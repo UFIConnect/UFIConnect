@@ -6,7 +6,7 @@
     "start": "node --max-old-space-size=768 server.js",
     "start:single": "node --max-old-space-size=768 index.js",
     "dev": "node --watch index.js",
-    "test": "node --test content-screening.test.js feed-pagination.test.js feed-preferences.test.js search.test.js following-scope.test.js office-controls.test.js video-placement.test.js",
+    "test": "node --test *.test.js",
     "test:screening": "node --test content-screening.test.js"
   },
   "dependencies": {

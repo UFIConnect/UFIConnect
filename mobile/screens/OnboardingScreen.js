@@ -31,24 +31,6 @@ const STEPS = [
     ],
   },
   {
-    key: 'goals',
-    title: "What are you here for?",
-    subtitle: 'Pick everything that applies — no wrong answers.',
-    multi: true,
-    options: [
-      { value: 'networking',   icon: '🤝', desc: 'Meet peers & collaborators' },
-      { value: 'jobs',         icon: '💼', desc: 'Jobs, gigs & contracts' },
-      { value: 'learning',     icon: '📚', desc: 'Courses, tutorials, guides' },
-      { value: 'build',        icon: '🛠', desc: 'Share work & get feedback' },
-      { value: 'hiring',       icon: '🔍', desc: 'Find great people to hire' },
-      { value: 'funding',      icon: '🏦', desc: 'Grants, investors, VCs' },
-      { value: 'mentorship',   icon: '🧑‍🏫', desc: 'Learn from experienced pros' },
-      { value: 'events',       icon: '📅', desc: 'Conferences, IRL & online' },
-      { value: 'expertise',    icon: '💡', desc: 'Teach, write, speak' },
-      { value: 'sideproject',  icon: '🔨', desc: 'Hack on something new' },
-    ],
-  },
-  {
     key: 'interests',
     title: 'What topics light you up?',
     subtitle: "We surface groups and opportunities in these areas.",
@@ -124,7 +106,7 @@ const STEPS = [
 export default function OnboardingScreen() {
   const { token, updateProfileLocally } = useAuth();
   const [step, setStep] = useState(0);
-  const [answers, setAnswers] = useState({ role: null, goals: [], interests: [], experience: null });
+  const [answers, setAnswers] = useState({ role: null, interests: [], experience: null });
   const [loading, setLoading] = useState(false);
 
   const current = STEPS[step];

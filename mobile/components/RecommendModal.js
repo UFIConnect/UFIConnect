@@ -19,6 +19,8 @@ export default function RecommendModal({ visible, onClose, triggerGroup, recomme
   if (!visible || !triggerGroup) return null;
 
   async function joinGroup(groupId) {
+    const group = recommendations.find(candidate => candidate?.id === groupId);
+    if (!group || group.isExternal || group.canJoin === false) return;
     setJoining(groupId);
     try {
       const res = await axios.post(
@@ -64,7 +66,7 @@ export default function RecommendModal({ visible, onClose, triggerGroup, recomme
                   </View>
                   <Text style={styles.groupName}>{group.name}</Text>
                   <Text style={styles.groupDesc}>{group.description}</Text>
-                  <TouchableOpacity
+                  {!group.isExternal && group.canJoin !== false && <TouchableOpacity
                     style={[styles.joinBtn, isJoined && styles.joinedBtn]}
                     onPress={() => !isJoined && joinGroup(group.id)}
                     disabled={joining === group.id || isJoined}
@@ -77,7 +79,7 @@ export default function RecommendModal({ visible, onClose, triggerGroup, recomme
                         {isJoined ? '✓ Joined' : '+ Join'}
                       </Text>
                     )}
-                  </TouchableOpacity>
+                  </TouchableOpacity>}
                 </View>
               );
             })}

@@ -41,18 +41,6 @@ const ROLES = [
   { value: 'Parent / Caregiver',       icon: 'PC', label: 'Parent / Caregiver',       desc: 'Family life, childcare, and parenting community' },
 ];
 
-const GOALS = [
-  { value: 'networking',   icon: 'NW', label: 'Grow my network',        desc: 'Meet peers, collaborators, and mentors' },
-  { value: 'jobs',         icon: 'JB', label: 'Find a new role',         desc: 'Discover jobs, gigs, and contracts' },
-  { value: 'learning',     icon: 'LR', label: 'Learn new skills',        desc: 'Courses, tutorials, and expert guides' },
-  { value: 'build',        icon: 'BP', label:  'Build in public',         desc: 'Share work, get feedback, and find collaborators' },
-  { value: 'hiring',       icon: 'HT', label: 'Hire great talent',       desc: 'Find exceptional people for your team' },
-  { value: 'funding',      icon: 'FN', label: 'Raise funding',           desc: 'Connect with investors, grants, and VCs' },
-  { value: 'mentorship',   icon: 'MN', label: 'Find a mentor',          desc: 'Learn from experienced professionals' },
-  { value: 'events',       icon: 'EV', label: 'Attend events',           desc: 'Conferences, meetups, and virtual summits' },
-  { value: 'expertise',    icon: 'EX', label: 'Share my expertise',      desc: 'Teach, write, and speak to others' },
-  { value: 'sideproject',  icon: 'SP', label: 'Launch a side project',   desc: 'Build something new and find early users' },
-];
 
 // Interests shown to everyone (canonical list) — exported so the topic
 // selectors on Feed/Videos (see FilterPanel in Feed.jsx and the Filters
@@ -211,7 +199,7 @@ const EXPERIENCE = [
   { value: 'exec',      icon: 'EL', label: 'Executive',       desc: 'C-suite, VP, or Founder' },
 ];
 
-const STEPS = ['Your Role', 'Topics', 'Goals', 'Experience'];
+const STEPS = ['Your Role', 'Topics', 'Experience'];
 
 /* ─── Component ─────────────────────────────────────────────────────────────── */
 
@@ -236,7 +224,6 @@ export default function Onboarding() {
   const [interests,  setInterests]  = useState(
     ctxRole && ctxPreInterests.length > 0 ? ctxPreInterests.slice(0, 5) : []
   );
-  const [goals,      setGoals]      = useState([]);
   const [experience, setExperience] = useState(ctxExperience);
   const [loading,    setLoading]    = useState(false);
   const [lastPicked, setLastPicked] = useState('');
@@ -270,18 +257,10 @@ export default function Onboarding() {
     );
   }
 
-  function toggleGoal(val) {
-    setError('');
-    setGoals(prev =>
-      prev.includes(val) ? prev.filter(v => v !== val) : [...prev, val]
-    );
-  }
-
   function canNext() {
     if (step === 0) return role === '__custom__' ? customRole.trim().length > 1 : !!role;
     if (step === 1) return interests.length > 0;
-    if (step === 2) return goals.length > 0;
-    if (step === 3) return !!experience;
+    if (step === 2) return !!experience;
     return false;
   }
 
@@ -290,7 +269,7 @@ export default function Onboarding() {
     setError('');
     try {
       const resolvedRole = role === '__custom__' ? customRole.trim() : role;
-      const payload = { role: resolvedRole, goals, interests, experience };
+      const payload = { role: resolvedRole, interests, experience };
       const ctx = loadSignupCtx();
       if (ctx?.bio)   payload.bio   = ctx.bio;
       if (ctx?.title) payload.title = ctx.title;
@@ -312,8 +291,6 @@ export default function Onboarding() {
       r.value.toLowerCase().includes(q) || r.desc.toLowerCase().includes(q)
     );
   }, [roleSearch]);
-
-  const progress = ((step) / STEPS.length) * 100;
 
   return (
     <div className="onboarding-page">
@@ -573,41 +550,9 @@ export default function Onboarding() {
           </>
         )}
 
-        {/* ── Step 2 — Goals ── */}
-        {step === 2 && (
-          <>
-            <h1 className="onboarding-title">What brings you here?</h1>
-            <p className="onboarding-sub">Select everything that applies. Your feed, opportunities, and connections will reflect your goals.</p>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10, marginBottom: 24 }}>
-              {GOALS.map(({ value, label, desc }) => {
-                const sel = goals.includes(value);
-                return (
-                  <button
-                    key={value}
-                    onClick={() => toggleGoal(value)}
-                    style={{
-                      padding: '14px 16px', borderRadius: 14,
-                      border: `2px solid ${sel ? 'var(--primary)' : 'var(--border)'}`,
-                      background: sel ? 'var(--primary-light)' : 'var(--surface)',
-                      cursor: 'pointer', textAlign: 'left', transition: 'all .2s',
-                      transform: sel ? 'scale(1.02)' : 'scale(1)',
-                      boxShadow: sel ? '0 4px 16px rgba(0,98,255,.15)' : 'none',
-                    }}
-                  >
-                    <div style={{ fontWeight: 700, fontSize: '.88rem', color: sel ? 'var(--primary)' : 'var(--text)', marginBottom: 3 }}>
-                      {label}
-                    </div>
-                    <div style={{ fontSize: '.74rem', color: 'var(--muted)', lineHeight: 1.4 }}>{desc}</div>
-                    {sel && <div style={{ marginTop: 8, fontSize: '.7rem', fontWeight: 700, color: 'var(--primary)' }}>Selected</div>}
-                  </button>
-                );
-              })}
-            </div>
-          </>
-        )}
 
-        {/* ── Step 3 — Experience ── */}
-        {step === 3 && (
+        {/* Experience */}
+        {step === 2 && (
           <>
             <h1 className="onboarding-title">What's your experience level?</h1>
             <p className="onboarding-sub">This helps us calibrate content difficulty and tailor connection suggestions to your career stage.</p>

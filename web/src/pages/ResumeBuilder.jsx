@@ -451,6 +451,8 @@ export default function ResumeBuilder() {
   const { profile, refreshProfile } = useAuth();
   const { showToast } = useToast();
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [billingReady, setBillingReady] = useState(null);
   const [resumeBuilderPrice, setResumeBuilderPrice] = useState(null);
   const [unlocking, setUnlocking] = useState(false);
@@ -508,14 +510,21 @@ export default function ResumeBuilder() {
 
   useEffect(() => {
     if (!unlocked) return;
+    let cancelled = false;
+    setLoaded(false);
+    setLoadError('');
     client.get('/resume-builder/draft')
       .then(({ data: res }) => {
+        if (cancelled) return;
         setTemplate(res.template || 'modern');
         setData(normalizeDraft(res.data));
+        setLoaded(true);
       })
-      .catch(() => {})
-      .finally(() => setLoaded(true));
-  }, [unlocked]);
+      .catch((error) => {
+        if (!cancelled) setLoadError(error?.response?.data?.message || 'Could not load your saved draft. Please try again.');
+      });
+    return () => { cancelled = true; };
+  }, [unlocked, profile?.id, loadAttempt]);
 
   useEffect(() => {
     if (!unlocked) return undefined;
@@ -571,6 +580,7 @@ export default function ResumeBuilder() {
   }
 
   async function saveDraft(nextData = data, successMessage = 'All changes saved.') {
+    if (!loaded || loadError) return false;
     setSaving(true);
     try {
       await client.put('/resume-builder/draft', { template, data: nextData });
@@ -608,6 +618,7 @@ export default function ResumeBuilder() {
   }
 
   async function handleExport() {
+    if (!loaded || loadError) return;
     setExporting(true);
     setExportResult(null);
     try {
@@ -840,6 +851,11 @@ export default function ResumeBuilder() {
           <div className="empty-state"><span className="spinner spinner-primary" /></div>
         ) : !unlocked ? (
           <LockedState onUnlock={unlockResumeBuilder} unlocking={unlocking} billingReady={billingReady} price={resumeBuilderPrice} />
+        ) : loadError ? (
+          <div className="empty-state" role="alert">
+            <p>{loadError}</p>
+            <button type="button" className="btn btn-primary" onClick={() => setLoadAttempt(value => value + 1)}>Try again</button>
+          </div>
         ) : !loaded ? (
           <div className="empty-state"><span className="spinner spinner-primary" /></div>
         ) : (

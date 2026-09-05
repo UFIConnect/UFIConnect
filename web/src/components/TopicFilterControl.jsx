@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-function TopicChoices({ options, selectedTopics, onToggle, search }) {
+export function TopicChoices({ options = [], selectedTopics = [], onToggle, search = '' }) {
   const normalizedSearch = search.trim().toLowerCase();
   const visibleTopics = normalizedSearch
     ? options.filter((topic) => topic.toLowerCase().includes(normalizedSearch))

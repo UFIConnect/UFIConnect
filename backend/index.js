@@ -269,6 +269,9 @@ app.post('/billing/webhook', express.raw({ type: 'application/json' }), async (r
     return res.status(400).send(`Webhook signature verification failed`);
   }
   try {
+    if (['checkout.session.completed', 'customer.subscription.deleted', 'customer.subscription.updated'].includes(event.type) && !db.isConnected()) {
+      return res.status(503).send('Billing persistence is temporarily unavailable');
+    }
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object;
       const userId = session.client_reference_id;
@@ -305,33 +308,36 @@ app.post('/billing/webhook', express.raw({ type: 'application/json' }), async (r
         }
       }
     } else if (event.type === 'customer.subscription.deleted' || event.type === 'customer.subscription.updated') {
-      const sub = event.data.object;
-      // updated: only downgrade on a state that actually means "not paying"
-      // (past_due/unpaid/canceled/incomplete_expired) — an active or
-      // trialing subscription mid-update (e.g. a plan change) shouldn't
-      // knock someone back to free.
-      const inactiveStatuses = new Set(['canceled', 'unpaid', 'past_due', 'incomplete_expired']);
-      if (event.type === 'customer.subscription.updated' && !inactiveStatuses.has(sub.status)) {
+      // Read current state for out-of-order updates. Keep recoverable IDs so
+      // payment recovery can restore access without creating a new subscription.
+      const sub = event.type === 'customer.subscription.deleted'
+        ? event.data.object
+        : await stripe.subscriptions.retrieve(event.data.object.id);
+      const active = ['active', 'trialing'].includes(sub.status);
+      const ended = event.type === 'customer.subscription.deleted' || ['canceled', 'incomplete_expired'].includes(sub.status);
+      if (!active && !ended && !['past_due', 'unpaid', 'incomplete', 'paused'].includes(sub.status)) {
         return res.json({ received: true });
       }
-      if (db.isConnected()) {
-        // Two independent subscriptions can point at the same customer, so
-        // this cancellation might be the plan OR the resume_builder addon —
-        // check both id columns and only clear whichever one actually matches.
-        const { rows } = await db.query(`SELECT id FROM users WHERE stripe_subscription_id = $1`, [sub.id]);
-        if (rows[0]) {
-          await db.query(`UPDATE users SET plan='free', stripe_subscription_id=NULL WHERE id=$1`, [rows[0].id]);
-          const mem = users.find(u => u.id === rows[0].id);
-          if (mem) { mem.plan = 'free'; mem.stripeSubscriptionId = null; }
-          console.log(`[Stripe webhook] user ${rows[0].id} downgraded to free (${sub.status})`);
-        } else {
-          const { rows: addonRows } = await db.query(`SELECT id FROM users WHERE resume_builder_subscription_id = $1`, [sub.id]);
-          if (addonRows[0]) {
-            await db.query(`UPDATE users SET resume_builder_addon=false, resume_builder_subscription_id=NULL WHERE id=$1`, [addonRows[0].id]);
-            const mem = users.find(u => u.id === addonRows[0].id);
-            if (mem) { mem.resumeBuilderAddon = false; mem.resumeBuilderSubscriptionId = null; }
-            console.log(`[Stripe webhook] user ${addonRows[0].id} lost resume_builder (${sub.status})`);
-          }
+      const subscriptionId = ended ? null : sub.id;
+      const { rows } = await db.query('SELECT id, plan FROM users WHERE stripe_subscription_id=$1', [sub.id]);
+      if (rows[0]) {
+        let plan = 'free';
+        if (active) {
+          const priceIds = (sub.items?.data || []).map(item => item.price?.id);
+          plan = ['business', 'pro'].find(tier => TIER_PRICE_IDS[tier]() && priceIds.includes(TIER_PRICE_IDS[tier]()))
+            || (['pro', 'business'].includes(sub.metadata?.tier) ? sub.metadata.tier : null)
+            || (['pro', 'business'].includes(rows[0].plan) ? rows[0].plan : null);
+          if (!plan) throw new Error('Cannot resolve the active subscription tier');
+        }
+        await db.query('UPDATE users SET plan=$1, stripe_subscription_id=$2 WHERE id=$3', [plan, subscriptionId, rows[0].id]);
+        const mem = users.find(user => user.id === rows[0].id);
+        if (mem) { mem.plan = plan; mem.stripeSubscriptionId = subscriptionId; }
+      } else {
+        const { rows: addons } = await db.query('SELECT id FROM users WHERE resume_builder_subscription_id=$1', [sub.id]);
+        if (addons[0]) {
+          await db.query('UPDATE users SET resume_builder_addon=$1, resume_builder_subscription_id=$2 WHERE id=$3', [active, subscriptionId, addons[0].id]);
+          const mem = users.find(user => user.id === addons[0].id);
+          if (mem) { mem.resumeBuilderAddon = active; mem.resumeBuilderSubscriptionId = subscriptionId; }
         }
       }
     }
@@ -16732,82 +16738,38 @@ async function verifyAuth0Token(token) {
 
 async function provisionAuth0User(payload) {
   const subject = payload.sub;
-  const email = (payload.email || `${subject.replace(/[^a-z0-9_-]/gi, '_')}@auth0.local`).toLowerCase();
+  const email = (typeof payload.email === 'string' ? payload.email : `${subject.replace(/[^a-z0-9_-]/gi, '_')}@auth0.local`).trim().toLowerCase();
   const name = payload.name || payload.nickname || email.split('@')[0] || 'UFIconnect Member';
   const avatarUrl = payload.picture || '';
-
-  const existingBySubject = users.find(u => u.authProvider === 'auth0' && u.authSubject === subject);
-  if (existingBySubject) return existingBySubject;
-
-  if (db.isConnected()) {
-    const linked = await fetchAndSyncUserByAuthSubject('auth0', subject);
-    if (linked) return linked;
-
-    const byEmail = await fetchAndSyncUserByEmail(email);
-    if (byEmail) {
-      byEmail.authProvider = byEmail.authProvider || 'auth0';
-      byEmail.authSubject = subject;
-      byEmail.avatarUrl = byEmail.avatarUrl || avatarUrl;
-      db.query(
-        `UPDATE users
-         SET auth_provider='auth0', auth_subject=$1, avatar_url=COALESCE(NULLIF(avatar_url,''), $2)
-         WHERE id=$3`,
-        [subject, avatarUrl, byEmail.id]
-      ).catch(e => console.error('link Auth0 user:', e.message));
-      return byEmail;
-    }
-
-    try {
-      const syntheticHash = bcrypt.hashSync(crypto.randomUUID(), 10);
-      const { rows } = await db.query(
-        `INSERT INTO users (name, email, password_hash, auth_provider, auth_subject, avatar_url)
-         VALUES ($1,$2,$3,'auth0',$4,$5)
-         RETURNING *`,
-        [name, email, syntheticHash, subject, avatarUrl]
-      );
-      return syncToMemory(dbRowToMemUser(rows[0]));
-    } catch (err) {
-      console.error('provisionAuth0User DB:', err.message);
-      const fallback = await fetchAndSyncUserByEmail(email);
-      if (fallback) return fallback;
-    }
+  const existing = users.find(u => u.authProvider === 'auth0' && u.authSubject === subject);
+  if (existing) return existing;
+  if (!db.isConnected()) {
+    throw Object.assign(new Error('Sign-in storage is temporarily unavailable.'), { status: 503 });
   }
+  const linked = await fetchAndSyncUserByAuthSubject('auth0', subject);
+  if (linked) return linked;
 
-  const existingByEmail = users.find(u => u.email === email);
-  if (existingByEmail) {
-    existingByEmail.authProvider = 'auth0';
-    existingByEmail.authSubject = subject;
-    existingByEmail.avatarUrl = existingByEmail.avatarUrl || avatarUrl;
-    filestore.saveUsers(users);
-    return existingByEmail;
+  // Matching email addresses are not proof that both accounts have been
+  // authenticated. Keep existing identities separate until explicit linking.
+  if (await fetchAndSyncUserByEmail(email)) {
+    throw Object.assign(new Error('An account already uses this email. Sign in with its existing method.'), { status: 409 });
   }
-
-  const newUser = {
-    id: `u${Date.now()}`,
-    name,
-    email,
-    phone: '',
-    passwordHash: bcrypt.hashSync(crypto.randomUUID(), 10),
-    authProvider: 'auth0',
-    authSubject: subject,
-    avatarUrl,
-    title: '',
-    bio: '',
-    skills: [],
-    organization: '',
-    joinedGroups: [],
-    onboardingComplete: false,
-    preferences: null,
-    socialAccounts: {},
-    links: {},
-    socialTokens: {},
-    socialRefreshTokens: {},
-    socialConnectedAt: {},
-    plan: 'free',
-  };
-  users.push(newUser);
-  filestore.saveUsers(users);
-  return newUser;
+  try {
+    const syntheticHash = bcrypt.hashSync(crypto.randomUUID(), 10);
+    const { rows } = await db.query(
+      `INSERT INTO users (name, email, password_hash, auth_provider, auth_subject, avatar_url)
+       VALUES ($1,$2,$3,'auth0',$4,$5)
+       RETURNING *`,
+      [name, email, syntheticHash, subject, avatarUrl]
+    );
+    return syncToMemory(dbRowToMemUser(rows[0]));
+  } catch (error) {
+    if (error.code === '23505') {
+      const concurrent = await fetchAndSyncUserByAuthSubject('auth0', subject);
+      if (concurrent) return concurrent;
+    }
+    throw Object.assign(new Error('Could not save your account. Please try again.'), { status: 503 });
+  }
 }
 
 async function migrateDB() {
@@ -19813,7 +19775,7 @@ function recommendGroups(userId, triggerGroupId, count = 3) {
   const roleCats = ROLE_CATEGORIES[prefs.role] || [];
   const scores = {};
   groups.forEach((group) => {
-    if (joined.has(group.id) || group.id === triggerGroupId) return;
+    if (joined.has(group.id) || group.id === triggerGroupId || !canSeeGroup(group, userId)) return;
     let score = 0;
     if (triggerGroup && group.category === triggerGroup.category) score += 3;
     if (triggerGroup?.relatedGroups?.includes(group.id)) score += 4;
@@ -19831,6 +19793,7 @@ function pickOnboardingGroups(prefs, count = 5) {
   const interestSet = new Set(interests);
   const scores = {};
   groups.forEach((group) => {
+    if (group.isExternal || group.isPrivate) return;
     let score = 0;
     if (interestSet.has(group.category)) score += 4;
     if (roleCats.has(group.category)) score += 3;
@@ -19875,7 +19838,8 @@ async function authenticate(req, res, next) {
     req.user = { id: user.id, email: user.email, authProvider: 'auth0', sub: payload.sub };
     recordRealUserActivity(req, 'auth0');
     return next();
-  } catch {
+  } catch (error) {
+    if ([409, 503].includes(error.status)) return res.status(error.status).json({ message: error.message });
     return res.status(401).json({ message: 'Invalid or expired token.' });
   }
 }
@@ -19918,12 +19882,10 @@ async function authenticateOptional(req, res, next) {
 // meant anyone who found the API's base URL could force-refresh every
 // source worker or trigger a real production deploy on demand — exactly the
 // kind of uncontrolled load spike this check was meant to rule out.
-// Fails open (unauthenticated access still allowed) until OFFICE_TOKEN is
-// set in the Render dashboard, so this can't itself take the dashboard down
-// before the env var is configured.
+// Missing configuration must never grant access to deployment controls.
 function requireOfficeToken(req, res, next) {
   const expected = process.env.OFFICE_TOKEN;
-  if (!expected) return next();
+  if (!expected) return res.status(503).json({ error: 'Office access is not configured.' });
   const provided = req.headers['x-office-token'] || req.query.token;
   if (provided === expected) return next();
   return res.status(401).json({ error: 'Unauthorized — set the office token in the dashboard.' });
@@ -20247,10 +20209,14 @@ app.get('/auth/me', authenticate, async (req, res) => {
 
 app.post('/auth/register', registerLimiter, async (req, res) => {
   const { name, email, password, title, phone: phoneInput } = req.body || {};
-  if (!name || !email || !password || !phoneInput) return res.status(400).json({ message: 'Name, email, password, and phone number are required.' });
-  const phone = normalizeMemberPhone(phoneInput);
-  if (!phone) return res.status(400).json({ message: 'Enter a valid phone number with country code, such as +1 555 123 4567.' });
-  const emailLc = email.toLowerCase();
+  if (typeof name !== 'string' || !name.trim() || typeof email !== 'string' ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) || typeof password !== 'string' || password.length < 6 ||
+      (phoneInput != null && typeof phoneInput !== 'string') || (title !== undefined && typeof title !== 'string')) {
+    return res.status(400).json({ message: 'Enter a name, valid email, and password of at least 6 characters.' });
+  }
+  const phone = normalizeMemberPhone(phoneInput) || '';
+  if (phoneInput?.trim() && !phone) return res.status(400).json({ message: 'Enter a valid phone number with country code, such as +1 555 123 4567, or leave it blank.' });
+  const emailLc = email.trim().toLowerCase();
 
   if (db.isConnected()) {
     try {
@@ -20259,12 +20225,13 @@ app.post('/auth/register', registerLimiter, async (req, res) => {
       const hash = bcrypt.hashSync(password, 10);
       const { rows } = await db.query(
         `INSERT INTO users (name, email, phone, password_hash, title) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-        [name, emailLc, phone, hash, title || null]
+        [name.trim(), emailLc, phone, hash, title || null]
       );
       const mem = syncToMemory(dbRowToMemUser(rows[0]));
       const token = jwt.sign({ id: mem.id, email: mem.email }, JWT_SECRET, { expiresIn: '7d' });
       return res.status(201).json({ token, profile: fullProfile(mem) });
     } catch (err) {
+      if (err.code === '23505') return res.status(409).json({ message: 'Email already registered.' });
       console.error('register DB error:', err.message);
       // Distinguish a real DB failure from something the retry loop below
       // can't fix (bad input, a constraint violation) — those should still
@@ -20285,8 +20252,11 @@ app.post('/auth/register', registerLimiter, async (req, res) => {
 });
 
 app.post('/auth/login', authLimiter, async (req, res) => {
-  const { email, password } = req.body;
-  const emailLc = (email || '').toLowerCase();
+  const { email, password } = req.body || {};
+  if (typeof email !== 'string' || !email.trim() || typeof password !== 'string' || !password) {
+    return res.status(400).json({ message: 'Enter your email and password.' });
+  }
+  const emailLc = email.trim().toLowerCase();
 
   // Check DB first (persisted users)
   if (db.isConnected()) {
@@ -20307,7 +20277,7 @@ app.post('/auth/login', authLimiter, async (req, res) => {
 });
 
 app.post('/auth/forgot-password', passwordResetLimiter, async (req, res) => {
-  const email = (req.body?.email || '').toLowerCase().trim();
+  const email = typeof req.body?.email === 'string' ? req.body.email.toLowerCase().trim() : '';
   // Always respond the same way whether or not the email is registered —
   // don't let this endpoint reveal which emails have accounts.
   const generic = { ok: true, message: "If an account exists for that email, we've sent a reset link." };
@@ -20327,7 +20297,7 @@ app.post('/auth/forgot-password', passwordResetLimiter, async (req, res) => {
 
 app.post('/auth/reset-password', passwordResetLimiter, async (req, res) => {
   const { token, password } = req.body || {};
-  if (!token || !password) return res.status(400).json({ message: 'Token and new password are required.' });
+  if (typeof token !== 'string' || !token || typeof password !== 'string' || !password) return res.status(400).json({ message: 'Token and new password are required.' });
   if (password.length < 6) return res.status(400).json({ message: 'Password must be at least 6 characters.' });
   const userId = verifyPasswordResetToken(token);
   if (!userId) return res.status(400).json({ message: 'This reset link is invalid or has expired.' });
@@ -20832,7 +20802,7 @@ app.patch('/profile', authenticate, async (req, res) => {
     if (Object.prototype.hasOwnProperty.call(nextRoleSettings, 'feedSourceFavorites')) {
       nextRoleSettings.feedSourceFavorites = normalizeFeedSourceFavorites(nextRoleSettings.feedSourceFavorites);
     }
-    user.roleSettings = nextRoleSettings;
+    user.roleSettings = { ...(user.roleSettings || {}), ...nextRoleSettings };
   }
   // Trusts the URL as given rather than re-validating it points at our own
   // Cloudinary account — same trust boundary as mediaUrl on regular posts
@@ -20924,7 +20894,7 @@ app.post('/profile/onboarding', authenticate, async (req, res) => {
     .slice(0, 40);
   const prefs = {
     role: typeof submitted.role === 'string' ? submitted.role.trim().slice(0, 120) : '',
-    goals: preferenceList(submitted.goals),
+    goals: preferenceList(submitted.goals === undefined ? user.preferences?.goals : submitted.goals),
     interests: preferenceList(submitted.interests),
     experience: typeof submitted.experience === 'string' ? submitted.experience.trim().slice(0, 80) : '',
   };
@@ -21137,7 +21107,7 @@ async function ensureStripeCustomer(user, phone) {
   const customerData = {
     email: user.email,
     name: user.name || undefined,
-    phone,
+    ...(phone ? { phone } : {}),
     metadata: { uficonnect_user_id: user.id },
   };
   if (user.stripeCustomerId) {
@@ -21197,9 +21167,6 @@ app.post('/billing/create-checkout-session', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
   const phone = normalizeMemberPhone(user.phone);
-  if (!phone) {
-    return res.status(400).json({ message: 'Add a valid phone number in Settings before starting checkout.' });
-  }
   if (tier === 'resume_builder' && user.resumeBuilderAddon) {
     return res.status(400).json({ message: 'Resume Builder is already unlocked. Manage Billing to change or cancel it.' });
   }
@@ -21214,13 +21181,13 @@ app.post('/billing/create-checkout-session', authenticate, async (req, res) => {
     return res.status(400).json({ message: `Already on the ${user.plan === 'business' ? 'Business' : 'Pro'} plan — use Manage Billing to change plans.` });
   }
   try {
-    // Checkout receives a real app-owned customer with the saved phone,
-    // rather than creating an anonymous customer from partial form data.
+    // Include a real saved number when present; phone is optional.
     const stripeCustomerId = await ensureStripeCustomer(user, phone);
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       line_items: [{ price: priceId, quantity: 1 }],
       metadata: { tier, uficonnect_user_id: user.id },
+      subscription_data: { metadata: { tier, uficonnect_user_id: user.id } },
       // Reuse an existing Stripe customer if this user has one (e.g. a past
       // canceled subscription, or an already-active plan/addon) instead of
       // creating a duplicate — this is also what lets one Manage Billing
@@ -21612,10 +21579,12 @@ app.get('/groups/:id', authenticate, async (req, res) => {
   }
 });
 
-app.get('/groups/:id/members', authenticate, (req, res) => {
+app.get('/groups/:id/members', authenticate, async (req, res) => {
   const groupId = req.params.id;
   const group = groups.find((g) => g.id === groupId);
-  if (!group) return res.status(404).json({ message: 'Group not found.' });
+  await getUser(req.user.id);
+  if (!group || !canSeeGroup(group, req.user.id)) return res.status(404).json({ message: 'Group not found.' });
+  if (group.isExternal) return res.json({ members: [], total: group.members });
 
   const requesterId = req.user.id;
   const allMembers = users.filter((u) => u.joinedGroups.includes(groupId) && u.id !== requesterId);
@@ -21644,7 +21613,7 @@ app.post('/groups/:id/join', authenticate, async (req, res) => {
   try {
     const user = await getUser(req.user.id);
     const group = groups.find((g) => g.id === req.params.id);
-    if (!user || !group) return res.status(404).json({ message: 'Not found.' });
+    if (!user || !group || !canSeeGroup(group, user.id)) return res.status(404).json({ message: 'Not found.' });
     if (group.isExternal) {
       return res.status(400).json({ message: 'External groups must be joined on their source platform.' });
     }
@@ -22977,8 +22946,6 @@ async function handleFeedRequest(req, res) {
   // request when shouldFetchLive was true — dead since that flag was
   // hardcoded false, removed outright rather than left as an unreachable
   // fetchRedditByKeyword call.
-  const joinedGroupPostsRaw = [];
-  const joinedGroupPostsReal = realFeedPosts(joinedGroupPostsRaw);
 
   const redditPosts    = redditRaw.map(p => mapExternalPost(p, 'reddit'));
   const hnPosts        = (hnRaw     || []).map(p => mapExternalPost(p, 'hackernews'));
@@ -23065,17 +23032,6 @@ async function handleFeedRequest(req, res) {
   // mixed public feed everyone else's request also has to stay consistent
   // with.
 
-  // Joined-group posts: mark fromJoinedGroup + high relevance
-  const joinedGroupPosts = joinedGroupPostsReal.map(p => {
-    const matchedGroup = joinedRedditGroups.find(g => g.subreddit?.toLowerCase() === p.group?.name?.replace('r/','').toLowerCase());
-    return {
-      ...mapExternalPost(p, 'reddit'),
-      fromJoinedGroup: true,
-      group: matchedGroup
-        ? { id: matchedGroup.id, name: matchedGroup.name, category: matchedGroup.category, externalUrl: matchedGroup.externalUrl }
-        : p.group,
-    };
-  });
 
   // Sort external posts only: ranked (time-decay + engagement), interleaved
   // for source diversity. `internal` (community posts, genuinely per-user
@@ -23085,7 +23041,6 @@ async function handleFeedRequest(req, res) {
   // trigger the recompute, since every other user reads the same cached
   // pool for the next 10 minutes.
   const liveSorted = sortFeedBatch([
-    ...joinedGroupPosts,
     ...redditPosts, ...githubPosts, ...devtoPosts,
     ...mediumPosts, ...youtubePosts, ...soPosts, ...mastoPosts,
     ...lobPosts, ...arxivPosts,
@@ -23199,7 +23154,7 @@ async function handleFeedRequest(req, res) {
     designweb:     designwebPosts.length,
     db:            dbPosts.length,
     cached:       cachedMapped.length,
-    joinedGroups: joinedGroupPosts.length,
+    joinedGroups: 0,
     internal:     internal.length,
   };
   const refreshMeta = {
@@ -27655,6 +27610,21 @@ function computeATSScore(text) {
   return { score: Math.min(100, Math.round(score)), checks, keywords };
 }
 
+async function withAttachmentTransaction(userId, work) {
+  return db.withClient(async client => {
+    await client.query('BEGIN');
+    try {
+      await client.query('SELECT id FROM users WHERE id=$1 FOR UPDATE', [userId]);
+      const result = await work(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    }
+  });
+}
+
 app.post('/profile/attachments', authenticate, (req, res) => {
   attachmentUpload.single('file')(req, res, async (err) => {
     if (err) {
@@ -27679,12 +27649,14 @@ app.post('/profile/attachments', authenticate, (req, res) => {
       // "most recent wins" behavior) — explicit unset-then-insert rather
       // than relying on ORDER BY alone, so GET's isPrimary flag is correct
       // immediately without needing a second read-after-write.
-      await db.query(`UPDATE attachments SET is_primary=false WHERE user_id=$1`, [req.user.id]);
-      await db.query(
-        `INSERT INTO attachments (id, user_id, filename, mime_type, file_size, file_data, extracted_text, ats_score, ats_feedback, keywords, created_at, is_primary)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true)`,
-        [id, req.user.id, originalname, mimetype || null, size, buffer, text.slice(0, 20000), score, JSON.stringify(checks), JSON.stringify(keywords), createdAt]
-      );
+      await withAttachmentTransaction(req.user.id, async client => {
+        await client.query(`UPDATE attachments SET is_primary=false WHERE user_id=$1`, [req.user.id]);
+        await client.query(
+          `INSERT INTO attachments (id, user_id, filename, mime_type, file_size, file_data, extracted_text, ats_score, ats_feedback, keywords, created_at, is_primary)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true)`,
+          [id, req.user.id, originalname, mimetype || null, size, buffer, text.slice(0, 20000), score, JSON.stringify(checks), JSON.stringify(keywords), createdAt]
+        );
+      });
 
       res.status(201).json({
         id, filename: originalname, mimeType: mimetype || null, fileSize: size,
@@ -27721,10 +27693,14 @@ app.get('/profile/attachments', authenticate, async (req, res) => {
 app.post('/profile/attachments/:id/select', authenticate, async (req, res) => {
   try {
     if (!db.isConnected()) return res.status(503).json({ message: 'Not available right now.' });
-    const { rows } = await db.query(`SELECT id FROM attachments WHERE id=$1 AND user_id=$2`, [req.params.id, req.user.id]);
-    if (!rows.length) return res.status(404).json({ message: 'Not found.' });
-    await db.query(`UPDATE attachments SET is_primary=false WHERE user_id=$1`, [req.user.id]);
-    await db.query(`UPDATE attachments SET is_primary=true WHERE id=$1`, [req.params.id]);
+    const selected = await withAttachmentTransaction(req.user.id, async client => {
+      const { rows } = await client.query(`SELECT id FROM attachments WHERE id=$1 AND user_id=$2`, [req.params.id, req.user.id]);
+      if (!rows.length) return false;
+      await client.query(`UPDATE attachments SET is_primary=false WHERE user_id=$1`, [req.user.id]);
+      await client.query(`UPDATE attachments SET is_primary=true WHERE id=$1 AND user_id=$2`, [req.params.id, req.user.id]);
+      return true;
+    });
+    if (!selected) return res.status(404).json({ message: 'Not found.' });
     res.json({ ok: true, id: req.params.id });
   } catch (e) { console.error('POST /profile/attachments/:id/select:', e.message); res.status(500).json({ message: 'Failed to update.' }); }
 });
@@ -27752,6 +27728,7 @@ app.delete('/profile/attachments/:id', authenticate, async (req, res) => {
     const result = await db.withClient(async (client) => {
       await client.query('BEGIN');
       try {
+        await client.query('SELECT id FROM users WHERE id=$1 FOR UPDATE', [req.user.id]);
         const { rows } = await client.query(
           `DELETE FROM attachments WHERE id=$1 AND user_id=$2 RETURNING id, is_primary`,
           [req.params.id, req.user.id]
@@ -27829,6 +27806,7 @@ app.post('/groups/:id/posts', authenticate, contentSubmissionLimiter, async (req
     const user  = await getUser(req.user.id);
     const group = groups.find((g) => g.id === req.params.id);
     if (!user || !group || !canSeeGroup(group, user.id)) return res.status(404).json({ message: 'Not found.' });
+    if (group.isExternal) return res.status(400).json({ message: 'Publish to this group on its source platform.' });
     // Only enforced for user-created groups (createdBy set) — legacy seeded
     // internal groups (ufi-general etc.) stay open, since onboarding's
     // preference-scored auto-join doesn't guarantee membership in those and
@@ -28110,7 +28088,9 @@ function canViewHiddenProfile(user, viewerId) {
   ) || getConnectionStatus(viewerId, user.id) === 'connected';
 }
 
-app.get('/users/:id', authenticate, async (req, res) => {
+app.get('/users/:id', authenticate, async (req, res, next) => {
+  // These collection endpoints are declared below the individual profile.
+  if (req.params.id === 'connections' || req.params.id === 'blocked') return next('route');
   try {
     const user = await getUser(req.params.id);
     if (!user) return res.status(404).json({ message: 'User not found.' });
@@ -31138,7 +31118,7 @@ function renderApplicationWritingPDF(data, type) {
 app.get('/resume-builder/draft', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user?.resumeBuilderAddon) return res.status(403).json({ message: 'Resume Builder is a paid add-on — unlock it to continue.' });
-  if (!db.isConnected()) return res.json({ template: 'modern', data: emptyResumeDraft() });
+  if (!db.isConnected()) return res.status(503).json({ message: 'Your saved draft is temporarily unavailable. Please try again.' });
   try {
     const { rows } = await db.query(`SELECT template, data FROM resume_drafts WHERE user_id=$1`, [req.user.id]);
     if (!rows[0]) return res.json({ template: 'modern', data: emptyResumeDraft() });
@@ -31356,12 +31336,14 @@ app.post('/resume-builder/export', authenticate, async (req, res) => {
     const id = `att_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const createdAt = new Date().toISOString();
 
-    await db.query(`UPDATE attachments SET is_primary=false WHERE user_id=$1`, [req.user.id]);
-    await db.query(
-      `INSERT INTO attachments (id, user_id, filename, mime_type, file_size, file_data, extracted_text, ats_score, ats_feedback, keywords, created_at, is_primary)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true)`,
-      [id, req.user.id, filename, 'application/pdf', pdfBuffer.length, pdfBuffer, text.slice(0, 20000), score, JSON.stringify(checks), JSON.stringify(keywords), createdAt]
-    );
+    await withAttachmentTransaction(req.user.id, async client => {
+      await client.query(`UPDATE attachments SET is_primary=false WHERE user_id=$1`, [req.user.id]);
+      await client.query(
+        `INSERT INTO attachments (id, user_id, filename, mime_type, file_size, file_data, extracted_text, ats_score, ats_feedback, keywords, created_at, is_primary)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true)`,
+        [id, req.user.id, filename, 'application/pdf', pdfBuffer.length, pdfBuffer, text.slice(0, 20000), score, JSON.stringify(checks), JSON.stringify(keywords), createdAt]
+      );
+    });
 
     res.status(201).json({
       id, filename, mimeType: 'application/pdf', fileSize: pdfBuffer.length,

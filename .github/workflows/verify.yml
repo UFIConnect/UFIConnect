@@ -1,0 +1,35 @@
+name: Verify UFIconnect
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --no-package-lock
+      - run: npm install --no-package-lock --prefix backend
+      - run: npm install --no-package-lock --prefix web
+      - run: npm install --no-package-lock --prefix office
+      - run: node scripts/check-js.cjs
+      - run: npm test --prefix backend
+      - run: npm run build --prefix web
+      - run: npm run build --prefix office
+      - run: npx playwright install --with-deps chromium
+      - run: node scripts/audit-ui.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: responsive-audit-screenshots
+          path: .cache/audit-ui/
+          include-hidden-files: true
