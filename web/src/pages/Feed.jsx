@@ -84,7 +84,7 @@ function MenuIcon({ size = 18 }) {
   );
 }
 
-function FeedSourceOption({ tab, active, onSelect, compact = false, phoneExtra = false }) {
+function FeedSourceOption({ tab, active, onSelect, compact = false, favorite = false, phoneExtra = false }) {
   const meta = SOURCE_META[tab.key];
   const color = tab.key === 'all' ? 'var(--primary)' : (meta?.color || 'var(--primary)');
   return (
@@ -99,7 +99,25 @@ function FeedSourceOption({ tab, active, onSelect, compact = false, phoneExtra =
       onClick={onSelect}
     >
       {tab.key !== 'all' && <SourceMark source={tab.key} label={tab.icon} size={13} active={active} />}
-      <span>{tab.label}</span>
+      <span className="feed-source-option-label">{tab.label}</span>
+      {compact && favorite && <span className="feed-source-compact-favorite" aria-hidden="true">★</span>}
+    </button>
+  );
+}
+
+function SourceFavoriteButton({ tab, favorite, disabled, onToggle }) {
+  const action = favorite ? 'Remove from favorites' : 'Add to favorites';
+  return (
+    <button
+      type="button"
+      className={`feed-source-favorite-button${favorite ? ' active' : ''}`}
+      aria-label={`${action}: ${tab.label}`}
+      aria-pressed={favorite}
+      title={disabled ? 'Remove a favorite before adding another' : `${action}: ${tab.label}`}
+      disabled={disabled}
+      onClick={() => onToggle(tab.key)}
+    >
+      <span aria-hidden="true">{favorite ? '★' : '☆'}</span>
     </button>
   );
 }
@@ -413,6 +431,35 @@ const FOLLOWING_SOURCE_TABS = [
     .map(key => ({ key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || 'SRC' })),
 ];
 const FOLLOWING_EXCLUDED_SOURCES = new Set(FOLLOWING_EXCLUDED_SOURCE_IDS);
+const SOURCE_FAVORITE_LIMIT = 4;
+const DEFAULT_SOURCE_FAVORITES = Object.freeze({
+  feed: SOURCE_TABS.slice(0, SOURCE_FAVORITE_LIMIT).map(tab => tab.key),
+  following: FOLLOWING_SOURCE_TABS
+    .filter(tab => tab.key !== 'all')
+    .slice(0, SOURCE_FAVORITE_LIMIT)
+    .map(tab => tab.key),
+});
+
+function normalizeSourceFavoriteList(value, tabs, fallback) {
+  const allowed = new Set(tabs.filter(tab => tab.key !== 'all').map(tab => tab.key));
+  const normalized = [];
+  const add = (key) => {
+    if (!allowed.has(key) || normalized.includes(key) || normalized.length >= SOURCE_FAVORITE_LIMIT) return;
+    normalized.push(key);
+  };
+  if (Array.isArray(value)) value.forEach(add);
+  fallback.forEach(add);
+  tabs.forEach(tab => add(tab.key));
+  return normalized.slice(0, SOURCE_FAVORITE_LIMIT);
+}
+
+function normalizeSourceFavorites(value) {
+  const saved = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  return {
+    feed: normalizeSourceFavoriteList(saved.feed, SOURCE_TABS, DEFAULT_SOURCE_FAVORITES.feed),
+    following: normalizeSourceFavoriteList(saved.following, FOLLOWING_SOURCE_TABS, DEFAULT_SOURCE_FAVORITES.following),
+  };
+}
 
 const DEFAULT_FILTERS = { sort: 'newest', sources: [], timeRange: 'all', topics: [] };
 const FEED_PAGE_SIZE = 50;
@@ -2212,6 +2259,15 @@ export default function Feed({ forcedMode } = {}) {
   const [filterOpen,    setFilterOpen]   = useState(false);
   const [topicFilterOpen, setTopicFilterOpen] = useState(false);
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
+  const [sourceFavorites, setSourceFavorites] = useState(() => (
+    normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites)
+  ));
+  const [sourceFavoriteDraft, setSourceFavoriteDraft] = useState(() => {
+    const initial = normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites);
+    return [...initial[initialViewMode === 'following' ? 'following' : 'feed']];
+  });
+  const [sourceFavoriteSaving, setSourceFavoriteSaving] = useState(false);
+  const [sourceFavoriteError, setSourceFavoriteError] = useState('');
   const [mediaLightboxPostId, setMediaLightboxPostId] = useState(null);
   const [filters, setFilters] = useState(initialFilters);
   const [activeTabs,    setActiveTabs]    = useState(_saved?.activeTabs || []); // [] = All
@@ -2224,6 +2280,7 @@ export default function Feed({ forcedMode } = {}) {
       ? [...new Set(profile.roleSettings.disabledSources.map(source => String(source).trim().toLowerCase()).filter(Boolean))].sort().join(',')
       : ''
   ), [profile?.roleSettings?.disabledSources]);
+  const profileSourceFavoritesKey = JSON.stringify(profile?.roleSettings?.feedSourceFavorites || null);
   const requestedHomeToolPanel = useMemo(() => {
     const panel = new URLSearchParams(routeLocation.search).get('panel');
     return ['sources', 'accounts', 'skills', 'files'].includes(panel) ? panel : null;
@@ -2453,6 +2510,17 @@ export default function Feed({ forcedMode } = {}) {
   useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
   useEffect(() => { locationFiltersRef.current = locationFilters; }, [locationFilters]);
   useEffect(() => { searchRef.current = search; }, [search]);
+
+  // Favorite source shortcuts belong to the member, not the browser. Keep
+  // the profile-backed copy authoritative when an account finishes loading
+  // or a save from another session refreshes the profile snapshot.
+  useEffect(() => {
+    const next = normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites);
+    setSourceFavorites(next);
+    setSourceFavoriteDraft([...next[viewModeRef.current === 'following' ? 'following' : 'feed']]);
+    setSourceFavoriteError('');
+    setSourceMenuOpen(false);
+  }, [profile?.id, profileSourceFavoritesKey]);
 
   // Source switches are saved per member in roleSettings. Clear any active
   // source filters that were just turned off, then reload from the API so a
@@ -2771,6 +2839,49 @@ export default function Feed({ forcedMode } = {}) {
       replace: true,
     });
   }, [loadFeed]); // eslint-disable-line
+
+  const toggleSourceFavorite = useCallback((key) => {
+    const tabs = viewModeRef.current === 'following' ? FOLLOWING_SOURCE_TABS : SOURCE_TABS;
+    if (key === 'all' || !tabs.some(tab => tab.key === key)) return;
+    setSourceFavoriteError('');
+    setSourceFavoriteDraft(current => {
+      if (current.includes(key)) return current.filter(source => source !== key);
+      if (current.length >= SOURCE_FAVORITE_LIMIT) return current;
+      return [...current, key];
+    });
+  }, []);
+
+  const saveSourceFavorites = useCallback(async () => {
+    const mode = viewModeRef.current === 'following' ? 'following' : 'feed';
+    const tabs = mode === 'following' ? FOLLOWING_SOURCE_TABS : SOURCE_TABS;
+    const allowed = new Set(tabs.filter(tab => tab.key !== 'all').map(tab => tab.key));
+    const draft = [...new Set(sourceFavoriteDraft.filter(source => allowed.has(source)))];
+    if (draft.length !== SOURCE_FAVORITE_LIMIT || !profile?.id) return;
+
+    const nextFavorites = { ...sourceFavorites, [mode]: draft };
+    setSourceFavoriteSaving(true);
+    setSourceFavoriteError('');
+    try {
+      const { data } = await client.patch('/profile', {
+        roleSettings: {
+          ...(profile.roleSettings || {}),
+          feedSourceFavorites: nextFavorites,
+        },
+      });
+      const persisted = data.profile || data;
+      const savedFavorites = normalizeSourceFavorites(
+        persisted?.roleSettings?.feedSourceFavorites || nextFavorites
+      );
+      setSourceFavorites(savedFavorites);
+      setSourceFavoriteDraft([...savedFavorites[mode]]);
+      updateProfileLocally(persisted);
+      setSourceMenuOpen(false);
+    } catch {
+      setSourceFavoriteError('Favorites could not be saved. Please try again.');
+    } finally {
+      setSourceFavoriteSaving(false);
+    }
+  }, [profile, sourceFavoriteDraft, sourceFavorites, updateProfileLocally]);
 
   const loadMoreRemote = useCallback(async () => {
     // Confirmed live as a real crash: fast scrolling could fire this many
@@ -3261,13 +3372,19 @@ export default function Feed({ forcedMode } = {}) {
   const selectedSourceLabel = activeTabs.map(k => SOURCE_META[k]?.label || k).join(', ');
   const currentSourceTabs = viewMode === 'following' ? FOLLOWING_SOURCE_TABS : SOURCE_TABS;
   const selectedSourceKey = activeTabs[0] || filters.sources[0] || null;
-  const compactSourceTabs = [
-    currentSourceTabs.find(tab => tab.key === selectedSourceKey),
-    ...currentSourceTabs.filter(tab => tab.key !== selectedSourceKey),
-  ].filter(Boolean).slice(0, 4);
+  const sourceFavoriteMode = viewMode === 'following' ? 'following' : 'feed';
+  const currentSourceFavoriteKeys = sourceFavorites[sourceFavoriteMode] || [];
+  const compactSourceTabs = currentSourceFavoriteKeys
+    .map(key => currentSourceTabs.find(tab => tab.key === key))
+    .filter(Boolean)
+    .slice(0, SOURCE_FAVORITE_LIMIT);
   const fullSourceTabs = viewMode === 'following'
     ? currentSourceTabs
     : [{ key: 'all', label: 'All sources', icon: '' }, ...currentSourceTabs];
+  const sourceFavoriteDraftChanged = sourceFavoriteDraft.join('|') !== currentSourceFavoriteKeys.join('|');
+  const canSaveSourceFavorites = sourceFavoriteDraft.length === SOURCE_FAVORITE_LIMIT
+    && sourceFavoriteDraftChanged
+    && !sourceFavoriteSaving;
   const isSourceActive = (key) => key === 'all'
     ? !selectedSourceKey
     : selectedSourceKey === key;
@@ -3409,6 +3526,7 @@ export default function Feed({ forcedMode } = {}) {
                   tab={tab}
                   active={isSourceActive(tab.key)}
                   compact
+                  favorite
                   phoneExtra={index >= 2}
                   onSelect={() => toggleTab(tab.key)}
                 />
@@ -3424,24 +3542,59 @@ export default function Feed({ forcedMode } = {}) {
               onClick={() => {
                 setTopicFilterOpen(false);
                 setFilterOpen(false);
-                setSourceMenuOpen(open => !open);
+                setSourceMenuOpen(open => {
+                  const nextOpen = !open;
+                  if (nextOpen) {
+                    setSourceFavoriteDraft([...currentSourceFavoriteKeys]);
+                    setSourceFavoriteError('');
+                  }
+                  return nextOpen;
+                });
               }}
             >
               <MenuIcon />
             </button>
             {sourceMenuOpen && (
-              <div ref={sourceMenuPanelRef} id="feed-source-menu" className="feed-source-menu" role="radiogroup" aria-label="All feed sources">
-                {fullSourceTabs.map(tab => (
-                  <FeedSourceOption
-                    key={tab.key}
-                    tab={tab}
-                    active={isSourceActive(tab.key)}
-                    onSelect={() => {
-                      toggleTab(tab.key);
-                      setSourceMenuOpen(false);
-                    }}
-                  />
-                ))}
+              <div ref={sourceMenuPanelRef} id="feed-source-menu" className="feed-source-menu" role="group" aria-label="Feed sources and favorites">
+                <div className="feed-source-menu-header">
+                  <strong>Favorites</strong>
+                  <span>{sourceFavoriteDraft.length} / {SOURCE_FAVORITE_LIMIT}</span>
+                </div>
+                {fullSourceTabs.map(tab => {
+                  const favorite = sourceFavoriteDraft.includes(tab.key);
+                  const aggregate = tab.key === 'all';
+                  return (
+                    <div key={tab.key} className={`feed-source-menu-item${aggregate ? ' aggregate' : ''}`}>
+                      <FeedSourceOption
+                        tab={tab}
+                        active={isSourceActive(tab.key)}
+                        onSelect={() => {
+                          toggleTab(tab.key);
+                          setSourceMenuOpen(false);
+                        }}
+                      />
+                      {!aggregate && (
+                        <SourceFavoriteButton
+                          tab={tab}
+                          favorite={favorite}
+                          disabled={sourceFavoriteSaving || (!favorite && sourceFavoriteDraft.length >= SOURCE_FAVORITE_LIMIT)}
+                          onToggle={toggleSourceFavorite}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+                <div className="feed-source-menu-footer">
+                  {sourceFavoriteError && <span role="alert">{sourceFavoriteError}</span>}
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    disabled={!canSaveSourceFavorites}
+                    onClick={saveSourceFavorites}
+                  >
+                    {sourceFavoriteSaving ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Save favorites'}
+                  </button>
+                </div>
               </div>
             )}
           </div>

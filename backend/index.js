@@ -14878,6 +14878,28 @@ const AGGREGATE_FEED_SOURCES = [...new Set([
   .filter(source => !MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(source));
 const AGGREGATE_FEED_SOURCE_SET = new Set(AGGREGATE_FEED_SOURCES);
 const isAggregateFeedSource = (source) => AGGREGATE_FEED_SOURCE_SET.has(canonicalFeedSourceId(source));
+const FAVORITE_FEED_SOURCE_LIMIT = 4;
+const FOLLOWING_FAVORITE_FEED_SOURCE_SET = new Set([
+  'uficonnect',
+  ...[...CONNECTED_SOCIAL_PLATFORMS].filter(source => !['instagram', 'tiktok'].includes(source)),
+]);
+
+function normalizeFeedSourceFavorites(value) {
+  const saved = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const normalizeList = (items, allowed) => {
+    const normalized = [];
+    asArray(items).forEach((item) => {
+      const source = canonicalFeedSourceId(item);
+      if (!source || !allowed(source) || normalized.includes(source) || normalized.length >= FAVORITE_FEED_SOURCE_LIMIT) return;
+      normalized.push(source);
+    });
+    return normalized;
+  };
+  return {
+    feed: normalizeList(saved.feed, isAggregateFeedSource),
+    following: normalizeList(saved.following, source => FOLLOWING_FAVORITE_FEED_SOURCE_SET.has(source)),
+  };
+}
 
 // The unfiltered video feed used to hand every one of AGGREGATE_FEED_SOURCES
 // (36) to getCursorFeedPage on every single request, even though only a
@@ -20707,6 +20729,9 @@ app.patch('/profile', authenticate, async (req, res) => {
     }
     if (Object.prototype.hasOwnProperty.call(nextRoleSettings, 'feedLanguages')) {
       nextRoleSettings.feedLanguages = normalizeMemberFeedLanguages(nextRoleSettings.feedLanguages);
+    }
+    if (Object.prototype.hasOwnProperty.call(nextRoleSettings, 'feedSourceFavorites')) {
+      nextRoleSettings.feedSourceFavorites = normalizeFeedSourceFavorites(nextRoleSettings.feedSourceFavorites);
     }
     user.roleSettings = nextRoleSettings;
   }
