@@ -6,6 +6,7 @@ import client from '../api/client';
 import HomeFeedTools from './HomeFeedTools';
 import JobsSidebarControls from './JobsSidebarControls';
 import { HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS } from './sourceMeta';
+import { PanelLeft, ShoppingBag } from 'lucide-react';
 
 function ShellIcon({ name, size = 20 }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' };
@@ -121,6 +122,8 @@ export default function Layout({ children, wide = false }) {
   // competing for the same small dot.
   const [notifBadge, setNotifBadge] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mobileAccountOpen, setMobileAccountOpen] = useState(false);
+  const [failedAvatarUrl, setFailedAvatarUrl] = useState(null);
   const [mobileHeaderPopup, setMobileHeaderPopup] = useState(null);
   const [mobileSearchQuery, setMobileSearchQuery] = useState('');
   const [mobileSearchTarget, setMobileSearchTarget] = useState('posts');
@@ -151,6 +154,7 @@ export default function Layout({ children, wide = false }) {
 
   useEffect(() => {
     setMobileMenuOpen(false);
+    setMobileAccountOpen(false);
     setMobileHeaderPopup(null);
   }, [location.pathname, location.search]);
 
@@ -158,30 +162,68 @@ export default function Layout({ children, wide = false }) {
     function closeOnEscape(event) {
       if (event.key !== 'Escape') return;
       setMobileMenuOpen(false);
+      setMobileAccountOpen(false);
       setMobileHeaderPopup(null);
     }
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
   }, []);
 
-  // A deliberate left swipe from the right edge opens the navigation drawer.
-  // Swipe right inside the drawer to close it. Keeping the opening gesture
-  // edge-bound prevents horizontal source rails and media controls from being
-  // mistaken for navigation gestures.
+  useEffect(() => {
+    if (!mobileAccountOpen) return undefined;
+    const mobile = window.matchMedia('(max-width: 768px)');
+    if (!mobile.matches) { setMobileAccountOpen(false); return undefined; }
+    const drawer = document.getElementById('mobile-account-drawer');
+    const previousFocus = document.activeElement;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const frame = window.requestAnimationFrame(() => drawer?.querySelector('button')?.focus({ preventScroll: true }));
+    function trapFocus(event) {
+      if (event.key !== 'Tab' || !drawer) return;
+      const items = [...drawer.querySelectorAll('a[href], button:not(:disabled)')];
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !drawer.contains(document.activeElement))) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !drawer.contains(document.activeElement))) {
+        event.preventDefault();
+        first?.focus();
+      }
+    }
+    const closeOnDesktop = event => { if (!event.matches) setMobileAccountOpen(false); };
+    document.addEventListener('keydown', trapFocus);
+    mobile.addEventListener('change', closeOnDesktop);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', trapFocus);
+      mobile.removeEventListener('change', closeOnDesktop);
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus({ preventScroll: true });
+    };
+  }, [mobileAccountOpen]);
+
+  // Edge-only swipes keep source rails and media gestures separate from drawers.
   useEffect(() => {
     function handleTouchStart(event) {
       menuSwipeStartRef.current = null;
       if (!profile || mobileHeaderPopup || window.innerWidth > 768 || event.touches.length !== 1) return;
       const touch = event.touches[0];
       const target = event.target;
+      if (mobileAccountOpen) {
+        if (!(target instanceof Element) || !target.closest('#mobile-account-drawer')) return;
+        menuSwipeStartRef.current = { x: touch.clientX, y: touch.clientY, at: Date.now(), action: 'close-account' };
+        return;
+      }
       if (mobileMenuOpen) {
         if (!(target instanceof Element) || !target.closest('#mobile-feed-drawer')) return;
         menuSwipeStartRef.current = { x: touch.clientX, y: touch.clientY, at: Date.now(), action: 'close' };
         return;
       }
-      if (touch.clientX < window.innerWidth - 72) return;
+      const action = touch.clientX <= 72 ? 'open-account' : touch.clientX >= window.innerWidth - 72 ? 'open' : null;
+      if (!action) return;
       if (target instanceof Element && target.closest('input, textarea, select, button, a, iframe, video, [role="dialog"]')) return;
-      menuSwipeStartRef.current = { x: touch.clientX, y: touch.clientY, at: Date.now(), action: 'open' };
+      menuSwipeStartRef.current = { x: touch.clientX, y: touch.clientY, at: Date.now(), action };
     }
 
     function handleTouchEnd(event) {
@@ -193,9 +235,15 @@ export default function Layout({ children, wide = false }) {
       if (verticalDistance > 60 || Date.now() - start.at > 700) return;
       if (start.action === 'open' && start.x - touch.clientX >= 56) {
         setMobileHeaderPopup(null);
+        setMobileAccountOpen(false);
         setMobileMenuOpen(true);
       } else if (start.action === 'close' && touch.clientX - start.x >= 56) {
         setMobileMenuOpen(false);
+      } else if (start.action === 'open-account' && touch.clientX - start.x >= 56) {
+        setMobileMenuOpen(false);
+        setMobileAccountOpen(true);
+      } else if (start.action === 'close-account' && start.x - touch.clientX >= 56) {
+        setMobileAccountOpen(false);
       }
     }
 
@@ -211,10 +259,11 @@ export default function Layout({ children, wide = false }) {
       document.removeEventListener('touchend', handleTouchEnd);
       document.removeEventListener('touchcancel', cancelSwipe);
     };
-  }, [mobileHeaderPopup, mobileMenuOpen, profile]);
+  }, [mobileHeaderPopup, mobileMenuOpen, mobileAccountOpen, profile]);
 
   function closeMobileOverlays() {
     setMobileMenuOpen(false);
+    setMobileAccountOpen(false);
     setMobileHeaderPopup(null);
   }
 
@@ -241,6 +290,7 @@ export default function Layout({ children, wide = false }) {
   function toggleMobileHeaderPopup(name) {
     const opening = mobileHeaderPopup !== name;
     setMobileMenuOpen(false);
+    setMobileAccountOpen(false);
     setMobileHeaderPopup(opening ? name : null);
     if (opening && name === 'notifications') loadMobileNotifications();
   }
@@ -390,14 +440,31 @@ export default function Layout({ children, wide = false }) {
 
       {profile && (
         <header className="mobile-app-header">
-          <Link
-            to={HOME_FEED_PATH}
-            className="mobile-app-header-brand"
-            aria-label="Home"
-            onClick={handleAllFeedHomeClick}
-          >
-            <span className="mobile-app-header-mark" aria-hidden="true">UFI</span>
-          </Link>
+          <div className="mobile-app-header-start">
+            <button
+              type="button"
+              className={`mobile-app-header-action${mobileAccountOpen ? ' active' : ''}`}
+              aria-label="Open account menu"
+              aria-expanded={mobileAccountOpen}
+              aria-controls="mobile-account-drawer"
+              title="Account menu"
+              onClick={() => {
+                setMobileMenuOpen(false);
+                setMobileHeaderPopup(null);
+                setMobileAccountOpen(open => !open);
+              }}
+            >
+              <PanelLeft size={21} aria-hidden="true" />
+            </button>
+            <Link
+              to={HOME_FEED_PATH}
+              className="mobile-app-header-brand"
+              aria-label="Home"
+              onClick={handleAllFeedHomeClick}
+            >
+              <span className="mobile-app-header-mark" aria-hidden="true">UFI</span>
+            </Link>
+          </div>
 
           <div className="mobile-command-menu">
             <button
@@ -434,6 +501,7 @@ export default function Layout({ children, wide = false }) {
               title="Menu"
               onClick={() => {
                 setMobileHeaderPopup(null);
+                setMobileAccountOpen(false);
                 setMobileMenuOpen(open => !open);
               }}
             >
@@ -531,6 +599,55 @@ export default function Layout({ children, wide = false }) {
           position it against the viewport rather than the sticky header. */}
       {profile && (
         <aside
+          id="mobile-account-drawer"
+          className={`mobile-feed-drawer mobile-account-drawer${mobileAccountOpen ? ' open' : ''}`}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Account and shop"
+          aria-hidden={!mobileAccountOpen}
+        >
+          <div className="mobile-feed-drawer-header">
+            <button type="button" className="mobile-feed-drawer-close" aria-label="Close account sidebar" onClick={() => setMobileAccountOpen(false)}>
+              <ShellIcon name="close" size={19} />
+            </button>
+          </div>
+          <div className="mobile-feed-drawer-content">
+            <Link
+              to="/?feed=ufi&channel=shop"
+              className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'ufi' && mobileFeedParams.get('channel') === 'shop' ? ' active' : ''}`}
+              onClick={closeMobileOverlays}
+            >
+              <ShoppingBag size={20} aria-hidden="true" />
+              Shop
+            </Link>
+            <div className="mobile-feed-drawer-bottom mobile-account-drawer-bottom">
+              <NavLink to="/profile" className="mobile-command-menu-item mobile-account-profile" aria-label="Profile" onClick={closeMobileOverlays}>
+                <span className="mobile-account-avatar" aria-hidden="true">
+                  {profile.avatarUrl && failedAvatarUrl !== profile.avatarUrl
+                    ? <img src={profile.avatarUrl} alt="" onError={() => setFailedAvatarUrl(profile.avatarUrl)} />
+                    : initials(profile.name)}
+                </span>
+                <span className="mobile-account-profile-copy">
+                  <strong>{profile.name}</strong>
+                  <span>Profile</span>
+                </span>
+              </NavLink>
+              <div className="mobile-account-actions">
+                <NavLink to="/settings" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
+                  <ShellIcon name="settings" size={18} />
+                  Settings
+                </NavLink>
+                <button type="button" className="mobile-command-menu-item mobile-command-menu-item--logout" onClick={handleLogout}>
+                  <ShellIcon name="logout" size={18} />
+                  Log out
+                </button>
+              </div>
+            </div>
+          </div>
+        </aside>
+      )}
+      {profile && (
+        <aside
           id="mobile-feed-drawer"
           className={`mobile-feed-drawer${mobileMenuOpen ? ' open' : ''}`}
           role="dialog"
@@ -571,16 +688,6 @@ export default function Layout({ children, wide = false }) {
                     <ShellIcon name="files" size={18} />
                     Resume Builder
                   </NavLink>
-                  <div className="mobile-account-actions">
-                    <NavLink to="/settings" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-                      <ShellIcon name="settings" size={18} />
-                      Settings
-                    </NavLink>
-                    <button type="button" className="mobile-command-menu-item mobile-command-menu-item--logout" onClick={handleLogout}>
-                      <ShellIcon name="logout" size={18} />
-                      Log out
-                    </button>
-                  </div>
                 </div>
               </>
             ) : (
@@ -624,16 +731,6 @@ export default function Layout({ children, wide = false }) {
                 <ShellIcon name="command" size={18} />
                 Command Center
               </NavLink>
-              <div className="mobile-account-actions">
-                <NavLink to="/settings" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-                  <ShellIcon name="settings" size={18} />
-                  Settings
-                </NavLink>
-                <button type="button" className="mobile-command-menu-item mobile-command-menu-item--logout" onClick={handleLogout}>
-                  <ShellIcon name="logout" size={18} />
-                  Log out
-                </button>
-              </div>
                 </div>
               </>
             )}
@@ -646,7 +743,7 @@ export default function Layout({ children, wide = false }) {
         {children}
       </main>
 
-      {profile && (mobileMenuOpen || mobileHeaderPopup) && (
+      {profile && (mobileMenuOpen || mobileAccountOpen || mobileHeaderPopup) && (
         <button
           type="button"
           className="mobile-command-menu-scrim"

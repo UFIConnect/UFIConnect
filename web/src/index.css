@@ -3743,6 +3743,12 @@ input, textarea, select { font-family: inherit; }
     font-weight: 800;
     text-decoration: none;
   }
+  .mobile-app-header-start {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
   .mobile-app-header-mark {
     display: inline-flex;
     align-items: center;
@@ -3989,6 +3995,14 @@ input, textarea, select { font-family: inherit; }
     box-shadow: -12px 0 30px rgba(15, 23, 42, .14);
     pointer-events: none;
   }
+  .mobile-account-drawer {
+    left: 0;
+    right: auto;
+    transform: translateX(-100%);
+    border-left: 0;
+    border-right: 1px solid var(--border);
+    box-shadow: 12px 0 30px rgba(15, 23, 42, .14);
+  }
   .mobile-feed-drawer.open {
     visibility: visible;
     transform: translateX(0);
@@ -4142,6 +4156,26 @@ input, textarea, select { font-family: inherit; }
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 6px;
   }
+  .mobile-account-drawer-bottom {
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+  }
+  .mobile-account-profile { min-height: 64px; }
+  .mobile-account-avatar {
+    display: grid;
+    place-items: center;
+    flex: 0 0 44px;
+    width: 44px;
+    height: 44px;
+    overflow: hidden;
+    border-radius: 50%;
+    background: var(--primary-light);
+    color: var(--primary);
+  }
+  .mobile-account-avatar img { width: 100%; height: 100%; object-fit: cover; }
+  .mobile-account-profile-copy { display: grid; gap: 2px; min-width: 0; }
+  .mobile-account-profile-copy strong { font-size: .875rem; overflow-wrap: anywhere; }
+  .mobile-account-profile-copy > span { color: var(--muted); font-size: .78rem; font-weight: 400; }
   .mobile-account-actions .mobile-command-menu-item {
     width: 100%;
     min-width: 0;
