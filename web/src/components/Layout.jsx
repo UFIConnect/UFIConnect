@@ -8,7 +8,7 @@ import JobsSidebarControls from './JobsSidebarControls';
 import NotificationInbox from './NotificationInbox';
 import './social-surfaces.css';
 import { HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS } from './sourceMeta';
-import { PanelLeft, ShoppingBag, BriefcaseBusiness, Bookmark, Music } from 'lucide-react';
+import { PanelLeft, SquarePen, UsersRound, ShoppingBag, BriefcaseBusiness, Bookmark, Music } from 'lucide-react';
 
 function ShellIcon({ name, size = 20 }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' };
@@ -535,6 +535,14 @@ export default function Layout({ children, wide = false }) {
             </button>
           </div>
           <div className="mobile-feed-drawer-content">
+            <Link to="/?feed=ufi&compose=1" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
+              <SquarePen size={20} aria-hidden="true" />
+              Post
+            </Link>
+            <Link to="/search?tab=groups&create=1" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
+              <UsersRound size={20} aria-hidden="true" />
+              Create a group
+            </Link>
             <Link
               to="/?feed=ufi&channel=shop"
               className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'ufi' && mobileFeedParams.get('channel') === 'shop' ? ' active' : ''}`}
