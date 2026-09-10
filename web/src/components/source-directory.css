@@ -1,9 +1,4 @@
 .source-directory-controls { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-bottom: 12px; }
-.source-directory-search { display: flex; align-items: center; gap: 8px; min-width: 0; border: 1px solid var(--border); border-radius: 6px; padding: 0 10px; background: var(--surface); color: var(--muted); }
-.source-directory-search svg { flex-shrink: 0; }
-.source-directory-search input { width: 100%; min-width: 0; height: 40px; padding: 0; border: 0; background: transparent; color: var(--text); font: inherit; font-size: .8rem; }
-.source-directory-search:focus-within { outline: 2px solid var(--primary); outline-offset: 1px; }
-.source-directory-search input:focus { outline: none; }
 .source-directory-controls select { width: 100%; min-width: 0; min-height: 40px; font-size: .8rem; }
 .source-directory-section { min-width: 0; }
 .source-directory-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 14px 0 7px; font-size: .76rem; color: var(--muted); font-weight: 600; }
@@ -16,8 +11,25 @@
 .home-connected-account-row { grid-template-columns: 22px minmax(0, 1fr); border: 0; border-bottom: 1px solid var(--border); border-radius: 0; padding: 9px 0; }
 .home-connected-account-row .source-directory-account-actions { grid-column: 2; }
 .home-connected-account-name { white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
-.account-directory-page .source-directory-controls { max-width: 640px; grid-template-columns: minmax(0, 1fr) minmax(140px, .5fr); }
+.account-directory-page .source-directory-controls { max-width: 320px; }
+.account-platform-card { margin-bottom: 10px; padding: 14px 16px; }
+.account-platform-card-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.account-platform-card-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; margin-left: auto; }
+@media (max-width: 1023px) {
+  .home-feed-side-tools .home-connected-account-row { grid-template-columns: 22px minmax(0, 1fr) auto; gap: 6px; min-height: 60px; background: transparent; }
+  .home-connected-account-row .source-directory-account-actions { grid-column: auto; flex-wrap: nowrap; gap: 4px; }
+  .home-connected-account-row .source-directory-account-actions .btn { min-height: 40px; padding: 5px 6px; }
+  .home-connected-account-row .source-directory-account-actions .account-site-link { width: 32px; min-width: 32px; height: 40px; padding: 0; }
+  .home-feed-side-tools .home-connected-account-name { font-size: .78rem; font-weight: 600; }
+  .home-connected-account-list { padding-top: 0; gap: 3px; }
+}
 @media (max-width: 600px) {
   .account-directory-page .source-directory-controls { grid-template-columns: minmax(0, 1fr); }
   .source-directory-account-actions .account-site-link, .account-site-link { width: 40px; height: 40px; min-width: 40px; }
+  .account-platform-card { padding: 12px; }
+  .account-platform-card-header { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: start; gap: 10px; }
+  .account-platform-card-actions { grid-column: 1 / -1; width: 100%; padding-top: 10px; border-top: 1px solid var(--border); justify-content: flex-end; }
+  .account-platform-card-actions .btn { min-height: 40px; }
+  .member-account-card > .source-directory-account-actions { flex-basis: 100%; border-top: 1px solid var(--border); padding-top: 10px; }
+  .member-account-card > .source-directory-account-actions .btn { min-height: 40px; }
 }

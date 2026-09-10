@@ -17,13 +17,8 @@ const CATEGORY_SOURCES = {
 export function sourceCategory(source) {
   return SOURCE_CATEGORIES.find(([key]) => CATEGORY_SOURCES[key].includes(source))?.[0] || 'social';
 }
-export function matchesSource(source, name, query) {
-  const text = `${source} ${name || SOURCE_META[source]?.label || ''}`.toLowerCase();
-  return query.trim().toLowerCase().split(/\s+/).every(word => text.includes(word));
-}
-export function sourceSections(sources, favorites, query, category) {
-  const filtered = sources.filter(source => matchesSource(source, '', query)
-    && (category === 'all' || (category === 'favorites' ? favorites.includes(source) : sourceCategory(source) === category)));
+export function sourceSections(sources, favorites, category) {
+  const filtered = sources.filter(source => category === 'all' || (category === 'favorites' ? favorites.includes(source) : sourceCategory(source) === category));
   return [['favorites', 'Favorites'], ...SOURCE_CATEGORIES].map(([id, label]) => ({
     id, label,
     items: filtered.filter(source => favorites.includes(source) ? id === 'favorites' : sourceCategory(source) === id)
@@ -36,9 +31,8 @@ export function accountStatus(platform, connected) {
   if (platform.forceComingSoon || !platform.configured) return 'soon';
   return platform.locked ? 'membership' : 'available';
 }
-export function filterAccounts(entries, connected, query, status) {
-  return entries.filter(([key, platform]) => matchesSource(key, platform.name, query)
-    && (status === 'all' || accountStatus(platform, connected[key]) === status))
+export function filterAccounts(entries, connected, status) {
+  return entries.filter(([key, platform]) => status === 'all' || accountStatus(platform, connected[key]) === status)
     .sort(([a, pa], [b, pb]) => ACCOUNT_STATUSES.findIndex(([s]) => s === accountStatus(pa, connected[a]))
       - ACCOUNT_STATUSES.findIndex(([s]) => s === accountStatus(pb, connected[b]))
       || (pa.name || a).localeCompare(pb.name || b));

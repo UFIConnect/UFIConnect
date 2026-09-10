@@ -13,6 +13,7 @@ const app = await createAppHarness({ connected: true });
 const platforms = {
   reddit: { name: 'Reddit', configured: true }, youtube: { name: 'YouTube', configured: true },
   wired: { name: 'WIRED', configured: false, category: 'publication' },
+  mittr: { name: 'MIT Technology Review', configured: false, category: 'publication' },
   instagram: { name: 'Instagram', configured: true, commandCenterOnly: true },
   linkedin: { name: 'LinkedIn', configured: true, forceComingSoon: true, commandCenterOnly: true },
   indeed: { name: 'Indeed', category: 'career', configured: false },
@@ -54,9 +55,8 @@ try {
     assert.equal(new Set(names).size, names.length, 'Each source appears once');
     assert.deepEqual(names.slice(0, 2), ['Reddit', 'YouTube']);
     assert.ok(names.length > 30, 'Full source catalog stays available');
-    await tools.getByRole('searchbox', { name: 'Search feed sources', exact: true }).fill('stack');
-    assert.deepEqual(await tools.locator('.home-feed-source-name').allTextContents(), ['Stack Overflow']);
-    await tools.getByRole('searchbox', { name: 'Search feed sources', exact: true }).fill('');
+    assert.equal(await tools.getByRole('searchbox').count(), 0);
+    assert.equal(await tools.getByRole('button', { name: 'Select favorites', exact: true }).count(), 0);
     await tools.getByRole('combobox', { name: 'Filter feed sources' }).selectOption('career');
     assert.ok((await tools.locator('.home-feed-source-name').allTextContents()).includes('USAJobs'));
     assert.ok(!(await tools.locator('.home-feed-source-name').allTextContents()).includes('Reddit'));
@@ -68,8 +68,7 @@ try {
     assert.equal(await tools.getByRole('link', { name: 'Open Indeed website' }).count(), 0);
     await tools.getByRole('combobox', { name: 'Filter accounts' }).selectOption('connected');
     assert.equal(await tools.locator('.home-connected-account-row').count(), 1);
-    await tools.getByRole('combobox', { name: 'Filter accounts' }).selectOption('all');
-    await tools.getByRole('searchbox', { name: 'Search accounts', exact: true }).fill('youtube');
+    await tools.getByRole('combobox', { name: 'Filter accounts' }).selectOption('available');
     assert.equal(await tools.locator('.home-connected-account-row').count(), 1);
     const popupPromise = context.waitForEvent('page');
     await tools.getByRole('link', { name: 'Open YouTube website' }).click();
@@ -84,17 +83,30 @@ try {
     assert.ok(authorizationRequests >= 1, 'Connect uses OAuth, including the API retry on a temporary outage');
     await tools.getByRole('button', { name: 'Retry', exact: true }).click();
     await tools.getByRole('link', { name: 'Open YouTube website' }).waitFor();
-    await tools.getByRole('searchbox', { name: 'Search accounts', exact: true }).fill('');
+    await tools.getByRole('combobox', { name: 'Filter accounts' }).selectOption('all');
+    if (width <= 768) {
+      const row = tools.locator('.home-connected-account-row').filter({ has: page.getByRole('link', { name: 'Open YouTube website' }) });
+      const rowBox = await row.boundingBox();
+      const actionBox = await row.locator('.source-directory-account-actions').boundingBox();
+      const nameBox = await row.locator('.home-connected-account-name').boundingBox();
+      assert.ok(rowBox.height <= 80, 'Mobile account rows remain compact');
+      assert.ok(nameBox.x + nameBox.width <= actionBox.x, 'Account names do not overlap actions');
+      assert.ok(actionBox.x + actionBox.width <= rowBox.x + rowBox.width + 1, 'Account actions stay inside the row');
+    }
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/account-directory-${width}.png`) });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
     await page.goto(server.resolvedUrls.local[0] + 'connected-accounts');
-    await page.getByRole('searchbox', { name: 'Search accounts', exact: true }).fill('youtube');
+    await page.getByRole('combobox', { name: 'Filter accounts' }).selectOption('available');
+    assert.equal(await page.getByRole('searchbox', { name: 'Search accounts', exact: true }).count(), 0);
     await page.getByRole('link', { name: 'Open YouTube website' }).waitFor();
     assert.equal(await page.getByRole('link', { name: 'Open Reddit website' }).count(), 0);
+    await page.screenshot({ path: path.join(root, `.cache/audit-ui/accounts-page-${width}.png`) });
     await page.goto(server.resolvedUrls.local[0] + 'command-center?tab=accounts');
-    await page.getByRole('searchbox', { name: 'Search accounts', exact: true }).fill('instagram');
+    await page.getByRole('combobox', { name: 'Filter accounts' }).selectOption('available');
+    assert.equal(await page.getByRole('searchbox', { name: 'Search accounts', exact: true }).count(), 0);
     await page.getByRole('link', { name: 'Open Instagram website' }).waitFor();
     assert.equal(await page.getByRole('link', { name: 'Open YouTube website' }).count(), 0);
+    await page.screenshot({ path: path.join(root, `.cache/audit-ui/member-accounts-${width}.png`) });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
     if (width === 390) {
       app.seedUser(member('business-directory', { plan: 'business' }));
@@ -103,7 +115,7 @@ try {
       await page.getByRole('link', { name: 'Open Indeed website' }).waitFor();
       assert.equal(await page.locator('.account-site-link').count(), 10, 'Business includes all career destinations');
       assert.equal(await page.getByRole('link', { name: 'Open Reddit website' }).count(), 0);
-      await page.getByRole('searchbox', { name: 'Search accounts', exact: true }).fill('not-a-provider');
+      await page.getByRole('combobox', { name: 'Filter accounts' }).selectOption('connected');
       await page.getByRole('status').getByText('No matching accounts', { exact: true }).waitFor();
     }
     assert.deepEqual(errors, []);

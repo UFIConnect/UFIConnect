@@ -47,7 +47,6 @@ export default function ConnectedAccounts() {
   const [flash,     setFlash]           = useState(null);
   const [connecting, setConnecting]     = useState(null);
   const [disconnecting, setDisconnecting] = useState(null);
-  const [accountQuery, setAccountQuery] = useState('');
   const [accountFilter, setAccountFilter] = useState('all');
   // null = modal closed; '' or partial text = open, mid-typing. Bluesky is
   // the one platform with no fixed authorization URL (AT Protocol is
@@ -150,8 +149,8 @@ export default function ConnectedAccounts() {
   // then wondering why it only appears in their private workspace.
   const careerPlatforms = platforms.filter(([, p]) => p.category === 'career');
   const generalPlatforms = platforms.filter(([, p]) => p.category !== 'career' && !p.commandCenterOnly);
-  const displayedGeneral = filterAccounts(generalPlatforms, connected, accountQuery, accountFilter);
-  const displayedCareer = filterAccounts(careerPlatforms, connected, accountQuery, accountFilter);
+  const displayedGeneral = filterAccounts(generalPlatforms, connected, accountFilter);
+  const displayedCareer = filterAccounts(careerPlatforms, connected, accountFilter);
   const connectedCareerCount = careerPlatforms.filter(([key]) => connected[key]).length;
   const connectedList   = displayedGeneral.filter(([k]) => connected[k]);
   const availableList   = displayedGeneral.filter(([k, p]) => !connected[k] && p.configured && !p.forceComingSoon);
@@ -248,7 +247,7 @@ export default function ConnectedAccounts() {
           )}
 
           <div className="account-directory-page">
-            <DirectoryControls label="accounts" query={accountQuery} onQueryChange={setAccountQuery} filter={accountFilter} onFilterChange={setAccountFilter}
+            <DirectoryControls label="accounts" filter={accountFilter} onFilterChange={setAccountFilter}
               options={[["all", "All statuses"], ...ACCOUNT_STATUSES]} />
           </div>
           {!(isBusinessMembership ? displayedCareer : displayedGeneral).length && <p className="source-directory-empty" role="status">No matching accounts</p>}
@@ -403,8 +402,8 @@ function PlatformCard({
     || (p.category === 'publication' ? PUBLICATION_BENEFITS : p.category === 'career' ? CAREER_BENEFITS : []);
 
   return (
-    <div className="card" style={{ marginBottom: 10, padding: '14px 16px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+    <div className="card account-platform-card">
+      <div className="account-platform-card-header">
         {/* Platform icon — the platform's own official mark where one's
             available (see BrandIcon), initials-on-brand-color otherwise. */}
         <div style={{
@@ -425,7 +424,7 @@ function PlatformCard({
 
         {/* Name + description */}
         <div style={{ flex: '1 1 180px', minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             <span style={{ fontWeight: 700, fontSize: '.92rem' }}>{p.name}</span>
             {isConnected && (
               <span style={{
@@ -458,7 +457,7 @@ function PlatformCard({
         </div>
 
         {/* Action buttons */}
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', minWidth: 0, marginLeft: 'auto' }}>
+        <div className="account-platform-card-actions">
           <button onClick={onToggle} className="btn btn-ghost btn-sm" style={{ fontSize: '.72rem', padding: '4px 8px' }}>
             {expanded ? '▲' : '▼'} Details
           </button>
