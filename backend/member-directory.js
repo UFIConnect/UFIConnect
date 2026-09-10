@@ -3,6 +3,7 @@
 const { expandSearchWords } = require('./search');
 const publicProfile = `u.profile_hidden IS NOT TRUE AND COALESCE(u.role_settings ->> 'privacy_publicProfile', 'true') <> 'false'`;
 const escapeLike = value => String(value).replace(/[\\%_]/g, '\\$&');
+const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // Page in PostgreSQL so account discovery never stops at an in-memory ceiling.
 async function searchMemberDirectory(db, { myId, q = '', role = '', sort = 'relevance', limit = 24, offset = 0 }) {
@@ -16,10 +17,10 @@ async function searchMemberDirectory(db, { myId, q = '', role = '', sort = 'rele
     where.push(`LOWER(COALESCE(u.email, '')) = ${bind(q)}`);
   } else if (q) {
     const terms = expandSearchWords(q);
-    // LIKE handles initials, stop words, Unicode names and long biographies
+    // Word-boundary regex handles initials, Unicode names and long biographies
     // without PostgreSQL tsvector's lexeme/document length restrictions.
     const text = `LOWER(CONCAT_WS(' ', u.name, u.title, u.organization, u.bio, u.skills::text, u.role, u.interests::text))`;
-    where.push(terms.length ? `(${terms.map(term => `${text} LIKE ${bind('%' + escapeLike(term) + '%')} ESCAPE E'\\\\'`).join(' OR ')})` : 'FALSE');
+    where.push(terms.length ? `(${terms.map(term => `${text} ~ ${bind('(^|[^[:alnum:]])' + escapeRegex(term) + (term.length < 3 ? '([^[:alnum:]+#]|$)' : ''))}`).join(' OR ')})` : 'FALSE');
   }
   if (role) where.push(`LOWER(COALESCE(u.role, '')) LIKE ${bind('%' + escapeLike(role) + '%')} ESCAPE E'\\\\'`);
   const baseParams = [...params];

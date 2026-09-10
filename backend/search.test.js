@@ -11,6 +11,14 @@ test('normalizes and deduplicates typed search words', () => {
   assert.deepEqual(splitSearchWords('  Design. design, UX  '), ['design', 'ux']);
 });
 
+test('matches separate words and complete prefixes, not interior substrings or truncated stems', () => {
+  assert.equal(matchesRelatedSearch('Architecture discussion', 'art'), false);
+  assert.equal(matchesRelatedSearch('Accountants meeting', 'accountability'), false);
+  assert.equal(matchesRelatedSearch('Designing a garden', 'garden space'), true);
+  assert.equal(matchesRelatedSearch('Gardening together', 'garden'), true);
+  assert.equal(matchesRelatedSearch('UX, design and C++', 'c++'), true);
+});
+
 test('matches related career words without requiring the full phrase', () => {
   assert.equal(matchesRelatedSearch('A company is hiring a software engineer', 'developer jobs'), true);
   assert.equal(matchesRelatedSearch('Fresh restaurant opening downtown', 'dining'), true);

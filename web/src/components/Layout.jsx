@@ -5,6 +5,8 @@ import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import client from '../api/client';
 import HomeFeedTools from './HomeFeedTools';
 import JobsSidebarControls from './JobsSidebarControls';
+import NotificationInbox from './NotificationInbox';
+import './social-surfaces.css';
 import { HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS } from './sourceMeta';
 import { PanelLeft, ShoppingBag, BriefcaseBusiness, Bookmark, Music } from 'lucide-react';
 
@@ -61,35 +63,6 @@ function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 }
 
-function timeAgo(iso) {
-  const createdAt = new Date(iso || 0).getTime();
-  if (!Number.isFinite(createdAt) || createdAt <= 0) return '';
-  const seconds = Math.max(0, (Date.now() - createdAt) / 1000);
-  if (seconds < 60) return 'just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  return `${Math.floor(seconds / 86400)}d ago`;
-}
-
-function notificationTarget(notification) {
-  if ((notification?.type === 'comment' || notification?.type === 'like') && notification?.targetId) {
-    return `/p/${notification.targetId}`;
-  }
-  return notification?.user?.id ? `/u/${notification.user.id}` : '/notifications';
-}
-
-function notificationText(notification) {
-  const action = {
-    connection_request: 'wants to connect with you',
-    new_follower: 'started following you',
-    comment: 'commented on your post',
-    like: 'liked your post',
-  }[notification?.type] || 'sent you an update';
-  return notification?.preview && ['comment', 'like'].includes(notification?.type)
-    ? `${action}: "${notification.preview}"`
-    : action;
-}
-
 // The Notifications bell had no unread/pending indicator anywhere — a
 // member had no way to know a connection request or new follower was
 // waiting without remembering to open the page themselves. GET /notifications
@@ -127,10 +100,6 @@ export default function Layout({ children, wide = false }) {
   const [mobileHeaderPopup, setMobileHeaderPopup] = useState(null);
   const [mobileSearchQuery, setMobileSearchQuery] = useState('');
   const [mobileSearchTarget, setMobileSearchTarget] = useState('posts');
-  const [mobileNotifications, setMobileNotifications] = useState([]);
-  const [mobileNotificationsLoading, setMobileNotificationsLoading] = useState(false);
-  const [mobileNotificationsError, setMobileNotificationsError] = useState('');
-  const notificationRequestRef = useRef(0);
   const menuSwipeStartRef = useRef(null);
 
   // Polled from the shell itself, not the Notifications page — the whole
@@ -149,7 +118,8 @@ export default function Layout({ children, wide = false }) {
     }
     load();
     const id = setInterval(load, 30000);
-    return () => { cancelled = true; clearInterval(id); };
+    window.addEventListener('ufi-notifications-updated', load);
+    return () => { cancelled = true; clearInterval(id); window.removeEventListener('ufi-notifications-updated', load); };
   }, [profile]);
 
   useEffect(() => {
@@ -267,32 +237,11 @@ export default function Layout({ children, wide = false }) {
     setMobileHeaderPopup(null);
   }
 
-  function loadMobileNotifications() {
-    const requestId = ++notificationRequestRef.current;
-    setMobileNotificationsLoading(true);
-    setMobileNotificationsError('');
-    client.get('/notifications')
-      .then(({ data }) => {
-        if (notificationRequestRef.current !== requestId) return;
-        setMobileNotifications(Array.isArray(data.notifications) ? data.notifications : []);
-        setNotifBadge(0);
-        client.post('/notifications/mark-read').catch(() => {});
-      })
-      .catch(() => {
-        if (notificationRequestRef.current !== requestId) return;
-        setMobileNotificationsError('Notifications could not be loaded.');
-      })
-      .finally(() => {
-        if (notificationRequestRef.current === requestId) setMobileNotificationsLoading(false);
-      });
-  }
-
   function toggleMobileHeaderPopup(name) {
     const opening = mobileHeaderPopup !== name;
     setMobileMenuOpen(false);
     setMobileAccountOpen(false);
     setMobileHeaderPopup(opening ? name : null);
-    if (opening && name === 'notifications') loadMobileNotifications();
   }
 
   function submitMobileSearch(event) {
@@ -559,37 +508,11 @@ export default function Layout({ children, wide = false }) {
       {profile && mobileHeaderPopup === 'notifications' && (
         <section id="mobile-alerts-popup" className="mobile-header-popup mobile-alerts-popup" role="dialog" aria-label="Alerts">
           <div className="mobile-header-popup-heading">
-            <strong>Alerts</strong>
+            <strong>Notifications</strong>
             <button type="button" className="mobile-header-popup-close" aria-label="Close alerts" onClick={() => setMobileHeaderPopup(null)}><ShellIcon name="close" size={18} /></button>
           </div>
-          <div className="mobile-alerts-list" aria-live="polite">
-            {mobileNotificationsLoading ? (
-              <div className="mobile-header-popup-state"><span className="spinner spinner-primary" /></div>
-            ) : mobileNotificationsError ? (
-              <div className="mobile-header-popup-state">
-                <span>{mobileNotificationsError}</span>
-                <button type="button" className="btn btn-ghost btn-sm" onClick={loadMobileNotifications}>Retry</button>
-              </div>
-            ) : mobileNotifications.length === 0 ? (
-              <div className="mobile-header-popup-state">No new alerts</div>
-            ) : mobileNotifications.slice(0, 8).map(notification => (
-              <Link
-                key={notification.id}
-                to={notificationTarget(notification)}
-                className={`mobile-alert-item${notification.read === false ? ' unread' : ''}`}
-                onClick={closeMobileOverlays}
-              >
-                <span className="avatar avatar-sm">{initials(notification.user?.name || 'UFI')}</span>
-                <span className="mobile-alert-item-copy">
-                  <strong>{notification.user?.name || 'UFIconnect'}</strong>
-                  <span>{notificationText(notification)}</span>
-                </span>
-                <time>{timeAgo(notification.createdAt)}</time>
-              </Link>
-            ))}
-          </div>
+          <NotificationInbox compact onNavigate={closeMobileOverlays} />
           <div className="mobile-header-popup-footer">
-            <button type="button" className="btn btn-ghost btn-sm" onClick={loadMobileNotifications} disabled={mobileNotificationsLoading}><ShellIcon name="refresh" size={14} /> Refresh</button>
             <Link to="/notifications" className="btn btn-primary btn-sm" onClick={closeMobileOverlays}>View all</Link>
           </div>
         </section>
