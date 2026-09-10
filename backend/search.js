@@ -61,10 +61,7 @@ function matchesRelatedSearch(text, value) {
   const words = splitSearchWords(haystack, 5000);
   return terms.some((term) => {
     if (term.length < 3) return words.includes(term);
-    if (haystack.includes(term)) return true;
-    const prefixLength = Math.min(5, term.length);
-    const prefix = term.slice(0, prefixLength);
-    return words.some(word => word.length >= prefixLength && word.startsWith(prefix));
+    return words.some(word => word.startsWith(term));
   });
 }
 

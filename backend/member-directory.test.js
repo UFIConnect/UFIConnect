@@ -49,6 +49,9 @@ test('member directory paginates all public accounts without leaking private acc
   await pg.query('INSERT INTO users (id, name, bio, role) VALUES ($1,$2,$3,$4)', ['long', 'A', 'x'.repeat(1100000) + ' needle', 'engineer']);
   assert.equal((await search({ q: 'needle', role: 'engineer' })).users[0].id, 'long');
   assert.ok((await search({ q: 'A' })).users.some(u => u.id === 'long'));
+  await pg.query('INSERT INTO users (id, name, title) VALUES ($1,$2,$3)', ['word-match', 'Jordan', 'Architecture specialist']);
+  assert.equal((await search({ q: 'art' })).users.some(u => u.id === 'word-match'), false);
+  assert.equal((await search({ q: 'specialist garden' })).users.some(u => u.id === 'word-match'), true);
   assert.equal((await search({ q: "' OR 1=1 --" })).users.some(u => u.id === 'private'), false);
 });
 

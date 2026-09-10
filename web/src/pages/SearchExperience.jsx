@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
+import { Search as SearchIcon, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
@@ -655,9 +656,11 @@ export default function SearchExperience({ initialTab = null } = {}) {
         </div>
 
         <div className="search-query-wrap">
-          <span className="search-query-icon" aria-hidden="true">Q</span>
+          <SearchIcon className="search-query-icon" size={19} aria-hidden="true" />
           <input
             className="form-input search-query-input"
+            type="search"
+            aria-label={`Search ${activeTab === 'following' ? 'following posts' : activeTab}`}
             placeholder={activeTab === 'posts'
               ? 'Search posts...'
               : activeTab === 'following'
@@ -673,7 +676,7 @@ export default function SearchExperience({ initialTab = null } = {}) {
           />
           {activeLoading && <span className="search-query-spinner"><span className="spinner" /></span>}
           {query && !activeLoading && (
-            <button type="button" className="search-query-clear" aria-label="Clear search" onClick={clearSearch}>x</button>
+            <button type="button" className="search-query-clear" aria-label="Clear search" onClick={clearSearch}><X size={17} /></button>
           )}
         </div>
 
@@ -758,7 +761,7 @@ export default function SearchExperience({ initialTab = null } = {}) {
                       aria-pressed={roleFilter === role}
                       onClick={() => setRoleFilter(role)}
                       style={roleFilter === role && meta ? { '--chip-color': meta.color } : undefined}
-                    >{meta && <span>{meta.icon}</span>}{role}</button>
+                    >{role}</button>
                   );
                 })}
               </div>
@@ -797,13 +800,12 @@ export default function SearchExperience({ initialTab = null } = {}) {
                 return (
                   <article key={user.id} className="card search-person-card" onClick={() => navigate(user.isSelf ? '/profile' : `/u/${user.id}`)}>
                     <div className="search-person-avatar-wrap">
-                      <div className="avatar avatar-md" style={{ border: roleMeta ? `2px solid ${roleMeta.color}` : undefined }}>{initials(user.name)}</div>
-                      {roleMeta && <span className="search-person-role-mark" style={{ color: roleMeta.color, background: roleMeta.bg }}>{roleMeta.icon}</span>}
+                      <div className="avatar avatar-md search-result-avatar">{initials(user.name)}{user.avatarUrl && <img src={user.avatarUrl} alt="" onError={event => { event.currentTarget.hidden = true; }} />}</div>
                     </div>
                     <div className="search-person-body">
                       <div className="search-person-topline">
                         <div className="search-person-name-wrap">
-                          <strong>{user.name}</strong>
+                          <Link className="search-profile-link" to={user.isSelf ? '/profile' : `/u/${user.id}`} onClick={event => event.stopPropagation()}>{user.name}</Link>
                           {user.isSelf && <span className="tag tag-primary">You</span>}
                           {user.title && <span>{user.title}{user.organization ? ` | ${user.organization}` : ''}</span>}
                         </div>
@@ -825,7 +827,7 @@ export default function SearchExperience({ initialTab = null } = {}) {
                         </div>
                       )}
                       <div className="search-person-meta">
-                        {user.role && roleMeta && <span style={{ color: roleMeta.color, background: roleMeta.bg }}>{roleMeta.icon} {user.role}</span>}
+                        {user.role && roleMeta && <span style={{ color: roleMeta.color, background: roleMeta.bg }}>{user.role}</span>}
                         <span>{user.followersCount || 0} follower{user.followersCount === 1 ? '' : 's'}</span>
                         {!user.isSelf && user.sharedInterests?.length > 0 && <span>{user.sharedInterests.length} shared interest{user.sharedInterests.length === 1 ? '' : 's'}</span>}
                       </div>
