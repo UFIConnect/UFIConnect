@@ -67,6 +67,7 @@ try {
     const errors = [];
     let failSave = false;
     let failFeed = false;
+    let failPagination = false;
     let hideCameras = false;
     let profileWrites = 0;
     let feedRequests = 0;
@@ -82,6 +83,8 @@ try {
     await page.route('**/api/office/feed?*', async route => {
       feedRequests++;
       if (failFeed) return route.fulfill({ status: 503, json: { error: 'Test feed failure' } });
+      const query = new URL(route.request().url()).searchParams;
+      if (failPagination && (query.has('cursor') || Number(query.get('page')) > 1)) return route.fulfill({ status: 503, json: { error: 'Test pagination failure' } });
       if (!hideCameras) return route.continue();
       const response = await route.fetch();
       const data = await response.json();
@@ -148,10 +151,19 @@ try {
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'no horizontal overflow');
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/travel-${width}.png`) });
     hideCameras = true;
+    failPagination = true;
     await page.getByRole('button', { name: 'Clear', exact: true }).click();
     await rail.getByText('Live camera checks are temporarily unavailable.').waitFor();
     assert.equal(await picker.inputValue(), '');
     assert.equal(await rail.locator('iframe').count(), 0);
+    await page.locator('[data-feed-has-more]').first().evaluate(element => element.scrollIntoView({ block: 'end' }));
+    await page.getByText('More destinations could not load.').waitFor();
+    const failedPageRequests = feedRequests;
+    await page.waitForTimeout(700);
+    assert.equal(feedRequests, failedPageRequests, 'paging failures do not cause an automatic retry loop');
+    assert.ok(await page.locator('.post-card').count() > 0, 'loaded posts survive a paging outage');
+    failPagination = false;
+    await page.getByRole('button', { name: 'Retry more destinations', exact: true }).click();
     // Exhaust the actual API pagination and make sure the UI stops asking.
     for (let attempt = 0; attempt < 15; attempt++) {
       const feed = page.locator('[data-feed-has-more]').first();

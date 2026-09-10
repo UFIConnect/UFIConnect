@@ -2115,6 +2115,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const [posts,         setPosts]        = useState(_cache?.posts || []);
   const [travelLiveFeeds, setTravelLiveFeeds] = useState([]);
   const [travelStatus, setTravelStatus] = useState(null);
+  const [travelPaginationError, setTravelPaginationError] = useState('');
   // Following mode's per-source fetch failures (bad scope, API not
   // enabled, expired token) — see getFollowingFeedPosts's own comment
   // server-side. Surfaced in the empty state below instead of a real
@@ -2329,6 +2330,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       if (activeMode === 'countries' && viewModeRef.current === 'countries') {
         setTravelLiveFeeds(Array.isArray(data.liveFeeds) ? data.liveFeeds : []);
         setTravelStatus(data.travel || null);
+        setTravelPaginationError('');
       } else if (viewModeRef.current !== 'countries') {
         setTravelLiveFeeds([]);
       }
@@ -2897,6 +2899,10 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       setRemoteHasMore(CONTINUOUS_FEED_MODES.has(viewModeRef.current) || data.hasMore !== false);
     } catch (error) {
       console.error('[feed] position cursor request failed', error);
+      if (viewModeRef.current === 'countries' && requestIdAtStart === feedRequestIdRef.current) {
+        setTravelPaginationError('More destinations could not load.');
+        setRemoteHasMore(false);
+      }
     }
     finally {
       if (paginationRequestId === paginationRequestIdRef.current) {
@@ -3908,6 +3914,17 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
 
           {/* Infinite scroll sentinel */}
           <div ref={sentinelRef} style={{ height: 1 }} />
+
+          {viewMode === 'countries' && travelPaginationError && (
+            <div className="travel-camera-empty" role="status">
+              <span>{travelPaginationError}</span>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => {
+                setTravelPaginationError('');
+                setRemoteHasMore(true);
+                loadMoreRemote();
+              }}><RotateCw size={14} aria-hidden="true" />Retry more destinations</button>
+            </div>
+          )}
 
           {loadingMore && (
             <div style={{ textAlign: 'center', padding: '16px 0 24px' }}>
