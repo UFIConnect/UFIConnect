@@ -67,6 +67,9 @@ try {
         check(await page.locator('.sidebar-logout--danger').isVisible(), 'Desktop logout should stay in place');
       } else {
         await opener.waitFor();
+        const brandBounds = await page.locator('.mobile-app-header-brand').boundingBox();
+        const openerBounds = await opener.boundingBox();
+        check(brandBounds.x < openerBounds.x, 'Home icon must precede the account sidebar button');
         await opener.click();
         await waitOpen();
         check(await page.evaluate(() => document.body.style.overflow === 'hidden'), 'Background must not scroll behind the drawer');
@@ -100,6 +103,28 @@ try {
         await page.waitForURL('**/?feed=ufi&channel=shop');
         await waitClosed();
         check(new URL(page.url()).searchParams.get('channel') === 'shop', 'Shop route is not connected');
+        await opener.click();
+        await waitOpen();
+        await drawer.getByRole('link', { name: 'Roles', exact: true }).click();
+        await page.waitForURL('**/profile?tab=saved&section=jobs');
+        await waitClosed();
+        const savedTabs = page.getByRole('tablist', { name: 'Saved items' });
+        await savedTabs.waitFor();
+        check(await savedTabs.getByRole('tab', { name: /^Jobs/ }).getAttribute('aria-selected') === 'true', 'Roles must open saved jobs');
+        await page.reload();
+        await savedTabs.waitFor();
+        check(await savedTabs.getByRole('tab', { name: /^Jobs/ }).getAttribute('aria-selected') === 'true', 'Saved roles must survive reload');
+        await opener.click();
+        await waitOpen();
+        await drawer.getByRole('link', { name: 'Posts', exact: true }).click();
+        await page.waitForURL('**/profile?tab=saved&section=posts');
+        await waitClosed();
+        await savedTabs.getByRole('tab', { name: /^Posts/, selected: true }).waitFor();
+        check(await savedTabs.getByRole('tab', { name: /^Posts/ }).getAttribute('aria-selected') === 'true', 'Posts must open saved posts');
+        await page.goBack();
+        await page.waitForURL('**/profile?tab=saved&section=jobs');
+        await savedTabs.getByRole('tab', { name: /^Jobs/, selected: true }).waitFor();
+        check(await savedTabs.getByRole('tab', { name: /^Jobs/ }).getAttribute('aria-selected') === 'true', 'Back must restore saved roles');
         await opener.click();
         await waitOpen();
         await drawer.getByRole('link', { name: 'Profile', exact: true }).click();

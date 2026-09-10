@@ -6,7 +6,7 @@ import client from '../api/client';
 import HomeFeedTools from './HomeFeedTools';
 import JobsSidebarControls from './JobsSidebarControls';
 import { HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS } from './sourceMeta';
-import { PanelLeft, ShoppingBag } from 'lucide-react';
+import { PanelLeft, ShoppingBag, BriefcaseBusiness, Bookmark } from 'lucide-react';
 
 function ShellIcon({ name, size = 20 }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' };
@@ -441,6 +441,14 @@ export default function Layout({ children, wide = false }) {
       {profile && (
         <header className="mobile-app-header">
           <div className="mobile-app-header-start">
+            <Link
+              to={HOME_FEED_PATH}
+              className="mobile-app-header-brand"
+              aria-label="Home"
+              onClick={handleAllFeedHomeClick}
+            >
+              <span className="mobile-app-header-mark" aria-hidden="true">UFI</span>
+            </Link>
             <button
               type="button"
               className={`mobile-app-header-action${mobileAccountOpen ? ' active' : ''}`}
@@ -456,14 +464,6 @@ export default function Layout({ children, wide = false }) {
             >
               <PanelLeft size={21} aria-hidden="true" />
             </button>
-            <Link
-              to={HOME_FEED_PATH}
-              className="mobile-app-header-brand"
-              aria-label="Home"
-              onClick={handleAllFeedHomeClick}
-            >
-              <span className="mobile-app-header-mark" aria-hidden="true">UFI</span>
-            </Link>
           </div>
 
           <div className="mobile-command-menu">
@@ -620,6 +620,17 @@ export default function Layout({ children, wide = false }) {
               <ShoppingBag size={20} aria-hidden="true" />
               Shop
             </Link>
+            <div className="mobile-account-saved" role="group" aria-label="Saved">
+              <div className="mobile-account-saved-heading">Saved</div>
+              <Link to="/profile?tab=saved&section=jobs" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
+                <BriefcaseBusiness size={20} aria-hidden="true" />
+                Roles
+              </Link>
+              <Link to="/profile?tab=saved&section=posts" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
+                <Bookmark size={20} aria-hidden="true" />
+                Posts
+              </Link>
+            </div>
             <div className="mobile-feed-drawer-bottom mobile-account-drawer-bottom">
               <NavLink to="/profile" className="mobile-command-menu-item mobile-account-profile" aria-label="Profile" onClick={closeMobileOverlays}>
                 <span className="mobile-account-avatar" aria-hidden="true">
