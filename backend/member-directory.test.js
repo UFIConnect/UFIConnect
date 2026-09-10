@@ -5,6 +5,26 @@ const { searchMemberDirectory } = require('./member-directory');
 const { createAppHarness, member } = require('./test-support/app-harness');
 require('./generated-media');
 
+test('People supports production UUID accounts with text relationship IDs', async t => {
+  const pg = new PGlite();
+  t.after(() => pg.close());
+  await pg.exec(`
+    CREATE TABLE users (id UUID PRIMARY KEY, name TEXT, email TEXT, title TEXT, bio TEXT, organization TEXT,
+      skills JSONB DEFAULT '[]', role TEXT, interests TEXT[] DEFAULT '{}', avatar_url TEXT,
+      role_settings JSONB DEFAULT '{}', profile_hidden BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now());
+    CREATE TABLE blocks (blocker_id TEXT, blocked_id TEXT);
+    CREATE TABLE follows (follower_id TEXT, following_id TEXT);
+    CREATE TABLE connections (from_id TEXT, to_id TEXT, status TEXT, created_at TIMESTAMPTZ DEFAULT now());
+    INSERT INTO users (id, name) VALUES
+      ('00000000-0000-4000-8000-000000000001', 'Alex Morgan'),
+      ('00000000-0000-4000-8000-000000000002', 'Jordan Smith');
+    INSERT INTO follows VALUES ('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002');
+  `);
+  const result = await searchMemberDirectory(pg, { myId: '00000000-0000-4000-8000-000000000001' });
+  assert.equal(result.totalCount, 2);
+  assert.equal(result.users.find(user => user.name === 'Jordan Smith').isFollowing, true);
+});
+
 test('member directory paginates all public accounts without leaking private account fields', async t => {
   const pg = new PGlite();
   t.after(() => pg.close());
@@ -51,7 +71,7 @@ test('member directory paginates all public accounts without leaking private acc
   assert.ok((await search({ q: 'A' })).users.some(u => u.id === 'long'));
   await pg.query('INSERT INTO users (id, name, title) VALUES ($1,$2,$3)', ['word-match', 'Jordan', 'Architecture specialist']);
   assert.equal((await search({ q: 'art' })).users.some(u => u.id === 'word-match'), false);
-  assert.equal((await search({ q: 'specialist garden' })).users.some(u => u.id === 'word-match'), true);
+  assert.equal((await search({ q: 'specialist garden' })).users.some(u => u.id === 'word-match'), false);
   assert.equal((await search({ q: "' OR 1=1 --" })).users.some(u => u.id === 'private'), false);
 });
 

@@ -33,6 +33,7 @@ jobs:
       - run: node scripts/audit-jobs-feed.mjs
       - run: node scripts/audit-music-feed.mjs
       - run: node scripts/audit-search-notifications.mjs
+      - run: node scripts/audit-office-pipeline.mjs
       - run: node scripts/audit-source-favorites.mjs
       - run: node scripts/audit-source-directory.mjs
       - run: node scripts/audit-post-context.mjs

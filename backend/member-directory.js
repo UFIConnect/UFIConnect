@@ -1,6 +1,6 @@
 'use strict';
 
-const { expandSearchWords } = require('./search');
+const { searchTermGroups } = require('./search');
 const publicProfile = `u.profile_hidden IS NOT TRUE AND COALESCE(u.role_settings ->> 'privacy_publicProfile', 'true') <> 'false'`;
 const escapeLike = value => String(value).replace(/[\\%_]/g, '\\$&');
 const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -9,31 +9,32 @@ const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
 async function searchMemberDirectory(db, { myId, q = '', role = '', sort = 'relevance', limit = 24, offset = 0 }) {
   const params = [myId];
   const bind = value => { params.push(value); return `$${params.length}`; };
-  const where = [`((${publicProfile}) OR u.id = $1)`];
+  // Account IDs are UUIDs, while relationship tables store text IDs.
+  const where = [`((${publicProfile}) OR u.id::text = $1)`];
   where.push(`NOT EXISTS (SELECT 1 FROM blocks b WHERE
-    (b.blocker_id = $1 AND b.blocked_id = u.id) OR (b.blocked_id = $1 AND b.blocker_id = u.id))`);
+    (b.blocker_id = $1 AND b.blocked_id = u.id::text) OR (b.blocked_id = $1 AND b.blocker_id = u.id::text))`);
   let nameRank = '(0::integer)';
   if (q.includes('@')) {
     where.push(`LOWER(COALESCE(u.email, '')) = ${bind(q)}`);
   } else if (q) {
-    const terms = expandSearchWords(q);
+    const groups = searchTermGroups(q, { preserveStopWords: !q.trim().includes(' ') });
     // Word-boundary regex handles initials, Unicode names and long biographies
     // without PostgreSQL tsvector's lexeme/document length restrictions.
     const text = `LOWER(CONCAT_WS(' ', u.name, u.title, u.organization, u.bio, u.skills::text, u.role, u.interests::text))`;
-    where.push(terms.length ? `(${terms.map(term => `${text} ~ ${bind('(^|[^[:alnum:]])' + escapeRegex(term) + (term.length < 3 ? '([^[:alnum:]+#]|$)' : ''))}`).join(' OR ')})` : 'FALSE');
+    where.push(groups.length ? groups.map(terms => `(${terms.map(term => `${text} ~ ${bind('(^|[^[:alnum:]])' + escapeRegex(term) + (term.length < 3 ? '([^[:alnum:]+#]|$)' : ''))}`).join(' OR ')})`).join(' AND ') : 'FALSE');
   }
   if (role) where.push(`LOWER(COALESCE(u.role, '')) LIKE ${bind('%' + escapeLike(role) + '%')} ESCAPE E'\\\\'`);
   const baseParams = [...params];
   if (q && !q.includes('@')) nameRank = `CASE WHEN LOWER(u.name) = ${bind(q)} THEN 2 WHEN LOWER(u.name) LIKE ${bind(escapeLike(q) + '%')} ESCAPE E'\\\\' THEN 1 ELSE 0 END`;
-  const followerCount = `(SELECT COUNT(*) FROM follows f WHERE f.following_id = u.id)`;
-  const order = sort === 'followers' ? `followers_count DESC, ${nameRank} DESC` : `(u.id = $1) DESC, ${nameRank} DESC`;
+  const followerCount = `(SELECT COUNT(*) FROM follows f WHERE f.following_id = u.id::text)`;
+  const order = sort === 'followers' ? `followers_count DESC, ${nameRank} DESC` : `${nameRank} DESC, (u.id::text = $1) DESC`;
   const [page, counts] = await Promise.all([
     db.query(`SELECT u.id, u.name, u.title, u.bio, u.organization, u.skills, u.role, u.interests, u.avatar_url,
       ${followerCount} AS followers_count,
-      EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = $1 AND f.following_id = u.id) AS is_following,
+      EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = $1 AND f.following_id = u.id::text) AS is_following,
       (SELECT CASE WHEN c.status = 'accepted' THEN 'connected'
         WHEN c.from_id = $1 THEN 'pending_sent' ELSE 'pending_received' END
-        FROM connections c WHERE (c.from_id = $1 AND c.to_id = u.id) OR (c.to_id = $1 AND c.from_id = u.id)
+        FROM connections c WHERE (c.from_id = $1 AND c.to_id = u.id::text) OR (c.to_id = $1 AND c.from_id = u.id::text)
         ORDER BY c.created_at DESC LIMIT 1) AS connection_status
       FROM users u WHERE ${where.join(' AND ')} ORDER BY ${order}, u.created_at DESC, u.id
       LIMIT ${bind(limit)} OFFSET ${bind(offset)}`, params),

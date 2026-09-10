@@ -294,12 +294,14 @@ export default function SearchExperience({ initialTab = null } = {}) {
     hydratedProfileRef.current = profile.id;
     const posts = previousFeedSignals(profile.id, 'feed');
     const following = previousFeedSignals(profile.id, 'following');
+    const explicitPosts = routeSeed.tab === 'posts' && routeSeed.query;
+    const explicitFollowing = routeSeed.tab === 'following' && routeSeed.query;
     setPostSources({
-      posts: posts.sources.filter((source) => HOME_FEED_SOURCE_IDS.includes(source) && !disabledSources.has(source)),
-      following: following.sources.filter((source) => FOLLOWING_FEED_SOURCE_IDS.includes(source) && !disabledSources.has(source)),
+      posts: explicitPosts ? [] : posts.sources.filter((source) => HOME_FEED_SOURCE_IDS.includes(source) && !disabledSources.has(source)),
+      following: explicitFollowing ? [] : following.sources.filter((source) => FOLLOWING_FEED_SOURCE_IDS.includes(source) && !disabledSources.has(source)),
     });
-    setPostTopics({ posts: posts.topics, following: following.topics });
-    setHistoryFound({ posts: posts.found, following: following.found });
+    setPostTopics({ posts: explicitPosts ? [] : posts.topics, following: explicitFollowing ? [] : following.topics });
+    setHistoryFound({ posts: !explicitPosts && posts.found, following: !explicitFollowing && following.found });
     setSuggestionsReady(true);
   }, [disabledSources, profile?.id]);
 
@@ -512,6 +514,11 @@ export default function SearchExperience({ initialTab = null } = {}) {
 
   function handleQueryChange(event) {
     const value = event.target.value;
+    if (value.trim() && POST_TABS.has(activeTab) && historyFound[activeTab]) {
+      setPostSources(current => ({ ...current, [activeTab]: [] }));
+      setPostTopics(current => ({ ...current, [activeTab]: [] }));
+      setHistoryFound(current => ({ ...current, [activeTab]: false }));
+    }
     setQueries((current) => ({ ...current, [activeTab]: value }));
   }
 
@@ -686,8 +693,14 @@ export default function SearchExperience({ initialTab = null } = {}) {
               sources={availableSources[activeTab]}
               selectedSources={postSources[activeTab]}
               selectedTopics={postTopics[activeTab]}
-              onSourcesChange={(sources) => setPostSources((current) => ({ ...current, [activeTab]: sources }))}
-              onTopicsChange={(topics) => setPostTopics((current) => ({ ...current, [activeTab]: topics }))}
+              onSourcesChange={(sources) => {
+                setPostSources((current) => ({ ...current, [activeTab]: sources }));
+                setHistoryFound(current => ({ ...current, [activeTab]: false }));
+              }}
+              onTopicsChange={(topics) => {
+                setPostTopics((current) => ({ ...current, [activeTab]: topics }));
+                setHistoryFound(current => ({ ...current, [activeTab]: false }));
+              }}
             />
 
             {!activePostState.loading && !activePostState.error && activePostState.items.length > 0 && (
