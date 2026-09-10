@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import client, { publicOAuthRequestConfig } from '../api/client';
@@ -6,6 +6,8 @@ import { CONNECTED_SOCIAL_PLATFORMS, SOURCE_META, withCareerAccountFallback } fr
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { Star } from 'lucide-react';
 import { normalizeSourceFavorites } from './sourceFavorites';
+import { DirectoryControls, AccountSiteLink } from './DirectoryControls';
+import { SOURCE_CATEGORIES, ACCOUNT_STATUSES, sourceSections, filterAccounts, accountStatus } from './sourceDirectory';
 
 const LINK_FIELDS = [
   { key: 'linkedin', label: 'LinkedIn', placeholder: 'https://linkedin.com/in/yourname' },
@@ -71,6 +73,10 @@ export default function HomeFeedTools({
   const [favoriteDraft, setFavoriteDraft] = useState([]);
   const [savingFavorites, setSavingFavorites] = useState(false);
   const [favoriteError, setFavoriteError] = useState('');
+  const [sourceQuery, setSourceQuery] = useState('');
+  const [sourceCategory, setSourceCategory] = useState('all');
+  const [accountQuery, setAccountQuery] = useState('');
+  const [accountFilter, setAccountFilter] = useState('all');
   const favoriteSettingsKey = JSON.stringify(profile?.roleSettings?.feedSourceFavorites || null);
   useEffect(() => {
     setFavoriteDraft(normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites)[favoriteMode]);
@@ -167,6 +173,8 @@ export default function HomeFeedTools({
   const connectedAccountCount = accountPlatforms === null
     ? profileConnected.length
     : visibleAccountPlatforms.filter(([key]) => accountConnected[key]).length;
+  const sourceGroups = sourceSections(availableSources, normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites)[favoriteMode], sourceQuery, sourceCategory);
+  const filteredAccounts = filterAccounts(visibleAccountPlatforms, accountConnected, accountQuery, accountFilter);
 
   async function persistDisabledSources(next, previous, pendingKey, successMessage) {
     setDisabledSources(next);
@@ -367,6 +375,8 @@ export default function HomeFeedTools({
         open={openPanel === 'sources'}
         onToggle={() => toggle('sources')}
       >
+        <DirectoryControls label="feed sources" query={sourceQuery} onQueryChange={setSourceQuery} filter={sourceCategory} onFilterChange={setSourceCategory}
+          options={[["all", "All categories"], ["favorites", "Favorites"], ...SOURCE_CATEGORIES]} />
         <button type="button" className="btn btn-ghost btn-sm home-source-select-favorites" aria-pressed={selectingFavorites}
           disabled={savingFavorites || savingSourceId !== null}
           onClick={() => {
@@ -390,7 +400,9 @@ export default function HomeFeedTools({
           </button>
         </div>}
         <div className="home-feed-source-list" aria-label="Feed source controls">
-          {availableSources.map(source => {
+          {sourceGroups.map(section => <div key={section.id} className="source-directory-section">
+            <h4 className="source-directory-heading">{section.label}<span>{section.items.length}</span></h4>
+          {section.items.map(source => {
             const enabled = !disabledSources.has(source);
             const saving = savingSourceId === source;
             return (
@@ -415,10 +427,14 @@ export default function HomeFeedTools({
               </div>
             );
           })}
+          </div>)}
+          {!sourceGroups.length && <div className="source-directory-empty" role="status">No matching sources</div>}
         </div>
       </ToolPanel>}
 
       {showAccounts && <ToolPanel title="Connected accounts" summary={connectedAccountCount ? `${connectedAccountCount} connected` : 'Add your sources'} open={openPanel === 'accounts'} onToggle={() => toggle('accounts')}>
+        <DirectoryControls label="accounts" query={accountQuery} onQueryChange={setAccountQuery} filter={accountFilter} onFilterChange={setAccountFilter}
+          options={[["all", "All statuses"], ...ACCOUNT_STATUSES]} />
         <div className="home-connected-account-list" aria-label="Connected account controls">
           {accountPlatforms === null && <div className="home-connected-account-loading"><span className="spinner spinner-primary" /></div>}
           {accountError && (
@@ -427,18 +443,24 @@ export default function HomeFeedTools({
               <button type="button" className="btn btn-ghost btn-sm" onClick={reloadAccounts}>Retry</button>
             </div>
           )}
-          {accountPlatforms !== null && visibleAccountPlatforms.map(([key, platform]) => {
+          {accountPlatforms !== null && filteredAccounts.map(([key, platform], index) => {
             const isConnected = Boolean(accountConnected[key]);
             const isConnecting = accountAction === `connect:${key}`;
             const isDisconnecting = accountAction === `disconnect:${key}`;
             const comingSoon = !isConnected && (platform.forceComingSoon || !platform.configured);
+            const status = accountStatus(platform, isConnected);
+            const previous = filteredAccounts[index - 1];
+            const sectionStart = !previous || accountStatus(previous[1], accountConnected[previous[0]]) !== status;
             return (
-              <div className="home-connected-account-row" key={key}>
+              <Fragment key={key}>
+                {sectionStart && <h4 className="source-directory-heading">{ACCOUNT_STATUSES.find(([id]) => id === status)?.[1]}</h4>}
+              <div className="home-connected-account-row">
                 <SourceMark source={key} />
                 <span className="home-connected-account-name">
                   {platform.name || SOURCE_META[key]?.label || key}
                   {isConnected && <span className="home-connected-account-status">Connected</span>}
                 </span>
+                <div className="source-directory-account-actions">
                 {isConnected ? (
                   <button type="button" className="btn btn-danger btn-sm" onClick={() => disconnectAccount(key)} disabled={accountAction !== null}>
                     {isDisconnecting ? 'Wait...' : 'Disconnect'}
@@ -452,11 +474,14 @@ export default function HomeFeedTools({
                     {isConnecting ? 'Opening...' : 'Connect'}
                   </button>
                 )}
+                <AccountSiteLink platform={key} name={platform.name} />
+                </div>
               </div>
+              </Fragment>
             );
           })}
-          {accountPlatforms !== null && !accountError && visibleAccountPlatforms.length === 0 && (
-            <div className="home-connected-account-empty">No account connections are available yet.</div>
+          {accountPlatforms !== null && !accountError && filteredAccounts.length === 0 && (
+            <div className="home-connected-account-empty" role="status">{visibleAccountPlatforms.length ? 'No matching accounts' : 'No account connections are available yet.'}</div>
           )}
           {blueskyHandle !== null && (
             <form className="home-connected-account-handle" onSubmit={event => {

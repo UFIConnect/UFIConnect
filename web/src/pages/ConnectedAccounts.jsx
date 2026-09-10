@@ -5,6 +5,8 @@ import client, { publicOAuthRequestConfig } from '../api/client';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { withCareerAccountFallback } from '../components/sourceMeta';
 import { useAuth } from '../contexts/AuthContext';
+import { DirectoryControls, AccountSiteLink } from '../components/DirectoryControls';
+import { ACCOUNT_STATUSES, filterAccounts } from '../components/sourceDirectory';
 
 const PLATFORM_BENEFITS = {
   linkedin:  ['Import your work history & headline', 'Show LinkedIn posts in your feed', 'Get matched with relevant jobs'],
@@ -45,6 +47,8 @@ export default function ConnectedAccounts() {
   const [flash,     setFlash]           = useState(null);
   const [connecting, setConnecting]     = useState(null);
   const [disconnecting, setDisconnecting] = useState(null);
+  const [accountQuery, setAccountQuery] = useState('');
+  const [accountFilter, setAccountFilter] = useState('all');
   // null = modal closed; '' or partial text = open, mid-typing. Bluesky is
   // the one platform with no fixed authorization URL (AT Protocol is
   // federated — the handle is how we find which server to route to), so it
@@ -146,10 +150,13 @@ export default function ConnectedAccounts() {
   // then wondering why it only appears in their private workspace.
   const careerPlatforms = platforms.filter(([, p]) => p.category === 'career');
   const generalPlatforms = platforms.filter(([, p]) => p.category !== 'career' && !p.commandCenterOnly);
+  const displayedGeneral = filterAccounts(generalPlatforms, connected, accountQuery, accountFilter);
+  const displayedCareer = filterAccounts(careerPlatforms, connected, accountQuery, accountFilter);
   const connectedCareerCount = careerPlatforms.filter(([key]) => connected[key]).length;
-  const connectedList   = generalPlatforms.filter(([k]) => connected[k]);
-  const availableList   = generalPlatforms.filter(([k, p]) => !connected[k] && p.configured && !p.forceComingSoon);
-  const comingSoonList  = generalPlatforms.filter(([k, p]) => !connected[k] && (p.forceComingSoon || !p.configured));
+  const connectedList   = displayedGeneral.filter(([k]) => connected[k]);
+  const availableList   = displayedGeneral.filter(([k, p]) => !connected[k] && p.configured && !p.forceComingSoon);
+  const comingSoonList  = displayedGeneral.filter(([k, p]) => !connected[k] && (p.forceComingSoon || !p.configured));
+  const totalConnected = generalPlatforms.filter(([key]) => connected[key]).length;
 
   return (
     <Layout>
@@ -207,12 +214,12 @@ export default function ConnectedAccounts() {
             <div style={{ fontSize: '.8rem', fontWeight: 800, color: 'var(--primary)' }}>LINK</div>
             <div>
               <div style={{ fontWeight: 700, fontSize: '.95rem' }}>
-                {connectedList.length} of {generalPlatforms.length} accounts connected
+                {totalConnected} of {generalPlatforms.length} accounts connected
               </div>
               <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>
-                {connectedList.length === 0
+                {totalConnected === 0
                   ? 'Connect an account to personalise your feed.'
-                  : `Connected: ${connectedList.map(([k, p]) => p.name).join(', ')}`}
+                  : `Connected: ${generalPlatforms.filter(([key]) => connected[key]).map(([, p]) => p.name).join(', ')}`}
               </div>
             </div>
             {connectedList.length > 0 && (
@@ -240,14 +247,19 @@ export default function ConnectedAccounts() {
             </>
           )}
 
-          {isBusinessMembership && careerPlatforms.length > 0 && <section style={{ marginBottom: 28 }} aria-labelledby="career-sites-heading">
+          <div className="account-directory-page">
+            <DirectoryControls label="accounts" query={accountQuery} onQueryChange={setAccountQuery} filter={accountFilter} onFilterChange={setAccountFilter}
+              options={[["all", "All statuses"], ...ACCOUNT_STATUSES]} />
+          </div>
+          {!(isBusinessMembership ? displayedCareer : displayedGeneral).length && <p className="source-directory-empty" role="status">No matching accounts</p>}
+          {isBusinessMembership && displayedCareer.length > 0 && <section style={{ marginBottom: 28 }} aria-labelledby="career-sites-heading">
             <div id="career-sites-heading" style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 6 }}>
               Career accounts
             </div>
             <p style={{ fontSize: '.8rem', color: 'var(--muted)', lineHeight: 1.5, margin: '0 0 10px' }}>
               Connect through each provider's authorization flow. Job browsing remains in Opportunities.
             </p>
-            {careerPlatforms.map(([key, p]) => {
+            {displayedCareer.map(([key, p]) => {
               const unavailable = p.forceComingSoon || !p.configured;
               return (
                 <PlatformCard
@@ -446,7 +458,7 @@ function PlatformCard({
         </div>
 
         {/* Action buttons */}
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0, marginLeft: 'auto' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', minWidth: 0, marginLeft: 'auto' }}>
           <button onClick={onToggle} className="btn btn-ghost btn-sm" style={{ fontSize: '.72rem', padding: '4px 8px' }}>
             {expanded ? '▲' : '▼'} Details
           </button>
@@ -467,6 +479,7 @@ function PlatformCard({
               {connecting ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Connect'}
             </button>
           )}
+          <AccountSiteLink platform={platformKey} name={p.name} />
         </div>
       </div>
 

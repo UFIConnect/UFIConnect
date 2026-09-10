@@ -34,6 +34,7 @@ jobs:
       - run: node scripts/audit-music-feed.mjs
       - run: node scripts/audit-search-notifications.mjs
       - run: node scripts/audit-source-favorites.mjs
+      - run: node scripts/audit-source-directory.mjs
       - run: node scripts/audit-post-context.mjs
       - run: node scripts/audit-content-history.mjs
       - uses: actions/upload-artifact@v4
