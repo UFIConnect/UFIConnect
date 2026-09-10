@@ -6,7 +6,7 @@ import client from '../api/client';
 import HomeFeedTools from './HomeFeedTools';
 import JobsSidebarControls from './JobsSidebarControls';
 import { HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS } from './sourceMeta';
-import { PanelLeft, ShoppingBag, BriefcaseBusiness, Bookmark } from 'lucide-react';
+import { PanelLeft, ShoppingBag, BriefcaseBusiness, Bookmark, Music } from 'lucide-react';
 
 function ShellIcon({ name, size = 20 }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' };
@@ -680,19 +680,15 @@ export default function Layout({ children, wide = false }) {
                     <ShellIcon name="profile" size={18} />
                     Roles
                   </NavLink>
-                  <NavLink to="/profile?tab=saved" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-                    <ShellIcon name="saved" size={18} />
-                    Saved
-                  </NavLink>
                 </div>
                 <div className="mobile-feed-drawer-bottom mobile-jobs-drawer-bottom">
-                  <NavLink to="/messages" className="mobile-command-menu-item" style={{ fontWeight: 400 }} onClick={() => setMobileMenuOpen(false)}>
-                    <ShellIcon name="messages" size={18} />
-                    Messages
-                  </NavLink>
                   <NavLink to="/groups" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
                     <ShellIcon name="groups" size={18} />
                     Discover groups
+                  </NavLink>
+                  <NavLink to="/messages" className="mobile-command-menu-item" style={{ fontWeight: 400 }} onClick={() => setMobileMenuOpen(false)}>
+                    <ShellIcon name="messages" size={18} />
+                    Messages
                   </NavLink>
                   <HomeFeedTools showSources={false} />
                   <NavLink to="/resume-builder" className="mobile-command-menu-item mobile-command-menu-item--command" onClick={() => setMobileMenuOpen(false)}>
@@ -724,15 +720,18 @@ export default function Layout({ children, wide = false }) {
                 <ShellIcon name="restaurants" size={18} />
                 Restaurants
               </button>
+              <NavLink to="/music" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                <Music size={18} aria-hidden="true" />Music
+              </NavLink>
                 </div>
                 <div className="mobile-feed-drawer-bottom">
-              <NavLink to="/messages" className="mobile-command-menu-item" style={{ fontWeight: 400 }} onClick={() => setMobileMenuOpen(false)}>
-                <ShellIcon name="messages" size={18} />
-                Messages
-              </NavLink>
               <NavLink to="/groups" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
                 <ShellIcon name="search" size={18} />
                 Discover groups
+              </NavLink>
+              <NavLink to="/messages" className="mobile-command-menu-item" style={{ fontWeight: 400 }} onClick={() => setMobileMenuOpen(false)}>
+                <ShellIcon name="messages" size={18} />
+                Messages
               </NavLink>
               <HomeFeedTools
                 showSources

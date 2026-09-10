@@ -36,7 +36,7 @@ class VideoFeedErrorBoundary extends Component {
         </div>
       );
     }
-    return <VideoFeedView key={this.state.retryKey} onExit={this.props.onExit} />;
+    return <VideoFeedView key={`${this.props.music}-${this.state.retryKey}`} music={this.props.music} onExit={this.props.onExit} />;
   }
 }
 
@@ -44,14 +44,14 @@ class VideoFeedErrorBoundary extends Component {
 // shows up as its own item in the main nav, next to Feed/Search/etc. — a
 // TikTok-style full-screen takeover, deliberately not wrapped in the usual
 // Layout sidebar/content shell.
-export default function Videos() {
+export default function Videos({ music = false }) {
   const navigate = useNavigate();
   return (
     <>
       <Helmet>
-        <title>Videos | UFIconnect</title>
+        <title>{music ? 'Music' : 'Videos'} | UFIconnect</title>
       </Helmet>
-      <VideoFeedErrorBoundary onExit={() => navigate('/?feed=feed&all=1')} />
+      <VideoFeedErrorBoundary music={music} onExit={() => navigate('/?feed=feed&all=1')} />
     </>
   );
 }

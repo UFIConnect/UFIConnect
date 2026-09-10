@@ -28,8 +28,8 @@ try {
     await page.route('**/api/opportunities?*', async route => {
       const p = new URL(route.request().url()).searchParams;
       const offset = Number(p.get('offset') || 0);
-      requests.push({ offset, bust: p.get('bust') });
-      await route.fulfill({ json: { opportunities: jobs.slice(offset, offset + 20), hasMore: offset + 20 < jobs.length, totalCount: jobs.length, availableSources: ['Remotive'] } });
+      requests.push({ offset, bust: p.get('bust'), postedWithin: p.get('postedWithin') });
+      await route.fulfill({ json: { opportunities: jobs.slice(offset, offset + 20).map(job => p.get('postedWithin') ? { ...job, id: `${job.id}-date-${p.get('postedWithin')}` } : job), hasMore: offset + 20 < jobs.length, totalCount: jobs.length, availableSources: ['Remotive'] } });
     });
     await page.goto(server.resolvedUrls.local[0]);
     await page.evaluate(t => localStorage.setItem('pc_token', t), app.token('jobs-audit'));
@@ -53,6 +53,18 @@ try {
     await page.getByRole('button', { name: 'Open Engineer 1 at Example', exact: true }).click();
     await page.getByRole('heading', { name: 'Engineer 1', exact: true }).waitFor();
     assert.match(await page.locator('.job-detail-facts').textContent(), /Feb 3, 2025/);
+    await page.goto(server.resolvedUrls.local[0] + 'opportunities?postedWithin=7');
+    await page.locator('.job-result-tab').first().waitFor().catch(async error => {
+      console.error(page.url(), await page.locator('body').innerText(), requests.slice(-5));
+      throw error;
+    });
+    assert.ok(requests.some(r => r.postedWithin === '7' && r.offset === 0));
+    if (width === 1440) {
+      const response = page.waitForResponse(r => r.url().includes('/opportunities?') && new URL(r.url()).searchParams.get('postedWithin') === '1');
+      await page.getByRole('radio', { name: 'Today', exact: true }).click();
+      await response;
+      assert.equal(await page.locator('.jobs-page-rail a').filter({ hasText: /^Saved$/ }).count(), 0);
+    }
     console.log(`PASS: jobs feed, pagination, refresh and dates at ${width}px`);
     await context.close();
   }

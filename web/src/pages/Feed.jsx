@@ -3963,12 +3963,13 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             ].map(({ key, label }) => (
               <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => activateHomeView(key)}>{label}</button>
             ))}
+            <Link to="/music" className="home-feed-rail-tab">Music</Link>
           </div>
           <div className="home-feed-rail-bottom">
+            <Link to="/groups" className="home-feed-rail-tab">Discover groups</Link>
             <Link to="/messages" className="home-feed-rail-tab" style={{ fontWeight: 400 }}>
               Messages
             </Link>
-            <Link to="/groups" className="home-feed-rail-tab">Discover groups</Link>
             <HomeFeedTools
               showSources
               sourceIds={viewMode === 'following' ? FOLLOWING_FILTER_SOURCES : ALL_FILTER_SOURCES}

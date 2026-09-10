@@ -104,6 +104,17 @@ export default function JobsSidebarControls({ onNavigate }) {
         </div>
       </section>
 
+      <section className="jobs-sidebar-section" aria-labelledby="jobs-sidebar-date-heading">
+        <h2 id="jobs-sidebar-date-heading">Date posted</h2>
+        <div className="jobs-sidebar-options" role="radiogroup" aria-label="Date posted">
+          {[['', 'Any time'], ['1', 'Today'], ['7', 'Past week'], ['30', 'Past month']].map(([value, label]) => (
+            <button key={value} type="button" role="radio" aria-checked={(params.get('postedWithin') || '') === value}
+              className={`jobs-sidebar-option${(params.get('postedWithin') || '') === value ? ' active' : ''}`}
+              onClick={() => updateFilters({ postedWithin: value || null })}>{label}</button>
+          ))}
+        </div>
+      </section>
+
       <section className="jobs-sidebar-section" aria-labelledby="jobs-sidebar-sites-heading">
         <h2 id="jobs-sidebar-sites-heading">Career sites</h2>
         <div className="jobs-sidebar-options" role="radiogroup" aria-label="Career sites">

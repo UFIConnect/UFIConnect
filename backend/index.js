@@ -37,6 +37,7 @@ const {
   normalizeVideoDurationSeconds,
   isPlayableVideoPost,
   isVideoSurfacePost,
+  isMusicVideoPost,
   isRegularFeedSurfacePost,
   continuousVideoPageMeta,
 } = require('./video-placement');
@@ -4009,7 +4010,7 @@ function parseYouTubeChannelRSS(xml, keyword, channelName) {
   return posts;
 }
 
-function mapYouTubePost(videoId, title, description, channelTitle, channelId, publishedAt, thumbnailUrl, keyword, isShort = false, durationSeconds = null) {
+function mapYouTubePost(videoId, title, description, channelTitle, channelId, publishedAt, thumbnailUrl, keyword, isShort = false, durationSeconds = null, categoryId = null) {
   return {
     id:          `youtube_${videoId}`,
     authorId:    `youtube_${channelId || 'unknown'}`,
@@ -4025,7 +4026,7 @@ function mapYouTubePost(videoId, title, description, channelTitle, channelId, pu
     // it — sourceUrl is the one thing about this classification that does.
     sourceUrl:   isShort ? `https://www.youtube.com/shorts/${videoId}` : `https://www.youtube.com/watch?v=${videoId}`,
     embedId:     videoId,
-    topic:       keyword,
+    topic:       String(categoryId) === '10' ? 'Music' : keyword,
     author:      { id: `youtube_${channelId || 'unknown'}`, name: channelTitle || null, title: channelTitle || 'YouTube', organization: 'YouTube' },
     likes: [], likesCount: 0, commentsCount: 0,
     createdAt:   normalizeTimestamp(publishedAt),
@@ -4087,9 +4088,10 @@ async function fetchYouTubeShortsByKeyword(keyword, apiKey) {
     if (!candidates.length) return [];
 
     const ids = candidates.map(v => v.id.videoId).join(',');
-    const detailsUrl = `https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${ids}&key=${encodeURIComponent(apiKey)}`;
+    const detailsUrl = `https://www.googleapis.com/youtube/v3/videos?part=contentDetails,snippet&id=${ids}&key=${encodeURIComponent(apiKey)}`;
     const detailsData = await fetchJSON(detailsUrl);
     const durationById = new Map((detailsData?.items || []).map(v => [v.id, parseISO8601DurationSeconds(v.contentDetails?.duration)]));
+    const categoryById = new Map((detailsData?.items || []).map(v => [v.id, v.snippet?.categoryId]));
 
     return candidates
       .filter(v => {
@@ -4100,7 +4102,7 @@ async function fetchYouTubeShortsByKeyword(keyword, apiKey) {
         v.id.videoId, v.snippet.title, v.snippet.description,
         v.snippet.channelTitle, v.snippet.channelId, v.snippet.publishedAt,
         v.snippet.thumbnails?.high?.url || v.snippet.thumbnails?.medium?.url, keyword, true,
-        durationById.get(v.id.videoId)
+        durationById.get(v.id.videoId), categoryById.get(v.id.videoId)
       ));
   } catch {
     return []; // best-effort supplement to the main fetch below — never worth failing that over
@@ -4133,12 +4135,14 @@ async function fetchYouTubeByKeyword(keyword) {
         ]);
         const mainCandidates = (data?.items || []).filter(v => v.id?.videoId && v.snippet?.title);
         const mainDurationById = new Map();
+        const mainCategoryById = new Map();
         if (mainCandidates.length) {
           try {
             const ids = mainCandidates.map(v => v.id.videoId).join(',');
-            const details = await fetchJSON(`https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${ids}&key=${encodeURIComponent(apiKey)}`);
+            const details = await fetchJSON(`https://www.googleapis.com/youtube/v3/videos?part=contentDetails,snippet&id=${ids}&key=${encodeURIComponent(apiKey)}`);
             for (const video of details?.items || []) {
               mainDurationById.set(video.id, parseISO8601DurationSeconds(video.contentDetails?.duration));
+              mainCategoryById.set(video.id, video.snippet?.categoryId);
             }
           } catch (error) {
             console.warn(`[YouTube] duration lookup failed for "${keyword}": ${error.message}`);
@@ -4163,7 +4167,7 @@ async function fetchYouTubeByKeyword(keyword) {
               v.id.videoId, v.snippet.title, v.snippet.description,
               v.snippet.channelTitle, v.snippet.channelId, v.snippet.publishedAt,
               v.snippet.thumbnails?.high?.url || v.snippet.thumbnails?.medium?.url, keyword, false,
-              mainDurationById.get(v.id.videoId)
+              mainDurationById.get(v.id.videoId), mainCategoryById.get(v.id.videoId)
             )),
         ].filter(p => { if (seenIds.has(p.id)) return false; seenIds.add(p.id); return true; });
         if (posts.length) { setCached(cacheKey, posts); return posts; }
@@ -23440,10 +23444,10 @@ async function fetchPlayableVideoPage(params, attempts = 8) {
       ...params,
       sources: activeSources,
       cursorMap,
-      videoDurationMaxSeconds: VIDEO_FEED_MAX_DURATION_SECONDS,
+      videoDurationMaxSeconds: params.music ? null : VIDEO_FEED_MAX_DURATION_SECONDS,
     });
     for (const post of result.posts) {
-      if (!isVideoSurfacePost(post) || !post?.id || emitted.has(post.id)) continue;
+      if (!(params.music ? isMusicVideoPost(post) : isVideoSurfacePost(post)) || !post?.id || emitted.has(post.id)) continue;
       const source = canonicalFeedSourceId(post.source) || 'unknown';
       if (sourceCap && (sourceCounts.get(source) || 0) >= sourceCap) continue;
       emitted.add(post.id);
@@ -23718,6 +23722,27 @@ async function handleVideoFeedRequest(req, res) {
 }
 app.get('/feed/videos', authenticate, handleVideoFeedRequest);
 app.get('/office/feed/videos', authenticate, handleVideoFeedRequest);
+
+app.get('/office/feed/music', authenticate, async (req, res) => {
+  try {
+    const sources = String(req.query.sources || req.query.source || '').split(',').map(canonicalFeedSourceId).filter(isAggregateFeedSource);
+    const { matchesSearch } = parseVideoFilters(req);
+    const user = await getUser(req.user.id);
+    const genre = String(req.query.genre || '').toLowerCase().replace(/[-\s]+/g, ' ');
+    const result = await fetchPlayableVideoPage({
+      music: true, userId: req.user.id, sources: sources.length ? sources : await getVideoCapableSources() || AGGREGATE_FEED_SOURCES,
+      cursorMap: decodeFeedCursor(req.query.cursor), limit: boundedLimit(req.query.limit, 20, 50), mediaType: 'video',
+      seenIds: req.query.q ? new Set() : await getUserSeenSet(req.user.id, 'videos'),
+    });
+    const posts = filterPostsForMemberLanguages(result.posts, user, req).filter(matchesSearch).filter(post => !genre ||
+      [post.title, post.topic, post.genre, ...asArray(post.tags)].join(' ').toLowerCase().replace(/[-\s]+/g, ' ').includes(genre));
+    markPostsSeen(req.user.id, posts, 'videos');
+    res.json({ posts, cursor: result.nextCursor, ...continuousVideoPageMeta(req.query, result.hasMore) });
+  } catch (error) {
+    console.error('[music feed]', error.message);
+    res.status(503).json({ error: 'Music is temporarily unavailable. Please try again.', posts: [], hasMore: true });
+  }
+});
 
 // --- Following videos - same Feed/Following split as the main feed, for video --
 // getFollowingFeedPosts is already scoped to one user (follow graph + their own
@@ -29529,6 +29554,13 @@ app.get('/opportunities', authenticate, async (req, res) => {
   });
 
   let results = allOps;
+  const postedWithin = Number(req.query.postedWithin);
+  if ([1, 7, 30].includes(postedWithin)) {
+    const cutoff = postedWithin === 1
+      ? new Date().setUTCHours(0, 0, 0, 0)
+      : Date.now() - postedWithin * 86400000;
+    results = results.filter(job => jobPostedDate(job.posted) && Date.parse(job.posted) >= cutoff);
+  }
   if (type && type !== 'all') results = results.filter((o) => o.type === type);
   if (remote === 'true')       results = results.filter((o) => o.remote);
   if (remote === 'false')      results = results.filter((o) => !o.remote);

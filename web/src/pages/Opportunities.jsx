@@ -189,6 +189,7 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
   const { profile } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const postedWithin = ['1', '7', '30'].includes(searchParams.get('postedWithin')) ? searchParams.get('postedWithin') : '';
   const initialRouteQuery = embedded
     ? String(searchQuery ?? searchParams.get('q') ?? '').trim().slice(0, 200)
     : '';
@@ -270,6 +271,7 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
     loadingMoreRef.current = false;
     setLoadingMore(false);
     const params = { sort, limit: PAGE_SIZE, offset: 0 };
+    if (postedWithin) params.postedWithin = postedWithin;
     const refreshRequest = refreshRequestRef.current;
     if (refreshRequest) {
       params.bust = '1';
@@ -317,7 +319,7 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
         setLoading(false);
         if (refreshRequest) setRefreshing(false);
       });
-  }, [filter, sort, workSetting, liveOnly, search, sourceFilter, refreshTick]);
+  }, [filter, sort, workSetting, liveOnly, search, sourceFilter, refreshTick, postedWithin]);
 
   const requestRefresh = useCallback(() => {
     if (refreshing) return;
@@ -336,6 +338,7 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
     loadingMoreRef.current = true;
     setLoadingMore(true);
     const params = { sort, limit: PAGE_SIZE, offset: nextOffsetRef.current };
+    if (postedWithin) params.postedWithin = postedWithin;
     if (filter !== 'all') params.type = filter;
     if (search) params.search = search;
     if (workSetting === 'remote') params.remote = true;
@@ -360,7 +363,7 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
         if (requestGeneration !== requestGenerationRef.current) return;
         loadingMoreRef.current = false; setLoadingMore(false);
       });
-  }, [loading, refreshing, hasMore, allOpps.length, sort, filter, search, workSetting, sourceFilter, liveOnly]);
+  }, [loading, refreshing, hasMore, allOpps.length, sort, filter, search, workSetting, sourceFilter, liveOnly, postedWithin]);
 
   // Same sentinel + IntersectionObserver pattern as the main Feed page
   // (400px rootMargin fires the fetch just before the sentinel is actually
@@ -684,16 +687,13 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
               <Link to="/settings?tab=preferences" className="jobs-page-tool jobs-page-tool--compact" title={profile?.preferences?.role || 'Choose your target role'}>
                 <strong>Roles</strong>
               </Link>
-              <Link to="/profile?tab=saved" className="jobs-page-tool jobs-page-tool--compact">
-                <strong>Saved</strong>
-              </Link>
             </div>
             <div className="jobs-page-rail-bottom">
-              <Link to="/messages" className="jobs-page-tool jobs-page-tool--compact">
-                <strong>Messages</strong>
-              </Link>
               <Link to="/groups" className="jobs-page-tool jobs-page-tool--compact">
                 <strong>Discover groups</strong>
+              </Link>
+              <Link to="/messages" className="jobs-page-tool jobs-page-tool--compact">
+                <strong>Messages</strong>
               </Link>
               <HomeFeedTools showSources={false} />
               <Link to="/resume-builder" className="jobs-page-tool jobs-page-tool--primary jobs-page-resume-builder">
