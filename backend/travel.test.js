@@ -1,0 +1,186 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const http = require('node:http');
+const { createAppHarness, member } = require('./test-support/app-harness');
+const { ADDITIONAL_TRAVEL_DESTINATIONS } = require('./travel-destinations');
+const providers = require('./travel-providers');
+
+async function harness(t, options) {
+  const app = await createAppHarness(options);
+  t.after(() => app.close());
+  return app;
+}
+
+test('Travel adds 50 unique guide cities and exposes all 91 destinations', async t => {
+  const app = await harness(t);
+  assert.equal(ADDITIONAL_TRAVEL_DESTINATIONS.length, 50);
+  const response = await app.request('/travel/destinations');
+  assert.equal(response.status, 200);
+  const list = response.data.destinations;
+  assert.equal(list.length, 91);
+  assert.equal(new Set(list.map(d => `${d.countryCode}:${d.city}`)).size, 91);
+  assert.ok(list.every(d => d.guideUrl.startsWith('https://en.wikivoyage.org/wiki/')));
+  assert.match(list.find(d => d.city === 'Queenstown').guideUrl, /Queenstown_\(New_Zealand\)/);
+  assert.match(list.find(d => d.city === 'Oaxaca').guideUrl, /Oaxaca_\(city\)/);
+});
+
+test('city matching is exact, accent-insensitive, and country-aware', async t => {
+  const app = await harness(t);
+  const paris = { city: 'Paris', country: 'France', countryCode: 'FR' };
+  assert.equal(app.travelCityMatches(paris, { city: 'Paris', country: 'FR' }), true);
+  assert.equal(app.travelCityMatches(paris, { city: 'Paris', country: 'US' }), false);
+  assert.equal(app.travelCityMatches(paris, { city: 'Par' }), false);
+  assert.equal(app.travelCityMatches({ city: 'San Jose', countryCode: 'CR' }, { city: 'San Jos\u00e9', country: 'CR' }), true);
+  assert.equal(app.selectedTravelGuideDestinations({ city: 'London', country: 'CA', countryName: 'Canada' })[0].searchOnly, true);
+});
+
+test('unknown cities use a country-qualified guide search without guessing a page', async t => {
+  let calls = 0;
+  const app = await harness(t, { modules: { './travel-providers': { ...providers, fetchTravelResource: async () => { calls++; throw new Error('unexpected request'); } } } });
+  const result = await app.fetchTravelGuidePosts(app.selectedTravelGuideDestinations({ city: 'London', country: 'CA', countryName: 'Canada' }));
+  assert.equal(calls, 0);
+  assert.equal(new URL(result[0].sourceUrl).searchParams.get('search'), 'London Canada');
+  assert.equal(result[0].mediaUrl, null);
+});
+
+test('a provider outage still returns paginated guides for every catalog city without duplicates', async t => {
+  const app = await harness(t);
+  app.seedUser(member('traveler'));
+  let cursor = '';
+  const ids = new Set();
+  for (let page = 1; page <= 12; page++) {
+    const result = await app.request(`/office/feed?mode=countries&limit=20&page=${page}&cursor=${encodeURIComponent(cursor)}`, { userId: 'traveler' });
+    assert.equal(result.status, 200);
+    assert.equal(result.data.travel.destinationCount, 91);
+    assert.equal(result.data.travel.cameraStatus, 'degraded');
+    assert.equal(result.data.liveFeeds.length, 0);
+    for (const post of result.data.posts) {
+      assert.equal(ids.has(post.id), false, 'a guide must not repeat across pages');
+      ids.add(post.id);
+    }
+    if (!result.data.hasMore) break;
+    cursor = result.data.cursor;
+  }
+  assert.equal(ids.size, 91);
+});
+
+test('cold Travel responds without waiting for guide and news providers', async t => {
+  const app = await harness(t, { modules: { './travel-providers': { ...providers, fetchTravelResource: () => new Promise(() => {}) } } });
+  const result = await Promise.race([
+    app.getCountriesCameraFeed({ city: 'Seattle', country: 'US', countryName: 'United States', source: 'member', available: true }),
+    new Promise((_, reject) => { const timer = setTimeout(() => reject(new Error('Travel waited for an optional provider')), 500); timer.unref(); }),
+  ]);
+  assert.equal(result.posts.length, 91);
+  assert.equal(result.posts[0].city, 'Seattle');
+  assert.equal(result.travel.storiesUpdating, true);
+});
+
+test('profile location persists, applies to Travel, and can be cleared', async t => {
+  const app = await harness(t);
+  app.seedUser(member('location-member'));
+  const saved = await app.request('/profile', { userId: 'location-member', method: 'PATCH', body: { roleSettings: { feedLocation: { city: 'Seattle', country: 'United States' } } } });
+  assert.equal(saved.status, 200);
+  const feed = await app.request('/office/feed?mode=countries&limit=20&city=Paris&country=FR', { userId: 'location-member' });
+  assert.equal(feed.data.location.city, 'Seattle');
+  assert.equal(feed.data.location.savedForMember, true);
+  assert.ok(feed.data.posts.some(post => post.city === 'Seattle' && post.matchedByLocation));
+  await app.request('/profile', { userId: 'location-member', method: 'PATCH', body: { roleSettings: { feedLocation: { city: '', country: '' } } } });
+  const clear = await app.request('/office/feed?mode=countries&limit=20', { userId: 'location-member' });
+  assert.equal(clear.data.location.city, null);
+  assert.equal(clear.data.location.savedForMember, false);
+});
+
+test('city news and event queries cannot relabel unrelated country-wide stories as local', async t => {
+  const xml = '<rss><channel>' + [
+    ['Seattle things to do festival', 'Seattle travel guide and music events'],
+    ['Miami things to do festival', 'United States travel guide and events'],
+    ['Seattleville things to do festival', 'United States travel guide'],
+  ].map(([title, description], i) => `<item><title>${title}</title><description>${description}</description><link>https://example.org/story/${i}</link><source>City paper</source></item>`).join('') + '</channel></rss>';
+  const app = await harness(t, { modules: { './travel-providers': { ...providers, fetchTravelResource: async () => xml } } });
+  const location = { city: 'Seattle', country: 'US', countryName: 'United States', available: true, source: 'member' };
+  assert.match(app.selectedTravelNewsEdition(location).query, /"Seattle" "United States"/);
+  const news = await app.fetchSelectedTravelNewsPosts(location);
+  const events = await app.fetchSelectedTravelEventPosts(location);
+  assert.equal(news.length, 1);
+  assert.equal(events.length, 1);
+  assert.match(news[0].title, /^Seattle /);
+});
+
+test('live verification checks every ID in batches, including cities beyond the first 50', async t => {
+  const batches = [];
+  let app;
+  app = await harness(t, { env: { YOUTUBE_API_KEY: 'test-key' }, modules: { './travel-providers': { ...providers, fetchTravelResource: async url => {
+    const ids = new URL(url).searchParams.get('id').split(',');
+    batches.push(ids);
+    app.setYouTubeCallReady();
+    return { items: ids.map(id => ({ id, liveStreamingDetails: { actualStartTime: '2026-09-01T00:00:00Z' }, status: { privacyStatus: 'public', embeddable: true } })) };
+  } } } });
+  const ids = Array.from({ length: 117 }, (_, i) => `camera${String(i).padStart(5, '0')}`);
+  const states = await app.fetchYouTubeLiveStates(ids);
+  assert.deepEqual(batches.map(batch => batch.length), [50, 50, 17]);
+  assert.equal(states.size, 117);
+  assert.equal(states.get(ids[116]).live, true);
+});
+
+test('ended, private, and non-embeddable streams never enter the live rail', async t => {
+  let app;
+  app = await harness(t, { env: { YOUTUBE_API_KEY: 'test-key' }, modules: { './travel-providers': { ...providers, fetchTravelResource: async url => {
+    if (!url.includes('googleapis.com')) throw new Error('optional provider unavailable');
+    app.setYouTubeCallReady();
+    return { items: [
+      { id: 'rnXIjl_Rzy4', liveStreamingDetails: { actualStartTime: '2026-09-01' }, status: { privacyStatus: 'public', embeddable: true } },
+      { id: 'UUhTr19MH0k', liveStreamingDetails: { actualStartTime: '2026-09-01', actualEndTime: '2026-09-02' }, status: { privacyStatus: 'public', embeddable: true } },
+      { id: 'j9Sa4uBGGQ0', liveStreamingDetails: { actualStartTime: '2026-09-01' }, status: { privacyStatus: 'public', embeddable: false } },
+      { id: 'Fy8_xLMkAXc', liveStreamingDetails: { actualStartTime: '2026-09-01' }, status: { privacyStatus: 'private', embeddable: true } },
+    ] };
+  } } } });
+  const result = await app.getCountriesCameraFeed(null);
+  assert.equal(result.liveFeeds.length, 1);
+  assert.equal(result.liveFeeds[0].city, 'New York');
+  assert.equal(result.liveFeeds[0].liveVerified, true);
+});
+
+test('replacement discovery rejects unrelated streams before verifying candidates', async t => {
+  let app;
+  app = await harness(t, { env: { YOUTUBE_API_KEY: 'test-key' }, modules: { './travel-providers': { ...providers, fetchTravelResource: async url => {
+    app.setYouTubeCallReady();
+    if (url.includes('/search?')) return { items: [
+      { id: { videoId: 'wrongcity01' }, snippet: { title: 'Paris live webcam', liveBroadcastContent: 'live' } },
+      { id: { videoId: 'musicradio1' }, snippet: { title: 'London relaxing music radio 24/7 live stream', liveBroadcastContent: 'live' } },
+      { id: { videoId: 'j9Sa4uBGGQ0' }, snippet: { title: 'London live webcam United Kingdom', liveBroadcastContent: 'live' } },
+    ] };
+    const ids = new URL(url).searchParams.get('id').split(',');
+    assert.deepEqual(ids, ['j9Sa4uBGGQ0']);
+    return { items: [{ id: ids[0], liveStreamingDetails: { actualStartTime: '2026-09-01' }, status: { privacyStatus: 'public', embeddable: true } }] };
+  } } } });
+  const stream = await app.discoverLiveCameraReplacement(app.LIVE_CAMERA_CATALOG.find(camera => camera.city === 'London'));
+  assert.equal(stream.videoId, 'j9Sa4uBGGQ0');
+});
+
+test('cached discovered streams survive short verification expiry and exhausted search budget', async t => {
+  let app;
+  app = await harness(t, { env: { YOUTUBE_API_KEY: 'test-key' }, modules: { './travel-providers': { ...providers, fetchTravelResource: async url => {
+    assert.ok(url.includes('/videos?'), 'reverification must not spend another search slot');
+    app.setYouTubeCallReady();
+    return { items: [{ id: 'j9Sa4uBGGQ0', liveStreamingDetails: { actualStartTime: '2026-09-01' }, status: { privacyStatus: 'public', embeddable: true } }] };
+  } } } });
+  const camera = app.LIVE_CAMERA_CATALOG.find(item => item.id === 'camera_seattle');
+  app.liveCameraDiscoveryCache.set(camera.id, { expiresAt: Date.now() + 60000, stream: { videoId: 'j9Sa4uBGGQ0', sourceUrl: 'https://www.youtube.com/watch?v=j9Sa4uBGGQ0', replacement: true } });
+  app.exhaustCameraDiscoveryBudget();
+  const post = app.currentLiveCameraPosts().find(item => item.id === camera.id);
+  assert.equal(post.liveVerified, false);
+  assert.match(post.sourceUrl, /j9Sa4uBGGQ0/);
+  const result = await app.resolveLiveCameraDiscoveries([post], 1);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].liveVerified, true);
+});
+
+test('Travel provider requests enforce a real timeout and sanitize upstream errors', async t => {
+  const server = http.createServer(() => {});
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  await assert.rejects(providers.fetchTravelResource(`http://127.0.0.1:${server.address().port}`, { timeoutMs: 25 }), /timeout|aborted/i);
+  await assert.rejects(providers.fetchTravelResource('https://example.invalid/?key=private', {
+    fetchImpl: async () => ({ ok: false, status: 403 }),
+  }), error => error.message === 'Travel provider returned HTTP 403');
+});

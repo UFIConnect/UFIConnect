@@ -41,6 +41,9 @@ async function createAppHarness({ env = {}, connected = false, query, modules = 
       if (name === 'dotenv') return { config() {} };
       if (name === './db') return db;
       if (name === './filestore') return { loadUsers: () => [], saveUsers() {} };
+      if (name === './travel-providers') return {
+        ...localRequire(name), fetchTravelResource: async () => { throw new Error('Travel provider unavailable in route tests'); },
+      };
       if (name === 'http' || name === 'https') return {
         ...localRequire(name), get: blockedRequest, request: blockedRequest,
       };
@@ -66,6 +69,13 @@ async function createAppHarness({ env = {}, connected = false, query, modules = 
       normalizeFeedPost, dbRowToFeedPost, mapSharedJobPost,
       getFollowingFeedPosts, getCommunityPosts,
       addAndBroadcast, flushFeedPersistenceQueue, ingestPersistenceQueues, transferStagedPosts,
+      COUNTRIES_DESTINATION_GUIDES, LIVE_CAMERA_CATALOG, liveCameraDiscoveryCache,
+      fetchYouTubeLiveStates, fetchTravelGuidePosts, fetchSelectedTravelNewsPosts, fetchSelectedTravelEventPosts,
+      travelCityMatches, travelCountryMatches, selectedTravelGuideDestinations, selectedTravelNewsEdition,
+      getCountriesCameraFeed, discoverLiveCameraReplacement, resolveLiveCameraDiscoveries, currentLiveCameraPosts,
+      liveCameraVerificationState, liveCameraLocationRefreshes, locationLiveFeedCache,
+      setYouTubeCallReady() { youtubeApiLastCallAt = 0; },
+      exhaustCameraDiscoveryBudget() { liveCameraDiscoveryWindowStartedAt = Date.now(); liveCameraDiscoveryCount = LIVE_CAMERA_MAX_DISCOVERIES_PER_WINDOW; },
       seedUser(user) { users.push(user); },
     };
   `, context, { filename: entry, timeout: 10000, importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER });
