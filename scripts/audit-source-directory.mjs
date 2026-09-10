@@ -41,6 +41,10 @@ try {
     page.on('pageerror', e => errors.push(e.message));
     await page.route('**/api/office/feed?*', route => route.fulfill({ json: { posts: [], hasMore: false, nativeUficonnectIncluded: true } }));
     await page.route('**/api/social/platforms', route => route.fulfill({ json: { platforms, connected: { reddit: true } } }));
+    await page.route('**/api/feed/sources?*', route => route.fulfill({ json: {
+      sources: [{ id: 'reddit', postCount: 3, lastFetch: new Date().toISOString(), samplePosts: [] },
+        { id: 'audit-source', postCount: 0, samplePosts: [] }],
+    } }));
     await page.route('**/auth/social/youtube/start*', route => {
       authorizationRequests += 1;
       return route.fulfill({ status: 503, json: { error: 'Test provider unavailable' } });
@@ -64,6 +68,7 @@ try {
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/source-directory-${width}.png`) });
     await tools.getByRole('button', { name: /Connected accounts/ }).click();
     await tools.getByRole('link', { name: 'Open Reddit website' }).waitFor();
+    assert.equal(await tools.getByRole('searchbox').count(), 0, 'Connected accounts has no search bar');
     assert.equal(await tools.getByRole('link', { name: 'Open Instagram website' }).count(), 0);
     assert.equal(await tools.getByRole('link', { name: 'Open Indeed website' }).count(), 0);
     await tools.getByRole('combobox', { name: 'Filter accounts' }).selectOption('connected');
@@ -95,6 +100,26 @@ try {
     }
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/account-directory-${width}.png`) });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
+    await page.goto(server.resolvedUrls.local[0] + 'sources');
+    await page.getByRole('heading', { name: 'Feed Sources', exact: true }).waitFor();
+    await page.getByRole('switch').first().waitFor();
+    assert.equal(await page.getByPlaceholder(/Search sources/).count(), 0, 'Full Feed Sources page has no search bar');
+    assert.equal(await page.getByRole('searchbox').count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'Select favorites', exact: true }).count(), 0);
+    assert.ok(await page.getByRole('switch').count() > 30, 'Removing search does not hide sources');
+    await page.getByText('audit-source', { exact: true }).waitFor();
+    const sourceSave = page.waitForResponse(response => response.request().method() === 'PATCH' && response.url().endsWith('/profile'));
+    await page.getByRole('switch').first().click();
+    assert.equal((await sourceSave).status(), 200);
+    await page.getByRole('button', { name: 'Enable all', exact: true }).waitFor();
+    await page.reload();
+    await page.getByRole('button', { name: 'Enable all', exact: true }).waitFor();
+    assert.equal(await page.getByRole('switch').first().getAttribute('aria-checked'), 'false');
+    await page.getByRole('button', { name: 'Enable all', exact: true }).click();
+    await page.getByRole('button', { name: 'Enable all', exact: true }).waitFor({ state: 'detached' });
+    assert.equal(await page.getByRole('switch', { checked: false }).count(), 0);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
+    await page.screenshot({ path: path.join(root, `.cache/audit-ui/sources-page-${width}.png`) });
     await page.goto(server.resolvedUrls.local[0] + 'connected-accounts');
     await page.getByRole('combobox', { name: 'Filter accounts' }).selectOption('available');
     assert.equal(await page.getByRole('searchbox', { name: 'Search accounts', exact: true }).count(), 0);
