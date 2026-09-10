@@ -5,7 +5,7 @@ const RETENTION_DAYS = 7;
 const MAX_EVENTS = 100000;
 const MAX_PENDING = 5000;
 const STAGES = ['staging', 'live', 'archived', 'queued', 'rejected', 'duplicate', 'retrying', 'dropped'];
-const clean = (value, limit = 500) => String(value ?? '').replace(/\u0000/g, '').slice(0, limit);
+const clean = (value, limit = 500) => String(value ?? '').replace(/\u0000/g, '').slice(0, limit).toWellFormed();
 const safeUrl = value => {
   try {
     const url = new URL(value);
@@ -70,11 +70,11 @@ function createPostPipelineTracker(db, { role = 'api', schedule = setTimeout } =
         INSERT INTO feed_post_events SELECT * FROM incoming ON CONFLICT (event_id) DO NOTHING
       ) INSERT INTO feed_post_progress
         SELECT DISTINCT ON (post_id) post_id, source, title, source_url, stage, reason, role, occurred_at
-        FROM incoming ORDER BY post_id, occurred_at DESC, event_id DESC
+        FROM incoming ORDER BY post_id, (stage='duplicate'), occurred_at DESC, event_id DESC
         ON CONFLICT (post_id) DO UPDATE SET source=EXCLUDED.source, title=EXCLUDED.title,
           source_url=EXCLUDED.source_url,
-          stage=CASE WHEN EXCLUDED.stage='duplicate' AND feed_post_progress.stage IN ('queued','retrying') THEN feed_post_progress.stage ELSE EXCLUDED.stage END,
-          reason=CASE WHEN EXCLUDED.stage='duplicate' AND feed_post_progress.stage IN ('queued','retrying') THEN feed_post_progress.reason ELSE EXCLUDED.reason END,
+          stage=CASE WHEN EXCLUDED.stage='duplicate' THEN feed_post_progress.stage ELSE EXCLUDED.stage END,
+          reason=CASE WHEN EXCLUDED.stage='duplicate' THEN feed_post_progress.reason ELSE EXCLUDED.reason END,
           role=EXCLUDED.role, occurred_at=EXCLUDED.occurred_at
         WHERE feed_post_progress.occurred_at <= EXCLUDED.occurred_at`, [JSON.stringify(batch)]);
       health.lastError = null;

@@ -42,6 +42,13 @@ test('post pipeline persists ordered decisions, lists every storage stage and pa
   assert.equal((await reader.detail('archived')).snapshots[0].archive_reason, 'source-deleted');
   assert.equal((await reader.detail('live')).events.length, 0);
   assert.equal(await reader.detail('missing'), null);
+  tracker.record({ id: 'unicode', source: 'news', title: 'x'.repeat(499) + '\ud83d\ude00' }, 'queued');
+  tracker.record({ id: 'unicode', source: 'news', title: 'Malformed \ud800 source text' }, 'duplicate');
+  await tracker.flush();
+  assert.equal((await reader.list({ q: 'unicode' })).posts[0].stage, 'queued');
+  assert.equal((await reader.detail('unicode')).events.length, 2);
+  tracker.record({ id: 'unicode', source: 'news' }, 'duplicate'); await tracker.flush();
+  assert.equal((await reader.list({ q: 'unicode' })).posts[0].stage, 'queued');
   await pg.exec("UPDATE feed_post_events SET occurred_at=NOW()-INTERVAL '8 days'");
   const cleanupTracker = createPostPipelineTracker(db, { schedule: () => ({ unref() {} }) });
   cleanupTracker.record({ id: 'cleanup', source: 'news' }, 'rejected'); await cleanupTracker.flush();
