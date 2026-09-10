@@ -925,8 +925,13 @@ function AnalyticsView() {
             </Card>
             <Card style={{ minWidth: 150 }}>
               <Label>Recorded sign-ins</Label>
-              <div style={{ fontSize: 32, fontWeight: 800, color: '#c084fc', marginTop: 6 }}>{users.signIns?.allTime ?? 0}</div>
-              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{users.signIns?.uniqueMembers ?? 0} member{(users.signIns?.uniqueMembers ?? 0) === 1 ? '' : 's'}</div>
+              <div style={{ fontSize: 32, fontWeight: 800, color: '#c084fc', marginTop: 6 }}>{users.signIns?.allTime ?? 'Unavailable'}</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{users.signIns ? `${users.signIns.uniqueMembers} members` : 'History could not be read'}</div>
+            </Card>
+            <Card style={{ minWidth: 150 }}>
+              <Label>Active members</Label>
+              <div style={{ fontSize: 32, fontWeight: 800, color: '#60a5fa', marginTop: 6 }}>{users.active ?? 'Unavailable'}</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>Authenticated activity in the last 15 minutes</div>
             </Card>
             <Card style={{ minWidth: 150 }}>
               <Label>Completed onboarding</Label>
@@ -979,7 +984,7 @@ function AnalyticsView() {
 
       {data && data.available && (
         <>
-          <Label color="#475569">Pageviews (anonymous)</Label>
+          <Label color="#475569">Pageviews and visitors</Label>
           {/* Raw page-load count next to distinct visitor_id count for the
               same window — the count alone reads as "N people visited"
               when it's really "N page loads," inflated by the same person
@@ -1024,7 +1029,7 @@ function AnalyticsView() {
               <Card key={p.path} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '11px 18px' }}>
                 <div style={{ flex: 1, fontSize: 13, fontFamily: 'monospace', color: '#cbd5e1' }}>{p.path}</div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: '#60a5fa' }}>{p.views}</div>
-                <div style={{ fontSize: 12, color: '#64748b', minWidth: 68, textAlign: 'right' }}>{p.visitors ?? 0} IP{(p.visitors ?? 0) === 1 ? '' : 's'}</div>
+                <div style={{ fontSize: 12, color: '#64748b', minWidth: 68, textAlign: 'right' }}>{p.visitors ?? 0} visitors</div>
               </Card>
             ))}
           </div>
@@ -1044,7 +1049,7 @@ function AnalyticsView() {
                   }} />
                 </div>
                 <div style={{ width: 40, textAlign: 'right', color: '#e2e8f0', fontWeight: 600 }}>{d.views}</div>
-                <div style={{ width: 72, textAlign: 'right' }}>{d.visitors} IP{d.visitors === 1 ? '' : 's'}</div>
+                <div style={{ width: 72, textAlign: 'right' }}>{d.visitors} visitors</div>
               </div>
             ))}
           </div>

@@ -17998,6 +17998,9 @@ async function runCacheMaintenance({ reason = 'scheduled', forceOffice = false }
 
   try {
     const runtime = pruneExpiredRuntimeCaches(started);
+    if (db.isConnected()) {
+      cacheMaintenanceState.unusedPosts = await require('./unused-feed-cleanup').runUnusedFeedCleanup(db);
+    }
     let office = { breakdown: {}, removed: 0, skipped: IS_PIPELINE_ROLE ? 'api-role-only' : 'not-due' };
     const officeDue = !IS_PIPELINE_ROLE && (forceOffice || !nextOfficeCacheCleanupAt || started >= nextOfficeCacheCleanupAt);
     if (officeDue && db.isConnected()) {
@@ -20137,7 +20140,7 @@ app.get('/office/users', requireOfficeToken, async (req, res) => {
     if (!db.isConnected()) return res.json({ available: false });
     const [total, hidden, onboarded, today, last7, last30, recent] = await Promise.all([
       db.query(`SELECT COUNT(*) FROM users`),
-      db.query(`SELECT COUNT(*) FROM users WHERE profile_hidden = true`),
+      db.query(`SELECT COUNT(*) FROM users WHERE profile_hidden IS TRUE OR COALESCE(role_settings ->> 'privacy_publicProfile', 'true') = 'false'`),
       db.query(`SELECT COUNT(*) FROM users WHERE onboarding_complete = true`),
       db.query(`SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '1 day'`),
       db.query(`SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '7 days'`),
@@ -20145,9 +20148,11 @@ app.get('/office/users', requireOfficeToken, async (req, res) => {
       // Office is the protected account-management surface. Return the full
       // registered-user list here so its view and the database total cannot
       // silently disagree after the first twenty accounts.
-      db.query(`SELECT id, name, email, created_at, onboarding_complete, profile_hidden FROM users ORDER BY created_at DESC`),
+      db.query(`SELECT id, name, email, created_at, onboarding_complete,
+        (profile_hidden IS TRUE OR COALESCE(role_settings ->> 'privacy_publicProfile', 'true') = 'false') AS profile_hidden
+        FROM users ORDER BY created_at DESC, id`),
     ]);
-    let signIns = { rows: [{ all_time: 0, all_time_users: 0, today: 0, last7: 0, last30: 0 }] };
+    let signIns = null;
     try {
       signIns = await db.query(`
         SELECT
@@ -20163,22 +20168,35 @@ app.get('/office/users', requireOfficeToken, async (req, res) => {
       // blank the source-of-truth accounts-created count in Office.
       console.warn('GET /office/users sign-in history unavailable:', error.message);
     }
+    let activeMembers = null;
+    try {
+      const activity = await db.query(`SELECT COUNT(DISTINCT p.user_id) AS count FROM page_views p
+        JOIN users u ON u.id::text = p.user_id WHERE p.created_at >= NOW() - INTERVAL '15 minutes'`);
+      activeMembers = Number(activity.rows[0].count);
+    } catch (error) {
+      console.warn('GET /office/users activity unavailable:', error.message);
+    }
     const totalCount = Number(total.rows[0].count);
     res.json({
       available: true,
       total: totalCount,
-      active: totalCount - Number(hidden.rows[0].count),
+      active: activeMembers,
+      activeWindowMinutes: 15,
+      discoverable: totalCount - Number(hidden.rows[0].count),
+      hidden: Number(hidden.rows[0].count),
+      countSource: 'database',
       onboarded: Number(onboarded.rows[0].count),
       today:  Number(today.rows[0].count),
       last7:  Number(last7.rows[0].count),
       last30: Number(last30.rows[0].count),
-      signIns: {
+      signInsAvailable: signIns !== null,
+      signIns: signIns ? {
         allTime: Number(signIns.rows[0].all_time),
         uniqueMembers: Number(signIns.rows[0].all_time_users),
         today: Number(signIns.rows[0].today),
         last7: Number(signIns.rows[0].last7),
         last30: Number(signIns.rows[0].last30),
-      },
+      } : null,
       recent: recent.rows.map(r => ({
         id: r.id, name: r.name, email: r.email,
         createdAt: r.created_at,
@@ -26875,6 +26893,8 @@ async function executeOfficeControl(control, body) {
       };
     case 'storage.run-retention':
       return { started: runFeedRetentionPass({ reason: 'office-controls', steps: FEED_RETENTION_ALL_STEPS }) };
+    case 'storage.clean-unused-posts':
+      return require('./unused-feed-cleanup').runUnusedFeedCleanup(db, { force: true });
     case 'automation.audit':
       await runAutofixCheck();
       return { enabled: autofixState.enabled, lastRun: autofixState.lastRun, lastError: autofixState.lastError };
@@ -27900,75 +27920,38 @@ app.post('/feed/:postId/like', authenticate, toggleCommunityPostLike);
 // that made the People page look nearly empty even when the database had many
 // registered members. The database is the source of truth for both the list
 // and the member count; users[] remains only as an outage fallback.
-async function getSearchMembersFromDatabase({ myId, q, role }) {
-  if (!db.isConnected()) {
-    return {
-      members: users,
-      // Never present the process cache as a real registration total. It is
-      // only a warm-start fallback and can be far smaller than the DB.
-      registeredCount: null,
-      discoverableCount: users.filter(u => !isProfileHidden(u) || u.id === myId).length,
-      countSource: 'unavailable',
-    };
-  }
-
-  const params = [myId];
-  const conditions = [
-    `((u.profile_hidden IS NOT TRUE AND COALESCE(u.role_settings ->> 'privacy_publicProfile', 'true') <> 'false') OR u.id = $1)`,
-  ];
-  let memberOrder = 'u.created_at DESC';
-  if (q) {
-    if (q.includes('@')) {
-      params.push(q);
-      conditions.push(`LOWER(COALESCE(u.email, '')) = $${params.length}`);
-    } else {
-      const search = databaseSearchTerms(q);
-      params.push(search.webQuery, search.prefixQuery);
-      const webQueryParam = params.length - 1;
-      const prefixQueryParam = params.length;
-      const vectorSql = `to_tsvector('english',
-        COALESCE(u.name, '') || ' ' || COALESCE(u.title, '') || ' ' ||
-        COALESCE(u.organization, '') || ' ' || COALESCE(u.bio, '') || ' ' ||
-        COALESCE(u.skills::text, '') || ' ' || COALESCE(u.role, '') || ' ' || COALESCE(u.interests::text, '')
-      )`;
-      const querySql = `(websearch_to_tsquery('english', $${webQueryParam}) || to_tsquery('english', $${prefixQueryParam}))`;
-      conditions.push(`${vectorSql} @@ ${querySql}`);
-      memberOrder = `ts_rank_cd(${vectorSql}, ${querySql}) DESC, u.created_at DESC`;
-    }
-  }
-  if (role) {
-    params.push(`%${role}%`);
-    conditions.push(`LOWER(COALESCE(u.role, '')) LIKE $${params.length}`);
-  }
-
-  try {
-    const [memberRows, totalRows, discoverableRows] = await Promise.all([
-      db.query(`SELECT u.* FROM users u WHERE ${conditions.join(' AND ')} ORDER BY ${memberOrder} LIMIT 500`, params),
-      db.query('SELECT COUNT(*) AS count FROM users'),
-      db.query(`SELECT COUNT(*) AS count FROM users u WHERE u.profile_hidden IS NOT TRUE AND COALESCE(u.role_settings ->> 'privacy_publicProfile', 'true') <> 'false'`),
-    ]);
-    return {
-      members: memberRows.rows.map(row => syncToMemory(dbRowToMemUser(row))),
-      registeredCount: Number(totalRows.rows[0]?.count || 0),
-      discoverableCount: Number(discoverableRows.rows[0]?.count || 0),
-      countSource: 'database',
-    };
-  } catch (error) {
-    console.error('[users/search] database lookup failed, using cache:', error.message);
-    return {
-      members: users,
-      registeredCount: null,
-      discoverableCount: users.filter(u => !isProfileHidden(u) || u.id === myId).length,
-      countSource: 'unavailable',
-    };
-  }
+async function getSearchMembersFromDatabase({ myId }) {
+  return {
+    members: users,
+    registeredCount: null,
+    discoverableCount: users.filter(u => !isProfileHidden(u) || u.id === myId).length,
+    countSource: 'unavailable',
+  };
 }
 
 app.get('/users/search', authenticate, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  if (['q', 'role'].some(key => req.query[key] != null && (typeof req.query[key] !== 'string' || req.query[key].length > 500))) {
+    return res.status(400).json({ error: 'Search text must be no longer than 500 characters.' });
+  }
   const q    = (req.query.q    || '').toLowerCase().trim();
   const role = (req.query.role || '').toLowerCase().trim();
   const sort = req.query.sort === 'followers' ? 'followers' : 'relevance';
   const myId = req.user.id;
+
+  if (db.isConnected()) {
+    try {
+      const { searchMemberDirectory } = require('./member-directory');
+      return res.json(await searchMemberDirectory(db, {
+        myId, q, role, sort,
+        limit: Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 24)),
+        offset: Math.max(0, parseInt(req.query.offset, 10) || 0),
+      }));
+    } catch (error) {
+      console.error('[users/search] directory unavailable:', error.message);
+      return res.status(503).json({ error: 'People search is temporarily unavailable. Please try again.', countSource: 'unavailable' });
+    }
+  }
 
   const myUser      = await getUser(myId);
   const myInterests = new Set((myUser?.preferences?.interests || []).map(i => i.toLowerCase()));
@@ -27980,7 +27963,7 @@ app.get('/users/search', authenticate, async (req, res) => {
   // shouldn't look broken) and doesn't touch existing relationships
   // (follows/connections list him fine; this is about not being found by
   // people who don't already know the id, not erasing the account).
-  let results = memberSearch.members.filter(u => u.id && u.email && (!isProfileHidden(u) || u.id === myId));
+  let results = memberSearch.members.filter(u => u.id && (!isProfileHidden(u) || u.id === myId));
 
   if (q) {
     results = results.filter(u => q.includes('@')

@@ -1,0 +1,58 @@
+'use strict';
+
+const { expandSearchWords } = require('./search');
+const publicProfile = `u.profile_hidden IS NOT TRUE AND COALESCE(u.role_settings ->> 'privacy_publicProfile', 'true') <> 'false'`;
+const escapeLike = value => String(value).replace(/[\\%_]/g, '\\$&');
+
+// Page in PostgreSQL so account discovery never stops at an in-memory ceiling.
+async function searchMemberDirectory(db, { myId, q = '', role = '', sort = 'relevance', limit = 24, offset = 0 }) {
+  const params = [myId];
+  const bind = value => { params.push(value); return `$${params.length}`; };
+  const where = [`((${publicProfile}) OR u.id = $1)`];
+  where.push(`NOT EXISTS (SELECT 1 FROM blocks b WHERE
+    (b.blocker_id = $1 AND b.blocked_id = u.id) OR (b.blocked_id = $1 AND b.blocker_id = u.id))`);
+  let nameRank = '(0::integer)';
+  if (q.includes('@')) {
+    where.push(`LOWER(COALESCE(u.email, '')) = ${bind(q)}`);
+  } else if (q) {
+    const terms = expandSearchWords(q);
+    // LIKE handles initials, stop words, Unicode names and long biographies
+    // without PostgreSQL tsvector's lexeme/document length restrictions.
+    const text = `LOWER(CONCAT_WS(' ', u.name, u.title, u.organization, u.bio, u.skills::text, u.role, u.interests::text))`;
+    where.push(terms.length ? `(${terms.map(term => `${text} LIKE ${bind('%' + escapeLike(term) + '%')} ESCAPE E'\\\\'`).join(' OR ')})` : 'FALSE');
+  }
+  if (role) where.push(`LOWER(COALESCE(u.role, '')) LIKE ${bind('%' + escapeLike(role) + '%')} ESCAPE E'\\\\'`);
+  const baseParams = [...params];
+  if (q && !q.includes('@')) nameRank = `CASE WHEN LOWER(u.name) = ${bind(q)} THEN 2 WHEN LOWER(u.name) LIKE ${bind(escapeLike(q) + '%')} ESCAPE E'\\\\' THEN 1 ELSE 0 END`;
+  const followerCount = `(SELECT COUNT(*) FROM follows f WHERE f.following_id = u.id)`;
+  const order = sort === 'followers' ? `followers_count DESC, ${nameRank} DESC` : `(u.id = $1) DESC, ${nameRank} DESC`;
+  const [page, counts] = await Promise.all([
+    db.query(`SELECT u.id, u.name, u.title, u.bio, u.organization, u.skills, u.role, u.interests, u.avatar_url,
+      ${followerCount} AS followers_count,
+      EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = $1 AND f.following_id = u.id) AS is_following,
+      (SELECT CASE WHEN c.status = 'accepted' THEN 'connected'
+        WHEN c.from_id = $1 THEN 'pending_sent' ELSE 'pending_received' END
+        FROM connections c WHERE (c.from_id = $1 AND c.to_id = u.id) OR (c.to_id = $1 AND c.from_id = u.id)
+        ORDER BY c.created_at DESC LIMIT 1) AS connection_status
+      FROM users u WHERE ${where.join(' AND ')} ORDER BY ${order}, u.created_at DESC, u.id
+      LIMIT ${bind(limit)} OFFSET ${bind(offset)}`, params),
+    db.query(`SELECT (SELECT COUNT(*) FROM users) AS registered,
+      (SELECT COUNT(*) FROM users u WHERE ${publicProfile}) AS discoverable,
+      (SELECT COUNT(*) FROM users u WHERE ${where.join(' AND ')}) AS matching`, baseParams),
+  ]);
+  const count = counts.rows[0];
+  return {
+    countSource: 'database', registeredCount: Number(count.registered), discoverableCount: Number(count.discoverable),
+    totalCount: Number(count.matching), hasMore: offset + page.rows.length < Number(count.matching),
+    users: page.rows.map(u => ({
+      id: u.id, name: u.name, title: u.title || '', bio: u.bio || '', organization: u.organization || '',
+      skills: Array.isArray(u.skills) ? u.skills : [], role: u.role || '',
+      interests: Array.isArray(u.interests) ? u.interests.slice(0, 6) : [], avatarUrl: u.avatar_url || '',
+      followersCount: Number(u.followers_count), isFollowing: u.is_following,
+      connectionStatus: u.id === myId ? 'self' : (u.connection_status || 'none'),
+      sharedInterests: [], isSelf: u.id === myId,
+    })),
+  };
+}
+
+module.exports = { searchMemberDirectory };

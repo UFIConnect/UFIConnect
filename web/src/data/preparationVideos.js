@@ -1,4 +1,6 @@
-export const PREPARATION_ASSET_VERSION = '2026-09-04-3';
+import durations from './preparationDurations.js';
+
+export const PREPARATION_ASSET_VERSION = '2026-09-09-narrated-1';
 
 export const PREPARATION_TOPICS = [
   'All',
@@ -140,6 +142,10 @@ export const PREPARATION_VIDEOS = [
     ],
   },
 ];
+
+for (const video of PREPARATION_VIDEOS) {
+  if (durations[video.id]) video.duration = durations[video.id];
+}
 
 const LEGACY_PREPARATION_IDS = new Map(
   PREPARATION_VIDEOS.flatMap(video => video.legacyIds.map(legacyId => [legacyId, video.id])),

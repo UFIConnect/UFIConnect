@@ -14,30 +14,30 @@ const SOURCES = [
 const FEATURES = [
   {
     label: 'Feed',
-    title: 'A live feed with range',
-    desc: 'Follow real conversations, videos, member posts, jobs, and source updates without one platform crowding out the rest.',
+    title: 'More of what moves you',
+    desc: 'Fresh perspectives, worthwhile conversations, and videos worth your time. Discover a mix shaped by your interests.',
   },
   {
     label: 'People',
-    title: 'Find people by what they do',
-    desc: 'Search by role, interests, skills, and communities so the network feels useful from the first session.',
+    title: 'Find your kind of people',
+    desc: 'Meet people who share your interests, exchange ideas, and make connections that go beyond a follow.',
   },
   {
     label: 'Work',
-    title: 'Opportunities beside the feed',
-    desc: 'Browse jobs, gigs, grants, events, and learning resources without leaving the scroll.',
+    title: 'Make room for your next move',
+    desc: 'Explore jobs, gigs, and learning opportunities that connect what you enjoy with where you want to go.',
   },
   {
     label: 'Center',
-    title: 'Command Center for your tools',
-    desc: 'Keep connected accounts, AI drafts, cross-post history, tracked jobs, and your live You Feed in one place.',
+    title: 'Turn your ideas into something',
+    desc: 'Bring your drafts, creative tools, connected accounts, and job search together in Command Center.',
   },
 ];
 
 const STEPS = [
-  ['Join or browse', 'Create a free account for personalization, or use Global Feed to look around first.'],
-  ['Pick your direction', 'Choose the role and interests that shape your feed, communities, and opportunities.'],
-  ['Start from the feed', 'Read, follow, post, save jobs, and return to a network that keeps updating.'],
+  ['Come as you are', 'Explore the public feed or join free to make room for your own interests.'],
+  ['Make it yours', 'Choose what matters to you, from the topics you love to the work you want to do.'],
+  ['See where it takes you', 'Join a conversation, find a community, or discover your next opportunity.'],
 ];
 
 const FAQS = [
@@ -47,7 +47,7 @@ const FAQS = [
   },
   {
     q: 'Can I browse without creating an account?',
-    a: 'Yes. Global Feed is available from the homepage with the skip sign-up button.',
+    a: 'Yes. Choose Explore the feed to browse public posts before creating an account.',
   },
   {
     q: 'Where does the feed content come from?',
@@ -60,7 +60,7 @@ const FAQS = [
 ];
 
 const SHARE_URL = 'https://uficonnect.org';
-const SHARE_TEXT = 'UFIconnect brings people, posts, communities, messaging, videos, and job discovery into one social network.';
+const SHARE_TEXT = 'Find your people and your next opportunity on UFIconnect. A social network for the things you enjoy and the places you want to go.';
 const SHARE_LINKS = [
   {
     label: 'Share on X',
@@ -140,7 +140,7 @@ export default function Landing() {
     <>
       <Helmet>
         <title>UFIconnect | Social Network &amp; Job Discovery</title>
-        <meta name="description" content="UFIconnect is a social network for connecting, posting, messaging, joining communities, watching videos, and finding jobs in one personalized experience." />
+        <meta name="description" content="Find your people and your next opportunity on UFIconnect. Discover fresh conversations, join communities, and explore jobs in a social network shaped by your interests." />
         <meta name="keywords" content="social network, personalized feed, communities, messaging, job search, opportunities, videos, UFIconnect" />
         <meta name="author" content="UFIconnect" />
         <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
@@ -168,15 +168,16 @@ export default function Landing() {
           <section className="landing-hero-refined">
             <div className="landing-hero-inner">
               <div className="landing-hero-copy">
-                <div className="landing-eyebrow">Official home</div>
+                <div className="landing-eyebrow">Your world, connected</div>
                 <h1>UFIconnect</h1>
                 <p>
-                  A social network for people, posts, communities, messaging, videos,
-                  and finding your next job in one personalized scroll.
+                  Find your people. Discover your next opportunity.
+                  Fresh conversations, shared interests, and career possibilities,
+                  all in a social network that feels like you.
                 </p>
                 <div className="landing-actions">
                   <Link to="/register" className="landing-primary-action">Join free</Link>
-                  <Link to="/global" className="landing-secondary-action">Skip sign up - Global Feed</Link>
+                  <Link to="/global" className="landing-secondary-action">Explore the feed</Link>
                 </div>
               </div>
             </div>
@@ -192,8 +193,8 @@ export default function Landing() {
           </section>
 
           <section className="landing-section landing-product-section">
-            <SectionHeading eyebrow="Inside" title="Built around the feed, not a pitch deck">
-              The first thing people see should feel like the place they are about to use.
+            <SectionHeading eyebrow="Discover" title="Good conversations. New possibilities.">
+              Stay curious, meet people, and make your next move. There is more than one reason to connect.
             </SectionHeading>
             <div className="landing-product-grid">
               <div className="landing-product-shot">
@@ -214,8 +215,8 @@ export default function Landing() {
           </section>
 
           <section className="landing-section landing-sources-section">
-            <SectionHeading eyebrow="Live Sources" title="A feed that keeps moving">
-              Public sources, connected accounts, and UFIconnect posts are balanced into one scrolling experience.
+            <SectionHeading eyebrow="Discover more" title="Different perspectives, one place">
+              Go beyond a single source. Explore the conversations and ideas that make your world bigger.
             </SectionHeading>
             <div className="landing-source-row">
               {SOURCES.map(source => <SourceChip key={source} source={source} />)}
@@ -223,8 +224,8 @@ export default function Landing() {
           </section>
 
           <section className="landing-section landing-start-section">
-            <SectionHeading eyebrow="Start" title="A welcoming path in">
-              Browse first, or create an account and let UFIconnect shape itself around what you like to read.
+            <SectionHeading eyebrow="Get started" title="Your next connection starts here">
+              Start with a little curiosity. Build a feed around the people, interests, and possibilities that matter to you.
             </SectionHeading>
             <div className="landing-step-grid">
               {STEPS.map(([title, desc], index) => (
@@ -238,7 +239,7 @@ export default function Landing() {
           </section>
 
           <section id="pricing" className="landing-section landing-pricing-section">
-            <SectionHeading eyebrow="Plans" title="Free to begin, clear when you upgrade">
+            <SectionHeading eyebrow="Plans" title="Start free. Grow from there.">
               The main feed stays free. Resume Builder is available now, and Business is coming soon.
             </SectionHeading>
             <div className="landing-plan-grid">
@@ -303,11 +304,11 @@ export default function Landing() {
           </section>
 
           <section className="landing-final-cta">
-            <h2>Welcome to UFIconnect.</h2>
-            <p>Start with the live Global Feed, or join free and make the network yours.</p>
+            <h2>Your people. Your possibilities.</h2>
+            <p>A new conversation could be the start of something. Join UFIconnect free.</p>
             <div className="landing-actions">
               <Link to="/register" className="landing-primary-action">Join free</Link>
-              <Link to="/global" className="landing-secondary-action">Open Global Feed</Link>
+              <Link to="/global" className="landing-secondary-action">Explore the feed</Link>
             </div>
           </section>
         </main>
