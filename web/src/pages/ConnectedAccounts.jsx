@@ -402,8 +402,8 @@ function PlatformCard({
     || (p.category === 'publication' ? PUBLICATION_BENEFITS : p.category === 'career' ? CAREER_BENEFITS : []);
 
   return (
-    <div className="card" style={{ marginBottom: 10, padding: '14px 16px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+    <div className="card account-platform-card">
+      <div className="account-platform-card-header">
         {/* Platform icon — the platform's own official mark where one's
             available (see BrandIcon), initials-on-brand-color otherwise. */}
         <div style={{
@@ -424,7 +424,7 @@ function PlatformCard({
 
         {/* Name + description */}
         <div style={{ flex: '1 1 180px', minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             <span style={{ fontWeight: 700, fontSize: '.92rem' }}>{p.name}</span>
             {isConnected && (
               <span style={{
@@ -457,7 +457,7 @@ function PlatformCard({
         </div>
 
         {/* Action buttons */}
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', minWidth: 0, marginLeft: 'auto' }}>
+        <div className="account-platform-card-actions">
           <button onClick={onToggle} className="btn btn-ghost btn-sm" style={{ fontSize: '.72rem', padding: '4px 8px' }}>
             {expanded ? '▲' : '▼'} Details
           </button>

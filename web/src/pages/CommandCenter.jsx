@@ -1006,11 +1006,11 @@ function MemberAccountsSection() {
         const accountOnly = ['instagram', 'tiktok', 'threads'].includes(key);
         const accountType = isBusinessMembership ? 'Career account' : accountOnly ? 'Own posts only' : 'Publisher setup';
         return (
-          <div key={key} className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div key={key} className="card member-account-card" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <span style={{ width: 42, height: 42, borderRadius: 8, background: '#fff', border: '1px solid var(--border)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
               {hasBrandIcon(key) ? <BrandIcon platform={key} size={23} /> : <span style={{ color: platform.color, fontWeight: 800 }}>{platform.name.slice(0, 2)}</span>}
             </span>
-            <div style={{ flex: 1, minWidth: 180 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
                 <strong style={{ fontSize: '.92rem' }}>{platform.name}</strong>
                 <span style={{ fontSize: '.64rem', fontWeight: 750, color: 'var(--primary)', background: 'var(--primary-light)', padding: '2px 6px', borderRadius: 4 }}>{accountType}</span>

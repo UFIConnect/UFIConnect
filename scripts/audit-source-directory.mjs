@@ -13,6 +13,7 @@ const app = await createAppHarness({ connected: true });
 const platforms = {
   reddit: { name: 'Reddit', configured: true }, youtube: { name: 'YouTube', configured: true },
   wired: { name: 'WIRED', configured: false, category: 'publication' },
+  mittr: { name: 'MIT Technology Review', configured: false, category: 'publication' },
   instagram: { name: 'Instagram', configured: true, commandCenterOnly: true },
   linkedin: { name: 'LinkedIn', configured: true, forceComingSoon: true, commandCenterOnly: true },
   indeed: { name: 'Indeed', category: 'career', configured: false },
@@ -83,6 +84,15 @@ try {
     await tools.getByRole('button', { name: 'Retry', exact: true }).click();
     await tools.getByRole('link', { name: 'Open YouTube website' }).waitFor();
     await tools.getByRole('combobox', { name: 'Filter accounts' }).selectOption('all');
+    if (width <= 768) {
+      const row = tools.locator('.home-connected-account-row').filter({ has: page.getByRole('link', { name: 'Open YouTube website' }) });
+      const rowBox = await row.boundingBox();
+      const actionBox = await row.locator('.source-directory-account-actions').boundingBox();
+      const nameBox = await row.locator('.home-connected-account-name').boundingBox();
+      assert.ok(rowBox.height <= 80, 'Mobile account rows remain compact');
+      assert.ok(nameBox.x + nameBox.width <= actionBox.x, 'Account names do not overlap actions');
+      assert.ok(actionBox.x + actionBox.width <= rowBox.x + rowBox.width + 1, 'Account actions stay inside the row');
+    }
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/account-directory-${width}.png`) });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
     await page.goto(server.resolvedUrls.local[0] + 'connected-accounts');
@@ -90,11 +100,13 @@ try {
     assert.equal(await page.getByRole('searchbox', { name: 'Search accounts', exact: true }).count(), 0);
     await page.getByRole('link', { name: 'Open YouTube website' }).waitFor();
     assert.equal(await page.getByRole('link', { name: 'Open Reddit website' }).count(), 0);
+    await page.screenshot({ path: path.join(root, `.cache/audit-ui/accounts-page-${width}.png`) });
     await page.goto(server.resolvedUrls.local[0] + 'command-center?tab=accounts');
     await page.getByRole('combobox', { name: 'Filter accounts' }).selectOption('available');
     assert.equal(await page.getByRole('searchbox', { name: 'Search accounts', exact: true }).count(), 0);
     await page.getByRole('link', { name: 'Open Instagram website' }).waitFor();
     assert.equal(await page.getByRole('link', { name: 'Open YouTube website' }).count(), 0);
+    await page.screenshot({ path: path.join(root, `.cache/audit-ui/member-accounts-${width}.png`) });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
     if (width === 390) {
       app.seedUser(member('business-directory', { plan: 'business' }));
