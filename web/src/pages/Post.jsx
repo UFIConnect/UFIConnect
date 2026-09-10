@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import PostList from '../components/PostList';
 import client from '../api/client';
@@ -30,6 +31,8 @@ export function UfiFeedContent({ embedded = false, initialShop = false }) {
 function UfiPostArea({ embedded, initialShop }) {
   const { profile } = useAuth();
   const { showToast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const composeRequested = searchParams.get('compose') === '1';
   const textareaRef = useRef(null);
   const topicButtonRef = useRef(null);
   const topicPanelRef = useRef(null);
@@ -148,11 +151,21 @@ function UfiPostArea({ embedded, initialShop }) {
     finally { setFeedLoadingMore(false); }
   }
 
-  function openCompose() {
+  const openCompose = useCallback(() => {
     setComposing(true);
     setTopicFilterOpen(false);
     setTimeout(() => textareaRef.current?.focus(), 50);
-  }
+  }, []);
+
+  useEffect(() => {
+    if (!composeRequested) return;
+    openCompose();
+    setSearchParams(current => {
+      const next = new URLSearchParams(current);
+      next.delete('compose');
+      return next;
+    }, { replace: true });
+  }, [composeRequested, openCompose, setSearchParams]);
 
   function toggleDraftTopic(topicId) {
     setDraftTopicIds(current => current.includes(topicId)

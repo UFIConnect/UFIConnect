@@ -30,9 +30,14 @@ try {
   browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined, headless: true });
   for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 768, height: 1024 }, { width: 820, height: 1180 }, { width: 1440, height: 1000 }]) {
     const context = await browser.newContext({ viewport, isMobile: viewport.width <= 768, hasTouch: viewport.width <= 768 });
+    const published = [];
     await context.addInitScript(token => localStorage.setItem('pc_token', token), app.token(memberId));
     const routeApi = async route => {
       const endpoint = new URL(route.request().url()).pathname.replace(/^\/(api|fallback)/, '');
+      if (route.request().method() === 'POST' && /^\/groups\/[^/]+\/posts$/.test(endpoint)) {
+        published.push({ endpoint, body: route.request().postDataJSON() });
+        return route.fulfill({ status: 201, json: { post: { id: 'sidebar-general-post' } } });
+      }
       if (endpoint === '/office/feed') return route.fulfill({ json: { posts: [], hasMore: false, nativeUficonnectIncluded: true } });
       if (/events|stream/.test(endpoint)) return route.abort();
       return route.continue();
@@ -74,11 +79,13 @@ try {
         await waitOpen();
         check(await page.evaluate(() => document.body.style.overflow === 'hidden'), 'Background must not scroll behind the drawer');
         const bounds = await drawer.boundingBox();
+        const post = await drawer.getByRole('link', { name: 'Post', exact: true }).boundingBox();
+        const createGroup = await drawer.getByRole('link', { name: 'Create a group', exact: true }).boundingBox();
         const shop = await drawer.getByRole('link', { name: 'Shop', exact: true }).boundingBox();
         const profile = await drawer.getByRole('link', { name: 'Profile', exact: true }).boundingBox();
         const logout = await drawer.getByRole('button', { name: 'Log out', exact: true }).boundingBox();
         check(Math.abs(bounds.x) < 1 && bounds.width <= viewport.width, 'Drawer must open on the left');
-        check(shop.y < 110, 'Shop belongs at the top');
+        check(post.y < 110 && post.y + post.height <= createGroup.y && createGroup.y + createGroup.height <= shop.y, 'The sidebar must start with Post, Create a group, then Shop');
         check(profile.y > viewport.height * 0.55 && logout.y > profile.y, 'Profile and account actions belong at the bottom');
         check(logout.y + logout.height <= viewport.height, 'Bottom actions must remain on screen');
         check(await drawer.locator('img').evaluate(img => img.complete && img.naturalWidth > 0), 'Saved avatar did not load');
@@ -103,6 +110,39 @@ try {
         await page.waitForURL('**/?feed=ufi&channel=shop');
         await waitClosed();
         check(new URL(page.url()).searchParams.get('channel') === 'shop', 'Shop route is not connected');
+        await opener.click();
+        await waitOpen();
+        await drawer.getByRole('link', { name: 'Post', exact: true }).click();
+        const composer = page.getByRole('form', { name: 'Create UFI post', exact: true });
+        await composer.waitFor();
+        await waitClosed();
+        check(new URL(page.url()).searchParams.get('channel') === null, 'Post must leave Shop and use General');
+        await composer.getByRole('textbox').fill(`General sidebar post at ${viewport.width}px`);
+        await composer.getByRole('button', { name: 'Publish', exact: true }).click();
+        await composer.waitFor({ state: 'hidden' });
+        check(published.length === 1 && published[0].endpoint === '/groups/ufi-general/posts', 'Post must publish to General');
+        check(published[0].body.content === `General sidebar post at ${viewport.width}px`, 'The General post must preserve its content');
+        await opener.click();
+        await waitOpen();
+        await drawer.getByRole('link', { name: 'Post', exact: true }).click();
+        await composer.waitFor();
+        await waitClosed();
+        await composer.getByRole('button', { name: 'Cancel', exact: true }).click();
+        await composer.waitFor({ state: 'hidden' });
+        await opener.click();
+        await waitOpen();
+        await drawer.getByRole('link', { name: 'Create a group', exact: true }).click();
+        await page.waitForURL('**/search?tab=groups&create=1');
+        await page.getByRole('heading', { name: 'Create a group', exact: true }).waitFor();
+        await waitClosed();
+        await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+        await page.getByRole('heading', { name: 'Create a group', exact: true }).waitFor({ state: 'hidden' });
+        await opener.click();
+        await waitOpen();
+        await drawer.getByRole('link', { name: 'Create a group', exact: true }).click();
+        await page.getByRole('heading', { name: 'Create a group', exact: true }).waitFor();
+        await waitClosed();
+        await page.getByRole('button', { name: 'Cancel', exact: true }).click();
         await opener.click();
         await waitOpen();
         await drawer.getByRole('link', { name: 'Roles', exact: true }).click();
