@@ -33,9 +33,31 @@ try {
     await page.goto(server.resolvedUrls.local[0] + 'music');
     await page.getByRole('button', { name: 'Music', exact: true }).waitFor();
     await page.locator('[data-post-id="music-0"]').waitFor();
+    const firstVideo = page.locator('[data-post-id="music-0"] video');
+    const firstSlide = page.locator('[data-post-id="music-0"] .video-feed-slide');
+    await page.waitForFunction(() => {
+      const video = document.querySelector('[data-post-id="music-0"] video');
+      return video && !video.paused && video.currentTime > 0;
+    });
+    await firstSlide.hover();
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(400);
+    assert.equal(await firstVideo.evaluate(video => video.paused), false, 'Music keeps playing after the pointer leaves');
+    await firstSlide.click();
+    assert.equal(await firstVideo.evaluate(video => video.paused), true, 'Music can still be paused manually');
+    await page.mouse.move(0, 0);
+    await firstSlide.hover();
+    assert.equal(await firstVideo.evaluate(video => video.paused), true, 'Hovering does not undo a manual pause');
+    await firstSlide.click();
     const scroll = page.locator('[data-video-feed-scroll]');
     await scroll.evaluate(el => el.scrollTo(0, el.clientHeight));
     await page.waitForFunction(() => document.querySelector('[data-video-feed-scroll]').scrollTop > 0);
+    await page.mouse.move(0, 0);
+    await page.waitForFunction(() => {
+      const first = document.querySelector('[data-post-id="music-0"] video');
+      const next = document.querySelector('[data-post-id="music-1"] video');
+      return first?.paused && next && !next.paused && next.currentTime > 0;
+    });
     await page.waitForTimeout(250);
     await scroll.evaluate(el => el.scrollTo(0, 0));
     await page.waitForTimeout(500);
@@ -48,7 +70,7 @@ try {
     await page.locator('[data-post-id="genre-0"]').waitFor();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/music-${width}.png`) });
-    console.log(`PASS: Music player, filter and scroll refresh at ${width}px`);
+    console.log(`PASS: Music playback without hover, manual pause, filter and scroll refresh at ${width}px`);
     await context.close();
   }
 } finally { await browser?.close(); await server.close(); await app.close(); }

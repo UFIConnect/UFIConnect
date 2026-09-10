@@ -54,11 +54,11 @@ export function useGlobalMuted() {
 }
 
 // A mouse has a precise playback target that touch screens do not. Desktop
-// feeds therefore play the video currently under the pointer (or containing
+// inline feeds therefore play the video under the pointer (or containing
 // keyboard focus), while phones and tablets keep their viewport-driven
 // autoplay behavior. Keeping this as one shared hook prevents YouTube,
 // Vimeo, HLS, and direct-file cards from interpreting pointer input
-// differently.
+// differently. Full-screen Videos and Music use their active slide instead.
 export function usePointerPlaybackGate() {
   const [requiresPointer, setRequiresPointer] = useState(() => (
     typeof window !== 'undefined'
