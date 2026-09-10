@@ -392,6 +392,7 @@ function PreparationLibrary({ watchedIds, onToggleWatched, saving }) {
               playsInline
               preload="metadata"
             >
+              <track kind="captions" src={mediaUrl(activeVideo, 'vtt')} srcLang="en" label="English" />
               Your browser cannot play this video.
             </video>
           ) : (

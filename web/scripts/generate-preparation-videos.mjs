@@ -16,15 +16,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { PREPARATION_VIDEOS } from '../src/data/preparationVideos.js';
+import { PREPARATION_NARRATION } from '../src/data/preparationNarration.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const outputDir = path.resolve(__dirname, '../public/media/preparation');
 const provenanceDir = path.resolve(__dirname, '../../docs/media/preparation-videos');
 const width = 960;
 const height = 540;
-const frameRate = 24;
-const slideSeconds = 5.2;
-const transitionSeconds = 0.45;
+const frameRate = 12;
 const fontStack = 'Segoe UI, Arial, sans-serif';
 
 const colors = {
@@ -52,7 +51,7 @@ function findRecursively(root, filename, depth = 5) {
 }
 
 function executableCandidates(filename) {
-  const candidates = [process.env.FFMPEG_PATH, filename];
+  const candidates = [filename === 'ffmpeg' ? process.env.FFMPEG_PATH : process.env.FFPROBE_PATH, filename];
   if (process.platform === 'win32') {
     candidates.push(findRecursively(
       path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WinGet', 'Packages'),
@@ -218,30 +217,26 @@ async function rasterizeSvg(page, svgFilename, pngFilename) {
   });
 }
 
-function encodeVideo(ffmpeg, video, frames) {
+function encodeVideo(ffmpeg, video, frames, narration) {
   const args = ['-hide_banner', '-loglevel', 'error', '-y'];
-  for (const frame of frames) {
-    args.push('-loop', '1', '-framerate', String(frameRate), '-t', String(slideSeconds), '-i', frame);
+  for (const [index, frame] of frames.entries()) {
+    args.push('-loop', '1', '-framerate', String(frameRate), '-t', String(narration[index].duration), '-i', frame, '-i', narration[index].path);
   }
 
-  const filters = frames.map((_, index) => `[${index}:v]fps=${frameRate},scale=${width}:${height},format=yuv420p,setsar=1[v${index}]`);
-  let current = 'v0';
-  for (let index = 1; index < frames.length; index += 1) {
-    const output = `x${index}`;
-    const offset = index * (slideSeconds - transitionSeconds);
-    filters.push(`[${current}][v${index}]xfade=transition=fade:duration=${transitionSeconds}:offset=${offset.toFixed(2)}[${output}]`);
-    current = output;
-  }
-
-  const duration = (frames.length * slideSeconds) - ((frames.length - 1) * transitionSeconds);
+  const filters = frames.flatMap((_, index) => [
+    `[${index * 2}:v]fps=${frameRate},format=yuv420p,setsar=1,trim=duration=${narration[index].duration},setpts=PTS-STARTPTS[v${index}]`,
+    `[${index * 2 + 1}:a]apad,atrim=duration=${narration[index].duration},asetpts=PTS-STARTPTS[a${index}]`,
+  ]);
+  filters.push(`${frames.map((_, i) => `[v${i}][a${i}]`).join('')}concat=n=${frames.length}:v=1:a=1[video][audio]`);
+  const duration = narration.reduce((total, part) => total + part.duration, 0);
   const output = path.join(outputDir, `${video.slug}.mp4`);
   args.push(
     '-filter_complex', filters.join(';'),
-    '-map', `[${current}]`,
+    '-map', '[video]', '-map', '[audio]',
     '-t', duration.toFixed(2),
-    '-an',
+    '-c:a', 'aac', '-b:a', '96k',
     '-c:v', 'libx264',
-    '-preset', 'medium',
+    '-preset', 'fast', '-threads', '2',
     '-crf', '24',
     '-profile:v', 'main',
     '-level', '3.1',
@@ -262,15 +257,53 @@ function encodeVideo(ffmpeg, video, frames) {
 mkdirSync(outputDir, { recursive: true });
 mkdirSync(provenanceDir, { recursive: true });
 const ffmpeg = resolveExecutable('ffmpeg');
+const ffprobe = resolveExecutable('ffprobe');
 const workingDir = mkdtempSync(path.join(tmpdir(), 'ufi-preparation-'));
 const manifest = [];
-const browser = await chromium.launch({ headless: true });
+const durations = {};
+const browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined, headless: true });
 const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
+
+function timestamp(seconds) {
+  return new Date(Math.round(seconds * 1000)).toISOString().slice(11, 23);
+}
+
+function narrate(video, videoDir) {
+  const texts = [`Welcome to UFI Career Studio. ${video.title}. ${video.summary} We will work through five practical steps, with examples you can adapt to your own experience.`, ...PREPARATION_NARRATION[video.id]];
+  if (texts.length !== video.slides.length + 1) throw new Error(`Incomplete narration for ${video.id}`);
+  const parts = texts.map((text, i) => ({ text, path: path.join(videoDir, `${i}.wav`) }));
+  const file = path.join(videoDir, 'narration.json');
+  writeFileSync(file, JSON.stringify(parts));
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'synthesize-preparation.ps1'), '-ManifestPath', file], { encoding: 'utf8', windowsHide: true });
+  if (result.status !== 0) throw new Error(result.stderr || 'Speech synthesis failed');
+  for (const part of parts) {
+    const probe = spawnSync(ffprobe, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', part.path], { encoding: 'utf8', windowsHide: true });
+    part.speechDuration = Number(probe.stdout.trim());
+    if (probe.status !== 0 || !(part.speechDuration > 0)) throw new Error(`Invalid narration for ${video.id}`);
+    part.duration = Math.ceil((part.speechDuration + 0.8) * frameRate) / frameRate;
+  }
+  let offset = 0;
+  const captions = ['WEBVTT', ''];
+  for (const part of parts) {
+    const words = part.text.split(/\s+/);
+    for (let i = 0; i < words.length; i += 8) {
+      const end = Math.min(i + 8, words.length);
+      captions.push(`${timestamp(offset + part.speechDuration * i / words.length)} --> ${timestamp(offset + part.speechDuration * end / words.length)}`, words.slice(i, end).join(' '), '');
+    }
+    offset += part.duration;
+  }
+  writeFileSync(path.join(outputDir, `${video.slug}.vtt`), captions.join('\n'));
+  const seconds = Math.round(offset);
+  video.duration = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+  durations[video.id] = video.duration;
+  return parts;
+}
 
 try {
   for (const video of PREPARATION_VIDEOS) {
     const videoDir = path.join(workingDir, video.slug);
     mkdirSync(videoDir, { recursive: true });
+    const narration = narrate(video, videoDir);
     const poster = titleFrame(video);
     const titleSvg = path.join(videoDir, '00-title.svg');
     const titlePng = path.join(videoDir, '00-title.png');
@@ -279,7 +312,6 @@ try {
     const posterFile = path.join(outputDir, `${video.slug}.png`);
     copyFileSync(titlePng, posterFile);
     rmSync(path.join(outputDir, `${video.slug}.svg`), { force: true });
-    rmSync(path.join(outputDir, `${video.slug}.vtt`), { force: true });
 
     const frames = [titlePng];
     for (const [index, slide] of video.slides.entries()) {
@@ -291,7 +323,7 @@ try {
       frames.push(pngFilename);
     }
 
-    const videoFile = encodeVideo(ffmpeg, video, frames);
+    const videoFile = encodeVideo(ffmpeg, video, frames, narration);
     manifest.push({
       id: video.id,
       title: video.title,
@@ -304,6 +336,10 @@ try {
       posterSha256: sha256(posterFile),
       hasExternalFootage: false,
       hasExternalAudio: false,
+      hasSynthesizedSpeech: true,
+      voice: 'Microsoft Zira Desktop',
+      duration: video.duration,
+      durationSeconds: narration.reduce((total, part) => total + part.duration, 0),
       hasExternalBrandAssets: false,
     });
     process.stdout.write(`Generated ${path.basename(videoFile)}\n`);
@@ -316,8 +352,8 @@ try {
     studio: 'UFI Career Studio',
     generatedAt: new Date().toISOString(),
     generator: 'web/scripts/generate-preparation-videos.mjs',
-    format: `${width}x${height} H.264 MP4 with PNG posters, silent, burned-in instructional text`,
-    provenance: 'Original scripts and code-rendered visual design. No third-party footage, audio, logos, or thumbnails.',
+    format: `${width}x${height} H.264/AAC MP4 with PNG posters, synthesized English narration, and WebVTT captions`,
+    provenance: 'Original scripts and code-rendered visual design. Narration synthesized locally with Windows System.Speech (Microsoft Zira Desktop). No third-party footage or recorded audio.',
     videos: manifest,
   }, null, 2)}\n`, 'utf8');
 
@@ -326,12 +362,15 @@ try {
     '',
     'These preparation lessons were produced in-house from the original scripts and',
     'code-rendered visual system in web/scripts/generate-preparation-videos.mjs.',
-    'They contain no third-party footage, audio, logos, thumbnails, or embedded media.',
+    'Narration uses Windows System.Speech with Microsoft Zira Desktop. Scripts are original.',
+    'They contain no third-party footage, recorded audio, logos, thumbnails, or embedded media.',
     '',
     'Copyright UFIConnect. All rights reserved.',
     '',
   ].join('\n'), 'utf8');
+  writeFileSync(path.resolve(__dirname, '../src/data/preparationDurations.js'), `export default ${JSON.stringify(durations, null, 2)};\n`);
 } finally {
   await browser.close();
+  if (path.dirname(workingDir) !== path.resolve(tmpdir()) || !path.basename(workingDir).startsWith('ufi-preparation-')) throw new Error('Unexpected temporary media directory');
   rmSync(workingDir, { recursive: true, force: true });
 }

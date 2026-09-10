@@ -315,6 +315,15 @@ const BASE_OFFICE_CONTROLS = Object.freeze([
     requiresConfirmation: true,
   },
   {
+    id: 'storage.clean-unused-posts',
+    category: 'Runtime',
+    label: 'Delete unused cached posts',
+    description: 'Permanently remove a bounded batch of expired or over-cap external cache copies. Preserve accounts, member posts, saved posts, and posts with local comments or likes. Requires a running database.',
+    target: 'api',
+    impact: 'critical',
+    requiresConfirmation: true,
+  },
+  {
     id: 'automation.audit',
     category: 'Automation',
     label: 'Run Autofix audit',
