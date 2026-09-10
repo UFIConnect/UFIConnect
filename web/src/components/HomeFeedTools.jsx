@@ -4,7 +4,6 @@ import { useToast } from '../contexts/ToastContext';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import { CONNECTED_SOCIAL_PLATFORMS, SOURCE_META, withCareerAccountFallback } from './sourceMeta';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
-import { Star } from 'lucide-react';
 import { normalizeSourceFavorites } from './sourceFavorites';
 import { DirectoryControls, AccountSiteLink } from './DirectoryControls';
 import { SOURCE_CATEGORIES, ACCOUNT_STATUSES, sourceSections, filterAccounts, accountStatus } from './sourceDirectory';
@@ -69,37 +68,8 @@ export default function HomeFeedTools({
   const [uncontrolledOpenPanel, setUncontrolledOpenPanel] = useState(null);
   const [disabledSources, setDisabledSources] = useState(new Set());
   const [savingSourceId, setSavingSourceId] = useState(null);
-  const [selectingFavorites, setSelectingFavorites] = useState(false);
-  const [favoriteDraft, setFavoriteDraft] = useState([]);
-  const [savingFavorites, setSavingFavorites] = useState(false);
-  const [favoriteError, setFavoriteError] = useState('');
-  const [sourceQuery, setSourceQuery] = useState('');
   const [sourceCategory, setSourceCategory] = useState('all');
-  const [accountQuery, setAccountQuery] = useState('');
   const [accountFilter, setAccountFilter] = useState('all');
-  const favoriteSettingsKey = JSON.stringify(profile?.roleSettings?.feedSourceFavorites || null);
-  useEffect(() => {
-    setFavoriteDraft(normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites)[favoriteMode]);
-    setSelectingFavorites(false);
-    setFavoriteError('');
-  }, [profile?.id, favoriteMode, favoriteSettingsKey]);
-
-  async function saveFavorites() {
-    if (!profile?.id || savingFavorites) return;
-    setSavingFavorites(true);
-    setFavoriteError('');
-    try {
-      const favorites = normalizeSourceFavorites(profile.roleSettings?.feedSourceFavorites);
-      const { data } = await client.patch('/profile', {
-        roleSettings: { feedSourceFavorites: { ...favorites, [favoriteMode]: favoriteDraft } },
-      });
-      updateProfileLocally(data.profile || data);
-      setSelectingFavorites(false);
-      showToast('Favorites saved', 'success');
-    } catch {
-      setFavoriteError('Favorites could not be saved. Please try again.');
-    } finally { setSavingFavorites(false); }
-  }
   const [accountPlatforms, setAccountPlatforms] = useState(null);
   const [accountConnected, setAccountConnected] = useState({});
   const [accountError, setAccountError] = useState('');
@@ -173,8 +143,8 @@ export default function HomeFeedTools({
   const connectedAccountCount = accountPlatforms === null
     ? profileConnected.length
     : visibleAccountPlatforms.filter(([key]) => accountConnected[key]).length;
-  const sourceGroups = sourceSections(availableSources, normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites)[favoriteMode], sourceQuery, sourceCategory);
-  const filteredAccounts = filterAccounts(visibleAccountPlatforms, accountConnected, accountQuery, accountFilter);
+  const sourceGroups = sourceSections(availableSources, normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites)[favoriteMode], sourceCategory);
+  const filteredAccounts = filterAccounts(visibleAccountPlatforms, accountConnected, accountFilter);
 
   async function persistDisabledSources(next, previous, pendingKey, successMessage) {
     setDisabledSources(next);
@@ -375,30 +345,16 @@ export default function HomeFeedTools({
         open={openPanel === 'sources'}
         onToggle={() => toggle('sources')}
       >
-        <DirectoryControls label="feed sources" query={sourceQuery} onQueryChange={setSourceQuery} filter={sourceCategory} onFilterChange={setSourceCategory}
+        <DirectoryControls label="feed sources" filter={sourceCategory} onFilterChange={setSourceCategory}
           options={[["all", "All categories"], ["favorites", "Favorites"], ...SOURCE_CATEGORIES]} />
-        <button type="button" className="btn btn-ghost btn-sm home-source-select-favorites" aria-pressed={selectingFavorites}
-          disabled={savingFavorites || savingSourceId !== null}
-          onClick={() => {
-            setFavoriteDraft(normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites)[favoriteMode]);
-            setFavoriteError('');
-            setSelectingFavorites(current => !current);
-          }}><Star size={16} /> Select favorites</button>
-        {selectingFavorites && <div className="home-source-favorite-actions">
-          <span>{favoriteDraft.length} selected</span>
-          <button type="button" className="btn btn-ghost btn-sm" disabled={savingFavorites || availableSources.every(source => favoriteDraft.includes(source))} onClick={() => setFavoriteDraft(current => [...new Set([...current, ...availableSources])])}>Select all</button>
-          <button type="button" className="btn btn-ghost btn-sm" disabled={savingFavorites || !favoriteDraft.length} onClick={() => setFavoriteDraft([])}>Clear favorites</button>
-          <button type="button" className="btn btn-primary btn-sm" disabled={savingFavorites} onClick={saveFavorites}>{savingFavorites ? 'Saving...' : 'Save favorites'}</button>
-          {favoriteError && <span role="alert">{favoriteError}</span>}
-        </div>}
-        {!selectingFavorites && <div className="home-feed-source-actions" aria-label="All feed source controls">
+        <div className="home-feed-source-actions" aria-label="All feed source controls">
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAllSources(true)} disabled={savingSourceId !== null || enabledSourceCount === availableSources.length}>
             {savingSourceId === '__all__' ? 'Saving...' : 'Enable all'}
           </button>
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAllSources(false)} disabled={savingSourceId !== null || enabledSourceCount === 0}>
             {savingSourceId === '__all__' ? 'Saving...' : 'Disable all'}
           </button>
-        </div>}
+        </div>
         <div className="home-feed-source-list" aria-label="Feed source controls">
           {sourceGroups.map(section => <div key={section.id} className="source-directory-section">
             <h4 className="source-directory-heading">{section.label}<span>{section.items.length}</span></h4>
@@ -406,13 +362,10 @@ export default function HomeFeedTools({
             const enabled = !disabledSources.has(source);
             const saving = savingSourceId === source;
             return (
-              <div className={`home-feed-source-row${enabled || selectingFavorites ? '' : ' is-off'}`} key={source}>
+              <div className={`home-feed-source-row${enabled ? '' : ' is-off'}`} key={source}>
                 <SourceMark source={source} />
                 <span className="home-feed-source-name">{SOURCE_META[source]?.label || source}</span>
-                {selectingFavorites ? <label className="home-source-favorite-hit"><input type="checkbox" className="home-source-favorite-checkbox"
-                  aria-label={`Favorite ${SOURCE_META[source]?.label || source}`}
-                  checked={favoriteDraft.includes(source)} disabled={savingFavorites}
-                  onChange={() => setFavoriteDraft(current => current.includes(source) ? current.filter(key => key !== source) : [...current, source])} /></label> : <button
+                <button
                   type="button"
                   role="switch"
                   aria-checked={enabled}
@@ -423,7 +376,7 @@ export default function HomeFeedTools({
                 >
                   <span className="home-feed-source-toggle-track" aria-hidden="true"><span /></span>
                   <span>{saving ? 'Saving' : enabled ? 'On' : 'Off'}</span>
-                </button>}
+                </button>
               </div>
             );
           })}
@@ -433,7 +386,7 @@ export default function HomeFeedTools({
       </ToolPanel>}
 
       {showAccounts && <ToolPanel title="Connected accounts" summary={connectedAccountCount ? `${connectedAccountCount} connected` : 'Add your sources'} open={openPanel === 'accounts'} onToggle={() => toggle('accounts')}>
-        <DirectoryControls label="accounts" query={accountQuery} onQueryChange={setAccountQuery} filter={accountFilter} onFilterChange={setAccountFilter}
+        <DirectoryControls label="accounts" filter={accountFilter} onFilterChange={setAccountFilter}
           options={[["all", "All statuses"], ...ACCOUNT_STATUSES]} />
         <div className="home-connected-account-list" aria-label="Connected account controls">
           {accountPlatforms === null && <div className="home-connected-account-loading"><span className="spinner spinner-primary" /></div>}

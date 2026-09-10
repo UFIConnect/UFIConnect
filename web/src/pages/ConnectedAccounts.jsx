@@ -47,7 +47,6 @@ export default function ConnectedAccounts() {
   const [flash,     setFlash]           = useState(null);
   const [connecting, setConnecting]     = useState(null);
   const [disconnecting, setDisconnecting] = useState(null);
-  const [accountQuery, setAccountQuery] = useState('');
   const [accountFilter, setAccountFilter] = useState('all');
   // null = modal closed; '' or partial text = open, mid-typing. Bluesky is
   // the one platform with no fixed authorization URL (AT Protocol is
@@ -150,8 +149,8 @@ export default function ConnectedAccounts() {
   // then wondering why it only appears in their private workspace.
   const careerPlatforms = platforms.filter(([, p]) => p.category === 'career');
   const generalPlatforms = platforms.filter(([, p]) => p.category !== 'career' && !p.commandCenterOnly);
-  const displayedGeneral = filterAccounts(generalPlatforms, connected, accountQuery, accountFilter);
-  const displayedCareer = filterAccounts(careerPlatforms, connected, accountQuery, accountFilter);
+  const displayedGeneral = filterAccounts(generalPlatforms, connected, accountFilter);
+  const displayedCareer = filterAccounts(careerPlatforms, connected, accountFilter);
   const connectedCareerCount = careerPlatforms.filter(([key]) => connected[key]).length;
   const connectedList   = displayedGeneral.filter(([k]) => connected[k]);
   const availableList   = displayedGeneral.filter(([k, p]) => !connected[k] && p.configured && !p.forceComingSoon);
@@ -248,7 +247,7 @@ export default function ConnectedAccounts() {
           )}
 
           <div className="account-directory-page">
-            <DirectoryControls label="accounts" query={accountQuery} onQueryChange={setAccountQuery} filter={accountFilter} onFilterChange={setAccountFilter}
+            <DirectoryControls label="accounts" filter={accountFilter} onFilterChange={setAccountFilter}
               options={[["all", "All statuses"], ...ACCOUNT_STATUSES]} />
           </div>
           {!(isBusinessMembership ? displayedCareer : displayedGeneral).length && <p className="source-directory-empty" role="status">No matching accounts</p>}

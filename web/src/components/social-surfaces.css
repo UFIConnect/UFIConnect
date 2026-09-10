@@ -44,13 +44,6 @@
 .search-result-avatar img[hidden] { display: none; }
 .search-profile-link { font-weight: 650; color: var(--text); text-decoration: none; }
 .search-profile-link:hover { text-decoration: underline; }
-.home-source-select-favorites { width: 100%; justify-content: center; margin-bottom: 10px; min-height: 40px; }
-.home-source-select-favorites[aria-pressed="true"] { background: var(--hover); color: var(--primary); }
-.home-source-favorite-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; font-size: .8rem; }
-.home-source-favorite-actions > span:first-child { width: 100%; color: var(--muted); }
-.home-source-favorite-actions [role="alert"] { width: 100%; color: var(--danger); }
-.home-source-favorite-hit { width: 44px; height: 44px; display: grid; place-items: center; cursor: pointer; flex: 0 0 44px; }
-.home-source-favorite-checkbox { width: 22px; height: 22px; margin: 0; accent-color: var(--primary); cursor: pointer; }
 @media (max-width: 1023px) {
   .mobile-header-popup { border-radius: 16px; box-shadow: 0 12px 38px #00000024; }
   .mobile-header-popup-heading { padding: 16px; }

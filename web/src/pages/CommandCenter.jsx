@@ -905,7 +905,6 @@ function MemberAccountsSection() {
   const [error, setError] = useState('');
   const [connecting, setConnecting] = useState(null);
   const [disconnecting, setDisconnecting] = useState(null);
-  const [accountQuery, setAccountQuery] = useState('');
   const [accountFilter, setAccountFilter] = useState('all');
   const isBusinessMembership = profile?.plan === 'business';
 
@@ -980,7 +979,7 @@ function MemberAccountsSection() {
     : platforms.filter(([key, platform]) => (
       platform.commandCenterOnly || COMMAND_CENTER_ACCOUNT_PLATFORMS.includes(key)
     ));
-  const displayedAccounts = filterAccounts(memberPlatforms, connected, accountQuery, accountFilter);
+  const displayedAccounts = filterAccounts(memberPlatforms, connected, accountFilter);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -994,7 +993,7 @@ function MemberAccountsSection() {
       </div>
       {error && <SectionError message={error} onRetry={loadAccounts} />}
       <div className="account-directory-page">
-        <DirectoryControls label="accounts" query={accountQuery} onQueryChange={setAccountQuery} filter={accountFilter} onFilterChange={setAccountFilter}
+        <DirectoryControls label="accounts" filter={accountFilter} onFilterChange={setAccountFilter}
           options={[["all", "All statuses"], ...ACCOUNT_STATUSES]} />
       </div>
       {memberPlatforms.length > 0 && !displayedAccounts.length && <div className="source-directory-empty" role="status">No matching accounts</div>}
