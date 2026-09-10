@@ -376,6 +376,7 @@ export default function HomeFeedTools({
           }}><Star size={16} /> Select favorites</button>
         {selectingFavorites && <div className="home-source-favorite-actions">
           <span>{favoriteDraft.length} selected</span>
+          <button type="button" className="btn btn-ghost btn-sm" disabled={savingFavorites || availableSources.every(source => favoriteDraft.includes(source))} onClick={() => setFavoriteDraft(current => [...new Set([...current, ...availableSources])])}>Select all</button>
           <button type="button" className="btn btn-ghost btn-sm" disabled={savingFavorites || !favoriteDraft.length} onClick={() => setFavoriteDraft([])}>Clear favorites</button>
           <button type="button" className="btn btn-primary btn-sm" disabled={savingFavorites} onClick={saveFavorites}>{savingFavorites ? 'Saving...' : 'Save favorites'}</button>
           {favoriteError && <span role="alert">{favoriteError}</span>}

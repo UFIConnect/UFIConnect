@@ -41,6 +41,11 @@ try {
     };
     await page.goto(server.resolvedUrls.local[0] + '?feed=feed&all=1');
     let panel = await open();
+    await panel.getByRole('button', { name: 'Select all', exact: true }).click();
+    assert.equal(await panel.getByRole('checkbox', { checked: true }).count(), await panel.getByRole('checkbox').count());
+    await panel.getByRole('button', { name: 'Clear favorites', exact: true }).click();
+    assert.equal(await panel.getByRole('checkbox', { checked: true }).count(), 0);
+    await panel.getByRole('checkbox', { name: 'Favorite Reddit', exact: true }).check();
     await panel.getByRole('checkbox', { name: 'Favorite YouTube', exact: true }).check();
     failSave = true;
     await panel.getByRole('button', { name: 'Save favorites', exact: true }).click();
@@ -49,6 +54,8 @@ try {
     failSave = false;
     await panel.getByRole('button', { name: 'Save favorites', exact: true }).click();
     await panel.getByRole('switch').first().waitFor();
+    assert.equal(await panel.getByRole('button', { name: 'Enable all', exact: true }).isVisible(), true);
+    assert.equal(await panel.getByRole('button', { name: 'Disable all', exact: true }).isVisible(), true);
     let profile = (await app.request('/profile', { userId: id })).data;
     assert.deepEqual(profile.roleSettings.feedSourceFavorites.feed, ['reddit', 'youtube']);
     assert.deepEqual(profile.roleSettings.feedSourceFavorites.following, ['uficonnect']);
