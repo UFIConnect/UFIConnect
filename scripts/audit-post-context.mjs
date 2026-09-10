@@ -44,8 +44,8 @@ try {
       await form.getByRole('button', { name: 'Publish', exact: true }).click();
       assert.equal((await response).status(), 201);
       assert.ok(app.queries.some(q => q.sql.includes('INSERT INTO community_posts') && q.params[1] === groupId && q.params[4] === content));
+      await page.getByText(content, { exact: true }).waitFor();
       if (area === 'Shop') {
-        await page.getByText(content, { exact: true }).waitFor();
         assert.equal(await page.getByText('A useful technology update from our joined community.', { exact: true }).count(), 0);
       }
       await page.getByRole('button', { name: 'Post', exact: true }).click();
@@ -64,7 +64,7 @@ try {
     await page.evaluate(() => { history.pushState({}, '', '/?feed=ufi'); window.dispatchEvent(new PopStateEvent('popstate')); });
     await page.getByText(`Technology community update for ${width}.`, { exact: true }).waitFor();
     assert.equal(await page.getByText(`A thoughtful Shop update from our community at ${width}.`, { exact: true }).count(), 0);
-    assert.equal(await page.getByText(`A thoughtful UFI update from our community at ${width}.`, { exact: true }).count(), 0);
+    await page.getByText(`A thoughtful UFI update from our community at ${width}.`, { exact: true }).waitFor();
     assert.deepEqual(errors, []);
     console.log(`PASS: UFI, Shop and group posting contexts at ${width}px`);
     await context.close();

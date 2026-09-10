@@ -27246,10 +27246,13 @@ app.get('/posts', authenticate, async (req, res) => {
     const requestedGroupIds = hasGroupFilter
       ? [...new Set(req.query.groupIds.split(',').map(id => id.trim()).filter(Boolean))]
       : null;
-    const member = req.query.scope === 'joined' ? await getUser(req.user.id) : null;
+    const memberScoped = req.query.scope === 'joined' || req.query.scope === 'ufi';
+    const includeGeneral = req.query.scope === 'ufi';
+    const member = memberScoped ? await getUser(req.user.id) : null;
     const joinedGroupIds = member ? new Set(member.joinedGroups || []) : new Set();
-    const scopeGroupIds = req.query.scope === 'joined'
-      ? groups.filter(group => !group.isExternal && group.id !== GENERAL_UFI_GROUP_ID && joinedGroupIds.has(group.id)
+    const scopeGroupIds = memberScoped
+      ? groups.filter(group => !group.isExternal
+        && (group.id === GENERAL_UFI_GROUP_ID ? includeGeneral : joinedGroupIds.has(group.id))
         && (!hasGroupFilter || requestedGroupIds.includes(group.id))).map(group => group.id)
       : requestedGroupIds;
     const visibleGroupIds = scopeGroupIds?.filter(id => {
@@ -27258,7 +27261,7 @@ app.get('/posts', authenticate, async (req, res) => {
     }) || null;
     const { posts: communityPosts, hasMore } = await getCommunityPosts({
       viewerId: req.user.id,
-      groupIds: hasGroupFilter || req.query.scope === 'joined' ? visibleGroupIds : null,
+      groupIds: hasGroupFilter || memberScoped ? visibleGroupIds : null,
       limit,
       offset,
     });
