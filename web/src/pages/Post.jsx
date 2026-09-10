@@ -23,17 +23,11 @@ const PROMPTS = [
   "What's one thing you wish someone had told you earlier?",
 ];
 
-const COMMUNITY_ICONS = {
-  'ufi-general':  'GEN',
-  'ufi-tech':     'TECH',
-  'ufi-business': 'BIZ',
-  'ufi-creative': 'CRT',
-  'ufi-career':   'JOB',
-  'ufi-wellness': 'WELL',
-  'ufi-shop':     'SHOP',
-};
-
 export function UfiFeedContent({ embedded = false, initialShop = false }) {
+  return <UfiPostArea key={initialShop ? 'shop' : 'ufi'} embedded={embedded} initialShop={initialShop} />;
+}
+
+function UfiPostArea({ embedded, initialShop }) {
   const { profile } = useAuth();
   const { showToast } = useToast();
   const textareaRef = useRef(null);
@@ -41,7 +35,7 @@ export function UfiFeedContent({ embedded = false, initialShop = false }) {
   const topicPanelRef = useRef(null);
 
   const [groups,   setGroups]   = useState([]);
-  const [groupId,  setGroupId]  = useState(initialShop ? 'ufi-shop' : 'ufi-general');
+  const groupId = initialShop ? 'ufi-shop' : 'ufi-general';
   const [selectedTopicIds, setSelectedTopicIds] = useState(initialShop ? ['ufi-shop'] : []);
   const [draftTopicIds, setDraftTopicIds] = useState([]);
   const [topicFilterOpen, setTopicFilterOpen] = useState(false);
@@ -74,31 +68,9 @@ export function UfiFeedContent({ embedded = false, initialShop = false }) {
       .then(({ data }) => {
         const internal = data.groups || [];
         setGroups(internal);
-        if (initialShop && internal.some(group => group.id === 'ufi-shop')) {
-          setGroupId('ufi-shop');
-        } else if (internal.length > 0) {
-          const gen = internal.find(g => g.id === 'ufi-general');
-          setGroupId(gen ? gen.id : internal[0].id);
-        }
       })
       .catch(() => {});
   }, [initialShop]);
-
-  useEffect(() => {
-    if (initialShop) {
-      setSelectedTopicIds(['ufi-shop']);
-      setGroupId('ufi-shop');
-      return;
-    }
-    setSelectedTopicIds(current => (
-      current.length === 1 && current[0] === 'ufi-shop' ? [] : current
-    ));
-    setGroupId(current => (
-      current === 'ufi-shop'
-        ? (groups.find(group => group.id === 'ufi-general')?.id || groups[0]?.id || 'ufi-general')
-        : current
-    ));
-  }, [groups, initialShop]);
 
   useEffect(() => {
     if (!topicFilterOpen) return undefined;
@@ -128,7 +100,7 @@ export function UfiFeedContent({ embedded = false, initialShop = false }) {
     try {
       const params = { limit: FEED_PAGE_SIZE };
       if (selectedTopicKey) params.groupIds = selectedTopicKey;
-      const { data } = await client.get('/posts', { params: { ...params, scope: 'joined' } });
+      const { data } = await client.get('/posts', { params: { ...params, scope: initialShop ? undefined : 'joined' } });
       setFeed(orderNewestFeedCohorts(data.posts || []));
       setFeedHasMore(!!data.hasMore);
     } catch {
@@ -136,7 +108,7 @@ export function UfiFeedContent({ embedded = false, initialShop = false }) {
     } finally {
       setFeedLoading(false);
     }
-  }, [selectedTopicKey]);
+  }, [selectedTopicKey, initialShop]);
 
   useEffect(() => {
     loadRecentFeed();
@@ -165,7 +137,7 @@ export function UfiFeedContent({ embedded = false, initialShop = false }) {
     try {
       const params = { limit: FEED_PAGE_SIZE, offset: feed.length };
       if (selectedTopicKey) params.groupIds = selectedTopicKey;
-      const { data } = await client.get('/posts', { params: { ...params, scope: 'joined' } });
+      const { data } = await client.get('/posts', { params: { ...params, scope: initialShop ? undefined : 'joined' } });
       const incoming = data.posts || [];
       setFeed(prev => {
         const knownIds = new Set(prev.map(p => p.id));
@@ -243,7 +215,6 @@ export function UfiFeedContent({ embedded = false, initialShop = false }) {
   async function handleSubmit(e) {
     e.preventDefault();
     if (!content.trim() && !uploadedMedia) { setError('Write something or attach a photo/video before posting.'); return; }
-    if (!groupId) { setError('Select a community to post in.'); return; }
     if (uploading) { setError('Your photo/video is still uploading — one moment.'); return; }
     setError('');
     setLoading(true);
@@ -290,7 +261,7 @@ export function UfiFeedContent({ embedded = false, initialShop = false }) {
         <button type="button" className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action ufi-compose-button" onClick={openCompose}>
           Post
         </button>
-        <div className="feed-topic-filter ufi-topic-filter">
+        {!initialShop && <div className="feed-topic-filter ufi-topic-filter">
           <button
             ref={topicButtonRef}
             type="button"
@@ -353,12 +324,12 @@ export function UfiFeedContent({ embedded = false, initialShop = false }) {
               )}
             </div>
           )}
-        </div>
+        </div>}
       </div>
 
       {composing && (
         <div className="card ufi-compose-card" style={{ maxWidth: embedded ? 'none' : 640 }}>
-          <form onSubmit={handleSubmit}>
+          <form onSubmit={handleSubmit} aria-label={initialShop ? 'Create Shop post' : 'Create UFI post'}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
               <div className="avatar avatar-md" style={{ flexShrink: 0, marginTop: 4 }}>
                 {initials(profile?.name)}
@@ -407,32 +378,7 @@ export function UfiFeedContent({ embedded = false, initialShop = false }) {
             )}
             {mediaError && <div className="auth-error" style={{ marginBottom: 10 }}>{mediaError}</div>}
 
-            {/* Community pills */}
-            {groups.length > 0 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
-                <span style={{ fontSize: '.73rem', color: 'var(--muted)', alignSelf: 'center', marginRight: 2 }}>Post to:</span>
-                {groups.map(g => {
-                  const sel = groupId === g.id;
-                  return (
-                    <button
-                      key={g.id}
-                      type="button"
-                      onClick={() => setGroupId(g.id)}
-                      style={{
-                        padding: '4px 12px', borderRadius: 'var(--radius-sm)', fontSize: '.78rem', fontWeight: sel ? 700 : 500,
-                        border: `1.5px solid ${sel ? 'var(--primary)' : 'var(--border)'}`,
-                        background: sel ? 'var(--primary)' : 'var(--surface)',
-                        color: sel ? '#fff' : 'var(--text)', cursor: 'pointer',
-                      }}
-                    >
-                      {COMMUNITY_ICONS[g.id] || 'GR'} {g.name}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <PhotoPickerButton
                   onFileSelected={handleFileSelect}
@@ -442,11 +388,11 @@ export function UfiFeedContent({ embedded = false, initialShop = false }) {
                   label="Photo/Video"
                 />
                 <EmojiPicker textareaRef={textareaRef} value={content} onChange={setContent} />
-                <span style={{ fontSize: '.72rem', color: content.length > 1800 ? '#DC2626' : 'var(--muted)' }}>
+                <span style={{ fontSize: '.72rem', whiteSpace: 'nowrap', color: content.length > 1800 ? '#DC2626' : 'var(--muted)' }}>
                   {content.length} / 2000
                 </span>
               </div>
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
                 <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setComposing(false); setContent(''); setError(''); resetMedia(); }}>
                   Cancel
                 </button>
