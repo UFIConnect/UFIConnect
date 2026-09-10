@@ -128,7 +128,7 @@ export function UfiFeedContent({ embedded = false, initialShop = false }) {
     try {
       const params = { limit: FEED_PAGE_SIZE };
       if (selectedTopicKey) params.groupIds = selectedTopicKey;
-      const { data } = await client.get('/posts', { params });
+      const { data } = await client.get('/posts', { params: { ...params, scope: 'joined' } });
       setFeed(orderNewestFeedCohorts(data.posts || []));
       setFeedHasMore(!!data.hasMore);
     } catch {
@@ -165,7 +165,7 @@ export function UfiFeedContent({ embedded = false, initialShop = false }) {
     try {
       const params = { limit: FEED_PAGE_SIZE, offset: feed.length };
       if (selectedTopicKey) params.groupIds = selectedTopicKey;
-      const { data } = await client.get('/posts', { params });
+      const { data } = await client.get('/posts', { params: { ...params, scope: 'joined' } });
       const incoming = data.posts || [];
       setFeed(prev => {
         const knownIds = new Set(prev.map(p => p.id));

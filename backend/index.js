@@ -16031,7 +16031,7 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
         const nativeResult = await getCommunityPosts({
           viewerId: userId,
           groupId: GENERAL_UFI_GROUP_ID,
-          audienceAuthorIds: [userId, ...followingIds],
+          audienceAuthorIds: [...followingIds],
           limit: Math.min(CONNECTED_ACCOUNT_HISTORY_MAX_POSTS, 1000),
           offset: 0,
         });
@@ -16410,8 +16410,8 @@ async function getCommunityPosts({
     ? [...new Set(audienceGroupIds.filter(Boolean))]
     : null;
   if (scopedGroupIds && scopedGroupIds.length === 0) return { posts: [], hasMore: false };
-  if (scopedAudienceAuthorIds && scopedAudienceGroupIds
-      && scopedAudienceAuthorIds.length === 0 && scopedAudienceGroupIds.length === 0) {
+  if ((scopedAudienceAuthorIds || scopedAudienceGroupIds)
+      && !scopedAudienceAuthorIds?.length && !scopedAudienceGroupIds?.length) {
     return { posts: [], hasMore: false };
   }
   const scopedGroupIdSet = scopedGroupIds ? new Set(scopedGroupIds) : null;
@@ -22013,7 +22013,7 @@ async function handleFeedRequest(req, res) {
     const poolMode = publicGroupsRequested ? 'public-groups' : 'groups';
     const scopedGroupModels = publicGroupsRequested
       ? groups.filter(group => !group.isPrivate)
-      : groups.filter(group => !group.isExternal && joined.has(group.id));
+      : groups.filter(group => group.id !== GENERAL_UFI_GROUP_ID && joined.has(group.id));
     const nativeGroupIds = scopedGroupModels.filter(group => !group.isExternal).map(group => group.id);
     const externalGroupIds = new Set(scopedGroupModels.filter(group => group.isExternal).map(group => group.id));
     const connectedSources = publicGroupsRequested ? [] : [...new Set(Object.entries(user?.socialTokens || {})
@@ -22033,7 +22033,7 @@ async function handleFeedRequest(req, res) {
       connectedSources.length
         ? getFollowingFeedPosts(req.user.id, connectedSources, { bust: req.query.bust === '1', surface: null })
         : Promise.resolve({ posts: [], sourceErrors: {} }),
-      publicGroupsRequested && externalGroupIds.size
+      externalGroupIds.size
         ? getPublicGroupPostsFromDB([...externalGroupIds], { limit: externalLimit, sort: groupSortMode })
         : Promise.resolve({ posts: [], hasMore: false }),
     ]);
@@ -22053,7 +22053,7 @@ async function handleFeedRequest(req, res) {
     const annotateGroup = (rawPost) => {
       const post = normalizeFeedPost(rawPost);
       const group = groupById.get(post.groupId || post.group?.id);
-      if (publicGroupsRequested && !group) return null;
+      if (!group) return null;
       return {
         ...post,
         groupId: group?.id || post.groupId || post.group?.id || null,
@@ -27221,13 +27221,19 @@ app.get('/posts', authenticate, async (req, res) => {
     const requestedGroupIds = hasGroupFilter
       ? [...new Set(req.query.groupIds.split(',').map(id => id.trim()).filter(Boolean))]
       : null;
-    const visibleGroupIds = requestedGroupIds?.filter(id => {
+    const member = req.query.scope === 'joined' ? await getUser(req.user.id) : null;
+    const joinedGroupIds = member ? new Set(member.joinedGroups || []) : new Set();
+    const scopeGroupIds = req.query.scope === 'joined'
+      ? groups.filter(group => !group.isExternal && group.id !== GENERAL_UFI_GROUP_ID && joinedGroupIds.has(group.id)
+        && (!hasGroupFilter || requestedGroupIds.includes(group.id))).map(group => group.id)
+      : requestedGroupIds;
+    const visibleGroupIds = scopeGroupIds?.filter(id => {
       const group = groups.find(candidate => candidate.id === id);
       return Boolean(group && !group.isExternal && canSeeGroup(group, req.user.id));
     }) || null;
     const { posts: communityPosts, hasMore } = await getCommunityPosts({
       viewerId: req.user.id,
-      groupIds: hasGroupFilter ? visibleGroupIds : null,
+      groupIds: hasGroupFilter || req.query.scope === 'joined' ? visibleGroupIds : null,
       limit,
       offset,
     });

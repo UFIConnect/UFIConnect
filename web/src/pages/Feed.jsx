@@ -262,22 +262,16 @@ async function getFollowingNativeCompatibility(viewer, bust = false) {
   const cached = followingNativeCompatCache.get(viewer.id);
   if (!bust && cached?.expiresAt > Date.now()) return cached.posts;
 
-  const [postsResponse, groupsResponse, followingResponse] = await Promise.all([
+  const [postsResponse, followingResponse] = await Promise.all([
     client.get('/posts?limit=100&offset=0'),
-    client.get('/groups'),
     client.get(`/users/${encodeURIComponent(viewer.id)}/following`),
   ]);
-  const joinedIds = new Set(viewer.joinedGroups || []);
-  const visibleGroupIds = new Set((groupsResponse.data?.groups || []).map(group => group.id));
   const followedIds = new Set((followingResponse.data?.users || []).map(user => user.id));
   const nativePosts = (postsResponse.data?.posts || []).filter((post) => {
     if ((post.source || 'uficonnect') !== 'uficonnect') return false;
-    const isOwnPost = post.authorId === viewer.id || post.author?.id === viewer.id;
     const isFollowedAuthor = followedIds.has(post.authorId || post.author?.id);
     const postGroupId = post.groupId || post.group?.id;
-    const isJoinedGroup = postGroupId && joinedIds.has(postGroupId);
-    const canSeePostGroup = !postGroupId || visibleGroupIds.has(postGroupId);
-    return (isOwnPost || isFollowedAuthor || isJoinedGroup) && (isOwnPost || canSeePostGroup);
+    return isFollowedAuthor && postGroupId === 'ufi-general';
   });
   const posts = sortPostsForView(nativePosts);
   followingNativeCompatCache.set(viewer.id, {
@@ -335,14 +329,14 @@ async function loadGroupsFeedCompatibility(params) {
     client.get(`/office/feed?mode=following&limit=250&sort=${encodeURIComponent(sort)}&passive=1`),
   ]);
   const joinedIds = new Set(profileResponse.data?.joinedGroups || []);
-  const joinedGroups = (groupsResponse.data?.groups || []).filter(group => joinedIds.has(group.id));
+  const joinedGroups = (groupsResponse.data?.groups || []).filter(group => group.id !== 'ufi-general' && joinedIds.has(group.id));
   const nativeGroups = joinedGroups.filter(group => !group.isExternal);
   const nativeResults = await Promise.allSettled(nativeGroups.map(group =>
     client.get(`/groups/${encodeURIComponent(group.id)}/posts?limit=100&offset=0`)
   ));
   const nativePosts = nativeResults.flatMap(result => result.status === 'fulfilled' ? result.value.data?.posts || [] : []);
   const connectedPosts = (connectedResponse.data?.posts || []).filter(post =>
-    (post.source || 'uficonnect') !== 'uficonnect' || joinedIds.has(post.groupId || post.group?.id)
+    (post.groupId || post.group?.id) !== 'ufi-general' && joinedIds.has(post.groupId || post.group?.id)
   );
   const groupById = new Map(joinedGroups.map(group => [group.id, group]));
   const candidates = mergeFeedPosts([...nativePosts, ...connectedPosts], sort).map(post => {
