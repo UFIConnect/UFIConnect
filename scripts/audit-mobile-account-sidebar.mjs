@@ -119,6 +119,7 @@ try {
         await drawer.getByRole('link', { name: 'Posts', exact: true }).click();
         await page.waitForURL('**/profile?tab=saved&section=posts');
         await waitClosed();
+        await savedTabs.getByRole('tab', { name: /^Posts/, selected: true }).waitFor();
         check(await savedTabs.getByRole('tab', { name: /^Posts/ }).getAttribute('aria-selected') === 'true', 'Posts must open saved posts');
         await page.goBack();
         await page.waitForURL('**/profile?tab=saved&section=jobs');
