@@ -63,6 +63,8 @@ async function createAppHarness({ env = {}, connected = false, query, modules = 
     globalThis.audit = {
       app, users, groups, posts, connections, blocks, follows,
       pickOnboardingGroups, fullProfile, provisionAuth0User,
+      normalizeFeedPost, dbRowToFeedPost, mapSharedJobPost,
+      getFollowingFeedPosts, getCommunityPosts,
       seedUser(user) { users.push(user); },
     };
   `, context, { filename: entry, timeout: 10000, importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER });

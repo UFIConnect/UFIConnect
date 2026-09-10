@@ -605,6 +605,8 @@ function parseTimestampMs(value) {
   return Number.isFinite(ms) && ms > 0 ? ms : null;
 }
 
+const { JOB_SOURCES, jobPostedDate } = require('./job-dates');
+
 function normalizeTimestamp(value, fallback = Date.now()) {
   const fallbackMs = parseTimestampMs(fallback) || Date.now();
   const parsed = parseTimestampMs(value);
@@ -4883,7 +4885,7 @@ function rssPost(item, sourceId, sourceLabel, groupId, groupName, category, topi
     topic,
     author:      { id: `${sourceId}_author`, name: item.author || sourceLabel, title: sourceLabel, organization: sourceLabel },
     likes: [], likesCount: 0, commentsCount: 0,
-    createdAt:   normalizeTimestamp(item.pubDate),
+    createdAt:   JOB_SOURCES.has(sourceId) ? jobPostedDate(item.pubDate) : normalizeTimestamp(item.pubDate),
     isExternal:  true,
     // A real embedded video wins over a static image when both exist on the
     // same item (rare, but the video is strictly the richer of the two) —
@@ -4939,7 +4941,7 @@ async function fetchIndeedJobs(keyword) {
       topic:       keyword,
       author:      { id: 'indeed_jobs', name: j.company_name || 'Company', title: 'Employer', organization: j.company_name },
       likes: [], likesCount: 0, commentsCount: 0,
-      createdAt:   normalizeTimestamp(j.publication_date),
+      createdAt:   jobPostedDate(j.publication_date),
       isExternal:  true,
       mediaUrl:    j.company_logo_url || null,
       mediaType:   j.company_logo_url ? 'image' : null,
@@ -5694,7 +5696,7 @@ async function fetchRemoteOKJobs(keyword) {
         topic:       keyword,
         author:      { id: 'remoteok_jobs', name: j.company || 'Company', title: 'Employer', organization: j.company },
         likes: [], likesCount: 0, commentsCount: 0,
-        createdAt:   normalizeTimestamp(j.date || j.epoch * 1000),
+        createdAt:   jobPostedDate(j.date || j.epoch),
         isExternal:  true,
         mediaUrl:    j.logo || j.company_logo || null,
         mediaType:   (j.logo || j.company_logo) ? 'image' : null,
@@ -5766,7 +5768,7 @@ async function fetchUSAJobsByKeyword(keyword) {
           topic:       keyword,
           author:      { id: 'usajobs_jobs', name: d.OrganizationName || 'U.S. Government', title: 'Federal Employer', organization: d.OrganizationName },
           likes: [], likesCount: 0, commentsCount: 0,
-          createdAt:   normalizeTimestamp(d.PublicationStartDate),
+          createdAt:   jobPostedDate(d.PublicationStartDate),
           isExternal:  true,
           location,
           group:       { id: 'ext_usajobs', name: 'USAJobs', category: 'Opportunities', externalUrl: 'https://www.usajobs.gov' },
@@ -6908,7 +6910,9 @@ function normalizeFeedPost(p, fallback = Date.now()) {
   if (!p) return p;
   return {
     ...p,
-    createdAt:     normalizeTimestamp(p.createdAt || p.time || p.posted, fallback),
+    createdAt:     JOB_SOURCES.has(p.source)
+      ? jobPostedDate(p.createdAt || p.time || p.posted)
+      : normalizeTimestamp(p.createdAt || p.time || p.posted, fallback),
     likesCount:    normalizeCount(p.likesCount ?? p.likes),
     commentsCount: normalizeCount(p.commentsCount ?? p.comments),
     videoDurationSeconds: normalizeVideoDurationSeconds(
@@ -16027,7 +16031,7 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
         const nativeResult = await getCommunityPosts({
           viewerId: userId,
           groupId: GENERAL_UFI_GROUP_ID,
-          audienceAuthorIds: [userId, ...followingIds],
+          audienceAuthorIds: [...followingIds],
           limit: Math.min(CONNECTED_ACCOUNT_HISTORY_MAX_POSTS, 1000),
           offset: 0,
         });
@@ -16406,8 +16410,8 @@ async function getCommunityPosts({
     ? [...new Set(audienceGroupIds.filter(Boolean))]
     : null;
   if (scopedGroupIds && scopedGroupIds.length === 0) return { posts: [], hasMore: false };
-  if (scopedAudienceAuthorIds && scopedAudienceGroupIds
-      && scopedAudienceAuthorIds.length === 0 && scopedAudienceGroupIds.length === 0) {
+  if ((scopedAudienceAuthorIds || scopedAudienceGroupIds)
+      && !scopedAudienceAuthorIds?.length && !scopedAudienceGroupIds?.length) {
     return { posts: [], hasMore: false };
   }
   const scopedGroupIdSet = scopedGroupIds ? new Set(scopedGroupIds) : null;
@@ -19034,7 +19038,9 @@ function dbRowToFeedPost(r) {
     topic:       r.topic,
     likesCount:  normalizeCount(r.likes_count),
     commentsCount: normalizeCount(r.comments_count),
-    createdAt:   normalizeTimestamp(r.post_created_at, r.fetched_at || Date.now()),
+    createdAt:   JOB_SOURCES.has(r.source)
+      ? jobPostedDate(r.post_created_at)
+      : normalizeTimestamp(r.post_created_at, r.fetched_at || Date.now()),
     author:      { name: r.author_name },
     isExternal:  true,
   };
@@ -22007,7 +22013,7 @@ async function handleFeedRequest(req, res) {
     const poolMode = publicGroupsRequested ? 'public-groups' : 'groups';
     const scopedGroupModels = publicGroupsRequested
       ? groups.filter(group => !group.isPrivate)
-      : groups.filter(group => !group.isExternal && joined.has(group.id));
+      : groups.filter(group => group.id !== GENERAL_UFI_GROUP_ID && joined.has(group.id));
     const nativeGroupIds = scopedGroupModels.filter(group => !group.isExternal).map(group => group.id);
     const externalGroupIds = new Set(scopedGroupModels.filter(group => group.isExternal).map(group => group.id));
     const connectedSources = publicGroupsRequested ? [] : [...new Set(Object.entries(user?.socialTokens || {})
@@ -22027,7 +22033,7 @@ async function handleFeedRequest(req, res) {
       connectedSources.length
         ? getFollowingFeedPosts(req.user.id, connectedSources, { bust: req.query.bust === '1', surface: null })
         : Promise.resolve({ posts: [], sourceErrors: {} }),
-      publicGroupsRequested && externalGroupIds.size
+      externalGroupIds.size
         ? getPublicGroupPostsFromDB([...externalGroupIds], { limit: externalLimit, sort: groupSortMode })
         : Promise.resolve({ posts: [], hasMore: false }),
     ]);
@@ -22047,7 +22053,7 @@ async function handleFeedRequest(req, res) {
     const annotateGroup = (rawPost) => {
       const post = normalizeFeedPost(rawPost);
       const group = groupById.get(post.groupId || post.group?.id);
-      if (publicGroupsRequested && !group) return null;
+      if (!group) return null;
       return {
         ...post,
         groupId: group?.id || post.groupId || post.group?.id || null,
@@ -27215,13 +27221,19 @@ app.get('/posts', authenticate, async (req, res) => {
     const requestedGroupIds = hasGroupFilter
       ? [...new Set(req.query.groupIds.split(',').map(id => id.trim()).filter(Boolean))]
       : null;
-    const visibleGroupIds = requestedGroupIds?.filter(id => {
+    const member = req.query.scope === 'joined' ? await getUser(req.user.id) : null;
+    const joinedGroupIds = member ? new Set(member.joinedGroups || []) : new Set();
+    const scopeGroupIds = req.query.scope === 'joined'
+      ? groups.filter(group => !group.isExternal && group.id !== GENERAL_UFI_GROUP_ID && joinedGroupIds.has(group.id)
+        && (!hasGroupFilter || requestedGroupIds.includes(group.id))).map(group => group.id)
+      : requestedGroupIds;
+    const visibleGroupIds = scopeGroupIds?.filter(id => {
       const group = groups.find(candidate => candidate.id === id);
       return Boolean(group && !group.isExternal && canSeeGroup(group, req.user.id));
     }) || null;
     const { posts: communityPosts, hasMore } = await getCommunityPosts({
       viewerId: req.user.id,
-      groupIds: hasGroupFilter ? visibleGroupIds : null,
+      groupIds: hasGroupFilter || req.query.scope === 'joined' ? visibleGroupIds : null,
       limit,
       offset,
     });
@@ -28914,7 +28926,7 @@ async function fetchRemotiveByCategory(category) {
         content:     truncateWithEllipsis(stripAndDecodeHTML(j.description || ''), POST_CONTENT_MAX_CHARS),
         author:      { name: j.company_name || 'Company' },
         likesCount: 0, commentsCount: 0,
-        createdAt:   normalizeTimestamp(j.publication_date),
+        createdAt:   jobPostedDate(j.publication_date),
         isExternal:  true,
         mediaUrl:    j.company_logo || null,
         mediaType:   j.company_logo ? 'image' : null,
@@ -28970,7 +28982,7 @@ async function fetchMuseByCategoryLevel(category, level) {
         content:     truncateWithEllipsis(stripAndDecodeHTML(j.contents || ''), POST_CONTENT_MAX_CHARS),
         author:      { name: j.company?.name || 'Company' },
         likesCount: 0, commentsCount: 0,
-        createdAt:   normalizeTimestamp(j.publication_date),
+        createdAt:   jobPostedDate(j.publication_date),
         isExternal:  true,
         mediaUrl:    null,
         mediaType:   null,
@@ -29098,7 +29110,7 @@ function mapSharedJobPost(p, label) {
     tags:      [],
     source:    label,
     sourceUrl: p.sourceUrl,
-    posted:    p.createdAt || new Date().toISOString(),
+    posted:    jobPostedDate(p.createdAt),
     remote:    label !== 'USAJobs',
     isLive:    true,
     logo:      p.mediaUrl || null,
