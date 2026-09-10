@@ -20,6 +20,7 @@ const multer = require('multer');
 const PDFDocument = require('pdfkit');
 const v8 = require('v8');
 const db        = require('./db');
+const { initializePostPipeline, createPostPipelineTracker, createPostPipelineReader, pipelineFilters } = require('./post-pipeline');
 const filestore  = require('./filestore');
 const { HISTORY_SCHEMA, createGeneratedContentStore, publicHistoryItem } = require('./generated-content');
 const { createGeneratedMediaStorage } = require('./generated-media');
@@ -70,6 +71,8 @@ const generatedMedia = createGeneratedMediaStorage({ env: process.env });
 // ever unset on a service is "don't fetch," not "silently double-fetch."
 const SERVICE_ROLE = process.env.SERVICE_ROLE === 'pipeline' ? 'pipeline' : 'api';
 const IS_PIPELINE_ROLE = SERVICE_ROLE === 'pipeline';
+const postPipelineTracker = createPostPipelineTracker(db, { role: SERVICE_ROLE, schedule: setTimeout });
+const postPipelineReader = createPostPipelineReader(db);
 
 // Declared here, not next to the rest of the autofix/job-board code further
 // down, because both are read synchronously as a setInterval() argument in
@@ -7083,10 +7086,10 @@ function addAndBroadcast(incoming, { includeAccepted = false } = {}) {
     const src = p?.source || 'unknown';
     const bucket = filterAgentState.bySource[src] || (filterAgentState.bySource[src] = { input: 0, output: 0, droppedInvalid: 0, droppedDuplicate: 0, droppedScreened: 0 });
     bucket.input++;
-    if (!p?.id || isFallbackFeedPost(p)) { bucket.droppedInvalid++; droppedInvalid++; continue; }
+    if (!p?.id || isFallbackFeedPost(p)) { postPipelineTracker.record(p, 'rejected', 'Invalid or fallback post'); bucket.droppedInvalid++; droppedInvalid++; continue; }
     const screened = screenFeedPost(p);
-    if (!screened.allowed) { bucket.droppedScreened++; droppedScreened++; continue; }
-    if (seenPostIds.has(screened.post.id) || acceptedIds.has(screened.post.id)) { bucket.droppedDuplicate++; droppedDuplicate++; continue; }
+    if (!screened.allowed) { postPipelineTracker.record(p, 'rejected', screened.reason); bucket.droppedScreened++; droppedScreened++; continue; }
+    if (seenPostIds.has(screened.post.id) || acceptedIds.has(screened.post.id)) { postPipelineTracker.record(p, 'duplicate', 'Previously accepted post ID'); bucket.droppedDuplicate++; droppedDuplicate++; continue; }
     acceptedIds.add(screened.post.id);
     bucket.output++;
     passed.push(screened.post);
@@ -7130,7 +7133,7 @@ function addAndBroadcast(incoming, { includeAccepted = false } = {}) {
   // by the transfer job); api role keeps writing feed_posts_cache directly —
   // relevant for the Deploy A overlap window and any api-role code path not
   // yet gated (see SERVICE_ROLE), so a save never lands somewhere unexpected.
-  if (db.isConnected()) queueFeedPersistence(fresh, IS_PIPELINE_ROLE ? 'feed_posts_staging' : 'feed_posts_cache');
+  queueFeedPersistence(fresh, IS_PIPELINE_ROLE ? 'feed_posts_staging' : 'feed_posts_cache');
   return includeAccepted ? { count: fresh.length, posts: fresh } : fresh.length;
 }
 
@@ -7153,11 +7156,15 @@ function queueFeedPersistence(posts, targetTable) {
     ingestPersistenceQueues.set(targetTable, state);
   }
   for (const post of posts) {
-    if (post?.id) state.pending.set(post.id, post);
+    if (post?.id) {
+      state.pending.set(post.id, post);
+      postPipelineTracker.record(post, 'queued', `Screening passed; persistence queued for ${targetTable}`);
+    }
   }
   while (state.pending.size > INGEST_PERSIST_MAX_PENDING) {
     const oldestId = state.pending.keys().next().value;
     if (!oldestId) break;
+    postPipelineTracker.record(state.pending.get(oldestId), 'dropped', 'Persistence queue capacity exceeded');
     state.pending.delete(oldestId);
     state.dropped += 1;
   }
@@ -7179,13 +7186,16 @@ async function flushFeedPersistenceQueue(targetTable) {
   for (const post of batch) state.pending.delete(post.id);
   let retryDelay = INGEST_PERSIST_FLUSH_MS;
   try {
+    if (!db.isConnected()) throw new Error('Database unavailable');
     const saved = await savePostsToDBFast(batch, targetTable, db, { skipTrim: false });
     recordFeedWriteOutcome(targetTable, batch.length, saved, null);
+    for (const post of batch) postPipelineTracker.record(post, targetTable === 'feed_posts_staging' ? 'staging' : 'live', 'Persistence completed');
   } catch (error) {
     // Preserve newer copies queued while this batch was in flight. Only put
     // an older failed post back when no newer copy of that id has arrived.
     for (const post of batch) {
       if (!state.pending.has(post.id)) state.pending.set(post.id, post);
+      postPipelineTracker.record(post, 'retrying', 'Persistence failed; retained in retry queue');
     }
     recordFeedWriteOutcome(targetTable, batch.length, 0, error?.message || String(error));
     retryDelay = INGEST_PERSIST_RETRY_MS;
@@ -8035,10 +8045,12 @@ function pushToEqualizer(sourceId, posts) {
   let buffered = 0;
   for (const post of posts) {
     if (!post?.id || isFallbackFeedPost(post) || seenPostIds.has(post.id) || equalizerQueuedPostIds.has(post.id)) {
+      postPipelineTracker.record(post, !post?.id || isFallbackFeedPost(post) ? 'rejected' : 'duplicate', 'Equalizer intake: invalid, fallback or already queued post');
       equalizerState.totalQueueDuplicates += 1;
       continue;
     }
     buffer.push(post);
+    postPipelineTracker.record(post, 'queued', 'Source fetched; waiting in equalizer before screening');
     equalizerQueuedPostIds.add(post.id);
     buffered += 1;
   }
@@ -8051,7 +8063,10 @@ function dropEqualizerPosts(sourceId, count) {
   const buffer = equalizerBuffer.get(sourceId);
   if (!buffer?.length || count <= 0) return 0;
   const dropped = buffer.splice(0, Math.min(count, buffer.length));
-  for (const post of dropped) equalizerQueuedPostIds.delete(post?.id);
+  for (const post of dropped) {
+    equalizerQueuedPostIds.delete(post?.id);
+    postPipelineTracker.record(post, 'dropped', 'Equalizer backlog capacity exceeded');
+  }
   if (!buffer.length) equalizerBuffer.delete(sourceId);
   if (dropped.length) {
     equalizerState.totalBackpressureDropped += dropped.length;
@@ -17463,6 +17478,7 @@ async function migrateDB() {
     await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS archive_reason TEXT`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpa_archived_idx ON feed_posts_archive(archived_at)`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpa_reason_archived_idx ON feed_posts_archive(archive_reason, archived_at DESC)`);
+    await initializePostPipeline(db);
 
     // Website optimizer snapshots - public-domain checks retained for office/HQ history
     await db.query(`
@@ -25604,6 +25620,33 @@ function getAgentPostCount(id, cache) {
 
 // --- Office API endpoints -----------------------------------------------------
 
+app.get('/office/post-pipeline', requireOfficeToken, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  try { pipelineFilters(req.query); } catch (error) { return res.status(400).json({ error: error.message }); }
+  if (!db.isConnected()) return res.status(503).json({ error: 'Post pipeline database unavailable' });
+  try {
+    res.json({ ...await postPipelineReader.list(req.query), tracker: postPipelineTracker.status(), serviceRole: SERVICE_ROLE });
+  } catch (error) {
+    console.warn('[post pipeline] list failed:', error.message);
+    res.status(503).json({ error: 'Post pipeline could not be loaded. Please retry.' });
+  }
+});
+
+app.get('/office/post-pipeline/detail', requireOfficeToken, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  const id = String(req.query.id || '');
+  if (!id || id.length > 1000) return res.status(400).json({ error: 'A valid post ID is required' });
+  if (!db.isConnected()) return res.status(503).json({ error: 'Post pipeline database unavailable' });
+  try {
+    const detail = await postPipelineReader.detail(id);
+    if (!detail) return res.status(404).json({ error: 'Post no longer retained' });
+    res.json(detail);
+  } catch (error) {
+    console.warn('[post pipeline] detail failed:', error.message);
+    res.status(503).json({ error: 'Post history could not be loaded. Please retry.' });
+  }
+});
+
 app.get('/office/status', requireOfficeToken, (req, res) => {
   // Ingestion and DB loading screen posts before they enter this cache. Build
   // the source/topic indexes once per status request; the old implementation
@@ -25696,6 +25739,7 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
   const startingCount = sourceHealthArr.filter(s => s.status === 'starting').length;
 
   res.json({
+    postPipeline: postPipelineTracker.status(),
     server: {
       uptime:      Date.now() - SERVER_START,
       version:     require('./package.json').version,
@@ -26319,6 +26363,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
       stagingTransferState.currentBatch = batch + 1;
       const result = await db.withClient(async (client) => {
         await client.query('BEGIN');
+        let attemptedRows = [];
         try {
           const { rows } = await client.query(
             `WITH picked AS (
@@ -26334,6 +26379,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
              ORDER BY s.fetched_at ASC, s.id ASC`,
             [STAGING_TRANSFER_BATCH_SIZE]
           );
+          attemptedRows = rows;
           if (!rows.length) {
             await client.query('COMMIT');
             return { rows: [], approvedPosts: [], saved: 0, deleted: 0, screenedOut: 0 };
@@ -26342,8 +26388,10 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
           // That catches anything written by an older pipeline deployment and
           // makes the visible-transfer count honest: filtered rows are
           // drained from staging, but never reported as live posts.
+          const rejectedPosts = [];
           const approvedPosts = rows.flatMap(row => {
             const screened = screenFeedPost(dbRowToFeedPost(row));
+            if (!screened.allowed) rejectedPosts.push({ post: dbRowToFeedPost(row), reason: screened.reason });
             return screened.allowed ? [screened.post] : [];
           });
           const screenedOut = rows.length - approvedPosts.length;
@@ -26355,14 +26403,17 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
             [rows.map(r => r.id)]
           );
           await client.query('COMMIT');
-          return { rows, approvedPosts, saved, deleted: deleted.rowCount || 0, screenedOut };
+          return { rows, approvedPosts, rejectedPosts, saved, deleted: deleted.rowCount || 0, screenedOut };
         } catch (e) {
           await client.query('ROLLBACK').catch(() => {});
+          for (const row of attemptedRows) postPipelineTracker.record(row, 'retrying', 'Transfer rolled back; staging retained for retry');
           throw e;
         }
       });
       stagingTransferState.lastRun = new Date().toISOString();
       if (!result.rows.length) { stagingTransferState.lastCount = 0; break; }
+      for (const post of result.approvedPosts) postPipelineTracker.record(post, 'live', 'Transfer committed; removed from staging');
+      for (const { post, reason: rejection } of result.rejectedPosts) postPipelineTracker.record(post, 'rejected', `Transfer screening: ${rejection}`);
       const count = result.saved;
       const batchSources = summarizeRowsBySource(result.approvedPosts);
       addSourceCounts(sourceCounts, batchSources);

@@ -2,7 +2,7 @@
 
 const RELATED_TERM_GROUPS = [
   ['job', 'jobs', 'career', 'careers', 'hiring', 'hire', 'employment', 'opportunity', 'opportunities', 'role', 'roles'],
-  ['developer', 'developers', 'development', 'engineer', 'engineers', 'engineering', 'programmer', 'programmers', 'programming', 'coder', 'coding', 'software'],
+  ['developer', 'developers', 'development', 'engineer', 'engineers', 'engineering', 'programmer', 'programmers', 'programming', 'coder', 'coding'],
   ['design', 'designer', 'designers', 'ui', 'ux', 'creative'],
   ['travel', 'trip', 'trips', 'vacation', 'vacations', 'tourism', 'destination', 'destinations'],
   ['restaurant', 'restaurants', 'dining', 'food', 'eatery', 'eateries'],
@@ -17,6 +17,7 @@ const RELATED_TERM_GROUPS = [
 ];
 
 const RELATED_BY_TERM = new Map();
+const QUERY_STOP_WORDS = new Set('a an and are as at be by find for from how i in is it me near of on or our the their to was we what when where which who with you your'.split(' '));
 for (const group of RELATED_TERM_GROUPS) {
   for (const term of group) {
     const related = RELATED_BY_TERM.get(term) || new Set();
@@ -32,7 +33,7 @@ function splitSearchWords(value, limit = 12) {
 }
 
 function expandSearchWords(value, limit = 40) {
-  const requested = splitSearchWords(value);
+  const requested = searchTermGroups(value).map(group => group[0]);
   const expanded = new Set(requested);
   for (const word of requested) {
     for (const related of RELATED_BY_TERM.get(word) || []) expanded.add(related);
@@ -40,42 +41,46 @@ function expandSearchWords(value, limit = 40) {
   return [...expanded].slice(0, limit);
 }
 
+function searchTermGroups(value, { preserveStopWords = false } = {}) {
+  const words = splitSearchWords(value, 100).filter(word => preserveStopWords || !QUERY_STOP_WORDS.has(word)).slice(0, 12);
+  return words.map(word => [...new Set([word, ...(RELATED_BY_TERM.get(word) || [])])]);
+}
+
+function matchesTerm(words, term) {
+  return words.some(word => term.length < 3 ? word === term : word.startsWith(term));
+}
+
 function databaseSearchTerms(value) {
-  const terms = expandSearchWords(value);
-  const lexemes = [...new Set(terms.flatMap(term => (
-    term.match(/[\p{L}\p{N}]+/gu) || []
-  )))].filter(term => term.length > 1);
+  const groups = searchTermGroups(value);
+  const terms = [...new Set(groups.flat())];
+  const lexemes = group => [...new Set(group.flatMap(term => term.match(/[\p{L}\p{N}]+/gu) || []))];
   return {
     terms,
-    webQuery: lexemes.map(term => `"${term}"`).join(' OR '),
-    prefixQuery: lexemes.map(term => `${term}:*`).join(' | '),
+    webQuery: groups.map(group => `"${group[0]}"`).join(' '),
+    prefixQuery: groups.map(group => `(${lexemes(group).map(term => term.length < 3 ? term : `${term}:*`).join(' | ')})`).join(' & '),
   };
 }
 
 function matchesRelatedSearch(text, value) {
   const query = String(value || '').normalize('NFKC').toLowerCase().trim();
   if (!query) return true;
-  const terms = expandSearchWords(query);
-  if (!terms.length) return false;
+  const groups = searchTermGroups(query);
+  if (!groups.length) return false;
   const haystack = String(text || '').normalize('NFKC').toLowerCase();
   const words = splitSearchWords(haystack, 5000);
-  return terms.some((term) => {
-    if (term.length < 3) return words.includes(term);
-    return words.some(word => word.startsWith(term));
-  });
+  return groups.every(group => group.some(term => matchesTerm(words, term)));
 }
 
 function relatedSearchScore(text, value) {
   const query = String(value || '').normalize('NFKC').toLowerCase().trim();
   if (!query) return 0;
   const haystack = String(text || '').normalize('NFKC').toLowerCase();
-  const requested = splitSearchWords(query);
+  const requested = searchTermGroups(query).map(group => group[0]);
   const expanded = expandSearchWords(query);
+  const words = splitSearchWords(haystack, 5000);
   let score = haystack.includes(query) ? 100 : 0;
-  score += requested.filter(term => term.length < 3
-    ? splitSearchWords(haystack, 5000).includes(term)
-    : haystack.includes(term)).length * 20;
-  score += expanded.filter(term => !requested.includes(term) && haystack.includes(term)).length * 5;
+  score += requested.filter(term => matchesTerm(words, term)).length * 20;
+  score += expanded.filter(term => !requested.includes(term) && matchesTerm(words, term)).length * 5;
   return score;
 }
 
@@ -84,5 +89,6 @@ module.exports = {
   expandSearchWords,
   matchesRelatedSearch,
   relatedSearchScore,
+  searchTermGroups,
   splitSearchWords,
 };

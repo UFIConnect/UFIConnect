@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Controls from './Controls';
+import PostPipeline from './PostPipeline';
+import { createOfficeClient, connectOfficeStreams, mergeOfficeLog } from './office-runtime.mjs';
 
 const API = import.meta.env.VITE_API_URL || '';
 // uficonnect-pipeline's own URL (see render.yaml) — the service that
@@ -10,7 +12,6 @@ const API = import.meta.env.VITE_API_URL || '';
 // every dual-source fetch/merge below degrades to "both requests hit the
 // same place," not a broken one.
 const PIPELINE_API = import.meta.env.VITE_PIPELINE_API_URL || API;
-const OFFICE_TOKEN_KEY = 'ufi_office_token';
 // transferStagedPosts drains in batches of up to 100k/minute now (20 x 5000-
 // row batches per tick) — steady-state pending should stay well under this.
 // Past it, the sidebar flags it rather than requiring a click into Pipeline
@@ -21,32 +22,14 @@ const STAGING_BACKLOG_WARN = 20000;
 // ─── office auth ────────────────────────────────────────────────────────────
 // Office requires a configured server token and a matching x-office-token
 // header (or ?token= for EventSource, which cannot set custom headers).
-function getOfficeToken() {
-  try { return localStorage.getItem(OFFICE_TOKEN_KEY) || ''; } catch { return ''; }
-}
-function setOfficeToken(token) {
-  try {
-    if (token) localStorage.setItem(OFFICE_TOKEN_KEY, token);
-    else localStorage.removeItem(OFFICE_TOKEN_KEY);
-  } catch {}
-}
-async function officeFetch(url, opts = {}) {
-  const token = getOfficeToken();
-  const headers = { ...(opts.headers || {}) };
-  if (token) headers['x-office-token'] = token;
-  const res = await fetch(url, { ...opts, headers });
-  if (res.status === 401) {
-    const entered = window.prompt('Office access token required (set in Render as OFFICE_TOKEN):');
-    if (entered) {
-      setOfficeToken(entered);
-      const retryHeaders = { ...(opts.headers || {}), 'x-office-token': entered };
-      return fetch(url, { ...opts, headers: retryHeaders });
-    }
-  }
-  return res;
-}
+const officeClient = createOfficeClient({
+  storage: { getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) },
+  fetcher: (...args) => fetch(...args), prompt: message => window.prompt(message),
+  onTokenChange: () => window.dispatchEvent(new Event('office-token-changed')),
+});
+const officeFetch = officeClient.request;
 function officeStreamUrl(path, base = API) {
-  const token = getOfficeToken();
+  const token = officeClient.getToken();
   return token ? `${base}${path}?token=${encodeURIComponent(token)}` : `${base}${path}`;
 }
 
@@ -3022,7 +3005,7 @@ function mergeAgentMaps(base, incoming) {
 }
 
 export default function App() {
-  const officeViews = ['overview', 'controls', 'sources', 'pipeline', 'topics', 'agents', 'feed', 'analytics', 'deploy', 'autofix', 'versions'];
+  const officeViews = ['overview', 'controls', 'sources', 'pipeline', 'post-pipeline', 'topics', 'agents', 'feed', 'analytics', 'deploy', 'autofix', 'versions'];
   const [view, setView] = useState(() => {
     const requested = typeof window !== 'undefined' ? window.location.hash.slice(1) : '';
     return officeViews.includes(requested) ? requested : 'overview';
@@ -3039,14 +3022,14 @@ export default function App() {
   const [triggering, setTriggering] = useState({});
   const [versions, setVersions] = useState(null);
   const [connected, setConnected] = useState(false);
-  const sseRef = useRef(null);
-  const pipelineSseRef = useRef(null);
+  const [actionError, setActionError] = useState('');
 
   const fetchStatus = useCallback(async () => {
     try {
       const r = await officeFetch(`${API}/office/status`);
-      if (r.ok) setStatus(await r.json());
-    } catch {}
+      if (!r.ok) throw new Error('Status unavailable');
+      setStatus(await r.json());
+    } catch { setStatus(null); }
   }, []);
 
   // Always a real fetch, even when PIPELINE_API === API (the fallback case,
@@ -3058,8 +3041,9 @@ export default function App() {
   const fetchPipelineStatus = useCallback(async () => {
     try {
       const r = await officeFetch(`${PIPELINE_API}/office/status`);
-      if (r.ok) setPipelineStatus(await r.json());
-    } catch {}
+      if (!r.ok) throw new Error('Status unavailable');
+      setPipelineStatus(await r.json());
+    } catch { setPipelineStatus(null); }
   }, []);
 
   const fetchAgents = useCallback(async () => {
@@ -3102,57 +3086,30 @@ export default function App() {
   // OverviewView's activity feed and Agents view show one unified picture
   // instead of a dashboard split in two.
   useEffect(() => {
-    const timeouts = [];
-    const sources = [officeStreamUrl('/office/agents/stream')];
-    if (PIPELINE_API !== API) sources.push(officeStreamUrl('/office/agents/stream', PIPELINE_API));
-
-    function connectOne(url, ref) {
-      const es = new EventSource(url);
-      ref.current = es;
-      es.onopen = () => setConnected(true);
-      es.onerror = () => {
-        es.close();
-        timeouts.push(setTimeout(() => connectOne(url, ref), 4000));
-      };
-      es.onmessage = (evt) => {
-        const data = JSON.parse(evt.data);
-        if (data.backlog) {
-          // ts is an ISO string (see logAgentAction) — Date-parsed here for
-          // the same reason as mergeAgentMaps above, not compared as raw
-          // strings/numbers.
-          setLog(prev => [...data.backlog, ...prev].sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime()).slice(0, 300));
-          setAgents(prev => {
-            const next = { ...prev };
-            for (const entry of data.backlog) {
-              if (!next[entry.agentId]?.lastAction || entry.ts > next[entry.agentId].lastAction.ts) {
-                next[entry.agentId] = { ...next[entry.agentId], lastAction: entry };
-              }
-            }
-            return next;
-          });
-        } else {
-          setLog(prev => [data, ...prev].slice(0, 300));
-          setAgents(prev => {
-            if (!prev[data.agentId]) return prev;
-            return {
-              ...prev,
-              [data.agentId]: {
-                ...prev[data.agentId],
-                lastAction: data,
-                logs: [data, ...(prev[data.agentId].logs || [])].slice(0, 15),
-              },
+    return connectOfficeStreams({
+      bases: [...new Set([API, PIPELINE_API])],
+      urlFor: base => officeStreamUrl('/office/agents/stream', base),
+      EventSourceClass: EventSource,
+      onConnection: setConnected,
+      subscribeToken: listener => {
+        window.addEventListener('office-token-changed', listener);
+        return () => window.removeEventListener('office-token-changed', listener);
+      },
+      onData: entries => {
+        setLog(prev => mergeOfficeLog(prev, entries));
+        setAgents(prev => {
+          const next = { ...prev };
+          for (const entry of entries) {
+            const agent = next[entry.agentId] || {};
+            next[entry.agentId] = { ...agent,
+              lastAction: !agent.lastAction || Date.parse(entry.ts) > Date.parse(agent.lastAction.ts) ? entry : agent.lastAction,
+              logs: mergeOfficeLog(agent.logs || [], [entry]).slice(0, 15),
             };
-          });
-        }
-      };
-    }
-    connectOne(sources[0], sseRef);
-    if (sources[1]) connectOne(sources[1], pipelineSseRef);
-    return () => {
-      timeouts.forEach(clearTimeout);
-      sseRef.current?.close();
-      pipelineSseRef.current?.close();
-    };
+          }
+          return next;
+        });
+      },
+    });
   }, []);
 
   // Fires at both services and lets whichever one actually owns this id's
@@ -3162,20 +3119,25 @@ export default function App() {
   // AGENT_DEFS' own categorization here). The other side 404s harmlessly,
   // same as an unknown id already did before this split existed.
   const triggerAgent = async (id) => {
+    setActionError('');
     setTriggering(prev => ({ ...prev, [id]: true }));
     const targets = PIPELINE_API === API ? [API] : [API, PIPELINE_API];
     const results = await Promise.all(targets.map(base =>
       officeFetch(`${base}/office/agents/${id}/trigger`, { method: 'POST' }).catch(() => null)
     ));
     if (!results.some(r => r?.ok)) {
-      console.error(`Trigger failed for "${id}": no service recognized this agent id`);
+      setActionError(`Could not run ${id}. No service accepted the request.`);
     }
     setTimeout(() => setTriggering(prev => ({ ...prev, [id]: false })), 2000);
   };
 
   const triggerDeploy = async (service) => {
+    setActionError('');
     setDeploying(prev => ({ ...prev, [service]: true }));
-    try { await officeFetch(`${API}/office/deploy/${service}`, { method: 'POST' }); } catch {}
+    try {
+      const response = await officeFetch(`${API}/office/deploy/${service}`, { method: 'POST' });
+      if (!response.ok) throw new Error(`Deploy request failed (${response.status}).`);
+    } catch (error) { setActionError(error.message); }
     setTimeout(() => setDeploying(prev => ({ ...prev, [service]: false })), 5000);
   };
 
@@ -3184,6 +3146,7 @@ export default function App() {
     { id: 'controls', label: 'Controls' },
     { id: 'sources',  label: 'Live Sources' },
     { id: 'pipeline', label: 'Pipeline' },
+    { id: 'post-pipeline', label: 'Post Pipeline' },
     { id: 'topics',   label: 'Topics' },
     { id: 'agents',   label: 'Agents' },
     { id: 'feed',     label: 'Feed Manager' },
@@ -3362,6 +3325,8 @@ export default function App() {
 
         {/* ── Main content ── */}
         <main style={mainStyle}>
+          {actionError && <div role="alert" style={{ color: '#fca5a5', paddingBottom: 16 }}>{actionError}</div>}
+          {view === 'post-pipeline' && <PostPipeline apiBase={API} request={officeFetch} pipelineStatus={pipelineStatus} />}
           {view === 'overview' && <OverviewView status={status} pipelineStatus={pipelineStatus} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'controls' && <Controls apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} />}
           {/* Source health (workerHealth/agentSourceCache) only has real

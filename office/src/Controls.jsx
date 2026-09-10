@@ -130,7 +130,7 @@ export default function Controls({ apiBase = '', pipelineBase = '', request = fe
   const [history, setHistory] = useState([]);
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('All controls');
-  const [status, setStatus] = useState(apiBase ? 'Loading controls' : 'Controls unavailable');
+  const [status, setStatus] = useState('Loading controls');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState(null);
   const [runningId, setRunningId] = useState('');
@@ -162,7 +162,6 @@ export default function Controls({ apiBase = '', pipelineBase = '', request = fe
   }, []);
 
   const refresh = useCallback(async () => {
-    if (!apiBase) return;
     setStatus('Refreshing controls');
     try {
       const payload = await responsePayload(await request(`${apiBase}/office/controls`));
@@ -281,7 +280,7 @@ export default function Controls({ apiBase = '', pipelineBase = '', request = fe
       const requestedBases = control.target === 'both'
         ? [apiBase, pipelineBase || apiBase]
         : [control.target === 'pipeline' ? (pipelineBase || apiBase) : apiBase];
-      const bases = [...new Set(requestedBases.filter(Boolean))];
+      const bases = [...new Set(requestedBases)];
       const results = [];
       for (const base of bases) {
         const payload = await responsePayload(await request(`${base}/office/controls/${encodeURIComponent(control.id)}/execute`, {
