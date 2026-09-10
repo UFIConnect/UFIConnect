@@ -222,7 +222,6 @@ export default function Sources() {
   const [data,      setData]      = useState(null);
   const [loading,   setLoading]   = useState(true);
   const [error,     setError]     = useState(null);
-  const [search,    setSearch]    = useState('');
   const [expanded,  setExpanded]  = useState(null);
   const [disabled,  setDisabled]  = useState(new Set());
   const [savingSources, setSavingSources] = useState(false);
@@ -293,14 +292,6 @@ export default function Sources() {
     const fromMeta = Object.keys(SOURCE_META);
     return [...new Set([...fromApi, ...fromMeta])];
   }, [data]);
-
-  const q = search.trim().toLowerCase();
-  const matchesSearch = (id) => {
-    if (!q) return true;
-    const meta = SOURCE_META[id] || {};
-    return (meta.label || id).toLowerCase().includes(q) ||
-           (meta.desc || '').toLowerCase().includes(q);
-  };
 
   const enabledCount  = allSourceIds.filter(id => !disabled.has(id)).length;
   const liveCount     = (data?.sources || []).filter(s => {
@@ -380,23 +371,8 @@ export default function Sources() {
             </div>
           </div>
 
-          {/* Search */}
-          <div style={{ position: 'relative', marginBottom: 20 }}>
-            <span style={{
-              position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)',
-              fontSize: '.85rem', opacity: 0.35, pointerEvents: 'none',
-            }}>Q</span>
-            <input
-              className="form-input"
-              placeholder="Search sources…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              style={{ paddingLeft: 34, borderRadius: 20, fontSize: '.85rem' }}
-            />
-          </div>
-
           {/* Disabled banner */}
-          {disabled.size > 0 && !q && (
+          {disabled.size > 0 && (
             <div style={{
               padding: '10px 14px', borderRadius: 8, marginBottom: 16,
               background: '#FFF7ED', border: '1px solid #FED7AA',
@@ -417,8 +393,6 @@ export default function Sources() {
 
           {/* Categories */}
           {CATEGORIES.map(cat => {
-            const visibleIds = cat.sources.filter(id => matchesSearch(id));
-            if (visibleIds.length === 0) return null;
             return (
               <div key={cat.id} style={{ marginBottom: 28 }}>
                 <div style={{
@@ -428,7 +402,7 @@ export default function Sources() {
                   {cat.label}
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {visibleIds.map(id => (
+                  {cat.sources.map(id => (
                     <SourceRow
                       key={id}
                       sourceId={id}
@@ -448,7 +422,7 @@ export default function Sources() {
           {/* Sources not in any category (from API but not in CATEGORIES) */}
           {(() => {
             const categorised = new Set(CATEGORIES.flatMap(c => c.sources));
-            const uncategorised = allSourceIds.filter(id => !categorised.has(id) && matchesSearch(id));
+            const uncategorised = allSourceIds.filter(id => !categorised.has(id));
             if (!uncategorised.length) return null;
             return (
               <div style={{ marginBottom: 28 }}>
@@ -475,12 +449,6 @@ export default function Sources() {
               </div>
             );
           })()}
-
-          {q && allSourceIds.filter(matchesSearch).length === 0 && (
-            <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)', fontSize: '.9rem' }}>
-              No sources match "{search}".
-            </div>
-          )}
 
           {data?.refreshedAt && (
             <div style={{ textAlign: 'center', padding: '16px 0 4px', fontSize: '.7rem', color: 'var(--muted)' }}>
