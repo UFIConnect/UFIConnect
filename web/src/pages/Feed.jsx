@@ -1,6 +1,7 @@
 ﻿import { useState, useEffect, useCallback, useRef, useMemo, Component, memo } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
+import { ArrowLeft, ArrowRight, RotateCw } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
@@ -15,6 +16,7 @@ import {
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import HomeFeedTools from '../components/HomeFeedTools';
 import TopicFilterControl, { TopicChoices } from '../components/TopicFilterControl';
+import TravelDestinationPicker from '../components/TravelDestinationPicker';
 import { TIERS } from '../components/PricingModal';
 import ImageLightbox from '../components/ImageLightbox';
 import { useEngagementTracking } from '../hooks/useEngagementTracking';
@@ -32,7 +34,7 @@ import { SavePostButton } from '../components/SaveButtons';
 const COMMAND_CENTER_PRO_TIER = TIERS.find((tier) => tier.tier === 'pro');
 const HOME_VIEW_MODES = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants']);
 const EMBEDDED_HOME_MODES = new Set(['ufi']);
-const CONTINUOUS_FEED_MODES = new Set(['feed', 'following', 'groups', 'countries', 'restaurants']);
+const CONTINUOUS_FEED_MODES = new Set(['feed', 'following', 'groups', 'restaurants']);
 const FEED_POSITION_PREFETCH_POSTS = 8;
 
 function timeAgo(iso) {
@@ -816,7 +818,7 @@ function MaximizeButton({ onClick }) {
   );
 }
 
-function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, autoPlayOnVisible = true, forcePause = false }) {
+function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, minHeight = 0, autoPlayOnVisible = true, forcePause = false, onPlaybackStatus, requirePointer = true }) {
   const [inView, setInView] = useState(false);
   const { playbackAllowed, pointerHandlers } = usePointerPlaybackGate();
   // Whether the real YT.Player has actually been constructed yet — separate
@@ -825,6 +827,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
   // visibility toggled off and back on.
   const [playerReady, setPlayerReady] = useState(false);
   const [playerFailed, setPlayerFailed] = useState(false);
+  useEffect(() => { onPlaybackStatus?.(playerFailed); }, [playerFailed, onPlaybackStatus]);
   // Always starts muted regardless of trigger (scroll-into-view or a manual
   // click on the poster) — a passive scroll shouldn't ever blast sound
   // unexpectedly, same convention every other inline-feed autoplay
@@ -873,7 +876,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
   // doubled if the user has sound on. Excluded from the solo-playback
   // arbiter too (not just gated after it wins) so it can't hold the "now
   // playing" slot hostage while paused for the lightbox.
-  const isSolo = useSoloVideoPlayback(videoKey || embedId, inView && playbackAllowed && !forcePause);
+  const isSolo = useSoloVideoPlayback(videoKey || embedId, inView && (!requirePointer || playbackAllowed) && !forcePause);
   const effectivelyPlaying = isSolo && !forcePause;
   ytShouldPlayRef.current = effectivelyPlaying;
 
@@ -929,8 +932,9 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
     host.replaceChildren();
     const mount = document.createElement('div');
     mount.style.width = '100%';
-    mount.style.aspectRatio = '16 / 9';
-    mount.style.maxHeight = `${maxHeight}px`;
+    mount.style.height = '100%';
+    mount.style.position = 'absolute';
+    mount.style.inset = '0';
     mount.style.pointerEvents = 'none';
     host.appendChild(mount);
 
@@ -1041,15 +1045,21 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
           VideoFeedView and ImageLightbox's own YouTube mounts already use. */}
       <div
         ref={ytHostRef}
-        style={{ width: '100%', aspectRatio: '16/9', display: 'block', maxHeight, pointerEvents: 'none', visibility: playerFailed ? 'hidden' : 'visible' }}
+        style={{ position: 'relative', width: '100%', aspectRatio: '16/9', display: 'block', maxHeight, minHeight, pointerEvents: 'none', visibility: playerFailed ? 'hidden' : 'visible' }}
       />
-      {playerFailed && effectivelyPlaying && (
+      {playerFailed && effectivelyPlaying && !onPlaybackStatus && (
         <iframe
           src={`https://www.youtube.com/embed/${embedId}?autoplay=1&mute=${userWantsSound() ? 0 : 1}&playsinline=1&controls=0&modestbranding=1&rel=0`}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', display: 'block', pointerEvents: 'none' }}
           allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
           title={title || 'YouTube video'}
         />
+      )}
+      {playerFailed && onPlaybackStatus && (
+        <div className="travel-player-error" role="status">
+          <span>This stream cannot play here.</span>
+          <a href={`https://www.youtube.com/watch?v=${embedId}`} target="_blank" rel="noopener noreferrer">Open on YouTube</a>
+        </div>
       )}
       {showPlayerHint && (
         <div style={{
@@ -1090,27 +1100,29 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
 // Travel has a small, persistent live-camera rail above its discoverable
 // stories. Only the current camera is mounted, so switching the rail never
 // turns into a row of simultaneously decoding YouTube players on mobile.
-function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, locationLabel = '', onLocationSelect }) {
-  const [activeIndex, setActiveIndex] = useState(0);
+function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, locationLabel = '', onLocationSelect, disabled, status, onRetry }) {
+  const [activeId, setActiveId] = useState(null);
+  const [failedStreamId, setFailedStreamId] = useState(null);
   const [inView, setInView] = useState(false);
   const [pageVisible, setPageVisible] = useState(() => typeof document === 'undefined' || !document.hidden);
   const loopRef = useRef(null);
-  const liveFeeds = Array.isArray(feeds) ? feeds.filter(feed => feed?.id && feed?.mediaUrl) : [];
-  const active = liveFeeds[activeIndex] || liveFeeds[0] || null;
+  const liveFeeds = useMemo(() => (Array.isArray(feeds) ? feeds : [])
+    .filter(feed => feed?.id && feed.liveVerified && extractYouTubeId(feed.sourceUrl || feed.mediaUrl))
+    .sort((a, b) => `${a.city}, ${a.country}`.localeCompare(`${b.city}, ${b.country}`)), [feeds]);
+  const activeIndex = Math.max(0, liveFeeds.findIndex(feed => feed.id === activeId));
+  const active = liveFeeds[activeIndex] || null;
   const embedId = extractYouTubeId(active?.sourceUrl || active?.mediaUrl);
-
-  useEffect(() => {
-    setActiveIndex(current => Math.min(current, Math.max(liveFeeds.length - 1, 0)));
-  }, [liveFeeds.length]);
+  const handlePlaybackStatus = useCallback(failed => setFailedStreamId(failed ? active?.id : null), [active?.id]);
 
   useEffect(() => {
     if (!locationLabel) return;
     const selectedIndex = liveFeeds.findIndex(feed =>
-      [feed?.city, feed?.country].filter(Boolean).join(', ') === locationLabel
+      status?.selectedCameraId ? feed.id === status.selectedCameraId
+        : [feed?.city, feed?.country].filter(Boolean).join(', ') === locationLabel
     );
     if (selectedIndex < 0) return;
-    setActiveIndex(current => current === selectedIndex ? current : selectedIndex);
-  }, [liveFeeds, locationLabel]);
+    setActiveId(liveFeeds[selectedIndex].id);
+  }, [liveFeeds, locationLabel, status?.selectedCameraId]);
 
   useEffect(() => {
     const element = loopRef.current;
@@ -1124,7 +1136,7 @@ function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, locationLabel = 
     );
     observer.observe(element);
     return () => observer.disconnect();
-  }, []);
+  }, [Boolean(active)]);
 
   useEffect(() => {
     const handleVisibility = () => setPageVisible(!document.hidden);
@@ -1132,12 +1144,21 @@ function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, locationLabel = 
     return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, []);
 
-  if (!active) return null;
+  if (!active) return (
+    <section className="travel-camera-empty" aria-label="Live travel cameras">
+      <span role="status">{status?.camerasChecking ? 'Checking live cameras...' : status?.cameraStatus === 'degraded' || status?.cameraStatus === 'error'
+        ? 'Live camera checks are temporarily unavailable.' : 'No verified live cameras are available right now.'}</span>
+      <button type="button" className="btn btn-ghost btn-sm" onClick={onRetry} disabled={disabled}
+        aria-label="Refresh live cameras" title="Refresh live cameras"><RotateCw size={16} /></button>
+    </section>
+  );
 
-  const selectCamera = (index) => {
+  const selectCamera = async (index) => {
     const selected = liveFeeds[index];
-    setActiveIndex(index);
-    if (selected) onLocationSelect?.(selected);
+    if (disabled) return;
+    if (!selected) return;
+    const saved = await onLocationSelect?.(selected);
+    if (saved !== false) setActiveId(selected.id);
   };
   const moveCamera = (direction) => {
     const nextIndex = (activeIndex + direction + liveFeeds.length) % liveFeeds.length;
@@ -1148,14 +1169,14 @@ function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, locationLabel = 
     <section ref={loopRef} className="travel-live-loop" aria-label="Live travel cameras">
       <div className="travel-live-loop-header">
         <div>
-          <div className="travel-live-loop-title">{locationLabel ? `Live travel near ${locationLabel}` : 'Live travel'}</div>
+          <div className="travel-live-loop-title">Live travel</div>
           <div className="travel-live-loop-subtitle">
-            {locationLabel
-              ? 'Live views from your selected area first, then a wider world loop.'
-              : 'A moving window into places worth keeping on the list.'}
+            {locationLabel && !status?.localCameraAvailable
+              ? `No verified camera in ${locationLabel}. Showing worldwide views.`
+              : `${liveFeeds.length} verified city cameras`}
           </div>
         </div>
-        <span className="travel-live-loop-status"><span aria-hidden="true" />Live now</span>
+        <span className="travel-live-loop-status">{failedStreamId === active.id ? 'Playback unavailable' : <><span aria-hidden="true" />Live now</>}</span>
       </div>
 
       <div className="travel-live-loop-stage">
@@ -1167,7 +1188,10 @@ function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, locationLabel = 
             poster={`https://i.ytimg.com/vi/${embedId}/hqdefault.jpg`}
             title={active.title}
             maxHeight={520}
+            minHeight={200}
             forcePause={mediaOpenId === active.id || !inView || !pageVisible}
+            onPlaybackStatus={handlePlaybackStatus}
+            requirePointer={false}
           />
         ) : (
           <img src={active.mediaUrl} alt={active.title || 'Live travel camera'} className="travel-live-loop-fallback" />
@@ -1180,8 +1204,8 @@ function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, locationLabel = 
               <span>{active.city || active.country || 'Live camera'}</span>
               <LocationMatchBadge post={active} />
             </div>
-            <div className="travel-live-loop-camera-title">{active.title}</div>
-            {active.content && <p>{active.content}</p>}
+            <div className="travel-live-loop-camera-title">{active.liveStreamTitle || active.title}</div>
+            {active.liveStreamChannel && <p>{active.liveStreamChannel}</p>}
           </div>
           <div className="travel-live-loop-actions">
             <Link to={`/p/${encodeURIComponent(active.id)}`} className="travel-live-loop-action">Discuss</Link>
@@ -1195,9 +1219,9 @@ function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, locationLabel = 
 
         {liveFeeds.length > 1 && (
           <div className="travel-live-loop-navigation">
-            <button type="button" onClick={() => moveCamera(-1)} aria-label="Previous live camera" title="Previous live camera">&larr;</button>
+            <button type="button" disabled={disabled} onClick={() => moveCamera(-1)} aria-label="Previous live camera" title="Previous live camera"><ArrowLeft size={16} /></button>
             <span>{activeIndex + 1} / {liveFeeds.length}</span>
-            <button type="button" onClick={() => moveCamera(1)} aria-label="Next live camera" title="Next live camera">&rarr;</button>
+            <button type="button" disabled={disabled} onClick={() => moveCamera(1)} aria-label="Next live camera" title="Next live camera"><ArrowRight size={16} /></button>
           </div>
         )}
         {onMediaOpen && <MaximizeButton onClick={() => onMediaOpen(active)} />}
@@ -1209,6 +1233,7 @@ function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, locationLabel = 
             <button
               key={feed.id}
               type="button"
+              disabled={disabled}
               onClick={() => selectCamera(index)}
               className={`travel-live-loop-choice${active.id === feed.id ? ' active' : ''}`}
               aria-pressed={active.id === feed.id}
@@ -2089,6 +2114,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const _cache = !forcedMode && initialViewMode === 'feed' ? readFeedCache(profile?.id) : null;
   const [posts,         setPosts]        = useState(_cache?.posts || []);
   const [travelLiveFeeds, setTravelLiveFeeds] = useState([]);
+  const [travelStatus, setTravelStatus] = useState(null);
   // Following mode's per-source fetch failures (bad scope, API not
   // enabled, expired token) — see getFollowingFeedPosts's own comment
   // server-side. Surfaced in the empty state below instead of a real
@@ -2114,8 +2140,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         ...DEFAULT_FILTERS,
         topics: Array.isArray(_saved?.filters?.topics) ? _saved.filters.topics : [],
       }
-    : { ...DEFAULT_FILTERS, ...(_saved?.filters || {}), sort: 'newest' };
-  const [search,        setSearch]       = useState(_saved?.search || '');
+    : { ...DEFAULT_FILTERS, ...(initialViewMode === 'countries' && _saved?.viewMode !== 'countries' ? {} : _saved?.filters || {}), ...(initialViewMode === 'countries' ? { sources: [] } : {}), sort: 'newest' };
+  const [search,        setSearch]       = useState(initialViewMode === 'countries' ? '' : _saved?.search || '');
   const [filterOpen,    setFilterOpen]   = useState(false);
   const [topicFilterOpen, setTopicFilterOpen] = useState(false);
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
@@ -2130,10 +2156,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const [sourceFavoriteError, setSourceFavoriteError] = useState('');
   const [mediaLightboxPostId, setMediaLightboxPostId] = useState(null);
   const [filters, setFilters] = useState(initialFilters);
-  const [activeTabs,    setActiveTabs]    = useState(_saved?.activeTabs || []); // [] = All
+  const [activeTabs,    setActiveTabs]    = useState(initialViewMode === 'countries' ? [] : _saved?.activeTabs || []); // [] = All
   const [viewMode,      setViewMode]      = useState(initialViewMode);
   const [locationFilters, setLocationFilters] = useState(() => normalizeLocationFilters(profile?.roleSettings?.feedLocation));
   const [locationSaving, setLocationSaving] = useState(false);
+  const locationSavingRef = useRef(false);
   const [locationMessage, setLocationMessage] = useState('');
   const disabledSourceKey = useMemo(() => (
     Array.isArray(profile?.roleSettings?.disabledSources)
@@ -2301,6 +2328,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       ));
       if (activeMode === 'countries' && viewModeRef.current === 'countries') {
         setTravelLiveFeeds(Array.isArray(data.liveFeeds) ? data.liveFeeds : []);
+        setTravelStatus(data.travel || null);
       } else if (viewModeRef.current !== 'countries') {
         setTravelLiveFeeds([]);
       }
@@ -2373,6 +2401,12 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         : status
           ? `The feed request failed with HTTP ${status}.`
           : 'The feed request did not complete. Check the API connection and try again.';
+      if (activeMode === 'countries' && replace) {
+        postsRef.current = [];
+        setPosts([]);
+        setTravelLiveFeeds([]);
+        setTravelStatus(null);
+      }
       if (!silent || postsRef.current.length === 0) setFeedError(message);
     }
     finally {
@@ -2382,6 +2416,14 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       }
     }
   }, [profile, publicGroupsFeed]);
+
+  useEffect(() => {
+    if (viewMode !== 'countries' || locationSaving || !(travelStatus?.camerasChecking || travelStatus?.storiesUpdating)) return undefined;
+    const timer = setInterval(() => {
+      if (!document.hidden) loadFeed(false, [], { silent: true, live: true, preserveScroll: true, bust: false });
+    }, 20000);
+    return () => clearInterval(timer);
+  }, [viewMode, locationSaving, travelStatus?.camerasChecking, travelStatus?.storiesUpdating, loadFeed]);
 
   // Keep postsRef in sync so loadFeed can read current posts without a dep cycle
   useEffect(() => { postsRef.current = posts; }, [posts]);
@@ -2435,9 +2477,9 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     const savedTopics = Array.isArray(saved?.filters?.topics) ? saved.filters.topics : [];
     const nextFilters = ['feed', 'following'].includes(nextMode)
       ? { ...DEFAULT_FILTERS, topics: savedTopics }
-      : { ...DEFAULT_FILTERS, ...(saved?.filters || {}), sort: 'newest' };
-    const nextTabs = saved?.activeTabs || [];
-    const nextSearch = saved?.search || '';
+      : { ...DEFAULT_FILTERS, ...(nextMode === 'countries' && saved?.viewMode !== 'countries' ? {} : saved?.filters || {}), ...(nextMode === 'countries' ? { sources: [] } : {}), sort: 'newest' };
+    const nextTabs = nextMode === 'countries' ? [] : saved?.activeTabs || [];
+    const nextSearch = nextMode === 'countries' ? '' : saved?.search || '';
     const nextLocation = normalizeLocationFilters(profile.roleSettings?.feedLocation);
     filtersRef.current = nextFilters;
     activeTabsRef.current = nextTabs;
@@ -2487,12 +2529,14 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     const currentTopics = Array.isArray(filtersRef.current.topics) ? filtersRef.current.topics : [];
     const nextFilters = usesSources
       ? { ...DEFAULT_FILTERS, topics: currentTopics }
+      : nextMode === 'countries' && viewModeRef.current !== 'countries' ? { ...DEFAULT_FILTERS }
       : { ...filtersRef.current, sources: [] };
-    const nextSearch = resetHome ? '' : searchRef.current;
+    const clearSearch = resetHome || (nextMode === 'countries' && viewModeRef.current !== 'countries');
+    const nextSearch = clearSearch ? '' : searchRef.current;
     viewModeRef.current = nextMode;
     activeTabsRef.current = nextTabs;
     filtersRef.current = nextFilters;
-    if (resetHome) {
+    if (clearSearch) {
       searchRef.current = '';
       setSearch('');
     }
@@ -2621,13 +2665,16 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     loadFeed(false, [], { filters: DEFAULT_FILTERS, q: '', replace: true });
   }, [loadFeed]);
 
-  const applyLocationFilters = useCallback(async (event) => {
+  const applyLocationFilters = useCallback(async (event, selection = null) => {
     event?.preventDefault();
-    const next = normalizeLocationFilters(locationFiltersRef.current);
+    if (locationSavingRef.current) return;
+    locationSavingRef.current = true;
+    const next = normalizeLocationFilters(selection || locationFiltersRef.current);
     locationFiltersRef.current = next;
     setLocationFilters(next);
     setLocationSaving(true);
     setLocationMessage('');
+    let saveError = '';
     try {
       const { data } = await client.patch('/profile', {
         roleSettings: { ...(profile?.roleSettings || {}), feedLocation: next },
@@ -2638,52 +2685,28 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       const stored = normalizeLocationFilters(profile?.roleSettings?.feedLocation);
       locationFiltersRef.current = stored;
       setLocationFilters(stored);
-      setLocationMessage('Could not save this location. Your previous feed location is still active.');
+      saveError = 'Could not save this location. Your previous feed location is still active.';
     } finally {
-      setLocationSaving(false);
       setRemotePage(2);
       setRemoteHasMore(true);
-      loadFeed(false, activeTabsRef.current, { replace: true });
+      await loadFeed(true, activeTabsRef.current, { replace: true, preserveScroll: true, bust: false });
+      if (saveError) setLocationMessage(saveError);
+      locationSavingRef.current = false;
+      setLocationSaving(false);
     }
+    return !saveError;
   }, [loadFeed, profile?.roleSettings, updateProfileLocally]);
 
   const clearLocationFilters = useCallback(() => {
-    const next = { country: '', city: '' };
-    locationFiltersRef.current = next;
-    setLocationFilters(next);
-    applyLocationFilters();
+    applyLocationFilters(null, { country: '', city: '' });
   }, [applyLocationFilters]);
 
-  const selectTravelLiveLocation = useCallback(async (camera) => {
+  const selectTravelLiveLocation = useCallback((camera) => {
     const next = normalizeLocationFilters({ country: camera?.country, city: camera?.city });
     if (!next.country && !next.city) return;
-    const current = normalizeLocationFilters(locationFiltersRef.current);
-    const unchanged = current.country.toLowerCase() === next.country.toLowerCase()
-      && current.city.toLowerCase() === next.city.toLowerCase();
-    locationFiltersRef.current = next;
-    setLocationFilters(next);
-    setLocationSaving(true);
-    setLocationMessage('');
-    try {
-      if (!unchanged) {
-        const { data } = await client.patch('/profile', {
-          roleSettings: { ...(profile?.roleSettings || {}), feedLocation: next },
-        });
-        updateProfileLocally(data.profile || data);
-      }
-      setLocationMessage(`Showing newest events around ${[next.city, next.country].filter(Boolean).join(', ')}.`);
-    } catch {
-      const stored = normalizeLocationFilters(profile?.roleSettings?.feedLocation);
-      locationFiltersRef.current = stored;
-      setLocationFilters(stored);
-      setLocationMessage('Could not save this location. Your previous travel location is still active.');
-    } finally {
-      setLocationSaving(false);
-      setRemotePage(2);
-      setRemoteHasMore(true);
-      loadFeed(true, activeTabsRef.current, { replace: true, bust: false });
-    }
-  }, [loadFeed, profile?.roleSettings, updateProfileLocally]);
+    if (next.city === profile?.roleSettings?.feedLocation?.city && next.country === profile?.roleSettings?.feedLocation?.country) return;
+    return applyLocationFilters(null, next);
+  }, [applyLocationFilters, profile?.roleSettings?.feedLocation]);
 
   const toggleTab = useCallback((key) => {
     searchRef.current = '';
@@ -2781,6 +2804,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     // subside. loadingMoreRef is checked and set synchronously, in the same
     // tick, so only the very first call in a burst ever gets past this line.
     if (loadingMoreRef.current || !remoteHasMoreRef.current) return;
+    if (viewModeRef.current === 'countries' && (locationSavingRef.current || loadStateRef.current.loading || loadStateRef.current.refreshing)) return;
     const paginationRequestId = ++paginationRequestIdRef.current;
     loadingMoreRef.current = true;
     setLoadingMore(true);
@@ -2831,6 +2855,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       if (requestIdAtStart !== feedRequestIdRef.current) return;
       if (viewModeRef.current === 'countries' && Array.isArray(data.liveFeeds)) {
         setTravelLiveFeeds(data.liveFeeds);
+        setTravelStatus(data.travel || null);
       }
       // A flat all-time dedup here used to make infinite scroll dead-end
       // (once a user had paged through the whole shared pool once, every
@@ -2888,6 +2913,9 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     ));
   }, []);
 
+  // Saving a Travel city updates the profile; the selection handler already
+  // reloads that feed. Do not also reset its player and cursor here.
+  const feedBootstrapDependency = viewMode === 'countries' ? profile?.id : loadFeed;
   // Only Home owns this cache. Group scopes must start with their own response.
   useEffect(() => {
     if (!profile?.id) return;
@@ -2906,7 +2934,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       feedRequestIdRef.current += 1;
       paginationRequestIdRef.current += 1;
     };
-  }, [forcedMode, loadFeed, profile?.id, JSON.stringify(profile?.roleSettings?.feedLanguages || [])]);
+  }, [forcedMode, feedBootstrapDependency, profile?.id, JSON.stringify(profile?.roleSettings?.feedLanguages || [])]);
 
   useEffect(() => {
     const refreshQuietly = () => {
@@ -3142,7 +3170,9 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   // rendered list's length changes (covers both "sentinel just mounted"
   // and "sentinel's position moved because more content loaded") re-reads
   // the current ref each time instead of relying on a one-time capture.
+  const travelPageBusy = viewMode === 'countries' && (loading || refreshing || locationSaving || loadingMore);
   useEffect(() => {
+    if (travelPageBusy) return undefined;
     const el = sentinelRef.current;
     if (!el) return;
     const obs = new IntersectionObserver(
@@ -3151,7 +3181,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [loadMoreRemote, loading, processed.length]);
+  }, [loadMoreRemote, loading, processed.length, travelPageBusy]);
 
   // Close any feed-filter popover on an outside click.
   useEffect(() => {
@@ -3277,7 +3307,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const usesSourceControls = ['feed', 'following'].includes(viewMode);
   const showsAdvancedFilters = !usesSourceControls && viewMode !== 'groups';
   const isLocationFeed = ['countries', 'restaurants'].includes(viewMode);
-  const travelLocationLabel = locationScopeLabel(locationFilters);
+  const travelLocationLabel = locationScopeLabel(normalizeLocationFilters(profile?.roleSettings?.feedLocation));
   const activeFilterCount = (usesSourceControls ? filters.sources.length : 0) + (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
   const visibleFilterCount = (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
   const advancedFilterCount = (usesSourceControls ? filters.sources.length : 0)
@@ -3406,6 +3436,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
 
         {isLocationFeed && (
           <>
+            {viewMode === 'countries' && <TravelDestinationPicker location={locationFilters} disabled={locationSaving}
+              onSelect={selectTravelLiveLocation} />}
             <form className="feed-location-form" onSubmit={applyLocationFilters}>
               <label className="feed-location-field">
                 <span>Country</span>
@@ -3413,6 +3445,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                   type="search"
                   className="form-input"
                   aria-label={`${viewMode === 'countries' ? 'Travel' : 'Restaurant'} country`}
+                  disabled={locationSaving}
                   autoComplete="country-name"
                   placeholder="Search country"
                   value={locationFilters.country}
@@ -3430,6 +3463,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                   type="search"
                   className="form-input"
                   aria-label={`${viewMode === 'countries' ? 'Travel' : 'Restaurant'} city`}
+                  disabled={locationSaving}
                   autoComplete="address-level2"
                   placeholder="Search city"
                   value={locationFilters.city}
@@ -3826,12 +3860,15 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
               mediaOpenId={mediaLightboxPostId}
               locationLabel={travelLocationLabel}
               onLocationSelect={selectTravelLiveLocation}
+              disabled={locationSaving || refreshing}
+              status={travelStatus}
+              onRetry={() => loadFeed(true, activeTabsRef.current, { replace: true, preserveScroll: true, bust: false })}
             />
           )}
 
           {viewMode === 'countries' && contentPosts.length > 0 && (
             <div className="travel-content-heading">
-              <span>{travelLocationLabel ? `From ${travelLocationLabel}` : 'Travel picks'}</span>
+              <span>{travelLocationLabel ? `Travel picks: ${travelLocationLabel} and worldwide` : 'Travel picks'}</span>
             </div>
           )}
 

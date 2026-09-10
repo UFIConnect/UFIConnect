@@ -10010,7 +10010,9 @@ const COUNTRIES_SELECTED_NEWS_MAX_POSTS = 24;
 const COUNTRIES_SELECTED_EVENTS_MAX_POSTS = 24;
 const COUNTRIES_SELECTED_GUIDES_MAX = 4;
 const COUNTRIES_GUIDES_PER_REFRESH = 15;
-const COUNTRIES_GUIDE_BATCH_SIZE = 4;
+const COUNTRIES_GUIDE_BATCH_SIZE = 20;
+const { ADDITIONAL_TRAVEL_DESTINATIONS } = require('./travel-destinations');
+const { fetchTravelResource, mentionsTravelPlace } = require('./travel-providers');
 const COUNTRIES_DISCOVERY_NEWS_EDITIONS = Object.freeze([
   { label: 'North America', gl: 'US', hl: 'en-US', ceid: 'US:en', query: '("travel guide" OR "things to do" OR "places to visit" OR "travel destination") -"birth tourism" when:60d' },
   { label: 'Europe', gl: 'GB', hl: 'en-GB', ceid: 'GB:en', query: '("travel guide" OR "destination guide" OR "places to visit" OR "city break") -"birth tourism" when:60d' },
@@ -10040,7 +10042,7 @@ const COUNTRIES_DESTINATION_GUIDES = Object.freeze([
   { slug: 'Marrakesh', city: 'Marrakesh', country: 'Morocco', countryCode: 'MA', fallback: 'Courtyards, markets, gardens, and a gateway to the Atlas Mountains.' },
   { slug: 'Cairo', city: 'Cairo', country: 'Egypt', countryCode: 'EG', fallback: 'Museum days, Nile views, and pyramids just beyond the city.' },
   { slug: 'Cape Town', city: 'Cape Town', country: 'South Africa', countryCode: 'ZA', fallback: 'Mountain trails, coastal drives, vineyards, and city beaches.' },
-  { slug: 'Zanzibar', city: 'Zanzibar City', country: 'Tanzania', countryCode: 'TZ', fallback: 'Stone Town, spice history, and Indian Ocean beaches.' },
+  { slug: 'Zanzibar_City', city: 'Zanzibar City', country: 'Tanzania', countryCode: 'TZ', fallback: 'Stone Town, spice history, and Indian Ocean beaches.' },
   { slug: 'Nairobi', city: 'Nairobi', country: 'Kenya', countryCode: 'KE', fallback: 'A city break with parks, food, and safari routes nearby.' },
   { slug: 'Dubai', city: 'Dubai', country: 'United Arab Emirates', countryCode: 'AE', fallback: 'Waterfronts, desert day trips, modern architecture, and global food.' },
   { slug: 'Petra', city: 'Wadi Musa', country: 'Jordan', countryCode: 'JO', fallback: 'A dramatic historic site with desert landscapes and nearby trails.' },
@@ -10049,16 +10051,16 @@ const COUNTRIES_DESTINATION_GUIDES = Object.freeze([
   { slug: 'Seoul', city: 'Seoul', country: 'South Korea', countryCode: 'KR', fallback: 'Palaces, night markets, design districts, and mountain paths inside the city.' },
   { slug: 'Bangkok', city: 'Bangkok', country: 'Thailand', countryCode: 'TH', fallback: 'Street food, river ferries, temples, and a fast-moving city rhythm.' },
   { slug: 'Singapore', city: 'Singapore', country: 'Singapore', countryCode: 'SG', fallback: 'Hawker centers, gardens, museums, and easy tropical escapes.' },
-  { slug: 'Bali', city: 'Denpasar', country: 'Indonesia', countryCode: 'ID', fallback: 'Beaches, rice terraces, temples, and a wide range of slow or lively stays.' },
+  { slug: 'Denpasar', city: 'Denpasar', country: 'Indonesia', countryCode: 'ID', fallback: 'Beaches, rice terraces, temples, and a wide range of slow or lively stays.' },
   { slug: 'Hanoi', city: 'Hanoi', country: 'Vietnam', countryCode: 'VN', fallback: 'Old Quarter streets, lakeside walks, and food worth planning a day around.' },
   { slug: 'Siem_Reap', city: 'Siem Reap', country: 'Cambodia', countryCode: 'KH', fallback: 'Temple mornings, markets, and a relaxed base for Angkor.' },
   { slug: 'Sydney', city: 'Sydney', country: 'Australia', countryCode: 'AU', fallback: 'Harbor walks, beaches, ferries, and neighborhoods with their own pace.' },
   { slug: 'Melbourne', city: 'Melbourne', country: 'Australia', countryCode: 'AU', fallback: 'Laneways, cafes, galleries, and coastal road trips nearby.' },
-  { slug: 'Queenstown', city: 'Queenstown', country: 'New Zealand', countryCode: 'NZ', fallback: 'Lakes, mountain views, hiking, and enough outdoor plans for a second trip.' },
+  { slug: 'Queenstown_(New_Zealand)', city: 'Queenstown', country: 'New Zealand', countryCode: 'NZ', fallback: 'Lakes, mountain views, hiking, and enough outdoor plans for a second trip.' },
   { slug: 'Honolulu', city: 'Honolulu', country: 'United States', countryCode: 'US', fallback: 'Beach mornings, city food, volcanic landscapes, and island day trips.' },
   { slug: 'New_Orleans', city: 'New Orleans', country: 'United States', countryCode: 'US', fallback: 'Music, architecture, food, and neighborhoods that reward a slower stroll.' },
   { slug: 'Mexico_City', city: 'Mexico City', country: 'Mexico', countryCode: 'MX', fallback: 'Museums, markets, parks, and a serious food itinerary.' },
-  { slug: 'Oaxaca_City', city: 'Oaxaca', country: 'Mexico', countryCode: 'MX', fallback: 'Markets, craft traditions, mountain day trips, and regional food.' },
+  { slug: 'Oaxaca_(city)', city: 'Oaxaca', country: 'Mexico', countryCode: 'MX', fallback: 'Markets, craft traditions, mountain day trips, and regional food.' },
   { slug: 'San_Jose_(Costa_Rica)', city: 'San Jose', country: 'Costa Rica', countryCode: 'CR', fallback: 'A practical base for rainforests, volcanoes, beaches, and coffee regions.' },
   { slug: 'Lima', city: 'Lima', country: 'Peru', countryCode: 'PE', fallback: 'Coastal neighborhoods, museums, and a food scene that does not waste your time.' },
   { slug: 'Cusco', city: 'Cusco', country: 'Peru', countryCode: 'PE', fallback: 'Highland history, mountain routes, and a base for Sacred Valley adventures.' },
@@ -10067,7 +10069,16 @@ const COUNTRIES_DESTINATION_GUIDES = Object.freeze([
   { slug: 'Cartagena,_Colombia', city: 'Cartagena', country: 'Colombia', countryCode: 'CO', fallback: 'Caribbean color, old walls, nearby islands, and warm evenings.' },
   { slug: 'Banff', city: 'Banff', country: 'Canada', countryCode: 'CA', fallback: 'Mountain lakes, wildlife, and trails that make a long weekend feel too short.' },
   { slug: 'Vancouver', city: 'Vancouver', country: 'Canada', countryCode: 'CA', fallback: 'Waterfront paths, forest access, food, and mountain views in one compact trip.' },
+  ...ADDITIONAL_TRAVEL_DESTINATIONS,
 ]);
+
+app.get('/travel/destinations', (_req, res) => {
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.json({ destinations: COUNTRIES_DESTINATION_GUIDES.map(({ slug, city, country, countryCode }) => ({
+    id: `${countryCode}:${slug}`, city, country, countryCode,
+    guideUrl: countryGuideUrl({ slug }),
+  })).sort((a, b) => a.city.localeCompare(b.city) || a.country.localeCompare(b.country)) });
+});
 
 const LIVE_CAMERA_SOURCE = 'livecamera';
 // Discovery-only cities do not carry a guessed video URL. They become visible
@@ -10613,8 +10624,8 @@ const LIVE_CAMERA_FAILURE_RECHECK_MS = 2 * MIN;
 const LIVE_CAMERA_DISCOVERY_CACHE_MS = 6 * H;
 const LIVE_CAMERA_DISCOVERY_WINDOW_MS = 12 * H;
 const LIVE_CAMERA_MAX_DISCOVERIES_PER_WINDOW = 24;
-const LIVE_CAMERA_DISCOVERY_INLINE_MAX = 4;
-const LIVE_CAMERA_DISCOVERY_BACKGROUND_MAX = 20;
+const LIVE_CAMERA_DISCOVERY_BACKGROUND_MAX = 8;
+const LIVE_CAMERA_DISCOVERY_RESERVED_SLOTS = 8;
 const liveCameraResolvedStreams = new Map();
 const liveCameraDiscoveryCache = new Map();
 let liveCameraVerificationPromise = null;
@@ -10679,7 +10690,9 @@ function rememberResolvedLiveCameraStream(cameraId, stream, ttl = LIVE_CAMERA_VE
 
 function liveCameraPost(camera) {
   const resolved = getResolvedLiveCameraStream(camera.id);
-  const sourceUrl = resolved?.sourceUrl || camera.sourceUrl;
+  const discovery = liveCameraDiscoveryCache.get(camera.id);
+  const candidate = resolved || (discovery?.expiresAt > Date.now() ? discovery.stream : null);
+  const sourceUrl = candidate?.sourceUrl || camera.sourceUrl;
   return {
     id: camera.id,
     authorId: null,
@@ -10700,7 +10713,7 @@ function liveCameraPost(camera) {
     topic: 'Live Cameras',
     isLiveCamera: true,
     liveVerified: Boolean(resolved),
-    liveReplacement: Boolean(resolved?.replacement),
+    liveReplacement: Boolean(candidate?.replacement),
   };
 }
 
@@ -10796,23 +10809,25 @@ async function waitForYouTubeDataApiSlot() {
 
 async function fetchYouTubeLiveStates(videoIds) {
   const apiKey = process.env.YOUTUBE_API_KEY;
-  const ids = [...new Set((videoIds || []).filter(id => /^[\w-]{11}$/.test(String(id))))].slice(0, 50);
+  const ids = [...new Set((videoIds || []).filter(id => /^[\w-]{11}$/.test(String(id))))];
   if (!apiKey || !ids.length) return null;
   try {
-    await waitForYouTubeDataApiSlot();
-    const params = new URLSearchParams({
-      part: 'liveStreamingDetails,status',
-      id: ids.join(','),
-      key: apiKey,
-    });
-    const data = await fetchJSON(`https://www.googleapis.com/youtube/v3/videos?${params.toString()}`);
     const states = new Map();
-    for (const item of data?.items || []) {
-      const live = item?.liveStreamingDetails;
-      states.set(item.id, {
-        live: Boolean(live?.actualStartTime && !live?.actualEndTime),
-        embeddable: item?.status?.embeddable === true && item?.status?.privacyStatus === 'public',
+    for (let offset = 0; offset < ids.length; offset += 50) {
+      await waitForYouTubeDataApiSlot();
+      const params = new URLSearchParams({
+        part: 'liveStreamingDetails,status',
+        id: ids.slice(offset, offset + 50).join(','),
+        key: apiKey,
       });
+      const data = await fetchTravelResource(`https://www.googleapis.com/youtube/v3/videos?${params.toString()}`);
+      for (const item of data?.items || []) {
+        const live = item?.liveStreamingDetails;
+        states.set(item.id, {
+          live: Boolean(live?.actualStartTime && !live?.actualEndTime),
+          embeddable: item?.status?.embeddable === true && item?.status?.privacyStatus === 'public',
+        });
+      }
     }
     return states;
   } catch (error) {
@@ -10872,9 +10887,12 @@ async function discoverLiveCameraReplacement(camera) {
       });
       if (/^[A-Z]{2}$/.test(camera.countryCode || '')) params.set('regionCode', camera.countryCode);
       await waitForYouTubeDataApiSlot();
-      const data = await fetchJSON(`https://www.googleapis.com/youtube/v3/search?${params.toString()}`);
+      const data = await fetchTravelResource(`https://www.googleapis.com/youtube/v3/search?${params.toString()}`);
       const candidates = (data?.items || [])
         .filter(item => item?.id?.videoId && item?.snippet?.liveBroadcastContent === 'live')
+        .filter(item => mentionsTravelPlace(item.snippet?.title, camera.city)
+          && !/\b(music|radio|lofi|lo-fi|playlist|meditation|gaming|gameplay)\b/i.test(item.snippet?.title || '')
+          && /\b(webcam|live\s*cam(?:era)?|city\s*cam|live\s*(?:view|stream)|24\s*\/\s*7)\b/i.test(`${item.snippet?.title || ''} ${item.snippet?.description || ''}`))
         .slice(0, 5);
       const states = await fetchYouTubeLiveStates(candidates.map(item => item.id.videoId));
       const selected = candidates.find(item => {
@@ -10922,7 +10940,7 @@ async function resolveLiveCameraDiscoveries(cameraPosts, maxLookups) {
   const resolved = [];
   let lookups = 0;
   for (const post of cameraPosts) {
-    if (lookups >= maxLookups || liveCameraDiscoverySlotsRemaining() <= 0) break;
+    if (lookups >= maxLookups) break;
     const camera = LIVE_CAMERA_BY_ID.get(post.id);
     if (!camera) continue;
     const before = liveCameraDiscoveryCount;
@@ -10935,13 +10953,16 @@ async function resolveLiveCameraDiscoveries(cameraPosts, maxLookups) {
   return resolved;
 }
 
-function scheduleLiveCameraDiscovery(cameraPosts) {
+function scheduleLiveCameraDiscovery(cameraPosts, requested = false) {
   if (IS_PIPELINE_ROLE || !process.env.YOUTUBE_API_KEY || !cameraPosts.length || liveCameraDiscoveryBackgroundPromise) return;
+  const budget = Math.min(LIVE_CAMERA_DISCOVERY_BACKGROUND_MAX,
+    Math.max(0, liveCameraDiscoverySlotsRemaining() - (requested ? 0 : LIVE_CAMERA_DISCOVERY_RESERVED_SLOTS)));
+  if (!budget) return;
   liveCameraVerificationState.backgroundStatus = 'queued';
   liveCameraDiscoveryBackgroundPromise = new Promise(resolve => setTimeout(resolve, 0))
     .then(async () => {
       liveCameraVerificationState.backgroundStatus = 'running';
-      const resolved = await resolveLiveCameraDiscoveries(cameraPosts, LIVE_CAMERA_DISCOVERY_BACKGROUND_MAX);
+      const resolved = await resolveLiveCameraDiscoveries(cameraPosts, budget);
       liveCameraVerificationState.backgroundLastRun = Date.now();
       liveCameraVerificationState.backgroundResolved = resolved.length;
       if (resolved.length) liveCameraVerificationExpiresAt = 0;
@@ -10984,7 +11005,7 @@ async function refreshVerifiedLiveCameraPosts(location = null) {
     const videoId = liveCameraYouTubeId(post.sourceUrl);
     const state = videoId ? states?.get(videoId) : null;
     if (state?.live && state.embeddable) {
-      const existing = getResolvedLiveCameraStream(post.id);
+      const existing = getResolvedLiveCameraStream(post.id) || liveCameraDiscoveryCache.get(post.id)?.stream;
       const stream = {
         sourceUrl: post.sourceUrl,
         videoId,
@@ -11002,9 +11023,9 @@ async function refreshVerifiedLiveCameraPosts(location = null) {
   }
 
   const discoveryCandidates = prioritizeLiveCameraDiscovery(unresolved, location);
-  const inlineCandidates = discoveryCandidates.slice(0, LIVE_CAMERA_DISCOVERY_INLINE_MAX);
-  verified.push(...await resolveLiveCameraDiscoveries(inlineCandidates, LIVE_CAMERA_DISCOVERY_INLINE_MAX));
-  scheduleLiveCameraDiscovery(discoveryCandidates.slice(inlineCandidates.length));
+  // Expensive searches run off the feed request path. Reserve capacity for
+  // cities members actually select instead of spending it all on rotation.
+  scheduleLiveCameraDiscovery(discoveryCandidates, Boolean(location?.available));
 
   const uniqueVerified = uniqueLiveCameraCities(verified);
 
@@ -11031,8 +11052,18 @@ async function verifiedLiveCameraPosts(location = null) {
   if (liveCameraVerificationExpiresAt > now && (hasLocationCamera || locationRefreshUntil > now)) {
     return liveCameraVerificationSnapshot;
   }
-  if (liveCameraVerificationPromise) return liveCameraVerificationPromise;
-  if (locationKey) liveCameraLocationRefreshes.set(locationKey, now + LIVE_CAMERA_FAILURE_RECHECK_MS);
+  if (liveCameraVerificationPromise) {
+    const snapshot = await liveCameraVerificationPromise;
+    if (locationKey && !snapshot.some(post => liveCameraLocationScore(post, location) === (location.city ? 2 : 1))) {
+      scheduleLiveCameraDiscovery(prioritizeLiveCameraDiscovery(currentLiveCameraPosts()
+        .filter(post => !snapshot.some(camera => camera.id === post.id)), location), true);
+    }
+    return snapshot;
+  }
+  if (locationKey) {
+    liveCameraLocationRefreshes.set(locationKey, now + LIVE_CAMERA_FAILURE_RECHECK_MS);
+    trimOldestMapEntries(liveCameraLocationRefreshes, 500);
+  }
   liveCameraVerificationPromise = refreshVerifiedLiveCameraPosts(location)
     .then((posts) => {
       liveCameraVerificationSnapshot = posts;
@@ -11051,13 +11082,14 @@ async function verifiedLiveCameraPosts(location = null) {
 }
 
 function countryGuideUrl(destination) {
+  if (destination.searchOnly) return `https://en.wikivoyage.org/w/index.php?search=${encodeURIComponent([destination.city, destination.country].filter(Boolean).join(' '))}`;
   return `https://en.wikivoyage.org/wiki/${encodeURIComponent(destination.slug)}`;
 }
 
 function safeWikivoyageImage(value) {
   try {
     const parsed = new URL(String(value || ''));
-    return parsed.protocol === 'https:' && parsed.hostname.endsWith('wikimedia.org')
+    return parsed.protocol === 'https:' && (parsed.hostname === 'wikimedia.org' || parsed.hostname.endsWith('.wikimedia.org'))
       ? parsed.toString()
       : null;
   } catch {
@@ -11074,12 +11106,12 @@ function countryDestinationGuidePost(destination, summary = null) {
     id: `wikivoyage_${id}`,
     source: 'wikivoyage',
     sourceLabel: 'Wikivoyage',
-    sourceUrl: countryGuideUrl(destination),
+    sourceUrl: countryGuideUrl(summary?.type === 'standard' ? { ...destination, searchOnly: false } : destination),
     title: `${destinationName}, ${destination.country}`,
     content: String(summary?.extract || destination.fallback || `Explore ${destinationName}.`).slice(0, POST_CONTENT_MAX_CHARS),
     author: { id: 'wikivoyage', name: 'Wikivoyage', title: 'Travel guide', organization: 'Wikivoyage' },
     authorName: 'Wikivoyage',
-    createdAt: normalizeTimestamp(summary?.timestamp),
+    createdAt: summary?.timestamp ? normalizeTimestamp(summary.timestamp) : null,
     isExternal: true,
     country: destination.country,
     countryCode: destination.countryCode,
@@ -11097,19 +11129,18 @@ function countryDestinationGuidePost(destination, summary = null) {
 }
 
 function travelLocationHasSavedSelection(location) {
-  return location?.source === 'member' && Boolean(location?.city || location?.country || location?.countryName);
+  return ['member', 'request'].includes(location?.source) && Boolean(location?.city || location?.country || location?.countryName);
 }
 
 function travelCityMatches(post, location) {
   const requested = normalizedCountryInput(location?.city);
   const candidate = normalizedCountryInput(post?.city);
-  return Boolean(requested && candidate && (
-    requested === candidate || requested.includes(candidate) || candidate.includes(requested)
-  ));
+  return Boolean(requested && candidate && requested === candidate
+    && (!(location?.country || location?.countryName || location?.countryCode) || travelCountryMatches(post, location)));
 }
 
 function travelCountryMatches(post, location) {
-  const countryCode = String(location?.country || '').trim().toUpperCase();
+  const countryCode = countryCodeFromInput(location?.countryCode || location?.countryName || location?.country);
   if (countryCode && countryCode === String(post?.countryCode || '').trim().toUpperCase()) return true;
   const requested = normalizedCountryInput(location?.countryName || location?.country);
   const candidate = normalizedCountryInput(post?.country);
@@ -11128,6 +11159,7 @@ function selectedTravelGuideDestinations(location) {
       city,
       country,
       countryCode,
+      searchOnly: true,
       fallback: `A practical starting point for planning time in ${city}.`,
     }];
   }
@@ -11142,6 +11174,7 @@ function selectedTravelGuideDestinations(location) {
     city: country,
     country,
     countryCode,
+    searchOnly: true,
     fallback: `A practical starting point for planning a trip through ${country}.`,
   }];
 }
@@ -11162,11 +11195,12 @@ async function fetchTravelGuidePosts(destinations) {
   for (let start = 0; start < list.length; start += COUNTRIES_GUIDE_BATCH_SIZE) {
     const batch = list.slice(start, start + COUNTRIES_GUIDE_BATCH_SIZE);
     const results = await Promise.allSettled(batch.map(destination =>
-      fetchJSON(`https://en.wikivoyage.org/api/rest_v1/page/summary/${encodeURIComponent(destination.slug)}`)
+      destination.searchOnly ? Promise.resolve(null)
+        : fetchTravelResource(`https://en.wikivoyage.org/api/rest_v1/page/summary/${encodeURIComponent(destination.slug)}`)
     ));
     results.forEach((result, index) => {
       if (result.status !== 'fulfilled') failures += 1;
-      guides.push(countryDestinationGuidePost(batch[index], result.status === 'fulfilled' ? result.value : null));
+      guides.push(countryDestinationGuidePost(batch[index], result.status === 'fulfilled' && result.value?.type === 'standard' ? result.value : null));
     });
   }
   if (failures) console.warn(`[Countries] ${failures} Wikivoyage guide lookup(s) failed; using compact fallback cards.`);
@@ -11174,7 +11208,13 @@ async function fetchTravelGuidePosts(destinations) {
 }
 
 async function fetchCountryDestinationGuides() {
-  return fetchTravelGuidePosts(rotatingCountryGuideSelection());
+  const refreshed = await fetchTravelGuidePosts(rotatingCountryGuideSelection());
+  const cached = locationLiveFeedCache.get('countries:vacation-discovery')?.posts || [];
+  const byId = new Map([...cached, ...refreshed].filter(post => post.source === 'wikivoyage').map(post => [post.id, post]));
+  return COUNTRIES_DESTINATION_GUIDES.map(destination => {
+    const fallback = countryDestinationGuidePost(destination);
+    return byId.get(fallback.id) || fallback;
+  });
 }
 
 async function fetchSelectedTravelGuides(location) {
@@ -11251,7 +11291,7 @@ async function fetchCountryDiscoveryNewsPosts() {
   for (let start = 0; start < COUNTRIES_DISCOVERY_NEWS_EDITIONS.length; start += COUNTRIES_DISCOVERY_NEWS_BATCH_SIZE) {
     const editions = COUNTRIES_DISCOVERY_NEWS_EDITIONS.slice(start, start + COUNTRIES_DISCOVERY_NEWS_BATCH_SIZE);
     const results = await Promise.allSettled(editions.map(async (edition) => {
-      const xml = await withLocationProviderSlot(() => fetchText(countryDiscoveryNewsUrl(edition)));
+      const xml = await withLocationProviderSlot(() => fetchTravelResource(countryDiscoveryNewsUrl(edition), { json: false }));
       return parseRSSItems(xml)
         .filter(item => item?.title && item?.link && isCountryDiscoveryNewsItem(item))
         .map(item => countryDiscoveryNewsPost(item, edition));
@@ -11287,7 +11327,7 @@ function selectedTravelNewsEdition(location) {
     gl: countryCode,
     hl: 'en',
     ceid: `${countryCode}:en`,
-    query: `(${placeTerms.join(' OR ')}) (travel OR tourism OR \"travel guide\" OR \"things to do\" OR destination) -\"tourism tax\" -\"travel ban\" when:30d`,
+    query: `(${placeTerms.join(' ')}) (travel OR tourism OR \"travel guide\" OR \"things to do\" OR destination) -\"tourism tax\" -\"travel ban\" when:30d`,
     location: {
       scope,
       city: location?.city || null,
@@ -11300,9 +11340,10 @@ function selectedTravelNewsEdition(location) {
 async function fetchSelectedTravelNewsPosts(location) {
   const edition = selectedTravelNewsEdition(location);
   if (!edition) return [];
-  const xml = await withLocationProviderSlot(() => fetchText(countryDiscoveryNewsUrl(edition)));
+  const xml = await withLocationProviderSlot(() => fetchTravelResource(countryDiscoveryNewsUrl(edition), { json: false }));
   return parseRSSItems(xml)
     .filter(item => item?.title && item?.link && isCountryDiscoveryNewsItem(item))
+    .filter(item => mentionsTravelPlace(`${item.title} ${item.desc || ''}`, location.city || location.countryName))
     .map(item => countryDiscoveryNewsPost(item, edition))
     .slice(0, COUNTRIES_SELECTED_NEWS_MAX_POSTS);
 }
@@ -11322,7 +11363,7 @@ function selectedTravelEventsEdition(location) {
     gl: countryCode,
     hl: 'en',
     ceid: `${countryCode}:en`,
-    query: `(${placeTerms.join(' OR ')}) (event OR events OR festival OR concert OR exhibition OR market OR fair OR \"things to do\" OR \"what's on\") -\"tourism tax\" -\"travel ban\" when:30d`,
+    query: `(${placeTerms.join(' ')}) (event OR events OR festival OR concert OR exhibition OR market OR fair OR \"things to do\" OR \"what's on\") -\"tourism tax\" -\"travel ban\" when:30d`,
     location: {
       scope,
       city: location?.city || null,
@@ -11382,9 +11423,10 @@ function selectedTravelEventPost(item, edition) {
 async function fetchSelectedTravelEventPosts(location) {
   const edition = selectedTravelEventsEdition(location);
   if (!edition) return [];
-  const xml = await withLocationProviderSlot(() => fetchText(countryDiscoveryNewsUrl(edition)));
+  const xml = await withLocationProviderSlot(() => fetchTravelResource(countryDiscoveryNewsUrl(edition), { json: false }));
   return parseRSSItems(xml)
     .filter(item => item?.title && item?.link && isSelectedTravelEventItem(item))
+    .filter(item => mentionsTravelPlace(`${item.title} ${item.desc || ''}`, location.city || location.countryName))
     .map(item => selectedTravelEventPost(item, edition))
     .slice(0, COUNTRIES_SELECTED_EVENTS_MAX_POSTS);
 }
@@ -11493,6 +11535,16 @@ function prioritizeLiveCamerasForLocation(cameras, location) {
       : post);
 }
 
+function readTravelDiscoveryCache(key, ttl, loader, destinations) {
+  if (!locationLiveFeedCache.has(key)) {
+    locationLiveFeedCache.set(key, {
+      posts: destinations.map(destination => countryDestinationGuidePost(destination)),
+      fetchedAt: null, expiresAt: 0, pending: null,
+    });
+  }
+  return readLocationLiveCache(key, ttl, loader);
+}
+
 async function getCountriesCameraFeed(location, viewerId = null) {
   // Guides and stories can stay cached for a while. Camera availability cannot:
   // a stream can end at any moment, so its independently verified snapshot has
@@ -11502,7 +11554,7 @@ async function getCountriesCameraFeed(location, viewerId = null) {
       console.warn('[Travel] live-camera verification failed:', error?.message || error);
       return [];
     }),
-    readLocationLiveCache('countries:vacation-discovery', COUNTRIES_DISCOVERY_CACHE_MS, async () => {
+    readTravelDiscoveryCache('countries:vacation-discovery', COUNTRIES_DISCOVERY_CACHE_MS, async () => {
       const [guideResult, newsResult] = await Promise.allSettled([
         fetchCountryDestinationGuides(),
         fetchCountryDiscoveryNewsPosts(),
@@ -11512,7 +11564,7 @@ async function getCountriesCameraFeed(location, viewerId = null) {
       if (guideResult.status === 'rejected') console.warn('[Travel] guide search failed:', guideResult.reason?.message || guideResult.reason);
       if (newsResult.status === 'rejected') console.warn('[Travel] travel-news search failed:', newsResult.reason?.message || newsResult.reason);
       return interleaveCountryDiscoveryPosts(guides, news);
-    }),
+    }, COUNTRIES_DESTINATION_GUIDES),
   ]);
 
   const rawPosts = Array.isArray(entry?.posts) ? entry.posts : [];
@@ -11535,7 +11587,7 @@ async function getCountriesCameraFeed(location, viewerId = null) {
   let regionalPosts = [];
   const selectedLocation = travelLocationHasSavedSelection(location);
   if (selectedLocation) {
-    selectedEntry = await readLocationLiveCache(
+    selectedEntry = await readTravelDiscoveryCache(
       locationCacheKey('countries:selected', location),
       COUNTRIES_SELECTED_DISCOVERY_CACHE_MS,
       async () => {
@@ -11553,6 +11605,7 @@ async function getCountriesCameraFeed(location, viewerId = null) {
           { posts: newsResult.status === 'fulfilled' ? newsResult.value : [], weight: 2 },
         ]);
       },
+      selectedTravelGuideDestinations(location),
     );
     regionalPosts = (selectedEntry?.posts || []).map(post => markSelectedTravelPost(post, location));
   }
@@ -11574,6 +11627,14 @@ async function getCountriesCameraFeed(location, viewerId = null) {
   return {
     posts: travelPosts,
     liveFeeds,
+    travel: {
+      destinationCount: COUNTRIES_DESTINATION_GUIDES.length,
+      cameraStatus: liveCameraVerificationState.status,
+      camerasChecking: ['queued', 'running'].includes(liveCameraVerificationState.backgroundStatus),
+      localCameraAvailable: scopedCameras.some(post => location?.city ? travelCityMatches(post, location) : travelCountryMatches(post, location)),
+      selectedCameraId: scopedCameras.find(post => location?.city ? travelCityMatches(post, location) : travelCountryMatches(post, location))?.id || null,
+      storiesUpdating: Boolean(entry?.pending || selectedEntry?.pending),
+    },
     fetchedAt: [
       entry?.fetchedAt,
       selectedEntry?.fetchedAt,
@@ -22003,7 +22064,7 @@ async function handleFeedRequest(req, res) {
       // Travel's looping live-camera rail is deliberately separate from
       // paginated discovery cards. Do not run it through `filterUnseen` --
       // a camera remains useful every time a member opens Travel.
-      ...(feedMode === 'countries' ? { liveFeeds: localFeed.liveFeeds || [] } : {}),
+      ...(feedMode === 'countries' ? { liveFeeds: localFeed.liveFeeds || [], travel: localFeed.travel } : {}),
       mode: feedMode,
       sort: 'newest',
       page: reqPage,

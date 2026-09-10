@@ -1056,6 +1056,20 @@ input, textarea, select { font-family: inherit; }
 }
 .home-connected-account-handle .form-input { grid-column: 1 / -1; }
 
+.travel-destination-picker {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  margin-bottom: 10px;
+  min-width: 0;
+}
+.travel-destination-picker > label { flex: 1; min-width: 0; }
+.travel-destination-picker select { width: 100%; min-width: 0; }
+.travel-destination-picker .btn { flex-shrink: 0; min-height: 38px; gap: 5px; }
+.travel-camera-empty { display: flex; align-items: center; gap: 12px; justify-content: space-between; padding: 12px 0; margin-bottom: 14px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: .8rem; }
+.travel-player-error { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 40px 12px 12px; color: #fff; background: #18181b; font-size: .8rem; text-align: center; }
+.travel-player-error a { color: #fff; text-decoration: underline; }
 .travel-live-loop {
   margin: 0 0 20px;
   overflow: hidden;
@@ -1114,7 +1128,7 @@ input, textarea, select { font-family: inherit; }
   object-fit: cover;
 }
 .travel-live-loop-overlay {
-  position: absolute;
+  position: static;
   right: 0;
   bottom: 0;
   left: 0;
@@ -1123,7 +1137,7 @@ input, textarea, select { font-family: inherit; }
   align-items: end;
   justify-content: space-between;
   gap: 14px;
-  padding: 46px 14px 14px;
+  padding: 12px 14px;
   color: #fff;
   background: rgba(2, 6, 23, .82);
   pointer-events: none;
@@ -1145,7 +1159,7 @@ input, textarea, select { font-family: inherit; }
   font-weight: 800;
   line-height: 1.25;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .travel-live-loop-copy p {
   display: -webkit-box;
@@ -1199,6 +1213,9 @@ input, textarea, select { font-family: inherit; }
   font-weight: 700;
 }
 .travel-live-loop-navigation button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 26px;
   height: 26px;
   border: 0;
@@ -3647,7 +3664,7 @@ input, textarea, select { font-family: inherit; }
     align-items: flex-start;
     flex-direction: column;
     gap: 9px;
-    padding: 40px 12px 12px;
+    padding: 12px;
   }
   .travel-live-loop-camera-title { font-size: .92rem; }
   .travel-live-loop-copy p { font-size: .71rem; }
