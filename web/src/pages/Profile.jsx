@@ -125,7 +125,13 @@ export default function Profile() {
     const requested = searchParams.get('tab');
     return ['posts', 'about', 'saved'].includes(requested) ? requested : 'posts';
   });
-  const [savedSection, setSavedSection] = useState('posts');
+  const savedSection = searchParams.get('section') === 'jobs' ? 'jobs' : 'posts';
+  const setSavedSection = (section) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', 'saved');
+    next.set('section', section);
+    setSearchParams(next);
+  };
   const [savedPosts, setSavedPosts] = useState([]);
   const [savedPostsLoading, setSavedPostsLoading] = useState(false);
   const [savedPostsLoadingMore, setSavedPostsLoadingMore] = useState(false);
