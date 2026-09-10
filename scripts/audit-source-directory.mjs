@@ -30,7 +30,9 @@ try {
     const id = `directory-${width}`;
     app.seedUser(member(id, { plan: 'pro', roleSettings: { feedSourceFavorites: { feed: ['youtube', 'reddit'], following: [] } } }));
     const context = await browser.newContext({ viewport: { width, height: 900 }, hasTouch: width <= 768, isMobile: width < 600 });
-    await context.addInitScript(t => localStorage.setItem('pc_token', t), app.token(id));
+    await context.addInitScript(t => {
+      if (!localStorage.getItem('pc_token')) localStorage.setItem('pc_token', t);
+    }, app.token(id));
     await context.route('https://www.youtube.com/', route => route.fulfill({ contentType: 'text/html', body: '<title>YouTube test destination</title>' }));
     const page = await context.newPage();
     const errors = [];
