@@ -17,6 +17,10 @@ function initials(name = '') {
 
 export default function GroupDetail() {
   const { id } = useParams();
+  return <GroupPostArea key={id} id={id} />;
+}
+
+function GroupPostArea({ id }) {
   const navigate = useNavigate();
   const { profile, updateProfileLocally } = useAuth();
   const [group,   setGroup]   = useState(null);
@@ -281,7 +285,7 @@ export default function GroupDetail() {
               </button>
             </div>
           ) : (
-            <form onSubmit={handlePost}>
+            <form onSubmit={handlePost} aria-label={`Create post in ${group.name}`}>
               <textarea
                 ref={textareaRef}
                 className="form-textarea"
@@ -318,7 +322,7 @@ export default function GroupDetail() {
               )}
               {mediaError && <div className="auth-error" style={{ marginBottom: 10 }}>{mediaError}</div>}
 
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <PhotoPickerButton
                     onFileSelected={handleFileSelect}
@@ -328,11 +332,11 @@ export default function GroupDetail() {
                     label="Photo/Video"
                   />
                   <EmojiPicker textareaRef={textareaRef} value={content} onChange={setContent} />
-                  <span style={{ fontSize: '.72rem', color: content.length > 1800 ? '#DC2626' : 'var(--muted)' }}>
+                  <span style={{ fontSize: '.72rem', whiteSpace: 'nowrap', color: content.length > 1800 ? '#DC2626' : 'var(--muted)' }}>
                     {content.length} / 2000
                   </span>
                 </div>
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
                   <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setComposing(false); setContent(''); setPostError(''); resetMedia(); }}>
                     Cancel
                   </button>
