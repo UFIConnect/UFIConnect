@@ -1,0 +1,139 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:03.942
+Welcome to UFI Career Studio. Think clearly in
+
+00:00:03.942 --> 00:00:07.883
+a technical interview. Make your reasoning visible by
+
+00:00:07.883 --> 00:00:11.825
+clarifying the problem, testing the solution, and discussing
+
+00:00:11.825 --> 00:00:15.767
+tradeoffs. We will work through five practical steps,
+
+00:00:15.767 --> 00:00:19.708
+with examples you can adapt to your own
+
+00:00:19.708 --> 00:00:20.201
+experience.
+
+00:00:21.083 --> 00:00:25.271
+Before solving, restate the problem in your own
+
+00:00:25.271 --> 00:00:29.459
+words. Confirm the expected inputs and outputs, important
+
+00:00:29.459 --> 00:00:33.646
+constraints, and what should happen in unusual cases.
+
+00:00:33.646 --> 00:00:37.834
+If something is unclear, ask rather than guessing
+
+00:00:37.834 --> 00:00:42.022
+silently. In a coding exercise, consider empty input
+
+00:00:42.022 --> 00:00:46.209
+and duplicates. In a systems discussion, ask about
+
+00:00:46.209 --> 00:00:50.397
+users, scale, and reliability. Clarification is part of
+
+00:00:50.397 --> 00:00:53.538
+solving the problem, not a delay.
+
+00:00:54.417 --> 00:00:57.800
+Describe a simple workable approach before adding complexity.
+
+00:00:57.800 --> 00:01:01.184
+Walk through a small example so the interviewer
+
+00:01:01.184 --> 00:01:04.568
+can follow your reasoning. State any assumption you
+
+00:01:04.568 --> 00:01:07.952
+need to make and explain why the approach
+
+00:01:07.952 --> 00:01:11.335
+should work. A clear baseline gives you something
+
+00:01:11.335 --> 00:01:14.719
+to test and improve. Jumping straight to an
+
+00:01:14.719 --> 00:01:18.103
+elaborate solution makes it harder to spot mistakes
+
+00:01:18.103 --> 00:01:19.372
+or discuss alternatives.
+
+00:01:20.250 --> 00:01:23.655
+Test the solution as you develop it. Use
+
+00:01:23.655 --> 00:01:27.061
+a normal example, an edge case, and a
+
+00:01:27.061 --> 00:01:30.466
+case that could expose a wrong assumption. Explain
+
+00:01:30.466 --> 00:01:33.871
+what you expect before checking the result. If
+
+00:01:33.871 --> 00:01:37.276
+a test fails, trace the behavior instead of
+
+00:01:37.276 --> 00:01:40.682
+changing several things at once. This demonstrates a
+
+00:01:40.682 --> 00:01:44.087
+disciplined process and helps you recover without losing
+
+00:01:44.087 --> 00:01:46.215
+track of the original problem.
+
+00:01:47.083 --> 00:01:50.693
+Discuss tradeoffs in terms of the actual requirements.
+
+00:01:50.693 --> 00:01:54.303
+An approach may use less memory but be
+
+00:01:54.303 --> 00:01:57.912
+harder to maintain, or run faster but introduce
+
+00:01:57.912 --> 00:02:01.522
+operational complexity. Explain which factor matters most here
+
+00:02:01.522 --> 00:02:05.132
+and why. Do not describe a solution as
+
+00:02:05.132 --> 00:02:08.741
+universally best. A strong technical conversation shows that
+
+00:02:08.741 --> 00:02:12.351
+you can make reasonable choices under constraints and
+
+00:02:12.351 --> 00:02:15.058
+revise them when the requirements change.
+
+00:02:15.917 --> 00:02:19.831
+If you get stuck, summarize what you know
+
+00:02:19.831 --> 00:02:23.745
+and identify the smallest unresolved question. Try a
+
+00:02:23.745 --> 00:02:27.659
+simpler example, draw the data flow, or ask
+
+00:02:27.659 --> 00:02:31.573
+for clarification. Keep the interviewer informed without narrating
+
+00:02:31.573 --> 00:02:35.487
+every keystroke. For practice, solve a modest problem
+
+00:02:35.487 --> 00:02:39.401
+aloud and include your tests. Afterwards, review whether
+
+00:02:39.401 --> 00:02:43.315
+your explanation made both the solution and the
+
+00:02:43.315 --> 00:02:45.272
+reasoning easy to follow.
