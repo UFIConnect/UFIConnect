@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useRef, useCallback } from 'react';
 import client from '../api/client';
-import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, isYouTubeShortsUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, useGlobalMuted, usePointerPlaybackGate, fetchVimeoThumbnail, youTubePosterUrl, SoundIcon } from './videoMedia';
+import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, isYouTubeShortsUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, useGlobalMuted, fetchVimeoThumbnail, youTubePosterUrl, SoundIcon } from './videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
@@ -200,7 +200,7 @@ function formatTime(sec) {
 // its own top comment) instead of each slide owning/destroying its own.
 // Only meaningful when src.kind === 'youtube'; file/hls/vimeo keep their
 // existing fully-local state below, untouched.
-function VideoSlide({ post, active, playbackAllowed, muted, onToggleMute, isScrolling, onOpenComments, sharedYt }) {
+function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComments, sharedYt }) {
   const src = resolveVideoSource(post);
   const meta = SOURCE_META[post.source] || SOURCE_META.uficonnect;
   const fileVideoRef = useRef(null);
@@ -315,13 +315,12 @@ function VideoSlide({ post, active, playbackAllowed, muted, onToggleMute, isScro
       v.muted = true;
       v.defaultMuted = true;
       v.playsInline = true;
-      if (playbackAllowed) v.play().catch(() => {});
-      else v.pause();
+      v.play().catch(() => {});
     } else {
       v.pause(); try { v.currentTime = 0; } catch {} setCurrentTime(0); setPaused(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, playbackAllowed, src?.kind, getNativeEl]);
+  }, [active, src?.kind, getNativeEl]);
 
   // Keeps an already-active file/hls video's mute state in sync with manual
   // toggles of the shared mute button — the play effect above already sets
@@ -376,7 +375,7 @@ function VideoSlide({ post, active, playbackAllowed, muted, onToggleMute, isScro
     }
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [active, playbackAllowed, src?.kind]);
+  }, [active, src?.kind]);
 
   // Same "every slide starts fresh" reset file/hls gets on becoming
   // inactive (above) — the iframe itself already fully unmounts when
@@ -422,7 +421,7 @@ function VideoSlide({ post, active, playbackAllowed, muted, onToggleMute, isScro
     if (src?.kind === 'vimeo') {
       try {
         vimeoIframeRef.current?.contentWindow?.postMessage(
-          JSON.stringify({ method: isScrolling || !playbackAllowed ? 'pause' : 'play' }),
+          JSON.stringify({ method: isScrolling ? 'pause' : 'play' }),
           'https://player.vimeo.com',
         );
       } catch {}
@@ -430,9 +429,9 @@ function VideoSlide({ post, active, playbackAllowed, muted, onToggleMute, isScro
     }
     const v = getNativeEl();
     if (!v) return;
-    if (isScrolling || !playbackAllowed) v.pause();
+    if (isScrolling) v.pause();
     else if (v.paused) v.play().catch(() => {});
-  }, [isScrolling, active, playbackAllowed, src?.kind, getNativeEl]);
+  }, [isScrolling, active, src?.kind, getNativeEl]);
 
   function togglePlay() {
     if (isYoutube) {
@@ -545,7 +544,7 @@ function VideoSlide({ post, active, playbackAllowed, muted, onToggleMute, isScro
       {!src ? (
         <div style={{ color: '#888', fontSize: '.85rem' }}>Video unavailable</div>
       ) : src.kind === 'youtube' ? (
-        active && playbackAllowed ? (
+        active ? (
           // The actual video pixels render via VideoFeedView's own shared
           // overlay now (see sharedYtHostRef there), positioned to match
           // this exact same centered/aspect-ratio box independently — this
@@ -568,7 +567,7 @@ function VideoSlide({ post, active, playbackAllowed, muted, onToggleMute, isScro
         // instead: if this browser already earned "unmuted" elsewhere,
         // start here unmuted too rather than forcing yet another mute
         // cycle the app can't itself unwind.
-        active && playbackAllowed ? (
+        active ? (
           // pointerEvents:'none' on the iframe itself makes a tap fall
           // through to this wrapping div's onClick instead of being
           // captured inside the iframe's own document (a click landing on
@@ -1147,7 +1146,6 @@ export default function VideoFeedView({ onExit, music = false }) {
   const viewModeRef = useRef('feed');
   const sourceFilterRef = useRef([]);
   const containerRef = useRef(null);
-  const { playbackAllowed: pointerPlaybackAllowed, pointerHandlers: framePointerHandlers } = usePointerPlaybackGate();
   const slideRefs = useRef([]);
   const consumedVideoIds = useRef(new Set());
   // Consecutive pages that came back with zero results after a search/topic
@@ -1823,7 +1821,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   const sharedYtRetryRef = useRef(null);
   const sharedYtReadyTimeoutRef = useRef(null);
   const [sharedYt, setSharedYt] = useState({ paused: false, duration: 0, currentTime: 0, failed: false });
-  sharedYtDesiredIdRef.current = pointerPlaybackAllowed && activeSrc?.kind === 'youtube' ? activeSrc.id : null;
+  sharedYtDesiredIdRef.current = activeSrc?.kind === 'youtube' ? activeSrc.id : null;
   sharedYtMutedRef.current = muted;
 
   // The video box's own width/height:auto + max-width/max-height:100% +
@@ -1908,7 +1906,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   }, []);
 
   useEffect(() => {
-    const videoId = pointerPlaybackAllowed && activeSrc?.kind === 'youtube' ? activeSrc.id : null;
+    const videoId = activeSrc?.kind === 'youtube' ? activeSrc.id : null;
     clearTimeout(sharedYtPendingLoadRef.current);
     clearInterval(sharedYtRetryRef.current);
 
@@ -2042,7 +2040,7 @@ export default function VideoFeedView({ onExit, music = false }) {
       clearTimeout(sharedYtPendingLoadRef.current);
       clearInterval(sharedYtRetryRef.current);
     };
-  }, [activeIndex, activeSrc?.kind, activeSrc?.id, pointerPlaybackAllowed, startSharedYtAutoplayRetry]);
+  }, [activeIndex, activeSrc?.kind, activeSrc?.id, startSharedYtAutoplayRetry]);
 
   useEffect(() => {
     const pollId = setInterval(() => {
@@ -2139,7 +2137,6 @@ export default function VideoFeedView({ onExit, music = false }) {
       <div
         className="video-feed-frame"
         data-orientation={activeIsWideVideo ? 'landscape' : 'portrait'}
-        {...framePointerHandlers}
         style={{ position: 'relative', height: '100%', width: '100%' }}
       >
       {/* All controls on one row now, at the very top — was three separate
@@ -2588,7 +2585,6 @@ export default function VideoFeedView({ onExit, music = false }) {
                 <VideoSlide
                   post={post}
                   active={idx === activeIndex}
-                  playbackAllowed={pointerPlaybackAllowed}
                   muted={muted}
                   onToggleMute={toggleMuted}
                   isScrolling={isScrolling}
@@ -2685,7 +2681,7 @@ export default function VideoFeedView({ onExit, music = false }) {
             }}
           >
             <div ref={sharedYtHostRef} style={{ width: '100%', height: '100%', pointerEvents: 'none', visibility: sharedYt.failed ? 'hidden' : 'visible' }} />
-            {sharedYt.failed && activeSrc?.kind === 'youtube' && pointerPlaybackAllowed && (
+            {sharedYt.failed && activeSrc?.kind === 'youtube' && (
               // Same reasoning as the old per-slide fallback: the IFrame
               // Player API script never went ready (blocked, offline,
               // slow network) — a plain embed iframe doesn't load that

@@ -63,8 +63,10 @@ try {
       } else localStorage.setItem('pc_token', token);
     }, app.token('preview-member'));
     await context.addInitScript(() => {
+      window.__auditYouTubePlayers = [];
       window.YT = { PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 }, Player: class {
         constructor(host, options) {
+          window.__auditYouTubePlayers.push(this);
           this.options = options;
           this.frame = document.createElement('iframe');
           this.frame.style.cssText = 'width:100%;height:100%;border:0';
@@ -204,12 +206,17 @@ try {
       console.log(`PASS: source favorites at ${viewport.width}px`);
       continue;
     }
+    await page.mouse.move(0, 0);
     await page.goto(base + 'videos');
     const videoScroll = page.locator('.video-feed-scroll');
     await page.locator('[data-post-id="audit-video-0"]').waitFor();
     const frame = await page.locator('.video-feed-frame').boundingBox();
-    await page.mouse.move(frame.x + frame.width / 2, frame.y + frame.height / 3);
     await page.locator('.video-feed-youtube-player iframe').waitFor();
+    await page.waitForFunction(() => window.__auditYouTubePlayers.some(player => player.getPlayerState() === 1));
+    await page.mouse.move(frame.x + frame.width / 2, frame.y + frame.height / 3);
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(400);
+    assert.ok(await page.evaluate(() => window.__auditYouTubePlayers.some(player => player.getPlayerState() === 1)), 'YouTube in Videos keeps playing after the pointer leaves');
     assert.equal(await page.locator('.video-feed-youtube-player iframe').evaluate(el => getComputedStyle(el).pointerEvents), 'none');
     const firstSlide = page.locator('[data-post-id="audit-video-0"]');
     assert.ok(await firstSlide.getByRole('group', { name: 'Video engagement' }).isVisible());
@@ -239,8 +246,15 @@ try {
       await page.screenshot({ path: path.join(output, `video-scroll-failure-${viewport.width}.png`) });
       throw error;
     }
+    await videoScroll.evaluate(el => el.scrollTo(0, el.clientHeight));
     const native = page.locator('[data-post-id="audit-video-1"] video');
     await native.waitFor();
+    await page.mouse.move(0, 0);
+    await page.waitForFunction(() => {
+      const video = document.querySelector('[data-post-id="audit-video-1"] video');
+      return video && !video.paused && video.currentTime > 0;
+    });
+    assert.ok(await page.evaluate(() => window.__auditYouTubePlayers.every(player => player.getPlayerState() !== 1)), 'The previous YouTube slide pauses after scrolling');
     assert.equal(await native.evaluate(el => getComputedStyle(el).objectFit), 'contain');
     await page.screenshot({ path: path.join(output, `videos-${viewport.width}.png`) });
     checks += 5;
