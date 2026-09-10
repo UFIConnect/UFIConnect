@@ -19,6 +19,7 @@ import { TIERS } from '../components/PricingModal';
 import ImageLightbox from '../components/ImageLightbox';
 import { useEngagementTracking } from '../hooks/useEngagementTracking';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
+import { normalizeSourceFavorites } from '../components/sourceFavorites';
 import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { reportEngagementSignal } from '../api/engagement';
 import { reportClientError } from '../api/errorReporting';
@@ -411,34 +412,6 @@ const FOLLOWING_SOURCE_TABS = [
     .map(key => ({ key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || 'SRC' })),
 ];
 const FOLLOWING_EXCLUDED_SOURCES = new Set(FOLLOWING_EXCLUDED_SOURCE_IDS);
-const DEFAULT_SOURCE_FAVORITE_COUNT = 6;
-const DEFAULT_SOURCE_FAVORITES = Object.freeze({
-  feed: SOURCE_TABS.slice(0, DEFAULT_SOURCE_FAVORITE_COUNT).map(tab => tab.key),
-  following: FOLLOWING_SOURCE_TABS
-    .filter(tab => tab.key !== 'all')
-    .slice(0, DEFAULT_SOURCE_FAVORITE_COUNT)
-    .map(tab => tab.key),
-});
-
-function normalizeSourceFavoriteList(value, tabs, fallback) {
-  const allowed = new Set(tabs.filter(tab => tab.key !== 'all').map(tab => tab.key));
-  const normalized = [];
-  const add = (key) => {
-    if (!allowed.has(key) || normalized.includes(key)) return;
-    normalized.push(key);
-  };
-  (Array.isArray(value) ? value : fallback).forEach(add);
-  return normalized;
-}
-
-function normalizeSourceFavorites(value) {
-  const saved = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  return {
-    feed: normalizeSourceFavoriteList(saved.feed, SOURCE_TABS, DEFAULT_SOURCE_FAVORITES.feed),
-    following: normalizeSourceFavoriteList(saved.following, FOLLOWING_SOURCE_TABS, DEFAULT_SOURCE_FAVORITES.following),
-  };
-}
-
 const DEFAULT_FILTERS = { sort: 'newest', sources: [], timeRange: 'all', topics: [] };
 const FEED_PAGE_SIZE = 50;
 const FEED_AUTO_REFRESH_MS = 2 * 60 * 1000;
@@ -3973,6 +3946,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             <HomeFeedTools
               showSources
               sourceIds={viewMode === 'following' ? FOLLOWING_FILTER_SOURCES : ALL_FILTER_SOURCES}
+              favoriteMode={viewMode === 'following' ? 'following' : 'feed'}
               activePanel={requestedHomeToolPanel}
               onActivePanelChange={setHomeToolPanel}
             />

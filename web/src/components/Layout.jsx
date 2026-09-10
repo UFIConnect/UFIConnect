@@ -659,6 +659,7 @@ export default function Layout({ children, wide = false }) {
               <HomeFeedTools
                 showSources
                 sourceIds={mobileSourceIds}
+                favoriteMode={mobileFeedMode === 'following' ? 'following' : 'feed'}
               />
               <NavLink to="/command-center" className="mobile-command-menu-item mobile-command-menu-item--command" onClick={() => setMobileMenuOpen(false)}>
                 <ShellIcon name="command" size={18} />

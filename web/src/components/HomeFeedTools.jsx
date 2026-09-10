@@ -4,6 +4,8 @@ import { useToast } from '../contexts/ToastContext';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import { CONNECTED_SOCIAL_PLATFORMS, SOURCE_META, withCareerAccountFallback } from './sourceMeta';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
+import { Star } from 'lucide-react';
+import { normalizeSourceFavorites } from './sourceFavorites';
 
 const LINK_FIELDS = [
   { key: 'linkedin', label: 'LinkedIn', placeholder: 'https://linkedin.com/in/yourname' },
@@ -56,6 +58,7 @@ export default function HomeFeedTools({
   showSkills = true,
   showAttachments = true,
   sourceIds = [],
+  favoriteMode = 'feed',
   activePanel,
   onActivePanelChange,
 }) {
@@ -64,6 +67,33 @@ export default function HomeFeedTools({
   const [uncontrolledOpenPanel, setUncontrolledOpenPanel] = useState(null);
   const [disabledSources, setDisabledSources] = useState(new Set());
   const [savingSourceId, setSavingSourceId] = useState(null);
+  const [selectingFavorites, setSelectingFavorites] = useState(false);
+  const [favoriteDraft, setFavoriteDraft] = useState([]);
+  const [savingFavorites, setSavingFavorites] = useState(false);
+  const [favoriteError, setFavoriteError] = useState('');
+  const favoriteSettingsKey = JSON.stringify(profile?.roleSettings?.feedSourceFavorites || null);
+  useEffect(() => {
+    setFavoriteDraft(normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites)[favoriteMode]);
+    setSelectingFavorites(false);
+    setFavoriteError('');
+  }, [profile?.id, favoriteMode, favoriteSettingsKey]);
+
+  async function saveFavorites() {
+    if (!profile?.id || savingFavorites) return;
+    setSavingFavorites(true);
+    setFavoriteError('');
+    try {
+      const favorites = normalizeSourceFavorites(profile.roleSettings?.feedSourceFavorites);
+      const { data } = await client.patch('/profile', {
+        roleSettings: { feedSourceFavorites: { ...favorites, [favoriteMode]: favoriteDraft } },
+      });
+      updateProfileLocally(data.profile || data);
+      setSelectingFavorites(false);
+      showToast('Favorites saved', 'success');
+    } catch {
+      setFavoriteError('Favorites could not be saved. Please try again.');
+    } finally { setSavingFavorites(false); }
+  }
   const [accountPlatforms, setAccountPlatforms] = useState(null);
   const [accountConnected, setAccountConnected] = useState({});
   const [accountError, setAccountError] = useState('');
@@ -337,23 +367,40 @@ export default function HomeFeedTools({
         open={openPanel === 'sources'}
         onToggle={() => toggle('sources')}
       >
-        <div className="home-feed-source-actions" aria-label="All feed source controls">
+        <button type="button" className="btn btn-ghost btn-sm home-source-select-favorites" aria-pressed={selectingFavorites}
+          disabled={savingFavorites || savingSourceId !== null}
+          onClick={() => {
+            setFavoriteDraft(normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites)[favoriteMode]);
+            setFavoriteError('');
+            setSelectingFavorites(current => !current);
+          }}><Star size={16} /> Select favorites</button>
+        {selectingFavorites && <div className="home-source-favorite-actions">
+          <span>{favoriteDraft.length} selected</span>
+          <button type="button" className="btn btn-ghost btn-sm" disabled={savingFavorites || availableSources.every(source => favoriteDraft.includes(source))} onClick={() => setFavoriteDraft(current => [...new Set([...current, ...availableSources])])}>Select all</button>
+          <button type="button" className="btn btn-ghost btn-sm" disabled={savingFavorites || !favoriteDraft.length} onClick={() => setFavoriteDraft([])}>Clear favorites</button>
+          <button type="button" className="btn btn-primary btn-sm" disabled={savingFavorites} onClick={saveFavorites}>{savingFavorites ? 'Saving...' : 'Save favorites'}</button>
+          {favoriteError && <span role="alert">{favoriteError}</span>}
+        </div>}
+        {!selectingFavorites && <div className="home-feed-source-actions" aria-label="All feed source controls">
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAllSources(true)} disabled={savingSourceId !== null || enabledSourceCount === availableSources.length}>
             {savingSourceId === '__all__' ? 'Saving...' : 'Enable all'}
           </button>
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAllSources(false)} disabled={savingSourceId !== null || enabledSourceCount === 0}>
             {savingSourceId === '__all__' ? 'Saving...' : 'Disable all'}
           </button>
-        </div>
+        </div>}
         <div className="home-feed-source-list" aria-label="Feed source controls">
           {availableSources.map(source => {
             const enabled = !disabledSources.has(source);
             const saving = savingSourceId === source;
             return (
-              <div className={`home-feed-source-row${enabled ? '' : ' is-off'}`} key={source}>
+              <div className={`home-feed-source-row${enabled || selectingFavorites ? '' : ' is-off'}`} key={source}>
                 <SourceMark source={source} />
                 <span className="home-feed-source-name">{SOURCE_META[source]?.label || source}</span>
-                <button
+                {selectingFavorites ? <label className="home-source-favorite-hit"><input type="checkbox" className="home-source-favorite-checkbox"
+                  aria-label={`Favorite ${SOURCE_META[source]?.label || source}`}
+                  checked={favoriteDraft.includes(source)} disabled={savingFavorites}
+                  onChange={() => setFavoriteDraft(current => current.includes(source) ? current.filter(key => key !== source) : [...current, source])} /></label> : <button
                   type="button"
                   role="switch"
                   aria-checked={enabled}
@@ -364,7 +411,7 @@ export default function HomeFeedTools({
                 >
                   <span className="home-feed-source-toggle-track" aria-hidden="true"><span /></span>
                   <span>{saving ? 'Saving' : enabled ? 'On' : 'Off'}</span>
-                </button>
+                </button>}
               </div>
             );
           })}
