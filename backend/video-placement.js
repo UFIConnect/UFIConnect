@@ -22,6 +22,7 @@ function isPlayableVideoPost(post) {
 }
 
 function isVideoSurfacePost(post) {
+  if (isMusicVideoPost(post)) return false;
   if (!isPlayableVideoPost(post)) return false;
   const duration = normalizeVideoDurationSeconds(post.videoDurationSeconds ?? post.video_duration_seconds);
   if (duration != null) return duration <= VIDEO_FEED_MAX_DURATION_SECONDS;
@@ -29,10 +30,19 @@ function isVideoSurfacePost(post) {
 }
 
 function isRegularFeedSurfacePost(post) {
+  if (isMusicVideoPost(post)) return false;
   if (!isPlayableVideoPost(post)) return true;
   const duration = normalizeVideoDurationSeconds(post.videoDurationSeconds ?? post.video_duration_seconds);
   if (duration != null) return duration > VIDEO_FEED_MAX_DURATION_SECONDS;
   return !/youtube(?:-nocookie)?\.com\/shorts\//i.test(post.sourceUrl || '');
+}
+
+function isMusicVideoPost(post) {
+  if (!isPlayableVideoPost(post)) return false;
+  const text = [post.title, post.topic, post.genre, ...(Array.isArray(post.tags) ? post.tags : [])].filter(Boolean).join(' ');
+  if (/\b(tutorial|lesson|review|music industry|music news)\b/i.test(text)) return false;
+  return String(post.categoryId || post.category_id || '') === '10'
+    || /\b(music|song|songs|lyrics?|official audio|live performance|concert|remix|karaoke|acoustic cover)\b/i.test(text);
 }
 
 function continuousVideoPageMeta(query = {}, upstreamHasMore) {
@@ -48,6 +58,7 @@ module.exports = {
   VIDEO_FEED_MAX_DURATION_SECONDS,
   normalizeVideoDurationSeconds,
   isPlayableVideoPost,
+  isMusicVideoPost,
   isVideoSurfacePost,
   isRegularFeedSurfacePost,
   continuousVideoPageMeta,

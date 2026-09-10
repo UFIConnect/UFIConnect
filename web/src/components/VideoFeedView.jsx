@@ -1077,7 +1077,7 @@ function CommentsSheet({ post, onClose }) {
   );
 }
 
-export default function VideoFeedView({ onExit }) {
+export default function VideoFeedView({ onExit, music = false }) {
   const [videoPosts, setVideoPosts] = useState([]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [youtubeFrameOrientations, setYoutubeFrameOrientations] = useState({});
@@ -1204,7 +1204,9 @@ export default function VideoFeedView({ onExit }) {
       // Same ?q=/?topics= convention as the main feed (see handleFeedRequest/
       // handleVideoFeedRequest server-side).
       if (searchQueryRef.current) params += `&q=${encodeURIComponent(searchQueryRef.current)}`;
-      if (topicFiltersRef.current.length) params += `&topics=${topicFiltersRef.current.map(encodeURIComponent).join(',')}`;
+      if (topicFiltersRef.current.length) params += music
+        ? `&genre=${encodeURIComponent(topicFiltersRef.current[0])}`
+        : `&topics=${topicFiltersRef.current.map(encodeURIComponent).join(',')}`;
       let endpoint;
       if (mode === 'following') {
         if (reset) {
@@ -1226,7 +1228,7 @@ export default function VideoFeedView({ onExit }) {
         if (reset) cursorRef.current = null;
         if (cursorRef.current) params += `&cursor=${encodeURIComponent(cursorRef.current)}`;
         if (bust) params += `&bust=1`;
-        endpoint = '/office/feed/videos';
+        endpoint = music ? '/office/feed/music' : '/office/feed/videos';
       }
       const { data } = await client.get(`${endpoint}?${params}`);
       if (requestId !== loadRequestRef.current) return;
@@ -1426,7 +1428,7 @@ export default function VideoFeedView({ onExit }) {
   // platform filter just above.
   const toggleTopicFilter = useCallback((topic) => {
     const current = topicFiltersRef.current;
-    const next = current.includes(topic) ? current.filter(t => t !== topic) : [...current, topic];
+    const next = current.includes(topic) ? current.filter(t => t !== topic) : music ? [topic] : [...current, topic];
     topicFiltersRef.current = next;
     setTopicFilters(next);
     setActiveIndex(0);
@@ -2174,7 +2176,7 @@ export default function VideoFeedView({ onExit }) {
           background: 'rgba(0,0,0,.4)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
           border: '1px solid rgba(255,255,255,.18)', borderRadius: 18, padding: 3,
         }}>
-          {[{ key: 'feed', label: 'Home' }, { key: 'following', label: 'Following' }].map(({ key, label }) => {
+          {(music ? [{ key: 'feed', label: 'Music' }] : [{ key: 'feed', label: 'Home' }, { key: 'following', label: 'Following' }]).map(({ key, label }) => {
             const active = viewMode === key;
             return (
               <button
@@ -2426,9 +2428,9 @@ export default function VideoFeedView({ onExit }) {
                 })}
               </div>
 
-              <div style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.02em', opacity: 0.6, marginBottom: 8, textTransform: 'uppercase' }}>Topic</div>
+              <div style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.02em', opacity: 0.6, marginBottom: 8, textTransform: 'uppercase' }}>{music ? 'Genre' : 'Topic'}</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                {ALL_INTERESTS.map(topic => {
+                {(music ? ['Pop', 'Rock', 'Hip hop', 'Rap', 'Jazz', 'Classical', 'Country', 'Electronic', 'Latin', 'Acoustic', 'Live'] : ALL_INTERESTS).map(topic => {
                   const active = topicFilters.includes(topic);
                   return (
                     <button
@@ -2518,6 +2520,7 @@ export default function VideoFeedView({ onExit }) {
         )}
         <div
           ref={containerRef}
+          data-video-feed-scroll
           // video-feed-scroll: hides this element's own native scrollbar
           // (see index.css) — on desktop that scrollbar renders right at
           // the frame's edge, easy to mistake for some kind of cursor.

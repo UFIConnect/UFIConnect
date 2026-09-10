@@ -1,0 +1,54 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+import { chromium } from 'playwright';
+import { createServer } from '../web/node_modules/vite/dist/node/index.js';
+const require = createRequire(import.meta.url);
+require('../backend/generated-media');
+const { createAppHarness, member } = require('../backend/test-support/app-harness');
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const app = await createAppHarness();
+app.seedUser(member('music-audit'));
+const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envFile: false,
+  define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api') },
+  server: { host: '127.0.0.1', port: 5206, strictPort: false, proxy: { '/api': { target: app.base, rewrite: p => p.replace(/^\/api/, '') } } },
+});
+let browser;
+try {
+  await server.listen();
+  browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
+  await fs.mkdir(path.join(root, '.cache/audit-ui'), { recursive: true });
+  for (const width of [1440, 768, 390]) {
+    const context = await browser.newContext({ viewport: { width, height: 850 }, hasTouch: width < 1000, isMobile: width < 600 });
+    await context.addInitScript(t => localStorage.setItem('pc_token', t), app.token('music-audit'));
+    const page = await context.newPage();
+    const calls = [];
+    await page.route('**/api/office/feed/music?*', async route => {
+      calls.push(new URL(route.request().url()).searchParams);
+      const prefix = calls.at(-1).get('genre') ? 'genre-' : 'music-';
+      await route.fulfill({ json: { posts: Array.from({ length: 4 }, (_, i) => ({ id: prefix + i, source: 'reddit', title: 'Acoustic song ' + i, content: 'Original test media', mediaType: 'video', mediaUrl: server.resolvedUrls.local[0] + 'media/preparation/tailored-resume.mp4', sourceUrl: 'https://example.com/song', isExternal: true, createdAt: '2026-09-01T12:00:00Z' })), hasMore: false } });
+    });
+    await page.goto(server.resolvedUrls.local[0] + 'music');
+    await page.getByRole('button', { name: 'Music', exact: true }).waitFor();
+    await page.locator('[data-post-id="music-0"]').waitFor();
+    const scroll = page.locator('[data-video-feed-scroll]');
+    await scroll.evaluate(el => el.scrollTo(0, el.clientHeight));
+    await page.waitForFunction(() => document.querySelector('[data-video-feed-scroll]').scrollTop > 0);
+    await page.waitForTimeout(250);
+    await scroll.evaluate(el => el.scrollTo(0, 0));
+    await page.waitForTimeout(500);
+    assert.ok(calls.some(p => p.get('bust') === '1'));
+    await page.getByRole('button', { name: 'Filter videos', exact: true }).click();
+    await page.getByRole('button', { name: 'Acoustic', exact: true }).click();
+    await page.waitForTimeout(300);
+    assert.ok(calls.some(p => p.get('genre') === 'Acoustic'));
+    await page.getByRole('button', { name: 'Done', exact: true }).first().click();
+    await page.locator('[data-post-id="genre-0"]').waitFor();
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
+    await page.screenshot({ path: path.join(root, `.cache/audit-ui/music-${width}.png`) });
+    console.log(`PASS: Music player, filter and scroll refresh at ${width}px`);
+    await context.close();
+  }
+} finally { await browser?.close(); await server.close(); await app.close(); }

@@ -138,6 +138,9 @@ export default function App() {
       <Route path="/you" element={
         <RequireAuth><RequireOnboarding><YourPostsFeed /></RequireOnboarding></RequireAuth>
       }/>
+      <Route path="/music" element={
+        <RequireAuth><RequireOnboarding><Videos music /></RequireOnboarding></RequireAuth>
+      }/>
       <Route path="/groups" element={
         <RequireAuth><RequireOnboarding><Groups /></RequireOnboarding></RequireAuth>
       }/>
