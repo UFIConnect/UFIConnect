@@ -11,6 +11,8 @@ import PhotoPickerButton from '../components/PhotoPickerButton';
 import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
 import { useSavedItems } from '../contexts/SavedItemsContext';
 import GeneratedContentHistory from '../components/GeneratedContentHistory';
+import { DirectoryControls, AccountSiteLink } from '../components/DirectoryControls';
+import { ACCOUNT_STATUSES, filterAccounts } from '../components/sourceDirectory';
 
 // Platforms with a real, working "my own posts" fetcher server-side (see
 // OWN_CONTENT_FETCHERS in backend/index.js) — the rest of
@@ -903,6 +905,8 @@ function MemberAccountsSection() {
   const [error, setError] = useState('');
   const [connecting, setConnecting] = useState(null);
   const [disconnecting, setDisconnecting] = useState(null);
+  const [accountQuery, setAccountQuery] = useState('');
+  const [accountFilter, setAccountFilter] = useState('all');
   const isBusinessMembership = profile?.plan === 'business';
 
   const loadAccounts = useCallback(async () => {
@@ -976,6 +980,7 @@ function MemberAccountsSection() {
     : platforms.filter(([key, platform]) => (
       platform.commandCenterOnly || COMMAND_CENTER_ACCOUNT_PLATFORMS.includes(key)
     ));
+  const displayedAccounts = filterAccounts(memberPlatforms, connected, accountQuery, accountFilter);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -988,10 +993,15 @@ function MemberAccountsSection() {
         </p>
       </div>
       {error && <SectionError message={error} onRetry={loadAccounts} />}
+      <div className="account-directory-page">
+        <DirectoryControls label="accounts" query={accountQuery} onQueryChange={setAccountQuery} filter={accountFilter} onFilterChange={setAccountFilter}
+          options={[["all", "All statuses"], ...ACCOUNT_STATUSES]} />
+      </div>
+      {memberPlatforms.length > 0 && !displayedAccounts.length && <div className="source-directory-empty" role="status">No matching accounts</div>}
       {!memberPlatforms.length && !error && (
         <div className="card" style={{ textAlign: 'center', padding: 28, color: 'var(--muted)', fontSize: '.85rem' }}>{isBusinessMembership ? 'No career account connections are available yet.' : 'No member-only account connections are available yet.'}</div>
       )}
-      {memberPlatforms.map(([key, platform]) => {
+      {displayedAccounts.map(([key, platform]) => {
         const isConnected = !!connected[key];
         const unavailable = !platform.configured || platform.forceComingSoon;
         const accountOnly = ['instagram', 'tiktok', 'threads'].includes(key);
@@ -1010,15 +1020,18 @@ function MemberAccountsSection() {
               </div>
               <p style={{ color: 'var(--muted)', fontSize: '.78rem', margin: '4px 0 0', lineHeight: 1.45 }}>{platform.description}</p>
             </div>
+            <div className="source-directory-account-actions">
             {isConnected ? (
               <button type="button" className="btn btn-danger btn-sm" onClick={() => disconnectAccount(key)} disabled={disconnecting === key}>
                 {disconnecting === key ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Disconnect'}
               </button>
             ) : (
-              <button type="button" className="btn btn-primary btn-sm" onClick={() => connectAccount(key)} disabled={unavailable || connecting === key}>
-                {connecting === key ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : unavailable ? 'Coming soon' : 'Connect'}
+              <button type="button" className="btn btn-primary btn-sm" onClick={() => connectAccount(key)} disabled={unavailable || platform.locked || connecting === key}>
+                {connecting === key ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : unavailable ? 'Coming soon' : platform.locked ? 'Membership' : 'Connect'}
               </button>
             )}
+            <AccountSiteLink platform={key} name={platform.name} />
+            </div>
           </div>
         );
       })}
