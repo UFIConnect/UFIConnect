@@ -440,7 +440,7 @@ function OverviewView({ status, pipelineStatus, log, agents, triggerAgent, trigg
         <StatCard icon="UP" label="Uptime"        value={s ? fmtUptime(s.uptime) : '—'}           sub={s?.env}                                                     color="#60a5fa" />
         <StatCard icon="FP" label="Feed Posts"    value={f?.postCount?.toLocaleString() ?? '—'}    sub={f?.refreshedAt ? `refreshed ${fmtAgo(f.refreshedAt)}` : null} color="#4ade80" />
         <StatCard icon="AG" label="Agents"        value={a?.active ?? '—'}                         sub={`${a?.logSize || 0} log entries`}                            color="#fbbf24" />
-        <StatCard icon="DB" label="Database"     value={s?.db === 'connected' ? 'Live' : s?.db === 'fallback' ? 'Memory' : '—'} sub={s?.dbReadFailoverActive ? 'read failover active' : s?.dbBackup ? 'backup ready' : s?.db} color={s?.db === 'connected' ? '#4ade80' : '#f97316'} />
+        <StatCard icon="DB" label="Primary database" value={s?.db === 'connected' ? 'Live' : s?.db === 'fallback' ? 'Memory' : '—'} sub={s?.dbReadFailoverActive ? 'read failover active' : s?.db} color={s?.db === 'connected' ? '#4ade80' : '#f97316'} />
         <StatCard icon="SSE" label="SSE Clients"  value={f?.sseClients ?? '—'}                     sub="feed subscribers"                                            color="#a78bfa" />
         <StatCard
           icon="SRC"
@@ -451,27 +451,43 @@ function OverviewView({ status, pipelineStatus, log, agents, triggerAgent, trigg
         />
       </div>
 
-      {backup && (
-        <Card style={{ padding: '16px 18px', marginBottom: 24 }}>
+      <Card style={{ padding: '16px 18px', marginBottom: 24 }}>
           <h2 style={{ fontSize: 14, margin: '0 0 8px', color: '#e2e8f0' }}>Feed recovery database</h2>
-          <p style={{ fontSize: 12, margin: '0 0 6px', color: backup.enabled && backup.connected && !backup.lastError ? '#4ade80' : '#fbbf24' }}>
-            {!backup.enabled ? 'Not configured: set DATABASE_URL_BACKUP on the API service.'
-              : !backup.connected ? 'Disconnected: the API is retrying the backup connection.'
-                : backup.lastError ? 'Connected; the last recovery update failed.'
-                  : backup.lastSyncAt ? 'Connected; the latest recovery update succeeded.'
-                    : 'Connected; waiting for the first recovery update.'}
+          <p style={{ fontSize: 12, margin: '0 0 6px', color: backup?.enabled && backup.connected && backup.lastSyncAt && !backup.lastError ? '#4ade80' : '#fbbf24' }}>
+            {!s ? 'Recovery status unavailable. Waiting for an API status response.'
+              : !backup ? 'Recovery status unavailable: the API did not report backup diagnostics.'
+                : !backup.enabled ? 'Not configured: set DATABASE_URL_BACKUP on the API service.'
+                  : !backup.connected ? 'Disconnected: the recovery database connection is unavailable.'
+                    : backup.lastError ? 'Connected; the last recovery update failed.'
+                      : backup.lastSyncAt ? 'Connected; the latest recovery update succeeded.'
+                        : 'Connected; waiting for the first recovery update.'}
           </p>
+          {!backup && (
+            <p style={{ fontSize: 12, margin: '0 0 6px', color: '#94a3b8' }}>
+              Backup connection: {s?.dbBackup === true ? 'reported connected' : s?.dbBackup === false ? 'reported disconnected' : 'unknown'}.
+              {' '}Recovery updates are unverified.
+            </p>
+          )}
+          {backup && <>
           <p style={{ fontSize: 12, margin: '0 0 6px', color: '#94a3b8' }}>
             Last successful update: {backup.lastSyncAt ? fmtAgo(backup.lastSyncAt) : 'none reported'}
             {' · '}{backup.rowCount == null ? 'Row count unavailable' : `${Number(backup.rowCount).toLocaleString()} feed posts`}
           </p>
           {backup.lastError && <p style={{ fontSize: 12, margin: '0 0 6px', color: '#fca5a5', overflowWrap: 'anywhere' }}>{backup.lastError}</p>}
-          <p style={{ fontSize: 11, margin: 0, color: '#94a3b8' }}>
+          {(backup.lastAttemptAt || backup.nextSyncAt || (backup.enabled && !backup.connected)) && (
+            <p style={{ fontSize: 12, margin: '0 0 6px', color: '#94a3b8' }}>
+              {backup.lastAttemptAt ? `Last recovery attempt: ${fmtAgo(backup.lastAttemptAt)}.` : 'No connection attempt reported.'}
+              {backup.nextSyncAt ? ` Next recovery attempt: in ${fmtUntil(backup.nextSyncAt)}.` : ''}
+            </p>
+          )}
+          <p style={{ fontSize: 11, margin: '0 0 6px', color: '#94a3b8' }}>
             Recent feed posts only: up to {backup.retentionDays} days and {Number(backup.maxRows).toLocaleString()} posts.
-            {' '}Accounts, messages, and settings require a separate full database backup.
           </p>
-        </Card>
-      )}
+          </>}
+          <p style={{ fontSize: 11, margin: 0, color: '#94a3b8' }}>
+            Accounts, messages, and settings require a separate full database backup.
+          </p>
+      </Card>
 
       <WebOptimizerPanel web={web} triggerAgent={triggerAgent} triggering={triggering} />
 
