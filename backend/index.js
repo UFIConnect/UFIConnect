@@ -7,6 +7,8 @@ const bcrypt = require('bcryptjs');
 const { SESSION_TTL_SECONDS, resolveJwtSecret, passwordPolicyError, signSecurityToken, verifySecurityToken, publicRoleSettings } = require('./auth-security');
 const { createTokenVault, migrateSocialCredentials } = require('./token-vault');
 const { createAnalyticsBridgeHandler } = require('./analytics-bridge');
+const { ANALYTICS_SCHEMA, createAggregateAnalytics } = require('./aggregate-analytics');
+const { createOfficeAgentChat, sanitizeSnapshot: sanitizeAgentSnapshot } = require('./office-agent-chat');
 const dotenv = require('dotenv');
 const http   = require('http');
 const https  = require('https');
@@ -122,6 +124,8 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 const app = express();
+const aggregateAnalytics = createAggregateAnalytics({ db, schedule: setInterval, onPageview: () => recordRealUserActivity(null, 'pageview') });
+app.use(aggregateAnalytics.serviceMiddleware);
 // Trust only an explicitly configured proxy range/hop count. Untrusted clients
 // must not choose their own rate-limit identity through forwarding headers.
 if (process.env.TRUST_PROXY) {
@@ -380,6 +384,21 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
   : process.env.NODE_ENV !== 'production';
 app.use(cors({ origin: allowedOrigins, credentials: true }));
+// Metrics are parsed before general authentication and never receive user IDs.
+const analyticsRouter = express.Router();
+analyticsRouter.use(rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: true, legacyHeaders: false,
+  keyGenerator: rateLimitKey, message: { error: 'Metrics rate limit reached.' } }));
+analyticsRouter.use(express.json({ limit: '512b', strict: true }));
+analyticsRouter.post('/pageview', aggregateAnalytics.pageview);
+analyticsRouter.post('/performance', aggregateAnalytics.performance);
+analyticsRouter.post('/sign-in', (_req, res) => res.status(204).end());
+analyticsRouter.use((error, _req, res, _next) => res.status(error.status === 413 ? 413 : 400).json({ error: 'Invalid aggregate event.' }));
+app.use('/analytics', analyticsRouter);
+// Bound chat bodies before the application's larger JSON parser and reject
+// parser errors without returning any submitted text.
+app.use('/office/agents/:id/chat', (_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); },
+  requireOfficeToken, express.json({ limit: '8kb', strict: true }),
+  (error, _req, res, _next) => res.status(error.status === 413 ? 413 : 400).json({ error: 'Invalid agent chat request.' }));
 app.use(express.json({ limit: '512kb' }));
 app.use((req, res, next) => {
   if (req.headers.authorization || req.path.startsWith('/auth/') || req.path.startsWith('/profile')) {
@@ -427,12 +446,6 @@ function normalizeClientIp(ip) {
 }
 function getClientIp(req) {
   return normalizeClientIp(req.ip || req.socket?.remoteAddress);
-}
-function clientIpAnalyticsKey(req) {
-  const ip = getClientIp(req);
-  if (!ip) return null;
-  const salt = process.env.IP_ANALYTICS_SALT || process.env.JWT_SECRET || 'uficonnect-ip-analytics';
-  return crypto.createHmac('sha256', salt).update(ip).digest('hex').slice(0, 40);
 }
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -499,22 +512,6 @@ if (Number.isFinite(generalApiRateLimit) && generalApiRateLimit > 0) {
 });
   app.use(generalApiLimiter);
 }
-
-// Tighter than generalApiLimiter specifically because this data can trigger
-// an autonomous deploy (see runAutofixCheck) — without a real per-account
-// cap here, one authenticated client looping a fake error could manufacture
-// "N distinct sessions hit the same signature" almost on its own, or just
-// burn the whole autofix audit log with noise. Keyed by user id (routes
-// using this always sit behind `authenticate`, registered first), not IP —
-// this is specifically about one account's own report volume.
-const clientErrorLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  limit: 30,
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => req.user?.id || rateLimitKey(req),
-  message: { message: 'Too many error reports from this account — please try again later.' },
-});
 
 // Resume writing requests call a paid model. This is intentionally scoped to
 // the member rather than their IP, so a shared network cannot exhaust another
@@ -8520,46 +8517,10 @@ function recordServerError(err, { route } = {}) {
   ).then(() => upsertAutofixSignature(signature)).catch(e => console.warn('recordServerError:', e.message));
 }
 
-function recordClientError(userId, { message, stack, componentStack, urlPath, visitorId, appVersion } = {}) {
-  if (!db.isConnected()) return;
-  // component_stack (React's own, e.g. "in VideoSlide") is unminified even
-  // in a production build — used for the signature here in place of a real
-  // stack frame, which a minified bundle can't offer reliably.
-  const frameMatch = String(componentStack || '').match(/in (\S+)/);
-  const signature = computeErrorSignature(message, null, frameMatch ? frameMatch[1] : appVersion);
-  db.query(
-    `INSERT INTO client_error_reports (signature, message, stack, component_stack, url_path, visitor_id, user_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-    [signature, String(message || '').slice(0, 500), String(stack || '').slice(0, 2000), String(componentStack || '').slice(0, 2000), urlPath || null, visitorId || null, userId || null]
-  ).catch(e => console.warn('recordClientError:', e.message));
-}
-
-function recordSuccessfulSignIn(user, req, { provider = 'local', sessionId = null } = {}) {
-  if (!db.isConnected() || !isDBId(user?.id)) return;
-  const safeSessionId = typeof sessionId === 'string' && sessionId.length
-    ? sessionId.slice(0, 120)
-    : null;
-  const providerName = String(provider || 'local').slice(0, 40);
-  const ipKey = clientIpAnalyticsKey(req);
-  const query = safeSessionId
-    ? `INSERT INTO user_sign_in_events (user_id, provider, session_id, ip_key)
-       VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`
-    : `INSERT INTO user_sign_in_events (user_id, provider, session_id, ip_key)
-       VALUES ($1,$2,NULL,$3)`;
-  const params = safeSessionId
-    ? [user.id, providerName, safeSessionId, ipKey]
-    : [user.id, providerName, ipKey];
-  db.query(query, params).catch(e => console.warn('recordSuccessfulSignIn:', e.message));
-}
-
-function recordNegativeSignal(userId, { signalType, source, topic, postId, visitorId, context } = {}) {
-  if (!db.isConnected() || !signalType) return;
-  db.query(
-    `INSERT INTO negative_usage_signals (signal_type, source, topic, post_id, visitor_id, user_id, context)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-    [String(signalType).slice(0, 60), source || null, topic || null, postId || null, visitorId || null, userId || null, JSON.stringify(context || {})]
-  ).catch(e => console.warn('recordNegativeSignal:', e.message));
-}
+// Sign-in event rows were legacy usage tracking. Authentication/session
+// security records remain in their dedicated stores; new usage metrics have
+// no account, browser, session, or network identifiers.
+function recordSuccessfulSignIn() {}
 
 function feedWorkerKey(source) {
   return source === 'hackernews' ? 'hn' : source;
@@ -9021,7 +8982,7 @@ function recordRealUserActivity(req = null, source = 'api') {
   const now = Date.now();
   if (now - sharedActivityWriteLastAt < SHARED_ACTIVITY_WRITE_MIN_MS) return;
   sharedActivityWriteLastAt = now;
-  const ipKey = req ? clientIpAnalyticsKey(req) : null;
+  const ipKey = null; // The shared service heartbeat never stores a visitor identifier.
   db.query(
     `INSERT INTO site_activity_heartbeat (key, last_seen_at, source, ip_key, updated_at)
      VALUES ('public', NOW(), $1, $2, NOW())
@@ -13076,14 +13037,12 @@ function runPerfCheck() {
   const limit = refreshControl.heapLimitMB?.toFixed(0) ?? '?';
   const rss   = refreshControl.rssMB?.toFixed(1) ?? '?';
   const lag   = refreshControl.eventLoopLagMs ?? 0;
-  const ttfb  = 155 + Math.floor(Math.random() * 50);
-  const lh    = 88 + Math.floor(Math.random() * 10);
   const posts = globalFeedCache.posts.length;
   const checks = [
     () => logAgentAction('perf', '?', `Heap: ${heap}MB / ${limit}MB - RSS: ${rss}MB - event-loop lag: ${lag}ms`, lag > 500 ? '#FBBF24' : '#4ADE80'),
-    () => logAgentAction('perf', '??', `TTFB: ${ttfb}ms - Lighthouse: ${lh} - ${posts.toLocaleString()} feed posts in memory`, '#4ADE80'),
+    () => logAgentAction('perf', '??', `Local inventory: ${posts.toLocaleString()} feed posts in memory. This monitor does not measure Lighthouse or browser render performance.`, '#60A5FA'),
     () => logAgentAction('perf', '??', `Refresh mode: ${refreshControl.mode} - multiplier: x${refreshControl.multiplier} - ${sseClients.size} SSE clients`, '#4ADE80'),
-    () => logAgentAction('perf', '?', `CDN cache hit rate: 94% - JS bundle: 312KB gzip - ${agentSourceCache.size} source workers active`, '#4ADE80'),
+    () => logAgentAction('perf', '?', `${agentSourceCache.size} source caches present. CDN hit rate and compressed bundle size are not measured by this monitor.`, '#60A5FA'),
   ];
   const i = _perfIdx % checks.length;
   checks[i]();
@@ -13098,12 +13057,11 @@ function runCommunityCheck() {
   const convCount  = conversations?.length ?? 0;
   const msgCount   = conversations?.reduce((s, c) => s + c.messages.length, 0) ?? 0;
   const userCount  = users?.length ?? 0;
-  const topContrib = Math.floor(Math.random() * 6) + 3;
   const checks = [
-    () => logAgentAction('community', '??', `${groupCount} active groups - ${userCount} members - ${convCount} conversations - ${msgCount} messages`, '#A78BFA'),
-    () => logAgentAction('community', '?', `Content review: 0 violations - spam filter clean - ${topContrib} top contributors scored this cycle`, '#4ADE80'),
-    () => logAgentAction('community', '??', `Engagement: ${convCount} open threads - ${msgCount} total messages - community sentiment positive`, '#A78BFA'),
-    () => logAgentAction('community', '???', `Group health check: all ${groupCount} communities passing - moderation queue clear`, '#4ADE80'),
+    () => logAgentAction('community', '??', `Local inventory: ${groupCount} groups - ${userCount} members - ${convCount} conversations - ${msgCount} messages. Counts may differ from database totals.`, '#A78BFA'),
+    () => logAgentAction('community', '?', 'This inventory monitor does not review content, score contributors, or certify that moderation queues are clear.', '#60A5FA'),
+    () => logAgentAction('community', '??', `Local inventory: ${convCount} conversations and ${msgCount} messages. Sentiment and active participation are not measured.`, '#A78BFA'),
+    () => logAgentAction('community', '???', `${groupCount} groups present locally. A count does not establish community health.`, '#60A5FA'),
   ];
   const i = _commIdx % checks.length;
   checks[i]();
@@ -13116,13 +13074,11 @@ let _seoIdx = 0;
 function runSeoCheck() {
   const posts  = globalFeedCache.posts.length;
   const sources = agentSourceCache.size;
-  const lcpMs  = (1100 + Math.floor(Math.random() * 300));
-  const cls    = (Math.random() * 0.05).toFixed(3);
   const checks = [
-    () => logAgentAction('seo', '??', `Meta tags + OG images validated - sitemap covers ${posts.toLocaleString()} indexed posts - ${sources} source feeds`, '#34D399'),
-    () => logAgentAction('seo', '?', `Core Web Vitals: LCP ${lcpMs}ms - CLS ${cls} - FID < 100ms - all passing`, '#4ADE80'),
-    () => logAgentAction('seo', '??', `Structured data clean - ${sources} content sources - canonical links verified`, '#34D399'),
-    () => logAgentAction('seo', '???', `Sitemap.xml up-to-date - robots.txt valid - ${posts.toLocaleString()} posts indexable`, '#34D399'),
+    () => logAgentAction('seo', '??', `Local inventory: ${posts.toLocaleString()} feed posts and ${sources} source caches. Search indexing is not measured.`, '#34D399'),
+    () => logAgentAction('seo', '?', 'Browser Core Web Vitals are not measured by this inventory monitor.', '#60A5FA'),
+    () => logAgentAction('seo', '??', 'For actual metadata and canonical-tag checks, inspect the separate Web SEO sub-agent observation.', '#60A5FA'),
+    () => logAgentAction('seo', '???', 'This monitor does not validate sitemap coverage, robots.txt, or whether feed posts are indexable.', '#60A5FA'),
   ];
   const i = _seoIdx % checks.length;
   checks[i]();
@@ -13137,12 +13093,11 @@ function runOppsCheck() {
   const totalPosts = globalFeedCache.posts.length;
   const indeedCache = agentSourceCache.get('indeed');
   const indeedCount = indeedCache?.posts?.length ?? 0;
-  const liveJobs = Math.floor(Math.random() * 15) + 20;
   const checks = [
-    () => logAgentAction('opps', '??', `Indeed: ${indeedCount} live listings in cache - ${jobPosts} job posts in feed - ${liveJobs} active positions`, '#F97316'),
-    () => logAgentAction('opps', '?', `Job source URLs responding - expired listings cleaned - salary coverage: 91% of ${indeedCount} listings`, '#4ADE80'),
-    () => logAgentAction('opps', '??', `Relevance rankings updated - ${totalPosts.toLocaleString()} total feed posts - job-to-content ratio healthy`, '#F97316'),
-    () => logAgentAction('opps', '??', `USAJobs + Indeed feed sync complete - ${indeedCount} cached - ${liveJobs} freshly ranked`, '#F97316'),
+    () => logAgentAction('opps', '??', `Local cache: ${indeedCount} Indeed posts and ${jobPosts} Indeed/USAJobs posts in the feed. Open-position status is not verified.`, '#F97316'),
+    () => logAgentAction('opps', '?', 'This inventory monitor does not check job URLs, expiration, or salary coverage.', '#60A5FA'),
+    () => logAgentAction('opps', '??', `Local feed inventory: ${totalPosts.toLocaleString()} posts, including ${jobPosts} Indeed/USAJobs posts. No ranking update is performed by this check.`, '#F97316'),
+    () => logAgentAction('opps', '??', `Indeed cache inventory: ${indeedCount} posts. Inspect source-worker timestamps and transfer status to verify synchronization.`, '#F97316'),
   ];
   const i = _oppsIdx % checks.length;
   checks[i]();
@@ -17569,7 +17524,9 @@ async function migrateDB() {
     `);
     await db.query(`CREATE INDEX IF NOT EXISTS wor_created_idx ON website_optimization_runs(created_at DESC)`);
 
-    // First-party pageview log — there was no way to tell whether the site
+    await db.query(ANALYTICS_SCHEMA);
+
+    // Legacy first-party pageview log — there was no way to tell whether the site
     // was actually getting traffic at all (no GA/Plausible/etc. installed),
     // separate from and in addition to GA4.
     await db.query(`
@@ -20042,44 +19999,7 @@ function isLikelyBotRequest(req) {
   return BOT_USER_AGENT_RE.test(req.headers['user-agent'] || '');
 }
 
-// --- First-party pageview logging ------------------------------------------
-// No analytics of any kind was installed — there was no way to tell whether
-// the site was getting traffic separate from search-engine indexing. Public
-// and unauthenticated on purpose (most visitors won't have a session).
-// Distinct visitor counts are IP-derived server-side, not client-generated,
-// because the public "skip sign up" flow means many real visitors never
-// create an account. The IP is stored only as a salted hash key.
-app.post('/analytics/pageview', authenticateOptional, async (req, res) => {
-  try {
-    if (isLikelyBotRequest(req)) return res.status(204).end();
-    const path      = String(req.body?.path || '').slice(0, 300);
-    const referrer  = req.body?.referrer ? String(req.body.referrer).slice(0, 500) : null;
-    const clientVisitorId = req.body?.visitorId ? String(req.body.visitorId).slice(0, 100) : null;
-    const ipKey = clientIpAnalyticsKey(req);
-    const visitorId = req.user?.id ? `member:${req.user.id}` : (ipKey || clientVisitorId);
-    if (!path) return res.status(400).json({ error: 'path required' });
-    recordRealUserActivity(req, 'pageview');
-    if (db.isConnected()) {
-      await db.query(
-        `INSERT INTO page_views (path, referrer, visitor_id, ip_key, client_visitor_id, user_id) VALUES ($1,$2,$3,$4,$5,$6)`,
-        [path, referrer, visitorId, ipKey, clientVisitorId, req.user?.id || null]
-      );
-    }
-    res.status(204).end();
-  } catch (e) {
-    // Never let analytics logging fail a real user's page load.
-    res.status(204).end();
-  }
-});
-
-// Auth0 completes outside the local /auth/login route. Its client sends one
-// stable browser-session ID after verification, so it is counted once per
-// sign-in session instead of once for every authenticated API request.
-app.post('/analytics/sign-in', authenticate, (req, res) => {
-  const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : null;
-  recordSuccessfulSignIn(req.user, req, { provider: req.user?.authProvider || 'local', sessionId });
-  res.status(204).end();
-});
+// Pageview/performance collectors are mounted before authentication above.
 
 // --- Reports admin (office dashboard) --------------------------------------
 // The other half of what makes "users can report child safety concerns
@@ -20118,68 +20038,7 @@ app.patch('/office/reports/:id', requireOfficeToken, async (req, res) => {
   } catch (e) { console.error('PATCH /office/reports/:id:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
-app.get('/office/analytics/pageviews', requireOfficeToken, async (req, res) => {
-  try {
-    if (!db.isConnected()) return res.json({ available: false });
-    // Distinct IP-derived visitor key counted alongside raw views for each window, not
-    // just the daily breakdown further down — the top-level Today/7d/30d
-    // cards only ever showed raw pageview counts, which reads as "N people
-    // visited" when it's really just "N page loads," inflated by the same
-    // person browsing multiple pages (or, before the bot filter on the
-    // logging endpoint above, by crawlers with no person behind them at
-    // all). Distinct visitors next to it gives the actually-meaningful
-    // number for "how many separate people were here."
-    // Cloudflare/Render client IP is the primary visitor key. The browser ID
-    // is only used when a deployment does not forward a trusted client IP.
-    const visitorKeySql = `COALESCE('member:' || NULLIF(user_id, ''), NULLIF(ip_key, ''), NULLIF(client_visitor_id, ''), NULLIF(visitor_id, ''))`;
-    const visitorSql = `COUNT(DISTINCT ${visitorKeySql}) FILTER (WHERE ${visitorKeySql} IS NOT NULL)`;
-    const [today, last7, last30, topPaths, daily, signedIn] = await Promise.all([
-      db.query(`SELECT COUNT(*), ${visitorSql} AS visitors FROM page_views WHERE created_at >= NOW() - INTERVAL '1 day'`),
-      db.query(`SELECT COUNT(*), ${visitorSql} AS visitors FROM page_views WHERE created_at >= NOW() - INTERVAL '7 days'`),
-      db.query(`SELECT COUNT(*), ${visitorSql} AS visitors FROM page_views WHERE created_at >= NOW() - INTERVAL '30 days'`),
-      db.query(`
-        SELECT path, COUNT(*) AS views, ${visitorSql} AS visitors
-        FROM page_views
-        WHERE created_at >= NOW() - INTERVAL '30 days'
-        GROUP BY path ORDER BY views DESC LIMIT 15
-      `),
-      db.query(`
-        SELECT date_trunc('day', created_at) AS day, COUNT(*) AS views,
-               ${visitorSql} AS visitors
-        FROM page_views
-        WHERE created_at >= NOW() - INTERVAL '30 days'
-        GROUP BY day ORDER BY day ASC
-      `),
-      db.query(`
-        SELECT
-          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '1 day' AND user_id IS NOT NULL) AS today_views,
-          COUNT(DISTINCT user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '1 day' AND user_id IS NOT NULL) AS today_users,
-          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days' AND user_id IS NOT NULL) AS last30_views,
-          COUNT(DISTINCT user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days' AND user_id IS NOT NULL) AS last30_users
-        FROM page_views
-      `),
-    ]);
-    res.json({
-      available: true,
-      today:  Number(today.rows[0].count),
-      todayVisitors:  Number(today.rows[0].visitors),
-      last7:  Number(last7.rows[0].count),
-      last7Visitors:  Number(last7.rows[0].visitors),
-      last30: Number(last30.rows[0].count),
-      last30Visitors: Number(last30.rows[0].visitors),
-      signedInTodayViews: Number(signedIn.rows[0].today_views),
-      signedInTodayUsers: Number(signedIn.rows[0].today_users),
-      signedInLast30Views: Number(signedIn.rows[0].last30_views),
-      signedInLast30Users: Number(signedIn.rows[0].last30_users),
-      visitorKey: 'member-or-ip-with-browser-fallback',
-      topPaths: topPaths.rows.map(r => ({ path: r.path, views: Number(r.views), visitors: Number(r.visitors) })),
-      daily: daily.rows.map(r => ({ day: r.day, views: Number(r.views), visitors: Number(r.visitors) })),
-    });
-  } catch (e) {
-    console.error('GET /office/analytics/pageviews:', e.message);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+app.get('/office/analytics/pageviews', requireOfficeToken, aggregateAnalytics.report);
 
 // Real per-topic volume, straight from the DB rather than the capped
 // 300-post in-memory global cache (feed_posts_cache holds far more, and is
@@ -20251,36 +20110,17 @@ app.get('/office/users', requireOfficeToken, async (req, res) => {
         (profile_hidden IS TRUE OR COALESCE(role_settings ->> 'privacy_publicProfile', 'true') = 'false') AS profile_hidden
         FROM users ORDER BY created_at DESC, id`),
     ]);
-    let signIns = null;
-    try {
-      signIns = await db.query(`
-        SELECT
-          COUNT(*) AS all_time,
-          COUNT(DISTINCT user_id) AS all_time_users,
-          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '1 day') AS today,
-          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days') AS last7,
-          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days') AS last30
-        FROM user_sign_in_events
-      `);
-    } catch (error) {
-      // Historical sign-in data is optional; a missing migration must never
-      // blank the source-of-truth accounts-created count in Office.
-      console.warn('GET /office/users sign-in history unavailable:', error.message);
-    }
-    let activeMembers = null;
-    try {
-      const activity = await db.query(`SELECT COUNT(DISTINCT p.user_id) AS count FROM page_views p
-        JOIN users u ON u.id::text = p.user_id WHERE p.created_at >= NOW() - INTERVAL '15 minutes'`);
-      activeMembers = Number(activity.rows[0].count);
-    } catch (error) {
-      console.warn('GET /office/users activity unavailable:', error.message);
-    }
+    // Aggregate usage intentionally cannot identify active or signed-in people.
+    // Historical identifiable analytics remain untouched and are not queried.
+    const signIns = null;
+    const activeMembers = null;
     const totalCount = Number(total.rows[0].count);
     res.json({
       available: true,
       total: totalCount,
       active: activeMembers,
-      activeWindowMinutes: 15,
+      activeWindowMinutes: null,
+      activeAvailable: false,
       discoverable: totalCount - Number(hidden.rows[0].count),
       hidden: Number(hidden.rows[0].count),
       countSource: 'database',
@@ -24097,36 +23937,10 @@ app.post('/posts/engagement-signal', authenticate, (req, res) => {
   res.status(204).end();
 });
 
-// Client-side error/negative-signal ingestion for the autofix agent (see
-// recordClientError/recordNegativeSignal, and runAutofixCheck which reads
-// the aggregated autofix_signatures registry these feed). Same fire-and-
-// forget 204 shape as /posts/engagement-signal above; every free-text field
-// truncated the same way that endpoint already does.
-app.post('/client-error', authenticate, clientErrorLimiter, (req, res) => {
-  const { message, stack, componentStack, urlPath, visitorId, appVersion } = req.body || {};
-  recordClientError(req.user.id, {
-    message: typeof message === 'string' ? message.slice(0, 500) : null,
-    stack: typeof stack === 'string' ? stack.slice(0, 2000) : null,
-    componentStack: typeof componentStack === 'string' ? componentStack.slice(0, 2000) : null,
-    urlPath: typeof urlPath === 'string' ? urlPath.slice(0, 300) : null,
-    visitorId: typeof visitorId === 'string' ? visitorId.slice(0, 100) : null,
-    appVersion: typeof appVersion === 'string' ? appVersion.slice(0, 40) : null,
-  });
-  res.status(204).end();
-});
-
-app.post('/negative-signal', authenticate, clientErrorLimiter, (req, res) => {
-  const { signalType, source, topic, postId, visitorId, context } = req.body || {};
-  recordNegativeSignal(req.user.id, {
-    signalType: typeof signalType === 'string' ? signalType.slice(0, 60) : null,
-    source: typeof source === 'string' ? source.slice(0, 40) : null,
-    topic: typeof topic === 'string' ? topic.slice(0, 80) : null,
-    postId: typeof postId === 'string' ? postId.slice(0, 120) : null,
-    visitorId: typeof visitorId === 'string' ? visitorId.slice(0, 100) : null,
-    context: context && typeof context === 'object' ? context : {},
-  });
-  res.status(204).end();
-});
+// Old clients may still call these endpoints. Accept without reading or
+// retaining their raw messages, stacks, URLs, IDs, or free-form context.
+app.post('/client-error', (_req, res) => res.status(204).end());
+app.post('/negative-signal', (_req, res) => res.status(204).end());
 
 // --- Feed source stats (posts per source in DB) -------------------------------
 app.get('/feed/stats', authenticate, async (req, res) => {
@@ -25016,6 +24830,26 @@ const AGENT_DEFS = {
     description: 'Queries Facebook Graph API for public page content (requires FACEBOOK_TOKEN). Surfaces professional and community posts across 36 topics.',
   },
   // -- Operational agents ----------------------------------------------------
+  equalizer: {
+    name: 'Equalizer', emoji: 'EQ', color: '#38BDF8', interval: `${EQUALIZER_DRAIN_MS / 1000}s`, triggerable: false,
+    description: 'Interleaves bounded source queues on the pipeline before screening. Reports actual buffered, drained, and accepted counts.',
+  },
+  filter: {
+    name: 'Ingestion Filter', emoji: 'FLT', color: '#4ADE80', interval: 'on-demand', triggerable: false,
+    description: 'Records screening and deduplication of incoming feed candidates. Counts describe this process, not all service instances.',
+  },
+  topic_filter: {
+    name: 'Topic Filter', emoji: 'TOP', color: '#22D3EE', interval: 'per request', triggerable: false,
+    description: 'Filters feed candidates for requested topics. Conversation uses aggregate input/output counts only.',
+  },
+  topic_audit: {
+    name: 'Topic Audit', emoji: 'TOP', color: '#A78BFA', interval: '4min', triggerable: false,
+    description: 'Samples cached posts for topic mismatches and queues suggested corrections. Each process has its own observations.',
+  },
+  topic_fix: {
+    name: 'Topic Correction', emoji: 'FIX', color: '#818CF8', interval: '4min', triggerable: false,
+    description: 'Applies queued topic corrections to local caches and attempts database updates. Counts report local corrections, not verified database writes.',
+  },
   feed: {
     name: 'Feed Cache Agent', emoji: 'FEED', color: '#60A5FA', interval: 'on-demand',
     description: 'Manages the global feed cache. Aggregates all source agent output, deduplicates posts, persists to DB, and triggers the initial warm-up on startup.',
@@ -25061,20 +24895,20 @@ const AGENT_DEFS = {
     description: 'Reports configured session expiry, revocation, authentication rate limits, and runtime counters every 8 minutes. Vulnerability scans run separately in release checks.',
   },
   perf: {
-    name: 'Performance Agent', emoji: 'PERF', color: '#FBBF24', interval: '12min',
-    description: 'Measures server TTFB, CDN cache hit rate, Lighthouse performance scores, JS bundle size, and React render profiles every 12 minutes.',
+    name: 'Performance Agent', emoji: 'PERF', color: '#FBBF24', interval: '3min',
+    description: 'Reports actual process memory, event-loop lag, refresh mode, and cache inventory. Lighthouse, CDN hit rate, and browser render performance are not measured here.',
   },
   community: {
-    name: 'Community Agent', emoji: 'COM', color: '#A78BFA', interval: '15min',
-    description: 'Reviews flagged content, measures community sentiment, scores top contributor activity, and filters spam across all groups every 15 minutes.',
+    name: 'Community Agent', emoji: 'COM', color: '#A78BFA', interval: '3min',
+    description: 'Reports local group, member, conversation, and message inventory. It does not moderate content or measure community sentiment.',
   },
   seo: {
-    name: 'SEO Agent', emoji: 'SEO', color: '#34D399', interval: '20min',
-    description: 'Validates meta tags, sitemap.xml, Core Web Vitals (LCP/CLS/FID), Open Graph images, and structured data markup every 20 minutes.',
+    name: 'SEO Agent', emoji: 'SEO', color: '#34D399', interval: '4min',
+    description: 'Reports feed inventory and points to the separate Web SEO checks. Browser Web Vitals and search indexing are not measured here.',
   },
   opps: {
-    name: 'Opportunities Agent', emoji: 'JOBS', color: '#F97316', interval: '15min',
-    description: 'Refreshes live job listings from multiple sources, validates source URLs, removes expired entries, and updates salary coverage data every 15 minutes.',
+    name: 'Opportunities Agent', emoji: 'JOBS', color: '#F97316', interval: '3min',
+    description: 'Reports local Indeed/USAJobs cache inventory. Source workers fetch jobs separately; this summary does not verify open positions, expiration, or salary coverage.',
   },
   deploy: {
     name: 'Deploy Agent', emoji: 'DEP', color: '#38BDF8', interval: '10min',
@@ -26209,28 +26043,73 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
   });
 });
 
+// Registry heartbeats and log messages are not evidence of successful work.
+// Only structured observations enter Live City health and its read-only chat.
+function getOfficeAgentObservation(id, observedAt = new Date().toISOString()) {
+  if (!Object.prototype.hasOwnProperty.call(AGENT_DEFS, id)) return null;
+  const sourceWorker = Object.prototype.hasOwnProperty.call(SOURCE_CONFIG, id)
+    || ['remotive', 'muse'].includes(id) || typeof SOURCE_FETCHERS[id] === 'function';
+  const executionRole = sourceWorker || ['refresh_queue', 'equalizer'].includes(id) ? 'pipeline' : id === 'instagram' ? 'on-demand' : 'both';
+  const hasRuntimeMetrics = ['stability', 'crash_guard', 'refresh_queue', 'sort_agent', 'sort_distrib', 'mix_optimizer',
+    'sort_optimizer', 'activity', 'autofix', 'perf', 'equalizer', 'filter', 'topic_filter', 'topic_audit', 'topic_fix'].includes(id) || id.startsWith('web_');
+  const diagnosticCapability = sourceWorker ? 'source-worker' : id === 'instagram' ? 'on-demand'
+    : hasRuntimeMetrics ? 'runtime-metrics' : 'summary-only';
+  const cache = agentSourceCache.get(id);
+  let status = 'unknown';
+  let metrics = {};
+  if (sourceWorker) {
+    const health = workerHealth.get(id);
+    if (SERVICE_ROLE !== 'pipeline') status = 'unavailable';
+    else if (health) {
+      metrics = health;
+      status = health.paused ? 'paused' : health.consecutiveErrors > 0 ? 'degraded' : health.lastSuccess ? 'healthy' : 'unknown';
+    }
+  } else if (hasRuntimeMetrics) {
+    const stageState = { equalizer: equalizerState, filter: filterAgentState, topic_filter: topicFilterAgentState,
+      topic_audit: topicAuditState, topic_fix: topicFixState }[id];
+    metrics = stageState || (id === 'perf' ? getRuntimeHealthForAgent('stability') : getRuntimeHealthForAgent(id));
+    status = stageState ? stageState.lastError ? 'degraded' : stageState.lastRun ? 'healthy' : 'idle' : metrics.status;
+    if (id === 'equalizer') metrics = { ...metrics, pending: equalizerPendingTotal() };
+    if (id === 'topic_fix') metrics = { ...metrics, pending: topicMismatchQueue.length };
+    if (metrics.totalRuns === 0 || (id === 'activity' && metrics.totalSweeps === 0)) status = 'idle';
+  }
+  if (executionRole === 'pipeline' && SERVICE_ROLE !== 'pipeline') status = 'unavailable';
+  if (['feed', 'cache_helper', 'data', 'perf', 'seo', 'opps'].includes(id)) metrics = {
+    ...metrics, postCount: globalFeedCache.posts.length, sourceCaches: agentSourceCache.size,
+  };
+  if (id === 'data') metrics = { ...metrics, databaseConnected: db.isConnected(), backupConnected: db.isBackupConnected() };
+  if (cache) metrics = { ...metrics, postCount: getAgentPostCount(id, cache), lastFetch: cache.lastFetch };
+  return sanitizeAgentSnapshot({ agentId: id, serviceRole: SERVICE_ROLE, executionRole, diagnosticCapability,
+    observedAt, status, cadence: AGENT_DEFS[id].interval, metrics });
+}
+
+const officeAgentChatLimiter = rateLimit({
+  windowMs: 60 * 1000, limit: 18, standardHeaders: 'draft-8', legacyHeaders: false,
+  keyGenerator: rateLimitKey, message: { error: 'Too many agent chat messages. Try again shortly.' },
+});
+app.post('/office/agents/:id/chat', requireOfficeToken, officeAgentChatLimiter, createOfficeAgentChat({
+  getAgentSnapshot: getOfficeAgentObservation,
+  apiKey: process.env.OPENAI_API_KEY,
+  model: process.env.OFFICE_CHAT_OPENAI_MODEL || process.env.AI_CONTENT_OPENAI_MODEL || 'gpt-5-mini',
+}));
+
 app.get('/office/agents', requireOfficeToken, (req, res) => {
   const result = {};
+  const observedAt = new Date().toISOString();
   for (const [id, def] of Object.entries(AGENT_DEFS)) {
     const logs   = agentActionLog.filter(e => e.agentId === id).slice(0, 15);
-    const health = workerHealth.get(id) || null;
     const cache  = agentSourceCache.get(id) || null;
-    const runtimeHealth = getRuntimeHealthForAgent(id);
+    const observation = getOfficeAgentObservation(id, observedAt);
     result[id] = {
       ...def, id, emoji: officeBadgeCode(id, def.emoji), logs, lastAction: logs[0] || null,
-      health: health ? {
-        status: health.paused ? 'paused' : health.consecutiveErrors >= 3 ? 'degraded' : 'healthy',
-        consecutiveErrors: health.consecutiveErrors, totalErrors: health.totalErrors,
-        fetchCount: health.fetchCount, lastSuccess: health.lastSuccess, paused: health.paused,
-        skippedForStability: health.skippedForStability || 0,
-        lastAttempt: health.lastAttempt || null,
-        lastError: health.lastError || null,
-      } : runtimeHealth,
+      serviceRole: SERVICE_ROLE, executionRole: observation.executionRole, observedAt,
+      diagnosticCapability: observation.diagnosticCapability, observation,
+      health: { ...observation.metrics, status: observation.status },
       postCount: getAgentPostCount(id, cache),
       lastFetch: cache?.lastFetch ?? null,
     };
   }
-  res.json({ agents: result });
+  res.json({ serviceRole: SERVICE_ROLE, observedAt, agents: result });
 });
 
 // SSE: push every new agent log entry to office browsers in real time

@@ -2,19 +2,9 @@ import { createContext, useContext, useState, useEffect, useCallback } from 'rea
 import { useAuth0 } from '@auth0/auth0-react';
 import client from '../api/client';
 import { auth0AuthorizationParams, isAuth0Configured } from '../auth/auth0Config';
-import { clearSession, getAccessToken, setAccessToken, subscribeToSession, privateSessionStorage } from '../auth/session';
+import { clearSession, getAccessToken, setAccessToken, subscribeToSession } from '../auth/session';
 
 const AuthContext = createContext(null);
-const AUTH_SESSION_KEY = 'ufi_authenticated_session_id';
-
-function getAuthenticatedSessionId() {
-  let id = privateSessionStorage.getItem(AUTH_SESSION_KEY);
-  if (!id) {
-    id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    privateSessionStorage.setItem(AUTH_SESSION_KEY, id);
-  }
-  return id;
-}
 
 export function AuthProvider({ children }) {
   const [token, setToken] = useState(getAccessToken);
@@ -62,7 +52,6 @@ export function AuthProvider({ children }) {
         const { data } = await client.get('/auth/me');
         if (!cancelled && getAccessToken() === accessToken) {
           setProfile(data.profile || data);
-          client.post('/analytics/sign-in', { sessionId: getAuthenticatedSessionId() }).catch(() => {});
         }
       })
       .catch(() => { if (!cancelled) clearSession(); })

@@ -11,6 +11,7 @@ import client from '../api/client';
 import { ALL_ROLES, EXTRA_INTERESTS, roleCode } from '../data/roles';
 import { pushSupported, getPushSubscriptionState, enablePush, disablePush } from '../api/push';
 import PricingModal from '../components/PricingModal';
+import DataPrivacySettings from '../components/DataPrivacySettings';
 
 // ── Shared preference constants ───────────────────────────────────────────────
 const GOALS = [
@@ -540,6 +541,7 @@ export default function Settings() {
   const isLocalAuth = (profile.authProvider || 'local') === 'local';
 
   const TABS = [
+    { key: 'data',          label: 'Data and privacy' },
     { key: 'account',       label: 'Account' },
     { key: 'security',      label: 'Security' },
     { key: 'privacy',       label: 'Privacy' },
@@ -590,6 +592,8 @@ export default function Settings() {
       </div>
 
       {/* ── Preferences tab ──────────────────────────────────────────────────── */}
+      {activeTab === 'data' && <DataPrivacySettings />}
+
       {activeTab === 'preferences' && (
         <form onSubmit={handlePrefSave} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {prefError && <div className="auth-error">{prefError}</div>}

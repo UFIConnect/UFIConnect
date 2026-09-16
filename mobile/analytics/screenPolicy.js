@@ -13,6 +13,7 @@ const SCREEN_PATHS = Object.freeze({
   ProfileMain: '/app/profile',
   ConnectedAccounts: '/app/connected-accounts',
   Security: '/app/security',
+  Privacy: '/app/privacy',
 });
 
 function screenPath(name) {

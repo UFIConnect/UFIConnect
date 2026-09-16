@@ -26,6 +26,7 @@ import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { normalizeSourceFavorites } from '../components/sourceFavorites';
 import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { reportEngagementSignal } from '../api/engagement';
+import { useDataPreferences, previewPlaybackAllowed } from '../preferences';
 import { reportClientError } from '../api/errorReporting';
 import { ALL_INTERESTS } from './Onboarding';
 import ReportModal from '../components/ReportModal';
@@ -821,6 +822,10 @@ function MaximizeButton({ onClick }) {
 }
 
 function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, minHeight = 0, autoPlayOnVisible = true, forcePause = false, onPlaybackStatus, requirePointer = true }) {
+  const preferences = useDataPreferences();
+  const automaticPlayback = autoPlayOnVisible && previewPlaybackAllowed(preferences);
+  const [manuallyStarted, setManuallyStarted] = useState(false);
+  useEffect(() => { setManuallyStarted(false); }, [preferences.dataSaver, preferences.autoplayPreviews, embedId]);
   const [inView, setInView] = useState(false);
   const { playbackAllowed, pointerHandlers } = usePointerPlaybackGate();
   // Whether the real YT.Player has actually been constructed yet — separate
@@ -854,7 +859,6 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
   // unmuted) audible indefinitely after being scrolled past. Mirrors
   // InlineAutoplayVideo's inView pattern for the other video type.
   useEffect(() => {
-    if (!autoPlayOnVisible) return;
     const el = containerRef.current;
     if (!el) return;
     if (!('IntersectionObserver' in window)) {
@@ -878,8 +882,9 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
   // doubled if the user has sound on. Excluded from the solo-playback
   // arbiter too (not just gated after it wins) so it can't hold the "now
   // playing" slot hostage while paused for the lightbox.
-  const isSolo = useSoloVideoPlayback(videoKey || embedId, inView && (!requirePointer || playbackAllowed) && !forcePause);
-  const effectivelyPlaying = isSolo && !forcePause;
+  const playbackRequested = manuallyStarted || automaticPlayback;
+  const isSolo = useSoloVideoPlayback(videoKey || embedId, playbackRequested && inView && (manuallyStarted || !requirePointer || playbackAllowed) && !forcePause);
+  const effectivelyPlaying = playbackRequested && isSolo && !forcePause;
   ytShouldPlayRef.current = effectivelyPlaying;
 
   // Real IFrame Player API instead of a raw <iframe src="...?mute=1">, which
@@ -921,7 +926,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
       try { player?.destroy(); } catch {}
       try { host?.replaceChildren(); } catch {}
     };
-  }, [embedId]);
+  }, [embedId, preferences.dataSaver, preferences.autoplayPreviews]);
 
   useEffect(() => {
     if (!effectivelyPlaying || ytInitializedRef.current) return;
@@ -1011,14 +1016,13 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
     } catch {}
   }, [muted, playerReady]);
 
-  const showPlayerHint = !playerReady && !effectivelyPlaying;
+  const showPlayerHint = !effectivelyPlaying;
 
   return (
     <div
       ref={containerRef}
       {...pointerHandlers}
       style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', background: '#000', cursor: showPlayerHint ? 'pointer' : 'default' }}
-      onClick={showPlayerHint ? () => setInView(true) : undefined}
     >
       {/* Always in the DOM once rendered, and — critically — always
           display:'block' from the very first render, never toggled by
@@ -1064,10 +1068,10 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
         </div>
       )}
       {showPlayerHint && (
-        <div style={{
+        <button type="button" aria-label="Play feed video preview" onClick={() => { setManuallyStarted(true); setInView(true); }} style={{
           position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
           justifyContent: 'center', color: '#fff', background: 'linear-gradient(135deg, #111827, #020617)',
-          pointerEvents: 'none',
+          border: 0, width: '100%', cursor: 'pointer',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontWeight: 800, fontSize: '.85rem' }}>
             <span style={{
@@ -1075,9 +1079,9 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               boxShadow: '0 4px 20px rgba(0,0,0,.35)', fontSize: '1.15rem',
             }}>▶</span>
-            <span>{autoPlayOnVisible ? 'Playing when it hits the sweet spot' : 'Tap to play'}</span>
+            <span>{automaticPlayback ? 'Playing when it hits the sweet spot' : 'Tap to play'}</span>
           </div>
-        </div>
+        </button>
       )}
       {playerReady && (
         <button
@@ -1306,6 +1310,10 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
 // custom minimal UI on top via the real IFrame Player API instead), so
 // there's no separate mute button needed here either.
 function VimeoEmbedBlock({ embedId, videoKey, poster, title, forcePause = false }) {
+  const preferences = useDataPreferences();
+  const automaticPlayback = previewPlaybackAllowed(preferences);
+  const [manuallyStarted, setManuallyStarted] = useState(false);
+  useEffect(() => { setManuallyStarted(false); }, [preferences.dataSaver, preferences.autoplayPreviews, embedId]);
   const [inView, setInView] = useState(false);
   const containerRef = useRef(null);
   const { playbackAllowed, pointerHandlers } = usePointerPlaybackGate();
@@ -1327,7 +1335,8 @@ function VimeoEmbedBlock({ embedId, videoKey, poster, title, forcePause = false 
 
   // See useSoloVideoPlayback — only the most-recently-scrolled-to video
   // across the whole Feed (any embed type) actually plays at once.
-  const playing = useSoloVideoPlayback(videoKey || embedId, inView && playbackAllowed && !forcePause) && !forcePause;
+  const playbackRequested = automaticPlayback || manuallyStarted;
+  const playing = useSoloVideoPlayback(videoKey || embedId, playbackRequested && inView && (manuallyStarted || playbackAllowed) && !forcePause) && playbackRequested && !forcePause;
 
   return (
     <div ref={containerRef} {...pointerHandlers} style={{
@@ -1357,6 +1366,8 @@ function VimeoEmbedBlock({ embedId, videoKey, poster, title, forcePause = false 
           Vimeo video
         </div>
       )}
+      {!playing && <button type="button" aria-label="Play feed video preview" onClick={() => { setManuallyStarted(true); setInView(true); }}
+        style={{ position: 'absolute', inset: 0, border: 0, background: 'rgba(0,0,0,.35)', color: '#fff', width: '100%', cursor: 'pointer' }}>Tap to play</button>}
     </div>
   );
 }

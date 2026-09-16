@@ -1,5 +1,31 @@
 # UFIConnect app analytics
 
+## Required service metrics and optional performance insights
+
+The **Data & privacy** screen is available from sign-in and Profile.
+Every allowlisted screen visit sends only `{category}` to the first-party
+`POST /analytics/pageview` endpoint. Repeated navigation state for the current
+screen is deduplicated in memory. Navigation keys never leave the app.
+The server stores daily aggregate counts without account or visitor identifiers.
+Requests omit authorization, cookies, and referrers. Infrastructure receives
+connection information when serving requests; it is not part of these counts.
+
+Performance insights are off by default. When enabled, browser error events or
+the native runtime's existing global error hook send only a fixed category,
+`kind: "client_error"`, and a fixed error code to `/analytics/performance`.
+Messages, stack traces, filenames, screen parameters, and private content are
+excluded. Duplicate errors are limited to once per code/category per minute.
+Withdrawal detaches the listener and aborts pending optional requests. The
+change is applied synchronously and shared between tabs of the Expo web app.
+The original native error handler still runs. Unsupported runtimes show unavailable.
+
+Data Saver and performance preferences are stored as booleans in AsyncStorage.
+Data Saver fetches only the selected Feed section instead of prefetching Groups,
+Social, and Jobs together, on every connection. The current native app has text
+feeds without media autoplay, so it offers no autoplay control. Roaming remains
+an operating-system cellular setting. These source changes require a signed
+native release; Expo exports are validation artifacts, not published binaries.
+
 ## Configured now: Expo web
 
 The browser version of the mobile app uses GA4 web stream `G-F68DRQ6CC5`.
@@ -9,10 +35,10 @@ The Google script runs inside a sandbox frame on a separate origin. Browser
 same-origin protections prevent it from reading
 the application's passwords, messages, session tokens, or page contents.
 
-All twelve rendered screen names are explicitly mapped in
+All thirteen rendered screen names are explicitly mapped in
 `analytics/screenPolicy.js`: login, registration, onboarding, opportunities,
 groups, group details, feed, message list, conversation, profile, connected
-accounts, and security. Only these constant categories are forwarded. Group
+accounts, security, and data/privacy. Only these constant categories are forwarded. Group
 names, conversation identifiers, dynamic navigation titles, query strings,
 fragments, search text, user IDs, and form values are never event parameters.
 Unknown new screen names are ignored until deliberately added to the allowlist.
@@ -33,9 +59,10 @@ Running raw
 
 ## Native iOS and Android activation requirements
 
-Native collection is **unavailable in this build**. No Firebase SDK has been
+Native Google collection is **unavailable in this build**. No Firebase SDK has been
 installed or initialized, and the native analytics adapter performs no network
-requests. The provided `G-` identifier configures a web stream; it cannot
+requests. Required first-party counts and optional error counts are separate.
+The provided `G-` identifier configures a web stream; it cannot
 identify native Android and iOS app streams.
 
 To activate native analytics, the Firebase project must be connected to the

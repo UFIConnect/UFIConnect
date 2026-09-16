@@ -35,12 +35,14 @@ async function probe(origin) {
     // /readyz is intentionally tiny. The /health fallback keeps a rolling
     // deploy safe while an older API instance is still serving traffic.
     let response = await fetch(withApiPath(origin, '/readyz'), {
+      referrerPolicy: 'no-referrer', redirect: 'error',
       cache: 'no-store',
       credentials: 'omit',
       signal: controller.signal,
     });
     if (response.status === 404) {
       response = await fetch(withApiPath(origin, '/health'), {
+        referrerPolicy: 'no-referrer', redirect: 'error',
         cache: 'no-store',
         credentials: 'omit',
         signal: controller.signal,
@@ -62,6 +64,7 @@ async function probe(origin) {
       );
       try {
         await fetch(withApiPath(origin, '/readyz'), {
+          referrerPolicy: 'no-referrer', redirect: 'error',
           cache: 'no-store',
           credentials: 'omit',
           mode: 'no-cors',

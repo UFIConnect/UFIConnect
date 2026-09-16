@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Controls from './Controls';
 import PostPipeline from './PostPipeline';
+import LiveCity from './LiveCity';
+import { mergeObservedAgents, observeAgentPayload } from './office-telemetry.mjs';
 import { createOfficeClient, createOfficeEventSource, createTrustedOfficeFetch, connectOfficeStreams, mergeOfficeLog } from './office-runtime.mjs';
 import { requestOfficeAccess } from './OfficeAccessDialog';
 
@@ -511,7 +513,7 @@ function OverviewView({ status, pipelineStatus, log, agents, triggerAgent, trigg
                 {ag.lastAction?.msg || 'Standby...'}
               </div>
             </div>
-            <Dot ok pulse />
+            <HealthBadge health={ag.health} />
           </Card>
         ))}
       </div>
@@ -554,6 +556,8 @@ function HealthBadge({ health }) {
     degraded: { bg: 'rgba(251,191,36,.12)', color: '#fbbf24', label: 'Degraded' },
     paused:   { bg: 'rgba(239,68,68,.1)',   color: '#f87171', label: 'Paused' },
     gated:    { bg: 'rgba(148,163,184,.12)',color: '#94a3b8', label: 'Gated' },
+    unavailable: { bg: 'rgba(148,163,184,.12)', color: '#94a3b8', label: 'Unavailable' },
+    unknown: { bg: 'rgba(148,163,184,.12)', color: '#94a3b8', label: 'Not reported' },
   }[health.status] || { bg: 'rgba(148,163,184,.1)', color: '#94a3b8', label: '—' };
   return (
     <span style={{
@@ -569,8 +573,8 @@ function AgentsView({ agents, triggerAgent, triggering }) {
   return (
     <>
       <h1 style={H1}>Agent Control</h1>
-      <p style={SUBTITLE}>Monitor and manually trigger each autonomous agent. All agents run continuously on their own schedules.</p>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: 18 }}>
+      <p style={SUBTITLE}>Inspect registered workers and processing stages. Agents run on their reported schedules or on demand; manual actions are available where supported.</p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 400px), 1fr))', gap: 18 }}>
         {Object.entries(agents).map(([id, ag]) => {
           const isPaused = ag.health?.status === 'paused';
           return (
@@ -589,10 +593,10 @@ function AgentsView({ agents, triggerAgent, triggering }) {
                   </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                  <Dot ok={!isPaused} pulse={!isPaused} />
-                  <Btn size="sm" variant={isPaused ? 'danger' : 'ghost'} onClick={() => triggerAgent(id)} disabled={triggering[id]}>
-                    {triggering[id] ? '...' : isPaused ? '↺ Reset' : '▶ Run'}
-                  </Btn>
+                  {ag.triggerable === false ? <span style={{ fontSize: 11, color: '#94a3b8' }}>Read only</span> :
+                    <Btn size="sm" variant={isPaused ? 'danger' : 'ghost'} onClick={() => triggerAgent(id)} disabled={triggering[id]}>
+                      {triggering[id] ? '...' : isPaused ? '↺ Reset' : '▶ Run'}
+                    </Btn>}
                 </div>
               </div>
               <p style={{ fontSize: 12, color: '#64748b', lineHeight: 1.65, margin: '0 0 14px' }}>
@@ -604,8 +608,8 @@ function AgentsView({ agents, triggerAgent, triggering }) {
                   background: 'rgba(255,255,255,.03)', borderRadius: 6,
                   fontSize: 11, color: '#475569',
                 }}>
-                  <span>Fetches: <strong style={{ color: '#94a3b8' }}>{ag.health.fetchCount?.toLocaleString() ?? 0}</strong></span>
-                  <span>Errors: <strong style={{ color: ag.health.totalErrors ? '#f87171' : '#4ade80' }}>{ag.health.totalErrors ?? 0}</strong></span>
+                  <span>Fetches: <strong style={{ color: '#94a3b8' }}>{ag.health.fetchCount?.toLocaleString() ?? 'Not reported'}</strong></span>
+                  <span>Errors: <strong style={{ color: ag.health.totalErrors ? '#f87171' : '#94a3b8' }}>{ag.health.totalErrors ?? 'Not reported'}</strong></span>
                   {ag.lastFetch && <span>Last fetch: <strong style={{ color: '#94a3b8' }}>{fmtAgo(ag.lastFetch)}</strong></span>}
                 </div>
               )}
@@ -620,7 +624,7 @@ function AgentsView({ agents, triggerAgent, triggering }) {
                     </div>
                   ))}
                   {(!ag.logs || ag.logs.length === 0) && (
-                    <div style={{ fontSize: 11, color: '#475569', fontStyle: 'italic' }}>No recent activity — click Run to trigger</div>
+                    <div style={{ fontSize: 11, color: '#475569', fontStyle: 'italic' }}>No recent activity reported.</div>
                   )}
                 </div>
               </div>
@@ -872,7 +876,6 @@ function AnalyticsView() {
   const [users, setUsers] = useState(null);
   const [usersError, setUsersError] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
-  const visitorLabel = data?.visitorKey === 'member-or-ip-with-browser-fallback' ? 'unique viewers' : 'unique IPs';
 
   const loadUsers = useCallback(() => {
     officeFetch(`${API}/office/users`)
@@ -921,7 +924,7 @@ function AnalyticsView() {
   return (
     <>
       <h1 style={H1}>Analytics</h1>
-      <p style={SUBTITLE}>First-party pageviews, deduped by member account when signed in and by a privacy-preserving IP/browser key for guests. See also GA4 at analytics.google.com.</p>
+      <p style={SUBTITLE}>Aggregate page and app-screen counts, service performance, and optional diagnostic reports. Counts use UTC calendar days and do not identify individual visitors. Optional Google Analytics reports are separate.</p>
 
       {error && <Card style={{ maxWidth: 520 }}><div style={{ color: '#f87171', fontSize: 13 }}>Couldn't load analytics.</div></Card>}
 
@@ -952,16 +955,6 @@ function AnalyticsView() {
               <div style={{ fontSize: 32, fontWeight: 800, color: '#60a5fa', marginTop: 6 }}>{users.total}</div>
             </Card>
             <Card style={{ minWidth: 150 }}>
-              <Label>Recorded sign-ins</Label>
-              <div style={{ fontSize: 32, fontWeight: 800, color: '#c084fc', marginTop: 6 }}>{users.signIns?.allTime ?? 'Unavailable'}</div>
-              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{users.signIns ? `${users.signIns.uniqueMembers} members` : 'History could not be read'}</div>
-            </Card>
-            <Card style={{ minWidth: 150 }}>
-              <Label>Active members</Label>
-              <div style={{ fontSize: 32, fontWeight: 800, color: '#60a5fa', marginTop: 6 }}>{users.active ?? 'Unavailable'}</div>
-              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>Authenticated activity in the last 15 minutes</div>
-            </Card>
-            <Card style={{ minWidth: 150 }}>
               <Label>Completed onboarding</Label>
               <div style={{ fontSize: 32, fontWeight: 800, color: '#4ade80', marginTop: 6 }}>{users.onboarded}</div>
             </Card>
@@ -976,7 +969,7 @@ function AnalyticsView() {
           </div>
 
           <div style={{ fontSize: 11.5, color: '#64748b', margin: '-8px 0 18px' }}>
-            Account totals come from the users table. Sign-ins are tracked separately from this release forward; all registered accounts are shown below, newest first.
+            Account totals describe registered accounts. Aggregate usage counts are reported separately and are not linked to these accounts.
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, margin: '12px 0 28px', maxWidth: 680 }}>
@@ -1010,45 +1003,58 @@ function AnalyticsView() {
         </>
       )}
 
-      {data && data.available && (
+      {data?.mode === 'aggregate' && data.service && (
+        <Card style={{ marginBottom: 24 }}>
+          <Label>Service performance</Label>
+          <p style={{ fontSize: 12, color: '#94a3b8', margin: '8px 0' }}>
+            {Number(data.service.total || 0).toLocaleString()} completed requests since this API process started.
+            {' '}These counters reset when the process restarts and do not represent all server instances.
+          </p>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            {(data.service.responses || []).map(row => <div key={`${row.statusClass}-${row.durationBucket}`} style={{ color: '#cbd5e1', fontSize: 12 }}>
+              {row.statusClass} · {row.durationBucket}: {Number(row.count || 0).toLocaleString()}
+            </div>)}
+          </div>
+        </Card>
+      )}
+      {data?.available && data.mode !== 'aggregate' && (
+        <Card style={{ marginBottom: 24, fontSize: 13, color: '#fbbf24' }}>Aggregate analytics is unavailable from this API release. Deploy the matching backend to view the new reports.</Card>
+      )}
+      {data && data.available && data.mode === 'aggregate' && (
         <>
-          <Label color="#475569">Pageviews and visitors</Label>
-          {/* Raw page-load count next to distinct visitor_id count for the
-              same window — the count alone reads as "N people visited"
-              when it's really "N page loads," inflated by the same person
-              browsing multiple pages. Bot/crawler/link-preview-scraper
-              traffic is filtered out server-side before it's even logged
-              (see isLikelyBotRequest), so what's left here is real
-              browser sessions either way. */}
+          <Label color="#475569">Page and screen views · UTC calendar days</Label>
+          <p style={{ fontSize: 12, color: '#94a3b8', margin: '8px 0' }}>Repeat visits count again. These totals are not unique people or signed-in members.</p>
           <div style={{ display: 'flex', gap: 16, margin: '12px 0 28px', flexWrap: 'wrap' }}>
             <Card style={{ minWidth: 150 }}>
               <Label>Today</Label>
               <div style={{ fontSize: 32, fontWeight: 800, color: '#60a5fa', marginTop: 6 }}>{data.today}</div>
-              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{data.todayVisitors} {visitorLabel}</div>
             </Card>
             <Card style={{ minWidth: 150 }}>
               <Label>Last 7 days</Label>
               <div style={{ fontSize: 32, fontWeight: 800, color: '#4ade80', marginTop: 6 }}>{data.last7}</div>
-              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{data.last7Visitors} {visitorLabel}</div>
             </Card>
             <Card style={{ minWidth: 150 }}>
               <Label>Last 30 days</Label>
               <div style={{ fontSize: 32, fontWeight: 800, color: '#e2e8f0', marginTop: 6 }}>{data.last30}</div>
-              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{data.last30Visitors} {visitorLabel}</div>
             </Card>
             <Card style={{ minWidth: 150 }}>
-              <Label>Signed-in today</Label>
-              <div style={{ fontSize: 32, fontWeight: 800, color: '#c084fc', marginTop: 6 }}>{data.signedInTodayViews ?? 0}</div>
-              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{data.signedInTodayUsers ?? 0} registered user{(data.signedInTodayUsers ?? 0) === 1 ? '' : 's'}</div>
-            </Card>
-            <Card style={{ minWidth: 150 }}>
-              <Label>Signed-in 30d</Label>
-              <div style={{ fontSize: 32, fontWeight: 800, color: '#f0abfc', marginTop: 6 }}>{data.signedInLast30Views ?? 0}</div>
-              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{data.signedInLast30Users ?? 0} registered user{(data.signedInLast30Users ?? 0) === 1 ? '' : 's'}</div>
+              <Label>Optional diagnostics · 30d</Label>
+              <div style={{ fontSize: 32, fontWeight: 800, color: '#c084fc', marginTop: 6 }}>{data.performance?.last30 ?? 0}</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>Reports from people who enabled performance insights</div>
             </Card>
           </div>
 
-          <Label color="#475569">Top Pages (30d)</Label>
+          {(data.performance?.byCode || []).length > 0 && (
+            <Card style={{ marginBottom: 24 }}>
+              <Label>Optional performance insights · 30 days</Label>
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 12 }}>
+                {data.performance.byCode.map(row => <div key={row.code} style={{ color: '#cbd5e1', fontSize: 12 }}>
+                  {row.code.replaceAll('_', ' ')}: {Number(row.count || 0).toLocaleString()}
+                </div>)}
+              </div>
+            </Card>
+          )}
+          <Label color="#475569">Top page and screen categories (30d)</Label>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, margin: '12px 0 28px', maxWidth: 680 }}>
             {data.topPaths.length === 0 && (
               <Card style={{ color: '#64748b', fontSize: 13 }}>No pageviews logged yet.</Card>
@@ -1057,7 +1063,6 @@ function AnalyticsView() {
               <Card key={p.path} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '11px 18px' }}>
                 <div style={{ flex: 1, fontSize: 13, fontFamily: 'monospace', color: '#cbd5e1' }}>{p.path}</div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: '#60a5fa' }}>{p.views}</div>
-                <div style={{ fontSize: 12, color: '#64748b', minWidth: 68, textAlign: 'right' }}>{p.visitors ?? 0} visitors</div>
               </Card>
             ))}
           </div>
@@ -1069,7 +1074,7 @@ function AnalyticsView() {
             )}
             {data.daily.slice().reverse().map(d => (
               <div key={d.day} style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12, color: '#94a3b8', padding: '4px 0' }}>
-                <div style={{ width: 90 }}>{new Date(d.day).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</div>
+                <div style={{ width: 90 }}>{d.day}</div>
                 <div style={{ flex: 1, background: 'rgba(255,255,255,.05)', borderRadius: 4, height: 14, overflow: 'hidden' }}>
                   <div style={{
                     width: `${Math.min(100, (d.views / Math.max(...data.daily.map(x => x.views), 1)) * 100)}%`,
@@ -1077,7 +1082,6 @@ function AnalyticsView() {
                   }} />
                 </div>
                 <div style={{ width: 40, textAlign: 'right', color: '#e2e8f0', fontWeight: 600 }}>{d.views}</div>
-                <div style={{ width: 72, textAlign: 'right' }}>{d.visitors} visitors</div>
               </div>
             ))}
           </div>
@@ -2791,22 +2795,20 @@ function ViewedDetailCard({ pageviews }) {
   const daily = (pageviews.daily || []).slice(-14);
   const maxViews = Math.max(1, ...daily.map(d => d.views || 0));
   const topPaths = pageviews.topPaths || [];
-  const viewerLabel = pageviews.visitorKey === 'member-or-ip-with-browser-fallback' ? 'viewers' : 'IPs';
+  if (pageviews.mode !== 'aggregate') return <Card><Label>Viewed — detail</Label><p style={{ fontSize: 12, color: '#fbbf24' }}>Aggregate analytics requires the matching API release.</p></Card>;
 
   return (
     <Card>
       <Label color="#4ade80">Viewed — detail</Label>
       <p style={{ fontSize: 11.5, color: '#64748b', margin: '6px 0 14px', lineHeight: 1.6 }}>
-        First-party pageview log, one row per route change on the live site. Unique counts are grouped by
-        salted IP key for guests, and signed-in views are tied to registered user IDs when a member has a session.
+        Aggregate counts for fixed page and app-screen categories. Repeat visits count again;
+        no account, visitor, or IP identifiers are stored in these metrics. Dates use UTC calendar days.
       </p>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12, marginBottom: 16 }}>
-        <DetailStat label="last 24h views" value={pageviews.today.toLocaleString()} color="#4ade80" />
-        <DetailStat label={`24h unique ${viewerLabel}`} value={(pageviews.todayVisitors ?? 0).toLocaleString()} />
-        <DetailStat label={`30d unique ${viewerLabel}`} value={(pageviews.last30Visitors ?? 0).toLocaleString()} />
-        <DetailStat label="signed-in 24h" value={(pageviews.signedInTodayViews ?? 0).toLocaleString()} color="#c084fc" />
-        <DetailStat label="registered 30d" value={(pageviews.signedInLast30Users ?? 0).toLocaleString()} />
+        <DetailStat label="views today · UTC" value={Number(pageviews.today || 0).toLocaleString()} color="#4ade80" />
+        <DetailStat label="views · 7 days" value={Number(pageviews.last7 || 0).toLocaleString()} />
+        <DetailStat label="views · 30 days" value={Number(pageviews.last30 || 0).toLocaleString()} />
       </div>
 
       {daily.length > 0 && (
@@ -2817,7 +2819,7 @@ function ViewedDetailCard({ pageviews }) {
               const h = Math.max(2, Math.round((d.views / maxViews) * 54));
               const isFlat = d.views === 0;
               return (
-                <div key={i} title={`${new Date(d.day).toLocaleDateString()}: ${d.views} views, ${d.visitors} unique IPs`} style={{
+                <div key={i} title={`${d.day} UTC: ${d.views} views`} style={{
                   flex: 1, height: h, borderRadius: '2px 2px 0 0',
                   background: isFlat ? 'rgba(239,68,68,.5)' : '#4ade80',
                   opacity: isFlat ? 1 : 0.55 + (0.45 * (d.views / maxViews)),
@@ -2827,8 +2829,8 @@ function ViewedDetailCard({ pageviews }) {
             })}
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#334155', marginTop: 4 }}>
-            <span>{new Date(daily[0].day).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
-            <span>{new Date(daily[daily.length - 1].day).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+            <span>{daily[0].day}</span>
+            <span>{daily[daily.length - 1].day}</span>
           </div>
         </div>
       )}
@@ -2840,7 +2842,7 @@ function ViewedDetailCard({ pageviews }) {
             {topPaths.slice(0, 6).map(p => (
               <div key={p.path} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, gap: 8 }}>
                 <span style={{ color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.path}</span>
-                <span style={{ color: '#e2e8f0', fontWeight: 700, flexShrink: 0 }}>{p.views.toLocaleString()} views · {(p.visitors ?? 0).toLocaleString()} IPs</span>
+                <span style={{ color: '#e2e8f0', fontWeight: 700, flexShrink: 0 }}>{p.views.toLocaleString()} views</span>
               </div>
             ))}
           </div>
@@ -3026,31 +3028,8 @@ function TopicsView() {
 
 // ─── App (root) ───────────────────────────────────────────────────────────────
 
-// Post-split (see SERVICE_ROLE, backend/index.js), api and pipeline are two
-// separate processes with two separate in-memory states — a single
-// AGENT_DEFS-keyed agents map merged from both, preferring whichever side
-// actually has real activity for a given id, so a source-fetcher id (only
-// ever real on pipeline) and an operational id (only ever real on api)
-// don't stomp on each other, and a genuinely dual-role id (crash_guard,
-// stability — both roles run these) shows whichever is more recent.
-function mergeAgentMaps(base, incoming) {
-  const merged = { ...base };
-  for (const [id, entry] of Object.entries(incoming || {})) {
-    // logAgentAction's ts is new Date().toISOString() — a string, not a
-    // number. Explicit Date parsing here (not a raw string/number `>`
-    // comparison, which silently coerces to NaN and never overwrites) is
-    // what makes "prefer whichever side has more recent real activity"
-    // actually correct, including the "existing entry has no lastAction
-    // yet" case (parses to 0, so any real incoming timestamp wins).
-    const existingTs = merged[id]?.lastAction?.ts ? new Date(merged[id].lastAction.ts).getTime() : 0;
-    const incomingTs = entry?.lastAction?.ts ? new Date(entry.lastAction.ts).getTime() : 0;
-    if (!merged[id] || incomingTs > existingTs) merged[id] = entry;
-  }
-  return merged;
-}
-
 export default function App() {
-  const officeViews = ['overview', 'controls', 'sources', 'pipeline', 'post-pipeline', 'topics', 'agents', 'feed', 'analytics', 'deploy', 'autofix', 'versions'];
+  const officeViews = ['overview', 'city', 'controls', 'sources', 'pipeline', 'post-pipeline', 'topics', 'agents', 'feed', 'analytics', 'deploy', 'autofix', 'versions'];
   const [view, setView] = useState(() => {
     const requested = typeof window !== 'undefined' ? window.location.hash.slice(1) : '';
     return officeViews.includes(requested) ? requested : 'overview';
@@ -3068,13 +3047,36 @@ export default function App() {
   const [versions, setVersions] = useState(null);
   const [connected, setConnected] = useState(false);
   const [actionError, setActionError] = useState('');
+  const [telemetry, setTelemetry] = useState({
+    api: { updatedAt: null, loading: true, error: '' },
+    pipeline: { updatedAt: null, loading: true, error: '' },
+    agents: { updatedAt: null, error: '', byService: {} },
+  });
+  const polls = useRef({ api: false, pipeline: false, agents: false });
+  const observedAgents = useRef({ api: {}, pipeline: {} });
+  const navigateOffice = useCallback(id => {
+    if (!officeViews.includes(id)) return;
+    setView(id);
+    window.history.replaceState(null, '', `#${id}`);
+  }, []);
 
   const fetchStatus = useCallback(async () => {
+    if (polls.current.api) return;
+    polls.current.api = true;
+    setTelemetry(prev => ({ ...prev, api: { ...prev.api, loading: true } }));
     try {
       const r = await officeFetch(`${API}/office/status`);
       if (!r.ok) throw new Error('Status unavailable');
-      setStatus(await r.json());
-    } catch { setStatus(null); }
+      const data = await r.json();
+      if (!data?.server || typeof data.server !== 'object' || Array.isArray(data.server)) throw new Error('Status unavailable');
+      setStatus(data);
+      setTelemetry(prev => ({ ...prev, api: { updatedAt: Date.now(), loading: false,
+        error: data.server.serviceRole === 'pipeline' ? 'The API address returned pipeline process telemetry' : '',
+      } }));
+    } catch {
+      setStatus(null);
+      setTelemetry(prev => ({ ...prev, api: { ...prev.api, loading: false, error: 'API telemetry unavailable' } }));
+    } finally { polls.current.api = false; }
   }, []);
 
   // Always a real fetch, even when PIPELINE_API === API (the fallback case,
@@ -3084,24 +3086,49 @@ export default function App() {
   // otherwise, since this callback is deliberately deps-stable for its own
   // setInterval below).
   const fetchPipelineStatus = useCallback(async () => {
+    if (polls.current.pipeline) return;
+    polls.current.pipeline = true;
+    setTelemetry(prev => ({ ...prev, pipeline: { ...prev.pipeline, loading: true } }));
     try {
       const r = await officeFetch(`${PIPELINE_API}/office/status`);
       if (!r.ok) throw new Error('Status unavailable');
-      setPipelineStatus(await r.json());
-    } catch { setPipelineStatus(null); }
+      const data = await r.json();
+      if (!data?.server || typeof data.server !== 'object' || Array.isArray(data.server)) throw new Error('Status unavailable');
+      setPipelineStatus(data);
+      setTelemetry(prev => ({ ...prev, pipeline: { updatedAt: Date.now(), loading: false,
+        error: data.server.serviceRole === 'api'
+          ? PIPELINE_API === API ? 'A separate pipeline service is not configured' : 'The pipeline address returned API process telemetry'
+          : '',
+      } }));
+    } catch {
+      setPipelineStatus(null);
+      setTelemetry(prev => ({ ...prev, pipeline: { ...prev.pipeline, loading: false, error: 'Pipeline telemetry unavailable' } }));
+    } finally { polls.current.pipeline = false; }
   }, []);
 
   const fetchAgents = useCallback(async () => {
+    if (polls.current.agents) return;
+    polls.current.agents = true;
     try {
-      const [apiRes, pipelineRes] = await Promise.all([
-        officeFetch(`${API}/office/agents`),
-        PIPELINE_API === API ? null : officeFetch(`${PIPELINE_API}/office/agents`).catch(() => null),
-      ]);
-      let merged = {};
-      if (apiRes?.ok) merged = { ...(await apiRes.json()).agents };
-      if (pipelineRes?.ok) merged = mergeAgentMaps(merged, (await pipelineRes.json()).agents);
-      setAgents(merged);
-    } catch {}
+      const targets = PIPELINE_API === API ? [['api', API]] : [['api', API], ['pipeline', PIPELINE_API]];
+      await Promise.allSettled(targets.map(async ([role, base]) => {
+        try {
+          const response = await officeFetch(`${base}/office/agents`);
+          if (!response.ok) throw new Error('Agent telemetry unavailable');
+          const data = await response.json();
+          const updatedAt = Date.now();
+          observedAgents.current[role] = observeAgentPayload(data, role, updatedAt);
+          setTelemetry(prev => ({ ...prev, agents: { ...prev.agents,
+            updatedAt, byService: { ...prev.agents.byService, [role]: { updatedAt, error: '' } },
+          } }));
+        } catch {
+          setTelemetry(prev => ({ ...prev, agents: { ...prev.agents,
+            byService: { ...prev.agents.byService, [role]: { ...prev.agents.byService[role], error: 'Agent telemetry unavailable' } },
+          } }));
+        }
+      }));
+      setAgents(mergeObservedAgents(observedAgents.current.api, observedAgents.current.pipeline));
+    } finally { polls.current.agents = false; }
   }, []);
 
   const fetchVersions = useCallback(async () => {
@@ -3142,17 +3169,20 @@ export default function App() {
       },
       onData: entries => {
         setLog(prev => mergeOfficeLog(prev, entries));
-        setAgents(prev => {
-          const next = { ...prev };
-          for (const entry of entries) {
-            const agent = next[entry.agentId] || {};
-            next[entry.agentId] = { ...agent,
-              lastAction: !agent.lastAction || Date.parse(entry.ts) > Date.parse(agent.lastAction.ts) ? entry : agent.lastAction,
-              logs: mergeOfficeLog(agent.logs || [], [entry]).slice(0, 15),
-            };
-          }
-          return next;
-        });
+        let changed = false;
+        for (const entry of entries) {
+          const entryRole = entry.service === PIPELINE_API && PIPELINE_API !== API ? 'pipeline' : 'api';
+          const agent = observedAgents.current[entryRole]?.[entry.agentId];
+          if (!agent) continue;
+          // Stream activity updates only its own process instance. It does
+          // not refresh measured health or the registry observation time.
+          observedAgents.current[entryRole][entry.agentId] = { ...agent,
+            lastAction: !agent.lastAction || Date.parse(entry.ts) > Date.parse(agent.lastAction.ts) ? entry : agent.lastAction,
+            logs: mergeOfficeLog(agent.logs || [], [entry]).slice(0, 15),
+          };
+          changed = true;
+        }
+        if (changed) setAgents(mergeObservedAgents(observedAgents.current.api, observedAgents.current.pipeline));
       },
     });
   }, []);
@@ -3188,6 +3218,7 @@ export default function App() {
 
   const nav = [
     { id: 'overview', label: 'Overview' },
+    { id: 'city', label: 'Live City' },
     { id: 'controls', label: 'Controls' },
     { id: 'sources',  label: 'Live Sources' },
     { id: 'pipeline', label: 'Pipeline' },
@@ -3273,16 +3304,14 @@ export default function App() {
             </div>
           </div>
 
-          <nav style={navStyle}>
+          <nav style={navStyle} aria-label="Office sections">
           {nav.map(({ id, label }) => {
               const active = view === id;
               return (
                 <button
                   key={id}
-                  onClick={() => {
-                    setView(id);
-                    window.history.replaceState(null, '', `#${id}`);
-                  }}
+                  aria-current={active ? 'page' : undefined}
+                  onClick={() => navigateOffice(id)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 8, width: isMobile ? 'auto' : '100%',
                     flex: isMobile ? '0 0 auto' : undefined,
@@ -3371,6 +3400,9 @@ export default function App() {
         {/* ── Main content ── */}
         <main style={mainStyle}>
           {actionError && <div role="alert" style={{ color: '#fca5a5', paddingBottom: 16 }}>{actionError}</div>}
+          {view === 'city' && <LiveCity status={status} pipelineStatus={pipelineStatus} agents={agents} log={log}
+            telemetry={{ ...telemetry, streamConnected: connected }} officeFetch={officeFetch}
+            apiBase={API} pipelineBase={PIPELINE_API} onNavigate={navigateOffice} />}
           {view === 'post-pipeline' && <PostPipeline apiBase={API} request={officeFetch} pipelineStatus={pipelineStatus} />}
           {view === 'overview' && <OverviewView status={status} pipelineStatus={pipelineStatus} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'controls' && <Controls apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} />}
