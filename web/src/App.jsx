@@ -116,7 +116,6 @@ export default function App() {
   return (
     <>
     <PageviewTracker />
-    <AnalyticsPrivacy />
     <Suspense fallback={<div className="splash">Loading...</div>}>
     <Routes>
       {/* Public */}
@@ -215,6 +214,7 @@ export default function App() {
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
     </Suspense>
+    <AnalyticsPrivacy />
     </>
   );
 }

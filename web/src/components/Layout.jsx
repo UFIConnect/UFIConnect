@@ -9,7 +9,7 @@ import JobsSidebarControls from './JobsSidebarControls';
 import NotificationInbox from './NotificationInbox';
 import './social-surfaces.css';
 import { HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS } from './sourceMeta';
-import { PanelLeft, SquarePen, UsersRound, ShoppingBag, BriefcaseBusiness, Bookmark, Music } from 'lucide-react';
+import { PanelLeft, SquarePen, UsersRound, ShoppingBag, BriefcaseBusiness, Bookmark, Music, ShieldCheck } from 'lucide-react';
 
 function ShellIcon({ name, size = 20 }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' };
@@ -372,6 +372,10 @@ export default function Layout({ children, wide = false }) {
           </button>
         )}
 
+        {profile && <NavLink to="/privacy#analytics" className="nav-link sidebar-analytics-link" title="Analytics privacy" aria-label="Analytics privacy">
+          <ShieldCheck size={20} aria-hidden="true" />
+          <span className="nav-label">Analytics privacy</span>
+        </NavLink>}
         {profile && (
           <div className="sidebar-user">
             <div className="avatar avatar-sm">{initials(profile.name)}</div>
@@ -567,6 +571,10 @@ export default function Layout({ children, wide = false }) {
               </Link>
             </div>
             <div className="mobile-feed-drawer-bottom mobile-account-drawer-bottom">
+              <NavLink to="/privacy#analytics" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
+                <ShieldCheck size={18} aria-hidden="true" />
+                Analytics privacy
+              </NavLink>
               <NavLink to="/profile" className="mobile-command-menu-item mobile-account-profile" aria-label="Profile" onClick={closeMobileOverlays}>
                 <span className="mobile-account-avatar" aria-hidden="true">
                   {profile.avatarUrl && failedAvatarUrl !== profile.avatarUrl

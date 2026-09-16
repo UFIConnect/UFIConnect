@@ -25883,6 +25883,7 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       env:         process.env.NODE_ENV || 'development',
       db:          db.isConnected() ? 'connected' : 'fallback',
       dbBackup:    db.isBackupConnected(),
+      dbBackupStatus: db.getBackupStatus(),
       dbReadFailoverActive: db.isReadFailoverActive(),
       serviceRole: SERVICE_ROLE,
       port:        PORT,
@@ -32816,6 +32817,10 @@ db.initDB().then(async () => {
   console.log('[startup] Beginning background data initialization...');
   try {
     await migrateDB();
+    // Start the optional feed recovery loop as soon as its primary schema is
+    // ready. Connection failures are retried by db.js; unrelated warm-up or
+    // preload failures must not prevent the backup from ever connecting.
+    if (!IS_PIPELINE_ROLE) db.startBackupSync();
     await migrateSocialCredentials(db, tokenVault);
     if (process.env.NODE_ENV === 'production') {
       await db.query('SELECT auth_version FROM users LIMIT 0');
@@ -32842,13 +32847,6 @@ db.initDB().then(async () => {
     // new covering index, to already be ready) so the first real video
     // feed request doesn't fall back to the full 36-source list.
     getVideoCapableSources().catch(e => console.warn('[getVideoCapableSources] Startup warm failed:', e.message));
-    // Optional read-failover DB — see db.js. No-ops entirely if
-    // DATABASE_URL_BACKUP isn't set. Only starts the sync loop once the
-    // backup itself is confirmed reachable and indexed.
-    if (!IS_PIPELINE_ROLE) {
-      await db.initBackupDB();
-      db.startBackupSync();
-    }
     // Pre-populate seenPostIds so workers don't re-broadcast historical posts
     globalFeedCache.posts = realFeedPosts(globalFeedCache.posts);
     globalFeedCache.posts.forEach(p => p?.id && addSeenId(p.id));

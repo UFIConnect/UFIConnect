@@ -90,7 +90,9 @@ try {
     check(await accept.isVisible() && await decline.isVisible(), 'Both consent choices are visible');
     const sizes = await Promise.all([accept, decline].map(button => button.boundingBox()));
     check(Math.abs(sizes[0].width - sizes[1].width) < 2 && sizes[0].height === sizes[1].height, 'Consent choices have equal visual prominence');
+    const initialScroll = await page.evaluate(() => scrollY);
     await decline.click();
+    check(Math.abs(await page.evaluate(() => scrollY) - initialScroll) < 2, 'Choosing consent does not move the page to the footer');
     check(googleRequests.length === 0, 'Decline makes no Google request');
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.locator('#login-password').waitFor();
@@ -131,6 +133,14 @@ try {
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
     await page.waitForURL(url => url.pathname === '/');
     await assertEventually(() => pageViews.at(-1)?.dl === origin + '/');
+    if (width <= 768) await page.getByRole('button', { name: 'Open account menu', exact: true }).click();
+    await page.getByRole('link', { name: 'Analytics privacy', exact: true }).click();
+    await page.waitForURL(url => url.pathname === '/privacy' && url.hash === '#analytics');
+    await page.waitForFunction(() => document.activeElement?.id === 'analytics-privacy-title');
+    check(await page.getByRole('button', { name: 'Decline analytics', exact: true }).isVisible(), 'Account navigation opens preferences without reaching the feed footer');
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.activeElement?.classList.contains('analytics-privacy-trigger'));
+    check(await page.getByRole('button', { name: 'Analytics privacy', exact: true }).isVisible(), 'Closing linked preferences restores keyboard focus to the control');
     const routes = [
       ['/settings', '/settings'], ['/messages/' + seed, '/messages/conversation'],
       ['/groups/' + seed, '/groups/details'], ['/u/' + seed, '/u/member'],
@@ -174,6 +184,18 @@ try {
     await page.getByRole('button', { name: 'Accept analytics', exact: true }).click();
     await assertEventually(() => pageViews.at(-1)?.dl === origin + '/privacy' && pageViews.at(-1)?.cid !== oldClient);
     check(pageViews.at(-1).cid !== oldClient, 'New consent generates a new random identifier');
+    await page.evaluate(() => { history.pushState({}, '', '/global'); dispatchEvent(new PopStateEvent('popstate')); });
+    const guestPreferences = page.locator('.guest-header').getByRole('link', { name: 'Analytics privacy', exact: true });
+    await guestPreferences.waitFor();
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Guest analytics navigation fits the viewport');
+    await guestPreferences.click();
+    await page.waitForFunction(() => document.activeElement?.id === 'analytics-privacy-title');
+    check(new URL(page.url()).hash === '#analytics', 'Guest infinite feeds have direct access to analytics preferences');
+    const beforeCloseScroll = await page.evaluate(() => scrollY);
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.activeElement?.classList.contains('analytics-privacy-trigger'));
+    check(Math.abs(await page.evaluate(() => scrollY) - beforeCloseScroll) < 2, 'Closing preferences preserves page position');
+    check(await page.locator('.analytics-privacy').evaluate(element => getComputedStyle(element).position === 'static'), 'The compact control stays in normal page flow');
     await fs.mkdir(path.join(root, '.cache/audit-ui'), { recursive: true });
     await page.getByRole('button', { name: 'Analytics privacy', exact: true }).click();
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/analytics-preferences-${width}.png`) });

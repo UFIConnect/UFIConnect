@@ -395,6 +395,7 @@ function WebOptimizerPanel({ web, triggerAgent, triggering }) {
 
 function OverviewView({ status, pipelineStatus, log, agents, triggerAgent, triggering }) {
   const s = status?.server;
+  const backup = s?.dbBackupStatus;
   const f = pipelineStatus?.feed || status?.feed;
   const a = status?.agents;
   const src = pipelineStatus?.sources || status?.sources;
@@ -449,6 +450,28 @@ function OverviewView({ status, pipelineStatus, log, agents, triggerAgent, trigg
           color={src?.paused ? '#f97316' : src?.starting ? '#94a3b8' : '#4ade80'}
         />
       </div>
+
+      {backup && (
+        <Card style={{ padding: '16px 18px', marginBottom: 24 }}>
+          <h2 style={{ fontSize: 14, margin: '0 0 8px', color: '#e2e8f0' }}>Feed recovery database</h2>
+          <p style={{ fontSize: 12, margin: '0 0 6px', color: backup.enabled && backup.connected && !backup.lastError ? '#4ade80' : '#fbbf24' }}>
+            {!backup.enabled ? 'Not configured: set DATABASE_URL_BACKUP on the API service.'
+              : !backup.connected ? 'Disconnected: the API is retrying the backup connection.'
+                : backup.lastError ? 'Connected; the last recovery update failed.'
+                  : backup.lastSyncAt ? 'Connected; the latest recovery update succeeded.'
+                    : 'Connected; waiting for the first recovery update.'}
+          </p>
+          <p style={{ fontSize: 12, margin: '0 0 6px', color: '#94a3b8' }}>
+            Last successful update: {backup.lastSyncAt ? fmtAgo(backup.lastSyncAt) : 'none reported'}
+            {' · '}{backup.rowCount == null ? 'Row count unavailable' : `${Number(backup.rowCount).toLocaleString()} feed posts`}
+          </p>
+          {backup.lastError && <p style={{ fontSize: 12, margin: '0 0 6px', color: '#fca5a5', overflowWrap: 'anywhere' }}>{backup.lastError}</p>}
+          <p style={{ fontSize: 11, margin: 0, color: '#94a3b8' }}>
+            Recent feed posts only: up to {backup.retentionDays} days and {Number(backup.maxRows).toLocaleString()} posts.
+            {' '}Accounts, messages, and settings require a separate full database backup.
+          </p>
+        </Card>
+      )}
 
       <WebOptimizerPanel web={web} triggerAgent={triggerAgent} triggering={triggering} />
 

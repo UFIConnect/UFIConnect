@@ -55,8 +55,13 @@ try {
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/post-context-${width}.png`) });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Composer must fit the viewport');
     await auditNavigate(page, server.resolvedUrls.local[0] + 'groups/ufi-tech');
+    // A lazy route can retain the previous Shop UI while its module loads.
+    // Wait for this group's content before using a shared button label.
+    const groupName = app.groups.find(group => group.id === 'ufi-tech').name;
+    await page.getByRole('heading', { name: groupName, exact: true }).waitFor();
     await page.getByRole('button', { name: 'Post', exact: true }).click();
-    const groupForm = page.getByRole('form', { name: /Create post in/ });
+    const groupForm = page.getByRole('form', { name: `Create post in ${groupName}`, exact: true });
+    assert.equal(await groupForm.getByRole('textbox').inputValue(), '', 'Group composer must not inherit the Shop draft');
     await groupForm.getByRole('textbox').fill(`Technology community update for ${width}.`);
     const groupResponse = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/groups/ufi-tech/posts'));
     await groupForm.getByRole('button', { name: 'Publish', exact: true }).click();
