@@ -84,7 +84,7 @@ function RequireOnboarding({ children }) {
 function PageviewTracker() {
   const location = useLocation();
   useEffect(() => {
-    trackPageview(location.pathname);
+    trackPageview(location.pathname, location.key);
     getGoogleAnalytics().trackPage(location.pathname, location.key);
   }, [location.pathname]);
   return null;

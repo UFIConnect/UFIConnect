@@ -9,7 +9,7 @@ test('every rendered mobile screen has a fixed analytics name', () => {
   const source = fs.readFileSync(path.join(__dirname, '../App.js'), 'utf8');
   const screens = [...source.matchAll(/<\w+\.Screen\s+name="([^"]+)"\s+component=\{(\w+)\}/g)]
     .filter(([, , component]) => component.endsWith('Screen')).map(([, name]) => name);
-  assert.equal(screens.length, 12);
+  assert.equal(screens.length, 13);
   assert.deepEqual(screens.sort(), Object.keys(SCREEN_PATHS).sort());
   assert.equal(new Set(Object.values(SCREEN_PATHS)).size, screens.length);
 });

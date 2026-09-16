@@ -20,8 +20,8 @@
     "export": "expo export --platform all",
     "doctor": "expo-doctor",
     "test:export": "node scripts/audit-export.mjs",
-    "test:security": "node --test security/security.test.js security/dependencyCompatibility.test.js analytics/screenPolicy.test.js",
-    "test:analytics": "node scripts/audit-analytics.mjs"
+    "test:security": "node --test security/security.test.js security/dependencyCompatibility.test.js analytics/screenPolicy.test.js analytics/serviceMetrics.test.js",
+    "test:analytics": "node scripts/audit-analytics.mjs && node scripts/audit-preferences.mjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~57.0.15",

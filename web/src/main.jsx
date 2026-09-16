@@ -11,19 +11,13 @@ import { auth0AuthorizationParams, auth0Config, isAuth0Configured } from './auth
 import './index.css';
 import { reportClientError } from './api/errorReporting';
 
-// Feeds the autofix agent's detection pipeline (backend recordClientError/
-// runAutofixCheck) — catches errors React's own per-tree error boundaries
-// (see Feed.jsx's FeedErrorBoundary) never see: anything outside a React
-// render (an event handler, a timer, a raw DOM API) or a rejected promise
-// nobody awaited. Silently no-ops for a signed-out visitor (POST /client-
-// error requires auth) — same fire-and-forget swallow reportClientError
-// itself already does, not something to special-case here.
-window.addEventListener('error', (e) => {
-  reportClientError({ message: e.message, stack: e.error?.stack });
+// Optional diagnostics report a broad category only after this browser opts
+// in. Error messages, rejected values and stack traces are never submitted.
+window.addEventListener('error', () => {
+  reportClientError({ code: 'script_error' });
 });
-window.addEventListener('unhandledrejection', (e) => {
-  const reason = e.reason;
-  reportClientError({ message: reason?.message || String(reason), stack: reason?.stack });
+window.addEventListener('unhandledrejection', () => {
+  reportClientError({ code: 'unhandled_rejection' });
 });
 
 // Clicking a push notification (see sw.js's notificationclick handler)

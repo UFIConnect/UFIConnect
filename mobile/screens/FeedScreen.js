@@ -8,6 +8,9 @@ import { useAuth, API_BASE } from '../context/AuthContext';
 import { COLORS } from '../theme';
 import { PLATFORM_META } from '../platforms';
 import PostCard from '../components/PostCard';
+import { useIsFocused } from '@react-navigation/native';
+import { usePreferences } from '../context/PreferencesContext';
+import { feedSections } from '../context/dataPreferences';
 
 // ── Social post card ──────────────────────────────────────────────────────────
 function SocialAvatar({ initials, color }) {
@@ -128,6 +131,8 @@ function TabBar({ active, onChange, tabs }) {
 // ── Main screen ───────────────────────────────────────────────────────────────
 export default function FeedScreen({ navigation }) {
   const { token, profile } = useAuth();
+  const { preferences, ready } = usePreferences();
+  const isFocused = useIsFocused();
   const [activeTab, setActiveTab] = useState('groups');
   const [groupPosts, setGroupPosts] = useState([]);
   const [socialPosts, setSocialPosts] = useState([]);
@@ -136,27 +141,34 @@ export default function FeedScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchAll = useCallback(async () => {
+  const selectedSection = preferences.dataSaver ? activeTab : null;
+  const fetchAll = useCallback(async (signal) => {
     try {
       const headers = { Authorization: `Bearer ${token}` };
-      const [groupRes, socialRes, jobsRes] = await Promise.all([
-        axios.get(`${API_BASE}/feed`, { headers }),
-        axios.get(`${API_BASE}/social/feed`, { headers }),
-        axios.get(`${API_BASE}/social/jobs`, { headers }),
-      ]);
-      setGroupPosts(groupRes.data.posts);
-      setSocialPosts(socialRes.data.posts);
-      setConnectedPlatforms(socialRes.data.connectedPlatforms || []);
-      setJobs(jobsRes.data.jobs);
+      await Promise.all(feedSections(preferences.dataSaver, selectedSection).map(async section => {
+        const path = { groups: '/feed', social: '/social/feed', jobs: '/social/jobs' }[section];
+        const { data } = await axios.get(`${API_BASE}${path}`, { headers, signal });
+        if (section === 'groups') setGroupPosts(data.posts || []);
+        if (section === 'social') {
+          setSocialPosts(data.posts || []);
+          setConnectedPlatforms(data.connectedPlatforms || []);
+        }
+        if (section === 'jobs') setJobs(data.jobs || []);
+      }));
     } catch (e) {
-      console.error(e.message);
+      if (!axios.isCancel(e)) console.error(e.message);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [token]);
+  }, [token, preferences.dataSaver, selectedSection]);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => {
+    if (!ready || !isFocused) return undefined;
+    const controller = new AbortController();
+    fetchAll(controller.signal);
+    return () => controller.abort();
+  }, [fetchAll, ready, isFocused]);
 
   const onRefresh = () => { setRefreshing(true); fetchAll(); };
 

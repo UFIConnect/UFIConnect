@@ -9,10 +9,33 @@ routes use generic categories such as Conversation, Group, and Member profile.
 Expo web maps all twelve current screens to fixed `/app/` categories. Native
 iOS/Android app streams require Firebase configuration as described below.
 
-These changes have been tested locally. They have **not been deployed**, and
-receipt in your Google Analytics account has not been verified. The measurement
+The consent-based website integration and API bridge were verified live on
+September 16, 2026 (UTC). Receipt in your Google Analytics account has not been verified. The measurement
 ID is public configuration; it does not grant access to the account or verify
-which Gmail address owns it.
+which Gmail address owns it. The new core metrics and data preferences described
+below require their own verified release; preparing code does not deploy it.
+
+## Core metrics and optional insights
+
+Core service metrics and first-party aggregate page/screen counts stay active
+independently of Google consent. New counters contain a UTC date, a fixed page
+category, an event category and a count. They do not store account IDs, visitor
+IDs, IP addresses, full URLs, referrers, messages, passwords or search text.
+Request outcomes and duration buckets are counted separately in bounded process
+memory. Network addresses can still be processed by hosting and abuse controls;
+this is not a claim of anonymous networking.
+
+Optional performance insights default off and send only reviewed error codes
+and fixed categories, never raw error messages or stack traces. Data and privacy
+settings control this reporting independently of Google Analytics. Declining
+Google Analytics continues to prevent Google requests; it does not disable
+first-party aggregate counters, account security or requested feed features.
+
+Office's analytics report shows aggregate views, optional diagnostic counts and
+the current API process's response buckets. A view is not a unique person.
+Existing identified analytics history is not deleted by this release and is
+not included in the new aggregate report. See [Data and privacy controls](DATA-PRIVACY.md)
+for persistence, retention, data-saving behavior and rollout checks.
 
 ## Activate the website and browser apps
 

@@ -199,6 +199,21 @@ try {
     await fs.mkdir(path.join(root, '.cache/audit-ui'), { recursive: true });
     await page.getByRole('button', { name: 'Analytics privacy', exact: true }).click();
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/analytics-preferences-${width}.png`) });
+    await page.getByRole('button', { name: 'Decline analytics', exact: true }).click();
+    await page.locator('iframe[title="Optional page analytics"]').waitFor({ state: 'detached' });
+    const requestsBeforeFailedSave = googleRequests.length;
+    await page.evaluate(() => {
+      const originalSetItem = Storage.prototype.setItem;
+      Storage.prototype.setItem = function(key, value) {
+        if (key.startsWith('uficonnect.analytics.')) throw new DOMException('Storage blocked', 'QuotaExceededError');
+        return originalSetItem.call(this, key, value);
+      };
+    });
+    await page.getByRole('button', { name: 'Analytics privacy', exact: true }).click();
+    await page.getByRole('button', { name: 'Accept analytics', exact: true }).click();
+    check(await page.locator('.analytics-privacy-panel [role="status"]').filter({ hasText: 'could not save your choice' }).isVisible(), 'Failed consent saves display a warning even when consent stays denied');
+    check(await page.getByRole('button', { name: 'Accept analytics', exact: true }).isVisible(), 'Failed choices keep preferences open for review');
+    check(googleRequests.length === requestsBeforeFailedSave, 'A failed opt-in remains off without Google requests');
     console.log(`PASS: consent, SPA coverage, sensitive-data isolation and revocation at ${width}px`);
     await context.close();
   }

@@ -1,42 +1,38 @@
-import client from './client';
-import { getVisitorId } from '../analytics';
-import { redactTelemetry, telemetryPath } from './telemetryPrivacy';
+import { resolveApiBaseUrl } from './apiOrigin';
+import { canonicalPage } from '../analytics/googleAnalytics.mjs';
+import { getDataPreferences, subscribeDataPreferences } from '../preferences/dataPreferences';
 
-// Feeds the autofix agent's detection pipeline (see backend's
-// recordClientError/recordServerError/runAutofixCheck) — same fire-and-
-// forget shape as engagement.js's reportEngagementSignal: no batching, no
-// retry, a dropped report just doesn't nudge that signature's count.
-//
-// Deduped per session per signature (a looping error — e.g. one stuck in a
-// render loop — shouldn't spam the same report every render) rather than a
-// hard cap, since a genuinely different error should never be suppressed by
-// an unrelated one having already reported once.
-const reportedSignatures = new Set();
+const allowedCodes = new Set(['script_error', 'unhandled_rejection', 'render_error', 'request_failed']);
+const reported = new Set();
+const pending = new Set();
 
-// Coarse client-side mirror of the backend's own computeErrorSignature — the
-// real signature is computed server-side (this only needs to be stable
-// enough to dedupe within one tab session, not to match the backend's exact
-// hash), so a class of error doesn't get reported on every single render/
-// event it recurs in during one session.
-function localSignature(message, extra) {
-  return `${String(message || '').slice(0, 120)}|${extra || ''}`;
+subscribeDataPreferences(() => {
+  if (getDataPreferences().performanceInsights) return;
+  pending.forEach(controller => controller.abort());
+  pending.clear();
+  reported.clear();
+});
+
+// Optional diagnostics send broad, allowlisted error categories only. Message
+// text, stack traces, component names, source URLs and account IDs are excluded.
+export function reportClientError({ code = 'render_error', urlPath } = {}) {
+  if (!getDataPreferences().performanceInsights || !allowedCodes.has(code)) return;
+  const category = canonicalPage(urlPath || (typeof location !== 'undefined' ? location.pathname : '/')).category;
+  const signature = `${category}:${code}`;
+  if (reported.has(signature)) return;
+  reported.add(signature);
+  const controller = new AbortController();
+  pending.add(controller);
+  void resolveApiBaseUrl().then(apiBase => {
+    if (controller.signal.aborted || !getDataPreferences().performanceInsights) return;
+    return fetch(apiBase + '/analytics/performance', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category, kind: 'client_error', code }),
+      credentials: 'omit', referrerPolicy: 'no-referrer', redirect: 'error', cache: 'no-store', signal: controller.signal,
+    });
+  }).catch(() => {}).finally(() => pending.delete(controller));
 }
 
-export function reportClientError({ message, stack, componentStack, urlPath }) {
-  const safePath = telemetryPath(urlPath || (typeof location !== 'undefined' ? location.pathname : '/'));
-  if (!safePath) return;
-  const safeMessage = redactTelemetry(message);
-  const sig = localSignature(safeMessage, componentStack?.match(/in (\S+)/)?.[1]);
-  if (reportedSignatures.has(sig)) return;
-  reportedSignatures.add(sig);
-  client.post('/client-error', {
-    message: safeMessage, stack: redactTelemetry(stack), componentStack: redactTelemetry(componentStack),
-    urlPath: safePath,
-    visitorId: getVisitorId(),
-  }).catch(() => {});
-}
-
-export function reportNegativeSignal({ signalType, source, topic, postId, context }) {
-  if (!signalType) return;
-  client.post('/negative-signal', { signalType, source, topic, postId, context, visitorId: getVisitorId() }).catch(() => {});
+export function reportNegativeSignal({ signalType } = {}) {
+  if (signalType === 'video_load_fail') reportClientError({ code: 'request_failed' });
 }

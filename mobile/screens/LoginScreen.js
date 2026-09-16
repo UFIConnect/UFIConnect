@@ -81,6 +81,9 @@ export default function LoginScreen({ navigation }) {
               <Text style={styles.link}>Create one</Text>
             </TouchableOpacity>
           </View>
+          <TouchableOpacity accessibilityRole="button" onPress={() => navigation.navigate('Privacy')} style={{ marginTop: 20, alignItems: 'center' }}>
+            <Text style={styles.link}>Data & privacy</Text>
+          </TouchableOpacity>
         </View>
 
       </ScrollView>

@@ -13,6 +13,7 @@ export default function AnalyticsProvider({ children }) {
   const latestScreenRef = useRef(null);
   const [available, setAvailable] = useState(false);
   const [consent, setConsent] = useState(null);
+  const [persistenceError, setPersistenceError] = useState(null);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const insets = useSafeAreaInsets();
   useEffect(() => {
@@ -21,20 +22,25 @@ export default function AnalyticsProvider({ children }) {
     const controller = createMobileAnalytics();
     controllerRef.current = controller;
     setAvailable(controller.available);
-    setConsent(controller.getConsent());
-    const unsubscribe = controller.subscribe(() => setConsent(controller.getConsent()));
+    const refresh = () => {
+      setConsent(controller.getConsent());
+      setPersistenceError(controller.getPersistenceError?.() || null);
+    };
+    refresh();
+    const unsubscribe = controller.subscribe(refresh);
     createScreenTracker(controller)(latestScreenRef.current?.name, latestScreenRef.current?.navigationKey);
     return () => { controllerRef.current = null; unsubscribe(); controller.dispose(); };
   }, []);
-  const context = useMemo(() => ({ trackScreen(name, navigationKey) {
+  const context = useMemo(() => ({ available, consent, persistenceError, openPreferences: () => setPreferencesOpen(true), trackScreen(name, navigationKey) {
     latestScreenRef.current = { name, navigationKey };
     if (controllerRef.current) createScreenTracker(controllerRef.current)(name, navigationKey);
-  } }), []);
+  } }), [available, consent, persistenceError]);
   function choose(value) {
     const controller = controllerRef.current;
     if (!controller) return;
     controller.setConsent(value);
     setConsent(controller.getConsent());
+    setPersistenceError(controller.getPersistenceError?.() || null);
     setPreferencesOpen(false);
   }
   const showPrompt = available && (preferencesOpen || !['granted', 'denied'].includes(consent));
@@ -42,6 +48,7 @@ export default function AnalyticsProvider({ children }) {
     <AnalyticsContext.Provider value={context}>
       <View style={styles.application}>
       <View style={styles.application}>{children}</View>
+      {available && !!persistenceError && <Text accessibilityRole="alert" style={styles.error}>{persistenceError}</Text>}
       {available && (
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="Analytics preferences"
           style={[styles.preferences, { paddingBottom: Math.max(8, insets.bottom) }]} onPress={() => setPreferencesOpen(true)}>
@@ -54,6 +61,8 @@ export default function AnalyticsProvider({ children }) {
             <Text style={styles.heading} accessibilityRole="header">Optional usage analytics</Text>
             <Text style={styles.description}>Allow Google Analytics to count visits to general app screens so we can improve UFIConnect? We send fixed screen categories, without names, emails, passwords, messages, search text, or account IDs. Google also receives connection and device information.</Text>
             <Text style={styles.description}>Analytics stays off until you allow it. You can change your choice here at any time.</Text>
+            <Text style={styles.description}>Required service metrics and aggregate screen counts remain active. Manage data use and optional error counts in Data & privacy.</Text>
+            {!!persistenceError && <Text accessibilityRole="alert" style={styles.error}>{persistenceError}</Text>}
             <View style={styles.actions}>
               <TouchableOpacity accessibilityRole="button" style={styles.button} onPress={() => choose('denied')}>
                 <Text style={styles.buttonText}>Decline analytics</Text>
@@ -74,6 +83,7 @@ const styles = StyleSheet.create({
   application: { flex: 1 },
   preferences: { alignItems: 'center', borderTopWidth: 1, borderColor: COLORS.border, backgroundColor: '#fff', paddingHorizontal: 8, paddingTop: 8 },
   preferencesText: { color: COLORS.muted, fontSize: 11 },
+  error: { color: COLORS.danger, backgroundColor: '#fff', fontSize: 12, lineHeight: 18, padding: 10 },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center', padding: 20 },
   dialog: { width: '100%', maxWidth: 480, padding: 24, borderRadius: 16, backgroundColor: '#fff' },
   heading: { color: COLORS.text, fontSize: 20, fontWeight: '800', marginBottom: 12 },

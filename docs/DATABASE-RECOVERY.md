@@ -16,6 +16,23 @@ Public health checks on September 16, 2026 (UTC) reported `db: true` and `dbBack
 
 The operator subsequently confirmed `DATABASE_URL_BACKUP` is listed in Render and provided failed API/pipeline deployment logs with `DEPTH_ZERO_SELF_SIGNED_CERT` on the **primary** connection. Those attempted deployments cannot initialize the primary schema or start backup synchronization. Render's internal PostgreSQL URLs present self-signed certificates, which this application's verified TLS policy rejects. Use the primary database's full external URL for `DATABASE_URL` on both services, and the separate backup database's full external URL for the API's `DATABASE_URL_BACKUP`, with appropriate network allowlists. Preserve `DATABASE_SSL_MODE=verify-full`. An older deployment can remain live while a replacement fails; public health and deployment logs must be matched to their running commit. The precise deployed URLs and a successful retry remain unverified.
 
+## Recover a database that cannot start because its disk is full
+
+The newer PostgreSQL log reports recovery redo followed by `FATAL: could not write to file "pg_wal/xlogtemp.62": No space left on device` and a startup-process exit. The database cannot complete startup because its storage is full. `redo done` does not establish that the database became available. Confirm which Render database emitted this log before changing capacity; the log alone does not identify the primary or the feed recovery cache. This storage failure is separate from the earlier application TLS error.
+
+1. Open that database's **Info** page. If Render has suspended it, click **Resume Database** at the bottom and wait 1–2 minutes.
+2. Promptly open **PostgreSQL Instance → Update → Storage**, choose a higher multiple of 5 GB with enough headroom, and save. Render can suspend it again if it remains full after resuming. Follow [Render's disk-full recovery procedure](https://render.com/docs/postgresql-creating-connecting#running-out-of-storage).
+3. Storage increases are permanent and affect billing; review the displayed price. Storage cannot be reduced, and another increase is blocked for six hours. Free or legacy instances may require a plan change before expansion. If the controls are unavailable or startup still fails after capacity increases, contact Render support with the instance ID and sanitized log excerpt. See [Render storage and plan controls](https://render.com/docs/postgresql-creating-connecting#adding-storage).
+
+Do not delete `pg_wal`, reset WAL, or remove database files to make room. Redeploying the API or pipeline does not expand PostgreSQL storage. The separate feed recovery cache contains only the bounded `feed_posts_cache` snapshot described above; it cannot replace the full primary database.
+
+### Verify recovery before declaring the incident resolved
+
+- Confirm the database reaches **Available**, startup stops repeating the disk-full error, and its storage metrics show sustained free capacity.
+- Recheck API and pipeline readiness against their running commits. A recovered primary must accept connections and complete security storage initialization; investigate any remaining TLS failure separately.
+- Check the API's protected `dbBackupStatus`: `connected: true` proves connectivity only. Require a new completed `lastSyncAt` and recorded `rowCount`, then verify the next scheduled refresh. The pipeline does not own backup synchronization.
+- Verify representative application reads and authorized writes, and record the recovery time. A successful feed sync is not a complete backup or a restore test; use the full recovery checks below for the primary database.
+
 ## Check the API service configuration
 
 1. Open the **API web service** in Render and confirm it owns `api.uficonnect.org`. Record its deployed commit and inspect that deployment's status.

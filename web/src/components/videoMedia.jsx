@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useDataPreferences, previewPlaybackAllowed } from '../preferences';
 
 // Every video surface (the Videos swipe feed, the photo/video lightbox, and
 // each inline YouTube card in the Feed) starts muted by default and only
@@ -376,6 +377,8 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
 // VideoFeedView already uses, just triggered by real scroll position
 // instead of a swipe-snap container.
 export function InlineAutoplayVideo({ kind, src, videoKey, poster, style, forcePause = false }) {
+  const preferences = useDataPreferences();
+  const automaticPlayback = previewPlaybackAllowed(preferences);
   const containerRef = useRef(null);
   const fileRef = useRef(null);
   const [inView, setInView] = useState(false);
@@ -411,8 +414,8 @@ export function InlineAutoplayVideo({ kind, src, videoKey, poster, style, forceP
   // right now" stay independent, composable signals. Also gated through the
   // shared solo-playback arbiter (see useSoloVideoPlayback) so only the
   // most-recently-scrolled-to video across the whole Feed plays at once.
-  const isSolo = useSoloVideoPlayback(videoKey || src, inView && playbackAllowed && !forcePause);
-  const shouldPlay = isSolo && !forcePause;
+  const isSolo = useSoloVideoPlayback(videoKey || src, automaticPlayback && inView && playbackAllowed && !forcePause);
+  const shouldPlay = automaticPlayback && isSolo && !forcePause;
 
   // Direct-file case drives its own <video> element here; the HLS case
   // (below, in the render) hands autoplay off to HlsVideoPlayer instead,
@@ -435,11 +438,18 @@ export function InlineAutoplayVideo({ kind, src, videoKey, poster, style, forceP
 
   return (
     <div ref={containerRef} {...pointerHandlers}>
-      {kind === 'hls' ? (
+      {preferences.dataSaver ? (
+        <div style={{ minHeight: 220, background: '#000', color: '#fff', display: 'grid', placeItems: 'center', ...style }}>
+          {poster && <img src={poster} alt="" loading="lazy" style={{ width: '100%', maxHeight: 220, objectFit: 'cover' }} />}
+          <span style={{ padding: 16 }}>Open video to play · Data saver is on</span>
+        </div>
+      ) : kind === 'hls' ? (
         shouldPlay ? (
           <HlsVideoPlayer src={src} poster={null} autoPlay muted loop style={style} />
         ) : (
-          <div style={{ minHeight: 220, background: '#000', ...style }} />
+          <div style={{ minHeight: 220, background: '#000', color: '#fff', display: 'grid', placeItems: 'center', ...style }}>
+            {!automaticPlayback && <span style={{ padding: 16 }}>Open video to play</span>}
+          </div>
         )
       ) : (
         <video ref={fileRef} src={src} muted loop playsInline preload="metadata" style={style} />

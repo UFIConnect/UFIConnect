@@ -24,13 +24,25 @@ jobs:
       RENDER_HOOK_OFFICE: ${{ secrets.RENDER_HOOK_OFFICE }}
       RENDER_HOOK_PIPELINE: ${{ secrets.RENDER_HOOK_PIPELINE }}
     steps:
+      - name: Require all release destinations
+        run: |
+          missing=0
+          for hook_name in RENDER_HOOK_API RENDER_HOOK_WEB RENDER_HOOK_OFFICE RENDER_HOOK_PIPELINE; do
+            if [[ -z "${!hook_name}" ]]; then
+              echo "::error::Missing GitHub Actions secret: ${hook_name}. No services have been deployed."
+              missing=1
+            fi
+          done
+          if [[ "$missing" != 0 ]]; then
+            exit 1
+          fi
+
       - name: Deploy the latest verified commit
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           for hook_name in RENDER_HOOK_API RENDER_HOOK_WEB RENDER_HOOK_OFFICE RENDER_HOOK_PIPELINE; do
             url="${!hook_name}"
-            [[ -z "$url" ]] && continue
             latest_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
             if [[ "$latest_sha" != "$VERIFIED_SHA" ]]; then
               echo "Skipping a superseded verified commit. A newer main commit must finish verification."
@@ -38,11 +50,5 @@ jobs:
             fi
             sep='?'
             [[ "$url" == *\?* ]] && sep='&'
-            curl -fsS -X POST "${url}${sep}ref=${VERIFIED_SHA}"
+            curl --proto '=https' --connect-timeout 10 --max-time 60 -fsS -X POST "${url}${sep}ref=${VERIFIED_SHA}"
           done
-
-      - name: Hooks not configured
-        if: env.RENDER_HOOK_API == '' && env.RENDER_HOOK_WEB == '' && env.RENDER_HOOK_OFFICE == '' && env.RENDER_HOOK_PIPELINE == ''
-        run: |
-          echo "Render deploy hooks are not configured yet."
-          echo "Add RENDER_HOOK_API, RENDER_HOOK_WEB, RENDER_HOOK_OFFICE, and RENDER_HOOK_PIPELINE as GitHub Actions secrets."

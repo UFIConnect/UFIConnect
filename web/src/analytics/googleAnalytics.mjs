@@ -23,7 +23,7 @@ export const PAGE_CATEGORIES = Object.freeze(Object.fromEntries(Object.entries({
   app_groups: ['/app/groups', 'App groups'], app_group: ['/app/group', 'App group'], app_feed: ['/app/feed', 'App feed'],
   app_messages: ['/app/messages', 'App messages'], app_conversation: ['/app/conversation', 'App conversation'],
   app_profile: ['/app/profile', 'App profile'], app_connected_accounts: ['/app/connected-accounts', 'App connected accounts'],
-  app_security: ['/app/security', 'App security'], other: ['/other', 'Other page'],
+  app_security: ['/app/security', 'App security'], app_privacy: ['/app/privacy', 'App data and privacy'], other: ['/other', 'Other page'],
 }).map(([category, [path, title]]) => [category, Object.freeze({ category, path, title })])));
 
 const exactPages = new Map(Object.values(PAGE_CATEGORIES).map(page => [page.path, page]));
@@ -50,7 +50,32 @@ function randomClientId(window) {
 
 export function createAnalyticsController({ window, document, bridgeUrl }) {
   let consent = null;
-  try { const value = window.localStorage.getItem(ANALYTICS_CONSENT_KEY); if (value === 'granted' || value === 'denied') consent = value; } catch {}
+  let persistenceError = null;
+  const storageErrorMessage = 'Google Analytics is off. This browser could not save your choice or clear stored analytics data. Check your choice after reloading.';
+  function storageWritable() {
+    // Merely rewriting the existing grant cannot prove that storage changed:
+    // some restricted storage implementations silently ignore writes. Probe
+    // with an alternating constant, verify it, then remove it. No identifier.
+    const key = `${ANALYTICS_CONSENT_KEY}.writable`;
+    try {
+      const storage = window.localStorage;
+      const value = storage.getItem(key) === '1' ? '2' : '1';
+      storage.setItem(key, value);
+      if (storage.getItem(key) !== value) return false;
+      storage.removeItem(key);
+      return storage.getItem(key) === null;
+    } catch { return false; }
+  }
+  try {
+    const value = window.localStorage.getItem(ANALYTICS_CONSENT_KEY);
+    if (value === 'denied') consent = value;
+    if (value === 'granted') {
+      // A readable old grant must not resurrect collection when a previous
+      // opt-out could not overwrite/remove it because storage was blocked.
+      consent = storageWritable() ? 'granted' : 'denied';
+      if (consent === 'denied') persistenceError = storageErrorMessage;
+    }
+  } catch { persistenceError = storageErrorMessage; }
   let frame = null;
   let ready = false;
   let clientId = null;
@@ -90,7 +115,12 @@ export function createAnalyticsController({ window, document, bridgeUrl }) {
     clientId = null;
     lastSent = 0;
     pending.length = 0;
-    if (clearIdentifier) { try { window.localStorage.removeItem(ANALYTICS_CLIENT_KEY); } catch {} }
+    if (clearIdentifier) {
+      try {
+        window.localStorage.removeItem(ANALYTICS_CLIENT_KEY);
+        if (window.localStorage.getItem(ANALYTICS_CLIENT_KEY) !== null) persistenceError = storageErrorMessage;
+      } catch { persistenceError = storageErrorMessage; }
+    }
   }
 
   function consentedClientId() {
@@ -159,11 +189,28 @@ export function createAnalyticsController({ window, document, bridgeUrl }) {
 
   function updateConsent(value, persist) {
     if (disposed || (value !== 'granted' && value !== 'denied' && value !== null)) return;
-    const changed = consent !== value;
+    const previousConsent = consent;
+    const previousError = persistenceError;
     consent = value;
-    if (persist) { try { window.localStorage.setItem(ANALYTICS_CONSENT_KEY, value); } catch {} }
+    persistenceError = null;
+    if (value === 'granted' && !storageWritable()) {
+      consent = 'denied';
+      persistenceError = storageErrorMessage;
+    }
+    if (persist) {
+      try {
+        window.localStorage.setItem(ANALYTICS_CONSENT_KEY, consent);
+        if (window.localStorage.getItem(ANALYTICS_CONSENT_KEY) !== consent) throw Error('Choice was not stored');
+      } catch {
+        consent = 'denied';
+        persistenceError = storageErrorMessage;
+        // Absence of consent also disables collection after reload. Try this
+        // when quota or browser restrictions prevent replacing an old grant.
+        try { window.localStorage.removeItem(ANALYTICS_CONSENT_KEY); } catch {}
+      }
+    }
     if (consent === 'granted') activate(); else stop();
-    if (changed) listeners.forEach(listener => listener());
+    if (previousConsent !== consent || previousError !== persistenceError) listeners.forEach(listener => listener());
   }
 
   function onStorage(event) {
@@ -179,6 +226,7 @@ export function createAnalyticsController({ window, document, bridgeUrl }) {
   return Object.freeze({
     available: true,
     getConsent: () => consent,
+    getPersistenceError: () => persistenceError,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     setConsent(value) { if (value === 'granted' || value === 'denied') updateConsent(value, true); },
     trackPage(path, navigationKey = path) {

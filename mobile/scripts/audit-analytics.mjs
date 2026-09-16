@@ -137,6 +137,10 @@ try {
   await page.getByText('Security', { exact: true }).click();
   await page.getByLabel('Current password', { exact: true }).fill(password);
   await expectScreen(page, '/app/security');
+  await page.getByRole('tab', { name: 'Profile' }).click();
+  await page.getByRole('button', { name: 'Data & privacy', exact: true }).click();
+  await expectScreen(page, '/app/privacy');
+  await page.getByRole('link', { name: /Go back|, back/i }).first().click();
   const events = await readEvents(page);
   const commands = await frame.evaluate(() => (window.dataLayer || []).map(value => Array.from(value)));
   const serialized = JSON.stringify({ events, commands, googleRequests });
@@ -167,7 +171,38 @@ try {
   await onboardingPage.getByText('Sign in', { exact: true }).click();
   await expectScreen(onboardingPage, '/app/onboarding');
   await onboardingContext.close();
-  check(allScreens.size === 12, 'All twelve rendered screens are counted with fixed names');
+  check(allScreens.size === 13, 'All thirteen rendered screens are counted with fixed names');
+
+  const blockedContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const blockedPage = await blockedContext.newPage();
+  const blockedGoogle = [];
+  await installRoutes(blockedPage, blockedGoogle);
+  await blockedPage.goto(base);
+  await blockedPage.getByRole('button', { name: 'Allow analytics', exact: true }).click();
+  await expectScreen(blockedPage, '/app/login');
+  function blockAnalyticsStorage() {
+    const set = window.Storage.prototype.setItem, remove = window.Storage.prototype.removeItem;
+    window.Storage.prototype.setItem = function(key, value) {
+      if (key.startsWith('uficonnect.analytics.')) throw new Error('Synthetic blocked analytics storage');
+      return set.call(this, key, value);
+    };
+    window.Storage.prototype.removeItem = function(key) {
+      if (key.startsWith('uficonnect.analytics.')) throw new Error('Synthetic blocked analytics storage');
+      return remove.call(this, key);
+    };
+  }
+  await blockedPage.addInitScript(blockAnalyticsStorage);
+  await blockedPage.evaluate(blockAnalyticsStorage);
+  await blockedPage.getByRole('button', { name: 'Analytics preferences', exact: true }).click();
+  await blockedPage.getByRole('button', { name: 'Decline analytics', exact: true }).click();
+  await blockedPage.waitForFunction(() => !document.querySelector('iframe[title="Optional page analytics"]'));
+  check(await blockedPage.getByRole('alert').filter({hasText:'This browser could not save your choice'}).first().isVisible(), 'Failed consent persistence is visibly reported');
+  const googleBeforeReload = blockedGoogle.length;
+  await blockedPage.reload();
+  await blockedPage.getByLabel('Password', { exact: true }).waitFor();
+  check(blockedPage.frames().length === 1 && blockedGoogle.length === googleBeforeReload, 'A saved grant cannot restart Google while storage is blocked');
+  check(await blockedPage.getByRole('alert').filter({hasText:'This browser could not save your choice'}).first().isVisible(), 'Reload reports unavailable persistence instead of a saved choice');
+  await blockedContext.close();
 
   for (const platform of ['android', 'ios']) {
     const directory = path.join(exportRoot, '_expo/static/js', platform);
@@ -176,7 +211,7 @@ try {
     const data = await fs.readFile(path.join(directory, bundle));
     check(!data.includes(Buffer.from('G-F68DRQ6CC5')) && !data.includes(Buffer.from('googletagmanager.com')), `${platform} excludes the web collector and web measurement ID`);
   }
-  console.log(`Expo analytics export audit: ${checks} checks passed, all 12 screens covered.`);
+  console.log(`Expo analytics export audit: ${checks} checks passed, all 13 screens covered.`);
 } finally {
   await browser?.close();
   server.closeAllConnections();

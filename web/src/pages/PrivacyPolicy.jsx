@@ -105,7 +105,8 @@ export default function PrivacyPolicy() {
 
           <P><strong>Content you create</strong> — posts, comments, and messages you send on the platform.</P>
 
-          <P><strong>Usage data</strong> — standard server logs including IP address, browser user-agent, pages visited, and timestamps. We use this to operate and improve the service.</P>
+          <P><strong>Core service metrics and aggregate usage counts</strong> — these are always active. We count visits to general page and app-screen categories and measure request outcomes and service response times. These metrics do not store account IDs, visitor IDs, IP addresses, full page links, search terms, passwords, or message content. Counts represent views, not individual people. Hosting and security systems still process connection information, including IP addresses, to deliver and protect the service.</P>
+          <P><strong>Optional performance insights</strong> — when enabled on your browser or app, we count general error categories to identify reliability problems. These reports exclude raw error messages, stack traces, account details, and personal content. You can turn future reporting off in Data and privacy settings.</P>
 
           <P><strong>Social account tokens</strong> — if you connect a social platform (LinkedIn, Twitter/X, Instagram, or Facebook) via the Connected Accounts feature, we store the OAuth access token you authorise. This token is used only to fetch content relevant to your feed and is never shared with third parties.</P>
 
@@ -173,7 +174,7 @@ export default function PrivacyPolicy() {
           <P>
             We use a service worker to cache public app assets. Browser storage may also hold non-sensitive
             display preferences. Private API responses are not cached by the service worker. We use
-            first-party operational analytics. Optional Google Analytics loads only after you accept it,
+            core service metrics and aggregate usage counts without analytics cookies or visitor identifiers. Optional Google Analytics loads only after you accept it,
             inside a separate document that cannot read the app's contents.
           </P>
           <P>
@@ -185,6 +186,13 @@ export default function PrivacyPolicy() {
             identifier and cookies. It does not delete previously collected reports from Google.
             Standalone iOS and Android builds currently do not collect Google Analytics.
           </P>
+          <P>
+            Data-saving and performance preferences are saved on this browser or app installation.
+            They do not change your phone's cellular or roaming permissions. Data Saver reduces automatic
+            media loading or background feed requests where supported; content you choose to open can
+            still use data. Turning off optional analytics does not disable account security or the
+            interactions needed for requested features, such as saving posts and personalising your feed.
+          </P>
         </Section>
 
         <Section title="8. Data retention">
@@ -193,6 +201,7 @@ export default function PrivacyPolicy() {
             'Posts and messages: deleted with your account. Community posts visible to others may be anonymised rather than deleted.',
             'Feed cache: external posts are cached for up to 60 minutes and then evicted.',
             'Server logs: retained for up to 90 days for security and debugging.',
+            'Aggregate page, app-screen, and optional performance counts: retained for 30 UTC calendar days. Request outcome and response-time counters reset when the server process restarts.',
             'OAuth tokens: active credentials are removed when you disconnect; retained backups follow the backup retention policy.',
           ]} />
         </Section>

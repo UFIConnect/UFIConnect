@@ -1,10 +1,42 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
+import { createRequire } from 'node:module';
 import fs from 'node:fs/promises';
 import { canonicalPage, createAnalyticsController, PAGE_CATEGORIES, ANALYTICS_CONSENT_KEY,
   ANALYTICS_CLIENT_KEY, ANALYTICS_CLIENT_LIFETIME_MS } from '../web/src/analytics/googleAnalytics.mjs';
 import { analyticsBridgeHtml } from '../web/analyticsBridge.mjs';
+
+const require = createRequire(import.meta.url);
+const { PAGE_CATEGORIES: BACKEND_CATEGORIES, createAggregateAnalytics } = require('../backend/aggregate-analytics');
+const { SCREEN_PATHS } = require('../mobile/analytics/screenPolicy');
+const { createServiceMetrics } = require('../mobile/analytics/serviceMetrics');
+
+test('every web and native screen category is accepted by the required aggregate endpoint contract', async () => {
+  assert.deepEqual([...BACKEND_CATEGORIES].sort(), Object.keys(PAGE_CATEGORIES).sort());
+  const backend = createAggregateAnalytics({ db: { isConnected: () => true }, schedule() {} });
+  const categories = [];
+  for (const category of Object.keys(PAGE_CATEGORIES)) {
+    const response = { statusCode: 200, set() { return this; }, status(code) { this.statusCode = code; return this; },
+      json() { return this; }, end() { return this; } };
+    backend.pageview({ body: { category }, originalUrl: '/analytics/pageview' }, response);
+    assert.equal(response.statusCode, 204, `Backend must accept the fixed category ${category}`);
+  }
+  const mobile = createServiceMetrics({ apiBase: 'https://api.example.invalid', fetcher(url, options) {
+    assert.equal(url, 'https://api.example.invalid/analytics/pageview');
+    const payload = JSON.parse(options.body);
+    assert.deepEqual(Object.keys(payload), ['category']);
+    categories.push(payload.category);
+  } });
+  try {
+    for (const name of Object.keys(SCREEN_PATHS)) mobile.trackScreen(name, `private-navigation-key-${name}`);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(categories, Object.values(SCREEN_PATHS).map(path => canonicalPage(path).category));
+    assert.equal(categories.length, Object.keys(SCREEN_PATHS).length);
+    assert.ok(categories.includes('app_privacy'));
+    assert.ok(categories.every(category => BACKEND_CATEGORIES.includes(category)));
+  } finally { mobile.dispose(); }
+});
 
 function fixture(entries = []) {
   const storage = new Map(entries);
@@ -152,6 +184,60 @@ test('storage and randomness failure fail safely without reading authentication 
   controller.trackPage('/'); controller.setConsent('granted');
   assert.equal(frames.length, 0);
   controller.dispose();
+});
+
+test('withdrawal stops collection immediately even when a saved grant cannot be overwritten or removed', () => {
+  const { controller, window, document, frames, ready, storage } = fixture([[ANALYTICS_CONSENT_KEY, 'granted']]);
+  controller.trackPage('/messages/private-one'); ready();
+  const frame = frames[0];
+  const originalStorage = window.localStorage;
+  window.localStorage = {
+    getItem: originalStorage.getItem,
+    setItem() { throw Error('writes blocked'); },
+    removeItem() { throw Error('removal blocked'); },
+  };
+  controller.setConsent('denied');
+  assert.equal(controller.getConsent(), 'denied');
+  assert.ok(controller.getPersistenceError());
+  assert.equal(frame.messages.at(-1).type, 'ufi-analytics-stop');
+  controller.trackPage('/settings');
+  assert.equal(frame.messages.filter(message => message.type === 'ufi-analytics-page').length, 1);
+  assert.equal(storage.get(ANALYTICS_CONSENT_KEY), 'granted', 'The failure fixture retains the stale old grant');
+  controller.dispose();
+  const reloaded = createAnalyticsController({ window, document, bridgeUrl: 'https://api.uficonnect.org/analytics-bridge.html' });
+  reloaded.trackPage('/profile');
+  assert.equal(reloaded.getConsent(), 'denied');
+  assert.ok(reloaded.getPersistenceError());
+  assert.equal(frames.length, 1, 'Reload must not create another Google frame from the stale grant');
+  reloaded.dispose();
+});
+
+test('failed consent writes remove an old grant when possible and never enable Google in unwritable storage', () => {
+  const { controller, window, document, storage, frames } = fixture([[ANALYTICS_CONSENT_KEY, 'granted']]);
+  window.localStorage.setItem = () => { throw Error('quota exceeded'); };
+  controller.setConsent('denied');
+  assert.equal(storage.has(ANALYTICS_CONSENT_KEY), false);
+  assert.ok(controller.getPersistenceError());
+  controller.dispose();
+  const reloaded = createAnalyticsController({ window, document, bridgeUrl: 'https://api.uficonnect.org/analytics-bridge.html' });
+  reloaded.trackPage('/'); reloaded.setConsent('granted');
+  assert.equal(reloaded.getConsent(), 'denied');
+  assert.equal(frames.length, 0);
+  assert.ok(reloaded.getPersistenceError());
+  reloaded.dispose();
+});
+
+test('silently ignored storage writes cannot validate a saved or new Google grant', () => {
+  const { controller, window, document, frames, storage } = fixture(); controller.dispose();
+  storage.set(ANALYTICS_CONSENT_KEY, 'granted');
+  window.localStorage.setItem = () => {};
+  window.localStorage.removeItem = () => {};
+  const reloaded = createAnalyticsController({ window, document, bridgeUrl: 'https://api.uficonnect.org/analytics-bridge.html' });
+  reloaded.trackPage('/'); reloaded.setConsent('granted');
+  assert.equal(reloaded.getConsent(), 'denied');
+  assert.equal(frames.length, 0);
+  assert.ok(reloaded.getPersistenceError());
+  reloaded.dispose();
 });
 
 test('the bridge must remain a static, separate-origin URL and its generated allowlist/CSP stay synchronized', async () => {

@@ -14,6 +14,7 @@ export function createMobileAnalytics() {
     return {
       available: false,
       getConsent: () => 'unavailable',
+      getPersistenceError: () => null,
       subscribe: () => () => {},
       setConsent: () => {},
       trackPage: () => {},

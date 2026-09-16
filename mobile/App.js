@@ -19,6 +19,9 @@ import ConversationScreen from './screens/ConversationScreen';
 import ProfileScreen from './screens/ProfileScreen';
 import ConnectedAccountsScreen from './screens/ConnectedAccountsScreen';
 import SecurityScreen from './screens/SecurityScreen';
+import PrivacyScreen from './screens/PrivacyScreen';
+import PreferencesProvider from './context/PreferencesContext';
+import ServiceMetricsProvider, { useServiceMetrics } from './analytics/ServiceMetricsProvider';
 import { COLORS } from './theme';
 import AnalyticsProvider, { useAnalytics } from './analytics/AnalyticsProvider';
 
@@ -149,6 +152,7 @@ function RootNavigator() {
       ) : (
         <RootStack.Screen name="Main" component={AppTabs} />
       )}
+      <RootStack.Screen name="Privacy" component={PrivacyScreen} options={{ ...NAV_OPTS, headerShown: true, title: 'Data & privacy' }} />
     </RootStack.Navigator>
   );
 }
@@ -156,9 +160,11 @@ function RootNavigator() {
 function TrackedNavigation() {
   const navigationRef = React.useRef(null);
   const { trackScreen } = useAnalytics();
+  const metrics = useServiceMetrics();
   const trackCurrentScreen = () => {
     const route = navigationRef.current?.getCurrentRoute();
     trackScreen(route?.name, route?.key);
+    metrics.trackScreen(route?.name, route?.key);
   };
   return (
     <NavigationContainer ref={navigationRef} onReady={trackCurrentScreen} onStateChange={trackCurrentScreen}>
@@ -171,11 +177,15 @@ function TrackedNavigation() {
 export default function App() {
   return (
     <SafeAreaProvider>
-      <AnalyticsProvider>
-        <AuthProvider>
-          <TrackedNavigation />
-        </AuthProvider>
-      </AnalyticsProvider>
+      <PreferencesProvider>
+        <ServiceMetricsProvider>
+          <AnalyticsProvider>
+            <AuthProvider>
+              <TrackedNavigation />
+            </AuthProvider>
+          </AnalyticsProvider>
+        </ServiceMetricsProvider>
+      </PreferencesProvider>
     </SafeAreaProvider>
   );
 }

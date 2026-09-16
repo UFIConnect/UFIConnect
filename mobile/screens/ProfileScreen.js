@@ -67,6 +67,10 @@ function OverviewTab({ profile, navigation, onLogout, loggingOut }) {
         <Text style={s.sectionTitle}>Security</Text>
         <Text style={s.sub}>Change your password and manage account sessions</Text>
       </TouchableOpacity>
+      <TouchableOpacity style={s.section} onPress={() => navigation.navigate('Privacy')} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Data & privacy">
+        <Text style={s.sectionTitle}>Data & privacy</Text>
+        <Text style={s.sub}>Data Saver, service metrics, and optional analytics</Text>
+      </TouchableOpacity>
 
       <View style={s.section}>
         <Text style={s.sectionTitle}>Account</Text>

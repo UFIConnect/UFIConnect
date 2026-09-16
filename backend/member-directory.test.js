@@ -86,7 +86,7 @@ test('search reports database failure instead of a misleading partial cache', as
   assert.equal((await app.request('/users/search?q[]=a', { userId: 'member-1' })).status, 400);
 });
 
-test('Office distinguishes registered accounts, recent activity, and unavailable sign-in history', async t => {
+test('Office reports registered accounts without reading legacy visitor or sign-in histories', async t => {
   const app = await createAppHarness({ connected: true, env: { OFFICE_TOKEN: 'office-audit-only' }, query: async sql => {
     if (sql.includes('FROM user_sign_in_events')) throw Error('missing sign-in history');
     if (sql.includes('COUNT(DISTINCT p.user_id)')) return { rows: [{ count: 2 }] };
@@ -99,7 +99,9 @@ test('Office distinguishes registered accounts, recent activity, and unavailable
   assert.equal(response.status, 200);
   assert.equal(response.data.total, 7);
   assert.equal(response.data.discoverable, 6);
-  assert.equal(response.data.active, 2);
+  assert.equal(response.data.active, null);
+  assert.equal(response.data.activeAvailable, false);
   assert.equal(response.data.signIns, null);
   assert.equal(response.data.signInsAvailable, false);
+  assert.equal(app.queries.some(({ sql }) => /FROM (page_views|user_sign_in_events)/.test(sql)), false);
 });
