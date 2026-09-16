@@ -14,6 +14,8 @@ Only the API runs this loop. A pipeline health response with `dbBackup: false` i
 
 Public health checks on September 16, 2026 (UTC) reported `db: true` and `dbBackup: false` on the API. That establishes a working primary connection and no established backup connection; it does not identify whether the backup URL is missing, credentials are invalid, TLS failed, or older initialization code skipped the attempt. No direct database comparison, Render configuration inspection, or restore test was available in this session.
 
+The operator subsequently confirmed `DATABASE_URL_BACKUP` is listed in Render and provided failed API/pipeline deployment logs with `DEPTH_ZERO_SELF_SIGNED_CERT` on the **primary** connection. Those attempted deployments cannot initialize the primary schema or start backup synchronization. Render's internal PostgreSQL URLs present self-signed certificates, which this application's verified TLS policy rejects. Use the primary database's full external URL for `DATABASE_URL` on both services, and the separate backup database's full external URL for the API's `DATABASE_URL_BACKUP`, with appropriate network allowlists. Preserve `DATABASE_SSL_MODE=verify-full`. An older deployment can remain live while a replacement fails; public health and deployment logs must be matched to their running commit. The precise deployed URLs and a successful retry remain unverified.
+
 ## Check the API service configuration
 
 1. Open the **API web service** in Render and confirm it owns `api.uficonnect.org`. Record its deployed commit and inspect that deployment's status.
