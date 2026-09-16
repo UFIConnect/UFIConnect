@@ -54,7 +54,20 @@ const backupState = {
   lastResetAt: null,
   rowCount: null,
   lastError: null,
+  lastAttemptAt: null,
+  nextSyncAt: null,
+  syncing: false,
+  capacityStatus: 'unknown',
 };
+
+// Do not return connection strings, hostnames, query text, or credentials in
+// diagnostics. SQLSTATE/transport codes are enough to classify a failure.
+function backupFailure(error, operation) {
+  const code = /^[A-Z0-9_]{2,40}$/.test(String(error?.code || '')) ? ` (${error.code})` : '';
+  return `${operation} failed${code}; inspect the database configuration and service logs.`;
+}
+
+let backupInitialization = null;
 
 async function initDB() {
   if (!process.env.DATABASE_URL) {
@@ -136,17 +149,37 @@ async function initDB() {
 async function initBackupDB() {
   if (!process.env.DATABASE_URL_BACKUP) {
     console.log('ℹ️  DATABASE_URL_BACKUP not set — no read failover if the primary DB is overloaded.');
-    return;
+    return false;
   }
+  if (backupPool && _backupConnected) return true;
+  if (backupInitialization) return backupInitialization;
+  backupInitialization = initializeBackupPool();
+  try { return await backupInitialization; }
+  finally { backupInitialization = null; }
+}
+
+async function initializeBackupPool() {
+  let backup;
+  let client;
   try {
-    const backup = new Pool({
+    if (backupPool) {
+      const previous = backupPool;
+      backupPool = null;
+      await previous.end().catch(() => {});
+    }
+    backup = new Pool({
       ...databaseConnectionOptions(process.env.DATABASE_URL_BACKUP),
       max: 10,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 10_000,
       statement_timeout: 20_000,
     });
-    const client = await backup.connect();
+    backup.on('error', (error) => {
+      _backupConnected = false;
+      backupState.lastError = backupFailure(error, 'Backup connection');
+      console.warn('[db backup]', backupState.lastError);
+    });
+    client = await backup.connect();
     await client.query('SELECT 1');
     await client.query(`
       CREATE TABLE IF NOT EXISTS feed_posts_cache (
@@ -181,17 +214,19 @@ async function initBackupDB() {
     await client.query(`CREATE INDEX IF NOT EXISTS fpc_source_time_id_idx ON feed_posts_cache(source, post_created_at DESC, id DESC)`);
     await client.query(`CREATE INDEX IF NOT EXISTS fpc_source_media_time_idx ON feed_posts_cache(source, media_type, post_created_at DESC)`);
     await client.query(`CREATE INDEX IF NOT EXISTS fpc_group_time_idx ON feed_posts_cache(group_id, post_created_at DESC) WHERE group_id IS NOT NULL`);
-    client.release();
     backupPool = backup;
     _backupConnected = true;
-    await pruneBackupFeedCache();
-    backupState.lastError = null;
     console.log('✅ Backup PostgreSQL (read failover) connected and indexed');
+    return true;
   } catch (err) {
-    console.warn(`⚠️  Backup PostgreSQL unreachable: ${err.message}`);
     backupPool = null;
     _backupConnected = false;
-    backupState.lastError = err.message;
+    backupState.lastError = backupFailure(err, 'Backup initialization');
+    console.warn('[db backup]', backupState.lastError);
+    return false;
+  } finally {
+    if (client) client.release();
+    if (backup && backup !== backupPool) await backup.end().catch(() => {});
   }
 }
 
@@ -200,121 +235,171 @@ const BACKUP_SYNC_COLUMNS = [
   'media_type', 'media_poster', 'video_duration_seconds', 'topic', 'likes_count', 'comments_count', 'post_created_at', 'fetched_at', 'location',
 ];
 
-async function pruneBackupFeedCache() {
-  if (!backupPool || !_backupConnected) return;
+// A snapshot is replaced only after its entire bounded source selection has
+// been read successfully. Capacity problems must never erase the usable copy.
+async function recordBackupCapacity(client) {
+  const result = await client.query('SELECT pg_database_size(current_database()) AS bytes');
+  backupState.sizeMb = Math.round((Number(result.rows[0]?.bytes) || 0) / (1024 * 1024));
+  backupState.usedPct = Math.round((backupState.sizeMb / BACKUP_DB_LIMIT_MB) * 1000) / 10;
+  backupState.capacityStatus = backupState.usedPct >= BACKUP_DB_RESET_PCT ? 'warning' : 'ok';
+}
+
+const BACKUP_IDENTITY_SQL = 'SELECT current_database() AS database, inet_server_addr()::text AS address, inet_server_port() AS port';
+function sameDatabase(primary, backup) {
+  const valid = row => row && typeof row.database === 'string' && row.database.length > 0
+    && typeof row.address === 'string' && row.address.length > 0
+    && Number.isInteger(Number(row.port)) && Number(row.port) > 0;
+  if (!valid(primary) || !valid(backup)) {
+    const error = new Error('Database identity could not be verified.');
+    error.code = 'UFI_DATABASE_IDENTITY';
+    throw error;
+  }
+  return primary.database === backup.database && primary.address === backup.address
+    && Number(primary.port) === Number(backup.port);
+}
+
+async function reconcileBackupSnapshot() {
+  let sourceClient;
+  let targetClient;
+  let sourceTransaction = false;
+  let targetTransaction = false;
+  let targetConnectionError = null;
+  let operation = 'Backup connection';
   try {
-    const sizeResult = await backupPool.query(`SELECT pg_database_size(current_database()) AS bytes`);
-    const sizeMb = Math.round((Number(sizeResult.rows[0]?.bytes) || 0) / (1024 * 1024));
-    const usedPct = Math.round((sizeMb / BACKUP_DB_LIMIT_MB) * 1000) / 10;
-    backupState.sizeMb = sizeMb;
-    backupState.usedPct = usedPct;
-    if (usedPct >= BACKUP_DB_RESET_PCT) {
-      const { rows: countRows } = await backupPool.query(`SELECT count(*)::int AS count FROM feed_posts_cache`);
-      const cleared = Number(countRows[0]?.count) || 0;
-      // This table is only the disposable recovery snapshot. TRUNCATE releases
-      // its storage immediately, unlike DELETE which leaves pages allocated.
-      await backupPool.query(`TRUNCATE TABLE feed_posts_cache`);
-      backupState.lastPrunedAt = new Date().toISOString();
-      backupState.lastPrunedRows = cleared;
-      backupState.lastResetAt = backupState.lastPrunedAt;
-      backupState.rowCount = 0;
-      backupState.lastError = null;
-      console.warn(`[db backup] reset ${cleared} snapshot rows at ${usedPct}% capacity; primary remains authoritative`);
-      return;
+    targetClient = await backupPool.connect();
+    await targetClient.query('BEGIN');
+    targetTransaction = true;
+    // All API workers and rolling deployments share this transaction lock.
+    // Acquire it before opening the source snapshot so older copies cannot
+    // overwrite a newer snapshot committed by another process.
+    const lock = await targetClient.query('SELECT pg_try_advisory_xact_lock(1969645923, 1650553707) AS locked');
+    if (lock.rows[0]?.locked !== true) return false;
+    operation = 'Primary snapshot connection';
+    sourceClient = await pool.connect();
+    const primaryIdentity = await sourceClient.query(BACKUP_IDENTITY_SQL);
+    operation = 'Backup identity check';
+    const backupIdentity = await targetClient.query(BACKUP_IDENTITY_SQL);
+    if (sameDatabase(primaryIdentity.rows[0], backupIdentity.rows[0])) {
+      backupState.lastError = 'Backup synchronization refused: primary and backup are the same database.';
+      return false;
+    }
+    operation = 'Primary snapshot read';
+    await sourceClient.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    sourceTransaction = true;
+    // Server addresses can differ when aliases reach different interfaces of
+    // the same server. Database-scoped locks provide a second identity check:
+    // this source transaction cannot acquire a lock already held by target
+    // if both clients actually address the same database. No primary writes.
+    const sourceLock = await sourceClient.query('SELECT pg_try_advisory_xact_lock(1969645923, 1650553707) AS locked');
+    if (sourceLock.rows[0]?.locked !== true) {
+      backupState.lastError = 'Backup synchronization refused: the primary snapshot lock is held or both connections address the same database.';
+      return false;
     }
     const cutoff = new Date(Date.now() - BACKUP_FEED_RETENTION_DAYS * 24 * 60 * 60 * 1000);
-    const aged = await backupPool.query(
-      `DELETE FROM feed_posts_cache WHERE post_created_at IS NULL OR post_created_at < $1`,
-      [cutoff],
+    const cols = BACKUP_SYNC_COLUMNS;
+    await sourceClient.query(
+      'DECLARE ufi_backup_source NO SCROLL CURSOR FOR SELECT ' + cols.join(', ') +
+      ' FROM feed_posts_cache WHERE post_created_at >= $1' +
+      ' ORDER BY fetched_at DESC NULLS LAST, post_created_at DESC, id DESC LIMIT $2',
+      [cutoff, BACKUP_FEED_MAX_ROWS],
     );
-    const { rows } = await backupPool.query(`SELECT count(*)::int AS count FROM feed_posts_cache`);
-    const rowCount = Number(rows[0]?.count) || 0;
-    let capped = 0;
-    if (rowCount > BACKUP_FEED_MAX_ROWS) {
-      const result = await backupPool.query(
-        `DELETE FROM feed_posts_cache
-         WHERE id IN (
-           SELECT id FROM feed_posts_cache
-           ORDER BY fetched_at ASC NULLS FIRST, post_created_at ASC NULLS FIRST, id ASC
-           LIMIT $1
-         )`,
-        [rowCount - BACKUP_FEED_MAX_ROWS],
-      );
-      capped = result.rowCount || 0;
+    operation = 'Backup staging';
+    await targetClient.query('CREATE TEMP TABLE ufi_backup_snapshot (LIKE feed_posts_cache INCLUDING DEFAULTS, PRIMARY KEY (id)) ON COMMIT DROP');
+    let rowCount = 0;
+    for (;;) {
+      operation = 'Primary snapshot read';
+      const { rows } = await sourceClient.query('FETCH FORWARD 500 FROM ufi_backup_source');
+      if (!rows.length) break;
+      rowCount += rows.length;
+      const params = [];
+      const tuples = rows.map(row => '(' + cols.map(column => {
+        params.push(row[column]);
+        return '$' + params.length;
+      }).join(',') + ')').join(',');
+      operation = 'Backup staging';
+      await targetClient.query('INSERT INTO ufi_backup_snapshot (' + cols.join(', ') + ') VALUES ' + tuples, params);
     }
-    backupState.lastPrunedAt = new Date().toISOString();
-    backupState.lastPrunedRows = (aged.rowCount || 0) + capped;
-    backupState.rowCount = Math.max(0, rowCount - capped);
+    operation = 'Primary snapshot completion';
+    await sourceClient.query('COMMIT');
+    sourceTransaction = false;
+    operation = 'Backup reconciliation';
+    const mutable = cols.filter(column => column !== 'id');
+    const updateSet = mutable.map(column => column + '=EXCLUDED.' + column).join(', ');
+    await targetClient.query('INSERT INTO feed_posts_cache AS existing (' + cols.join(', ') + ')' +
+      ' SELECT ' + cols.join(', ') + ' FROM ufi_backup_snapshot WHERE true' +
+      ' ON CONFLICT (id) DO UPDATE SET ' + updateSet +
+      ' WHERE (' + mutable.map(column => 'existing.' + column).join(', ') + ')' +
+      ' IS DISTINCT FROM (' + mutable.map(column => 'EXCLUDED.' + column).join(', ') + ')');
+    const removed = await targetClient.query('DELETE FROM feed_posts_cache AS existing WHERE NOT EXISTS (SELECT 1 FROM ufi_backup_snapshot AS snapshot WHERE snapshot.id = existing.id)');
+    await recordBackupCapacity(targetClient);
+    await targetClient.query('COMMIT');
+    targetTransaction = false;
+    const completedAt = new Date().toISOString();
+    backupState.lastSyncAt = completedAt;
+    backupState.lastPrunedAt = completedAt;
+    backupState.lastPrunedRows = removed.rowCount || 0;
+    backupState.rowCount = rowCount;
     backupState.lastError = null;
-    if (backupState.lastPrunedRows) {
-      console.log(`[db backup] pruned ${backupState.lastPrunedRows} rows; ${backupState.rowCount} retained`);
+    _backupConnected = true;
+    console.log('[db backup sync] reconciled ' + rowCount + ' snapshot rows');
+    if (backupState.capacityStatus === 'warning') {
+      console.warn('[db backup] capacity warning: ' + backupState.usedPct + '% used; retained the valid snapshot');
     }
+    return true;
   } catch (error) {
-    backupState.lastError = error.message;
-    console.warn('[db backup] prune failed:', error.message);
+    const code = String(error?.code || '');
+    if (operation.startsWith('Backup') && (operation === 'Backup connection'
+      || /^(08[A-Z0-9]{3}|57P0[123]|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EPIPE|EHOSTUNREACH)$/.test(code))) {
+      _backupConnected = false;
+      targetConnectionError = error;
+    }
+    backupState.lastError = code === 'UFI_DATABASE_IDENTITY'
+      ? 'Backup synchronization refused: database identity could not be verified; check both PostgreSQL endpoints.'
+      : backupFailure(error, operation);
+    console.warn('[db backup sync]', backupState.lastError);
+    return false;
+  } finally {
+    if (sourceTransaction) await sourceClient.query('ROLLBACK').catch(() => {});
+    if (targetTransaction) await targetClient.query('ROLLBACK').catch(() => {});
+    if (sourceClient) sourceClient.release();
+    if (targetClient) targetClient.release(targetConnectionError || undefined);
   }
 }
 
-// Keeps the backup's feed_posts_cache from just sitting frozen at whatever
-// day failover was set up — incremental and watermark-based (fetched_at >
-// last sync), not a full resync, since most of the primary table is older
-// than readQuery()'s own time-bounded queries will ever ask for anyway.
-// Runs on its own schedule, entirely independent of any user request.
-let _lastSyncedAt = null;
+let backupSyncStarted = false;
 function startBackupSync(intervalMs = 30 * 60 * 1000) {
-  if (!backupPool) return;
-  const cols = BACKUP_SYNC_COLUMNS;
+  if (backupSyncStarted) return;
+  backupSyncStarted = true;
+  if (!process.env.DATABASE_URL_BACKUP) {
+    console.log('[db backup] DATABASE_URL_BACKUP is not configured; feed snapshot synchronization is disabled.');
+    return;
+  }
+  const normalInterval = Number.isFinite(intervalMs) && intervalMs > 0 ? intervalMs : 30 * 60 * 1000;
+  const retryInterval = Math.min(normalInterval, 60_000);
   const sync = async () => {
-    if (!pool || !_connected || !backupPool) return;
+    backupState.syncing = true;
+    backupState.lastAttemptAt = new Date().toISOString();
+    backupState.nextSyncAt = null;
+    let succeeded = false;
     try {
-      const cutoff = new Date(Date.now() - BACKUP_FEED_RETENTION_DAYS * 24 * 60 * 60 * 1000);
-      const since = _lastSyncedAt && _lastSyncedAt > cutoff ? _lastSyncedAt : cutoff;
-      const { rows } = await pool.query(
-        `SELECT ${cols.join(', ')} FROM feed_posts_cache
-         WHERE fetched_at > $1 AND post_created_at >= $2
-         ORDER BY fetched_at ASC LIMIT 20000`,
-        [since, cutoff]
-      );
-      if (!rows.length) {
-        await pruneBackupFeedCache();
-        return;
+      if (!pool || !_connected) {
+        backupState.lastError = 'Primary database unavailable; backup synchronization will retry.';
+      } else if (await initBackupDB()) {
+        succeeded = await reconcileBackupSnapshot();
       }
-      const client = await backupPool.connect();
-      try {
-        await client.query('BEGIN');
-        const BATCH = 200;
-        for (let i = 0; i < rows.length; i += BATCH) {
-          const batch = rows.slice(i, i + BATCH);
-          const params = [];
-          const tuples = batch.map(r => {
-            const vals = cols.map(c => r[c]);
-            const placeholders = vals.map(v => { params.push(v); return `$${params.length}`; });
-            return `(${placeholders.join(',')})`;
-          }).join(', ');
-          const updateSet = cols.filter(c => c !== 'id').map(c => `${c}=EXCLUDED.${c}`).join(', ');
-          await client.query(
-            `INSERT INTO feed_posts_cache (${cols.join(', ')}) VALUES ${tuples}
-             ON CONFLICT (id) DO UPDATE SET ${updateSet}`,
-            params
-          );
-        }
-        await client.query('COMMIT');
-        _lastSyncedAt = rows[rows.length - 1].fetched_at;
-        backupState.lastSyncAt = new Date().toISOString();
-        console.log(`[db backup sync] synced ${rows.length} rows, watermark now ${new Date(_lastSyncedAt).toISOString()}`);
-      } catch (e) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw e;
-      } finally {
-        client.release();
-      }
-      await pruneBackupFeedCache();
-    } catch (e) {
-      console.warn('[db backup sync] failed:', e.message);
+    } catch (error) {
+      backupState.lastError = backupFailure(error, 'Backup synchronization');
+      console.warn('[db backup sync]', backupState.lastError);
+    } finally {
+      backupState.syncing = false;
+      const delay = succeeded ? normalInterval : retryInterval;
+      backupState.nextSyncAt = new Date(Date.now() + delay).toISOString();
+      // Schedule after completion, not at a fixed overlapping interval.
+      const timer = setTimeout(sync, delay);
+      timer.unref?.();
     }
   };
-  sync();
-  setInterval(sync, intervalMs);
+  void sync();
 }
 
 /** Run a parameterised query. Throws if DB is not available. Writes and everything not explicitly failover-eligible go through this, unchanged. */
