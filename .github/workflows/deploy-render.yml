@@ -17,6 +17,7 @@ jobs:
   deploy-render:
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
+    environment: main - uficonnect-pipeline-708r
     env:
       VERIFIED_SHA: ${{ github.event.workflow_run.head_sha }}
       RENDER_HOOK_API: ${{ secrets.RENDER_HOOK_API }}
