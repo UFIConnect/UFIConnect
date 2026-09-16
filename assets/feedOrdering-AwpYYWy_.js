@@ -1,1 +1,0 @@
-function a(r=[],n=1){const e=new Map;for(const t of r){const o=new Date((t==null?void 0:t.createdAt)||0).getTime(),s=Math.floor((Number.isFinite(o)?o:0)/n);e.has(s)||e.set(s,[]),e.get(s).push(t)}return[...e.entries()].sort(([t],[o])=>o-t).flatMap(([,t])=>t)}export{a as o};
