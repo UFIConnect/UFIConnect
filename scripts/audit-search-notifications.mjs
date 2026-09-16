@@ -1,3 +1,4 @@
+import { installAuditMember, auditNavigate, auditReload } from './audit-session.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -22,8 +23,8 @@ try {
   browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
   for (const width of [1440, 768, 390, 320]) {
     const context = await browser.newContext({ viewport: { width, height: 850 }, hasTouch: width <= 768, isMobile: width < 600 });
-    await context.addInitScript(t => localStorage.setItem('pc_token', t), app.token('social-audit'));
     const page = await context.newPage();
+    await installAuditMember(page, app, 'social-audit');
     const errors = [];
     page.on('pageerror', e => errors.push(e.message));
     let failRead = true;
@@ -38,7 +39,7 @@ try {
     await page.route('**/api/notifications/mark-read', route => { if (!failRead) read = true; return route.fulfill({ status: failRead ? 503 : 200, json: { ok: !failRead } }); });
     await page.route('**/api/users/alex/connect', route => { accepted = true; return route.fulfill({ json: { ok: true } }); });
     await page.route('**/api/users/search?*', route => { searches.push(new URL(route.request().url()).searchParams.get('q')); return route.fulfill({ json: { users: [{ id: 'maya', name: 'Maya Chen', title: 'Software engineer', role: 'Developer', skills: [], interests: [] }], totalCount: 1, registeredCount: 1, hasMore: false, countSource: 'database' } }); });
-    await page.goto(server.resolvedUrls.local[0] + 'notifications');
+    await auditNavigate(page, server.resolvedUrls.local[0] + 'notifications');
     await page.locator('.notification-inbox').getByText('Maya Chen').waitFor();
     let inbox = page.locator('.notification-inbox').first();
     if (width <= 768) {
@@ -67,7 +68,7 @@ try {
       await page.locator('#mobile-search-popup').getByRole('tab', { name: 'People', exact: true }).click();
       await page.locator('#mobile-search-popup').getByRole('searchbox').fill('software engineer');
       await page.locator('#mobile-search-popup').getByRole('button', { name: 'Search', exact: true }).click();
-    } else await page.goto(server.resolvedUrls.local[0] + 'search?tab=people&q=software%20engineer');
+    } else await auditNavigate(page, server.resolvedUrls.local[0] + 'search?tab=people&q=software%20engineer');
     await page.getByRole('searchbox', { name: 'Search people', exact: true }).waitFor();
     await page.locator('.search-page-shell').getByText('Maya Chen', { exact: true }).waitFor();
     assert.ok(searches.includes('software engineer'));

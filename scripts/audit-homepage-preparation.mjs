@@ -1,3 +1,4 @@
+import { installAuditMember, auditNavigate } from './audit-session.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -32,7 +33,7 @@ try {
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     try {
-      await page.goto(server.resolvedUrls.local[0]);
+      await auditNavigate(page, server.resolvedUrls.local[0]);
       await page.getByRole('heading', { name: 'UFIconnect', exact: true }).waitFor();
       assert.match(await page.locator('.landing-hero-copy p').textContent(), /Find your people/);
       assert.equal(await page.getByRole('link', { name: 'Explore the feed', exact: true }).first().getAttribute('href'), '/global');
@@ -40,8 +41,8 @@ try {
       assert.ok(await page.locator('.landing-product-shot img').evaluate(img => img.complete && img.naturalWidth > 0));
       await page.screenshot({ path: path.join(output, `homepage-copy-${width}.png`), fullPage: true });
       checks += 4;
-      await page.evaluate(token => localStorage.setItem('pc_token', token), app.token('prep-audit'));
-      await page.goto(server.resolvedUrls.local[0] + 'resume-builder?tab=preparation');
+      await installAuditMember(page, app, 'prep-audit');
+      await auditNavigate(page, server.resolvedUrls.local[0] + 'resume-builder?tab=preparation');
       await page.getByRole('heading', { name: 'Interview preparation', exact: true }).waitFor();
       for (const lesson of PREPARATION_VIDEOS) {
         await page.locator('.resume-preparation-card-media').filter({ has: page.locator(`img[src*="/${lesson.slug}.png"]`) }).click();

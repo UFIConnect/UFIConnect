@@ -1,3 +1,4 @@
+import { installAuditMember, auditNavigate, auditReload } from './audit-session.mjs';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,8 +23,8 @@ try {
     const favorites = { feed: ['reddit'], following: ['uficonnect'] };
     app.seedUser(member(id, { roleSettings: { disabledSources: ['github'], feedSourceFavorites: favorites } }));
     const context = await browser.newContext({ viewport: { width, height: 900 }, hasTouch: width <= 768, isMobile: width < 600 });
-    await context.addInitScript(t => localStorage.setItem('pc_token', t), app.token(id));
     const page = await context.newPage();
+    await installAuditMember(page, app, id);
     let failSave = false;
     await page.route('**/api/profile', route => failSave && route.request().method() === 'PATCH' ? route.fulfill({ status: 503, json: { error: 'Temporary outage' } }) : route.continue());
     await page.route('**/api/office/feed?*', route => route.fulfill({ json: { posts: [], hasMore: false, nativeUficonnectIncluded: true } }));
@@ -37,7 +38,7 @@ try {
       assert.equal(await panel.getByRole('searchbox').count(), 0);
       return panel;
     };
-    await page.goto(server.resolvedUrls.local[0] + '?feed=feed&all=1');
+    await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=feed&all=1');
     let panel = await open();
     failSave = true;
     let response = page.waitForResponse(r => r.request().method() === 'PATCH' && r.url().endsWith('/profile'));
@@ -55,10 +56,10 @@ try {
     response = page.waitForResponse(r => r.request().method() === 'PATCH' && r.url().endsWith('/profile'));
     await panel.getByRole('button', { name: 'Disable all', exact: true }).click();
     assert.equal((await response).status(), 200);
-    await page.reload();
+    await auditReload(page);
     panel = await open();
     assert.equal(await panel.getByRole('switch', { checked: true }).count(), 0);
-    await page.goto(server.resolvedUrls.local[0] + '?feed=following');
+    await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=following');
     panel = await open();
     profile = (await app.request('/profile', { userId: id })).data;
     assert.deepEqual(profile.roleSettings.feedSourceFavorites, favorites);

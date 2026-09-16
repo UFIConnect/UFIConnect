@@ -1,5 +1,6 @@
 import client from './client';
 import { getVisitorId } from '../analytics';
+import { redactTelemetry, telemetryPath } from './telemetryPrivacy';
 
 // Feeds the autofix agent's detection pipeline (see backend's
 // recordClientError/recordServerError/runAutofixCheck) — same fire-and-
@@ -22,12 +23,15 @@ function localSignature(message, extra) {
 }
 
 export function reportClientError({ message, stack, componentStack, urlPath }) {
-  const sig = localSignature(message, componentStack?.match(/in (\S+)/)?.[1]);
+  const safePath = telemetryPath(urlPath || (typeof location !== 'undefined' ? location.pathname : '/'));
+  if (!safePath) return;
+  const safeMessage = redactTelemetry(message);
+  const sig = localSignature(safeMessage, componentStack?.match(/in (\S+)/)?.[1]);
   if (reportedSignatures.has(sig)) return;
   reportedSignatures.add(sig);
   client.post('/client-error', {
-    message, stack, componentStack,
-    urlPath: urlPath || (typeof location !== 'undefined' ? location.pathname : null),
+    message: safeMessage, stack: redactTelemetry(stack), componentStack: redactTelemetry(componentStack),
+    urlPath: safePath,
     visitorId: getVisitorId(),
   }).catch(() => {});
 }

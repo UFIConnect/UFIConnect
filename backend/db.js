@@ -12,6 +12,7 @@
  */
 
 const { Pool } = require('pg');
+const { databaseConnectionOptions } = require('./database-security');
 
 let pool = null;             // primary — general purpose, all writes + most reads
 let primaryReadPool = null;  // primary, same DB — short statement_timeout, used only by readQuery()'s first attempt
@@ -61,14 +62,13 @@ async function initDB() {
     return;
   }
 
-  const sslOpt = process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false;
+  const connectionOptions = databaseConnectionOptions(process.env.DATABASE_URL);
   const maxRetries = 3;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`🔗 Connecting to PostgreSQL (attempt ${attempt}/${maxRetries})...`);
       pool = new Pool({
-        connectionString: process.env.DATABASE_URL,
-        ssl: sslOpt,
+        ...connectionOptions,
         // Confirmed live (2026-08-19) as a real bottleneck, not just headroom
         // math: getCursorFeedPage (the video feed, and /feed?sort=newest)
         // fires one query per source via Promise.all, and AGGREGATE_FEED_SOURCES
@@ -101,8 +101,7 @@ async function initDB() {
       // an empty-feed result at the end of it is exactly what real users hit
       // on 2026-08-20 (see the getCursorFeedPage timeRange fix + this file).
       primaryReadPool = new Pool({
-        connectionString: process.env.DATABASE_URL,
-        ssl: sslOpt,
+        ...connectionOptions,
         max: 10,
         idleTimeoutMillis: 30_000,
         connectionTimeoutMillis: 10_000,
@@ -141,8 +140,7 @@ async function initBackupDB() {
   }
   try {
     const backup = new Pool({
-      connectionString: process.env.DATABASE_URL_BACKUP,
-      ssl: { rejectUnauthorized: false },
+      ...databaseConnectionOptions(process.env.DATABASE_URL_BACKUP),
       max: 10,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 10_000,

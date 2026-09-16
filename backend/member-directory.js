@@ -15,12 +15,13 @@ async function searchMemberDirectory(db, { myId, q = '', role = '', sort = 'rele
     (b.blocker_id = $1 AND b.blocked_id = u.id::text) OR (b.blocked_id = $1 AND b.blocker_id = u.id::text))`);
   let nameRank = '(0::integer)';
   if (q.includes('@')) {
+    where.push(`(u.id::text = $1 OR u.role_settings ->> 'privacy_showEmail' = 'true')`);
     where.push(`LOWER(COALESCE(u.email, '')) = ${bind(q)}`);
   } else if (q) {
     const groups = searchTermGroups(q, { preserveStopWords: !q.trim().includes(' ') });
     // Word-boundary regex handles initials, Unicode names and long biographies
     // without PostgreSQL tsvector's lexeme/document length restrictions.
-    const text = `LOWER(CONCAT_WS(' ', u.name, u.title, u.organization, u.bio, u.skills::text, u.role, u.interests::text))`;
+    const text = `LOWER(CONCAT_WS(' ', u.name, u.title, u.organization, u.bio, CASE WHEN u.id::text = $1 OR COALESCE(u.role_settings ->> 'privacy_showSkills', 'true') <> 'false' THEN u.skills::text ELSE '' END, u.role, u.interests::text))`;
     where.push(groups.length ? groups.map(terms => `(${terms.map(term => `${text} ~ ${bind('(^|[^[:alnum:]])' + escapeRegex(term) + (term.length < 3 ? '([^[:alnum:]+#]|$)' : ''))}`).join(' OR ')})`).join(' AND ') : 'FALSE');
   }
   if (role) where.push(`LOWER(COALESCE(u.role, '')) LIKE ${bind('%' + escapeLike(role) + '%')} ESCAPE E'\\\\'`);
@@ -29,7 +30,9 @@ async function searchMemberDirectory(db, { myId, q = '', role = '', sort = 'rele
   const followerCount = `(SELECT COUNT(*) FROM follows f WHERE f.following_id = u.id::text)`;
   const order = sort === 'followers' ? `followers_count DESC, ${nameRank} DESC` : `${nameRank} DESC, (u.id::text = $1) DESC`;
   const [page, counts] = await Promise.all([
-    db.query(`SELECT u.id, u.name, u.title, u.bio, u.organization, u.skills, u.role, u.interests, u.avatar_url,
+    db.query(`SELECT u.id, u.name, u.title, u.bio, u.organization,
+      CASE WHEN u.id::text = $1 OR COALESCE(u.role_settings ->> 'privacy_showSkills', 'true') <> 'false' THEN u.skills ELSE NULL END AS skills,
+      u.role, u.interests, u.avatar_url,
       ${followerCount} AS followers_count,
       EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = $1 AND f.following_id = u.id::text) AS is_following,
       (SELECT CASE WHEN c.status = 'accepted' THEN 'connected'

@@ -2,6 +2,8 @@
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 import { trackPageview } from './analytics';
+import { getGoogleAnalytics } from './analytics/browserAnalytics';
+import AnalyticsPrivacy from './components/AnalyticsPrivacy';
 
 const MAINTENANCE = import.meta.env.VITE_MAINTENANCE_MODE === 'true';
 
@@ -83,6 +85,7 @@ function PageviewTracker() {
   const location = useLocation();
   useEffect(() => {
     trackPageview(location.pathname);
+    getGoogleAnalytics().trackPage(location.pathname, location.key);
   }, [location.pathname]);
   return null;
 }
@@ -108,11 +111,12 @@ export default function App() {
     return sessionStorage.getItem('ufi_preview') === '1';
   });
 
-  if (MAINTENANCE && !preview) return <MaintenancePage />;
+  if (MAINTENANCE && !preview) return <><PageviewTracker /><MaintenancePage /><AnalyticsPrivacy /></>;
 
   return (
     <>
     <PageviewTracker />
+    <AnalyticsPrivacy />
     <Suspense fallback={<div className="splash">Loading...</div>}>
     <Routes>
       {/* Public */}

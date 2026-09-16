@@ -1,3 +1,4 @@
+import { privateSessionStorage } from '../auth/session';
 ﻿import { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
@@ -528,7 +529,7 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
                             job={job}
                             index={index}
                             onSelect={() => {
-                              try { sessionStorage.setItem(`ufi_job_detail:${job.id}`, JSON.stringify(job)); } catch {}
+                              try { privateSessionStorage.setItem(`ufi_job_detail:${job.id}`, JSON.stringify(job)); } catch {}
                               navigate(`/opportunities/${encodeURIComponent(job.id)}`, { state: { job } });
                             }}
                           />

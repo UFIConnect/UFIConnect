@@ -1,50 +1,45 @@
 name: Deploy Render Services
 
 on:
-  push:
+  workflow_run:
+    workflows: [Verify UFIconnect]
+    types: [completed]
     branches: [main]
-  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-render-main
+  cancel-in-progress: false
 
 jobs:
   deploy-render:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     env:
+      VERIFIED_SHA: ${{ github.event.workflow_run.head_sha }}
       RENDER_HOOK_API: ${{ secrets.RENDER_HOOK_API }}
       RENDER_HOOK_WEB: ${{ secrets.RENDER_HOOK_WEB }}
       RENDER_HOOK_OFFICE: ${{ secrets.RENDER_HOOK_OFFICE }}
       RENDER_HOOK_PIPELINE: ${{ secrets.RENDER_HOOK_PIPELINE }}
     steps:
-      - name: Trigger API deploy
-        if: env.RENDER_HOOK_API != ''
+      - name: Deploy the latest verified commit
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          url="$RENDER_HOOK_API"
-          sep='?'
-          [[ "$url" == *\?* ]] && sep='&'
-          curl -fsS -X POST "${url}${sep}ref=${GITHUB_SHA}"
-
-      - name: Trigger web deploy
-        if: env.RENDER_HOOK_WEB != ''
-        run: |
-          url="$RENDER_HOOK_WEB"
-          sep='?'
-          [[ "$url" == *\?* ]] && sep='&'
-          curl -fsS -X POST "${url}${sep}ref=${GITHUB_SHA}"
-
-      - name: Trigger office deploy
-        if: env.RENDER_HOOK_OFFICE != ''
-        run: |
-          url="$RENDER_HOOK_OFFICE"
-          sep='?'
-          [[ "$url" == *\?* ]] && sep='&'
-          curl -fsS -X POST "${url}${sep}ref=${GITHUB_SHA}"
-
-      - name: Trigger pipeline deploy
-        if: env.RENDER_HOOK_PIPELINE != ''
-        run: |
-          url="$RENDER_HOOK_PIPELINE"
-          sep='?'
-          [[ "$url" == *\?* ]] && sep='&'
-          curl -fsS -X POST "${url}${sep}ref=${GITHUB_SHA}"
+          for hook_name in RENDER_HOOK_API RENDER_HOOK_WEB RENDER_HOOK_OFFICE RENDER_HOOK_PIPELINE; do
+            url="${!hook_name}"
+            [[ -z "$url" ]] && continue
+            latest_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+            if [[ "$latest_sha" != "$VERIFIED_SHA" ]]; then
+              echo "Skipping a superseded verified commit. A newer main commit must finish verification."
+              exit 0
+            fi
+            sep='?'
+            [[ "$url" == *\?* ]] && sep='&'
+            curl -fsS -X POST "${url}${sep}ref=${VERIFIED_SHA}"
+          done
 
       - name: Hooks not configured
         if: env.RENDER_HOOK_API == '' && env.RENDER_HOOK_WEB == '' && env.RENDER_HOOK_OFFICE == '' && env.RENDER_HOOK_PIPELINE == ''

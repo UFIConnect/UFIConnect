@@ -1,3 +1,4 @@
+import { installAuditMember, auditNavigate, auditReload } from './audit-session.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -23,12 +24,12 @@ try {
   await fs.mkdir(path.join(root, '.cache/audit-ui'), { recursive: true });
   for (const width of [1440, 768, 390]) {
     const context = await browser.newContext({ viewport: { width, height: 900 }, hasTouch: width <= 768, isMobile: width < 600 });
-    await context.addInitScript(t => localStorage.setItem('pc_token', t), app.token('post-context'));
     const page = await context.newPage();
+    await installAuditMember(page, app, 'post-context');
     const errors = [];
     page.on('pageerror', e => errors.push(e.message));
     await page.route('**/api/groups/internal', route => route.fulfill({ json: { groups: [{ id: 'ufi-tech', name: 'Technology' }] } }));
-    await page.goto(server.resolvedUrls.local[0] + '?feed=ufi');
+    await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=ufi');
     await page.getByText('A useful technology update from our joined community.', { exact: true }).waitFor();
     for (const [area, groupId, location] of [['UFI', 'ufi-general', '/?feed=ufi'], ['Shop', 'ufi-shop', '/?feed=ufi&channel=shop']]) {
       // Same-document navigation exercises state isolation, not a page reload.
@@ -53,7 +54,7 @@ try {
     }
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/post-context-${width}.png`) });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Composer must fit the viewport');
-    await page.goto(server.resolvedUrls.local[0] + 'groups/ufi-tech');
+    await auditNavigate(page, server.resolvedUrls.local[0] + 'groups/ufi-tech');
     await page.getByRole('button', { name: 'Post', exact: true }).click();
     const groupForm = page.getByRole('form', { name: /Create post in/ });
     await groupForm.getByRole('textbox').fill(`Technology community update for ${width}.`);

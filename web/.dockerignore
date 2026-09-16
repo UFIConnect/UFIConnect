@@ -1,0 +1,13 @@
+**/node_modules
+**/dist
+**/.git
+**/.cache
+**/.env
+**/.env.*
+**/*.log
+**/*.keystore
+**/*.jks
+**/*.p12
+**/*.pfx
+**/*.pem
+**/*.key

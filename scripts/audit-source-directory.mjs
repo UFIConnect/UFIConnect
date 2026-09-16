@@ -1,3 +1,4 @@
+import { installAuditMember, auditNavigate, auditReload } from './audit-session.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -31,11 +32,9 @@ try {
     const id = `directory-${width}`;
     app.seedUser(member(id, { plan: 'pro', roleSettings: { feedSourceFavorites: { feed: ['youtube', 'reddit'], following: [] } } }));
     const context = await browser.newContext({ viewport: { width, height: 900 }, hasTouch: width <= 768, isMobile: width < 600 });
-    await context.addInitScript(t => {
-      if (!localStorage.getItem('pc_token')) localStorage.setItem('pc_token', t);
-    }, app.token(id));
     await context.route('https://www.youtube.com/', route => route.fulfill({ contentType: 'text/html', body: '<title>YouTube test destination</title>' }));
     const page = await context.newPage();
+    await installAuditMember(page, app, id);
     const errors = [];
     let authorizationRequests = 0;
     page.on('pageerror', e => errors.push(e.message));
@@ -49,7 +48,7 @@ try {
       authorizationRequests += 1;
       return route.fulfill({ status: 503, json: { error: 'Test provider unavailable' } });
     });
-    await page.goto(server.resolvedUrls.local[0] + '?feed=feed&all=1');
+    await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=feed&all=1');
     if (width <= 768) await page.getByRole('button', { name: 'Open menu', exact: true }).click();
     const tools = page.locator(width <= 768 ? '#mobile-feed-drawer .home-feed-side-tools' : '.home-feed-right-tabs .home-feed-side-tools');
     const sourceTrigger = tools.getByRole('button', { name: /Feed sources/ });
@@ -100,7 +99,7 @@ try {
     }
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/account-directory-${width}.png`) });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
-    await page.goto(server.resolvedUrls.local[0] + 'sources');
+    await auditNavigate(page, server.resolvedUrls.local[0] + 'sources');
     await page.getByRole('heading', { name: 'Feed Sources', exact: true }).waitFor();
     await page.getByRole('switch').first().waitFor();
     assert.equal(await page.getByPlaceholder(/Search sources/).count(), 0, 'Full Feed Sources page has no search bar');
@@ -112,7 +111,7 @@ try {
     await page.getByRole('switch').first().click();
     assert.equal((await sourceSave).status(), 200);
     await page.getByRole('button', { name: 'Enable all', exact: true }).waitFor();
-    await page.reload();
+    await auditReload(page);
     await page.getByRole('button', { name: 'Enable all', exact: true }).waitFor();
     assert.equal(await page.getByRole('switch').first().getAttribute('aria-checked'), 'false');
     await page.getByRole('button', { name: 'Enable all', exact: true }).click();
@@ -120,13 +119,13 @@ try {
     assert.equal(await page.getByRole('switch', { checked: false }).count(), 0);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/sources-page-${width}.png`) });
-    await page.goto(server.resolvedUrls.local[0] + 'connected-accounts');
+    await auditNavigate(page, server.resolvedUrls.local[0] + 'connected-accounts');
     await page.getByRole('combobox', { name: 'Filter accounts' }).selectOption('available');
     assert.equal(await page.getByRole('searchbox', { name: 'Search accounts', exact: true }).count(), 0);
     await page.getByRole('link', { name: 'Open YouTube website' }).waitFor();
     assert.equal(await page.getByRole('link', { name: 'Open Reddit website' }).count(), 0);
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/accounts-page-${width}.png`) });
-    await page.goto(server.resolvedUrls.local[0] + 'command-center?tab=accounts');
+    await auditNavigate(page, server.resolvedUrls.local[0] + 'command-center?tab=accounts');
     await page.getByRole('combobox', { name: 'Filter accounts' }).selectOption('available');
     assert.equal(await page.getByRole('searchbox', { name: 'Search accounts', exact: true }).count(), 0);
     await page.getByRole('link', { name: 'Open Instagram website' }).waitFor();
@@ -135,8 +134,8 @@ try {
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
     if (width === 390) {
       app.seedUser(member('business-directory', { plan: 'business' }));
-      await page.evaluate(token => localStorage.setItem('pc_token', token), app.token('business-directory'));
-      await page.goto(server.resolvedUrls.local[0] + 'connected-accounts');
+      await installAuditMember(page, app, 'business-directory');
+      await auditNavigate(page, server.resolvedUrls.local[0] + 'connected-accounts');
       await page.getByRole('link', { name: 'Open Indeed website' }).waitFor();
       assert.equal(await page.locator('.account-site-link').count(), 10, 'Business includes all career destinations');
       assert.equal(await page.getByRole('link', { name: 'Open Reddit website' }).count(), 0);

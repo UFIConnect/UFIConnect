@@ -9,9 +9,9 @@ A starter workspace for an ad-free professional networking app that connects gro
 
 ## Getting Started
 
-1. Install dependencies
-   - `cd mobile && npm install`
-   - `cd backend && npm install`
+1. Use Node.js 24 and install locked dependencies
+   - `npm ci --prefix mobile`
+   - `npm ci --prefix backend`
 2. Create the backend environment file
    - `cd backend && cp .env.example .env`
 3. Start the backend
@@ -27,4 +27,6 @@ A starter workspace for an ad-free professional networking app that connects gro
 
 ## Notes
 
-The backend uses in-memory sample data for initial development. Replace this with a database when moving toward production.
+Production authentication requires PostgreSQL, a strong JWT signing secret, and a separate token-encryption key. See [SECURITY.md](SECURITY.md) and the [security rollout requirements](docs/SECURITY-2026-09-15.md) before deployment. Local sample data is for development only.
+
+Use Node.js 24 and `npm ci` with the committed lockfiles. Security checks are part of the verification workflow.

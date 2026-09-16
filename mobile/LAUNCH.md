@@ -1,6 +1,6 @@
 # UFconnect — App Store Launch Guide
 
-This guide walks you through every step needed to submit UFconnect to the Apple App Store (and optionally Google Play). The code is ready; what remains is account setup and build commands.
+This guide describes submitting UFconnect to the Apple App Store (and optionally Google Play). Complete the [mobile security release checks](SECURITY.md) before distributing a build; account setup and a successful build alone do not establish release readiness.
 
 ---
 
@@ -19,7 +19,7 @@ This guide walks you through every step needed to submit UFconnect to the Apple 
   ```
 
 ### 3. Deployed Backend
-The app currently points to `localhost:3000` during development. For a real production build you need the backend running on a public URL.
+The app defaults to `https://api.uficonnect.org`. Configure `API_URL` to the intended backend; release builds require HTTPS. HTTP development APIs require `APP_ENV=development` and must not handle real accounts.
 
 **Recommended: Railway (free tier available)**
 1. Go to https://railway.app and sign up
@@ -149,7 +149,7 @@ Apple typically reviews apps within **1–3 business days**. Common rejection re
 - [ ] Set up crash monitoring (https://sentry.io — free tier)
 - [ ] Replace in-memory backend storage with a real database (PostgreSQL on Railway/Supabase)
 - [ ] Add push notifications (Expo Push Notifications — free)
-- [ ] Set up analytics (Expo Analytics or PostHog)
+- [ ] Complete [native Firebase Analytics activation](ANALYTICS.md) and validate consent on real devices. Expo web GA4 is configured separately.
 - [ ] Submit to Google Play (run `eas build --platform android --profile production`)
 
 ---

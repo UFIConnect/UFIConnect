@@ -1,11 +1,13 @@
 # ── Build stage ───────────────────────────────────────────────
-FROM node:20-alpine AS base
+FROM node:24-alpine AS base
 WORKDIR /app
 
 COPY backend/package*.json ./
 RUN npm ci --omit=dev
 
-COPY backend/ ./
+COPY --chown=node:node backend/ ./
+RUN mkdir -p /app/data && chown node:node /app/data
+USER node
 
 # ── Runtime ───────────────────────────────────────────────────
 EXPOSE 3000

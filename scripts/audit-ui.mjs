@@ -1,3 +1,4 @@
+import { installAuditMember, auditNavigate, auditReload } from './audit-session.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -56,12 +57,6 @@ try {
     const context = await browser.newContext({ viewport, isMobile: viewport.width < 600, hasTouch: viewport.width < 900 });
     const errors = [];
     const requests = [];
-    await context.addInitScript(token => {
-      if (new URL(location.href).searchParams.has('audit-public')) {
-        localStorage.removeItem('pc_token');
-        localStorage.removeItem('ufi_profile_snapshot');
-      } else localStorage.setItem('pc_token', token);
-    }, app.token('preview-member'));
     await context.addInitScript(() => {
       window.__auditYouTubePlayers = [];
       window.YT = { PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 }, Player: class {
@@ -109,9 +104,10 @@ try {
     await context.route('**/api/**', routeApi);
     await context.route('**/fallback/**', routeApi);
     const page = await context.newPage();
+    await installAuditMember(page, app, 'preview-member');
     page.setDefaultTimeout(12000);
     page.on('pageerror', error => errors.push(error.message));
-    await page.goto(base);
+    await auditNavigate(page, base);
     await page.locator('.feed-source-option').first().waitFor();
     await page.waitForFunction(() => !document.querySelector('.splash'));
     const buttons = page.locator('.feed-source-tabs--compact .feed-source-option');
@@ -175,7 +171,10 @@ try {
       await page.getByRole('button', { name: 'Save favorites', exact: true }).click();
       assert.equal((await saved).status(), 200);
       await page.locator('.feed-source-menu').waitFor({ state: 'hidden' });
-      await page.reload();
+      // Feed selection now lives in memory. Preserve the requested route in
+      // the URL while verifying that server-side favorites survive sign-in.
+      await auditNavigate(page, base + `?feed=${mode}`);
+      await auditReload(page);
       await buttons.first().waitFor();
       assert.equal(await buttons.count(), sourceIds.length);
       assert.equal(await page.locator('.feed-source-compact-favorite').count(), 0);
@@ -207,7 +206,7 @@ try {
       continue;
     }
     await page.mouse.move(0, 0);
-    await page.goto(base + 'videos');
+    await auditNavigate(page, base + 'videos');
     const videoScroll = page.locator('.video-feed-scroll');
     await page.locator('[data-post-id="audit-video-0"]').waitFor();
     const frame = await page.locator('.video-feed-frame').boundingBox();
@@ -260,7 +259,7 @@ try {
     checks += 5;
     await page.screenshot({ path: path.join(output, `following-${viewport.width}.png`) });
 
-    await page.goto(base + 'onboarding');
+    await auditNavigate(page, base + 'onboarding');
     await page.getByRole('heading', { name: 'What best describes you?' }).waitFor();
     assert.equal(await page.getByText('Goals', { exact: true }).count(), 0);
     await page.getByRole('button', { name: /Software Engineer/ }).first().click();
@@ -272,18 +271,17 @@ try {
     await page.locator('.feed-source-tabs--compact').waitFor();
     checks++;
 
-    await page.goto(base + 'resume-builder');
+    await auditNavigate(page, base + 'resume-builder');
     await page.getByRole('button', { name: 'Try again', exact: true }).waitFor({ timeout: 20000 });
     assert.equal(await page.getByRole('button', { name: /Save all changes/i }).count(), 0);
     checks++;
     for (const route of ['profile', 'settings', 'connected-accounts', 'command-center', 'groups', 'search', 'opportunities']) {
-      await page.goto(base + route);
+      await auditNavigate(page, base + route);
       await page.waitForTimeout(450);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), `${route} overflows at ${viewport.width}`);
       checks++;
     }
-    await page.evaluate(() => localStorage.removeItem('pc_token'));
-    await page.goto(base + 'register');
+    await auditNavigate(page, base + 'register');
     await page.locator('input[name="name"]').fill('Test Member');
     await page.locator('input[name="email"]').fill('member@example.invalid');
     await page.locator('input[name="password"]').fill('test-only-password');
@@ -292,7 +290,7 @@ try {
     await page.getByRole('button', { name: /^Continue/ }).click();
     await page.getByRole('heading', { name: 'Who are you professionally?' }).waitFor();
     checks++;
-    await page.goto(base + '?audit-public=1');
+    await auditNavigate(page, base + '?audit-public=1');
     const homepageImage = page.locator('.landing-product-shot img');
     await homepageImage.scrollIntoViewIfNeeded();
     const dimensions = await homepageImage.evaluate(async image => {

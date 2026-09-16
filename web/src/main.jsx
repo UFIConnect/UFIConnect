@@ -35,7 +35,10 @@ window.addEventListener('unhandledrejection', (e) => {
 // navigate function out to a module-level listener.
 navigator.serviceWorker?.addEventListener('message', (e) => {
   if (e.data?.type === 'notification-click' && e.data.url) {
-    window.location.href = e.data.url;
+    try {
+      const target = new URL(e.data.url, window.location.origin);
+      if (target.origin === window.location.origin && /^https?:$/.test(target.protocol)) window.location.href = target.href;
+    } catch { /* Ignore malformed notification links. */ }
   }
 });
 
@@ -56,7 +59,7 @@ function OptionalAuth0Provider({ children }) {
       domain={auth0Config.domain}
       clientId={auth0Config.clientId}
       authorizationParams={auth0AuthorizationParams()}
-      cacheLocation="localstorage"
+      cacheLocation="memory"
       useRefreshTokens
     >
       {children}

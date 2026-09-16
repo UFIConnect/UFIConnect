@@ -63,6 +63,11 @@ function OverviewTab({ profile, navigation, onLogout, loggingOut }) {
         </Text>
       </TouchableOpacity>
 
+      <TouchableOpacity style={s.section} onPress={() => navigation.navigate('Security')} activeOpacity={0.85}>
+        <Text style={s.sectionTitle}>Security</Text>
+        <Text style={s.sub}>Change your password and manage account sessions</Text>
+      </TouchableOpacity>
+
       <View style={s.section}>
         <Text style={s.sectionTitle}>Account</Text>
         <View style={s.infoRow}>
@@ -257,7 +262,15 @@ export default function ProfileScreen({ navigation }) {
   function handleLogout() {
     Alert.alert('Sign out', 'Are you sure you want to sign out?', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign out', style: 'destructive', onPress: async () => { setLoggingOut(true); await logout(); } },
+      { text: 'Sign out', style: 'destructive', onPress: async () => {
+        setLoggingOut(true);
+        const result = await logout();
+        if (!result.localCleared || !result.serverRevoked) {
+          Alert.alert('Sign-out needs attention', !result.serverRevoked
+            ? 'The server could not confirm sign-out. When connected, sign in and use Security > Sign out all devices.'
+            : 'Server access was revoked, but this device could not clear its saved sign-in data.');
+        }
+      } },
     ]);
   }
 

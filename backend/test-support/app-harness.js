@@ -40,7 +40,7 @@ async function createAppHarness({ env = {}, connected = false, query, modules = 
       if (name === 'express') return expressFactory;
       if (name === 'dotenv') return { config() {} };
       if (name === './db') return db;
-      if (name === './filestore') return { loadUsers: () => [], saveUsers() {} };
+      if (name === './filestore') return { loadUsers: () => [], saveUsers() {}, saveUsersNow() {} };
       if (name === './travel-providers') return {
         ...localRequire(name), fetchTravelResource: async () => { throw new Error('Travel provider unavailable in route tests'); },
       };
@@ -53,7 +53,7 @@ async function createAppHarness({ env = {}, connected = false, query, modules = 
       return localRequire(name);
     },
     process: Object.assign(Object.create(process), {
-      env: { NODE_ENV: 'test', JWT_SECRET: 'route-test-only', PORT: '0', AUTOFIX_SMOKE_TEST: '1', ...env },
+      env: { NODE_ENV: 'test', JWT_SECRET: 'route-test-only', OAUTH_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString('base64'), PORT: '0', AUTOFIX_SMOKE_TEST: '1', ...env },
       on() {},
     }),
     console: { log() {}, warn() {}, error: (...args) => errors.push(args.map(String).join(' ')) },
@@ -65,7 +65,8 @@ async function createAppHarness({ env = {}, connected = false, query, modules = 
   vm.runInContext(fs.readFileSync(entry, 'utf8') + `
     globalThis.audit = {
       app, users, groups, posts, connections, blocks, follows,
-      pickOnboardingGroups, fullProfile, provisionAuth0User,
+      pickOnboardingGroups, fullProfile, provisionAuth0User, issueSession, createPasswordResetToken, localSessions,
+      createOAuthState, verifyOAuthState, dbRowToMemUser, saveSocialToken,
       normalizeFeedPost, dbRowToFeedPost, mapSharedJobPost,
       getFollowingFeedPosts, getCommunityPosts,
       addAndBroadcast, flushFeedPersistenceQueue, ingestPersistenceQueues, transferStagedPosts,
@@ -85,7 +86,14 @@ async function createAppHarness({ env = {}, connected = false, query, modules = 
   const base = `http://127.0.0.1:${server.address().port}`;
   return {
     ...audit, base, errors, queries, db,
-    token(id) { return jwt.sign({ id }, 'route-test-only', { expiresIn: '1h' }); },
+    token(id) {
+      const user = audit.users.find(user => user.id === id);
+      const sid = require('node:crypto').randomUUID();
+      audit.localSessions.set(sid, { userId: id, expiresAt: Date.now() + 3600000 });
+      return jwt.sign({ id, sid, purpose: 'session', ver: user?.authVersion || 0 }, env.JWT_SECRET || 'route-test-only', {
+        expiresIn: '1h', algorithm: 'HS256', issuer: 'uficonnect', audience: 'uficonnect-api',
+      });
+    },
     async request(url, { userId, body, headers = {}, method = 'GET' } = {}) {
       const res = await fetch(base + url, {
         method, headers: { ...(userId ? { authorization: `Bearer ${this.token(userId)}` } : {}),

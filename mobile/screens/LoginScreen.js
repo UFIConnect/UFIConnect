@@ -1,19 +1,23 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Alert,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
-import { COLORS, FONTS } from '../theme';
+import PasswordInput from '../components/PasswordInput';
+import { COLORS } from '../theme';
 
 export default function LoginScreen({ navigation }) {
   const { login } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [concealKey, setConcealKey] = useState(0);
+  useEffect(() => navigation.addListener('blur', () => setPassword('')), [navigation]);
 
   async function handleLogin() {
-    if (!email.trim() || !password.trim()) {
+    setConcealKey(value => value + 1);
+    if (!email.trim() || !password) {
       return Alert.alert('Missing fields', 'Please enter your email and password.');
     }
     setLoading(true);
@@ -22,6 +26,7 @@ export default function LoginScreen({ navigation }) {
     } catch (err) {
       Alert.alert('Login failed', err?.response?.data?.message || 'Check your credentials and try again.');
     } finally {
+      setPassword('');
       setLoading(false);
     }
   }
@@ -51,13 +56,15 @@ export default function LoginScreen({ navigation }) {
           />
 
           <Text style={styles.label}>Password</Text>
-          <TextInput
+          <PasswordInput
             style={styles.input}
             placeholder="••••••••"
             placeholderTextColor={COLORS.muted}
             value={password}
             onChangeText={setPassword}
-            secureTextEntry
+            accessibilityLabel="Password"
+            editable={!loading}
+            concealKey={concealKey}
           />
 
           <TouchableOpacity style={styles.button} onPress={handleLogin} disabled={loading}>
@@ -76,7 +83,6 @@ export default function LoginScreen({ navigation }) {
           </View>
         </View>
 
-        <Text style={styles.demo}>Demo: maria@example.com · password123</Text>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -123,5 +129,4 @@ const styles = StyleSheet.create({
   footer: { flexDirection: 'row', justifyContent: 'center', marginTop: 20 },
   footerText: { color: COLORS.muted, fontSize: 14 },
   link: { color: COLORS.primary, fontWeight: '700', fontSize: 14 },
-  demo: { textAlign: 'center', marginTop: 20, fontSize: 12, color: COLORS.muted },
 });

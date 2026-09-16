@@ -1,3 +1,4 @@
+import { installAuditMember, auditNavigate, auditReload } from './audit-session.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -42,7 +43,6 @@ try {
     const errors = [];
     releasePending = () => { heldScope = null; pending.splice(0).forEach(item => item.resolve()); };
     await context.addInitScript(({ token, cached }) => {
-      localStorage.setItem('pc_token', token);
       localStorage.setItem('ufi_feed_v1:group-audit', JSON.stringify({ posts: [cached], ts: Date.now() }));
     }, { token: app.token('group-audit'), cached: post('home', 0) });
     const routeApi = async route => {
@@ -63,6 +63,7 @@ try {
     await context.route('**/api/**', routeApi);
     await context.route('**/fallback/**', routeApi);
     const page = await context.newPage();
+    await installAuditMember(page, app, 'group-audit');
     page.setDefaultTimeout(12000);
     page.on('pageerror', error => errors.push(error.message));
     const groupTab = name => page.getByRole('tab', { name, exact: true });
@@ -72,7 +73,7 @@ try {
     };
     const visiblePost = scope => page.getByText(`${scope.toUpperCase()}_POST_0`, { exact: true });
     try {
-      await page.goto(base + '?feed=groups');
+      await auditNavigate(page, base + '?feed=groups');
       await groupTab('Your groups').waitFor();
       await waitForHeldRequest();
       assert.equal(await visiblePost('home').count(), 0, 'Home cache leaked into Your groups');

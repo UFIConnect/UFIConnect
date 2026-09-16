@@ -9,10 +9,6 @@
       "android",
       "web"
     ],
-    "sdkVersion": "48.0.0",
-    "assetBundlePatterns": [
-      "**/*"
-    ],
     "ios": {
       "supportsTablet": true
     }

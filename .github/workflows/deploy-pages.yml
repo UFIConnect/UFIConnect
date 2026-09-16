@@ -1,15 +1,21 @@
 name: Deploy Agent Office to GitHub Pages
 
 on:
-  push:
+  workflow_run:
+    workflows: [Verify UFIconnect]
+    types: [completed]
     branches: [main]
-  workflow_dispatch:   # lets you trigger manually from the GitHub Actions tab
 
 permissions:
   contents: write      # needed to push to gh-pages branch
 
+concurrency:
+  group: deploy-pages-main
+  cancel-in-progress: false
+
 jobs:
   build-and-deploy:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     env:
       NODE_OPTIONS: --max-old-space-size=6144
@@ -17,14 +23,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
         working-directory: web
 
       - name: Build (GitHub Pages base path)
@@ -33,7 +41,21 @@ jobs:
         env:
           GH_PAGES: "true"
 
+      - name: Confirm this is still the latest verified commit
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFIED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          latest_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "$latest_sha" == "$VERIFIED_SHA" ]]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Skipping a superseded verified commit. A newer main commit must finish verification."
+          fi
+
       - name: Deploy to gh-pages branch
+        if: steps.current.outputs.publish == 'true'
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}

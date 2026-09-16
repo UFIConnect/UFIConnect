@@ -1,3 +1,4 @@
+import { installAuditMember, auditNavigate, auditReload } from './audit-session.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -35,7 +36,6 @@ try {
     app.seedUser(member(userId, { plan: 'pro' }));
     const context = await browser.newContext({ viewport, isMobile: viewport.width < 600, hasTouch: viewport.width < 900 });
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-    await context.addInitScript(token => localStorage.setItem('pc_token', token), app.token(userId));
     await context.addInitScript(() => Object.defineProperty(navigator, 'clipboard', { value: {
       async writeText(text) { window.copiedHistoryText = text; },
     } }));
@@ -57,10 +57,11 @@ try {
       return route.continue();
     });
     const page = await context.newPage();
+    await installAuditMember(page, app, userId);
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     page.setDefaultTimeout(20000);
-    await page.goto(base + 'command-center?tab=content');
+    await auditNavigate(page, base + 'command-center?tab=content');
     await page.locator('textarea').first().fill('A practical design community launch');
     await page.getByRole('button', { name: 'Draft with AI', exact: true }).click();
     await page.locator('.generated-history-item').waitFor();
@@ -72,7 +73,7 @@ try {
     await page.getByRole('tab', { name: 'AI Content Hub', exact: true }).click();
     await page.locator('.generated-history-item').first().waitFor();
     assert.equal(await page.locator('.generated-history-item').count(), 2);
-    await page.reload();
+    await auditReload(page);
     await page.locator('.generated-history-item').first().waitFor();
     assert.equal(await page.locator('.generated-history-item').count(), 2);
     checks += 3;
@@ -99,7 +100,7 @@ try {
     await page.locator('textarea').fill('UFIconnect studio artwork');
     await page.getByRole('button', { name: 'Generate image', exact: true }).click();
     await page.locator('.generated-history-item').waitFor();
-    await page.reload();
+    await auditReload(page);
     await page.locator('.generated-history-row', { hasText: 'UFIconnect studio artwork' }).click();
     await page.locator('.generated-history-detail > img').evaluate(image => image.decode());
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
@@ -112,7 +113,10 @@ try {
     const video = await store.create(userId, { kind: 'video', prompt: 'A short preparation video', output: { mediaUrl: base + 'media/preparation/professional-introduction.mp4', mediaType: 'video' } });
     assert.ok(video.id);
     app.users.find(user => user.id === userId).plan = 'free';
-    await page.goto(base + 'command-center?tab=media');
+    await auditNavigate(page, base + 'command-center?tab=media');
+    // The simulated server-side plan change requires a fresh profile. A
+    // same-document tab change intentionally keeps the current UI session.
+    await auditReload(page);
     await page.locator('.generated-history-row', { hasText: 'A short preparation video' }).click();
     await page.waitForFunction(() => document.querySelector('.generated-history-detail video')?.readyState >= 1, null, { timeout: 20000 });
     assert.equal(await page.getByRole('button', { name: 'Generate image', exact: true }).count(), 0);

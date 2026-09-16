@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import client from '../api/client';
 import HomeFeedTools from './HomeFeedTools';
@@ -86,6 +87,7 @@ function NavBadge({ count }) {
 
 export default function Layout({ children, wide = false }) {
   const { profile, logout, updateProfileLocally } = useAuth();
+  const { showToast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
   const { canInstall, installed, triggerInstall } = useInstallPrompt();
@@ -254,7 +256,9 @@ export default function Layout({ children, wide = false }) {
   }
 
   function handleLogout() {
-    logout();
+    logout().then(({ revoked }) => {
+      if (!revoked) showToast('Signed out on this page. The server could not confirm session revocation; reconnect and use Sign out all sessions.', 'warning', 10000);
+    });
     navigate('/login');
   }
 

@@ -1,3 +1,4 @@
+import { installAuditMember, auditNavigate, auditReload } from './audit-session.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -22,15 +23,15 @@ try {
   await fs.mkdir(path.join(root, '.cache/audit-ui'), { recursive: true });
   for (const width of [1440, 768, 390]) {
     const context = await browser.newContext({ viewport: { width, height: 850 }, hasTouch: width < 1000, isMobile: width < 600 });
-    await context.addInitScript(t => localStorage.setItem('pc_token', t), app.token('music-audit'));
     const page = await context.newPage();
+    await installAuditMember(page, app, 'music-audit');
     const calls = [];
     await page.route('**/api/office/feed/music?*', async route => {
       calls.push(new URL(route.request().url()).searchParams);
       const prefix = calls.at(-1).get('genre') ? 'genre-' : 'music-';
       await route.fulfill({ json: { posts: Array.from({ length: 4 }, (_, i) => ({ id: prefix + i, source: 'reddit', title: 'Acoustic song ' + i, content: 'Original test media', mediaType: 'video', mediaUrl: server.resolvedUrls.local[0] + 'media/preparation/tailored-resume.mp4', sourceUrl: 'https://example.com/song', isExternal: true, createdAt: '2026-09-01T12:00:00Z' })), hasMore: false } });
     });
-    await page.goto(server.resolvedUrls.local[0] + 'music');
+    await auditNavigate(page, server.resolvedUrls.local[0] + 'music');
     await page.getByRole('button', { name: 'Music', exact: true }).waitFor();
     await page.locator('[data-post-id="music-0"]').waitFor();
     const firstVideo = page.locator('[data-post-id="music-0"] video');

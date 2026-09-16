@@ -1,6 +1,6 @@
 // Change this with each web release so installed clients discard obsolete
 // app-shell assets as soon as the updated worker activates.
-const CACHE_NAME = 'uficonnect-v7';
+const CACHE_NAME = 'uficonnect-v8';
 const API_ORIGINS = new Set([
   'https://api.uficonnect.org',
   'https://uficonnect-api-708r.onrender.com',
@@ -40,7 +40,7 @@ self.addEventListener('fetch', (e) => {
   if (url.pathname.endsWith('/feed/stream')) return;
 
   // API calls — network-first, no caching; return 503 on failure so callers treat it as an error
-  if (API_ORIGINS.has(url.origin) || url.pathname.startsWith('/api/')) {
+  if (API_ORIGINS.has(url.origin) || url.pathname.startsWith('/api/') || request.headers.has('Authorization')) {
     e.respondWith(
       fetch(request).catch(() => new Response(JSON.stringify({ error: 'offline' }), {
         status: 503,
@@ -60,12 +60,18 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
+  // Cache only the published shell and bundled assets. User uploads, signed
+  // links, and responses with query strings must never enter offline storage.
+  const cacheableAsset = url.origin === self.location.origin && !url.search
+    && (SHELL_ASSETS.includes(url.pathname) || url.pathname.startsWith('/assets/'));
+  if (!cacheableAsset) return;
+
   // Static assets — cache-first
   e.respondWith(
     caches.match(request).then((cached) => {
       if (cached) return cached;
       return fetch(request).then((response) => {
-        if (response.ok && url.origin === self.location.origin) {
+        if (response.ok && !/no-store|private/i.test(response.headers.get('Cache-Control') || '')) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
         }
@@ -97,7 +103,11 @@ self.addEventListener('push', (e) => {
 // new one — most people already have the app open in a tab somewhere.
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  const targetUrl = e.notification.data?.url || '/';
+  let targetUrl = '/';
+  try {
+    const candidate = new URL(e.notification.data?.url || '/', self.location.origin);
+    if (candidate.origin === self.location.origin && /^https?:$/.test(candidate.protocol)) targetUrl = candidate.href;
+  } catch { /* Ignore malformed notification links. */ }
   e.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
       for (const client of clientList) {
