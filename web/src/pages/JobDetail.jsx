@@ -1,3 +1,4 @@
+import { privateSessionStorage } from '../auth/session';
 import { useEffect, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { Link, useLocation, useParams } from 'react-router-dom';
@@ -11,7 +12,7 @@ export default function JobDetail() {
   const [job, setJob] = useState(() => {
     if (location.state?.job) return location.state.job;
     try {
-      return JSON.parse(sessionStorage.getItem(`ufi_job_detail:${id}`) || 'null');
+      return JSON.parse(privateSessionStorage.getItem(`ufi_job_detail:${id}`) || 'null');
     } catch {
       return null;
     }
@@ -27,7 +28,7 @@ export default function JobDetail() {
         const match = (data.opportunities || []).find((item) => String(item.id) === String(id));
         if (match) {
           setJob(match);
-          try { sessionStorage.setItem(`ufi_job_detail:${id}`, JSON.stringify(match)); } catch {}
+          try { privateSessionStorage.setItem(`ufi_job_detail:${id}`, JSON.stringify(match)); } catch {}
         }
       })
       .catch(() => {})

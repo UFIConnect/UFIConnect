@@ -1,28 +1,22 @@
-# Enhanced docker-compose with load balancing via nginx
-version: "3.9"
-
+# Local-only two-worker example. See docs/CONTAINERS.md before use.
+# Use this as a separate Compose file, not an overlay on docker-compose.yml.
 services:
-
-  # ── PostgreSQL ──────────────────────────────────────────────
   db:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB:       uficonnect
-      POSTGRES_USER:     pc_user
-      POSTGRES_PASSWORD: pc_password
+      POSTGRES_DB: uficonnect
+      POSTGRES_USER: pc_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a separate random URL-safe hex database password}
     volumes:
       - pg_data:/var/lib/postgresql/data
-      - ./backend/schema.sql:/docker-entrypoint-initdb.d/schema.sql
-    ports:
-      - "5432:5432"
+      - ./backend/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U pc_user -d uficonnect"]
       interval: 5s
       timeout: 5s
       retries: 5
 
-  # ── Backend Worker 1 ────────────────────────────────────────
   backend-1:
     build:
       context: .
@@ -32,20 +26,28 @@ services:
       db:
         condition: service_healthy
     environment:
-      NODE_ENV:     production
-      PORT:         3001
-      JWT_SECRET:   ${JWT_SECRET:-change-me-in-production}
-      DATABASE_URL: postgresql://pc_user:pc_password@db:5432/uficonnect
-      ALLOWED_ORIGINS: http://localhost:5173,http://localhost:80
+      NODE_ENV: production
+      PORT: "3001"
+      JWT_SECRET: ${JWT_SECRET:?Set a dedicated random JWT secret of at least 32 bytes}
+      OAUTH_TOKEN_ENCRYPTION_KEY: ${OAUTH_TOKEN_ENCRYPTION_KEY:?Set a separate random 32-byte key encoded as base64}
+      OFFICE_TOKEN: ${OFFICE_TOKEN:-}
+      DATABASE_URL: postgresql://pc_user:${POSTGRES_PASSWORD:?Set a separate random URL-safe hex database password}@db:5432/uficonnect
+      DATABASE_SSL_MODE: disable
+      DATABASE_ALLOW_PLAINTEXT_INTERNAL: "true"
+      TRUST_PROXY: "2"
+      ALLOWED_ORIGINS: http://localhost,http://127.0.0.1
+      API_BASE_URL: http://localhost/api
+      PUBLIC_API_URL: http://localhost/api
+      FRONTEND_URL: http://localhost
     expose:
       - "3001"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/readyz',{signal:AbortSignal.timeout(4000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 30s
 
-  # ── Backend Worker 2 ────────────────────────────────────────
   backend-2:
     build:
       context: .
@@ -55,48 +57,60 @@ services:
       db:
         condition: service_healthy
     environment:
-      NODE_ENV:     production
-      PORT:         3002
-      JWT_SECRET:   ${JWT_SECRET:-change-me-in-production}
-      DATABASE_URL: postgresql://pc_user:pc_user:pc_password@db:5432/uficonnect
-      ALLOWED_ORIGINS: http://localhost:5173,http://localhost:80
+      NODE_ENV: production
+      PORT: "3002"
+      JWT_SECRET: ${JWT_SECRET:?Set a dedicated random JWT secret of at least 32 bytes}
+      OAUTH_TOKEN_ENCRYPTION_KEY: ${OAUTH_TOKEN_ENCRYPTION_KEY:?Set a separate random 32-byte key encoded as base64}
+      OFFICE_TOKEN: ${OFFICE_TOKEN:-}
+      DATABASE_URL: postgresql://pc_user:${POSTGRES_PASSWORD:?Set a separate random URL-safe hex database password}@db:5432/uficonnect
+      DATABASE_SSL_MODE: disable
+      DATABASE_ALLOW_PLAINTEXT_INTERNAL: "true"
+      TRUST_PROXY: "2"
+      ALLOWED_ORIGINS: http://localhost,http://127.0.0.1
+      API_BASE_URL: http://localhost/api
+      PUBLIC_API_URL: http://localhost/api
+      FRONTEND_URL: http://localhost
     expose:
       - "3002"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/readyz',{signal:AbortSignal.timeout(4000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 30s
 
-  # ── Nginx Load Balancer ──────────────────────────────────────
   api-lb:
     image: nginx:alpine
     restart: unless-stopped
     depends_on:
-      - backend-1
-      - backend-2
-    ports:
-      - "3000:80"
+      backend-1:
+        condition: service_healthy
+      backend-2:
+        condition: service_healthy
+    expose:
+      - "80"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O-", "http://localhost/health"]
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1/readyz"]
       interval: 10s
       timeout: 5s
       retries: 3
 
-  # ── Web (React SPA via nginx) ────────────────────────────────
   web:
     build:
       context: ./web
       dockerfile: Dockerfile
       args:
-        VITE_API_URL: http://localhost:3000  # Points to load balancer
+        VITE_API_URL: ""
     restart: unless-stopped
+    environment:
+      API_UPSTREAM: api-lb:80
     depends_on:
-      - api-lb
+      api-lb:
+        condition: service_healthy
     ports:
-      - "80:80"
+      - "127.0.0.1:80:80"
 
 volumes:
   pg_data:

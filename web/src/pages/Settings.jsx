@@ -1,5 +1,8 @@
+import { PASSWORD_GUIDANCE, validateNewPassword } from '../auth/passwordPolicy';
+import PasswordInput from '../components/PasswordInput';
+import { privateSessionStorage } from '../auth/session';
 ﻿import { useState, useEffect, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -188,7 +191,8 @@ function PushNotificationsCard() {
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function Settings() {
-  const { profile, updateProfileLocally, logout } = useAuth();
+  const { profile, updateProfileLocally, logout, logoutAll } = useAuth();
+  const navigate = useNavigate();
   const { showToast } = useToast();
   const role = profile?.preferences?.role || '';
   const meta = ROLE_META[role] || DEFAULT_META;
@@ -321,20 +325,58 @@ export default function Settings() {
   const [pwForm, setPwForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [pwSaving, setPwSaving] = useState(false);
   const [pwError,  setPwError]  = useState('');
+  const [signingOutAll, setSigningOutAll] = useState(false);
+  const [sessionError, setSessionError] = useState('');
+  const [securityStatus, setSecurityStatus] = useState(null);
+  const [securityStatusError, setSecurityStatusError] = useState('');
+
+  useEffect(() => {
+    if (activeTab !== 'security') {
+      setPwForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      setPwError('');
+      return undefined;
+    }
+    let cancelled = false;
+    setSecurityStatusError('');
+    client.get('/profile/security').then(({ data }) => {
+      if (!cancelled) setSecurityStatus(data);
+    }).catch(() => {
+      if (!cancelled) setSecurityStatusError('Security status could not be verified. Reload this page or try again later.');
+    });
+    return () => { cancelled = true; };
+  }, [activeTab]);
+
+  async function handleSignOutAll() {
+    setSigningOutAll(true);
+    setSessionError('');
+    try {
+      await logoutAll();
+      showToast('Signed out of all UFIconnect sessions. Sign in again to continue.', 'success');
+      navigate('/login', { replace: true });
+    } catch {
+      setSessionError('Could not sign out all sessions. Check your connection and try again.');
+    } finally {
+      setSigningOutAll(false);
+    }
+  }
 
   async function handleChangePassword(e) {
     e.preventDefault();
     setPwError('');
-    if (pwForm.newPassword.length < 6) { setPwError('New password must be at least 6 characters.'); return; }
+    const passwordError = validateNewPassword(pwForm.newPassword);
+    if (passwordError) { setPwError(passwordError); return; }
     if (pwForm.newPassword !== pwForm.confirmPassword) { setPwError('New passwords do not match.'); return; }
+    if (pwForm.currentPassword === pwForm.newPassword) { setPwError('Choose a new password different from your current password.'); return; }
     setPwSaving(true);
     try {
-      await client.post('/profile/password', {
+      const { data } = await client.post('/profile/password', {
         currentPassword: pwForm.currentPassword,
         newPassword: pwForm.newPassword,
-      });
+      }, { _ufiReauthentication: true });
       setPwForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
-      showToast('Password updated', 'success');
+      await logout({ revoke: false });
+      showToast(data.requiresSignIn ? 'Password updated. All UFIconnect sessions were signed out.' : 'Password updated. Sign in again to continue.', 'success');
+      navigate('/login', { replace: true });
     } catch (err) {
       setPwError(err?.response?.data?.message || 'Failed to update password. Please try again.');
     } finally {
@@ -474,7 +516,7 @@ export default function Settings() {
         goals: prefGoals, interests: prefInterests,
         feedLanguages: prefFeedLanguages,
       });
-      try { localStorage.removeItem('ufi_feed_v1'); } catch {}
+      privateSessionStorage.removeItem(`ufi_feed_v1:${profile.id}`);
       const persisted = data.profile || data;
       const persistedPreferences = persisted.preferences || {};
       updateProfileLocally(persisted);
@@ -895,40 +937,69 @@ export default function Settings() {
       {/* ── Security tab ─────────────────────────────────────────────────────── */}
       {activeTab === 'security' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {securityStatusError && <div className="auth-error" role="alert">{securityStatusError}</div>}
           <div className="card">
             <SectionHeading>Password</SectionHeading>
             {!isLocalAuth ? (
               <div style={{ fontSize: '.85rem', color: 'var(--muted)' }}>
-                Your password is managed by your sign-in provider, not UFIconnect — there's nothing to change here.
+                Manage your password and any multi-factor authentication in your sign-in provider's account settings.
               </div>
             ) : (
               <form onSubmit={handleChangePassword} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {pwError && <div className="auth-error" style={{ marginBottom: 8 }}>{pwError}</div>}
+                <p id="settings-password-help" style={{ fontSize: '.8rem', color: 'var(--muted)', lineHeight: 1.6 }}>
+                  {PASSWORD_GUIDANCE} {securityStatus?.passwordChangeRevokesSessions && 'Changing your password signs out all UFIconnect sessions.'}
+                </p>
+                {pwError && <div className="auth-error" role="alert" style={{ marginBottom: 8 }}>{pwError}</div>}
                 <div className="form-group">
-                  <label className="form-label">Current password</label>
-                  <input className="form-input" type="password" autoComplete="current-password"
+                  <label className="form-label" htmlFor="current-password">Current password</label>
+                  <PasswordInput id="current-password" name="currentPassword" className="form-input" autoComplete="current-password" required
                     value={pwForm.currentPassword}
-                    onChange={e => setPwForm(f => ({ ...f, currentPassword: e.target.value }))} />
+                    onChange={e => { setPwForm(f => ({ ...f, currentPassword: e.target.value })); setPwError(''); }} />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">New password</label>
-                  <input className="form-input" type="password" autoComplete="new-password"
+                  <label className="form-label" htmlFor="new-password">New password</label>
+                  <PasswordInput id="new-password" name="newPassword" aria-describedby="settings-password-help" className="form-input" autoComplete="new-password" required
                     value={pwForm.newPassword}
-                    onChange={e => setPwForm(f => ({ ...f, newPassword: e.target.value }))} />
+                    onChange={e => { setPwForm(f => ({ ...f, newPassword: e.target.value })); setPwError(''); }} />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Confirm new password</label>
-                  <input className="form-input" type="password" autoComplete="new-password"
+                  <label className="form-label" htmlFor="confirm-password">Confirm new password</label>
+                  <PasswordInput id="confirm-password" name="confirmPassword" className="form-input" autoComplete="new-password" required
                     value={pwForm.confirmPassword}
-                    onChange={e => setPwForm(f => ({ ...f, confirmPassword: e.target.value }))} />
+                    onChange={e => { setPwForm(f => ({ ...f, confirmPassword: e.target.value })); setPwError(''); }} />
                 </div>
                 <div style={{ marginTop: 8 }}>
-                  <button className="btn btn-primary btn-sm" type="submit" disabled={pwSaving || !pwForm.currentPassword || !pwForm.newPassword}>
+                  <button className="btn btn-primary btn-sm" type="submit" disabled={pwSaving || !securityStatus?.passwordChangeAvailable || !pwForm.currentPassword || !pwForm.newPassword}>
                     {pwSaving ? <span className="spinner" /> : 'Update password'}
                   </button>
                 </div>
               </form>
             )}
+          </div>
+          <div className="card">
+            <SectionHeading>Sessions and password privacy</SectionHeading>
+            <p style={{ fontSize: '.85rem', color: 'var(--muted)', lineHeight: 1.7 }}>
+              Passwords are hidden by default. Select Show to check what you entered; the password hides again when you leave the field or submit. Copying, cutting, and dragging from password fields is blocked to reduce accidental clipboard exposure. You can paste or use a password manager.
+            </p>
+            <p style={{ fontSize: '.85rem', color: 'var(--muted)', lineHeight: 1.7 }}>
+              This website keeps its sign-in token and member caches in memory. Reloading or closing the page ends a local sign-in. Your sign-in provider may restore its own session.
+            </p>
+            {isLocalAuth ? (
+              <>
+                <p style={{ fontSize: '.85rem', color: 'var(--muted)', lineHeight: 1.7 }}>
+                  {securityStatus ? (securityStatus.multiFactorAvailable ? 'Review multi-factor authentication with your sign-in provider.' : 'Multi-factor authentication is not currently available for email and password accounts.') : 'Checking available account protections…'}
+                </p>
+                {securityStatus?.sessionLifetimeSeconds && <p style={{ fontSize: '.85rem', color: 'var(--muted)' }}>Local sign-in sessions expire after {Math.floor(securityStatus.sessionLifetimeSeconds / 3600)} hours.</p>}
+                {securityStatus && !securityStatus.securityAlertsAvailable && <p style={{ fontSize: '.85rem', color: 'var(--muted)' }}>Automatic security alert emails are not currently available.</p>}
+                {sessionError && <div className="auth-error" role="alert">{sessionError}</div>}
+                <button type="button" className="btn btn-ghost btn-sm" onClick={handleSignOutAll} disabled={signingOutAll || !securityStatus?.serverSessionRevocation}>
+                  {signingOutAll ? 'Signing out…' : 'Sign out all sessions'}
+                </button>
+              </>
+            ) : (
+              <p style={{ fontSize: '.85rem', color: 'var(--muted)', lineHeight: 1.7 }}>Review and end other sessions through your sign-in provider.</p>
+            )}
+            <p style={{ fontSize: '.8rem', marginTop: 16 }}><Link to="/privacy">Read our privacy and security practices</Link></p>
           </div>
         </div>
       )}
@@ -942,7 +1013,6 @@ export default function Settings() {
               { key: 'publicProfile',   label: 'Public profile',      desc: 'Allow anyone on UFIconnect to view your profile.' },
               { key: 'showEmail',       label: 'Show email address',  desc: 'Display your email on your public profile.' },
               { key: 'showSkills',      label: 'Show skills',         desc: 'Display your skill tags on your profile card.' },
-              { key: 'showGroups',      label: 'Show groups',         desc: 'Let others see which groups you belong to.' },
               { key: 'showConnections', label: 'Show connections',    desc: "Let others see your followers/following lists. People you're connected with can always see it." },
             ].map(({ key, label, desc }) => (
               <div key={key} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)', gap: 12 }}>

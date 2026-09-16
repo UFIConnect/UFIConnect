@@ -1,3 +1,5 @@
+import { validateApiBaseUrl } from './apiEndpointPolicy';
+
 // Keep the public API hostname and the Render hostname separate. The public
 // hostname is the stable, dual-stack route users should see; the Render URL
 // remains a short-lived escape hatch while DNS, TLS, or an edge route recovers.
@@ -14,7 +16,7 @@ function normalizeBaseUrl(value) {
 }
 
 const apiOrigins = [...new Set([PRIMARY_API_URL, FALLBACK_API_URL]
-  .map(normalizeBaseUrl)
+  .map(value => validateApiBaseUrl(value, { production: import.meta.env.PROD, pageOrigin: window.location.origin }))
   .filter(Boolean))];
 
 let activeApiOrigin = apiOrigins[0] || '/api';
@@ -80,6 +82,10 @@ async function probe(origin) {
 
 export function getApiBaseUrl() {
   return activeApiOrigin;
+}
+
+export function isConfiguredApiBaseUrl(value) {
+  return apiOrigins.includes(value);
 }
 
 // OAuth redirect URIs are registered with providers as an exact public URL.

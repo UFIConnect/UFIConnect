@@ -223,11 +223,14 @@ test('a failed member preference write rolls back without changing another accou
   const id = 'a0000000-0000-4000-8000-000000000088';
   const app = await createAppHarness({ connected: true, query(sql) {
     if (sql.startsWith('UPDATE users')) throw new Error('Simulated storage failure');
+    if (sql.startsWith('SELECT * FROM users WHERE id')) return { rows: [{ id, name: 'Test Member', email: 'member@example.invalid', role: 'Designer', interests: ['Design Systems'], goals: ['networking'], experience: 'mid' }] };
+    if (sql.startsWith('SELECT id FROM auth_sessions')) return { rows: [{ id: 'active-session' }] };
     return { rows: [] };
   } });
   t.after(() => app.close());
   app.seedUser(member(id, { preferences: { role: 'Designer', interests: ['Design Systems'], goals: ['networking'], experience: 'mid' } }));
   app.seedUser(member('bob'));
+  await app.request('/profile', { userId: id });
   const before = JSON.stringify(app.users.find(user => user.id === id));
   const result = await app.request('/profile/onboarding', { method: 'POST', userId: id, body: { role: 'Engineer', interests: ['Open Source'], experience: 'senior' } });
   assert.equal(result.status, 500);

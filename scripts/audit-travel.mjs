@@ -1,3 +1,4 @@
+import { installAuditMember, auditNavigate, auditReload } from './audit-session.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -38,7 +39,6 @@ try {
     app.seedUser(member(id));
     const context = await browser.newContext({ viewport: { width, height: 900 }, hasTouch: width <= 768, isMobile: width < 600 });
     await context.addInitScript(token => {
-      localStorage.setItem('pc_token', token);
       window.__travelPlayers = [];
       // Exercise the real player lifecycle without depending on third-party
       // ads, region restrictions, or autoplay permissions in CI.
@@ -64,6 +64,7 @@ try {
       } };
     }, app.token(id));
     const page = await context.newPage();
+    await installAuditMember(page, app, id);
     const errors = [];
     let failSave = false;
     let failFeed = false;
@@ -92,7 +93,7 @@ try {
       feedPages.push({ page: params.get('page'), cursor: Boolean(params.get('cursor')), count: data.posts?.length, hasMore: data.hasMore });
       await route.fulfill({ json: { ...data, liveFeeds: [], travel: { ...data.travel, cameraStatus: 'degraded', camerasChecking: false } } });
     });
-    await page.goto(server.resolvedUrls.local[0] + '?feed=countries');
+    await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=countries');
     const picker = page.getByRole('combobox', { name: 'Travel destination', exact: true });
     await picker.locator('option[value="US:Seattle"]').waitFor({ state: 'attached' });
     assert.equal(await picker.locator('option').count(), 92);
@@ -121,7 +122,7 @@ try {
     await page.getByRole('searchbox', { name: 'Travel city', exact: true }).fill('Not saved yet');
     assert.match(await heading.textContent(), /Seattle/);
     assert.doesNotMatch(await heading.textContent(), /Not saved yet/);
-    await page.reload();
+    await auditReload(page);
     await picker.locator('option[value="US:Seattle"]').waitFor({ state: 'attached' });
     await page.waitForFunction(() => document.querySelector('[aria-label="Travel destination"]').value === 'US:Seattle');
     failSave = true;

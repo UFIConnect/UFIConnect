@@ -2,167 +2,109 @@ import { createContext, useContext, useState, useEffect, useCallback } from 'rea
 import { useAuth0 } from '@auth0/auth0-react';
 import client from '../api/client';
 import { auth0AuthorizationParams, isAuth0Configured } from '../auth/auth0Config';
+import { clearSession, getAccessToken, setAccessToken, subscribeToSession, privateSessionStorage } from '../auth/session';
 
 const AuthContext = createContext(null);
 const AUTH_SESSION_KEY = 'ufi_authenticated_session_id';
-const PROFILE_CACHE_KEY = 'ufi_profile_snapshot';
-
-function readCachedProfile() {
-  try {
-    const token = localStorage.getItem('pc_token');
-    const cached = JSON.parse(localStorage.getItem(PROFILE_CACHE_KEY) || 'null');
-    return cached?.token === token && cached?.profile?.id ? cached.profile : null;
-  } catch {
-    return null;
-  }
-}
-
-function cacheProfile(profile, token = localStorage.getItem('pc_token')) {
-  try {
-    if (profile?.id && token) localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify({ token, profile }));
-  } catch {}
-}
-
-function clearCachedProfile() {
-  try { localStorage.removeItem(PROFILE_CACHE_KEY); } catch {}
-}
-
-function isRejectedSession(error) {
-  return [401, 403].includes(error?.response?.status);
-}
 
 function getAuthenticatedSessionId() {
-  try {
-    let id = sessionStorage.getItem(AUTH_SESSION_KEY);
-    if (!id) {
-      id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      sessionStorage.setItem(AUTH_SESSION_KEY, id);
-    }
-    return id;
-  } catch {
-    return null;
+  let id = privateSessionStorage.getItem(AUTH_SESSION_KEY);
+  if (!id) {
+    id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    privateSessionStorage.setItem(AUTH_SESSION_KEY, id);
   }
+  return id;
 }
 
 export function AuthProvider({ children }) {
-  const [token,   setToken]   = useState(() => localStorage.getItem('pc_token'));
-  const [profile, setProfile] = useState(() => readCachedProfile());
+  const [token, setToken] = useState(getAccessToken);
+  const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const auth0 = useAuth0();
   const auth0Enabled = isAuth0Configured;
 
-  const hydrateLocalProfile = useCallback(() => {
-    if (!token) {
-      setProfile(null);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    client.get('/profile')
-      .then(({ data }) => {
-        // Guard against stale service-worker offline responses that look like { error: 'offline' }
-        if (!data?.error && data?.id) {
-          setProfile(data);
-          cacheProfile(data, token);
-        }
-      })
-      .catch((error) => {
-        // A DNS/edge timeout is not an invalid session. Retaining the token
-        // and last known profile lets the feed's own cache stay usable until
-        // its API fallback reconnects.
-        if (!isRejectedSession(error)) return;
-        localStorage.removeItem('pc_token');
-        clearCachedProfile();
-        setToken(null);
-        setProfile(null);
-      })
-      .finally(() => setLoading(false));
-  }, [token]);
+  useEffect(() => subscribeToSession((nextToken) => {
+    setToken(nextToken);
+    if (!nextToken) setProfile(null);
+  }), []);
 
   const refreshProfile = useCallback(async () => {
-    if (!token) {
-      setProfile(null);
-      return null;
-    }
+    const activeToken = getAccessToken();
+    if (!activeToken) return null;
     const { data } = await client.get('/profile');
     if (data?.error || !data?.id) throw new Error('Profile unavailable');
-    setProfile(data);
-    cacheProfile(data, token);
+    if (getAccessToken() === activeToken) setProfile(data);
     return data;
-  }, [token]);
+  }, []);
 
-  // Re-hydrate profile on mount / token change. Auth0 is optional: if it is not
-  // configured, the original local JWT flow remains the only active path.
   useEffect(() => {
     let cancelled = false;
-    async function hydrateAuth0Profile() {
-      if (auth0Enabled && auth0.isLoading) {
-        setLoading(true);
-        return;
-      }
-
-      if (auth0Enabled && auth0.isAuthenticated) {
-        setLoading(true);
-        try {
-          const accessToken = await auth0.getAccessTokenSilently({
-            authorizationParams: auth0AuthorizationParams(),
-          });
-          if (cancelled) return;
-          localStorage.setItem('pc_token', accessToken);
-          setToken(accessToken);
-          const { data } = await client.get('/auth/me');
-          client.post('/analytics/sign-in', { sessionId: getAuthenticatedSessionId() }).catch(() => {});
-          if (!cancelled) {
-            const nextProfile = data.profile || data;
-            setProfile(nextProfile);
-            cacheProfile(nextProfile, accessToken);
-          }
-        } catch (error) {
-          if (!cancelled && isRejectedSession(error)) {
-            localStorage.removeItem('pc_token');
-            clearCachedProfile();
-            setToken(null);
-            setProfile(null);
-          }
-        } finally {
-          if (!cancelled) setLoading(false);
-        }
-        return;
-      }
-
-      hydrateLocalProfile();
+    if (!token) {
+      setProfile(null);
+      if (!auth0Enabled || !auth0.isLoading) setLoading(false);
+      return undefined;
     }
-
-    hydrateAuth0Profile();
+    setLoading(true);
+    refreshProfile().catch((error) => {
+      if (!cancelled && getAccessToken() === token && [401, 403].includes(error?.response?.status)) clearSession();
+    }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [auth0Enabled, auth0.isAuthenticated, auth0.isLoading, hydrateLocalProfile]);
+  }, [token, refreshProfile, auth0Enabled, auth0.isLoading]);
+
+  useEffect(() => {
+    if (!auth0Enabled || auth0.isLoading || !auth0.isAuthenticated) return undefined;
+    let cancelled = false;
+    setLoading(true);
+    auth0.getAccessTokenSilently({ authorizationParams: auth0AuthorizationParams() })
+      .then(async (accessToken) => {
+        if (cancelled) return;
+        setAccessToken(accessToken);
+        const { data } = await client.get('/auth/me');
+        if (!cancelled && getAccessToken() === accessToken) {
+          setProfile(data.profile || data);
+          client.post('/analytics/sign-in', { sessionId: getAuthenticatedSessionId() }).catch(() => {});
+        }
+      })
+      .catch(() => { if (!cancelled) clearSession(); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [auth0Enabled, auth0.isAuthenticated, auth0.isLoading, auth0.getAccessTokenSilently]);
+
+  function acceptSession(data) {
+    clearSession();
+    setAccessToken(data.token);
+    const nextProfile = data.profile || data.user || null;
+    setProfile(nextProfile);
+    return nextProfile;
+  }
 
   async function login(email, password) {
     const { data } = await client.post('/auth/login', { email, password });
-    localStorage.setItem('pc_token', data.token);
-    cacheProfile(data.profile || data.user || null, data.token);
-    setToken(data.token);
-    setProfile(data.profile || data.user || null);
-    return data.profile || data.user;
+    return acceptSession(data);
   }
 
   async function register(name, email, password, title, phone) {
     const { data } = await client.post('/auth/register', { name, email, password, title, phone });
-    localStorage.setItem('pc_token', data.token);
-    cacheProfile(data.profile || data.user || null, data.token);
-    setToken(data.token);
-    setProfile(data.profile || data.user || null);
-    return data.profile || data.user;
+    return acceptSession(data);
   }
 
-  function logout() {
-    localStorage.removeItem('pc_token');
-    clearCachedProfile();
-    setToken(null);
-    setProfile(null);
+  async function logout({ revoke = true } = {}) {
+    const activeToken = getAccessToken();
+    const revocation = revoke && activeToken
+      ? client.post('/auth/logout', {}, { headers: { Authorization: `Bearer ${activeToken}` } })
+          .then(() => true).catch(() => false)
+      : Promise.resolve(true);
+    clearSession();
+    const revoked = await revocation;
     if (auth0Enabled && auth0.isAuthenticated) {
       auth0.logout({ logoutParams: { returnTo: window.location.origin } });
     }
+    return { revoked };
+  }
+
+  async function logoutAll() {
+    await client.post('/auth/logout-all');
+    return logout({ revoke: false });
   }
 
   function loginWithAuth0() {
@@ -176,32 +118,17 @@ export function AuthProvider({ children }) {
   }
 
   function updateProfileLocally(updated) {
-    setProfile((prev) => {
-      const next = { ...prev, ...updated };
-      cacheProfile(next);
-      return next;
-    });
+    if (getAccessToken()) setProfile((prev) => ({ ...prev, ...updated }));
   }
 
   return (
     <AuthContext.Provider value={{
-      token,
-      profile,
-      loading,
-      login,
-      register,
-      logout,
-      updateProfileLocally,
-      refreshProfile,
-      auth0Enabled,
-      loginWithAuth0,
-      registerWithAuth0,
+      token, profile, loading, login, register, logout, logoutAll,
+      updateProfileLocally, refreshProfile, auth0Enabled, loginWithAuth0, registerWithAuth0,
     }}>
       {children}
     </AuthContext.Provider>
   );
 }
 
-export function useAuth() {
-  return useContext(AuthContext);
-}
+export function useAuth() { return useContext(AuthContext); }

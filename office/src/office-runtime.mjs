@@ -1,23 +1,94 @@
 export function createOfficeClient({ storage, fetcher, prompt, onTokenChange }) {
   const key = 'ufi_office_token';
+  // Discard legacy persistent credentials; never recover them into a session.
+  try { storage?.removeItem(key); } catch { /* Storage can be unavailable. */ }
   const prompted = new Set();
-  const getToken = () => { try { return storage.getItem(key) || ''; } catch { return ''; } };
+  let memoryToken = '', pendingAuth = null;
+  const getToken = () => memoryToken;
   async function request(url, options = {}) {
-    const send = token => fetcher(url, { ...options, signal: options.signal || AbortSignal.timeout(20000), headers: { ...options.headers, ...(token ? { 'x-office-token': token } : {}) } });
+    const send = token => fetcher(url, { ...options, credentials: 'omit', cache: 'no-store', redirect: 'error', signal: options.signal || AbortSignal.timeout(20000), headers: { ...options.headers, ...(token ? { 'x-office-token': token } : {}) } });
     const token = getToken();
     const response = await send(token);
     if (response.status !== 401) return response;
     const updated = getToken();
     if (updated !== token) return send(updated);
-    if (prompted.has(token)) return response;
-    prompted.add(token);
-    const entered = prompt('Office access token required:')?.trim();
-    if (!entered) return response;
-    try { storage.setItem(key, entered); } catch { return response; }
-    onTokenChange();
-    return send(entered);
+    if (!pendingAuth) {
+      if (prompted.has(token)) return response;
+      prompted.add(token);
+      pendingAuth = Promise.resolve().then(() => prompt('Office access token')).then(value => {
+        const entered = value?.trim();
+        if (entered) { memoryToken = entered; prompted.clear(); onTokenChange(); }
+        return entered;
+      }).finally(() => { pendingAuth = null; });
+    }
+    const entered = await pendingAuth;
+    return entered ? send(entered) : response;
   }
   return { request, getToken };
+}
+
+export function createTrustedOfficeFetch({ baseUrls, pageUrl, development = false, fetcher }) {
+  const page = new URL(pageUrl);
+  const origins = new Set(baseUrls.map(base => {
+    const url = new URL(base || '/', page.origin);
+    const local = development && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+    if (url.username || url.password || url.search || url.hash || (url.protocol !== 'https:' && !(local && url.protocol === 'http:'))) {
+      throw new Error('Office requires a trusted HTTPS API URL.');
+    }
+    return url.origin;
+  }));
+  return (input, options) => {
+    const url = new URL(input, page.origin);
+    if (url.username || url.password || !origins.has(url.origin)) throw new Error('Office request destination is not trusted.');
+    return fetcher(url.href, { ...options, credentials: 'omit', cache: 'no-store', redirect: 'error' });
+  };
+}
+
+// EventSource cannot send authorization headers. This adapter uses fetch so
+// administrative credentials never enter a URL, history, or proxy access log.
+export function createOfficeEventSource({ fetcher, getToken }) {
+  return class OfficeEventSource {
+    constructor(url) {
+      this.controller = new AbortController();
+      this.closed = false;
+      queueMicrotask(() => this.read(url));
+    }
+    async read(url) {
+      let reader;
+      try {
+        const token = getToken();
+        const response = await fetcher(url, {
+          headers: { Accept: 'text/event-stream', ...(token ? { 'x-office-token': token } : {}) },
+          credentials: 'omit', cache: 'no-store', redirect: 'error', signal: this.controller.signal,
+        });
+        if (!response.ok || !response.headers.get('content-type')?.includes('text/event-stream') || !response.body) {
+          throw new Error('Office stream unavailable');
+        }
+        if (this.closed) return;
+        this.onopen?.();
+        reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (!this.closed) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          if (buffer.length > 1024 * 1024) throw new Error('Office stream event too large');
+          let boundary;
+          while ((boundary = /\r?\n\r?\n/.exec(buffer))) {
+            const event = buffer.slice(0, boundary.index);
+            buffer = buffer.slice(boundary.index + boundary[0].length);
+            const data = event.split(/\r?\n/).filter(line => line.startsWith('data:'))
+              .map(line => line.slice(5).replace(/^ /, '')).join('\n');
+            if (data && !this.closed) this.onmessage?.({ data });
+          }
+        }
+        if (!this.closed) this.onerror?.();
+      } catch { if (!this.closed) this.onerror?.(); }
+      finally { reader?.releaseLock(); }
+    }
+    close() { this.closed = true; this.controller.abort(); }
+  };
 }
 
 export function mergeOfficeLog(current, incoming) {

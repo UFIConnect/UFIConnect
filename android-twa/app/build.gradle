@@ -20,6 +20,19 @@ plugins {
     id 'com.android.application'
 }
 
+// Provision signing secrets through the build environment. Never commit them.
+def signingStorePath = System.getenv('UFI_ANDROID_KEYSTORE_PATH')
+def signingStorePassword = System.getenv('UFI_ANDROID_KEYSTORE_PASSWORD')
+def signingAlias = System.getenv('UFI_ANDROID_KEY_ALIAS')
+def signingKeyPassword = System.getenv('UFI_ANDROID_KEY_PASSWORD')
+def signingConfigured = [signingStorePath, signingStorePassword, signingAlias, signingKeyPassword].every { it }
+
+gradle.taskGraph.whenReady { graph ->
+    if (graph.allTasks.any { it.project == project && it.name.toLowerCase().contains('release') } && !signingConfigured) {
+        throw new GradleException('Release signing requires UFI_ANDROID_KEYSTORE_PATH, UFI_ANDROID_KEYSTORE_PASSWORD, UFI_ANDROID_KEY_ALIAS, and UFI_ANDROID_KEY_PASSWORD.')
+    }
+}
+
 def twaManifest = [
     applicationId: 'org.uficonnect.app',
     hostName: 'uficonnect.org', // The domain being opened in the TWA.
@@ -149,10 +162,12 @@ android {
     }
     signingConfigs {
         release {
-            storeFile     file('../android.keystore')
-            storePassword 'uficonnect123'
-            keyAlias      'uficonnect'
-            keyPassword   'uficonnect123'
+            if (signingConfigured) {
+                storeFile file(signingStorePath)
+                storePassword signingStorePassword
+                keyAlias signingAlias
+                keyPassword signingKeyPassword
+            }
         }
     }
     buildTypes {

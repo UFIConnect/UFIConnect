@@ -62,6 +62,8 @@ test('member directory paginates all public accounts without leaking private acc
   assert.equal(seen.size, 606);
   assert.ok(seen.has('member-605') && seen.has('no-email'));
   assert.ok(!seen.has('private') && !seen.has('private-setting') && !seen.has('blocked'));
+  assert.equal((await search({ q: 'member605@example.invalid' })).totalCount, 0);
+  await pg.query('UPDATE users SET role_settings=$1 WHERE id=$2', [{ privacy_showEmail: true }, 'member-605']);
   assert.equal((await search({ q: 'member605@example.invalid' })).users[0].id, 'member-605');
   assert.equal((await search({ sort: 'followers' })).users[0].id, 'member-605');
   assert.equal((await search({ q: 'private@example.invalid' })).totalCount, 0);

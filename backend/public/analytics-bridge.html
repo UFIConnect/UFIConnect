@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-fbOyjD7Sccr4H3oJOvCyI9awgJX+wN7OQDtI0erOwUo=' https://www.googletagmanager.com; connect-src https://*.google-analytics.com https://*.analytics.google.com https://www.googletagmanager.com; img-src https://*.google-analytics.com https://www.googletagmanager.com; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta name="robots" content="noindex, nofollow">
+<title>UFIconnect analytics</title>
+</head><body><script>(function bridgeProgram(pages, measurementId) {
+  'use strict';
+  if (window.parent === window) return;
+  const bridgeUrl = new URL(window.location.href);
+  // A forged embed must not let even automatic SDK metadata see a query or
+  // fragment. The API additionally rejects query-bearing bridge requests.
+  if (bridgeUrl.search || bridgeUrl.hash) return;
+  const isLoopback = url => ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  const cookiePrefix = 'uficonnect_analytics';
+  let configured = false;
+  let stopped = false;
+  let clientId = null;
+  let lastVisit = 0;
+  window.dataLayer = [];
+  function gtag() { window.dataLayer.push(arguments); }
+
+  window.addEventListener('message', function (event) {
+    const data = event.data;
+    if (event.source !== window.parent || event.origin === bridgeUrl.origin || !data || typeof data !== 'object') return;
+    let parentUrl;
+    try { parentUrl = new URL(event.origin); } catch { return; }
+    if (parentUrl.protocol !== 'https:' && !(parentUrl.protocol === 'http:' && bridgeUrl.protocol === 'http:'
+        && isLoopback(parentUrl) && isLoopback(bridgeUrl))) return;
+    // Production's HTTP frame-ancestors policy also restricts embedding to
+    // configured UFIconnect frontend origins. No untrusted event fields pass.
+    if (data.type === 'ufi-analytics-stop' && data.version === 1
+        && Object.keys(data).sort().join(',') === 'type,version') {
+      stopped = true;
+      window['ga-disable-' + measurementId] = true;
+      document.cookie.split(';').forEach(function (cookie) {
+        const name = cookie.split('=')[0].trim();
+        if (!name.startsWith(cookiePrefix)) return;
+        const expired = name + '=; Max-Age=0; Path=/analytics-bridge.html; SameSite=None; Secure; Partitioned';
+        document.cookie = expired;
+        document.cookie = expired + '; Domain=' + bridgeUrl.hostname;
+      });
+      window.parent.postMessage({ type: 'ufi-analytics-stopped', version: 1 }, event.origin);
+      return;
+    }
+    if (stopped || Object.keys(data).sort().join(',') !== 'category,clientId,type,version,visit'
+        || data.type !== 'ufi-analytics-page' || data.version !== 1
+        || !Object.prototype.hasOwnProperty.call(pages, data.category)
+        || typeof data.clientId !== 'string' || !/^[a-f0-9]{32}$/.test(data.clientId)
+        || !Number.isSafeInteger(data.visit) || data.visit <= lastVisit) return;
+    if (clientId && clientId !== data.clientId) return;
+    clientId = data.clientId;
+    lastVisit = data.visit;
+    const page = pages[data.category];
+    const fields = {
+      page_location: 'https://uficonnect.org' + page.path,
+      page_title: 'UFIconnect | ' + page.title,
+      page_referrer: '',
+    };
+    if (!configured) {
+      configured = true;
+      // Basic consent mode: this document itself exists only after opt-in.
+      // Advertising storage, signals, personalization and user data stay off.
+      gtag('consent', 'default', { analytics_storage: 'denied', ad_storage: 'denied',
+        ad_user_data: 'denied', ad_personalization: 'denied' });
+      gtag('consent', 'update', { analytics_storage: 'granted', ad_storage: 'denied',
+        ad_user_data: 'denied', ad_personalization: 'denied' });
+      gtag('set', 'ads_data_redaction', true);
+      gtag('set', 'url_passthrough', false);
+      gtag('js', new Date());
+      gtag('config', measurementId, {
+        ...fields, client_id: clientId, send_page_view: false,
+        allow_google_signals: false, allow_ad_personalization_signals: false,
+        ignore_referrer: true, cookie_expires: 0, cookie_update: false,
+        cookie_domain: bridgeUrl.hostname, cookie_prefix: cookiePrefix,
+        cookie_path: '/analytics-bridge.html', cookie_flags: 'SameSite=None;Secure;Partitioned',
+      });
+      const script = document.createElement('script');
+      script.async = true;
+      script.crossOrigin = 'anonymous';
+      script.referrerPolicy = 'no-referrer';
+      script.src = 'https://www.googletagmanager.com/gtag/js?id=' + measurementId;
+      document.head.appendChild(script);
+    }
+    // Defaults remain safe for automatically generated lifecycle events too.
+    // Enhanced measurement can see only this empty, separate document; it has no
+    // access to the app's history, inputs, content, links, title or credentials.
+    gtag('set', fields);
+    gtag('event', 'page_view', { ...fields, send_to: measurementId });
+  });
+  // Readiness contains no measurement data. Subsequent messages use the
+  // validated source and exact target origin.
+  window.parent.postMessage({ type: 'ufi-analytics-ready', version: 1 }, '*');
+})({"home":{"category":"home","path":"/","title":"Home"},"login":{"category":"login","path":"/login","title":"Sign in"},"register":{"category":"register","path":"/register","title":"Create account"},"forgot_password":{"category":"forgot_password","path":"/forgot-password","title":"Forgot password"},"reset_password":{"category":"reset_password","path":"/reset-password","title":"Reset password"},"onboarding":{"category":"onboarding","path":"/onboarding","title":"Getting started"},"global":{"category":"global","path":"/global","title":"Public feed"},"videos":{"category":"videos","path":"/videos","title":"Videos"},"you":{"category":"you","path":"/you","title":"Your feed"},"music":{"category":"music","path":"/music","title":"Music"},"groups":{"category":"groups","path":"/groups","title":"Groups"},"group":{"category":"group","path":"/groups/details","title":"Group"},"opportunities":{"category":"opportunities","path":"/opportunities","title":"Opportunities"},"opportunity":{"category":"opportunity","path":"/opportunities/details","title":"Opportunity"},"resume":{"category":"resume","path":"/resume-builder","title":"Resume builder"},"cover_letter":{"category":"cover_letter","path":"/resume-builder/cover-letter/preview","title":"Cover letter preview"},"messages":{"category":"messages","path":"/messages","title":"Messages"},"conversation":{"category":"conversation","path":"/messages/conversation","title":"Conversation"},"notifications":{"category":"notifications","path":"/notifications","title":"Notifications"},"profile":{"category":"profile","path":"/profile","title":"Your profile"},"command_center":{"category":"command_center","path":"/command-center","title":"Command center"},"connected_accounts":{"category":"connected_accounts","path":"/connected-accounts","title":"Connected accounts"},"compose":{"category":"compose","path":"/post","title":"Create post"},"post":{"category":"post","path":"/p/details","title":"Post"},"search":{"category":"search","path":"/search","title":"Search"},"member":{"category":"member","path":"/u/member","title":"Member profile"},"settings":{"category":"settings","path":"/settings","title":"Settings"},"sources":{"category":"sources","path":"/sources","title":"Sources"},"privacy":{"category":"privacy","path":"/privacy","title":"Privacy policy"},"terms":{"category":"terms","path":"/terms","title":"Terms of service"},"child_safety":{"category":"child_safety","path":"/child-safety","title":"Child safety"},"app_login":{"category":"app_login","path":"/app/login","title":"App sign in"},"app_register":{"category":"app_register","path":"/app/register","title":"App create account"},"app_onboarding":{"category":"app_onboarding","path":"/app/onboarding","title":"App getting started"},"app_opportunities":{"category":"app_opportunities","path":"/app/opportunities","title":"App opportunities"},"app_groups":{"category":"app_groups","path":"/app/groups","title":"App groups"},"app_group":{"category":"app_group","path":"/app/group","title":"App group"},"app_feed":{"category":"app_feed","path":"/app/feed","title":"App feed"},"app_messages":{"category":"app_messages","path":"/app/messages","title":"App messages"},"app_conversation":{"category":"app_conversation","path":"/app/conversation","title":"App conversation"},"app_profile":{"category":"app_profile","path":"/app/profile","title":"App profile"},"app_connected_accounts":{"category":"app_connected_accounts","path":"/app/connected-accounts","title":"App connected accounts"},"app_security":{"category":"app_security","path":"/app/security","title":"App security"},"other":{"category":"other","path":"/other","title":"Other page"}},"G-F68DRQ6CC5");</script></body></html>

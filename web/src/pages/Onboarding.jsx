@@ -1,3 +1,4 @@
+import { privateSessionStorage } from '../auth/session';
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -204,7 +205,7 @@ const STEPS = ['Your Role', 'Topics', 'Experience'];
 /* ─── Component ─────────────────────────────────────────────────────────────── */
 
 function loadSignupCtx() {
-  try { return JSON.parse(localStorage.getItem('ufi_signup_ctx') || 'null'); } catch { return null; }
+  try { return JSON.parse(privateSessionStorage.getItem('ufi_signup_ctx') || 'null'); } catch { return null; }
 }
 
 export default function Onboarding() {
@@ -274,7 +275,7 @@ export default function Onboarding() {
       if (ctx?.bio)   payload.bio   = ctx.bio;
       if (ctx?.title) payload.title = ctx.title;
       const { data } = await client.post('/profile/onboarding', payload);
-      localStorage.removeItem('ufi_signup_ctx');
+      privateSessionStorage.removeItem('ufi_signup_ctx');
       updateProfileLocally(data.profile || data);
       navigate('/', { replace: true });
     } catch {

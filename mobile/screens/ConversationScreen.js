@@ -8,6 +8,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import axios from 'axios';
 import { useAuth, API_BASE } from '../context/AuthContext';
 import { COLORS } from '../theme';
+import { attachmentDetails } from '../security/attachmentDetails';
 
 function timeStamp(dateStr) {
   return new Date(dateStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -38,6 +39,7 @@ function AttachmentBubble({ attachment, isMe }) {
     <View style={[att.wrap, isMe && att.wrapMe]}>
       <Text style={att.icon}>{fileIcon(attachment.mimeType)}</Text>
       <View style={att.info}>
+        <Text style={[att.size, isMe && att.sizeMe]}>File details</Text>
         <Text style={[att.name, isMe && att.nameMe]} numberOfLines={1}>{attachment.name}</Text>
         {attachment.size ? <Text style={[att.size, isMe && att.sizeMe]}>{formatBytes(attachment.size)}</Text> : null}
       </View>
@@ -89,13 +91,8 @@ export default function ConversationScreen({ route, navigation }) {
         copyToCacheDirectory: false,
       });
       if (result.canceled) return;
-      const file = result.assets?.[0] || result;
-      setPendingAttachment({
-        name: file.name,
-        size: file.size || null,
-        mimeType: file.mimeType || 'application/octet-stream',
-        uri: file.uri,
-      });
+      const file = result.assets?.[0];
+      setPendingAttachment(attachmentDetails(file));
     } catch (e) {
       Alert.alert('Error', 'Could not pick file.');
     }
@@ -149,6 +146,7 @@ export default function ConversationScreen({ route, navigation }) {
           <Text style={s.attachIcon}>{fileIcon(pendingAttachment.mimeType)}</Text>
           <View style={{ flex: 1 }}>
             <Text style={s.attachName} numberOfLines={1}>{pendingAttachment.name}</Text>
+            <Text style={s.attachSize}>File details only; contents are not uploaded.</Text>
             {pendingAttachment.size ? <Text style={s.attachSize}>{formatBytes(pendingAttachment.size)}</Text> : null}
           </View>
           <TouchableOpacity onPress={() => setPendingAttachment(null)} style={s.attachRemove}>
@@ -159,7 +157,7 @@ export default function ConversationScreen({ route, navigation }) {
 
       {/* Input row */}
       <View style={s.inputRow}>
-        <TouchableOpacity style={s.attachBtn} onPress={pickFile} activeOpacity={0.7}>
+        <TouchableOpacity style={s.attachBtn} onPress={pickFile} activeOpacity={0.7} accessibilityLabel="Share file details">
           <Text style={s.attachBtnIcon}>📎</Text>
         </TouchableOpacity>
         <TextInput

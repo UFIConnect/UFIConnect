@@ -1,0 +1,63 @@
+// UI audits use the real sign-in form with a synthetic API response. No
+// production auth bypass or persisted bearer credential is needed.
+const sessions = new WeakMap();
+
+export async function installAuditMember(page, app, userId) {
+  // General UI/security audits opt out of optional analytics. Analytics has a
+  // separate browser audit that exercises both choices without this fixture.
+  await page.addInitScript(() => localStorage.setItem('uficonnect.analytics.consent.v1', 'denied'));
+  const existing = sessions.get(page);
+  if (existing) {
+    existing.userId = userId;
+    existing.authenticated = false;
+    return;
+  }
+  const state = { app, userId, authenticated: false };
+  sessions.set(page, state);
+  await page.route('**/auth/login', async (route) => {
+    const { data: profile, status } = await state.app.request('/profile', { userId: state.userId });
+    if (status && status !== 200) throw new Error('Audit member profile unavailable');
+    await route.fulfill({ json: { token: state.app.token(state.userId), profile } });
+  });
+}
+
+async function signIn(page, origin, state) {
+  await page.goto(origin + '/login', { waitUntil: 'domcontentloaded' });
+  await page.locator('input[name="email"]').fill('ui-audit@example.invalid');
+  await page.locator('input[name="password"]').fill('UI audit passphrase only');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await page.waitForURL((url) => url.pathname !== '/login');
+  state.authenticated = true;
+}
+
+export async function auditNavigate(page, value, options) {
+  const state = sessions.get(page);
+  const target = new URL(value);
+  const publicPage = target.searchParams.has('audit-public') || /^\/(?:register|login|forgot-password|reset-password)(?:\/|$)/.test(target.pathname);
+  if (!state || publicPage) {
+    if (state) state.authenticated = false;
+    return page.goto(value, { waitUntil: 'domcontentloaded', ...options });
+  }
+  if (!state.authenticated || !page.url().startsWith(target.origin) || new URL(page.url()).pathname === '/login') {
+    await signIn(page, target.origin, state);
+  }
+  await page.evaluate((url) => new Promise(resolve => {
+    history.pushState({}, '', url);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    // React commits this navigation after the history event returns. Wait
+    // for that commit before an audit interacts with a reused feed control.
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  }), target.pathname + target.search + target.hash);
+  await page.waitForFunction(() => !Array.from(document.querySelectorAll('.splash')).some(element => element.getClientRects().length));
+  return null;
+}
+
+export async function auditReload(page, options) {
+  const target = page.url();
+  await page.reload({ waitUntil: 'domcontentloaded', ...options });
+  const state = sessions.get(page);
+  if (state) state.authenticated = false;
+  // Reload intentionally ends a local sign-in; sign in again before checking
+  // settings or content that the server should have retained.
+  return auditNavigate(page, target);
+}

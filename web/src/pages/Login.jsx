@@ -1,3 +1,4 @@
+import PasswordInput from '../components/PasswordInput';
 ﻿import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
@@ -21,6 +22,7 @@ export default function Login() {
     setLoading(true);
     try {
       const user = await login(form.email, form.password);
+      setForm({ email: '', password: '' });
       navigate(user.onboardingComplete ? '/' : '/onboarding', { replace: true });
     } catch (err) {
       if (!err.response) {
@@ -95,10 +97,11 @@ export default function Login() {
           </div>
           <div className="form-group">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <label className="form-label">Password</label>
+              <label className="form-label" htmlFor="login-password">Password</label>
               <Link to="/forgot-password" style={{ fontSize: '.8rem', color: 'var(--primary)' }}>Forgot password?</Link>
             </div>
-            <input
+            <PasswordInput
+              id="login-password"
               className="form-input"
               type="password"
               name="password"

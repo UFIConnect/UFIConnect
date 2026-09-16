@@ -1,43 +1,34 @@
-// Two independent, best-effort trackers: a first-party log (own DB, visible
-// in the office dashboard, no external account needed) and GA4. The backend
-// derives distinct visitor counts from the request IP hash server-side. The
-// browser ID is only a fallback when no trusted client IP reaches the API.
-// The gtag.js
-// snippet itself is embedded directly in index.html (Measurement ID
-// G-43NFBSC7CL), not loaded from here — trackPageview() below just fires the
-// page_view event on every SPA route change, since gtag's own automatic
-// page_view only fires once, on initial script load.
-
+// First-party page counts only. Authentication pages and URL query strings
+// are excluded, and referrers contain only an origin.
 import { resolveApiBaseUrl } from './api/apiOrigin';
+import { getAccessToken, privateSessionStorage } from './auth/session';
+import { telemetryPath } from './api/telemetryPrivacy';
 
 export function getVisitorId() {
-  try {
-    let id = localStorage.getItem('ufi_visitor_id');
-    if (!id) {
-      id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      localStorage.setItem('ufi_visitor_id', id);
-    }
-    return id;
-  } catch {
-    return null;
+  let id = privateSessionStorage.getItem('ufi_visitor_id');
+  if (!id) {
+    id = crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2);
+    privateSessionStorage.setItem('ufi_visitor_id', id);
   }
+  return id;
 }
 
 export function trackPageview(path) {
-  if (window.gtag) {
-    window.gtag('event', 'page_view', { page_path: path });
-  }
-  let token = null;
-  try { token = localStorage.getItem('pc_token'); } catch {}
-  // Resolve before sending so analytics follows the same DNS fallback as the
-  // rest of the app without delaying the page that triggered it.
-  void resolveApiBaseUrl().then((apiBase) => fetch(`${apiBase}/analytics/pageview`, {
+  const safePath = telemetryPath(path);
+  if (!safePath) return;
+  let referrer = null;
+  try { if (document.referrer) referrer = new URL(document.referrer).origin; } catch {}
+  const token = getAccessToken();
+  void resolveApiBaseUrl().then((apiBase) => fetch(apiBase + '/analytics/pageview', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(token && token === getAccessToken() ? { Authorization: 'Bearer ' + token } : {}),
     },
-    body: JSON.stringify({ path, referrer: document.referrer || null, visitorId: getVisitorId() }),
+    body: JSON.stringify({ path: safePath, referrer, visitorId: getVisitorId() }),
+    referrerPolicy: 'no-referrer',
+    credentials: 'omit',
+    redirect: 'error',
     keepalive: true,
   })).catch(() => {});
 }

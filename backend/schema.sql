@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
   email           VARCHAR(255)  UNIQUE NOT NULL,
   phone           VARCHAR(20)   DEFAULT '',
   password_hash   VARCHAR(255)  NOT NULL,
+  auth_version    INTEGER NOT NULL DEFAULT 0,
   auth_provider   VARCHAR(50)   DEFAULT 'local',
   auth_subject    VARCHAR(255),
   title           VARCHAR(200),
@@ -28,6 +29,14 @@ CREATE TABLE IF NOT EXISTS users (
   created_at      TIMESTAMPTZ   DEFAULT NOW(),
   updated_at      TIMESTAMPTZ   DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  id UUID PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS auth_sessions_expiry_idx ON auth_sessions(expires_at);
 
 -- ── Groups ───────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS groups (

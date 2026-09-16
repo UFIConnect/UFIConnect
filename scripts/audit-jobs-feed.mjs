@@ -1,3 +1,4 @@
+import { installAuditMember, auditNavigate } from './audit-session.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -31,9 +32,9 @@ try {
       requests.push({ offset, bust: p.get('bust'), postedWithin: p.get('postedWithin') });
       await route.fulfill({ json: { opportunities: jobs.slice(offset, offset + 20).map(job => p.get('postedWithin') ? { ...job, id: `${job.id}-date-${p.get('postedWithin')}` } : job), hasMore: offset + 20 < jobs.length, totalCount: jobs.length, availableSources: ['Remotive'] } });
     });
-    await page.goto(server.resolvedUrls.local[0]);
-    await page.evaluate(t => localStorage.setItem('pc_token', t), app.token('jobs-audit'));
-    await page.goto(server.resolvedUrls.local[0] + 'opportunities');
+    await auditNavigate(page, server.resolvedUrls.local[0]);
+    await installAuditMember(page, app, 'jobs-audit');
+    await auditNavigate(page, server.resolvedUrls.local[0] + 'opportunities');
     await page.locator('.job-result-tab').first().waitFor();
     assert.equal(await page.locator('.opportunities-page-header, .jobs-personalization-status, .job-result-section-heading').count(), 0);
     assert.match(await page.locator('.job-result-tab').first().textContent(), /Posting date unavailable/);
@@ -53,7 +54,7 @@ try {
     await page.getByRole('button', { name: 'Open Engineer 1 at Example', exact: true }).click();
     await page.getByRole('heading', { name: 'Engineer 1', exact: true }).waitFor();
     assert.match(await page.locator('.job-detail-facts').textContent(), /Feb 3, 2025/);
-    await page.goto(server.resolvedUrls.local[0] + 'opportunities?postedWithin=7');
+    await auditNavigate(page, server.resolvedUrls.local[0] + 'opportunities?postedWithin=7');
     await page.locator('.job-result-tab').first().waitFor().catch(async error => {
       console.error(page.url(), await page.locator('body').innerText(), requests.slice(-5));
       throw error;

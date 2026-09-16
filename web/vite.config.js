@@ -1,12 +1,28 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { browserSecurityPolicy } from './securityPolicy.mjs';
 
 export default defineConfig({
   // On GitHub Pages the app lives at /UFIConnect/; locally it's at /
   base: process.env.GH_PAGES === 'true' ? '/UFIConnect/' : '/',
-  plugins: [react()],
+  plugins: [react(), {
+    name: 'production-browser-security',
+    apply: 'build',
+    transformIndexHtml: {
+      order: 'post',
+      handler(html) {
+        // Render also sends an HTTP CSP. The meta policy protects executable
+        // content on static hosts such as GitHub Pages that cannot set headers.
+        return { html, tags: [{ tag: 'meta', attrs: { 'http-equiv': 'Content-Security-Policy',
+          content: browserSecurityPolicy(html, { meta: true }) }, injectTo: 'head-prepend' }] };
+      },
+    },
+  }],
   server: {
     port: 5173,
+    // Applies before Vite's injected client module can request a reset URL
+    // as its referrer. Production hosts must send the same policy.
+    headers: { 'Referrer-Policy': 'no-referrer' },
     proxy: {
       // In dev, forward /api/* → backend at :3000 (strips /api prefix)
       '/api': {
@@ -16,6 +32,7 @@ export default defineConfig({
       },
     },
   },
+  preview: { headers: { 'Referrer-Policy': 'no-referrer' } },
   build: {
     outDir: 'dist',
     sourcemap: false,

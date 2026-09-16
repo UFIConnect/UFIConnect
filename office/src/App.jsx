@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Controls from './Controls';
 import PostPipeline from './PostPipeline';
-import { createOfficeClient, connectOfficeStreams, mergeOfficeLog } from './office-runtime.mjs';
+import { createOfficeClient, createOfficeEventSource, createTrustedOfficeFetch, connectOfficeStreams, mergeOfficeLog } from './office-runtime.mjs';
+import { requestOfficeAccess } from './OfficeAccessDialog';
 
 const API = import.meta.env.VITE_API_URL || '';
 // uficonnect-pipeline's own URL (see render.yaml) — the service that
@@ -21,16 +22,21 @@ const STAGING_BACKLOG_WARN = 20000;
 
 // ─── office auth ────────────────────────────────────────────────────────────
 // Office requires a configured server token and a matching x-office-token
-// header (or ?token= for EventSource, which cannot set custom headers).
+// header. Credentials are held in memory and never appended to stream URLs.
+const trustedOfficeFetch = createTrustedOfficeFetch({ baseUrls: [API, PIPELINE_API], pageUrl: window.location.href,
+  development: import.meta.env.DEV, fetcher: (...args) => fetch(...args) });
 const officeClient = createOfficeClient({
-  storage: { getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) },
-  fetcher: (...args) => fetch(...args), prompt: message => window.prompt(message),
+  storage: { removeItem: key => {
+    try { localStorage.removeItem(key); } catch { /* Storage can be disabled. */ }
+    try { sessionStorage.removeItem(key); } catch { /* Storage can be disabled. */ }
+  } },
+  fetcher: trustedOfficeFetch, prompt: requestOfficeAccess,
   onTokenChange: () => window.dispatchEvent(new Event('office-token-changed')),
 });
 const officeFetch = officeClient.request;
+const OfficeEventSource = createOfficeEventSource({ fetcher: trustedOfficeFetch, getToken: officeClient.getToken });
 function officeStreamUrl(path, base = API) {
-  const token = officeClient.getToken();
-  return token ? `${base}${path}?token=${encodeURIComponent(token)}` : `${base}${path}`;
+  return `${base}${path}`;
 }
 
 function useMediaQuery(query) {
@@ -3089,7 +3095,7 @@ export default function App() {
     return connectOfficeStreams({
       bases: [...new Set([API, PIPELINE_API])],
       urlFor: base => officeStreamUrl('/office/agents/stream', base),
-      EventSourceClass: EventSource,
+      EventSourceClass: OfficeEventSource,
       onConnection: setConnected,
       subscribeToken: listener => {
         window.addEventListener('office-token-changed', listener);

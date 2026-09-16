@@ -4,6 +4,9 @@ const helmet = require('helmet');
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const { SESSION_TTL_SECONDS, resolveJwtSecret, passwordPolicyError, signSecurityToken, verifySecurityToken, publicRoleSettings } = require('./auth-security');
+const { createTokenVault, migrateSocialCredentials } = require('./token-vault');
+const { createAnalyticsBridgeHandler } = require('./analytics-bridge');
 const dotenv = require('dotenv');
 const http   = require('http');
 const https  = require('https');
@@ -56,6 +59,8 @@ const {
 } = require('./office-controls');
 
 dotenv.config();
+const tokenVault = createTokenVault(process.env);
+let securityStorageReady = process.env.NODE_ENV !== 'production';
 const generatedContent = createGeneratedContentStore(db);
 const generatedMedia = createGeneratedMediaStorage({ env: process.env });
 
@@ -117,6 +122,13 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 const app = express();
+// Trust only an explicitly configured proxy range/hop count. Untrusted clients
+// must not choose their own rate-limit identity through forwarding headers.
+if (process.env.TRUST_PROXY) {
+  const proxy = process.env.TRUST_PROXY.trim();
+  if (proxy === 'true') throw new Error('TRUST_PROXY must specify trusted proxy addresses or a hop count.');
+  app.set('trust proxy', /^\d+$/.test(proxy) ? Number(proxy) : proxy.split(',').map(value => value.trim()));
+}
 
 function buildHealthPayload() {
   const payload = {
@@ -359,13 +371,24 @@ app.post('/billing/webhook', express.raw({ type: 'application/json' }), async (r
 });
 
 app.use(helmet());
+// Serve optional analytics on the API origin so the browser's same-origin
+// policy prevents Google's script from reading the web application's DOM.
+app.get('/analytics-bridge.html', createAnalyticsBridgeHandler());
 
 // Allow web frontend origin in production, all origins in dev
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
-  : true; // allow all in dev
+  : process.env.NODE_ENV !== 'production';
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json({ limit: '512kb' }));
+app.use((req, res, next) => {
+  if (req.headers.authorization || req.path.startsWith('/auth/') || req.path.startsWith('/profile')) {
+    res.set('Cache-Control', 'no-store');
+    res.set('Pragma', 'no-cache');
+    if (!securityStorageReady) return res.status(503).json({ message: 'Account security storage is initializing. Please try again shortly.' });
+  }
+  next();
+});
 
 // Office is an operational view of live state. Never let a browser or edge
 // cache replay an old status/control response after the underlying job moved.
@@ -377,33 +400,15 @@ app.use('/office', (_req, res, next) => {
 // Keep these lightweight probes ahead of the application's rate limits and
 // database-heavy routes, but after CORS so the web app can use them when it
 // selects a healthy API origin from a different hostname.
-app.get('/readyz', (_req, res) => res.status(200).set('Cache-Control', 'no-store').type('text/plain').send('ok'));
-app.get('/health', (_req, res) => res.status(200).set('Cache-Control', 'no-store').json(buildHealthProbePayload()));
+app.get('/readyz', (_req, res) => res.status(securityStorageReady ? 200 : 503).set('Cache-Control', 'no-store').type('text/plain').send(securityStorageReady ? 'ok' : 'initializing'));
+app.get('/health', (_req, res) => res.status(securityStorageReady ? 200 : 503).set('Cache-Control', 'no-store').json(securityStorageReady ? buildHealthProbePayload() : { status: 'initializing' }));
 // Detailed diagnostics remain available for manual operations checks, while
 // Render and the public uptime monitors stay on the constant-size probe above.
-app.get('/health/details', (_req, res) => res.status(200).set('Cache-Control', 'no-store').json(buildHealthPayload()));
+app.get('/health/details', requireOfficeToken, (_req, res) => res.status(200).set('Cache-Control', 'no-store').json(buildHealthPayload()));
 
-// The office dashboard's "Security Agent" logs a reassuring-looking
-// "Rate-limit monitor" line, but that's display-only — it reads real memory/
-// event-loop numbers, it doesn't actually throttle anything. There was no
-// real rate limiting anywhere in the app. Login/register/password-reset are
-// the classic abuse targets (credential stuffing, registration spam,
-// email-bombing a password reset target) and the ones most likely to get
-// hit hard by either bad actors or a buggy client retry loop once real
-// traffic picks up. Scoped tightly to just these — a blanket limiter across
-// every route risks throttling legitimate heavy scrolling/pagination, which
-// is a worse failure mode than the one being guarded against here.
-//
-// express-rate-limit keys on req.ip by default, which without an explicit
-// `trust proxy` setting resolves to the immediate upstream connection —
-// Render's own proxy, not the real visitor. That would put every visitor's
-// traffic in one shared bucket and lock out the whole site's login/register
-// after a handful of real users, right when traffic is about to grow. This
-// app already trusts Cloudflare's CF-IPCountry header elsewhere (see
-// getUserCountry) since Cloudflare is confirmed in front of it in
-// production (Server: cloudflare on every response) — CF-Connecting-IP is
-// Cloudflare's own authoritative client IP, so keying on that sidesteps
-// needing to get Express's proxy-hop-count trust setting exactly right.
+// Rate limits are independent of dashboard runtime metrics. Express resolves
+// req.ip using the explicitly configured TRUST_PROXY boundary; direct clients
+// cannot select a rate-limit bucket by sending forwarding headers.
 function rateLimitKey(req) {
   // ipKeyGenerator normalizes IPv6 down to a /56 subnet before using it as a
   // key — express-rate-limit refuses to start (throws at setup, not just a
@@ -421,13 +426,7 @@ function normalizeClientIp(ip) {
   return text.startsWith('::ffff:') ? text.slice(7) : text;
 }
 function getClientIp(req) {
-  return normalizeClientIp(
-    firstHeaderValue(req.headers['cf-connecting-ip']) ||
-    firstHeaderValue(req.headers['x-real-ip']) ||
-    firstHeaderValue(req.headers['x-forwarded-for']) ||
-    req.ip ||
-    req.socket?.remoteAddress
-  );
+  return normalizeClientIp(req.ip || req.socket?.remoteAddress);
 }
 function clientIpAnalyticsKey(req) {
   const ip = getClientIp(req);
@@ -568,7 +567,8 @@ if (process.env.MAINTENANCE === 'true') {
 }
 
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-key';
+const JWT_SECRET = resolveJwtSecret(process.env);
+const localSessions = new Map();
 const AUTH0_DOMAIN = (process.env.AUTH0_DOMAIN || process.env.AUTH0_ISSUER_BASE_URL || '')
   .replace(/^https?:\/\//, '')
   .replace(/\/+$/, '');
@@ -913,90 +913,7 @@ const ROLE_TO_SUBREDDITS = {
 const redditCache = new Map(); // subreddit ? { posts, fetchedAt }
 const REDDIT_TTL  = 30 * 60 * 1000; // 30 minutes
 
-function fetchJSON(url, extraHeaders = {}) {
-  return new Promise((resolve, reject) => {
-    const opts = {
-      headers: {
-        'User-Agent':      'UFIconnect/1.0 (https://uficonnect.org; contact: yosufkaka99@gmail.com)',
-        'Accept':          'application/json',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Cache-Control':   'no-cache',
-        ...extraHeaders,
-      },
-    };
-    https.get(url, opts, (res) => {
-      // Follow redirects
-      if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) {
-        const nextUrl = new URL(res.headers.location, url).toString();
-        return fetchJSON(nextUrl, extraHeaders).then(resolve).catch(reject);
-      }
-      // Reject on non-success HTTP status (catches 429, 403, 503, etc.) —
-      // reads the body instead of draining/discarding it first: most APIs
-      // that error this way (Google's included) put the actual reason in a
-      // JSON error body, not just the status code, and that reason was
-      // previously thrown away entirely. Appended after the existing
-      // "HTTP <code> for <url>" prefix (unchanged) so every existing
-      // caller pattern-matching on that exact prefix — several do, this
-      // file included — keeps working; this is purely additive.
-      if (res.statusCode < 200 || res.statusCode >= 300) {
-        let errBody = '';
-        res.on('data', (c) => { if (errBody.length < 500) errBody += c; });
-        res.on('end', () => reject(new Error(`HTTP ${res.statusCode} for ${url}${errBody ? ` — ${errBody.slice(0, 500)}` : ''}`)));
-        return;
-      }
-      let data = '';
-      res.on('data', (c) => data += c);
-      res.on('end', () => {
-        try { resolve(JSON.parse(data)); }
-        catch (e) { reject(new Error(`JSON parse failed for ${url}: ${e.message}`)); }
-      });
-    }).on('error', reject).setTimeout(15000, function() { this.destroy(new Error('timeout')); });
-  });
-}
-
-// Same shape as fetchJSON, but also hands back response headers — needed
-// for GitHub's rate-limit guard below, which reads X-RateLimit-Remaining/
-// X-RateLimit-Reset off of every response (success or not), not something
-// carried in the JSON body the way StackExchange's backoff/quota_remaining
-// are. A separate function rather than changing fetchJSON's own resolved
-// shape, which 70+ existing call sites destructure as the plain JSON body
-// directly.
-function fetchJSONWithHeaders(url, extraHeaders = {}) {
-  return new Promise((resolve, reject) => {
-    const opts = {
-      headers: {
-        'User-Agent':      'UFIconnect/1.0 (https://uficonnect.org; contact: yosufkaka99@gmail.com)',
-        'Accept':          'application/json',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Cache-Control':   'no-cache',
-        ...extraHeaders,
-      },
-    };
-    https.get(url, opts, (res) => {
-      if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) {
-        const nextUrl = new URL(res.headers.location, url).toString();
-        return fetchJSONWithHeaders(nextUrl, extraHeaders).then(resolve).catch(reject);
-      }
-      const headers = res.headers;
-      if (res.statusCode < 200 || res.statusCode >= 300) {
-        let errBody = '';
-        res.on('data', (c) => { if (errBody.length < 500) errBody += c; });
-        res.on('end', () => {
-          const err = new Error(`HTTP ${res.statusCode} for ${url}${errBody ? ` — ${errBody.slice(0, 500)}` : ''}`);
-          err.headers = headers;
-          reject(err);
-        });
-        return;
-      }
-      let data = '';
-      res.on('data', (c) => data += c);
-      res.on('end', () => {
-        try { resolve({ data: JSON.parse(data), headers }); }
-        catch (e) { reject(new Error(`JSON parse failed for ${url}: ${e.message}`)); }
-      });
-    }).on('error', reject).setTimeout(15000, function() { this.destroy(new Error('timeout')); });
-  });
-}
+const { fetchJSON, fetchJSONWithHeaders } = require('./provider-json').createProviderJsonClient(https);
 
 // --- Social OAuth config -----------------------------------------------------
 const API_BASE      = process.env.API_BASE_URL  || 'http://localhost:3000';
@@ -1255,13 +1172,17 @@ function createOAuthState(userId, platform, codeVerifier, extra) {
   const payload = { userId, platform };
   if (codeVerifier) payload.cv = codeVerifier;
   if (extra) payload.x = extra;
-  return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '10m' });
+  // PKCE verifiers and provider metadata must not be readable in redirect URLs.
+  return jwt.sign({ purpose: 'oauth-state', data: tokenVault.seal(JSON.stringify(payload), 'oauth-state') }, JWT_SECRET,
+    { algorithm: 'HS256', issuer: 'uficonnect', audience: 'uficonnect-oauth', expiresIn: '10m' });
 }
 
 function verifyOAuthState(state, platform) {
   try {
-    const payload = jwt.verify(state, process.env.JWT_SECRET);
-    if (payload.platform !== platform) return null;
+    const envelope = jwt.verify(state, JWT_SECRET, { algorithms: ['HS256'], issuer: 'uficonnect', audience: 'uficonnect-oauth' });
+    if (envelope.purpose !== 'oauth-state' || typeof envelope.data !== 'string') return null;
+    const payload = JSON.parse(tokenVault.open(envelope.data, 'oauth-state'));
+    if (payload.platform !== platform || typeof payload.userId !== 'string') return null;
     return { userId: payload.userId, platform: payload.platform, codeVerifier: payload.cv, extra: payload.x };
   } catch {
     return null;
@@ -1747,13 +1668,12 @@ app.get('/auth/social/bluesky/callback', async (req, res) => {
 });
 
 // --- Password reset -----------------------------------------------------------
-function createPasswordResetToken(userId) {
-  return jwt.sign({ id: userId, purpose: 'password-reset' }, JWT_SECRET, { expiresIn: '30m' });
+function createPasswordResetToken(user) {
+  return signSecurityToken({ id: user.id, purpose: 'password-reset', ver: user.authVersion || 0 }, JWT_SECRET, '30m');
 }
 function verifyPasswordResetToken(token) {
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    return payload.purpose === 'password-reset' ? payload.id : null;
+    return verifySecurityToken(token, JWT_SECRET, 'password-reset');
   } catch {
     return null;
   }
@@ -1762,8 +1682,8 @@ function verifyPasswordResetToken(token) {
 // --- Outbound email (password reset, etc.) ------------------------------------
 // Requires SMTP_HOST/SMTP_USER/SMTP_PASS to be set — any SMTP provider works
 // (Gmail with an app password, SendGrid/Mailgun/etc. SMTP relay, ...). Without
-// them, reset links are logged server-side instead of emailed, same
-// unconfigured-but-not-broken pattern used for the social OAuth platforms.
+// these settings no message can be delivered; only a generic configuration
+// warning is logged, never a recipient address or a reset credential.
 function emailConfigured() {
   return Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
 }
@@ -1784,7 +1704,7 @@ function getMailTransport() {
 async function sendPasswordResetEmail(toEmail, resetUrl) {
   const transport = getMailTransport();
   if (!transport) {
-    console.warn(`[email] SMTP not configured — password reset link for ${toEmail}: ${resetUrl}`);
+    console.warn('[email] Password reset delivery unavailable: SMTP is not configured.');
     return;
   }
   await transport.sendMail({
@@ -1906,7 +1826,7 @@ function postForm(url, params, headers = {}) {
       res.on('data', c => data += c);
       res.on('end', () => {
         try { resolve(JSON.parse(data)); }
-        catch { reject(new Error(`postForm parse error: ${data.slice(0, 120)}`)); }
+        catch { reject(new Error('Provider returned an invalid token response.')); }
       });
     });
     req.on('error', reject);
@@ -3629,7 +3549,7 @@ async function getRedditToken() {
       console.log(`[Reddit] OAuth token obtained, expires in ${data.expires_in}s`);
       return _redditToken;
     }
-    console.warn('[Reddit] OAuth token response missing access_token:', JSON.stringify(data).slice(0, 200));
+    console.warn('[Reddit] OAuth token response missing access_token.');
     return null;
   } catch (e) {
     console.warn('[Reddit] OAuth token error:', e.message);
@@ -13136,11 +13056,11 @@ function runSecurityScan() {
   const crashes = refreshControl.crashEvents || 0;
   const uptime  = Math.floor(process.uptime() / 60);
   const checks = [
-    () => logAgentAction('security', '??', `JWT + CORS scan - 0 anomalies - ${crashes} crash events contained - uptime ${uptime}m`, '#4ADE80'),
-    () => logAgentAction('security', '???', `Rate-limit monitor: ${skipped} skipped fetches - event-loop lag ${lag}ms - heap ${heapPct}%`, skipped > 100 ? '#FBBF24' : '#4ADE80'),
-    () => logAgentAction('security', '?', `Feed integrity: ${globalFeedCache.posts.length.toLocaleString()} posts - ${seenPostIds.size.toLocaleString()} unique IDs - ${agentSourceCache.size} source caches verified`, '#4ADE80'),
-    () => logAgentAction('security', '??', `Auth endpoints healthy - ${users.length} user records - 0 suspicious patterns detected`, '#4ADE80'),
-    () => logAgentAction('security', '??', `CVE scan: stack clean - SSE clients: ${sseClients.size} - office connections: ${officeClients.size}`, '#4ADE80'),
+    () => logAgentAction('security', '??', `Configuration: typed session tokens, server revocation, ${SESSION_TTL_SECONDS / 3600}h local session expiry. Uptime ${uptime}m.`, '#60A5FA'),
+    () => logAgentAction('security', '???', `Runtime metrics: ${skipped} skipped source fetches, event-loop lag ${lag}ms, heap ${heapPct}%. These are not abuse detections.`, '#60A5FA'),
+    () => logAgentAction('security', '?', `Feed inventory: ${globalFeedCache.posts.length.toLocaleString()} posts, ${seenPostIds.size.toLocaleString()} tracked IDs, ${agentSourceCache.size} source caches.`, '#60A5FA'),
+    () => logAgentAction('security', '??', `Authentication configuration: login, registration, password reset and change rate limits enabled. ${crashes} recorded runtime crashes.`, '#60A5FA'),
+    () => logAgentAction('security', '??', `No automated vulnerability scan runs here. Connected clients: ${sseClients.size} feed, ${officeClients.size} office. See the release security checks.`, '#FBBF24'),
   ];
   // Run two staggered checks per invocation so the dashboard always shows fresh activity
   const i = _secIdx % checks.length;
@@ -15442,7 +15362,7 @@ function isBlockedEitherWay(userId1, userId2) {
 }
 
 function sanitizeUser(u) {
-  return { id: u.id, name: u.name, title: u.title, organization: u.organization || '', skills: asArray(u.skills), avatarUrl: u.avatarUrl || '' };
+  return { id: u.id, name: u.name, title: u.title, organization: u.organization || '', skills: u.roleSettings?.privacy_showSkills === false ? [] : asArray(u.skills), avatarUrl: u.avatarUrl || '' };
 }
 
 function isInteractiveCommunitySource(source) {
@@ -16722,6 +16642,7 @@ function dbRowToMemUser(row) {
     email: row.email,
     phone: row.phone || '',
     passwordHash: row.password_hash,
+    authVersion: Number(row.auth_version || 0),
     authProvider: row.auth_provider || 'local',
     authSubject: row.auth_subject || null,
     avatarUrl: row.avatar_url || '',
@@ -16747,8 +16668,8 @@ function dbRowToMemUser(row) {
     },
     links: row.links || {},
     roleSettings: row.role_settings || {},
-    socialTokens: row.social_tokens || {},
-    socialRefreshTokens: row.social_refresh_tokens || {},
+    socialTokens: tokenVault.decryptMap(row.social_tokens, row.id, 'access'),
+    socialRefreshTokens: tokenVault.decryptMap(row.social_refresh_tokens, row.id, 'refresh'),
     socialConnectedAt: row.social_connected_at || {},
     plan: row.plan || 'free',
     stripeCustomerId: row.stripe_customer_id || null,
@@ -16810,6 +16731,82 @@ async function getUser(id) {
   return fetchAndSyncUser(id);
 }
 
+async function getAuthUser(id) {
+  if (isDBId(id)) {
+    if (!db.isConnected()) throw Object.assign(new Error('Sign-in storage is temporarily unavailable.'), { status: 503 });
+    try {
+      const { rows } = await db.query('SELECT * FROM users WHERE id=$1', [id]);
+      return rows[0] ? syncToMemory(dbRowToMemUser(rows[0])) : null;
+    } catch {
+      throw Object.assign(new Error('Sign-in storage is temporarily unavailable.'), { status: 503 });
+    }
+  }
+  // File-backed accounts exist only in local development, never as an outage fallback.
+  if (process.env.NODE_ENV === 'production') return null;
+  return users.find(user => user.id === id) || null;
+}
+
+async function issueSession(user) {
+  const sid = crypto.randomUUID();
+  const expiresAt = Date.now() + SESSION_TTL_SECONDS * 1000;
+  if (isDBId(user.id)) {
+    if (!db.isConnected()) throw new Error('Sign-in storage is temporarily unavailable.');
+    await db.query('INSERT INTO auth_sessions (id,user_id,expires_at) VALUES ($1,$2,$3)', [sid, user.id, new Date(expiresAt)]);
+    // Opportunistic bounded cleanup; authorization also checks expiry itself.
+    db.query('DELETE FROM auth_sessions WHERE expires_at < NOW()').catch(() => {});
+  } else {
+    for (const [id, session] of localSessions) if (session.expiresAt <= Date.now()) localSessions.delete(id);
+    localSessions.set(sid, { userId: user.id, expiresAt });
+  }
+  return signSecurityToken({ id: user.id, sid, ver: user.authVersion || 0, purpose: 'session' }, JWT_SECRET, SESSION_TTL_SECONDS);
+}
+
+async function resolveSession(token) {
+  const payload = verifySecurityToken(token, JWT_SECRET, 'session');
+  const user = await getAuthUser(payload.id);
+  if (!user || payload.ver !== (user.authVersion || 0)) throw new Error('Session revoked.');
+  if (isDBId(user.id)) {
+    let rows;
+    try {
+      ({ rows } = await db.query('SELECT id FROM auth_sessions WHERE id=$1 AND user_id=$2 AND expires_at>NOW()', [payload.sid, user.id]));
+    } catch {
+      throw Object.assign(new Error('Session storage is temporarily unavailable.'), { status: 503 });
+    }
+    if (!rows[0]) throw new Error('Session revoked.');
+  } else {
+    const session = localSessions.get(payload.sid);
+    if (!session || session.userId !== user.id || session.expiresAt <= Date.now()) throw new Error('Session revoked.');
+  }
+  return { ...payload, email: user.email, authProvider: user.authProvider || 'local' };
+}
+
+async function updatePasswordAndRevoke(user, hash, previousVersion, expectedHash) {
+  if ((user.authVersion || 0) !== previousVersion || user.passwordHash !== expectedHash) {
+    throw Object.assign(new Error('Password changed already.'), { status: 409 });
+  }
+  if (isDBId(user.id)) {
+    if (!db.isConnected()) throw Object.assign(new Error('Account storage unavailable.'), { status: 503 });
+    const result = await db.query(
+      'UPDATE users SET password_hash=$1,auth_version=auth_version+1 WHERE id=$2 AND auth_version=$3 AND password_hash=$4 RETURNING auth_version',
+      [hash, user.id, previousVersion, expectedHash]
+    );
+    if (!result.rows[0]) throw Object.assign(new Error('Password changed already. Request a new reset link or sign in again.'), { status: 409 });
+    user.authVersion = Number(result.rows[0].auth_version);
+  } else {
+    // Update before persistence, with rollback if the durable write fails.
+    user.authVersion = previousVersion + 1;
+  }
+  const previousHash = user.passwordHash;
+  user.passwordHash = hash;
+  if (!isDBId(user.id)) {
+    try { filestore.saveUsersNow(users); } catch (error) {
+      user.authVersion = previousVersion;
+      user.passwordHash = previousHash;
+      throw error;
+    }
+  }
+}
+
 async function verifyAuth0Token(token) {
   if (!auth0Enabled) throw new Error('Auth0 is not configured');
   const { jwtVerify, createRemoteJWKSet } = await joseModulePromise;
@@ -16830,9 +16827,17 @@ async function provisionAuth0User(payload) {
   const name = payload.name || payload.nickname || email.split('@')[0] || 'UFIconnect Member';
   const avatarUrl = payload.picture || '';
   const existing = users.find(u => u.authProvider === 'auth0' && u.authSubject === subject);
-  if (existing) return existing;
   if (!db.isConnected()) {
     throw Object.assign(new Error('Sign-in storage is temporarily unavailable.'), { status: 503 });
+  }
+  if (existing) {
+    // Another worker can delete or update this account while its old identity
+    // remains cached here. Authorize against the primary database each time.
+    const current = await getAuthUser(existing.id);
+    if (!current || current.authProvider !== 'auth0' || current.authSubject !== subject) {
+      throw Object.assign(new Error('This sign-in identity is no longer linked to an account.'), { status: 401 });
+    }
+    return current;
   }
   const linked = await fetchAndSyncUserByAuthSubject('auth0', subject);
   if (linked) return linked;
@@ -16922,6 +16927,12 @@ async function migrateDB() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider TEXT DEFAULT 'local'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_subject TEXT`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT DEFAULT ''`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_version INTEGER NOT NULL DEFAULT 0`);
+    await db.query(`CREATE TABLE IF NOT EXISTS auth_sessions (
+      id UUID PRIMARY KEY, user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
+    await db.query(`CREATE INDEX IF NOT EXISTS auth_sessions_expiry_idx ON auth_sessions(expires_at)`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT DEFAULT ''`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS cover_url TEXT DEFAULT ''`);
     // Stripe billing — see createCheckoutSession/handleStripeWebhook. Customer
@@ -19903,27 +19914,26 @@ function pickOnboardingGroups(prefs, count = 5) {
 }
 
 // --- Auth middleware ----------------------------------------------------------
-// authenticateSSE: EventSource can't send headers, so accept token as ?token= query param
+// Streaming clients use fetch with an Authorization header; URLs never carry credentials.
 function authenticateSSE(req, res, next) {
-  if (!req.headers.authorization && req.query.token) {
-    req.headers = { ...req.headers, authorization: `Bearer ${req.query.token}` };
-  }
   return authenticate(req, res, next);
 }
 
 async function authenticate(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader) return res.status(401).json({ message: 'Authorization header missing.' });
-  const token = authHeader.split(' ')[1];
+  const token = /^Bearer ([^\s]+)$/i.exec(authHeader)?.[1];
+  if (!token) return res.status(401).json({ message: 'Invalid authorization header.' });
   try {
-    req.user = jwt.verify(token, JWT_SECRET);
+    req.user = await resolveSession(token);
     // Every real, successfully-authenticated request counts as "someone's
     // here" — see isAppIdle's own comment. /office/* admin routes go through
     // requireOfficeToken instead of this middleware, so they deliberately
     // never touch this.
     recordRealUserActivity(req, 'auth');
     return next();
-  } catch {
+  } catch (error) {
+    if (error.status === 503) return res.status(503).json({ message: error.message });
     // Not a local UFIconnect JWT; try Auth0 when configured.
   }
 
@@ -19948,9 +19958,10 @@ async function authenticate(req, res, next) {
 async function authenticateOptional(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader) return next();
-  const token = authHeader.split(' ')[1];
+  const token = /^Bearer ([^\s]+)$/i.exec(authHeader)?.[1];
+  if (!token) return next();
   try {
-    req.user = jwt.verify(token, JWT_SECRET);
+    req.user = await resolveSession(token);
     recordRealUserActivity(req, 'auth-optional');
     return next();
   } catch {
@@ -19981,8 +19992,9 @@ async function authenticateOptional(req, res, next) {
 function requireOfficeToken(req, res, next) {
   const expected = process.env.OFFICE_TOKEN;
   if (!expected) return res.status(503).json({ error: 'Office access is not configured.' });
-  const provided = req.headers['x-office-token'] || req.query.token;
-  if (provided === expected) return next();
+  const provided = req.headers['x-office-token'];
+  if (typeof provided === 'string' && Buffer.byteLength(provided) === Buffer.byteLength(expected)
+      && crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected))) return next();
   return res.status(401).json({ error: 'Unauthorized — set the office token in the dashboard.' });
 }
 
@@ -20319,10 +20331,11 @@ app.get('/auth/me', authenticate, async (req, res) => {
 
 app.post('/auth/register', registerLimiter, async (req, res) => {
   const { name, email, password, title, phone: phoneInput } = req.body || {};
+  const passwordError = passwordPolicyError(password);
   if (typeof name !== 'string' || !name.trim() || typeof email !== 'string' ||
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) || typeof password !== 'string' || password.length < 6 ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) || passwordError ||
       (phoneInput != null && typeof phoneInput !== 'string') || (title !== undefined && typeof title !== 'string')) {
-    return res.status(400).json({ message: 'Enter a name, valid email, and password of at least 6 characters.' });
+    return res.status(400).json({ message: passwordError || 'Enter a name and valid email.' });
   }
   const phone = normalizeMemberPhone(phoneInput) || '';
   if (phoneInput?.trim() && !phone) return res.status(400).json({ message: 'Enter a valid phone number with country code, such as +1 555 123 4567, or leave it blank.' });
@@ -20332,13 +20345,13 @@ app.post('/auth/register', registerLimiter, async (req, res) => {
     try {
       const exists = await db.query('SELECT id FROM users WHERE email=$1', [emailLc]);
       if (exists.rows.length) return res.status(409).json({ message: 'Email already registered.' });
-      const hash = bcrypt.hashSync(password, 10);
+      const hash = await bcrypt.hash(password, 12);
       const { rows } = await db.query(
         `INSERT INTO users (name, email, phone, password_hash, title) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
         [name.trim(), emailLc, phone, hash, title || null]
       );
       const mem = syncToMemory(dbRowToMemUser(rows[0]));
-      const token = jwt.sign({ id: mem.id, email: mem.email }, JWT_SECRET, { expiresIn: '7d' });
+      const token = await issueSession(mem);
       return res.status(201).json({ token, profile: fullProfile(mem) });
     } catch (err) {
       if (err.code === '23505') return res.status(409).json({ message: 'Email already registered.' });
@@ -20368,22 +20381,54 @@ app.post('/auth/login', authLimiter, async (req, res) => {
   }
   const emailLc = email.trim().toLowerCase();
 
-  // Check DB first (persisted users)
-  if (db.isConnected()) {
-    const dbUser = await fetchAndSyncUserByEmail(emailLc);
-    if (dbUser && dbUser.passwordHash && bcrypt.compareSync(password, dbUser.passwordHash)) {
-      recordSuccessfulSignIn(dbUser, req);
-      const token = jwt.sign({ id: dbUser.id, email: dbUser.email }, JWT_SECRET, { expiresIn: '7d' });
-      return res.json({ token, profile: fullProfile(dbUser) });
+  try {
+    let user;
+    if (db.isConnected()) {
+      const { rows } = await db.query('SELECT * FROM users WHERE email=$1', [emailLc]);
+      user = rows[0] ? syncToMemory(dbRowToMemUser(rows[0])) : null;
+    } else {
+      const cached = users.find(u => u.email === emailLc);
+      if (process.env.NODE_ENV === 'production' || (cached && isDBId(cached.id))) {
+        return res.status(503).json({ message: 'Sign-in storage is temporarily unavailable.' });
+      }
+      user = cached;
     }
+    if (!user?.passwordHash || user.authProvider === 'auth0' || !await bcrypt.compare(password, user.passwordHash)) {
+      return res.status(401).json({ message: 'Invalid email or password.' });
+    }
+    const token = await issueSession(user);
+    recordSuccessfulSignIn(user, req);
+    res.json({ token, profile: fullProfile(user) });
+  } catch (error) {
+    console.error('Sign-in storage failed.');
+    res.status(503).json({ message: 'Sign-in storage is temporarily unavailable.' });
   }
+});
 
-  // Fall back to in-memory cache (users synced from DB at login)
-  const user = users.find((u) => u.email === emailLc || u.email === email);
-  if (!user || !user.passwordHash || !bcrypt.compareSync(password, user.passwordHash)) return res.status(401).json({ message: 'Invalid email or password.' });
-  recordSuccessfulSignIn(user, req);
-  const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
-  res.json({ token, profile: fullProfile(user) });
+app.post('/auth/logout', authenticate, async (req, res) => {
+  if (!req.user.sid) return res.status(409).json({ message: 'End this session through your sign-in provider.' });
+  try {
+    if (isDBId(req.user.id)) await db.query('DELETE FROM auth_sessions WHERE id=$1 AND user_id=$2', [req.user.sid, req.user.id]);
+    else localSessions.delete(req.user.sid);
+    res.json({ ok: true });
+  } catch { res.status(503).json({ message: 'Could not revoke this session. Please try again.' }); }
+});
+
+app.post('/auth/logout-all', authenticate, authLimiter, async (req, res) => {
+  if (!req.user.sid) return res.status(409).json({ message: 'Manage sessions through your sign-in provider.' });
+  try {
+    const user = await getAuthUser(req.user.id);
+    if (isDBId(user.id)) {
+      const { rows } = await db.query('UPDATE users SET auth_version=auth_version+1 WHERE id=$1 RETURNING auth_version', [user.id]);
+      if (!rows[0]) throw new Error('Account unavailable.');
+      user.authVersion = Number(rows[0].auth_version);
+    } else {
+      const previous = user.authVersion || 0;
+      user.authVersion = previous + 1;
+      try { filestore.saveUsersNow(users); } catch (error) { user.authVersion = previous; throw error; }
+    }
+    res.json({ ok: true });
+  } catch { res.status(503).json({ message: 'Could not revoke sessions. Please try again.' }); }
 });
 
 app.post('/auth/forgot-password', passwordResetLimiter, async (req, res) => {
@@ -20395,39 +20440,40 @@ app.post('/auth/forgot-password', passwordResetLimiter, async (req, res) => {
   try {
     const user = db.isConnected()
       ? await fetchAndSyncUserByEmail(email)
-      : users.find((u) => u.email === email);
-    if (user) {
-      const resetToken = createPasswordResetToken(user.id);
-      const resetUrl = `${FRONTEND_BASE}/reset-password?token=${resetToken}`;
+      : process.env.NODE_ENV !== 'production' ? users.find((u) => u.email === email && !isDBId(u.id)) : null;
+    if (user && user.authProvider !== 'auth0') {
+      const resetToken = createPasswordResetToken(user);
+      const resetUrl = `${FRONTEND_BASE}/reset-password#token=${resetToken}`;
       await sendPasswordResetEmail(user.email, resetUrl);
     }
-  } catch (e) { console.error('forgot-password:', e.message); }
+  } catch { console.error('Password reset email could not be delivered.'); }
   res.json(generic);
 });
 
 app.post('/auth/reset-password', passwordResetLimiter, async (req, res) => {
   const { token, password } = req.body || {};
   if (typeof token !== 'string' || !token || typeof password !== 'string' || !password) return res.status(400).json({ message: 'Token and new password are required.' });
-  if (password.length < 6) return res.status(400).json({ message: 'Password must be at least 6 characters.' });
-  const userId = verifyPasswordResetToken(token);
-  if (!userId) return res.status(400).json({ message: 'This reset link is invalid or has expired.' });
-  const user = await getUser(userId);
-  if (!user) return res.status(404).json({ message: 'Account not found.' });
-  const hash = bcrypt.hashSync(password, 10);
-  const prevHash = user.passwordHash;
+  if (Buffer.byteLength(password, 'utf8') > 72) return res.status(400).json({ message: passwordPolicyError(password) });
+  const payload = verifyPasswordResetToken(token);
+  if (!payload) return res.status(400).json({ message: 'This reset link is invalid or has expired.' });
   try {
-    if (db.isConnected() && isDBId(userId)) {
-      await db.query('UPDATE users SET password_hash=$1 WHERE id=$2', [hash, userId]);
-    } else {
-      user.passwordHash = hash;
-      filestore.saveUsers(users);
+    const user = await getAuthUser(payload.id);
+    if (!user || user.authProvider === 'auth0' || payload.ver !== (user.authVersion || 0)) {
+      return res.status(400).json({ message: 'This reset link is invalid or has expired.' });
     }
-    user.passwordHash = hash;
+    const previousVersion = user.authVersion || 0;
+    const expectedHash = user.passwordHash;
+    if (expectedHash && await bcrypt.compare(password, expectedHash)) {
+      return res.status(400).json({ code: 'PASSWORD_UNCHANGED', message: 'Choose a new password different from your current password.' });
+    }
+    const passwordError = passwordPolicyError(password);
+    if (passwordError) return res.status(400).json({ message: passwordError });
+    const hash = await bcrypt.hash(password, 12);
+    await updatePasswordAndRevoke(user, hash, previousVersion, expectedHash);
     res.json({ ok: true, message: 'Password updated — you can now sign in.' });
   } catch (e) {
     console.error('reset-password DB:', e.message);
-    user.passwordHash = prevHash;
-    res.status(500).json({ message: 'Could not reset your password. Please try again.' });
+    res.status(e.status || 500).json({ message: 'Could not reset your password. Request a new link or try again later.' });
   }
 });
 
@@ -20456,7 +20502,7 @@ async function saveSocialToken(userId, platform, token, refreshToken, connectedA
   try {
     if (isDBId(userId)) {
       await db.query('UPDATE users SET social_tokens=$1, social_refresh_tokens=$2, social_connected_at=$3 WHERE id=$4',
-        [JSON.stringify(user.socialTokens), JSON.stringify(user.socialRefreshTokens || {}), JSON.stringify(user.socialConnectedAt || {}), userId]);
+        [JSON.stringify(tokenVault.encryptMap(user.socialTokens, userId, 'access')), JSON.stringify(tokenVault.encryptMap(user.socialRefreshTokens, userId, 'refresh')), JSON.stringify(user.socialConnectedAt || {}), userId]);
     } else {
       filestore.saveUsers(users);
     }
@@ -20482,7 +20528,7 @@ async function refreshGoogleAccessToken(userId) {
       client_secret: cfg.clientSecret(),
     });
     if (!raw.access_token) {
-      console.warn('[YouTube] refresh token exchange failed:', raw.error || JSON.stringify(raw).slice(0, 200));
+      console.warn('[YouTube] refresh token exchange failed.');
       return null;
     }
     // Google only returns a new refresh_token on rare re-consent flows —
@@ -20511,7 +20557,7 @@ async function removeSocialToken(userId, platform) {
   try {
     if (isDBId(userId)) {
       await db.query('UPDATE users SET social_tokens=$1, social_refresh_tokens=$2, social_connected_at=$3 WHERE id=$4',
-        [JSON.stringify(user.socialTokens || {}), JSON.stringify(user.socialRefreshTokens || {}), JSON.stringify(user.socialConnectedAt || {}), userId]);
+        [JSON.stringify(tokenVault.encryptMap(user.socialTokens, userId, 'access')), JSON.stringify(tokenVault.encryptMap(user.socialRefreshTokens, userId, 'refresh')), JSON.stringify(user.socialConnectedAt || {}), userId]);
     } else {
       filestore.saveUsers(users);
     }
@@ -20956,35 +21002,54 @@ app.patch('/profile', authenticate, async (req, res) => {
 // authLimiter since it's exactly the kind of endpoint a compromised/guessed
 // session could hammer to brute-force the current password.
 app.post('/profile/password', authenticate, authLimiter, async (req, res) => {
-  const user = await getUser(req.user.id);
-  if (!user) return res.status(404).json({ message: 'Not found.' });
-  if (isDBId(user.id) && !db.isConnected()) {
-    return res.status(503).json({ message: 'Saving is temporarily unavailable. Please try again in a moment.' });
-  }
-  if (user.authProvider === 'auth0') {
-    return res.status(400).json({ message: 'Your password is managed by your sign-in provider, not UFIconnect.' });
-  }
   const { currentPassword, newPassword } = req.body || {};
-  if (!currentPassword || !newPassword) return res.status(400).json({ message: 'Current and new password are required.' });
-  if (newPassword.length < 6) return res.status(400).json({ message: 'New password must be at least 6 characters.' });
-  if (!user.passwordHash || !bcrypt.compareSync(currentPassword, user.passwordHash)) {
-    return res.status(401).json({ message: 'Current password is incorrect.' });
-  }
-  const hash = bcrypt.hashSync(newPassword, 10);
-  const prevHash = user.passwordHash;
+  if (typeof currentPassword !== 'string' || !currentPassword || typeof newPassword !== 'string') return res.status(400).json({ message: 'Current and new password are required.' });
+  if (Buffer.byteLength(newPassword, 'utf8') > 72) return res.status(400).json({ message: passwordPolicyError(newPassword) });
   try {
-    if (isDBId(user.id)) {
-      await db.query('UPDATE users SET password_hash=$1 WHERE id=$2', [hash, user.id]);
-    } else {
-      filestore.saveUsers(users);
+    // Re-read the authoritative account after session middleware: a reset or
+    // revocation may have completed while this request was waiting to run.
+    const user = await getAuthUser(req.user.id);
+    if (!user) return res.status(401).json({ message: 'Sign in again before changing your password.' });
+    if (user.authProvider === 'auth0') {
+      return res.status(400).json({ message: 'Your password is managed by your sign-in provider, not UFIconnect.' });
     }
-    user.passwordHash = hash;
-    res.json({ ok: true, message: 'Password updated.' });
+    const previousVersion = user.authVersion || 0;
+    const expectedHash = user.passwordHash;
+    if (req.user.ver !== previousVersion) {
+      return res.status(401).json({ message: 'Sign in again before changing your password.' });
+    }
+    if (!expectedHash || !await bcrypt.compare(currentPassword, expectedHash)) {
+      return res.status(401).json({ message: 'Current password is incorrect.' });
+    }
+    // Compare with the stored hash, not just the submitted current-password
+    // string, so equivalent legacy bcrypt credentials are also rejected.
+    if (await bcrypt.compare(newPassword, expectedHash)) {
+      return res.status(400).json({ code: 'PASSWORD_UNCHANGED', message: 'Choose a new password different from your current password.' });
+    }
+    const passwordError = passwordPolicyError(newPassword);
+    if (passwordError) return res.status(400).json({ message: passwordError });
+    const hash = await bcrypt.hash(newPassword, 12);
+    await updatePasswordAndRevoke(user, hash, previousVersion, expectedHash);
+    res.json({ ok: true, message: 'Password updated. Sign in again.', requiresSignIn: true });
   } catch (e) {
     console.error('POST /profile/password DB:', e.message);
-    user.passwordHash = prevHash;
-    res.status(500).json({ message: 'Could not update your password. Please try again.' });
+    res.status(e.status || 500).json({ message: 'Could not update your password. Please try again.' });
   }
+});
+
+app.get('/profile/security', authenticate, (req, res) => {
+  const local = req.user.authProvider !== 'auth0';
+  res.json({
+    authProvider: local ? 'local' : 'auth0',
+    passwordChangeAvailable: local,
+    passwordMinimumCharacters: 15,
+    passwordMaximumUtf8Bytes: 72,
+    sessionLifetimeSeconds: local ? SESSION_TTL_SECONDS : null,
+    serverSessionRevocation: local,
+    passwordChangeRevokesSessions: local,
+    multiFactorAvailable: false,
+    securityAlertsAvailable: false,
+  });
 });
 
 app.post('/profile/onboarding', authenticate, async (req, res) => {
@@ -23953,7 +24018,7 @@ async function getInitialSSEPosts(limit = 200) {
 // --- SSE endpoint - streams new posts to every connected browser in real time --
 app.get('/feed/stream', authenticateSSE, async (req, res) => {
   res.setHeader('Content-Type',  'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Connection',    'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no'); // disable nginx/Render proxy buffering
   res.flushHeaders();
@@ -23970,9 +24035,19 @@ app.get('/feed/stream', authenticateSSE, async (req, res) => {
   } catch { cleanup(); return; }
 
   // Heartbeat every 20 s to keep the connection alive through proxies
-  hb = setInterval(() => {
-    try { res.write(':ping\n\n'); }
-    catch { cleanup(); }
+  hb = setInterval(async () => {
+    try {
+      const bearer = /^Bearer ([^\s]+)$/i.exec(req.headers.authorization)?.[1];
+      if (req.user.sid) await resolveSession(bearer);
+      else {
+        const payload = await verifyAuth0Token(bearer);
+        const user = await getAuthUser(req.user.id);
+        if (!user || user.authProvider !== 'auth0' || user.authSubject !== payload.sub) {
+          throw new Error('Streaming account authorization has ended.');
+        }
+      }
+      res.write(':ping\n\n');
+    } catch { cleanup(); res.end(); }
   }, 20000);
 
   req.on('close', cleanup);
@@ -24983,7 +25058,7 @@ const AGENT_DEFS = {
   },
   security: {
     name: 'Security Agent', emoji: 'SEC', color: '#4ADE80', interval: '8min',
-    description: 'Scans JWT tokens, validates CORS headers, monitors failed login attempts, checks CVE database, and enforces rate-limit rules every 8 minutes.',
+    description: 'Reports configured session expiry, revocation, authentication rate limits, and runtime counters every 8 minutes. Vulnerability scans run separately in release checks.',
   },
   perf: {
     name: 'Performance Agent', emoji: 'PERF', color: '#FBBF24', interval: '12min',
@@ -28119,10 +28194,10 @@ app.get('/users/search', authenticate, async (req, res) => {
 
   if (q) {
     results = results.filter(u => q.includes('@')
-      ? (u.email || '').toLowerCase() === q
+      ? (u.id === myId || u.roleSettings?.privacy_showEmail === true) && (u.email || '').toLowerCase() === q
       : matchesRelatedSearch([
           u.name, u.title, u.organization, u.bio,
-          ...asArray(u.skills), u.preferences?.role,
+          ...(u.id === myId || u.roleSettings?.privacy_showSkills !== false ? asArray(u.skills) : []), u.preferences?.role,
           ...asArray(u.preferences?.interests),
         ].filter(Boolean).join(' '), q)
     );
@@ -28153,7 +28228,7 @@ app.get('/users/search', authenticate, async (req, res) => {
       else if ((u.email || '').toLowerCase() === q) score += 100;
       score += relatedSearchScore([
         u.name, u.title, u.organization, u.bio,
-        ...asArray(u.skills), uRole, ...uInterests,
+        ...(u.id === myId || u.roleSettings?.privacy_showSkills !== false ? asArray(u.skills) : []), uRole, ...uInterests,
       ].filter(Boolean).join(' '), q);
     }
 
@@ -28182,7 +28257,7 @@ app.get('/users/search', authenticate, async (req, res) => {
 
   const allResults = scored.map(({ u, sharedInterests }) => ({
     id: u.id, name: u.name, title: u.title || '', bio: u.bio || '',
-    organization: u.organization || '', skills: asArray(u.skills),
+    organization: u.organization || '', skills: u.id === myId || u.roleSettings?.privacy_showSkills !== false ? asArray(u.skills) : [],
     role: u.preferences?.role || '',
     interests: (u.preferences?.interests || []).slice(0, 6),
     followersCount: followerCount[u.id] || 0,
@@ -28251,13 +28326,14 @@ app.get('/users/:id', authenticate, async (req, res, next) => {
     const followsYouBack = follows.some(f => f.followerId === user.id && f.followingId === req.user.id);
     res.json({
       id: user.id, name: user.name, title: user.title || '', bio: user.bio || '',
-      organization: user.organization || '', skills: asArray(user.skills),
+      organization: user.organization || '', skills: user.id === req.user.id || user.roleSettings?.privacy_showSkills !== false ? asArray(user.skills) : [],
+      ...(user.id === req.user.id || user.roleSettings?.privacy_showEmail === true ? { email: user.email } : {}),
       avatarUrl: user.avatarUrl || '', coverUrl: user.coverUrl || '',
       role: user.preferences?.role || '',
       interests: user.preferences?.interests || [],
       goals: user.preferences?.goals || [],
       experience: user.preferences?.experience || '',
-      roleSettings: user.roleSettings || {},
+      roleSettings: publicRoleSettings(user.roleSettings),
       followersCount, followingCount, isFollowing, followsYouBack,
       connectionStatus: user.id === req.user.id ? 'self' : getConnectionStatus(req.user.id, user.id),
       links: user.links || {},
@@ -28330,13 +28406,13 @@ app.delete('/users/:id/follow', authenticate, async (req, res) => {
 // --- Followers / Following lists ----------------------------------------------
 // A profile owner turning off "who can see my connections" should mean
 // exactly that — not just filtering individually-hidden users out of the
-// list, but withholding the list itself from anyone who isn't the owner or
-// already connected to them. Shared by both directions below.
+// list, but withholding the list itself from anyone who is not the owner.
+// Shared by both directions below.
 async function connectionsListRestricted(ownerId, viewerId) {
   if (ownerId === viewerId) return false;
   const owner = await getUser(ownerId);
   if (!owner || owner.roleSettings?.privacy_showConnections !== false) return false;
-  return getConnectionStatus(viewerId, ownerId) !== 'connected';
+  return true;
 }
 
 app.get('/users/:id/followers', authenticate, async (req, res) => {
@@ -32740,6 +32816,12 @@ db.initDB().then(async () => {
   console.log('[startup] Beginning background data initialization...');
   try {
     await migrateDB();
+    await migrateSocialCredentials(db, tokenVault);
+    if (process.env.NODE_ENV === 'production') {
+      await db.query('SELECT auth_version FROM users LIMIT 0');
+      await db.query('SELECT id FROM auth_sessions LIMIT 0');
+      securityStorageReady = true;
+    }
     if (IS_PIPELINE_ROLE) await backfillYouTubeVideoDurations();
     await refreshSharedUserActivity();
     await Promise.all([refreshDbFeedPostCount(), refreshStagingPostCount()]);

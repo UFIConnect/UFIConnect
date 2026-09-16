@@ -1,3 +1,5 @@
+import { getAccessToken, privateSessionStorage } from '../auth/session';
+import { createAuthenticatedStream } from '../api/authenticatedStream';
 ﻿import { useState, useEffect, useCallback, useRef, useMemo, Component, memo } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
@@ -238,6 +240,7 @@ function equalizeGroupFeed(posts, sort) {
 const FOLLOWING_NATIVE_COMPAT_TTL_MS = 30_000;
 const followingNativeCompatCache = new Map();
 const locationFeedCursorSupport = new Map();
+window.addEventListener('ufi-session-cleared', () => followingNativeCompatCache.clear());
 
 function requestedFeedSources(params) {
   return [...new Set([
@@ -429,7 +432,7 @@ function wasSocialConnectPromptRecentlyShown(userId) {
   try {
     const key = memberStorageKey(SOCIAL_CONNECT_PROMPT_KEY, userId);
     if (!key) return false;
-    const shownAt = Number(localStorage.getItem(key));
+    const shownAt = Number(privateSessionStorage.getItem(key));
     return Number.isFinite(shownAt) && Date.now() - shownAt < SOCIAL_CONNECT_PROMPT_COOLDOWN_MS;
   } catch { return false; }
 }
@@ -437,7 +440,7 @@ function wasSocialConnectPromptRecentlyShown(userId) {
 function markSocialConnectPromptShown(userId) {
   try {
     const key = memberStorageKey(SOCIAL_CONNECT_PROMPT_KEY, userId);
-    if (key) localStorage.setItem(key, String(Date.now()));
+    if (key) privateSessionStorage.setItem(key, String(Date.now()));
   } catch {}
 }
 
@@ -462,7 +465,7 @@ function loadFeedState(userId) {
   try {
     const key = memberStorageKey(FEED_STATE_KEY, userId);
     if (!key) return null;
-    const raw = sessionStorage.getItem(key) || localStorage.getItem(key);
+    const raw = privateSessionStorage.getItem(key);
     if (!raw) return null;
     const s = JSON.parse(raw);
     const requestedMode = s.viewMode === 'local' ? 'countries' : s.viewMode;
@@ -503,13 +506,12 @@ function saveFeedState(userId, filters, activeTabs, _search, viewMode, location)
       sources: normalizeSingleSourceSelection(filters?.sources, allowedSourceIds),
     };
     const value = JSON.stringify({ filters: savedFilters, activeTabs: savedTabs, search: '', viewMode, location });
-    sessionStorage.setItem(key, value);
-    localStorage.setItem(key, value);
+    privateSessionStorage.setItem(key, value);
 
     if (viewMode === 'feed' || viewMode === 'following') {
       const suggestionKey = memberStorageKey(`ufi_feed_suggestions:${viewMode}`, userId);
       const sources = savedFilters.sources.length ? savedFilters.sources : savedTabs;
-      localStorage.setItem(suggestionKey, JSON.stringify({
+      privateSessionStorage.setItem(suggestionKey, JSON.stringify({
         sources: Array.isArray(sources) ? sources : [],
         topics: Array.isArray(filters?.topics) ? filters.topics : [],
         updatedAt: Date.now(),
@@ -2070,7 +2072,7 @@ function readFeedCache(userId) {
   try {
     const key = memberStorageKey(FEED_CACHE_KEY, userId);
     if (!key) return null;
-    const raw = localStorage.getItem(key);
+    const raw = privateSessionStorage.getItem(key);
     if (!raw) return null;
     const { posts, ts } = JSON.parse(raw);
     if (!Array.isArray(posts)) return null;
@@ -2084,7 +2086,7 @@ function writeFeedCache(userId, posts) {
   try {
     const key = memberStorageKey(FEED_CACHE_KEY, userId);
     if (!key) return;
-    localStorage.setItem(key, JSON.stringify({ posts: posts.slice(0, 100), ts: Date.now() }));
+    privateSessionStorage.setItem(key, JSON.stringify({ posts: posts.slice(0, 100), ts: Date.now() }));
   } catch {}
 }
 
@@ -3019,8 +3021,9 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       try {
         const base = await resolveApiBaseUrl();
         if (cancelled) return;
-        const token = localStorage.getItem('pc_token') || '';
-        es = new EventSource(`${base}/feed/stream?token=${encodeURIComponent(token)}`);
+        const token = getAccessToken();
+        if (!token) return;
+        es = createAuthenticatedStream(`${base}/feed/stream`, token);
         es.onopen = () => {
           reconnectAttempt = 0; // Reset backoff on successful connection
         };

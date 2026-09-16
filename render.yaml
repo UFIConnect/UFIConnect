@@ -6,6 +6,8 @@ databases:
     # tracked separately as diskSizeGB.
     diskSizeGB: 5
 
+# Deploy hooks are invoked only by the verified-commit workflow. Using a hook's
+# ref parameter disables Render auto-deploys, so keep this ownership explicit.
 services:
   # ── Backend (Node.js API) ───────────────────────────────────
   - type: web
@@ -15,12 +17,12 @@ services:
     domains:
       - api.uficonnect.org
     runtime: node
-    autoDeployTrigger: commit
+    autoDeployTrigger: off
     buildFilter:
       paths:
         - backend/**
     rootDir: backend
-    buildCommand: npm install
+    buildCommand: npm ci --omit=dev
     startCommand: node --max-old-space-size=320 index.js
     plan: starter
     healthCheckPath: /readyz
@@ -86,10 +88,20 @@ services:
         value: api
       - key: JWT_SECRET
         sync: false
+      # The API and pipeline must use the same independent 32-byte base64 key.
+      - key: OAUTH_TOKEN_ENCRYPTION_KEY
+        sync: false
+      - key: DATABASE_SSL_MODE
+        value: verify-full
+      - key: DATABASE_SSL_CA
+        sync: false
+      - key: NODE_VERSION
+        value: '24'
       - key: DATABASE_URL
-        fromDatabase:
-          name: uficonnect-db
-          property: connectionString
+        # Use the full external URL with verified TLS. Render's internal
+        # connectionString uses a self-signed certificate, without verify-full.
+        # Restrict the database's external access to the services' egress IPs.
+        sync: false
       # Optional read-failover target for when the primary DB above is
       # overloaded or unreachable (see backend/db.js: readQuery/
       # initBackupDB) — only the hot feed queries fail over to it, and only
@@ -107,6 +119,10 @@ services:
         value: '85'
       - key: ALLOWED_ORIGINS
         value: https://uficonnect.org,https://www.uficonnect.org,https://uficonnect.pro,https://www.uficonnect.pro,https://uficonnect-web.onrender.com,https://office.uficonnect.org,https://uficonnect-office.onrender.com
+      # Only these public sites may embed the isolated optional Google tag.
+      # Add the Expo web deployment's exact origin when hosting it elsewhere.
+      - key: ANALYTICS_PARENT_ORIGINS
+        value: https://uficonnect.org,https://www.uficonnect.org,https://uficonnect.pro,https://www.uficonnect.pro,https://uficonnect-web.onrender.com,https://yosufkaka99-alt.github.io,https://app.uficonnect.org
       - key: API_BASE_URL
         value: https://api.uficonnect.org
       - key: FALLBACK_API_BASE_URL
@@ -151,10 +167,9 @@ services:
         sync: false
       - key: RENDER_SERVICE_PIPELINE_ID
         sync: false
-      # Shared secret gating /office/* (status, manual refresh triggers, and
-      # the deploy trigger). Until this is set the API accepts unauthenticated
-      # office requests (backward compatible) — set a value here, then enter
-      # the same value in the office dashboard when prompted.
+      # Shared secret gating /office/* (status, manual refresh and deploys).
+      # Production Office requests fail closed until this is configured.
+      # Enter the same value in the office dashboard's masked access dialog.
       - key: OFFICE_TOKEN
         sync: false
       # Media upload (Cloudinary signed direct upload) — free tier at
@@ -371,12 +386,12 @@ services:
   - type: web
     name: uficonnect-pipeline
     runtime: node
-    autoDeployTrigger: commit
+    autoDeployTrigger: off
     buildFilter:
       paths:
         - backend/**
     rootDir: backend
-    buildCommand: npm install
+    buildCommand: npm ci --omit=dev
     startCommand: node --max-old-space-size=320 index.js
     plan: starter
     healthCheckPath: /readyz
@@ -435,10 +450,17 @@ services:
         value: pipeline
       - key: JWT_SECRET
         sync: false
+      - key: OAUTH_TOKEN_ENCRYPTION_KEY
+        sync: false
+      - key: DATABASE_SSL_MODE
+        value: verify-full
+      - key: DATABASE_SSL_CA
+        sync: false
+      - key: NODE_VERSION
+        value: '24'
       - key: DATABASE_URL
-        fromDatabase:
-          name: uficonnect-db
-          property: connectionString
+        # Match the API's verified external database URL and network allowlist.
+        sync: false
       - key: DATABASE_URL_BACKUP
         sync: false
       # Not user-facing, but /office/* still needs a CORS allowance for the
@@ -529,7 +551,7 @@ services:
   - type: web
     name: uficonnect-web
     runtime: static
-    autoDeployTrigger: commit
+    autoDeployTrigger: off
     buildFilter:
       paths:
         - web/**
@@ -537,7 +559,7 @@ services:
       - uficonnect.org
       - www.uficonnect.org
     rootDir: web
-    buildCommand: npm install && npm run build
+    buildCommand: npm ci && npm run build
     staticPublishPath: dist
     routes:
       - type: rewrite
@@ -567,11 +589,11 @@ services:
       - path: /assets/*
         name: Cache-Control
         value: public, max-age=31536000, immutable
-      # No CSP here: this app aggregates content/avatars from dozens of
-      # external sources (Reddit, GitHub, YouTube, etc.) with no fixed
-      # domain list, so a real img-src/connect-src allowlist needs its own
-      # dedicated audit rather than a guess that risks silently breaking
-      # feed images. These are the headers safe to set without that risk.
+      # Updated by scripts/sync-security-headers.mjs. Media may use HTTPS
+      # providers; executable scripts require the app origin or a fixed hash.
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; script-src 'self' 'sha256-w3Ke8LfvdMZwAb7byJBlehlUyE5HjV5rka75pE6G0J8=' 'sha256-X5kOxK0BkVOmzWsKGwp44DOpaPkZo3PQ9lkeTvBTcmU=' 'sha256-SLemu6qdC3SNomQNM0m6pF/dDOUzJejsgJw4vZ6/RwM=' 'sha256-canvoxfi90Okg3WUEVS7rb7AXS8s1nEhr6rE8o4PpNY=' 'sha256-TmLK51iJuCuZRsMaaunzKs3lS7ioMu77c7fiITCwZrQ=' 'sha256-CUz+HbFLdRw1H9TKvWBwFeknPrQTvo+EWygCYcCmC28='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' https: data: blob:; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' https:; media-src 'self' https: blob:; frame-src 'self' https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self' https://*.auth0.com https://checkout.stripe.com; frame-ancestors 'self'; upgrade-insecure-requests"
       - path: /*
         name: Strict-Transport-Security
         value: max-age=63072000; includeSubDomains; preload
@@ -583,13 +605,17 @@ services:
         value: nosniff
       - path: /*
         name: Referrer-Policy
-        value: strict-origin-when-cross-origin
+        value: no-referrer
       - path: /*
         name: Permissions-Policy
         value: camera=(), microphone=(), geolocation=()
     envVars:
+      - key: NODE_VERSION
+        value: '24'
       - key: VITE_API_URL
         value: https://api.uficonnect.org
+      - key: VITE_ANALYTICS_BRIDGE_URL
+        value: https://api.uficonnect.org/analytics-bridge.html
       # Keep the Render hostname available during DNS/TLS propagation and a
       # regional edge failure. The browser chooses it automatically when the
       # public API host cannot answer its lightweight readiness probe.
@@ -610,14 +636,14 @@ services:
   - type: web
     name: uficonnect-office
     runtime: static
-    autoDeployTrigger: commit
+    autoDeployTrigger: off
     buildFilter:
       paths:
         - office/**
     domains:
       - office.uficonnect.org
     rootDir: office
-    buildCommand: npm install && npm run build
+    buildCommand: npm ci && npm run build
     staticPublishPath: dist
     routes:
       - type: rewrite
@@ -627,6 +653,9 @@ services:
         source: /*
         destination: /index.html
     headers:
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' https: data: blob:; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' https:; media-src 'self' https: blob:; frame-src 'self' https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self' https://*.auth0.com https://checkout.stripe.com; frame-ancestors 'self'; upgrade-insecure-requests"
       - path: /health*
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
@@ -647,7 +676,7 @@ services:
         value: nosniff
       - path: /*
         name: Referrer-Policy
-        value: strict-origin-when-cross-origin
+        value: no-referrer
       - path: /*
         name: Permissions-Policy
         value: camera=(), microphone=(), geolocation=()
@@ -658,6 +687,8 @@ services:
         name: X-Robots-Tag
         value: noindex, nofollow
     envVars:
+      - key: NODE_VERSION
+        value: '24'
       - key: VITE_API_URL
         value: https://api.uficonnect.org
       # uficonnect-pipeline's own URL — Live Sources/Pipeline/Topics/agent

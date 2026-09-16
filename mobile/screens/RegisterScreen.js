@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Alert,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
+import PasswordInput from '../components/PasswordInput';
+import { validateNewPassword } from '../security/passwordPolicy';
 import { COLORS } from '../theme';
 
 export default function RegisterScreen({ navigation }) {
@@ -14,20 +16,23 @@ export default function RegisterScreen({ navigation }) {
   const [title, setTitle] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [concealKey, setConcealKey] = useState(0);
+  useEffect(() => navigation.addListener('blur', () => setPassword('')), [navigation]);
 
   async function handleRegister() {
-    if (!name.trim() || !email.trim() || !password.trim() || !title.trim()) {
+    setConcealKey(value => value + 1);
+    if (!name.trim() || !email.trim() || !password || !title.trim()) {
       return Alert.alert('Missing fields', 'Please fill in the required fields.');
     }
-    if (password.length < 6) {
-      return Alert.alert('Weak password', 'Password must be at least 6 characters.');
-    }
+    const passwordError = validateNewPassword(password);
+    if (passwordError) return Alert.alert('Check password', passwordError);
     setLoading(true);
     try {
       await register(name.trim(), email.trim().toLowerCase(), password, title.trim(), phone.trim());
     } catch (err) {
       Alert.alert('Registration failed', err?.response?.data?.message || 'Please try again.');
     } finally {
+      setPassword('');
       setLoading(false);
     }
   }
@@ -61,8 +66,8 @@ export default function RegisterScreen({ navigation }) {
             value={phone} onChangeText={setPhone} keyboardType="phone-pad" autoComplete="tel" textContentType="telephoneNumber" />
 
           <Text style={styles.label}>Password</Text>
-          <TextInput style={styles.input} placeholder="Min. 6 characters" placeholderTextColor={COLORS.muted}
-            value={password} onChangeText={setPassword} secureTextEntry />
+          <PasswordInput style={styles.input} placeholder="At least 15 characters" placeholderTextColor={COLORS.muted}
+            value={password} onChangeText={setPassword} newPassword accessibilityLabel="New password" editable={!loading} concealKey={concealKey} />
 
           <TouchableOpacity style={styles.button} onPress={handleRegister} disabled={loading}>
             {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Create account</Text>}
@@ -70,7 +75,7 @@ export default function RegisterScreen({ navigation }) {
 
           <View style={styles.footer}>
             <Text style={styles.footerText}>Already have an account? </Text>
-            <TouchableOpacity onPress={() => navigation.navigate('Login')}>
+            <TouchableOpacity onPress={() => navigation.popTo('Login')}>
               <Text style={styles.link}>Sign in</Text>
             </TouchableOpacity>
           </View>

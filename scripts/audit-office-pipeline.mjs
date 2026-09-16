@@ -20,12 +20,16 @@ try {
   browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
   for (const width of [1440, 768, 390, 320]) {
     const context = await browser.newContext({ viewport: { width, height: 950 }, isMobile: width < 600, hasTouch: width < 600 });
-    await context.addInitScript(() => localStorage.setItem('ufi_office_token', 'audit-only'));
+    await context.addInitScript(() => localStorage.setItem('ufi_office_token', 'legacy-must-be-deleted'));
     const page = await context.newPage(), errors = [];
     page.on('pageerror', error => errors.push(error.message));
     let failList = false, failDetail = false, controlRequests = 0, executions = 0;
     await page.route('**/office/**', async route => {
       const url = new URL(route.request().url());
+      assert.equal(url.searchParams.has('token'), false, 'Office tokens never appear in URLs');
+      if (route.request().headers()['x-office-token'] !== 'audit-only') {
+        return route.fulfill({ status: 401, json: { error: 'Unauthorized' } });
+      }
       if (url.pathname.endsWith('/post-pipeline/detail')) {
         if (failDetail) return route.fulfill({ status: 503, json: { error: 'History temporarily unavailable' } });
         const post = posts.find(row => row.id === url.searchParams.get('id'));
@@ -50,6 +54,32 @@ try {
       return route.fulfill({ json: { agents: {} } });
     });
     await page.goto(server.resolvedUrls.local[0] + '#post-pipeline', { waitUntil: 'domcontentloaded', timeout: 90000 });
+    await page.getByLabel('Access token', { exact: true }).fill('audit-only');
+    assert.equal(await page.getByLabel('Access token', { exact: true }).getAttribute('type'), 'password');
+    await page.getByRole('button', { name: 'Show access token', exact: true }).click();
+    assert.equal(await page.getByLabel('Access token', { exact: true }).getAttribute('type'), 'text');
+    const accessBounds = await page.getByRole('dialog').boundingBox();
+    assert.ok(accessBounds.x >= 0 && accessBounds.x + accessBounds.width <= width, 'Access dialog fits the viewport');
+    assert.equal(await page.getByRole('button', { name: 'Hide access token', exact: true }).getAttribute('aria-pressed'), 'true');
+    const protection = await page.getByLabel('Access token', { exact: true }).evaluate(element => {
+      return ['copy', 'cut', 'dragstart'].every(type => {
+        const event = new Event(type, { bubbles: true, cancelable: true });
+        element.dispatchEvent(event);
+        return event.defaultPrevented;
+      });
+    });
+    assert.equal(protection, true, 'Revealed Office credentials still reject clipboard export');
+    await page.getByRole('button', { name: 'Unlock Office', exact: true }).focus();
+    assert.equal(await page.getByLabel('Access token', { exact: true }).getAttribute('type'), 'password');
+    await page.getByRole('button', { name: 'Show access token', exact: true }).click();
+    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+    assert.equal(await page.getByLabel('Access token', { exact: true }).getAttribute('type'), 'password');
+    await page.getByRole('button', { name: 'Show access token', exact: true }).click();
+    await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+    assert.equal(await page.getByLabel('Access token', { exact: true }).getAttribute('type'), 'password');
+    await page.getByRole('button', { name: 'Unlock Office', exact: true }).click();
+    assert.equal(await page.locator('#office-access-token').inputValue(), '', 'Submission clears the entered credential');
+    assert.equal(await page.evaluate(() => localStorage.getItem('ufi_office_token')), null);
     await page.getByRole('button', { name: posts[0].title, exact: true }).waitFor();
     await page.getByLabel('Auto-refresh').uncheck();
     assert.equal(await page.locator('.pp-list tbody tr').count(), 40);

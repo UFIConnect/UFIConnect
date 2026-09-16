@@ -1,27 +1,21 @@
-version: "3.9"
-
+# Local-only container example. See docs/CONTAINERS.md before use.
 services:
-
-  # ── PostgreSQL ──────────────────────────────────────────────
   db:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB:       uficonnect
-      POSTGRES_USER:     pc_user
-      POSTGRES_PASSWORD: pc_password
+      POSTGRES_DB: uficonnect
+      POSTGRES_USER: pc_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a separate random URL-safe hex database password}
     volumes:
       - pg_data:/var/lib/postgresql/data
-      - ./backend/schema.sql:/docker-entrypoint-initdb.d/schema.sql
-    ports:
-      - "5432:5432"
+      - ./backend/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U pc_user -d uficonnect"]
       interval: 5s
       timeout: 5s
       retries: 5
 
-  # ── Backend ─────────────────────────────────────────────────
   backend:
     build:
       context: .
@@ -31,26 +25,43 @@ services:
       db:
         condition: service_healthy
     environment:
-      NODE_ENV:     production
-      PORT:         3000
-      JWT_SECRET:   ${JWT_SECRET:-change-me-in-production}
-      DATABASE_URL: postgresql://pc_user:pc_password@db:5432/uficonnect
-      ALLOWED_ORIGINS: http://localhost:5173,http://localhost:80
-    ports:
-      - "3000:3000"
+      NODE_ENV: production
+      PORT: "3000"
+      JWT_SECRET: ${JWT_SECRET:?Set a dedicated random JWT secret of at least 32 bytes}
+      OAUTH_TOKEN_ENCRYPTION_KEY: ${OAUTH_TOKEN_ENCRYPTION_KEY:?Set a separate random 32-byte key encoded as base64}
+      OFFICE_TOKEN: ${OFFICE_TOKEN:-}
+      DATABASE_URL: postgresql://pc_user:${POSTGRES_PASSWORD:?Set a separate random URL-safe hex database password}@db:5432/uficonnect
+      # Local Docker network only; hosted/public databases must verify TLS.
+      DATABASE_SSL_MODE: disable
+      DATABASE_ALLOW_PLAINTEXT_INTERNAL: "true"
+      TRUST_PROXY: "1"
+      ALLOWED_ORIGINS: http://localhost,http://127.0.0.1
+      API_BASE_URL: http://localhost/api
+      PUBLIC_API_URL: http://localhost/api
+      FRONTEND_URL: http://localhost
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/readyz',{signal:AbortSignal.timeout(4000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
-  # ── Web (React SPA via nginx) ────────────────────────────────
   web:
     build:
       context: ./web
       dockerfile: Dockerfile
       args:
-        VITE_API_URL: ""   # empty → uses /api proxy via nginx
+        VITE_API_URL: ""
     restart: unless-stopped
+    environment:
+      API_UPSTREAM: backend:3000
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
-      - "80:80"
+      - "127.0.0.1:80:80"
 
 volumes:
   pg_data:

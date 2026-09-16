@@ -1,3 +1,6 @@
+import { PASSWORD_GUIDANCE, validateNewPassword } from '../auth/passwordPolicy';
+import PasswordInput from '../components/PasswordInput';
+import { privateSessionStorage } from '../auth/session';
 ﻿import { useState, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
@@ -494,9 +497,8 @@ export default function Register() {
     if (normalizedPhone && !/^\+[1-9]\d{7,14}$/.test(normalizedPhone)) {
       setError('Use a phone number with country code, such as +1 555 123 4567.'); return;
     }
-    if (form.password.length < 6) {
-      setError('Password must be at least 6 characters.'); return;
-    }
+    const passwordError = validateNewPassword(form.password);
+    if (passwordError) { setError(passwordError); return; }
     if (form.password !== form.confirmPassword) {
       setError('Passwords do not match.'); return;
     }
@@ -536,7 +538,7 @@ export default function Register() {
     try {
       await register(form.name, form.email, form.password, title, form.phone);
       if (selectedMacro) {
-        localStorage.setItem('ufi_signup_ctx', JSON.stringify({
+        privateSessionStorage.setItem('ufi_signup_ctx', JSON.stringify({
           role: selectedMacro.role,
           experience,
           bio: bio.trim(),
@@ -650,13 +652,14 @@ export default function Register() {
                   <span style={{ fontSize: '.72rem', color: 'var(--muted)', marginTop: 4, display: 'block' }}>Include your country code. Used only to keep your billing account accurate.</span>
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Password</label>
-                  <input className="form-input" type="password" name="password"
-                    placeholder="At least 6 characters" value={form.password} onChange={handleChange} autoComplete="new-password" />
+                  <label className="form-label" htmlFor="register-password">Password</label>
+                  <PasswordInput id="register-password" aria-describedby="register-password-help" className="form-input" name="password"
+                    placeholder="At least 15 characters" value={form.password} onChange={handleChange} autoComplete="new-password" />
+                  <p id="register-password-help" style={{ fontSize: '.75rem', color: 'var(--muted)', margin: '6px 0 0' }}>{PASSWORD_GUIDANCE}</p>
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Confirm password</label>
-                  <input className="form-input" type="password" name="confirmPassword"
+                  <label className="form-label" htmlFor="register-confirm-password">Confirm password</label>
+                  <PasswordInput id="register-confirm-password" className="form-input" name="confirmPassword"
                     placeholder="Re-enter your password" value={form.confirmPassword} onChange={handleChange} autoComplete="new-password" />
                 </div>
 

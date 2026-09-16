@@ -4,6 +4,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { StatusBar } from 'expo-status-bar';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AuthProvider, useAuth } from './context/AuthContext';
 import LoginScreen from './screens/LoginScreen';
@@ -17,7 +18,9 @@ import MessagesScreen from './screens/MessagesScreen';
 import ConversationScreen from './screens/ConversationScreen';
 import ProfileScreen from './screens/ProfileScreen';
 import ConnectedAccountsScreen from './screens/ConnectedAccountsScreen';
+import SecurityScreen from './screens/SecurityScreen';
 import { COLORS } from './theme';
+import AnalyticsProvider, { useAnalytics } from './analytics/AnalyticsProvider';
 
 const RootStack  = createNativeStackNavigator();
 const Tab        = createBottomTabNavigator();
@@ -72,6 +75,7 @@ function ProfileNavigator() {
     <ProfileStack.Navigator screenOptions={NAV_OPTS}>
       <ProfileStack.Screen name="ProfileMain" component={ProfileScreen} options={{ title: 'Profile' }} />
       <ProfileStack.Screen name="ConnectedAccounts" component={ConnectedAccountsScreen} options={{ title: 'Connected Accounts' }} />
+      <ProfileStack.Screen name="Security" component={SecurityScreen} options={{ title: 'Security' }} />
     </ProfileStack.Navigator>
   );
 }
@@ -81,10 +85,11 @@ function TabIcon({ icon, focused }) {
 }
 
 function AppTabs() {
+  const insets = useSafeAreaInsets();
   return (
     <Tab.Navigator
       screenOptions={{
-        tabBarStyle: { backgroundColor: '#fff', borderTopColor: COLORS.border, height: 60, paddingBottom: 8 },
+        tabBarStyle: { backgroundColor: '#fff', borderTopColor: COLORS.border, height: 60 + insets.bottom, paddingBottom: Math.max(8, insets.bottom) },
         tabBarActiveTintColor: COLORS.primary,
         tabBarInactiveTintColor: COLORS.muted,
         tabBarLabelStyle: { fontSize: 10, fontWeight: '700' },
@@ -148,14 +153,30 @@ function RootNavigator() {
   );
 }
 
+function TrackedNavigation() {
+  const navigationRef = React.useRef(null);
+  const { trackScreen } = useAnalytics();
+  const trackCurrentScreen = () => {
+    const route = navigationRef.current?.getCurrentRoute();
+    trackScreen(route?.name, route?.key);
+  };
+  return (
+    <NavigationContainer ref={navigationRef} onReady={trackCurrentScreen} onStateChange={trackCurrentScreen}>
+      <StatusBar style="dark" />
+      <RootNavigator />
+    </NavigationContainer>
+  );
+}
+
 export default function App() {
   return (
-    <AuthProvider>
-      <NavigationContainer>
-        <StatusBar style="dark" />
-        <RootNavigator />
-      </NavigationContainer>
-    </AuthProvider>
+    <SafeAreaProvider>
+      <AnalyticsProvider>
+        <AuthProvider>
+          <TrackedNavigation />
+        </AuthProvider>
+      </AnalyticsProvider>
+    </SafeAreaProvider>
   );
 }
 

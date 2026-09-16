@@ -1,3 +1,4 @@
+import { privateSessionStorage } from '../auth/session';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
@@ -644,7 +645,7 @@ function MediaStudioSection({ onOpenCrossPost, readOnly = false }) {
 
   function sendToCrossPost(selected = asset) {
     if (!selected?.url) return;
-    try { sessionStorage.setItem('ufi_crosspost_media', JSON.stringify(selected)); } catch {}
+    try { privateSessionStorage.setItem('ufi_crosspost_media', JSON.stringify(selected)); } catch {}
     onOpenCrossPost();
   }
 
@@ -1418,9 +1419,9 @@ function CrossPostSection() {
   useEffect(() => {
     loadCrossPostData();
     try {
-      const stored = JSON.parse(sessionStorage.getItem('ufi_crosspost_media') || 'null');
+      const stored = JSON.parse(privateSessionStorage.getItem('ufi_crosspost_media') || 'null');
       if (stored?.url && (stored?.type === 'image' || stored?.type === 'video')) setMedia(stored);
-      sessionStorage.removeItem('ufi_crosspost_media');
+      privateSessionStorage.removeItem('ufi_crosspost_media');
     } catch {}
   }, [loadCrossPostData]);
 

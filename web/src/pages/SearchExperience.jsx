@@ -1,3 +1,4 @@
+import { privateSessionStorage } from '../auth/session';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
@@ -51,7 +52,7 @@ function readJsonStorage(storage, key) {
 function previousFeedSignals(userId, mode) {
   if (!userId || typeof window === 'undefined') return { sources: [], topics: [], found: false };
 
-  const dedicated = readJsonStorage(localStorage, `ufi_feed_suggestions:${mode}:${userId}`);
+  const dedicated = readJsonStorage(privateSessionStorage, `ufi_feed_suggestions:${mode}:${userId}`);
   if (dedicated) {
     return {
       sources: Array.isArray(dedicated.sources) ? dedicated.sources : [],
@@ -61,7 +62,7 @@ function previousFeedSignals(userId, mode) {
   }
 
   const key = `ufi_feed_state:${userId}`;
-  const saved = readJsonStorage(sessionStorage, key) || readJsonStorage(localStorage, key);
+  const saved = readJsonStorage(privateSessionStorage, key);
   if (!saved || saved.viewMode !== mode) return { sources: [], topics: [], found: false };
   return {
     sources: Array.isArray(saved.filters?.sources) && saved.filters.sources.length

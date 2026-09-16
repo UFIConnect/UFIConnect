@@ -1,3 +1,4 @@
+import { installAuditMember, auditNavigate, auditReload } from './audit-session.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -31,7 +32,6 @@ try {
   for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 768, height: 1024 }, { width: 820, height: 1180 }, { width: 1440, height: 1000 }]) {
     const context = await browser.newContext({ viewport, isMobile: viewport.width <= 768, hasTouch: viewport.width <= 768 });
     const published = [];
-    await context.addInitScript(token => localStorage.setItem('pc_token', token), app.token(memberId));
     const routeApi = async route => {
       const endpoint = new URL(route.request().url()).pathname.replace(/^\/(api|fallback)/, '');
       if (route.request().method() === 'POST' && /^\/groups\/[^/]+\/posts$/.test(endpoint)) {
@@ -48,6 +48,7 @@ try {
       contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'),
     }));
     const page = await context.newPage();
+    await installAuditMember(page, app, memberId);
     page.setDefaultTimeout(12000);
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -64,7 +65,7 @@ try {
       check(await page.evaluate(() => document.body.style.overflow !== 'hidden'), 'Page scrolling must unlock after closing');
     };
     try {
-      await page.goto(base);
+      await auditNavigate(page, base);
       if (viewport.width > 768) {
         await page.locator('.sidebar-logout--danger').waitFor();
         check(!(await opener.isVisible()), 'Mobile opener leaked into desktop');
@@ -151,7 +152,7 @@ try {
         const savedTabs = page.getByRole('tablist', { name: 'Saved items' });
         await savedTabs.waitFor();
         check(await savedTabs.getByRole('tab', { name: /^Jobs/ }).getAttribute('aria-selected') === 'true', 'Roles must open saved jobs');
-        await page.reload();
+        await auditReload(page);
         await savedTabs.waitFor();
         check(await savedTabs.getByRole('tab', { name: /^Jobs/ }).getAttribute('aria-selected') === 'true', 'Saved roles must survive reload');
         await opener.click();
@@ -179,7 +180,7 @@ try {
         await waitClosed();
 
         for (const route of ['', 'opportunities']) {
-          await page.goto(base + route);
+          await auditNavigate(page, base + route);
           await rightOpener.click();
           const right = page.locator('#mobile-feed-drawer');
           await page.waitForFunction(() => document.querySelector('#mobile-feed-drawer').getAttribute('aria-hidden') === 'false');
@@ -193,7 +194,7 @@ try {
           await waitClosed();
         }
 
-        await page.goto(base);
+        await auditNavigate(page, base);
         await opener.waitFor();
         // Real touch input also exercises native scrolling and touchcancel.
         const session = await context.newCDPSession(page);

@@ -1,7 +1,7 @@
 ﻿import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 
-const EFFECTIVE_DATE = 'May 28, 2026';
+const EFFECTIVE_DATE = 'September 15, 2026';
 const CONTACT_EMAIL  = 'privacy@uficonnect.org';
 const APP_NAME       = 'UFIconnect';
 const APP_URL        = 'https://uficonnect.org';
@@ -146,9 +146,9 @@ export default function PrivacyPolicy() {
           <UL items={[
             'You are redirected to that platform\'s official login page — we never see your social password',
             'You grant us a limited-scope access token (e.g. read-only access to your posts or feed)',
-            'We store that token encrypted in our database and use it only to personalise your feed',
+            'Connected-account tokens are encrypted before database storage and used for the connection you authorise',
             'You can disconnect any platform at any time from your Profile → Connected Accounts page',
-            'Disconnecting immediately removes the token from our systems',
+            'Disconnecting removes the active connection credentials; backup copies follow the backup retention policy',
           ]} />
         </Section>
 
@@ -156,21 +156,34 @@ export default function PrivacyPolicy() {
           <P>We share data only in the following limited circumstances:</P>
           <UL items={[
             'Service providers: our hosting provider (Render) and database (PostgreSQL on Render) process data to operate the platform. They are contractually bound to keep it confidential.',
+            'Optional analytics: if you accept analytics in a browser, Google Analytics receives generic page categories, a random analytics identifier, and basic browser/device information. Google receives your IP address when your browser connects. We do not send passwords, messages, account details, search terms, or your full page links to Google Analytics.',
             'Legal requirements: if required by law, court order, or to protect our rights and users\' safety.',
             'Business transfer: if UFIconnect is acquired or merges, data may transfer to the new entity under the same policy.',
           ]} />
-          <P>We do not share your data with advertisers, data brokers, or analytics platforms.</P>
+          <P>Our analytics integration disables advertising storage, Google signals, advertising personalisation, and advertising user data.</P>
         </Section>
 
         <Section title="7. Cookies and local storage">
           <P>
-            We use <strong>localStorage</strong> to store your authentication token (JWT) on your device.
-            We use a <strong>service worker</strong> to cache app shell assets for faster load times.
-            We do not use third-party tracking cookies or analytics cookies.
+            The web app keeps your sign-in token and private profile data in the current page's memory,
+            not in localStorage or sessionStorage. Reloading or closing the page ends the local session;
+            a connected sign-in provider may restore access through its own session.
+            The native mobile app stores its sign-in token using the operating system's secure storage.
           </P>
           <P>
-            You can clear your browser's localStorage and cache at any time through your browser settings.
-            Doing so will log you out of {APP_NAME}.
+            We use a service worker to cache public app assets. Browser storage may also hold non-sensitive
+            display preferences. Private API responses are not cached by the service worker. We use
+            first-party operational analytics. Optional Google Analytics loads only after you accept it,
+            inside a separate document that cannot read the app's contents.
+          </P>
+          <P>
+            Your analytics choice is saved in this browser until you change it or clear browser storage.
+            If you accept, a separate random analytics identifier is stored for up to 30 days, with
+            session analytics cookies scoped to the analytics document. Use Analytics privacy
+            (Analytics preferences in the browser version of the mobile app) to decline at any time.
+            Declining stops future Google collection and clears this integration's local analytics
+            identifier and cookies. It does not delete previously collected reports from Google.
+            Standalone iOS and Android builds currently do not collect Google Analytics.
           </P>
         </Section>
 
@@ -180,7 +193,7 @@ export default function PrivacyPolicy() {
             'Posts and messages: deleted with your account. Community posts visible to others may be anonymised rather than deleted.',
             'Feed cache: external posts are cached for up to 60 minutes and then evicted.',
             'Server logs: retained for up to 90 days for security and debugging.',
-            'OAuth tokens: deleted immediately when you disconnect a social account.',
+            'OAuth tokens: active credentials are removed when you disconnect; retained backups follow the backup retention policy.',
           ]} />
         </Section>
 
@@ -207,11 +220,20 @@ export default function PrivacyPolicy() {
           </P>
           <UL items={[
             'Passwords hashed with bcrypt (never stored in plaintext)',
-            'Authentication via short-lived JWT tokens (7-day expiry)',
-            'HTTPS enforced on all connections',
-            'Database access restricted to the application server',
-            'OAuth tokens stored in a dedicated database column',
+            'Local sign-in sessions expire after 12 hours and can be revoked from Security settings',
+            'Changing or resetting a local password invalidates existing local sign-in sessions',
+            'Password-reset links expire, work once, and cannot be used as sign-in tokens',
+            'Public production connections require HTTPS; database TLS certificates are verified by default',
+            'Connected-account tokens are encrypted before persistence; passwords and sign-in tokens are excluded from public profiles',
           ]} />
+          <P>
+            Password fields are hidden by default. You can choose Show to check what you entered;
+            leaving the field or submitting hides it again. Copy protection remains active while
+            the password is visible. Password-manager autofill and pasting remain available.
+            We check new passwords against a local list of common passwords without sending them
+            to a password-checking service. These controls cannot protect a password that you independently
+            copy into another app or a device that is already compromised.
+          </P>
           <P>
             No system is 100% secure. If you discover a security vulnerability, please report it
             responsibly to <a href={`mailto:${CONTACT_EMAIL}`} style={{ color: 'var(--primary)' }}>{CONTACT_EMAIL}</a>.
