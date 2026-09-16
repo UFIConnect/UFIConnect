@@ -44,8 +44,9 @@ export async function auditNavigate(page, value, options) {
   await page.evaluate((url) => new Promise(resolve => {
     history.pushState({}, '', url);
     window.dispatchEvent(new PopStateEvent('popstate'));
-    // React commits this navigation after the history event returns. Wait
-    // for that commit before an audit interacts with a reused feed control.
+    // Let React begin navigation after the history event returns. Two frames
+    // do not guarantee a lazy route or transition has committed; callers must
+    // wait for destination-specific content before using shared controls.
     requestAnimationFrame(() => requestAnimationFrame(resolve));
   }), target.pathname + target.search + target.hash);
   await page.waitForFunction(() => !Array.from(document.querySelectorAll('.splash')).some(element => element.getClientRects().length));

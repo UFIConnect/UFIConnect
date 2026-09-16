@@ -28,8 +28,14 @@ try {
     let failSave = false;
     await page.route('**/api/profile', route => failSave && route.request().method() === 'PATCH' ? route.fulfill({ status: 503, json: { error: 'Temporary outage' } }) : route.continue());
     await page.route('**/api/office/feed?*', route => route.fulfill({ json: { posts: [], hasMore: false, nativeUficonnectIncluded: true } }));
-    const open = async () => {
-      if (width <= 768) await page.getByRole('button', { name: 'Open menu', exact: true }).click();
+    const open = async (mode = 'Home') => {
+      // Same-document navigation can briefly retain the previous open panel.
+      // Wait for the requested feed before opening its source controls.
+      await page.getByRole('radiogroup', { name: `${mode} sources`, exact: true }).waitFor();
+      if (width <= 768) {
+        await page.waitForFunction(() => document.querySelector('#mobile-feed-drawer')?.getAttribute('aria-hidden') === 'true');
+        await page.getByRole('button', { name: 'Open menu', exact: true }).click();
+      }
       const panel = page.locator(width <= 768 ? '#mobile-feed-drawer .home-feed-source-panel' : '.home-feed-right-tabs .home-feed-source-panel');
       const trigger = panel.getByRole('button', { name: /Feed sources/ });
       if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click();
@@ -60,7 +66,8 @@ try {
     panel = await open();
     assert.equal(await panel.getByRole('switch', { checked: true }).count(), 0);
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=following');
-    panel = await open();
+    panel = await open('Following');
+    await panel.getByRole('switch', { name: 'Turn off UFIconnect', exact: true }).waitFor();
     profile = (await app.request('/profile', { userId: id })).data;
     assert.deepEqual(profile.roleSettings.feedSourceFavorites, favorites);
     assert.ok(await panel.getByRole('button', { name: 'Enable all', exact: true }).isVisible());
