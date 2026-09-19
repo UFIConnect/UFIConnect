@@ -54,7 +54,7 @@ jobs:
       - run: node scripts/audit-source-directory.mjs
       - run: node scripts/audit-post-context.mjs
       - run: node scripts/audit-content-history.mjs
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: responsive-audit-screenshots
@@ -83,7 +83,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run test:export --prefix mobile
       - run: npm run test:analytics --prefix mobile
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: native-web-security-screenshots
