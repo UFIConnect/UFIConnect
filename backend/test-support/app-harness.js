@@ -68,7 +68,7 @@ async function createAppHarness({ env = {}, connected = false, query, modules = 
       pickOnboardingGroups, fullProfile, provisionAuth0User, issueSession, createPasswordResetToken, localSessions,
       createOAuthState, verifyOAuthState, dbRowToMemUser, saveSocialToken,
       normalizeFeedPost, dbRowToFeedPost, mapSharedJobPost,
-      getFollowingFeedPosts, getCommunityPosts,
+      getFollowingFeedPosts, getCommunityPosts, followingSourceCache,
       addAndBroadcast, flushFeedPersistenceQueue, ingestPersistenceQueues, transferStagedPosts,
       COUNTRIES_DESTINATION_GUIDES, LIVE_CAMERA_CATALOG, liveCameraDiscoveryCache,
       fetchYouTubeLiveStates, fetchTravelGuidePosts, fetchSelectedTravelNewsPosts, fetchSelectedTravelEventPosts,
