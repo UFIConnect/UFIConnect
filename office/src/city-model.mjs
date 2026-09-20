@@ -1,3 +1,5 @@
+import { createBuildingLevels } from './city-architecture.mjs';
+
 // This view models observations, never an inferred job scheduler or a post ledger.
 export const CITY_FRESH_MS = 30_000;
 export const CITY_DISTRICTS = Object.freeze([
@@ -31,6 +33,15 @@ export function recentWork(value, now = Date.now()) {
   return time != null && time <= now + 5_000 && now - time < CITY_FRESH_MS;
 }
 export const cityNumber = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+export function agentHomeState(agent, observation, now = Date.now()) {
+  if (observation !== 'fresh' || agent?.ownerAvailable === false) return 'unobserved';
+  const status = String(agent?.health?.status || agent?.observation?.status || '').toLowerCase();
+  if (['degraded', 'error', 'critical', 'warn', 'warning', 'emergency', 'failed'].includes(status)) return 'attention';
+  if (['paused', 'disabled', 'idle', 'inactive', 'unavailable', 'gated', 'starting', 'ready'].includes(status)) return 'inactive';
+  const workedAt = Math.max(cityTimestamp(agent?.health?.lastSuccess) || 0, cityTimestamp(agent?.lastFetch) || 0);
+  if (['healthy', 'running', 'active', 'working', 'ok'].includes(status) || recentWork(workedAt, now)) return 'working';
+  return 'inactive';
+}
 const sum = value => {
   const values = Object.values(value || {}).map(cityNumber).filter(item => item != null);
   return values.length ? values.reduce((total, item) => total + item, 0) : null;
@@ -85,6 +96,19 @@ export function buildCityModel({ status, pipelineStatus, agents = {}, log = [], 
     return { ...agent, key: `${role}:${agent.id}`, serviceRole: role, observation: state,
       district: agentDistrict(agent, workers), name: String(agent.name || agent.id).slice(0, 100) };
   }).sort((a, b) => a.name.localeCompare(b.name) || a.serviceRole.localeCompare(b.serviceRole));
+  const homes = Object.values(agents || {}).filter(agent => agent && typeof agent === 'object'
+    && /^[a-z0-9][a-z0-9_-]{0,79}$/.test(agent.id || '')).map(agent => {
+    const role = ['api', 'pipeline'].includes(agent.serviceRole) ? agent.serviceRole : 'unknown';
+    const primary = roster.find(instance => instance.key === `${role}:${agent.id}`)
+      || roster.find(instance => instance.id === agent.id) || agent;
+    const observed = telemetry.agents?.byService?.[primary.serviceRole] || telemetry.agents || {};
+    const observation = observationState({ ...observed, updatedAt: primary.receivedAt || observed.updatedAt }, now);
+    const district = agentDistrict(primary, workers);
+    const lastWorkAt = Math.max(cityTimestamp(primary.health?.lastSuccess) || 0, cityTimestamp(primary.lastFetch) || 0) || null;
+    return { ...primary, ownerAvailable: agent.ownerAvailable, instances: agent.instances, district,
+      primaryKey: primary.key || `${role}:${agent.id}`, observation, lastWorkAt,
+      homeState: agentHomeState(agent, observation, now), instanceCount: Object.keys(agent.instances || { [role]: primary }).length };
+  }).sort((a, b) => a.name.localeCompare(b.name));
   const equalizer = pipeline.equalizer || {}, filter = pipeline.filterAgent || {}, sort = pipeline.sortAgent || {};
   const stage = api.staging || {}, db = api.dbSize || {}, topics = api.topicFilterAgent || {}, backup = api.server?.dbBackupStatus || {};
   const securityAgent = roster.find(agent => agent.id === 'security' && agent.serviceRole === 'api');
@@ -129,17 +153,18 @@ export function buildCityModel({ status, pipelineStatus, agents = {}, log = [], 
       ? securityAgent.observation : observations[def.role].state;
     const health = !detail.present ? 'unknown' : detail.error || degraded(detail.health) ? 'degraded' : detail.health === 'paused' || detail.health === 'disabled' ? detail.health : 'observed';
     const state = freshness !== 'fresh' ? freshness : health;
-    return { ...def, ...detail, health, state, observation: observations[def.role],
+    const district = { ...def, ...detail, health, state, observation: observations[def.role],
       active: freshness === 'fresh' && detail.present && !detail.error && !['degraded', 'paused', 'disabled'].includes(health) && Boolean(detail.active),
       agents: roster.filter(agent => agent.district === def.id),
       history: detail.history || [], breakdown: detail.breakdown || [] };
+    return { ...district, levels: createBuildingLevels(district) };
   });
   const byId = Object.fromEntries(districts.map(district => [district.id, district]));
   const edges = [['sources', 'equalizer'], ['equalizer', 'filter'], ['filter', 'sort'], ['sort', 'staging'], ['staging', 'transfer'], ['transfer', 'database'], ['database', 'topics'], ['topics', 'feed'], ['database', 'backup']].map(([from, to]) => ({ from, to,
     active: observations[byId[from].role].state === 'fresh' && observations[byId[to].role].state === 'fresh'
       && (from === 'database' ? byId[to].active : byId[from].active) && byId[to].present && !['degraded', 'paused', 'disabled'].includes(byId[to].health)
       && (from !== 'filter' || filter.lastOutput > 0) && (from !== 'sort' || sort.lastOutput > 0) && (from !== 'topics' || topics.lastOutput > 0) }));
-  return { districts, byId, edges, agents: roster, observations,
+  return { districts, byId, edges, agents: roster, homes, observations,
     streamConnected: telemetry.streamConnected === true,
     log: Array.isArray(log) ? log.slice(0, 20) : [], now };
 }
