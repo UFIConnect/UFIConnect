@@ -113,6 +113,9 @@ async function auditWidth(browser, width) {
     await page.screenshot({path:path.join(root,`.cache/audit-ui/office-city-initial-${width}.png`),fullPage:false});
     check(fixture.requests.some(request=>request.role==='api'&&request.path==='/office/status'),'API status fetched from API origin');
     check(fixture.requests.some(request=>request.role==='pipeline'&&request.path==='/office/status'),'Pipeline status fetched from its own origin');
+    await eventually(async()=>await city.locator('.lc-home-grid [data-home-id]').count()===3,'The residential grid must render one home per canonical agent');
+    check(await city.locator('[data-home-id="stability"]').count()===1,'A shared agent has one home rather than one home per service');
+    check(await city.locator('[data-home-state="working"]').count()>0,'Fresh healthy agents have visibly working homes');
     async function verifyMobileInspector() {
       if (width>=760) return;
       let previousTop=null, stable=0, visible=false;
@@ -150,7 +153,8 @@ async function auditWidth(browser, width) {
     check(await geometry()===initialGeometry,'Reset restores the original map geometry');
     check((await page.getByText('Paused sources',{exact:true}).locator('..').locator('dd').textContent()).trim()==='0','Explicit zero remains visible as zero');
     check((await page.getByText('Degraded sources',{exact:true}).locator('..').locator('dd').textContent()).trim()==='Not reported','An absent metric is not turned into zero');
-    await page.getByRole('button',{name:'Inspect Live feed',exact:true}).click();
+    await page.getByRole('button',{name:'Enter Live feed',exact:true}).click();
+    await page.getByRole('button',{name:'Exit Live feed',exact:true}).click();
     check((await page.getByText('Posts in memory',{exact:true}).locator('..').locator('dd').textContent()).trim()==='4,000','City feed metric uses the API snapshot');
     await page.getByLabel('Agent service',{exact:true}).selectOption('pipeline');
     check(await city.locator('button[data-agent-id][data-service="api"]').count()===0,'Service filter removes the other process from the directory');
@@ -184,6 +188,21 @@ async function auditWidth(browser, width) {
 
     if (width===1440) {
       console.log('Checking Live City chat failures, cancellation, and telemetry outages at 1440px');
+      const buildings=['sources','equalizer','filter','sort','staging','transfer','database','topics','feed','backup','security','runtime'];
+      for (const building of buildings) {
+        await city.locator(`[data-stage="${building}"]`).click();
+        const interior=city.locator('.lc-interior');
+        await interior.waitFor();
+        check(await interior.locator('[data-level]').count()===4,`${building} building exposes four detailed levels`);
+        check(await interior.getByText('What enters',{exact:true}).count()===4,`${building} explains every level input`);
+        check(await interior.getByText('How it works',{exact:true}).count()===4,`${building} explains every level process`);
+        check(await interior.getByText('What leaves',{exact:true}).count()===4,`${building} explains every level output`);
+        const levelDeck=interior.locator('.lc-level-stack');
+        await interior.locator('.lc-elevator button').nth(3).click();
+        await eventually(async()=>await levelDeck.evaluate(element=>element.scrollTop>0),`${building} elevator scrolls through its levels`);
+        await interior.getByRole('button',{name:/^Exit /}).click();
+      }
+      await chooseAgent('stability','pipeline');
       fixture.chatMode='unknown';
       await page.getByLabel('Message this agent',{exact:true}).fill('What is your current status?');
       await page.getByRole('button',{name:'Send message',exact:true}).click();
@@ -216,7 +235,8 @@ async function auditWidth(browser, width) {
       fixture.apiFailure=true;
       fixture.pipelineFailure=true;
       await eventually(async()=>await motion.getAttribute('data-motion')==='idle','Unavailable services stop motion',12000);
-      await page.getByRole('button',{name:'Inspect Staging depot',exact:true}).click();
+      await page.getByRole('button',{name:'Enter Staging depot',exact:true}).click();
+      await page.getByRole('button',{name:'Exit Staging depot',exact:true}).click();
       const waiting=page.getByText('Waiting for promotion',{exact:true});
       await waiting.waitFor();
       check((await waiting.locator('..').locator('dd').textContent()).trim()==='Not reported','Offline staging count is unavailable, not an invented zero');

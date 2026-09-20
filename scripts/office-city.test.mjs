@@ -192,3 +192,42 @@ test('registry failures mark only the affected service instances unavailable', (
   assert.equal(model.agents.find(agent=>agent.key==='api:stability').observation,'unavailable');
   assert.equal(model.agents.find(agent=>agent.key==='pipeline:stability').observation,'fresh');
 });
+
+test('the city gives every one of 71 canonical agents one home while retaining both service views', () => {
+  const definitions=Object.fromEntries(Array.from({length:71},(_,index)=>[`agent_${String(index+1).padStart(2,'0')}`,{
+    name:`Agent ${index+1}`,executionRole:'pipeline',health:{status:index===1?'idle':index===2?'degraded':'healthy',lastSuccess:iso(later)},
+  }]));
+  const api=observeAgentPayload({agents:definitions},'api',later);
+  const pipeline=observeAgentPayload({agents:definitions},'pipeline',later);
+  const model=buildCityModel({now:later,agents:mergeObservedAgents(api,pipeline),telemetry:fresh,
+    pipelineStatus:{sources:{workers:[]}}});
+  assert.equal(model.homes.length,71,'Canonical definitions become permanent unique homes');
+  assert.equal(new Set(model.homes.map(home=>home.id)).size,71,'Homes never duplicate a multi-service agent');
+  assert.equal(model.agents.length,142,'Both service observations remain available for diagnostics');
+  assert.ok(model.homes.every(home=>home.instanceCount===2));
+  assert.equal(model.homes.find(home=>home.id==='agent_01').homeState,'working');
+  assert.equal(model.homes.find(home=>home.id==='agent_02').homeState,'inactive');
+  assert.equal(model.homes.find(home=>home.id==='agent_03').homeState,'attention');
+});
+
+test('missing owner observations keep an agent home visible and explicitly unobserved', () => {
+  const api=observeAgentPayload({agents:{collector:{name:'Collector',executionRole:'pipeline',health:{status:'healthy'}}}},'api',later);
+  const model=buildCityModel({now:later,agents:mergeObservedAgents(api,{}),telemetry:fresh});
+  assert.equal(model.homes.length,1);
+  assert.equal(model.homes[0].homeState,'unobserved');
+  assert.equal(model.homes[0].ownerAvailable,false);
+});
+
+test('every city building exposes a detailed four-level interior backed by its own metrics', () => {
+  const model=buildCityModel({now:later,telemetry:fresh,status:{server:{db:'connected'}},pipelineStatus:{server:{}}});
+  assert.equal(model.districts.length,12);
+  for (const district of model.districts) {
+    assert.equal(district.levels.length,4,`${district.id} has four scrollable levels`);
+    for (const [index,level] of district.levels.entries()) {
+      assert.equal(level.number,index+1);
+      assert.ok(level.title&&level.purpose);
+      assert.ok(level.pulls.length&&level.process.length&&level.outputs.length,`${district.id} level ${level.number} explains the full handoff`);
+      assert.ok(level.metrics.length,`${district.id} level ${level.number} attaches live evidence`);
+    }
+  }
+});

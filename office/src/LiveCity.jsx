@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDownLeft, ArrowUpRight, Check, ChevronRight, CircleHelp, Focus, Layers3, MessageSquare, Minus, Pause, Play, Plus, Radio, Search, Send, ShieldCheck, Trash2 } from 'lucide-react';
+import { Activity, ArrowDownLeft, ArrowUpRight, Building2, Check, ChevronRight, CircleHelp, Focus, Home, Layers3, MessageSquare, Minus, Pause, Play, Plus, Radio, Search, Send, ShieldCheck, Trash2, X } from 'lucide-react';
 import { buildCityModel, cityNumber, cityTimestamp } from './city-model.mjs';
 import './LiveCity.css';
 
 const roleName = role => role === 'api' ? 'API' : role === 'pipeline' ? 'Pipeline' : 'Unknown service';
 const stateName = state => ({ fresh: 'Fresh observation', observed: 'Observed', degraded: 'Needs attention', unavailable: 'Unavailable', unknown: 'Not reported', stale: 'Stale observation', loading: 'Connecting', paused: 'Paused', disabled: 'Disabled' }[state] || state || 'Not reported');
+const homeStateName = state => ({ working: 'Working', inactive: 'Inactive', attention: 'Needs attention', unobserved: 'Unobserved' }[state] || 'Unobserved');
 const stamp = value => cityTimestamp(value) == null ? 'Not reported' : new Date(cityTimestamp(value)).toLocaleString();
 const age = (value, now) => {
   const time = cityTimestamp(value);
@@ -35,13 +36,13 @@ function History({ entries, heading = 'Reported activity' }) {
   </section>;
 }
 
-function Building({ district, selected, onSelect }) {
+function Building({ district, selected, onEnter }) {
   const { x, y, height: h, color } = district;
   const w = 70, d = 35;
   return <g transform={`translate(${x} ${y})`} className={`lc-building ${selected ? 'lc-building-selected' : ''}`} role="button" tabIndex={0}
-    aria-label={`Inspect ${district.label}`} aria-pressed={selected} data-stage={district.id} data-state={district.state}
-    onClick={onSelect} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(); } }} style={{ '--district-color': color }}>
-    <title>{district.label}: {stateName(district.state)}. Select to inspect.</title>
+    aria-label={`Enter ${district.label}`} aria-pressed={selected} data-stage={district.id} data-state={district.state}
+    onClick={onEnter} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onEnter(); } }} style={{ '--district-color': color }}>
+    <title>{district.label}: {stateName(district.state)}. Enter to inspect its levels.</title>
     <path className="lc-parcel" d="M-100 0 0-50 100 0 0 50Z" />
     <path className="lc-building-ring" d="M-108 0 0-54 108 0 0 54Z" />
     <path d={`M${-w} 0 0 ${d} ${w} 0 0 ${-d}Z`} fill="#080f1d" opacity=".7" transform="translate(8 12)" />
@@ -70,7 +71,7 @@ function roadPath(from, to) {
   return `M${from.x} ${from.y + 30} L${from.x + 114} ${from.y + 87} L${to.x + 114} ${to.y - 40} L${to.x} ${to.y + 30}`;
 }
 
-function CityMap({ model, selected, onSelect, paused, setPaused, reduced }) {
+function CityMap({ model, selected, onEnter, paused, setPaused, reduced }) {
   const [zoom, setZoom] = useState(1), [offset, setOffset] = useState({ x: 0, y: 0 });
   const drag = useRef(null);
   const hasWork = model.edges.some(edge => edge.active);
@@ -108,14 +109,58 @@ function CityMap({ model, selected, onSelect, paused, setPaused, reduced }) {
             <path d={roadPath(model.byId[edge.from], model.byId[edge.to])} fill="none" stroke="#385267" strokeWidth="1" strokeDasharray="4 7" />
             <path className="lc-road-flow" d={roadPath(model.byId[edge.from], model.byId[edge.to])} fill="none" stroke={model.byId[edge.from].color} strokeWidth="5" strokeLinecap="round" />
           </g>)}
-          {model.districts.map(district => <Building key={district.id} district={district} selected={selected === district.id} onSelect={() => onSelect(district.id)} />)}
+          {model.districts.map(district => <Building key={district.id} district={district} selected={selected === district.id} onEnter={() => onEnter(district.id)} />)}
         </g>
         <g className="lc-map-compass" aria-hidden="true"><path d="M1035 45v33m-16-17h32M1035 45l-5 9h10Z" fill="#64748b" stroke="#64748b" /><text x="1035" y="34" textAnchor="middle">N</text></g>
       </svg>
       <div className="lc-map-live"><span className={motion === 'active' ? 'lc-dot-active' : ''} />{motion === 'active' ? 'Recent work observed' : motion === 'paused' ? 'Motion paused' : motion === 'reduced' ? 'Reduced motion' : 'No recent work to animate'}</div>
     </div>
     <div className="lc-map-legend"><p><Layers3 size={14} />Logical routes · illustrative motion, not one particle per post.</p><p>Drag background to pan. Use zoom buttons to explore. No motion from heartbeats.</p></div>
-    <div className="lc-district-nav" aria-label="Inspect city districts">{model.districts.map(district => <button key={district.id} type="button" aria-pressed={selected === district.id} onClick={() => onSelect(district.id)} style={{ '--district-color': district.color }}><span />{district.label}</button>)}</div>
+    <div className="lc-district-nav" aria-label="Enter city buildings">{model.districts.map(district => <button key={district.id} type="button" aria-pressed={selected === district.id} onClick={() => onEnter(district.id)} style={{ '--district-color': district.color }}><span />{district.label}</button>)}</div>
+  </section>;
+}
+
+function BuildingInterior({ district, model, onClose, onSelectAgent, interiorRef }) {
+  const [visibleLevel, setVisibleLevel] = useState(1);
+  useEffect(() => setVisibleLevel(1), [district.id]);
+  const upstream = model.edges.filter(edge => edge.to === district.id).map(edge => model.byId[edge.from]?.label).filter(Boolean);
+  const downstream = model.edges.filter(edge => edge.from === district.id).map(edge => model.byId[edge.to]?.label).filter(Boolean);
+  const moveTo = level => {
+    const target = interiorRef.current?.querySelector(`[data-level="${level}"]`);
+    target?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    setVisibleLevel(level);
+  };
+  return <section className="lc-interior" aria-label={`${district.label} building interior`} ref={interiorRef} tabIndex={-1} style={{ '--district-color': district.color }}>
+    <header className="lc-interior-header"><div><span className="lc-eyebrow"><Building2 size={14} /> BUILDING INTERIOR / {roleName(district.role)}</span><h2>{district.label}</h2><p>{district.description}</p></div><button type="button" className="lc-interior-close" onClick={onClose} aria-label={`Exit ${district.label}`}><X size={17} /> Exit building</button></header>
+    <div className="lc-building-flow" aria-label="Building route"><span>{upstream.length ? upstream.join(' + ') : 'External inputs'}</span><ChevronRight size={15} /><strong>{district.label}</strong><ChevronRight size={15} /><span>{downstream.length ? downstream.join(' + ') : 'Observed operations'}</span></div>
+    <div className="lc-interior-body">
+      <nav className="lc-elevator" aria-label={`${district.label} levels`}><span>ELEVATOR</span>{district.levels.map(item => <button type="button" key={item.id} aria-current={visibleLevel === item.number ? 'step' : undefined} onClick={() => moveTo(item.number)}><b>{String(item.number).padStart(2, '0')}</b><small>{item.title}</small></button>)}</nav>
+      <div className="lc-level-stack" tabIndex={0} aria-label={`Scrollable levels in ${district.label}`} onScroll={event => {
+        const frame = event.currentTarget.getBoundingClientRect();
+        const cards = [...event.currentTarget.querySelectorAll('[data-level]')];
+        const closest = cards.sort((a, b) => Math.abs(a.getBoundingClientRect().top - frame.top) - Math.abs(b.getBoundingClientRect().top - frame.top))[0];
+        if (closest) setVisibleLevel(Number(closest.dataset.level));
+      }}>
+        {district.levels.map(item => <article className="lc-level" key={item.id} data-level={item.number} aria-label={`Level ${item.number}: ${item.title}`}>
+          <header><span>LEVEL {String(item.number).padStart(2, '0')}</span><div><h3>{item.title}</h3><p>{item.purpose}</p></div></header>
+          <div className="lc-level-route"><section><h4>What enters</h4><ul>{item.pulls.map(value => <li key={value}>{value}</li>)}</ul></section><section><h4>How it works</h4><ol>{item.process.map(value => <li key={value}>{value}</li>)}</ol></section><section><h4>What leaves</h4><ul>{item.outputs.map(value => <li key={value}>{value}</li>)}</ul></section></div>
+          <section className="lc-level-evidence"><div><h4><Activity size={14} /> Live evidence</h4><Status state={district.state} /></div><MetricGrid metrics={item.metrics} />
+            {!!item.breakdown.length && <div className="lc-level-breakdown"><h4>What is currently represented</h4><ul>{item.breakdown.slice(0, 71).map((entry, index) => <li key={`${entry.label}:${index}`}><span>{entry.label}<small>{entry.detail}</small></span><strong>{typeof entry.value === 'number' ? number(entry.value) : entry.value || 'Not reported'}</strong></li>)}</ul></div>}
+          </section>
+          {item.number === district.levels.length && <section className="lc-level-agents"><h4>Agents connected to this building</h4>{district.agents.length ? <div>{district.agents.map(agent => <button type="button" key={agent.key} onClick={() => onSelectAgent(agent.key)}>{agent.name}<small>{roleName(agent.serviceRole)}</small></button>)}</div> : <p>No agent instance is assigned here; this building is driven by service-stage telemetry.</p>}</section>}
+        </article>)}
+      </div>
+    </div>
+    <footer><span>Scroll the level deck or use the elevator.</span><span>Unknown means the owning service did not report that measurement.</span></footer>
+  </section>;
+}
+
+function AgentNeighborhood({ homes, selectedAgent, onSelect }) {
+  const totals = homes.reduce((result, home) => ({ ...result, [home.homeState]: (result[home.homeState] || 0) + 1 }), {});
+  return <section className="lc-neighborhood" aria-label="Agent homes"><header><div><span className="lc-eyebrow"><Home size={14} /> RESIDENTIAL GRID</span><h2>Agent homes <span>{homes.length}</span></h2><p>One permanent home per registered agent. Lights reflect the selected owner service’s latest observation.</p></div><div className="lc-home-totals">{['working', 'inactive', 'attention', 'unobserved'].map(state => <span key={state} data-home-state={state}><i />{homeStateName(state)} <b>{totals[state] || 0}</b></span>)}</div></header>
+    {homes.length ? <div className="lc-home-grid">{homes.map(home => <button type="button" key={home.id} className={selectedAgent?.id === home.id ? 'lc-home-selected' : ''} data-home-id={home.id} data-home-state={home.homeState} aria-label={`Visit ${home.name}'s home · ${homeStateName(home.homeState)}`} aria-pressed={selectedAgent?.id === home.id} onClick={() => onSelect(home.primaryKey)} style={{ '--home-color': home.color || '#64748b' }}>
+      <span className="lc-house" aria-hidden="true"><i /><b>{String(home.emoji || home.id.slice(0, 3)).slice(0, 4)}</b></span><span><strong>{home.name}</strong><small>{homeStateName(home.homeState)} · {home.instanceCount} service {home.instanceCount === 1 ? 'view' : 'views'}</small><em>{home.lastWorkAt ? `Last work ${age(home.lastWorkAt, Date.now())}` : 'No successful work time reported'}</em></span>
+    </button>)}</div> : <p className="lc-empty">Agent homes appear after the protected registry is received. A registry outage does not create placeholder activity.</p>}
   </section>;
 }
 
@@ -199,12 +244,12 @@ function AgentInspector({ agent, model, officeFetch, apiBase, pipelineBase, onNa
   </>;
 }
 
-function DistrictInspector({ district, onNavigate, onSelectAgent }) {
+function DistrictInspector({ district, onNavigate, onSelectAgent, onEnter }) {
   return <><div className="lc-inspector-header" style={{ '--district-color': district.color }}><span className="lc-eyebrow">DISTRICT / {roleName(district.role)}</span><h2>{district.label}</h2><Status state={district.state} /><p>{district.description}</p></div>
     {district.observation.state !== 'fresh' && <p className="lc-notice" role="status">{safeObservationError(district.observation.error) || `${roleName(district.role)} telemetry is ${stateName(district.observation.state).toLowerCase()}.`} Movement stops until fresh observations arrive.</p>}
     {district.error && <p className="lc-notice">This stage reports a problem. Review its detailed operations view and service logs.</p>}
     <MetricGrid metrics={district.metrics} />
-    <div className="lc-crosslinks"><button type="button" onClick={() => onNavigate('post-pipeline')}>Open Post Pipeline <ArrowUpRight size={14} /></button>{district.link !== 'post-pipeline' && <button type="button" onClick={() => onNavigate(district.link)}>Open {({ sources: 'Sources', pipeline: 'Pipeline', overview: 'Overview', agents: 'Agents', controls: 'Controls' }[district.link])} <ArrowUpRight size={14} /></button>}</div>
+    <div className="lc-crosslinks"><button type="button" onClick={onEnter}>Enter all {district.levels.length} levels <Building2 size={14} /></button><button type="button" onClick={() => onNavigate('post-pipeline')}>Open Post Pipeline <ArrowUpRight size={14} /></button>{district.link !== 'post-pipeline' && <button type="button" onClick={() => onNavigate(district.link)}>Open {({ sources: 'Sources', pipeline: 'Pipeline', overview: 'Overview', agents: 'Agents', controls: 'Controls' }[district.link])} <ArrowUpRight size={14} /></button>}</div>
     {!!district.breakdown.length && <section className="lc-breakdown"><h3>Reported breakdown</h3><ul>{district.breakdown.slice(0, 60).map((item, index) => <li key={`${item.label}:${index}`}><span>{item.label}<small>{item.detail}</small></span><strong>{typeof item.value === 'number' ? number(item.value) : item.value || 'Not reported'}</strong></li>)}</ul></section>}
     <section className="lc-residents"><h3>Agents in this district <span>{district.agents.length}</span></h3>{district.agents.length ? district.agents.map(agent => <button type="button" key={agent.key} onClick={() => onSelectAgent(agent.key)}><span>{agent.name}<small>{roleName(agent.serviceRole)} · {stateName(agent.observation === 'fresh' ? agent.health?.status : agent.observation)}</small></span><ChevronRight size={16} /></button>) : <p className="lc-empty">No agent instance reported for this district. The district can still report service metrics.</p>}</section>
     {!!district.history.length && <History entries={district.history} heading={district.id === 'transfer' ? 'Recent transfer runs' : 'Reported activity'} />}
@@ -215,9 +260,11 @@ export default function LiveCity({ status, pipelineStatus, agents = {}, log = []
   const [now, setNow] = useState(Date.now), [paused, setPaused] = useState(false);
   const [reduced, setReduced] = useState(() => typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   const [selection, setSelection] = useState({ type: 'district', id: 'sources' });
+  const [interior, setInterior] = useState(null);
   const [query, setQuery] = useState(''), [service, setService] = useState('all'), [healthFilter, setHealthFilter] = useState('all');
   const [conversations, setConversations] = useState({});
   const inspector = useRef(null);
+  const interiorPanel = useRef(null);
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
   useEffect(() => {
     const media = window.matchMedia?.('(prefers-reduced-motion: reduce)');
@@ -228,10 +275,12 @@ export default function LiveCity({ status, pipelineStatus, agents = {}, log = []
   const model = useMemo(() => buildCityModel({ status, pipelineStatus, agents, log, telemetry, now }), [status, pipelineStatus, agents, log, telemetry, now]);
   const selectedAgent = selection.type === 'agent' ? model.agents.find(agent => agent.key === selection.id) : null;
   const selectedDistrict = model.byId[selection.type === 'district' ? selection.id : selectedAgent?.district] || model.byId.sources;
+  const interiorDistrict = model.byId[interior] || null;
   const filteredAgents = model.agents.filter(agent => (service === 'all' || agent.serviceRole === service)
     && (healthFilter === 'all' || (healthFilter === 'attention' ? agent.observation !== 'fresh' || ['degraded', 'error', 'paused'].includes(agent.health?.status) : agent.observation === 'fresh'))
     && `${agent.name} ${agent.id} ${agent.district}`.toLowerCase().includes(query.trim().toLowerCase()));
   function select(type, id) {
+    setInterior(null);
     setSelection({ type, id });
     // Selection is an explicit request to inspect. Keep its result reachable on
     // small screens, where the inspector follows the map and bounded directory.
@@ -246,14 +295,26 @@ export default function LiveCity({ status, pipelineStatus, agents = {}, log = []
       if (window.matchMedia('(max-width: 1190px)').matches) target.scrollIntoView({ block: 'start', behavior: reduced ? 'auto' : 'smooth' });
     });
   }
+  function enterBuilding(id) {
+    setSelection({ type: 'district', id });
+    setInterior(id);
+    window.requestAnimationFrame(() => {
+      const target = interiorPanel.current;
+      if (!target) return;
+      target.focus({ preventScroll: true });
+      target.scrollIntoView({ block: 'start', behavior: reduced ? 'auto' : 'smooth' });
+    });
+  }
   function updateMessages(key, messages) { setConversations(current => {
     const next = { ...current }; delete next[key]; next[key] = messages;
     return Object.fromEntries(Object.entries(next).slice(-8));
   }); }
   return <section className="live-city" data-testid="live-city" aria-label="Live City">
     <header className="lc-page-header"><div><div className="lc-eyebrow"><span className="lc-brand-mark"><Layers3 size={14} /></span> UFICONNECT / SERVICE OBSERVATORY</div><h1>Live City<span>.</span></h1><p>A working map of your platform. Follow the content. Meet the agents. Inspect the evidence.</p></div><button type="button" className="lc-open-pipeline" onClick={() => onNavigate('post-pipeline')}>Explore post history <ArrowUpRight size={16} /></button></header>
-    <div className="lc-observations">{['api', 'pipeline'].map(role => <div className="lc-observation" key={role} data-service={role} data-freshness={model.observations[role].state}><span>{roleName(role)} telemetry</span><Status state={model.observations[role].state} /><small>{safeObservationError(model.observations[role].error) || age(model.observations[role].updatedAt, now)}</small></div>)}<div className="lc-observation"><span>Agent activity stream</span><strong className={model.streamConnected ? 'lc-stream-connected' : ''}><Radio size={13} />{model.streamConnected ? 'Connected' : 'Disconnected'}</strong><small>Connection only; not a work counter</small></div><div className="lc-observation"><span>Reported agent instances</span><strong>{model.agents.length}</strong><small>Distinct service observations</small></div></div>
-    <div className="lc-layout"><div className="lc-main"><CityMap model={model} selected={selectedDistrict.id} onSelect={id => select('district', id)} paused={paused} setPaused={setPaused} reduced={reduced} />
+    <div className="lc-observations">{['api', 'pipeline'].map(role => <div className="lc-observation" key={role} data-service={role} data-freshness={model.observations[role].state}><span>{roleName(role)} telemetry</span><Status state={model.observations[role].state} /><small>{safeObservationError(model.observations[role].error) || age(model.observations[role].updatedAt, now)}</small></div>)}<div className="lc-observation"><span>Agent activity stream</span><strong className={model.streamConnected ? 'lc-stream-connected' : ''}><Radio size={13} />{model.streamConnected ? 'Connected' : 'Disconnected'}</strong><small>Connection only; not a work counter</small></div><div className="lc-observation"><span>Registered agent homes</span><strong>{model.homes.length}</strong><small>{model.agents.length} distinct service observations</small></div></div>
+    <div className="lc-layout"><div className="lc-main"><CityMap model={model} selected={selectedDistrict.id} onEnter={enterBuilding} paused={paused} setPaused={setPaused} reduced={reduced} />
+      {interiorDistrict && <BuildingInterior district={interiorDistrict} model={model} interiorRef={interiorPanel} onClose={() => { setInterior(null); window.requestAnimationFrame(() => inspector.current?.focus()); }} onSelectAgent={key => select('agent', key)} />}
+      <AgentNeighborhood homes={model.homes} selectedAgent={selectedAgent} onSelect={key => select('agent', key)} />
       <section className="lc-roster" aria-label="Agent roster"><div className="lc-roster-heading"><div><span className="lc-eyebrow">WORKERS & OPERATIONS</span><h2>Agent directory <span>{filteredAgents.length}</span></h2></div><p>Real registered workers and operational agents.<br />Each service instance has its own observations.</p></div>
         <div className="lc-roster-tools"><label className="lc-search"><Search size={16} /><span className="lc-sr-only">Search agents</span><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search agents or districts" /></label><label><span className="lc-sr-only">Agent service</span><select aria-label="Agent service" value={service} onChange={event => setService(event.target.value)}><option value="all">All services</option><option value="api">API</option><option value="pipeline">Pipeline</option></select></label><label><span className="lc-sr-only">Agent observation filter</span><select aria-label="Agent observation filter" value={healthFilter} onChange={event => setHealthFilter(event.target.value)}><option value="all">All observations</option><option value="fresh">Fresh observations</option><option value="attention">Needs review</option></select></label></div>
         {!filteredAgents.length && <p className="lc-empty">{model.agents.length ? 'No agents match these filters.' : 'No agent registry received yet. Service telemetry and agent telemetry arrive independently.'}</p>}
@@ -262,7 +323,7 @@ export default function LiveCity({ status, pipelineStatus, agents = {}, log = []
         </button>)}</div>
       </section></div>
       <aside className="lc-inspector" aria-label="City inspector" ref={inspector} tabIndex={-1}><div className="lc-inspector-topline"><span><CircleHelp size={14} /> INSPECTOR</span><span><ShieldCheck size={13} /> Read only</span></div>
-        {selectedAgent ? <AgentInspector key={selectedAgent.key} agent={selectedAgent} model={model} officeFetch={officeFetch} apiBase={apiBase} pipelineBase={pipelineBase} onNavigate={onNavigate} messages={conversations[selectedAgent.key] || []} updateMessages={messages => updateMessages(selectedAgent.key, messages)} /> : <DistrictInspector district={selectedDistrict} onNavigate={onNavigate} onSelectAgent={key => select('agent', key)} />}
+        {selectedAgent ? <AgentInspector key={selectedAgent.key} agent={selectedAgent} model={model} officeFetch={officeFetch} apiBase={apiBase} pipelineBase={pipelineBase} onNavigate={onNavigate} messages={conversations[selectedAgent.key] || []} updateMessages={messages => updateMessages(selectedAgent.key, messages)} /> : <DistrictInspector district={selectedDistrict} onNavigate={onNavigate} onSelectAgent={key => select('agent', key)} onEnter={() => enterBuilding(selectedDistrict.id)} />}
         <div className="lc-inspector-footer"><Check size={13} />Values come from the selected service’s last observation.</div>
       </aside>
     </div>

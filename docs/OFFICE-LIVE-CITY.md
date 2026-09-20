@@ -5,6 +5,31 @@ interactive city. Buildings represent operating stages, and the agent directory
 contains agents returned by the authenticated services. Select a building or
 agent for its measurements, role, recent activity and explanation.
 
+Every building can be entered from the map or district strip. Its four-level
+interior is a scrollable, read-only walkthrough of what enters the stage, how
+the stage processes it, what leaves, and which live measurements support the
+display. The elevator jumps directly between levels. Inputs and outputs are
+system boundaries, not claims that a particular post completed them; missing
+measurements remain **Not reported**.
+
+The residential grid gives each of the 71 canonical agents one permanent home.
+An agent that reports from both API and pipeline still has one home, while both
+service observations remain available in the directory and inspector. Home
+lights mean:
+
+- **Working** — the owner service has a fresh healthy/running observation or
+  recent successful work.
+- **Inactive** — the owner is freshly observed but reports idle, paused,
+  disabled, gated, starting, ready, or no active work state.
+- **Needs attention** — the fresh owner observation reports a degraded or
+  failed state.
+- **Unobserved** — the owner service is missing, stale, unavailable, or has not
+  supplied a trustworthy observation.
+
+A home light does not turn a presence heartbeat into completed work. Selecting
+a home opens that agent's owning service observation; the directory remains the
+place to switch between API and pipeline instances of shared agents.
+
 ## Reading the city
 
 - Source collection, balancing and ingestion belong to the pipeline process.
