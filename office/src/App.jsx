@@ -23,6 +23,7 @@ const PIPELINE_API = import.meta.env.VITE_PIPELINE_API_URL || API;
 // to notice a real backlog (how the 8+ day stale-pipeline backlog went
 // unnoticed for so long in the first place).
 const STAGING_BACKLOG_WARN = 20000;
+const PRIMARY_OFFICE_VIEWS = new Set(['overview', 'city', 'controls', 'setup', 'deploy']);
 
 // ─── office auth ────────────────────────────────────────────────────────────
 // Office requires a configured server token and a matching x-office-token
@@ -423,7 +424,7 @@ function OverviewView({ status, pipelineStatus, log, agents, triggerAgent, trigg
   return (
     <>
       <h1 style={H1}>Command Center</h1>
-      <p style={SUBTITLE}>Real-time status of all services and autonomous agents</p>
+      <p style={SUBTITLE}>Service health at a glance. Open the details when you need them.</p>
 
       {pausedWorkers.length > 0 && (
         <div style={{
@@ -493,9 +494,13 @@ function OverviewView({ status, pipelineStatus, log, agents, triggerAgent, trigg
           </p>
       </Card>
 
-      <WebOptimizerPanel web={web} triggerAgent={triggerAgent} triggering={triggering} />
+      <details className="office-overview-detail">
+        <summary>Website diagnostics</summary>
+        <WebOptimizerPanel web={web} triggerAgent={triggerAgent} triggering={triggering} />
+      </details>
 
-      <Label color="#475569">Agent Status</Label>
+      <details className="office-overview-detail">
+      <summary>Agent status <span>{Object.keys(agents).length} agents</span></summary>
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
@@ -519,8 +524,10 @@ function OverviewView({ status, pipelineStatus, log, agents, triggerAgent, trigg
           </Card>
         ))}
       </div>
+      </details>
 
-      <Label color="#475569">Live Activity Stream</Label>
+      <details className="office-overview-detail">
+      <summary>Live activity <span>{log.length} entries</span></summary>
       <Card style={{ padding: 0, marginTop: 12 }}>
         <div style={{
           padding: '10px 16px', borderBottom: '1px solid rgba(255,255,255,.05)',
@@ -536,6 +543,7 @@ function OverviewView({ status, pipelineStatus, log, agents, triggerAgent, trigg
           }
         </div>
       </Card>
+      </details>
     </>
   );
 }
@@ -3033,6 +3041,10 @@ export default function App() {
     const requested = typeof window !== 'undefined' ? window.location.hash.slice(1) : '';
     return officeViews.includes(requested) ? requested : 'overview';
   });
+  const [moreToolsOpen, setMoreToolsOpen] = useState(() => !PRIMARY_OFFICE_VIEWS.has(view));
+  useEffect(() => {
+    if (!PRIMARY_OFFICE_VIEWS.has(view)) setMoreToolsOpen(true);
+  }, [view]);
   const needsOfficeTelemetry = !['local-web', 'setup'].includes(view);
   const [status, setStatus] = useState(null);
   // Source-fetcher health (workerHealth/agentSourceCache) only ever has real
@@ -3262,9 +3274,7 @@ export default function App() {
   };
   const navStyle = {
     flex: isMobile ? '0 0 auto' : 1,
-    display: isMobile ? 'flex' : 'block',
-    gap: isMobile ? 8 : 0,
-    overflowX: isMobile ? 'auto' : 'visible',
+    display: 'block',
     padding: isMobile ? '0 14px 12px' : 0,
     scrollbarWidth: 'thin',
   };
@@ -3296,6 +3306,19 @@ export default function App() {
         @keyframes glowPulse { 0%,100% { transform: scale(1); filter: brightness(1); } 50% { transform: scale(1.06); filter: brightness(1.3); } }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         a { text-decoration: none; }
+        .office-nav-primary, .office-nav-more { display: flex; flex-direction: column; }
+        .office-nav-toggle { width: 100%; padding: 12px 20px; border: 0; background: transparent; color: #94a3b8; text-align: left; cursor: pointer; font: inherit; font-size: 12px; }
+        .office-nav-more { border-top: 1px solid rgba(255,255,255,.06); }
+        .office-nav-more[hidden] { display: none; }
+        .office-overview-detail { margin: 12px 0; border: 1px solid rgba(255,255,255,.08); border-radius: 12px; padding: 0 16px; }
+        .office-overview-detail > summary { padding: 16px 0; color: #cbd5e1; font-size: 13px; font-weight: 600; cursor: pointer; }
+        .office-overview-detail > summary span { margin-left: 10px; color: #64748b; font-size: 11px; font-weight: 400; }
+        .office-overview-detail[open] { padding-bottom: 16px; }
+        @media (max-width: 760px) {
+          .office-nav-primary { flex-direction: row; gap: 6px; overflow-x: auto; scrollbar-width: thin; }
+          .office-nav-toggle { padding: 10px 0 0; }
+          .office-nav-more { flex-direction: row; flex-wrap: wrap; gap: 4px; max-height: 30vh; overflow-y: auto; margin-top: 10px; padding-top: 8px; }
+        }
       `}</style>
 
       <div style={shellStyle}>
@@ -3311,7 +3334,12 @@ export default function App() {
           </div>
 
           <nav style={navStyle} aria-label="Office sections">
-          {nav.map(({ id, label }) => {
+          {['primary', 'more'].map(section => <div key={section}>
+          {section === 'more' && <button className="office-nav-toggle" aria-expanded={moreToolsOpen} aria-controls="office-more-tools" onClick={() => setMoreToolsOpen(open => !open)}>
+            {moreToolsOpen ? 'Fewer tools' : 'More tools'}
+          </button>}
+          <div className={`office-nav-${section}`} id={section === 'more' ? 'office-more-tools' : undefined} hidden={section === 'more' && !moreToolsOpen}>
+          {nav.filter(({ id }) => PRIMARY_OFFICE_VIEWS.has(id) === (section === 'primary')).map(({ id, label }) => {
               const active = view === id;
               return (
                 <button
@@ -3337,6 +3365,8 @@ export default function App() {
                 </button>
               );
             })}
+          </div>
+          </div>)}
           </nav>
 
           <div style={{ padding: isMobile ? '10px 14px 12px' : '16px 20px', borderTop: '1px solid rgba(255,255,255,.05)' }}>

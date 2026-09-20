@@ -58,6 +58,23 @@ try {
   await page.getByRole('navigation',{name:'Office sections'}).getByRole('button',{name:'Deploy Center',exact:true}).click();
   await page.getByRole('button',{name:'Deploy Now',exact:true}).first().click();
   await page.getByRole('alert').filter({hasText:'Deployment configuration is missing.'}).waitFor();
+  const nav=page.getByRole('navigation',{name:'Office sections'});
+  await nav.getByRole('button',{name:'Overview',exact:true}).click();
+  assert.equal(await nav.getByRole('button').count(),6,'Five primary destinations and More tools keep navigation compact');
+  await nav.getByRole('button',{name:'More tools',exact:true}).click();
+  assert.equal(await nav.getByRole('button').count(),16,'All Office destinations remain available');
+  await nav.getByRole('button',{name:'Agents',exact:true}).click();
+  await page.getByRole('heading',{name:'Agent Control',exact:true}).waitFor();
+  await nav.getByRole('button',{name:'Overview',exact:true}).click();
+  await nav.getByRole('button',{name:'Fewer tools',exact:true}).click();
+  assert.equal(await page.locator('.office-overview-detail[open]').count(),0,'Detailed panels start collapsed');
+  const details=page.locator('.office-overview-detail summary');
+  await details.nth(1).focus();
+  await page.keyboard.press('Enter');
+  assert.equal(await page.locator('.office-overview-detail[open]').count(),1,'Keyboard users can open diagnostics');
+  await page.keyboard.press('Enter');
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  await page.screenshot({path:path.join(root,`.cache/audit-ui/office-clean-overview-${width}.png`),fullPage:true});
   await page.close();
   console.log(`Office setup: ${width}px passed`);
  }

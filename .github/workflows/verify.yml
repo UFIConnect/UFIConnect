@@ -56,6 +56,7 @@ jobs:
       - run: node scripts/audit-source-favorites.mjs
       - run: node scripts/audit-source-directory.mjs
       - run: node scripts/audit-interface-release.mjs
+      - run: node scripts/audit-feed-equalizer.mjs
       - run: node scripts/audit-post-context.mjs
       - run: node scripts/audit-content-history.mjs
       - run: node scripts/audit-video-duration.mjs

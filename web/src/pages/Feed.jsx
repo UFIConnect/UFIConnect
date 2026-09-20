@@ -164,13 +164,18 @@ function isCursorEligible(mode, sort, search) {
   return mode === 'feed' && normalizeFeedSort(sort) === 'newest' && !search.trim();
 }
 
-// Keep newer minute-level cohorts above older ones while preserving the
-// server's source-equalized order inside each cohort.
-function sortPostsForView(list = [], sort = 'newest') {
-  return normalizeFeedSort(sort) === 'popular' ? list : orderNewestFeedCohorts(list);
+function usesMemberEqualizer(mode, search = '') {
+  return ['feed', 'following'].includes(mode) && !search.trim();
 }
 
-function mergeFeedPosts(list = [], sort = 'ranked') {
+// Home/Following responses already balance the selected sources and topics.
+// Preserve that order on load, refresh, pagination, and display; re-sorting by
+// timestamp here would undo the server's equalizer whenever dates differ.
+function sortPostsForView(list = [], sort = 'newest', preserveEqualizer = false) {
+  return preserveEqualizer || normalizeFeedSort(sort) === 'popular' ? list : orderNewestFeedCohorts(list);
+}
+
+function mergeFeedPosts(list = [], sort = 'ranked', preserveEqualizer = false) {
   const byId = new Map();
   for (const post of list) {
     if (!post) continue;
@@ -179,7 +184,7 @@ function mergeFeedPosts(list = [], sort = 'ranked') {
     const previous = byId.get(key);
     if (!previous || feedPostTime(post) >= feedPostTime(previous)) byId.set(key, post);
   }
-  return sortPostsForView([...byId.values()], sort);
+  return sortPostsForView([...byId.values()], sort, preserveEqualizer);
 }
 
 function groupFeedLane(post) {
@@ -2367,9 +2372,10 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       // `previous` was processed second — confirmed live as the actual
       // reason counts never appeared to update no matter how long a post
       // sat in the feed. This order makes the fresh copy win instead.
+      const preserveEqualizer = usesMemberEqualizer(activeMode, activeSearch);
       const nextPosts = shouldMerge
-        ? mergeFeedPosts([...previous, ...incoming], activeFilters.sort)
-        : mergeFeedPosts(incoming, activeFilters.sort);
+        ? mergeFeedPosts([...previous, ...incoming], activeFilters.sort, preserveEqualizer)
+        : mergeFeedPosts(incoming, activeFilters.sort, preserveEqualizer);
 
       if (shouldMerge) {
         const prevIds = new Set(previous.map(p => p.id).filter(Boolean));
@@ -2915,7 +2921,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       ));
       incoming.forEach(p => markKnownId(p.id));
       if (incoming.length > 0) {
-        setPosts(prev => sortPostsForView([...prev, ...incoming], activeFilters.sort));
+        setPosts(prev => sortPostsForView([...prev, ...incoming], activeFilters.sort, usesMemberEqualizer(viewModeRef.current, q)));
       }
       if (useCursor) remoteCursorRef.current = data.cursor || remoteCursorRef.current;
       else setRemotePage(p => p + 1);
@@ -3176,7 +3182,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       result = result.filter(p => feedPostTime(p) >= cutoff);
     }
 
-    return sortPostsForView(result, filters.sort);
+    return sortPostsForView(result, filters.sort, usesMemberEqualizer(viewMode, search));
   }, [posts, search, filters, activeTabs, viewMode, profile?.roleSettings?.disabledSources]);
 
   useEffect(() => {

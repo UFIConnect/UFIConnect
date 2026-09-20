@@ -21900,9 +21900,15 @@ async function handleFeedRequest(req, res) {
   const personalizeForUser = (items, options = {}) => {
     const scoped = filterForUser(items);
     const equalizerTopics = topicsFilter.length ? topicsFilter : userTopics;
-    const equalized = buildFullMemberFeedEqualizer(scoped, equalizerTopics, userAffinity);
-    const personalized = personalizeAuthenticatedFeedPosts(equalized, user, prefs, userAffinity, { ...options, locationContext, request: req });
-    return requestedSortMode === 'newest' ? orderNewestFeedCohorts(personalized) : personalized;
+    const preserveEqualizer = usesRegularFeedVideoPlacement && !hasExplicitSearch;
+    const candidates = preserveEqualizer ? scoped : buildFullMemberFeedEqualizer(scoped, equalizerTopics, userAffinity);
+    const personalized = personalizeAuthenticatedFeedPosts(candidates, user, prefs, userAffinity, { ...options, locationContext, request: req });
+    const ordered = requestedSortMode === 'newest' ? orderNewestFeedCohorts(personalized) : personalized;
+    // Home and Following always finish with source/topic balancing, including
+    // single-source selections. Ranking the result by date or location again
+    // would group a busier source (or topic) ahead of the quieter selections.
+    // Date order still chooses the next item within each source/topic queue.
+    return preserveEqualizer ? buildFullMemberFeedEqualizer(ordered, equalizerTopics, userAffinity) : ordered;
   };
   // Client-generated, changes only when the user explicitly hits refresh
   // (kept stable across pagination within that sitting) — see rotateForUser
@@ -22203,7 +22209,7 @@ async function handleFeedRequest(req, res) {
     });
   }
 
-  // True chronological infinite scroll (see getCursorFeedPage) — the
+  // Chronological cursors per source (see getCursorFeedPage) — the
   // client's own default sort, so this covers the primary Feed experience,
   // both unfiltered and single/multi-source filtered. Deliberately scoped
   // to sortMode==='newest' only: Ranked/Popular/Balanced don't have a
@@ -22842,14 +22848,8 @@ async function handleFeedRequest(req, res) {
         0,
         Math.min(personalized.length, Math.max(feedLimit * 4, 120)),
       ).map(p => ({ ...p, fromJoinedGroup: joined.has(p.groupId) }));
-      const rankedPosts = rankFeedPostsForLocation(
-        [...internal, ...externalPosts],
-        locationContext,
-        { preserveFirst: Math.min(internal.length, 2) }
-      );
-      const finalPosts = enforceFeedDiversity(rankedPosts, feedLimit, sortMode);
-      // Location ranking can move an external row ahead of an internal row,
-      // so persist only the exact final slice returned to this member.
+      // personalizeForUser already applies location ranking before equalizing.
+      const finalPosts = enforceFeedDiversity([...internal, ...externalPosts], feedLimit, sortMode);
       trackPostsSeen(finalPosts);
       return res.json({
         posts: finalPosts,
@@ -23207,11 +23207,7 @@ async function handleFeedRequest(req, res) {
     personalizedExternal = applyResumeMatchedJobs(personalizedExternal, resumeKeywords, feedPoolInput.filter(p => JOB_LISTING_SOURCES.includes(p.source)));
   }
   personalizedExternal = personalizeForUser(personalizedExternal);
-  const rankedResponsePosts = rankFeedPostsForLocation(
-    [...internal, ...personalizedExternal],
-    locationContext,
-    { preserveFirst: Math.min(internal.length, 2) }
-  );
+  const rankedResponsePosts = [...internal, ...personalizedExternal];
   const responsePosts = usesBlendedSources
     ? enforceFeedDiversity(rankedResponsePosts, feedLimit, sortMode)
     : rankedResponsePosts.slice(0, feedLimit);
