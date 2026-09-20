@@ -62,10 +62,16 @@ try {
     };
     const waitClosed = async () => {
       await page.waitForFunction(() => !document.querySelector('#mobile-account-drawer') || document.querySelector('#mobile-account-drawer').getAttribute('aria-hidden') === 'true');
+      // The closing animation can still cover the next touch target after aria-hidden changes.
+      await page.waitForFunction(() => {
+        const element = document.querySelector('#mobile-account-drawer');
+        return !element || !element.getClientRects().length || element.getBoundingClientRect().right <= 1;
+      });
       check(await page.evaluate(() => document.body.style.overflow !== 'hidden'), 'Page scrolling must unlock after closing');
     };
     try {
       await auditNavigate(page, base);
+      await page.locator('.home-feed-layout').waitFor();
       if (viewport.width > 768) {
         await page.locator('.sidebar-logout--danger').waitFor();
         check(!(await opener.isVisible()), 'Mobile opener leaked into desktop');
@@ -109,6 +115,7 @@ try {
         await waitOpen();
         await drawer.getByRole('link', { name: 'Shop', exact: true }).click();
         await page.waitForURL('**/?feed=ufi&channel=shop');
+        await page.getByRole('button', { name: 'Create a Shop post', exact: true }).waitFor();
         await waitClosed();
         check(new URL(page.url()).searchParams.get('channel') === 'shop', 'Shop route is not connected');
         await opener.click();
@@ -181,6 +188,7 @@ try {
 
         for (const route of ['', 'opportunities']) {
           await auditNavigate(page, base + route);
+          await page.locator(route ? '.jobs-page-layout' : '.home-feed-layout').waitFor();
           await rightOpener.click();
           const right = page.locator('#mobile-feed-drawer');
           await page.waitForFunction(() => document.querySelector('#mobile-feed-drawer').getAttribute('aria-hidden') === 'false');
@@ -195,6 +203,8 @@ try {
         }
 
         await auditNavigate(page, base);
+        await page.locator('.home-feed-layout').waitFor();
+        await waitClosed();
         await opener.waitFor();
         // Real touch input also exercises native scrolling and touchcancel.
         const session = await context.newCDPSession(page);

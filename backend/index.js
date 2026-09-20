@@ -124,6 +124,8 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 const app = express();
+// Preserve nested-value validation after Express 5 changed its default parser.
+app.set('query parser', 'extended');
 const aggregateAnalytics = createAggregateAnalytics({ db, schedule: setInterval, onPageview: () => recordRealUserActivity(null, 'pageview') });
 app.use(aggregateAnalytics.serviceMiddleware);
 // Trust only an explicitly configured proxy range/hop count. Untrusted clients
