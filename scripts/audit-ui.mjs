@@ -143,7 +143,12 @@ try {
         return bounds.left >= parent.left - 1 && bounds.right <= parent.right + 1;
       }), `Last ${feedName} source cannot be reached at ${viewport.width}`);
       await page.locator('.feed-source-tabs--compact').evaluate(el => { el.scrollLeft = 0; });
-      assert.ok(await buttons.last().evaluate(el => el.getBoundingClientRect().right >= el.parentElement.getBoundingClientRect().right - 1), 'Source bar leaves unused space');
+      // Fixed-size circles may all fit in a wide row; do not stretch them to
+      // consume spare width. After scrolling back, the first must be reachable.
+      assert.ok(await buttons.first().evaluate(el => {
+        const bounds = el.getBoundingClientRect(), parent = el.parentElement.getBoundingClientRect();
+        return bounds.left >= parent.left - 1 && bounds.right <= parent.right + 1;
+      }), 'First source is clipped after resetting the source bar');
       const sourceMenu = page.getByRole('button', { name: 'View all feed sources', exact: true });
       await sourceMenu.click();
       const menuLabels = await page.locator('.feed-source-menu-item:not(.aggregate) .feed-source-option-label').allTextContents();
