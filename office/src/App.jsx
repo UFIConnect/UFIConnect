@@ -682,7 +682,7 @@ function DeployView({ triggerDeploy, deploying, log }) {
     <>
       <h1 style={H1}>Deploy Center</h1>
       <p style={SUBTITLE}>
-        Push to <strong style={{ color: '#e2e8f0' }}>main</strong> for automatic deploys, or trigger a manual redeploy here.
+        Push to <strong style={{ color: '#e2e8f0' }}>main</strong> to verify and deploy every service, or redeploy a verified service here.
       </p>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 13, maxWidth: 680, marginBottom: 30 }}>
@@ -713,18 +713,15 @@ function DeployView({ triggerDeploy, deploying, log }) {
 
       <Card style={{ maxWidth: 680, background: '#0a1628', borderColor: 'rgba(59,130,246,.18)', marginBottom: 24 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: '#60a5fa', marginBottom: 10 }}>
-          Auto-Deploy is Active
+          Verified Deployment Gate
         </div>
         <div style={{ fontSize: 12, color: '#94a3b8', lineHeight: 1.8 }}>
-          Every push to <code style={CODE}>main</code> automatically triggers a rebuild and deploy via Render's GitHub integration — typically live within 2–3 minutes.
+          Every push to <code style={CODE}>main</code> runs <em>Verify UFIconnect</em>. Only a successful, still-current commit is sent to Render through the protected GitHub environment hooks.
           <br />
-          For the <em>Deploy Now</em> buttons to work, add deploy hooks or Render API credentials to the backend env vars:
+          The <em>Deploy Now</em> buttons dispatch that same guarded workflow when <code style={CODE}>OFFICE_GITHUB_TOKEN</code> has Actions write access.
           <br />
-          <code style={CODE}>RENDER_HOOK_API</code> · <code style={CODE}>RENDER_HOOK_WEB</code> · <code style={CODE}>RENDER_HOOK_OFFICE</code> · <code style={CODE}>RENDER_HOOK_PIPELINE</code>
-          <br />
-          Pipeline hasn't been redeploying automatically — it's worth confirming <em>Auto-Deploy</em> is actually turned on for it in Render's dashboard (Settings → Build & Deploy), not just relying on the hook here.
-          <br />
-          Find your deploy hooks under each service → <em>Settings → Deploy Hook</em> in the Render dashboard.
+          GitHub environment secrets: <code style={CODE}>RENDER_HOOK_API</code> · <code style={CODE}>RENDER_HOOK_WEB</code> · <code style={CODE}>RENDER_HOOK_OFFICE</code> · <code style={CODE}>RENDER_HOOK_PIPELINE</code>.
+          Render blueprint auto-deploy remains disabled so an unverified commit cannot bypass this gate.
         </div>
       </Card>
 
@@ -802,7 +799,7 @@ function AutofixView() {
           </div>
           <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
             {data.enabled
-              ? 'Eligible candidates can be committed and auto-deployed.'
+              ? 'Eligible candidates can be committed, verified, and deployed.'
               : 'Detection and logging still run — nothing gets committed while off.'}
           </div>
         </div>
@@ -1108,7 +1105,7 @@ function VersionsView({ versions, status, pipelineStatus }) {
     {
       name: 'UFIConnect Monorepo',
       desc: 'Backend (Node.js) · Web (React) · Mobile (Expo) · Office (React)',
-      url: 'https://github.com/yosufkaka99-alt/UFIConnect',
+      url: 'https://github.com/UFIConnect/UFIConnect',
       icon: 'PKG',
     },
   ];
@@ -1208,11 +1205,11 @@ function VersionsView({ versions, status, pipelineStatus }) {
           <li>Make your code changes locally in the repo</li>
           <li>Commit: <code style={CODE}>git commit -m "your change"</code></li>
           <li>Push: <code style={CODE}>git push origin main</code></li>
-          <li>Render detects the push and auto-deploys within ~2 minutes</li>
-          <li>Or use the Deploy Center tab for an instant manual redeploy</li>
+          <li>GitHub verifies the current main commit and then triggers the Render hooks</li>
+          <li>Or use the Deploy Center tab to redeploy the already-verified commit</li>
         </ol>
         <div style={{ marginTop: 12, fontSize: 11, color: '#334155' }}>
-          Each service (API, Web, Office) has its own Render build — pushing once redeploys all three simultaneously.
+          API, Web, Office, and Pipeline each have a Render build; one successful main verification deploys all four.
         </div>
       </Card>
     </>

@@ -353,7 +353,7 @@ const BASE_OFFICE_CONTROLS = Object.freeze([
     id: 'commit.web-frontend',
     category: 'Frontend changes',
     label: 'Commit a web frontend file',
-    description: 'Review and commit one approved text file under the web frontend to the main branch.',
+    description: 'Review and commit one approved web file to main. Successful verification then updates the public domain.',
     target: 'api',
     impact: 'critical',
     requiresConfirmation: true,
@@ -386,7 +386,7 @@ const BASE_OFFICE_CONTROLS = Object.freeze([
     id: 'deploy.frontends',
     category: 'Deployments',
     label: 'Deploy web and Office',
-    description: 'Start the public web and Office frontend deployments together from the current main branch.',
+    description: 'Deploy the public web and Office from the current main commit after GitHub confirms its verification passed.',
     target: 'api',
     impact: 'critical',
     requiresConfirmation: true,
@@ -397,7 +397,7 @@ const BASE_OFFICE_CONTROLS = Object.freeze([
     label: service === 'mobile' ? 'Build mobile app' : `Deploy ${service === 'web' ? 'public web' : service}`,
     description: service === 'mobile'
       ? 'Start the production Expo EAS workflow for both iOS and Android from the main branch.'
-      : `Start a production deployment for the ${service} service using its configured Render hook or API service ID.`,
+      : `Deploy the verified current main commit to the ${service} service through GitHub Actions.`,
     target: 'api',
     impact: 'critical',
     requiresConfirmation: true,

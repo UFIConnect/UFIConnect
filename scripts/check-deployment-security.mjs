@@ -39,6 +39,18 @@ for (const file of ['.github/workflows/deploy-render.yml', '.github/workflows/de
     assert.ok(commands.includes('latest_sha') && commands.includes('VERIFIED_SHA'), 'Deploys must reject superseded commits');
   }
 }
+const renderDeployment = load('.github/workflows/deploy-render.yml');
+assert.equal(renderDeployment.permissions.actions, 'read', 'Manual deployment verification needs read-only Actions access');
+assert.deepEqual(renderDeployment.on.workflow_dispatch.inputs.target.options, [
+  'all', 'frontends', 'web', 'office', 'api', 'pipeline',
+]);
+const renderJob = renderDeployment.jobs['deploy-render'];
+assert.match(renderJob.if, /workflow_dispatch/);
+assert.match(renderJob.if, /refs\/heads\/main/);
+const renderCommands = renderJob.steps.map(step => step.run || '').join('\n');
+for (const required of ['actions/workflows/verify.yml/runs', 'head_sha=${VERIFIED_SHA}', '.event == "push"', '.conclusion == "success"']) {
+  assert.ok(renderCommands.includes(required), `Manual Render deployment must verify: ${required}`);
+}
 const verification = load('.github/workflows/verify.yml');
 assert.ok(verification.jobs.native, 'Native verification must gate releases alongside the web checks');
 const nativeSteps = verification.jobs.native.steps.map(step => step.run || '').join('\n');

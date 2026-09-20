@@ -151,6 +151,7 @@ try {
         await page.getByRole('heading', { name: 'Create a group', exact: true }).waitFor();
         await waitClosed();
         await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+        await page.getByRole('heading', { name: 'Create a group', exact: true }).waitFor({ state: 'hidden' });
         await opener.click();
         await waitOpen();
         await drawer.getByRole('link', { name: 'Roles', exact: true }).click();

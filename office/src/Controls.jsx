@@ -296,7 +296,13 @@ export default function Controls({ apiBase = '', pipelineBase = '', request = fe
         results.push({ role: base === apiBase ? 'api' : 'pipeline', ...payload.result });
       }
       const result = results.length === 1 ? results[0] : results;
-      setNotice({ tone: 'success', text: `${control.label} completed.`, result });
+      setNotice({
+        tone: 'success',
+        text: control.input === 'frontend-file'
+          ? `${control.label} completed. GitHub verification will publish the commit to the public domain when it passes.`
+          : `${control.label} completed.`,
+        result,
+      });
       await refresh();
       return results[0] || null;
     } catch (runError) {
@@ -541,7 +547,7 @@ export default function Controls({ apiBase = '', pipelineBase = '', request = fe
           <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${COLORS.border}` }}>
             <SectionHeader
               title={`${frontendTargetLabel(editor.target)} frontend change`}
-              description="Only existing frontend text files are editable. GitHub rejects stale or conflicting commits."
+              description="Only existing frontend text files are editable. GitHub rejects stale commits, verifies each new main commit, then publishes successful web changes to the public domain."
               action={<ActionButton tone="neutral" onClick={() => setEditor((current) => ({ ...current, open: false }))}>Close editor</ActionButton>}
             />
             <div style={{ display: 'grid', gridTemplateColumns: compact ? '1fr' : 'minmax(0, 1fr) 110px', gap: 9 }}>

@@ -39,6 +39,8 @@ test('Office and public web frontend controls are both allowlisted', () => {
   assert.equal(findOfficeControl('commit.web-frontend')?.frontendTarget, 'web');
   assert.equal(findOfficeControl('commit.office-frontend')?.frontendTarget, 'office');
   assert.equal(findOfficeControl('deploy.frontends')?.requiresConfirmation, true);
+  assert.match(findOfficeControl('commit.web-frontend')?.description, /public domain/);
+  assert.match(findOfficeControl('deploy.web')?.description, /verified current main commit/);
 });
 
 test('high-impact controls require explicit confirmation', () => {
