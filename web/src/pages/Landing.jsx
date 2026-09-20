@@ -171,14 +171,19 @@ export default function Landing() {
                 <div className="landing-eyebrow">Your world, connected</div>
                 <h1>UFIconnect</h1>
                 <p>
-                  Find your people. Discover your next opportunity.
-                  Fresh conversations, shared interests, and career possibilities,
-                  all in a social network that feels like you.
+                  Your interests. Your communities. Your people.
+                  Discover conversations across your favorite apps and bring
+                  your world together in one social network.
                 </p>
                 <div className="landing-actions">
                   <Link to="/register" className="landing-primary-action">Join free</Link>
                   <Link to="/global" className="landing-secondary-action">Explore the feed</Link>
                 </div>
+              </div>
+              <div className="landing-network-art">
+                <img src="/homepage-app-network-2026-09.jpg"
+                  alt="UFIconnect at the center of a connected network of social, community, and creative apps"
+                  width="1536" height="1024" fetchPriority="high" />
               </div>
             </div>
           </section>

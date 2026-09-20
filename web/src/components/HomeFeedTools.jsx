@@ -36,7 +36,7 @@ function SourceMark({ source }) {
   if (hasBrandIcon(source)) {
     return (
       <span className="home-feed-source-mark" style={{ color: meta.color || 'var(--primary)' }}>
-        <BrandIcon platform={source} size={15} />
+        <BrandIcon platform={source} size={18} />
       </span>
     );
   }
@@ -68,7 +68,7 @@ export default function HomeFeedTools({
   const [uncontrolledOpenPanel, setUncontrolledOpenPanel] = useState(null);
   const [disabledSources, setDisabledSources] = useState(new Set());
   const [savingSourceId, setSavingSourceId] = useState(null);
-  const [sourceCategory, setSourceCategory] = useState('all');
+  const [sourceCategory, setSourceCategory] = useState('social');
   const [accountFilter, setAccountFilter] = useState('all');
   const [accountPlatforms, setAccountPlatforms] = useState(null);
   const [accountConnected, setAccountConnected] = useState({});
@@ -88,6 +88,7 @@ export default function HomeFeedTools({
   const [editingLinks, setEditingLinks] = useState(false);
   const [savingLinks, setSavingLinks] = useState(false);
 
+  useEffect(() => { setSourceCategory('social'); }, [favoriteMode]);
   useEffect(() => { setSkills(Array.isArray(profile?.skills) ? profile.skills : []); }, [profile?.skills]);
   useEffect(() => {
     const stored = Array.isArray(profile?.roleSettings?.disabledSources) ? profile.roleSettings.disabledSources : [];
@@ -144,6 +145,8 @@ export default function HomeFeedTools({
     ? profileConnected.length
     : visibleAccountPlatforms.filter(([key]) => accountConnected[key]).length;
   const sourceGroups = sourceSections(availableSources, normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites)[favoriteMode], sourceCategory);
+  const visibleSources = sourceGroups.flatMap(section => section.items);
+  const visibleEnabledCount = visibleSources.filter(source => !disabledSources.has(source)).length;
   const filteredAccounts = filterAccounts(visibleAccountPlatforms, accountConnected, accountFilter);
 
   async function persistDisabledSources(next, previous, pendingKey, successMessage) {
@@ -181,10 +184,10 @@ export default function HomeFeedTools({
   }
 
   async function setAllSources(enabled) {
-    if (!profile || savingSourceId || availableSources.length === 0) return;
+    if (!profile || savingSourceId || visibleSources.length === 0) return;
     const previous = new Set(disabledSources);
     const next = new Set(previous);
-    availableSources.forEach(source => {
+    visibleSources.forEach(source => {
       if (enabled) next.delete(source);
       else next.add(source);
     });
@@ -192,7 +195,7 @@ export default function HomeFeedTools({
       next,
       previous,
       '__all__',
-      enabled ? 'All feed sources are on.' : 'All feed sources are off.',
+      enabled ? 'Sources in this category are on.' : 'Sources in this category are off.',
     );
   }
 
@@ -346,12 +349,12 @@ export default function HomeFeedTools({
         onToggle={() => toggle('sources')}
       >
         <DirectoryControls label="feed sources" filter={sourceCategory} onFilterChange={setSourceCategory}
-          options={[["all", "All categories"], ["favorites", "Favorites"], ...SOURCE_CATEGORIES]} />
-        <div className="home-feed-source-actions" aria-label="All feed source controls">
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAllSources(true)} disabled={savingSourceId !== null || enabledSourceCount === availableSources.length}>
+          options={[["favorites", "Favorites"], ...SOURCE_CATEGORIES]} />
+        <div className="home-feed-source-actions" aria-label="Current category source controls">
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAllSources(true)} disabled={savingSourceId !== null || visibleEnabledCount === visibleSources.length}>
             {savingSourceId === '__all__' ? 'Saving...' : 'Enable all'}
           </button>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAllSources(false)} disabled={savingSourceId !== null || enabledSourceCount === 0}>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAllSources(false)} disabled={savingSourceId !== null || visibleEnabledCount === 0}>
             {savingSourceId === '__all__' ? 'Saving...' : 'Disable all'}
           </button>
         </div>

@@ -47,7 +47,7 @@ try {
     await installAuditMember(page, app, 'interface-member');
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=feed');
     const sources = page.getByRole('group', { name: 'Home sources', exact: true }); await sources.waitFor();
-    await sources.getByRole('button', { name: 'All sources', exact: true }).click();
+    assert.equal(await sources.getByRole('button', { name: 'All sources', exact: true }).count(), 0);
     await sources.getByRole('button', { name: 'Reddit', exact: true }).click();
     await sources.getByRole('button', { name: 'Hacker News', exact: true }).click();
     await page.waitForTimeout(150);
