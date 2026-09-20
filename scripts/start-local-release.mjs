@@ -2,13 +2,17 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createOfficeServer } from '../office/node_modules/vite/dist/node/index.js';
 import { createServer as createWebServer } from '../web/node_modules/vite/dist/node/index.js';
+import { createPhoneAccess } from './local-phone-access.mjs';
+import { localWebWorkbench } from './local-web-workbench.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const servers = [];
+const phoneAccess = createPhoneAccess({ root });
 let closing = false;
 async function close() {
   if (closing) return;
   closing = true;
+  await phoneAccess.stop();
   await Promise.allSettled(servers.map(server => server.close()));
 }
 for (const signal of ['SIGINT', 'SIGTERM']) {
@@ -41,6 +45,7 @@ try {
     root: officeRoot,
     configFile: path.join(officeRoot, 'vite.config.js'),
     mode: 'release-local',
+    plugins: [localWebWorkbench({ mode: 'release-local', phoneAccess })],
     server: { host: '127.0.0.1', port: 4174, strictPort: true },
   });
   servers.push(office);
@@ -49,6 +54,10 @@ try {
   console.log('Local Office: http://127.0.0.1:4174');
   console.log('Local website: http://127.0.0.1:4173');
   console.log('Use the Local web tab to edit and preview website files before publishing.');
+  if (process.argv.includes('--phone')) {
+    await phoneAccess.start();
+    console.log('Phone connection ready. Its link and code are available in Local web.');
+  }
 } catch (error) {
   await close();
   console.error(`Could not start the local release workspace: ${error.message}`);

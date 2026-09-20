@@ -25,6 +25,12 @@
 .local-web-preview-mobile { max-width: 390px; }
 .local-web-preview iframe { display: block; border: 0; width: 100%; height: 600px; background: #fff; }
 .local-web-publish { margin-top: 18px; }
+.local-web-phone { margin-top:16px; margin-bottom:18px; }
+.local-web-phone h2 { margin-bottom:12px; }
+.local-web-phone .local-web-button { margin-top:12px; }
+.local-web-phone-preview { padding:22px 0; }
+.local-web-phone-preview a { margin-top:16px; }
+@media(max-width:760px) { .local-web-desktop-start { display:none; } }
 .local-web-review { border-top: 1px solid #293851; padding-top: 18px; margin-top: 18px; }
 .local-web-comparison { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
 .local-web-comparison label { min-width: 0; font-size: 12px; color: #cbd5e1; }

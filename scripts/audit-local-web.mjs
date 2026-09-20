@@ -29,7 +29,7 @@ async function start(local) {
   return server.resolvedUrls.local[0];
 }
 
-async function fixture(context) {
+async function fixture(context, remote = false) {
   const state = { content: "export const label = 'Local base';\n", saves: [], publishes: [], localCalls: [], staleSave: false, failPublish: false };
   await context.route('**/*', async route => {
     const request = route.request(), url = new URL(request.url());
@@ -37,7 +37,7 @@ async function fixture(context) {
     if (url.pathname.startsWith('/__local-web/')) {
       state.localCalls.push(url.pathname);
       assert.equal(request.headers()['x-office-token'], undefined, 'Administrative tokens stay out of local file requests');
-      if (url.pathname.endsWith('/status')) return route.fulfill({ json: { previewUrl: 'http://127.0.0.1:4173', officeUrl: 'http://127.0.0.1:4174', writeHeader: 'X-Local-Web-Editor' } });
+      if (url.pathname.endsWith('/status')) return route.fulfill({ json: { previewUrl: remote ? 'https://phone-preview.trycloudflare.com' : 'http://127.0.0.1:4173', phone: remote ? { remote: true } : { state: 'off' }, officeUrl: 'http://127.0.0.1:4174', writeHeader: 'X-Local-Web-Editor' } });
       if (url.pathname.endsWith('/files')) return route.fulfill({ json: { files: [{ path: filePath }] } });
       if (url.pathname.endsWith('/file') && request.method() === 'PUT') {
         const body = request.postDataJSON();
@@ -166,6 +166,26 @@ try {
   assert.equal(await page.locator('iframe').count(), 0, 'Hosted Office does not embed a local service');
   await context.close();
   console.log('PASS: Hosted Local web tab requires the local console');
+  const phoneContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const phoneState = await fixture(phoneContext, true);
+  const phonePage = await phoneContext.newPage();
+  await open(phonePage, localUrl);
+  await phonePage.getByLabel('Website file', { exact: true }).selectOption(filePath);
+  await phonePage.getByLabel(filePath, { exact: true }).fill('phone edit');
+  await phonePage.getByRole('button', { name: 'Save locally', exact: true }).click();
+  await phonePage.getByRole('status').filter({ hasText: 'Saved on this computer' }).waitFor();
+  assert.equal(phoneState.content, 'phone edit');
+  assert.equal(await phonePage.getByRole('link', { name: 'Open phone preview', exact: true }).getAttribute('href'), 'https://phone-preview.trycloudflare.com');
+  assert.equal(await phonePage.locator('iframe').count(), 0, 'Phone preview is isolated from the file editor on its own secure origin');
+  await open(phonePage, hostedUrl);
+  await phonePage.getByLabel('Computer connection link', { exact: true }).fill('javascript:alert(1)');
+  assert.equal(await phonePage.getByRole('link', { name: 'Connect to my computer', exact: true }).count(), 0);
+  await phonePage.getByLabel('Computer connection link', { exact: true }).fill('https://my-computer.trycloudflare.com');
+  assert.equal(await phonePage.getByRole('link', { name: 'Connect to my computer', exact: true }).getAttribute('href'), 'https://my-computer.trycloudflare.com/#local-web');
+  assert.equal(await phonePage.getByRole('link', { name: 'Open local web workspace', exact: true }).isVisible(), false, 'Phones are not sent to their own localhost');
+  assert.ok(await phonePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
+  await phoneContext.close();
+  console.log('PASS: Phone editing, isolated HTTPS preview and hosted phone connection flow');
 } finally {
   await browser?.close();
   await Promise.all(servers.map(server => server.close()));
