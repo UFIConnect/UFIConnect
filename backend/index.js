@@ -23598,7 +23598,10 @@ async function handleVideoFeedRequest(req, res) {
         userAffinity,
         { ...options, locationContext, request: req },
       );
-      return req.query.sort === 'balanced' ? personalized : orderNewestFeedCohorts(personalized);
+      const ordered = req.query.sort === 'balanced' ? personalized : orderNewestFeedCohorts(personalized);
+      // Source/topic selection must not bypass the equalizer in Videos either.
+      // Explicit search retains its chronological results.
+      return searchQuery ? ordered : equalizeVideosForUser(ordered);
     };
     const userTopics = userDeclaredFeedTopics(user, prefs);
     const hasSavedVideoScope = userTopics.length > 0;
@@ -23657,7 +23660,7 @@ async function handleVideoFeedRequest(req, res) {
         diversify: true,
       });
       const playable = applyPersonalTopicFilter(filterUnseen(ranked.filter(isVideoSurfacePost), seenIds).filter(matchesTopic));
-      const videoCandidates = personalizeVideosForUser(equalizeVideosForUser(playable));
+      const videoCandidates = personalizeVideosForUser(playable);
       const pageRows = usesBlendedVideoSources
         ? enforceFeedDiversity(videoCandidates, feedLimit, 'balanced')
         : videoCandidates.slice(0, feedLimit);
@@ -23687,7 +23690,7 @@ async function handleVideoFeedRequest(req, res) {
       });
       const playable = applyPersonalTopicFilter(filterUnseen(balancedRaw.filter(isVideoSurfacePost), seenIds)
         .filter(matchesTopic).filter(matchesSearch));
-      const videoCandidates = personalizeVideosForUser(equalizeVideosForUser(playable));
+      const videoCandidates = personalizeVideosForUser(playable);
       const pageRows = usesBlendedVideoSources
         ? enforceFeedDiversity(videoCandidates, feedLimit, 'balanced')
         : videoCandidates.slice(0, feedLimit);
@@ -23705,7 +23708,7 @@ async function handleVideoFeedRequest(req, res) {
         mediaType: 'video', topics: scopedVideoTopics, timeRange: scopedVideoTimeRange, seenIds, freshOnly,
         maxPostsPerSource: usesBlendedVideoSources ? BLENDED_FEED_MAX_POSTS_PER_SOURCE : null,
       });
-      const filtered = personalizeVideosForUser(equalizeVideosForUser(applyPersonalTopicFilter(playable.filter(matchesSearch))));
+      const filtered = personalizeVideosForUser(applyPersonalTopicFilter(playable.filter(matchesSearch)));
       const pageRows = usesBlendedVideoSources
         ? enforceFeedDiversity(filtered, feedLimit, 'balanced')
         : filtered.slice(0, feedLimit);
@@ -23765,7 +23768,7 @@ async function handleVideoFeedRequest(req, res) {
       hasMore = mix.hasMore || introPosts.length > 0;
     }
 
-    const videoCandidates = personalizeVideosForUser(equalizeVideosForUser([...introPosts, ...mixPosts]));
+    const videoCandidates = personalizeVideosForUser([...introPosts, ...mixPosts]);
     const posts = enforceFeedDiversity(videoCandidates, feedLimit, 'balanced');
     sendVideoPage(req, res, posts, { cursor: nextCursor, hasMore: hasMore || videoCandidates.length > posts.length });
   } catch (e) {
@@ -23840,18 +23843,19 @@ async function handleFollowingVideoFeedRequest(req, res) {
     // wraparound instead of hard-stopping once a small connected pool runs out.
     const userAffinity = await getUserAffinity(req.user.id);
     const locationContext = getFeedLocationContext(req, user);
-    const equalized = orderNewestFeedCohorts(personalizeAuthenticatedFeedPosts(
-      buildFullMemberFeedEqualizer(
-        buildEqualizedFollowingPool(scopedVideos, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS }),
-        topicsFilter.length ? topicsFilter : userTopics,
-        userAffinity,
-        { filterTopics: false },
-      ),
+    const ranked = orderNewestFeedCohorts(personalizeAuthenticatedFeedPosts(
+      buildEqualizedFollowingPool(scopedVideos, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS }),
       user,
       prefs,
       userAffinity,
       { locationContext, request: req }
     ));
+    const equalized = searchQuery ? ranked : buildFullMemberFeedEqualizer(
+      ranked,
+      topicsFilter.length ? topicsFilter : userTopics,
+      userAffinity,
+      { filterTopics: false },
+    );
     const seenIds = searchQuery ? new Set() : await getUserSeenSet(req.user.id, 'videos');
     const followingVideoPage = paginateEqualizedPool(equalized, {
       mode: 'following-videos',

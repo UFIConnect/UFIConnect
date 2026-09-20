@@ -19,8 +19,8 @@ function fixture() {
     })));
 }
 
-async function feedHarness() {
-  const rows = fixture();
+async function feedHarness({ videos = false } = {}) {
+  const rows = fixture().map(row => videos ? { ...row, media_type: 'video', media_url: `https://example.org/${row.id}.mp4`, video_duration_seconds: 60 } : row);
   const app = await createAppHarness({ connected: true, query(sql, params) {
     if (!sql.includes('WITH c(source, before_ts, before_id)')) return { rows: [] };
     const laneCount = [...sql.matchAll(/\(\$\d+, \$\d+::timestamptz, \$\d+::text\)/g)].length;
@@ -32,7 +32,7 @@ async function feedHarness() {
     }).flat() };
   } });
   app.seedUser(member('equalizer-viewer', { preferences: { interests: topics } }));
-  return { app, rows, request: query => app.request(`/office/feed?mode=feed&sort=newest&passive=1&${query}`, { userId: 'equalizer-viewer' }) };
+  return { app, rows, request: query => app.request(`/office/feed${videos ? '/videos' : ''}?mode=feed&sort=newest&passive=1&${query}`, { userId: 'equalizer-viewer' }) };
 }
 
 test('selected sources stay equalized across different timestamps and cursor pages', async () => {
@@ -104,5 +104,37 @@ test('Following keeps selected connected sources balanced in newest and popular 
       assert.ok(single.data.posts.every(post => post.source === 'reddit'));
       assert.ok(single.data.posts.slice(0, 3).some(post => post.topic === topics[1]));
     }
+  } finally { await app.close(); }
+});
+
+test('Videos keeps selected sources and single-source topics equalized', async () => {
+  const { app, request } = await feedHarness({ videos: true });
+  try {
+    const first = await request('sources=reddit,hackernews&limit=4');
+    assert.equal(first.status, 200);
+    assert.deepEqual(first.data.posts.map(post => post.source), ['reddit', 'hackernews', 'reddit', 'hackernews']);
+    const second = await request(`sources=reddit,hackernews&limit=4&cursor=${encodeURIComponent(first.data.cursor)}`);
+    assert.equal(second.status, 200);
+    assert.deepEqual(second.data.posts.map(post => post.source), ['reddit', 'hackernews', 'reddit', 'hackernews']);
+    assert.equal(new Set([...first.data.posts, ...second.data.posts].map(post => post.id)).size, 8);
+    const single = await request('source=reddit&limit=20');
+    assert.ok(single.data.posts.length > 0);
+    assert.ok(single.data.posts.every(post => post.source === 'reddit'));
+    assert.ok(single.data.posts.slice(0, 3).some(post => post.topic === topics[1]));
+  } finally { await app.close(); }
+});
+
+test('Following videos preserves the mix for selected connected sources', async () => {
+  const app = await createAppHarness();
+  const viewer = member('following-video-equalizer', { preferences: { interests: topics }, socialTokens: { reddit: 'test-only', github: 'test-only' } });
+  app.seedUser(viewer);
+  for (const [source, original] of [['reddit', 'reddit'], ['github', 'hackernews']]) {
+    app.followingSourceCache.set(`${viewer.id}::${source}`, { fetchedAt: Date.now(),
+      posts: fixture().filter(row => row.source === original).map(row => app.dbRowToFeedPost({ ...row, source, media_type: 'video', media_url: `https://example.org/${row.id}.mp4`, video_duration_seconds: 60 })) });
+  }
+  try {
+    const result = await app.request('/office/feed/videos/following?sources=reddit,github&limit=4', { userId: viewer.id });
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.data.posts.map(post => post.source), ['reddit', 'github', 'reddit', 'github']);
   } finally { await app.close(); }
 });
