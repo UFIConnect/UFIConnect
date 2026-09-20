@@ -88,12 +88,20 @@ try {
     await category.selectOption('career');
     await panel.getByRole('button', { name: 'Enable all', exact: true }).waitFor();
     assert.equal(await panel.getByRole('button', { name: 'Enable all', exact: true }).isDisabled(), true);
+    // Wait for the destination feed request as well as its heading. React can
+    // show the new source row before navigation has closed the previous drawer.
+    const followingLoaded = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname.endsWith('/office/feed') && url.searchParams.get('mode') === 'following';
+    });
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=following');
+    await followingLoaded;
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     panel = await open('Following');
     await panel.getByRole('switch', { name: 'Turn off UFIconnect', exact: true }).waitFor();
     profile = (await app.request('/profile', { userId: id })).data;
     assert.deepEqual(profile.roleSettings.feedSourceFavorites, favorites);
-    assert.ok(await panel.getByRole('button', { name: 'Enable all', exact: true }).isVisible());
+    await panel.getByRole('button', { name: 'Enable all', exact: true }).waitFor();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
     console.log(`PASS: Source bulk controls, rollback, reload and saved favorites preservation at ${width}px`);
     await context.close();
