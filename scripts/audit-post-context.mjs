@@ -34,6 +34,9 @@ try {
     for (const [area, groupId, location] of [['UFI', 'ufi-general', '/?feed=ufi'], ['Shop', 'ufi-shop', '/?feed=ufi&channel=shop']]) {
       // Same-document navigation exercises state isolation, not a page reload.
       await page.evaluate(url => { history.pushState({}, '', url); window.dispatchEvent(new PopStateEvent('popstate')); }, location);
+      // Wait for the destination area to commit before using its shared Post label.
+      await page.getByRole('button', { name: 'Filter UFI posts by topic', exact: true })
+        .waitFor({ state: area === 'Shop' ? 'hidden' : 'visible' });
       await page.getByRole('button', { name: 'Post', exact: true }).click();
       const form = page.getByRole('form', { name: `Create ${area} post`, exact: true });
       await form.waitFor();

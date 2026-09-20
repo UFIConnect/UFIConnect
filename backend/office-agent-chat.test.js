@@ -177,7 +177,9 @@ test('provider errors and invalid or excessive output fall back without exposing
     { answer: 'password=private-secret' }, { raw: 'x'.repeat(65537) },
     { raw: JSON.stringify({ status: 'incomplete', output_text: 'unfinished text' }) }]) {
     const fake = provider(config);
-    const app = await harness(t, { fake, env: { OPENAI_API_KEY: 'private-key' } });
+    // A real timestamp can contain "401" and falsely resemble leaked provider output.
+    const app = await harness(t, { fake, env: { OPENAI_API_KEY: 'private-key' },
+      factoryOptions: { getAgentSnapshot: () => sample } });
     const result = await post(app);
     assert.equal(result.status, 200);
     assert.equal(result.data.mode, 'diagnostics');
