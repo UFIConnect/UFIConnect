@@ -108,7 +108,7 @@ async function auditWidth(browser, width) {
     await page.getByRole('button',{name:'Unlock Office',exact:true}).click();
     const city=page.getByTestId('live-city');
     await city.waitFor();
-    const motion=city.locator('[data-motion]');
+    const motion=city.locator('.lc-canvas');
     await eventually(async()=>await motion.getAttribute('data-motion')==='active','Fresh measured activity must animate');
     await page.screenshot({path:path.join(root,`.cache/audit-ui/office-city-initial-${width}.png`),fullPage:false});
     check(fixture.requests.some(request=>request.role==='api'&&request.path==='/office/status'),'API status fetched from API origin');
@@ -140,6 +140,17 @@ async function auditWidth(browser, width) {
     check(await city.locator('button[data-agent-id="stability"][data-service="api"]').count()>0,'API guard remains inspectable');
     check(await city.locator('button[data-agent-id="stability"][data-service="pipeline"]').count()>0,'Pipeline guard remains inspectable separately');
     check(await city.locator('.lc-road[data-active="true"] .lc-road-flow').evaluateAll(elements=>elements.some(element=>getComputedStyle(element).animationName!=='none')),'Actual CSS motion follows measured activity');
+    check(await city.locator('.lc-home-grid [data-home-id]').evaluateAll(elements=>elements.every(element=>getComputedStyle(element).animationName!=='none')),'Every visible home receives state-specific motion in whole-city mode');
+    await page.getByLabel('City motion speed').selectOption('1.75');
+    check(await city.evaluate(element=>element.style.getPropertyValue('--lc-fast-motion').endsWith('s')),'Motion speed updates the shared city timing');
+    await page.getByRole('button',{name:'Change animation scope',exact:true}).click();
+    check(await city.getAttribute('data-animation-scope')==='observed','Animation scope can be limited to observed activity');
+    await page.getByRole('button',{name:'Change animation scope',exact:true}).click();
+    check(await city.getAttribute('data-animation-scope')==='all','Animation scope can restore whole-city motion');
+    await city.getByRole('button',{name:/^Working \d+$/}).click();
+    check(await city.locator('.lc-home-grid [data-home-id]').evaluateAll(elements=>elements.length>0&&elements.every(element=>element.dataset.homeState==='working')),'Home controls filter the residential grid by live state');
+    await city.getByRole('button',{name:/^All \d+$/}).click();
+    check(await city.locator('.lc-home-grid [data-home-id]').count()===3,'All-home control restores the complete residential grid');
     await page.getByRole('button',{name:'Pause motion',exact:true}).click();
     await eventually(async()=>await motion.getAttribute('data-motion')==='paused','Pause control must stop the city');
     check(await city.locator('.lc-road-flow').evaluateAll(elements=>elements.every(element=>getComputedStyle(element).animationName==='none'||getComputedStyle(element).animationPlayState==='paused')),'Pausing stops actual CSS road animation');
