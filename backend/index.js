@@ -25117,8 +25117,8 @@ function getRuntimeHealthForAgent(id) {
 // --- Autofix agent -----------------------------------------------------------
 // Detects a recurring server error, mechanically generates a narrow fix,
 // validates it, and — only when AUTOFIX_ENABLED=true — commits it via
-// GitHub's Contents API, letting Render's existing auto-deploy-on-push ship
-// it, then watches health and reverts automatically if anything regresses.
+// GitHub's Contents API. The verified main workflow ships it, then this agent
+// watches health and reverts automatically if anything regresses.
 // Detection and logging always run regardless of the switch; only fix
 // generation through deploy/revert are gated by it. See the plan this was
 // built from (autofix agent design) for the full reasoning — the short
@@ -25187,7 +25187,7 @@ const AUTOFIX_MAX_PER_WEEK = envNumber('AUTOFIX_MAX_PER_WEEK', 3, 0, 30);
 const AUTOFIX_VERIFY_WINDOW_MS = envNumber('AUTOFIX_VERIFY_WINDOW_MS', 15 * 60 * 1000, 60 * 1000, 60 * 60 * 1000);
 // AUTOFIX_CHECK_INTERVAL_MS lives near the top of the file now, not here —
 // see that declaration's own comment for why.
-const AUTOFIX_GITHUB_OWNER = process.env.AUTOFIX_GITHUB_OWNER || 'yosufkaka99-alt';
+const AUTOFIX_GITHUB_OWNER = process.env.AUTOFIX_GITHUB_OWNER || 'UFIConnect';
 const configuredAutofixRepo = process.env.AUTOFIX_GITHUB_REPO || 'UFIConnect';
 const AUTOFIX_GITHUB_REPO = configuredAutofixRepo.toLowerCase() === 'ufconnect'
   ? 'UFIConnect'
@@ -25477,9 +25477,9 @@ async function runAutofixCheck() {
         continue;
       }
 
-      // -- Deploy: commit via GitHub Contents API, Render auto-deploys on
-      // push. Baseline captured immediately before the commit for the
-      // verify step below.
+      // -- Deploy: commit via GitHub Contents API. The verified main workflow
+      // ships successful commits. Baseline captured immediately before the
+      // commit for the verify step below.
       const baseline = {
         crashEvents: refreshControl.crashEvents,
         unhandledRejections: refreshControl.unhandledRejections,
@@ -25560,7 +25560,7 @@ async function verifyAutofixDeploy(attemptId, signature, previousSha, baseline, 
 
   // Regression — revert. Re-fetch the file's CURRENT sha (may have moved
   // since the fix commit) and PUT the pre-fix content back, which triggers
-  // another real auto-deploy of the reverted code.
+  // another verification-gated deployment of the reverted code.
   try {
     const current = await getGitHubFileContent(AUTOFIX_TARGET_PATH);
     const preFix = await githubApiRequest(`/repos/${AUTOFIX_GITHUB_OWNER}/${AUTOFIX_GITHUB_REPO}/git/blobs/${previousSha}`, 'GET');
@@ -26621,6 +26621,25 @@ async function triggerRenderServiceDeploy(service, hook) {
   };
 }
 
+async function dispatchVerifiedRenderDeploy(target) {
+  if (!['all', 'frontends', 'api', 'web', 'office', 'pipeline'].includes(target)) {
+    throw new Error(`Unknown verified deployment target "${target}".`);
+  }
+  const token = officeGithubToken();
+  if (!token) return null;
+  const result = await githubApiRequest(
+    `/repos/${AUTOFIX_GITHUB_OWNER}/${AUTOFIX_GITHUB_REPO}/actions/workflows/deploy-render.yml/dispatches`,
+    'POST',
+    { ref: 'main', inputs: { target } },
+    token,
+  );
+  return {
+    method: 'github-actions',
+    statusCode: result.statusCode,
+    data: { workflow: 'deploy-render.yml', ref: 'main', target },
+  };
+}
+
 app.post('/office/deploy/:service', requireOfficeToken, async (req, res) => {
   const service = req.params.service;
   if (!['api', 'web', 'office', 'pipeline'].includes(service)) {
@@ -26635,22 +26654,23 @@ app.post('/office/deploy/:service', requireOfficeToken, async (req, res) => {
   };
 
   try {
-    const result = await triggerRenderServiceDeploy(service, hooks[service]);
+    const result = await dispatchVerifiedRenderDeploy(service)
+      || await triggerRenderServiceDeploy(service, hooks[service]);
     if (!result) {
       const suffix = service.toUpperCase();
       const serviceIdVar = `RENDER_SERVICE_${suffix}_ID`;
       logAgentAction('deploy', 'WARN',
-        `Manual deploy for "${service}" needs RENDER_HOOK_${suffix} or RENDER_API_KEY + ${serviceIdVar}`, '#FBBF24');
+        `Manual deploy for "${service}" needs OFFICE_GITHUB_TOKEN, RENDER_HOOK_${suffix}, or RENDER_API_KEY + ${serviceIdVar}`, '#FBBF24');
       return res.json({
         ok: false,
-        msg: `No deploy config - set RENDER_HOOK_${suffix} or RENDER_API_KEY + ${serviceIdVar}`,
+        msg: `No deploy config - set OFFICE_GITHUB_TOKEN, RENDER_HOOK_${suffix}, or RENDER_API_KEY + ${serviceIdVar}`,
       });
     }
 
     const ok = result.statusCode >= 200 && result.statusCode < 300;
     logAgentAction('deploy',
       ok ? 'OK' : 'FAIL',
-      `Deploy "${service}" via Render ${result.method}: HTTP ${result.statusCode}`,
+      `Deploy "${service}" via ${result.method}: HTTP ${result.statusCode}`,
       ok ? '#4ADE80' : '#F87171'
     );
     return res.status(ok ? 200 : 502).json({
@@ -26697,14 +26717,15 @@ function officeControlCatalog() {
       || (process.env.RENDER_API_KEY && process.env[`RENDER_SERVICE_${service.toUpperCase()}_ID`])
     ));
     const renderConfigured = missingRenderServices.length === 0;
-    const available = (!needsGithub || githubConfigured) && renderConfigured;
+    const deployConfigured = !renderServices.length || githubConfigured || renderConfigured;
+    const available = (!needsGithub || githubConfigured) && deployConfigured;
     return {
       ...control,
       available,
       unavailableReason: needsGithub && !githubConfigured
         ? 'Set OFFICE_GITHUB_TOKEN in Render with repository Contents and Actions write access.'
-        : !renderConfigured
-          ? `Set deployment configuration for ${missingRenderServices.join(', ')}.`
+        : !deployConfigured
+          ? `Set OFFICE_GITHUB_TOKEN or deployment configuration for ${missingRenderServices.join(', ')}.`
           : null,
     };
   });
@@ -27007,6 +27028,18 @@ async function executeOfficeControl(control, body) {
     case 'deploy.mobile':
       return executeMobileBuild();
     case 'deploy.frontends': {
+      const verifiedDeployment = await dispatchVerifiedRenderDeploy('frontends');
+      if (verifiedDeployment) {
+        if (verifiedDeployment.statusCode !== 204) {
+          throw new Error(`Verified deployment workflow dispatch failed with HTTP ${verifiedDeployment.statusCode}.`);
+        }
+        return {
+          deployments: ['web', 'office'],
+          method: verifiedDeployment.method,
+          workflow: verifiedDeployment.data.workflow,
+          target: verifiedDeployment.data.target,
+        };
+      }
       const deployments = [];
       for (const service of ['web', 'office']) {
         const hook = process.env[`RENDER_HOOK_${service.toUpperCase()}`];
@@ -27029,6 +27062,18 @@ async function executeOfficeControl(control, body) {
     case 'deploy.pipeline':
     case 'deploy.office': {
       const service = control.id.slice('deploy.'.length);
+      const verifiedDeployment = await dispatchVerifiedRenderDeploy(service);
+      if (verifiedDeployment) {
+        if (verifiedDeployment.statusCode !== 204) {
+          throw new Error(`Verified deployment workflow dispatch failed with HTTP ${verifiedDeployment.statusCode}.`);
+        }
+        return {
+          service,
+          method: verifiedDeployment.method,
+          workflow: verifiedDeployment.data.workflow,
+          target: verifiedDeployment.data.target,
+        };
+      }
       const hooks = {
         api: process.env.RENDER_HOOK_API,
         web: process.env.RENDER_HOOK_WEB,
