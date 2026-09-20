@@ -370,7 +370,7 @@ services:
       - key: OFFICE_GITHUB_TOKEN
         sync: false
       - key: AUTOFIX_GITHUB_OWNER
-        value: yosufkaka99-alt
+        value: UFIConnect
       - key: AUTOFIX_GITHUB_REPO
         value: UFIConnect
 

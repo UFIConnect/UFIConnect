@@ -12,6 +12,7 @@ vite-*.log
 .env.*
 !.env.example
 !**/.env.example
+!office/.env.release-local
 *.keystore
 *.jks
 *.p12
