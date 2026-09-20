@@ -23,7 +23,7 @@ const server = await createServer({
 });
 const post = (scope, index) => ({
   id: `${scope}-${index}`, title: `${scope.toUpperCase()}_POST_${index}`,
-  content: `A conversation from the ${scope} feed.`, source: ['reddit', 'devto', 'bluesky'][index % 3],
+  content: `A conversation from the ${scope} feed.`, source: scope === 'joined' ? 'uficonnect' : ['reddit', 'devto', 'bluesky'][index % 3],
   sourceUrl: `https://example.org/${scope}/${index}`, author: 'Community member',
   createdAt: new Date(Date.now() - index * 60000).toISOString(), likesCount: 0, commentsCount: 0,
   ...(scope !== 'home' ? { groupId: `${scope}-group`, group: { id: `${scope}-group`, name: `${scope} community` } } : {}),

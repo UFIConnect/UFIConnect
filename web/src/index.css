@@ -5443,3 +5443,28 @@ a, button { -webkit-tap-highlight-color: transparent; }
 /* Prevent rubber-band overscroll from looking broken */
 html, body { overscroll-behavior: none; }
 
+
+/* Circular source toggles keep selection in the controls themselves. */
+.feed-source-picker { grid-template-columns: minmax(0, 1fr) 44px; }
+.feed-source-tabs--compact { grid-auto-columns: 44px; padding-block: 2px; }
+.feed-source-tabs--compact .feed-source-option.compact {
+  width: 44px; height: 44px; min-height: 44px; border-radius: 50%;
+  justify-content: center; padding: 0; flex-shrink: 0;
+}
+.feed-source-tabs--compact .feed-source-option-label { display: none; }
+.feed-source-option:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
+.feed-source-menu-button { width: 44px; height: 44px; min-width: 44px; min-height: 44px; border-radius: 50%; padding: 0; }
+.profile-more-options { display: grid; gap: 12px; }
+.profile-more-options a { display: block; padding: 16px; color: var(--text); text-decoration: none; }
+.profile-more-options span { display: block; margin-top: 4px; color: var(--muted); font-size: .85rem; }
+.saved-page { max-width: 760px; margin: 0 auto; }
+.saved-page h1 { margin: 0 0 8px; }
+.saved-page > p { color: var(--muted); margin-bottom: 24px; }
+
+.connected-post-actions { margin-top: 10px; color: var(--text, #111); }
+.connected-post-action-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.connected-post-action-error { font-size: .8rem; color: var(--danger, #b91c1c); margin-block: 8px; }
+.connected-post-actions form { padding: 12px; margin-top: 8px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface, #fff); }
+.connected-post-actions textarea { margin-bottom: 8px; }
+.profile-content-tabs > a { padding: 10px 16px; color: var(--muted); text-decoration: none; font-weight: 650; }
+.profile-content-tabs > a[aria-current="page"] { color: var(--primary); border-bottom: 2px solid var(--primary); }

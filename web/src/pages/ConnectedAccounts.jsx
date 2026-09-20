@@ -107,7 +107,10 @@ export default function ConnectedAccounts() {
   }
 
   async function startConnect(platform, handle) {
-    const handleParam = handle ? `?handle=${encodeURIComponent(handle.trim())}` : '';
+    const connectParams = new URLSearchParams();
+    if (handle) connectParams.set('handle', handle.trim());
+    if (searchParams.get('interactions') === '1') connectParams.set('interactions', '1');
+    const handleParam = connectParams.size ? `?${connectParams}` : '';
     setConnecting(platform);
     try {
       const { data } = await client.get(
@@ -246,6 +249,13 @@ export default function ConnectedAccounts() {
             </>
           )}
 
+          {searchParams.get('interactions') === '1' && <section className="card" aria-label="Source interaction permissions" style={{ marginBottom: 20 }}>
+            <h2>Likes and comments</h2>
+            <p>Authorize publishing actions on a connected source. Your comments will be published on that platform.</p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {['reddit', 'twitter', 'youtube', 'github', 'gitlab', 'bluesky'].filter(key => connected[key]).map(key => <button key={key} className="btn btn-outline btn-sm" disabled={!!connecting} onClick={() => handleConnect(key)}>Enable actions on {key === 'twitter' ? 'X' : key}</button>)}
+            </div>
+          </section>}
           <div className="account-directory-page">
             <DirectoryControls label="accounts" filter={accountFilter} onFilterChange={setAccountFilter}
               options={[["all", "All statuses"], ...ACCOUNT_STATUSES]} />

@@ -11645,11 +11645,12 @@ async function geocodeLocation(location) {
   return entry?.posts?.[0] || null;
 }
 
-async function fetchLocalRestaurantPosts(location) {
+async function fetchLocalRestaurantPosts(location, kind = 'restaurants') {
   if (!location?.city) return [];
   const point = await geocodeLocation(location);
   if (!point) return [];
-  const query = `[out:json][timeout:15];nwr[\"amenity\"~\"^(restaurant|cafe|fast_food)$\"](around:8000,${point.lat},${point.lon});out center meta 80;`;
+  const amenities = kind === 'bars' ? 'bar|pub|biergarten' : 'restaurant|cafe|fast_food';
+  const query = `[out:json][timeout:15];nwr[\"amenity\"~\"^(${amenities})$\"](around:8000,${point.lat},${point.lon});out center meta 80;`;
   const data = await withLocationProviderSlot(() => fetchLocationJSON(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`));
   const scope = locationScopeLabel(location);
   const elements = Array.isArray(data?.elements) ? data.elements : [];
@@ -11665,11 +11666,11 @@ async function fetchLocalRestaurantPosts(location) {
       const details = [tags.cuisine && `${tags.cuisine.replace(/;/g, ', ')} cuisine`, address, tags.opening_hours].filter(Boolean).join(' · ');
       return {
         id: `osm:${element.type}:${element.id}`,
-        source: 'restaurants',
-        sourceLabel: 'Restaurants',
+        source: kind,
+        sourceLabel: kind === 'bars' ? 'Bars' : 'Restaurants',
         sourceUrl: `https://www.openstreetmap.org/${element.type}/${element.id}`,
         title: tags.name || tags.brand,
-        content: details || `Local restaurant in ${scope}.`,
+        content: details || `Local ${kind === 'bars' ? 'bar' : 'restaurant'} in ${scope}.`,
         author: { name: 'OpenStreetMap' },
         authorName: 'OpenStreetMap',
         createdAt: updatedAt,
@@ -11677,12 +11678,12 @@ async function fetchLocalRestaurantPosts(location) {
         location: scope,
         city: location.city,
         country: location.countryName || null,
-        topic: 'Restaurant Culture',
+        topic: kind === 'bars' ? 'Wine & Spirits' : 'Restaurant Culture',
         activityScore: openedAt ? new Date(openedAt).getTime() : new Date(updatedAt).getTime(),
         matchedByLocation: true,
         locationMatch: 'local',
         locationMatchLabel: `Updated near ${location.city}`,
-        group: { id: 'local_restaurants', name: 'Local Restaurants', category: 'Community', externalUrl: `https://www.openstreetmap.org/#map=14/${point.lat}/${point.lon}` },
+        group: { id: `local_${kind}`, name: kind === 'bars' ? 'Local Bars' : 'Local Restaurants', category: 'Community', externalUrl: `https://www.openstreetmap.org/#map=14/${point.lat}/${point.lon}` },
       };
     })
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -12022,8 +12023,39 @@ function equalizeRestaurantDiscoveryPosts(nearbyPosts, worldwidePosts) {
   ]);
 }
 
+async function getBarsDiscoveryFeed(location) {
+  const fetchNews = async (local = false) => {
+    const editions = local ? [restaurantLocationNewsEdition(location)].filter(Boolean) : RESTAURANT_OPENING_NEWS_EDITIONS;
+    const collected = [];
+    for (let offset = 0; offset < editions.length; offset += 2) {
+      const results = await Promise.allSettled(editions.slice(offset, offset + 2).map(async edition => {
+        const place = local ? [location.city, location.countryName].filter(Boolean).join(' ') : '';
+        const query = '(' + place + ') ("new bar" OR "cocktail bar" OR "pub opening" OR "bar opens" OR "beer garden") when:30d';
+        const xml = await withLocationProviderSlot(() => fetchText(restaurantOpeningNewsUrl({ ...edition, query: query.replace('() ', '') })));
+        return parseRSSItems(xml).filter(item => item.title && item.link && /\b(bar|pub|cocktail|beer garden|brewery)\b/i.test(item.title + ' ' + (item.desc || ''))).map(item => {
+          const post = restaurantOpeningNewsPost(item, edition);
+          return { ...post, id: post.id.replace('restaurant_opening_', 'bar_opening_'), source: 'bars', sourceLabel: 'Bars', topic: 'Wine & Spirits', group: { ...post.group, id: 'bar_discovery', name: 'Bars and Pubs' } };
+        });
+      }));
+      results.forEach(result => { if (result.status === 'fulfilled') collected.push(...result.value); });
+    }
+    const unique = [...new Map(collected.map(post => [post.id, post])).values()];
+    if (!unique.length) throw new Error('Bar discoveries are temporarily unavailable.');
+    return sortDiscoveryPostsNewest(unique).slice(0, RESTAURANT_OPENING_NEWS_MAX_POSTS);
+  };
+  const [worldwide, nearby, local] = await Promise.all([
+    readLocationLiveCache('bars:worldwide', RESTAURANT_OPENING_NEWS_CACHE_MS, () => fetchNews()),
+    location?.city ? readLocationLiveCache(locationCacheKey('bars:nearby', location), RESTAURANT_OPENING_NEWS_CACHE_MS, () => fetchLocalRestaurantPosts(location, 'bars')) : null,
+    location?.available ? readLocationLiveCache(locationCacheKey('bars:news', location), RESTAURANT_OPENING_NEWS_CACHE_MS, () => fetchNews(true)) : null,
+  ]);
+  return { posts: rankFeedPostsForLocation(equalizeRestaurantDiscoveryPosts([...(nearby?.posts || []), ...(local?.posts || [])], worldwide?.posts || []), location, { preserveFirst: 0 }),
+    fetchedAt: [worldwide?.fetchedAt, nearby?.fetchedAt, local?.fetchedAt].filter(Boolean).sort().at(-1) || null,
+    providerError: worldwide?.error || null };
+}
+
 async function getLocationLiveFeed(kind, location, viewerId = null) {
   if (kind === 'countries') return getCountriesCameraFeed(location, viewerId);
+  if (kind === 'bars') return getBarsDiscoveryFeed(location);
   const worldwideRequest = readLocationLiveCache(
     'restaurants:worldwide-openings',
     RESTAURANT_OPENING_NEWS_CACHE_MS,
@@ -20477,7 +20509,9 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
     response_type: 'code',
     [cfg.clientIdParam || 'client_id']: clientId,
     redirect_uri:  redirectUri,
-    scope:         cfg.scope,
+    scope: req.query.interactions === '1'
+      ? ({ youtube: 'https://www.googleapis.com/auth/youtube.force-ssl', gitlab: 'read_user api', reddit: 'identity read submit vote', twitter: 'tweet.read tweet.write users.read offline.access like.write' }[platform] || cfg.scope)
+      : cfg.scope,
     ...(cfg.extraAuthParams || {}),
   });
 
@@ -21868,7 +21902,7 @@ async function handleFeedRequest(req, res) {
     parseInt(req.query.limit || `${DEFAULT_FEED_LIMIT}`, 10) || DEFAULT_FEED_LIMIT,
     1
   ), 250);
-  const requestedFeedMode = ['archive', 'following', 'groups', 'local', 'countries', 'restaurants'].includes(req.query.mode)
+  const requestedFeedMode = ['archive', 'following', 'groups', 'local', 'countries', 'restaurants', 'bars'].includes(req.query.mode)
     ? req.query.mode
     : 'feed';
   // Existing shared links and stored client state can still ask for `local`.
@@ -21933,7 +21967,7 @@ async function handleFeedRequest(req, res) {
     });
   }
 
-  if (feedMode === 'countries' || feedMode === 'restaurants') {
+  if (['countries', 'restaurants', 'bars'].includes(feedMode)) {
     const localFeed = await getLocationLiveFeed(feedMode, locationContext, req.user.id);
     const locationSearchWords = splitSearchWords(searchQuery);
     const eligiblePosts = filterPostsForMemberLanguages(realFeedPosts(localFeed.posts), user, req)
@@ -22001,13 +22035,12 @@ async function handleFeedRequest(req, res) {
     const poolMode = publicGroupsRequested ? 'public-groups' : 'groups';
     const scopedGroupModels = publicGroupsRequested
       ? groups.filter(group => !group.isPrivate)
-      : groups.filter(group => group.id !== GENERAL_UFI_GROUP_ID && joined.has(group.id));
+      : groups.filter(group => !group.isExternal && ![GENERAL_UFI_GROUP_ID, 'ufi-shop'].includes(group.id) && joined.has(group.id) && canSeeGroup(group, req.user.id));
     const nativeGroupIds = scopedGroupModels.filter(group => !group.isExternal).map(group => group.id);
     const externalGroupIds = new Set(scopedGroupModels.filter(group => group.isExternal).map(group => group.id));
-    const connectedSources = publicGroupsRequested ? [] : [...new Set(Object.entries(user?.socialTokens || {})
-      .filter(([, token]) => Boolean(token))
-      .map(([source]) => canonicalFeedSourceId(source) || source)
-      .filter(source => FOLLOWING_SOURCE_FETCHERS[source] || CONNECTED_SOCIAL_SEARCH_FETCHERS[source]))];
+    // Your groups contains posts published in joined UFIconnect groups.
+    // Connected timelines and platform-wide communities belong to their own feeds.
+    const connectedSources = [];
     const cursorPage = groupCursor.__poolMode === poolMode
       ? Math.max(1, Number(groupCursor.__poolPage) + 1 || 1)
       : reqPage;
@@ -23710,7 +23743,7 @@ app.get('/office/feed/videos', authenticate, handleVideoFeedRequest);
 app.get('/office/feed/music', authenticate, async (req, res) => {
   try {
     const sources = String(req.query.sources || req.query.source || '').split(',').map(canonicalFeedSourceId).filter(isAggregateFeedSource);
-    const { matchesSearch } = parseVideoFilters(req);
+    const { matchesSearch, matchesTopic } = parseVideoFilters(req);
     const user = await getUser(req.user.id);
     const genre = String(req.query.genre || '').toLowerCase().replace(/[-\s]+/g, ' ');
     const result = await fetchPlayableVideoPage({
@@ -23718,7 +23751,7 @@ app.get('/office/feed/music', authenticate, async (req, res) => {
       cursorMap: decodeFeedCursor(req.query.cursor), limit: boundedLimit(req.query.limit, 20, 50), mediaType: 'video',
       seenIds: req.query.q ? new Set() : await getUserSeenSet(req.user.id, 'videos'),
     });
-    const posts = filterPostsForMemberLanguages(result.posts, user, req).filter(matchesSearch).filter(post => !genre ||
+    const posts = filterPostsForMemberLanguages(result.posts, user, req).filter(matchesSearch).filter(matchesTopic).filter(post => !genre ||
       [post.title, post.topic, post.genre, ...asArray(post.tags)].join(' ').toLowerCase().replace(/[-\s]+/g, ' ').includes(genre));
     markPostsSeen(req.user.id, posts, 'videos');
     res.json({ posts, cursor: result.nextCursor, ...continuousVideoPageMeta(req.query, result.hasMore) });
@@ -27469,6 +27502,11 @@ async function createRestaurantPostComment(req, res) {
     return res.status(500).json({ error: 'Internal server error' });
   }
 }
+
+require('./source-interactions').registerSourceInteractionRoutes(app, {
+  authenticate, limiter: contentSubmissionLimiter, getUser, screenMemberContent,
+  fetchImpl: fetch, atprotoGet, atprotoPostJSON,
+});
 
 app.post('/restaurants/:postId/like', authenticate, toggleRestaurantPostLike);
 app.post('/restaurants/:postId/comments', authenticate, contentSubmissionLimiter, createRestaurantPostComment);

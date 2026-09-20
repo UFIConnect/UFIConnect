@@ -44,7 +44,7 @@ function ShellIcon({ name, size = 20 }) {
 // shortLabel is used only in the mobile bottom-nav so longer destination
 // names stay readable. The desktop sidebar always uses the full label.
 const HOME_FEED_PATH = '/?feed=feed&all=1';
-const MOBILE_FEED_OPTIONS = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants']);
+const MOBILE_FEED_OPTIONS = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants', 'bars']);
 
 const NAV = [
   { to: HOME_FEED_PATH,  icon: 'home',           label: 'Home'         },
@@ -323,7 +323,12 @@ export default function Layout({ children, wide = false }) {
         </Link>
 
         <nav className="sidebar-nav">
-          {NAV.map(({ to, icon, label }) => (
+          {[...NAV,
+            { to: '/search?tab=groups&create=1', icon: 'groups', label: 'Create a group' },
+            { to: '/groups/post', icon: 'groups', label: 'Post to your group' },
+            { to: '/saved/posts', icon: 'saved', label: 'Saved posts' },
+            { to: '/saved/jobs', icon: 'opportunities', label: 'Saved jobs' },
+          ].map(({ to, icon, label }) => (
             <NavLink
               key={to}
               to={to}
@@ -551,6 +556,10 @@ export default function Layout({ children, wide = false }) {
               <UsersRound size={20} aria-hidden="true" />
               Create a group
             </Link>
+            <Link to="/groups/post" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
+              <SquarePen size={20} aria-hidden="true" />
+              Post to your group
+            </Link>
             <Link
               to="/?feed=ufi&channel=shop"
               className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'ufi' && mobileFeedParams.get('channel') === 'shop' ? ' active' : ''}`}
@@ -561,13 +570,13 @@ export default function Layout({ children, wide = false }) {
             </Link>
             <div className="mobile-account-saved" role="group" aria-label="Saved">
               <div className="mobile-account-saved-heading">Saved</div>
-              <Link to="/profile?tab=saved&section=jobs" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
+              <Link to="/saved/jobs" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
                 <BriefcaseBusiness size={20} aria-hidden="true" />
-                Roles
+                Saved jobs
               </Link>
-              <Link to="/profile?tab=saved&section=posts" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
+              <Link to="/saved/posts" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
                 <Bookmark size={20} aria-hidden="true" />
-                Posts
+                Saved posts
               </Link>
             </div>
             <div className="mobile-feed-drawer-bottom mobile-account-drawer-bottom">
@@ -662,6 +671,10 @@ export default function Layout({ children, wide = false }) {
               <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'restaurants' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'restaurants'} onClick={() => selectMobileFeed('restaurants')}>
                 <ShellIcon name="restaurants" size={18} />
                 Restaurants
+              </button>
+              <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'bars' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'bars'} onClick={() => selectMobileFeed('bars')}>
+                <ShellIcon name="restaurants" size={18} />
+                Bars
               </button>
               <NavLink to="/music" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
                 <Music size={18} aria-hidden="true" />Music

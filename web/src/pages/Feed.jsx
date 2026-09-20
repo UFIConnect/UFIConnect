@@ -32,12 +32,13 @@ import { ALL_INTERESTS } from './Onboarding';
 import ReportModal from '../components/ReportModal';
 import { useToast } from '../contexts/ToastContext';
 import { UfiFeedContent } from './Post';
+import ConnectedPostActions from '../components/ConnectedPostActions';
 import { SavePostButton } from '../components/SaveButtons';
 
 const COMMAND_CENTER_PRO_TIER = TIERS.find((tier) => tier.tier === 'pro');
-const HOME_VIEW_MODES = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants']);
+const HOME_VIEW_MODES = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants', 'bars']);
 const EMBEDDED_HOME_MODES = new Set(['ufi']);
-const CONTINUOUS_FEED_MODES = new Set(['feed', 'following', 'groups', 'restaurants']);
+const CONTINUOUS_FEED_MODES = new Set(['feed', 'following', 'groups', 'restaurants', 'bars']);
 const FEED_POSITION_PREFETCH_POSTS = 8;
 
 function timeAgo(iso) {
@@ -98,15 +99,15 @@ function FeedSourceOption({ tab, active, onSelect, compact = false, favorite = f
   return (
     <button
       type="button"
-      role="radio"
-      aria-checked={active}
+      aria-pressed={active}
       aria-label={compact ? tab.label : undefined}
       title={compact ? tab.label : undefined}
       className={`feed-source-option${active ? ' active' : ''}${compact ? ' compact' : ''}`}
       style={{ '--feed-source-color': color }}
       onClick={onSelect}
     >
-      {tab.key !== 'all' && <SourceMark source={tab.key} label={tab.icon} size={13} active={active} />}
+      {tab.key === 'all' && compact && <span aria-hidden="true">All</span>}
+      {tab.key !== 'all' && <SourceMark source={tab.key} label={tab.icon} size={compact ? 20 : 16} active={active} />}
       <span className="feed-source-option-label">{tab.label}</span>
       {compact && favorite && <span className="feed-source-compact-favorite" aria-hidden="true">★</span>}
     </button>
@@ -158,7 +159,7 @@ function normalizeFeedSort(value) {
 // function so loadMoreRemote's choice of ?cursor= vs ?page= can't drift
 // from what the backend actually honors.
 function isCursorEligible(mode, sort, search) {
-  if (['following', 'groups', 'countries', 'restaurants'].includes(mode)) {
+  if (['following', 'groups', 'countries', 'restaurants', 'bars'].includes(mode)) {
     return normalizeFeedSort(sort) === 'newest';
   }
   return mode === 'feed' && normalizeFeedSort(sort) === 'newest' && !search.trim();
@@ -336,7 +337,7 @@ async function loadGroupsFeedCompatibility(params) {
     client.get(`/office/feed?mode=following&limit=250&sort=${encodeURIComponent(sort)}&passive=1`),
   ]);
   const joinedIds = new Set(profileResponse.data?.joinedGroups || []);
-  const joinedGroups = (groupsResponse.data?.groups || []).filter(group => group.id !== 'ufi-general' && joinedIds.has(group.id));
+  const joinedGroups = (groupsResponse.data?.groups || []).filter(group => !group.isExternal && !['ufi-general', 'ufi-shop'].includes(group.id) && joinedIds.has(group.id));
   const nativeGroups = joinedGroups.filter(group => !group.isExternal);
   const nativeResults = await Promise.allSettled(nativeGroups.map(group =>
     client.get(`/groups/${encodeURIComponent(group.id)}/posts?limit=100&offset=0`)
@@ -352,8 +353,8 @@ async function loadGroupsFeedCompatibility(params) {
       ...post,
       group: { id: group.id, name: group.name, category: group.category, externalUrl: group.externalUrl },
       fromJoinedGroup: true,
-    } : post;
-  }).filter(post => {
+    } : null;
+  }).filter(Boolean).filter(post => {
     if (topics.length && !topics.includes(String(post.topic || '').toLowerCase())) return false;
     if (!queryWords.length) return true;
     const text = `${post.title || ''} ${post.content || ''} ${post.author?.name || ''} ${post.group?.name || ''} ${post.topic || ''}`.toLowerCase();
@@ -380,11 +381,11 @@ async function requestFeedPage(params, viewer) {
   // two-per-source cap after calculating the offset. Ask it for two at a
   // time so it cannot jump over unseen cards. A cursor-capable API advertises
   // itself on that first compact page; every later request returns to 50.
-  if (['countries', 'restaurants'].includes(mode) && locationFeedCursorSupport.get(mode) !== true) {
+  if (['countries', 'restaurants', 'bars'].includes(mode) && locationFeedCursorSupport.get(mode) !== true) {
     requestParams.set('limit', '2');
   }
   const { data } = await client.get(`/office/feed?${requestParams.toString()}`);
-  if (['countries', 'restaurants'].includes(mode)) {
+  if (['countries', 'restaurants', 'bars'].includes(mode)) {
     locationFeedCursorSupport.set(mode, typeof data?.cursor === 'string' && data.cursor.length > 0);
   }
   if (mode === 'groups'
@@ -393,6 +394,13 @@ async function requestFeedPage(params, viewer) {
   }
   if (mode === 'following' && data?.nativeUficonnectIncluded !== true) {
     return loadFollowingFeedCompatibility(params, data, viewer);
+  }
+  if (mode === 'groups' && params.get('groupScope') !== 'public') {
+    const joined = new Set(viewer?.joinedGroups || []);
+    return { ...data, posts: (data.posts || []).filter(post =>
+      !post.isExternal && (post.source || 'uficonnect') === 'uficonnect'
+      && joined.has(post.groupId || post.group?.id)
+      && !['ufi-general', 'ufi-shop'].includes(post.groupId || post.group?.id)) };
   }
   return data;
 }
@@ -452,10 +460,9 @@ function normalizeLocationFilters(value = {}) {
   };
 }
 
-function normalizeSingleSourceSelection(value, allowedSourceIds = []) {
+function normalizeSourceSelection(value, allowedSourceIds = []) {
   if (!Array.isArray(value)) return [];
-  const selected = value.find(source => allowedSourceIds.includes(source));
-  return selected ? [selected] : [];
+  return [...new Set(value.filter(source => allowedSourceIds.includes(source)))];
 }
 
 function locationScopeLabel(value = {}) {
@@ -474,10 +481,10 @@ function loadFeedState(userId) {
     const allowedSourceIds = viewMode === 'following'
       ? FOLLOWING_FEED_SOURCE_IDS
       : viewMode === 'feed' ? HOME_FEED_SOURCE_IDS : [];
-    const activeTabs = normalizeSingleSourceSelection(s.activeTabs, allowedSourceIds);
+    const activeTabs = normalizeSourceSelection(s.activeTabs, allowedSourceIds);
     const filters = { ...DEFAULT_FILTERS, ...(s.filters || {}) };
     filters.sort = 'newest';
-    filters.sources = normalizeSingleSourceSelection(filters.sources, allowedSourceIds);
+    filters.sources = normalizeSourceSelection(filters.sources, allowedSourceIds);
     filters.topics = Array.isArray(filters.topics)
       ? filters.topics.filter(topic => ALL_INTERESTS.includes(topic))
       : [];
@@ -501,10 +508,10 @@ function saveFeedState(userId, filters, activeTabs, _search, viewMode, location)
     const allowedSourceIds = viewMode === 'following'
       ? FOLLOWING_FEED_SOURCE_IDS
       : viewMode === 'feed' ? HOME_FEED_SOURCE_IDS : [];
-    const savedTabs = normalizeSingleSourceSelection(activeTabs, allowedSourceIds);
+    const savedTabs = normalizeSourceSelection(activeTabs, allowedSourceIds);
     const savedFilters = {
       ...filters,
-      sources: normalizeSingleSourceSelection(filters?.sources, allowedSourceIds),
+      sources: normalizeSourceSelection(filters?.sources, allowedSourceIds),
     };
     const value = JSON.stringify({ filters: savedFilters, activeTabs: savedTabs, search: '', viewMode, location });
     privateSessionStorage.setItem(key, value);
@@ -1285,6 +1292,7 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
         </div>
       ) : null}
       {post.content && <PostText text={post.content} />}
+      <ConnectedPostActions post={post} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
         <SavePostButton post={post} className="btn btn-ghost btn-sm save-item-button" />
         {post.sourceUrl && (
@@ -1903,6 +1911,8 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
         )}
       </div>
 
+      {!isUFIconnectInteractive && <ConnectedPostActions post={post} />}
+
       {/* Inline comments / replies / answers / reviews */}
       {showComments && (
         <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
@@ -2294,7 +2304,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     }
     const requestedSources = ['feed', 'following'].includes(activeMode)
       ? (activeFilters.sources?.length ? activeFilters.sources : activeSourceTabs)
-        .slice(0, 1)
+
       : [];
     const requestId = ++feedRequestIdRef.current;
     const isCurrentRequest = () => requestId === feedRequestIdRef.current;
@@ -2404,7 +2414,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       }
       setRemoteHasMore(CONTINUOUS_FEED_MODES.has(activeMode) || data.hasMore !== false);
       setSourceErrors(data.sourceErrors || {});
-      if (['countries', 'restaurants'].includes(activeMode)) {
+      if (['countries', 'restaurants', 'bars'].includes(activeMode)) {
         setLocationMessage(data.locationRequired || data.providerError || '');
       }
     } catch (e) {
@@ -2466,10 +2476,10 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     sourcePreferenceKeyRef.current = disabledSourceKey;
     if (!['feed', 'following'].includes(viewModeRef.current)) return;
     const disabled = new Set(disabledSourceKey ? disabledSourceKey.split(',') : []);
-    const nextTabs = activeTabsRef.current.filter(source => !disabled.has(source)).slice(0, 1);
+    const nextTabs = activeTabsRef.current.filter(source => !disabled.has(source));
     const nextFilters = {
       ...filtersRef.current,
-      sources: (filtersRef.current.sources || []).filter(source => !disabled.has(source)).slice(0, 1),
+      sources: (filtersRef.current.sources || []).filter(source => !disabled.has(source)),
     };
     activeTabsRef.current = nextTabs;
     filtersRef.current = nextFilters;
@@ -2540,7 +2550,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     const allowedSourceIds = nextMode === 'following' ? FOLLOWING_FEED_SOURCE_IDS : HOME_FEED_SOURCE_IDS;
     const nextTabs = resetHome || !usesSources
       ? []
-      : normalizeSingleSourceSelection(activeTabsRef.current, allowedSourceIds);
+      : normalizeSourceSelection(activeTabsRef.current, allowedSourceIds);
     const currentTopics = Array.isArray(filtersRef.current.topics) ? filtersRef.current.topics : [];
     const nextFilters = usesSources
       ? { ...DEFAULT_FILTERS, topics: currentTopics }
@@ -2637,7 +2647,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     const allowedSourceIds = viewModeRef.current === 'following'
       ? FOLLOWING_FEED_SOURCE_IDS
       : viewModeRef.current === 'feed' ? HOME_FEED_SOURCE_IDS : [];
-    next.sources = normalizeSingleSourceSelection(next.sources, allowedSourceIds);
+    next.sources = normalizeSourceSelection(next.sources, allowedSourceIds);
     if (next.sources.length > 0) {
       activeTabsRef.current = [];
       setActiveTabs([]);
@@ -2755,7 +2765,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       ? FOLLOWING_FEED_SOURCE_IDS
       : HOME_FEED_SOURCE_IDS;
     if (!allowedSourceIds.includes(key)) return;
-    const next = [key];
+    const current = activeTabsRef.current.length ? activeTabsRef.current : filtersRef.current.sources || [];
+    const next = current.includes(key) ? current.filter(source => source !== key) : [...current, key];
     const sourceClearedFilters = { ...filtersRef.current, sources: [] };
     activeTabsRef.current = next;
     filtersRef.current = sourceClearedFilters;
@@ -2830,7 +2841,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       activeFilters.sort = viewModeRef.current === 'groups' && publicGroupsFeed ? 'popular' : 'newest';
       const requestedSources = ['feed', 'following'].includes(viewModeRef.current)
         ? (activeFilters.sources?.length ? activeFilters.sources : tabs)
-          .slice(0, 1)
+
         : [];
       const q = searchRef.current.trim();
       const cursorEligible = isCursorEligible(viewModeRef.current, activeFilters.sort, q);
@@ -2958,7 +2969,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   useEffect(() => {
     const refreshQuietly = () => {
       const state = loadStateRef.current;
-      if (!['feed', 'groups', 'countries', 'restaurants'].includes(viewModeRef.current)) return;
+      if (!['feed', 'groups', 'countries', 'restaurants', 'bars'].includes(viewModeRef.current)) return;
       if (document.hidden || state.loading || state.refreshing || state.loadingMore) return;
       loadFeed(false, activeTabsRef.current, { silent: true, live: true, preserveScroll: true });
     };
@@ -2974,7 +2985,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   }, [loadFeed]);
 
   const refreshCurrentFeed = useCallback(() => {
-    if (!['feed', 'following', 'groups', 'countries', 'restaurants'].includes(viewModeRef.current)) return undefined;
+    if (!['feed', 'following', 'groups', 'countries', 'restaurants', 'bars'].includes(viewModeRef.current)) return undefined;
     const state = loadStateRef.current;
     if (state.loading || state.refreshing || state.loadingMore) return undefined;
     if (viewModeRef.current === 'groups' && publicGroupsFeed) {
@@ -3326,7 +3337,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const hasCommandCenterMembership = ['pro', 'business'].includes(profile?.plan);
   const usesSourceControls = ['feed', 'following'].includes(viewMode);
   const showsAdvancedFilters = !usesSourceControls && viewMode !== 'groups';
-  const isLocationFeed = ['countries', 'restaurants'].includes(viewMode);
+  const isLocationFeed = ['countries', 'restaurants', 'bars'].includes(viewMode);
   const travelLocationLabel = locationScopeLabel(normalizeLocationFilters(profile?.roleSettings?.feedLocation));
   const activeFilterCount = (usesSourceControls ? filters.sources.length : 0) + (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
   const visibleFilterCount = (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
@@ -3335,7 +3346,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     + (isLocationFeed ? 0 : filters.topics.length);
   const selectedSourceLabel = activeTabs.map(k => SOURCE_META[k]?.label || k).join(', ');
   const currentSourceTabs = viewMode === 'following' ? FOLLOWING_SOURCE_TABS : SOURCE_TABS;
-  const selectedSourceKey = activeTabs[0] || filters.sources[0] || null;
+  const selectedSourceKeys = activeTabs.length ? activeTabs : filters.sources;
   const sourceFavoriteMode = viewMode === 'following' ? 'following' : 'feed';
   const currentSourceFavoriteKeys = sourceFavorites[sourceFavoriteMode] || [];
   const favoriteCompactSourceTabs = currentSourceFavoriteKeys
@@ -3343,6 +3354,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     .filter(Boolean);
   const favoriteCompactSourceKeys = new Set(favoriteCompactSourceTabs.map(tab => tab.key));
   const compactSourceTabs = [
+    { key: 'all', label: 'All sources', icon: 'All' },
     ...favoriteCompactSourceTabs,
     ...currentSourceTabs.filter(tab => tab.key !== 'all' && !favoriteCompactSourceKeys.has(tab.key)),
   ];
@@ -3369,8 +3381,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const canSaveSourceFavorites = sourceFavoriteDraftChanged
     && !sourceFavoriteSaving;
   const isSourceActive = (key) => key === 'all'
-    ? !selectedSourceKey
-    : selectedSourceKey === key;
+    ? selectedSourceKeys.length === 0
+    : selectedSourceKeys.includes(key);
 
   return (
     <Layout wide={!forcedMode}>
@@ -3400,7 +3412,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       {showsAdvancedFilters && <section className={`feed-specialized-toolbar${isLocationFeed ? ' feed-specialized-toolbar--location' : ''}`}>
         {isLocationFeed && (
           <div className="feed-location-heading">
-            <strong>{viewMode === 'countries' ? 'Travel location' : 'Restaurant location'}</strong>
+            <strong>{viewMode === 'countries' ? 'Travel location' : viewMode === 'bars' ? 'Bar location' : 'Restaurant location'}</strong>
             <span>{travelLocationLabel || 'Worldwide'}</span>
           </div>
         )}
@@ -3517,7 +3529,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       {usesSourceControls && (
         <div className="feed-source-filter-row feed-unified-control-bar">
           <div className="feed-source-picker">
-            <div className="feed-source-tabs feed-source-tabs--compact" role="radiogroup" aria-label={`${viewMode === 'following' ? 'Following' : 'Home'} sources`}>
+            <div className="feed-source-tabs feed-source-tabs--compact" role="group" aria-label={`${viewMode === 'following' ? 'Following' : 'Home'} sources`}>
               {compactSourceTabs.map(tab => (
                 <FeedSourceOption
                   key={tab.key}
@@ -3549,7 +3561,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                 });
               }}
             >
-              <MenuIcon />
+              <MenuIcon size={22} />
             </button>
             {sourceMenuOpen && (
               <div ref={sourceMenuPanelRef} id="feed-source-menu" className="feed-source-menu" role="group" aria-label="Feed sources and favorites">
@@ -3567,7 +3579,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                         active={isSourceActive(tab.key)}
                         onSelect={() => {
                           toggleTab(tab.key);
-                          setSourceMenuOpen(false);
+                          if (tab.key === 'all') setSourceMenuOpen(false);
                         }}
                       />
                       {!aggregate && (
@@ -3775,10 +3787,10 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           <div className="empty-icon">
             {activeTabs.length === 1
               ? <SourceMark source={activeTabs[0]} label={SOURCE_META[activeTabs[0]]?.icon} size={24} />
-              : (search ? 'Search' : viewMode === 'following' ? 'Following' : viewMode === 'groups' ? 'Groups' : viewMode === 'countries' ? 'Travel' : viewMode === 'restaurants' ? 'Restaurants' : 'Home')}
+              : (search ? 'Search' : viewMode === 'following' ? 'Following' : viewMode === 'groups' ? 'Groups' : viewMode === 'countries' ? 'Travel' : viewMode === 'restaurants' ? 'Restaurants' : viewMode === 'bars' ? 'Bars' : 'Home')}
           </div>
           <div className="empty-title">
-            {search ? `No posts match "${search}"` : viewMode === 'following' ? 'No posts from people you follow yet' : viewMode === 'groups' ? 'No group posts yet' : viewMode === 'countries' ? 'No travel discoveries are available yet' : viewMode === 'restaurants' ? 'No restaurant openings are available yet' : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts yet` : 'Home is empty'}
+            {search ? `No posts match "${search}"` : viewMode === 'following' ? 'No posts from people you follow yet' : viewMode === 'groups' ? 'No group posts yet' : viewMode === 'countries' ? 'No travel discoveries are available yet' : viewMode === 'bars' ? 'No bar discoveries are available yet' : viewMode === 'restaurants' ? 'No restaurant openings are available yet' : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts yet` : 'Home is empty'}
           </div>
           <div className="empty-desc">
             {search ? (
@@ -3833,10 +3845,10 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                     : <Link to="/connected-accounts" className="btn btn-ghost btn-sm">Connected accounts</Link>}
                 </div>
               </>
-            ) : (viewMode === 'countries' || viewMode === 'restaurants') ? (
+            ) : ['countries', 'restaurants', 'bars'].includes(viewMode) ? (
               <>
                 <p style={{ marginBottom: 12 }}>
-                  {locationMessage || (viewMode === 'restaurants'
+                  {locationMessage || (viewMode === 'bars' ? 'Explore bar openings and local pubs. Choose a city or country above to narrow your discoveries.' : viewMode === 'restaurants'
                     ? 'This feed searches for recent restaurant openings worldwide. Add a country or city above to bring matching reports closer to the top.'
                     : travelLocationLabel
                       ? `Travel is showing live views, guides, and current stories for ${travelLocationLabel}, then a wider worldwide scroll.`
@@ -4001,6 +4013,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             {[
               { key: 'countries', label: 'Travel' },
               { key: 'restaurants', label: 'Restaurants' },
+              { key: 'bars', label: 'Bars' },
             ].map(({ key, label }) => (
               <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => activateHomeView(key)}>{label}</button>
             ))}

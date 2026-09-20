@@ -1,0 +1,195 @@
+// Provider writes only occur on an authenticated member's explicit action.
+// Fixed API origins and strict target parsing prevent forwarding credentials
+// to a URL supplied by a post. Never log tokens or provider response bodies.
+const SUPPORTED = Object.freeze({
+  reddit: { label: 'Reddit', likeLabel: 'Upvote', maxLength: 1000 },
+  twitter: { label: 'X', likeLabel: 'Like', maxLength: 280 },
+  bluesky: { label: 'Bluesky', likeLabel: 'Like', maxLength: 300 },
+  youtube: { label: 'YouTube', likeLabel: 'Like', maxLength: 1000 },
+  github: { label: 'GitHub', likeLabel: 'Star repository', maxLength: 1000 },
+  gitlab: { label: 'GitLab', likeLabel: 'Star project', maxLength: 1000 },
+});
+
+function failure(message, status = 400) { return Object.assign(new Error(message), { status }); }
+function parseTarget(source, sourceUrl) {
+  let url;
+  try { url = new URL(sourceUrl); } catch { throw failure('This post has no valid original link.'); }
+  if (url.protocol !== 'https:' || url.username || url.password || url.port) throw failure('Unsupported original link.');
+  const host = url.hostname.toLowerCase(), parts = url.pathname.split('/').filter(Boolean);
+  if (source === 'reddit' && ['reddit.com', 'www.reddit.com', 'old.reddit.com', 'oauth.reddit.com'].includes(host)) {
+    const index = parts.indexOf('comments'), id = index >= 0 ? parts[index + 1] : null;
+    if (/^[a-z0-9]+$/i.test(id || '')) return { id: `t3_${id}`, comment: true };
+  }
+  if (source === 'twitter' && ['x.com', 'www.x.com', 'twitter.com', 'www.twitter.com'].includes(host)) {
+    const id = parts[parts.indexOf('status') + 1];
+    if (parts.includes('status') && /^\d+$/.test(id || '')) return { id, comment: true };
+  }
+  if (source === 'youtube' && ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be'].includes(host)) {
+    const id = host === 'youtu.be' ? parts[0] : url.searchParams.get('v') || (['shorts', 'live', 'embed'].includes(parts[0]) ? parts[1] : '');
+    if (/^[\w-]{11}$/.test(id || '')) return { id, comment: true };
+  }
+  if (source === 'bluesky' && host === 'bsky.app' && parts.length === 4 && parts[0] === 'profile' && parts[2] === 'post') {
+    if (/^(?:did:plc:[a-z0-9]+|[a-z0-9][a-z0-9.-]+)$/i.test(parts[1]) && /^[a-z0-9]+$/i.test(parts[3])) return { actor: parts[1], rkey: parts[3], comment: true };
+  }
+  if (source === 'github' && host === 'github.com' && parts.length >= 2 && parts.slice(0, 2).every(part => /^[\w.-]+$/.test(part) && !['.', '..'].includes(part))) {
+    return { project: parts.slice(0, 2).map(encodeURIComponent).join('/'), number: /^\d+$/.test(parts[3] || '') ? parts[3] : null, comment: ['issues', 'pull'].includes(parts[2]) && /^\d+$/.test(parts[3] || '') };
+  }
+  if (source === 'gitlab' && host === 'gitlab.com') {
+    const divider = parts.indexOf('-'), project = divider < 0 ? parts : parts.slice(0, divider);
+    if (project.length >= 2 && project.every(part => /^[\w.-]+$/.test(part) && !['.', '..'].includes(part))) {
+      const type = parts[divider + 1], number = parts[divider + 2];
+      return { project: encodeURIComponent(project.join('/')), type, number, comment: divider >= 0 && ['issues', 'merge_requests'].includes(type) && /^\d+$/.test(number || '') };
+    }
+  }
+  throw failure('This source does not support actions for that original link.');
+}
+
+function createSourceInteractions({ fetchImpl = fetch, atprotoGet, atprotoPostJSON }) {
+  async function request(url, token, method = 'GET', body, form = false) {
+    let response;
+    try {
+      response = await fetchImpl(url, { method, redirect: 'error', signal: AbortSignal.timeout(15000),
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'User-Agent': 'UFIconnect/1.0',
+          ...(body ? { 'Content-Type': form ? 'application/x-www-form-urlencoded' : 'application/json' } : {}) },
+        ...(body ? { body: form ? new URLSearchParams(body).toString() : JSON.stringify(body) } : {}) });
+    } catch { throw failure('The source did not confirm this action. Check the original post before retrying.', 502); }
+    if (!response.ok) {
+      if ([401, 403].includes(response.status)) throw failure('The source denied this action. Reconnect this account with interaction permissions, or open the original post.', 403);
+      if (response.status === 429) throw failure('This source is temporarily rate limited. Try again later.', 429);
+      throw failure('The source could not complete this action. Open the original post to check its availability.', 502);
+    }
+    const text = await response.text();
+    if (!text) return {};
+    try { return JSON.parse(text); } catch { throw failure('The source returned an unexpected response. Check the original post.', 502); }
+  }
+  async function bluesky(token, target, action, content, liked) {
+    let session;
+    try { session = JSON.parse(token); } catch { throw failure('Reconnect your Bluesky account.', 403); }
+    if (!session?.did || !session.accessToken || !session.pdsUrl) throw failure('Reconnect your Bluesky account.', 403);
+    const base = String(session.pdsUrl).replace(/\/$/, '');
+    if (!base.startsWith('https://')) throw failure('Reconnect your Bluesky account.', 403);
+    const call = async (method, endpoint, body) => {
+      const result = method === 'GET' ? await atprotoGet(`${base}/xrpc/${endpoint}`, { accessToken: session.accessToken })
+        : await atprotoPostJSON(`${base}/xrpc/${endpoint}`, body, { accessToken: session.accessToken });
+      if (!result || result.status < 200 || result.status >= 300) throw failure('Bluesky denied this action. Reconnect your account or check the original post.', [401, 403].includes(result?.status) ? 403 : 502);
+      return result.data;
+    };
+    let did = target.actor;
+    if (!did.startsWith('did:')) did = (await call('GET', `com.atproto.identity.resolveHandle?handle=${encodeURIComponent(did)}`))?.did;
+    if (!/^did:[a-z]+:[a-zA-Z0-9:._%-]+$/.test(did || '')) throw failure('Bluesky could not resolve this author.', 502);
+    const uri = `at://${did}/app.bsky.feed.post/${target.rkey}`;
+    const post = (await call('GET', `app.bsky.feed.getPosts?uris=${encodeURIComponent(uri)}`))?.posts?.[0];
+    if (post?.uri !== uri || !post.cid) throw failure('This Bluesky post is no longer available.', 404);
+    if (action === 'like') {
+      if (liked && !post.viewer?.like) await call('POST', 'com.atproto.repo.createRecord', { repo: session.did, collection: 'app.bsky.feed.like', record: { $type: 'app.bsky.feed.like', subject: { uri, cid: post.cid }, createdAt: new Date().toISOString() } });
+      if (!liked && post.viewer?.like) {
+        const prefix = `at://${session.did}/app.bsky.feed.like/`;
+        if (!post.viewer.like.startsWith(prefix) || !/^[a-z0-9]+$/i.test(post.viewer.like.slice(prefix.length))) throw failure('Bluesky could not resolve your like.', 502);
+        await call('POST', 'com.atproto.repo.deleteRecord', { repo: session.did, collection: 'app.bsky.feed.like', rkey: post.viewer.like.slice(prefix.length) });
+      }
+      return { liked };
+    }
+    const record = { $type: 'app.bsky.feed.post', text: content, createdAt: new Date().toISOString(), reply: { parent: { uri, cid: post.cid }, root: post.record?.reply?.root || { uri, cid: post.cid } } };
+    const data = await call('POST', 'com.atproto.repo.createRecord', { repo: session.did, collection: 'app.bsky.feed.post', record });
+    if (!data?.uri) throw failure('Bluesky did not confirm the reply. Check the original post.', 502);
+    return { commentId: data.uri };
+  }
+  async function perform({ user, source, sourceUrl, action, content, liked }) {
+    const capability = SUPPORTED[source];
+    if (!capability) throw failure('Open the original source to interact with this post.', 422);
+    const token = user?.socialTokens?.[source];
+    if (!token) throw failure('Connect this source before interacting with its posts.', 403);
+    const target = parseTarget(source, sourceUrl);
+    if (!['like', 'comment'].includes(action)) throw failure('Unsupported action.');
+    if (action === 'like' && typeof liked !== 'boolean') throw failure('Choose whether to like this post.');
+    if (action === 'comment') {
+      if (!target.comment) throw failure('Open the original source to comment on this item.', 422);
+      if (typeof content !== 'string' || !content.trim() || Array.from(content.trim()).length > capability.maxLength) throw failure(`Comments must be between 1 and ${capability.maxLength} characters.`);
+      content = content.trim();
+    }
+    if (source === 'bluesky') return bluesky(token, target, action, content, liked);
+    if (source === 'reddit') {
+      const data = action === 'like'
+        ? await request('https://oauth.reddit.com/api/vote', token, 'POST', { id: target.id, dir: liked ? '1' : '0', api_type: 'json' }, true)
+        : await request('https://oauth.reddit.com/api/comment', token, 'POST', { thing_id: target.id, text: content, api_type: 'json' }, true);
+      if (data?.json?.errors?.length) throw failure('Reddit rejected this action. Check the original post and your account permissions.', 422);
+      if (action === 'comment' && !data?.json?.data?.things?.[0]?.data?.id) throw failure('Reddit did not confirm the comment. Check the original post.', 502);
+      return action === 'like' ? { liked } : { commentId: data.json.data.things[0].data.id };
+    }
+    if (source === 'twitter') {
+      if (action === 'comment') { const data = await request('https://api.x.com/2/tweets', token, 'POST', { text: content, reply: { in_reply_to_tweet_id: target.id } }); if (!data.data?.id) throw failure('X did not confirm the reply.', 502); return { commentId: data.data.id }; }
+      const me = await request('https://api.x.com/2/users/me', token);
+      if (!/^\d+$/.test(me.data?.id || '')) throw failure('Reconnect your X account.', 403);
+      const data = await request(`https://api.x.com/2/users/${me.data.id}/likes${liked ? '' : `/${target.id}`}`, token, liked ? 'POST' : 'DELETE', liked ? { tweet_id: target.id } : undefined);
+      if (data.data?.liked !== liked) throw failure('X did not confirm this like.', 502);
+      return { liked };
+    }
+    if (source === 'youtube') {
+      if (action === 'like') { await request(`https://www.googleapis.com/youtube/v3/videos/rate?id=${target.id}&rating=${liked ? 'like' : 'none'}`, token, 'POST'); return { liked }; }
+      const video = await request(`https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${target.id}`, token);
+      const channelId = video.items?.[0]?.snippet?.channelId;
+      if (!channelId) throw failure('This video is no longer available.', 404);
+      const data = await request('https://www.googleapis.com/youtube/v3/commentThreads?part=snippet', token, 'POST', { snippet: { videoId: target.id, channelId, topLevelComment: { snippet: { textOriginal: content } } } });
+      if (!data.id) throw failure('YouTube did not confirm this comment.', 502);
+      return { commentId: data.id };
+    }
+    if (source === 'github') {
+      if (action === 'like') { await request(`https://api.github.com/user/starred/${target.project}`, token, liked ? 'PUT' : 'DELETE'); return { liked }; }
+      const data = await request(`https://api.github.com/repos/${target.project}/issues/${target.number}/comments`, token, 'POST', { body: content });
+      if (!data.id) throw failure('GitHub did not confirm this comment.', 502);
+      return { commentId: String(data.id) };
+    }
+    if (source === 'gitlab') {
+      if (action === 'like') { await request(`https://gitlab.com/api/v4/projects/${target.project}/${liked ? 'star' : 'unstar'}`, token, 'POST'); return { liked }; }
+      const data = await request(`https://gitlab.com/api/v4/projects/${target.project}/${target.type}/${target.number}/notes`, token, 'POST', { body: content });
+      if (!data.id) throw failure('GitLab did not confirm this comment.', 502);
+      return { commentId: String(data.id) };
+    }
+  }
+  return { perform };
+}
+
+function registerSourceInteractionRoutes(app, { authenticate, limiter, getUser, screenMemberContent, ...transport }) {
+  const { perform } = createSourceInteractions(transport);
+  const requests = new Map();
+  app.get('/social/interaction-capabilities', authenticate, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      const user = await getUser(req.user.id);
+      res.json({ sources: Object.fromEntries(Object.entries(SUPPORTED).map(([source, info]) => [source, { ...info, connected: Boolean(user?.socialTokens?.[source]) }])) });
+    } catch { res.status(503).json({ message: 'Connected source actions are temporarily unavailable.' }); }
+  });
+  app.post('/social/interactions', authenticate, limiter, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    const { source, sourceUrl, action, content, liked, requestId } = req.body || {};
+    if (typeof source !== 'string' || typeof sourceUrl !== 'string' || sourceUrl.length > 2048 || !/^[a-zA-Z0-9-]{16,80}$/.test(requestId || '')) return res.status(400).json({ message: 'Invalid source action.' });
+    const fingerprint = JSON.stringify([source, sourceUrl, action, content, liked]);
+    const key = `${req.user.id}:${requestId}`;
+    const now = Date.now();
+    for (const [id, entry] of requests) if (entry.expiresAt < now) requests.delete(id);
+    const previous = requests.get(key);
+    if (previous && previous.fingerprint !== fingerprint) return res.status(409).json({ message: 'This request was already used for another action.' });
+    if (!previous && requests.size >= 2000) return res.status(503).json({ message: 'Source actions are busy. Try again shortly.' });
+    const run = async () => {
+      try {
+        const user = await getUser(req.user.id);
+        if (!SUPPORTED[source] || !user?.socialTokens?.[source]) throw failure('Connect a supported source to use this action.', 403);
+        parseTarget(source, sourceUrl);
+        let text = content;
+        if (action === 'comment') {
+          if (typeof content !== 'string' || !content.trim() || Array.from(content.trim()).length > SUPPORTED[source].maxLength) throw failure(`Comments must be between 1 and ${SUPPORTED[source].maxLength} characters.`);
+          const screened = await screenMemberContent({ content: content.trim(), kind: 'source_comment', maxLength: SUPPORTED[source].maxLength });
+          if (!screened.allowed) throw failure(screened.reason === 'screening_unavailable' ? 'Comment screening is temporarily unavailable.' : 'This comment cannot be published.', screened.reason === 'screening_unavailable' ? 503 : 422);
+          text = screened.content;
+        }
+        return { status: 200, body: { source, action, published: true, ...await perform({ user, source, sourceUrl, action, content: text, liked }) } };
+      } catch (error) { return { status: error.status || 502, body: { message: error.status ? error.message : 'The source did not confirm this action. Check the original post before retrying.' } }; }
+    };
+    const entry = previous || { fingerprint, expiresAt: now + 10 * 60 * 1000, result: run() };
+    if (!previous) requests.set(key, entry);
+    const result = await entry.result;
+    res.status(result.status).json(result.body);
+  });
+}
+
+module.exports = { SUPPORTED, parseTarget, createSourceInteractions, registerSourceInteractionRoutes };
