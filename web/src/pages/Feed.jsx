@@ -3,7 +3,7 @@ import { createAuthenticatedStream } from '../api/authenticatedStream';
 ﻿import { useState, useEffect, useCallback, useRef, useMemo, Component, memo } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
-import { ArrowLeft, ArrowRight, RotateCw } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Martini, Plane, RotateCw, Utensils } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
@@ -4006,11 +4006,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             ))}
             <button type="button" className={`home-feed-rail-tab${viewMode === 'groups' && !publicGroupsFeed ? ' active' : ''}`} onClick={() => selectGroupScope('joined')}>Your groups</button>
             {[
-              { key: 'countries', label: 'Travel' },
-              { key: 'restaurants', label: 'Restaurants' },
-              { key: 'bars', label: 'Bars' },
-            ].map(({ key, label }) => (
-              <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => activateHomeView(key)}>{label}</button>
+              { key: 'countries', label: 'Travel', Icon: Plane },
+              { key: 'restaurants', label: 'Restaurants', Icon: Utensils },
+              { key: 'bars', label: 'Bars', Icon: Martini },
+            ].map(({ key, label, Icon }) => (
+              <button key={key} type="button" className={`home-feed-rail-tab home-feed-rail-tab--icon${viewMode === key ? ' active' : ''}`} onClick={() => activateHomeView(key)}><Icon size={16} strokeWidth={2.2} aria-hidden="true" />{label}</button>
             ))}
             <Link to="/music" className="home-feed-rail-tab">Music</Link>
           </div>

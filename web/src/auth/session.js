@@ -1,5 +1,6 @@
-// Bearer credentials and member caches live only for this page session.
-// Never write them to localStorage, sessionStorage, or Cache Storage.
+// Bearer credentials and member caches live only in this page's memory.
+// The API may restore the bearer from its HttpOnly session cookie; JavaScript
+// never writes credentials to localStorage, sessionStorage, or Cache Storage.
 let accessToken = null;
 const sessionValues = new Map();
 const listeners = new Set();

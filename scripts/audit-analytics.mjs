@@ -68,7 +68,7 @@ try {
       } } });
       if (url.origin !== origin || url.pathname.startsWith('/api/')) {
         return route.fulfill({ status: 200, json: { items: [], posts: [], groups: [], messages: [], notifications: [], results: [],
-          passwordChangeAvailable: true, passwordMinimumCharacters: 15, passwordMaximumUtf8Bytes: 72, sessionLifetimeSeconds: 43200 } });
+          passwordChangeAvailable: true, passwordMinimumCharacters: 15, passwordMaximumUtf8Bytes: 72, sessionLifetimeSeconds: 2592000 } });
       }
       if (url.pathname.startsWith('/assets/')) {
         const file = path.resolve(dist, '.' + url.pathname);

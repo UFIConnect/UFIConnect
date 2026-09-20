@@ -144,7 +144,7 @@ export default function HomeFeedTools({
   const connectedAccountCount = accountPlatforms === null
     ? profileConnected.length
     : visibleAccountPlatforms.filter(([key]) => accountConnected[key]).length;
-  const sourceGroups = sourceSections(availableSources, normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites)[favoriteMode], sourceCategory);
+  const sourceGroups = sourceSections(availableSources, normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites)[favoriteMode], sourceCategory, disabledSources);
   const visibleSources = sourceGroups.flatMap(section => section.items);
   const visibleEnabledCount = visibleSources.filter(source => !disabledSources.has(source)).length;
   const filteredAccounts = filterAccounts(visibleAccountPlatforms, accountConnected, accountFilter);

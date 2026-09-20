@@ -16750,6 +16750,26 @@ async function issueSession(user) {
   return signSecurityToken({ id: user.id, sid, ver: user.authVersion || 0, purpose: 'session' }, JWT_SECRET, SESSION_TTL_SECONDS);
 }
 
+const SESSION_COOKIE_NAME = 'ufi_session';
+function sessionCookie(token, maxAge = SESSION_TTL_SECONDS) {
+  const parts = [`${SESSION_COOKIE_NAME}=${encodeURIComponent(token || '')}`, 'Path=/', 'HttpOnly', 'SameSite=Lax', `Max-Age=${Math.max(0, maxAge)}`];
+  if (process.env.NODE_ENV === 'production') parts.push('Secure');
+  return parts.join('; ');
+}
+function setSessionCookie(res, token) { res.setHeader('Set-Cookie', sessionCookie(token)); }
+function clearSessionCookie(res) { res.setHeader('Set-Cookie', sessionCookie('', 0)); }
+function cookieSessionToken(req) {
+  const raw = typeof req.headers.cookie === 'string' ? req.headers.cookie : '';
+  const pair = raw.split(';').map(value => value.trim()).find(value => value.startsWith(`${SESSION_COOKIE_NAME}=`));
+  if (!pair) return null;
+  try { return decodeURIComponent(pair.slice(SESSION_COOKIE_NAME.length + 1)); } catch { return null; }
+}
+function cookieOriginAllowed(req) {
+  if (process.env.NODE_ENV !== 'production') return true;
+  const origin = req.headers.origin;
+  return typeof origin === 'string' && Array.isArray(allowedOrigins) && allowedOrigins.includes(origin);
+}
+
 async function resolveSession(token) {
   const payload = verifySecurityToken(token, JWT_SECRET, 'session');
   const user = await getAuthUser(payload.id);
@@ -19912,11 +19932,16 @@ function authenticateSSE(req, res, next) {
 
 async function authenticate(req, res, next) {
   const authHeader = req.headers.authorization;
-  if (!authHeader) return res.status(401).json({ message: 'Authorization header missing.' });
-  const token = /^Bearer ([^\s]+)$/i.exec(authHeader)?.[1];
-  if (!token) return res.status(401).json({ message: 'Invalid authorization header.' });
+  const cookieToken = authHeader ? null : cookieSessionToken(req);
+  if (!authHeader && !cookieToken) return res.status(401).json({ message: 'Authorization session missing.' });
+  const token = authHeader ? /^Bearer ([^\s]+)$/i.exec(authHeader)?.[1] : cookieToken;
+  if (!token) return res.status(401).json({ message: 'Invalid authorization session.' });
+  if (cookieToken && !['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !cookieOriginAllowed(req)) {
+    return res.status(403).json({ message: 'Session origin is not allowed.' });
+  }
   try {
     req.user = await resolveSession(token);
+    req.authToken = token;
     // Every real, successfully-authenticated request counts as "someone's
     // here" — see isAppIdle's own comment. /office/* admin routes go through
     // requireOfficeToken instead of this middleware, so they deliberately
@@ -19948,11 +19973,13 @@ async function authenticate(req, res, next) {
 // every handler using this must treat req.user as optional.
 async function authenticateOptional(req, res, next) {
   const authHeader = req.headers.authorization;
-  if (!authHeader) return next();
-  const token = /^Bearer ([^\s]+)$/i.exec(authHeader)?.[1];
+  const cookieToken = authHeader ? null : cookieSessionToken(req);
+  if (!authHeader && !cookieToken) return next();
+  const token = authHeader ? /^Bearer ([^\s]+)$/i.exec(authHeader)?.[1] : cookieToken;
   if (!token) return next();
   try {
     req.user = await resolveSession(token);
+    req.authToken = token;
     recordRealUserActivity(req, 'auth-optional');
     return next();
   } catch {
@@ -20203,6 +20230,14 @@ app.get('/auth/me', authenticate, async (req, res) => {
   res.json({ profile: fullProfile(user) });
 });
 
+app.get('/auth/session', authenticate, async (req, res) => {
+  const user = await getAuthUser(req.user.id);
+  if (!user) return res.status(401).json({ message: 'User not found.' });
+  setSessionCookie(res, req.authToken);
+  res.set('Cache-Control', 'no-store');
+  res.json({ token: req.authToken, profile: fullProfile(user) });
+});
+
 app.post('/auth/register', registerLimiter, async (req, res) => {
   const { name, email, password, title, phone: phoneInput } = req.body || {};
   const passwordError = passwordPolicyError(password);
@@ -20226,6 +20261,7 @@ app.post('/auth/register', registerLimiter, async (req, res) => {
       );
       const mem = syncToMemory(dbRowToMemUser(rows[0]));
       const token = await issueSession(mem);
+      setSessionCookie(res, token);
       return res.status(201).json({ token, profile: fullProfile(mem) });
     } catch (err) {
       if (err.code === '23505') return res.status(409).json({ message: 'Email already registered.' });
@@ -20272,6 +20308,7 @@ app.post('/auth/login', authLimiter, async (req, res) => {
     }
     const token = await issueSession(user);
     recordSuccessfulSignIn(user, req);
+    setSessionCookie(res, token);
     res.json({ token, profile: fullProfile(user) });
   } catch (error) {
     console.error('Sign-in storage failed.');
@@ -20280,6 +20317,7 @@ app.post('/auth/login', authLimiter, async (req, res) => {
 });
 
 app.post('/auth/logout', authenticate, async (req, res) => {
+  clearSessionCookie(res);
   if (!req.user.sid) return res.status(409).json({ message: 'End this session through your sign-in provider.' });
   try {
     if (isDBId(req.user.id)) await db.query('DELETE FROM auth_sessions WHERE id=$1 AND user_id=$2', [req.user.sid, req.user.id]);
@@ -20289,6 +20327,7 @@ app.post('/auth/logout', authenticate, async (req, res) => {
 });
 
 app.post('/auth/logout-all', authenticate, authLimiter, async (req, res) => {
+  clearSessionCookie(res);
   if (!req.user.sid) return res.status(409).json({ message: 'Manage sessions through your sign-in provider.' });
   try {
     const user = await getAuthUser(req.user.id);

@@ -1,0 +1,38 @@
+.local-web { max-width: 1800px; margin: 0 auto; min-width: 0; }
+.local-web h1 { color: #f1f5f9; font-size: 24px; letter-spacing: -.5px; margin: 0 0 8px; }
+.local-web h2 { font-size: 16px; color: #f1f5f9; margin: 0; }
+.local-web h3 { font-size: 14px; overflow-wrap: anywhere; }
+.local-web p { font-size: 13px; line-height: 1.6; margin: 12px 0; color: #b3bfd1; }
+.local-web .local-web-subtitle { color: #94a3b8; margin: 0 0 20px; max-width: 900px; }
+.local-web-panel { background: #0d0d1a; border: 1px solid rgba(255,255,255,.09); border-radius: 12px; padding: 18px; min-width: 0; }
+.local-web-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; margin-top: 18px; align-items: start; }
+.local-web-section-heading { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 14px; }
+.local-web-section-heading > span { font-size: 11px; color: #94a3b8; }
+.local-web-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+.local-web button, .local-web-button { border: 1px solid #293851; border-radius: 7px; padding: 9px 12px; background: #162238; color: #dbeafe; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block; }
+.local-web button:disabled { opacity: .45; cursor: not-allowed; }
+.local-web button:hover:not(:disabled), .local-web-button:hover { border-color: #60a5fa; }
+.local-web button[aria-pressed=true] { color: #93c5fd; border-color: #3b82f6; }
+.local-web button.local-web-primary, .local-web .local-web-button.local-web-primary { background: #1d4ed8; border-color: #2563eb; color: #fff; }
+.local-web :is(button, a, input, select, textarea):focus-visible { outline: 2px solid #60a5fa; outline-offset: 3px; }
+.local-web select, .local-web input:not([type=checkbox]), .local-web textarea { width: 100%; min-width: 0; border: 1px solid #293851; border-radius: 7px; background: #080f1d; color: #e2e8f0; padding: 10px; font: inherit; font-size: 12px; }
+.local-web select { text-overflow: ellipsis; }
+.local-web-label { display: block; color: #cbd5e1; font-size: 12px; margin: 14px 0 7px; overflow-wrap: anywhere; }
+.local-web textarea.local-web-code { display: block; min-height: 410px; resize: vertical; line-height: 1.6; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre; tab-size: 2; }
+.local-web .local-web-hint { font-size: 12px; color: #94a3b8; line-height: 1.6; }
+.local-web .local-web-empty { padding: 40px 10px; text-align: center; }
+.local-web-preview { margin: 12px auto 0; width: 100%; border-radius: 8px; overflow: hidden; border: 1px solid #293851; background: #fff; }
+.local-web-preview-mobile { max-width: 390px; }
+.local-web-preview iframe { display: block; border: 0; width: 100%; height: 600px; background: #fff; }
+.local-web-publish { margin-top: 18px; }
+.local-web-review { border-top: 1px solid #293851; padding-top: 18px; margin-top: 18px; }
+.local-web-comparison { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.local-web-comparison label { min-width: 0; font-size: 12px; color: #cbd5e1; }
+.local-web-comparison textarea { margin-top: 8px; }
+.local-web-confirm { display: flex; gap: 10px; align-items: start; margin: 18px 0; font-size: 13px; line-height: 1.5; color: #dbeafe; }
+.local-web-confirm input { margin-top: 3px; flex-shrink: 0; accent-color: #3b82f6; }
+.local-web .local-web-error { padding: 12px 15px; background: #3b1421; border: 1px solid #7f1d3e; color: #fecdd3; border-radius: 8px; overflow-wrap: anywhere; }
+.local-web .local-web-notice { padding: 12px 15px; background: #102a2c; border: 1px solid #115e59; color: #99f6e4; border-radius: 8px; overflow-wrap: anywhere; }
+.local-web-command { background: #080f1d; border: 1px solid #293851; border-radius: 7px; color: #93c5fd; padding: 14px; margin: 16px 0; overflow: auto; font-size: 13px; }
+@media (max-width: 1100px) { .local-web-workspace { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 760px) { .local-web-comparison { grid-template-columns: minmax(0, 1fr); } .local-web-panel { padding: 14px; } .local-web-preview iframe { height: 520px; } .local-web textarea.local-web-code { min-height: 300px; } }

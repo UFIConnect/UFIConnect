@@ -17,13 +17,24 @@ const CATEGORY_SOURCES = {
 export function sourceCategory(source) {
   return SOURCE_CATEGORIES.find(([key]) => CATEGORY_SOURCES[key].includes(source))?.[0] || 'social';
 }
-export function sourceSections(sources, favorites, category) {
+export function enabledFirstSourceSections(sections, disabledSources) {
+  // Partition the whole directory, so disabled favorites or earlier categories
+  // cannot appear above enabled sources in later categories.
+  return [true, false].flatMap(enabled => sections.map(section => ({
+    ...section,
+    id: `${enabled ? 'enabled' : 'disabled'}-${section.id}`,
+    label: `${enabled ? 'On' : 'Off'} · ${section.label}`,
+    items: section.items.filter(source => !disabledSources.has(source) === enabled),
+  })).filter(section => section.items.length));
+}
+export function sourceSections(sources, favorites, category, disabledSources) {
   const filtered = sources.filter(source => category === 'all' || (category === 'favorites' ? favorites.includes(source) : sourceCategory(source) === category));
-  return [['favorites', 'Favorites'], ...SOURCE_CATEGORIES].map(([id, label]) => ({
+  const sections = [['favorites', 'Favorites'], ...SOURCE_CATEGORIES].map(([id, label]) => ({
     id, label,
     items: filtered.filter(source => favorites.includes(source) ? id === 'favorites' : sourceCategory(source) === id)
       .sort((a, b) => (SOURCE_META[a]?.label || a).localeCompare(SOURCE_META[b]?.label || b)),
   })).filter(section => section.items.length);
+  return enabledFirstSourceSections(sections, disabledSources);
 }
 export const ACCOUNT_STATUSES = [['connected', 'Connected'], ['available', 'Available'], ['membership', 'Membership'], ['soon', 'Coming soon']];
 export function accountStatus(platform, connected) {

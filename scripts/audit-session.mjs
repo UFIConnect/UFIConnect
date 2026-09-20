@@ -14,9 +14,16 @@ export async function installAuditMember(page, app, userId) {
   }
   const state = { app, userId, authenticated: false };
   sessions.set(page, state);
+  await page.route('**/auth/session', async (route) => {
+    if (!state.authenticated) return route.fulfill({ status: 401, json: { message: 'No saved audit session.' } });
+    const { data: profile, status } = await state.app.request('/profile', { userId: state.userId });
+    if (status && status !== 200) throw new Error('Audit member profile unavailable');
+    return route.fulfill({ json: { token: state.app.token(state.userId), profile } });
+  });
   await page.route('**/auth/login', async (route) => {
     const { data: profile, status } = await state.app.request('/profile', { userId: state.userId });
     if (status && status !== 200) throw new Error('Audit member profile unavailable');
+    state.authenticated = true;
     await route.fulfill({ json: { token: state.app.token(state.userId), profile } });
   });
 }
@@ -56,9 +63,6 @@ export async function auditNavigate(page, value, options) {
 export async function auditReload(page, options) {
   const target = page.url();
   await page.reload({ waitUntil: 'domcontentloaded', ...options });
-  const state = sessions.get(page);
-  if (state) state.authenticated = false;
-  // Reload intentionally ends a local sign-in; sign in again before checking
-  // settings or content that the server should have retained.
+  // A saved browser session now restores through the API's HttpOnly cookie.
   return auditNavigate(page, target);
 }
