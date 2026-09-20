@@ -3,6 +3,7 @@ import Controls from './Controls';
 import PostPipeline from './PostPipeline';
 import LiveCity from './LiveCity';
 import LocalWeb from './LocalWeb';
+import Setup from './Setup';
 import { mergeObservedAgents, observeAgentPayload } from './office-telemetry.mjs';
 import { createOfficeClient, createOfficeEventSource, createTrustedOfficeFetch, connectOfficeStreams, mergeOfficeLog } from './office-runtime.mjs';
 import { requestOfficeAccess } from './OfficeAccessDialog';
@@ -3027,12 +3028,12 @@ function TopicsView() {
 // ─── App (root) ───────────────────────────────────────────────────────────────
 
 export default function App() {
-  const officeViews = ['overview', 'city', 'local-web', 'controls', 'sources', 'pipeline', 'post-pipeline', 'topics', 'agents', 'feed', 'analytics', 'deploy', 'autofix', 'versions'];
+  const officeViews = ['overview', 'city', 'local-web', 'setup', 'controls', 'sources', 'pipeline', 'post-pipeline', 'topics', 'agents', 'feed', 'analytics', 'deploy', 'autofix', 'versions'];
   const [view, setView] = useState(() => {
     const requested = typeof window !== 'undefined' ? window.location.hash.slice(1) : '';
     return officeViews.includes(requested) ? requested : 'overview';
   });
-  const needsOfficeTelemetry = view !== 'local-web';
+  const needsOfficeTelemetry = !['local-web', 'setup'].includes(view);
   const [status, setStatus] = useState(null);
   // Source-fetcher health (workerHealth/agentSourceCache) only ever has real
   // data on the pipeline role now — SourcesView/PipelineView read this
@@ -3213,7 +3214,8 @@ export default function App() {
     setDeploying(prev => ({ ...prev, [service]: true }));
     try {
       const response = await officeFetch(`${API}/office/deploy/${service}`, { method: 'POST' });
-      if (!response.ok) throw new Error(`Deploy request failed (${response.status}).`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok === false) throw new Error(payload.msg || payload.error || `Deploy request failed (${response.status}).`);
     } catch (error) { setActionError(error.message); }
     setTimeout(() => setDeploying(prev => ({ ...prev, [service]: false })), 5000);
   };
@@ -3222,6 +3224,7 @@ export default function App() {
     { id: 'overview', label: 'Overview' },
     { id: 'city', label: 'Live City' },
     { id: 'local-web', label: 'Local web' },
+    { id: 'setup', label: 'Setup' },
     { id: 'controls', label: 'Controls' },
     { id: 'sources',  label: 'Live Sources' },
     { id: 'pipeline', label: 'Pipeline' },
@@ -3340,7 +3343,7 @@ export default function App() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
               {needsOfficeTelemetry && <Dot ok={connected} pulse={connected} />}
               <span style={{ fontSize: 11, color: '#475569' }}>
-                {!needsOfficeTelemetry ? 'Telemetry paused in Local web' : connected ? 'Live stream active' : 'Reconnecting...'}
+                {!needsOfficeTelemetry ? `Telemetry paused in ${view === 'setup' ? 'Setup' : 'Local web'}` : connected ? 'Live stream active' : 'Reconnecting...'}
               </span>
             </div>
             {/* Both services' own health, always visible regardless of which
@@ -3426,6 +3429,7 @@ export default function App() {
               SourcesView reads pipelineStatus, not status. */}
           {view === 'feed'     && <FeedManagerView pipelineStatus={pipelineStatus} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'analytics'&& <AnalyticsView />}
+          {view === 'setup' && <Setup apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} />}
           {view === 'deploy'   && <DeployView triggerDeploy={triggerDeploy} deploying={deploying} log={log} />}
           {view === 'autofix'  && <AutofixView />}
           {view === 'versions' && <VersionsView versions={versions} status={status} pipelineStatus={pipelineStatus} />}

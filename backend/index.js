@@ -9,6 +9,7 @@ const { createTokenVault, migrateSocialCredentials } = require('./token-vault');
 const { createAnalyticsBridgeHandler } = require('./analytics-bridge');
 const { ANALYTICS_SCHEMA, createAggregateAnalytics } = require('./aggregate-analytics');
 const { createOfficeAgentChat, sanitizeSnapshot: sanitizeAgentSnapshot } = require('./office-agent-chat');
+const { buildOfficeSetup } = require('./office-setup');
 const dotenv = require('dotenv');
 const http   = require('http');
 const https  = require('https');
@@ -27163,6 +27164,15 @@ async function executeOfficeControl(control, body) {
       throw new Error('Control has no executable implementation.');
   }
 }
+
+app.get('/office/setup', requireOfficeToken, (_req, res) => {
+  const social = Object.fromEntries(Object.keys(SOCIAL_ENV_KEYS).map(platform => [platform, {
+    ...socialCredentialStatus(platform), disabled: FORCE_COMING_SOON_PLATFORMS.has(platform),
+  }]));
+  res.set('Cache-Control', 'no-store').json(buildOfficeSetup({
+    env: process.env, role: SERVICE_ROLE, database: db.isConnected(), backup: db.getBackupStatus(), social, autofixEnabled: autofixState.enabled,
+  }));
+});
 
 app.get('/office/controls', requireOfficeToken, async (_req, res) => {
   let history = [];
