@@ -24,6 +24,16 @@ const server = await createServer({ root: path.join(root, 'web'), configFile: pa
   server: { host: '127.0.0.1', port: 5210, strictPort: false, proxy: { '/api': { target: app.base, rewrite: p => p.replace(/^\/api/, '') } } },
 });
 let browser;
+async function assertEnabledFirst(scope) {
+  const rows = await scope.getByRole('switch').evaluateAll(elements => elements.map(element => ({
+    name: element.getAttribute('aria-label'),
+    enabled: element.getAttribute('aria-checked') === 'true',
+  })));
+  assert.equal(new Set(rows.map(row => row.name)).size, rows.length, 'Each source appears once');
+  assert.deepEqual(rows.map(row => row.enabled), rows.map(row => row.enabled).sort((a, b) => Number(b) - Number(a)),
+    'Every enabled source precedes every disabled source, including sources from the API');
+  return rows;
+}
 try {
   await server.listen();
   browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
@@ -57,6 +67,7 @@ try {
     const names = await tools.locator('.home-feed-source-name').allTextContents();
     assert.equal(new Set(names).size, names.length, 'Each source appears once');
     assert.deepEqual(names.slice(0, 2), ['Reddit', 'YouTube']);
+    await assertEnabledFirst(tools);
     assert.ok(names.length > 30, 'Full source catalog stays available');
     assert.equal(await tools.getByRole('searchbox').count(), 0);
     assert.equal(await tools.getByRole('button', { name: 'Select favorites', exact: true }).count(), 0);
@@ -107,16 +118,34 @@ try {
     assert.equal(await page.getByRole('button', { name: 'Select favorites', exact: true }).count(), 0);
     assert.ok(await page.getByRole('switch').count() > 30, 'Removing search does not hide sources');
     await page.getByText('audit-source', { exact: true }).waitFor();
-    const sourceSave = page.waitForResponse(response => response.request().method() === 'PATCH' && response.url().endsWith('/profile'));
-    await page.getByRole('switch').first().click();
+    let sourceSave = page.waitForResponse(response => response.request().method() === 'PATCH' && response.url().endsWith('/profile'));
+    await page.getByRole('switch', { name: 'Turn off GitHub', exact: true }).click();
     assert.equal((await sourceSave).status(), 200);
+    await page.getByRole('switch', { name: 'Turn on GitHub', exact: true }).waitFor();
+    await page.locator('[role="switch"]:disabled').first().waitFor({ state: 'detached' });
+    await assertEnabledFirst(page);
+    sourceSave = page.waitForResponse(response => response.request().method() === 'PATCH' && response.url().endsWith('/profile'));
+    await page.getByRole('switch', { name: 'Turn off audit-source', exact: true }).click();
+    assert.equal((await sourceSave).status(), 200);
+    await page.getByRole('switch', { name: 'Turn on audit-source', exact: true }).waitFor();
+    await assertEnabledFirst(page);
     await page.getByRole('button', { name: 'Enable all', exact: true }).waitFor();
     await auditReload(page);
     await page.getByRole('button', { name: 'Enable all', exact: true }).waitFor();
-    assert.equal(await page.getByRole('switch').first().getAttribute('aria-checked'), 'false');
+    await page.getByRole('switch', { name: 'Turn on GitHub', exact: true }).waitFor();
+    await page.getByRole('switch', { name: 'Turn on audit-source', exact: true }).waitFor();
+    assert.equal(await page.getByRole('switch').first().getAttribute('aria-checked'), 'true');
+    await assertEnabledFirst(page);
+    sourceSave = page.waitForResponse(response => response.request().method() === 'PATCH' && response.url().endsWith('/profile'));
+    await page.getByRole('switch', { name: 'Turn on audit-source', exact: true }).click();
+    assert.equal((await sourceSave).status(), 200);
+    await page.getByRole('switch', { name: 'Turn off audit-source', exact: true }).waitFor();
+    await page.locator('[role="switch"]:disabled').first().waitFor({ state: 'detached' });
+    await assertEnabledFirst(page);
     await page.getByRole('button', { name: 'Enable all', exact: true }).click();
     await page.getByRole('button', { name: 'Enable all', exact: true }).waitFor({ state: 'detached' });
     assert.equal(await page.getByRole('switch', { checked: false }).count(), 0);
+    await assertEnabledFirst(page);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/sources-page-${width}.png`) });
     await auditNavigate(page, server.resolvedUrls.local[0] + 'connected-accounts');
