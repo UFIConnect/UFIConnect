@@ -1,1 +1,0 @@
-const r="Use at least 15 characters. A unique passphrase works well. Maximum 72 bytes; some characters use more than one byte.";function s(e){return Array.from(e||"").length<15?"Use at least 15 characters for your new password.":new TextEncoder().encode(e).length>72?"Password must be 72 UTF-8 bytes or fewer. Some characters use more than one byte.":""}export{r as P,s as v};

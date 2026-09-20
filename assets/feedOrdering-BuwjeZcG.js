@@ -1,0 +1,1 @@
+function e(e=[],t=1){let n=new Map;for(let r of e){let e=new Date(r?.createdAt||0).getTime(),i=Math.floor((Number.isFinite(e)?e:0)/t);n.has(i)||n.set(i,[]),n.get(i).push(r)}return[...n.entries()].sort(([e],[t])=>t-e).flatMap(([,e])=>e)}export{e as t};
