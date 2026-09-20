@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useAuth0 } from '@auth0/auth0-react';
-import client from '../api/client';
+import client, { publicOAuthRequestConfig } from '../api/client';
 import { auth0AuthorizationParams, isAuth0Configured } from '../auth/auth0Config';
 import { clearSession, getAccessToken, setAccessToken, subscribeToSession } from '../auth/session';
 
@@ -10,6 +10,7 @@ export function AuthProvider({ children }) {
   const [token, setToken] = useState(getAccessToken);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [restoringSession, setRestoringSession] = useState(true);
   const auth0 = useAuth0();
   const auth0Enabled = isAuth0Configured;
 
@@ -17,6 +18,20 @@ export function AuthProvider({ children }) {
     setToken(nextToken);
     if (!nextToken) setProfile(null);
   }), []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (getAccessToken()) { setRestoringSession(false); return undefined; }
+    client.get('/auth/session', publicOAuthRequestConfig({ _ufiReauthentication: true }))
+      .then(({ data }) => {
+        if (cancelled || !data?.token) return;
+        setAccessToken(data.token);
+        setProfile(data.profile || null);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setRestoringSession(false); });
+    return () => { cancelled = true; };
+  }, []);
 
   const refreshProfile = useCallback(async () => {
     const activeToken = getAccessToken();
@@ -31,7 +46,7 @@ export function AuthProvider({ children }) {
     let cancelled = false;
     if (!token) {
       setProfile(null);
-      if (!auth0Enabled || !auth0.isLoading) setLoading(false);
+      if (!restoringSession && (!auth0Enabled || !auth0.isLoading)) setLoading(false);
       return undefined;
     }
     setLoading(true);
@@ -39,7 +54,7 @@ export function AuthProvider({ children }) {
       if (!cancelled && getAccessToken() === token && [401, 403].includes(error?.response?.status)) clearSession();
     }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [token, refreshProfile, auth0Enabled, auth0.isLoading]);
+  }, [token, refreshProfile, auth0Enabled, auth0.isLoading, restoringSession]);
 
   useEffect(() => {
     if (!auth0Enabled || auth0.isLoading || !auth0.isAuthenticated) return undefined;
@@ -68,19 +83,19 @@ export function AuthProvider({ children }) {
   }
 
   async function login(email, password) {
-    const { data } = await client.post('/auth/login', { email, password });
+    const { data } = await client.post('/auth/login', { email, password }, publicOAuthRequestConfig());
     return acceptSession(data);
   }
 
   async function register(name, email, password, title, phone) {
-    const { data } = await client.post('/auth/register', { name, email, password, title, phone });
+    const { data } = await client.post('/auth/register', { name, email, password, title, phone }, publicOAuthRequestConfig());
     return acceptSession(data);
   }
 
   async function logout({ revoke = true } = {}) {
     const activeToken = getAccessToken();
     const revocation = revoke && activeToken
-      ? client.post('/auth/logout', {}, { headers: { Authorization: `Bearer ${activeToken}` } })
+      ? client.post('/auth/logout', {}, publicOAuthRequestConfig({ headers: { Authorization: `Bearer ${activeToken}` } }))
           .then(() => true).catch(() => false)
       : Promise.resolve(true);
     clearSession();

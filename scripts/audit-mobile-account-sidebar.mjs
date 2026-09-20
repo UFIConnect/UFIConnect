@@ -57,7 +57,18 @@ try {
     const closeButton = drawer.getByRole('button', { name: 'Close account sidebar' });
     const rightOpener = page.getByRole('button', { name: 'Open menu', exact: true });
     const waitOpen = async () => {
-      await page.waitForFunction(() => document.querySelector('#mobile-account-drawer')?.getAttribute('aria-hidden') === 'false');
+      const waitForOpenState = timeout => page.waitForFunction(
+        () => document.querySelector('#mobile-account-drawer')?.getAttribute('aria-hidden') === 'false',
+        undefined, { timeout },
+      );
+      try {
+        await waitForOpenState(4000);
+      } catch {
+        // A dialog scrim can finish leaving just after its heading becomes hidden,
+        // swallowing the first synthetic tap. Retry only while the drawer is closed.
+        if (await drawer.getAttribute('aria-hidden') !== 'false') await opener.click();
+        await waitForOpenState(12000);
+      }
       await page.waitForFunction(() => Math.abs(document.querySelector('#mobile-account-drawer').getBoundingClientRect().x) < 1);
     };
     const waitClosed = async () => {
@@ -195,6 +206,16 @@ try {
           await page.waitForFunction(() => document.querySelector('#mobile-feed-drawer').getAttribute('aria-hidden') === 'false');
           check(await right.getByRole('link', { name: 'Settings', exact: true }).count() === 0, 'Settings still duplicated in the right sidebar');
           check(await right.getByRole('button', { name: 'Log out', exact: true }).count() === 0, 'Logout still duplicated in the right sidebar');
+          if (!route) {
+            const destinations = ['Travel', 'Restaurants', 'Bars'];
+            const signatures = [];
+            for (const name of destinations) {
+              const icon = right.getByRole('button', { name, exact: true }).locator('svg');
+              check(await icon.count() === 1, `${name} must use the same line-icon treatment as the other destinations`);
+              signatures.push(await icon.locator('path').evaluateAll(paths => paths.map(path => path.getAttribute('d')).join('|')));
+            }
+            check(new Set(signatures).size === destinations.length, 'Travel, Restaurants and Bars need distinct destination icons');
+          }
           await page.keyboard.press('Escape');
           await opener.click();
           await waitOpen();

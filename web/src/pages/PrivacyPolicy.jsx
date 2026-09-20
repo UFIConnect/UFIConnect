@@ -167,8 +167,8 @@ export default function PrivacyPolicy() {
         <Section title="7. Cookies and local storage">
           <P>
             The web app keeps your sign-in token and private profile data in the current page's memory,
-            not in localStorage or sessionStorage. Reloading or closing the page ends the local session;
-            a connected sign-in provider may restore access through its own session.
+            not in localStorage or sessionStorage. A Secure, HttpOnly cookie lets the same saved browser restore a revocable local session without exposing the credential to page scripts. IP addresses are not used as account credentials;
+            a connected sign-in provider may also restore access through its own session.
             The native mobile app stores its sign-in token using the operating system's secure storage.
           </P>
           <P>
@@ -229,7 +229,7 @@ export default function PrivacyPolicy() {
           </P>
           <UL items={[
             'Passwords hashed with bcrypt (never stored in plaintext)',
-            'Local sign-in sessions expire after 12 hours and can be revoked from Security settings',
+            'Local sign-in sessions expire after 30 days and can be revoked from Security settings',
             'Changing or resetting a local password invalidates existing local sign-in sessions',
             'Password-reset links expire, work once, and cannot be used as sign-in tokens',
             'Public production connections require HTTPS; database TLS certificates are verified by default',

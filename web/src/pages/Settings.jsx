@@ -986,14 +986,14 @@ export default function Settings() {
               Passwords are hidden by default. Select Show to check what you entered; the password hides again when you leave the field or submit. Copying, cutting, and dragging from password fields is blocked to reduce accidental clipboard exposure. You can paste or use a password manager.
             </p>
             <p style={{ fontSize: '.85rem', color: 'var(--muted)', lineHeight: 1.7 }}>
-              This website keeps its sign-in token and member caches in memory. Reloading or closing the page ends a local sign-in. Your sign-in provider may restore its own session.
+              This website keeps a revocable sign-in session in a Secure, HttpOnly browser cookie. Reloading or reopening the same saved browser restores your local sign-in until it expires or you sign out. The session is not keyed to your IP address.
             </p>
             {isLocalAuth ? (
               <>
                 <p style={{ fontSize: '.85rem', color: 'var(--muted)', lineHeight: 1.7 }}>
                   {securityStatus ? (securityStatus.multiFactorAvailable ? 'Review multi-factor authentication with your sign-in provider.' : 'Multi-factor authentication is not currently available for email and password accounts.') : 'Checking available account protections…'}
                 </p>
-                {securityStatus?.sessionLifetimeSeconds && <p style={{ fontSize: '.85rem', color: 'var(--muted)' }}>Local sign-in sessions expire after {Math.floor(securityStatus.sessionLifetimeSeconds / 3600)} hours.</p>}
+                {securityStatus?.sessionLifetimeSeconds && <p style={{ fontSize: '.85rem', color: 'var(--muted)' }}>Local sign-in sessions expire after {Math.floor(securityStatus.sessionLifetimeSeconds / 86400)} days.</p>}
                 {securityStatus && !securityStatus.securityAlertsAvailable && <p style={{ fontSize: '.85rem', color: 'var(--muted)' }}>Automatic security alert emails are not currently available.</p>}
                 {sessionError && <div className="auth-error" role="alert">{sessionError}</div>}
                 <button type="button" className="btn btn-ghost btn-sm" onClick={handleSignOutAll} disabled={signingOutAll || !securityStatus?.serverSessionRevocation}>

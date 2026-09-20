@@ -37,9 +37,19 @@ export default function DataPrivacySettings() {
     <section className="card" aria-labelledby="data-insights-title">
       <h2 id="data-insights-title">Service metrics and insights</h2>
       <div className="data-preference-row">
-        <div><h3>Core service metrics and aggregate usage counts</h3>
-          <p>Always active: totals for availability, request outcomes and page categories help us operate UFIconnect. These metrics do not attach account IDs, visitor IDs, messages or full page links. Hosting still receives network information when connecting.</p></div>
+        <div><h3>Required service analytics</h3>
+          <p>Always active: availability, request outcomes and aggregate page categories keep UFIconnect reliable. These counts exclude account IDs, visitor IDs, messages, searches and full page links.</p></div>
         <span className="data-preference-required">Always active</span>
+      </div>
+      <div className="data-preference-row">
+        <div><h3>Session and security activity</h3>
+          <p>Always active: sign-in success, session revocation, rate-limit and security outcomes protect accounts and keep a saved browser signed in. The secure session is attached to the browser, never to an IP address.</p></div>
+        <span className="data-preference-required">Necessary</span>
+      </div>
+      <div className="data-preference-row">
+        <div><h3>Feature records you create</h3>
+          <p>Saved posts, reading history, follows, groups and preference changes are stored with your account when you use those features so they remain available on your devices.</p></div>
+        <span className="data-preference-required">Feature data</span>
       </div>
       <PreferenceSwitch label="Optional performance diagnostics" checked={preferences.performanceInsights}
         onChange={performanceInsights => setDataPreferences({ performanceInsights })}
@@ -48,7 +58,7 @@ export default function DataPrivacySettings() {
         onChange={enabled => analytics.setConsent(enabled ? 'granted' : 'denied')}
         description={analytics.available ? 'Share page categories and basic device information with Google. Google receives your IP address when connecting. Turning this off stops new collection and clears this browser’s analytics identifier.' : 'Google Analytics is unavailable in this deployment.'} />
       {analyticsPersistenceError && <p className="auth-error" role="status">{analyticsPersistenceError}</p>}
-      <p className="data-preference-note">Actions such as saving posts, managing reading history and personalizing your feed still use the information needed to perform those features. <Link to="/privacy">Read the privacy policy</Link>.</p>
+      <p className="data-preference-note">Hosting receives connection information, including IP addresses, to deliver and secure requests. IP addresses are not used as sign-in credentials. <Link to="/privacy">Read the privacy policy</Link>.</p>
     </section>
   </div>;
 }
