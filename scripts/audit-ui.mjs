@@ -111,7 +111,7 @@ try {
     await page.locator('.feed-source-option').first().waitFor();
     await page.waitForFunction(() => !document.querySelector('.splash'));
     const buttons = page.locator('.feed-source-tabs--compact .feed-source-option');
-    assert.equal(await buttons.count(), HOME_FEED_SOURCE_IDS.length + 1);
+    assert.equal(await buttons.count(), HOME_FEED_SOURCE_IDS.length);
     const visible = await buttons.evaluateAll(elements => {
       const parent = elements[0].parentElement.getBoundingClientRect();
       return elements.filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.left >= parent.left - 1 && r.right <= parent.right + 1; }).length;
@@ -132,10 +132,10 @@ try {
       const mode = feedName === 'home' ? 'feed' : 'following';
       const otherMode = mode === 'feed' ? 'following' : 'feed';
       const before = (await app.request('/profile', { userId: 'preview-member' })).data;
-      const expectedLabels = ['All sources', ...sourceIds.map(key => SOURCE_META[key]?.label || key)].sort();
+      const expectedLabels = sourceIds.map(key => SOURCE_META[key]?.label || key).sort();
       assert.deepEqual((await buttons.evaluateAll(elements => elements.map(el => el.getAttribute('aria-label')))).sort(), expectedLabels);
       const favoriteLabels = before.roleSettings.feedSourceFavorites[mode].map(key => SOURCE_META[key]?.label || key);
-      assert.deepEqual((await buttons.evaluateAll(elements => elements.map(el => el.getAttribute('aria-label')))).slice(1, favoriteLabels.length + 1), favoriteLabels);
+      assert.deepEqual((await buttons.evaluateAll(elements => elements.map(el => el.getAttribute('aria-label')))).slice(0, favoriteLabels.length), favoriteLabels);
       await buttons.last().scrollIntoViewIfNeeded();
       assert.ok(await buttons.last().evaluate(el => {
         const bounds = el.getBoundingClientRect();
@@ -143,11 +143,16 @@ try {
         return bounds.left >= parent.left - 1 && bounds.right <= parent.right + 1;
       }), `Last ${feedName} source cannot be reached at ${viewport.width}`);
       await page.locator('.feed-source-tabs--compact').evaluate(el => { el.scrollLeft = 0; });
-      assert.ok(await buttons.last().evaluate(el => el.getBoundingClientRect().right >= el.parentElement.getBoundingClientRect().right - 1), 'Source bar leaves unused space');
+      // Fixed-size circles may all fit in a wide row; do not stretch them to
+      // consume spare width. After scrolling back, the first must be reachable.
+      assert.ok(await buttons.first().evaluate(el => {
+        const bounds = el.getBoundingClientRect(), parent = el.parentElement.getBoundingClientRect();
+        return bounds.left >= parent.left - 1 && bounds.right <= parent.right + 1;
+      }), 'First source is clipped after resetting the source bar');
       const sourceMenu = page.getByRole('button', { name: 'View all feed sources', exact: true });
       await sourceMenu.click();
       const menuLabels = await page.locator('.feed-source-menu-item:not(.aggregate) .feed-source-option-label').allTextContents();
-      assert.deepEqual(menuLabels.sort(), expectedLabels.filter(label => label !== 'All sources'));
+      assert.deepEqual(menuLabels.sort(), expectedLabels);
       const favorite = page.locator('.feed-source-favorite-button:not(.active)').first();
       const label = await favorite.getAttribute('aria-label');
       await favorite.hover();
@@ -176,7 +181,7 @@ try {
       await auditNavigate(page, base + `?feed=${mode}`);
       await auditReload(page);
       await buttons.first().waitFor();
-      assert.equal(await buttons.count(), sourceIds.length + 1);
+      assert.equal(await buttons.count(), sourceIds.length);
       assert.equal(await page.locator('.feed-source-compact-favorite').count(), 0);
       const after = (await app.request('/profile', { userId: 'preview-member' })).data;
       assert.deepEqual(after.roleSettings.feedSourceFavorites[mode], []);
@@ -195,8 +200,8 @@ try {
     const menu = page.getByRole('button', { name: 'Open menu', exact: true });
     if (await menu.isVisible()) await menu.click();
     await page.getByRole('button', { name: 'Following', exact: true }).filter({ visible: true }).first().click();
-    await page.waitForFunction(count => document.querySelectorAll('.feed-source-tabs--compact .feed-source-option').length === count, FOLLOWING_FEED_SOURCE_IDS.length + 1);
-    assert.equal(await buttons.count(), FOLLOWING_FEED_SOURCE_IDS.length + 1);
+    await page.waitForFunction(count => document.querySelectorAll('.feed-source-tabs--compact .feed-source-option').length === count, FOLLOWING_FEED_SOURCE_IDS.length);
+    assert.equal(await buttons.count(), FOLLOWING_FEED_SOURCE_IDS.length);
     checks++;
     await checkSourceFavorites('following', FOLLOWING_FEED_SOURCE_IDS);
     if (process.argv.includes('--favorites-only')) {

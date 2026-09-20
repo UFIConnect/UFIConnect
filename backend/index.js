@@ -30776,8 +30776,9 @@ function callConfiguredVideoGenerator(endpoint, apiKey, prompt, durationSeconds)
 const OPENAI_VIDEO_MODELS = new Set(['sora-2', 'sora-2-pro']);
 const OPENAI_VIDEO_SECONDS = new Set(['4', '8', '12']);
 const OPENAI_VIDEO_SIZES = new Set(['720x1280', '1280x720', '1024x1792', '1792x1024']);
-const MIN_VIDEO_GENERATION_SECONDS = 4;
-const MAX_VIDEO_GENERATION_SECONDS = 300;
+const { MIN_VIDEO_SECONDS, MAX_VIDEO_SECONDS, PLANNED_MAX_VIDEO_SECONDS, videoDurationSeconds } = require('./video-generation-policy');
+const { createNarratedVideoProvider } = require('./narrated-video');
+const narratedVideo = createNarratedVideoProvider({ env: process.env, transport: https });
 const OPENAI_VIDEO_JOB_TICKET_PURPOSE = 'openai-video-generation';
 const OPENAI_VIDEO_JOB_ID = /^video_[A-Za-z0-9_-]{1,200}$/;
 
@@ -30795,10 +30796,15 @@ function configuredOpenAIVideoProvider() {
   };
 }
 
-function requestedVideoGenerationSeconds(value, fallback = 12) {
-  const seconds = Number.parseInt(String(value ?? ''), 10);
-  if (!Number.isFinite(seconds)) return fallback;
-  return Math.max(MIN_VIDEO_GENERATION_SECONDS, Math.min(MAX_VIDEO_GENERATION_SECONDS, seconds));
+function videoGenerationOptions() {
+  const shortClipSeconds = configuredOpenAIVideoProvider() ? [...OPENAI_VIDEO_SECONDS].map(Number) : [];
+  let longFormConfigured = narratedVideo.configured();
+  try {
+    const endpoint = new URL(String(process.env.VIDEO_GENERATION_API_URL || '').trim());
+    longFormConfigured ||= endpoint.protocol === 'https:' && !endpoint.username && !endpoint.password;
+  } catch {}
+  return { minSeconds: MIN_VIDEO_SECONDS, maxSeconds: MAX_VIDEO_SECONDS,
+    plannedMaxSeconds: PLANNED_MAX_VIDEO_SECONDS, shortClipSeconds, longFormConfigured };
 }
 
 function openAIVideoFormBody(fields) {
@@ -31023,6 +31029,15 @@ async function refreshSavedVideo(entry) {
   const claimed = await generatedContent.claim(entry.user_id, entry.id);
   if (!claimed) return (await generatedContent.get(entry.user_id, entry.id)) || entry;
   try {
+    if (entry.output?.provider === 'shotstack') {
+      const job = await narratedVideo.status(entry.provider_job_id, entry.output.stage);
+      const output = { ...entry.output, error: job.error || null };
+      if (job.status === 'completed') {
+        Object.assign(output, await generatedMedia.save(entry.user_id, entry.id, 'video', job.mediaUrl),
+          { durationSeconds: job.durationSeconds });
+      }
+      return await generatedContent.update(entry.user_id, entry.id, { output, status: job.status });
+    }
     const provider = configuredOpenAIVideoProvider();
     if (!provider) throw new Error('Video status is temporarily unavailable.');
     const video = await getOpenAIVideoJob(provider, entry.provider_job_id);
@@ -31062,6 +31077,13 @@ if (!IS_PIPELINE_ROLE) setInterval(async () => {
 // Images return immediately. OpenAI video requests are queued, so the client
 // receives a signed, member-bound ticket and polls status without exposing an
 // OpenAI credential to the browser.
+app.get('/command-center/media-options', authenticate, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  const user = await getUser(req.user.id);
+  if (!user || user.plan === 'free') return res.status(403).json({ message: 'Media Studio is a Pro feature - upgrade to use it.' });
+  return res.json({ video: videoGenerationOptions() });
+});
+
 app.post('/command-center/media-generate', authenticate, mediaGenerationLimiter, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user || user.plan === 'free') {
@@ -31069,11 +31091,19 @@ app.post('/command-center/media-generate', authenticate, mediaGenerationLimiter,
   }
   const type = req.body?.type === 'video' ? 'video' : 'image';
   const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim().slice(0, 1000) : '';
-  const requestedDurationSeconds = requestedVideoGenerationSeconds(
-    req.body?.durationSeconds,
-    Number.parseInt(String(process.env.VIDEO_GENERATION_OPENAI_SECONDS || '4'), 10) || 4,
-  );
   if (!prompt) return res.status(400).json({ message: 'Describe what you want to create.' });
+  let requestedDurationSeconds;
+  if (type === 'video') {
+    try {
+      requestedDurationSeconds = videoDurationSeconds(req.body?.durationSeconds, Number(configuredOpenAIVideoProvider()?.seconds || 12));
+    } catch (error) { return res.status(error.status || 400).json({ message: error.message }); }
+    const options = videoGenerationOptions();
+    if (!options.longFormConfigured && !options.shortClipSeconds.includes(requestedDurationSeconds)) {
+      return res.status(422).json({ message: options.shortClipSeconds.length
+        ? 'This video length needs a connected long-form video service. Short clips of 4, 8, or 12 seconds are currently available.'
+        : 'Video creation is not connected yet. Please try again after a video service is connected.' });
+    }
+  }
   let entry = null;
   try {
     generatedMedia.assertConfigured();
@@ -31099,8 +31129,17 @@ app.post('/command-center/media-generate', authenticate, mediaGenerationLimiter,
 
     const openAIProvider = configuredOpenAIVideoProvider();
     const customProviderUrl = String(process.env.VIDEO_GENERATION_API_URL || '').trim();
-    if (openAIProvider && requestedDurationSeconds <= 12) {
-      if (!OPENAI_VIDEO_SECONDS.has(String(requestedDurationSeconds))) return res.status(400).json({ message: 'Choose a video duration of 4, 8, or 12 seconds.' });
+    if (narratedVideo.configured()) {
+      entry = await beginGeneratedContent(req, res, { kind: 'video', prompt, input: { durationSeconds: requestedDurationSeconds } });
+      if (!entry) return;
+      const job = await narratedVideo.create(screening.content, requestedDurationSeconds);
+      const saved = await generatedContent.update(req.user.id, entry.id, {
+        output: { provider: 'shotstack', stage: job.stage, durationSeconds: job.durationSeconds },
+        status: 'processing', jobId: job.id,
+      });
+      return res.status(202).json({ mediaType: 'video', provider: 'shotstack', historyItem: publicHistoryItem(saved) });
+    }
+    if (openAIProvider && OPENAI_VIDEO_SECONDS.has(String(requestedDurationSeconds))) {
       openAIProvider.seconds = String(requestedDurationSeconds);
       entry = await beginGeneratedContent(req, res, { kind: 'video', prompt, input: { durationSeconds: requestedDurationSeconds } });
       if (!entry) return;
@@ -31120,7 +31159,7 @@ app.post('/command-center/media-generate', authenticate, mediaGenerationLimiter,
 
     if (!customProviderUrl) {
       if (openAIProvider) {
-        return res.status(422).json({ message: 'OpenAI generates clips up to 12 seconds. Set VIDEO_GENERATION_API_URL to a long-form provider for videos up to 5 minutes.' });
+        return res.status(422).json({ message: 'This video length needs a connected long-form video service.' });
       }
       return res.status(503).json({ message: 'Video generation needs OPENAI_API_KEY or VIDEO_GENERATION_API_URL in Render.' });
     }

@@ -24,7 +24,7 @@ try {
     const page = await context.newPage(), errors = [];
     page.on('pageerror', error => errors.push(error.message));
     let failList = false, failDetail = false, controlRequests = 0, executions = 0;
-    await page.route('**/office/**', async route => {
+    await page.route(url => url.pathname.startsWith('/office/'), async route => {
       const url = new URL(route.request().url());
       assert.equal(url.searchParams.has('token'), false, 'Office tokens never appear in URLs');
       if (route.request().headers()['x-office-token'] !== 'audit-only') {
@@ -104,6 +104,9 @@ try {
     assert.equal(await page.getByText('Persistence completed', { exact: true }).count(), 0);
     await page.getByRole('button', { name: 'Close post details' }).click();
     await page.getByLabel('Stage', { exact: true }).selectOption('rejected');
+    // The selected post also exists in the old unfiltered page. Wait for the
+    // filtered row count before using its title as proof that loading finished.
+    await page.waitForFunction(() => document.querySelectorAll('.pp-list tbody tr').length === 1);
     await page.getByRole('button', { name: 'Pipeline item 1', exact: true }).waitFor();
     assert.equal(await page.locator('.pp-list tbody tr').count(), 1);
     await page.getByRole('button', { name: 'Clear pipeline filters' }).click();

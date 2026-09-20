@@ -12,6 +12,7 @@ import PhotoPickerButton from '../components/PhotoPickerButton';
 import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
 import { useSavedItems } from '../contexts/SavedItemsContext';
 import GeneratedContentHistory from '../components/GeneratedContentHistory';
+import VideoDurationControl, { VIDEO_DURATION_LIMIT } from '../components/VideoDurationControl';
 import { DirectoryControls, AccountSiteLink } from '../components/DirectoryControls';
 import { ACCOUNT_STATUSES, filterAccounts } from '../components/sourceDirectory';
 
@@ -553,6 +554,10 @@ function MediaStudioSection({ onOpenCrossPost, readOnly = false }) {
   const [type, setType] = useState('image');
   const [prompt, setPrompt] = useState('');
   const [videoSeconds, setVideoSeconds] = useState(12);
+  const [videoOptions, setVideoOptions] = useState(null);
+  const [videoOptionsError, setVideoOptionsError] = useState('');
+  const [optionsRevision, setOptionsRevision] = useState(0);
+  const { profile: studioProfile } = useAuth();
   const [generating, setGenerating] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [asset, setAsset] = useState(null);
@@ -562,17 +567,38 @@ function MediaStudioSection({ onOpenCrossPost, readOnly = false }) {
   const [historyRevision, setHistoryRevision] = useState(0);
   const formTop = useRef(null);
 
+  useEffect(() => {
+    if (type !== 'video' || readOnly) return undefined;
+    let cancelled = false;
+    setVideoOptions(null); setVideoOptionsError('');
+    client.get('/command-center/media-options').then(({ data }) => {
+      if (cancelled) return;
+      if (!data.video || !Array.isArray(data.video.shortClipSeconds)) throw new Error('Invalid video options');
+      setVideoOptions(data.video);
+    }).catch(() => { if (!cancelled) setVideoOptionsError('Video availability could not be checked.'); });
+    return () => { cancelled = true; };
+  }, [type, readOnly, studioProfile?.id, optionsRevision]);
+
+  const durationSeconds = Number(videoSeconds);
+  const validDuration = Number.isInteger(durationSeconds) && durationSeconds >= 4 && durationSeconds <= VIDEO_DURATION_LIMIT;
+  const videoAvailable = validDuration && videoOptions
+    && (videoOptions.longFormConfigured || videoOptions.shortClipSeconds.includes(durationSeconds));
+
   useEffect(() => () => {
     generationRequest.current += 1;
   }, []);
 
-  async function waitForOpenAIVideo(job, requestId) {
+  async function waitForVideo(job, requestId, historyId) {
     for (let attempt = 0; attempt < 240; attempt += 1) {
       if (requestId !== generationRequest.current) return null;
-      const { data } = await client.get(`/command-center/media-generate/${encodeURIComponent(job.id)}`, {
+      const response = historyId
+        ? await client.post(`/command-center/history/${encodeURIComponent(historyId)}/refresh`, {}, { timeout: 180000 })
+        : await client.get(`/command-center/media-generate/${encodeURIComponent(job.id)}`, {
         params: { ticket: job.ticket },
         timeout: 180000,
       });
+      const data = historyId ? { ...response.data.item?.output,
+        job: { status: response.data.item?.status, error: response.data.item?.output?.error } } : response.data;
       if (requestId !== generationRequest.current) return null;
       const latest = data.job || {};
       if (latest.status === 'failed') throw new Error(latest.error || 'Video generation failed.');
@@ -599,14 +625,14 @@ function MediaStudioSection({ onOpenCrossPost, readOnly = false }) {
       setGenerationStatus(latest.status === 'queued'
         ? `Your video is queued${percentage}`
         : `Creating your video${percentage}`);
-      await new Promise(resolve => window.setTimeout(resolve, 2500));
+      await new Promise(resolve => window.setTimeout(resolve, historyId ? 5000 : 2500));
     }
-    throw new Error('Video generation is taking longer than expected. Please try again shortly.');
+    throw new Error('Your video is still processing. Check its status in your saved media shortly; you do not need to generate it again.');
   }
 
   async function generate(e) {
     e.preventDefault();
-    if (!prompt.trim() || generating) return;
+    if (!prompt.trim() || generating || (type === 'video' && !videoAvailable)) return;
     const requestId = generationRequest.current + 1;
     generationRequest.current = requestId;
     setGenerating(true); setUploading(false); setError(''); setAsset(null); setGenerationStatus('Preparing your request...');
@@ -614,12 +640,12 @@ function MediaStudioSection({ onOpenCrossPost, readOnly = false }) {
       const { data } = await client.post('/command-center/media-generate', {
         type,
         prompt: prompt.trim(),
-        ...(type === 'video' ? { durationSeconds: Math.min(videoSeconds, 12) } : {}),
+        ...(type === 'video' ? { durationSeconds } : {}),
       }, { timeout: 240000 });
       if (requestId !== generationRequest.current) return;
       setHistoryRevision(value => value + 1);
-      if (data.job?.id && data.job?.ticket) {
-        const video = await waitForOpenAIVideo(data.job, requestId);
+      if ((data.job?.id && data.job?.ticket) || data.historyItem?.status === 'processing') {
+        const video = await waitForVideo(data.job, requestId, data.provider === 'shotstack' ? data.historyItem.id : null);
         if (video && requestId === generationRequest.current) setAsset(video);
         return;
       }
@@ -655,7 +681,7 @@ function MediaStudioSection({ onOpenCrossPost, readOnly = false }) {
       <div className="card">
         <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>Create media</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0, lineHeight: 1.55 }}>
-          Create a share-ready image or short video with OpenAI. Generated images are ready to use in Cross-Post.
+          Create an image or video for your next post. Choose a video length up to 5 minutes when a compatible video service is connected.
         </p>
         <form onSubmit={generate} style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 16 }}>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -675,25 +701,19 @@ function MediaStudioSection({ onOpenCrossPost, readOnly = false }) {
             style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border)', fontSize: '.85rem', fontFamily: 'inherit', resize: 'vertical' }}
           />
           {type === 'video' && (
-            <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: '.82rem', fontWeight: 700 }}>
-              Duration
-              <select
-                value={videoSeconds}
-                onChange={e => setVideoSeconds(Number(e.target.value))}
-                disabled={generating || uploading}
-                style={{ minHeight: 36, padding: '0 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg)' }}
-              >
-                <option value={4}>4 seconds</option>
-                <option value={8}>8 seconds</option>
-                <option value={12}>12 seconds</option>
-                <option value={30} disabled>30 seconds (coming soon)</option>
-                <option value={60} disabled>1 minute (coming soon)</option>
-                <option value={120} disabled>2 minutes (coming soon)</option>
-                <option value={300} disabled>5 minutes (coming soon)</option>
-              </select>
-            </label>
+            <>
+              <VideoDurationControl value={videoSeconds} onChange={setVideoSeconds} disabled={generating || uploading} />
+              <div style={{ color: 'var(--muted)', fontSize: '.8rem', lineHeight: 1.5 }} role="status">
+                {videoOptionsError ? <>{videoOptionsError} <button type="button" className="btn btn-ghost btn-sm" onClick={() => setOptionsRevision(value => value + 1)}>Retry video availability</button></>
+                  : !videoOptions ? 'Checking video availability…'
+                    : !videoAvailable && validDuration ? (videoOptions.shortClipSeconds.length
+                      ? 'This length needs a connected long-form video service. You can currently create clips of 4, 8, or 12 seconds.'
+                      : 'Video creation is not connected yet.')
+                    : null}
+              </div>
+            </>
           )}
-          <button className="btn btn-primary" type="submit" disabled={generating || uploading || !prompt.trim()} style={{ alignSelf: 'flex-start' }}>
+          <button className="btn btn-primary" type="submit" disabled={generating || uploading || !prompt.trim() || (type === 'video' && !videoAvailable)} style={{ alignSelf: 'flex-start' }}>
             {generating || uploading ? <span className="spinner" style={{ width: 14, height: 14 }} /> : `Generate ${type}`}
           </button>
           {generationStatus && <div role="status" style={{ color: 'var(--muted)', fontSize: '.8rem' }}>{generationStatus}</div>}

@@ -47,7 +47,7 @@ try {
     await installAuditMember(page, app, 'interface-member');
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=feed');
     const sources = page.getByRole('group', { name: 'Home sources', exact: true }); await sources.waitFor();
-    await sources.getByRole('button', { name: 'All sources', exact: true }).click();
+    assert.equal(await sources.getByRole('button', { name: 'All sources', exact: true }).count(), 0);
     await sources.getByRole('button', { name: 'Reddit', exact: true }).click();
     await sources.getByRole('button', { name: 'Hacker News', exact: true }).click();
     await page.waitForTimeout(150);
@@ -58,6 +58,13 @@ try {
     assert.equal(dimensions.width, dimensions.height); assert.equal(dimensions.radius, '50%');
     const menu = await page.getByRole('button', { name: 'View all feed sources', exact: true }).evaluate(el => ({ width: el.offsetWidth, height: el.offsetHeight, radius: getComputedStyle(el).borderRadius }));
     assert.equal(menu.width, menu.height); assert.equal(menu.radius, '50%');
+    const toolbarSizes = await page.locator('.feed-unified-control-bar').evaluate(bar =>
+      ['.feed-source-option.compact', '.feed-source-menu-button', '.home-shop-button', '.feed-topic-filter-trigger'].map(selector => {
+        const rect = bar.querySelector(selector).getBoundingClientRect();
+        return { height: rect.height, top: rect.top };
+      }));
+    assert.ok(toolbarSizes.every(size => size.height === 40 && Math.abs(size.top - toolbarSizes[0].top) < 1),
+      'Source icons, menu, Shop and Topics have the same size and vertical alignment');
     await auditNavigate(page, server.resolvedUrls.local[0] + 'saved/posts');
     await page.getByRole('heading', { name: 'Saved posts', exact: true }).waitFor();
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=feed'); await sources.waitFor();

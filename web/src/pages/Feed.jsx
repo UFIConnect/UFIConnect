@@ -56,14 +56,14 @@ function initials(name = '') {
   return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 }
 
-function SourceMark({ source, label, size = 15, active = false }) {
+function SourceMark({ source, label, size = 15, active = false, compact = false }) {
   const meta = SOURCE_META[source] || {};
   if (hasBrandIcon(source)) {
     return (
       <span style={{
-        width: size + 8, height: size + 8, borderRadius: '50%',
+        width: compact ? size : size + 8, height: compact ? size : size + 8, borderRadius: '50%',
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        background: '#fff', border: active ? 'none' : '1px solid var(--border)', flexShrink: 0,
+        background: compact ? 'transparent' : '#fff', border: active || compact ? 'none' : '1px solid var(--border)', flexShrink: 0,
       }}>
         <BrandIcon platform={source} size={size} />
       </span>
@@ -74,8 +74,8 @@ function SourceMark({ source, label, size = 15, active = false }) {
     <span style={{
       width: size + 8, height: size + 8, borderRadius: '50%',
       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-      background: active ? 'rgba(255,255,255,.22)' : `${meta.color || 'var(--primary)'}18`,
-      color: active ? '#fff' : (meta.color || 'var(--primary)'),
+      background: active && !compact ? 'rgba(255,255,255,.22)' : 'transparent',
+      color: active && !compact ? '#fff' : (meta.color || 'var(--primary)'),
       fontSize: Math.max(8, size - 7), fontWeight: 800, lineHeight: 1, flexShrink: 0,
     }}>
       {String(text).slice(0, 3).toUpperCase()}
@@ -106,8 +106,7 @@ function FeedSourceOption({ tab, active, onSelect, compact = false, favorite = f
       style={{ '--feed-source-color': color }}
       onClick={onSelect}
     >
-      {tab.key === 'all' && compact && <span aria-hidden="true">All</span>}
-      {tab.key !== 'all' && <SourceMark source={tab.key} label={tab.icon} size={compact ? 20 : 16} active={active} />}
+      <SourceMark source={tab.key} label={tab.icon} size={compact ? 24 : 18} active={active} compact={compact} />
       <span className="feed-source-option-label">{tab.label}</span>
       {compact && favorite && <span className="feed-source-compact-favorite" aria-hidden="true">★</span>}
     </button>
@@ -3354,15 +3353,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     .filter(Boolean);
   const favoriteCompactSourceKeys = new Set(favoriteCompactSourceTabs.map(tab => tab.key));
   const compactSourceTabs = [
-    { key: 'all', label: 'All sources', icon: 'All' },
     ...favoriteCompactSourceTabs,
     ...currentSourceTabs.filter(tab => tab.key !== 'all' && !favoriteCompactSourceKeys.has(tab.key)),
   ];
-  const aggregateSourceTab = currentSourceTabs.find(tab => tab.key === 'all')
-    || { key: 'all', label: 'All sources', icon: '' };
   const favoriteSourceOrder = new Map(sourceFavoriteDraft.map((key, index) => [key, index]));
   const fullSourceTabs = [
-    aggregateSourceTab,
     ...currentSourceTabs
       .filter(tab => tab.key !== 'all')
       .map((tab, index) => ({ tab, index }))
