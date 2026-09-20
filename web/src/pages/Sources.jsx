@@ -6,6 +6,7 @@ import client from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
+import { enabledFirstSourceSections } from '../components/sourceDirectory';
 
 const SOURCE_META = {
   reddit:        { label: 'Reddit',           icon: 'RD', color: '#FF4500', desc: 'Community discussions and threads' },
@@ -56,11 +57,12 @@ const CATEGORIES = [
   { id: 'community',  label: 'UFIconnect',            sources: ['uficonnect'] },
 ];
 
-function Toggle({ enabled, onChange, disabled = false }) {
+function Toggle({ enabled, onChange, disabled = false, label }) {
   return (
     <button
       role="switch"
       aria-checked={enabled}
+      aria-label={`${enabled ? 'Turn off' : 'Turn on'} ${label}`}
       disabled={disabled}
       onClick={e => { e.stopPropagation(); onChange(!enabled); }}
       style={{
@@ -173,7 +175,7 @@ function SourceRow({ sourceId, health, enabled, onToggle, expanded, onExpand, sa
               {expanded ? '▲' : '▼'}
             </button>
           )}
-          <Toggle enabled={enabled} onChange={onToggle} disabled={saving} />
+          <Toggle enabled={enabled} onChange={onToggle} disabled={saving} label={meta.label} />
         </div>
       </div>
 
@@ -294,6 +296,11 @@ export default function Sources() {
   }, [data]);
 
   const enabledCount  = allSourceIds.filter(id => !disabled.has(id)).length;
+  const categorised = new Set(CATEGORIES.flatMap(category => category.sources));
+  const sourceGroups = enabledFirstSourceSections([
+    ...CATEGORIES.map(({ id, label, sources }) => ({ id, label, items: sources })),
+    { id: 'other', label: 'Other', items: allSourceIds.filter(id => !categorised.has(id)) },
+  ], disabled);
   const liveCount     = (data?.sources || []).filter(s => {
     const age = s.lastFetch ? (Date.now() - new Date(s.lastFetch).getTime()) / 60000 : 9999;
     return s.postCount > 0 && age < 30;
@@ -391,8 +398,8 @@ export default function Sources() {
             </div>
           )}
 
-          {/* Categories */}
-          {CATEGORIES.map(cat => {
+          {/* Enabled sources first, retaining category order within each state. */}
+          {sourceGroups.map(cat => {
             return (
               <div key={cat.id} style={{ marginBottom: 28 }}>
                 <div style={{
@@ -402,7 +409,7 @@ export default function Sources() {
                   {cat.label}
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {cat.sources.map(id => (
+                  {cat.items.map(id => (
                     <SourceRow
                       key={id}
                       sourceId={id}
@@ -418,37 +425,6 @@ export default function Sources() {
               </div>
             );
           })}
-
-          {/* Sources not in any category (from API but not in CATEGORIES) */}
-          {(() => {
-            const categorised = new Set(CATEGORIES.flatMap(c => c.sources));
-            const uncategorised = allSourceIds.filter(id => !categorised.has(id));
-            if (!uncategorised.length) return null;
-            return (
-              <div style={{ marginBottom: 28 }}>
-                <div style={{
-                  fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)',
-                  textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 10,
-                }}>
-                  Other
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {uncategorised.map(id => (
-                    <SourceRow
-                      key={id}
-                      sourceId={id}
-                      health={healthMap[id]}
-                      enabled={!disabled.has(id)}
-                      onToggle={() => toggle(id)}
-                      saving={savingSources}
-                      expanded={expanded === id}
-                      onExpand={() => setExpanded(expanded === id ? null : id)}
-                    />
-                  ))}
-                </div>
-              </div>
-            );
-          })()}
 
           {data?.refreshedAt && (
             <div style={{ textAlign: 'center', padding: '16px 0 4px', fontSize: '.7rem', color: 'var(--muted)' }}>
