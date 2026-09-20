@@ -31,7 +31,7 @@ try {
     const open = async (mode = 'Home') => {
       // Same-document navigation can briefly retain the previous open panel.
       // Wait for the requested feed before opening its source controls.
-      await page.getByRole('radiogroup', { name: `${mode} sources`, exact: true }).waitFor();
+      await page.getByRole('group', { name: `${mode} sources`, exact: true }).waitFor();
       if (width <= 768) {
         await page.waitForFunction(() => document.querySelector('#mobile-feed-drawer')?.getAttribute('aria-hidden') === 'true');
         await page.getByRole('button', { name: 'Open menu', exact: true }).click();

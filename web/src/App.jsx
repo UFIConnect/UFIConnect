@@ -67,6 +67,8 @@ const CommandCenter  = lazy(() => import('./pages/CommandCenter'));
 const ResumeBuilder  = lazy(() => import('./pages/ResumeBuilder'));
 const CoverLetterPreview = lazy(() => import('./pages/CoverLetterPreview'));
 const YourPostsFeed  = lazy(() => import('./pages/YourPostsFeed'));
+const SavedItems = lazy(() => import('./pages/SavedItems'));
+const GroupPost = lazy(() => import('./pages/GroupPost'));
 
 function RequireAuth({ children }) {
   const { token, loading } = useAuth();
@@ -200,6 +202,9 @@ export default function App() {
       <Route path="/sources" element={
         <RequireAuth><RequireOnboarding><Sources /></RequireOnboarding></RequireAuth>
       }/>
+
+      <Route path="/saved/:kind" element={<RequireAuth><RequireOnboarding><SavedItems /></RequireOnboarding></RequireAuth>} />
+      <Route path="/groups/post" element={<RequireAuth><RequireOnboarding><GroupPost /></RequireOnboarding></RequireAuth>} />
 
       {/* Agent Control Room — live on public domain */}
       <Route path="/hq"     element={<Navigate to="/command-center" replace />} />

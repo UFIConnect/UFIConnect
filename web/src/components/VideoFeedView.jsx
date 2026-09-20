@@ -8,6 +8,7 @@ import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { reportConsumed, reportEngaged, reportEngagementSignal } from '../api/engagement';
 import { reportNegativeSignal } from '../api/errorReporting';
 import { ALL_INTERESTS } from '../pages/Onboarding';
+import ConnectedPostActions from './ConnectedPostActions';
 import { SavePostButton } from './SaveButtons';
 
 // A video counts as genuinely watched (as opposed to just scrolled past —
@@ -1022,6 +1023,7 @@ function CommentsSheet({ post, onClose }) {
           >×</button>
         </div>
         <div style={{ overflowY: 'auto', padding: '10px 16px 20px' }}>
+          <ConnectedPostActions post={post} />
           {loading && (
             <div style={{ textAlign: 'center', padding: '24px 0' }}>
               <span className="spinner spinner-primary" />
@@ -1131,6 +1133,8 @@ export default function VideoFeedView({ onExit, music = false }) {
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [topicFilters, setTopicFilters] = useState([]);
+  const [genre, setGenre] = useState('');
+  const genreRef = useRef('');
   const searchQueryRef = useRef('');
   const topicFiltersRef = useRef([]);
   // Whether the search sheet (just the text input) or the filter sheet
@@ -1202,9 +1206,8 @@ export default function VideoFeedView({ onExit, music = false }) {
       // Same ?q=/?topics= convention as the main feed (see handleFeedRequest/
       // handleVideoFeedRequest server-side).
       if (searchQueryRef.current) params += `&q=${encodeURIComponent(searchQueryRef.current)}`;
-      if (topicFiltersRef.current.length) params += music
-        ? `&genre=${encodeURIComponent(topicFiltersRef.current[0])}`
-        : `&topics=${topicFiltersRef.current.map(encodeURIComponent).join(',')}`;
+      if (music && genreRef.current) params += `&genre=${encodeURIComponent(genreRef.current)}`;
+      if (topicFiltersRef.current.length) params += `&topics=${topicFiltersRef.current.map(encodeURIComponent).join(',')}`;
       let endpoint;
       if (mode === 'following') {
         if (reset) {
@@ -1426,7 +1429,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   // platform filter just above.
   const toggleTopicFilter = useCallback((topic) => {
     const current = topicFiltersRef.current;
-    const next = current.includes(topic) ? current.filter(t => t !== topic) : music ? [topic] : [...current, topic];
+    const next = current.includes(topic) ? current.filter(t => t !== topic) : [...current, topic];
     topicFiltersRef.current = next;
     setTopicFilters(next);
     setActiveIndex(0);
@@ -1437,8 +1440,15 @@ export default function VideoFeedView({ onExit, music = false }) {
 
   // Filter sheet's "Clear all" resets source and topic together. Search
   // remains independent in its own sheet.
+  const selectGenre = (value) => {
+    genreRef.current = value; setGenre(value); setActiveIndex(0);
+    if (containerRef.current) containerRef.current.scrollTop = 0;
+    setLoading(true); loadPage({ reset: true });
+  };
+
   const clearFilters = useCallback(() => {
-    if (!sourceFilterRef.current.length && !topicFiltersRef.current.length) return;
+    if (!sourceFilterRef.current.length && !topicFiltersRef.current.length && !genreRef.current) return;
+    genreRef.current = ''; setGenre('');
     sourceFilterRef.current = [];
     setSourceFilter([]);
     topicFiltersRef.current = [];
@@ -2228,8 +2238,8 @@ export default function VideoFeedView({ onExit, music = false }) {
           aria-label="Filter videos"
           style={{
             ...OVERLAY_BTN_STYLE, width: 36, height: 36, flexShrink: 0, position: 'relative',
-            border: `1px solid ${(sourceFilter.length || topicFilters.length) ? '#fff' : 'rgba(255,255,255,.18)'}`,
-            background: (sourceFilter.length || topicFilters.length) ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.4)',
+            border: `1px solid ${(sourceFilter.length || topicFilters.length || genre) ? '#fff' : 'rgba(255,255,255,.18)'}`,
+            background: (sourceFilter.length || topicFilters.length || genre) ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.4)',
           }}
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -2237,7 +2247,7 @@ export default function VideoFeedView({ onExit, music = false }) {
             <line x1="4" y1="12" x2="20" y2="12" /><circle cx="16" cy="12" r="2" fill="currentColor" stroke="none" />
             <line x1="4" y1="18" x2="20" y2="18" /><circle cx="11" cy="18" r="2" fill="currentColor" stroke="none" />
           </svg>
-          {(sourceFilter.length || topicFilters.length) > 0 && (
+          {Boolean(sourceFilter.length || topicFilters.length || genre) && (
             <span style={{ position: 'absolute', top: 4, right: 4, width: 7, height: 7, borderRadius: '50%', background: '#4ADE80', border: '1px solid rgba(0,0,0,.4)' }} />
           )}
         </button>
@@ -2425,9 +2435,15 @@ export default function VideoFeedView({ onExit, music = false }) {
                 })}
               </div>
 
-              <div style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.02em', opacity: 0.6, marginBottom: 8, textTransform: 'uppercase' }}>{music ? 'Genre' : 'Topic'}</div>
+              {music && <section aria-label="Music genres" style={{ marginBottom: 20 }}>
+                <h3 style={{ fontSize: '.85rem' }}>Genres</h3>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {['', 'Pop', 'Rock', 'Hip hop', 'Rap', 'R&B', 'Jazz', 'Classical', 'Country', 'Electronic', 'Latin', 'Reggae', 'Metal', 'Folk', 'Acoustic', 'Live'].map(value => <button type="button" key={value} aria-pressed={genre === value} onClick={() => selectGenre(value)} style={{ borderRadius: 20, padding: '8px 12px', border: '1px solid #777', background: genre === value ? '#fff' : '#252525', color: genre === value ? '#111' : '#fff', cursor: 'pointer' }}>{value || 'All genres'}</button>)}
+                </div>
+              </section>}
+              <div style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.02em', opacity: 0.6, marginBottom: 8, textTransform: 'uppercase' }}>Topics</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                {(music ? ['Pop', 'Rock', 'Hip hop', 'Rap', 'Jazz', 'Classical', 'Country', 'Electronic', 'Latin', 'Acoustic', 'Live'] : ALL_INTERESTS).map(topic => {
+                {ALL_INTERESTS.map(topic => {
                   const active = topicFilters.includes(topic);
                   return (
                     <button
@@ -2450,13 +2466,13 @@ export default function VideoFeedView({ onExit, music = false }) {
             <div style={{ padding: '10px 20px 18px', display: 'flex', gap: 10, borderTop: '1px solid rgba(255,255,255,.12)', flexShrink: 0 }}>
               <button
                 onClick={() => clearFilters()}
-                disabled={sourceFilter.length === 0 && topicFilters.length === 0}
+                disabled={sourceFilter.length === 0 && topicFilters.length === 0 && !genre}
                 style={{
                   flex: 1, padding: '10px 0', borderRadius: 10, marginTop: 10,
                   border: '1px solid rgba(255,255,255,.25)', background: 'transparent',
-                  color: (sourceFilter.length === 0 && topicFilters.length === 0) ? 'rgba(255,255,255,.35)' : '#fff',
+                  color: (sourceFilter.length === 0 && topicFilters.length === 0 && !genre) ? 'rgba(255,255,255,.35)' : '#fff',
                   fontWeight: 700, fontSize: '.85rem',
-                  cursor: (sourceFilter.length === 0 && topicFilters.length === 0) ? 'default' : 'pointer',
+                  cursor: (sourceFilter.length === 0 && topicFilters.length === 0 && !genre) ? 'default' : 'pointer',
                 }}
               >
                 Clear all

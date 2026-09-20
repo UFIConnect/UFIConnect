@@ -88,6 +88,7 @@ export default function PublicProfile() {
   const [postsHasMore, setPostsHasMore] = useState(false);
   const [postsLoadingMore, setPostsLoadingMore] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState('posts');
   const [reportOpen, setReportOpen] = useState(false);
   const moreBtnRef  = useRef(null);
   const moreMenuRef = useRef(null);
@@ -110,6 +111,8 @@ export default function PublicProfile() {
 
   useEffect(() => {
     setLoading(true);
+    setUser(null);
+    setActiveTab('posts');
     client.get(`/users/${id}`)
       .then(({ data }) => { setUser(data); setError(''); })
       // A hidden profile 403s with { hidden: true } — distinguished from a
@@ -448,37 +451,40 @@ export default function PublicProfile() {
         )}
       </div>
 
+      <nav className="profile-content-tabs" aria-label="Public profile sections">
+        {['posts', 'about'].map(tab => <button key={tab} type="button" className={activeTab === tab ? 'active' : ''} aria-current={activeTab === tab ? 'page' : undefined} onClick={() => setActiveTab(tab)}>{tab === 'posts' ? 'Posts' : 'About'}</button>)}
+      </nav>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 14 }}>
 
         {/* Bio */}
-        {user.bio && (
+        {activeTab === 'about' && (
           <div className="card">
             <h3 style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 10 }}>About</h3>
-            <p style={{ fontSize: '.9rem', lineHeight: 1.7, margin: 0 }}>{user.bio}</p>
+            <p style={{ fontSize: '.9rem', lineHeight: 1.7, margin: 0 }}>{user.bio || 'No about information shared yet.'}</p>
           </div>
         )}
 
         {/* Interests & Goals */}
-        {(user.interests?.length > 0 || user.goals?.length > 0) && (
+        {activeTab === 'about' && (
           <div className="card">
             <h3 style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 12 }}>Interests & Goals</h3>
-            {user.interests?.length > 0 && (
+            {(
               <div style={{ marginBottom: user.goals?.length > 0 ? 12 : 0 }}>
                 <div style={{ fontSize: '.7rem', color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.4px' }}>Interests</div>
-                <div className="tags">{user.interests.map(i => <span key={i} className="tag tag-secondary">{i}</span>)}</div>
+                <div className="tags">{!user.interests?.length && <span className="profile-about-empty">No interests shared yet.</span>}{(user.interests || []).map(i => <span key={i} className="tag tag-secondary">{i}</span>)}</div>
               </div>
             )}
-            {user.goals?.length > 0 && (
+            {(
               <div>
                 <div style={{ fontSize: '.7rem', color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.4px' }}>Goals</div>
-                <div className="tags">{user.goals.map(g => <span key={g} className="tag">{g}</span>)}</div>
+                <div className="tags">{!user.goals?.length && <span className="profile-about-empty">No goals shared yet.</span>}{(user.goals || []).map(g => <span key={g} className="tag">{g}</span>)}</div>
               </div>
             )}
           </div>
         )}
 
         {/* Posts */}
-        <div>
+        {activeTab === 'posts' && <div>
           <div style={{ maxWidth: 640, marginBottom: 8 }}>
             <h3 style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', margin: '0 0 4px' }}>Posts</h3>
           </div>
@@ -490,10 +496,10 @@ export default function PublicProfile() {
             emptyDesc={`${user.name} has not posted to the community yet.`}
             onNearEnd={loadMorePosts}
           />
-        </div>
+        </div>}
 
         {/* Skills */}
-        {user.skills?.length > 0 && (
+        {activeTab === 'about' && user.skills?.length > 0 && (
           <div className="card">
             <h3 style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 10 }}>Skills</h3>
             <div className="tags">
@@ -503,7 +509,7 @@ export default function PublicProfile() {
         )}
 
         {/* Role-specific details */}
-        {roleFields.length > 0 && roleFields.some(f => user.roleSettings?.[f]) && (
+        {activeTab === 'about' && roleFields.length > 0 && roleFields.some(f => user.roleSettings?.[f]) && (
           <div className="card">
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
               <div style={{
@@ -537,7 +543,7 @@ export default function PublicProfile() {
         )}
 
         {/* Links */}
-        {hasLinks && (
+        {activeTab === 'about' && hasLinks && (
           <div className="card">
             <h3 style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 12 }}>Links</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
