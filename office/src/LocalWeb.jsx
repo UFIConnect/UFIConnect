@@ -3,8 +3,11 @@ import './local-web.css';
 
 const LOCAL_CONSOLE = 'http://127.0.0.1:4174/#local-web';
 const LOCAL_PREVIEW = 'http://127.0.0.1:4173';
-const isLocalConsole = import.meta.env.MODE === 'release-local'
-  && ['127.0.0.1', 'localhost', '[::1]'].includes(window.location.hostname);
+const isLocalConsole = import.meta.env.MODE === 'release-local';
+const phoneUrl = value => {
+  try { const url = new URL(value); return url.protocol === 'https:' && url.hostname.endsWith('.trycloudflare.com') && !url.username && !url.password ? url.origin : ''; }
+  catch { return ''; }
+};
 
 async function payloadOf(response) {
   let payload;
@@ -55,6 +58,8 @@ function LocalEditor({ apiBase, request }) {
   const [previewSize, setPreviewSize] = useState('desktop');
   const [previewVersion, setPreviewVersion] = useState(0);
   const [connectionAttempt, setConnectionAttempt] = useState(0);
+  const [phone, setPhone] = useState({ state: 'off' });
+  const [previewUrl, setPreviewUrl] = useState(LOCAL_PREVIEW);
   const dirty = Boolean(saved && draft !== saved.content);
 
   useEffect(() => {
@@ -67,10 +72,12 @@ function LocalEditor({ apiBase, request }) {
       fetch('/__local-web/files', { cache: 'no-store', signal: controller.signal }).then(payloadOf),
     ]).then(([status, directory]) => {
       if (!active) return;
-      if (status.previewUrl !== LOCAL_PREVIEW || !Array.isArray(directory.files)) {
+      if (!(status.previewUrl === LOCAL_PREVIEW || (status.phone?.remote && phoneUrl(status.previewUrl))) || !Array.isArray(directory.files)) {
         throw new Error('Restart the local release console to connect its website editor.');
       }
       setFiles(directory.files);
+      setPhone(status.phone || { state: 'off' });
+      setPreviewUrl(status.previewUrl);
       setReady(true);
     }).catch(failure => {
       if (active) setError(failure.message);
@@ -101,6 +108,15 @@ function LocalEditor({ apiBase, request }) {
   }, [dirty, busy]);
 
   const clearReview = () => { setReview(null); setReviewed(false); setCommitMessage(''); };
+  const connectPhone = async action => {
+    setBusy('phone'); setError('');
+    try {
+      setPhone(await payloadOf(await fetch('/__local-web/phone', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Local-Web-Editor': '1' }, body: JSON.stringify({ action }),
+      })));
+    } catch (failure) { setError(failure.message); }
+    finally { setBusy(''); }
+  };
 
   const loadFile = async path => {
     if (!path || busy || (dirty && !window.confirm('Discard unsaved changes and load this file?'))) return;
@@ -188,11 +204,15 @@ function LocalEditor({ apiBase, request }) {
   return <>
     <p className="local-web-subtitle">Edit website files on this computer, try them in the preview, then review a saved file before updating the public website. Account actions in the preview use the live service.</p>
     <div className="local-web-actions">
-      <a className="local-web-button" href={LOCAL_PREVIEW} target="_blank" rel="noreferrer">Open local website</a>
+      <a className="local-web-button" href={previewUrl} target="_blank" rel="noreferrer">Open local website</a>
       <span className="local-web-hint">Local saves update the preview immediately. Publishing is a separate step.</span>
     </div>
     {error && <p className="local-web-error" role="alert">{error}</p>}
     {notice && <p className="local-web-notice" role="status">{notice}</p>}
+    {ready && !phone.remote && <section className="local-web-panel local-web-phone"><h2>Connect your phone</h2>
+      <p>Open a secure connection to this computer. Your phone can edit local files and open the website preview while this workspace stays running.</p>
+      {phone.state === 'ready' ? <><label className="local-web-label">Phone workspace link<input aria-label="Phone workspace link" readOnly value={phone.url} /></label><label className="local-web-label">Connection code<input aria-label="Phone connection code" readOnly value={phone.code} /></label><p className="local-web-hint">Enter this code on your phone. The website preview uses a separate secure link and the same code. Stopping the connection closes both links.</p><button type="button" disabled={Boolean(busy)} onClick={() => connectPhone('stop')}>Stop phone connection</button></> : <button type="button" disabled={Boolean(busy)} onClick={() => connectPhone('start')}>{busy === 'phone' ? 'Connecting phone…' : 'Start phone connection'}</button>}
+    </section>}
     {!ready && <div className="local-web-panel"><p>{busy === 'connecting' ? 'Connecting to your local files…' : 'The local file editor is unavailable. Start the console with npm run office:release-local.'}</p>
       {!busy && <button type="button" onClick={() => setConnectionAttempt(value => value + 1)}>Retry connection</button>}
     </div>}
@@ -218,11 +238,11 @@ function LocalEditor({ apiBase, request }) {
         </section>
         <section className="local-web-panel" aria-labelledby="local-web-preview-heading">
           <div className="local-web-section-heading"><h2 id="local-web-preview-heading">Local preview</h2><button type="button" onClick={() => setPreviewVersion(value => value + 1)}>Refresh</button></div>
-          <div className="local-web-actions" role="group" aria-label="Preview size">
+          {!phone.remote && <div className="local-web-actions" role="group" aria-label="Preview size">
             <button type="button" aria-pressed={previewSize === 'desktop'} onClick={() => setPreviewSize('desktop')}>Desktop</button>
             <button type="button" aria-pressed={previewSize === 'mobile'} onClick={() => setPreviewSize('mobile')}>Mobile</button>
-          </div>
-          <LocalPreview size={previewSize} version={previewVersion} />
+          </div>}
+          {phone.remote ? <div className="local-web-phone-preview"><p>Open the preview in its own tab on your phone, using the same connection code. Refresh it after saving a change.</p><a href={previewUrl} target="_blank" rel="noreferrer" className="local-web-button">Open phone preview</a></div> : <LocalPreview size={previewSize} version={previewVersion} />}
         </section>
       </div>
       <section className="local-web-panel local-web-publish" aria-labelledby="local-web-publish-heading">
@@ -247,12 +267,23 @@ function LocalEditor({ apiBase, request }) {
   </>;
 }
 
+function PhoneConnection() {
+  const [address, setAddress] = useState(() => { try { return localStorage.getItem('ufi-local-computer-link') || ''; } catch { return ''; } });
+  const url = phoneUrl(address);
+  return <section className="local-web-panel local-web-phone"><h2>Open on your phone</h2><p>In Local web on your computer, select <strong>Start phone connection</strong>. Paste its HTTPS workspace link here, then enter the connection code. Your computer must stay running.</p>
+    <label className="local-web-label" htmlFor="phone-workspace-address">Computer connection link</label><input id="phone-workspace-address" type="url" value={address} onChange={event => setAddress(event.target.value)} placeholder="https://your-connection.trycloudflare.com" />
+    {url && <a className="local-web-button local-web-primary" href={`${url}/#local-web`} target="_blank" rel="noreferrer" onClick={() => { try { localStorage.setItem('ufi-local-computer-link', url); } catch {} }}>Connect to my computer</a>}
+    <p className="local-web-hint">A localhost address opens this phone, not your computer. Phone links change when the connection restarts.</p>
+  </section>;
+}
+
 export default function LocalWeb({ apiBase = '', request }) {
   return <div className="local-web">
     <h1>Local web</h1>
     {isLocalConsole ? <LocalEditor apiBase={apiBase} request={request} /> : <>
       <p className="local-web-subtitle">Open your local website workspace to edit files, preview your changes, and review them before updating the public website.</p>
-      <section className="local-web-panel">
+      <PhoneConnection />
+      <section className="local-web-panel local-web-desktop-start">
         <h2>Make changes on your computer</h2>
         <p>Start the local console from your UFIConnect repository:</p>
         <pre className="local-web-command">npm run office:release-local</pre>

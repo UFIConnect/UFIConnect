@@ -60,7 +60,7 @@ function installFixture(context) {
       return route.fulfill({headers,json:status(role==='pipeline'&&state.wrongPipelineRole?'api':role,state.missing)});
     }
     if (url.pathname==='/office/agents') return route.fulfill({headers,json:{agents:role==='api'
-      ? {stability:agent('stability','Stability Guard',role),web_optimizer:agent('web_optimizer','Website Optimizer',role)}
+      ? {stability:agent('stability','Stability Guard',role),web_optimizer:agent('web_optimizer','Website Optimizer',role), ...(state.fullRoster ? Object.fromEntries(Array.from({length:68},(_,index)=>[`home_${index}`,agent(`home_${index}`,`Resident ${index + 1}`,role,{health:{status:index%3?'healthy':'paused'}})])) : {})}
       : {stability:agent('stability','Stability Guard',role),reddit:agent('reddit','Reddit Agent',role)}}});
     if (url.pathname.endsWith('/stream')) return route.fulfill({headers,contentType:'text/event-stream',body:`data: ${JSON.stringify({backlog:[{agentId:'stability',ts:new Date().toISOString(),msg:`${role} measured activity`}]})}\n\n`});
     const chat = url.pathname.match(/^\/office\/agents\/([a-z0-9_-]+)\/chat$/);
@@ -113,7 +113,7 @@ async function auditWidth(browser, width) {
     await page.screenshot({path:path.join(root,`.cache/audit-ui/office-city-initial-${width}.png`),fullPage:false});
     check(fixture.requests.some(request=>request.role==='api'&&request.path==='/office/status'),'API status fetched from API origin');
     check(fixture.requests.some(request=>request.role==='pipeline'&&request.path==='/office/status'),'Pipeline status fetched from its own origin');
-    await eventually(async()=>await city.locator('.lc-home-grid [data-home-id]').count()===3,'The residential grid must render one home per canonical agent');
+    await eventually(async()=>await city.locator('.lc-map-homes [data-home-id]').count()===3,'The residential grid must render one home per canonical agent');
     check(await city.locator('[data-home-id="stability"]').count()===1,'A shared agent has one home rather than one home per service');
     check(await city.locator('[data-home-state="working"]').count()>0,'Fresh healthy agents have visibly working homes');
     async function verifyMobileInspector() {
@@ -140,7 +140,7 @@ async function auditWidth(browser, width) {
     check(await city.locator('button[data-agent-id="stability"][data-service="api"]').count()>0,'API guard remains inspectable');
     check(await city.locator('button[data-agent-id="stability"][data-service="pipeline"]').count()>0,'Pipeline guard remains inspectable separately');
     check(await city.locator('.lc-road[data-active="true"] .lc-road-flow').evaluateAll(elements=>elements.some(element=>getComputedStyle(element).animationName!=='none')),'Actual CSS motion follows measured activity');
-    check(await city.locator('.lc-home-grid [data-home-id]').evaluateAll(elements=>elements.every(element=>getComputedStyle(element).animationName!=='none')),'Every visible home receives state-specific motion in whole-city mode');
+    check(await city.locator('.lc-map-home-art').evaluateAll(elements=>elements.every(element=>getComputedStyle(element).animationName!=='none')),'Every visible home receives state-specific motion in whole-city mode');
     await page.getByLabel('City motion speed').selectOption('1.75');
     check(await city.evaluate(element=>element.style.getPropertyValue('--lc-fast-motion').endsWith('s')),'Motion speed updates the shared city timing');
     await page.getByRole('button',{name:'Change animation scope',exact:true}).click();
@@ -148,9 +148,9 @@ async function auditWidth(browser, width) {
     await page.getByRole('button',{name:'Change animation scope',exact:true}).click();
     check(await city.getAttribute('data-animation-scope')==='all','Animation scope can restore whole-city motion');
     await city.getByRole('button',{name:/^Working \d+$/}).click();
-    check(await city.locator('.lc-home-grid [data-home-id]').evaluateAll(elements=>elements.length>0&&elements.every(element=>element.dataset.homeState==='working')),'Home controls filter the residential grid by live state');
+    check(await city.locator('.lc-map-homes [data-home-id]').evaluateAll(elements=>elements.length>0&&elements.every(element=>element.dataset.homeState==='working')),'Home controls filter the residential grid by live state');
     await city.getByRole('button',{name:/^All \d+$/}).click();
-    check(await city.locator('.lc-home-grid [data-home-id]').count()===3,'All-home control restores the complete residential grid');
+    check(await city.locator('.lc-map-homes [data-home-id]').count()===3,'All-home control restores the complete residential grid');
     await page.getByRole('button',{name:'Pause motion',exact:true}).click();
     await eventually(async()=>await motion.getAttribute('data-motion')==='paused','Pause control must stop the city');
     check(await city.locator('.lc-road-flow').evaluateAll(elements=>elements.every(element=>getComputedStyle(element).animationName==='none'||getComputedStyle(element).animationPlayState==='paused')),'Pausing stops actual CSS road animation');
@@ -297,6 +297,32 @@ try {
   await server.listen();
   await fs.mkdir(path.join(root,'.cache/audit-ui'),{recursive:true});
   browser=await chromium.launch({channel:process.platform==='win32'?'msedge':undefined});
+  for (const width of [1440,390]) {
+    const context=await browser.newContext({viewport:{width,height:950},isMobile:width<600,hasTouch:width<600});
+    const fixture=await installFixture(context); fixture.fullRoster=true;
+    const page=await context.newPage();
+    await page.goto(server.resolvedUrls.local[0]+'#city',{waitUntil:'domcontentloaded'});
+    await page.getByLabel('Access token',{exact:true}).fill(TOKEN);
+    await page.getByRole('button',{name:'Unlock Office',exact:true}).click();
+    await eventually(async()=>await page.locator('.lc-canvas [data-home-id]').count()===71,'All 71 homes must be inside the city SVG');
+    const ids=await page.locator('.lc-map-home').evaluateAll(elements=>elements.map(element=>element.dataset.homeId));
+    check(new Set(ids).size===71,'Each agent has exactly one home on the map');
+    check(await page.locator('.lc-map-home-art').evaluateAll(elements=>elements.every(element=>getComputedStyle(element).animationName!=='none')),'All 71 home buildings animate in whole-city mode');
+    await page.getByRole('button',{name:'Homes',exact:true}).click();
+    check((await page.locator('.lc-canvas svg').getAttribute('viewBox')).startsWith('40 920'),'Homes control focuses the neighborhood');
+    const home=page.locator('.lc-map-home[data-home-id="home_0"]');
+    await home.focus(); await page.keyboard.press('Enter');
+    await page.getByRole('heading',{name:'Resident 1',exact:true}).waitFor();
+    check(await page.locator('.lc-map-home[data-home-id="home_0"]').getAttribute('aria-pressed')==='true','Keyboard visits open the selected home inspector');
+    await page.getByRole('button',{name:'Pause motion',exact:true}).click();
+    check(await page.locator('.lc-map-home-art').evaluateAll(elements=>elements.every(element=>getComputedStyle(element).animationName==='none')),'Pause stops every house animation');
+    await page.getByRole('button',{name:'Resume motion',exact:true}).click();
+    await page.getByRole('button',{name:'Homes',exact:true}).scrollIntoViewIfNeeded();
+    await page.screenshot({path:path.join(root,`.cache/audit-ui/city-71-homes-${width}.png`),fullPage:false});
+    check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'The full neighborhood fits mobile and desktop');
+    await context.close();
+    console.log(`PASS: 71 mapped homes, animation and keyboard access at ${width}px`);
+  }
   for (const width of [1440,768,390,320]) await auditWidth(browser,width);
   console.log(`Office Live City audit: ${checks} checks passed with two separate intercepted service origins.`);
 } finally { await browser?.close(); await server.close(); }
