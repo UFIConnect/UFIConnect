@@ -77,7 +77,16 @@ test('password changes keep legacy login compatible and revoke sessions and earl
   app.seedUser(user);
   const login = await app.request('/auth/login', { method: 'POST', body: { email: user.email, password: oldPassword } });
   assert.equal(login.status, 200);
-  assert.equal(jwt.decode(login.data.token).exp - jwt.decode(login.data.token).iat, 43200);
+  assert.equal(jwt.decode(login.data.token).exp - jwt.decode(login.data.token).iat, 2592000);
+  const cookie = login.headers.get('set-cookie');
+  assert.match(cookie, /^ufi_session=/);
+  assert.match(cookie, /HttpOnly/i);
+  assert.match(cookie, /SameSite=Lax/i);
+  assert.match(cookie, /Max-Age=2592000/i);
+  const restored = await app.request('/auth/session', { headers: { cookie } });
+  assert.equal(restored.status, 200);
+  assert.equal(restored.data.profile.id, user.id);
+  assert.equal(restored.data.token, login.data.token);
   const reset = app.createPasswordResetToken(user);
   const change = await app.request('/profile/password', { method: 'POST', headers: bearer(login.data.token), body: { currentPassword: oldPassword, newPassword } });
   assert.equal(change.status, 200);

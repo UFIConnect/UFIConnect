@@ -4,7 +4,10 @@ const crypto = require('node:crypto');
 const jwt = require('jsonwebtoken');
 const { passwordBlocklistError } = require('./password-blocklist');
 
-const SESSION_TTL_SECONDS = 12 * 60 * 60;
+// A revocable browser session should survive normal reloads and browser
+// restarts. The token remains server-backed, expires after 30 days, and is
+// invalidated immediately by password changes or "sign out all sessions".
+const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 const JWT_ISSUER = 'uficonnect';
 const JWT_AUDIENCE = 'uficonnect-api';
 

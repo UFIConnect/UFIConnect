@@ -819,6 +819,8 @@ input, textarea, select { font-family: inherit; }
   outline: none;
 }
 .home-feed-rail-tab.active { font-weight: 750; }
+.home-feed-rail-tab--icon { gap: 9px; }
+.home-feed-rail-tab--icon svg { flex: 0 0 auto; }
 .home-feed-command-center-link {
   min-height: 64px;
   margin-top: 10px;

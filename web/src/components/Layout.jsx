@@ -30,6 +30,7 @@ function ShellIcon({ name, size = 20 }) {
     following: <><circle cx="9" cy="8" r="3" /><path d="M3.5 20a5.5 5.5 0 0 1 11 0" /><path d="m17 10 2 2 3-3" /></>,
     countries: <><circle cx="12" cy="12" r="9" /><path d="M3 12h18" /><path d="M12 3a14 14 0 0 1 0 18" /><path d="M12 3a14 14 0 0 0 0 18" /></>,
     restaurants: <><path d="M7 3v8" /><path d="M4 3v5a3 3 0 0 0 6 0V3" /><path d="M7 11v10" /><path d="M17 3v18" /><path d="M17 3c3 1.5 3 7.5 0 9" /></>,
+    bars: <><path d="M5 3h14l-2 7a5.2 5.2 0 0 1-10 0L5 3Z" /><path d="M12 15v6" /><path d="M8 21h8" /><path d="M8 7h8" /></>,
     sources: <><path d="M12 3 3 7.5 12 12l9-4.5L12 3Z" /><path d="m3 12 9 4.5 9-4.5" /><path d="m3 16.5 9 4.5 9-4.5" /></>,
     menu: <><path d="M4 6h16" /><path d="M4 12h16" /><path d="M4 18h16" /></>,
     skills: <><path d="M12 3 14.5 8l5.5.8-4 3.9.9 5.5-4.9-2.6-4.9 2.6.9-5.5-4-3.9L9.5 8 12 3Z" /></>,
@@ -673,7 +674,7 @@ export default function Layout({ children, wide = false }) {
                 Restaurants
               </button>
               <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'bars' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'bars'} onClick={() => selectMobileFeed('bars')}>
-                <ShellIcon name="restaurants" size={18} />
+                <ShellIcon name="bars" size={18} />
                 Bars
               </button>
               <NavLink to="/music" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>

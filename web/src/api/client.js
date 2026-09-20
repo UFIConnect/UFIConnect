@@ -14,7 +14,7 @@ import {
 // The origin is selected in the request interceptor below. A public API
 // hostname can briefly fail in one resolver region, so every safe read gets
 // a second route before a user sees a timeout.
-const client = axios.create({ timeout: 15000, adapter: 'fetch', withCredentials: false });
+const client = axios.create({ timeout: 15000, adapter: 'fetch', withCredentials: true });
 
 const SAFE_FAILOVER_METHODS = new Set(['get', 'head', 'options']);
 const TRANSIENT_STATUS_CODES = new Set([502, 503, 504]);
@@ -53,7 +53,9 @@ client.interceptors.request.use(async (config) => {
   config.baseURL = origin;
   config._ufiApiOrigin = origin;
   config.adapter = 'fetch';
-  config.withCredentials = false;
+  // The API's HttpOnly, SameSite session cookie restores a member on the
+  // same saved browser. JavaScript never reads or persists that credential.
+  config.withCredentials = true;
   config.fetchOptions = { ...config.fetchOptions, redirect: 'error', cache: 'no-store', referrerPolicy: 'no-referrer' };
   if (token && token === getAccessToken()) config.headers.Authorization = `Bearer ${token}`;
   return config;
