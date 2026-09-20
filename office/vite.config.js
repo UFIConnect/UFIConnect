@@ -1,10 +1,11 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { localWebWorkbench } from '../scripts/local-web-workbench.mjs';
 
 export default defineConfig(({ mode }) => {
   const releaseLocal = mode === 'release-local';
   return {
-    plugins: [react()],
+    plugins: [react(), localWebWorkbench({ mode })],
     server: {
       port: releaseLocal ? 4174 : 5174,
       host: releaseLocal ? '127.0.0.1' : undefined,

@@ -1,7 +1,8 @@
 {
   "scripts": {
     "check:js": "node scripts/check-js.cjs",
-    "office:release-local": "npm run release:local --prefix office",
+    "office:release-local": "node scripts/start-local-release.mjs",
+    "test:local-web": "node --test scripts/local-web-workbench.test.mjs",
     "test:ui": "node scripts/audit-ui.mjs",
     "preview:public": "node scripts/preview-public.mjs"
   },

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Controls from './Controls';
 import PostPipeline from './PostPipeline';
 import LiveCity from './LiveCity';
+import LocalWeb from './LocalWeb';
 import { mergeObservedAgents, observeAgentPayload } from './office-telemetry.mjs';
 import { createOfficeClient, createOfficeEventSource, createTrustedOfficeFetch, connectOfficeStreams, mergeOfficeLog } from './office-runtime.mjs';
 import { requestOfficeAccess } from './OfficeAccessDialog';
@@ -3026,11 +3027,12 @@ function TopicsView() {
 // ─── App (root) ───────────────────────────────────────────────────────────────
 
 export default function App() {
-  const officeViews = ['overview', 'city', 'controls', 'sources', 'pipeline', 'post-pipeline', 'topics', 'agents', 'feed', 'analytics', 'deploy', 'autofix', 'versions'];
+  const officeViews = ['overview', 'city', 'local-web', 'controls', 'sources', 'pipeline', 'post-pipeline', 'topics', 'agents', 'feed', 'analytics', 'deploy', 'autofix', 'versions'];
   const [view, setView] = useState(() => {
     const requested = typeof window !== 'undefined' ? window.location.hash.slice(1) : '';
     return officeViews.includes(requested) ? requested : 'overview';
   });
+  const needsOfficeTelemetry = view !== 'local-web';
   const [status, setStatus] = useState(null);
   // Source-fetcher health (workerHealth/agentSourceCache) only ever has real
   // data on the pipeline role now — SourcesView/PipelineView read this
@@ -3053,6 +3055,7 @@ export default function App() {
   const observedAgents = useRef({ api: {}, pipeline: {} });
   const navigateOffice = useCallback(id => {
     if (!officeViews.includes(id)) return;
+    if (!window.dispatchEvent(new Event('office-before-navigate', { cancelable: true }))) return;
     setView(id);
     window.history.replaceState(null, '', `#${id}`);
   }, []);
@@ -3136,6 +3139,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!needsOfficeTelemetry) return undefined;
     fetchStatus();
     fetchPipelineStatus();
     fetchAgents();
@@ -3144,7 +3148,7 @@ export default function App() {
     const t2 = setInterval(fetchPipelineStatus, 8000);
     const t3 = setInterval(fetchAgents, 15000);
     return () => { clearInterval(t1); clearInterval(t2); clearInterval(t3); };
-  }, [fetchStatus, fetchPipelineStatus, fetchAgents, fetchVersions]);
+  }, [fetchStatus, fetchPipelineStatus, fetchAgents, fetchVersions, needsOfficeTelemetry]);
 
   // SSE: real-time agent activity pushed from backend. Connects to both
   // services when PIPELINE_API is actually configured as a distinct URL —
@@ -3155,6 +3159,7 @@ export default function App() {
   // OverviewView's activity feed and Agents view show one unified picture
   // instead of a dashboard split in two.
   useEffect(() => {
+    if (!needsOfficeTelemetry) return undefined;
     return connectOfficeStreams({
       bases: [...new Set([API, PIPELINE_API])],
       urlFor: base => officeStreamUrl('/office/agents/stream', base),
@@ -3182,7 +3187,7 @@ export default function App() {
         if (changed) setAgents(mergeObservedAgents(observedAgents.current.api, observedAgents.current.pipeline));
       },
     });
-  }, []);
+  }, [needsOfficeTelemetry]);
 
   // Fires at both services and lets whichever one actually owns this id's
   // trigger key handle it (the office UI has no reliable client-side way to
@@ -3216,6 +3221,7 @@ export default function App() {
   const nav = [
     { id: 'overview', label: 'Overview' },
     { id: 'city', label: 'Live City' },
+    { id: 'local-web', label: 'Local web' },
     { id: 'controls', label: 'Controls' },
     { id: 'sources',  label: 'Live Sources' },
     { id: 'pipeline', label: 'Pipeline' },
@@ -3332,9 +3338,9 @@ export default function App() {
 
           <div style={{ padding: isMobile ? '10px 14px 12px' : '16px 20px', borderTop: '1px solid rgba(255,255,255,.05)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
-              <Dot ok={connected} pulse={connected} />
+              {needsOfficeTelemetry && <Dot ok={connected} pulse={connected} />}
               <span style={{ fontSize: 11, color: '#475569' }}>
-                {connected ? 'Live stream active' : 'Reconnecting...'}
+                {!needsOfficeTelemetry ? 'Telemetry paused in Local web' : connected ? 'Live stream active' : 'Reconnecting...'}
               </span>
             </div>
             {/* Both services' own health, always visible regardless of which
@@ -3342,7 +3348,7 @@ export default function App() {
                 an 8+ day stale build with nothing surfacing that anywhere;
                 its uptime reads here now specifically so that's obvious at
                 a glance next time, not just in the Pipeline detail view. */}
-            <div style={statusRowsStyle}>
+            <div style={{ ...statusRowsStyle, ...(!needsOfficeTelemetry ? { display: 'none' } : {}) }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <Dot ok={!!status?.server} pulse={false} />
                 <span style={{ fontSize: 10.5, color: apiDbFailover ? '#fbbf24' : '#64748b' }}>
@@ -3401,6 +3407,7 @@ export default function App() {
             telemetry={{ ...telemetry, streamConnected: connected }} officeFetch={officeFetch}
             apiBase={API} pipelineBase={PIPELINE_API} onNavigate={navigateOffice} />}
           {view === 'post-pipeline' && <PostPipeline apiBase={API} request={officeFetch} pipelineStatus={pipelineStatus} />}
+          {view === 'local-web' && <LocalWeb apiBase={API} request={officeFetch} />}
           {view === 'overview' && <OverviewView status={status} pipelineStatus={pipelineStatus} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'controls' && <Controls apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} />}
           {/* Source health (workerHealth/agentSourceCache) only has real

@@ -26,6 +26,7 @@ jobs:
       - run: npm test --prefix backend
       - run: node --test scripts/office-security.test.mjs scripts/web-security.test.mjs scripts/office-city.test.mjs
       - run: node --test scripts/analytics.test.mjs scripts/data-preferences.test.mjs
+      - run: node --test scripts/local-web-workbench.test.mjs
       - run: node scripts/sync-analytics-bridge.mjs --check
       - run: node scripts/sync-security-headers.mjs --check
       - run: node scripts/check-deployment-security.mjs
@@ -50,6 +51,7 @@ jobs:
       - run: node scripts/audit-search-notifications.mjs
       - run: node scripts/audit-office-pipeline.mjs
       - run: node scripts/audit-office-city.mjs
+      - run: node scripts/audit-local-web.mjs
       - run: node scripts/audit-source-favorites.mjs
       - run: node scripts/audit-source-directory.mjs
       - run: node scripts/audit-interface-release.mjs
