@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { parse } = require('../web/node_modules/@babel/parser');
-const traverse = require('../web/node_modules/@babel/traverse').default;
+const { parse } = require('../node_modules/@babel/parser');
+const traverse = require('../node_modules/@babel/traverse').default;
 
 const root = path.resolve(__dirname, '..');
 const globals = new Set([
