@@ -61,12 +61,23 @@ try {
   const nav=page.getByRole('navigation',{name:'Office sections'});
   await nav.getByRole('button',{name:'Overview',exact:true}).click();
   assert.equal(await nav.getByRole('button').count(),6,'Five primary destinations and More tools keep navigation compact');
-  await nav.getByRole('button',{name:'More tools',exact:true}).click();
+  const moreTools=nav.getByRole('button',{name:'More tools',exact:true});
+  if(width<=760){
+   const bounds=await moreTools.boundingBox();
+   assert.ok(bounds.x>=0&&bounds.x+bounds.width<=width&&bounds.y>=0&&bounds.y+bounds.height<=900,'More tools is fully visible without scrolling');
+   assert.ok(bounds.height>=44,'Mobile More tools has a full touch target');
+   await nav.locator('.office-nav-primary').evaluate(element=>{element.scrollLeft=element.scrollWidth;});
+   const afterScroll=await moreTools.boundingBox();
+   assert.equal(afterScroll.x,bounds.x,'More tools stays fixed while primary destinations scroll');
+  }
+  await moreTools.click();
+  assert.equal(await moreTools.getAttribute('aria-expanded'),'true');
   assert.equal(await nav.getByRole('button').count(),16,'All Office destinations remain available');
   await nav.getByRole('button',{name:'Agents',exact:true}).click();
   await page.getByRole('heading',{name:'Agent Control',exact:true}).waitFor();
   await nav.getByRole('button',{name:'Overview',exact:true}).click();
-  await nav.getByRole('button',{name:'Fewer tools',exact:true}).click();
+  await moreTools.click();
+  assert.equal(await moreTools.getAttribute('aria-expanded'),'false');
   assert.equal(await page.locator('.office-overview-detail[open]').count(),0,'Detailed panels start collapsed');
   const details=page.locator('.office-overview-detail summary');
   await details.nth(1).focus();
