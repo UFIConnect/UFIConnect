@@ -72,6 +72,54 @@ function roadPath(from, to) {
   return `M${from.x} ${from.y + 30} L${from.x + 114} ${from.y + 87} L${to.x + 114} ${to.y - 40} L${to.x} ${to.y + 30}`;
 }
 
+const cityPhases = {
+  morning: { label: 'Morning commute', detail: 'Agents are heading to work' },
+  lunch: { label: 'Lunch hour', detail: 'Agents are out for lunch' },
+  afternoon: { label: 'Workday', detail: 'Agents are running activities' },
+  evening: { label: 'Evening return', detail: 'Agents are heading home' },
+};
+
+function CityActivity({ model, phase }) {
+  const people = model.homes.slice(0, 18);
+  const phaseInfo = cityPhases[phase];
+  const positions = people.map((home, index) => {
+    const column = index % 6;
+    const row = Math.floor(index / 6);
+    const base = phase === 'lunch' ? { x: 420 + column * 54, y: 690 + row * 44 } : phase === 'afternoon' ? { x: 180 + (index % 8) * 104, y: 360 + row * 34 } : { x: 112 + column * 105, y: 1060 + row * 88 };
+    return { home, x: base.x, y: base.y, index };
+  });
+  return <g className="lc-city-activity" aria-label={`${phaseInfo.label}: ${phaseInfo.detail}`}>
+    <g className="lc-activity-banner"><rect x="72" y="112" width="300" height="52" rx="8" /><text x="90" y="134">{phaseInfo.label.toUpperCase()}</text><text x="90" y="151">{phaseInfo.detail} · illustrative schedule</text></g>
+    {positions.map(({ home, x, y, index }) => <g key={home.id} className="lc-activity-agent" transform={`translate(${x} ${y})`} style={{ '--activity-delay': `${index * -0.22}s`, '--activity-color': home.color || '#67e8f9' }}>
+      <circle r="7" /><path d="M-8 14a8 8 0 0 1 16 0" /><text x="12" y="4">{home.name.length > 11 ? `${home.name.slice(0, 10)}...` : home.name}</text>
+      <title>{home.name}: {phaseInfo.detail}. This schedule is illustrative.</title>
+    </g>)}
+  </g>;
+}
+
+function HighwayNetwork({ paused }) {
+  const highways = [
+    { name: 'NORTH LOOP', path: 'M70 315 C270 275 410 310 560 430 S850 600 1030 560' },
+    { name: 'EAST CONNECTOR', path: 'M80 820 C280 710 390 600 540 510 S820 330 1040 260' },
+    { name: 'RIVERWAY', path: 'M92 610 C280 540 410 550 560 610 S820 710 1010 690' },
+    { name: 'CROSS-TOWN 7', path: 'M250 180 C330 350 365 500 350 700 S310 930 230 1110' },
+    { name: 'AIRPORT SPUR', path: 'M820 150 C760 320 755 480 810 620 S900 850 980 1060' },
+  ];
+  return <g className="lc-highway-network" aria-label="City highways">
+    {highways.map(({ name, path }, index) => <g key={name} className="lc-highway"><path d={path} className="lc-highway-bed" /><path d={path} className="lc-highway-line" /><text className="lc-highway-label" x={index % 2 ? 875 : 95} y={index * 105 + 245}>{name}</text>{[0, 1, 2, 3, 4].map(car => <g key={car} className={`lc-car ${car % 3 === 0 ? 'lc-car-bus' : ''}`} style={{ '--car-delay': `${(index * 5 + car) * -1.8}s` }}><circle r={car % 3 === 0 ? 6 : 5} /><path d="M-8 0h16" /><animateMotion dur={`${7 + index * 1.3}s`} repeatCount={paused ? '0' : 'indefinite'} path={path} /></g>)}</g>)}
+  </g>;
+}
+
+function CommuteTraffic({ model, phase, paused }) {
+  if (!['morning', 'evening'].includes(phase)) return null;
+  const route = phase === 'morning' ? 'M120 1100 C240 900 360 760 520 600 S700 390 820 260' : 'M820 260 C700 390 560 610 410 760 S230 940 120 1100';
+  return <g className="lc-commute-traffic" aria-label="Illustrative agent commute traffic">
+    <text x="120" y="1140" className="lc-commute-label">AGENT COMMUTE ROUTE</text>
+    {model.homes.slice(0, 12).map((home, index) => <g key={home.id} className="lc-agent-car" style={{ '--car-delay': `${index * -1.1}s`, '--agent-color': home.color || '#67e8f9' }}>
+      <rect x="-7" y="-4" width="14" height="8" rx="2" /><circle cx="-4" cy="5" r="2" /><circle cx="4" cy="5" r="2" /><text x="10" y="-7">{home.name.length > 10 ? `${home.name.slice(0, 9)}...` : home.name}</text><title>{home.name} driving {phase === 'morning' ? 'to work' : 'home'} · illustrative route</title><animateMotion dur={`${10 + index * .4}s`} repeatCount={paused ? '0' : 'indefinite'} path={route} /></g>)}
+  </g>;
+}
+
 function CityHome({ home, index, selected, onSelect }) {
   const x = 100 + (index % 10) * 100, y = 1030 + Math.floor(index / 10) * 105;
   return <g transform={`translate(${x} ${y})`} className="lc-map-home" data-home-id={home.id} data-home-state={home.homeState}
@@ -95,7 +143,7 @@ function CityHome({ home, index, selected, onSelect }) {
   </g>;
 }
 
-function CityMap({ model, selected, selectedAgent, onSelectAgent, onEnter, paused, setPaused, reduced, speed, setSpeed, motionScope, setMotionScope }) {
+function CityMap({ model, selected, selectedAgent, onSelectAgent, onEnter, paused, setPaused, reduced, speed, setSpeed, motionScope, setMotionScope, pov, setPov, phase, setPhase }) {
   const [zoom, setZoom] = useState(1), [offset, setOffset] = useState({ x: 0, y: 0 });
   const [area, setArea] = useState('all'), [homeFilter, setHomeFilter] = useState('all');
   const drag = useRef(null);
@@ -113,6 +161,7 @@ function CityMap({ model, selected, selectedAgent, onSelectAgent, onEnter, pause
     const ratio = event.currentTarget.viewBox.baseVal.width / bounds.width;
     setOffset({ x: Math.max(-500, Math.min(500, drag.current.x + (event.clientX - drag.current.pointerX) * ratio)), y: Math.max(-350, Math.min(350, drag.current.y + (event.clientY - drag.current.pointerY) * ratio)) });
   }
+  const phaseInfo = cityPhases[phase];
   return <section className="lc-map-panel" aria-label="Service city map">
     <div className="lc-map-toolbar"><div><span className="lc-eyebrow">CITY MAP · {model.homes.length} HOMES</span><span className="lc-map-caption">Enter a building or visit an agent’s home</span></div><div className="lc-map-tools">
       <button type="button" aria-label="Zoom out" disabled={zoom <= .8} onClick={() => setZoom(value => Math.max(.8, +(value - .2).toFixed(1)))}><Minus size={16} /></button>
@@ -123,10 +172,11 @@ function CityMap({ model, selected, selectedAgent, onSelectAgent, onEnter, pause
       <button type="button" className="lc-scope-button" aria-label="Change animation scope" aria-pressed={motionScope === 'all'} disabled={reduced} title="All animates every city element; observed limits strong motion to reported activity." onClick={() => setMotionScope(value => value === 'all' ? 'observed' : 'all')}><Activity size={15} /><span>{motionScope === 'all' ? 'All city' : 'Observed'}</span></button>
       <button type="button" className="lc-motion-button" aria-label={paused ? 'Resume motion' : 'Pause motion'} aria-pressed={paused} disabled={reduced} title={reduced ? 'Reduced motion is enabled in your system settings' : undefined} onClick={() => setPaused(value => !value)}>{paused || reduced ? <Play size={15} /> : <Pause size={15} />}<span>{reduced ? 'Reduced motion' : paused ? 'Resume' : 'Pause'}</span></button>
     </div></div>
+    <div className="lc-city-controls"><div className="lc-phase-controls" aria-label="Illustrative day phase">{Object.entries(cityPhases).map(([id, item]) => <button type="button" key={id} aria-pressed={phase === id} onClick={() => setPhase(id)}>{item.label}</button>)}</div><div className="lc-pov-controls" aria-label="City point of view"><span>POV</span>{[['map', 'Map'], ['third', '3rd person'], ['first', '1st person']].map(([id, label]) => <button type="button" key={id} aria-pressed={pov === id} onClick={() => setPov(id)}>{label}</button>)}</div></div>
     <div className="lc-city-navigation"><div className="lc-area-controls" aria-label="City map area">{[['all', 'Whole city'], ['services', 'Buildings'], ['homes', 'Homes']].map(([id, label]) => <button type="button" key={id} aria-pressed={area === id} onClick={() => { setArea(id); reset(); }}>{label}</button>)}</div>
       <div className="lc-home-controls" aria-label="Filter agent homes">{['all', 'working', 'inactive', 'attention', 'unobserved'].map(state => <button type="button" key={state} aria-pressed={homeFilter === state} onClick={() => setHomeFilter(state)}>{state === 'all' ? `All ${model.homes.length}` : `${homeStateName(state)} ${homeTotals[state] || 0}`}</button>)}</div>
     </div>
-    <div className="lc-canvas" data-motion={motion} data-zoom={zoom}>
+    <div className="lc-canvas" data-motion={motion} data-zoom={zoom} data-pov={pov}>
       <svg viewBox={mapView} aria-label="Live city: a logical map of UFIConnect services and agent homes" onPointerDown={event => {
         if (event.button !== 0 || event.target.closest('[role="button"]')) return;
         drag.current = { pointerX: event.clientX, pointerY: event.clientY, ...offset }; event.currentTarget.setPointerCapture(event.pointerId);
@@ -138,6 +188,10 @@ function CityMap({ model, selected, selectedAgent, onSelectAgent, onEnter, pause
         <rect width="1100" height={mapHeight} fill="url(#lc-ground)" /><rect x="30" y="65" width="1040" height={mapHeight - 90} fill="url(#lc-grid)" opacity=".22" />
         <g transform={`translate(${550 + offset.x} ${centerY + offset.y}) scale(${zoom}) translate(-550 ${-centerY})`}>
           <path d="M45 201 185 125 1057 662 917 860 45 434Z" fill="#0c2030" opacity=".28" />
+          <g className="lc-street-grid" aria-label="City street grid">{Array.from({ length: 11 }, (_, index) => <path key={`vertical-${index}`} d={`M${90 + index * 92} 170V${mapHeight - 35}`} />)}{Array.from({ length: Math.max(8, rows + 3) }, (_, index) => <path key={`horizontal-${index}`} d={`M70 ${250 + index * 92}H1035`} />)}</g>
+          <HighwayNetwork paused={paused || reduced} />
+          <CommuteTraffic model={model} phase={phase} paused={paused || reduced} />
+          <CityActivity model={model} phase={phase} />
           <text x="65" y="66" className="lc-map-zone">01 / INGESTION DISTRICT</text><text x="65" y="359" className="lc-map-zone">02 / STORAGE & PROCESSING</text><text x="65" y="625" className="lc-map-zone">03 / DELIVERY & RESILIENCE</text>
           {model.edges.map(edge => <g key={`${edge.from}-${edge.to}`} className="lc-road" data-from={edge.from} data-to={edge.to} data-active={String(edge.active)} aria-hidden="true">
             <path d={roadPath(model.byId[edge.from], model.byId[edge.to])} fill="none" stroke="#172f43" strokeWidth="15" strokeLinejoin="round" />
@@ -154,7 +208,7 @@ function CityMap({ model, selected, selectedAgent, onSelectAgent, onEnter, pause
       </svg>
       <div className="lc-map-live"><span className={motion === 'active' ? 'lc-dot-active' : ''} />{motion === 'active' ? `${motionScope === 'all' ? 'Whole city' : 'Observed activity'} / ${speed}x` : motion === 'paused' ? 'Motion paused' : motion === 'reduced' ? 'Reduced motion' : 'No recent work to animate'}</div>
     </div>
-    <div className="lc-map-legend"><p><Home size={14} />Green: working · Gray: inactive · Amber: attention · Dim: unobserved.</p><p>Use Homes to zoom into the neighborhood. Motion is illustrative; labels report each agent’s actual state.</p></div>
+    <div className="lc-map-legend"><p><Home size={14} />Green: working · Gray: inactive · Amber: attention · Dim: unobserved.</p><p><Radio size={14} />{phaseInfo.label}: cars, highways, and agent activities are illustrative, separate from telemetry.</p></div>
     <div className="lc-district-nav" aria-label="Enter city buildings">{model.districts.map(district => <button key={district.id} type="button" aria-pressed={selected === district.id} onClick={() => onEnter(district.id)} style={{ '--district-color': district.color }}><span />{district.label}</button>)}</div>
   </section>;
 }
@@ -180,7 +234,7 @@ function BuildingInterior({ district, model, onClose, onSelectAgent, interiorRef
         const closest = cards.sort((a, b) => Math.abs(a.getBoundingClientRect().top - frame.top) - Math.abs(b.getBoundingClientRect().top - frame.top))[0];
         if (closest) setVisibleLevel(Number(closest.dataset.level));
       }}>
-        {district.levels.map(item => <article className="lc-level" key={item.id} data-level={item.number} aria-label={`Level ${item.number}: ${item.title}`}>
+        {district.levels.map(item => <article className={`lc-level ${visibleLevel === item.number ? 'lc-level-active' : ''}`} key={item.id} data-level={item.number} aria-label={`Level ${item.number}: ${item.title}`}>
           <header><span>LEVEL {String(item.number).padStart(2, '0')}</span><div><h3>{item.title}</h3><p>{item.purpose}</p></div></header>
           <div className="lc-level-route"><section><h4>What enters</h4><ul>{item.pulls.map(value => <li key={value}>{value}</li>)}</ul></section><section><h4>How it works</h4><ol>{item.process.map(value => <li key={value}>{value}</li>)}</ol></section><section><h4>What leaves</h4><ul>{item.outputs.map(value => <li key={value}>{value}</li>)}</ul></section></div>
           <section className="lc-level-evidence"><div><h4><Activity size={14} /> Live evidence</h4><Status state={district.state} /></div><MetricGrid metrics={item.metrics} />
@@ -288,7 +342,7 @@ function DistrictInspector({ district, onNavigate, onSelectAgent, onEnter }) {
 
 export default function LiveCity({ status, pipelineStatus, agents = {}, log = [], telemetry = {}, officeFetch, apiBase = '', pipelineBase = '', onNavigate = () => {} }) {
   const [now, setNow] = useState(Date.now), [paused, setPaused] = useState(false);
-  const [speed, setSpeed] = useState(1), [motionScope, setMotionScope] = useState('all');
+  const [speed, setSpeed] = useState(1), [motionScope, setMotionScope] = useState('all'), [pov, setPov] = useState('map'), [phase, setPhase] = useState('afternoon');
   const [reduced, setReduced] = useState(() => typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   const [selection, setSelection] = useState({ type: 'district', id: 'sources' });
   const [interior, setInterior] = useState(null);
@@ -344,7 +398,7 @@ export default function LiveCity({ status, pipelineStatus, agents = {}, log = []
   return <section className="live-city" data-testid="live-city" aria-label="Live City" data-motion={motionState} data-animation-scope={motionScope} style={{ '--lc-fast-motion': `${1.4 / speed}s`, '--lc-medium-motion': `${2.8 / speed}s`, '--lc-slow-motion': `${4.8 / speed}s` }}>
     <header className="lc-page-header"><div><div className="lc-eyebrow"><span className="lc-brand-mark"><Layers3 size={14} /></span> UFICONNECT / SERVICE OBSERVATORY</div><h1>Live City<span>.</span></h1><p>A working map of your platform. Follow the content. Meet the agents. Inspect the evidence.</p></div><button type="button" className="lc-open-pipeline" onClick={() => onNavigate('post-pipeline')}>Explore post history <ArrowUpRight size={16} /></button></header>
     <div className="lc-observations">{['api', 'pipeline'].map(role => <div className="lc-observation" key={role} data-service={role} data-freshness={model.observations[role].state}><span>{roleName(role)} telemetry</span><Status state={model.observations[role].state} /><small>{safeObservationError(model.observations[role].error) || age(model.observations[role].updatedAt, now)}</small></div>)}<div className="lc-observation"><span>Agent activity stream</span><strong className={model.streamConnected ? 'lc-stream-connected' : ''}><Radio size={13} />{model.streamConnected ? 'Connected' : 'Disconnected'}</strong><small>Connection only; not a work counter</small></div><div className="lc-observation"><span>Registered agent homes</span><strong>{model.homes.length}</strong><small>{model.agents.length} distinct service observations</small></div></div>
-    <div className="lc-layout"><div className="lc-main"><CityMap model={model} selected={selectedDistrict.id} selectedAgent={selectedAgent} onSelectAgent={key => select('agent', key)} onEnter={enterBuilding} paused={paused} setPaused={setPaused} reduced={reduced} speed={speed} setSpeed={setSpeed} motionScope={motionScope} setMotionScope={setMotionScope} />
+    <div className="lc-layout"><div className="lc-main"><CityMap model={model} selected={selectedDistrict.id} selectedAgent={selectedAgent} onSelectAgent={key => select('agent', key)} onEnter={enterBuilding} paused={paused} setPaused={setPaused} reduced={reduced} speed={speed} setSpeed={setSpeed} motionScope={motionScope} setMotionScope={setMotionScope} pov={pov} setPov={setPov} phase={phase} setPhase={setPhase} />
       {interiorDistrict && <BuildingInterior district={interiorDistrict} model={model} interiorRef={interiorPanel} onClose={() => { setInterior(null); window.requestAnimationFrame(() => inspector.current?.focus()); }} onSelectAgent={key => select('agent', key)} />}
       <section className="lc-roster" aria-label="Agent roster"><div className="lc-roster-heading"><div><span className="lc-eyebrow">WORKERS & OPERATIONS</span><h2>Agent directory <span>{filteredAgents.length}</span></h2></div><p>Real registered workers and operational agents.<br />Each service instance has its own observations.</p></div>
         <div className="lc-roster-tools"><label className="lc-search"><Search size={16} /><span className="lc-sr-only">Search agents</span><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search agents or districts" /></label><label><span className="lc-sr-only">Agent service</span><select aria-label="Agent service" value={service} onChange={event => setService(event.target.value)}><option value="all">All services</option><option value="api">API</option><option value="pipeline">Pipeline</option></select></label><label><span className="lc-sr-only">Agent observation filter</span><select aria-label="Agent observation filter" value={healthFilter} onChange={event => setHealthFilter(event.target.value)}><option value="all">All observations</option><option value="fresh">Fresh observations</option><option value="attention">Needs review</option></select></label></div>
