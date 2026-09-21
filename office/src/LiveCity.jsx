@@ -120,6 +120,30 @@ function CommuteTraffic({ model, phase, paused }) {
   </g>;
 }
 
+function CityBackdrop({ mapHeight }) {
+  const blocks = Array.from({ length: 22 }, (_, index) => ({
+    x: 92 + (index % 6) * 166,
+    y: 185 + Math.floor(index / 6) * 142,
+    w: 118 + (index % 2) * 14,
+    h: 82 + (index % 3) * 8,
+  }));
+  const towers = [
+    { x: 280, y: 245, h: 116, w: 42, tone: '#304e61' },
+    { x: 430, y: 255, h: 148, w: 50, tone: '#385e6b' },
+    { x: 600, y: 230, h: 185, w: 58, tone: '#2d5364' },
+    { x: 760, y: 250, h: 132, w: 45, tone: '#416574' },
+  ];
+  return <g className="lc-city-backdrop" aria-hidden="true">
+    <path className="lc-river" d={`M-40 770 C140 695 250 740 385 805 S650 920 1140 760 V${mapHeight + 40}H-40Z`} />
+    <path className="lc-river-edge" d="M-40 770 C140 695 250 740 385 805 S650 920 1140 760" />
+    <g className="lc-city-blocks">{blocks.map((block, index) => <g key={index}><rect x={block.x} y={block.y} width={block.w} height={block.h} rx="6" /><path d={`M${block.x + 12} ${block.y + 16}h${block.w - 24}M${block.x + 12} ${block.y + 32}h${block.w - 34}`} /></g>)}</g>
+    <g className="lc-parks"><path d="M92 525h180v100H92z" /><path d="M790 700h210v94H790z" /><circle cx="170" cy="575" r="18" /><circle cx="215" cy="558" r="13" /><circle cx="850" cy="748" r="16" /><circle cx="900" cy="730" r="21" /></g>
+    <g className="lc-skyline">{towers.map(tower => <g key={tower.x}><rect x={tower.x} y={tower.y - tower.h} width={tower.w} height={tower.h} fill={tower.tone} /><path d={`M${tower.x + 8} ${tower.y - tower.h + 18}h${tower.w - 16}M${tower.x + 8} ${tower.y - tower.h + 42}h${tower.w - 16}M${tower.x + 8} ${tower.y - tower.h + 66}h${tower.w - 16}`} /></g>)}</g>
+    <g className="lc-transit"><path d="M55 450 C250 420 420 450 575 530 S850 620 1050 580" /><path d="M160 170V885M940 170V885" /></g>
+    <text x="92" y="175" className="lc-neighborhood-label">CIVIC CORE</text><text x="92" y="515" className="lc-neighborhood-label">RIVERSIDE PARK</text><text x="790" y="690" className="lc-neighborhood-label">EAST COMMONS</text>
+  </g>;
+}
+
 function CityHome({ home, index, selected, onSelect }) {
   const x = 100 + (index % 10) * 100, y = 1030 + Math.floor(index / 10) * 105;
   return <g transform={`translate(${x} ${y})`} className="lc-map-home" data-home-id={home.id} data-home-state={home.homeState}
@@ -188,6 +212,7 @@ function CityMap({ model, selected, selectedAgent, onSelectAgent, onEnter, pause
         <rect width="1100" height={mapHeight} fill="url(#lc-ground)" /><rect x="30" y="65" width="1040" height={mapHeight - 90} fill="url(#lc-grid)" opacity=".22" />
         <g transform={`translate(${550 + offset.x} ${centerY + offset.y}) scale(${zoom}) translate(-550 ${-centerY})`}>
           <path d="M45 201 185 125 1057 662 917 860 45 434Z" fill="#0c2030" opacity=".28" />
+          <CityBackdrop mapHeight={mapHeight} />
           <g className="lc-street-grid" aria-label="City street grid">{Array.from({ length: 11 }, (_, index) => <path key={`vertical-${index}`} d={`M${90 + index * 92} 170V${mapHeight - 35}`} />)}{Array.from({ length: Math.max(8, rows + 3) }, (_, index) => <path key={`horizontal-${index}`} d={`M70 ${250 + index * 92}H1035`} />)}</g>
           <HighwayNetwork paused={paused || reduced} />
           <CommuteTraffic model={model} phase={phase} paused={paused || reduced} />

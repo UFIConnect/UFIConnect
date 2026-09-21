@@ -45,6 +45,17 @@
 .lc-canvas[data-pov="third"] svg { transform:perspective(1100px) rotateX(18deg) scale(1.04); transform-origin:50% 57%; }
 .lc-canvas[data-pov="first"] svg { transform:perspective(900px) rotateX(42deg) scale(1.16); transform-origin:50% 62%; }
 .lc-canvas svg:active { cursor:grabbing; }
+.lc-city-backdrop { opacity:.95; }
+.lc-river { fill:#0b3043; opacity:.8; }
+.lc-river-edge { fill:none; stroke:#4d91a0; stroke-width:2; stroke-dasharray:3 12; opacity:.6; }
+.lc-city-blocks rect { fill:#173040; stroke:#2e5360; stroke-width:1; opacity:.82; }
+.lc-city-blocks path { stroke:#4d7180; stroke-width:1.5; opacity:.35; }
+.lc-parks path { fill:#1b4a43; stroke:#3b7668; stroke-width:1; opacity:.8; }
+.lc-parks circle { fill:#4b8a68; opacity:.6; }
+.lc-skyline rect { stroke:#6893a0; stroke-width:1; opacity:.88; }
+.lc-skyline path { stroke:#83b3b4; stroke-width:2; stroke-dasharray:4 6; opacity:.28; }
+.lc-transit path { fill:none; stroke:#d5ad62; stroke-width:2; stroke-dasharray:2 9; opacity:.48; }
+.lc-neighborhood-label { fill:#7fa5ae; font-size:10px; font-weight:800; letter-spacing:2px; opacity:.9; }
 .lc-city-navigation { padding:12px 16px; border-bottom:1px solid #203448; display:flex; flex-wrap:wrap; gap:12px; justify-content:space-between; }
 .lc-area-controls { display:flex; gap:5px; }
 .lc-area-controls button { border:1px solid #345069; border-radius:6px; padding:8px 12px; background:#142334; font-size:11px; }
