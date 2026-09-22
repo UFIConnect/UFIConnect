@@ -50,6 +50,7 @@ function randomClientId(window) {
 
 export function createAnalyticsController({ window, document, bridgeUrl }) {
   let consent = null;
+  let privacySignal = window.navigator?.globalPrivacyControl === true;
   let persistenceError = null;
   const storageErrorMessage = 'Google Analytics is off. This browser could not save your choice or clear stored analytics data. Check your choice after reloading.';
   function storageWritable() {
@@ -144,6 +145,7 @@ export function createAnalyticsController({ window, document, bridgeUrl }) {
   }
 
   function sendLatest() {
+    if (window.navigator?.globalPrivacyControl === true) { updateConsent('denied', true); return; }
     if (!ready || consent !== 'granted') return;
     while (pending.length) {
       const page = pending.shift();
@@ -154,6 +156,7 @@ export function createAnalyticsController({ window, document, bridgeUrl }) {
   }
 
   function activate() {
+    if (window.navigator?.globalPrivacyControl === true && consent !== 'denied') { updateConsent('denied', true); return; }
     if (disposed || consent !== 'granted' || !latest) return;
     queueLatest();
     if (retiringFrames.size) return;
@@ -191,6 +194,9 @@ export function createAnalyticsController({ window, document, bridgeUrl }) {
     if (disposed || (value !== 'granted' && value !== 'denied' && value !== null)) return;
     const previousConsent = consent;
     const previousError = persistenceError;
+    const previousSignal = privacySignal;
+    privacySignal = window.navigator?.globalPrivacyControl === true;
+    if (privacySignal) value = 'denied';
     consent = value;
     persistenceError = null;
     if (value === 'granted' && !storageWritable()) {
@@ -210,7 +216,7 @@ export function createAnalyticsController({ window, document, bridgeUrl }) {
       }
     }
     if (consent === 'granted') activate(); else stop();
-    if (previousConsent !== consent || previousError !== persistenceError) listeners.forEach(listener => listener());
+    if (previousConsent !== consent || previousError !== persistenceError || previousSignal !== privacySignal) listeners.forEach(listener => listener());
   }
 
   function onStorage(event) {
@@ -222,10 +228,17 @@ export function createAnalyticsController({ window, document, bridgeUrl }) {
 
   window.addEventListener('message', onMessage);
   window.addEventListener('storage', onStorage);
+  const onPrivacySignal = () => {
+    if (privacySignal !== (window.navigator?.globalPrivacyControl === true)) updateConsent(consent, true);
+  };
+  window.addEventListener('focus', onPrivacySignal);
+  window.addEventListener('pageshow', onPrivacySignal);
+  if (privacySignal) updateConsent('denied', true);
   if (consent !== 'granted') { try { window.localStorage.removeItem(ANALYTICS_CLIENT_KEY); } catch {} }
   return Object.freeze({
     available: true,
     getConsent: () => consent,
+    getPrivacySignal: () => privacySignal,
     getPersistenceError: () => persistenceError,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     setConsent(value) { if (value === 'granted' || value === 'denied') updateConsent(value, true); },
@@ -234,6 +247,6 @@ export function createAnalyticsController({ window, document, bridgeUrl }) {
       latest = { page: canonicalPage(path), sourcePath: path, navigationKey, visit: ++visit };
       activate();
     },
-    dispose() { disposed = true; stop({ clearIdentifier: false }); retiringFrames.forEach(removeFrame); listeners.clear(); window.removeEventListener('message', onMessage); window.removeEventListener('storage', onStorage); },
+    dispose() { disposed = true; stop({ clearIdentifier: false }); retiringFrames.forEach(removeFrame); listeners.clear(); window.removeEventListener('message', onMessage); window.removeEventListener('storage', onStorage); window.removeEventListener('focus', onPrivacySignal); window.removeEventListener('pageshow', onPrivacySignal); },
   });
 }

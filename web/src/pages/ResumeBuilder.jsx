@@ -5,6 +5,7 @@ import Layout from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import client from '../api/client';
+import { hostedBillingUrl } from '../api/hostedBilling.mjs';
 import {
   PREPARATION_ASSET_VERSION,
   PREPARATION_TOPICS,
@@ -497,16 +498,16 @@ export default function ResumeBuilder() {
     if (!upgrade) return;
     window.history.replaceState({}, '', window.location.pathname);
     if (upgrade === 'cancelled') {
-      showToast('Checkout cancelled - no charge was made.', 'info');
+      showToast('Checkout was closed. Check Manage billing in Settings if you need to review a payment.', 'info');
       return;
     }
-    refreshProfile()
+    client.get('/billing/status').then(() => refreshProfile())
       .then((nextProfile) => {
         showToast(nextProfile?.resumeBuilderAddon
           ? 'Resume Builder is unlocked.'
-          : 'Payment received. Resume Builder will unlock in a moment.', 'success');
+          : 'Access is not active yet. Payment may still be processing; check billing status in Settings.', nextProfile?.resumeBuilderAddon ? 'success' : 'info');
       })
-      .catch(() => showToast('Payment received. Refresh in a moment if access has not appeared yet.', 'success'));
+      .catch(() => showToast('We could not confirm your billing status. Check Manage billing in Settings before starting another checkout.', 'info'));
   }, [refreshProfile, showToast]);
 
   useEffect(() => {
@@ -573,7 +574,7 @@ export default function ResumeBuilder() {
     setUnlocking(true);
     try {
       const { data: checkout } = await client.post('/billing/create-checkout-session', { tier: 'resume_builder' });
-      window.location.assign(checkout.url);
+      window.location.assign(hostedBillingUrl(checkout.url));
     } catch (err) {
       showToast(err?.response?.data?.message || 'Could not start checkout. Please try again.', 'error');
       setUnlocking(false);

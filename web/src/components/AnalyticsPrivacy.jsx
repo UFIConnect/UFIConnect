@@ -7,6 +7,7 @@ export default function AnalyticsPrivacy() {
   const location = useLocation();
   const analytics = getGoogleAnalytics();
   const consent = useSyncExternalStore(analytics.subscribe, analytics.getConsent, () => null);
+  const privacySignal = useSyncExternalStore(analytics.subscribe, analytics.getPrivacySignal || (() => false), () => false);
   const persistenceError = useSyncExternalStore(analytics.subscribe, analytics.getPersistenceError || (() => null), () => null);
   const [open, setOpen] = useState(false);
   const trigger = useRef(null);
@@ -32,9 +33,10 @@ export default function AnalyticsPrivacy() {
       <p>Allow Google Analytics to measure page categories and basic device information? Google receives your IP address when connecting. We exclude passwords, messages, account details and full page links.</p>
       <p>You can decline and change your choice here anytime. <a href={`${import.meta.env.BASE_URL}privacy`}>Privacy policy</a></p>
       {consent && <p className="analytics-privacy-status" role="status">Analytics is {consent === 'granted' ? 'on' : 'off'} for this browser.</p>}
+      {privacySignal && <p role="status">Global Privacy Control is enabled in your browser. Optional analytics stays off while this signal is enabled.</p>}
       {persistenceError && <p className="auth-error" role="status">{persistenceError}</p>}
       <div className="analytics-privacy-actions">
-        <button type="button" onClick={() => choose('granted')}>Accept analytics</button>
+        <button type="button" disabled={privacySignal} onClick={() => choose('granted')}>Accept analytics</button>
         <button type="button" onClick={() => choose('denied')}>Decline analytics</button>
       </div>
       {consent && <button type="button" className="analytics-privacy-close" onClick={() => { setOpen(false); restoreTriggerFocus(); }}>Close preferences</button>}

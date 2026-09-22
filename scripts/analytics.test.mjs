@@ -38,11 +38,12 @@ test('every web and native screen category is accepted by the required aggregate
   } finally { mobile.dispose(); }
 });
 
-function fixture(entries = []) {
+function fixture(entries = [], navigator = {}) {
   const storage = new Map(entries);
   const events = new Map();
   const frames = [];
   const window = {
+    navigator,
     crypto: webcrypto, location: { origin: 'https://uficonnect.org' },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
     addEventListener: (key, handler) => events.set(key, handler), removeEventListener: key => events.delete(key),
@@ -92,6 +93,38 @@ test('unknown and declined consent create neither a bridge nor analytics identif
   assert.equal(frames.length, 0);
   assert.equal(storage.get(ANALYTICS_CLIENT_KEY), undefined);
   assert.equal(storage.get(ANALYTICS_CONSENT_KEY), 'denied');
+});
+
+test('Global Privacy Control overrides an earlier opt-in and prevents new collection', () => {
+  const { controller, frames, storage, events, window } = fixture([
+    [ANALYTICS_CONSENT_KEY, 'granted'], [ANALYTICS_CLIENT_KEY, 'old-identifier'],
+  ], { globalPrivacyControl: true });
+  controller.trackPage('/settings');
+  controller.setConsent('granted');
+  events.get('storage')({ key: ANALYTICS_CONSENT_KEY, newValue: 'granted' });
+  assert.equal(controller.getPrivacySignal(), true);
+  assert.equal(controller.getConsent(), 'denied');
+  assert.equal(frames.length, 0);
+  assert.equal(storage.has(ANALYTICS_CLIENT_KEY), false);
+  window.navigator.globalPrivacyControl = false;
+  events.get('focus')();
+  assert.equal(controller.getConsent(), 'denied', 'disabling GPC must not restore an old grant');
+  controller.setConsent('granted');
+  assert.equal(frames.length, 1, 'a fresh opt-in is required after disabling the signal');
+});
+
+test('enabling Global Privacy Control stops an already active analytics bridge', () => {
+  const { controller, frames, ready, storage, events, window } = fixture([[ANALYTICS_CONSENT_KEY, 'granted']]);
+  controller.trackPage('/settings');
+  ready();
+  const messages = frames[0].messages.length;
+  window.navigator.globalPrivacyControl = true;
+  events.get('focus')();
+  controller.trackPage('/privacy');
+  assert.equal(controller.getConsent(), 'denied');
+  assert.equal(storage.has(ANALYTICS_CLIENT_KEY), false);
+  assert.equal(frames[0].messages.length, messages + 1);
+  assert.equal(frames[0].messages.at(-1).type, 'ufi-analytics-stop');
 });
 
 test('opt-in sends only the latest page once, through a separate-origin frame and a fixed payload', () => {
