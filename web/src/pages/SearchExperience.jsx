@@ -486,8 +486,13 @@ export default function SearchExperience({ initialTab = null } = {}) {
   }, [groupCategory]);
 
   const closeCreateGroup = useCallback(() => {
-    setShowCreateGroup(false);
     const params = new URLSearchParams(location.search);
+    // Let the URL-driven effect close a linked dialog after navigation commits.
+    // Otherwise a quick menu tap can be undone by the pending route change.
+    if (params.get('create') !== '1') {
+      setShowCreateGroup(false);
+      return;
+    }
     params.delete('create');
     const nextSearch = params.toString();
     navigate({ pathname: '/search', search: nextSearch ? `?${nextSearch}` : '?tab=groups' }, { replace: true });
