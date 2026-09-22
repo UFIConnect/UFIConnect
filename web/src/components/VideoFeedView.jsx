@@ -202,7 +202,7 @@ function formatTime(sec) {
 // its own top comment) instead of each slide owning/destroying its own.
 // Only meaningful when src.kind === 'youtube'; file/hls/vimeo keep their
 // existing fully-local state below, untouched.
-function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComments, sharedYt, onDurationResolved, onNavigate, hasPrevious, hasNext }) {
+function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComments, sharedYt, onDurationResolved, onNavigate, hasPrevious, hasNext, controlsVisible, onToggleControls }) {
   const src = resolveVideoSource(post);
   const meta = SOURCE_META[post.source] || SOURCE_META.uficonnect;
   const fileVideoRef = useRef(null);
@@ -580,7 +580,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
             onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
             onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id, context: { surface: 'videos' } })} />}
       </div>
-      <div className="video-feed-action-rail" data-video-actions role="group" aria-label="Video controls and engagement">
+      <div className="video-feed-action-rail" data-video-actions hidden={!controlsVisible} role="group" aria-label="Video controls and engagement">
         {effectiveDuration > 0 && <div className="video-feed-playback" role="group" aria-label="Video playback">
             <input type="range" data-video-scrubber aria-label="Video position" min="0" max="1" step="0.001"
               value={progressFraction} onChange={event => seekToFraction(Number(event.target.value))} />
@@ -608,6 +608,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
         {isYoutube && sharedYt?.failed && <p className="video-feed-playback-note" role="status">The embedded player could not start. Try its play button{originalUrl ? ' or open the original video.' : '.'}</p>}
         <div className="video-feed-caption" data-video-caption data-expanded={captionExpanded}>
           <div className="video-feed-caption-summary">
+            <button type="button" className="video-feed-controls-toggle" onClick={onToggleControls} aria-expanded={controlsVisible} aria-label={controlsVisible ? 'Hide video controls' : 'Show video controls'} title={controlsVisible ? 'Hide video controls' : 'Show video controls'}><SlidersHorizontal size={17} aria-hidden="true" /></button>
             <div className="video-feed-byline"><SourceMark source={post.source} label={meta.icon} size={11} /><strong>{post.sourceLabel || meta.label}</strong></div>
             {post.title && <h2>{post.title}</h2>}
             <span className="video-feed-like-count" aria-label={`Likes ${(post.likesCount || 0).toLocaleString()}`}><Heart size={12} aria-hidden="true" />{(post.likesCount || 0).toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 1 })}</span>
@@ -910,6 +911,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   // instead of a single sheet trying to do three different jobs at once.
   const [searchOpen, setSearchOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(false);
   // Mirrors state into refs so loadPage (called from effects/callbacks that
   // don't want to be redeclared on every mode/filter change) always reads
   // the current value instead of whatever was captured at its own creation —
@@ -2033,7 +2035,7 @@ export default function VideoFeedView({ onExit, music = false }) {
 
   return (
     <div className="video-feed-view">
-      <div className="video-feed-frame" data-orientation={activeIsWideVideo ? 'landscape' : 'portrait'}>
+      <div className="video-feed-frame" data-controls-visible={controlsVisible} data-orientation={activeIsWideVideo ? 'landscape' : 'portrait'}>
       <header className="video-feed-top-controls" aria-label={music ? 'Music feed' : 'Video feed'}>
         <button type="button" className="video-feed-header-button" onPointerDown={event => event.stopPropagation()} onClick={onExit} aria-label="Back to Home" title="Back to Home">
           <img className="video-feed-ufi-mark" src="/uficonnect-google-verification-icon.svg" alt="" width="25" height="25" />
@@ -2294,6 +2296,7 @@ export default function VideoFeedView({ onExit, music = false }) {
             {videoPosts.map((post, idx) => <div key={post.id || idx} ref={element => { slideRefs.current[idx] = element; }}
               data-idx={idx} data-post-id={post.id || ''} data-source={post.source || ''} className="video-feed-snap-item">
               {Math.abs(idx - activeIndex) <= VIDEO_MOUNT_RADIUS ? <VideoSlide post={post} active={idx === activeIndex}
+                controlsVisible={controlsVisible} onToggleControls={() => setControlsVisible(value => !value)}
                 muted={muted} onToggleMute={toggleMuted} isScrolling={isScrolling} onOpenComments={setCommentsPost}
                 onDurationResolved={onDurationResolved} hasPrevious={idx > 0} hasNext={idx < videoPosts.length - 1}
                 onNavigate={direction => containerRef.current?.scrollTo({ top: (idx + direction) * containerRef.current.clientHeight, behavior: 'smooth' })}

@@ -94,16 +94,18 @@ try {
       await route.fulfill({ json: { ...data, liveFeeds: [], travel: { ...data.travel, cameraStatus: 'degraded', camerasChecking: false } } });
     });
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=countries');
-    const picker = page.getByRole('combobox', { name: 'Travel destination', exact: true });
-    await picker.locator('option[value="US:Seattle"]').waitFor({ state: 'attached' });
-    assert.equal(await picker.locator('option').count(), 92);
     const rail = page.getByRole('region', { name: 'Live travel cameras' });
-    assert.equal(await rail.getByRole('combobox', { name: 'Travel destination', exact: true }).count(), 1, 'the 91-city selector belongs to Live Travel');
+    const cities = rail.getByRole('group', { name: 'Travel cities', exact: true });
+    const cityChoice = id => cities.locator(`[data-destination-id="${id}"]`);
+    const waitForCitySave = () => page.waitForFunction(() => !document.querySelector('[data-destination-id="US:Seattle"]')?.disabled);
+    await cityChoice('US:Seattle').waitFor({ state: 'attached' });
+    assert.equal(await cities.getByRole('button').count(), 91, 'all 91 cities share the Live Travel rail');
+    assert.equal(await rail.getByRole('combobox', { name: 'Travel destination', exact: true }).count(), 0, 'the separate city dropdown is removed');
     assert.equal(await page.locator('.feed-specialized-toolbar [aria-label="Travel destination"]').count(), 0, 'the old separate city selector is removed');
     const eventBar = page.getByRole('group', { name: 'Travel events', exact: true });
     await eventBar.waitFor();
     await rail.locator('.travel-live-loop-choice').first().waitFor();
-    assert.equal(await rail.locator('.travel-live-loop-choice').count(), 3);
+    assert.equal(await rail.locator('.travel-city-live-badge').count(), 3, 'only verified camera cities receive live badges');
     await rail.scrollIntoViewIfNeeded();
     await rail.locator('.travel-live-loop-stage').hover();
     await page.waitForFunction(() => window.__travelPlayers.some(player => player.playing));
@@ -112,14 +114,14 @@ try {
     assert.ok(copyBox.y >= frameBox.y + frameBox.height - 2, 'camera controls and description stay below the picture');
     for (const city of ['New York', 'Tokyo', 'London']) {
       await rail.getByRole('button', { name: 'Next live camera', exact: true }).click();
-      await page.waitForFunction(() => !document.querySelector('[aria-label="Travel destination"]').disabled);
+      await waitForCitySave();
       await page.waitForFunction(city => document.querySelector('.travel-live-loop-choice.active')?.textContent.includes(city), city);
       assert.equal(await page.getByRole('searchbox', { name: 'Travel city', exact: true }).inputValue(), city);
       assert.match(await rail.locator('.travel-live-loop-choice.active').textContent(), new RegExp(city));
     }
     assert.equal(profileWrites, 3, 'one save per camera selection');
-    await picker.selectOption('US:Seattle');
-    await page.waitForFunction(() => !document.querySelector('[aria-label="Travel destination"]').disabled);
+    await cityChoice('US:Seattle').click();
+    await waitForCitySave();
     await rail.getByText('No verified camera in Seattle, United States. Showing worldwide views.').waitFor();
     assert.match(await page.getByRole('link', { name: 'City guide', exact: true }).getAttribute('href'), /\/Seattle$/);
     const heading = page.locator('.travel-content-heading');
@@ -127,15 +129,15 @@ try {
     assert.match(await heading.textContent(), /Seattle/);
     assert.doesNotMatch(await heading.textContent(), /Not saved yet/);
     await auditReload(page);
-    await picker.locator('option[value="US:Seattle"]').waitFor({ state: 'attached' });
-    await page.waitForFunction(() => document.querySelector('[aria-label="Travel destination"]').value === 'US:Seattle');
+    await cityChoice('US:Seattle').waitFor({ state: 'attached' });
+    await page.waitForFunction(() => document.querySelector('[data-destination-id="US:Seattle"]')?.getAttribute('aria-pressed') === 'true');
     failSave = true;
-    await picker.selectOption('JP:Osaka');
+    await cityChoice('JP:Osaka').click();
     await page.getByText('Could not save this location. Your previous feed location is still active.').waitFor();
-    assert.equal(await picker.inputValue(), 'US:Seattle');
+    assert.equal(await cityChoice('US:Seattle').getAttribute('aria-pressed'), 'true');
     failSave = false;
-    await picker.selectOption('JP:Tokyo');
-    await page.waitForFunction(() => !document.querySelector('[aria-label="Travel destination"]').disabled);
+    await cityChoice('JP:Tokyo').click();
+    await waitForCitySave();
     await rail.scrollIntoViewIfNeeded();
     await rail.locator('.travel-live-loop-stage').hover();
     await page.waitForFunction(() => window.__travelPlayers.some(player => player.frame.isConnected && player.playing));
@@ -143,8 +145,8 @@ try {
     await rail.getByText('This stream cannot play here.').waitFor();
     await rail.getByText('Playback unavailable', { exact: true }).waitFor();
     assert.equal(await rail.getByRole('link', { name: 'Open on YouTube', exact: true }).getAttribute('href'), 'https://www.youtube.com/watch?v=r74OyneNmg8');
-    await picker.selectOption('GB:London');
-    await page.waitForFunction(() => !document.querySelector('[aria-label="Travel destination"]').disabled);
+    await cityChoice('GB:London').click();
+    await waitForCitySave();
     await rail.scrollIntoViewIfNeeded();
     await rail.locator('.travel-live-loop-stage').hover();
     await page.waitForFunction(() => window.__travelPlayers.filter(player => player.frame.isConnected).length === 1).catch(async error => {
@@ -159,7 +161,8 @@ try {
     failPagination = true;
     await page.getByRole('button', { name: 'Clear', exact: true }).click();
     await rail.getByText('Live camera checks are temporarily unavailable.').waitFor();
-    assert.equal(await picker.inputValue(), '');
+    assert.equal(await page.getByRole('searchbox', { name: 'Travel city', exact: true }).inputValue(), '');
+    assert.equal(await cities.getByRole('button').count(), 91, 'city choices remain available without live cameras');
     assert.equal(await rail.locator('iframe').count(), 0);
     await page.locator('[data-feed-has-more]').first().evaluate(element => element.scrollIntoView({ block: 'end' }));
     await page.getByText('More destinations could not load.').waitFor();
@@ -184,9 +187,11 @@ try {
     await page.waitForTimeout(700);
     assert.equal(feedRequests, before, 'no repeated exhausted-page requests');
     failFeed = true;
-    await picker.selectOption('US:Seattle');
+    await cityChoice('US:Seattle').click();
     await page.getByText('The feed request failed with HTTP 503.').waitFor();
-    assert.equal(await page.locator('.travel-live-loop-choice').count(), 0, 'a failed location change cannot leave old cameras under the new location');
+    assert.equal(await rail.locator('iframe').count(), 0, 'a failed location change cannot leave an old camera under the new location');
+    assert.equal(await rail.locator('.travel-city-live-badge').count(), 0, 'a failed location change does not retain stale live badges');
+    assert.equal(await cities.getByRole('button').count(), 91, 'city selection remains available after a feed failure');
     failFeed = false;
     await page.getByRole('button', { name: /Try again|Retry/i }).first().click();
     await rail.getByText('Live camera checks are temporarily unavailable.').waitFor();

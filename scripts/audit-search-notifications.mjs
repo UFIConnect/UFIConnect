@@ -64,15 +64,30 @@ try {
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/notifications-${width}.png`) });
     if (width <= 768) {
       await page.getByRole('button', { name: 'Close alerts', exact: true }).click();
-      await page.getByRole('button', { name: 'Search', exact: true }).click();
-      await page.locator('#mobile-search-popup').getByRole('tab', { name: 'People', exact: true }).click();
-      await page.locator('#mobile-search-popup').getByRole('searchbox').fill('software engineer');
-      await page.locator('#mobile-search-popup').getByRole('button', { name: 'Search', exact: true }).click();
-    } else await auditNavigate(page, server.resolvedUrls.local[0] + 'search?tab=people&q=software%20engineer');
+    }
+    const globalSearch = page.getByRole('search', { name: 'Search UFIconnect', exact: true });
+    await globalSearch.waitFor({ state: 'visible' });
+    await globalSearch.getByRole('combobox', { name: 'Search in', exact: true }).selectOption('people');
+    await globalSearch.getByRole('searchbox', { name: 'Search UFIconnect', exact: true }).fill('software engineer');
+    await globalSearch.getByRole('searchbox', { name: 'Search UFIconnect', exact: true }).press('Enter');
+    await page.waitForURL(url => url.pathname === '/search' && url.searchParams.get('tab') === 'people' && url.searchParams.get('q') === 'software engineer');
     await page.getByRole('searchbox', { name: 'Search people', exact: true }).waitFor();
     await page.locator('.search-page-shell').getByText('Maya Chen', { exact: true }).waitFor();
     assert.ok(searches.includes('software engineer'));
     assert.equal(await page.getByRole('searchbox', { name: 'Search people', exact: true }).inputValue(), 'software engineer');
+    const messages = page.locator('.global-search-center').getByRole('link', { name: 'Messages', exact: true });
+    await messages.waitFor({ state: 'visible' });
+    const searchBounds = await globalSearch.boundingBox();
+    const messageBounds = await messages.boundingBox();
+    assert.ok(searchBounds && messageBounds, 'Search and Messages remain visible in the header');
+    assert.ok(searchBounds.x + searchBounds.width <= messageBounds.x + 1 || messageBounds.x + messageBounds.width <= searchBounds.x + 1,
+      'Messages sits beside search without overlapping the input');
+    assert.ok(Math.abs((searchBounds.y + searchBounds.height / 2) - (messageBounds.y + messageBounds.height / 2)) <= 20,
+      'Messages shares the search row');
+    await messages.click();
+    await page.waitForURL(url => url.pathname === '/messages');
+    await auditNavigate(page, server.resolvedUrls.local[0] + 'search?tab=people&q=software%20engineer');
+    await page.locator('.search-page-shell').getByText('Maya Chen', { exact: true }).waitFor();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/search-${width}.png`) });
     assert.deepEqual(errors, []);

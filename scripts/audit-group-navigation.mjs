@@ -89,13 +89,19 @@ try {
       assert.equal(await postToGroup.getAttribute('href'), '/groups/post');
       const createBounds = await createGroup.boundingBox();
       const postBounds = await postToGroup.boundingBox();
-      assert.ok(createBounds.x >= 0 && postBounds.x + postBounds.width <= viewport.width, 'Both group actions must fit the viewport');
       assert.ok(Math.abs(createBounds.y - postBounds.y) < 2 && postBounds.x > createBounds.x, 'Post to your group belongs beside Create a group');
-      for (const tab of ['Your groups', 'Public posts']) {
-        const bounds = await groupTab(tab).boundingBox();
-        assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= viewport.width, `${tab} must remain fully visible`);
+      const actionsRow = groupToolbar.locator('.feed-group-primary-actions');
+      const rowBounds = await actionsRow.boundingBox();
+      assert.ok(rowBounds.x >= 0 && rowBounds.x + rowBounds.width <= viewport.width, 'The group action row stays inside the viewport');
+      for (const control of [groupTab('Your groups'), groupTab('Public posts'), createGroup, postToGroup]) {
+        await control.scrollIntoViewIfNeeded();
+        await control.click({ trial: true });
+        const bounds = await control.boundingBox();
+        assert.ok(bounds.x >= rowBounds.x - 1 && bounds.x + bounds.width <= rowBounds.x + rowBounds.width + 1,
+          'Each group control can be reached completely by scrolling its single row');
+        assert.ok(Math.abs(bounds.y - createBounds.y) < 5, 'Group controls stay on one row');
       }
-      checks += 5;
+      checks += 11;
 
       heldScope = 'public';
       await groupTab('Public posts').click();

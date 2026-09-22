@@ -12,11 +12,19 @@
 .discovery-category-bar .feed-toolbar-control { flex: 0 0 auto; }
 .discovery-category-bar .discovery-category-clear { position: sticky; left: 0; z-index: 1; background: var(--card, #fff); }
 .discovery-category-bar .discovery-category-clear:disabled { opacity: .5; cursor: default; }
-.feed-specialized-toolbar--location .discovery-category-bar { grid-column: 1 / -1; }
+.discovery-toolbar { display: flex; align-items: center; gap: 8px; min-width: 0; width: 100%; margin: 4px 0 10px; }
+.discovery-toolbar .discovery-category-bar { flex: 1 1 0; min-width: 76px; margin: 0; padding-block: 4px; }
+.discovery-toolbar-actions { position: relative; display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.discovery-toolbar-actions .feed-topic-filter { position: static; }
+.feed-specialized-toolbar--location .discovery-toolbar { grid-column: 1 / -1; }
 .feed-specialized-toolbar--location .feed-specialized-actions { position: relative; }
 .feed-specialized-toolbar--location .feed-specialized-actions .feed-topic-filter { position: static; }
-.feed-category-post { display: inline-flex; align-items: center; text-decoration: none; }
-.travel-live-loop .travel-destination-picker { margin: 0 16px 14px; }
+.feed-category-post { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; }
+.travel-live-loop .travel-destination-picker { display: block; min-width: 0; margin: 0; padding: 10px 12px 12px; }
+.travel-city-rail-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 38px; font-size: .8rem; }
+.travel-destination-picker .travel-live-loop-choices { padding: 6px 0; }
+.travel-destination-picker .travel-live-loop-choice { flex: 0 0 132px; }
+.travel-city-live-badge { color: #047857; font-weight: 700; }
 .travel-live-loop .travel-camera-empty { margin: 0 16px 16px; }
 .travel-live-loop .travel-live-loop-navigation { position: static; display: flex; justify-content: center; width: fit-content; margin: 0 auto 12px; }
 .travel-live-loop .travel-live-loop-actions { flex-wrap: wrap; }
@@ -24,8 +32,15 @@
 .discovery-post-context { display: grid; gap: 8px; margin: 16px 0; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
 .discovery-post-context p { margin: 0; color: var(--muted); font-size: .8rem; }
 .discovery-post-context-links { display: flex; flex-wrap: wrap; gap: 8px; }
+.shell .feed-group-filter-row.feed-group-unified-bar { display: flex; flex-wrap: nowrap; gap: 8px; align-items: center; min-width: 0; }
+.feed-group-primary-actions { display: flex; align-items: center; gap: 8px; overflow-x: auto; min-width: 0; flex: 1 1 0; padding-block: 4px; scrollbar-width: thin; }
+.feed-group-primary-actions > * { flex: 0 0 auto; }
+.shell .feed-group-filter-row.feed-group-unified-bar .group-feed-scope-tabs { flex: 0 0 auto; width: auto; margin-right: 0; }
+.feed-group-unified-bar .feed-topic-filter { flex: 0 0 auto; }
 @media (max-width: 600px) {
   .feed-specialized-toolbar--location .feed-location-heading,
   .feed-specialized-toolbar--location .feed-specialized-actions { grid-column: 1 / -1; justify-self: stretch; }
   .feed-specialized-toolbar--location .feed-category-post { margin-left: auto; }
+  .feed-category-post-context { display: none; }
+  .discovery-toolbar-actions .feed-category-post { min-width: 58px; padding-inline: 10px; }
 }

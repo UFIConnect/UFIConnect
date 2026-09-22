@@ -104,6 +104,22 @@ try {
     ]);
     assert.ok(clearedSourceResponse.ok());
     assert.ok(await followingSources.getByRole('button', { name: 'Clear sources', exact: true }).isDisabled());
+    await followingSources.getByRole('button', { name: 'Reddit', exact: true }).click();
+    await checkStart('reddit');
+    await page.getByRole('button', { name: 'Filter feed by topic', exact: true }).click();
+    await page.getByRole('button', { name: 'Open Source', exact: true }).click();
+    await page.getByRole('button', { name: 'Apply topics', exact: true }).click();
+    const [allSourcesResponse] = await Promise.all([
+      page.waitForResponse(response => {
+        const url = new URL(response.url());
+        return url.pathname.endsWith('/office/feed') && url.searchParams.get('mode') === 'following'
+          && url.searchParams.get('topics') === 'Open Source'
+          && !url.searchParams.has('source') && !url.searchParams.has('sources');
+      }),
+      followingSources.getByRole('button', { name: 'All sources', exact: true }).click(),
+    ]);
+    assert.ok(allSourcesResponse.ok(), 'All sources preserves topic filters and the equalized request path');
+    assert.equal(await followingSources.getByRole('button', { name: 'All sources', exact: true }).getAttribute('aria-pressed'), 'true');
     assert.deepEqual(errors, []);
     console.log(`PASS: equalized Home/Following, single/multiple selections, pagination, refresh and reload at ${width}px`);
     await context.close();

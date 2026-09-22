@@ -35,7 +35,7 @@ try {
     await page.getByRole('button', { name: 'Music', exact: true }).waitFor();
     await page.locator('[data-post-id="music-0"]').waitFor();
     const firstVideo = page.locator('[data-post-id="music-0"] video');
-    const firstSlide = page.locator('[data-post-id="music-0"] .video-feed-slide');
+    const firstSlide = page.locator('[data-post-id="music-0"] [data-video-media]');
     await page.waitForFunction(() => {
       const video = document.querySelector('[data-post-id="music-0"] video');
       return video && !video.paused && video.currentTime > 0;

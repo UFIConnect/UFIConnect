@@ -52,7 +52,6 @@ const MOBILE_FEED_OPTIONS = new Set(['ufi', 'feed', 'following', 'groups', 'coun
 const NAV = [
   { to: HOME_FEED_PATH,  icon: 'home',           label: 'Home'         },
   { to: '/videos',        icon: 'videos',        label: 'Videos'       },
-  { to: '/search',        icon: 'search',        label: 'Search'       },
   { to: '/notifications', icon: 'notifications', label: 'Notifications', shortLabel: 'Alerts' },
   { to: '/opportunities', icon: 'opportunities', label: 'Jobs'          },
   { to: '/profile',       icon: 'profile',       label: 'Profile'      },
@@ -164,6 +163,14 @@ export default function Layout({ children, wide = false }) {
     setMobileMenuOpen(false);
     setMobileAccountOpen(false);
     setMobileHeaderPopup(null);
+  }, [location.pathname, location.search]);
+
+  useEffect(() => {
+    if (location.pathname !== '/search') return;
+    const params = new URLSearchParams(location.search);
+    setMobileSearchQuery(params.get('q') || '');
+    const target = params.get('tab');
+    if (['posts', 'people', 'groups', 'jobs'].includes(target)) setMobileSearchTarget(target);
   }, [location.pathname, location.search]);
 
   useEffect(() => {
@@ -435,8 +442,9 @@ export default function Layout({ children, wide = false }) {
         )}
       </aside>
 
+      <div className="shell-content">
       {profile && (
-        <header className="mobile-app-header">
+        <header className="mobile-app-header global-app-header">
           <div className="mobile-app-header-start">
             <button
               type="button"
@@ -455,6 +463,22 @@ export default function Layout({ children, wide = false }) {
             </button>
           </div>
 
+          <div className="global-search-center">
+            <form className="global-search-bar" role="search" aria-label="Search UFIconnect" onSubmit={submitMobileSearch}>
+              <ShellIcon name="search" size={17} />
+              <input type="search" value={mobileSearchQuery} aria-label="Search UFIconnect" placeholder="Search" enterKeyHint="search"
+                onFocus={closeMobileOverlays} onChange={event => setMobileSearchQuery(event.target.value)} />
+              <select aria-label="Search in" title={`Search in ${mobileSearchTarget}`} value={mobileSearchTarget} onChange={event => setMobileSearchTarget(event.target.value)}>
+                <option value="posts">Posts</option><option value="people">People</option><option value="groups">Groups</option><option value="jobs">Jobs</option>
+              </select>
+            </form>
+            <NavLink to="/messages" className={({ isActive }) => `global-messages-link${isActive ? ' active' : ''}`} aria-label="Messages" title="Messages" onClick={closeMobileOverlays}>
+              <ShellIcon name="messages" size={20} />
+            </NavLink>
+          </div>
+          <NavLink to="/notifications" className="global-desktop-alerts" aria-label="Alerts" title="Alerts">
+            <ShellIcon name="notifications" size={19} /><NavBadge count={notifBadge} />
+          </NavLink>
           <div className="mobile-command-menu">
             <button
               type="button"
@@ -469,17 +493,6 @@ export default function Layout({ children, wide = false }) {
                 <ShellIcon name="notifications" size={19} />
                 <NavBadge count={notifBadge} />
               </span>
-            </button>
-            <button
-              type="button"
-              className={`mobile-app-header-action${mobileHeaderPopup === 'search' ? ' active' : ''}`}
-              aria-label="Search"
-              aria-expanded={mobileHeaderPopup === 'search'}
-              aria-controls="mobile-search-popup"
-              title="Search"
-              onClick={() => toggleMobileHeaderPopup('search')}
-            >
-              <ShellIcon name="search" size={19} />
             </button>
             <button
               type="button"
@@ -498,51 +511,6 @@ export default function Layout({ children, wide = false }) {
             </button>
           </div>
         </header>
-      )}
-
-      {profile && mobileHeaderPopup === 'search' && (
-        <section id="mobile-search-popup" className="mobile-header-popup" role="dialog" aria-label="Search">
-          <div className="mobile-header-popup-heading">
-            <strong>Search</strong>
-            <button type="button" className="mobile-header-popup-close" aria-label="Close search" onClick={() => setMobileHeaderPopup(null)}><ShellIcon name="close" size={18} /></button>
-          </div>
-          <form className="mobile-quick-search" onSubmit={submitMobileSearch}>
-            <div className="mobile-quick-search-tabs" role="tablist" aria-label="Search in">
-              {[
-                { key: 'posts', label: 'Posts' },
-                { key: 'people', label: 'People' },
-                { key: 'groups', label: 'Groups' },
-                { key: 'jobs', label: 'Jobs' },
-              ].map(({ key, label }) => (
-                <button
-                  key={key}
-                  type="button"
-                  role="tab"
-                  aria-selected={mobileSearchTarget === key}
-                  className={`mobile-quick-search-tab${mobileSearchTarget === key ? ' active' : ''}`}
-                  onClick={() => setMobileSearchTarget(key)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <div className="mobile-quick-search-field">
-              <ShellIcon name="search" size={18} />
-              <input
-                type="search"
-                value={mobileSearchQuery}
-                aria-label={`Search ${mobileSearchTarget}`}
-                placeholder={`Search ${mobileSearchTarget}`}
-                autoFocus
-                onChange={event => setMobileSearchQuery(event.target.value)}
-              />
-              {mobileSearchQuery && (
-                <button type="button" aria-label="Clear search" onClick={() => setMobileSearchQuery('')}><ShellIcon name="close" size={16} /></button>
-              )}
-            </div>
-            <button type="submit" className="btn btn-primary mobile-quick-search-submit">Search</button>
-          </form>
-        </section>
       )}
 
       {profile && mobileHeaderPopup === 'notifications' && (
@@ -655,10 +623,6 @@ export default function Layout({ children, wide = false }) {
                     <ShellIcon name="groups" size={18} />
                     Discover groups
                   </NavLink>
-                  <NavLink to="/messages" className="mobile-command-menu-item" style={{ fontWeight: 400 }} onClick={() => setMobileMenuOpen(false)}>
-                    <ShellIcon name="messages" size={18} />
-                    Messages
-                  </NavLink>
                   <HomeFeedTools showSources={false} />
                   <NavLink to="/resume-builder" className="mobile-command-menu-item mobile-command-menu-item--command" onClick={() => setMobileMenuOpen(false)}>
                     <ShellIcon name="files" size={18} />
@@ -701,10 +665,6 @@ export default function Layout({ children, wide = false }) {
               <NavLink to="/groups" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
                 <ShellIcon name="search" size={18} />
                 Discover groups
-              </NavLink>
-              <NavLink to="/messages" className="mobile-command-menu-item" style={{ fontWeight: 400 }} onClick={() => setMobileMenuOpen(false)}>
-                <ShellIcon name="messages" size={18} />
-                Messages
               </NavLink>
               <HomeFeedTools
                 showSources
@@ -764,6 +724,7 @@ export default function Layout({ children, wide = false }) {
           </NavLink>
         ))}
       </nav>
+      </div>
     </div>
   );
 }

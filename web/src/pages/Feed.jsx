@@ -102,7 +102,7 @@ function FeedSourceOption({ tab, active, onSelect, compact = false, favorite = f
     <button
       type="button"
       aria-pressed={active}
-      aria-label={compact ? tab.label : undefined}
+      aria-label={compact || tab.key === 'all' ? tab.label : undefined}
       title={compact ? tab.label : undefined}
       className={`feed-source-option${active ? ' active' : ''}${compact ? ' compact' : ''}`}
       style={{ '--feed-source-color': color }}
@@ -1155,13 +1155,13 @@ function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, location, locati
   if (!active) return (
     <section className="travel-live-loop" aria-label="Live travel cameras">
       <div className="travel-live-loop-header"><div className="travel-live-loop-title">Live travel</div></div>
-      <TravelDestinationPicker location={location} disabled={disabled} onSelect={onLocationSelect} />
       <div className="travel-camera-empty">
       <span role="status">{status?.camerasChecking ? 'Checking live cameras...' : status?.cameraStatus === 'degraded' || status?.cameraStatus === 'error'
         ? 'Live camera checks are temporarily unavailable.' : 'No verified live cameras are available right now.'}</span>
       <button type="button" className="btn btn-ghost btn-sm" onClick={onRetry} disabled={disabled}
         aria-label="Refresh live cameras" title="Refresh live cameras"><RotateCw size={16} /></button>
       </div>
+      <TravelDestinationPicker location={location} disabled={disabled} onSelect={onLocationSelect} />
     </section>
   );
 
@@ -1191,7 +1191,6 @@ function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, location, locati
         <span className="travel-live-loop-status">{failedStreamId === active.id ? 'Playback unavailable' : <><span aria-hidden="true" />Live now</>}</span>
       </div>
 
-      <TravelDestinationPicker location={location} disabled={disabled} onSelect={onLocationSelect} />
       <div className="travel-live-loop-stage">
         {embedId ? (
           <YouTubeEmbedBlock
@@ -1240,23 +1239,11 @@ function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, location, locati
         )}
       </div>
 
-      {liveFeeds.length > 1 && (
-        <div className="travel-live-loop-choices" aria-label="Choose a live travel camera">
-          {liveFeeds.map((feed, index) => (
-            <button
-              key={feed.id}
-              type="button"
-              disabled={disabled}
-              onClick={() => selectCamera(index)}
-              className={`travel-live-loop-choice${active.id === feed.id ? ' active' : ''}`}
-              aria-pressed={active.id === feed.id}
-            >
-              <span>{feed.city || feed.country || 'Live camera'}</span>
-              <small>{feed.country || 'Worldwide'}</small>
-            </button>
-          ))}
-        </div>
-      )}
+      <TravelDestinationPicker location={location} disabled={disabled} feeds={liveFeeds} activeCameraId={active.id}
+        onSelect={async (destination, camera) => {
+          const saved = await onLocationSelect?.(destination);
+          if (saved !== false && camera) setActiveId(camera.id);
+        }} />
     </section>
   );
 }
@@ -3381,11 +3368,13 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     .filter(Boolean);
   const favoriteCompactSourceKeys = new Set(favoriteCompactSourceTabs.map(tab => tab.key));
   const compactSourceTabs = [
+    { key: 'all', label: 'All sources', icon: 'All' },
     ...favoriteCompactSourceTabs,
     ...currentSourceTabs.filter(tab => tab.key !== 'all' && !favoriteCompactSourceKeys.has(tab.key)),
   ];
   const favoriteSourceOrder = new Map(sourceFavoriteDraft.map((key, index) => [key, index]));
   const fullSourceTabs = [
+    { key: 'all', label: 'All sources', icon: 'All' },
     ...currentSourceTabs
       .filter(tab => tab.key !== 'all')
       .map((tab, index) => ({ tab, index }))
@@ -3406,6 +3395,17 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const isSourceActive = (key) => key === 'all'
     ? selectedSourceKeys.length === 0
     : selectedSourceKeys.includes(key);
+
+  const discoveryActions = isLocationFeed && <>
+    <Link to={`/command-center?tab=crosspost&category=${viewMode}`} state={{ discoveryPost: postContext }}
+      aria-label={`Post to ${DISCOVERY_CATEGORIES[viewMode].label}`}
+      className="feed-toolbar-control feed-topic-filter-trigger feed-category-post">
+      Post<span className="feed-category-post-context"> to {DISCOVERY_CATEGORIES[viewMode].label}</span>
+    </Link>
+    <TopicFilterControl topics={filters.topics} options={ALL_INTERESTS} onChange={applyTopicFilters}
+      open={topicFilterOpen} onToggle={(open) => { setFilterOpen(false); setTopicFilterOpen(open); }}
+      buttonRef={topicFilterBtnRef} panelRef={topicPanelRef} />
+  </>;
 
   return (
     <Layout wide={!forcedMode}>
@@ -3473,28 +3473,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
               />
             )}
           </div>}
-          {isLocationFeed && (
-            <>
-            <TopicFilterControl
-              topics={filters.topics}
-              options={ALL_INTERESTS}
-              onChange={applyTopicFilters}
-              open={topicFilterOpen}
-              onToggle={(open) => {
-                setFilterOpen(false);
-                setTopicFilterOpen(open);
-              }}
-              buttonRef={topicFilterBtnRef}
-              panelRef={topicPanelRef}
-            />
-            {['countries', 'restaurants'].includes(viewMode) && <Link
-              to={`/command-center?tab=crosspost&category=${viewMode}`}
-              state={{ discoveryPost: postContext }}
-              className="feed-toolbar-control feed-topic-filter-trigger feed-category-post">
-              Post to {DISCOVERY_CATEGORIES[viewMode].label}
-            </Link>}
-            </>
-          )}
         </div>
 
         {isLocationFeed && (
@@ -3547,7 +3525,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                 )}
               </div>
             </form>
-            {['restaurants', 'bars'].includes(viewMode) && <DiscoveryCategoryBar mode={viewMode} filters={filters} onChange={applyFilters} />}
+            {['restaurants', 'bars'].includes(viewMode) && <DiscoveryCategoryBar mode={viewMode} filters={filters} onChange={applyFilters} actions={discoveryActions} />}
             {locationMessage && <div className="feed-location-message" role="status">{locationMessage}</div>}
           </>
         )}
@@ -3570,7 +3548,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                   active={isSourceActive(tab.key)}
                   compact
                   favorite={currentSourceFavoriteKeys.includes(tab.key)}
-                  onSelect={() => toggleTab(tab.key)}
+                  onSelect={() => tab.key === 'all' ? clearSourceSelection() : toggleTab(tab.key)}
                 />
               ))}
             </div>
@@ -3611,7 +3589,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                         tab={tab}
                         active={isSourceActive(tab.key)}
                         onSelect={() => {
-                          toggleTab(tab.key);
+                          if (tab.key === 'all') clearSourceSelection(); else toggleTab(tab.key);
                           if (tab.key === 'all') setSourceMenuOpen(false);
                         }}
                       />
@@ -3670,7 +3648,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       )}
 
       {viewMode === 'groups' && (
-        <div className="feed-source-filter-row feed-group-filter-row">
+        <div className="feed-source-filter-row feed-group-filter-row feed-group-unified-bar">
+          <div className="feed-group-primary-actions">
           <div className="group-feed-scope-tabs" role="tablist" aria-label="Group feeds">
             <button type="button" role="tab" aria-selected={!publicGroupsFeed} className={!publicGroupsFeed ? 'active' : ''} onClick={() => selectGroupScope('joined')}>
               Your groups
@@ -3683,6 +3662,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             Create a group
           </Link>
           <Link to="/groups/post" className="btn btn-ghost btn-sm feed-toolbar-control group-post-button">Post to your group</Link>
+          </div>
           <TopicFilterControl
             topics={filters.topics}
             options={ALL_INTERESTS}
@@ -3710,7 +3690,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           status={travelStatus}
           onRetry={() => loadFeed(true, activeTabsRef.current, { replace: true, preserveScroll: true, bust: false })}
         />
-        <DiscoveryCategoryBar mode={viewMode} filters={filters} onChange={applyFilters} />
+        <DiscoveryCategoryBar mode={viewMode} filters={filters} onChange={applyFilters} actions={discoveryActions} />
       </>}
 
       {visibleFilterCount > 0 && (
@@ -4057,9 +4037,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           </div>
           <div className="home-feed-rail-bottom">
             <Link to="/groups" className="home-feed-rail-tab">Discover groups</Link>
-            <Link to="/messages" className="home-feed-rail-tab" style={{ fontWeight: 400 }}>
-              Messages
-            </Link>
             <HomeFeedTools
               showSources
               sourceIds={viewMode === 'following' ? FOLLOWING_FILTER_SOURCES : ALL_FILTER_SOURCES}

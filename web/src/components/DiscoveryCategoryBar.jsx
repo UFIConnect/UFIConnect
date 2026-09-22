@@ -1,12 +1,13 @@
 import { DISCOVERY_CATEGORIES, discoveryChoice } from './discoveryCategories';
 import './DiscoveryCategoryBar.css';
 
-export default function DiscoveryCategoryBar({ mode, filters, onChange }) {
+export default function DiscoveryCategoryBar({ mode, filters, onChange, actions }) {
   const category = DISCOVERY_CATEGORIES[mode];
   if (!category) return null;
   const selected = discoveryChoice(mode, filters)?.[0];
   return (
-    <div className="discovery-category-bar" role="group" aria-label={category.filterLabel}>
+    <div className="discovery-toolbar">
+      <div className="discovery-category-bar" role="group" aria-label={category.filterLabel}>
       <button type="button"
         className="feed-toolbar-control feed-topic-filter-trigger discovery-category-clear"
         aria-label={`Clear ${category.filterLabel.toLowerCase()}`}
@@ -22,6 +23,8 @@ export default function DiscoveryCategoryBar({ mode, filters, onChange }) {
           {label}
         </button>
       ))}
+      </div>
+      {actions && <div className="discovery-toolbar-actions">{actions}</div>}
     </div>
   );
 }
