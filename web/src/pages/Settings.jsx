@@ -12,6 +12,7 @@ import { ALL_ROLES, EXTRA_INTERESTS, roleCode } from '../data/roles';
 import { pushSupported, getPushSubscriptionState, enablePush, disablePush } from '../api/push';
 import BillingSettings from '../components/BillingSettings';
 import DataPrivacySettings from '../components/DataPrivacySettings';
+import ConfirmActionDialog from '../components/ConfirmActionDialog';
 
 // ── Shared preference constants ───────────────────────────────────────────────
 const GOALS = [
@@ -199,8 +200,6 @@ export default function Settings() {
   const meta = ROLE_META[role] || DEFAULT_META;
   const [activeTab, setActiveTab] = useState('account');
   const [deleteModal, setDeleteModal] = useState(false);
-  const [deleteConfirm, setDeleteConfirm] = useState('');
-  const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
@@ -825,32 +824,17 @@ export default function Settings() {
 
           {/* Delete confirmation modal */}
           {deleteModal && (
-            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-              <div className="card" style={{ width: '100%', maxWidth: 440, padding: 28, borderRadius: 20 }}>
-                <div style={{ fontSize: '.9rem', fontWeight: 800, marginBottom: 12, textAlign: 'center' }}>!</div>
-                <h3 style={{ margin: '0 0 8px', textAlign: 'center' }}>Delete your account?</h3>
-                <p style={{ fontSize: '.85rem', color: 'var(--muted)', textAlign: 'center', marginBottom: 20, lineHeight: 1.6 }}>
-                  This deletes your profile, posts, messages, and saved account content. Active memberships will be canceled immediately. Shared groups remain available to other members. Stripe retains payment records under its own retention policy. This action <strong>cannot be undone</strong>.
-                </p>
-                <div className="form-group" style={{ marginBottom: 16 }}>
-                  <label className="form-label">Type <strong>DELETE</strong> to confirm</label>
-                  <input className="form-input" value={deleteConfirm} onChange={e => setDeleteConfirm(e.target.value)} placeholder="Type DELETE here" autoFocus />
-                </div>
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => { setDeleteModal(false); setDeleteConfirm(''); }}>Cancel</button>
-                  <button className="btn btn-danger" style={{ flex: 1 }} disabled={deleteConfirm !== 'DELETE' || deleting}
-                    onClick={async () => {
-                      setDeleting(true);
-                      try { await client.delete('/profile'); logout(); } catch (error) {
-                        alert(error?.response?.data?.message || 'Account deletion did not finish. Please retry or contact support@uficonnect.org.');
-                        setDeleting(false);
-                      }
-                    }}>
-                    {deleting ? <span className="spinner" /> : 'Permanently delete'}
-                  </button>
-                </div>
-              </div>
-            </div>
+            <ConfirmActionDialog
+              title="Delete your account?"
+              errorMessage="Account deletion did not finish. Please retry or contact support@uficonnect.org."
+              onClose={() => setDeleteModal(false)}
+              onConfirm={async () => {
+                await client.delete('/profile');
+                await logout();
+              }}
+            >
+              This deletes your profile, posts, messages, and saved account content. Active memberships will be canceled immediately. Shared groups remain available to other members. Stripe retains payment records under its own retention policy. This action <strong>cannot be undone</strong>.
+            </ConfirmActionDialog>
           )}
         </form>
       )}

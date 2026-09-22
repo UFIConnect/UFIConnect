@@ -94,7 +94,7 @@ function CityTraffic({ homes, highway, speed, motionScope }) {
   return <g className="lc-city-traffic" aria-hidden="true">
     {homes.filter(home => motionScope === 'all' || home.homeState === 'working').map(home => {
       const duration = (64 + home.index % 7 * 4) / speed;
-      const timing = { '--trip-duration': `${duration}s`, '--trip-delay': `${-(home.index * 13.7 % 84) / speed}s` };
+      const timing = { '--trip-duration': `${duration}s`, '--trip-delay': `${-(home.index * 13.7 % 84) / speed}s`, '--commute-stop': `${home.commuteStop}%` };
       return <g key={home.id} data-resident={home.id}>
         <g className="lc-commuter" style={{ ...timing, offsetPath: `path('${home.commutePath}')` }}>
           <rect x="-9" y="-4" width="18" height="8" rx="3" fill={home.color || '#7dd3fc'} /><rect x="-3" y="-3" width="7" height="6" rx="1" fill="#173049" /><path d="M8-3v6" stroke="#fff6c1" strokeWidth="2" />
@@ -157,7 +157,7 @@ function CityMap({ model, selected, selectedAgent, onSelectAgent, onEnter, pause
           <g className="lc-city-blocks" aria-hidden="true">{city.blocks.map(block => <g key={block.id}>
             <rect x={block.x - 160} y={block.y - 150} width="320" height="300" rx="18" fill="#1a3031" stroke="#35504c" strokeWidth="2" />
             <rect x={block.x - 108} y={block.y - 120} width="216" height="237" rx="12" fill="#142a31" />
-            {[-1, 1].flatMap(side => [-115, -30, 105].map((dy, i) => <g key={`${side}-${dy}`} transform={`translate(${block.x + side * 86} ${block.y + dy})`}>
+            {[-1, 1].flatMap(side => [-115, -30].map((dy, i) => <g key={`${side}-${dy}`} transform={`translate(${block.x + side * 86} ${block.y + dy})`}>
               <ellipse cy="6" rx="12" ry="6" fill="#091c20" /><path d="M0 8V-8" stroke="#627760" strokeWidth="3" /><circle cy="-12" r={i === 1 ? 11 : 14} fill={i % 2 ? '#355c48' : '#2b5146'} /><circle cx="-4" cy="-17" r="7" fill="#467657" />
             </g>))}
           </g>)}</g>
@@ -175,6 +175,14 @@ function CityMap({ model, selected, selectedAgent, onSelectAgent, onEnter, pause
             <text x={block.x} y={block.bottom - 22} textAnchor="middle" className="lc-street-label">{['COLLECTION AVENUE', 'CIVIC BOULEVARD', 'DELIVERY WAY'][block.row % 3]}</text>
           </g>)}</g>
           <g className="lc-city-driveways" aria-hidden="true">{city.homes.map(home => <path key={home.id} d={home.driveway} />)}{city.districts.map(district => <path key={district.id} d={`M${district.x} ${district.y + 38}V${district.streetY}`} />)}</g>
+          <g className="lc-arrival-courts" aria-label="Workplace garages with separate arrival and departure lanes">{city.districts.map(district => <g key={district.id} data-garage={district.id}>
+            <title>{district.label}: eight arrival bays and indoor parking for {district.residents} residents.</title>
+            <path d={district.arrivalPath} fill="none" stroke="#52666d" strokeWidth="30" strokeLinejoin="round" />
+            <path d={district.arrivalPath} fill="none" stroke="#23343e" strokeWidth="24" strokeLinejoin="round" />
+            <path d={district.arrivalPath} fill="none" stroke="#a6bba8" strokeWidth="1" strokeDasharray="6 7" />
+            <rect x={district.x - 82} y={district.y + 103} width="164" height="21" rx="3" fill="#425c68" stroke="#849eaa" />
+            {district.bays.map(([x, y], index) => <g key={index}><rect x={x - 6} y={y - 4} width="12" height="9" fill="#122a34" /><path d={`M${x - 8} ${y + 6}v10m16-10v10`} stroke="#8fa89f" strokeWidth="1" /></g>)}
+          </g>)}</g>
           {model.edges.map(edge => <g key={`${edge.from}-${edge.to}`} className="lc-road" data-from={edge.from} data-to={edge.to} data-active={String(edge.active)} aria-hidden="true">
             <path className="lc-road-flow" d={city.servicePath(edge.from, edge.to)} fill="none" stroke={model.byId[edge.from].color} strokeWidth="3" strokeLinecap="round" />
           </g>)}
@@ -194,7 +202,7 @@ function CityMap({ model, selected, selectedAgent, onSelectAgent, onEnter, pause
       </svg>}
       <div className="lc-map-live"><span className={motion === 'active' ? 'lc-dot-active' : ''} />{motion === 'active' ? `${motionScope === 'all' ? 'Whole city' : 'Observed activity'} / ${speed}x` : motion === 'paused' ? 'Motion paused' : motion === 'reduced' ? 'Reduced motion' : 'No recent work to animate'}</div>
     </div>
-    <div className="lc-map-legend"><p><Home size={14} />Green: working · Gray: inactive · Amber: attention · Dim: unobserved.</p><p>Homes, workplaces and cafes share the street grid. Commuting and lunch are city animations; status labels use live telemetry.</p></div>
+    <div className="lc-map-legend"><p><Home size={14} />Green: working · Gray: inactive · Amber: attention · Dim: unobserved.</p><p>Separate arrival lanes and indoor parking keep building entrances clear. Commutes are illustrative; status labels use live telemetry.</p></div>
     <div className="lc-district-nav" aria-label="Enter city buildings">{model.districts.map(district => <button key={district.id} type="button" aria-pressed={selected === district.id} onClick={() => onEnter(district.id)} style={{ '--district-color': district.color }}><span />{district.label}</button>)}</div>
   </section>;
 }

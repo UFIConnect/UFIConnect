@@ -28,7 +28,11 @@ function status(role, missing = false) {
   const now = new Date().toISOString();
   if (missing) return {server:{serviceRole:role,uptime:60000,db:'connected'}};
   return {
-    server:{serviceRole:role,uptime:60000,db:'connected',dbBackup:true},
+    server:{serviceRole:role,uptime:60000,db:'connected',dbBackup:true,
+      dbBackupStatus:{enabled:true,configured:true,connected:true,lastSyncAt:now,lastAttemptAt:now,lastError:null,rowCount:4000},
+      managedRecovery:{configured:true,status:'available',checkedAt:now,
+        primary:{state:'available',recovery:{status:'available',startsAt:now},exportsChecked:true,latestExport:{createdAt:now,available:true}},
+        feedReplica:{configured:true,state:'available'},issues:[]}},
     feed:{postCount:role==='api'?4000:812,sseClients:3,refreshedAt:now},
     sources:{total:2,healthy:2,paused:0,starting:0,workers:[{id:'reddit',name:'Reddit Agent',status:'healthy',lastSuccess:now}]},
     agents:{active:2,logSize:2},
@@ -62,7 +66,7 @@ function installFixture(context) {
     if (url.pathname==='/office/agents') return route.fulfill({headers,json:{agents:role==='api'
       ? {stability:agent('stability','Stability Guard',role),web_optimizer:agent('web_optimizer','Website Optimizer',role), ...(state.fullRoster ? Object.fromEntries(Array.from({length:68},(_,index)=>[`home_${index}`,agent(`home_${index}`,`Resident ${index + 1}`,role,{health:{status:index%3?'healthy':'paused'}})])) : {})}
       : {stability:agent('stability','Stability Guard',role),reddit:agent('reddit','Reddit Agent',role)}}});
-    if (url.pathname.endsWith('/stream')) return route.fulfill({headers,contentType:'text/event-stream',body:`data: ${JSON.stringify({backlog:[{agentId:'stability',ts:new Date().toISOString(),msg:`${role} measured activity`}]})}\n\n`});
+    if (url.pathname.endsWith('/stream')) return route.fulfill({headers,contentType:'text/event-stream',body:`data: ${JSON.stringify({backlog:[{id:`${role}-fixture-event`,agentId:'stability',ts:new Date().toISOString(),msg:`${role} measured activity`}]})}\n\n`});
     const chat = url.pathname.match(/^\/office\/agents\/([a-z0-9_-]+)\/chat$/);
     if (chat && request.method()==='POST') {
       const body=request.postDataJSON();
@@ -205,12 +209,17 @@ async function auditWidth(browser, width) {
         await city.locator(`[data-stage="${building}"]`).click();
         const interior=city.locator('.lc-interior');
         await interior.waitFor();
-        check(await interior.locator('[data-level]').count()===4,`${building} building exposes four detailed levels`);
-        check(await interior.getByText('What enters',{exact:true}).count()===4,`${building} explains every level input`);
-        check(await interior.getByText('How it works',{exact:true}).count()===4,`${building} explains every level process`);
-        check(await interior.getByText('What leaves',{exact:true}).count()===4,`${building} explains every level output`);
+        const levelCount = building === 'backup' ? 5 : 4;
+        check(await interior.locator('[data-level]').count()===levelCount,`${building} building exposes ${levelCount} detailed levels`);
+        check(await interior.getByText('What enters',{exact:true}).count()===levelCount,`${building} explains every level input`);
+        check(await interior.getByText('How it works',{exact:true}).count()===levelCount,`${building} explains every level process`);
+        check(await interior.getByText('What leaves',{exact:true}).count()===levelCount,`${building} explains every level output`);
+        if (building === 'backup') {
+          const primary = interior.locator('dt').filter({ hasText: /^Primary recovery$/ }).first();
+          check((await primary.locator('..').locator('dd').textContent()).trim() === 'available', 'Data recovery reports the managed primary recovery separately from its feed replica');
+        }
         const levelDeck=interior.locator('.lc-level-stack');
-        await interior.locator('.lc-elevator button').nth(3).click();
+        await interior.locator('.lc-elevator button').last().click();
         await eventually(async()=>await levelDeck.evaluate(element=>element.scrollTop>0),`${building} elevator scrolls through its levels`);
         await interior.getByRole('button',{name:/^Exit /}).click();
       }
@@ -287,6 +296,13 @@ async function auditWidth(browser, width) {
     await page.getByRole('button',{name:'Open Post Pipeline',exact:true}).first().click();
     await page.getByRole('heading',{name:'Post Pipeline',exact:true}).waitFor();
     check(new URL(page.url()).hash==='#post-pipeline','City links open the real post pipeline view');
+    await page.getByRole('button',{name:'Overview',exact:true}).click();
+    const recovery = page.getByTestId('office-recovery');
+    await recovery.locator('[data-recovery-state="available"]').waitFor();
+    check(await recovery.locator('[data-feed-recovery-state="ready"]').count() === 1, 'Overview separates available primary recovery from the synced optional feed snapshot');
+    await recovery.scrollIntoViewIfNeeded();
+    check(await recovery.evaluate(element => { const rect = element.getBoundingClientRect(); return rect.left >= 0 && rect.right <= innerWidth + 1 && element.scrollWidth <= element.clientWidth + 1; }), `Recovery controls fit ${width}px`);
+    await page.screenshot({path:path.join(root,`.cache/audit-ui/office-recovery-${width}.png`),fullPage:false});
     check(errors.length===0,`No Office runtime errors: ${errors.join('; ')}`);
     console.log(`PASS: Live City service routing, chat, motion, keyboard and layout at ${width}px`);
   } finally {
@@ -311,6 +327,7 @@ try {
     await scene.waitFor();
     await eventually(async()=>await scene.getAttribute('data-homes')==='71','All 71 registered homes render in 3D');
     await eventually(async()=>await scene.getAttribute('data-visible-homes')==='71'&&await scene.getAttribute('data-framed-homes')==='71','Every home fits inside the default 3D camera on desktop and mobile');
+    check(Number(await scene.getAttribute('data-parked-cars')) > 0, 'Workplace cars enter indoor parking instead of crowding building entrances');
     const firstTime=Number(await scene.getAttribute('data-motion-time'));
     await eventually(async()=>Number(await scene.getAttribute('data-motion-time'))>firstTime,'Cars and lunch trips advance in 3D');
     await page.getByRole('button',{name:'Pause motion',exact:true}).click();
@@ -334,6 +351,19 @@ try {
     check(await page.locator('.lc-map-home').evaluateAll(elements=>new Set(elements.map(element=>element.dataset.block)).size===12),'Homes are blended through all twelve city blocks');
     check(await page.locator('.lc-commuter').count()===71,'Every home has a commuting car');
     check(await page.locator('.lc-lunch-walker').count()===71,'Every agent has a lunch route');
+    check(await page.locator('.lc-arrival-courts [data-garage="sources"]').count() === 1 && await page.locator('.lc-arrival-courts [data-garage="runtime"]').count() === 1, 'Both busy workplaces have dedicated arrival courts');
+    const parkedOpacity = await page.locator('.lc-commuter').first().evaluate(element => {
+      const animation = element.getAnimations()[0], timing = animation.effect.getTiming();
+      animation.pause(); animation.currentTime = timing.delay + Number(timing.duration) * 1.5;
+      return getComputedStyle(element).opacity;
+    });
+    check(Number(parkedOpacity) === 0, 'Street-map cars disappear inside the garage during work hours');
+    const returnOpacity = await page.locator('.lc-commuter').first().evaluate(element => {
+      const animation = element.getAnimations()[0], timing = animation.effect.getTiming();
+      animation.currentTime = timing.delay + Number(timing.duration) * 1.75;
+      const opacity = getComputedStyle(element).opacity; animation.play(); return opacity;
+    });
+    check(Number(returnOpacity) === 1, 'Street-map cars return for the trip home');
     const home=page.locator('.lc-map-home[data-home-id="home_0"]');
     await home.focus(); await page.keyboard.press('Enter');
     await page.getByRole('heading',{name:'Resident 1',exact:true}).waitFor();

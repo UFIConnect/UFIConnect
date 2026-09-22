@@ -1,5 +1,13 @@
 # Database recovery and feed-cache troubleshooting
 
+## Office managed recovery evidence
+
+Office **Overview → Data recovery** and the Live City **Data recovery** building distinguish the primary database's managed recovery window from the optional recent-feed snapshot. Configure `RENDER_API_KEY` and `RENDER_DATABASE_ID` on the API service; optionally set `RENDER_BACKUP_DATABASE_ID` to explain the feed database's provider state. These IDs are provider resource IDs, not connection URLs.
+
+`GET /office/recovery` requires the Office token in its request header and returns sanitized, read-only provider evidence. The API caches and deduplicates Render reads for 60 seconds with a five-second timeout. The regular `/office/status` endpoint starts refreshes in the background, so provider delays do not block the rest of Office. Failed or stale checks remain unverified. Export download URLs, connection strings, and raw provider errors are never returned.
+
+An available primary recovery window can coexist with a suspended or disconnected feed cache. A completed feed sync does not establish recoverability of accounts and messages; an available managed recovery window does not establish a completed restore drill. This panel performs no restore, database resume, or capacity change. [Render recovery status API](https://api-docs.render.com/reference/retrieve-postgres-recovery-info)
+
 ## What the second database contains
 
 `DATABASE_URL` is authoritative for accounts, passwords, sessions, messages, settings, and feed data. API and pipeline must point to the intended primary database.
@@ -53,7 +61,7 @@ If no backup log exists, compare the active commit with the release containing t
 - `GET /readyz`: production security storage must finish initialization before readiness succeeds.
 - `GET /health`: check the API's `db` and `dbBackup` flags. These do not compare database contents.
 - `GET /health/details`: authorized operators use the existing `OFFICE_TOKEN` value in the **`X-Office-Token` request header**. Never put it in a URL. Missing server configuration returns 503; an invalid token returns 401. Inspect `dbBackupStatus` privately.
-- After deploying the updated API and Office dashboard, open **Office → Command Center → Feed recovery database** for the connection state, sanitized error, last successful update, and row count. This panel uses the existing authenticated Office API.
+- Open **Office → Overview → Data recovery → Optional recent-feed snapshot** for its connection state, last successful update, and row count. Primary database recovery is shown separately above it. Both use the existing authenticated Office API.
 
 | Diagnostic | Interpretation / next check |
 | --- | --- |

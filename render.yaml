@@ -159,6 +159,11 @@ services:
         sync: false
       - key: RENDER_API_KEY
         sync: false
+      # Office recovery evidence: primary database and optional feed-copy IDs.
+      - key: RENDER_DATABASE_ID
+        sync: false
+      - key: RENDER_BACKUP_DATABASE_ID
+        sync: false
       - key: RENDER_SERVICE_API_ID
         sync: false
       - key: RENDER_SERVICE_WEB_ID

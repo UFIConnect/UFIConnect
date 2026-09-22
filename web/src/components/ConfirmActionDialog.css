@@ -1,0 +1,26 @@
+.confirm-action-dialog {
+  box-sizing: border-box;
+  width: min(440px, calc(100% - 32px));
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--card, #fff);
+  color: var(--text);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .3);
+}
+
+.confirm-action-dialog::backdrop { background: rgba(0, 0, 0, .6); }
+.confirm-action-dialog h2 { margin: 0 0 12px; font-size: 1.2rem; overflow-wrap: anywhere; }
+.confirm-action-description { margin-bottom: 20px; font-size: .9rem; line-height: 1.6; color: var(--muted); }
+.confirm-action-buttons { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.confirm-action-buttons .btn { flex: 1 1 120px; min-height: 44px; white-space: normal; }
+.confirm-action-dialog .btn:focus-visible { outline: 3px solid var(--primary); outline-offset: 3px; }
+.confirm-action-progress { margin: 12px 0 0; font-size: .8rem; color: var(--muted); }
+
+@media (max-width: 360px) {
+  .confirm-action-dialog { padding: 20px; }
+}
