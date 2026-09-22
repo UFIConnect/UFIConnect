@@ -73,11 +73,19 @@ try {
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/music-${width}.png`) });
     await page.getByRole('button', { name: 'Filter videos', exact: true }).click();
     const selectAndRead = async (name) => {
-      const [response] = await Promise.all([
-        page.waitForResponse(response => response.url().includes('/office/feed/music?')),
+      const [request] = await Promise.all([
+        page.waitForRequest(request => {
+          if (!request.url().includes('/office/feed/music?')) return false;
+          const params = new URL(request.url()).searchParams;
+          if (name === 'Clear platforms') return !params.has('source') && !params.has('sources');
+          if (name === 'Clear genres') return !params.has('genre');
+          if (name === 'Clear video topics') return !params.has('topics');
+          if (name === 'YouTube') return params.get('source') === 'youtube';
+          return params.get('topics') === 'Open Source';
+        }),
         page.getByRole('button', { name, exact: true }).click(),
       ]);
-      return new URL(response.url()).searchParams;
+      return new URL(request.url()).searchParams;
     };
     await selectAndRead('YouTube');
     await selectAndRead('Open Source');
