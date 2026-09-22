@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect, useRef } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
 import TopicFilterControl from '../components/TopicFilterControl';
@@ -340,6 +340,7 @@ export function GroupsContent({ embedded = false, scope = 'all' }) {
           >
             Create a group
           </button>
+          <Link className="btn btn-ghost btn-sm feed-toolbar-control" to="/groups/post">Post to your group</Link>
           <TopicFilterControl
             topics={selectedTopics}
             options={groupTopics}

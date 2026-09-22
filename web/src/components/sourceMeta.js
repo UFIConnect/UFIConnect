@@ -55,7 +55,7 @@ export const SOURCE_META = {
   travelnews:    { label: 'Travel News',     color: '#1A73E8', icon: 'GN' },
   travelevents:  { label: 'Local Events',    color: '#B45309', icon: 'EV' },
   localpulse:    { label: 'Local Pulse',     color: '#0F766E', icon: 'LP' },
-  bars:          { label: 'Bars', color: '#7C3AED', icon: 'BAR' },
+  bars:          { label: 'Bars and clubs', color: '#7C3AED', icon: 'BAR' },
   restaurants:   { label: 'Restaurants',     color: '#B45309', icon: 'RS' },
   uficonnect:    { label: 'UFIconnect',      color: 'var(--primary)', icon: 'UFI' },
 };

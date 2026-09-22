@@ -49,7 +49,9 @@ jobs:
       - run: node scripts/audit-homepage-preparation.mjs
       - run: node scripts/audit-jobs-feed.mjs
       - run: node scripts/audit-music-feed.mjs
+      - run: node scripts/audit-video-layout.mjs
       - run: node scripts/audit-travel.mjs
+      - run: node scripts/audit-discovery-categories.mjs
       - run: node scripts/audit-search-notifications.mjs
       - run: node scripts/audit-office-pipeline.mjs
       - run: node scripts/audit-office-city.mjs

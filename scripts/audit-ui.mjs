@@ -221,7 +221,7 @@ try {
     await page.mouse.move(0, 0);
     await page.waitForTimeout(400);
     assert.ok(await page.evaluate(() => window.__auditYouTubePlayers.some(player => player.getPlayerState() === 1)), 'YouTube in Videos keeps playing after the pointer leaves');
-    assert.equal(await page.locator('.video-feed-youtube-player iframe').evaluate(el => getComputedStyle(el).pointerEvents), 'none');
+    assert.equal(await page.locator('.video-feed-youtube-player iframe').evaluate(el => getComputedStyle(el).pointerEvents), 'auto', 'Official player controls remain usable inside the media area');
     const firstSlide = page.locator('[data-post-id="audit-video-0"]');
     assert.ok(await firstSlide.getByRole('group', { name: 'Video engagement' }).isVisible());
     const original = firstSlide.getByRole('link', { name: /View original post/ });
@@ -233,17 +233,7 @@ try {
     assert.ok(clickable, `Original link is covered at ${viewport.width}`);
     await firstSlide.getByRole('button', { name: /Comments/ }).click();
     await page.getByRole('button', { name: 'Close comments' }).click();
-    await page.mouse.move(frame.x + frame.width / 2, frame.y + frame.height / 3);
-    if (viewport.width < 600) {
-      const cdp = await context.newCDPSession(page);
-      const x = frame.x + frame.width / 2;
-      for (let i = 0; i <= 8; i++) {
-        await cdp.send('Input.dispatchTouchEvent', { type: i ? 'touchMove' : 'touchStart', touchPoints: [{ x, y: frame.y + frame.height * (0.6 - i * 0.045) }] });
-        await page.waitForTimeout(25);
-      }
-      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-      await cdp.detach();
-    } else await page.mouse.wheel(0, frame.height * 0.8);
+    await firstSlide.getByRole('button', { name: 'Next video', exact: true }).click();
     try {
       await page.waitForFunction(() => document.querySelector('.video-feed-scroll').scrollTop > 100);
     } catch (error) {

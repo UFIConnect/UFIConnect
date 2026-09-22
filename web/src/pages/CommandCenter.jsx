@@ -15,6 +15,8 @@ import GeneratedContentHistory from '../components/GeneratedContentHistory';
 import VideoDurationControl, { VIDEO_DURATION_LIMIT } from '../components/VideoDurationControl';
 import { DirectoryControls, AccountSiteLink } from '../components/DirectoryControls';
 import { ACCOUNT_STATUSES, filterAccounts } from '../components/sourceDirectory';
+import { DISCOVERY_CATEGORIES, discoveryPostContext } from '../components/discoveryCategories';
+import '../components/DiscoveryCategoryBar.css';
 
 // Platforms with a real, working "my own posts" fetcher server-side (see
 // OWN_CONTENT_FETCHERS in backend/index.js) — the rest of
@@ -1403,6 +1405,13 @@ const PLATFORM_RESULT_META = {
 // keeps the composer from offering a connection that cannot actually publish.
 function CrossPostSection() {
   const { showToast } = useToast();
+  const location = useLocation();
+  const category = new URLSearchParams(location.search).get('category');
+  const categoryLabel = DISCOVERY_CATEGORIES[category]?.label;
+  const incomingContext = location.state?.discoveryPost;
+  const categoryContext = categoryLabel && incomingContext?.mode === category
+    ? discoveryPostContext(category, (Array.isArray(incomingContext.sources) ? incomingContext.sources : []).map(source => ({ source: source.platform, sourceLabel: source.label, sourceUrl: source.url })))
+    : null;
   const [connected, setConnected] = useState(null);
   const [platforms, setPlatforms] = useState({});
   const [content, setContent] = useState('');
@@ -1522,6 +1531,8 @@ function CrossPostSection() {
 
   if (connected === null) return <div className="empty-state"><span className="spinner spinner-primary" /></div>;
   const publishingPlatforms = CROSS_POST_PLATFORM_IDS.filter(platform => platforms[platform]);
+  const shownPlatforms = new Set(categoryContext?.sources.map(source => source.platform) || []);
+  const orderedPublishingPlatforms = [...publishingPlatforms].sort((left, right) => Number(shownPlatforms.has(right)) - Number(shownPlatforms.has(left)));
   const connectedPlatforms = publishingPlatforms.filter(platform => connected[platform] && platforms[platform]?.crossPost?.supported);
   const commandCenterPublishingPath = publishingPlatforms.some(platform => (
     platforms[platform]?.commandCenterOnly && platforms[platform]?.crossPost?.supported
@@ -1586,14 +1597,22 @@ function CrossPostSection() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       {loadError && <SectionError message={loadError} onRetry={loadCrossPostData} />}
       <div className="card">
-        <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>Post to multiple platforms</h3>
+        <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>{categoryLabel ? `Post to ${categoryLabel}` : 'Post to multiple platforms'}</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0 }}>
           Send one post through the official publishing route for each selected account. TikTok uses its inbox handoff, then this history confirms when it is complete.
         </p>
+        {categoryLabel && <div className="discovery-post-context" aria-label={`${categoryLabel} posting destinations`}>
+          <strong>Sites in your {categoryLabel.toLowerCase()} feed</strong>
+          <p>Choose a connected publishing account below. Sites without a publishing connection open on their own website.</p>
+          <div className="discovery-post-context-links">
+            {categoryContext?.sources.map(source => <a key={`${source.platform}:${source.url}`} href={source.url} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">Open {source.label}</a>)}
+            <Link to={`/?feed=${category}`} className="btn btn-ghost btn-sm">Back to {categoryLabel}</Link>
+          </div>
+        </div>}
         <div style={{ marginTop: 16, padding: 12, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
           <div style={{ fontSize: '.75rem', fontWeight: 800, color: 'var(--muted)', marginBottom: 8 }}>Publishing destinations</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {publishingPlatforms.map(publishingDestination)}
+            {orderedPublishingPlatforms.map(publishingDestination)}
           </div>
         </div>
         {!connectedPlatforms.length ? (
@@ -1604,7 +1623,7 @@ function CrossPostSection() {
           <form onSubmit={handlePost} style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 16 }}>
             <textarea
               value={content} onChange={e => setContent(e.target.value)} rows={4}
-              placeholder="What do you want to share?"
+              placeholder={categoryLabel ? `What would you like to share about ${categoryLabel.toLowerCase()}?` : 'What do you want to share?'}
               style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border)', fontSize: '.85rem', fontFamily: 'inherit', resize: 'vertical' }}
             />
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>

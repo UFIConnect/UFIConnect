@@ -83,6 +83,20 @@ try {
       assert.equal(await visiblePost('home').count(), 0);
       checks++;
 
+      const groupToolbar = page.locator('.feed-group-filter-row');
+      const createGroup = groupToolbar.getByRole('link', { name: 'Create a group', exact: true });
+      const postToGroup = groupToolbar.getByRole('link', { name: 'Post to your group', exact: true });
+      assert.equal(await postToGroup.getAttribute('href'), '/groups/post');
+      const createBounds = await createGroup.boundingBox();
+      const postBounds = await postToGroup.boundingBox();
+      assert.ok(createBounds.x >= 0 && postBounds.x + postBounds.width <= viewport.width, 'Both group actions must fit the viewport');
+      assert.ok(Math.abs(createBounds.y - postBounds.y) < 2 && postBounds.x > createBounds.x, 'Post to your group belongs beside Create a group');
+      for (const tab of ['Your groups', 'Public posts']) {
+        const bounds = await groupTab(tab).boundingBox();
+        assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= viewport.width, `${tab} must remain fully visible`);
+      }
+      checks += 5;
+
       heldScope = 'public';
       await groupTab('Public posts').click();
       await waitForHeldRequest();

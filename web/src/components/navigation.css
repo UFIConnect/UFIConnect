@@ -1,0 +1,67 @@
+/* Compact, raised marks keep the source artwork readable without crowding the feed. */
+.shell .feed-source-picker { grid-template-columns: minmax(0, 1fr) 34px; align-items: center; }
+.shell .feed-source-tabs--compact { grid-auto-columns: 34px; gap: 8px; padding-block: 4px; }
+.shell .feed-source-tabs--compact .feed-source-option.compact,
+.shell .feed-source-menu-button {
+  width: 34px; height: 34px; min-width: 34px; min-height: 34px;
+  padding: 0; border-radius: 50%; color: var(--text);
+  border: 1px solid #d5deeb;
+  background: linear-gradient(145deg, #fff 12%, #f5f8fc 58%, #e8eef7);
+  box-shadow: inset 0 1px 1px #fff, inset 0 -2px 2px #102a6b0d, 0 2px 3px #102a6b14;
+}
+.shell .feed-source-tabs--compact .feed-source-option.compact.active {
+  border-color: var(--feed-source-color, var(--primary));
+  box-shadow: inset 0 0 0 1px var(--feed-source-color, var(--primary)), inset 0 1px 2px #fff, 0 2px 4px #102a6b24;
+}
+.shell .feed-source-option.compact > span:first-child { filter: drop-shadow(0 1px 0 #fff) drop-shadow(0 1px 1px #102a6b18); }
+.shell .feed-source-option.compact svg,
+.shell .feed-source-option.compact img,
+.shell .feed-source-menu-button svg { width: 18px; height: 18px; }
+.shell .feed-source-compact-favorite { top: 1px; right: 2px; font-size: .48rem; }
+.shell .feed-source-option:focus-visible,
+.shell .feed-source-menu-button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+/* Restore the original navy UFI mark and use it to open the left drawer. */
+:root .sidebar-logo-icon,
+:root .mobile-app-header-mark,
+:root .guest-brand-mark,
+:root .auth-logo-icon { background: #102a6b; color: #fff; border-color: #102a6b; }
+.shell .sidebar-logo-icon { width: 30px; height: 30px; flex: 0 0 30px; box-shadow: 0 2px 4px #102a6b20; }
+.shell .mobile-app-header-ufi { min-width: 44px; min-height: 44px; background: transparent; border-color: transparent; padding: 6px; }
+.shell .mobile-app-header-ufi img { display: block; border-radius: 7px; box-shadow: 0 2px 4px #102a6b24; }
+.shell .mobile-app-header-ufi:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+
+.shell .nav-link .nav-icon {
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 24px;
+  width: 24px; height: 24px; border-radius: 7px;
+  background: linear-gradient(145deg, #fff, #eef2f8);
+  box-shadow: inset 0 1px 0 #fff, 0 1px 2px #102a6b18;
+}
+.shell .nav-link.active .nav-icon { background: linear-gradient(145deg, #fff, #e2eaf9); }
+.shell .mobile-command-menu-item > svg,
+.shell .mobile-app-header-action > svg { width: 18px; height: 18px; filter: drop-shadow(0 1px 0 #fff) drop-shadow(0 1px 1px #102a6b18); }
+
+.saved-navigation-toggle { width: 100%; border: 0; background: transparent; cursor: pointer; font-family: inherit; text-align: left; }
+.saved-navigation-chevron { margin-left: auto; flex: 0 0 14px; transition: transform .15s; }
+.saved-navigation-toggle[aria-expanded="true"] .saved-navigation-chevron { transform: rotate(180deg); }
+.saved-navigation-links { margin-left: 24px; padding-left: 6px; border-left: 1px solid var(--border); }
+.saved-navigation-links[hidden] { display: none; }
+.saved-navigation-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.saved-navigation--mobile { border-block: 1px solid var(--border); margin-block: 8px; padding-block: 4px; }
+.saved-navigation--mobile .nav-icon { display: inline-flex; align-items: center; justify-content: center; width: 20px; flex: 0 0 20px; }
+.saved-navigation--mobile .saved-navigation-links { margin-left: 27px; }
+.saved-content-toggle { margin: 0 0 16px; }
+.saved-content-hidden { color: var(--muted); padding-block: 12px; }
+.search-group-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+@media (min-width: 769px) and (max-width: 1100px) {
+  .saved-navigation-links { margin-left: 0; padding-left: 0; border-left: 0; }
+  .saved-navigation-toggle .saved-navigation-chevron { position: absolute; right: 1px; width: 10px; }
+}
+@media (max-width: 768px) {
+  .shell .feed-group-filter-row { flex-wrap: wrap; }
+  .shell .feed-group-filter-row .group-feed-scope-tabs { flex: 1 0 100%; width: 100%; margin-right: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .saved-navigation-chevron { transition: none; }
+}

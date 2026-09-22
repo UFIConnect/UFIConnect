@@ -61,12 +61,13 @@ try {
     const toolbarSizes = await page.locator('.feed-unified-control-bar').evaluate(bar =>
       ['.feed-source-option.compact', '.feed-source-menu-button', '.home-shop-button', '.feed-topic-filter-trigger'].map(selector => {
         const rect = bar.querySelector(selector).getBoundingClientRect();
-        return { height: rect.height, top: rect.top };
+        return { height: rect.height, center: rect.top + rect.height / 2 };
       }));
-    assert.ok(toolbarSizes.every(size => size.height === 40 && Math.abs(size.top - toolbarSizes[0].top) < 1),
-      'Source icons, menu, Shop and Topics have the same size and vertical alignment');
+    assert.ok(toolbarSizes.slice(0, 2).every(size => size.height === 34), 'Source icons and menu use compact 34px circles');
+    assert.ok(toolbarSizes.every(size => Math.abs(size.center - toolbarSizes[0].center) < 1),
+      'Compact source icons stay centered with Shop and Topics');
     await auditNavigate(page, server.resolvedUrls.local[0] + 'saved/posts');
-    await page.getByRole('heading', { name: 'Saved posts', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Saved', exact: true }).waitFor();
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=feed'); await sources.waitFor();
     assert.equal(await sources.getByRole('button', { name: 'Reddit', exact: true }).getAttribute('aria-pressed'), 'true');
     assert.equal(await sources.getByRole('button', { name: 'Hacker News', exact: true }).getAttribute('aria-pressed'), 'true');
@@ -92,9 +93,9 @@ try {
     await page.getByText('Posted to Builders club.', { exact: false }).waitFor();
     assert.equal(published[0].endpoint, '/groups/group-b/posts');
     await auditNavigate(page, server.resolvedUrls.local[0] + 'saved/posts');
-    await page.getByRole('heading', { name: 'Saved posts', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Saved', exact: true }).waitFor();
     await page.getByText('Story saved-story', { exact: true }).waitFor();
-    await page.getByRole('navigation', { name: 'Saved pages' }).getByRole('link', { name: 'Saved jobs', exact: true }).click();
+    await page.getByRole('navigation', { name: 'Saved pages' }).getByRole('link', { name: 'Jobs', exact: true }).click();
     await page.getByText('Community engineer', { exact: true }).waitFor();
     await auditNavigate(page, server.resolvedUrls.local[0] + 'profile?tab=more');
     await page.getByRole('link', { name: /Settings and privacy/ }).waitFor();

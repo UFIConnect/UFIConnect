@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useRef, useCallback } from 'react';
 import client from '../api/client';
-import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, isYouTubeShortsUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, useGlobalMuted, fetchVimeoThumbnail, youTubePosterUrl, SoundIcon } from './videoMedia';
+import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, isYouTubeShortsUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, useGlobalMuted, fetchVimeoMetadata, youTubePosterUrl, SoundIcon, createYouTubePlayerFrame, youTubeEmbedUrl } from './videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
@@ -10,6 +10,8 @@ import { reportNegativeSignal } from '../api/errorReporting';
 import { ALL_INTERESTS } from '../pages/Onboarding';
 import ConnectedPostActions from './ConnectedPostActions';
 import { SavePostButton } from './SaveButtons';
+import { videoDurationSeconds, isShortFeedVideo, videoSourceKey, safeMediaUrl, fitVideoFrame } from '../utils/videoFeedPolicy.mjs';
+import './VideoFeedView.css';
 
 // A video counts as genuinely watched (as opposed to just scrolled past —
 // see api/engagement.js for the view-vs-seen distinction) once playback
@@ -107,9 +109,12 @@ function resolveVideoSource(post) {
   // can carry the player. Do not prefer one field blindly: a source article
   // often keeps its original article URL in sourceUrl and a YouTube URL in
   // mediaUrl, while persisted YouTube rows do the inverse.
-  const youtubeUrls = [post.mediaUrl, post.sourceUrl].filter(Boolean);
+  const youtubeUrls = [post.mediaUrl, post.sourceUrl].filter(url => {
+    const parsed = safeMediaUrl(url);
+    return parsed && /^(?:www\.|m\.)?(?:youtube(?:-nocookie)?\.com|youtu\.be)$/.test(parsed.hostname);
+  });
   const youtubeUrl = youtubeUrls.find(url => extractYouTubeId(url)) || youtubeUrls[0] || null;
-  const ytId = post.embedId || extractYouTubeId(youtubeUrl);
+  const ytId = /^[\w-]{11}$/.test(String(post.embedId || '')) ? post.embedId : extractYouTubeId(youtubeUrl);
   if (ytId) {
     // Real Shorts are persisted with a /shorts/ sourceUrl specifically so
     // this survives the DB round-trip (see isYouTubeShortsUrl's own
@@ -127,15 +132,19 @@ function resolveVideoSource(post) {
   // parseRSSItems' vimeo detection backend-side) — mediaUrl is the
   // vimeo.com/{id} watch URL. No public thumbnail CDN pattern to borrow
   // like YouTube's i.ytimg.com, so poster stays null.
-  const vimeoId = extractVimeoId(post.mediaUrl || post.sourceUrl);
+  const vimeoUrl = [post.mediaUrl, post.sourceUrl].find(url => {
+    const parsed = safeMediaUrl(url);
+    return parsed && /^(?:www\.|player\.)?vimeo\.com$/.test(parsed.hostname);
+  });
+  const vimeoId = extractVimeoId(vimeoUrl);
   if (vimeoId) return { kind: 'vimeo', id: vimeoId, poster: null };
-  if (post.source === 'bluesky') {
+  if (post.source === 'bluesky' && safeMediaUrl(post.mediaUrl)) {
     const playlist = deriveBlueskyPlaylistUrl(post.mediaUrl);
     return playlist ? { kind: 'hls', src: playlist, poster: post.mediaPoster || null } : null;
   }
-  const hlsUrl = [post.mediaUrl, post.sourceUrl].find(url => /\.m3u8(\?|$)/i.test(String(url || '')));
+  const hlsUrl = [post.mediaUrl, post.sourceUrl].find(url => safeMediaUrl(url) && /\.m3u8(\?|$)/i.test(String(url || '')));
   if (hlsUrl) return { kind: 'hls', src: hlsUrl, poster: post.mediaPoster || null };
-  if (isDirectVideoUrl(post.mediaUrl)) {
+  if (safeMediaUrl(post.mediaUrl) && isDirectVideoUrl(post.mediaUrl)) {
     // mediaPoster is a real static preview frame server-side extracts
     // alongside the video itself where the source actually has one (Reddit's
     // own preview image, Mastodon's preview_url, Threads' thumbnail_url, an
@@ -201,7 +210,7 @@ function formatTime(sec) {
 // its own top comment) instead of each slide owning/destroying its own.
 // Only meaningful when src.kind === 'youtube'; file/hls/vimeo keep their
 // existing fully-local state below, untouched.
-function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComments, sharedYt }) {
+function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComments, sharedYt, onDurationResolved, onNavigate, hasPrevious, hasNext }) {
   const src = resolveVideoSource(post);
   const meta = SOURCE_META[post.source] || SOURCE_META.uficonnect;
   const fileVideoRef = useRef(null);
@@ -237,9 +246,16 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   useEffect(() => {
     if (src?.kind !== 'vimeo') return;
     let cancelled = false;
-    fetchVimeoThumbnail(src.id).then(url => { if (!cancelled) setVimeoPoster(url); });
+    fetchVimeoMetadata(src.id).then(metadata => {
+      if (cancelled) return;
+      setVimeoPoster(metadata?.thumbnailUrl || null);
+      if (metadata?.durationSeconds) {
+        setDuration(metadata.durationSeconds);
+        onDurationResolved(post, metadata.durationSeconds);
+      }
+    });
     return () => { cancelled = true; };
-  }, [src?.kind, src?.id]);
+  }, [src?.kind, src?.id, post, onDurationResolved]);
 
   const getNativeEl = useCallback(() => (src?.kind === 'hls' ? hlsVideoRef.current : fileVideoRef.current), [src?.kind]);
 
@@ -248,25 +264,15 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   // by VideoFeedView), everything else keeps reading this slide's own
   // local state exactly as before.
   const isYoutube = src?.kind === 'youtube';
-  const backdropPoster = isYoutube
-    ? src?.poster
-    : (!active ? (src?.kind === 'vimeo' ? vimeoPoster : src?.poster) : null);
   const effectivePaused = isYoutube ? !!sharedYt?.paused : paused;
   const effectiveDuration = isYoutube ? (sharedYt?.duration || 0) : duration;
   const effectiveCurrentTime = isYoutube ? (sharedYt?.currentTime || 0) : currentTime;
-  // The shared player is a sibling of the scroll slides. For a landscape
-  // video it occupies a centered 16:9 box, leaving a large unused area above
-  // and below it. Keep the existing caption/actions in their original style,
-  // but offset their bottom anchor by that measured letterbox so they stay
-  // inside the actual YouTube frame on phones as well as portrait Shorts.
-  const youtubeFrameInset = isYoutube && active && Number.isFinite(sharedYt?.frame?.top) && sharedYt.frame.height > 0
-    ? Math.max(0, Math.round(sharedYt.frame.top))
-    : null;
-  const captionBottom = youtubeFrameInset === null ? 40 : youtubeFrameInset + 40;
-  const railBottom = youtubeFrameInset === null ? 46 : youtubeFrameInset + 46;
-  const scrubberBottom = youtubeFrameInset === null ? 12 : youtubeFrameInset + 12;
-  const durationBottom = youtubeFrameInset === null ? 20 : youtubeFrameInset + 20;
-  const safeBottom = value => `calc(${value}px + env(safe-area-inset-bottom, 0px))`;
+  const acceptNativeMetadata = (event) => {
+    const seconds = event.currentTarget.duration;
+    setDuration(Number.isFinite(seconds) ? seconds : 0);
+    if (isShortFeedVideo(seconds)) event.currentTarget.pause();
+    onDurationResolved(post, seconds);
+  };
 
   // Genuine-watch engagement signal (see api/engagement.js) — currentTime
   // already updates continuously during real playback (onTimeUpdate/the
@@ -352,7 +358,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   useEffect(() => {
     if (!active || src?.kind !== 'vimeo') return;
     let ready = false;
-    function post(msg) {
+    function sendToVimeo(msg) {
       try { vimeoIframeRef.current?.contentWindow?.postMessage(JSON.stringify(msg), 'https://player.vimeo.com'); } catch {}
     }
     function handleMessage(event) {
@@ -362,21 +368,25 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
       try { msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data; } catch { return; }
       if (msg?.event === 'ready' && !ready) {
         ready = true;
-        post({ method: 'addEventListener', value: 'play' });
-        post({ method: 'addEventListener', value: 'pause' });
-        post({ method: 'addEventListener', value: 'timeupdate' });
+        sendToVimeo({ method: 'addEventListener', value: 'play' });
+        sendToVimeo({ method: 'addEventListener', value: 'pause' });
+        sendToVimeo({ method: 'addEventListener', value: 'timeupdate' });
+        sendToVimeo({ method: 'getDuration' });
+      } else if (msg?.method === 'getDuration') {
+        setDuration(Number(msg.value) || 0);
+        onDurationResolved(post, Number(msg.value));
       } else if (msg?.event === 'play') {
         setPaused(false);
       } else if (msg?.event === 'pause' || msg?.event === 'finish') {
         setPaused(true);
       } else if (msg?.event === 'timeupdate' && msg.data) {
         if (!seekingRef.current) setCurrentTime(msg.data.seconds || 0);
-        if (msg.data.duration) setDuration(msg.data.duration);
+        if (msg.data.duration) { setDuration(msg.data.duration); onDurationResolved(post, msg.data.duration); }
       }
     }
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [active, src?.kind]);
+  }, [active, src?.kind, post, onDurationResolved]);
 
   // Same "every slide starts fresh" reset file/hls gets on becoming
   // inactive (above) — the iframe itself already fully unmounts when
@@ -501,385 +511,66 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   }
 
   const progressFraction = effectiveDuration > 0 ? Math.min(1, effectiveCurrentTime / effectiveDuration) : 0;
-  function handleSlideClick(e) {
-    if (e.target.closest?.('button, a, [role="button"], .video-caption-scroll, [data-video-scrubber]')) return;
-    togglePlay();
-  }
-
+  const originalUrl = safeMediaUrl(post.sourceUrl)?.href;
   return (
-    <div
-      className="video-feed-slide"
-      onClick={handleSlideClick}
-      style={{ position: 'relative', height: '100%', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000', overflow: 'hidden', touchAction: 'pan-y' }}
-    >
-      {/* Blurred poster backdrop — most video here is landscape (regular
-          YouTube uploads, arbitrary hls/file clips), while this view's box
-          is portrait. A cross-origin YouTube iframe can't be cropped with
-          objectFit (that only affects the iframe's own box, not what's
-          inside it) so YouTube's player letterboxes it instead, same as
-          hls/file content that just isn't natively 9:16 — real black bars
-          top and bottom otherwise. Filling that space with the same
-          poster, blurred and scaled past the edge so the blur radius
-          doesn't reveal a hard border, reads as an intentional frame
-          rather than empty space. z-index -1, not just DOM order: the
-          foreground below is a mix of positioned (youtube's active
-          wrapper) and unpositioned (poster <img>, hls/file <video>)
-          elements, and per CSS painting order any positioned element with
-          z-index:auto paints above unpositioned siblings regardless of DOM
-          order — without a negative z-index here this backdrop would cover
-          the plain-element cases instead of sitting behind them. Harmless
-          no-op for kinds with no poster (file, or vimeo before its oEmbed
-          fetch resolves). effectivePoster prefers vimeoPoster over
-          src.poster — resolveVideoSource always hands back poster:null
-          for vimeo (see vimeoPoster's own comment above), so without this
-          override every Vimeo post would permanently skip this backdrop
-          and the inactive-state preview image below. */}
-      {backdropPoster && (
-        <div style={{
-          position: 'absolute', inset: 0, zIndex: isYoutube ? 0 : -1,
-          backgroundImage: `url(${backdropPoster})`,
-          backgroundSize: 'cover', backgroundPosition: 'center',
-          transform: 'scale(1.15)', filter: 'blur(30px) brightness(0.45)',
-        }} />
-      )}
-      {!src ? (
-        <div style={{ color: '#888', fontSize: '.85rem' }}>Video unavailable</div>
-      ) : src.kind === 'youtube' ? (
-        active ? (
-          // The actual video pixels render via VideoFeedView's own shared
-          // overlay now (see sharedYtHostRef there), positioned to match
-          // this exact same centered/aspect-ratio box independently — this
-          // slide only needs to *not* render anything competing in that
-          // spot, letting the backdrop above and the parent's overlay
-          // beneath the caption/scrub UI below show through. See
-          // VideoFeedView's own top-of-file comment for why the player
-          // itself isn't owned per-slide anymore.
-          null
-        ) : (
-          <div style={{ width: '100%', height: '100%', background: '#000' }} />
-        )
-      ) : src.kind === 'vimeo' ? (
-        // Play/pause/duration/currentTime now come from Vimeo's postMessage
-        // event protocol (see the effect above) instead of being untracked
-        // — api=1 is what turns that protocol on for this embed. The
-        // shared mute button still can't affect it post-mount (see its own
-        // kind check) — unlike play state, wiring mute wasn't part of this
-        // fix. Best-effort respects the stored preference at mount time
-        // instead: if this browser already earned "unmuted" elsewhere,
-        // start here unmuted too rather than forcing yet another mute
-        // cycle the app can't itself unwind.
-        active ? (
-          // pointerEvents:'none' on the iframe itself makes a tap fall
-          // through to this wrapping div's onClick instead of being
-          // captured inside the iframe's own document (a click landing on
-          // an iframe never bubbles out to the parent page at all) — same
-          // click-through technique the shared YouTube overlay already
-          // uses, needed here for the same reason: without it, tapping a
-          // stalled/blocked Vimeo video to resume it would do nothing.
-          <div onClick={(e) => { e.stopPropagation(); togglePlay(); }} style={{ width: '100%', height: '100%' }}>
-            <iframe
-              ref={vimeoIframeRef}
-              src={`https://player.vimeo.com/video/${src.id}?autoplay=1&muted=${userWantsSound() ? 0 : 1}&loop=1&title=0&byline=0&portrait=0&api=1`}
-              style={{ width: '100%', height: '100%', border: 'none', display: 'block', pointerEvents: 'none' }}
-              allow="autoplay; fullscreen; picture-in-picture"
-              title={post.title}
-            />
-          </div>
-        ) : vimeoPoster ? (
-          <img src={vimeoPoster} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
-        ) : (
-          <div style={{ color: '#888', fontSize: '.85rem' }}>Vimeo video</div>
-        )
-      ) : src.kind === 'hls' ? (
-        active ? (
-          <HlsVideoPlayer src={src.src} poster={null} autoPlay muted={muted} loop
-            videoRef={hlsVideoRef} onClick={(e) => { e.stopPropagation(); togglePlay(); }}
-            onTimeUpdate={(e) => { if (!seekingRef.current) setCurrentTime(e.target.currentTime); }}
-            onLoadedMetadata={(e) => setDuration(e.target.duration || 0)}
-            onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
-            onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id, context: { surface: 'videos' } })}
-            style={{ height: '100%', width: '100%', objectFit: 'contain', pointerEvents: 'none' }} />
-        ) : (
-          <div style={{ width: '100%', height: '100%', background: '#000' }} />
-        )
-      ) : (
-        // contain, not cover: 'file' is the catch-all for an arbitrary
-        // direct-linked video URL (see isDirectVideoUrl), most commonly a
-        // landscape clip (e.g. Reddit-hosted video) forced into this view's
-        // tall portrait box. cover used to crop these to fill the frame —
-        // confirmed live on mobile (where the box is a full phone screen,
-        // the most extreme portrait ratio this view ever renders into) as
-        // genuinely cutting off most of the picture, not just "occasional
-        // edge framing loss." contain guarantees the whole video is always
-        // visible, same as every other kind here (hls already uses contain;
-        // youtube/vimeo effectively letterbox within their fitted box too).
-        // Same style treatment every other kind here already gets: a real
-        // poster (see resolveVideoSource/mediaPoster) means this shows an
-        // actual thumbnail immediately, same as Bluesky/YouTube, instead of
-        // a blank black tile until the first frame decodes — falls back to
-        // this wrapper's own plain #000 background when a source genuinely
-        // has no distinct preview image to offer.
-        <video
-          ref={fileVideoRef}
-          src={src.src}
-          poster={undefined}
-          // Only the active slide needs to actually buffer video data ahead
-          // of play() — a neighbor within VIDEO_MOUNT_RADIUS (mounted so
-          // it's instant if scrolled to, see the render loop above) only
-          // needs its metadata (dimensions/duration) resolved, not the file
-          // itself downloading in the background before it's ever watched.
-          preload={active ? 'auto' : 'metadata'}
-          muted={muted}
-          loop
-          playsInline
-          draggable={false}
-          onClick={(e) => { e.stopPropagation(); togglePlay(); }}
-          onTimeUpdate={(e) => { if (!seekingRef.current) setCurrentTime(e.target.currentTime); }}
-          onLoadedMetadata={(e) => setDuration(e.target.duration || 0)}
-          onPlay={() => setPaused(false)}
-          onPause={() => setPaused(true)}
-          onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id, context: { surface: 'videos' } })}
-          style={{ width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }}
-        />
-      )}
-
-      {/* Center pause indicator — only visible while actually paused, tap
-          anywhere on the video (outside the progress bar) to resume.
-          YouTube and Vimeo specifically get an explicit "Tap to play"
-          label — cross-origin embedded video is subject to stricter mobile
-          autoplay policy than a native <video> element (confirmed live:
-          Bluesky/direct-file videos in this same view autoplay reliably,
-          YouTube's often don't, especially for a viewer with no prior
-          engagement with youtube.com on their device — a real browser
-          policy, not something fixable from here). Without the label this
-          reads as a broken/half-loaded video; with it, it reads as an
-          intentional "tap to start" design, the same pattern Instagram/
-          TikTok use for some embedded content. */}
-      {src && effectivePaused && (
-        <div style={{
-          position: 'absolute', inset: 0, zIndex: 2, display: 'flex', flexDirection: 'column',
-          alignItems: 'center', justifyContent: 'center', gap: 10, pointerEvents: 'none',
-        }}>
-          <button
-            onClick={togglePlay}
-            aria-label="Play"
-            style={{
-              width: 64, height: 64,
-              borderRadius: '50%', background: 'rgba(0,0,0,.45)', border: 'none',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color: '#fff', fontSize: '1.6rem', cursor: 'pointer', pointerEvents: 'none',
-            }}
-          >▶</button>
-          {(src.kind === 'youtube' || src.kind === 'vimeo') && (
-            <span style={{
-              color: '#fff', fontSize: '.78rem', fontWeight: 700,
-              textShadow: '0 1px 6px rgba(0,0,0,.7)', background: 'rgba(0,0,0,.45)',
-              padding: '4px 12px', borderRadius: 12,
-            }}>
-              Tap to play
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* Bottom vignette — one continuous gradient behind ALL the bottom UI
-          (source/author, writing, Show more, scrub bar, time, comments/
-          likes rail) instead of one-off boxed backgrounds on just some of
-          them. Reads as one deliberate treatment and keeps legibility
-          consistent regardless of what's actually playing behind it,
-          rather than some text having a boundary and some not. Grows
-          taller when the caption expands so a long post's writing —
-          capped below at 42dvh — is never left partly uncovered. */}
-      <div style={{
-        position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 1,
-        height: captionExpanded ? '78%' : '40%',
-        background: 'linear-gradient(to top, rgba(0,0,0,.82) 0%, rgba(0,0,0,.5) 55%, rgba(0,0,0,0) 100%)',
-        pointerEvents: 'none', transition: 'height .2s ease',
-      }} />
-
-      {/* Bottom caption overlay. Source + author are a pinned header, the
-          actual writing comes right below them, and Show more/less is
-          pinned right after the writing — none of the three ever move
-          based on scroll/expand state, so everything stays visible and in
-          a consistent reading order. Two fixes behind this shape, both
-          confirmed live: (1) this whole block used to be one
-          pointerEvents:'none' div — harmless while collapsed, but once
-          expanded it meant nothing inside, including its own
-          overflowY:auto, could ever receive a scroll/drag gesture; it just
-          fell through to whatever's behind it. Only the scrollable writing
-          below is pointerEvents:'auto' now (via .video-caption-scroll,
-          which the mouse-drag-to-scroll handler above knows to skip so the
-          two don't fight over the same drag). (2) Show more/less used to
-          live at the very bottom of that same scrolling block — on a long
-          post it scrolled out of view with no way to reach it, reading as
-          "Show less just disappears." It's outside the scrollable region
-          entirely now, so it's always reachable regardless of how far the
-          writing itself is scrolled. */}
-      <div
-        className={isYoutube ? 'video-feed-caption video-feed-caption--youtube' : 'video-feed-caption'}
-        data-video-caption
-        style={{
-        position: 'absolute', zIndex: 4, left: 16, right: 76, bottom: safeBottom(captionBottom), color: '#fff',
-        textShadow: '0 1px 6px rgba(0,0,0,.7)', pointerEvents: 'none',
+    <article className="video-feed-slide">
+      <div className="video-feed-media" data-video-media onClick={event => {
+        if (!event.target.closest('iframe')) togglePlay();
       }}>
-        <div style={{ marginBottom: 8 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: '.8rem', fontWeight: 700 }}>
-            <SourceMark source={post.source} label={meta.icon} size={13} />
-            <span>{post.sourceLabel || meta.label}</span>
-            {post.matchedByLocation && (
-              <span style={{
-                fontSize: '.65rem', fontWeight: 800, color: '#D1FAE5',
-                border: '1px solid rgba(167,243,208,.7)', background: 'rgba(6,78,59,.72)',
-                padding: '2px 7px', borderRadius: 5, textShadow: 'none', whiteSpace: 'nowrap',
-              }}>
-                {post.locationMatchLabel || 'Near you'}
-              </span>
-            )}
-          </div>
-          {post.author?.name && <div style={{ fontSize: '.78rem', opacity: 0.85, marginTop: 2 }}>{post.author.name}</div>}
-        </div>
-        <div
-          className={captionExpanded ? 'video-caption-scroll' : undefined}
-          style={{
-            maxHeight: captionExpanded ? '42dvh' : undefined,
-            overflowY: captionExpanded ? 'auto' : undefined,
-            WebkitOverflowScrolling: captionExpanded ? 'touch' : undefined,
-            touchAction: captionExpanded ? 'pan-y' : undefined,
-            pointerEvents: captionExpanded ? 'auto' : 'none',
-          }}
-        >
-          {post.title && (
-            <div style={{
-              fontSize: '.9rem', fontWeight: 600, marginBottom: 4, lineHeight: 1.35,
-              display: captionExpanded ? 'block' : '-webkit-box',
-              WebkitLineClamp: captionExpanded ? 'unset' : 3, WebkitBoxOrient: 'vertical',
-              overflow: captionExpanded ? 'visible' : 'hidden', whiteSpace: 'pre-wrap',
-            }}>
-              {post.title}
-            </div>
-          )}
-          {captionBody && (
-            <div style={{
-              fontSize: '.82rem', lineHeight: 1.45, whiteSpace: 'pre-wrap', opacity: 0.92,
-              display: captionExpanded ? 'block' : '-webkit-box',
-              WebkitLineClamp: captionExpanded ? 'unset' : 2,
-              WebkitBoxOrient: 'vertical', overflow: captionExpanded ? 'visible' : 'hidden',
-            }}>
-              {captionBody}
-            </div>
-          )}
-        </div>
-        {(hasExtraCaption || post.sourceUrl) && (
-          <div className="video-feed-caption-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
-            {hasExtraCaption && (
-              <button
-                onClick={(e) => { e.stopPropagation(); setCaptionExpanded(x => !x); }}
-                style={{
-                  background: 'rgba(0,0,0,.5)', border: 'none', borderRadius: 10,
-                  color: '#fff', fontWeight: 700, fontSize: '.75rem', padding: '4px 9px',
-                  cursor: 'pointer', pointerEvents: 'auto', opacity: 0.95,
-                }}
-              >
-                {captionExpanded ? 'Show less' : 'Read more'}
-              </button>
-            )}
-            {post.sourceUrl && (
-              <a
-                href={post.sourceUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true });
-                }}
-                style={{
-                  display: 'inline-block', background: 'rgba(0,0,0,.5)',
-                  borderRadius: 10, color: '#fff', fontWeight: 700, fontSize: '.75rem',
-                  padding: '4px 9px', textDecoration: 'none', pointerEvents: 'auto', opacity: 0.95,
-                }}
-              >
-                View original post ↗
-              </a>
-            )}
-          </div>
-        )}
+        {!src ? <p>Video unavailable</p> : src.kind === 'youtube' ? null : src.kind === 'vimeo' ? (
+          active ? <iframe ref={vimeoIframeRef}
+            src={`https://player.vimeo.com/video/${src.id}?autoplay=1&muted=${userWantsSound() ? 0 : 1}&loop=1&api=1`}
+            referrerPolicy="strict-origin-when-cross-origin"
+            allow="autoplay; fullscreen; picture-in-picture" allowFullScreen title={post.title || 'Vimeo video'} />
+          : vimeoPoster ? <img src={vimeoPoster} alt="" draggable={false} /> : null
+        ) : src.kind === 'hls' ? (
+          active ? <HlsVideoPlayer src={src.src} poster={src.poster} autoPlay muted={muted} loop
+            videoRef={hlsVideoRef} onTimeUpdate={event => { if (!seekingRef.current) setCurrentTime(event.target.currentTime); }}
+            onLoadedMetadata={acceptNativeMetadata} onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
+            onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id, context: { surface: 'videos' } })}
+            style={{ height: '100%', width: '100%', objectFit: 'contain' }} /> : null
+        ) : <video ref={fileVideoRef} src={src.src} poster={src.poster || undefined}
+            preload={active ? 'auto' : 'metadata'} muted={muted} loop playsInline draggable={false}
+            onTimeUpdate={event => { if (!seekingRef.current) setCurrentTime(event.target.currentTime); }}
+            onLoadedMetadata={acceptNativeMetadata} onDurationChange={acceptNativeMetadata}
+            onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
+            onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id, context: { surface: 'videos' } })} />}
       </div>
-
-      {/* Scrub tracker — click or drag anywhere on the bar to skip to that
-          point in the video. Widens slightly while actively dragging so
-          it's easier to hit on touch. Black track/fill/thumb (not the
-          previous white) to sit quietly against the video instead of a
-          bright white bar cutting across it — the thumb keeps a thin light
-          ring so it's still visible/grabbable against genuinely black
-          video content, widening along with the dot itself while seeking. */}
-      {src && effectiveDuration > 0 && (
-        <div
-          data-video-scrubber
-          ref={progressBarRef}
-          onPointerDown={handleBarPointerDown}
-          style={{
-            position: 'absolute', zIndex: 2, left: 12, right: 12, bottom: safeBottom(scrubberBottom),
-            height: seeking ? 10 : 4, borderRadius: 4, background: 'rgba(0,0,0,.45)',
-            cursor: 'pointer', touchAction: 'none', transition: 'height .12s',
-          }}
-        >
-          <div style={{
-            position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 4,
-            width: `${progressFraction * 100}%`, background: '#000',
-          }} />
-          <div style={{
-            position: 'absolute', top: '50%', left: `${progressFraction * 100}%`,
-            transform: 'translate(-50%, -50%)', width: seeking ? 16 : 11, height: seeking ? 16 : 11,
-            borderRadius: '50%', background: '#000',
-            boxShadow: seeking
-              ? '0 0 0 2px rgba(255,255,255,.85), 0 2px 8px rgba(0,0,0,.6)'
-              : '0 0 0 1.5px rgba(255,255,255,.7), 0 1px 4px rgba(0,0,0,.5)',
-            transition: 'width .12s, height .12s',
-          }} />
+      <div className="video-feed-details video-caption-scroll" data-video-details>
+        <div className="video-feed-playback" role="group" aria-label="Video playback">
+          <button type="button" onClick={togglePlay} aria-label={effectivePaused ? 'Play video' : 'Pause video'}>{effectivePaused ? 'Play' : 'Pause'}</button>
+          <button type="button" onClick={onToggleMute} disabled={src?.kind === 'vimeo'} aria-label={muted ? 'Unmute video' : 'Mute video'}><SoundIcon muted={muted} size={16} /></button>
+          {effectiveDuration > 0 && <>
+            <input type="range" data-video-scrubber aria-label="Video position" min="0" max="1" step="0.001"
+              value={progressFraction} onChange={event => seekToFraction(Number(event.target.value))} />
+            <span className="video-feed-time">{formatTime(effectiveCurrentTime)} / {formatTime(effectiveDuration)}</span>
+          </>}
+          <div className="video-feed-step-controls">
+            <button type="button" disabled={!hasPrevious} onClick={() => onNavigate(-1)} aria-label="Previous video">↑</button>
+            <button type="button" disabled={!hasNext} onClick={() => onNavigate(1)} aria-label="Next video">↓</button>
+          </div>
         </div>
-      )}
-      {src && effectiveDuration > 0 && (
-        <div style={{
-          position: 'absolute', zIndex: 2, right: 14, bottom: safeBottom(durationBottom), color: '#fff', fontSize: '.65rem',
-          fontWeight: 600, textShadow: '0 1px 4px rgba(0,0,0,.7)', pointerEvents: 'none',
-        }}>
-          {formatTime(effectiveCurrentTime)} / {formatTime(effectiveDuration)}
+        {isYoutube && sharedYt?.failed && <p className="video-feed-playback-note" role="status">The embedded player could not start. Try its play button{originalUrl ? ' or open the original video.' : '.'}</p>}
+        <div className="video-feed-caption" data-video-caption>
+          <div className="video-feed-byline"><SourceMark source={post.source} label={meta.icon} size={13} /><strong>{post.sourceLabel || meta.label}</strong>
+            {post.author?.name && <span>{post.author.name}</span>}
+            {post.matchedByLocation && <span>{post.locationMatchLabel || 'Near you'}</span>}
+          </div>
+          {post.title && <h2>{post.title}</h2>}
+          {captionExpanded && captionBody && <p>{captionBody}</p>}
+          <div className="video-feed-caption-actions">
+            {hasExtraCaption && <button type="button" onClick={() => setCaptionExpanded(value => !value)} aria-expanded={captionExpanded}>{captionExpanded ? 'Show less' : 'Read more'}</button>}
+            {originalUrl && <a href={originalUrl} target="_blank" rel="noopener noreferrer"
+              onClick={() => reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true })}>View original post ↗</a>}
+          </div>
         </div>
-      )}
-
-      {/* Right-side action rail */}
-      <div
-        className={isYoutube ? 'video-feed-action-rail video-feed-action-rail--youtube' : 'video-feed-action-rail'}
-        data-video-actions
-        role="group"
-        aria-label="Video engagement"
-        style={{ position: 'absolute', zIndex: 4, right: 14, bottom: safeBottom(railBottom), display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 18 }}
-      >
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, color: '#fff', textShadow: '0 1px 6px rgba(0,0,0,.7)' }}>
-          <span style={{ fontSize: '.72rem', fontWeight: 800 }}>Likes</span>
-          <span style={{ fontSize: '.68rem', fontWeight: 700 }}>{(post.likesCount || 0).toLocaleString()}</span>
+        <div className="video-feed-action-rail" data-video-actions role="group" aria-label="Video engagement">
+          <span>Likes {(post.likesCount || 0).toLocaleString()}</span>
+          <button type="button" onClick={() => onOpenComments?.(post)}>Comments {(post.commentsCount || 0).toLocaleString()}</button>
+          <SavePostButton post={post} className="video-feed-save-button" />
         </div>
-        <button
-          onClick={(e) => { e.stopPropagation(); onOpenComments?.(post); }}
-          style={{
-            all: 'unset', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
-            color: '#fff', textShadow: '0 1px 6px rgba(0,0,0,.7)', cursor: 'pointer',
-          }}
-        >
-          <span style={{ fontSize: '.72rem', fontWeight: 800 }}>Comments</span>
-          <span style={{ fontSize: '.68rem', fontWeight: 700 }}>{(post.commentsCount || 0).toLocaleString()}</span>
-        </button>
-        <SavePostButton
-          post={post}
-          className="video-feed-save-button"
-          style={{
-            all: 'unset', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
-            color: '#fff', textShadow: '0 1px 6px rgba(0,0,0,.7)', cursor: 'pointer',
-            fontSize: '.72rem', fontWeight: 800,
-          }}
-        />
       </div>
-    </div>
+    </article>
   );
 }
 
@@ -1081,6 +772,30 @@ function CommentsSheet({ post, onClose }) {
 export default function VideoFeedView({ onExit, music = false }) {
   const [videoPosts, setVideoPosts] = useState([]);
   const [activeIndex, setActiveIndex] = useState(0);
+  const durationCacheRef = useRef(new Map());
+  const queueRef = useRef(videoPosts);
+  const activeIndexRef = useRef(activeIndex);
+  const pendingScrollIndexRef = useRef(null);
+  queueRef.current = videoPosts;
+  activeIndexRef.current = activeIndex;
+  const onDurationResolved = useCallback((post, seconds) => {
+    if (!Number.isFinite(seconds) || seconds <= 0) return;
+    const key = videoSourceKey(resolveVideoSource(post));
+    if (!key || durationCacheRef.current.get(key) === seconds) return;
+    durationCacheRef.current.set(key, seconds);
+    if (!isShortFeedVideo(seconds)) return;
+    const previous = queueRef.current;
+    const activePost = previous[activeIndexRef.current];
+    const next = previous.filter(item => videoSourceKey(resolveVideoSource(item)) !== key);
+    if (next.length === previous.length) return;
+    const keptIndex = next.findIndex(item => item === activePost);
+    const nextIndex = keptIndex >= 0 ? keptIndex : Math.min(activeIndexRef.current, Math.max(next.length - 1, 0));
+    queueRef.current = next;
+    activeIndexRef.current = nextIndex;
+    pendingScrollIndexRef.current = nextIndex;
+    setVideoPosts(next);
+    setActiveIndex(nextIndex);
+  }, []);
   const [youtubeFrameOrientations, setYoutubeFrameOrientations] = useState({});
   // The post currently showing in the comments popup — lifted up here
   // (rather than local to each VideoSlide) so it renders once, fixed to the
@@ -1150,6 +865,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   const viewModeRef = useRef('feed');
   const sourceFilterRef = useRef([]);
   const containerRef = useRef(null);
+  const mediaBodyRef = useRef(null);
   const slideRefs = useRef([]);
   const consumedVideoIds = useRef(new Set());
   // Consecutive pages that came back with zero results after a search/topic
@@ -1233,7 +949,11 @@ export default function VideoFeedView({ onExit, music = false }) {
       }
       const { data } = await client.get(`${endpoint}?${params}`);
       if (requestId !== loadRequestRef.current) return;
-      const incoming = (Array.isArray(data.posts) ? data.posts : []).filter(p => p && resolveVideoSource(p));
+      const incoming = (Array.isArray(data.posts) ? data.posts : []).filter(post => {
+        const playable = resolveVideoSource(post);
+        if (!playable || isShortFeedVideo(videoDurationSeconds(post))) return false;
+        return !isShortFeedVideo(durationCacheRef.current.get(videoSourceKey(playable)));
+      });
       const isExplicitSearch = Boolean(searchQueryRef.current);
       const sourceExhausted = data.waitingForNew === true || data.hasMore === false;
       if (reset && isExplicitSearch) {
@@ -1338,6 +1058,12 @@ export default function VideoFeedView({ onExit, music = false }) {
   useEffect(() => {
     setActiveIndex(current => Math.min(Math.max(current, 0), Math.max(videoPosts.length - 1, 0)));
   }, [videoPosts.length]);
+
+  useEffect(() => {
+    if (pendingScrollIndexRef.current === null || !containerRef.current) return;
+    containerRef.current.scrollTop = pendingScrollIndexRef.current * containerRef.current.clientHeight;
+    pendingScrollIndexRef.current = null;
+  }, [videoPosts]);
 
   const videoLiveStateRef = useRef({ loading: false, refreshing: false, activeIndex: 0 });
   useEffect(() => {
@@ -1848,26 +1574,25 @@ export default function VideoFeedView({ onExit, music = false }) {
   // ambiguity entirely instead of relying on that CSS behavior resolving
   // the way it's supposed to.
   const sharedYtWrapperRef = useRef(null);
-  const [ytBoxSize, setYtBoxSize] = useState({ width: 0, height: 0, top: 0 });
+  const [ytBoxSize, setYtBoxSize] = useState({ width: 0, height: 0, top: 0, left: 0 });
   useEffect(() => {
-    const wrapper = sharedYtWrapperRef.current;
-    if (!wrapper) return;
-    const ratio = activeSrc?.vertical ? 9 / 16 : 16 / 9;
-    function recompute(availW, availH) {
-      if (!availW || !availH) return;
-      const width = availW / ratio <= availH ? availW : availH * ratio;
-      const height = width / ratio;
-      setYtBoxSize({ width, height, top: Math.max(0, (availH - height) / 2) });
-    }
-    const observer = new ResizeObserver(([entry]) => {
-      const { width, height } = entry.contentRect;
-      recompute(width, height);
-    });
-    observer.observe(wrapper);
-    const rect = wrapper.getBoundingClientRect();
-    recompute(rect.width, rect.height);
+    const stage = slideRefs.current[activeIndex]?.querySelector('[data-video-media]');
+    const body = mediaBodyRef.current;
+    if (!stage || !body) return;
+    const recompute = () => {
+      const stageRect = stage.getBoundingClientRect();
+      const bodyRect = body.getBoundingClientRect();
+      const fitted = fitVideoFrame(stageRect.width, stageRect.height, activeSrc?.vertical ? 9 / 16 : 16 / 9);
+      // Snap geometry uses the active slide's media height; scrolling only
+      // changes visibility, not the fitted frame's position in the viewport.
+      setYtBoxSize({ ...fitted, left: fitted.left + stageRect.left - bodyRect.left });
+    };
+    const observer = new ResizeObserver(recompute);
+    observer.observe(stage);
+    observer.observe(body);
+    recompute();
     return () => observer.disconnect();
-  }, [activeSrc?.vertical]);
+  }, [activeIndex, activeSrc?.vertical, videoPosts]);
 
   const startSharedYtAutoplayRetry = useCallback((player, videoId) => {
     clearInterval(sharedYtRetryRef.current);
@@ -1963,11 +1688,7 @@ export default function VideoFeedView({ onExit, music = false }) {
       const isCurrent = () => sharedYtMountedRef.current && sharedYtLifecycleRef.current === lifecycle;
       sharedYtCreatingRef.current = true;
       host.replaceChildren();
-      const mount = document.createElement('div');
-      mount.style.width = '100%';
-      mount.style.height = '100%';
-      mount.style.pointerEvents = 'none';
-      host.appendChild(mount);
+      const mount = createYouTubePlayerFrame(host, videoId, { autoplay: 1, mute: 1, loop: 1, playlist: videoId }, queueRef.current[activeIndexRef.current]?.title);
 
       clearTimeout(sharedYtReadyTimeoutRef.current);
       sharedYtReadyTimeoutRef.current = setTimeout(() => {
@@ -1983,7 +1704,7 @@ export default function VideoFeedView({ onExit, music = false }) {
           videoId: initialId,
           playerVars: {
             autoplay: 1, mute: 1, playsinline: 1, loop: 1,
-            controls: 0, modestbranding: 1, rel: 0, playlist: initialId,
+            controls: 1, rel: 0, playlist: initialId,
             origin: window.location.origin,
           },
           events: {
@@ -1999,9 +1720,9 @@ export default function VideoFeedView({ onExit, music = false }) {
               setSharedYt(s => ({ ...s, failed: false }));
               try {
                 const iframe = e.target.getIframe();
-                iframe.style.pointerEvents = 'none';
-                iframe.style.touchAction = 'pan-y';
-                iframe.tabIndex = -1;
+                iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+                iframe.style.pointerEvents = 'auto';
+                iframe.tabIndex = 0;
               } catch {}
 
               const desiredId = sharedYtDesiredIdRef.current;
@@ -2059,6 +1780,13 @@ export default function VideoFeedView({ onExit, music = false }) {
         const player = sharedYtPlayerRef.current;
         const currentTime = player?.getCurrentTime() || 0;
         const duration = player?.getDuration() || 0;
+        const actualId = player?.getVideoData?.()?.video_id;
+        const currentPost = queueRef.current[activeIndexRef.current];
+        const expectedId = resolveVideoSource(currentPost)?.id;
+        // getDuration can describe the previous item while loadVideoById is
+        // still switching. Never reject a different item using stale data.
+        if (!actualId || actualId !== expectedId) return;
+        onDurationResolved(currentPost, duration);
         setSharedYt(s => (s.currentTime === currentTime && s.duration === duration)
           ? s
           : { ...s, currentTime, duration });
@@ -2122,7 +1850,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   const topSafe = 'calc(16px + env(safe-area-inset-top, 0px))';
 
   return (
-    <div style={{
+    <div className="video-feed-view" style={{
       position: 'fixed', inset: 0, zIndex: 3000,
       background: 'radial-gradient(ellipse 80% 60% at 50% 40%, #181818 0%, #000 70%)',
       display: 'flex', alignItems: 'center', justifyContent: 'center', touchAction: 'pan-y',
@@ -2165,7 +1893,7 @@ export default function VideoFeedView({ onExit, music = false }) {
           fine at a glance and the sheet itself still shows exactly what's
           active. */}
       <div className="video-feed-top-controls" style={{
-        position: 'absolute', top: topSafe, left: 12, right: 12,
+        position: 'relative', padding: '12px', paddingTop: topSafe, flexWrap: 'wrap', flexShrink: 0,
         zIndex: 20, display: 'flex', alignItems: 'center', gap: 6,
         pointerEvents: 'auto', touchAction: 'manipulation',
       }}>
@@ -2183,7 +1911,7 @@ export default function VideoFeedView({ onExit, music = false }) {
           background: 'rgba(0,0,0,.4)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
           border: '1px solid rgba(255,255,255,.18)', borderRadius: 18, padding: 3,
         }}>
-          {(music ? [{ key: 'feed', label: 'Music' }] : [{ key: 'feed', label: 'Home' }, { key: 'following', label: 'Following' }]).map(({ key, label }) => {
+          {(music ? [{ key: 'feed', label: 'Music' }] : [{ key: 'feed', label: 'Videos' }, { key: 'following', label: 'Following' }]).map(({ key, label }) => {
             const active = viewMode === key;
             return (
               <button
@@ -2192,10 +1920,6 @@ export default function VideoFeedView({ onExit, music = false }) {
                 onPointerDown={event => event.stopPropagation()}
                 onClick={event => {
                   event.stopPropagation();
-                  if (key === 'feed') {
-                    onExit();
-                    return;
-                  }
                   switchViewMode(key);
                 }}
                 style={{
@@ -2488,233 +2212,40 @@ export default function VideoFeedView({ onExit, music = false }) {
         </div>
       )}
 
-      {loading && videoPosts.length === 0 ? (
-        <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '.9rem' }}>
-          Loading videos... lining up the good stuff.
-        </div>
-      ) : videoPosts.length === 0 ? (
-        <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#fff', gap: 14, padding: 24, textAlign: 'center' }}>
-          <div style={{ fontSize: '2.2rem', fontWeight: 800 }}>Video</div>
-          <div style={{ fontSize: '.9rem', opacity: 0.85, maxWidth: 280 }}>
-            {error
-              ? "Couldn't load videos right now."
-              : viewMode === 'following'
-                ? 'No videos yet from your connected world. Try another platform filter while the popcorn regroups.'
-                : 'No videos yet. The scroll is warming up and trying not to trip over its own shoelaces.'}
+      <div className="video-feed-body" ref={mediaBodyRef}>
+        {videoPosts.length === 0 ? <div className="video-feed-empty" role="status">
+          {loading ? 'Loading videos…' : error ? 'Could not load videos. Try refreshing.' : 'No playable videos of at least 5 seconds found. Try another source or filter.'}
+        </div> : <>
+          {loading && <div className="video-feed-loading" role="status">Loading videos…</div>}
+          <div ref={containerRef} data-video-feed-scroll className="video-feed-scroll">
+            {videoPosts.map((post, idx) => <div key={post.id || idx} ref={element => { slideRefs.current[idx] = element; }}
+              data-idx={idx} data-post-id={post.id || ''} data-source={post.source || ''} className="video-feed-snap-item">
+              {Math.abs(idx - activeIndex) <= VIDEO_MOUNT_RADIUS ? <VideoSlide post={post} active={idx === activeIndex}
+                muted={muted} onToggleMute={toggleMuted} isScrolling={isScrolling} onOpenComments={setCommentsPost}
+                onDurationResolved={onDurationResolved} hasPrevious={idx > 0} hasNext={idx < videoPosts.length - 1}
+                onNavigate={direction => containerRef.current?.scrollTo({ top: (idx + direction) * containerRef.current.clientHeight, behavior: 'smooth' })}
+                sharedYt={idx === activeIndex ? { ...sharedYt, togglePlay: sharedYtTogglePlay, seekTo: sharedYtSeekTo, seekingRef: sharedYtSeekingRef } : undefined} />
+                : <div className="video-feed-placeholder" />}
+            </div>)}
           </div>
-          <button onClick={onExit} className="btn btn-primary btn-sm">Back to Home</button>
+        </>}
+        {/* Keep the iframe alive across filters and mixed-source slides. Its
+            fitted rectangle belongs only to the media area, above no app UI. */}
+        <div ref={sharedYtWrapperRef} className="video-feed-youtube-player"
+          aria-hidden={activeSrc?.kind !== 'youtube' || isScrolling}
+          inert={activeSrc?.kind !== 'youtube' || isScrolling}
+          style={{ position: 'absolute', zIndex: 1, left: ytBoxSize.left, top: ytBoxSize.top,
+            width: ytBoxSize.width, height: ytBoxSize.height,
+            visibility: activeSrc?.kind === 'youtube' && !isScrolling ? 'visible' : 'hidden' }}>
+          <div ref={sharedYtHostRef} style={{ width: '100%', height: '100%', display: sharedYt.failed ? 'none' : 'block' }} />
+          {sharedYt.failed && activeSrc?.kind === 'youtube' && <iframe
+            src={youTubeEmbedUrl(activeSrc.id, { autoplay: 1, mute: muted ? 1 : 0 })}
+            referrerPolicy="strict-origin-when-cross-origin"
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }}
+            allow="autoplay; encrypted-media; fullscreen; picture-in-picture" allowFullScreen title={videoPosts[activeIndex]?.title || 'YouTube video'} />}
         </div>
-      ) : (
-        <>
-        {/* loading (a filter/topic/search/sort change, or Following/Feed
-            switch — see loadPage's reset path) used to be its own branch
-            above, replacing this entire fragment — including the shared
-            YouTube player's mount div below — with the plain spinner. React
-            fully unmounted that div, but sharedYtPlayerRef.current (the
-            underlying YT.Player, deliberately never cleared — see the
-            comment on the overlay below) was never reset to match, so the
-            next video's play/pause calls silently no-op against an
-            already-detached iframe. Confirmed live as "tap to play does
-            nothing" on every filter change, and effectively "always" since
-            ~73% of this feed's content is YouTube-kind. Now the fragment
-            (and the live player inside it) stays mounted straight through a
-            reset — videoPosts still holds the pre-filter content until the
-            new page actually lands (see loadPage) — with just a dimmed
-            overlay on top for the brief gap, instead of tearing the player
-            down and rebuilding it every time. */}
-        {loading && (
-          <div style={{
-            position: 'absolute', inset: 0, zIndex: 50, background: 'rgba(0,0,0,.45)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#fff', fontSize: '.9rem', pointerEvents: 'none',
-          }}>
-            Loading videos…
-          </div>
-        )}
-        <div
-          ref={containerRef}
-          data-video-feed-scroll
-          // video-feed-scroll: hides this element's own native scrollbar
-          // (see index.css) — on desktop that scrollbar renders right at
-          // the frame's edge, easy to mistake for some kind of cursor.
-          // scrollbar-width/::-webkit-scrollbar together cover every
-          // browser, since no single property does; a real OS scrollbar's
-          // color isn't reliably stylable across all of them either
-          // (::-webkit-scrollbar-thumb only works in Chromium/WebKit, not
-          // Firefox), so hiding it outright is the one fix that's actually
-          // consistent everywhere. Purely visual — scrolling (wheel,
-          // drag, touch, keyboard) all still work exactly the same.
-          className="video-feed-scroll"
-          // userSelect:'none' is also what actually answers "get rid of the
-          // text cursor" (a real OS text-caret icon can't be recolored from
-          // CSS) — with nothing in this view selectable, the browser has no
-          // reason to ever show it over the likes count/source label/
-          // caption text, so it never appears in the first place rather
-          // than needing to be hidden after the fact. cursor:'grab' hints
-          // the click-and-drag scrolling below on desktop (a no-op on
-          // touch, nothing renders a cursor there); the drag handler swaps
-          // it to 'grabbing' for the duration of an actual drag.
-          style={{
-            height: '100%', overflowY: 'auto', scrollSnapType: 'y mandatory', WebkitOverflowScrolling: 'touch',
-            overscrollBehaviorY: 'none', touchAction: 'pan-y', userSelect: 'none', cursor: 'grab',
-          }}
-        >
-          {videoPosts.map((post, idx) => (
-            <div
-              // idx included — the pool now legitimately wraps/repeats once
-              // real supply runs out (see sliceCircular server-side), so
-              // the same post.id can appear more than once in this list.
-              key={`${post.id || 'v'}-${idx}`}
-              ref={el => { slideRefs.current[idx] = el; }}
-              data-idx={idx}
-              data-post-id={post.id || ''}
-              data-source={post.source || ''}
-              // Was 100dvh — an absolute viewport unit computed independently
-              // of this slide's own ancestor chain (the root is pinned to the
-              // real viewport via position:fixed + inset:0, then height:100%
-              // down to this scroll container). 100dvh and inset:0 are
-              // *supposed* to resolve to the same value, but on some mobile
-              // browsers they can drift apart slightly as the browser's own
-              // UI chrome (address bar, etc.) animates open/closed — leaving
-              // a thin gap at the bottom of every slide where the page's own
-              // light background (#F8FAFC) shows through behind the video,
-              // confirmed live as a persistent white/grey strip at the
-              // bottom of every video regardless of which post. height:100%
-              // instead ties this directly to the same already-correctly-
-              // sized ancestor rather than an independently-computed unit
-              // that can disagree with it.
-              // scrollSnapStop:'always' used to sit here too, to stop a fast
-              // fling from skipping past more than one video at a time — but
-              // on WebKit it also disables real-time finger-tracking during
-              // the drag itself: instead of the slide moving 1:1 with the
-              // touch the way native scrolling normally does, the browser
-              // holds it still for the whole gesture and only animates it to
-              // the decided snap target on release, confirmed live as
-              // "video stays stationary for a second then jumps." Dropping
-              // it restores normal drag-tracking (scrollSnapType alone still
-              // snaps cleanly on release) at the cost of a very hard flick
-              // occasionally advancing two slides instead of one — the same
-              // tradeoff TikTok's own web player makes.
-              style={{ height: '100%', scrollSnapAlign: 'start' }}
-            >
-              {Math.abs(idx - activeIndex) <= VIDEO_MOUNT_RADIUS ? (
-                <VideoSlide
-                  post={post}
-                  active={idx === activeIndex}
-                  muted={muted}
-                  onToggleMute={toggleMuted}
-                  isScrolling={isScrolling}
-                  onOpenComments={setCommentsPost}
-                  // Only the active slide ever reads this — see VideoSlide's
-                  // own effectivePaused/effectiveDuration/effectiveCurrentTime,
-                  // which fall back to 0/false when it's undefined, correctly
-                  // hiding the pause indicator/scrub bar on every inactive
-                  // slide exactly like before this refactor.
-                  sharedYt={idx === activeIndex ? {
-                    paused: sharedYt.paused,
-                    duration: sharedYt.duration,
-                    currentTime: sharedYt.currentTime,
-                    failed: sharedYt.failed,
-                    togglePlay: sharedYtTogglePlay,
-                    seekTo: sharedYtSeekTo,
-                    seekingRef: sharedYtSeekingRef,
-                    frame: activeSrc?.kind === 'youtube' ? ytBoxSize : undefined,
-                  } : undefined}
-                />
-              ) : (
-                // Outside VIDEO_MOUNT_RADIUS — same solid background every
-                // VideoSlide starts from (see its own outer wrapper), so a
-                // fast fling passing through never shows anything visibly
-                // different from a real slide that just hasn't started
-                // playing yet.
-                <div style={{ height: '100%', width: '100%', background: '#000' }} />
-              )}
-            </div>
-          ))}
-        </div>
-
-        {/* Shared YouTube player overlay (see sharedYt/sharedYtPlayerRef
-            above) — ALWAYS mounted, never conditionally removed from the
-            DOM based on which slide is active. YouTube's IFrame API
-            physically replaces the mount div below with its own <iframe>,
-            entirely outside React's knowledge (same hazard Feed.jsx's own
-            YouTubeEmbedBlock documents at length). This used to be wrapped
-            in `{activeSrc?.kind === 'youtube' && (...)}`, so React tore the
-            mount div — and the live iframe YouTube had already substituted
-            in its place — out of the DOM the instant the user scrolled to
-            a single non-YouTube video, but sharedYtPlayerRef.current was
-            never cleared to match. The next YouTube video's effect then
-            took the "reuse existing player" branch against a reference to
-            an already-destroyed player, silently failing every play/
-            pause/seek call — confirmed live as "tap to play doesn't
-            work," and it undid the entire point of keeping one player
-            alive across slides. Hidden via opacity/pointer-events instead
-            of unmounted, so the node (and whatever live iframe YouTube has
-            put in its place) survives scrolling past any number of non-
-            YouTube videos in between. Positioned independently of any
-            individual slide, matching the exact same centered/aspect-ratio
-            box a per-slide player would have used, so it always lines up
-            with the active slide (which, scroll-snapped, always fills this
-            same viewport). z-index sits above the scrolling slide list
-            itself (default stacking) but below every per-slide UI element
-            (caption/scrub bar/action rail/pause indicator, all bumped to
-            z-index 2 — see VideoSlide) and well below the top controls
-            (z-index 10) and any modal (comments sheet, filter sheet).
-            Also hidden (not just when non-YouTube) for the duration of an
-            active scroll gesture, same as the isScrolling check every
-            file/hls slide already uses to pause in place — but for a
-            different reason here: this overlay is positioned to the fixed
-            viewport, not inside the scrolling slide list, so unlike a
-            per-slide player it doesn't move WITH the drag at all — left
-            visible, it would visually "stick" floating in place while
-            everything else (backdrop, caption, other slides) scrolls past
-            around it. Fading out for the drag and back in once scrolling
-            settles (when activeIndex itself updates) reads as clean rather
-            than broken; a brief transition softens the swap instead of an
-            abrupt cut. */}
-        <div ref={sharedYtWrapperRef} className="video-feed-youtube-player" style={{
-          position: 'absolute', inset: 0, zIndex: 1,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          // This player is a visual sibling of the scroll container. Let
-          // native wheel, trackpad, and touch input pass through to it.
-          pointerEvents: 'none',
-          opacity: activeSrc?.kind === 'youtube' && !isScrolling ? 1 : 0,
-          transition: 'opacity .15s ease-out',
-        }}>
-          <div
-            // Explicit pixel width/height from ytBoxSize (measured off this
-            // wrapper via ResizeObserver, see above) instead of width/
-            // height:auto + aspect-ratio — that CSS-only approach doesn't
-            // reliably resolve here (this box is a centered, not stretched,
-            // flex item, so neither axis ever becomes definite from layout
-            // alone), confirmed live as a video rendering at roughly a
-            // bare <iframe>'s ~300x150 browser default regardless of how
-            // large the actual card was. Falls back to 100%/100% only for
-            // the brief instant before the very first measurement lands.
-            style={{
-              width: ytBoxSize.width || '100%', height: ytBoxSize.height || '100%',
-              position: 'relative', pointerEvents: 'none',
-            }}
-          >
-            <div ref={sharedYtHostRef} style={{ width: '100%', height: '100%', pointerEvents: 'none', visibility: sharedYt.failed ? 'hidden' : 'visible' }} />
-            {sharedYt.failed && activeSrc?.kind === 'youtube' && (
-              // Same reasoning as the old per-slide fallback: the IFrame
-              // Player API script never went ready (blocked, offline,
-              // slow network) — a plain embed iframe doesn't load that
-              // script at all and still autoplays muted on its own.
-              <iframe
-                src={`https://www.youtube.com/embed/${activeSrc.id}?autoplay=1&mute=${userWantsSound() ? 0 : 1}&playsinline=1&loop=1&playlist=${activeSrc.id}&controls=0&modestbranding=1&rel=0`}
-                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', display: 'block', pointerEvents: 'none' }}
-                allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
-                title={videoPosts[activeIndex]?.title}
-              />
-            )}
-          </div>
-        </div>
-        </>
-      )}
       </div>
-
+      </div>
       {commentsPost && <CommentsSheet post={commentsPost} onClose={() => setCommentsPost(null)} />}
     </div>
   );

@@ -8,8 +8,9 @@ import HomeFeedTools from './HomeFeedTools';
 import JobsSidebarControls from './JobsSidebarControls';
 import NotificationInbox from './NotificationInbox';
 import './social-surfaces.css';
+import './navigation.css';
 import { HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS } from './sourceMeta';
-import { PanelLeft, SquarePen, UsersRound, ShoppingBag, BriefcaseBusiness, Bookmark, Music, ShieldCheck } from 'lucide-react';
+import { SquarePen, UsersRound, ShoppingBag, Music, ShieldCheck, ChevronDown } from 'lucide-react';
 
 function ShellIcon({ name, size = 20 }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' };
@@ -27,6 +28,7 @@ function ShellIcon({ name, size = 20 }) {
     logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="M16 17l5-5-5-5" /><path d="M21 12H9" /></>,
     install: <><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></>,
     command: <><rect x="4" y="4" width="6" height="6" rx="1" /><rect x="14" y="4" width="6" height="6" rx="1" /><rect x="4" y="14" width="6" height="6" rx="1" /><path d="M14 17h6" /><path d="M17 14v6" /></>,
+    crosspost: <><path d="M12 20V9" /><path d="m8 13 4-4 4 4" /><path d="M8 5H4v5" /><path d="m4 5 4 4" /><path d="M16 5h4v5" /><path d="m20 5-4 4" /></>,
     following: <><circle cx="9" cy="8" r="3" /><path d="M3.5 20a5.5 5.5 0 0 1 11 0" /><path d="m17 10 2 2 3-3" /></>,
     countries: <><circle cx="12" cy="12" r="9" /><path d="M3 12h18" /><path d="M12 3a14 14 0 0 1 0 18" /><path d="M12 3a14 14 0 0 0 0 18" /></>,
     restaurants: <><path d="M7 3v8" /><path d="M4 3v5a3 3 0 0 0 6 0V3" /><path d="M7 11v10" /><path d="M17 3v18" /><path d="M17 3c3 1.5 3 7.5 0 9" /></>,
@@ -86,6 +88,27 @@ function NavBadge({ count }) {
   );
 }
 
+function SavedNavigation({ mobile = false, expanded, onToggle, onNavigate }) {
+  const childrenId = mobile ? 'mobile-saved-links' : 'sidebar-saved-links';
+  const itemClass = mobile ? 'mobile-command-menu-item' : 'nav-link';
+  return <div className={`saved-navigation${mobile ? ' saved-navigation--mobile' : ''}`}>
+    <button type="button" className={`${itemClass} saved-navigation-toggle`} aria-label="Saved" aria-expanded={expanded} aria-controls={childrenId} onClick={onToggle} title={expanded ? 'Hide saved pages' : 'Show saved pages'}>
+      <span className="nav-icon"><ShellIcon name="saved" size={17} /></span>
+      <span className={mobile ? undefined : 'nav-label'}>Saved</span>
+      <ChevronDown size={14} aria-hidden="true" className="saved-navigation-chevron" />
+    </button>
+    <div id={childrenId} className="saved-navigation-links" hidden={!expanded}>
+      {[
+        { to: '/saved/posts', icon: 'posts', label: 'Posts' },
+        { to: '/saved/jobs', icon: 'opportunities', label: 'Jobs' },
+      ].map(({ to, icon, label }) => <NavLink key={to} to={to} className={({ isActive }) => `${itemClass}${isActive ? ' active' : ''}`} aria-label={`Saved ${label.toLowerCase()}`} title={`Saved ${label.toLowerCase()}`} onClick={onNavigate}>
+        <span className="nav-icon"><ShellIcon name={icon} size={16} /></span>
+        <span className={mobile ? undefined : 'nav-label'}>{label}</span>
+      </NavLink>)}
+    </div>
+  </div>;
+}
+
 export default function Layout({ children, wide = false }) {
   const { profile, logout, updateProfileLocally } = useAuth();
   const { showToast } = useToast();
@@ -103,7 +126,19 @@ export default function Layout({ children, wide = false }) {
   const [mobileHeaderPopup, setMobileHeaderPopup] = useState(null);
   const [mobileSearchQuery, setMobileSearchQuery] = useState('');
   const [mobileSearchTarget, setMobileSearchTarget] = useState('posts');
+  const [savedExpanded, setSavedExpanded] = useState(() => {
+    try {
+      const stored = window.localStorage.getItem('ufi:saved-navigation-expanded');
+      return stored === null ? location.pathname.startsWith('/saved/') : stored === '1';
+    } catch { return location.pathname.startsWith('/saved/'); }
+  });
   const menuSwipeStartRef = useRef(null);
+
+  function toggleSavedNavigation() {
+    const expanded = !savedExpanded;
+    setSavedExpanded(expanded);
+    try { window.localStorage.setItem('ufi:saved-navigation-expanded', expanded ? '1' : '0'); } catch { /* Storage may be unavailable. */ }
+  }
 
   // Polled from the shell itself, not the Notifications page — the whole
   // point of a nav badge is being visible from anywhere else in the app,
@@ -319,16 +354,14 @@ export default function Layout({ children, wide = false }) {
       {/* ── Desktop sidebar ── */}
       <aside className="sidebar">
         <Link to={HOME_FEED_PATH} className="sidebar-logo" onClick={handleAllFeedHomeClick} style={{ textDecoration: 'none', color: 'inherit' }}>
-          <div className="sidebar-logo-icon">UFI</div>
+          <img className="sidebar-logo-icon" src="/uficonnect-google-verification-icon.svg" alt="" />
           <span className="sidebar-logo-text">UFIconnect</span>
         </Link>
 
         <nav className="sidebar-nav">
           {[...NAV,
             { to: '/search?tab=groups&create=1', icon: 'groups', label: 'Create a group' },
-            { to: '/groups/post', icon: 'groups', label: 'Post to your group' },
-            { to: '/saved/posts', icon: 'saved', label: 'Saved posts' },
-            { to: '/saved/jobs', icon: 'opportunities', label: 'Saved jobs' },
+            { to: '/command-center?tab=crosspost', icon: 'crosspost', label: 'Cross post' },
           ].map(({ to, icon, label }) => (
             <NavLink
               key={to}
@@ -340,12 +373,13 @@ export default function Layout({ children, wide = false }) {
               className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
             >
               <span className="nav-icon" style={{ position: 'relative' }}>
-                <ShellIcon name={icon} size={19} />
+                <ShellIcon name={icon} size={17} />
                 {to === '/notifications' && <NavBadge count={notifBadge} />}
               </span>
               <span className="nav-label">{label}</span>
             </NavLink>
           ))}
+          <SavedNavigation expanded={savedExpanded} onToggle={toggleSavedNavigation} />
         </nav>
 
         {canInstall && (
@@ -404,17 +438,9 @@ export default function Layout({ children, wide = false }) {
       {profile && (
         <header className="mobile-app-header">
           <div className="mobile-app-header-start">
-            <Link
-              to={HOME_FEED_PATH}
-              className="mobile-app-header-brand"
-              aria-label="Home"
-              onClick={handleAllFeedHomeClick}
-            >
-              <span className="mobile-app-header-mark" aria-hidden="true">UFI</span>
-            </Link>
             <button
               type="button"
-              className={`mobile-app-header-action${mobileAccountOpen ? ' active' : ''}`}
+              className={`mobile-app-header-action mobile-app-header-ufi${mobileAccountOpen ? ' active' : ''}`}
               aria-label="Open account menu"
               aria-expanded={mobileAccountOpen}
               aria-controls="mobile-account-drawer"
@@ -425,7 +451,7 @@ export default function Layout({ children, wide = false }) {
                 setMobileAccountOpen(open => !open);
               }}
             >
-              <PanelLeft size={21} aria-hidden="true" />
+              <img src="/uficonnect-google-verification-icon.svg" alt="" width="30" height="30" />
             </button>
           </div>
 
@@ -557,9 +583,9 @@ export default function Layout({ children, wide = false }) {
               <UsersRound size={20} aria-hidden="true" />
               Create a group
             </Link>
-            <Link to="/groups/post" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
-              <SquarePen size={20} aria-hidden="true" />
-              Post to your group
+            <Link to="/command-center?tab=crosspost" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
+              <ShellIcon name="crosspost" size={18} />
+              Cross post
             </Link>
             <Link
               to="/?feed=ufi&channel=shop"
@@ -569,17 +595,7 @@ export default function Layout({ children, wide = false }) {
               <ShoppingBag size={20} aria-hidden="true" />
               Shop
             </Link>
-            <div className="mobile-account-saved" role="group" aria-label="Saved">
-              <div className="mobile-account-saved-heading">Saved</div>
-              <Link to="/saved/jobs" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
-                <BriefcaseBusiness size={20} aria-hidden="true" />
-                Saved jobs
-              </Link>
-              <Link to="/saved/posts" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
-                <Bookmark size={20} aria-hidden="true" />
-                Saved posts
-              </Link>
-            </div>
+            <SavedNavigation mobile expanded={savedExpanded} onToggle={toggleSavedNavigation} onNavigate={closeMobileOverlays} />
             <div className="mobile-feed-drawer-bottom mobile-account-drawer-bottom">
               <NavLink to="/privacy#analytics" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
                 <ShieldCheck size={18} aria-hidden="true" />
@@ -675,7 +691,7 @@ export default function Layout({ children, wide = false }) {
               </button>
               <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'bars' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'bars'} onClick={() => selectMobileFeed('bars')}>
                 <ShellIcon name="bars" size={18} />
-                Bars
+                Bars and clubs
               </button>
               <NavLink to="/music" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
                 <Music size={18} aria-hidden="true" />Music

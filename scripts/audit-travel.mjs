@@ -98,6 +98,10 @@ try {
     await picker.locator('option[value="US:Seattle"]').waitFor({ state: 'attached' });
     assert.equal(await picker.locator('option').count(), 92);
     const rail = page.getByRole('region', { name: 'Live travel cameras' });
+    assert.equal(await rail.getByRole('combobox', { name: 'Travel destination', exact: true }).count(), 1, 'the 91-city selector belongs to Live Travel');
+    assert.equal(await page.locator('.feed-specialized-toolbar [aria-label="Travel destination"]').count(), 0, 'the old separate city selector is removed');
+    const eventBar = page.getByRole('group', { name: 'Travel events', exact: true });
+    await eventBar.waitFor();
     await rail.locator('.travel-live-loop-choice').first().waitFor();
     assert.equal(await rail.locator('.travel-live-loop-choice').count(), 3);
     await rail.scrollIntoViewIfNeeded();

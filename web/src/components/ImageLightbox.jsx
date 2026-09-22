@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { deriveBlueskyPlaylistUrl, isDirectVideoUrl, extractYouTubeId, loadYouTubeIframeApi, HlsVideoPlayer, userWantsSound, useGlobalMuted } from './videoMedia';
+import { deriveBlueskyPlaylistUrl, isDirectVideoUrl, extractYouTubeId, loadYouTubeIframeApi, createYouTubePlayerFrame, youTubeEmbedUrl, HlsVideoPlayer, userWantsSound, useGlobalMuted } from './videoMedia';
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll';
 
 // Same floating-control look as VideoFeedView's overlay buttons (back/
@@ -323,11 +323,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
     ytPlayerRef.current = null;
 
     host.replaceChildren();
-    const mount = document.createElement('div');
-    mount.style.width = '100%';
-    mount.style.height = '100%';
-    mount.style.pointerEvents = 'none';
-    host.appendChild(mount);
+    const mount = createYouTubePlayerFrame(host, youtubeId, { autoplay: 1, mute: 1 }, post.title || 'YouTube video');
 
     const isCurrent = () => !cancelled && ytLifecycleRef.current === lifecycle;
     const readyTimeout = setTimeout(() => { if (isCurrent()) setYtFailed(true); }, 6000);
@@ -339,7 +335,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
         // back to this page can silently fail ("Unable to post message to
         // https://www.youtube.com...") — see VideoFeedView's identical fix
         // for the full explanation; same underlying player construction.
-        playerVars: { autoplay: 1, mute: 1, playsinline: 1, controls: 0, modestbranding: 1, rel: 0, origin: window.location.origin },
+        playerVars: { autoplay: 1, mute: 1, playsinline: 1, controls: 1, rel: 0, origin: window.location.origin },
         events: {
           onReady: (e) => {
             if (!isCurrent()) {
@@ -349,7 +345,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
             clearTimeout(readyTimeout);
             ytPlayerRef.current = e.target;
             setYtFailed(false);
-            try { e.target.getIframe().style.pointerEvents = 'none'; } catch {}
+            try { e.target.getIframe().style.pointerEvents = 'auto'; } catch {}
             try { setDuration(e.target.getDuration() || 0); } catch {}
             try { if (startUnmuted) e.target.unMute(); } catch {}
             // Same fix as VideoFeedView's YouTube slide: playerVars.autoplay:1
@@ -628,8 +624,9 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
                 // all and still autoplays muted on its own, so real
                 // playback survives even where that script doesn't load.
                 <iframe
-                  src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=${userWantsSound() ? 0 : 1}&playsinline=1&controls=0&modestbranding=1&rel=0`}
-                  style={{ width: '100%', height: '100%', border: 'none', display: 'block', pointerEvents: 'none' }}
+                  src={youTubeEmbedUrl(youtubeId, { autoplay: 1, mute: userWantsSound() ? 0 : 1 })}
+                  referrerPolicy="strict-origin-when-cross-origin"
+                  style={{ width: '100%', height: '100%', border: 'none', display: 'block', pointerEvents: 'auto' }}
                   allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
                   title={post.title}
                 />
