@@ -77,6 +77,16 @@
   background: transparent; border: 0; outline: 0; box-shadow: none; color: var(--text); font: inherit; font-size: .85rem;
 }
 .shell .global-search-bar input::placeholder { color: #8591a3; }
+.shell .global-search-bar input::-webkit-search-cancel-button { display: none; }
+.shell .global-search-bar .global-search-open,
+.shell .global-search-bar .global-search-clear {
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 26px;
+  width: 26px; height: 30px; padding: 0; border: 0; border-radius: 6px;
+  background: transparent; color: #6b7a90; cursor: pointer;
+}
+.shell .global-search-bar .global-search-open:hover,
+.shell .global-search-bar .global-search-clear:hover { color: #102a6b; background: #e7edf5; }
+.shell .global-search-bar button:focus-visible { outline: 2px solid var(--primary); outline-offset: -1px; }
 .shell .global-search-bar select {
   flex: 0 0 76px; width: 76px; max-width: 76px; height: 28px; padding: 0 2px 0 8px;
   border: 0; border-left: 1px solid #dfe5ed; border-radius: 0;
@@ -93,6 +103,24 @@
 .shell .global-messages-link:focus-visible,
 .shell .global-desktop-alerts:focus-visible,
 .shell .global-search-bar select:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+.global-search-backdrop {
+  position: fixed; inset: 0; z-index: 3200; display: flex; align-items: flex-start; justify-content: center;
+  padding: max(40px, env(safe-area-inset-top, 0px)) 20px 20px; background: #13223866;
+}
+.global-search-dialog {
+  width: min(920px, 100%); max-height: calc(100dvh - 70px); min-height: min(420px, 80dvh);
+  display: flex; flex-direction: column; min-width: 0; overflow: hidden;
+  border: 1px solid #dfe5ee; border-radius: 17px; background: var(--card, #fff); box-shadow: 0 20px 70px #14223a2b;
+}
+.global-search-dialog-header { display: flex; align-items: center; flex: 0 0 auto; gap: 10px; min-height: 62px; padding: 12px 18px; border-bottom: 1px solid var(--border); }
+.global-search-dialog-header h2 { flex: 1; margin: 0; min-width: 0; font-size: 1rem; font-weight: 650; color: var(--text); }
+.global-search-dialog-close { flex: 0 0 34px; width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 50%; background: #f0f3f7; color: #52637c; cursor: pointer; }
+.global-search-dialog-close:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.global-search-dialog-body { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 16px 20px 22px; }
+.global-search-dialog-body .search-page-shell { width: 100%; min-width: 0; }
+.global-search-dialog-body .search-tab-strip { position: sticky; top: -16px; z-index: 2; background: var(--card, #fff); }
+.global-search-loading { display: grid; min-height: 180px; place-items: center; color: var(--muted); font-size: .9rem; }
 
 @media (min-width: 769px) and (max-width: 1100px) {
   .saved-navigation-links { margin-left: 0; padding-left: 0; border-left: 0; }
@@ -113,6 +141,16 @@
   .shell .global-desktop-alerts { display: none; }
   .shell .global-app-header .mobile-command-menu { gap: 1px; }
   .shell .global-app-header .mobile-command-menu .mobile-app-header-action { width: 32px; min-width: 32px; height: 40px; }
+  .global-search-backdrop { padding: max(12px, env(safe-area-inset-top, 0px)) 8px 8px; }
+  .global-search-dialog { max-height: calc(100dvh - 24px); border-radius: 13px; }
+  .global-search-dialog-header { padding: 10px 12px; gap: 7px; min-height: 58px; }
+  .global-search-dialog-header h2 { font-size: .87rem; }
+  .global-search-dialog-header .btn { font-size: .72rem; padding-inline: 9px; }
+  .global-search-dialog-body { padding: 12px 12px 18px; }
+  .global-search-dialog-body .search-tab-strip { top: -12px; }
+  .shell .global-search-bar { gap: 4px; }
+  .shell .global-search-bar .global-search-open,
+  .shell .global-search-bar .global-search-clear { flex-basis: 23px; width: 23px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .saved-navigation-chevron { transition: none; }

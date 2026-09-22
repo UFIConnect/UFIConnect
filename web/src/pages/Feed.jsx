@@ -2652,6 +2652,21 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     });
   }, [loadFeed]);
 
+  const submitFeedSearch = useCallback((query) => {
+    const nextSearch = String(query || '').trim().slice(0, 500);
+    searchRef.current = nextSearch;
+    setSearch(nextSearch);
+    setRemotePage(2);
+    setRemoteHasMore(true);
+    // Search narrows the current feed without changing its sources, topics,
+    // category, location, or the member's equalizer preferences.
+    return loadFeed(false, activeTabsRef.current, {
+      filters: filtersRef.current,
+      q: nextSearch,
+      replace: true,
+    });
+  }, [loadFeed]);
+
   const clearSourceSelection = useCallback(() => {
     activeTabsRef.current = [];
     setActiveTabs([]);
@@ -2729,8 +2744,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   }, [applyLocationFilters, profile?.roleSettings?.feedLocation]);
 
   const toggleTab = useCallback((key) => {
-    searchRef.current = '';
-    setSearch('');
     // Source tabs just change which filter is active now — they no longer
     // double as their own refresh (that's Feed's job now, see
     // switchViewMode). manual:false means no seed reshuffle, no forced
@@ -3408,7 +3421,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   </>;
 
   return (
-    <Layout wide={!forcedMode}>
+    <Layout wide={!forcedMode} feedSearch={EMBEDDED_HOME_MODES.has(viewMode) ? undefined : {
+      query: search,
+      onSubmit: submitFeedSearch,
+      label: 'Search this feed',
+    }}>
       <Helmet>
         <title>{viewMode === 'groups' && publicGroupsFeed ? 'Public Group Posts | UFIconnect' : forcedMode ? 'You | UFIconnect' : 'UFIconnect | Social Network & Job Discovery'}</title>
         <meta name="description" content="Your personalized UFIconnect social feed brings posts, people, communities, videos, and job discovery into one useful scroll." />
@@ -3825,13 +3842,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             {search ? (
               <>
                 <p style={{ marginBottom: 8 }}>Try a different search term or clear your filters.</p>
-                <button className="btn btn-ghost btn-sm" onClick={() => {
-                  searchRef.current = '';
-                  setSearch('');
-                  setRemotePage(2);
-                  setRemoteHasMore(true);
-                  loadFeed(false, activeTabsRef.current, { q: '', replace: true });
-                }}>Clear search</button>
+                <button className="btn btn-ghost btn-sm" onClick={() => submitFeedSearch('')}>Clear search</button>
               </>
             ) : activeFilterCount > 0 ? (
               <>

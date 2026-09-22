@@ -1,4 +1,4 @@
-import { installAuditMember, auditNavigate, auditReload } from './audit-session.mjs';
+import { installAuditMember, auditNavigate } from './audit-session.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -39,6 +39,17 @@ try {
     await page.route('**/api/notifications/mark-read', route => { if (!failRead) read = true; return route.fulfill({ status: failRead ? 503 : 200, json: { ok: !failRead } }); });
     await page.route('**/api/users/alex/connect', route => { accepted = true; return route.fulfill({ json: { ok: true } }); });
     await page.route('**/api/users/search?*', route => { searches.push(new URL(route.request().url()).searchParams.get('q')); return route.fulfill({ json: { users: [{ id: 'maya', name: 'Maya Chen', title: 'Software engineer', role: 'Developer', skills: [], interests: [] }], totalCount: 1, registeredCount: 1, hasMore: false, countSource: 'database' } }); });
+    await page.route('**/api/office/feed?*', route => {
+      const params = new URL(route.request().url()).searchParams;
+      const query = params.get('q') || 'Recent';
+      const sources = (params.get('sources') || params.get('source') || 'reddit,github').split(',');
+      return route.fulfill({ json: { posts: sources.map((source, index) => ({
+        id: `search-audit-${params.get('mode')}-${query}-${source}`, source, title: `${query} project ${index}`,
+        content: 'An open source software engineer project with useful community discussion.', topic: 'Open Source',
+        createdAt: new Date(Date.now() - index * 60000).toISOString(), sourceUrl: 'https://example.com/project',
+        author: { id: 'author', name: 'Community member' },
+      })), hasMore: false } });
+    });
     await auditNavigate(page, server.resolvedUrls.local[0] + 'notifications');
     await page.locator('.notification-inbox').getByText('Maya Chen').waitFor();
     let inbox = page.locator('.notification-inbox').first();
@@ -66,15 +77,82 @@ try {
       await page.getByRole('button', { name: 'Close alerts', exact: true }).click();
     }
     const globalSearch = page.getByRole('search', { name: 'Search UFIconnect', exact: true });
-    await globalSearch.waitFor({ state: 'visible' });
-    await globalSearch.getByRole('combobox', { name: 'Search in', exact: true }).selectOption('people');
-    await globalSearch.getByRole('searchbox', { name: 'Search UFIconnect', exact: true }).fill('software engineer');
-    await globalSearch.getByRole('searchbox', { name: 'Search UFIconnect', exact: true }).press('Enter');
-    await page.waitForURL(url => url.pathname === '/search' && url.searchParams.get('tab') === 'people' && url.searchParams.get('q') === 'software engineer');
-    await page.getByRole('searchbox', { name: 'Search people', exact: true }).waitFor();
-    await page.locator('.search-page-shell').getByText('Maya Chen', { exact: true }).waitFor();
-    assert.ok(searches.includes('software engineer'));
-    assert.equal(await page.getByRole('searchbox', { name: 'Search people', exact: true }).inputValue(), 'software engineer');
+    const headerInput = globalSearch.getByRole('searchbox', { name: 'Search UFIconnect', exact: true });
+    const dialog = page.getByRole('dialog', { name: 'Search UFIconnect', exact: true });
+    const sourceIds = params => (params.get('sources') || params.get('source') || '').split(',').filter(Boolean).sort();
+    const feedResponse = (mode, query, expectedSources = ['github', 'reddit'], topics = 'Open Source') => page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname.endsWith('/office/feed') && url.searchParams.get('mode') === mode
+        && (url.searchParams.get('q') || '') === query
+        && sourceIds(url.searchParams).join(',') === expectedSources.join(',')
+        && (topics === null || url.searchParams.get('topics') === topics);
+    });
+    for (const mode of ['feed', 'following']) {
+      await auditNavigate(page, server.resolvedUrls.local[0] + `?feed=${mode}`);
+      const sources = page.getByRole('group', { name: mode === 'feed' ? 'Home sources' : 'Following sources', exact: true });
+      await sources.waitFor();
+      await Promise.all([feedResponse(mode, '', [], null), sources.getByRole('button', { name: 'All sources', exact: true }).click()]);
+      await Promise.all([feedResponse(mode, '', ['reddit'], null), sources.getByRole('button', { name: 'Reddit', exact: true }).click()]);
+      await Promise.all([feedResponse(mode, '', ['github', 'reddit'], null), sources.getByRole('button', { name: 'GitHub', exact: true }).click()]);
+      await page.getByRole('button', { name: 'Filter feed by topic', exact: true }).click();
+      const openSourceTopic = page.getByRole('button', { name: 'Open Source', exact: true });
+      if (await openSourceTopic.getAttribute('aria-pressed') !== 'true') await openSourceTopic.click();
+      await Promise.all([feedResponse(mode, ''), page.getByRole('button', { name: 'Apply topics', exact: true }).click()]);
+      const feedUrl = page.url();
+      await headerInput.fill('software engineer');
+      const [searchedFeed] = await Promise.all([feedResponse(mode, 'software engineer'), headerInput.press('Enter')]);
+      assert.ok(searchedFeed.ok(), 'Header search keeps the selected source and topic request filters');
+      assert.equal(page.url(), feedUrl, 'Header search updates the current feed without navigation');
+      await page.getByText('software engineer project 0', { exact: true }).waitFor();
+      assert.equal(await dialog.count(), 0, 'Submitting a feed query does not open broader search');
+      for (const source of ['Reddit', 'GitHub']) assert.equal(await sources.getByRole('button', { name: source, exact: true }).getAttribute('aria-pressed'), 'true');
+
+      if (mode === 'feed') {
+        const opener = globalSearch.getByRole('button', { name: 'Open search', exact: true });
+        await opener.click();
+        await dialog.waitFor({ state: 'visible' });
+        assert.equal(await dialog.getAttribute('aria-modal'), 'true');
+        await dialog.getByRole('tab', { name: 'People', exact: true }).click();
+        const peopleInput = dialog.getByRole('searchbox', { name: 'Search people', exact: true });
+        await Promise.all([
+          page.waitForResponse(response => {
+            const url = new URL(response.url());
+            return url.pathname.endsWith('/users/search') && url.searchParams.get('q') === 'product designer';
+          }),
+          peopleInput.fill('product designer'),
+        ]);
+        await dialog.getByText('Maya Chen', { exact: true }).waitFor();
+        assert.ok(searches.includes('product designer'));
+        assert.equal(page.url(), feedUrl, 'Broader search results stay in the popup');
+        await page.screenshot({ path: path.join(root, `.cache/audit-ui/search-${width}.png`) });
+        await dialog.getByRole('button', { name: 'Close search', exact: true }).click();
+        await dialog.waitFor({ state: 'detached' });
+        assert.equal(await opener.evaluate(element => document.activeElement === element), true, 'Closing search restores focus to its opener');
+        assert.equal(await headerInput.inputValue(), 'software engineer', 'Closing broader search leaves the feed query intact');
+        await opener.click();
+        await dialog.waitFor({ state: 'visible' });
+        await page.keyboard.press('Escape');
+        await dialog.waitFor({ state: 'detached' });
+        assert.equal(await opener.evaluate(element => document.activeElement === element), true, 'Escape closes search and restores focus');
+        assert.equal(page.url(), feedUrl);
+
+        await opener.click();
+        await dialog.getByRole('tab', { name: 'People', exact: true }).click();
+        await dialog.getByRole('searchbox', { name: 'Search people', exact: true }).fill('systems engineer');
+        const [updatedFeed] = await Promise.all([
+          feedResponse(mode, 'systems engineer'),
+          dialog.getByRole('button', { name: 'Update feed', exact: true }).click(),
+        ]);
+        assert.ok(updatedFeed.ok(), 'Update feed applies the popup query with existing sources and topics');
+        await dialog.waitFor({ state: 'detached' });
+        assert.equal(await headerInput.inputValue(), 'systems engineer');
+        assert.equal(page.url(), feedUrl);
+      }
+      const [clearedFeed] = await Promise.all([feedResponse(mode, ''), globalSearch.getByRole('button', { name: 'Clear feed search', exact: true }).click()]);
+      assert.ok(clearedFeed.ok(), 'Clearing feed search removes only the query');
+      assert.equal(await headerInput.inputValue(), '');
+      assert.equal(page.url(), feedUrl);
+    }
     const messages = page.locator('.global-search-center').getByRole('link', { name: 'Messages', exact: true });
     await messages.waitFor({ state: 'visible' });
     const searchBounds = await globalSearch.boundingBox();
@@ -86,12 +164,9 @@ try {
       'Messages shares the search row');
     await messages.click();
     await page.waitForURL(url => url.pathname === '/messages');
-    await auditNavigate(page, server.resolvedUrls.local[0] + 'search?tab=people&q=software%20engineer');
-    await page.locator('.search-page-shell').getByText('Maya Chen', { exact: true }).waitFor();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
-    await page.screenshot({ path: path.join(root, `.cache/audit-ui/search-${width}.png`) });
     assert.deepEqual(errors, []);
-    console.log(`PASS: Search and notification actions at ${width}px`);
+    console.log(`PASS: in-place Home/Following search, popup search/close/Escape/focus, Messages and notification actions at ${width}px`);
     await context.close();
   }
 } finally { await browser?.close(); await server.close(); await app.close(); }

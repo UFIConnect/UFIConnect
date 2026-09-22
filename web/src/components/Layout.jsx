@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { lazy, Suspense, useState, useEffect, useRef } from 'react';
 import { Link, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -11,6 +11,8 @@ import './social-surfaces.css';
 import './navigation.css';
 import { HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS } from './sourceMeta';
 import { SquarePen, UsersRound, ShoppingBag, Music, ShieldCheck, ChevronDown } from 'lucide-react';
+
+const SearchPopupContent = lazy(() => import('../pages/SearchExperience'));
 
 function ShellIcon({ name, size = 20 }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' };
@@ -108,7 +110,7 @@ function SavedNavigation({ mobile = false, expanded, onToggle, onNavigate }) {
   </div>;
 }
 
-export default function Layout({ children, wide = false }) {
+export default function Layout({ children, wide = false, feedSearch }) {
   const { profile, logout, updateProfileLocally } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
@@ -125,6 +127,11 @@ export default function Layout({ children, wide = false }) {
   const [mobileHeaderPopup, setMobileHeaderPopup] = useState(null);
   const [mobileSearchQuery, setMobileSearchQuery] = useState('');
   const [mobileSearchTarget, setMobileSearchTarget] = useState('posts');
+  const [searchPopupOpen, setSearchPopupOpen] = useState(false);
+  const [searchPopupSeed, setSearchPopupSeed] = useState('');
+  const [searchPopupQuery, setSearchPopupQuery] = useState('');
+  const searchPopupRef = useRef(null);
+  const searchPopupOpenerRef = useRef(null);
   const [savedExpanded, setSavedExpanded] = useState(() => {
     try {
       const stored = window.localStorage.getItem('ufi:saved-navigation-expanded');
@@ -163,7 +170,37 @@ export default function Layout({ children, wide = false }) {
     setMobileMenuOpen(false);
     setMobileAccountOpen(false);
     setMobileHeaderPopup(null);
+    setSearchPopupOpen(false);
   }, [location.pathname, location.search]);
+
+  useEffect(() => {
+    if (feedSearch) setMobileSearchQuery(feedSearch.query || '');
+  }, [feedSearch?.query]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!searchPopupOpen) return undefined;
+    const previousFocus = searchPopupOpenerRef.current;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    searchPopupRef.current?.querySelector('button')?.focus({ preventScroll: true });
+    function handleSearchKeys(event) {
+      if (event.key === 'Escape') { event.preventDefault(); setSearchPopupOpen(false); return; }
+      if (event.key !== 'Tab') return;
+      const dialog = searchPopupRef.current;
+      const items = [...(dialog?.querySelectorAll('a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]') || [])]
+        .filter(element => element.getClientRects().length && !element.closest('[hidden]'));
+      if (!items.length) { event.preventDefault(); return; }
+      const first = items[0], last = items[items.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
+    }
+    document.addEventListener('keydown', handleSearchKeys);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleSearchKeys);
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus({ preventScroll: true });
+    };
+  }, [searchPopupOpen]);
 
   useEffect(() => {
     if (location.pathname !== '/search') return;
@@ -293,9 +330,23 @@ export default function Layout({ children, wide = false }) {
     event.preventDefault();
     const query = mobileSearchQuery.trim();
     closeMobileOverlays();
-    const params = new URLSearchParams({ tab: mobileSearchTarget });
-    if (query) params.set('q', query);
-    navigate(`/search?${params.toString()}`);
+    if (feedSearch?.onSubmit) feedSearch.onSubmit(query);
+    else openSearchPopup();
+  }
+
+  function openSearchPopup() {
+    searchPopupOpenerRef.current = document.activeElement;
+    closeMobileOverlays();
+    setSearchPopupSeed(mobileSearchQuery.trim());
+    setSearchPopupQuery(mobileSearchQuery.trim());
+    setSearchPopupOpen(true);
+  }
+
+  function applyPopupSearch() {
+    const query = searchPopupQuery.trim();
+    setMobileSearchQuery(query);
+    feedSearch?.onSubmit(query);
+    setSearchPopupOpen(false);
   }
 
   function handleLogout() {
@@ -466,11 +517,10 @@ export default function Layout({ children, wide = false }) {
           <div className="global-search-center">
             <form className="global-search-bar" role="search" aria-label="Search UFIconnect" onSubmit={submitMobileSearch}>
               <ShellIcon name="search" size={17} />
-              <input type="search" value={mobileSearchQuery} aria-label="Search UFIconnect" placeholder="Search" enterKeyHint="search"
+              <input type="search" value={mobileSearchQuery} aria-label="Search UFIconnect" placeholder={feedSearch?.label || 'Search'} title={feedSearch?.label || 'Search UFIconnect'} enterKeyHint="search"
                 onFocus={closeMobileOverlays} onChange={event => setMobileSearchQuery(event.target.value)} />
-              <select aria-label="Search in" title={`Search in ${mobileSearchTarget}`} value={mobileSearchTarget} onChange={event => setMobileSearchTarget(event.target.value)}>
-                <option value="posts">Posts</option><option value="people">People</option><option value="groups">Groups</option><option value="jobs">Jobs</option>
-              </select>
+              {mobileSearchQuery && <button type="button" className="global-search-clear" aria-label="Clear feed search" title="Clear search" onClick={() => { setMobileSearchQuery(''); feedSearch?.onSubmit(''); }}><ShellIcon name="close" size={14} /></button>}
+              <button type="button" className="global-search-open" aria-label="Open search" title="Search posts, people, groups and jobs" aria-haspopup="dialog" aria-expanded={searchPopupOpen} onClick={openSearchPopup}><ChevronDown size={16} aria-hidden="true" /></button>
             </form>
             <NavLink to="/messages" className={({ isActive }) => `global-messages-link${isActive ? ' active' : ''}`} aria-label="Messages" title="Messages" onClick={closeMobileOverlays}>
               <ShellIcon name="messages" size={20} />
@@ -512,6 +562,21 @@ export default function Layout({ children, wide = false }) {
           </div>
         </header>
       )}
+
+      {profile && searchPopupOpen && <div className="global-search-backdrop" onClick={event => { if (event.target === event.currentTarget) setSearchPopupOpen(false); }}>
+        <section className="global-search-dialog" ref={searchPopupRef} role="dialog" aria-modal="true" aria-labelledby="global-search-title">
+          <div className="global-search-dialog-header">
+            <h2 id="global-search-title">Search UFIconnect</h2>
+            {feedSearch?.onSubmit && <button type="button" className="btn btn-primary btn-sm" onClick={applyPopupSearch}>Update feed</button>}
+            <button type="button" className="global-search-dialog-close" aria-label="Close search" onClick={() => setSearchPopupOpen(false)}><ShellIcon name="close" size={19} /></button>
+          </div>
+          <div className="global-search-dialog-body">
+            <Suspense fallback={<div className="global-search-loading" role="status">Loading search…</div>}>
+              <SearchPopupContent embedded initialTab={mobileSearchTarget} initialQuery={searchPopupSeed} onQueryChange={setSearchPopupQuery} />
+            </Suspense>
+          </div>
+        </section>
+      </div>}
 
       {profile && mobileHeaderPopup === 'notifications' && (
         <section id="mobile-alerts-popup" className="mobile-header-popup mobile-alerts-popup" role="dialog" aria-label="Alerts">

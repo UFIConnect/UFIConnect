@@ -1,5 +1,5 @@
 import { privateSessionStorage } from '../auth/session';
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { Search as SearchIcon, X } from 'lucide-react';
@@ -215,13 +215,13 @@ function PostFilters({ sources, selectedSources, selectedTopics, onSourcesChange
   );
 }
 
-export default function SearchExperience({ initialTab = null } = {}) {
+export default function SearchExperience({ initialTab = null, initialQuery = null, embedded = false, onQueryChange } = {}) {
   const { profile } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [routeSeed] = useState(() => ({
     tab: SEARCH_TABS.some((tab) => tab.key === initialTab) ? initialTab : initialSearchTab(),
-    query: initialSearchQuery(),
+    query: initialQuery === null ? initialSearchQuery() : String(initialQuery).slice(0, 200),
   }));
   const [activeTab, setActiveTab] = useState(routeSeed.tab);
   const [queries, setQueries] = useState(() => ({
@@ -247,7 +247,7 @@ export default function SearchExperience({ initialTab = null } = {}) {
   const [groupCategories, setGroupCategories] = useState([]);
   const [groupCategory, setGroupCategory] = useState('all');
   const [showCreateGroup, setShowCreateGroup] = useState(() => (
-    new URLSearchParams(window.location.search).get('create') === '1'
+    !embedded && new URLSearchParams(window.location.search).get('create') === '1'
   ));
   const [postStates, setPostStates] = useState({ posts: emptyPostState(), following: emptyPostState() });
   const [postSources, setPostSources] = useState({ posts: [], following: [] });
@@ -263,7 +263,10 @@ export default function SearchExperience({ initialTab = null } = {}) {
   const hydratedProfileRef = useRef(null);
   const query = queries[activeTab] || '';
 
+  useEffect(() => { onQueryChange?.(query); }, [query, onQueryChange]);
+
   useEffect(() => {
+    if (embedded) return;
     const params = new URLSearchParams(location.search);
     const requestedTab = params.get('tab');
     const nextTab = requestedTab === 'communities' ? 'groups' : requestedTab;
@@ -273,12 +276,13 @@ export default function SearchExperience({ initialTab = null } = {}) {
       const targetTab = SEARCH_TABS.some((tab) => tab.key === nextTab) ? nextTab : activeTab;
       setQueries(current => ({ ...current, [targetTab]: nextQuery }));
     }
-  }, [activeTab, location.search]);
+  }, [activeTab, embedded, location.search]);
 
   useEffect(() => {
+    if (embedded) return;
     const params = new URLSearchParams(location.search);
     setShowCreateGroup(activeTab === 'groups' && params.get('create') === '1');
-  }, [activeTab, location.search]);
+  }, [activeTab, embedded, location.search]);
 
   const disabledSources = useMemo(() => new Set(
     Array.isArray(profile?.roleSettings?.disabledSources)
@@ -486,6 +490,7 @@ export default function SearchExperience({ initialTab = null } = {}) {
   }, [groupCategory]);
 
   const closeCreateGroup = useCallback(() => {
+    if (embedded) { setShowCreateGroup(false); return; }
     const params = new URLSearchParams(location.search);
     // Let the URL-driven effect close a linked dialog after navigation commits.
     // Otherwise a quick menu tap can be undone by the pending route change.
@@ -496,7 +501,7 @@ export default function SearchExperience({ initialTab = null } = {}) {
     params.delete('create');
     const nextSearch = params.toString();
     navigate({ pathname: '/search', search: nextSearch ? `?${nextSearch}` : '?tab=groups' }, { replace: true });
-  }, [location.search, navigate]);
+  }, [embedded, location.search, navigate]);
 
   const createGroup = useCallback(async (group) => {
     const { data } = await client.post('/groups', group);
@@ -515,7 +520,8 @@ export default function SearchExperience({ initialTab = null } = {}) {
 
   function selectTab(tab) {
     setActiveTab(tab);
-    navigate({ pathname: '/search', search: `?tab=${tab}` }, { replace: true });
+    if (embedded) setQueries(current => ({ ...current, [tab]: current[tab] || query }));
+    else navigate({ pathname: '/search', search: `?tab=${tab}` }, { replace: true });
   }
 
   function handleQueryChange(event) {
@@ -617,7 +623,7 @@ export default function SearchExperience({ initialTab = null } = {}) {
   }, [activeTab, loadGroups, loadPostResults, postSources, postTopics, queries, roleFilter, searchPeople, sortBy]);
 
   useScrollToRefresh(refreshActiveSearch, {
-    enabled: activeTab !== 'jobs' && !activeLoading && !activeLoadingMore,
+    enabled: !embedded && activeTab !== 'jobs' && !activeLoading && !activeLoadingMore,
   });
 
   function updatePost(tab, updatedPost) {
@@ -630,9 +636,10 @@ export default function SearchExperience({ initialTab = null } = {}) {
     }));
   }
 
+  const SearchWrapper = embedded ? Fragment : Layout;
   return (
-    <Layout>
-      <Helmet>
+    <SearchWrapper>
+      {!embedded && <Helmet>
         <title>Search Posts, People, Groups & Jobs | UFIconnect</title>
         <meta name="description" content="Search personalized posts, professionals, groups, and live job listings." />
         <link rel="canonical" href="https://uficonnect.org/search" />
@@ -642,7 +649,7 @@ export default function SearchExperience({ initialTab = null } = {}) {
         <meta property="og:description" content="Search personalized posts, professionals, groups, and live job listings." />
         <meta property="og:image" content="https://uficonnect.org/og-image.png" />
         <meta name="twitter:card" content="summary_large_image" />
-      </Helmet>
+      </Helmet>}
 
       {showCreateGroup && (
         <CreateGroupModal
@@ -653,7 +660,7 @@ export default function SearchExperience({ initialTab = null } = {}) {
       )}
 
       <div className="search-page-shell">
-        <div className="page-header"><h1 className="page-title">Search</h1></div>
+        {!embedded && <div className="page-header"><h1 className="page-title">Search</h1></div>}
 
         <div className="search-tab-strip" role="tablist" aria-label="Search sections">
           {SEARCH_TABS.map((tab) => (
@@ -931,6 +938,6 @@ export default function SearchExperience({ initialTab = null } = {}) {
           </div>
         )}
       </div>
-    </Layout>
+    </SearchWrapper>
   );
 }
