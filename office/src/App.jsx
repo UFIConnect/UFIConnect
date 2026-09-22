@@ -3274,7 +3274,8 @@ export default function App() {
   };
   const navStyle = {
     flex: isMobile ? '0 0 auto' : 1,
-    display: 'block',
+    display: isMobile ? 'grid' : 'block',
+    gridTemplateColumns: isMobile ? 'minmax(0, 1fr) auto' : undefined,
     padding: isMobile ? '0 14px 12px' : 0,
     scrollbarWidth: 'thin',
   };
@@ -3306,6 +3307,7 @@ export default function App() {
         @keyframes glowPulse { 0%,100% { transform: scale(1); filter: brightness(1); } 50% { transform: scale(1.06); filter: brightness(1.3); } }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         a { text-decoration: none; }
+        .office-nav-section { display: contents; }
         .office-nav-primary, .office-nav-more { display: flex; flex-direction: column; }
         .office-nav-toggle { width: 100%; padding: 12px 20px; border: 0; background: transparent; color: #94a3b8; text-align: left; cursor: pointer; font: inherit; font-size: 12px; }
         .office-nav-more { border-top: 1px solid rgba(255,255,255,.06); }
@@ -3315,9 +3317,10 @@ export default function App() {
         .office-overview-detail > summary span { margin-left: 10px; color: #64748b; font-size: 11px; font-weight: 400; }
         .office-overview-detail[open] { padding-bottom: 16px; }
         @media (max-width: 760px) {
-          .office-nav-primary { flex-direction: row; gap: 6px; overflow-x: auto; scrollbar-width: thin; }
-          .office-nav-toggle { padding: 10px 0 0; }
-          .office-nav-more { flex-direction: row; flex-wrap: wrap; gap: 4px; max-height: 30vh; overflow-y: auto; margin-top: 10px; padding-top: 8px; }
+          .office-nav-primary { grid-column: 1; grid-row: 1; min-width: 0; flex-direction: row; gap: 6px; overflow-x: auto; scrollbar-width: thin; }
+          .office-nav-toggle { grid-column: 2; grid-row: 1; align-self: start; min-height: 44px; width: auto; margin-left: 8px; padding: 10px 12px; border: 1px solid #334155; border-radius: 8px; background: #142238; color: #dbeafe; font-weight: 600; white-space: nowrap; }
+          .office-nav-toggle[aria-expanded="true"] { background: #1d4ed8; border-color: #60a5fa; color: white; }
+          .office-nav-more { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; gap: 4px; max-height: 30vh; overflow-y: auto; margin-top: 10px; padding-top: 8px; }
         }
       `}</style>
 
@@ -3334,9 +3337,9 @@ export default function App() {
           </div>
 
           <nav style={navStyle} aria-label="Office sections">
-          {['primary', 'more'].map(section => <div key={section}>
+          {['primary', 'more'].map(section => <div key={section} className="office-nav-section">
           {section === 'more' && <button className="office-nav-toggle" aria-expanded={moreToolsOpen} aria-controls="office-more-tools" onClick={() => setMoreToolsOpen(open => !open)}>
-            {moreToolsOpen ? 'Fewer tools' : 'More tools'}
+            More tools <span aria-hidden="true">{moreToolsOpen ? '▴' : '▾'}</span>
           </button>}
           <div className={`office-nav-${section}`} id={section === 'more' ? 'office-more-tools' : undefined} hidden={section === 'more' && !moreToolsOpen}>
           {nav.filter(({ id }) => PRIMARY_OFFICE_VIEWS.has(id) === (section === 'primary')).map(({ id, label }) => {
