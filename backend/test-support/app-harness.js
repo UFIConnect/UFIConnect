@@ -64,7 +64,7 @@ async function createAppHarness({ env = {}, connected = false, query, modules = 
   });
   vm.runInContext(fs.readFileSync(entry, 'utf8') + `
     globalThis.audit = {
-      app, users, groups, posts, connections, blocks, follows,
+      app, users, groups, posts, connections, blocks, follows, conversations,
       pickOnboardingGroups, fullProfile, provisionAuth0User, issueSession, createPasswordResetToken, localSessions,
       createOAuthState, verifyOAuthState, dbRowToMemUser, saveSocialToken,
       normalizeFeedPost, dbRowToFeedPost, mapSharedJobPost,
@@ -77,6 +77,8 @@ async function createAppHarness({ env = {}, connected = false, query, modules = 
       getCountriesCameraFeed, discoverLiveCameraReplacement, resolveLiveCameraDiscoveries, currentLiveCameraPosts,
       liveCameraVerificationState, liveCameraLocationRefreshes, locationLiveFeedCache,
       setYouTubeCallReady() { youtubeApiLastCallAt = 0; },
+      setContentScreening(handler) { screenMemberContent = handler; },
+      setResumeExtraction(handler) { extractResumeText = handler; },
       exhaustCameraDiscoveryBudget() { liveCameraDiscoveryWindowStartedAt = Date.now(); liveCameraDiscoveryCount = LIVE_CAMERA_MAX_DISCOVERIES_PER_WINDOW; },
       seedUser(user) { users.push(user); },
     };

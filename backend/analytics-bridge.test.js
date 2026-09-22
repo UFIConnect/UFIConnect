@@ -32,3 +32,12 @@ test('an invalid parent allowlist produces a non-embeddable bridge', () => {
   handler({ url: '/analytics-bridge.html' }, { removeHeader() {}, set(value) { headers = value; }, status() { return this; }, send() {} });
   assert.match(headers['Content-Security-Policy'], /frame-ancestors 'none'$/);
 });
+
+test('a Global Privacy Control request receives no optional analytics document', async t => {
+  const app = await createAppHarness();
+  t.after(() => app.close());
+  const response = await app.request('/analytics-bridge.html', { headers: { 'Sec-GPC': '1' } });
+  assert.equal(response.status, 204);
+  assert.equal(response.data, '');
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+});

@@ -1,0 +1,286 @@
+const assert = require('node:assert/strict');
+const { before, after, beforeEach, test } = require('node:test');
+const { PGlite } = require('@electric-sql/pglite');
+const { BILLING_SCHEMA, createBilling, quantityOneAmount, validRecurringPrice } = require('./billing');
+const { createAppHarness } = require('./test-support/app-harness');
+
+const A = 'a0000000-0000-4000-8000-000000000001';
+const B = 'b0000000-0000-4000-8000-000000000002';
+let pg;
+before(async () => {
+  pg = new PGlite();
+  await pg.exec(`CREATE TABLE users (id UUID PRIMARY KEY, name TEXT, email TEXT,
+    plan TEXT NOT NULL DEFAULT 'free', stripe_customer_id TEXT UNIQUE,
+    stripe_subscription_id TEXT, resume_builder_addon BOOLEAN DEFAULT false,
+    resume_builder_subscription_id TEXT)`);
+  for (const statement of BILLING_SCHEMA) await pg.exec(statement);
+});
+after(async () => { await pg.close(); });
+beforeEach(async () => {
+  await pg.exec('TRUNCATE billing_webhook_events, billing_checkout_attempts, users CASCADE');
+  await pg.query("INSERT INTO users(id,name,email,stripe_customer_id) VALUES($1,'Alice','alice@example.invalid','cus_a'),($2,'Bob','bob@example.invalid','cus_b')", [A, B]);
+});
+
+function setup() {
+  const subscriptions = new Map();
+  const sessions = new Map();
+  const idempotency = new Map();
+  const creates = [];
+  const portalCustomers = [];
+  let failWrite = false;
+  let failProvider = false;
+  let tail = Promise.resolve();
+  const db = {
+    isConnected: () => true,
+    query: (sql, params) => pg.query(sql, params),
+    // PGlite is one real PostgreSQL connection. Queue transactions, as a
+    // production connection/row lock does, while testing actual SQL writes,
+    // unique constraints, rollback, and conflict handling.
+    withClient(work) {
+      const result = tail.then(() => work({ query: async (sql, params) => {
+        if (failWrite && sql.startsWith('UPDATE billing_checkout_attempts SET session_id')) { failWrite = false; throw new Error('simulated DB write failure'); }
+        return pg.query(sql, params);
+      } }));
+      tail = result.catch(() => {});
+      return result;
+    },
+  };
+  const stripe = {
+    customers: {
+      async retrieve(id) { return { id, metadata: { uficonnect_user_id: id === 'cus_a' ? A : B } }; },
+      async create(data) { return { id: 'cus_new', ...data }; },
+    },
+    checkout: { sessions: {
+      async retrieve(id) { if (failProvider) throw new Error('provider outage'); assert.ok(sessions.has(id), id); return structuredClone(sessions.get(id)); },
+      async listLineItems(id) { return { data: sessions.get(id).line_items.map(item => ({ ...item, price: { id: item.price } })) }; },
+      async create(data, options) {
+        creates.push({ data, options });
+        if (!idempotency.has(options.idempotencyKey)) {
+          const id = `cs_${idempotency.size + 1}`;
+          const result = { ...data, id, status: 'open', payment_status: 'unpaid', url: `https://checkout.stripe.com/${id}` };
+          sessions.set(id, result); idempotency.set(options.idempotencyKey, result);
+        }
+        return idempotency.get(options.idempotencyKey);
+      },
+      async *list({ customer }) { for (const value of sessions.values()) if (value.customer === customer && value.status === 'open') yield value; },
+      async expire(id) { if (failProvider) throw new Error('provider outage'); sessions.get(id).status = 'expired'; },
+    } },
+    subscriptions: {
+      async retrieve(id) { if (failProvider) throw new Error('provider outage'); assert.ok(subscriptions.has(id), id); return structuredClone(subscriptions.get(id)); },
+      async *list({ customer }) { for (const value of subscriptions.values()) if (value.customer === customer) yield value; },
+      async cancel(id, options) { assert.equal(options.prorate, false); assert.equal(options.invoice_now, false); if (failProvider) throw new Error('provider outage'); subscriptions.get(id).status = 'canceled'; },
+    },
+    billingPortal: { sessions: { async create(data) { portalCustomers.push(data.customer); return { url: 'https://billing.stripe.com/test' }; } } },
+  };
+  const catalog = { allowedPrices: new Map([['price_pro', 'pro'], ['price_business', 'business'], ['price_resume', 'resume_builder']]),
+    tiers: Object.fromEntries([['pro', 'price_pro'], ['business', 'price_business'], ['resume_builder', 'price_resume']].map(([tier, priceId]) => [tier, { available: true, priceId }])) };
+  const service = createBilling({ db, stripe, getCatalog: async () => catalog, frontendBase: 'https://uficonnect.org' });
+  const sub = (id = 'sub_a', overrides = {}) => {
+    const value = { id, customer: 'cus_a', status: 'active', latest_invoice: { status: 'paid' },
+      metadata: { tier: 'pro', uficonnect_user_id: A }, cancel_at_period_end: false,
+      items: { data: [{ price: { id: 'price_pro' }, quantity: 1, current_period_end: 1900000000 }] }, ...overrides };
+    subscriptions.set(id, value); return value;
+  };
+  const session = (id = 'cs_paid', subscription = 'sub_a', overrides = {}) => {
+    const value = { id, mode: 'subscription', customer: 'cus_a', client_reference_id: A,
+      status: 'complete', payment_status: 'paid', subscription, metadata: { tier: 'pro', uficonnect_user_id: A }, ...overrides };
+    sessions.set(id, value); return value;
+  };
+  const event = (id = 'evt_1', type = 'checkout.session.completed', object = { id: 'cs_paid', customer: 'cus_a' }) => ({ id, type, data: { object } });
+  return { service, stripe, db, catalog, sub, session, event, creates, sessions, subscriptions, portalCustomers,
+    failWrite() { failWrite = true; }, providerOutage() { failProvider = true; } };
+}
+async function alice() { return (await pg.query('SELECT * FROM users WHERE id=$1', [A])).rows[0]; }
+
+test('quantity-one tiered Pro price is validated and accurately displayed', () => {
+  const price = { id: 'price_tiered', type: 'recurring', active: true, currency: 'usd', unit_amount: null,
+    billing_scheme: 'tiered', tiers_mode: 'volume', recurring: { interval: 'month', interval_count: 1 },
+    tiers: [{ up_to: 1, unit_amount: 1994, flat_amount: null }, { up_to: null, unit_amount: 1994 }] };
+  assert.equal(quantityOneAmount(price), 1994);
+  assert.equal(validRecurringPrice(price), true);
+  assert.equal(validRecurringPrice({ ...price, tiers: undefined }), false);
+  assert.equal(validRecurringPrice({ ...price, transform_quantity: { divide_by: 10 } }), false);
+});
+
+test('checkout grants only a paid current subscription on its saved customer, once', async () => {
+  const f = setup(); f.sub(); f.session();
+  await f.service.handleEvent(f.event());
+  assert.equal((await alice()).plan, 'pro');
+  assert.equal((await alice()).stripe_subscription_id, 'sub_a');
+  assert.equal((await f.service.handleEvent(f.event())).duplicate, true);
+  assert.equal((await pg.query('SELECT * FROM billing_webhook_events')).rows.length, 1);
+});
+
+test('unpaid checkout and active subscription with unpaid invoice never unlock membership', async () => {
+  const f = setup(); f.sub('sub_a', { latest_invoice: { status: 'open' } }); f.session('cs_paid', 'sub_a', { payment_status: 'unpaid' });
+  await f.service.handleEvent(f.event());
+  assert.equal((await alice()).plan, 'free');
+  await f.service.handleEvent(f.event('evt_sub', 'customer.subscription.created', { id: 'sub_a', customer: 'cus_a' }));
+  assert.equal((await alice()).plan, 'free');
+  f.sub(); f.session();
+  await f.service.handleEvent(f.event('evt_async', 'checkout.session.async_payment_succeeded'));
+  assert.equal((await alice()).plan, 'pro');
+});
+
+test('metadata cannot redirect another customer or upgrade an unapproved price', async () => {
+  const f = setup(); f.sub(); f.session('cs_paid', 'sub_a', { client_reference_id: B, metadata: { uficonnect_user_id: B } });
+  await f.service.handleEvent(f.event());
+  assert.equal((await alice()).plan, 'free');
+  assert.equal((await pg.query('SELECT plan FROM users WHERE id=$1', [B])).rows[0].plan, 'free');
+  f.session(); f.sub('sub_a', { items: { data: [{ price: { id: 'price_unknown' }, quantity: 1 }] } });
+  await f.service.handleEvent(f.event('evt_unknown'));
+  assert.equal((await alice()).plan, 'free');
+  assert.equal((await alice()).stripe_subscription_id, null);
+});
+
+test('late checkout reads current cancellation and cannot resurrect paid access', async () => {
+  const f = setup(); f.sub('sub_a', { status: 'canceled' }); f.session();
+  await f.service.handleEvent(f.event());
+  assert.equal((await alice()).plan, 'free');
+  assert.equal((await alice()).stripe_subscription_id, null);
+});
+
+test('old checkout and cancellation cannot replace or revoke a newer subscription', async () => {
+  const f = setup(); f.sub('sub_new'); f.sub('sub_old', { status: 'canceled' }); f.session('cs_paid', 'sub_old');
+  await pg.query("UPDATE users SET plan='pro',stripe_subscription_id='sub_new' WHERE id=$1", [A]);
+  await f.service.handleEvent(f.event());
+  await f.service.handleEvent(f.event('evt_deleted', 'customer.subscription.deleted', { id: 'sub_old', customer: 'cus_a' }));
+  assert.equal((await alice()).plan, 'pro');
+  assert.equal((await alice()).stripe_subscription_id, 'sub_new');
+});
+
+test('temporary payment failures retain the subscription and recover through authoritative invoice events', async () => {
+  const f = setup(); f.sub(); f.session(); await f.service.handleEvent(f.event());
+  f.sub('sub_a', { status: 'past_due', latest_invoice: { status: 'open' } });
+  await f.service.handleEvent(f.event('evt_failed', 'invoice.payment_failed', { id: 'in_1', customer: 'cus_a', parent: { subscription_details: { subscription: 'sub_a' } } }));
+  assert.equal((await alice()).plan, 'free'); assert.equal((await alice()).stripe_subscription_id, 'sub_a');
+  await assert.rejects(f.service.createCheckout(A, 'pro'), { status: 409 });
+  f.sub(); await f.service.handleEvent(f.event('evt_recovered', 'invoice.paid', { id: 'in_1', customer: 'cus_a', subscription: 'sub_a' }));
+  assert.equal((await alice()).plan, 'pro');
+});
+
+test('add-on cancellation does not affect an independent Pro membership', async () => {
+  const f = setup(); f.sub(); f.session(); await f.service.handleEvent(f.event());
+  const addon = { metadata: { tier: 'resume_builder', uficonnect_user_id: A }, items: { data: [{ price: { id: 'price_resume' }, quantity: 1 }] } };
+  f.sub('sub_addon', addon); f.session('cs_addon', 'sub_addon');
+  await f.service.handleEvent(f.event('evt_addon', 'checkout.session.completed', { id: 'cs_addon', customer: 'cus_a' }));
+  assert.equal((await alice()).resume_builder_addon, true);
+  f.sub('sub_addon', { ...addon, status: 'canceled' });
+  await f.service.handleEvent(f.event('evt_end_addon', 'customer.subscription.deleted', { id: 'sub_addon', customer: 'cus_a' }));
+  const user = await alice(); assert.equal(user.plan, 'pro'); assert.equal(user.resume_builder_addon, false); assert.equal(user.resume_builder_subscription_id, null);
+});
+
+test('failed reconciliation rolls back its event record so Stripe can retry', async () => {
+  const f = setup(); f.sub(); f.session(); f.providerOutage();
+  await assert.rejects(f.service.handleEvent(f.event()), /provider outage/);
+  assert.equal((await pg.query('SELECT * FROM billing_webhook_events')).rows.length, 0);
+  assert.equal((await alice()).plan, 'free');
+});
+
+test('simultaneous checkout requests reuse one durable hosted Checkout', async () => {
+  const f = setup();
+  const results = await Promise.all([f.service.createCheckout(A, 'pro'), f.service.createCheckout(A, 'pro')]);
+  assert.equal(results[0].url, results[1].url); assert.equal(f.creates.length, 1);
+  assert.equal(f.creates[0].data.line_items[0].price, 'price_pro');
+  assert.equal(f.creates[0].data.client_reference_id, A);
+  assert.equal(f.creates[0].data.phone_number_collection.enabled, false);
+  await assert.rejects(f.service.createCheckout(A, 'business'), { status: 409 });
+});
+
+test('crash after Stripe accepts Checkout reuses the persisted idempotency key', async () => {
+  const f = setup(); f.failWrite();
+  await assert.rejects(f.service.createCheckout(A, 'pro'), /simulated DB/);
+  assert.equal((await pg.query('SELECT * FROM billing_checkout_attempts')).rows[0].session_id, null);
+  const result = await f.service.createCheckout(A, 'pro');
+  assert.equal(result.url, 'https://checkout.stripe.com/cs_1');
+  assert.equal(f.creates.length, 2);
+  assert.equal(f.creates[0].options.idempotencyKey, f.creates[1].options.idempotencyKey);
+  assert.equal(f.sessions.size, 1);
+});
+
+test('expired checkout starts a new attempt; aged unresolved attempts fail closed', async () => {
+  const f = setup(); await f.service.createCheckout(A, 'pro');
+  f.sessions.get('cs_1').status = 'expired';
+  assert.equal((await f.service.createCheckout(A, 'pro')).url, 'https://checkout.stripe.com/cs_2');
+  await pg.query("UPDATE billing_checkout_attempts SET session_id=NULL,created_at=NOW()-INTERVAL '25 hours' WHERE user_id=$1", [A]);
+  await assert.rejects(f.service.createCheckout(A, 'pro'), { status: 409 });
+});
+
+test('billing rejects invalid tiers and volatile storage before contacting Stripe', async () => {
+  const f = setup(); await assert.rejects(f.service.createCheckout(A, 'admin'), { status: 400 });
+  f.db.isConnected = () => false;
+  await assert.rejects(f.service.createCheckout(A, 'pro'), { status: 503 });
+  assert.equal(f.creates.length, 0);
+});
+
+test('legacy open checkouts are adopted, but different prices and unrecorded subscriptions cannot be charged twice', async () => {
+  const f = setup();
+  f.session('cs_legacy', null, { status: 'open', payment_status: 'unpaid',
+    line_items: [{ price: 'price_pro', quantity: 1 }], url: 'https://checkout.stripe.com/legacy' });
+  assert.equal((await f.service.createCheckout(A, 'pro')).url, 'https://checkout.stripe.com/legacy');
+  assert.equal(f.creates.length, 0);
+  await pg.query('DELETE FROM billing_checkout_attempts WHERE user_id=$1', [A]);
+  f.sessions.get('cs_legacy').line_items[0].price = 'price_retired';
+  await assert.rejects(f.service.createCheckout(A, 'pro'), { status: 409 });
+  f.sessions.clear(); f.sub();
+  await assert.rejects(f.service.createCheckout(A, 'pro'), { status: 409 });
+  assert.equal(f.creates.length, 0);
+});
+
+test('status and portal use only the authenticated customer; status catches up delayed webhooks', async () => {
+  const f = setup(); await f.service.createCheckout(A, 'pro'); f.sub(); f.session('cs_1');
+  const status = await f.service.status(A);
+  assert.equal(status.plan, 'pro'); assert.equal(status.subscriptions[0].currentPeriodEnd, 1900000000);
+  assert.equal(JSON.stringify(status).includes('cus_a'), false);
+  assert.equal(JSON.stringify(status).includes('sub_a'), false);
+  await f.service.portal(B); assert.deepEqual(f.portalCustomers, ['cus_b']);
+  assert.equal((await f.service.status(B)).plan, 'free');
+});
+
+test('deletion closes billing, expires open checkout and cancels only managed subscriptions', async () => {
+  const f = setup(); await f.service.createCheckout(A, 'pro'); f.sub(); f.sub('sub_b', { customer: 'cus_b', metadata: { uficonnect_user_id: B } });
+  await f.service.prepareAccountDeletion(A);
+  assert.equal((await alice()).billing_closed, true);
+  assert.equal(f.sessions.get('cs_1').status, 'expired');
+  assert.equal(f.subscriptions.get('sub_a').status, 'canceled');
+  assert.equal(f.subscriptions.get('sub_b').status, 'active');
+  await assert.rejects(f.service.createCheckout(A, 'pro'), { status: 409 });
+});
+
+test('failed cancellation preserves the account and keeps checkout closed until deletion can retry', async () => {
+  const f = setup(); await f.service.createCheckout(A, 'pro'); f.sub(); f.providerOutage();
+  await assert.rejects(f.service.prepareAccountDeletion(A), /provider outage/);
+  assert.equal((await alice()).billing_closed, true);
+  await assert.rejects(f.service.createCheckout(A, 'pro'), { status: 409 });
+});
+
+test('actual webhook route rejects invalid and tampered Stripe signatures without leaking payloads', async t => {
+  const sdk = require('stripe')('sk_test_fixture');
+  const app = await createAppHarness({ env: { STRIPE_SECRET_KEY: 'sk_test_fixture', STRIPE_WEBHOOK_SECRET: 'whsec_fixture' }, modules: { stripe: () => ({ webhooks: sdk.webhooks }) } });
+  t.after(() => app.close());
+  const body = { id: 'evt_signed', type: 'unhandled.event', data: { object: {} } };
+  const signature = sdk.webhooks.generateTestHeaderString({ payload: JSON.stringify(body), secret: 'whsec_fixture' });
+  assert.equal((await app.request('/billing/webhook', { method: 'POST', body, headers: { 'stripe-signature': signature } })).status, 200);
+  assert.equal((await app.request('/billing/webhook', { method: 'POST', body: { ...body, sensitive: 'never-log-this' }, headers: { 'stripe-signature': signature } })).status, 400);
+  assert.equal((await app.request('/billing/webhook', { method: 'POST', body })).status, 400);
+  assert.equal(app.errors.some(error => error.includes('never-log-this')), false);
+});
+
+test('public billing config reports the verified tiered Pro price and authenticated routes reject guests', async t => {
+  const price = { id: 'price_pro', type: 'recurring', active: true, currency: 'usd', unit_amount: null,
+    billing_scheme: 'tiered', tiers_mode: 'volume', recurring: { interval: 'month', interval_count: 1 },
+    tiers: [{ up_to: 1, unit_amount: 1994, flat_amount: null }] };
+  const app = await createAppHarness({ connected: true,
+    env: { STRIPE_SECRET_KEY: 'sk_test_fixture', STRIPE_WEBHOOK_SECRET: 'whsec_fixture', STRIPE_PRICE_ID: 'price_pro' },
+    modules: { stripe: () => ({ prices: { async retrieve(id, options) { assert.equal(id, 'price_pro'); assert.deepEqual(Array.from(options.expand), ['tiers']); return price; } } }) },
+  });
+  t.after(() => app.close());
+  const config = await app.request('/billing/config');
+  assert.equal(config.status, 200); assert.equal(config.data.pricing.pro.display, '$19.94');
+  assert.equal(config.data.pricing.pro.unitAmount, 1994); assert.equal(config.data.pricing.pro.interval, 'month');
+  assert.equal(config.data.paymentsReady, true); assert.equal(config.data.tiers.pro, true); assert.equal(config.data.tiers.business, false);
+  assert.equal(config.headers.get('cache-control'), 'no-store');
+  assert.equal((await app.request('/billing/status')).status, 401);
+  assert.equal((await app.request('/billing/create-checkout-session', { method: 'POST', body: { tier: 'pro' } })).status, 401);
+  assert.equal((await app.request('/billing/create-portal-session', { method: 'POST', body: {} })).status, 401);
+});

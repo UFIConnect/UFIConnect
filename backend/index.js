@@ -10,6 +10,8 @@ const { createAnalyticsBridgeHandler } = require('./analytics-bridge');
 const { ANALYTICS_SCHEMA, createAggregateAnalytics } = require('./aggregate-analytics');
 const { createOfficeAgentChat, sanitizeSnapshot: sanitizeAgentSnapshot } = require('./office-agent-chat');
 const { buildOfficeSetup } = require('./office-setup');
+const { withActiveMembers } = require('./member-write');
+const { BILLING_SCHEMA, validRecurringPrice, quantityOneAmount, createBilling } = require('./billing');
 const dotenv = require('dotenv');
 const http   = require('http');
 const https  = require('https');
@@ -107,7 +109,7 @@ const JOB_BOARD_SWEEP_INTERVAL_MS = 20 * 1000;
 // Bluesky) — stripe(null) would throw on construction, so this stays null
 // (billing routes respond with a clear "not configured" instead) until a
 // real STRIPE_SECRET_KEY is set.
-const stripe = process.env.STRIPE_SECRET_KEY ? require('stripe')(process.env.STRIPE_SECRET_KEY) : null;
+const stripe = process.env.STRIPE_SECRET_KEY ? require('stripe')(process.env.STRIPE_SECRET_KEY, { timeout: 10000, maxNetworkRetries: 1 }) : null;
 
 // Prevent crashes from unhandled exceptions
 process.on('uncaughtException', (err) => {
@@ -288,94 +290,20 @@ function buildHealthProbePayload() {
 // defined later in this file (getUser, syncToMemory, etc.) — it only runs
 // per-request, by which point the whole module has already finished
 // loading top to bottom.
-app.post('/billing/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+app.post('/billing/webhook', express.raw({ type: 'application/json', limit: '256kb' }), async (req, res) => {
   if (!stripe || !process.env.STRIPE_WEBHOOK_SECRET) return res.status(503).send('Billing not configured');
   let event;
   try {
     event = stripe.webhooks.constructEvent(req.body, req.headers['stripe-signature'], process.env.STRIPE_WEBHOOK_SECRET);
-  } catch (e) {
-    console.warn('[Stripe webhook] signature verification failed:', e.message);
-    return res.status(400).send(`Webhook signature verification failed`);
+  } catch {
+    // Signature errors can contain request payloads; never log them.
+    return res.status(400).send('Webhook signature verification failed');
   }
   try {
-    if (['checkout.session.completed', 'customer.subscription.deleted', 'customer.subscription.updated'].includes(event.type) && !db.isConnected()) {
-      return res.status(503).send('Billing persistence is temporarily unavailable');
-    }
-    if (event.type === 'checkout.session.completed') {
-      const session = event.data.object;
-      const userId = session.client_reference_id;
-      // Which tier was purchased: set as Checkout Session metadata at
-      // creation time (see /billing/create-checkout-session) and read back
-      // here, rather than expanding line_items — a session only ever has
-      // one line item in this app's checkout, so its own metadata is a
-      // simpler, one-less-API-call way to know which Price was bought.
-      // Falls back to 'pro' for any in-flight session created before this
-      // existed, or a genuinely missing/invalid value — matches this
-      // route's original single-tier behavior rather than leaving plan unset.
-      // resume_builder is a separate add-on subscription, not a plan tier —
-      // deliberately kept off `plan`/`stripe_subscription_id` (a user can
-      // hold Pro AND the addon at once) and given its own pair of columns
-      // instead (see resume_builder_addon/resume_builder_subscription_id).
-      const tier = ['pro', 'business', 'resume_builder'].includes(session.metadata?.tier) ? session.metadata.tier : 'pro';
-      if (userId && db.isConnected() && isDBId(userId)) {
-        if (tier === 'resume_builder') {
-          await db.query(
-            `UPDATE users SET resume_builder_addon=true, resume_builder_subscription_id=$1, stripe_customer_id=$2 WHERE id=$3`,
-            [session.subscription, session.customer, userId]
-          );
-          const mem = users.find(u => u.id === userId);
-          if (mem) { mem.resumeBuilderAddon = true; mem.resumeBuilderSubscriptionId = session.subscription; mem.stripeCustomerId = session.customer; }
-          console.log(`[Stripe webhook] user ${userId} unlocked resume_builder`);
-        } else {
-          await db.query(
-            `UPDATE users SET plan=$1, stripe_customer_id=$2, stripe_subscription_id=$3 WHERE id=$4`,
-            [tier, session.customer, session.subscription, userId]
-          );
-          const mem = users.find(u => u.id === userId);
-          if (mem) { mem.plan = tier; mem.stripeCustomerId = session.customer; mem.stripeSubscriptionId = session.subscription; }
-          console.log(`[Stripe webhook] user ${userId} upgraded to ${tier}`);
-        }
-      }
-    } else if (event.type === 'customer.subscription.deleted' || event.type === 'customer.subscription.updated') {
-      // Read current state for out-of-order updates. Keep recoverable IDs so
-      // payment recovery can restore access without creating a new subscription.
-      const sub = event.type === 'customer.subscription.deleted'
-        ? event.data.object
-        : await stripe.subscriptions.retrieve(event.data.object.id);
-      const active = ['active', 'trialing'].includes(sub.status);
-      const ended = event.type === 'customer.subscription.deleted' || ['canceled', 'incomplete_expired'].includes(sub.status);
-      if (!active && !ended && !['past_due', 'unpaid', 'incomplete', 'paused'].includes(sub.status)) {
-        return res.json({ received: true });
-      }
-      const subscriptionId = ended ? null : sub.id;
-      const { rows } = await db.query('SELECT id, plan FROM users WHERE stripe_subscription_id=$1', [sub.id]);
-      if (rows[0]) {
-        let plan = 'free';
-        if (active) {
-          const priceIds = (sub.items?.data || []).map(item => item.price?.id);
-          plan = ['business', 'pro'].find(tier => TIER_PRICE_IDS[tier]() && priceIds.includes(TIER_PRICE_IDS[tier]()))
-            || (['pro', 'business'].includes(sub.metadata?.tier) ? sub.metadata.tier : null)
-            || (['pro', 'business'].includes(rows[0].plan) ? rows[0].plan : null);
-          if (!plan) throw new Error('Cannot resolve the active subscription tier');
-        }
-        await db.query('UPDATE users SET plan=$1, stripe_subscription_id=$2 WHERE id=$3', [plan, subscriptionId, rows[0].id]);
-        const mem = users.find(user => user.id === rows[0].id);
-        if (mem) { mem.plan = plan; mem.stripeSubscriptionId = subscriptionId; }
-      } else {
-        const { rows: addons } = await db.query('SELECT id FROM users WHERE resume_builder_subscription_id=$1', [sub.id]);
-        if (addons[0]) {
-          await db.query('UPDATE users SET resume_builder_addon=$1, resume_builder_subscription_id=$2 WHERE id=$3', [active, subscriptionId, addons[0].id]);
-          const mem = users.find(user => user.id === addons[0].id);
-          if (mem) { mem.resumeBuilderAddon = active; mem.resumeBuilderSubscriptionId = subscriptionId; }
-        }
-      }
-    }
-    res.json({ received: true });
-  } catch (e) {
-    console.error('[Stripe webhook] handler error:', e.message);
-    // 500 so Stripe retries — this branch means the DB write itself failed,
-    // not "nothing to do," and a retry is the correct recovery here.
-    res.status(500).send('Webhook handler error');
+    res.json(await billing.handleEvent(event));
+  } catch (error) {
+    console.error('[billing] Webhook reconciliation failed', error.status || 500);
+    res.status(error.status === 400 ? 400 : error.status === 503 ? 503 : 500).send('Billing reconciliation is temporarily unavailable');
   }
 });
 
@@ -16732,6 +16660,20 @@ async function getUser(id) {
   return fetchAndSyncUser(id);
 }
 
+// Public target profiles must not survive deletion in another API worker's
+// memory. Keep authoritative reads bounded to profile and messaging routes.
+async function getPublicTargetUser(id) {
+  if (!isDBId(id)) return getUser(id);
+  if (!db.isConnected()) throw Object.assign(new Error('Account storage is temporarily unavailable.'), { status: 503 });
+  const { rows: [row] } = await db.query('SELECT * FROM users WHERE id=$1', [id]);
+  if (!row || row.billing_closed) {
+    const stale = users.findIndex(user => user.id === id);
+    if (stale !== -1) users.splice(stale, 1);
+    return null;
+  }
+  return syncToMemory(dbRowToMemUser(row));
+}
+
 async function getAuthUser(id) {
   if (isDBId(id)) {
     if (!db.isConnected()) throw Object.assign(new Error('Sign-in storage is temporarily unavailable.'), { status: 503 });
@@ -16971,6 +16913,7 @@ async function migrateDB() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS resume_builder_addon BOOLEAN NOT NULL DEFAULT false`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS resume_builder_subscription_id TEXT`);
     await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_resume_builder_sub_idx ON users(resume_builder_subscription_id) WHERE resume_builder_subscription_id IS NOT NULL`);
+    for (const statement of BILLING_SCHEMA) await db.query(statement);
 
     // Groups table — persists across deploys
     await db.query(`
@@ -21092,10 +21035,10 @@ const RESUME_BUILDER_PRICE_REQUIREMENT = Object.freeze({
 });
 
 function isConfiguredResumeBuilderPrice(price) {
-  return !!price
+  return validRecurringPrice(price)
     && price.active !== false
     && String(price.currency || '').toLowerCase() === RESUME_BUILDER_PRICE_REQUIREMENT.currency
-    && Number(price.unit_amount) === RESUME_BUILDER_PRICE_REQUIREMENT.unitAmount
+    && quantityOneAmount(price) === RESUME_BUILDER_PRICE_REQUIREMENT.unitAmount
     && String(price.recurring?.interval || '').toLowerCase() === RESUME_BUILDER_PRICE_REQUIREMENT.interval
     && Number(price.recurring?.interval_count || 1) === RESUME_BUILDER_PRICE_REQUIREMENT.intervalCount;
 }
@@ -21110,13 +21053,14 @@ function getResumeBuilderPriceCandidates() {
 
 function summarizeStripePrice(price, tier) {
   const currency = String(price?.currency || '').toUpperCase();
-  const unitAmount = Number(price?.unit_amount);
+  const unitAmount = quantityOneAmount(price);
   if (!currency || !Number.isFinite(unitAmount)) return null;
   try {
     const formatter = new Intl.NumberFormat('en-US', { style: 'currency', currency });
     const fractionDigits = formatter.resolvedOptions().maximumFractionDigits;
     return {
       active: price.active !== false,
+      unitAmount,
       display: formatter.format(unitAmount / (10 ** fractionDigits)),
       currency,
       interval: price.recurring?.interval || null,
@@ -21138,7 +21082,7 @@ async function resolveResumeBuilderPrice() {
   const candidates = [];
   for (const priceId of candidateIds) {
     try {
-      const price = await stripe.prices.retrieve(priceId);
+      const price = await stripe.prices.retrieve(priceId, { expand: ['tiers'] });
       const summary = summarizeStripePrice(price, 'resume_builder');
       if (summary) candidates.push({ priceId, price, summary });
     } catch (error) {
@@ -21161,6 +21105,7 @@ async function resolveResumeBuilderPrice() {
         active: true,
         type: 'recurring',
         limit: 100,
+        expand: ['data.tiers'],
       });
       for (const price of productPrices.data || []) {
         if (candidates.some(candidate => candidate.priceId === price.id)) continue;
@@ -21176,222 +21121,119 @@ async function resolveResumeBuilderPrice() {
   // that legacy value remains configured for existing subscriptions.
   const selected = candidates.find(candidate => candidate.summary.matchesRequiredPrice) || candidates[0] || null;
   const value = selected
-    ? { priceId: selected.priceId, summary: selected.summary }
-    : { priceId: null, summary: null };
+    ? { priceId: selected.priceId, summary: selected.summary,
+      allowedPriceIds: candidates.filter(candidate => validRecurringPrice(candidate.price)
+        && (candidateIds.includes(candidate.priceId) || candidate.summary.matchesRequiredPrice)).map(candidate => candidate.priceId) }
+    : { priceId: null, summary: null, allowedPriceIds: [] };
   stripePriceSummaryCache.set(cacheKey, { value, at: Date.now() });
   return value;
 }
 
-async function getStripePriceSummary(tier) {
-  if (tier === 'resume_builder') return (await resolveResumeBuilderPrice()).summary;
-  const priceId = String(TIER_PRICE_IDS[tier]?.() || '').trim();
-  if (!stripe || !priceId) return null;
-  const cacheKey = `${tier}:${priceId}`;
+async function getBillingCatalog() {
+  const configured = { pro: TIER_PRICE_IDS.pro(), business: TIER_PRICE_IDS.business() };
+  const cacheKey = 'catalog:' + JSON.stringify([configured, getResumeBuilderPriceCandidates()]);
   const cached = stripePriceSummaryCache.get(cacheKey);
   if (cached && Date.now() - cached.at < STRIPE_PRICE_SUMMARY_CACHE_MS) return cached.value;
-  try {
-    const value = summarizeStripePrice(await stripe.prices.retrieve(priceId), tier);
-    stripePriceSummaryCache.set(cacheKey, { value, at: Date.now() });
-    return value;
-  } catch (error) {
-    console.warn(`[billing/config] Could not read ${tier} price:`, error.message);
-    return cached?.value || null;
-  }
-}
-
-async function persistStripeCustomerId(user, stripeCustomerId) {
-  if (isDBId(user.id) && db.isConnected()) {
-    const { rows } = await db.query(
-      'UPDATE users SET stripe_customer_id=$1 WHERE id=$2 RETURNING *',
-      [stripeCustomerId, user.id]
-    );
-    if (!rows[0]) throw new Error('Profile record was not found while saving billing customer.');
-    Object.assign(user, dbRowToMemUser(rows[0]));
-    return;
-  }
-  user.stripeCustomerId = stripeCustomerId;
-  filestore.saveUsers(users);
-}
-
-async function ensureStripeCustomer(user, phone) {
-  const customerData = {
-    email: user.email,
-    name: user.name || undefined,
-    ...(phone ? { phone } : {}),
-    metadata: { uficonnect_user_id: user.id },
-  };
-  if (user.stripeCustomerId) {
-    try {
-      await stripe.customers.update(user.stripeCustomerId, customerData);
-      return user.stripeCustomerId;
-    } catch (error) {
-      // A deleted Stripe customer should not permanently prevent checkout.
-      if (error?.statusCode !== 404) throw error;
+  const allowedPrices = new Map();
+  const tiers = {};
+  await Promise.all(['pro', 'business'].map(async tier => {
+    const priceId = String(configured[tier] || '').trim();
+    let price = null;
+    if (stripe && priceId) {
+      try { price = await stripe.prices.retrieve(priceId, { expand: ['tiers'] }); }
+      catch {
+        // A provider outage must not be mistaken for a removed price and
+        // revoke a paying member during webhook reconciliation.
+        throw Object.assign(new Error('Subscription pricing is temporarily unavailable.'), { status: 503 });
+      }
     }
+    const valid = validRecurringPrice(price);
+    if (valid) allowedPrices.set(price.id, tier);
+    tiers[tier] = { priceId: valid ? price.id : null, available: valid && price.active === true,
+      summary: valid ? summarizeStripePrice(price, tier) : null };
+  }));
+  const resume = await resolveResumeBuilderPrice();
+  if (stripe && getResumeBuilderPriceCandidates().length && !resume.priceId) {
+    throw Object.assign(new Error('Subscription pricing is temporarily unavailable.'), { status: 503 });
   }
-
-  const created = await stripe.customers.create(customerData);
-  try {
-    await persistStripeCustomerId(user, created.id);
-  } catch (error) {
-    // Avoid leaving an unlinked customer behind when the durable DB write
-    // fails after Stripe accepts the create request.
-    await stripe.customers.del(created.id).catch(() => {});
-    throw error;
-  }
-  return created.id;
+  for (const priceId of resume.allowedPriceIds || []) allowedPrices.set(priceId, 'resume_builder');
+  tiers.resume_builder = { priceId: resume.priceId,
+    available: resume.summary?.matchesRequiredPrice === true, summary: resume.summary };
+  const value = { allowedPrices, tiers };
+  stripePriceSummaryCache.set(cacheKey, { at: Date.now(), value });
+  return value;
 }
 
-app.get('/billing/config', async (_req, res) => {
-  const resumeBuilderPrice = await getStripePriceSummary('resume_builder');
-  res.json({
-    stripeConfigured: !!stripe,
-    webhookConfigured: !!process.env.STRIPE_WEBHOOK_SECRET,
-    tiers: {
-      pro: !!TIER_PRICE_IDS.pro(),
-      business: !!TIER_PRICE_IDS.business(),
-      resume_builder: resumeBuilderPrice?.matchesRequiredPrice === true,
-    },
-    pricing: {
-      resume_builder: resumeBuilderPrice,
-    },
-  });
+const billing = createBilling({ db, stripe, getCatalog: getBillingCatalog, frontendBase: FRONTEND_BASE,
+  onUserUpdated: row => syncToMemory(dbRowToMemUser(row)),
 });
+const billingLimiter = rateLimit({ windowMs: 60 * 1000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false,
+  message: { message: 'Please wait a moment before trying billing again.' } });
+const billingResponse = action => async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try { res.json(await action(req)); }
+  catch (error) {
+    const status = Number.isInteger(error.status) && error.status >= 400 && error.status < 500 ? error.status : 503;
+    res.status(status).json({ message: error.status ? error.message : 'Billing is temporarily unavailable. Please try again.' });
+  }
+};
 
-app.post('/billing/create-checkout-session', authenticate, async (req, res) => {
-  const requestedTier = req.body?.tier;
-  const tier = ['pro', 'business', 'resume_builder'].includes(requestedTier) ? requestedTier : 'pro';
-  // A configured Business Price permits checkout; its presence is checked
-  // alongside Stripe and webhook configuration below.
-  const resumeBuilderPricing = tier === 'resume_builder'
-    ? await resolveResumeBuilderPrice()
-    : { priceId: null, summary: null };
-  const priceId = tier === 'resume_builder' ? resumeBuilderPricing.priceId : TIER_PRICE_IDS[tier]();
-  const resumeBuilderPrice = resumeBuilderPricing.summary;
-  if (!stripe || !process.env.STRIPE_WEBHOOK_SECRET || !priceId) {
-    return res.status(503).json({ message: 'Billing is not configured yet.' });
-  }
-  if (tier === 'resume_builder' && resumeBuilderPrice?.matchesRequiredPrice !== true) {
-    return res.status(503).json({ message: 'Resume Builder must be configured with an active $149.94 USD Stripe Price billed every 6 months.' });
-  }
-  const user = await getUser(req.user.id);
-  if (!user) return res.status(404).json({ message: 'Not found.' });
-  const phone = normalizeMemberPhone(user.phone);
-  if (tier === 'resume_builder' && user.resumeBuilderAddon) {
-    return res.status(400).json({ message: 'Resume Builder is already unlocked. Manage Billing to change or cancel it.' });
-  }
-  if (tier !== 'resume_builder' && (user.plan === 'pro' || user.plan === 'business')) {
-    // Blocks starting a second checkout on top of an existing paid plan
-    // rather than allowing a tier switch this way — a fresh checkout session
-    // creates a brand new subscription without touching the old one, which
-    // would leave someone paying for both Pro and Business at once instead
-    // of actually switching. Manage billing (the portal) is the correct path
-    // for changing/cancelling an existing subscription; this route is only
-    // for going from free to a first paid tier.
-    return res.status(400).json({ message: `Already on the ${user.plan === 'business' ? 'Business' : 'Pro'} plan — use Manage Billing to change plans.` });
-  }
-  try {
-    // Include a real saved number when present; phone is optional.
-    const stripeCustomerId = await ensureStripeCustomer(user, phone);
-    const session = await stripe.checkout.sessions.create({
-      mode: 'subscription',
-      line_items: [{ price: priceId, quantity: 1 }],
-      metadata: { tier, uficonnect_user_id: user.id },
-      subscription_data: { metadata: { tier, uficonnect_user_id: user.id } },
-      // Reuse an existing Stripe customer if this user has one (e.g. a past
-      // canceled subscription, or an already-active plan/addon) instead of
-      // creating a duplicate — this is also what lets one Manage Billing
-      // portal session show both a plan and the resume_builder addon.
-      customer: stripeCustomerId,
-      phone_number_collection: { enabled: false },
-      client_reference_id: user.id,
-      success_url: tier === 'resume_builder'
-        ? `${FRONTEND_BASE}/resume-builder?upgrade=success`
-        : `${FRONTEND_BASE}/settings?upgrade=success`,
-      cancel_url: tier === 'resume_builder'
-        ? `${FRONTEND_BASE}/resume-builder?upgrade=cancelled`
-        : `${FRONTEND_BASE}/settings?upgrade=cancelled`,
-    });
-    res.json({ url: session.url });
-  } catch (e) {
-    console.error('[Stripe] create checkout session:', e.message);
-    res.status(500).json({ message: 'Could not start checkout. Please try again.' });
-  }
-});
+app.get('/billing/config', billingResponse(async () => {
+  const catalog = await getBillingCatalog();
+  const ready = !!stripe && !!process.env.STRIPE_WEBHOOK_SECRET && db.isConnected();
+  return { stripeConfigured: !!stripe, webhookConfigured: !!process.env.STRIPE_WEBHOOK_SECRET,
+    paymentsReady: ready && Object.values(catalog.tiers).some(tier => tier.available),
+    paymentProvider: 'stripe', paymentCollection: 'hosted_checkout',
+    tiers: Object.fromEntries(Object.entries(catalog.tiers).map(([tier, value]) => [tier, ready && value.available])),
+    pricing: Object.fromEntries(Object.entries(catalog.tiers).map(([tier, value]) => [tier, value.summary])),
+  };
+}));
 
-// Lets an existing subscriber manage payment method / cancel via Stripe's
-// own hosted portal instead of this app needing to build that UI itself.
-app.post('/billing/create-portal-session', authenticate, async (req, res) => {
-  if (!stripe) return res.status(503).json({ message: 'Billing is not configured yet.' });
-  const user = await getUser(req.user.id);
-  if (!user?.stripeCustomerId) return res.status(400).json({ message: 'No billing account found.' });
-  try {
-    const session = await stripe.billingPortal.sessions.create({
-      customer: user.stripeCustomerId,
-      return_url: `${FRONTEND_BASE}/settings`,
-    });
-    res.json({ url: session.url });
-  } catch (e) {
-    console.error('[Stripe] create portal session:', e.message);
-    res.status(500).json({ message: 'Could not open billing portal. Please try again.' });
+app.post('/billing/create-checkout-session', authenticate, billingLimiter, billingResponse(req => {
+  if (!process.env.STRIPE_WEBHOOK_SECRET) throw Object.assign(new Error('Billing is not configured yet.'), { status: 503 });
+  if (!req.body || Object.keys(req.body).some(key => key !== 'tier')) {
+    throw Object.assign(new Error('Send only the subscription tier. Payment details are collected by Stripe.'), { status: 400 });
   }
-});
+  return billing.createCheckout(req.user.id, req.body.tier);
+}));
+app.post('/billing/create-portal-session', authenticate, billingLimiter, billingResponse(req => billing.portal(req.user.id)));
+app.get('/billing/status', authenticate, billingLimiter, billingResponse(req => billing.status(req.user.id)));
 
 // --- Delete account -------------------------------------------------------------
 // Removes a user from every in-memory + DB store. Used by both DELETE
 // /profile (self) and the temporary admin cleanup route below.
 async function purgeUser(uid) {
+  // Finish provider cancellation and commit durable deletion before changing
+  // any process-local view. An outage must not turn into local-only success.
+  if (isDBId(uid)) {
+    if (!db.isConnected()) throw Object.assign(new Error('Account storage is temporarily unavailable.'), { status: 503 });
+    await billing.prepareAccountDeletion(uid);
+    await require('./privacy-data').deleteAccountData(db, uid);
+  } else {
+    if (process.env.NODE_ENV === 'production') throw Object.assign(new Error('Account not found.'), { status: 404 });
+    filestore.saveUsersNow(users.filter(user => user.id !== uid));
+  }
+  const departedGroups = new Set(users.find(user => user.id === uid)?.joinedGroups || []);
   const idx = users.findIndex(u => u.id === uid);
   if (idx > -1) users.splice(idx, 1);
   const authoredPostIds = new Set(posts.filter(p => p.authorId === uid).map(p => p.id));
   postComments = postComments.filter(c => c.authorId !== uid && !authoredPostIds.has(c.postId));
   posts = posts.filter(p => p.authorId !== uid);
+  for (const post of posts) if (Array.isArray(post.likes)) post.likes = post.likes.filter(id => id !== uid);
   follows = follows.filter(f => f.followerId !== uid && f.followingId !== uid);
   connections = connections.filter(c => c.fromId !== uid && c.toId !== uid);
   blocks = blocks.filter(b => b.blockerId !== uid && b.blockedId !== uid);
   for (let i = conversations.length - 1; i >= 0; i--) {
     if (conversations[i].participants.includes(uid)) conversations.splice(i, 1);
   }
-  // Groups this user created would otherwise become orphaned (createdBy
-  // pointing at a deleted user, permanently un-deletable since DELETE
-  // /groups/:id only allows the creator).
-  const ownedGroupIds = groups.filter(g => g.createdBy === uid).map(g => g.id);
-  for (const gid of ownedGroupIds) {
-    const gIdx = groups.findIndex(g => g.id === gid);
-    if (gIdx > -1) groups.splice(gIdx, 1);
+  for (const group of groups) {
+    if (group.createdBy === uid) group.createdBy = null;
+    if (departedGroups.has(group.id)) group.members = Math.max(0, (group.members || 0) - 1);
   }
-  if (ownedGroupIds.length) {
-    users.forEach(u => { u.joinedGroups = (u.joinedGroups || []).filter(id => !ownedGroupIds.includes(id)); });
-  }
-  if (db.isConnected() && isDBId(uid)) {
-    // NB: social_accounts doesn't exist in the live schema (migrateDB never
-    // creates it — social tokens live on users.social_tokens instead), so
-    // only touch tables that actually exist. A prior version of this
-    // function deleted from a nonexistent social_accounts table first,
-    // which threw and silently aborted every subsequent statement —
-    // including DELETE FROM users — while still reporting success.
-    // connections now has a real table (see migrateDB) — was skipped here
-    // before too, for the same in-memory-only reason.
-    await db.query('DELETE FROM direct_messages WHERE sender_id=$1 OR receiver_id=$1', [uid]);
-    await db.query('DELETE FROM follows WHERE follower_id=$1 OR following_id=$1', [uid]);
-    await db.query('DELETE FROM connections WHERE from_id=$1 OR to_id=$1', [uid]);
-    await db.query('DELETE FROM blocks WHERE blocker_id=$1 OR blocked_id=$1', [uid]);
-    await db.query('DELETE FROM attachments WHERE user_id=$1', [uid]);
-    await db.query('DELETE FROM saved_posts WHERE user_id=$1', [uid]);
-    await db.query('DELETE FROM job_tracking WHERE user_id=$1', [uid]);
-    await db.query('DELETE FROM generated_content WHERE user_id=$1', [uid]);
-    // seen_posts (used by getUserSeenSet/markPostsSeen to keep refreshes from
-    // re-serving the same posts) was never purged here — every other
-    // per-user table gets cleaned above, but this one kept accumulating rows
-    // against a user_id that no longer existed in `users` after a delete.
-    await db.query('DELETE FROM seen_posts WHERE user_id=$1', [uid]);
-    await db.query('DELETE FROM restaurant_post_likes WHERE user_id=$1', [uid]);
-    await db.query('DELETE FROM post_comments WHERE author_id=$1 OR post_id IN (SELECT id FROM community_posts WHERE author_id=$1)', [uid]);
-    await db.query('DELETE FROM community_posts WHERE author_id=$1', [uid]);
-    await db.query('DELETE FROM community_groups WHERE created_by=$1', [uid]);
-    await db.query('DELETE FROM users WHERE id=$1', [uid]);
-  } else {
-    filestore.saveUsers(users);
+  for (const [id, session] of localSessions) if (session.userId === uid) localSessions.delete(id);
+  userAffinityCache.delete(uid);
+  for (const cache of [userSeenCache, followingSourceCache]) {
+    for (const key of cache.keys()) if (key.startsWith(`${uid}::`)) cache.delete(key);
   }
 }
 
@@ -21401,6 +21243,13 @@ async function purgeUser(uid) {
 // expectation on any platform that also offers account deletion.
 app.get('/profile/export', authenticate, async (req, res) => {
   try {
+    res.setHeader('Cache-Control', 'no-store');
+    if (isDBId(req.user.id)) {
+      const exported = await require('./privacy-data').exportAccountData(db, req.user.id);
+      res.setHeader('Content-Disposition', `attachment; filename="uficonnect-data-export-${req.user.id}.json"`);
+      return res.json(exported);
+    }
+    if (process.env.NODE_ENV === 'production') return res.status(404).json({ message: 'Not found.' });
     const user = await getUser(req.user.id);
     if (!user) return res.status(404).json({ message: 'Not found.' });
     const uid = user.id;
@@ -21412,33 +21261,6 @@ app.get('/profile/export', authenticate, async (req, res) => {
     const myComments = postComments.filter(c => c.authorId === uid).map(c => ({
       id: c.id, postId: c.postId, content: c.content, createdAt: c.createdAt,
     }));
-    let myAttachments = [];
-    let mySavedPosts = [];
-    let myTrackedJobs = [];
-    let myGeneratedContent = [];
-    if (db.isConnected()) {
-      const [attachmentResult, savedPostResult, trackedJobResult] = await Promise.all([
-        db.query(`SELECT id, filename, file_size, ats_score, keywords, created_at FROM attachments WHERE user_id=$1 ORDER BY created_at DESC`, [uid]),
-        db.query(`SELECT post_id, post_snapshot, created_at FROM saved_posts WHERE user_id=$1 ORDER BY created_at DESC`, [uid]),
-        db.query(`SELECT job_id, status, title, org, source, source_url, match_score, job_content, contact_email, recruiter_name, recruiter_role, created_at, updated_at FROM job_tracking WHERE user_id=$1 ORDER BY updated_at DESC`, [uid]),
-      ]);
-      myAttachments = attachmentResult.rows.map(r => ({
-        id: r.id, filename: r.filename, fileSize: r.file_size,
-        atsScore: r.ats_score, keywords: r.keywords, createdAt: r.created_at,
-      }));
-      mySavedPosts = savedPostResult.rows.map(r => ({
-        id: r.post_id, ...(r.post_snapshot || {}), savedAt: r.created_at,
-      }));
-      myTrackedJobs = trackedJobResult.rows.map(r => ({
-        id: r.job_id, status: r.status, title: r.title, org: r.org,
-        source: r.source, sourceUrl: r.source_url, matchScore: r.match_score,
-        jobContent: r.job_content, contactEmail: r.contact_email,
-        recruiterName: r.recruiter_name, recruiterRole: r.recruiter_role,
-        trackedAt: r.created_at, updatedAt: r.updated_at,
-      }));
-      const history = await db.query('SELECT * FROM generated_content WHERE user_id=$1 ORDER BY created_at DESC, id DESC', [uid]);
-      myGeneratedContent = history.rows.map(publicHistoryItem);
-    }
     const following = follows.filter(f => f.followerId === uid).map(f => f.followingId);
     const followerIds = follows.filter(f => f.followingId === uid).map(f => f.followerId);
     const myConnections = connections
@@ -21456,22 +21278,19 @@ app.get('/profile/export', authenticate, async (req, res) => {
       },
       posts: myPosts,
       comments: myComments,
-      attachments: myAttachments,
-      savedPosts: mySavedPosts,
-      trackedJobs: myTrackedJobs,
-      generatedContent: myGeneratedContent,
+      scope: { source: 'Local development account; no production database records.' },
       social: { following, followers: followerIds, connections: myConnections },
     });
   } catch (e) {
     console.error('GET /profile/export:', e.message);
-    res.status(500).json({ message: 'Could not build your data export. Please try again.' });
+    res.status(e.status === 404 ? 404 : e.status === 503 ? 503 : 500).json({ message: 'Could not build your data export. Please try again.' });
   }
 });
 
 app.delete('/profile', authenticate, async (req, res) => {
   try {
     await purgeUser(req.user.id);
-    res.json({ deleted: true, message: 'Account permanently deleted.' });
+    res.json({ deleted: true, message: 'Your account was deleted and recurring memberships were stopped. Provider records and retained backups follow their separate retention policies.' });
   } catch (e) {
     console.error('delete account:', e.message);
     res.status(500).json({ deleted: false, message: 'Failed to delete account.' });
@@ -27907,18 +27726,7 @@ function computeATSScore(text) {
 }
 
 async function withAttachmentTransaction(userId, work) {
-  return db.withClient(async client => {
-    await client.query('BEGIN');
-    try {
-      await client.query('SELECT id FROM users WHERE id=$1 FOR UPDATE', [userId]);
-      const result = await work(client);
-      await client.query('COMMIT');
-      return result;
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    }
-  });
+  return withActiveMembers(db, [userId], work);
 }
 
 app.post('/profile/attachments', authenticate, (req, res) => {
@@ -28351,7 +28159,7 @@ app.get('/users/:id', authenticate, async (req, res, next) => {
   // These collection endpoints are declared below the individual profile.
   if (req.params.id === 'connections' || req.params.id === 'blocked') return next('route');
   try {
-    const user = await getUser(req.params.id);
+    const user = await getPublicTargetUser(req.params.id);
     if (!user) return res.status(404).json({ message: 'User not found.' });
     if (user.id !== req.user.id && isBlockedEitherWay(req.user.id, user.id)) {
       return res.status(403).json({ blocked: true, message: 'This profile is not available.' });
@@ -28377,12 +28185,12 @@ app.get('/users/:id', authenticate, async (req, res, next) => {
       connectionStatus: user.id === req.user.id ? 'self' : getConnectionStatus(req.user.id, user.id),
       links: user.links || {},
     });
-  } catch (e) { console.error('GET /users/:id:', e); res.status(500).json({ error: 'Internal server error' }); }
+  } catch (e) { console.error('GET /users/:id:', e); res.status(e.status === 404 ? 404 : e.status === 503 ? 503 : 500).json({ error: e.status ? e.message : 'Internal server error' }); }
 });
 
 app.get('/users/:id/posts', authenticate, async (req, res) => {
   try {
-    const user = await getUser(req.params.id);
+    const user = await getPublicTargetUser(req.params.id);
     if (!user) return res.status(404).json({ message: 'User not found.' });
     if (user.id !== req.user.id && isBlockedEitherWay(req.user.id, user.id)) {
       return res.status(403).json({ blocked: true, message: 'This profile is not available.' });
@@ -28394,7 +28202,7 @@ app.get('/users/:id/posts', authenticate, async (req, res) => {
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
     const { posts: userPosts, hasMore } = await getCommunityPosts({ viewerId: req.user.id, authorId: user.id, limit, offset });
     res.json({ posts: userPosts, hasMore });
-  } catch (e) { console.error('GET /users/:id/posts:', e); res.status(500).json({ error: 'Internal server error' }); }
+  } catch (e) { console.error('GET /users/:id/posts:', e); res.status(e.status === 404 ? 404 : e.status === 503 ? 503 : 500).json({ error: e.status ? e.message : 'Internal server error' }); }
 });
 
 app.post('/users/:id/follow', authenticate, async (req, res) => {
@@ -32717,7 +32525,7 @@ app.get('/messages/:userId', authenticate, async (req, res) => {
   try {
     const uid = req.user.id;
     const otherId = req.params.userId;
-    const otherUser = await getUser(otherId);
+    const otherUser = await getPublicTargetUser(otherId);
     if (!otherUser) return res.status(404).json({ message: 'User not found.' });
     let conv = conversations.find((c) => c.participants.includes(uid) && c.participants.includes(otherId));
     if (conv) conv.messages.forEach((m) => { if (m.senderId !== uid) m.read = true; });
@@ -32737,7 +32545,7 @@ app.get('/messages/:userId', authenticate, async (req, res) => {
       participant: sanitizeUser(otherUser),
       messages: mergedMessages,
     });
-  } catch (e) { console.error('GET /messages/:userId:', e); res.status(500).json({ error: 'Internal server error' }); }
+  } catch (e) { console.error('GET /messages/:userId:', e); res.status(e.status === 404 ? 404 : e.status === 503 ? 503 : 500).json({ error: e.status ? e.message : 'Internal server error' }); }
 });
 
 app.post('/messages/:userId', authenticate, contentSubmissionLimiter, async (req, res) => {
@@ -32749,7 +32557,7 @@ app.post('/messages/:userId', authenticate, contentSubmissionLimiter, async (req
     if (!rawContent.trim() && !attachment) return res.status(400).json({ message: 'content or attachment required.' });
     if (rawContent.length > 2000) return res.status(400).json({ message: 'Messages must be 2000 characters or less.' });
     if (uid === otherId) return res.status(400).json({ message: "You can't message yourself." });
-    const otherUser = await getUser(otherId);
+    const otherUser = await getPublicTargetUser(otherId);
     if (!otherUser) return res.status(404).json({ message: 'User not found.' });
     if (isBlockedEitherWay(uid, otherId)) return res.status(403).json({ message: 'Unable to send messages to this user.' });
     // 'connections' restricts new conversations to accepted connections only
@@ -32766,12 +32574,6 @@ app.post('/messages/:userId', authenticate, contentSubmissionLimiter, async (req
     if (!screening.allowed) {
       const unavailable = screening.reason === 'screening_unavailable';
       return res.status(unavailable ? 503 : 422).json({ message: unavailable ? 'Message screening is temporarily unavailable. Please try again shortly.' : 'This message cannot be sent.' });
-    }
-
-    let conv = conversations.find((c) => c.participants.includes(uid) && c.participants.includes(otherId));
-    if (!conv) {
-      conv = { id: directConversationId(uid, otherId), participants: [uid, otherId], messages: [] };
-      conversations.push(conv);
     }
 
     const newMsg = {
@@ -32794,30 +32596,37 @@ app.post('/messages/:userId', authenticate, contentSubmissionLimiter, async (req
     if (!db.isConnected()) {
       return res.status(503).json({ message: 'Messaging is temporarily unavailable — please try again in a moment.' });
     }
-    await db.query(
-      `INSERT INTO direct_messages
-       (id, conversation_id, sender_id, receiver_id, content, attachment, read, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,false,$7)
-       ON CONFLICT DO NOTHING`,
-      [newMsg.id, directConversationId(uid, otherId), uid, otherId, newMsg.content, JSON.stringify(newMsg.attachment), newMsg.createdAt]
-    );
+    const conversationId = directConversationId(uid, otherId);
+    const preview = newMsg.content ? truncateWithEllipsis(newMsg.content, 120) : 'Photo';
+    const senderName = await withActiveMembers(db, [uid, otherId], async (client, members) => {
+      await client.query(
+        `INSERT INTO direct_messages
+         (id, conversation_id, sender_id, receiver_id, content, attachment, read, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,false,$7)`,
+        [newMsg.id, conversationId, uid, otherId, newMsg.content, JSON.stringify(newMsg.attachment), newMsg.createdAt]
+      );
+      // Persist the notification under the same member locks. Deferring this
+      // insert until after commit could recreate a deleted member's records.
+      await client.query(
+        `INSERT INTO notifications (id,user_id,type,actor_id,target_type,target_id,preview)
+         VALUES ($1,$2,'message',$3,'conversation',$4,$5)`,
+        [crypto.randomUUID(), otherId, uid, conversationId, preview]
+      );
+      return members.get(uid).name;
+    });
+    let conv = conversations.find(c => c.participants.includes(uid) && c.participants.includes(otherId));
+    if (!conv) {
+      conv = { id: conversationId, participants: [uid, otherId], messages: [] };
+      conversations.push(conv);
+    }
     conv.messages.push(newMsg);
-
-    getUser(uid).then(sender => {
-      if (!sender) return;
-      createNotification({
-        userId: otherId, type: 'message', actorId: uid,
-        targetType: 'conversation', targetId: conv.id,
-        preview: newMsg.content ? truncateWithEllipsis(newMsg.content, 120) : 'Photo',
-        pushTitle: sender.name, pushBody: newMsg.content ? truncateWithEllipsis(newMsg.content, 100) : 'Sent a photo', pushUrl: `/messages/${uid}`,
-      });
-    }).catch(() => {});
+    sendPushToUser(otherId, { title: senderName, body: preview, url: `/messages/${uid}` }).catch(() => {});
 
     res.json({
       message: newMsg,
       participant: sanitizeUser(otherUser),
     });
-  } catch (e) { console.error('POST /messages/:userId:', e); res.status(500).json({ error: 'Internal server error' }); }
+  } catch (e) { console.error('POST /messages/:userId:', e); res.status(e.status === 404 ? 404 : e.status === 503 ? 503 : 500).json({ error: e.status ? e.message : 'Internal server error' }); }
 });
 
 // --- Start --------------------------------------------------------------------
