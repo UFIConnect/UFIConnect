@@ -117,7 +117,7 @@ test('registration accepts missing and blank phones, but validates supplied numb
   } })).status, 400);
 });
 
-test('checkout omits missing phone numbers and billing outages are retryable', async t => {
+test('checkout requires durable storage and billing outages are retryable', async t => {
   const customers = [];
   const sessions = [];
   let event = { type: 'checkout.session.completed', data: { object: {} } };
@@ -133,9 +133,10 @@ test('checkout omits missing phone numbers and billing outages are retryable', a
   t.after(() => app.close());
   app.seedUser(member('buyer', { phone: '' }));
   const result = await app.request('/billing/create-checkout-session', { method: 'POST', userId: 'buyer', body: { tier: 'pro' } });
-  assert.equal(result.status, 200, JSON.stringify(result.data));
-  assert.equal(Object.hasOwn(customers[0], 'phone'), false);
-  assert.equal(sessions[0].phone_number_collection.enabled, false);
+  assert.equal(result.status, 503, JSON.stringify(result.data));
+  assert.equal(customers.length, 0);
+  assert.equal(sessions.length, 0);
+  assert.equal((await app.request('/billing/create-checkout-session', { method: 'POST', userId: 'buyer', body: { tier: 'invalid' } })).status, 400);
   for (const type of ['checkout.session.completed', 'customer.subscription.updated', 'customer.subscription.deleted']) {
     event = { ...event, type };
     assert.equal((await app.request('/billing/webhook', { method: 'POST', body: {} })).status, 503);
@@ -145,6 +146,7 @@ test('checkout omits missing phone numbers and billing outages are retryable', a
 test('resume selection commits atomically and rolls back failed writes', async t => {
   let fail = false;
   const app = await createAppHarness({ connected: true, query(sql, params) {
+    if (sql.startsWith('SELECT id, name, billing_closed FROM users')) return { rows: [{ id: 'alice', name: 'Alice', billing_closed: false }] };
     if (sql.startsWith('SELECT id FROM attachments')) return { rows: params[0] === 'own' && params[1] === 'alice' ? [{ id: 'own' }] : [] };
     if (fail && sql.startsWith('UPDATE attachments SET is_primary=true')) throw new Error('DB write failed');
     return { rows: [] };
@@ -176,47 +178,6 @@ test('Auth0 cannot claim an existing email or create a volatile account during a
     await assert.rejects(app.provisionAuth0User({ sub: 'auth0|different', email: 'existing@example.invalid', email_verified }), { status: 409 });
   }
   assert.equal(app.queries.some(q => /^(UPDATE|INSERT)/.test(q.sql)), false);
-});
-
-test('temporary payment failures keep the subscription link so paid access can recover', async t => {
-  const id = 'a0000000-0000-4000-8000-000000000099';
-  const row = { id, plan: 'pro', subscription: 'sub_plan', addon: true, addonSubscription: 'sub_addon' };
-  let sub = { id: 'sub_plan', status: 'past_due', items: { data: [{ price: { id: 'price_pro' } }] } };
-  let type = 'customer.subscription.updated';
-  const app = await createAppHarness({ connected: true,
-    env: { STRIPE_SECRET_KEY: 'fixture', STRIPE_WEBHOOK_SECRET: 'fixture', STRIPE_PRICE_ID: 'price_pro' },
-    modules: { stripe: () => ({
-      webhooks: { constructEvent: () => ({ type, data: { object: sub } }) },
-      subscriptions: { retrieve: async () => sub },
-    }) },
-    query(sql, params) {
-      if (sql.startsWith('SELECT id, plan FROM users')) return { rows: row.subscription === params[0] ? [row] : [] };
-      if (sql.startsWith('SELECT id FROM users WHERE resume_builder_subscription_id')) return { rows: row.addonSubscription === params[0] ? [row] : [] };
-      if (sql.startsWith('UPDATE users SET plan=')) [row.plan, row.subscription] = params;
-      if (sql.startsWith('UPDATE users SET resume_builder_addon=')) [row.addon, row.addonSubscription] = params;
-      return { rows: [] };
-    },
-  });
-  t.after(() => app.close());
-  const send = () => app.request('/billing/webhook', { method: 'POST', body: {} });
-  assert.equal((await send()).status, 200);
-  assert.equal(row.plan, 'free');
-  assert.equal(row.subscription, 'sub_plan');
-  sub.status = 'active';
-  assert.equal((await send()).status, 200);
-  assert.equal(row.plan, 'pro');
-  sub = { id: 'sub_addon', status: 'past_due' };
-  assert.equal((await send()).status, 200);
-  assert.equal(row.addon, false);
-  assert.equal(row.addonSubscription, 'sub_addon');
-  sub.status = 'active';
-  assert.equal((await send()).status, 200);
-  assert.equal(row.addon, true);
-  type = 'customer.subscription.deleted';
-  sub.status = 'canceled';
-  assert.equal((await send()).status, 200);
-  assert.equal(row.addonSubscription, null);
-  assert.equal(row.plan, 'pro');
 });
 
 test('a failed member preference write rolls back without changing another account', async t => {

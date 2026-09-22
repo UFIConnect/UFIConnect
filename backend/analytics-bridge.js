@@ -29,6 +29,11 @@ function createAnalyticsBridgeHandler({ env = process.env } = {}) {
     // No query parameters belong on this fixed document, even if somebody
     // constructs a URL outside the validated frontend controller.
     if ((req.originalUrl || req.url || '').includes('?')) return res.status(400).send('Analytics bridge does not accept query parameters.');
+    // Honor header-only privacy signals too, without serving any analytics script.
+    if (req.headers?.['sec-gpc'] === '1') {
+      res.set({ 'Cache-Control': 'no-store', 'Vary': 'Sec-GPC', 'X-Robots-Tag': 'noindex, nofollow' });
+      return res.status(204).end();
+    }
     res.removeHeader('X-Frame-Options');
     res.set({
       'Content-Type': 'text/html; charset=utf-8',

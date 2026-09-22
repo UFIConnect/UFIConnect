@@ -10,7 +10,7 @@ import Layout from '../components/Layout';
 import client from '../api/client';
 import { ALL_ROLES, EXTRA_INTERESTS, roleCode } from '../data/roles';
 import { pushSupported, getPushSubscriptionState, enablePush, disablePush } from '../api/push';
-import PricingModal from '../components/PricingModal';
+import BillingSettings from '../components/BillingSettings';
 import DataPrivacySettings from '../components/DataPrivacySettings';
 
 // ── Shared preference constants ───────────────────────────────────────────────
@@ -202,9 +202,6 @@ export default function Settings() {
   const [deleteConfirm, setDeleteConfirm] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [upgrading, setUpgrading] = useState(null); // null | 'pro' | 'business' — which tier's checkout is in flight
-  const [portalLoading, setPortalLoading] = useState(false);
-  const [pricingOpen, setPricingOpen] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -212,51 +209,6 @@ export default function Settings() {
     if (['account', 'security', 'privacy', 'notifications', 'preferences'].includes(tab)) setActiveTab(tab);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Stripe redirects back here with ?upgrade=success|cancelled after
-  // checkout. Success needs a real refetch (not updateProfileLocally with
-  // stale data) — the webhook is what actually flips plan to 'pro' server-
-  // side, on Stripe's own timing, not this redirect.
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const upgrade = params.get('upgrade');
-    if (!upgrade) return;
-    window.history.replaceState({}, '', window.location.pathname + (window.location.search.includes('tab=') ? '?tab=account' : ''));
-    if (upgrade === 'success') {
-      client.get('/profile')
-        .then(({ data }) => {
-          updateProfileLocally(data);
-          const planName = data.plan === 'business' ? 'Business' : data.plan === 'pro' ? 'Pro' : null;
-          showToast(planName ? `You're on ${planName} — thanks!` : 'Payment received — this can take a few seconds to finish activating.', 'success');
-        })
-        .catch(() => showToast('Payment received — refresh in a moment if it doesn\'t show up yet.', 'success'));
-    } else if (upgrade === 'cancelled') {
-      showToast('Checkout cancelled — no charge was made.', 'info');
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function handleUpgrade(tier) {
-    setUpgrading(tier);
-    try {
-      const { data } = await client.post('/billing/create-checkout-session', { tier });
-      window.location.href = data.url;
-    } catch (err) {
-      showToast(err?.response?.data?.message || 'Could not start checkout. Please try again.', 'error');
-      setUpgrading(null);
-    }
-  }
-
-  async function handleManageBilling() {
-    setPortalLoading(true);
-    try {
-      const { data } = await client.post('/billing/create-portal-session');
-      window.location.href = data.url;
-    } catch (err) {
-      showToast(err?.response?.data?.message || 'Could not open billing portal. Please try again.', 'error');
-      setPortalLoading(false);
-    }
-  }
-
-  // ── Account / role-specific settings state ────────────────────────────────
   const [form, setForm] = useState({
     name:         profile?.name         || '',
     phone:        profile?.phone        || '',
@@ -782,42 +734,7 @@ export default function Settings() {
             </div>
           </div>
 
-          {/* Plan / billing */}
-          <div className="card" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 18px', flexWrap: 'wrap' }}>
-            <div style={{
-              width: 44, height: 44, borderRadius: 12, flexShrink: 0,
-              background: profile.plan === 'free' ? 'var(--bg-secondary)' : '#EDE4FF',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.3rem',
-            }}>{profile.plan === 'business' ? 'BIZ' : profile.plan === 'pro' ? 'PRO' : 'FREE'}</div>
-            <div style={{ flex: 1, minWidth: 160 }}>
-              <div style={{ fontWeight: 700, fontSize: '.95rem' }}>
-                {profile.plan === 'business' ? 'Business plan' : profile.plan === 'pro' ? 'Pro plan' : 'Free plan'}
-              </div>
-              <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 2 }}>
-                {profile.plan === 'free'
-                  ? 'Support UFIconnect with a paid plan.'
-                  : profile.plan === 'business'
-                    ? 'Career sources and hiring workflows are ready in Connected Accounts.'
-                    : 'Thanks for supporting UFIconnect — manage your subscription anytime.'}
-              </div>
-            </div>
-            {profile.plan !== 'free' ? (
-              <button type="button" onClick={handleManageBilling} disabled={portalLoading} className="btn btn-ghost btn-sm">
-                {portalLoading ? 'Opening…' : 'Manage billing'}
-              </button>
-            ) : (
-              <button type="button" onClick={() => setPricingOpen(true)} disabled={!!upgrading} className="btn btn-primary btn-sm">
-                {upgrading ? 'Redirecting…' : 'Upgrade'}
-              </button>
-            )}
-          </div>
-          {pricingOpen && (
-            <PricingModal
-              loadingTier={upgrading}
-              onClose={() => setPricingOpen(false)}
-              onSelectTier={handleUpgrade}
-            />
-          )}
+          <BillingSettings profile={profile} onProfileUpdate={updateProfileLocally} />
 
           {/* Role badge */}
           {role && (
@@ -900,7 +817,7 @@ export default function Settings() {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
               <div>
                 <div style={{ fontWeight: 600, fontSize: '.875rem' }}>Delete your data / account</div>
-                <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>Permanently remove your account and all associated data. This cannot be undone.</div>
+                <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>Delete your account and its stored content, and stop recurring membership billing. This cannot be undone.</div>
               </div>
               <button type="button" className="btn btn-danger btn-sm" onClick={() => setDeleteModal(true)}>Delete account</button>
             </div>
@@ -913,7 +830,7 @@ export default function Settings() {
                 <div style={{ fontSize: '.9rem', fontWeight: 800, marginBottom: 12, textAlign: 'center' }}>!</div>
                 <h3 style={{ margin: '0 0 8px', textAlign: 'center' }}>Delete your account?</h3>
                 <p style={{ fontSize: '.85rem', color: 'var(--muted)', textAlign: 'center', marginBottom: 20, lineHeight: 1.6 }}>
-                  This will permanently delete your profile, posts, and all account data. This action <strong>cannot be undone</strong>.
+                  This deletes your profile, posts, messages, and saved account content. Active memberships will be canceled immediately. Shared groups remain available to other members. Stripe retains payment records under its own retention policy. This action <strong>cannot be undone</strong>.
                 </p>
                 <div className="form-group" style={{ marginBottom: 16 }}>
                   <label className="form-label">Type <strong>DELETE</strong> to confirm</label>
@@ -924,8 +841,8 @@ export default function Settings() {
                   <button className="btn btn-danger" style={{ flex: 1 }} disabled={deleteConfirm !== 'DELETE' || deleting}
                     onClick={async () => {
                       setDeleting(true);
-                      try { await client.delete('/profile'); logout(); } catch {
-                        alert('Failed to delete account. Please contact support@uficonnect.org.');
+                      try { await client.delete('/profile'); logout(); } catch (error) {
+                        alert(error?.response?.data?.message || 'Account deletion did not finish. Please retry or contact support@uficonnect.org.');
                         setDeleting(false);
                       }
                     }}>

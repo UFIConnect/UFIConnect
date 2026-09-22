@@ -1,7 +1,7 @@
 ﻿import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 
-const EFFECTIVE_DATE = 'September 15, 2026';
+const EFFECTIVE_DATE = 'September 22, 2026';
 const CONTACT_EMAIL  = 'privacy@uficonnect.org';
 const APP_NAME       = 'UFIconnect';
 const APP_URL        = 'https://uficonnect.org';
@@ -111,6 +111,7 @@ export default function PrivacyPolicy() {
           <P><strong>Social account tokens</strong> — if you connect a social platform (LinkedIn, Twitter/X, Instagram, or Facebook) via the Connected Accounts feature, we store the OAuth access token you authorise. This token is used only to fetch content relevant to your feed and is never shared with third parties.</P>
 
           <P><strong>Feed interactions</strong> — likes, saves, and clicks on posts. Used to personalise your feed.</P>
+          <P><strong>Membership billing</strong> — Stripe hosts checkout and manages payment methods. We store Stripe customer and subscription references, membership status, and limited checkout and webhook records to confirm access and prevent duplicate processing. Card numbers and security codes are entered on Stripe’s website and are not stored by UFIConnect.</P>
         </Section>
 
         <Section title="3. How we use your data">
@@ -162,6 +163,7 @@ export default function PrivacyPolicy() {
             'Business transfer: if UFIconnect is acquired or merges, data may transfer to the new entity under the same policy.',
           ]} />
           <P>Our analytics integration disables advertising storage, Google signals, advertising personalisation, and advertising user data.</P>
+          <P>Stripe processes payment details and the account information needed to manage your membership. You can review invoices, update payment methods, and cancel through Settings → Manage billing. Stripe’s handling of payment records is described in its <a href="https://stripe.com/privacy" style={{ color: 'var(--primary)' }}>privacy policy</a>.</P>
         </Section>
 
         <Section title="7. Cookies and local storage">
@@ -207,6 +209,8 @@ export default function PrivacyPolicy() {
         </Section>
 
         <Section title="9. Your rights">
+          <P>Use Settings → Account to download your account data, correct your profile, or request account deletion. For other requests, contact the privacy address below. Do not send passwords or full payment-card details.</P>
+          <P>We honor Global Privacy Control in supported browsers by keeping optional Google Analytics off, including when an earlier browser choice allowed it. You can review this in <Link to="/privacy#analytics" style={{ color: 'var(--primary)' }}>Analytics privacy</Link>. This does not disable security, login, or the aggregate service counts described above.</P>
           <P>Depending on where you live, you may have the right to:</P>
           <UL items={[
             'Access the personal data we hold about you',
