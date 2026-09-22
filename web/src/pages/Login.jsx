@@ -3,6 +3,7 @@ import PasswordInput from '../components/PasswordInput';
 import { Link, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
+import PublicFooter from '../components/PublicFooter';
 
 export default function Login() {
   const { login, auth0Enabled, loginWithAuth0 } = useAuth();
@@ -42,8 +43,8 @@ export default function Login() {
         <meta name="description" content="Sign in to your UFIconnect account to access your personalized feed, manage your profile, and follow communities." />
         <meta name="robots" content="noindex" />
       </Helmet>
-      <div className="auth-page">
-      <div className="auth-card">
+      <div className="auth-page public-auth-page">
+      <main className="auth-card">
         <div className="auth-logo">
           <div className="auth-logo-icon">UFI</div>
           <span className="auth-logo-name">UFIconnect</span>
@@ -51,9 +52,9 @@ export default function Login() {
         <p className="auth-tagline">Social connection meets job discovery.</p>
 
         <h1 className="auth-heading">Welcome back</h1>
-        <p className="auth-sub">Sign in to your account to continue.</p>
+        <p className="auth-sub">Sign in to read your personalized feed, join conversations, and manage your profile.</p>
 
-        {error && <div className="auth-error">{error}</div>}
+        {error && <div className="auth-error" role="alert">{error}</div>}
 
         {auth0Enabled && (
           <>
@@ -84,8 +85,9 @@ export default function Login() {
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
-            <label className="form-label">Email address</label>
+            <label className="form-label" htmlFor="login-email">Email address</label>
             <input
+              id="login-email"
               className="form-input"
               type="email"
               name="email"
@@ -120,10 +122,14 @@ export default function Login() {
           Don't have an account? <Link to="/register">Create one</Link>
         </div>
 
-        <div className="demo-hint">
-          Use your UFIconnect account credentials to continue.
-        </div>
-      </div>
+        <section className="public-page-guidance" aria-labelledby="login-guidance-title">
+          <h2 id="login-guidance-title">Need help signing in?</h2>
+          <p>Use the email address you registered with. If you cannot remember your password, <Link to="/forgot-password">request a reset link</Link>.</p>
+          {auth0Enabled && <p>If you created your account through Auth0, choose Continue with Auth0 to use the same sign-in method.</p>}
+          <p>You can <Link to="/global">browse the public feed</Link> before signing in.</p>
+        </section>
+      </main>
+      <PublicFooter />
     </div>
     </>
   );

@@ -5,6 +5,7 @@ import { privateSessionStorage } from '../auth/session';
 import { Link, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
+import PublicFooter from '../components/PublicFooter';
 
 const ROLE_MACROS = [
   {
@@ -575,8 +576,8 @@ export default function Register() {
         <meta name="twitter:card" content="summary_large_image" />
       </Helmet>
 
-      <div className="auth-page">
-        <div className="auth-card" style={{ maxWidth: step === 0 ? 460 : 620 }}>
+      <div className="auth-page public-auth-page">
+        <main className="auth-card" style={{ maxWidth: step === 0 ? 460 : 620 }}>
           <div className="auth-logo">
             <div className="auth-logo-icon">UFI</div>
             <span className="auth-logo-name">UFIconnect</span>
@@ -603,7 +604,7 @@ export default function Register() {
           {step === 0 && (
             <>
               <h1 className="auth-heading" style={{ marginBottom: 6 }}>Create your account</h1>
-              <p className="auth-sub" style={{ marginBottom: 24 }}>Join thousands of professionals on UFIconnect — free forever.</p>
+              <p className="auth-sub" style={{ marginBottom: 24 }}>Create a UFIconnect account to connect with people, follow communities, and discover career opportunities.</p>
 
               {error && <div className="auth-error" style={{ marginBottom: 14 }}>{error}</div>}
 
@@ -636,18 +637,18 @@ export default function Register() {
 
               <form onSubmit={handleStep1}>
                 <div className="form-group">
-                  <label className="form-label">Full name</label>
-                  <input className="form-input" type="text" name="name"
+                  <label className="form-label" htmlFor="register-name">Full name</label>
+                  <input id="register-name" className="form-input" type="text" name="name"
                     placeholder="Jane Smith" value={form.name} onChange={handleChange} autoComplete="name" autoFocus />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Email address</label>
-                  <input className="form-input" type="email" name="email"
+                  <label className="form-label" htmlFor="register-email">Email address</label>
+                  <input id="register-email" className="form-input" type="email" name="email"
                     placeholder="jane@example.com" value={form.email} onChange={handleChange} autoComplete="email" />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Phone number (optional)</label>
-                  <input className="form-input" type="tel" name="phone"
+                  <label className="form-label" htmlFor="register-phone">Phone number (optional)</label>
+                  <input id="register-phone" className="form-input" type="tel" name="phone"
                     placeholder="+1 555 123 4567" value={form.phone} onChange={handleChange} autoComplete="tel" inputMode="tel" />
                   <span style={{ fontSize: '.72rem', color: 'var(--muted)', marginTop: 4, display: 'block' }}>Include your country code. Used only to keep your billing account accurate.</span>
                 </div>
@@ -671,6 +672,11 @@ export default function Register() {
               <div className="auth-footer">
                 Already have an account? <Link to="/login">Sign in</Link>
               </div>
+              <section className="public-page-guidance" aria-labelledby="register-guidance-title">
+                <h2 id="register-guidance-title">What happens next?</h2>
+                <p>After entering your account details, you can add your professional role and a short bio. Then choose interests to personalize your feed. Your phone number and professional details are optional.</p>
+                <p>Review our <Link to="/terms">Terms of service</Link> and <Link to="/privacy">Privacy policy</Link>, or <Link to="/global">explore the public feed</Link> before creating an account.</p>
+              </section>
             </>
           )}
 
@@ -862,7 +868,8 @@ export default function Register() {
               </div>
             </>
           )}
-        </div>
+        </main>
+        <PublicFooter />
       </div>
     </>
   );

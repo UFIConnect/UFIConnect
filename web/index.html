@@ -1,282 +1,36 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="referrer" content="no-referrer" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/x-icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
     <link rel="apple-touch-icon" sizes="180x180" href="/icon-192.png" />
-    <meta name="application-name" content="UFIconnect" />
     <link rel="manifest" href="/manifest.json" />
     <link rel="sitemap" type="application/xml" href="/sitemap.xml" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="application-name" content="UFIconnect" />
     <meta name="theme-color" content="#102A6B" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="UFIconnect" />
-
-    <!-- Primary meta -->
-    <title>UFIconnect | Social Network &amp; Job Discovery</title>
-    <meta name="description" content="UFIconnect is a social network that brings people, posts, communities, messaging, videos, and job hunting into one personalized experience." />
-    <meta name="keywords" content="social network, social media, personalized feed, communities, messaging, videos, job search, job discovery, career opportunities, professional connections, live posts, UFIconnect" />
-    <meta name="author" content="UFIconnect" />
+    <title>UFIconnect | People, communities and opportunities</title>
+    <meta name="description" content="Explore public posts, meet people with shared interests, join communities, and discover job opportunities on UFIconnect." />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
     <link rel="canonical" href="https://uficonnect.org/" />
-
-    <!-- Open Graph / Facebook -->
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://uficonnect.org" />
-    <meta property="og:title" content="UFIconnect | Social Network &amp; Job Discovery" />
-    <meta property="og:description" content="Connect with people, share posts, join communities, message friends, watch videos, and discover jobs in one personalized social network." />
-    <meta property="og:image" content="https://uficonnect.org/og-image.png" />
-    <meta property="og:image:alt" content="UFIconnect social network and job discovery preview" />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
     <meta property="og:site_name" content="UFIconnect" />
-    <meta property="og:locale" content="en_US" />
-    <meta property="og:section_url" content="https://uficonnect.org/groups" />
-    <meta property="og:updated_time" content="2026-08-11T00:00:00Z" />
-
-    <!-- Twitter Card / X -->
+    <meta property="og:image" content="https://uficonnect.org/og-image.png" />
+    <meta property="og:image:alt" content="UFIconnect social network and job discovery" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:site" content="@uficonnect" />
-    <meta name="twitter:creator" content="@uficonnect" />
-    <meta name="twitter:title" content="UFIconnect | Social Network &amp; Job Discovery" />
-    <meta name="twitter:description" content="Connect, post, message, join communities, watch videos, and discover jobs in one personalized social network." />
     <meta name="twitter:image" content="https://uficonnect.org/og-image.png" />
-    <meta name="twitter:image:alt" content="UFIconnect social network and job discovery preview" />
-    <meta name="twitter:domain" content="uficonnect.org" />
-
-    <!-- LinkedIn-specific meta tags for better discoverability -->
-    <meta property="og:profile:first_name" content="UFIconnect" />
-    <meta property="og:profile:username" content="uficonnect" />
-
-    <!-- Additional social platform tags -->
-    <meta name="apple-mobile-web-app-title" content="UFIconnect" />
-    <meta name="application-name" content="UFIconnect" />
-    <meta name="msapplication-TileColor" content="#102A6B" />
-    <meta name="theme-color" content="#102A6B" />
-
-    <!-- Robots & Crawlers -->
-    <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
-    <meta name="googlebot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
-    <meta name="bingbot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
-
-    <!-- Additional SEO signals -->
-    <meta name="language" content="English" />
-    <meta name="revisit-after" content="7 days" />
-
-    <!-- Search engine verifications -->
     <meta name="google-site-verification" content="b2389e02302caba3" />
-    <!-- Add Bing Webmaster Tools verification once the real token is issued. -->
-
-    <!-- TikTok's DNS TXT record (tiktok-developers-site-verification=...) covers
-         domain-level verification; this meta tag is the per-URL check their
-         "Manage properties" screen (Privacy Policy / Terms / Website URL) runs
-         against the page itself. Present on every route since it's in index.html,
-         so it covers /, /privacy, and /terms without a per-page tag each. Same
-         code as the DNS record — TikTok issues one signature per domain, just
-         two accepted delivery methods for it. -->
     <meta name="tiktok-developers-site-verification" content="Af13yos4DdQTKKl09yvRBfRMmwi8UMGw" />
-
-    <!-- JSON-LD: WebSite with SearchAction -->
-    <script type="application/ld+json">
-    {
-      "@context": "https://schema.org",
-      "@type": "WebSite",
-      "name": "UFIconnect",
-      "alternateName": ["UFI", "UFI Connect", "UFIconnect Network"],
-      "url": "https://uficonnect.org",
-      "description": "UFIconnect is a social network that combines personalized posts, communities, messaging, videos, and job discovery.",
-      "potentialAction": {
-        "@type": "SearchAction",
-        "target": "https://uficonnect.org/search?q={search_term_string}",
-        "query-input": "required name=search_term_string"
-      }
-    }
-    </script>
-
-    <!-- JSON-LD: Organization -->
-    <script type="application/ld+json">
-    {
-      "@context": "https://schema.org",
-      "@type": "Organization",
-      "name": "UFIconnect",
-      "alternateName": ["UFI", "UFI Connect"],
-      "url": "https://uficonnect.org",
-      "logo": {
-        "@type": "ImageObject",
-        "url": "https://uficonnect.org/icon-512.png",
-        "width": 512,
-        "height": 512
-      },
-      "description": "UFIconnect is a social network for connecting with people, sharing posts, joining communities, and discovering career opportunities.",
-      "foundingDate": "2025",
-      "contactPoint": {
-        "@type": "ContactPoint",
-        "contactType": "customer support",
-        "email": "support@uficonnect.org",
-        "url": "https://uficonnect.org"
-      }
-    }
-    </script>
-
-    <!-- JSON-LD: SoftwareApplication -->
-    <script type="application/ld+json">
-    {
-      "@context": "https://schema.org",
-      "@type": "SoftwareApplication",
-      "name": "UFIconnect",
-      "alternateName": "UFI",
-      "applicationCategory": "SocialNetworkingApplication",
-      "operatingSystem": "Web, Android, iOS",
-      "url": "https://uficonnect.org",
-      "description": "UFIconnect is a social networking app with personalized feeds, communities, messaging, videos, and real job listings.",
-      "offers": {
-        "@type": "Offer",
-        "price": "0",
-        "priceCurrency": "USD"
-      },
-      "featureList": [
-        "Personalized social feed",
-        "80+ live communities",
-        "Direct messaging and member posts",
-        "Real job listings and opportunities",
-        "No ads",
-        "Free to join"
-      ]
-    }
-    </script>
-
-    <!-- JSON-LD: FAQ (powers 'People also ask' in Google) -->
-    <script type="application/ld+json">
-    {
-      "@context": "https://schema.org",
-      "@type": "FAQPage",
-      "mainEntity": [
-        {
-          "@type": "Question",
-          "name": "What is UFIconnect?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "UFIconnect is a social network that combines personalized posts, communities, messaging, videos, and job hunting in one place."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "What does UFI stand for?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "UFI stands for UFIconnect, a social network with personalized feeds, communities, messaging, and job discovery."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Is UFIconnect free?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Yes, UFIconnect is completely free to join and use. There are no subscription fees, no ads, and no paywalls. Simply register at uficonnect.org to get started."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "How is UFIconnect different from LinkedIn?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "UFIconnect has no ads, no sponsored posts, and no algorithm manipulation. Your feed is personalised purely by your role and interests, not by who paid the most. It also aggregates content from Reddit, GitHub, HackerNews, YouTube, and 15+ other sources in one place."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Who is UFIconnect for?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "UFIconnect is built for engineers, software developers, designers, founders, product managers, marketers, data scientists, healthcare professionals, educators, athletes, musicians, chefs, and anyone building a professional career."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Is UFIconnect connected to Facebook, Instagram, or X (Twitter)?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "UFIconnect is an independent platform, not affiliated with Facebook, Instagram, or X. It aggregates public content from 30+ sources by default — including Reddit, GitHub, Hacker News, Mastodon, and Bluesky — and members can optionally connect their own X/Twitter, LinkedIn, Instagram, or Facebook account to bring posts from people they follow there into their personalized UFIconnect feed."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Does UFIconnect show content from Mastodon and Bluesky?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Yes. UFIconnect continuously aggregates public posts from Mastodon and Bluesky alongside Reddit, GitHub, Hacker News, dev.to, and 25+ other sources, combined into one personalized professional feed."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "What is a good ad-free alternative to LinkedIn, Facebook, or Instagram for professionals?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "UFIconnect is an ad-free social network that combines personalized posts, communities, messaging, videos, and job discovery in one experience."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Can I find jobs on UFIconnect?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Yes. UFIconnect aggregates live job listings from Indeed-sourced boards, Remote OK, and USAJobs, matches them to your profile and uploaded resume, and scores your resume against an ATS-style checklist right on the platform."
-          }
-        }
-      ]
-    }
-    </script>
-
-    <!-- GitHub Pages SPA path restore (pairs with public/404.html) -->
-    <script>
-      (function(l){
-        if(l.search.indexOf('?p=')===0){
-          var decoded=l.search.slice(1).split('&').map(function(s){return s.replace(/~and~/g,'&')});
-          window.history.replaceState(null,null,
-            l.pathname.slice(0,-1)+(decoded[0].slice(2)||'/') +
-            (decoded[1]?'?'+decoded[1].slice(2):'') + l.hash
-          );
-        }
-      }(window.location));
-    </script>
-
-    <!-- Optional Google Analytics loads after consent on a separate origin;
-         see src/analytics/browserAnalytics.js. No Google script runs here. -->
-
-    <!-- Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" />
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite","name":"UFIconnect","url":"https://uficonnect.org/","description":"A social network for people, communities and opportunities."}</script>
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"Organization","name":"UFIconnect","url":"https://uficonnect.org/","logo":"https://uficonnect.org/icon-512.png"}</script>
   </head>
   <body>
-    <script>
-      (function() {
-        var MAINTENANCE = false;
-        var p = window.location.pathname;
-        var q = window.location.search;
-        var bypass = p === '/hq' || p.startsWith('/hq') || q.includes('preview') || q.includes('admin');
-        if (MAINTENANCE && !bypass) {
-          document.open();
-          document.write('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Maintenance — UFIconnect</title><style>*{margin:0;padding:0;box-sizing:border-box}body{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:24px;text-align:center;color:#0f172a}.icon{font-size:3rem;margin-bottom:16px}h1{font-size:1.75rem;font-weight:700;margin-bottom:12px}p{font-size:1rem;color:#64748b;max-width:400px;line-height:1.6;margin-bottom:32px}.badge{display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:24px;background:#6366f1;color:#fff;font-size:.875rem;font-weight:600}.dot{width:8px;height:8px;border-radius:50%;background:#fff;opacity:.7;animation:pulse 1.5s ease-in-out infinite}@keyframes pulse{0%,100%{opacity:.7}50%{opacity:1}}</style></head><body><div class="icon">🔧</div><h1>We\'re making improvements</h1><p>UFIconnect is temporarily offline while we polish a few things. We\'ll be back shortly — thanks for your patience.</p><div class="badge"><span class="dot"></span>Coming back soon</div></body></html>');
-          document.close();
-        }
-      })();
-    </script>
-    <noscript>
-      <main style="font-family: Inter, Arial, sans-serif; max-width: 760px; margin: 48px auto; padding: 0 24px; line-height: 1.6; color: #0f172a;">
-        <h1>UFIconnect</h1>
-        <p>UFIconnect is a social network for building a profile, finding people, joining communities, messaging, posting, watching videos, and discovering jobs.</p>
-        <p>
-          <a href="/register">Create an account</a> ·
-          <a href="/search">Find people and communities</a> ·
-          <a href="/groups">Browse groups</a> ·
-          <a href="/opportunities">View opportunities</a>
-        </p>
-      </main>
-    </noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
