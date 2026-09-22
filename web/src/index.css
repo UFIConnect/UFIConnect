@@ -5490,3 +5490,11 @@ html, body { overscroll-behavior: none; }
 .connected-post-actions textarea { margin-bottom: 8px; }
 .profile-content-tabs > a { padding: 10px 16px; color: var(--muted); text-decoration: none; font-weight: 650; }
 .profile-content-tabs > a[aria-current="page"] { color: var(--primary); border-bottom: 2px solid var(--primary); }
+/* Public guidance stays readable before JavaScript and on narrow screens. */
+.public-guide { max-width: 760px; margin: 0 auto; padding: 48px 24px; line-height: 1.7; }
+.public-guide h1 { font-size: clamp(1.75rem, 5vw, 2.5rem); line-height: 1.2; margin-bottom: 20px; }
+.public-guide h2 { font-size: 1.25rem; margin: 28px 0 12px; }
+.public-guide p, .public-guide ul { margin: 16px 0; }
+.public-guide ul { padding-left: 24px; }
+.public-guide nav { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 24px 0; }
+.public-guide nav a { min-height: 44px; display: inline-flex; align-items: center; text-decoration: underline; }

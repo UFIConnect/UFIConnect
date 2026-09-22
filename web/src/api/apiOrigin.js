@@ -16,7 +16,7 @@ function normalizeBaseUrl(value) {
 }
 
 const apiOrigins = [...new Set([PRIMARY_API_URL, FALLBACK_API_URL]
-  .map(value => validateApiBaseUrl(value, { production: import.meta.env.PROD, pageOrigin: window.location.origin }))
+  .map(value => validateApiBaseUrl(value, { production: import.meta.env.PROD, pageOrigin: typeof window === 'undefined' ? 'https://uficonnect.org' : window.location.origin }))
   .filter(Boolean))];
 
 let activeApiOrigin = apiOrigins[0] || '/api';
