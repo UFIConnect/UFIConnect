@@ -20,7 +20,7 @@ const post = (id, extra = {}) => ({ id, source: 'reddit', title: `Video ${id}`, 
 try {
   await server.listen();
   browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
-  for (const width of [390, 1440]) {
+  for (const width of [320, 390, 1440]) {
     const context = await browser.newContext({ viewport: { width, height: 850 }, hasTouch: width < 600, isMobile: width < 600 });
     const page = await context.newPage(); page.setDefaultTimeout(15000);
     const errors = [], embedRequests = [];
@@ -69,13 +69,18 @@ try {
       await accepted.waitFor();
       assert.equal(await page.locator('[data-post-id="below-five"], [data-post-id="unsupported"]').count(), 0);
       const rectangles = await accepted.evaluate(element => {
-        const box = selector => { const r = element.querySelector(selector).getBoundingClientRect(); return { top: r.top, bottom: r.bottom, height: r.height }; };
+        const box = selector => { const r = element.querySelector(selector).getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, height: r.height }; };
         const header = document.querySelector('.video-feed-top-controls').getBoundingClientRect();
-        return { headerBottom: header.bottom, media: box('[data-video-media]'), details: box('[data-video-details]'), fit: getComputedStyle(element.querySelector('video')).objectFit };
+        return { headerBottom: header.bottom, media: box('[data-video-media]'), details: box('[data-video-details]'), actions: box('[data-video-actions]'), fit: getComputedStyle(element.querySelector('video')).objectFit };
       });
       assert.ok(rectangles.media.height > 100, 'Media retains visible space');
       assert.ok(rectangles.headerBottom <= rectangles.media.top + 1, 'Header stays above video');
       assert.ok(rectangles.media.bottom <= rectangles.details.top + 1, 'App commands and details stay below video');
+      const mediaOverlapsActions = rectangles.media.left < rectangles.actions.right - 1
+        && rectangles.media.right > rectangles.actions.left + 1
+        && rectangles.media.top < rectangles.actions.bottom - 1
+        && rectangles.media.bottom > rectangles.actions.top + 1;
+      assert.equal(mediaOverlapsActions, false, 'Commands stay outside the full video frame');
       assert.equal(rectangles.fit, 'contain', 'Native video preserves the full frame');
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     }
@@ -101,6 +106,10 @@ try {
     assert.equal(new URL(frameInfo.src).searchParams.get('controls'), '1');
     assert.equal(frameInfo.pointerEvents, 'auto');
     assert.ok(frameInfo.tabIndex >= 0 && frameInfo.width > 100, 'Provider controls remain reachable at useful size');
+    const providerFrame = page.frameLocator('.video-feed-youtube-player iframe').first();
+    await providerFrame.getByRole('button', { name: 'Provider controls' }).click();
+    await frame.focus();
+    assert.equal(await frame.evaluate(element => document.activeElement === element), true, 'Keyboard users can focus the provider frame');
     assert.ok(embedRequests.some(request => request.headers.referer === new URL(origin).origin + '/'), 'First provider request includes the real origin referrer');
     assert.deepEqual(errors, []);
     console.log(`PASS: video/media layout, 5-second boundary, native/Vimeo/YouTube metadata filtering, iframe identity and provider controls at ${width}px`);
