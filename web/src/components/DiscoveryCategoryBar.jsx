@@ -7,6 +7,13 @@ export default function DiscoveryCategoryBar({ mode, filters, onChange }) {
   const selected = discoveryChoice(mode, filters)?.[0];
   return (
     <div className="discovery-category-bar" role="group" aria-label={category.filterLabel}>
+      <button type="button"
+        className="feed-toolbar-control feed-topic-filter-trigger discovery-category-clear"
+        aria-label={`Clear ${category.filterLabel.toLowerCase()}`}
+        disabled={!selected}
+        onClick={() => onChange({ ...filters, discovery: { ...filters.discovery, [mode]: '' } })}>
+        Clear
+      </button>
       {category.choices.map(([key, label]) => (
         <button key={key} type="button"
           className={`feed-toolbar-control feed-topic-filter-trigger${selected === key ? ' active' : ''}`}

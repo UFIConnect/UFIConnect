@@ -1164,6 +1164,16 @@ export default function VideoFeedView({ onExit, music = false }) {
     loadPage({ reset: true });
   }, [loadPage]);
 
+  const clearTopicFilter = useCallback(() => {
+    if (!topicFiltersRef.current.length) return;
+    topicFiltersRef.current = [];
+    setTopicFilters([]);
+    setActiveIndex(0);
+    if (containerRef.current) containerRef.current.scrollTop = 0;
+    setLoading(true);
+    loadPage({ reset: true });
+  }, [loadPage]);
+
   // Filter sheet's "Clear all" resets source and topic together. Search
   // remains independent in its own sheet.
   const selectGenre = (value) => {
@@ -2134,7 +2144,11 @@ export default function VideoFeedView({ onExit, music = false }) {
                   further into it never blocks reaching anything else
                   (Clear all/Done sit in their own fixed footer below,
                   outside this scrollable area entirely already). */}
-              <div style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.02em', opacity: 0.6, marginBottom: 8, textTransform: 'uppercase' }}>Platform</div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+                <span style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.02em', opacity: 0.6, textTransform: 'uppercase' }}>Platform</span>
+                <button type="button" onClick={clearSourceFilter} disabled={!sourceFilter.length} aria-label="Clear platforms"
+                  style={{ border: 0, background: 'transparent', color: '#fff', fontSize: '.78rem', padding: '6px 8px', cursor: sourceFilter.length ? 'pointer' : 'default', opacity: sourceFilter.length ? 1 : .4 }}>Clear</button>
+              </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>
                 {(viewMode === 'following' ? FOLLOWING_VIDEO_SOURCES : FEED_VIDEO_SOURCES).map(key => {
                   const meta = SOURCE_META[key] || {};
@@ -2144,6 +2158,7 @@ export default function VideoFeedView({ onExit, music = false }) {
                       key={key}
                       onClick={() => toggleSourceFilter(key)}
                       aria-label={meta.label || key}
+                      aria-pressed={active}
                       style={{
                         display: 'flex', alignItems: 'center', gap: 5,
                         padding: '7px 12px', borderRadius: 18, cursor: 'pointer', whiteSpace: 'nowrap',
@@ -2160,12 +2175,20 @@ export default function VideoFeedView({ onExit, music = false }) {
               </div>
 
               {music && <section aria-label="Music genres" style={{ marginBottom: 20 }}>
-                <h3 style={{ fontSize: '.85rem' }}>Genres</h3>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <h3 style={{ fontSize: '.85rem' }}>Genres</h3>
+                  <button type="button" onClick={() => selectGenre('')} disabled={!genre} aria-label="Clear genres"
+                    style={{ border: 0, background: 'transparent', color: '#fff', fontSize: '.78rem', padding: '6px 8px', cursor: genre ? 'pointer' : 'default', opacity: genre ? 1 : .4 }}>Clear</button>
+                </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                   {['', 'Pop', 'Rock', 'Hip hop', 'Rap', 'R&B', 'Jazz', 'Classical', 'Country', 'Electronic', 'Latin', 'Reggae', 'Metal', 'Folk', 'Acoustic', 'Live'].map(value => <button type="button" key={value} aria-pressed={genre === value} onClick={() => selectGenre(value)} style={{ borderRadius: 20, padding: '8px 12px', border: '1px solid #777', background: genre === value ? '#fff' : '#252525', color: genre === value ? '#111' : '#fff', cursor: 'pointer' }}>{value || 'All genres'}</button>)}
                 </div>
               </section>}
-              <div style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.02em', opacity: 0.6, marginBottom: 8, textTransform: 'uppercase' }}>Topics</div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+                <span style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.02em', opacity: 0.6, textTransform: 'uppercase' }}>Topics</span>
+                <button type="button" onClick={clearTopicFilter} disabled={!topicFilters.length} aria-label="Clear video topics"
+                  style={{ border: 0, background: 'transparent', color: '#fff', fontSize: '.78rem', padding: '6px 8px', cursor: topicFilters.length ? 'pointer' : 'default', opacity: topicFilters.length ? 1 : .4 }}>Clear</button>
+              </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {ALL_INTERESTS.map(topic => {
                   const active = topicFilters.includes(topic);
@@ -2173,6 +2196,7 @@ export default function VideoFeedView({ onExit, music = false }) {
                     <button
                       key={topic}
                       onClick={() => toggleTopicFilter(topic)}
+                      aria-pressed={active}
                       style={{
                         padding: '6px 12px', borderRadius: 16, cursor: 'pointer', whiteSpace: 'nowrap',
                         fontWeight: 600, fontSize: '.75rem',
