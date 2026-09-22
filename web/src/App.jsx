@@ -1,5 +1,6 @@
 ﻿import { lazy, Suspense, useEffect, useState } from 'react';
-import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
+import { useLayoutEffect } from 'react';
 import { useAuth } from './contexts/AuthContext';
 import { trackPageview } from './analytics';
 import { getGoogleAnalytics } from './analytics/browserAnalytics';
@@ -82,9 +83,26 @@ function AnalyticsPrivacyControls() {
 }
 
 function RequireAuth({ children }) {
-  const { token, loading } = useAuth();
-  if (loading) return <div className="splash">Loading...</div>;
-  return token ? children : <Navigate to="/login" replace />;
+  const { token, loading, sessionError } = useAuth();
+  const location = useLocation();
+  if (loading) return <SessionLoading />;
+  if (sessionError) return <SessionRecovery />;
+  return token ? children : <Navigate to="/login" state={{ from: location.pathname + location.search + location.hash }} replace />;
+}
+
+function SessionLoading() {
+  return <div className="splash" role="status">Opening UFIconnect…</div>;
+}
+
+function SessionRecovery() {
+  const { retrySession } = useAuth();
+  const location = useLocation();
+  return <main className="session-recovery">
+    <h1>We couldn’t restore your session</h1>
+    <p>Check your connection and try again. We’ll keep you on this page.</p>
+    <button type="button" className="btn btn-primary" onClick={retrySession}>Try again</button>
+    <Link to="/login" state={{ from: location.pathname + location.search + location.hash }}>Sign in</Link>
+  </main>;
 }
 
 function RequireOnboarding({ children }) {
@@ -104,8 +122,9 @@ function PageviewTracker() {
 }
 
 function HomeRoute() {
-  const { token, profile, loading } = useAuth();
-  if (loading) return <Landing />;
+  const { token, profile, loading, sessionError } = useAuth();
+  if (loading) return <SessionLoading />;
+  if (sessionError) return <SessionRecovery />;
   if (!token) {
     return <Landing />;
   }
@@ -114,12 +133,15 @@ function HomeRoute() {
 }
 
 function SearchRoute() {
-  const { token } = useAuth();
+  const { token, loading, sessionError } = useAuth();
+  if (loading) return <SessionLoading />;
+  if (sessionError) return <SessionRecovery />;
   return token ? <RequireAuth><RequireOnboarding><Search /></RequireOnboarding></RequireAuth> : <SearchGuide />;
 }
 
 function RouteLoading() {
   const { pathname } = useLocation();
+  if (pathname === '/' || pathname === '/search' || !publicRoutes.some(route => route.path === pathname)) return <SessionLoading />;
   const page = publicRoutes.find(route => route.path === pathname);
   return <main className="public-guide" aria-busy="true">
     <h1>{page ? page.title.split(' | ')[0] : 'UFIconnect'}</h1>
@@ -130,6 +152,11 @@ function RouteLoading() {
 }
 
 export default function App() {
+  useLayoutEffect(() => {
+    // Reveal React's committed route, not a pre-rendered guest page while
+    // the member's saved session is still being restored.
+    document.getElementById('root')?.removeAttribute('data-session-shell');
+  }, []);
   const [preview, setPreview] = useState(() => {
     if (typeof window === 'undefined') return false;
     const url = window.location.href;

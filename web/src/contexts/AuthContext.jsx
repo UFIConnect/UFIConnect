@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useAuth0 } from '@auth0/auth0-react';
+import { useRef } from 'react';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import { auth0AuthorizationParams, isAuth0Configured } from '../auth/auth0Config';
 import { clearSession, getAccessToken, setAccessToken, subscribeToSession } from '../auth/session';
@@ -11,6 +12,10 @@ export function AuthProvider({ children }) {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [restoringSession, setRestoringSession] = useState(true);
+  const [sessionError, setSessionError] = useState(false);
+  const [restoreAttempt, setRestoreAttempt] = useState(0);
+  const restoreGeneration = useRef(0);
+  const restoreRequest = useRef(null);
   const auth0 = useAuth0();
   const auth0Enabled = isAuth0Configured;
 
@@ -21,17 +26,38 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     let cancelled = false;
+    const generation = ++restoreGeneration.current;
+    const isCurrent = () => !cancelled && generation === restoreGeneration.current;
     if (getAccessToken()) { setRestoringSession(false); return undefined; }
-    client.get('/auth/session', publicOAuthRequestConfig({ _ufiReauthentication: true }))
+    const controller = new AbortController();
+    restoreRequest.current = controller;
+    setRestoringSession(true);
+    setSessionError(false);
+    client.get('/auth/session', publicOAuthRequestConfig({ _ufiReauthentication: true, signal: controller.signal }))
       .then(({ data }) => {
-        if (cancelled || !data?.token) return;
+        if (!isCurrent()) return;
+        if (!data?.token) throw new Error('Session response unavailable');
         setAccessToken(data.token);
         setProfile(data.profile || null);
       })
-      .catch(() => {})
-      .finally(() => { if (!cancelled) setRestoringSession(false); });
-    return () => { cancelled = true; };
-  }, []);
+      .catch((error) => {
+        // A temporary connection/server failure is not a sign-out. Keep the
+        // member's current URL and let them retry the HttpOnly session.
+        if (isCurrent() && ![401, 403].includes(error?.response?.status)) setSessionError(true);
+      })
+      .finally(() => { if (isCurrent()) setRestoringSession(false); });
+    return () => {
+      cancelled = true;
+      controller.abort();
+      if (restoreRequest.current === controller) restoreRequest.current = null;
+    };
+  }, [restoreAttempt]);
+
+  function retrySession() {
+    setRestoringSession(true);
+    setSessionError(false);
+    setRestoreAttempt(attempt => attempt + 1);
+  }
 
   const refreshProfile = useCallback(async () => {
     const activeToken = getAccessToken();
@@ -59,22 +85,33 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     if (!auth0Enabled || auth0.isLoading || !auth0.isAuthenticated) return undefined;
     let cancelled = false;
+    let generation = restoreGeneration.current;
+    const isCurrent = () => !cancelled && generation === restoreGeneration.current;
     setLoading(true);
     auth0.getAccessTokenSilently({ authorizationParams: auth0AuthorizationParams() })
       .then(async (accessToken) => {
-        if (cancelled) return;
+        if (!isCurrent()) return;
+        generation = ++restoreGeneration.current;
+        restoreRequest.current?.abort();
+        setRestoringSession(false);
+        setSessionError(false);
         setAccessToken(accessToken);
         const { data } = await client.get('/auth/me');
-        if (!cancelled && getAccessToken() === accessToken) {
+        if (isCurrent() && getAccessToken() === accessToken) {
           setProfile(data.profile || data);
         }
       })
-      .catch(() => { if (!cancelled) clearSession(); })
-      .finally(() => { if (!cancelled) setLoading(false); });
+      .catch(() => { if (isCurrent()) clearSession(); })
+      .finally(() => { if (isCurrent()) setLoading(false); });
     return () => { cancelled = true; };
   }, [auth0Enabled, auth0.isAuthenticated, auth0.isLoading, auth0.getAccessTokenSilently]);
 
   function acceptSession(data) {
+    // A late startup response must never replace a newer explicit sign-in.
+    restoreGeneration.current += 1;
+    restoreRequest.current?.abort();
+    setRestoringSession(false);
+    setSessionError(false);
     clearSession();
     setAccessToken(data.token);
     const nextProfile = data.profile || data.user || null;
@@ -93,6 +130,11 @@ export function AuthProvider({ children }) {
   }
 
   async function logout({ revoke = true } = {}) {
+    restoreGeneration.current += 1;
+    restoreRequest.current?.abort();
+    setRestoringSession(false);
+    setLoading(false);
+    setSessionError(false);
     const activeToken = getAccessToken();
     const revocation = revoke && activeToken
       ? client.post('/auth/logout', {}, publicOAuthRequestConfig({ headers: { Authorization: `Bearer ${activeToken}` } }))
@@ -127,7 +169,8 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthContext.Provider value={{
-      token, profile, loading, login, register, logout, logoutAll,
+      token, profile, loading: loading || restoringSession || (auth0Enabled && auth0.isLoading),
+      sessionError: sessionError && !token, retrySession, login, register, logout, logoutAll,
       updateProfileLocally, refreshProfile, auth0Enabled, loginWithAuth0, registerWithAuth0,
     }}>
       {children}

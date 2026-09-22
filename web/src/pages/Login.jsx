@@ -1,16 +1,24 @@
 import PasswordInput from '../components/PasswordInput';
 ﻿import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useEffect } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import PublicFooter from '../components/PublicFooter';
+import { safeReturnPath } from '../auth/returnPath';
 
 export default function Login() {
-  const { login, auth0Enabled, loginWithAuth0 } = useAuth();
+  const { login, token, profile, loading: restoring, auth0Enabled, loginWithAuth0 } = useAuth();
   const navigate  = useNavigate();
+  const location = useLocation();
+  const returnTo = safeReturnPath(location.state?.from);
   const [form, setForm] = useState({ email: '', password: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (token && !restoring) navigate(profile && !profile.onboardingComplete ? '/onboarding' : returnTo, { replace: true });
+  }, [token, profile, restoring, navigate, returnTo]);
 
   function handleChange(e) {
     setForm((f) => ({ ...f, [e.target.name]: e.target.value }));
@@ -24,7 +32,7 @@ export default function Login() {
     try {
       const user = await login(form.email, form.password);
       setForm({ email: '', password: '' });
-      navigate(user.onboardingComplete ? '/' : '/onboarding', { replace: true });
+      navigate(user.onboardingComplete ? returnTo : '/onboarding', { replace: true });
     } catch (err) {
       if (!err.response) {
         setError('Server is starting up — wait 30 seconds and try again.');

@@ -195,8 +195,8 @@ try {
   await page.goto(origin + '/', { waitUntil: 'domcontentloaded' });
   await sessionStarted;
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  check(await page.locator('h1').first().isVisible(), 'Homepage remains readable while session restoration waits on the API');
-  check(!await page.locator('.splash').count(), 'Delayed authentication does not replace public content with an empty loading screen');
+  check(await page.getByRole('status').filter({ hasText: 'Opening UFIconnect' }).isVisible(), 'Neutral startup remains visible while session restoration waits on the API');
+  check(!await page.locator('.landing-hero-refined').isVisible(), 'A pending saved session never flashes the public homepage');
   const sessionFinished = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/auth/session'));
   holdSession = false;
   heldSessions.splice(0).forEach(resolve => resolve());

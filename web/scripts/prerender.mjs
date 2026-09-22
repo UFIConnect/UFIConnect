@@ -33,7 +33,8 @@ try {
   html=html.replace('</head>',`<meta name="description" content="${escape(route.description)}">\n<meta name="robots" content="${robots}">\n<link rel="canonical" href="${escape(canonical)}">\n<meta property="og:title" content="${escape(route.title)}">\n<meta property="og:description" content="${escape(route.description)}">\n<meta property="og:url" content="${escape(canonical)}">\n<meta name="twitter:title" content="${escape(route.title)}">\n<meta name="twitter:description" content="${escape(route.description)}">\n${styles}\n</head>`);
   html=html.replace(/<title>/g,'<title data-prerender-meta>')
    .replace(/<(meta|link) (?=(?:name="(?:description|robots|twitter:title|twitter:description)"|property="(?:og:title|og:description|og:url)"|rel="canonical"))/g,'<$1 data-prerender-meta ');
-  return html.replace('<div id="root"></div>',`<div id="root" data-prerendered="true">${markup}</div>`);
+  const sessionShell = route.path === '/' || route.path === '/search' || memberRoutes.includes(route.path);
+  return html.replace('<div id="root"></div>',`<div id="root" data-prerendered="true"${sessionShell ? ' data-session-shell="true"' : ''}>${markup}</div>${sessionShell ? '<div class="static-session-loading" role="status">Opening UFIconnect…</div>' : ''}`);
  }
  for(const route of publicRoutes){
   const html=documentFor(route,renderPage(route.path,route.page));
