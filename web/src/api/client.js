@@ -78,7 +78,7 @@ client.interceptors.response.use(
     if (response?.status === 401 && !config?._ufiReauthentication && config?.headers?.Authorization === `Bearer ${getAccessToken()}`) {
       clearSession();
     }
-    if (!config || !canRetry(config)) return Promise.reject(error);
+    if (!config || !canRetry(config) || config._ufiManagedRetry || config.signal?.aborted) return Promise.reject(error);
 
     const transient = !response || TRANSIENT_STATUS_CODES.has(response.status);
     if (!transient) return Promise.reject(error);

@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import client from '../api/client';
 import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, isYouTubeShortsUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, useGlobalMuted, fetchVimeoMetadata, youTubePosterUrl, SoundIcon, createYouTubePlayerFrame, youTubeEmbedUrl } from './videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
@@ -10,6 +10,7 @@ import { reportNegativeSignal } from '../api/errorReporting';
 import { ALL_INTERESTS } from '../pages/Onboarding';
 import ConnectedPostActions from './ConnectedPostActions';
 import { SavePostButton } from './SaveButtons';
+import { ArrowUp, ArrowDown, ChevronDown, Search, SlidersHorizontal, RotateCw, Play, Pause, MessageCircle, Heart, ExternalLink } from 'lucide-react';
 import { videoDurationSeconds, isShortFeedVideo, videoSourceKey, safeMediaUrl, fitVideoFrame } from '../utils/videoFeedPolicy.mjs';
 import './VideoFeedView.css';
 
@@ -21,6 +22,13 @@ import './VideoFeedView.css';
 const VIDEO_ENGAGED_SECONDS = 3;
 const VIDEO_ENGAGED_FRACTION = 0.5;
 const VIDEO_FEED_TAIL_POLL_MS = 30 * 1000;
+const VIDEO_QUEUE_LIMIT = 60;
+const VIDEO_HISTORY_LIMIT = 2000;
+const VIDEO_RETRY_MAX_MS = 60 * 1000;
+
+function trimOldest(collection, limit = VIDEO_HISTORY_LIMIT) {
+  while (collection.size > limit) collection.delete(collection.keys().next().value);
+}
 
 // Platforms genuinely excluded from the shared Feed-mode video pool.
 // uficonnect is native/Following-only by design (a user's own network, not
@@ -182,22 +190,6 @@ const VIDEO_COMMENTS_PASSIVE_REFRESH_MS = 30 * 1000;
 // scrollSnapStop comment below) without a visible gap.
 const VIDEO_MOUNT_RADIUS = 2;
 
-// Shared look for the three floating controls over the video (back, refresh,
-// mute) — previously each had its own one-off style (the back button in
-// particular stood out with a harsh 2px solid white ring at a different size
-// from its neighbors). A soft blurred-glass circle reads as one consistent
-// control language instead of three mismatched buttons, and adapts to
-// whatever's playing behind it rather than fighting it with a hard outline.
-const OVERLAY_BTN_STYLE = {
-  zIndex: 10, width: 40, height: 40, borderRadius: '50%',
-  background: 'rgba(0,0,0,.4)',
-  backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
-  border: '1px solid rgba(255,255,255,.18)',
-  boxShadow: '0 2px 10px rgba(0,0,0,.35)',
-  color: '#fff', cursor: 'pointer',
-  display: 'flex', alignItems: 'center', justifyContent: 'center',
-};
-
 function formatTime(sec) {
   if (!Number.isFinite(sec) || sec < 0) return '0:00';
   const m = Math.floor(sec / 60);
@@ -210,7 +202,7 @@ function formatTime(sec) {
 // its own top comment) instead of each slide owning/destroying its own.
 // Only meaningful when src.kind === 'youtube'; file/hls/vimeo keep their
 // existing fully-local state below, untouched.
-function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComments, sharedYt, onDurationResolved, onNavigate, hasPrevious, hasNext }) {
+function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComments, sharedYt, onDurationResolved, onNavigate, hasPrevious, hasNext, controlsVisible, onToggleControls }) {
   const src = resolveVideoSource(post);
   const meta = SOURCE_META[post.source] || SOURCE_META.uficonnect;
   const fileVideoRef = useRef(null);
@@ -235,6 +227,10 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [seeking, setSeeking] = useState(false);
+  const scrollResumeRef = useRef(false);
+  const hiddenResumeRef = useRef(false);
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
   // Vimeo-only: resolveVideoSource always hands back poster:null for it
   // (mediaUrl there is the watch URL, needed as-is, so it can't double as
   // a thumbnail source) — fetched separately via Vimeo's own oEmbed
@@ -258,6 +254,34 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   }, [src?.kind, src?.id, post, onDurationResolved]);
 
   const getNativeEl = useCallback(() => (src?.kind === 'hls' ? hlsVideoRef.current : fileVideoRef.current), [src?.kind]);
+
+  useEffect(() => {
+    if (!active || src?.kind === 'youtube') return;
+    const video = getNativeEl();
+    const sendVimeo = method => vimeoIframeRef.current?.contentWindow?.postMessage(JSON.stringify({ method }), 'https://player.vimeo.com');
+    const guardBackgroundPlay = () => {
+      if (!document.hidden) return;
+      hiddenResumeRef.current = true;
+      video?.pause();
+    };
+    const visibilityChanged = () => {
+      if (document.hidden) {
+        hiddenResumeRef.current = src?.kind === 'vimeo' ? !pausedRef.current : Boolean(video && !video.paused) || scrollResumeRef.current;
+        scrollResumeRef.current = false;
+        if (src?.kind === 'vimeo') sendVimeo('pause'); else video?.pause();
+      } else if (hiddenResumeRef.current) {
+        hiddenResumeRef.current = false;
+        if (src?.kind === 'vimeo') sendVimeo('play'); else video?.play().catch(() => {});
+      }
+    };
+    document.addEventListener('visibilitychange', visibilityChanged);
+    video?.addEventListener('play', guardBackgroundPlay);
+    return () => {
+      document.removeEventListener('visibilitychange', visibilityChanged);
+      video?.removeEventListener('play', guardBackgroundPlay);
+      hiddenResumeRef.current = false;
+    };
+  }, [active, src?.kind, getNativeEl]);
 
   // What the render/scrub-bar/engagement-tracking below actually read —
   // youtube's real values live on the shared player (see sharedYt, owned
@@ -296,9 +320,17 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   // doesn't need to be more precise than "roughly how long were they here."
   useEffect(() => {
     if (!active) return;
-    const startedAt = Date.now();
+    let startedAt = document.hidden ? null : Date.now();
+    let watchMs = 0;
+    const updateVisibility = () => {
+      if (startedAt !== null) watchMs += Date.now() - startedAt;
+      startedAt = document.hidden ? null : Date.now();
+    };
+    document.addEventListener('visibilitychange', updateVisibility);
     return () => {
-      reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, watchMs: Date.now() - startedAt });
+      document.removeEventListener('visibilitychange', updateVisibility);
+      if (startedAt !== null) watchMs += Date.now() - startedAt;
+      if (watchMs > 0) reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, watchMs });
     };
   }, [active, post.id, post.source, post.topic]);
 
@@ -322,7 +354,9 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
       v.muted = true;
       v.defaultMuted = true;
       v.playsInline = true;
-      v.play().catch(() => {});
+      hiddenResumeRef.current = document.hidden;
+      scrollResumeRef.current = isScrolling;
+      if (!document.hidden && !isScrolling) v.play().catch(() => {});
     } else {
       v.pause(); try { v.currentTime = 0; } catch {} setCurrentTime(0); setPaused(false);
     }
@@ -338,7 +372,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
     const v = getNativeEl();
     if (v && active) v.muted = muted;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [muted]);
+  }, [muted, active, getNativeEl, src?.kind]);
 
   // Vimeo: a cross-origin iframe with no DOM <video> to attach onPlay/
   // onPause/onTimeUpdate to, so paused/duration/currentTime — and with
@@ -372,10 +406,12 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
         sendToVimeo({ method: 'addEventListener', value: 'pause' });
         sendToVimeo({ method: 'addEventListener', value: 'timeupdate' });
         sendToVimeo({ method: 'getDuration' });
+        if (document.hidden) { hiddenResumeRef.current = true; sendToVimeo({ method: 'pause' }); }
       } else if (msg?.method === 'getDuration') {
         setDuration(Number(msg.value) || 0);
         onDurationResolved(post, Number(msg.value));
       } else if (msg?.event === 'play') {
+        if (document.hidden) { hiddenResumeRef.current = true; sendToVimeo({ method: 'pause' }); }
         setPaused(false);
       } else if (msg?.event === 'pause' || msg?.event === 'finish') {
         setPaused(true);
@@ -428,20 +464,28 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   // real slide transition (the active/inactive effect above already
   // handles that by destroying the player outright).
   useEffect(() => {
-    if (!active || src?.kind === 'youtube') return;
+    if (!active || src?.kind === 'youtube' || document.hidden) return;
     if (src?.kind === 'vimeo') {
       try {
-        vimeoIframeRef.current?.contentWindow?.postMessage(
-          JSON.stringify({ method: isScrolling ? 'pause' : 'play' }),
-          'https://player.vimeo.com',
-        );
+        if (isScrolling) {
+          scrollResumeRef.current = scrollResumeRef.current || !pausedRef.current;
+          vimeoIframeRef.current?.contentWindow?.postMessage(JSON.stringify({ method: 'pause' }), 'https://player.vimeo.com');
+        } else if (scrollResumeRef.current) {
+          scrollResumeRef.current = false;
+          vimeoIframeRef.current?.contentWindow?.postMessage(JSON.stringify({ method: 'play' }), 'https://player.vimeo.com');
+        }
       } catch {}
       return;
     }
     const v = getNativeEl();
     if (!v) return;
-    if (isScrolling) v.pause();
-    else if (v.paused) v.play().catch(() => {});
+    if (isScrolling) {
+      scrollResumeRef.current = scrollResumeRef.current || !v.paused;
+      v.pause();
+    } else if (scrollResumeRef.current) {
+      scrollResumeRef.current = false;
+      v.play().catch(() => {});
+    }
   }, [isScrolling, active, src?.kind, getNativeEl]);
 
   function togglePlay() {
@@ -536,38 +580,46 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
             onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
             onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id, context: { surface: 'videos' } })} />}
       </div>
-      <div className="video-feed-details video-caption-scroll" data-video-details>
-        <div className="video-feed-playback" role="group" aria-label="Video playback">
-          <button type="button" onClick={togglePlay} aria-label={effectivePaused ? 'Play video' : 'Pause video'}>{effectivePaused ? 'Play' : 'Pause'}</button>
-          <button type="button" onClick={onToggleMute} disabled={src?.kind === 'vimeo'} aria-label={muted ? 'Unmute video' : 'Mute video'}><SoundIcon muted={muted} size={16} /></button>
-          {effectiveDuration > 0 && <>
+      <div className="video-feed-action-rail" data-video-actions hidden={!controlsVisible} role="group" aria-label="Video controls and engagement">
+        {effectiveDuration > 0 && <div className="video-feed-playback" role="group" aria-label="Video playback">
             <input type="range" data-video-scrubber aria-label="Video position" min="0" max="1" step="0.001"
               value={progressFraction} onChange={event => seekToFraction(Number(event.target.value))} />
-            <span className="video-feed-time">{formatTime(effectiveCurrentTime)} / {formatTime(effectiveDuration)}</span>
-          </>}
-          <div className="video-feed-step-controls">
-            <button type="button" disabled={!hasPrevious} onClick={() => onNavigate(-1)} aria-label="Previous video">↑</button>
-            <button type="button" disabled={!hasNext} onClick={() => onNavigate(1)} aria-label="Next video">↓</button>
-          </div>
+        </div>}
+        <button type="button" onClick={togglePlay} aria-label={effectivePaused ? 'Play video' : 'Pause video'} title={effectivePaused ? 'Play video' : 'Pause video'}>
+          {effectivePaused ? <Play size={18} aria-hidden="true" /> : <Pause size={18} aria-hidden="true" />}
+        </button>
+        <button type="button" onClick={onToggleMute} disabled={src?.kind === 'vimeo'} aria-label={muted ? 'Unmute video' : 'Mute video'} title={src?.kind === 'vimeo' ? 'Use the player volume control' : muted ? 'Unmute video' : 'Mute video'}>
+          <SoundIcon muted={muted} size={18} />
+        </button>
+        {effectiveDuration > 0 && <span className="video-feed-time">{formatTime(effectiveCurrentTime)} / {formatTime(effectiveDuration)}</span>}
+        <span className="video-feed-command-spacer" aria-hidden="true" />
+        <button type="button" onClick={() => onOpenComments?.(post)} aria-label={`Comments ${(post.commentsCount || 0).toLocaleString()}`} title="Comments and connected source actions">
+          <MessageCircle size={18} aria-hidden="true" />
+        </button>
+        <SavePostButton post={post} className="video-feed-save-button" showLabel={false} />
+        {originalUrl && <a href={originalUrl} target="_blank" rel="noopener noreferrer" aria-label="View original post" title="View original post"
+          onClick={() => reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true })}><ExternalLink size={17} aria-hidden="true" /></a>}
+        <div className="video-feed-step-controls" role="group" aria-label="Browse videos">
+          <button type="button" disabled={!hasPrevious} onClick={() => onNavigate(-1)} aria-label="Previous video" title="Previous video"><ArrowUp size={18} aria-hidden="true" /></button>
+          <button type="button" disabled={!hasNext} onClick={() => onNavigate(1)} aria-label="Next video" title="Next video"><ArrowDown size={18} aria-hidden="true" /></button>
         </div>
+      </div>
+      <div className="video-feed-details video-caption-scroll" data-video-details>
         {isYoutube && sharedYt?.failed && <p className="video-feed-playback-note" role="status">The embedded player could not start. Try its play button{originalUrl ? ' or open the original video.' : '.'}</p>}
-        <div className="video-feed-caption" data-video-caption>
-          <div className="video-feed-byline"><SourceMark source={post.source} label={meta.icon} size={13} /><strong>{post.sourceLabel || meta.label}</strong>
+        <div className="video-feed-caption" data-video-caption data-expanded={captionExpanded}>
+          <div className="video-feed-caption-summary">
+            <button type="button" className="video-feed-controls-toggle" onClick={onToggleControls} aria-expanded={controlsVisible} aria-label={controlsVisible ? 'Hide video controls' : 'Show video controls'} title={controlsVisible ? 'Hide video controls' : 'Show video controls'}><SlidersHorizontal size={17} aria-hidden="true" /></button>
+            <div className="video-feed-byline"><SourceMark source={post.source} label={meta.icon} size={11} /><strong>{post.sourceLabel || meta.label}</strong></div>
+            {post.title && <h2>{post.title}</h2>}
+            <span className="video-feed-like-count" aria-label={`Likes ${(post.likesCount || 0).toLocaleString()}`}><Heart size={12} aria-hidden="true" />{(post.likesCount || 0).toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 1 })}</span>
+            {(post.title || hasExtraCaption || post.author?.name) && <button type="button" className="video-feed-caption-toggle" onClick={() => setCaptionExpanded(value => !value)} aria-label={captionExpanded ? 'Show less' : 'Read more'} title={captionExpanded ? 'Show less' : 'Read more'} aria-expanded={captionExpanded}><ChevronDown size={16} aria-hidden="true" /></button>}
+          </div>
+          {captionExpanded && <div className="video-feed-caption-expanded">
             {post.author?.name && <span>{post.author.name}</span>}
             {post.matchedByLocation && <span>{post.locationMatchLabel || 'Near you'}</span>}
-          </div>
-          {post.title && <h2>{post.title}</h2>}
-          {captionExpanded && captionBody && <p>{captionBody}</p>}
-          <div className="video-feed-caption-actions">
-            {hasExtraCaption && <button type="button" onClick={() => setCaptionExpanded(value => !value)} aria-expanded={captionExpanded}>{captionExpanded ? 'Show less' : 'Read more'}</button>}
-            {originalUrl && <a href={originalUrl} target="_blank" rel="noopener noreferrer"
-              onClick={() => reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true })}>View original post ↗</a>}
-          </div>
-        </div>
-        <div className="video-feed-action-rail" data-video-actions role="group" aria-label="Video engagement">
-          <span>Likes {(post.likesCount || 0).toLocaleString()}</span>
-          <button type="button" onClick={() => onOpenComments?.(post)}>Comments {(post.commentsCount || 0).toLocaleString()}</button>
-          <SavePostButton post={post} className="video-feed-save-button" />
+            {post.title && <p className="video-feed-expanded-title">{post.title}</p>}
+            {captionBody && <p>{captionBody}</p>}
+          </div>}
         </div>
       </div>
     </article>
@@ -783,6 +835,7 @@ export default function VideoFeedView({ onExit, music = false }) {
     const key = videoSourceKey(resolveVideoSource(post));
     if (!key || durationCacheRef.current.get(key) === seconds) return;
     durationCacheRef.current.set(key, seconds);
+    trimOldest(durationCacheRef.current);
     if (!isShortFeedVideo(seconds)) return;
     const previous = queueRef.current;
     const activePost = previous[activeIndexRef.current];
@@ -858,6 +911,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   // instead of a single sheet trying to do three different jobs at once.
   const [searchOpen, setSearchOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(false);
   // Mirrors state into refs so loadPage (called from effects/callbacks that
   // don't want to be redeclared on every mode/filter change) always reads
   // the current value instead of whatever was captured at its own creation —
@@ -884,6 +938,11 @@ export default function VideoFeedView({ onExit, music = false }) {
   const emptyStreakRef = useRef(0);
   const EMPTY_STREAK_LIMIT = 6;
   const loadingMoreRef = useRef(false);
+  const requestControllerRef = useRef(null);
+  const pendingRequestIntentRef = useRef(null);
+  const retryStateRef = useRef({ failures: 0, until: 0 });
+  const [retryAt, setRetryAt] = useState(0);
+  const lastFeedReadRef = useRef(0);
   // Reset/filter/focus loads can overlap. Only the newest request may
   // replace the queue; otherwise an identical late response is filtered by
   // knownIds and can incorrectly turn a valid video page into an empty one.
@@ -899,9 +958,28 @@ export default function VideoFeedView({ onExit, music = false }) {
   const markKnownId = useCallback((id) => {
     if (!id || knownIds.current.has(id)) return;
     knownIds.current.add(id);
+    trimOldest(knownIds.current);
   }, []);
 
   const loadPage = useCallback(async ({ reset = false, bust = false, preserveOnEmpty = false, preserveQueue = false, quiet = false, continuationDepth = 0 } = {}) => {
+    const intent = { reset, bust, preserveOnEmpty, preserveQueue, quiet };
+    if (reset) {
+      // A new filter supersedes both an in-flight page and a delayed retry.
+      // Retain its reset semantics while honoring server overload backoff.
+      requestControllerRef.current?.abort();
+      requestControllerRef.current = null;
+      loadRequestRef.current += 1;
+      pendingRequestIntentRef.current = intent;
+    }
+    if (Date.now() < retryStateRef.current.until) {
+      if (!quiet) setLoading(false);
+      return;
+    }
+    if (!reset && pendingRequestIntentRef.current?.reset) return loadPage(pendingRequestIntentRef.current);
+    if (!reset && requestControllerRef.current && continuationDepth === 0) return;
+    if (reset) requestControllerRef.current?.abort();
+    const controller = new AbortController();
+    requestControllerRef.current = controller;
     const requestId = ++loadRequestRef.current;
     try {
       // A genuinely new search/topic/filter/mode shouldn't inherit a
@@ -947,8 +1025,14 @@ export default function VideoFeedView({ onExit, music = false }) {
         if (bust) params += `&bust=1`;
         endpoint = music ? '/office/feed/music' : '/office/feed/videos';
       }
-      const { data } = await client.get(`${endpoint}?${params}`);
+      const { data } = await client.get(`${endpoint}?${params}`, {
+        signal: controller.signal, _ufiManagedRetry: true,
+      });
       if (requestId !== loadRequestRef.current) return;
+      lastFeedReadRef.current = Date.now();
+      pendingRequestIntentRef.current = null;
+      retryStateRef.current = { failures: 0, until: 0 };
+      setRetryAt(0);
       const incoming = (Array.isArray(data.posts) ? data.posts : []).filter(post => {
         const playable = resolveVideoSource(post);
         if (!playable || isShortFeedVideo(videoDurationSeconds(post))) return false;
@@ -962,7 +1046,9 @@ export default function VideoFeedView({ onExit, music = false }) {
       }
       const fresh = isExplicitSearch ? incoming : incoming.filter(p => !knownIds.current.has(p.id));
       fresh.forEach(p => markKnownId(p.id));
-      setVideoPosts(prev => {
+      const previousQueue = queueRef.current;
+      const nextQueue = (() => {
+        const prev = previousQueue;
         // A flat all-time dedup here used to make infinite scroll dead-end
         // (once a user had scrolled through the whole real pool once, every
         // later page was "all already seen" and got filtered to nothing) —
@@ -998,7 +1084,23 @@ export default function VideoFeedView({ onExit, music = false }) {
         // mounted queue here moves slides above the viewport and makes the
         // same swipe jump backward when pagination lands.
         return [...prev, ...fresh];
-      });
+      })();
+      // Keep a small rewind window while dropping old slide DOM, metadata,
+      // and decoded-media owners during long sessions. Preserve the active
+      // item and compensate scrollTop before the next paint.
+      const excess = Math.max(0, nextQueue.length - VIDEO_QUEUE_LIMIT);
+      const removeBefore = reset ? 0 : Math.min(excess, Math.max(0, activeIndexRef.current - 10));
+      const retained = nextQueue.slice(removeBefore, removeBefore + VIDEO_QUEUE_LIMIT);
+      // A background refresh may replace the unseen tail. Allow those IDs
+      // to be fetched again from the cursor instead of permanently skipping them.
+      nextQueue.slice(removeBefore + VIDEO_QUEUE_LIMIT).forEach(post => knownIds.current.delete(post.id));
+      queueRef.current = retained;
+      if (removeBefore) {
+        activeIndexRef.current -= removeBefore;
+        pendingScrollIndexRef.current = activeIndexRef.current;
+        setActiveIndex(activeIndexRef.current);
+      }
+      setVideoPosts(retained);
       if (sourceExhausted && !isExplicitSearch) {
         cursorRef.current = null;
         if (mode === 'following') followingPageRef.current = 1;
@@ -1042,15 +1144,45 @@ export default function VideoFeedView({ onExit, music = false }) {
           continuationDepth: continuationDepth + 1,
         });
       }
-    } catch {
-      if (requestId === loadRequestRef.current && !quiet) setError(true);
+    } catch (failure) {
+      if (requestId !== loadRequestRef.current || controller.signal.aborted) return;
+      const status = failure?.response?.status;
+      if (!status || status === 429 || status >= 500) {
+        pendingRequestIntentRef.current = intent;
+        const failures = Math.min(6, retryStateRef.current.failures + 1);
+        const retryHeader = failure?.response?.headers?.['retry-after'];
+        const retrySeconds = Number(retryHeader);
+        const serverDelay = Number.isFinite(retrySeconds) ? retrySeconds * 1000 : Math.max(0, Date.parse(retryHeader) - Date.now()) || 0;
+        const delay = Math.max(serverDelay, Math.min(VIDEO_RETRY_MAX_MS, 1000 * 2 ** failures)) + Math.random() * 1500;
+        retryStateRef.current = { failures, until: Date.now() + delay };
+        setRetryAt(retryStateRef.current.until);
+      } else {
+        pendingRequestIntentRef.current = null;
+        retryStateRef.current = { failures: 0, until: 0 };
+        setRetryAt(0);
+      }
+      if (!quiet) setError(true);
     } finally {
-      if (requestId === loadRequestRef.current) setLoading(false);
+      if (requestId === loadRequestRef.current) {
+        requestControllerRef.current = null;
+        setLoading(false);
+      }
     }
-  }, [markKnownId]);
+  }, [markKnownId, music]);
 
-  useEffect(() => () => { loadRequestRef.current += 1; }, []);
+  useEffect(() => () => { loadRequestRef.current += 1; requestControllerRef.current?.abort(); }, []);
   useEffect(() => { loadPage({ reset: true }); }, [loadPage]);
+
+  useEffect(() => {
+    if (!retryAt) return;
+    const retry = () => {
+      if (document.hidden || Date.now() < retryStateRef.current.until || requestControllerRef.current) return;
+      loadPage(pendingRequestIntentRef.current || { reset: queueRef.current.length === 0, preserveOnEmpty: true, quiet: queueRef.current.length > 0 });
+    };
+    const timeout = window.setTimeout(retry, Math.max(0, Math.ceil(retryAt - Date.now())));
+    document.addEventListener('visibilitychange', retry);
+    return () => { window.clearTimeout(timeout); document.removeEventListener('visibilitychange', retry); };
+  }, [retryAt, loadPage]);
 
   // A refresh/filter response can legitimately contain fewer items than the
   // prior queue. Keep the active pointer valid instead of leaving mobile
@@ -1059,7 +1191,7 @@ export default function VideoFeedView({ onExit, music = false }) {
     setActiveIndex(current => Math.min(Math.max(current, 0), Math.max(videoPosts.length - 1, 0)));
   }, [videoPosts.length]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (pendingScrollIndexRef.current === null || !containerRef.current) return;
     containerRef.current.scrollTop = pendingScrollIndexRef.current * containerRef.current.clientHeight;
     pendingScrollIndexRef.current = null;
@@ -1073,11 +1205,11 @@ export default function VideoFeedView({ onExit, music = false }) {
   useEffect(() => {
     const refreshQuietly = () => {
       const state = videoLiveStateRef.current;
-      if (document.hidden || state.loading || state.refreshing || loadingMoreRef.current) return;
+      if (document.hidden || state.loading || state.refreshing || loadingMoreRef.current || Date.now() - lastFeedReadRef.current < 30000) return;
       if (state.activeIndex !== 0 || (containerRef.current?.scrollTop || 0) > 1) return;
       loadPage({ reset: true, bust: false, preserveOnEmpty: true, preserveQueue: true, quiet: true });
     };
-    const interval = window.setInterval(refreshQuietly, VIDEO_FEED_AUTO_REFRESH_MS);
+    const interval = window.setInterval(refreshQuietly, VIDEO_FEED_AUTO_REFRESH_MS + Math.random() * 30000);
     window.addEventListener('focus', refreshQuietly);
     document.addEventListener('visibilitychange', refreshQuietly);
     return () => {
@@ -1243,6 +1375,7 @@ export default function VideoFeedView({ onExit, music = false }) {
         const post = videoPosts[idx];
         if (passedAboveViewport && post?.id && !consumedVideoIds.current.has(post.id)) {
           consumedVideoIds.current.add(post.id);
+          trimOldest(consumedVideoIds.current);
           reportConsumed(post.id, 'videos');
         }
       });
@@ -1294,6 +1427,20 @@ export default function VideoFeedView({ onExit, music = false }) {
       if (activeFrame) cancelAnimationFrame(activeFrame);
       clearTimeout(settleTimer);
     };
+  }, [videoPosts.length]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const handleKey = event => {
+      if (event.target !== container || !['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp'].includes(event.key)) return;
+      event.preventDefault();
+      const direction = ['ArrowDown', 'PageDown'].includes(event.key) ? 1 : -1;
+      const next = Math.max(0, Math.min(queueRef.current.length - 1, activeIndexRef.current + direction));
+      container.scrollTo({ top: next * container.clientHeight, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+    };
+    container.addEventListener('keydown', handleKey);
+    return () => container.removeEventListener('keydown', handleKey);
   }, [videoPosts.length]);
 
   // Mouse click-and-drag scrolling. A mouse drag
@@ -1416,7 +1563,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   // rather than hammering the server (and the user's connection) forever
   // in a loop that never shows anything on screen.
   useEffect(() => {
-    if (!hasMore || loadingMoreRef.current || loading) return;
+    if (document.hidden || tailWaiting || !hasMore || loadingMoreRef.current || loading) return;
     if (searchQueryRef.current && emptyStreakRef.current >= EMPTY_STREAK_LIMIT) return;
     if (activeIndex >= videoPosts.length - 3) {
       loadingMoreRef.current = true;
@@ -1425,7 +1572,7 @@ export default function VideoFeedView({ onExit, music = false }) {
       // the whole swipe feed with an error state.
       loadPage({ quiet: true }).finally(() => { loadingMoreRef.current = false; });
     }
-  }, [activeIndex, videoPosts.length, hasMore, loading, loadPage]);
+  }, [activeIndex, videoPosts.length, hasMore, tailWaiting, loading, loadPage]);
 
   // "Endless" here means the tail stays live for newly transferred unseen
   // videos. It deliberately does not wrap back to watched slides. Once the
@@ -1441,7 +1588,7 @@ export default function VideoFeedView({ onExit, music = false }) {
       loadPage({ preserveOnEmpty: true, quiet: true })
         .finally(() => { loadingMoreRef.current = false; });
     };
-    const interval = window.setInterval(pollForNewVideos, VIDEO_FEED_TAIL_POLL_MS);
+    const interval = window.setInterval(pollForNewVideos, VIDEO_FEED_TAIL_POLL_MS + Math.random() * 15000);
     return () => window.clearInterval(interval);
   }, [tailWaiting, searchQuery, videoPosts.length, loadPage]);
 
@@ -1530,8 +1677,8 @@ export default function VideoFeedView({ onExit, music = false }) {
     let cancelled = false;
     const settle = (orientation) => {
       if (cancelled) return;
-      setYoutubeFrameOrientations(current => (
-        current[videoId] ? current : { ...current, [videoId]: orientation }
+      setYoutubeFrameOrientations(current => current[videoId] ? current : Object.fromEntries(
+        [...Object.entries(current), [videoId, orientation]].slice(-VIDEO_HISTORY_LIMIT)
       ));
     };
     probe.onload = () => settle(probe.naturalHeight > probe.naturalWidth ? 'portrait' : 'landscape');
@@ -1562,6 +1709,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   const sharedYtDesiredIdRef = useRef(null);
   const sharedYtMutedRef = useRef(muted);
   const sharedYtSeekingRef = useRef(false);
+  const sharedYtHiddenResumeRef = useRef(null);
   // Guards a fast-swipe race on loadVideoById — see the effect below.
   const sharedYtPendingLoadRef = useRef(null);
   const sharedYtRetryRef = useRef(null);
@@ -1608,7 +1756,7 @@ export default function VideoFeedView({ onExit, music = false }) {
     clearInterval(sharedYtRetryRef.current);
     let attempts = 0;
     sharedYtRetryRef.current = setInterval(() => {
-      if (!sharedYtMountedRef.current || sharedYtDesiredIdRef.current !== videoId) {
+      if (document.hidden || !sharedYtMountedRef.current || sharedYtDesiredIdRef.current !== videoId) {
         clearInterval(sharedYtRetryRef.current);
         return;
       }
@@ -1663,6 +1811,7 @@ export default function VideoFeedView({ onExit, music = false }) {
     setSharedYt(s => ({ ...s, failed: false }));
     const activatePlayer = (player, targetId) => {
       if (!sharedYtMountedRef.current || sharedYtDesiredIdRef.current !== targetId || !sharedYtReadyRef.current) return;
+      if (document.hidden) { sharedYtHiddenResumeRef.current = targetId; player.pauseVideo(); return; }
       try {
         if (sharedYtLoadedIdRef.current !== targetId) {
           sharedYtLoadedIdRef.current = targetId;
@@ -1698,7 +1847,7 @@ export default function VideoFeedView({ onExit, music = false }) {
       const isCurrent = () => sharedYtMountedRef.current && sharedYtLifecycleRef.current === lifecycle;
       sharedYtCreatingRef.current = true;
       host.replaceChildren();
-      const mount = createYouTubePlayerFrame(host, videoId, { autoplay: 1, mute: 1, loop: 1, playlist: videoId }, queueRef.current[activeIndexRef.current]?.title);
+      const mount = createYouTubePlayerFrame(host, videoId, { autoplay: document.hidden ? 0 : 1, mute: 1, loop: 1, playlist: videoId }, queueRef.current[activeIndexRef.current]?.title);
 
       clearTimeout(sharedYtReadyTimeoutRef.current);
       sharedYtReadyTimeoutRef.current = setTimeout(() => {
@@ -1713,7 +1862,7 @@ export default function VideoFeedView({ onExit, music = false }) {
         const player = new YT.Player(mount, {
           videoId: initialId,
           playerVars: {
-            autoplay: 1, mute: 1, playsinline: 1, loop: 1,
+            autoplay: document.hidden ? 0 : 1, mute: 1, playsinline: 1, loop: 1,
             controls: 1, rel: 0, playlist: initialId,
             origin: window.location.origin,
           },
@@ -1740,6 +1889,11 @@ export default function VideoFeedView({ onExit, music = false }) {
                 try { e.target.pauseVideo(); } catch {}
                 return;
               }
+              if (document.hidden) {
+                sharedYtHiddenResumeRef.current = desiredId;
+                try { e.target.pauseVideo(); } catch {}
+                return;
+              }
               if (desiredId !== initialId) {
                 try { e.target.loadVideoById(desiredId); } catch {}
               }
@@ -1756,6 +1910,10 @@ export default function VideoFeedView({ onExit, music = false }) {
             },
             onStateChange: (e) => {
               if (!isCurrent()) return;
+              if (document.hidden && e.data === YT.PlayerState.PLAYING) {
+                sharedYtHiddenResumeRef.current = sharedYtDesiredIdRef.current;
+                try { e.target.pauseVideo(); } catch {}
+              }
               setSharedYt(s => ({ ...s, paused: e.data === YT.PlayerState.PAUSED || e.data === YT.PlayerState.ENDED }));
               try {
                 const duration = e.target.getDuration() || 0;
@@ -1781,11 +1939,35 @@ export default function VideoFeedView({ onExit, music = false }) {
       clearTimeout(sharedYtPendingLoadRef.current);
       clearInterval(sharedYtRetryRef.current);
     };
-  }, [activeIndex, activeSrc?.kind, activeSrc?.id, startSharedYtAutoplayRetry]);
+  }, [activeSrc?.kind, activeSrc?.id, startSharedYtAutoplayRetry]);
+
+  useEffect(() => {
+    const visibilityChanged = () => {
+      const player = sharedYtPlayerRef.current;
+      if (!player || !sharedYtReadyRef.current) return;
+      try {
+        if (document.hidden) {
+          const state = player.getPlayerState();
+          sharedYtHiddenResumeRef.current = state === 1 || state === 3 ? sharedYtDesiredIdRef.current : null;
+          clearInterval(sharedYtRetryRef.current);
+          player.pauseVideo();
+        } else if (sharedYtHiddenResumeRef.current === sharedYtDesiredIdRef.current && sharedYtDesiredIdRef.current) {
+          sharedYtHiddenResumeRef.current = null;
+          if (sharedYtLoadedIdRef.current !== sharedYtDesiredIdRef.current) {
+            sharedYtLoadedIdRef.current = sharedYtDesiredIdRef.current;
+            player.loadVideoById(sharedYtDesiredIdRef.current);
+          }
+          player.playVideo();
+        }
+      } catch {}
+    };
+    document.addEventListener('visibilitychange', visibilityChanged);
+    return () => document.removeEventListener('visibilitychange', visibilityChanged);
+  }, []);
 
   useEffect(() => {
     const pollId = setInterval(() => {
-      if (!sharedYtReadyRef.current || !sharedYtDesiredIdRef.current || sharedYtSeekingRef.current) return;
+      if (document.hidden || !sharedYtReadyRef.current || !sharedYtDesiredIdRef.current || sharedYtSeekingRef.current) return;
       try {
         const player = sharedYtPlayerRef.current;
         const currentTime = player?.getCurrentTime() || 0;
@@ -1815,6 +1997,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   const sharedYtTogglePlay = useCallback(() => {
     const p = sharedYtPlayerRef.current;
     if (!p) return;
+    clearInterval(sharedYtRetryRef.current);
     try { if (p.getPlayerState() === 1) p.pauseVideo(); else p.playVideo(); } catch {}
   }, []);
 
@@ -1850,168 +2033,36 @@ export default function VideoFeedView({ onExit, music = false }) {
     return () => document.removeEventListener('keydown', handleKey);
   }, [onExit]);
 
-  // Standalone/installed-PWA mobile ("app view") renders under a real
-  // status bar/notch that a plain mobile-browser tab doesn't have — index.html
-  // already sets viewport-fit=cover so env(safe-area-inset-top) is live; adding
-  // it here (rather than just a fixed px offset) keeps the whole control
-  // cluster clear of a notch across whatever device this actually runs on,
-  // in-browser or installed, instead of guessing one fixed number that's
-  // only right for some devices.
-  const topSafe = 'calc(16px + env(safe-area-inset-top, 0px))';
-
   return (
-    <div className="video-feed-view" style={{
-      position: 'fixed', inset: 0, zIndex: 3000,
-      background: 'radial-gradient(ellipse 80% 60% at 50% 40%, #181818 0%, #000 70%)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center', touchAction: 'pan-y',
-    }}>
-      {/* Everything but the comments sheet lives inside this frame. Built
-          for a phone screen (full-bleed controls, a 9:16 video box) — on a
-          wide desktop browser the outer root above is the whole browser
-          window, so without a width cap the controls would spread edge to
-          edge (disconnected from the actual video) and the video box itself
-          would get squashed (aspect-ratio kept, but its width stays 100% of
-          a very wide parent while max-height clips it, distorting the
-          frame). Full-bleed edge-to-edge also just reads as unstyled once
-          it's not filling the whole screen anymore — see the
-          `.video-feed-frame` media-query rule in index.css, which caps this
-          at a phone-like width *and* height, centers it (the flex on the
-          root above), and gives it rounded corners + a shadow so it reads
-          as a deliberate "theater" card sitting on the page rather than a
-          mobile layout stretched into a black void. Every absolutely-
-          positioned child below keys off THIS div (the nearest positioned
-          ancestor), so they all move and scale with the card together.
-          Full-bleed edge-to-edge on an actual phone width is unaffected. */}
-      <div
-        className="video-feed-frame"
-        data-orientation={activeIsWideVideo ? 'landscape' : 'portrait'}
-        style={{ position: 'relative', height: '100%', width: '100%' }}
-      >
-      {/* All controls on one row now, at the very top — was three separate
-          absolutely-positioned rows (icons, then Feed/Following, then
-          Search/Filter), split apart specifically because independently
-          absolute-positioned elements had no awareness of each other's real
-          width and could mathematically overlap on a narrow phone (the
-          Feed/Following pill covering the refresh button was the confirmed
-          case — see git history). A single flex container sidesteps that
-          class of bug entirely: every child gets its own space in normal
-          flex flow, so two elements can't occupy the same pixels regardless
-          of viewport width. Search/Filter dropped their text labels here
-          (icon + a small active-state dot instead of "Search"/"Filter · N")
-          — with every other control now sharing this same row, keeping the
-          full-width pills would overflow a real phone width; a badge reads
-          fine at a glance and the sheet itself still shows exactly what's
-          active. */}
-      <div className="video-feed-top-controls" style={{
-        position: 'relative', padding: '12px', paddingTop: topSafe, flexWrap: 'wrap', flexShrink: 0,
-        zIndex: 20, display: 'flex', alignItems: 'center', gap: 6,
-        pointerEvents: 'auto', touchAction: 'manipulation',
-      }}>
-        <button type="button" onPointerDown={event => event.stopPropagation()} onClick={onExit} aria-label="Back to Home" style={{ ...OVERLAY_BTN_STYLE, width: 36, height: 36, flexShrink: 0 }}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M15 18l-6-6 6-6" />
-          </svg>
+    <div className="video-feed-view">
+      <div className="video-feed-frame" data-controls-visible={controlsVisible} data-orientation={activeIsWideVideo ? 'landscape' : 'portrait'}>
+      <header className="video-feed-top-controls" aria-label={music ? 'Music feed' : 'Video feed'}>
+        <button type="button" className="video-feed-header-button" onPointerDown={event => event.stopPropagation()} onClick={onExit} aria-label="Back to Home" title="Back to Home">
+          <img className="video-feed-ufi-mark" src="/uficonnect-google-verification-icon.svg" alt="" width="25" height="25" />
         </button>
-
-        {/* Feed/Following toggle — same split and reasoning as
-            pages/Feed.jsx's view-mode tabs, styled for the dark full-bleed
-            video overlay instead of the light page chrome. */}
-        <div style={{
-          display: 'flex', gap: 4, flexShrink: 0,
-          background: 'rgba(0,0,0,.4)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
-          border: '1px solid rgba(255,255,255,.18)', borderRadius: 18, padding: 3,
-        }}>
-          {(music ? [{ key: 'feed', label: 'Music' }] : [{ key: 'feed', label: 'Videos' }, { key: 'following', label: 'Following' }]).map(({ key, label }) => {
-            const active = viewMode === key;
-            return (
-              <button
-                key={key}
-                type="button"
-                onPointerDown={event => event.stopPropagation()}
-                onClick={event => {
-                  event.stopPropagation();
-                  switchViewMode(key);
-                }}
-                style={{
-                  padding: '5px 10px', borderRadius: 15, border: 'none', cursor: 'pointer',
-                  fontWeight: 700, fontSize: '.72rem', whiteSpace: 'nowrap',
-                  background: active ? '#fff' : 'transparent',
-                  color: active ? '#000' : '#fff',
-                  touchAction: 'manipulation',
-                }}
-              >
-                {label}
-              </button>
-            );
-          })}
+        <div className="video-feed-mode-switch" role="group" aria-label="Video feed mode">
+          {(music ? [{ key: 'feed', label: 'Music' }] : [{ key: 'feed', label: 'Videos' }, { key: 'following', label: 'Following' }]).map(({ key, label }) => (
+            <button key={key} type="button" aria-pressed={viewMode === key}
+              onPointerDown={event => event.stopPropagation()}
+              onClick={event => { event.stopPropagation(); switchViewMode(key); }}>
+              {label}
+            </button>
+          ))}
         </div>
-
-        {/* Search + Filter — two separate buttons/sheets, each doing one
-            job, rather than one combined sheet trying to do three (search/
-            topic/platform) at once. Following mode uses its own,
-            separate source list (FOLLOWING_VIDEO_SOURCES) — the Filter
-            sheet switches between them based on viewMode. */}
-        <button
-          onClick={() => { setSearchInput(searchQuery); setSearchOpen(true); }}
-          aria-label="Search videos"
-          style={{
-            ...OVERLAY_BTN_STYLE, width: 36, height: 36, flexShrink: 0, position: 'relative',
-            border: `1px solid ${searchQuery ? '#fff' : 'rgba(255,255,255,.18)'}`,
-            background: searchQuery ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.4)',
-          }}
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
-          </svg>
-          {searchQuery && (
-            <span style={{ position: 'absolute', top: 4, right: 4, width: 7, height: 7, borderRadius: '50%', background: '#4ADE80', border: '1px solid rgba(0,0,0,.4)' }} />
-          )}
+        <button type="button" className="video-feed-header-button" onClick={() => { setSearchInput(searchQuery); setSearchOpen(true); }}
+          aria-label="Search videos" title="Search videos" aria-expanded={searchOpen} data-active={Boolean(searchQuery)}>
+          <Search size={18} aria-hidden="true" />
+          {searchQuery && <span className="video-feed-filter-dot" aria-hidden="true" />}
         </button>
-        <button
-          onClick={() => setFilterOpen(true)}
-          aria-label="Filter videos"
-          style={{
-            ...OVERLAY_BTN_STYLE, width: 36, height: 36, flexShrink: 0, position: 'relative',
-            border: `1px solid ${(sourceFilter.length || topicFilters.length || genre) ? '#fff' : 'rgba(255,255,255,.18)'}`,
-            background: (sourceFilter.length || topicFilters.length || genre) ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.4)',
-          }}
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="4" y1="6" x2="20" y2="6" /><circle cx="9" cy="6" r="2" fill="currentColor" stroke="none" />
-            <line x1="4" y1="12" x2="20" y2="12" /><circle cx="16" cy="12" r="2" fill="currentColor" stroke="none" />
-            <line x1="4" y1="18" x2="20" y2="18" /><circle cx="11" cy="18" r="2" fill="currentColor" stroke="none" />
-          </svg>
-          {Boolean(sourceFilter.length || topicFilters.length || genre) && (
-            <span style={{ position: 'absolute', top: 4, right: 4, width: 7, height: 7, borderRadius: '50%', background: '#4ADE80', border: '1px solid rgba(0,0,0,.4)' }} />
-          )}
+        <button type="button" className="video-feed-header-button" onClick={() => setFilterOpen(true)}
+          aria-label="Filter videos" title="Sources, genres and topics" aria-expanded={filterOpen} data-active={Boolean(sourceFilter.length || topicFilters.length || genre)}>
+          <SlidersHorizontal size={18} aria-hidden="true" />
+          {Boolean(sourceFilter.length || topicFilters.length || genre) && <span className="video-feed-filter-dot" aria-hidden="true" />}
         </button>
-
-        {/* Spacer pushes refresh/mute to the far right regardless of how
-            much room the controls above actually take up. */}
-        <div style={{ flex: 1 }} />
-
-        <button
-          onClick={handleRefresh}
-          disabled={refreshing}
-          aria-label="Refresh videos"
-          style={{
-            ...OVERLAY_BTN_STYLE, width: 36, height: 36, flexShrink: 0,
-            fontSize: '.95rem', cursor: refreshing ? 'default' : 'pointer', opacity: refreshing ? 0.6 : 1,
-          }}
-        >
-          <span style={{ display: 'inline-block', animation: refreshing ? 'spin 0.9s linear infinite' : 'none' }}>⟳</span>
+        <button type="button" className="video-feed-header-button" onClick={handleRefresh} disabled={refreshing} aria-label="Refresh videos" title="Refresh videos">
+          <RotateCw size={18} aria-hidden="true" className={refreshing ? 'video-feed-refreshing' : undefined} />
         </button>
-        <button
-          onClick={() => { if (!muteControllable) return; toggleMuted(); }}
-          disabled={!muteControllable}
-          aria-label={muteControllable ? (muted ? 'Unmute' : 'Mute') : 'This video uses its own built-in volume control'}
-          style={{
-            ...OVERLAY_BTN_STYLE, width: 36, height: 36, flexShrink: 0, fontSize: '1rem',
-            opacity: muteControllable ? 1 : 0.35, cursor: muteControllable ? 'pointer' : 'default',
-          }}
-        ><SoundIcon muted={muted} size={16} /></button>
-      </div>
-
+      </header>
       {searchOpen && (
         <div
           onClick={e => { if (e.target === e.currentTarget) setSearchOpen(false); }}
@@ -2241,10 +2292,11 @@ export default function VideoFeedView({ onExit, music = false }) {
           {loading ? 'Loading videos…' : error ? 'Could not load videos. Try refreshing.' : 'No playable videos of at least 5 seconds found. Try another source or filter.'}
         </div> : <>
           {loading && <div className="video-feed-loading" role="status">Loading videos…</div>}
-          <div ref={containerRef} data-video-feed-scroll className="video-feed-scroll">
+          <div ref={containerRef} data-video-feed-scroll className="video-feed-scroll" tabIndex={0} aria-label={music ? 'Music videos' : 'Videos'}>
             {videoPosts.map((post, idx) => <div key={post.id || idx} ref={element => { slideRefs.current[idx] = element; }}
               data-idx={idx} data-post-id={post.id || ''} data-source={post.source || ''} className="video-feed-snap-item">
               {Math.abs(idx - activeIndex) <= VIDEO_MOUNT_RADIUS ? <VideoSlide post={post} active={idx === activeIndex}
+                controlsVisible={controlsVisible} onToggleControls={() => setControlsVisible(value => !value)}
                 muted={muted} onToggleMute={toggleMuted} isScrolling={isScrolling} onOpenComments={setCommentsPost}
                 onDurationResolved={onDurationResolved} hasPrevious={idx > 0} hasNext={idx < videoPosts.length - 1}
                 onNavigate={direction => containerRef.current?.scrollTo({ top: (idx + direction) * containerRef.current.clientHeight, behavior: 'smooth' })}

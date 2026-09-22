@@ -47,12 +47,14 @@ try {
     await installAuditMember(page, app, 'interface-member');
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=feed');
     const sources = page.getByRole('group', { name: 'Home sources', exact: true }); await sources.waitFor();
-    assert.equal(await sources.getByRole('button', { name: 'All sources', exact: true }).count(), 0);
+    assert.equal(await sources.getByRole('button', { name: 'All sources', exact: true }).count(), 1);
+    assert.equal(await sources.getByRole('button', { name: 'All sources', exact: true }).getAttribute('aria-pressed'), 'true');
     await sources.getByRole('button', { name: 'Reddit', exact: true }).click();
     await sources.getByRole('button', { name: 'Hacker News', exact: true }).click();
     await page.waitForTimeout(150);
     assert.equal(await sources.getByRole('button', { name: 'Reddit', exact: true }).getAttribute('aria-pressed'), 'true');
     assert.equal(await sources.getByRole('button', { name: 'Hacker News', exact: true }).getAttribute('aria-pressed'), 'true');
+    assert.equal(await sources.getByRole('button', { name: 'All sources', exact: true }).getAttribute('aria-pressed'), 'false');
     assert.ok(feedRequests.some(params => params.get('sources')?.split(',').includes('reddit') && params.get('sources')?.split(',').includes('hackernews')));
     const dimensions = await sources.getByRole('button', { name: 'Reddit', exact: true }).evaluate(el => ({ width: el.offsetWidth, height: el.offsetHeight, radius: getComputedStyle(el).borderRadius }));
     assert.equal(dimensions.width, dimensions.height); assert.equal(dimensions.radius, '50%');
@@ -79,6 +81,20 @@ try {
     await page.getByText('Comment published on Reddit.', { exact: true }).waitFor();
     assert.deepEqual(interactions.map(item => item.action), ['like', 'comment']);
     assert.equal(interactions[1].content, 'Thank you for the useful update.');
+    await page.getByRole('button', { name: 'View all feed sources', exact: true }).click();
+    const sourceMenu = page.getByRole('group', { name: 'Feed sources and favorites', exact: true });
+    assert.equal(await sourceMenu.locator('.feed-source-option').count(), await sources.locator('.feed-source-option').count(), 'the menu exposes the complete source rail');
+    await Promise.all([
+      page.waitForResponse(response => {
+        const url = new URL(response.url());
+        return url.pathname.endsWith('/office/feed') && url.searchParams.get('mode') === 'feed'
+          && !url.searchParams.has('source') && !url.searchParams.has('sources');
+      }),
+      sourceMenu.getByRole('button', { name: 'All sources', exact: true }).click(),
+    ]);
+    assert.equal(await sources.getByRole('button', { name: 'All sources', exact: true }).getAttribute('aria-pressed'), 'true');
+    assert.equal(await sources.getByRole('button', { name: 'Reddit', exact: true }).getAttribute('aria-pressed'), 'false');
+    assert.equal(await sources.getByRole('button', { name: 'Hacker News', exact: true }).getAttribute('aria-pressed'), 'false');
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/interface-sources-${width}.png`) });
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=groups');
     await page.getByText('Story joined-good', { exact: true }).waitFor();

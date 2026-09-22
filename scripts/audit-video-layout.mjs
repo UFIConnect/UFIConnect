@@ -20,7 +20,7 @@ const post = (id, extra = {}) => ({ id, source: 'reddit', title: `Video ${id}`, 
 try {
   await server.listen();
   browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
-  for (const width of [390, 1440]) {
+  for (const width of [320, 390, 1440]) {
     const context = await browser.newContext({ viewport: { width, height: 850 }, hasTouch: width < 600, isMobile: width < 600 });
     const page = await context.newPage(); page.setDefaultTimeout(15000);
     const errors = [], embedRequests = [];
@@ -68,15 +68,39 @@ try {
       const accepted = page.locator('[data-post-id="exactly-five"]');
       await accepted.waitFor();
       assert.equal(await page.locator('[data-post-id="below-five"], [data-post-id="unsupported"]').count(), 0);
+      const showControls = accepted.getByRole('button', { name: 'Show video controls', exact: true });
+      await showControls.waitFor({ state: 'visible' });
+      assert.equal(await showControls.getAttribute('aria-expanded'), 'false');
+      assert.equal(await accepted.locator('[data-video-actions]').isVisible(), false, 'Video opens with app commands collapsed');
+      const collapsedMedia = await accepted.locator('[data-video-media]').boundingBox();
+      // The surrounding app controls remain operable with a keyboard, without
+      // intercepting pointer input intended for the provider's own frame.
+      await showControls.focus();
+      await page.keyboard.press('Enter');
+      const hideControls = accepted.getByRole('button', { name: 'Hide video controls', exact: true });
+      await hideControls.waitFor({ state: 'visible' });
+      assert.equal(await hideControls.getAttribute('aria-expanded'), 'true');
+      await accepted.locator('[data-video-actions]').waitFor({ state: 'visible' });
       const rectangles = await accepted.evaluate(element => {
-        const box = selector => { const r = element.querySelector(selector).getBoundingClientRect(); return { top: r.top, bottom: r.bottom, height: r.height }; };
+        const box = selector => { const r = element.querySelector(selector).getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, height: r.height }; };
         const header = document.querySelector('.video-feed-top-controls').getBoundingClientRect();
-        return { headerBottom: header.bottom, media: box('[data-video-media]'), details: box('[data-video-details]'), fit: getComputedStyle(element.querySelector('video')).objectFit };
+        return { headerBottom: header.bottom, media: box('[data-video-media]'), details: box('[data-video-details]'), actions: box('[data-video-actions]'), fit: getComputedStyle(element.querySelector('video')).objectFit };
       });
       assert.ok(rectangles.media.height > 100, 'Media retains visible space');
       assert.ok(rectangles.headerBottom <= rectangles.media.top + 1, 'Header stays above video');
       assert.ok(rectangles.media.bottom <= rectangles.details.top + 1, 'App commands and details stay below video');
+      const mediaOverlapsActions = rectangles.media.left < rectangles.actions.right - 1
+        && rectangles.media.right > rectangles.actions.left + 1
+        && rectangles.media.top < rectangles.actions.bottom - 1
+        && rectangles.media.bottom > rectangles.actions.top + 1;
+      assert.equal(mediaOverlapsActions, false, 'Commands stay outside the full video frame');
       assert.equal(rectangles.fit, 'contain', 'Native video preserves the full frame');
+      assert.ok(collapsedMedia.height >= rectangles.media.height - 1, 'Collapsed commands preserve space for the video');
+      await hideControls.focus();
+      await page.keyboard.press('Space');
+      await showControls.waitFor({ state: 'visible' });
+      assert.equal(await accepted.locator('[data-video-actions]').isVisible(), false, 'Keyboard users can collapse app commands again');
+      assert.equal(await showControls.evaluate(element => document.activeElement === element), true, 'Collapsing controls retains keyboard focus on the toggle');
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     }
     await visit('videos', [post('native-short'), post('native-long', { mediaUrl: 'https://media.example.invalid/long.mp4', videoDurationSeconds: 20 })]);
@@ -101,9 +125,32 @@ try {
     assert.equal(new URL(frameInfo.src).searchParams.get('controls'), '1');
     assert.equal(frameInfo.pointerEvents, 'auto');
     assert.ok(frameInfo.tabIndex >= 0 && frameInfo.width > 100, 'Provider controls remain reachable at useful size');
+    const providerFrame = page.frameLocator('.video-feed-youtube-player iframe').first();
+    await providerFrame.getByRole('button', { name: 'Provider controls' }).click();
+    await frame.focus();
+    assert.equal(await frame.evaluate(element => document.activeElement === element), true, 'Keyboard users can focus the provider frame');
+    const youtubePost = page.locator('[data-post-id="youtube-long"]');
+    await youtubePost.getByRole('button', { name: 'Show video controls', exact: true }).click();
+    await youtubePost.locator('[data-video-actions]').waitFor({ state: 'visible' });
+    await page.waitForFunction(() => {
+      const frame = document.querySelector('.video-feed-youtube-player iframe')?.getBoundingClientRect();
+      const media = document.querySelector('[data-post-id="youtube-long"] [data-video-media]')?.getBoundingClientRect();
+      return frame && media && frame.x >= media.x - 1 && frame.y >= media.y - 1
+        && frame.right <= media.right + 1 && frame.bottom <= media.bottom + 1;
+    });
+    const providerBounds = await frame.boundingBox();
+    const mediaBounds = await youtubePost.locator('[data-video-media]').boundingBox();
+    const actionBounds = await youtubePost.locator('[data-video-actions]').boundingBox();
+    assert.ok(providerBounds.x >= mediaBounds.x - 1 && providerBounds.y >= mediaBounds.y - 1
+      && providerBounds.x + providerBounds.width <= mediaBounds.x + mediaBounds.width + 1
+      && providerBounds.y + providerBounds.height <= mediaBounds.y + mediaBounds.height + 1,
+    'The entire provider frame fits inside the available media rectangle');
+    assert.ok(providerBounds.y + providerBounds.height <= actionBounds.y + 1,
+      'Revealed app commands remain below the actual provider frame');
+    await providerFrame.getByRole('button', { name: 'Provider controls' }).click();
     assert.ok(embedRequests.some(request => request.headers.referer === new URL(origin).origin + '/'), 'First provider request includes the real origin referrer');
     assert.deepEqual(errors, []);
-    console.log(`PASS: video/media layout, 5-second boundary, native/Vimeo/YouTube metadata filtering, iframe identity and provider controls at ${width}px`);
+    console.log(`PASS: collapsed/revealed video controls, full media layout, 5-second boundary, native/Vimeo/YouTube metadata filtering, iframe identity and provider controls at ${width}px`);
     await context.close();
   }
 } finally { await browser?.close(); await server.close(); await app.close(); }

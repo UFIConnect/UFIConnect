@@ -54,6 +54,74 @@
 .saved-content-hidden { color: var(--muted); padding-block: 12px; }
 .search-group-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
+/* Search stays visible in the middle of the shell, beside direct messages. */
+.shell .shell-content { flex: 1; min-width: 0; }
+.shell .shell-content > .main { width: 100%; }
+.shell .global-app-header {
+  display: flex; position: sticky; top: 0; z-index: 221;
+  align-items: center; justify-content: center; gap: 12px;
+  min-height: 62px; padding: 9px 24px; border-bottom: 1px solid var(--border);
+  background: var(--card, #fff); box-shadow: 0 2px 8px #102a6b04; backdrop-filter: none;
+}
+.shell .global-app-header .mobile-app-header-start { display: none; }
+.shell .global-search-center { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; max-width: 660px; }
+.shell .global-search-bar {
+  display: flex; align-items: center; flex: 1; min-width: 0; gap: 8px;
+  height: 40px; padding: 0 10px; border: 1px solid #dfe5ed; border-radius: 20px;
+  background: #f3f5f8; color: #758299;
+}
+.shell .global-search-bar:focus-within { border-color: #8fa8cd; background: #fff; }
+.shell .global-search-bar > svg { flex: 0 0 17px; }
+.shell .global-search-bar input {
+  flex: 1; min-width: 0; width: 100%; height: 36px; padding: 0;
+  background: transparent; border: 0; outline: 0; box-shadow: none; color: var(--text); font: inherit; font-size: .85rem;
+}
+.shell .global-search-bar input::placeholder { color: #8591a3; }
+.shell .global-search-bar input::-webkit-search-cancel-button { display: none; }
+.shell .global-search-bar .global-search-open,
+.shell .global-search-bar .global-search-clear {
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 26px;
+  width: 26px; height: 30px; padding: 0; border: 0; border-radius: 6px;
+  background: transparent; color: #6b7a90; cursor: pointer;
+}
+.shell .global-search-bar .global-search-open:hover,
+.shell .global-search-bar .global-search-clear:hover { color: #102a6b; background: #e7edf5; }
+.shell .global-search-bar button:focus-visible { outline: 2px solid var(--primary); outline-offset: -1px; }
+.shell .global-search-bar select {
+  flex: 0 0 76px; width: 76px; max-width: 76px; height: 28px; padding: 0 2px 0 8px;
+  border: 0; border-left: 1px solid #dfe5ed; border-radius: 0;
+  font: inherit; font-size: .72rem; color: #6b7a90; background: transparent; cursor: pointer;
+}
+.shell .global-messages-link,
+.shell .global-desktop-alerts {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 40px; width: 40px; height: 40px; border-radius: 50%; color: #425a7b; text-decoration: none;
+}
+.shell .global-messages-link:hover,
+.shell .global-messages-link.active,
+.shell .global-desktop-alerts:hover { background: #e9eff8; color: #102a6b; }
+.shell .global-messages-link:focus-visible,
+.shell .global-desktop-alerts:focus-visible,
+.shell .global-search-bar select:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+.global-search-backdrop {
+  position: fixed; inset: 0; z-index: 3200; display: flex; align-items: flex-start; justify-content: center;
+  padding: max(40px, env(safe-area-inset-top, 0px)) 20px 20px; background: #13223866;
+}
+.global-search-dialog {
+  width: min(920px, 100%); max-height: calc(100dvh - 70px); min-height: min(420px, 80dvh);
+  display: flex; flex-direction: column; min-width: 0; overflow: hidden;
+  border: 1px solid #dfe5ee; border-radius: 17px; background: var(--card, #fff); box-shadow: 0 20px 70px #14223a2b;
+}
+.global-search-dialog-header { display: flex; align-items: center; flex: 0 0 auto; gap: 10px; min-height: 62px; padding: 12px 18px; border-bottom: 1px solid var(--border); }
+.global-search-dialog-header h2 { flex: 1; margin: 0; min-width: 0; font-size: 1rem; font-weight: 650; color: var(--text); }
+.global-search-dialog-close { flex: 0 0 34px; width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 50%; background: #f0f3f7; color: #52637c; cursor: pointer; }
+.global-search-dialog-close:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.global-search-dialog-body { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 16px 20px 22px; }
+.global-search-dialog-body .search-page-shell { width: 100%; min-width: 0; }
+.global-search-dialog-body .search-tab-strip { position: sticky; top: -16px; z-index: 2; background: var(--card, #fff); }
+.global-search-loading { display: grid; min-height: 180px; place-items: center; color: var(--muted); font-size: .9rem; }
+
 @media (min-width: 769px) and (max-width: 1100px) {
   .saved-navigation-links { margin-left: 0; padding-left: 0; border-left: 0; }
   .saved-navigation-toggle .saved-navigation-chevron { position: absolute; right: 1px; width: 10px; }
@@ -61,6 +129,28 @@
 @media (max-width: 768px) {
   .shell .feed-group-filter-row { flex-wrap: wrap; }
   .shell .feed-group-filter-row .group-feed-scope-tabs { flex: 1 0 100%; width: 100%; margin-right: 0; }
+  .shell .shell-content { width: 100%; }
+  .shell .global-app-header { gap: 4px; min-height: 58px; padding: 6px; }
+  .shell .global-app-header .mobile-app-header-start { display: flex; flex: 0 0 44px; }
+  .shell .global-search-center { gap: 3px; max-width: none; }
+  .shell .global-search-bar { height: 38px; padding-inline: 8px; gap: 6px; }
+  .shell .global-search-bar input { height: 34px; font-size: 16px; }
+  .shell .global-search-bar select { flex-basis: 23px; width: 23px; max-width: 23px; padding-left: 2px; font-size: 0; }
+  .shell .global-search-bar select option { font-size: 14px; }
+  .shell .global-messages-link { flex-basis: 32px; width: 32px; height: 40px; }
+  .shell .global-desktop-alerts { display: none; }
+  .shell .global-app-header .mobile-command-menu { gap: 1px; }
+  .shell .global-app-header .mobile-command-menu .mobile-app-header-action { width: 32px; min-width: 32px; height: 40px; }
+  .global-search-backdrop { padding: max(12px, env(safe-area-inset-top, 0px)) 8px 8px; }
+  .global-search-dialog { max-height: calc(100dvh - 24px); border-radius: 13px; }
+  .global-search-dialog-header { padding: 10px 12px; gap: 7px; min-height: 58px; }
+  .global-search-dialog-header h2 { font-size: .87rem; }
+  .global-search-dialog-header .btn { font-size: .72rem; padding-inline: 9px; }
+  .global-search-dialog-body { padding: 12px 12px 18px; }
+  .global-search-dialog-body .search-tab-strip { top: -12px; }
+  .shell .global-search-bar { gap: 4px; }
+  .shell .global-search-bar .global-search-open,
+  .shell .global-search-bar .global-search-clear { flex-basis: 23px; width: 23px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .saved-navigation-chevron { transition: none; }

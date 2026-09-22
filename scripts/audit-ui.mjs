@@ -111,7 +111,8 @@ try {
     await page.locator('.feed-source-option').first().waitFor();
     await page.waitForFunction(() => !document.querySelector('.splash'));
     const buttons = page.locator('.feed-source-tabs--compact .feed-source-option');
-    assert.equal(await buttons.count(), HOME_FEED_SOURCE_IDS.length);
+    assert.equal(await buttons.count(), HOME_FEED_SOURCE_IDS.length + 1);
+    assert.equal(await buttons.first().getAttribute('aria-label'), 'All sources');
     const visible = await buttons.evaluateAll(elements => {
       const parent = elements[0].parentElement.getBoundingClientRect();
       return elements.filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.left >= parent.left - 1 && r.right <= parent.right + 1; }).length;
@@ -133,9 +134,11 @@ try {
       const otherMode = mode === 'feed' ? 'following' : 'feed';
       const before = (await app.request('/profile', { userId: 'preview-member' })).data;
       const expectedLabels = sourceIds.map(key => SOURCE_META[key]?.label || key).sort();
-      assert.deepEqual((await buttons.evaluateAll(elements => elements.map(el => el.getAttribute('aria-label')))).sort(), expectedLabels);
+      const compactLabels = await buttons.evaluateAll(elements => elements.map(el => el.getAttribute('aria-label')));
+      assert.equal(compactLabels[0], 'All sources', 'The aggregate control stays first');
+      assert.deepEqual(compactLabels.slice(1).sort(), expectedLabels, 'Every individual source remains available after All sources');
       const favoriteLabels = before.roleSettings.feedSourceFavorites[mode].map(key => SOURCE_META[key]?.label || key);
-      assert.deepEqual((await buttons.evaluateAll(elements => elements.map(el => el.getAttribute('aria-label')))).slice(0, favoriteLabels.length), favoriteLabels);
+      assert.deepEqual(compactLabels.slice(1, favoriteLabels.length + 1), favoriteLabels);
       await buttons.last().scrollIntoViewIfNeeded();
       assert.ok(await buttons.last().evaluate(el => {
         const bounds = el.getBoundingClientRect();
@@ -151,6 +154,8 @@ try {
       }), 'First source is clipped after resetting the source bar');
       const sourceMenu = page.getByRole('button', { name: 'View all feed sources', exact: true });
       await sourceMenu.click();
+      assert.equal(await page.locator('.feed-source-menu-item.aggregate').count(), 1);
+      assert.equal(await page.locator('.feed-source-menu-item').first().locator('.feed-source-option-label').textContent(), 'All sources');
       const menuLabels = await page.locator('.feed-source-menu-item:not(.aggregate) .feed-source-option-label').allTextContents();
       assert.deepEqual(menuLabels.sort(), expectedLabels);
       const favorite = page.locator('.feed-source-favorite-button:not(.active)').first();
@@ -181,7 +186,7 @@ try {
       await auditNavigate(page, base + `?feed=${mode}`);
       await auditReload(page);
       await buttons.first().waitFor();
-      assert.equal(await buttons.count(), sourceIds.length);
+      assert.equal(await buttons.count(), sourceIds.length + 1);
       assert.equal(await page.locator('.feed-source-compact-favorite').count(), 0);
       const after = (await app.request('/profile', { userId: 'preview-member' })).data;
       assert.deepEqual(after.roleSettings.feedSourceFavorites[mode], []);
@@ -200,8 +205,8 @@ try {
     const menu = page.getByRole('button', { name: 'Open menu', exact: true });
     if (await menu.isVisible()) await menu.click();
     await page.getByRole('button', { name: 'Following', exact: true }).filter({ visible: true }).first().click();
-    await page.waitForFunction(count => document.querySelectorAll('.feed-source-tabs--compact .feed-source-option').length === count, FOLLOWING_FEED_SOURCE_IDS.length);
-    assert.equal(await buttons.count(), FOLLOWING_FEED_SOURCE_IDS.length);
+    await page.waitForFunction(count => document.querySelectorAll('.feed-source-tabs--compact .feed-source-option').length === count, FOLLOWING_FEED_SOURCE_IDS.length + 1);
+    assert.equal(await buttons.count(), FOLLOWING_FEED_SOURCE_IDS.length + 1);
     checks++;
     await checkSourceFavorites('following', FOLLOWING_FEED_SOURCE_IDS);
     if (process.argv.includes('--favorites-only')) {
@@ -223,7 +228,8 @@ try {
     assert.ok(await page.evaluate(() => window.__auditYouTubePlayers.some(player => player.getPlayerState() === 1)), 'YouTube in Videos keeps playing after the pointer leaves');
     assert.equal(await page.locator('.video-feed-youtube-player iframe').evaluate(el => getComputedStyle(el).pointerEvents), 'auto', 'Official player controls remain usable inside the media area');
     const firstSlide = page.locator('[data-post-id="audit-video-0"]');
-    assert.ok(await firstSlide.getByRole('group', { name: 'Video engagement' }).isVisible());
+    await firstSlide.getByRole('button', { name: 'Show video controls', exact: true }).click();
+    assert.ok(await firstSlide.getByRole('group', { name: 'Video controls and engagement', exact: true }).isVisible());
     const original = firstSlide.getByRole('link', { name: /View original post/ });
     assert.ok(await original.isVisible());
     const clickable = await original.evaluate(el => {

@@ -228,8 +228,9 @@ export async function fetchVimeoMetadata(vimeoId) {
     .then(data => data ? { thumbnailUrl: data.thumbnail_url || null, durationSeconds: Number(data.duration) || null } : null)
     .catch(() => null);
   vimeoThumbnailCache.set(vimeoId, promise);
+  while (vimeoThumbnailCache.size > 500) vimeoThumbnailCache.delete(vimeoThumbnailCache.keys().next().value);
   const result = await promise;
-  vimeoThumbnailCache.set(vimeoId, result);
+  if (vimeoThumbnailCache.get(vimeoId) === promise) vimeoThumbnailCache.set(vimeoId, result);
   return result;
 }
 

@@ -39,6 +39,7 @@ const {
   screenExternalComment,
 } = require('./content-screening');
 const { paginateEqualizedPool: paginateEqualizedPoolCore } = require('./feed-pagination');
+const { createFeedReadAdmission } = require('./feed-read-admission');
 const { PUBLIC_GROUP_LEGACY_SOURCES, inferPublicGroupId } = require('./group-feed');
 const { GENERAL_UFI_GROUP_ID, isGeneralUfiFollowingPost, isFollowingSourceAllowed } = require('./following-scope');
 const { canonicalizePreferenceTopics, matchesPreferenceTopic } = require('./feed-preferences');
@@ -14851,6 +14852,7 @@ function normalizeFeedSourceFavorites(value) {
 // it starts contributing video for real.
 let _videoCapableSources = null;
 let _videoCapableSourcesExpiry = 0;
+let _videoCapableSourcesInFlight = null;
 const VIDEO_CAPABLE_SOURCES_TTL = 15 * 60 * 1000;
 // A short source-discovery window must not turn Videos into a one-platform
 // feed when another reliable source has a quiet day.
@@ -14859,6 +14861,14 @@ const VIDEO_DISCOVERY_WINDOW = '30 days';
 async function getVideoCapableSources() {
   if (_videoCapableSources && Date.now() < _videoCapableSourcesExpiry) return _videoCapableSources;
   if (!db.isConnected()) return null; // caller falls back to the full source list
+  if (_videoCapableSourcesInFlight) return _videoCapableSourcesInFlight;
+  const refresh = refreshVideoCapableSources();
+  _videoCapableSourcesInFlight = refresh;
+  try { return await refresh; }
+  finally { if (_videoCapableSourcesInFlight === refresh) _videoCapableSourcesInFlight = null; }
+}
+
+async function refreshVideoCapableSources() {
   try {
     const { rows } = await db.query(
       `SELECT DISTINCT source
@@ -23607,10 +23617,15 @@ async function handleVideoFeedRequest(req, res) {
     res.status(500).json({ posts: [], hasMore: false });
   }
 }
-app.get('/feed/videos', authenticate, handleVideoFeedRequest);
-app.get('/office/feed/videos', authenticate, handleVideoFeedRequest);
+const videoReadAdmission = createFeedReadAdmission({
+  maxActive: envNumber('VIDEO_READ_MAX_ACTIVE', 16, 1, 128),
+  maxQueued: envNumber('VIDEO_READ_MAX_QUEUED', 64, 0, 512),
+  queueTimeoutMs: envNumber('VIDEO_READ_QUEUE_TIMEOUT_MS', 2000, 100, 10000),
+});
+app.get('/feed/videos', authenticate, videoReadAdmission.wrap(handleVideoFeedRequest));
+app.get('/office/feed/videos', authenticate, videoReadAdmission.wrap(handleVideoFeedRequest));
 
-app.get('/office/feed/music', authenticate, async (req, res) => {
+app.get('/office/feed/music', authenticate, videoReadAdmission.wrap(async (req, res) => {
   try {
     const sources = String(req.query.sources || req.query.source || '').split(',').map(canonicalFeedSourceId).filter(isAggregateFeedSource);
     const { matchesSearch, matchesTopic } = parseVideoFilters(req);
@@ -23629,7 +23644,7 @@ app.get('/office/feed/music', authenticate, async (req, res) => {
     console.error('[music feed]', error.message);
     res.status(503).json({ error: 'Music is temporarily unavailable. Please try again.', posts: [], hasMore: true });
   }
-});
+}));
 
 // --- Following videos - same Feed/Following split as the main feed, for video --
 // getFollowingFeedPosts is already scoped to one user (follow graph + their own
@@ -23711,8 +23726,8 @@ async function handleFollowingVideoFeedRequest(req, res) {
     res.status(500).json({ posts: [], hasMore: false });
   }
 }
-app.get('/feed/videos/following', authenticate, handleFollowingVideoFeedRequest);
-app.get('/office/feed/videos/following', authenticate, handleFollowingVideoFeedRequest);
+app.get('/feed/videos/following', authenticate, videoReadAdmission.wrap(handleFollowingVideoFeedRequest));
+app.get('/office/feed/videos/following', authenticate, videoReadAdmission.wrap(handleFollowingVideoFeedRequest));
 
 // --- Proactive snapshot warming ---------------------------------------------
 // Without this, the first request after a snapshot's TTL expires pays the
