@@ -55,7 +55,7 @@ const FAQS = [
   },
   {
     q: 'Is Resume Builder available?',
-    a: 'Yes. Resume Builder is available as a paid add-on for $149.94 every six months.',
+    a: 'Yes. Resume Builder is available as a paid add-on for $149.94 per 6 mo.',
   },
 ];
 
@@ -86,17 +86,17 @@ function SectionHeading({ eyebrow, title, children }) {
   );
 }
 
-function PlanCard({ title, price, tagline, locked }) {
+function PlanCard({ title, price, tagline }) {
   return (
-    <div className={`landing-plan-card${locked ? ' is-muted' : ''}`}>
+    <div className="landing-plan-card">
       <div className="landing-plan-top">
         <h3>{title}</h3>
-        {locked && <span>Coming soon</span>}
       </div>
       <div className="landing-plan-price">
         ${price}<small>/mo</small>
       </div>
       <p>{tagline}</p>
+      <Link to="/settings" className="landing-plan-link">View {title} membership</Link>
     </div>
   );
 }
@@ -245,7 +245,7 @@ export default function Landing() {
 
           <section id="pricing" className="landing-section landing-pricing-section">
             <SectionHeading eyebrow="Plans" title="Start free. Grow from there.">
-              The main feed stays free. Resume Builder is available now, and Business is coming soon.
+              The main feed stays free. Explore Pro and Business memberships, or add Resume Builder to your account.
             </SectionHeading>
             <div className="landing-plan-grid">
               <div className="landing-plan-card">
@@ -261,14 +261,13 @@ export default function Landing() {
                   title={t.name}
                   price={t.price}
                   tagline={t.tagline}
-                  locked={t.locked}
                 />
               ))}
               <div className="landing-plan-card landing-resume-live">
                 <div className="landing-plan-top">
                   <h3>Resume Builder</h3>
                 </div>
-                <div className="landing-plan-price">$149.94<small>/6 months</small></div>
+                <div className="landing-plan-price">$149.94<small> per 6 mo</small></div>
                 <p>Draft, polish, export, and save an ATS-scored resume to your profile.</p>
                 <Link to="/resume-builder" className="landing-plan-link">Open Resume Builder</Link>
               </div>

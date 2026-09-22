@@ -4,7 +4,7 @@ Prepared September 22, 2026. This records the engineering work for the initial r
 
 ## Implemented controls
 
-- **Hosted payments:** Stripe collects card details. The backend selects an approved recurring price, verifies the persisted customer, and stores a durable checkout attempt before creating a Stripe session. Retries reuse Stripe idempotency keys. The existing quantity-one Pro price is $19.94 USD/month; Business remains unavailable.
+- **Hosted payments:** Stripe collects card details. The backend selects an approved recurring price, verifies the persisted customer, and stores a durable checkout attempt before creating a Stripe session. Retries reuse Stripe idempotency keys. Pro is $19.94 USD/month; the owner-approved Business price is $199.94 USD/month; Resume Builder is $149.94 USD per six months as an independent add-on. Frontend purchase controls require validated server pricing, and the homepage uses the requested “per 6 mo” label.
 - **Membership integrity:** Signed webhooks reconcile current Stripe subscription/invoice state under database locks. Event deduplication and entitlement updates commit together. Unpaid, canceled, mismatched and unsupported-price subscriptions cannot grant access. A return URL cannot confirm payment.
 - **Member billing:** Desktop and phone settings display current status and cancellation information. Existing or overdue subscribers can open Stripe's portal. The price, renewal interval and cancellation route appear before checkout. Payment destinations are restricted to the expected HTTPS Stripe hosts.
 - **Privacy signals:** Global Privacy Control overrides a saved analytics opt-in, clears the integration's browser identifier and blocks optional analytics. Header-only GPC requests receive no analytics bridge. Security and identifier-free aggregate metrics continue.
@@ -13,9 +13,9 @@ Prepared September 22, 2026. This records the engineering work for the initial r
 
 ## Local verification
 
-The final backend suite passed **222 tests**, including real PostgreSQL-engine billing/privacy tests, real Stripe signature checks, delayed-operation races, rollback, cross-account isolation and stale-profile behavior. No production account was deleted or real payment created.
+The initial backend suite passed **222 tests**, including real PostgreSQL-engine billing/privacy tests, real Stripe signature checks, delayed-operation races, rollback, cross-account isolation and stale-profile behavior. The subsequent Business/Resume Builder expansion passed **24 focused billing tests**, including five additional cases for signed Business grants, separate add-on checkout, price-authoritative plan changes and isolated cancellation/failure. No production account was deleted or real payment created.
 
-The production frontend build and **53 membership/privacy browser checks** passed at 1440, 390 and 320 pixels. All billing requests in those browser tests were intercepted. Existing **295 public SEO checks**, **84 analytics browser checks**, and syntax/deployment-header checks passed. Source references:
+The production frontend build and **86 membership/privacy browser checks** passed at 1440, 390 and 320 pixels, including enabled Business checkout and Resume Builder loading, pricing, terms and availability. All billing requests in those browser tests were intercepted. Existing **295 public SEO checks**, **88 analytics browser checks**, and syntax/deployment-header checks passed. The analytics audit now waits for its separately loaded controls, with its original timing failure reproduced using a delayed bundle. Source references:
 
 - `backend/billing.js`, `backend/billing.test.js`
 - `backend/privacy-data.js`, `backend/privacy-data.test.js`
