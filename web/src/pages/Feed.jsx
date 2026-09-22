@@ -2148,6 +2148,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const [loading,       setLoading]      = useState(!_cache);
   const [feedError,     setFeedError]    = useState(null);
   const [refreshing,    setRefreshing]   = useState(false);
+  const [queuedRefresh, setQueuedRefresh] = useState(null);
   const [loadingMore,   setLoadingMore]  = useState(false);
   const [remotePage,    setRemotePage]   = useState(2);
   const [remoteHasMore, setRemoteHasMoreState] = useState(true);
@@ -2989,7 +2990,12 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const refreshCurrentFeed = useCallback(() => {
     if (!['feed', 'following', 'groups', 'countries', 'restaurants', 'bars'].includes(viewModeRef.current)) return undefined;
     const state = loadStateRef.current;
-    if (state.loading || state.refreshing || state.loadingMore) return undefined;
+    if (state.loading || state.refreshing || state.loadingMore || loadingMoreRef.current) {
+      // Coalesce refresh requests until pagination finishes without carrying
+      // a member's refresh into a different account, feed, or group scope.
+      setQueuedRefresh(`${profile?.id}:${viewModeRef.current}:${viewModeRef.current === 'groups' && publicGroupsFeed}`);
+      return undefined;
+    }
     if (viewModeRef.current === 'groups' && publicGroupsFeed) {
       window.dispatchEvent(new Event('ufi:refresh-group-directory'));
     }
@@ -2997,7 +3003,19 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       preserveScroll: true,
       bust: activeTabsRef.current.length === 1,
     });
-  }, [loadFeed, publicGroupsFeed]);
+  }, [loadFeed, profile?.id, publicGroupsFeed]);
+
+  useEffect(() => {
+    if (!queuedRefresh) return;
+    const context = `${profile?.id}:${viewMode}:${viewMode === 'groups' && publicGroupsFeed}`;
+    if (queuedRefresh !== context) {
+      setQueuedRefresh(null);
+      return;
+    }
+    if (loading || refreshing || loadingMore || loadingMoreRef.current) return;
+    setQueuedRefresh(null);
+    refreshCurrentFeed();
+  }, [queuedRefresh, loading, refreshing, loadingMore, profile?.id, viewMode, publicGroupsFeed, refreshCurrentFeed]);
 
   const scrollRefresh = useScrollToRefresh(refreshCurrentFeed, {
     enabled: Boolean(profile?.id) && !EMBEDDED_HOME_MODES.has(viewMode),
