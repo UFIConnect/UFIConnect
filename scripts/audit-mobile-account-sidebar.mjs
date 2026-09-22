@@ -165,6 +165,7 @@ try {
         await waitClosed();
         await page.getByRole('button', { name: 'Cancel', exact: true }).click();
         await page.getByRole('heading', { name: 'Create a group', exact: true }).waitFor({ state: 'hidden' });
+        check(new URL(page.url()).searchParams.get('create') === null, 'Cancelling a linked group dialog clears its route before hiding');
         await opener.click();
         await waitOpen();
         await drawer.getByRole('link', { name: 'Create a group', exact: true }).click();
@@ -172,6 +173,7 @@ try {
         await waitClosed();
         await page.getByRole('button', { name: 'Cancel', exact: true }).click();
         await page.getByRole('heading', { name: 'Create a group', exact: true }).waitFor({ state: 'hidden' });
+        check(new URL(page.url()).searchParams.get('create') === null, 'Repeated group cancellation finishes navigation before reopening the sidebar');
         await opener.click();
         await waitOpen();
         const savedToggle = drawer.getByRole('button', { name: 'Saved', exact: true });
