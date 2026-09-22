@@ -96,7 +96,12 @@ try {
     check(googleRequests.length === 0, 'Decline makes no Google request');
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.locator('#login-password').waitFor();
+    // Privacy controls load in a separate lazy chunk from the login form.
+    // Wait for that UI, then verify the saved choice rather than route timing.
+    await page.getByRole('button', { name: 'Analytics privacy', exact: true }).waitFor();
     check(await page.getByRole('button', { name: 'Analytics privacy', exact: true }).isVisible(), 'Decline is remembered across reload');
+    check(await page.evaluate(key => localStorage.getItem(key), ANALYTICS_CONSENT_KEY) === 'denied', 'Declined consent is persisted across reload');
+    check(await page.locator('.analytics-privacy-panel').count() === 0, 'Remembered decline does not ask for consent again');
     check(googleRequests.length === 0, 'Remembered decline prevents Google initialization');
     await page.getByRole('button', { name: 'Analytics privacy', exact: true }).click();
     await page.locator('#login-password').fill(seed);
