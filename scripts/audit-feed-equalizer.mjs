@@ -94,6 +94,16 @@ try {
     await checkStart('reddit');
     await followingSources.getByRole('button', { name: 'GitHub', exact: true }).click();
     await checkStart('reddit-github');
+    const [clearedSourceResponse] = await Promise.all([
+      page.waitForResponse(response => {
+        const url = new URL(response.url());
+        return url.pathname.endsWith('/office/feed') && url.searchParams.get('mode') === 'following'
+          && !url.searchParams.has('source') && !url.searchParams.has('sources');
+      }),
+      followingSources.getByRole('button', { name: 'Clear sources', exact: true }).click(),
+    ]);
+    assert.ok(clearedSourceResponse.ok());
+    assert.ok(await followingSources.getByRole('button', { name: 'Clear sources', exact: true }).isDisabled());
     assert.deepEqual(errors, []);
     console.log(`PASS: equalized Home/Following, single/multiple selections, pagination, refresh and reload at ${width}px`);
     await context.close();

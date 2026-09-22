@@ -57,6 +57,18 @@ try {
       page.waitForResponse(response => response.url().includes('/office/feed?') && response.url().includes('topics=Restaurant') && response.url().includes('q=italian')),
       page.getByRole('button', { name: 'Apply topics', exact: true }).click(),
     ]);
+    await Promise.all([
+      page.waitForResponse(response => {
+        const url = new URL(response.url());
+        return url.pathname.endsWith('/office/feed') && url.searchParams.get('mode') === 'restaurants'
+          && url.searchParams.get('topics') === 'Restaurant Culture' && !url.searchParams.has('q');
+      }),
+      cuisines.getByRole('button', { name: 'Clear cuisines', exact: true }).click(),
+    ]);
+    assert.equal(await cuisines.getByRole('button', { name: 'Italian', exact: true }).getAttribute('aria-pressed'), 'false');
+    assert.ok(await cuisines.getByRole('button', { name: 'Clear cuisines', exact: true }).isDisabled());
+    await page.getByText('Japanese restaurant opens downtown', { exact: true }).first().waitFor();
+    await cuisines.getByRole('button', { name: 'Italian', exact: true }).click();
     await page.getByRole('link', { name: 'Post to Restaurants', exact: true }).click();
     await page.getByRole('heading', { name: 'Post to Restaurants', exact: true }).waitFor();
     assert.equal(await page.getByRole('link', { name: 'Open Food circle', exact: true }).getAttribute('href'), 'https://www.reddit.com/r/food/');
@@ -70,7 +82,7 @@ try {
     await themes.getByRole('button', { name: 'Clubs', exact: true }).click();
     await page.waitForTimeout(100);
     assert.ok(queries.some(query => query.get('mode') === 'bars' && query.get('q') === 'club'));
-    await themes.getByRole('button', { name: 'Clubs', exact: true }).click();
+    await themes.getByRole('button', { name: 'Clear bar and club themes', exact: true }).click();
     assert.equal(await themes.getByRole('button', { name: 'Clubs', exact: true }).getAttribute('aria-pressed'), 'false');
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=countries');
     const rail = page.getByRole('region', { name: 'Live travel cameras', exact: true });
@@ -80,6 +92,10 @@ try {
     await events.getByRole('button', { name: 'Festivals', exact: true }).click();
     await page.waitForTimeout(100);
     assert.ok(queries.some(query => query.get('mode') === 'countries' && query.get('q') === 'festival'));
+    const cityBeforeClear = await rail.getByRole('combobox', { name: 'Travel destination', exact: true }).inputValue();
+    await events.getByRole('button', { name: 'Clear travel events', exact: true }).click();
+    assert.equal(await events.getByRole('button', { name: 'Festivals', exact: true }).getAttribute('aria-pressed'), 'false');
+    assert.equal(await rail.getByRole('combobox', { name: 'Travel destination', exact: true }).inputValue(), cityBeforeClear);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'category controls do not overflow the viewport');
     assert.deepEqual(errors, []);
     console.log(`PASS: cuisine/theme/event requests, Topics preservation, city placement and connected publishing at ${width}px`);
