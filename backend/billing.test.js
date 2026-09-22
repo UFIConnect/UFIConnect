@@ -170,6 +170,95 @@ test('add-on cancellation does not affect an independent Pro membership', async 
   const user = await alice(); assert.equal(user.plan, 'pro'); assert.equal(user.resume_builder_addon, false); assert.equal(user.resume_builder_subscription_id, null);
 });
 
+test('Business checkout selects its approved price and signed webhooks grant only paid access', async t => {
+  const f = setup();
+  await f.service.createCheckout(A, 'business');
+  assert.equal(f.creates[0].data.line_items[0].price, 'price_business');
+  assert.equal(f.creates[0].data.subscription_data.metadata.tier, 'business');
+  const business = { metadata: { tier: 'business', uficonnect_user_id: A },
+    items: { data: [{ price: { id: 'price_business' }, quantity: 1 }] } };
+  f.sub('sub_business', { ...business, latest_invoice: { status: 'open' } });
+  f.session('cs_business', 'sub_business', { payment_status: 'unpaid', metadata: { tier: 'business', uficonnect_user_id: A } });
+  const sdk = require('stripe')('sk_test_fixture');
+  const app = await createAppHarness({ connected: true, query: (sql, params) => pg.query(sql, params),
+    env: { STRIPE_SECRET_KEY: 'sk_test_fixture', STRIPE_WEBHOOK_SECRET: 'whsec_fixture', STRIPE_PRICE_ID_BUSINESS: 'price_business' },
+    modules: { stripe: () => ({ ...f.stripe, webhooks: sdk.webhooks, prices: { async retrieve(id) {
+      assert.equal(id, 'price_business');
+      return { id, type: 'recurring', active: true, currency: 'usd', unit_amount: 5994,
+        recurring: { interval: 'month', interval_count: 1 } };
+    } } }) },
+  });
+  t.after(() => app.close());
+  const body = f.event('evt_business_pending', 'checkout.session.completed', { id: 'cs_business', customer: 'cus_a' });
+  const signed = payload => ({ 'stripe-signature': sdk.webhooks.generateTestHeaderString({ payload: JSON.stringify(payload), secret: 'whsec_fixture' }) });
+  assert.equal((await app.request('/billing/webhook', { method: 'POST', body, headers: signed(body) })).status, 200);
+  assert.equal((await alice()).plan, 'free');
+  f.sub('sub_business', business);
+  f.session('cs_business', 'sub_business', { metadata: { tier: 'business', uficonnect_user_id: A } });
+  const paid = f.event('evt_business_paid', 'checkout.session.async_payment_succeeded', body.data.object);
+  assert.equal((await app.request('/billing/webhook', { method: 'POST', body: paid, headers: signed(body) })).status, 400);
+  assert.equal((await alice()).plan, 'free');
+  assert.equal((await app.request('/billing/webhook', { method: 'POST', body: paid, headers: signed(paid) })).status, 200);
+  assert.equal((await alice()).plan, 'business');
+  assert.equal((await alice()).stripe_subscription_id, 'sub_business');
+});
+
+test('Pro and Resume Builder have independent durable checkout slots and repeat requests reuse each', async () => {
+  const f = setup();
+  const [plan, addon] = await Promise.all([f.service.createCheckout(A, 'pro'), f.service.createCheckout(A, 'resume_builder')]);
+  assert.notEqual(plan.url, addon.url);
+  assert.equal(f.creates.length, 2);
+  assert.deepEqual(new Set(f.creates.map(call => call.data.line_items[0].price)), new Set(['price_pro', 'price_resume']));
+  const attempts = (await pg.query('SELECT slot,attempt_id,session_id FROM billing_checkout_attempts WHERE user_id=$1 ORDER BY slot', [A])).rows;
+  assert.deepEqual(attempts.map(attempt => attempt.slot), ['plan', 'resume_builder']);
+  assert.notEqual(attempts[0].attempt_id, attempts[1].attempt_id);
+  assert.equal((await f.service.createCheckout(A, 'pro')).url, plan.url);
+  assert.equal((await f.service.createCheckout(A, 'resume_builder')).url, addon.url);
+  assert.equal(f.creates.length, 2);
+  assert.ok(f.creates.find(call => call.data.metadata.tier === 'resume_builder').data.success_url.endsWith('/resume-builder?upgrade=success'));
+});
+
+test('current approved price upgrades Pro to Business despite stale metadata and preserves the resume add-on', async () => {
+  const f = setup(); f.sub(); f.session(); await f.service.handleEvent(f.event());
+  const addon = { metadata: { tier: 'resume_builder', uficonnect_user_id: A },
+    items: { data: [{ price: { id: 'price_resume' }, quantity: 1 }] } };
+  f.sub('sub_addon', addon); f.session('cs_addon', 'sub_addon');
+  await f.service.handleEvent(f.event('evt_addon', 'checkout.session.completed', { id: 'cs_addon', customer: 'cus_a' }));
+  // Provider plan changes do not necessarily rewrite Checkout's old metadata.
+  f.sub('sub_a', { items: { data: [{ price: { id: 'price_business' }, quantity: 1 }] } });
+  await f.service.handleEvent(f.event('evt_upgrade', 'customer.subscription.updated', { id: 'sub_a', customer: 'cus_a', metadata: { tier: 'pro' } }));
+  const user = await alice();
+  assert.equal(user.plan, 'business'); assert.equal(user.stripe_subscription_id, 'sub_a');
+  assert.equal(user.resume_builder_addon, true); assert.equal(user.resume_builder_subscription_id, 'sub_addon');
+  f.sub('sub_addon', { ...addon, status: 'canceled' });
+  await f.service.handleEvent(f.event('evt_addon_end', 'customer.subscription.deleted', { id: 'sub_addon', customer: 'cus_a' }));
+  assert.equal((await alice()).plan, 'business'); assert.equal((await alice()).resume_builder_addon, false);
+});
+
+test('Business payment failure, recovery and cancellation change only the membership slot', async () => {
+  const f = setup();
+  const business = { metadata: { tier: 'business', uficonnect_user_id: A },
+    items: { data: [{ price: { id: 'price_business' }, quantity: 1 }] } };
+  f.sub('sub_business', business);
+  f.sub('sub_addon', { metadata: { tier: 'resume_builder', uficonnect_user_id: A },
+    items: { data: [{ price: { id: 'price_resume' }, quantity: 1 }] } });
+  await f.service.handleEvent(f.event('evt_business', 'customer.subscription.created', { id: 'sub_business', customer: 'cus_a' }));
+  await f.service.handleEvent(f.event('evt_addon', 'customer.subscription.created', { id: 'sub_addon', customer: 'cus_a' }));
+  f.sub('sub_business', { ...business, status: 'past_due', latest_invoice: { status: 'open' } });
+  await f.service.handleEvent(f.event('evt_failed_business', 'invoice.payment_failed', { subscription: 'sub_business', customer: 'cus_a' }));
+  assert.equal((await alice()).plan, 'free'); assert.equal((await alice()).stripe_subscription_id, 'sub_business');
+  assert.equal((await alice()).resume_builder_addon, true);
+  await assert.rejects(f.service.createCheckout(A, 'business'), { status: 409 });
+  f.sub('sub_business', business);
+  await f.service.handleEvent(f.event('evt_recovered_business', 'invoice.paid', { subscription: 'sub_business', customer: 'cus_a' }));
+  assert.equal((await alice()).plan, 'business'); assert.equal((await alice()).resume_builder_addon, true);
+  f.sub('sub_business', { ...business, status: 'canceled' });
+  await f.service.handleEvent(f.event('evt_ended_business', 'customer.subscription.deleted', { id: 'sub_business', customer: 'cus_a' }));
+  const user = await alice();
+  assert.equal(user.plan, 'free'); assert.equal(user.stripe_subscription_id, null);
+  assert.equal(user.resume_builder_addon, true); assert.equal(user.resume_builder_subscription_id, 'sub_addon');
+});
+
 test('failed reconciliation rolls back its event record so Stripe can retry', async () => {
   const f = setup(); f.sub(); f.session(); f.providerOutage();
   await assert.rejects(f.service.handleEvent(f.event()), /provider outage/);
@@ -283,4 +372,29 @@ test('public billing config reports the verified tiered Pro price and authentica
   assert.equal((await app.request('/billing/status')).status, 401);
   assert.equal((await app.request('/billing/create-checkout-session', { method: 'POST', body: { tier: 'pro' } })).status, 401);
   assert.equal((await app.request('/billing/create-portal-session', { method: 'POST', body: {} })).status, 401);
+});
+
+test('public config enables configured Business and exactly priced six-month Resume Builder', async t => {
+  const prices = {
+    price_business: { unit_amount: 5994, recurring: { interval: 'month', interval_count: 1 } },
+    price_resume: { unit_amount: 14994, recurring: { interval: 'month', interval_count: 6 } },
+  };
+  const app = await createAppHarness({ connected: true,
+    env: { STRIPE_SECRET_KEY: 'sk_test_fixture', STRIPE_WEBHOOK_SECRET: 'whsec_fixture',
+      STRIPE_PRICE_ID_BUSINESS: 'price_business', STRIPE_RESUME_BUILDER_PRICE_ID: 'price_resume' },
+    modules: { stripe: () => ({ prices: { async retrieve(id, options) {
+      assert.ok(prices[id]); assert.deepEqual(Array.from(options.expand), ['tiers']);
+      return { id, type: 'recurring', active: true, currency: 'usd', ...prices[id] };
+    } } }) },
+  });
+  t.after(() => app.close());
+  const config = await app.request('/billing/config');
+  assert.equal(config.status, 200); assert.equal(config.data.paymentsReady, true);
+  assert.equal(config.data.tiers.pro, false); assert.equal(config.data.tiers.business, true);
+  assert.equal(config.data.pricing.business.unitAmount, 5994);
+  assert.equal(config.data.tiers.resume_builder, true);
+  assert.equal(config.data.pricing.resume_builder.unitAmount, 14994);
+  assert.equal(config.data.pricing.resume_builder.interval, 'month');
+  assert.equal(config.data.pricing.resume_builder.intervalCount, 6);
+  assert.equal(config.data.pricing.resume_builder.matchesRequiredPrice, true);
 });

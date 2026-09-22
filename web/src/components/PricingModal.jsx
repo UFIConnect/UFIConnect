@@ -19,7 +19,6 @@ export const TIERS = [
     price: '199.94',
     tagline: 'For hiring teams',
     icon: 'Biz',
-    locked: true,
     note: 'Career sources, role-matched opportunities, and hiring workflows.',
   },
 ];
@@ -84,8 +83,8 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier, error
           {TIERS.map(t => {
             const pricing = billingConfig?.pricing?.[t.tier];
             const available = billingConfig?.paymentsReady === true && billingConfig?.tiers?.[t.tier] === true && pricing?.active === true && pricing?.display && pricing?.interval;
-            const unavailable = Boolean(t.locked || !available);
-            const unavailableLabel = t.locked ? 'COMING SOON' : !billingConfig ? 'CHECKING' : !available ? 'UNAVAILABLE' : '';
+            const unavailable = !available;
+            const unavailableLabel = !billingConfig ? 'CHECKING' : !available ? 'UNAVAILABLE' : '';
             const cadence = pricing?.intervalCount > 1 ? `every ${pricing.intervalCount} ${pricing.interval}s` : `every ${pricing?.interval}`;
             return (
             <div
@@ -115,8 +114,8 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier, error
                 <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 2 }}>{t.tagline}</div>
               </div>
               <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                <div style={{ fontWeight: 800, fontSize: '1.05rem' }}>{pricing?.display || (t.locked ? `$${t.price}` : '—')}</div>
-                <div style={{ fontSize: '.68rem', color: 'var(--muted)' }}>{pricing?.interval ? cadence : t.locked ? '/month' : 'Price unavailable'}</div>
+                <div style={{ fontWeight: 800, fontSize: '1.05rem' }}>{pricing?.display || '—'}</div>
+                <div style={{ fontSize: '.68rem', color: 'var(--muted)' }}>{pricing?.interval ? cadence : 'Price unavailable'}</div>
               </div>
               <button
                 type="button"
@@ -141,13 +140,9 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier, error
             {t.name}: {t.note}
           </p>
         ))}
-        {TIERS.some(t => t.tier === 'business' && t.locked) ? (
+        {billingConfig && !billingConfig.tiers?.business && (
           <p style={{ margin: '8px 2px 0', fontSize: '.72rem', color: 'var(--muted)' }}>
-            Business membership is coming soon.
-          </p>
-        ) : billingConfig && !billingConfig.tiers?.business && (
-          <p style={{ margin: '8px 2px 0', fontSize: '.72rem', color: 'var(--muted)' }}>
-            Business checkout activates automatically once its Stripe Price is configured.
+            Business checkout is currently unavailable. Please check again later.
           </p>
         )}
       </div>

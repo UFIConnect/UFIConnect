@@ -23,7 +23,8 @@ try {
     const page = await context.newPage();
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     let status = { plan: 'free', resumeBuilderAddon: false, hasBillingAccount: false, subscriptions: [] };
-    let ready = true; let checkoutUrl = 'https://evil.invalid/checkout'; const requests = [];
+    let ready = true; let businessReady = false; let configWait = null;
+    let checkoutUrl = 'https://evil.invalid/checkout'; const requests = [];
     await context.route('**/*', async route => {
       const request = route.request(); const url = new URL(request.url());
       if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'Access-Control-Allow-Origin': server.origin, 'Access-Control-Allow-Credentials': 'true', 'Access-Control-Allow-Headers': '*' } });
@@ -32,7 +33,17 @@ try {
       const headers = { 'Access-Control-Allow-Origin': server.origin, 'Access-Control-Allow-Credentials': 'true' };
       const fulfill = json => route.fulfill({ json, headers });
       if (endpoint === '/billing/status') return fulfill(status);
-      if (endpoint === '/billing/config') return fulfill({ stripeConfigured: true, webhookConfigured: true, paymentsReady: ready, tiers: { pro: ready, business: false }, pricing: { pro: { active: true, display: '$19.94', currency: 'USD', interval: 'month', intervalCount: 1 } } });
+      if (endpoint === '/billing/config') {
+        if (configWait) await configWait;
+        return fulfill({ stripeConfigured: true, webhookConfigured: true, paymentsReady: ready,
+          tiers: { pro: ready, business: ready && businessReady, resume_builder: ready },
+          pricing: {
+            pro: { active: true, display: '$19.94', currency: 'USD', interval: 'month', intervalCount: 1 },
+            business: businessReady ? { active: true, display: '$199.94', currency: 'USD', interval: 'month', intervalCount: 1 } : null,
+            resume_builder: { active: true, matchesRequiredPrice: true, display: '$149.94', currency: 'USD', interval: 'month', intervalCount: 6 },
+          },
+        });
+      }
       if (endpoint === '/billing/create-checkout-session') { requests.push(request.postDataJSON()); return fulfill({ url: checkoutUrl }); }
       if (endpoint === '/billing/create-portal-session') return fulfill({ url: 'https://billing.stripe.com/p/session/audit' });
       if (endpoint === '/profile') return fulfill({ ...app.fullProfile(app.users[0]), plan: status.plan });
@@ -58,6 +69,15 @@ try {
     check(page.url().startsWith(server.origin), 'An untrusted checkout URL never receives the browser');
     assert.deepEqual(requests, [{ tier: 'pro' }]); checks++;
     await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    businessReady = true;
+    await upgrade.click();
+    await dialog.getByRole('button', { name: 'Choose Business', exact: true }).waitFor();
+    check(await dialog.getByRole('button', { name: 'Choose Business', exact: true }).isEnabled(), 'Validated Business configuration enables membership checkout');
+    check(await dialog.getByText('$199.94', { exact: true }).isVisible(), 'Business shows its configured recurring price');
+    await dialog.getByRole('button', { name: 'Choose Business', exact: true }).click();
+    await page.getByText('Could not open secure billing. Please try again.', { exact: true }).waitFor();
+    assert.deepEqual(requests.at(-1), { tier: 'business' }); checks++;
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
     ready = false;
     await upgrade.click();
     await dialog.getByText('Membership checkout is currently unavailable. Please try again later.').waitFor();
@@ -76,6 +96,29 @@ try {
     await page.getByRole('heading', { name: 'Pro plan', exact: true }).waitFor();
     check(await page.getByText(/Your Pro membership is active/).isVisible(), 'Confirmed server status activates the membership UI');
     check(await page.getByText(/Cancellation scheduled for/).isVisible(), 'Scheduled cancellation is visible');
+    ready = true;
+    let releaseConfig;
+    configWait = new Promise(resolve => { releaseConfig = resolve; });
+    await auditNavigate(page, server.origin + '/resume-builder');
+    await page.getByRole('button', { name: 'Checking billing…', exact: true }).waitFor();
+    check(await page.getByRole('button', { name: 'Checking billing…', exact: true }).isDisabled(), 'Resume Builder cannot be bought before its price is validated');
+    configWait = null; releaseConfig();
+    const resumePurchase = page.getByRole('button', { name: 'Unlock for $149.94 per 6 mo', exact: true });
+    await resumePurchase.waitFor();
+    check(await resumePurchase.isEnabled(), 'Validated Resume Builder configuration enables checkout');
+    check(await page.getByText(/This add-on renews automatically/).isVisible(), 'Resume Builder explains renewal before checkout');
+    check(await page.getByRole('link', { name: 'Settings → Manage billing', exact: true }).isVisible(), 'Resume Builder provides billing recovery and cancellation access');
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Resume Builder checkout fits ${width}px`);
+    await resumePurchase.click();
+    await page.getByText('Could not start checkout. Please try again.', { exact: true }).waitFor();
+    assert.deepEqual(requests.at(-1), { tier: 'resume_builder' }); checks++;
+    check(page.url().startsWith(server.origin), 'Resume Builder blocks untrusted payment redirects');
+    ready = false;
+    await auditNavigate(page, server.origin + '/settings');
+    await page.getByRole('heading', { name: 'Pro plan', exact: true }).waitFor();
+    await auditNavigate(page, server.origin + '/resume-builder');
+    await page.getByRole('button', { name: 'Billing unavailable', exact: true }).waitFor();
+    check(await page.getByRole('button', { name: 'Billing unavailable', exact: true }).isDisabled(), 'Unavailable Resume Builder checkout fails closed');
     check(errors.length === 0, `No browser errors at ${width}px: ${errors.join('; ')}`);
     await context.close();
   }

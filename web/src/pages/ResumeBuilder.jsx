@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Helmet } from 'react-helmet-async';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -62,6 +62,7 @@ function normalizeDraft(draft) {
 function priceCadence(price) {
   if (!price?.interval) return '';
   const count = Math.max(1, Number(price.intervalCount) || 1);
+  if (price.interval === 'month' && count === 6) return ' per 6 mo';
   return count === 1 ? ` / ${price.interval}` : ` every ${count} ${price.interval}s`;
 }
 
@@ -127,13 +128,18 @@ function LockedState({ onUnlock, unlocking, billingReady, price }) {
         Prepare for interviews, build an ATS-friendly resume with original templates, use AI-assisted writing,
         and export a scored PDF that is saved to your profile.
       </p>
-      <div style={{ display: 'inline-flex', alignItems: 'baseline', gap: 7, marginBottom: 18, fontSize: '.86rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', alignItems: 'baseline', gap: 7, marginBottom: 18, fontSize: '.86rem' }}>
         <span style={{ color: 'var(--muted)' }}>Resume Builder add-on</span>
-        <strong>{priceLabel || 'Price shown at checkout'}</strong>
+        <strong>{priceLabel || (billingReady === null ? 'Checking current price…' : 'Price unavailable')}</strong>
       </div>
-      <button className="btn btn-primary" type="button" onClick={onUnlock} disabled={unlocking || billingReady === false}>
-        {unlocking ? <span className="spinner" style={{ width: 14, height: 14 }} /> : billingReady === false ? 'Billing unavailable' : priceLabel ? `Unlock for ${priceLabel}` : 'Unlock Resume Builder'}
+      <button className="btn btn-primary" type="button" onClick={onUnlock} disabled={unlocking || billingReady !== true} style={{ maxWidth: '100%', whiteSpace: 'normal' }}>
+        {unlocking ? <span className="spinner" style={{ width: 14, height: 14 }} /> : billingReady === null ? 'Checking billing…' : billingReady !== true ? 'Billing unavailable' : `Unlock for ${priceLabel}`}
       </button>
+      <p style={{ color: 'var(--muted)', fontSize: '.78rem', maxWidth: 440, margin: '18px auto 0', lineHeight: 1.6 }}>
+        This add-on renews automatically at the price and interval shown. Review any applicable tax and the total on Stripe before paying.
+        {' '}Manage your payment method or cancel in <Link to="/settings">Settings → Manage billing</Link>.
+        {' '}By subscribing, you agree to our <Link to="/terms">Terms of Service</Link>. Read our <Link to="/privacy">Privacy Policy</Link>.
+      </p>
     </div>
   );
 }
@@ -485,7 +491,7 @@ export default function ResumeBuilder() {
         if (cancelled) return;
         const price = config?.pricing?.resume_builder || null;
         setResumeBuilderPrice(price);
-        setBillingReady(!!config?.stripeConfigured && !!config?.webhookConfigured && !!config?.tiers?.resume_builder && price?.matchesRequiredPrice === true);
+        setBillingReady(config?.paymentsReady === true && config?.tiers?.resume_builder === true && price?.active === true && price?.matchesRequiredPrice === true && Boolean(price?.display));
       })
       .catch(() => {
         if (!cancelled) setBillingReady(false);
@@ -570,7 +576,7 @@ export default function ResumeBuilder() {
   }, [unlocked]);
 
   async function unlockResumeBuilder() {
-    if (unlocking) return;
+    if (unlocking || billingReady !== true) return;
     setUnlocking(true);
     try {
       const { data: checkout } = await client.post('/billing/create-checkout-session', { tier: 'resume_builder' });
