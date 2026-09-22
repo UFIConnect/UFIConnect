@@ -1,7 +1,28 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { observeAgentPayload, mergeObservedAgents } from '../office/src/office-telemetry.mjs';
-import { buildCityModel, observationState, CITY_FRESH_MS } from '../office/src/city-model.mjs';
+import { buildCityModel, observationState, CITY_FRESH_MS, CITY_DISTRICTS } from '../office/src/city-model.mjs';
+import { buildCityStreets } from '../office/src/city-streets.mjs';
+
+test('city blends 71 homes with workplaces and connects each commute and lunch route', () => {
+  const homes = Array.from({ length: 71 }, (_, i) => ({ id: `resident_${i}`, district: i < 37 ? 'sources' : 'runtime' }));
+  const city = buildCityStreets({ districts: CITY_DISTRICTS, homes });
+  assert.equal(city.homes.length, 71);
+  assert.equal(new Set(city.homes.map(home => `${home.x}:${home.y}`)).size, 71);
+  assert.ok(city.blocks.every(block => block.homes.length <= 6));
+  assert.equal(city.blocks.filter(block => block.homes.length).length, 12);
+  for (const home of city.homes) {
+    assert.ok(home.x > 40 && home.x < city.width - 40 && home.y > 40 && home.y < city.bottom);
+    assert.deepEqual(home.commutePoints[0], [home.x, home.y + 20]);
+    assert.deepEqual(home.commutePoints.at(-1), [home.work.x, home.work.y + 38]);
+    assert.deepEqual(home.lunchPoints[0], home.commutePoints.at(-1));
+    assert.deepEqual(home.lunchPoints.at(-1), [home.cafe.x, home.cafe.y + 24]);
+  }
+  const expanded = buildCityStreets({ districts: CITY_DISTRICTS, homes: [...homes, ...homes.map(home => ({ ...home, id: `extra_${home.id}` }))] });
+  assert.equal(expanded.homes.length, 142);
+  assert.ok(expanded.height > city.height);
+  assert.ok(expanded.homes.every(home => home.y < expanded.bottom));
+});
 
 const earlier = Date.parse('2026-09-15T10:00:00Z');
 const later = earlier + 60000;
