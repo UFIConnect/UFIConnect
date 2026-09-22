@@ -20,6 +20,7 @@ function buildOfficeSetup({ env = {}, role = 'api', database = false, backup = {
   add('youtube', 'YouTube search', 'Content sources', ['YOUTUBE_API_KEY'], 'Enables keyword search and duration information; public channel feeds remain available without it.');
   add('twitch', 'Twitch discovery', 'Content sources', ['TWITCH_CLIENT_ID', 'TWITCH_CLIENT_SECRET'], 'Enables Twitch API discovery.');
   if (role === 'api') {
+    add('managed-recovery', 'Primary database recovery evidence', 'Core services', ['RENDER_API_KEY', 'RENDER_DATABASE_ID'], 'Reads Render point-in-time recovery and export metadata. Review Data recovery in Overview for verified provider status; restore drills are separate.');
     add('backup', 'Feed read failover', 'Core services', ['DATABASE_URL_BACKUP'], 'Copies a bounded recent feed snapshot. This does not back up accounts, messages, or the full database.', {
       status: !present('DATABASE_URL_BACKUP') ? 'missing' : backup.connected && backup.lastSyncAt ? 'ready' : 'degraded',
       detail: backup.connected && backup.lastSyncAt ? `Last successful feed sync: ${backup.lastSyncAt}` : 'Needs a connected backup database and a successful feed sync.',

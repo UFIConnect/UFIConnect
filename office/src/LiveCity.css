@@ -49,6 +49,7 @@
 .lc-street-label { fill:#9caeaa; font-size:8px; letter-spacing:1.6px; font-weight:600; }
 .lc-cafe-label { fill:#d7e3d2; font-size:11px; letter-spacing:1px; font-weight:600; }
 .lc-city-traffic { pointer-events:none; }
+.lc-arrival-courts { pointer-events:none; }
 .lc-commuter,.lc-lunch-walker,.lc-highway-car { offset-rotate:auto; offset-anchor:0px 0px; }
 .lc-lunch-walker { opacity:0; }
 .lc-commuter { animation:lc-commute var(--trip-duration) linear infinite paused; animation-delay:var(--trip-delay); }
@@ -58,8 +59,8 @@
 .lc-canvas:not([data-area="homes"]) .lc-map-home:not(:hover):not([aria-pressed="true"]) .lc-home-address,
 .lc-canvas:not([data-area="homes"]) .lc-map-home:not(:hover):not([aria-pressed="true"]) .lc-home-map-state { opacity:0; }
 .lc-canvas[data-area="homes"] .lc-building { opacity:.5; }
-@keyframes lc-commute { 0%,8% { offset-distance:0%; } 24%,68% { offset-distance:50%; } 88%,100% { offset-distance:100%; } }
-@keyframes lc-lunch { 0%,35% { offset-distance:0%; opacity:0; } 36% { offset-distance:0%; opacity:1; } 46%,55% { offset-distance:50%; opacity:1; } 65% { offset-distance:100%; opacity:1; } 66%,100% { offset-distance:100%; opacity:0; } }
+@keyframes lc-commute { 0%,8% { offset-distance:0%; opacity:1; } 23.9% { opacity:1; } 24%,68% { offset-distance:var(--commute-stop); opacity:0; } 68.1% { opacity:1; } 88%,100% { offset-distance:100%; opacity:1; } }
+@keyframes lc-lunch { 0%,35% { offset-distance:0%; opacity:0; } 36% { offset-distance:0%; opacity:1; } 45.9% { opacity:1; } 46%,55% { offset-distance:50%; opacity:0; } 55.1% { opacity:1; } 65% { offset-distance:100%; opacity:1; } 66%,100% { offset-distance:100%; opacity:0; } }
 @keyframes lc-highway { from { offset-distance:0%; } to { offset-distance:100%; } }
 .lc-city-navigation { padding:12px 16px; border-bottom:1px solid #203448; display:flex; flex-wrap:wrap; gap:12px; justify-content:space-between; }
 .lc-area-controls { display:flex; gap:5px; }

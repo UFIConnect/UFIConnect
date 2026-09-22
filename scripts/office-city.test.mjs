@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { observeAgentPayload, mergeObservedAgents } from '../office/src/office-telemetry.mjs';
 import { buildCityModel, observationState, CITY_FRESH_MS, CITY_DISTRICTS } from '../office/src/city-model.mjs';
-import { buildCityStreets } from '../office/src/city-streets.mjs';
+import { buildCityStreets, cityJourney } from '../office/src/city-streets.mjs';
 
 test('city blends 71 homes with workplaces and connects each commute and lunch route', () => {
   const homes = Array.from({ length: 71 }, (_, i) => ({ id: `resident_${i}`, district: i < 37 ? 'sources' : 'runtime' }));
@@ -14,14 +14,37 @@ test('city blends 71 homes with workplaces and connects each commute and lunch r
   for (const home of city.homes) {
     assert.ok(home.x > 40 && home.x < city.width - 40 && home.y > 40 && home.y < city.bottom);
     assert.deepEqual(home.commutePoints[0], [home.x, home.y + 20]);
-    assert.deepEqual(home.commutePoints.at(-1), [home.work.x, home.work.y + 38]);
-    assert.deepEqual(home.lunchPoints[0], home.commutePoints.at(-1));
+    assert.deepEqual(home.commutePoints.at(-1), home.arrivalBay);
+    assert.deepEqual(home.returnPoints[0], home.arrivalBay);
+    assert.deepEqual(home.returnPoints.at(-1), home.commutePoints[0]);
+    assert.ok(home.commuteStop > 0 && home.commuteStop < 100);
+    assert.notDeepEqual(home.returnPoints, [...home.commutePoints].reverse(), 'Opposing commutes use separate lanes');
+    assert.ok(home.lunchPoints[0][1] < home.arrivalBay[1], 'Pedestrians leave the building independently of car arrivals');
     assert.deepEqual(home.lunchPoints.at(-1), [home.cafe.x, home.cafe.y + 24]);
   }
   const expanded = buildCityStreets({ districts: CITY_DISTRICTS, homes: [...homes, ...homes.map(home => ({ ...home, id: `extra_${home.id}` }))] });
   assert.equal(expanded.homes.length, 142);
   assert.ok(expanded.height > city.height);
   assert.ok(expanded.homes.every(home => home.y < expanded.bottom));
+});
+
+test('busy source and runtime buildings distribute arrivals without parking crowds at entrances', () => {
+  const homes = Array.from({ length: 71 }, (_, i) => ({ id: `resident_${i}`, district: i < 37 ? 'sources' : 'runtime' }));
+  const city = buildCityStreets({ districts: CITY_DISTRICTS, homes });
+  for (const id of ['sources', 'runtime']) {
+    const residents = city.homes.filter(home => home.district === id);
+    assert.equal(city.byId[id].residents, residents.length);
+    assert.equal(new Set(residents.map(home => home.arrivalBay.join(':'))).size, 8, 'Busy buildings distribute arrivals among eight bays');
+    for (const home of residents) for (const [x, y] of [...home.commutePoints, ...home.returnPoints, ...home.lunchPoints]) {
+      assert.ok(Number.isFinite(x) && Number.isFinite(y) && x > 0 && x < city.width && y > 0 && y < city.height, 'Every trip stays inside the city');
+    }
+  }
+  assert.equal(cityJourney(.1).carVisible, true, 'Arriving residents remain visible');
+  assert.equal(cityJourney(.24).carVisible, false, 'Cars move into indoor parking after arrival');
+  assert.equal(cityJourney(.5).carVisible, false, 'Parked cars do not accumulate outside the entrance');
+  assert.equal(cityJourney(.5).walkerVisible, false, 'Cafe visitors enter rather than stack at the doorway');
+  assert.equal(cityJourney(.7).carVisible, true, 'Cars reappear for the return trip');
+  assert.equal(cityJourney(.7).returning, true);
 });
 
 const earlier = Date.parse('2026-09-15T10:00:00Z');
@@ -239,11 +262,11 @@ test('missing owner observations keep an agent home visible and explicitly unobs
   assert.equal(model.homes[0].ownerAvailable,false);
 });
 
-test('every city building exposes a detailed four-level interior backed by its own metrics', () => {
+test('every city building exposes detailed levels backed by its own metrics, including primary recovery', () => {
   const model=buildCityModel({now:later,telemetry:fresh,status:{server:{db:'connected'}},pipelineStatus:{server:{}}});
   assert.equal(model.districts.length,12);
   for (const district of model.districts) {
-    assert.equal(district.levels.length,4,`${district.id} has four scrollable levels`);
+    assert.equal(district.levels.length,district.id === 'backup' ? 5 : 4,`${district.id} exposes all its scrollable levels`);
     for (const [index,level] of district.levels.entries()) {
       assert.equal(level.number,index+1);
       assert.ok(level.title&&level.purpose);

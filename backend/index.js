@@ -10,6 +10,7 @@ const { createAnalyticsBridgeHandler } = require('./analytics-bridge');
 const { ANALYTICS_SCHEMA, createAggregateAnalytics } = require('./aggregate-analytics');
 const { createOfficeAgentChat, sanitizeSnapshot: sanitizeAgentSnapshot } = require('./office-agent-chat');
 const { buildOfficeSetup } = require('./office-setup');
+const { createManagedRecovery } = require('./managed-recovery');
 const { withActiveMembers } = require('./member-write');
 const { BILLING_SCHEMA, validRecurringPrice, quantityOneAmount, createBilling } = require('./billing');
 const dotenv = require('dotenv');
@@ -82,6 +83,7 @@ const generatedMedia = createGeneratedMediaStorage({ env: process.env });
 // ever unset on a service is "don't fetch," not "silently double-fetch."
 const SERVICE_ROLE = process.env.SERVICE_ROLE === 'pipeline' ? 'pipeline' : 'api';
 const IS_PIPELINE_ROLE = SERVICE_ROLE === 'pipeline';
+const managedRecovery = createManagedRecovery({ env: process.env, fetcher: (...args) => fetch(...args) });
 const postPipelineTracker = createPostPipelineTracker(db, { role: SERVICE_ROLE, schedule: setTimeout });
 const postPipelineReader = createPostPipelineReader(db);
 
@@ -25521,6 +25523,12 @@ app.get('/office/post-pipeline/detail', requireOfficeToken, async (req, res) => 
   }
 });
 
+app.get('/office/recovery', requireOfficeToken, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  if (IS_PIPELINE_ROLE) return res.status(409).json({ error: 'Managed database recovery is reported by the API service.' });
+  res.json(await managedRecovery.read());
+});
+
 app.get('/office/status', requireOfficeToken, (req, res) => {
   // Ingestion and DB loading screen posts before they enter this cache. Build
   // the source/topic indexes once per status request; the old implementation
@@ -25622,6 +25630,7 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       db:          db.isConnected() ? 'connected' : 'fallback',
       dbBackup:    db.isBackupConnected(),
       dbBackupStatus: db.getBackupStatus(),
+      ...(!IS_PIPELINE_ROLE ? { managedRecovery: managedRecovery.peek() } : {}),
       dbReadFailoverActive: db.isReadFailoverActive(),
       serviceRole: SERVICE_ROLE,
       port:        PORT,

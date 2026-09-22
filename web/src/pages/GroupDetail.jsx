@@ -10,6 +10,7 @@ import EmojiPicker from '../components/EmojiPicker';
 import PhotoPickerButton from '../components/PhotoPickerButton';
 import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { GroupInformation } from './Groups';
+import ConfirmActionDialog from '../components/ConfirmActionDialog';
 
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -52,12 +53,8 @@ function GroupPostArea({ id }) {
 
   // Only the group's own creator gets this at all — external/seeded groups
   // (subreddit-backed, etc.) have no createdBy, so this naturally never
-  // shows for those regardless of who's viewing. Same "type DELETE to
-  // confirm" pattern Settings.jsx already uses for account deletion.
+  // shows for those regardless of who's viewing. The server also checks ownership.
   const [deleteModal,   setDeleteModal]   = useState(false);
-  const [deleteConfirm, setDeleteConfirm] = useState('');
-  const [deleting,      setDeleting]      = useState(false);
-  const [deleteError,   setDeleteError]   = useState('');
 
   useEffect(() => {
     Promise.all([
@@ -125,16 +122,8 @@ function GroupPostArea({ id }) {
   }
 
   async function handleDeleteGroup() {
-    if (deleting || deleteConfirm !== 'DELETE') return;
-    setDeleting(true);
-    setDeleteError('');
-    try {
-      await client.delete(`/groups/${id}`);
-      navigate('/?feed=groups');
-    } catch (err) {
-      setDeleteError(err.response?.data?.message || 'Failed to delete group. Please try again.');
-      setDeleting(false);
-    }
+    await client.delete(`/groups/${id}`);
+    navigate('/?feed=groups');
   }
 
   function openCompose() {
@@ -243,28 +232,14 @@ function GroupPostArea({ id }) {
 
       {/* Delete confirmation modal */}
       {deleteModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-          <div className="card" style={{ width: '100%', maxWidth: 440, padding: 28, borderRadius: 20 }}>
-            <div style={{ fontSize: '.9rem', fontWeight: 800, marginBottom: 12, textAlign: 'center' }}>!</div>
-            <h3 style={{ margin: '0 0 8px', textAlign: 'center' }}>Delete {group.name}?</h3>
-            <p style={{ fontSize: '.85rem', color: 'var(--muted)', textAlign: 'center', marginBottom: 20, lineHeight: 1.6 }}>
-              This will permanently delete the group and remove it from every member's joined groups. This action <strong>cannot be undone</strong>.
-            </p>
-            <div className="form-group" style={{ marginBottom: 16 }}>
-              <label className="form-label">Type <strong>DELETE</strong> to confirm</label>
-              <input className="form-input" value={deleteConfirm} onChange={e => setDeleteConfirm(e.target.value)} placeholder="Type DELETE here" autoFocus />
-            </div>
-            {deleteError && <div className="auth-error" style={{ marginBottom: 12 }}>{deleteError}</div>}
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => { setDeleteModal(false); setDeleteConfirm(''); setDeleteError(''); }} disabled={deleting}>
-                Cancel
-              </button>
-              <button className="btn btn-danger" style={{ flex: 1 }} disabled={deleteConfirm !== 'DELETE' || deleting} onClick={handleDeleteGroup}>
-                {deleting ? <span className="spinner" /> : 'Permanently delete'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmActionDialog
+          title={`Delete ${group.name}?`}
+          errorMessage="Failed to delete group. Please try again."
+          onClose={() => setDeleteModal(false)}
+          onConfirm={handleDeleteGroup}
+        >
+          This will permanently delete the group and remove it from every member's joined groups. This action <strong>cannot be undone</strong>.
+        </ConfirmActionDialog>
       )}
 
       {/* Post composer — only for joined members */}

@@ -4,6 +4,7 @@ import PostPipeline from './PostPipeline';
 import LiveCity from './LiveCity';
 import LocalWeb from './LocalWeb';
 import Setup from './Setup';
+import RecoveryOverview from './RecoveryOverview';
 import { mergeObservedAgents, observeAgentPayload } from './office-telemetry.mjs';
 import { createOfficeClient, createOfficeEventSource, createTrustedOfficeFetch, connectOfficeStreams, mergeOfficeLog } from './office-runtime.mjs';
 import { requestOfficeAccess } from './OfficeAccessDialog';
@@ -400,7 +401,6 @@ function WebOptimizerPanel({ web, triggerAgent, triggering }) {
 
 function OverviewView({ status, pipelineStatus, log, agents, triggerAgent, triggering }) {
   const s = status?.server;
-  const backup = s?.dbBackupStatus;
   const f = pipelineStatus?.feed || status?.feed;
   const a = status?.agents;
   const src = pipelineStatus?.sources || status?.sources;
@@ -456,43 +456,7 @@ function OverviewView({ status, pipelineStatus, log, agents, triggerAgent, trigg
         />
       </div>
 
-      <Card style={{ padding: '16px 18px', marginBottom: 24 }}>
-          <h2 style={{ fontSize: 14, margin: '0 0 8px', color: '#e2e8f0' }}>Feed recovery database</h2>
-          <p style={{ fontSize: 12, margin: '0 0 6px', color: backup?.enabled && backup.connected && backup.lastSyncAt && !backup.lastError ? '#4ade80' : '#fbbf24' }}>
-            {!s ? 'Recovery status unavailable. Waiting for an API status response.'
-              : !backup ? 'Recovery status unavailable: the API did not report backup diagnostics.'
-                : !backup.enabled ? 'Not configured: set DATABASE_URL_BACKUP on the API service.'
-                  : !backup.connected ? 'Disconnected: the recovery database connection is unavailable.'
-                    : backup.lastError ? 'Connected; the last recovery update failed.'
-                      : backup.lastSyncAt ? 'Connected; the latest recovery update succeeded.'
-                        : 'Connected; waiting for the first recovery update.'}
-          </p>
-          {!backup && (
-            <p style={{ fontSize: 12, margin: '0 0 6px', color: '#94a3b8' }}>
-              Backup connection: {s?.dbBackup === true ? 'reported connected' : s?.dbBackup === false ? 'reported disconnected' : 'unknown'}.
-              {' '}Recovery updates are unverified.
-            </p>
-          )}
-          {backup && <>
-          <p style={{ fontSize: 12, margin: '0 0 6px', color: '#94a3b8' }}>
-            Last successful update: {backup.lastSyncAt ? fmtAgo(backup.lastSyncAt) : 'none reported'}
-            {' · '}{backup.rowCount == null ? 'Row count unavailable' : `${Number(backup.rowCount).toLocaleString()} feed posts`}
-          </p>
-          {backup.lastError && <p style={{ fontSize: 12, margin: '0 0 6px', color: '#fca5a5', overflowWrap: 'anywhere' }}>{backup.lastError}</p>}
-          {(backup.lastAttemptAt || backup.nextSyncAt || (backup.enabled && !backup.connected)) && (
-            <p style={{ fontSize: 12, margin: '0 0 6px', color: '#94a3b8' }}>
-              {backup.lastAttemptAt ? `Last recovery attempt: ${fmtAgo(backup.lastAttemptAt)}.` : 'No connection attempt reported.'}
-              {backup.nextSyncAt ? ` Next recovery attempt: in ${fmtUntil(backup.nextSyncAt)}.` : ''}
-            </p>
-          )}
-          <p style={{ fontSize: 11, margin: '0 0 6px', color: '#94a3b8' }}>
-            Recent feed posts only: up to {backup.retentionDays} days and {Number(backup.maxRows).toLocaleString()} posts.
-          </p>
-          </>}
-          <p style={{ fontSize: 11, margin: 0, color: '#94a3b8' }}>
-            Accounts, messages, and settings require a separate full database backup.
-          </p>
-      </Card>
+      <RecoveryOverview server={s} />
 
       <details className="office-overview-detail">
         <summary>Website diagnostics</summary>

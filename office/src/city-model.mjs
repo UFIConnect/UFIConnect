@@ -1,4 +1,5 @@
 import { createBuildingLevels } from './city-architecture.mjs';
+import { managedRecoveryState } from './recovery-status.mjs';
 
 // This view models observations, never an inferred job scheduler or a post ledger.
 export const CITY_FRESH_MS = 30_000;
@@ -12,7 +13,7 @@ export const CITY_DISTRICTS = Object.freeze([
   { id: 'database', label: 'Primary database', short: 'STORE', role: 'api', color: '#60a5fa', x: 430, y: 490, height: 110, link: 'overview', description: 'Primary PostgreSQL storage and its reported capacity. Connection status is not a verification of every stored record.' },
   { id: 'topics', label: 'Topic filter', short: 'MATCH', role: 'api', color: '#2dd4bf', x: 190, y: 490, height: 67, link: 'pipeline', description: 'Filters the requested feed for selected topics after storage. Only aggregate run counts are shown here.' },
   { id: 'feed', label: 'Live feed', short: 'DELIVER', role: 'api', color: '#4ade80', x: 190, y: 760, height: 85, link: 'post-pipeline', description: 'The API’s in-memory feed cache and connected feed streams. Connected clients do not prove that a post was delivered.' },
-  { id: 'backup', label: 'Feed recovery', short: 'RECOVER', role: 'api', color: '#818cf8', x: 430, y: 760, height: 58, link: 'overview', description: 'A bounded recent-feed recovery snapshot. This is not a complete backup of accounts, messages, or settings.' },
+  { id: 'backup', label: 'Data recovery', short: 'RECOVER', role: 'api', color: '#818cf8', x: 430, y: 760, height: 58, link: 'overview', description: 'Managed primary database recovery and the separate optional recent-feed snapshot. Provider availability does not prove a successful restore drill.' },
   { id: 'security', label: 'Security watch', short: 'PROTECT', role: 'api', color: '#f472b6', x: 670, y: 760, height: 95, link: 'agents', description: 'Reported security-agent activity and runtime counters. This dashboard does not certify security or run a vulnerability scan.' },
   { id: 'runtime', label: 'Runtime control', short: 'OPERATE', role: 'pipeline', color: '#94a3b8', x: 910, y: 760, height: 114, link: 'controls', description: 'Observed stability, memory pressure, and event-loop delay for each process. Open Controls to review operational settings.' },
 ]);
@@ -111,6 +112,8 @@ export function buildCityModel({ status, pipelineStatus, agents = {}, log = [], 
   }).sort((a, b) => a.name.localeCompare(b.name));
   const equalizer = pipeline.equalizer || {}, filter = pipeline.filterAgent || {}, sort = pipeline.sortAgent || {};
   const stage = api.staging || {}, db = api.dbSize || {}, topics = api.topicFilterAgent || {}, backup = api.server?.dbBackupStatus || {};
+  const managed = api.server?.managedRecovery;
+  const recoveryState = managedRecoveryState(managed, now);
   const securityAgent = roster.find(agent => agent.id === 'security' && agent.serviceRole === 'api');
   const details = {
     sources: { present: Boolean(pipeline.sources), health: pipeline.sources?.degraded > 0 ? 'degraded' : 'observed',
@@ -137,9 +140,10 @@ export function buildCityModel({ status, pipelineStatus, agents = {}, log = [], 
     feed: { present: Boolean(api.feed), active: false,
       metrics: [metric('Posts in memory', api.feed?.postCount), metric('Feed stream connections', api.feed?.sseClients), metric('Tracked post IDs', api.feed?.seenIds), timeMetric('Cache refreshed', api.feed?.refreshedAt), timeMetric('Newest stored fetch', api.feedStorage?.cache?.newestFetchedAt)],
       breakdown: (Array.isArray(api.feed?.composition) ? api.feed.composition : []).map(item => ({ label: item.source, value: cityNumber(item.count), detail: 'cached posts' })) },
-    backup: { present: Boolean(api.server?.dbBackupStatus), error: Boolean(backup.lastError) || backup.enabled === true && backup.connected === false, health: backup.enabled === false ? 'disabled' : backup.capacityStatus,
+    backup: { present: Boolean(managed || api.server?.dbBackupStatus), error: recoveryState === 'unavailable' || Boolean(backup.lastError) || backup.enabled === true && backup.connected === false,
+      health: ['unknown', 'not_configured', 'stale'].includes(recoveryState) || managed?.issues?.some(issue => ['exports', 'feedReplica'].includes(issue.component)) ? 'unknown' : backup.capacityStatus,
       active: backup.syncing === true,
-      metrics: [boolMetric('Configured', backup.enabled), boolMetric('Connected', backup.connected ?? api.server?.dbBackup), textMetric('Latest recovery result', backup.lastError ? 'Last attempt failed' : backup.lastSyncAt ? 'Successful sync recorded' : api.server?.dbBackupStatus ? 'No successful sync reported' : null), boolMetric('Sync in progress', backup.syncing), metric('Snapshot rows', backup.rowCount), metric('Retention', backup.retentionDays, 'days'), metric('Maximum rows', backup.maxRows), timeMetric('Last attempted sync', backup.lastAttemptAt), timeMetric('Last successful sync', backup.lastSyncAt), timeMetric('Next sync', backup.nextSyncAt)] },
+      metrics: [textMetric('Primary recovery', recoveryState), timeMetric('Recovery window begins', managed?.primary?.recovery?.startsAt), timeMetric('Provider checked', managed?.checkedAt), timeMetric('Latest database export', managed?.primary?.latestExport?.createdAt), textMetric('Feed database provider state', managed?.feedReplica?.state), boolMetric('Configured', backup.enabled), boolMetric('Connected', backup.connected ?? api.server?.dbBackup), textMetric('Latest recovery result', backup.lastError ? 'Last feed attempt failed' : backup.lastSyncAt ? 'Successful feed sync recorded' : api.server?.dbBackupStatus ? 'No successful feed sync reported' : null), boolMetric('Sync in progress', backup.syncing), metric('Snapshot rows', backup.rowCount), metric('Retention', backup.retentionDays, 'days'), metric('Maximum rows', backup.maxRows), timeMetric('Last attempted sync', backup.lastAttemptAt), timeMetric('Last successful sync', backup.lastSyncAt), timeMetric('Next sync', backup.nextSyncAt)] },
     security: { present: Boolean(securityAgent), health: securityAgent?.health?.status, active: false,
       metrics: [textMetric('Reported agent state', securityAgent?.health?.status), timeMetric('Last reported activity', securityAgent?.lastAction?.ts), metric('API recorded crash events', api.stability?.crashEvents), metric('API unhandled rejections', api.stability?.unhandledRejections)],
       history: Array.isArray(securityAgent?.logs) ? securityAgent.logs.slice(0, 6) : [] },
@@ -151,10 +155,10 @@ export function buildCityModel({ status, pipelineStatus, agents = {}, log = [], 
     const detail = details[def.id];
     const freshness = def.id === 'security' && securityAgent?.observation !== 'fresh' && securityAgent?.observation
       ? securityAgent.observation : observations[def.role].state;
-    const health = !detail.present ? 'unknown' : detail.error || degraded(detail.health) ? 'degraded' : detail.health === 'paused' || detail.health === 'disabled' ? detail.health : 'observed';
+    const health = !detail.present || detail.health === 'unknown' ? 'unknown' : detail.error || degraded(detail.health) ? 'degraded' : detail.health === 'paused' || detail.health === 'disabled' ? detail.health : 'observed';
     const state = freshness !== 'fresh' ? freshness : health;
     const district = { ...def, ...detail, health, state, observation: observations[def.role],
-      active: freshness === 'fresh' && detail.present && !detail.error && !['degraded', 'paused', 'disabled'].includes(health) && Boolean(detail.active),
+      active: freshness === 'fresh' && detail.present && !detail.error && !['unknown', 'degraded', 'paused', 'disabled'].includes(health) && Boolean(detail.active),
       agents: roster.filter(agent => agent.district === def.id),
       history: detail.history || [], breakdown: detail.breakdown || [] };
     return { ...district, levels: createBuildingLevels(district) };

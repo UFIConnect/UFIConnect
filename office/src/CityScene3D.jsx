@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { cityJourney } from './city-streets.mjs';
 
 const stateColor = state => ({ working: '#75ddb0', inactive: '#8f9da6', attention: '#ffb75e', unobserved: '#526976' }[state] || '#526976');
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -106,7 +107,7 @@ export default function CityScene3D({ city, motion, speed, motionScope, homeFilt
     city.blocks.forEach(block => {
       box(wx(block.x), .05, wz(block.y), 32, .25, 30, '#688078');
       box(wx(block.x), .21, wz(block.y), 29.7, .1, 27.7, '#3e5c50');
-      [-1, 1].forEach(side => [-115, -20, 108].forEach(dy => tree(wx(block.x + side * 84), wz(block.y + dy))));
+      [-1, 1].forEach(side => [-115, -20].forEach(dy => tree(wx(block.x + side * 84), wz(block.y + dy))));
     });
     for (let col = 0; col <= 4; col++) street(wx(80 + col * 360), wz(40), wx(80 + col * 360), wz(city.height - 40), col === 2 ? 4.4 : 2.6);
     for (let row = 0; row <= city.blocks.length / 4; row++) street(wx(40), wz(80 + row * 340), wx(1560), wz(80 + row * 340));
@@ -117,6 +118,13 @@ export default function CityScene3D({ city, motion, speed, motionScope, homeFilt
       const x = wx(district.x), z = wz(district.y), h = district.height / 6;
       const destination = { kind: 'building', id: district.id, label: district.label };
       street(x, wz(district.y + 38), x, wz(district.streetY), 1.2);
+      district.arrivalRoad.slice(1).forEach(([px, pz], i) => street(wx(district.arrivalRoad[i][0]), wz(district.arrivalRoad[i][1]), wx(px), wz(pz), 2.6));
+      box(x, 1.25, wz(district.y + 107), 16.4, 2, 3.2, '#536b76', scene, destination);
+      box(x, 2.4, wz(district.y + 107), 16.8, .3, 3.6, '#95aaa9');
+      district.bays.forEach(([px, pz]) => {
+        street(wx(px), wz(pz), wx(px), wz(district.y + 138), 1.3);
+        box(wx(px), 1, wz(district.y + 123.2), 1.25, 1.5, .06, '#182d36', scene, destination);
+      });
       box(x, .5, z, 15, .6, 12, '#819194');
       box(x, h / 2 + .8, z, 11, h, 8, ['#5c7183', '#65868c', '#778099'][index % 3], scene, destination);
       box(x, h + 1.2, z, 11.7, .55, 8.7, '#b0bdc0');
@@ -163,7 +171,8 @@ export default function CityScene3D({ city, motion, speed, motionScope, homeFilt
       const walker = new THREE.Group();
       const head = new THREE.Mesh(personShape, material('#e7c7a7')); head.position.y = 1.35; walker.add(head);
       box(0, .7, 0, .45, .8, .35, home.color || '#77bad1', walker); scene.add(walker);
-      fleet.push({ id: home.id, index: home.index, car: car(home.color || '#79bad3'), walker, commute: curve(home.commutePoints), lunch: curve(home.lunchPoints) });
+      fleet.push({ id: home.id, index: home.index, car: car(home.color || '#79bad3'), walker,
+        commute: curve(home.commutePoints), returning: curve(home.returnPoints), lunch: curve(home.lunchPoints) });
     });
     city.cafes.forEach((cafe, index) => {
       const x = wx(cafe.x), z = wz(cafe.y);
@@ -243,9 +252,11 @@ export default function CityScene3D({ city, motion, speed, motionScope, homeFilt
         const visible = live.homeFilter === 'all' || resident?.homeState === live.homeFilter;
         const moving = live.motionScope === 'all' || resident?.homeState === 'working';
         const phase = moving ? ((elapsed + vehicle.index * 13.7) % (64 + vehicle.index % 7 * 4)) / (64 + vehicle.index % 7 * 4) : 0;
-        const commute = phase < .68 ? dayProgress(phase, .08, .24) : 1 - dayProgress(phase, .68, .88);
-        vehicle.car.visible = visible; positionTraveler(vehicle.car, vehicle.commute, commute, phase >= .68);
-        vehicle.walker.visible = visible && moving && phase >= .36 && phase <= .65;
+        const journey = cityJourney(phase);
+        const commute = journey.returning ? dayProgress(phase, .68, .88) : dayProgress(phase, .08, .24);
+        vehicle.car.visible = visible && journey.carVisible;
+        positionTraveler(vehicle.car, journey.returning ? vehicle.returning : vehicle.commute, commute);
+        vehicle.walker.visible = visible && moving && journey.walkerVisible;
         const lunch = phase < .55 ? dayProgress(phase, .36, .46) : 1 - dayProgress(phase, .55, .65);
         positionTraveler(vehicle.walker, vehicle.lunch, lunch, phase >= .55);
       });
@@ -255,6 +266,7 @@ export default function CityScene3D({ city, motion, speed, motionScope, homeFilt
       renderer.domElement.dataset.motionTime = elapsed.toFixed(2);
       renderer.domElement.dataset.homes = String(homes.length);
       renderer.domElement.dataset.visibleHomes = String(homes.filter(home => home.group.visible).length);
+      renderer.domElement.dataset.parkedCars = String(fleet.filter(vehicle => !vehicle.car.visible && (live.homeFilter === 'all' || live.homes.get(vehicle.id)?.homeState === live.homeFilter)).length);
       renderer.domElement.dataset.framedHomes = String(homes.filter(home => home.group.visible && home.corners.every(point => visibleFrustum.containsPoint(point))).length);
       renderer.domElement.dataset.rendered = 'true';
     };
