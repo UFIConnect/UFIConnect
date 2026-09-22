@@ -7,7 +7,7 @@ import { SOURCE_META } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { orderNewestFeedCohorts } from '../utils/feedOrdering';
-import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, useGlobalMuted, SoundIcon } from '../components/videoMedia';
+import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, youTubeEmbedUrl, HlsVideoPlayer, useGlobalMuted, SoundIcon } from '../components/videoMedia';
 
 function timeAgo(iso) {
   if (!iso) return '';
@@ -88,9 +88,11 @@ function GuestVideoPlayer({ post, active, muted }) {
         {active ? (
           <iframe
             key={muted ? 'muted' : 'unmuted'}
-            src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=${muted ? 1 : 0}&playsinline=1&controls=0&modestbranding=1&rel=0`}
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', pointerEvents: 'none' }}
-            allow="autoplay; encrypted-media"
+            src={youTubeEmbedUrl(youtubeId, { autoplay: 1, mute: muted ? 1 : 0 })}
+            referrerPolicy="strict-origin-when-cross-origin"
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', pointerEvents: 'auto' }}
+            allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+            allowFullScreen
             title={post.title}
           />
         ) : (

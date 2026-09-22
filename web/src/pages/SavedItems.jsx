@@ -15,6 +15,7 @@ export default function SavedItems() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
+  const [contentHidden, setContentHidden] = useState(false);
   const generation = useRef(0);
   const busy = useRef(false);
 
@@ -43,6 +44,7 @@ export default function SavedItems() {
     const request = ++generation.current;
     busy.current = false;
     setPosts([]);
+    setContentHidden(false);
     setHasMore(false);
     if (['posts', 'jobs'].includes(kind)) load(0, request);
     return () => { generation.current++; };
@@ -52,12 +54,15 @@ export default function SavedItems() {
   const jobs = savedJobs.filter(job => ['saved', 'applied'].includes(job.status));
   const count = kind === 'jobs' ? jobs.length : posts.length;
   return <Layout><main className="saved-page">
-    <h1>Saved {kind}</h1>
+    <h1>Saved</h1>
     <p>{kind === 'jobs' ? 'Keep opportunities and applications in one place.' : 'Return to the posts you want to keep.'}</p>
     <nav className="profile-content-tabs" aria-label="Saved pages">
-      <Link to="/saved/posts" aria-current={kind === 'posts' ? 'page' : undefined}>Saved posts</Link>
-      <Link to="/saved/jobs" aria-current={kind === 'jobs' ? 'page' : undefined}>Saved jobs</Link>
+      <Link to="/saved/posts" aria-current={kind === 'posts' ? 'page' : undefined}>Posts</Link>
+      <Link to="/saved/jobs" aria-current={kind === 'jobs' ? 'page' : undefined}>Jobs</Link>
     </nav>
+    <button type="button" className="btn btn-ghost btn-sm saved-content-toggle" aria-expanded={!contentHidden} aria-controls="saved-page-content" onClick={() => setContentHidden(hidden => !hidden)}>{contentHidden ? 'Show' : 'Hide'} saved {kind}</button>
+    {contentHidden && <p className="saved-content-hidden">Saved {kind} are hidden.</p>}
+    <section id="saved-page-content" aria-label={`Saved ${kind}`} hidden={contentHidden}>
     {error && <div className="card profile-saved-state" role="alert">{error}<button className="btn btn-ghost" onClick={() => load(posts.length || 0)}>Try again</button></div>}
     {loading ? <div className="profile-saved-state" role="status">Loading saved {kind}…</div> : <>
       {count > 0 ? <div className="profile-saved-list">
@@ -65,5 +70,6 @@ export default function SavedItems() {
       </div> : !error && <div className="card profile-saved-state"><strong>No saved {kind} yet</strong><p>Use Save on a {kind === 'jobs' ? 'job listing' : 'post'} to keep it here.</p><Link className="btn btn-primary" to={kind === 'jobs' ? '/opportunities' : '/'}>Browse {kind}</Link></div>}
       {kind === 'posts' && hasMore && <button className="btn btn-ghost profile-saved-load-more" disabled={loadingMore} onClick={() => load(posts.length)}>{loadingMore ? 'Loading…' : 'Load more saved posts'}</button>}
     </>}
+    </section>
   </main></Layout>;
 }

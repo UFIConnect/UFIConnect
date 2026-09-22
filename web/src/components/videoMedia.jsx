@@ -220,17 +220,21 @@ export function deriveBlueskyPlaylistUrl(thumbnailUrl) {
 // each re-fetching independently; failures are cached too (as null) so a
 // broken/private video doesn't get re-requested on every render.
 const vimeoThumbnailCache = new Map();
-export async function fetchVimeoThumbnail(vimeoId) {
+export async function fetchVimeoMetadata(vimeoId) {
   if (!vimeoId) return null;
   if (vimeoThumbnailCache.has(vimeoId)) return vimeoThumbnailCache.get(vimeoId);
   const promise = fetch(`https://vimeo.com/api/oembed.json?url=${encodeURIComponent(`https://vimeo.com/${vimeoId}`)}`)
     .then(r => r.ok ? r.json() : null)
-    .then(data => data?.thumbnail_url || null)
+    .then(data => data ? { thumbnailUrl: data.thumbnail_url || null, durationSeconds: Number(data.duration) || null } : null)
     .catch(() => null);
   vimeoThumbnailCache.set(vimeoId, promise);
   const result = await promise;
   vimeoThumbnailCache.set(vimeoId, result);
   return result;
+}
+
+export async function fetchVimeoThumbnail(vimeoId) {
+  return (await fetchVimeoMetadata(vimeoId))?.thumbnailUrl || null;
 }
 
 // Reddit/Mastodon (and any other source) can store a direct, already-playable
@@ -246,6 +250,29 @@ export function isDirectVideoUrl(url) {
 // IFrame Player API (window.YT.Player), which needs its script loaded once
 // and its "API ready" callback awaited before any player can be constructed.
 let youtubeApiPromise = null;
+// Set identity and referrer policy before the iframe's first navigation.
+// YouTube error 153 means that the embed did not identify its real client.
+export function youTubeEmbedUrl(videoId, playerVars = {}) {
+  if (!/^[\w-]{11}$/.test(String(videoId || ''))) return '';
+  const params = new URLSearchParams({
+    playsinline: '1', rel: '0', ...playerVars,
+    enablejsapi: '1', controls: '1', origin: window.location.origin,
+  });
+  return `https://www.youtube.com/embed/${videoId}?${params}`;
+}
+
+export function createYouTubePlayerFrame(host, videoId, playerVars = {}, title = 'YouTube video') {
+  const frame = document.createElement('iframe');
+  frame.referrerPolicy = 'strict-origin-when-cross-origin';
+  frame.title = title || 'YouTube video';
+  frame.allow = 'autoplay; encrypted-media; fullscreen; picture-in-picture';
+  frame.allowFullscreen = true;
+  frame.style.cssText = 'width:100%;height:100%;border:0;display:block;pointer-events:auto';
+  frame.src = youTubeEmbedUrl(videoId, playerVars);
+  host.replaceChildren(frame);
+  return frame;
+}
+
 export function loadYouTubeIframeApi() {
   if (youtubeApiPromise) return youtubeApiPromise;
   youtubeApiPromise = new Promise((resolve) => {

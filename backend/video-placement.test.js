@@ -7,6 +7,8 @@ const {
   isVideoSurfacePost,
   isRegularFeedSurfacePost,
   continuousVideoPageMeta,
+  isMusicVideoPost,
+  normalizeVideoDurationSeconds,
 } = require('./video-placement');
 
 function youtubePost(overrides = {}) {
@@ -18,6 +20,19 @@ function youtubePost(overrides = {}) {
     ...overrides,
   };
 }
+
+test('Videos and Music reject every known duration below five seconds but keep the boundary and unknown live streams', () => {
+  for (const seconds of [0.2, 1, 4, 4.99]) {
+    assert.equal(isVideoSurfacePost(youtubePost({ videoDurationSeconds: seconds })), false);
+    assert.equal(isMusicVideoPost(youtubePost({ videoDurationSeconds: seconds, title: 'Official song' })), false);
+    assert.ok(normalizeVideoDurationSeconds(seconds) < 5, 'storage normalization cannot round a short clip up to five');
+  }
+  for (const seconds of [5, 6, null, undefined, 0]) {
+    assert.equal(isVideoSurfacePost(youtubePost({ videoDurationSeconds: seconds })), true);
+    assert.equal(isMusicVideoPost(youtubePost({ videoDurationSeconds: seconds, title: 'Official song' })), true);
+  }
+  assert.equal(isVideoSurfacePost(youtubePost({ video_duration_seconds: 4 })), false);
+});
 
 test('keeps clips through 15 minutes in Videos and long-form video in Home', () => {
   const clip = youtubePost({ videoDurationSeconds: VIDEO_FEED_MAX_DURATION_SECONDS });

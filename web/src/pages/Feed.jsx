@@ -8,7 +8,7 @@ import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
 import { markApiOriginFailure, resolveApiBaseUrl } from '../api/apiOrigin';
-import { extractYouTubeId, extractVimeoId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, InlineAutoplayVideo, userWantsSound, useGlobalMuted, usePointerPlaybackGate, useSoloVideoPlayback, SoundIcon } from '../components/videoMedia';
+import { extractYouTubeId, extractVimeoId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, createYouTubePlayerFrame, youTubeEmbedUrl, InlineAutoplayVideo, userWantsSound, useGlobalMuted, usePointerPlaybackGate, useSoloVideoPlayback, SoundIcon } from '../components/videoMedia';
 import {
   SOURCE_META,
   HOME_FEED_SOURCE_IDS,
@@ -19,6 +19,8 @@ import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import HomeFeedTools from '../components/HomeFeedTools';
 import TopicFilterControl, { TopicChoices } from '../components/TopicFilterControl';
 import TravelDestinationPicker from '../components/TravelDestinationPicker';
+import DiscoveryCategoryBar from '../components/DiscoveryCategoryBar';
+import { DISCOVERY_CATEGORIES, discoveryPostContext, discoveryQuery } from '../components/discoveryCategories';
 import { TIERS } from '../components/PricingModal';
 import ImageLightbox from '../components/ImageLightbox';
 import { useEngagementTracking } from '../hooks/useEngagementTracking';
@@ -106,7 +108,7 @@ function FeedSourceOption({ tab, active, onSelect, compact = false, favorite = f
       style={{ '--feed-source-color': color }}
       onClick={onSelect}
     >
-      <SourceMark source={tab.key} label={tab.icon} size={compact ? 24 : 18} active={active} compact={compact} />
+      <SourceMark source={tab.key} label={tab.icon} size={18} active={active} compact={compact} />
       <span className="feed-source-option-label">{tab.label}</span>
       {compact && favorite && <span className="feed-source-compact-favorite" aria-hidden="true">★</span>}
     </button>
@@ -948,13 +950,8 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
     ytInitializedRef.current = true;
 
     host.replaceChildren();
-    const mount = document.createElement('div');
-    mount.style.width = '100%';
-    mount.style.height = '100%';
-    mount.style.position = 'absolute';
-    mount.style.inset = '0';
-    mount.style.pointerEvents = 'none';
-    host.appendChild(mount);
+    const playerVars = { autoplay: 1, mute: 1, playsinline: 1, controls: 1, rel: 0, origin: window.location.origin };
+    const mount = createYouTubePlayerFrame(host, embedId, playerVars, title || 'YouTube video');
 
     const isCurrent = () => ytLifecycleRef.current === lifecycle;
     clearTimeout(ytReadyTimeoutRef.current);
@@ -968,7 +965,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
       if (!isCurrent() || !host.isConnected) return;
       const player = new YT.Player(mount, {
         videoId: embedId,
-        playerVars: { autoplay: 1, mute: 1, playsinline: 1, controls: 0, modestbranding: 1, rel: 0, origin: window.location.origin },
+        playerVars,
         events: {
           onReady: (e) => {
             if (!isCurrent()) {
@@ -982,8 +979,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
             setPlayerFailed(false);
             try {
               const iframe = e.target.getIframe();
-              iframe.style.pointerEvents = 'none';
-              iframe.tabIndex = -1;
+              iframe.referrerPolicy = 'strict-origin-when-cross-origin';
             } catch {}
             try {
               if (startUnmuted) e.target.unMute(); else e.target.mute();
@@ -1053,22 +1049,17 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
           covers it as a plain absolutely-positioned overlay instead,
           which — being a normal React-owned element nothing external ever
           takes ownership of — is always safe to conditionally render. */}
-      {/* pointerEvents: 'none' — controls: 0 above means there's no native
-          YouTube chrome to click inside this iframe anyway (mute/maximize
-          are the separate custom buttons below, unaffected since they're
-          siblings, not descendants, of this div), so nothing is lost by
-          letting scroll/touch pass through to the feed underneath instead
-          of the iframe's own document swallowing it — same fix
-          VideoFeedView and ImageLightbox's own YouTube mounts already use. */}
       <div
         ref={ytHostRef}
-        style={{ position: 'relative', width: '100%', aspectRatio: '16/9', display: 'block', maxHeight, minHeight, pointerEvents: 'none', visibility: playerFailed ? 'hidden' : 'visible' }}
+        style={{ position: 'relative', width: '100%', aspectRatio: '16/9', display: 'block', maxHeight, minHeight, visibility: playerFailed ? 'hidden' : 'visible' }}
       />
       {playerFailed && effectivelyPlaying && !onPlaybackStatus && (
         <iframe
-          src={`https://www.youtube.com/embed/${embedId}?autoplay=1&mute=${userWantsSound() ? 0 : 1}&playsinline=1&controls=0&modestbranding=1&rel=0`}
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', display: 'block', pointerEvents: 'none' }}
+          src={youTubeEmbedUrl(embedId, { autoplay: 1, mute: userWantsSound() ? 0 : 1 })}
+          referrerPolicy="strict-origin-when-cross-origin"
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', display: 'block' }}
           allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+          allowFullScreen
           title={title || 'YouTube video'}
         />
       )}
@@ -1117,7 +1108,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
 // Travel has a small, persistent live-camera rail above its discoverable
 // stories. Only the current camera is mounted, so switching the rail never
 // turns into a row of simultaneously decoding YouTube players on mobile.
-function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, locationLabel = '', onLocationSelect, disabled, status, onRetry }) {
+function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, location, locationLabel = '', onLocationSelect, disabled, status, onRetry }) {
   const [activeId, setActiveId] = useState(null);
   const [failedStreamId, setFailedStreamId] = useState(null);
   const [inView, setInView] = useState(false);
@@ -1162,11 +1153,15 @@ function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, locationLabel = 
   }, []);
 
   if (!active) return (
-    <section className="travel-camera-empty" aria-label="Live travel cameras">
+    <section className="travel-live-loop" aria-label="Live travel cameras">
+      <div className="travel-live-loop-header"><div className="travel-live-loop-title">Live travel</div></div>
+      <TravelDestinationPicker location={location} disabled={disabled} onSelect={onLocationSelect} />
+      <div className="travel-camera-empty">
       <span role="status">{status?.camerasChecking ? 'Checking live cameras...' : status?.cameraStatus === 'degraded' || status?.cameraStatus === 'error'
         ? 'Live camera checks are temporarily unavailable.' : 'No verified live cameras are available right now.'}</span>
       <button type="button" className="btn btn-ghost btn-sm" onClick={onRetry} disabled={disabled}
         aria-label="Refresh live cameras" title="Refresh live cameras"><RotateCw size={16} /></button>
+      </div>
     </section>
   );
 
@@ -1196,6 +1191,7 @@ function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, locationLabel = 
         <span className="travel-live-loop-status">{failedStreamId === active.id ? 'Playback unavailable' : <><span aria-hidden="true" />Live now</>}</span>
       </div>
 
+      <TravelDestinationPicker location={location} disabled={disabled} onSelect={onLocationSelect} />
       <div className="travel-live-loop-stage">
         {embedId ? (
           <YouTubeEmbedBlock
@@ -1225,6 +1221,7 @@ function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, locationLabel = 
             {active.liveStreamChannel && <p>{active.liveStreamChannel}</p>}
           </div>
           <div className="travel-live-loop-actions">
+            {onMediaOpen && <button type="button" className="travel-live-loop-action" onClick={() => onMediaOpen(active)}>Expand video</button>}
             <Link to={`/p/${encodeURIComponent(active.id)}`} className="travel-live-loop-action">Discuss</Link>
             {active.sourceUrl && (
               <a href={active.sourceUrl} target="_blank" rel="noopener noreferrer" className="travel-live-loop-action travel-live-loop-action--primary">
@@ -1241,7 +1238,6 @@ function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, locationLabel = 
             <button type="button" disabled={disabled} onClick={() => moveCamera(1)} aria-label="Next live camera" title="Next live camera"><ArrowRight size={16} /></button>
           </div>
         )}
-        {onMediaOpen && <MaximizeButton onClick={() => onMediaOpen(active)} />}
       </div>
 
       {liveFeeds.length > 1 && (
@@ -2291,7 +2287,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       setFeedError(null);
     }
     activeFilters.sort = activeMode === 'groups' && publicGroupsFeed ? 'popular' : 'newest';
-    const activeSearch = typeof q === 'string' ? q.trim() : searchRef.current.trim();
+    const activeSearch = discoveryQuery(activeMode, activeFilters, typeof q === 'string' ? q : searchRef.current);
     const activeSourceTabs = Array.isArray(tabs) ? tabs : activeTabsRef.current;
     if (EMBEDDED_HOME_MODES.has(activeMode)) {
       // UFI keeps its existing focused API and interaction component, but
@@ -2848,7 +2844,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         ? (activeFilters.sources?.length ? activeFilters.sources : tabs)
 
         : [];
-      const q = searchRef.current.trim();
+      const q = discoveryQuery(viewModeRef.current, activeFilters, searchRef.current);
       const cursorEligible = isCursorEligible(viewModeRef.current, activeFilters.sort, q);
       // Home has always used a cursor. Travel/Restaurants opt into it only
       // after page one proves the deployed API supports their new cursor;
@@ -2879,6 +2875,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       }
       if (q) params.set('q', q);
       if (activeFilters.timeRange && activeFilters.timeRange !== 'all') params.set('timeRange', activeFilters.timeRange);
+      if (activeFilters.topics?.length) params.set('topics', activeFilters.topics.join(','));
       if (requestedSources.length === 1) params.set('source', requestedSources[0]);
       else if (requestedSources.length > 1) params.set('sources', requestedSources.join(','));
       if (viewModeRef.current === 'groups' && publicGroupsFeed) params.set('groupScope', 'public');
@@ -3343,6 +3340,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const usesSourceControls = ['feed', 'following'].includes(viewMode);
   const showsAdvancedFilters = !usesSourceControls && viewMode !== 'groups';
   const isLocationFeed = ['countries', 'restaurants', 'bars'].includes(viewMode);
+  const postContext = isLocationFeed ? discoveryPostContext(viewMode, [...contentPosts, ...travelLiveFeeds]) : null;
   const travelLocationLabel = locationScopeLabel(normalizeLocationFilters(profile?.roleSettings?.feedLocation));
   const activeFilterCount = (usesSourceControls ? filters.sources.length : 0) + (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
   const visibleFilterCount = (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
@@ -3413,7 +3411,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       {showsAdvancedFilters && <section className={`feed-specialized-toolbar${isLocationFeed ? ' feed-specialized-toolbar--location' : ''}`}>
         {isLocationFeed && (
           <div className="feed-location-heading">
-            <strong>{viewMode === 'countries' ? 'Travel location' : viewMode === 'bars' ? 'Bar location' : 'Restaurant location'}</strong>
+            <strong>{viewMode === 'countries' ? 'Travel location' : viewMode === 'bars' ? 'Bars and clubs location' : 'Restaurant location'}</strong>
             <span>{travelLocationLabel || 'Worldwide'}</span>
           </div>
         )}
@@ -3452,6 +3450,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             )}
           </div>}
           {isLocationFeed && (
+            <>
             <TopicFilterControl
               topics={filters.topics}
               options={ALL_INTERESTS}
@@ -3464,20 +3463,25 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
               buttonRef={topicFilterBtnRef}
               panelRef={topicPanelRef}
             />
+            {['countries', 'restaurants'].includes(viewMode) && <Link
+              to={`/command-center?tab=crosspost&category=${viewMode}`}
+              state={{ discoveryPost: postContext }}
+              className="feed-toolbar-control feed-topic-filter-trigger feed-category-post">
+              Post to {DISCOVERY_CATEGORIES[viewMode].label}
+            </Link>}
+            </>
           )}
         </div>
 
         {isLocationFeed && (
           <>
-            {viewMode === 'countries' && <TravelDestinationPicker location={locationFilters} disabled={locationSaving}
-              onSelect={selectTravelLiveLocation} />}
             <form className="feed-location-form" onSubmit={applyLocationFilters}>
               <label className="feed-location-field">
                 <span>Country</span>
                 <input
                   type="search"
                   className="form-input"
-                  aria-label={`${viewMode === 'countries' ? 'Travel' : 'Restaurant'} country`}
+                  aria-label={`${viewMode === 'countries' ? 'Travel' : viewMode === 'bars' ? 'Bars and clubs' : 'Restaurant'} country`}
                   disabled={locationSaving}
                   autoComplete="country-name"
                   placeholder="Search country"
@@ -3495,7 +3499,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                 <input
                   type="search"
                   className="form-input"
-                  aria-label={`${viewMode === 'countries' ? 'Travel' : 'Restaurant'} city`}
+                  aria-label={`${viewMode === 'countries' ? 'Travel' : viewMode === 'bars' ? 'Bars and clubs' : 'Restaurant'} city`}
                   disabled={locationSaving}
                   autoComplete="address-level2"
                   placeholder="Search city"
@@ -3519,6 +3523,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                 )}
               </div>
             </form>
+            {['restaurants', 'bars'].includes(viewMode) && <DiscoveryCategoryBar mode={viewMode} filters={filters} onChange={applyFilters} />}
             {locationMessage && <div className="feed-location-message" role="status">{locationMessage}</div>}
           </>
         )}
@@ -3650,6 +3655,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           <Link to="/search?tab=groups&create=1" className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action group-create-button">
             Create a group
           </Link>
+          <Link to="/groups/post" className="btn btn-ghost btn-sm feed-toolbar-control group-post-button">Post to your group</Link>
           <TopicFilterControl
             topics={filters.topics}
             options={ALL_INTERESTS}
@@ -3664,6 +3670,21 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           />
         </div>
       )}
+
+      {viewMode === 'countries' && <>
+        <TravelLiveLoop
+          feeds={travelLiveFeeds}
+          onMediaOpen={post => setMediaLightboxPostId(post.id)}
+          mediaOpenId={mediaLightboxPostId}
+          location={locationFilters}
+          locationLabel={travelLocationLabel}
+          onLocationSelect={selectTravelLiveLocation}
+          disabled={locationSaving || refreshing}
+          status={travelStatus}
+          onRetry={() => loadFeed(true, activeTabsRef.current, { replace: true, preserveScroll: true, bust: false })}
+        />
+        <DiscoveryCategoryBar mode={viewMode} filters={filters} onChange={applyFilters} />
+      </>}
 
       {visibleFilterCount > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 12, fontSize: '.78rem' }}>
@@ -3788,7 +3809,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           <div className="empty-icon">
             {activeTabs.length === 1
               ? <SourceMark source={activeTabs[0]} label={SOURCE_META[activeTabs[0]]?.icon} size={24} />
-              : (search ? 'Search' : viewMode === 'following' ? 'Following' : viewMode === 'groups' ? 'Groups' : viewMode === 'countries' ? 'Travel' : viewMode === 'restaurants' ? 'Restaurants' : viewMode === 'bars' ? 'Bars' : 'Home')}
+              : (search ? 'Search' : viewMode === 'following' ? 'Following' : viewMode === 'groups' ? 'Groups' : viewMode === 'countries' ? 'Travel' : viewMode === 'restaurants' ? 'Restaurants' : viewMode === 'bars' ? 'Bars and clubs' : 'Home')}
           </div>
           <div className="empty-title">
             {search ? `No posts match "${search}"` : viewMode === 'following' ? 'No posts from people you follow yet' : viewMode === 'groups' ? 'No group posts yet' : viewMode === 'countries' ? 'No travel discoveries are available yet' : viewMode === 'bars' ? 'No bar discoveries are available yet' : viewMode === 'restaurants' ? 'No restaurant openings are available yet' : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts yet` : 'Home is empty'}
@@ -3849,7 +3870,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             ) : ['countries', 'restaurants', 'bars'].includes(viewMode) ? (
               <>
                 <p style={{ marginBottom: 12 }}>
-                  {locationMessage || (viewMode === 'bars' ? 'Explore bar openings and local pubs. Choose a city or country above to narrow your discoveries.' : viewMode === 'restaurants'
+                  {locationMessage || (viewMode === 'bars' ? 'Explore bars, clubs, and local pubs. Choose a city or country above to narrow your discoveries.' : viewMode === 'restaurants'
                     ? 'This feed searches for recent restaurant openings worldwide. Add a country or city above to bring matching reports closer to the top.'
                     : travelLocationLabel
                       ? `Travel is showing live views, guides, and current stories for ${travelLocationLabel}, then a wider worldwide scroll.`
@@ -3886,19 +3907,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         </div>
       ) : (
         <>
-          {viewMode === 'countries' && (
-            <TravelLiveLoop
-              feeds={travelLiveFeeds}
-              onMediaOpen={post => setMediaLightboxPostId(post.id)}
-              mediaOpenId={mediaLightboxPostId}
-              locationLabel={travelLocationLabel}
-              onLocationSelect={selectTravelLiveLocation}
-              disabled={locationSaving || refreshing}
-              status={travelStatus}
-              onRetry={() => loadFeed(true, activeTabsRef.current, { replace: true, preserveScroll: true, bust: false })}
-            />
-          )}
-
           {viewMode === 'countries' && contentPosts.length > 0 && (
             <div className="travel-content-heading">
               <span>{travelLocationLabel ? `Travel picks: ${travelLocationLabel} and worldwide` : 'Travel picks'}</span>
@@ -4014,7 +4022,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             {[
               { key: 'countries', label: 'Travel', Icon: Plane },
               { key: 'restaurants', label: 'Restaurants', Icon: Utensils },
-              { key: 'bars', label: 'Bars', Icon: Martini },
+              { key: 'bars', label: 'Bars and clubs', Icon: Martini },
             ].map(({ key, label, Icon }) => (
               <button key={key} type="button" className={`home-feed-rail-tab home-feed-rail-tab--icon${viewMode === key ? ' active' : ''}`} onClick={() => activateHomeView(key)}><Icon size={16} strokeWidth={2.2} aria-hidden="true" />{label}</button>
             ))}

@@ -1,0 +1,29 @@
+.discovery-category-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 4px 0 10px;
+  margin: 4px 0 10px;
+  scrollbar-width: thin;
+}
+.discovery-category-bar .feed-toolbar-control { flex: 0 0 auto; }
+.feed-specialized-toolbar--location .discovery-category-bar { grid-column: 1 / -1; }
+.feed-specialized-toolbar--location .feed-specialized-actions { position: relative; }
+.feed-specialized-toolbar--location .feed-specialized-actions .feed-topic-filter { position: static; }
+.feed-category-post { display: inline-flex; align-items: center; text-decoration: none; }
+.travel-live-loop .travel-destination-picker { margin: 0 16px 14px; }
+.travel-live-loop .travel-camera-empty { margin: 0 16px 16px; }
+.travel-live-loop .travel-live-loop-navigation { position: static; display: flex; justify-content: center; width: fit-content; margin: 0 auto 12px; }
+.travel-live-loop .travel-live-loop-actions { flex-wrap: wrap; }
+.travel-live-loop button.travel-live-loop-action { background: transparent; cursor: pointer; }
+.discovery-post-context { display: grid; gap: 8px; margin: 16px 0; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+.discovery-post-context p { margin: 0; color: var(--muted); font-size: .8rem; }
+.discovery-post-context-links { display: flex; flex-wrap: wrap; gap: 8px; }
+@media (max-width: 600px) {
+  .feed-specialized-toolbar--location .feed-location-heading,
+  .feed-specialized-toolbar--location .feed-specialized-actions { grid-column: 1 / -1; justify-self: stretch; }
+  .feed-specialized-toolbar--location .feed-category-post { margin-left: auto; }
+}

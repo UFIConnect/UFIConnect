@@ -864,6 +864,7 @@ export default function SearchExperience({ initialTab = null } = {}) {
                 >
                   Create a group
                 </button>
+                <Link className="btn btn-ghost btn-sm feed-toolbar-control" to="/groups/post">Post to your group</Link>
               </div>
               <div className="search-filter-line">
                 <span className="search-filter-label">Group category</span>

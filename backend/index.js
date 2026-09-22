@@ -40,6 +40,7 @@ const { PUBLIC_GROUP_LEGACY_SOURCES, inferPublicGroupId } = require('./group-fee
 const { GENERAL_UFI_GROUP_ID, isGeneralUfiFollowingPost, isFollowingSourceAllowed } = require('./following-scope');
 const { canonicalizePreferenceTopics, matchesPreferenceTopic } = require('./feed-preferences');
 const {
+  VIDEO_FEED_MIN_DURATION_SECONDS,
   VIDEO_FEED_MAX_DURATION_SECONDS,
   normalizeVideoDurationSeconds,
   isPlayableVideoPost,
@@ -11650,7 +11651,7 @@ async function fetchLocalRestaurantPosts(location, kind = 'restaurants') {
   if (!location?.city) return [];
   const point = await geocodeLocation(location);
   if (!point) return [];
-  const amenities = kind === 'bars' ? 'bar|pub|biergarten' : 'restaurant|cafe|fast_food';
+  const amenities = kind === 'bars' ? 'bar|pub|biergarten|nightclub' : 'restaurant|cafe|fast_food';
   const query = `[out:json][timeout:15];nwr[\"amenity\"~\"^(${amenities})$\"](around:8000,${point.lat},${point.lon});out center meta 80;`;
   const data = await withLocationProviderSlot(() => fetchLocationJSON(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`));
   const scope = locationScopeLabel(location);
@@ -11668,7 +11669,7 @@ async function fetchLocalRestaurantPosts(location, kind = 'restaurants') {
       return {
         id: `osm:${element.type}:${element.id}`,
         source: kind,
-        sourceLabel: kind === 'bars' ? 'Bars' : 'Restaurants',
+        sourceLabel: kind === 'bars' ? 'Bars and clubs' : 'Restaurants',
         sourceUrl: `https://www.openstreetmap.org/${element.type}/${element.id}`,
         title: tags.name || tags.brand,
         content: details || `Local ${kind === 'bars' ? 'bar' : 'restaurant'} in ${scope}.`,
@@ -11684,7 +11685,7 @@ async function fetchLocalRestaurantPosts(location, kind = 'restaurants') {
         matchedByLocation: true,
         locationMatch: 'local',
         locationMatchLabel: `Updated near ${location.city}`,
-        group: { id: `local_${kind}`, name: kind === 'bars' ? 'Local Bars' : 'Local Restaurants', category: 'Community', externalUrl: `https://www.openstreetmap.org/#map=14/${point.lat}/${point.lon}` },
+        group: { id: `local_${kind}`, name: kind === 'bars' ? 'Local Bars and clubs' : 'Local Restaurants', category: 'Community', externalUrl: `https://www.openstreetmap.org/#map=14/${point.lat}/${point.lon}` },
       };
     })
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -12031,11 +12032,11 @@ async function getBarsDiscoveryFeed(location) {
     for (let offset = 0; offset < editions.length; offset += 2) {
       const results = await Promise.allSettled(editions.slice(offset, offset + 2).map(async edition => {
         const place = local ? [location.city, location.countryName].filter(Boolean).join(' ') : '';
-        const query = '(' + place + ') ("new bar" OR "cocktail bar" OR "pub opening" OR "bar opens" OR "beer garden") when:30d';
+        const query = '(' + place + ') ("new bar" OR "cocktail bar" OR "pub opening" OR "bar opens" OR "beer garden" OR "nightclub" OR "club opening" OR "rooftop bar" OR "live music venue") when:30d';
         const xml = await withLocationProviderSlot(() => fetchText(restaurantOpeningNewsUrl({ ...edition, query: query.replace('() ', '') })));
-        return parseRSSItems(xml).filter(item => item.title && item.link && /\b(bar|pub|cocktail|beer garden|brewery)\b/i.test(item.title + ' ' + (item.desc || ''))).map(item => {
+        return parseRSSItems(xml).filter(item => item.title && item.link && /\b(bars?|pubs?|cocktails?|beer garden|brewery|nightclubs?|night club|club opening|dance club|live music venue)\b/i.test(item.title + ' ' + (item.desc || ''))).map(item => {
           const post = restaurantOpeningNewsPost(item, edition);
-          return { ...post, id: post.id.replace('restaurant_opening_', 'bar_opening_'), source: 'bars', sourceLabel: 'Bars', topic: 'Wine & Spirits', group: { ...post.group, id: 'bar_discovery', name: 'Bars and Pubs' } };
+          return { ...post, id: post.id.replace('restaurant_opening_', 'bar_opening_'), source: 'bars', sourceLabel: 'Bars and clubs', topic: 'Wine & Spirits', group: { ...post.group, id: 'bar_discovery', name: 'Bars and clubs' } };
         });
       }));
       results.forEach(result => { if (result.status === 'fulfilled') collected.push(...result.value); });
@@ -19347,7 +19348,7 @@ function cursorTsOf(cur) {
 // per-source cursor bookkeeping as everything else, rather than being
 // glued on before/after as a separate step (which would double-trim and
 // desync the cursor from what was actually shown).
-async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit = 20, mediaType = null, videoDurationMaxSeconds = null, excludeVideoDurationAtOrBelow = null, topics = null, topicBypassSources = [], timeRange = null, extraLists = {}, seenIds = null, freshOnly = false, maxPostsPerSource = null, _emptySkips = 0 }) {
+async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit = 20, mediaType = null, videoDurationMinSeconds = null, videoDurationMaxSeconds = null, excludeVideoDurationAtOrBelow = null, topics = null, topicBypassSources = [], timeRange = null, extraLists = {}, seenIds = null, freshOnly = false, maxPostsPerSource = null, _emptySkips = 0 }) {
   // Was a flat Math.max(limit, 20) per source regardless of how many
   // sources were asked for — harmless for a 1-3 source filter (each one
   // genuinely needs to supply most of the page), but the unfiltered case
@@ -19444,6 +19445,10 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
       if (mediaType) {
         params.push(mediaType);
         clauses.push(`fp.media_type = $${params.length}`);
+      }
+      if (Number.isFinite(videoDurationMinSeconds)) {
+        params.push(Math.ceil(videoDurationMinSeconds));
+        clauses.push(`(fp.video_duration_seconds IS NULL OR fp.video_duration_seconds = 0 OR fp.video_duration_seconds >= $${params.length})`);
       }
       if (Number.isFinite(videoDurationMaxSeconds)) {
         params.push(Math.floor(videoDurationMaxSeconds));
@@ -19665,7 +19670,7 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
 
   if (!page.length && merged.length && !isLiveMode && _emptySkips < 12) {
     return getCursorFeedPage({
-      userId, sources, cursorMap: nextCursor, limit, mediaType, videoDurationMaxSeconds, excludeVideoDurationAtOrBelow, topics,
+      userId, sources, cursorMap: nextCursor, limit, mediaType, videoDurationMinSeconds, videoDurationMaxSeconds, excludeVideoDurationAtOrBelow, topics,
       topicBypassSources, timeRange, extraLists, seenIds, freshOnly, maxPostsPerSource,
       _emptySkips: _emptySkips + 1,
     });
@@ -19692,7 +19697,7 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
 // — there's no skewed pool to correct because it was never built. Uses one
 // query with ROW_NUMBER() OVER (PARTITION BY source ...) rather than N
 // separate per-source queries, so it's still a single DB round-trip.
-async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', page = 1, perSourcePageSize = 4, source = null, mediaType = null, videoDurationMaxSeconds = null, equalize = true } = {}) {
+async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', page = 1, perSourcePageSize = 4, source = null, mediaType = null, videoDurationMinSeconds = null, videoDurationMaxSeconds = null, equalize = true } = {}) {
   if (!db.isConnected()) return { posts: [], perSourceCount: 0 };
   try {
     const clauses = [
@@ -19725,6 +19730,10 @@ async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', pa
     if (mediaType) {
       params.push(mediaType);
       clauses.push(`media_type = $${params.length}`);
+    }
+    if (Number.isFinite(videoDurationMinSeconds)) {
+      params.push(Math.ceil(videoDurationMinSeconds));
+      clauses.push(`(video_duration_seconds IS NULL OR video_duration_seconds = 0 OR video_duration_seconds >= $${params.length})`);
     }
     if (Number.isFinite(videoDurationMaxSeconds)) {
       params.push(Math.floor(videoDurationMaxSeconds));
@@ -23498,6 +23507,7 @@ async function fetchPlayableVideoPage(params, attempts = 8) {
       sources: activeSources,
       cursorMap,
       videoDurationMaxSeconds: params.music ? null : VIDEO_FEED_MAX_DURATION_SECONDS,
+      videoDurationMinSeconds: VIDEO_FEED_MIN_DURATION_SECONDS,
     });
     for (const post of result.posts) {
       if (!(params.music ? isMusicVideoPost(post) : isVideoSurfacePost(post)) || !post?.id || emitted.has(post.id)) continue;
@@ -23685,7 +23695,7 @@ async function handleVideoFeedRequest(req, res) {
       const balancedSource = sourcesParam.length > 1 ? sourcesParam : sourceFilter || AGGREGATE_FEED_SOURCES;
       const perSourcePageSize = Math.max(2, Math.ceil(feedLimit / 8));
       const { posts: balancedRaw } = await getBalancedFeedPosts({
-        sortMode: 'balanced', mediaType: 'video', videoDurationMaxSeconds: VIDEO_FEED_MAX_DURATION_SECONDS, source: balancedSource,
+        sortMode: 'balanced', mediaType: 'video', videoDurationMinSeconds: VIDEO_FEED_MIN_DURATION_SECONDS, videoDurationMaxSeconds: VIDEO_FEED_MAX_DURATION_SECONDS, source: balancedSource,
         timeRange: scopedVideoTimeRange || 'all', page: reqPage, perSourcePageSize,
       });
       const playable = applyPersonalTopicFilter(filterUnseen(balancedRaw.filter(isVideoSurfacePost), seenIds)
