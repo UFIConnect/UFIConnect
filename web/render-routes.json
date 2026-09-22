@@ -1,0 +1,367 @@
+[
+  {
+    "type": "rewrite",
+    "source": "/health",
+    "destination": "/health.json"
+  },
+  {
+    "type": "redirect",
+    "source": "/global-scroll",
+    "destination": "/global"
+  },
+  {
+    "type": "redirect",
+    "source": "/global-scroll/",
+    "destination": "/global"
+  },
+  {
+    "type": "redirect",
+    "source": "/hq",
+    "destination": "/command-center"
+  },
+  {
+    "type": "redirect",
+    "source": "/hq/",
+    "destination": "/command-center"
+  },
+  {
+    "type": "redirect",
+    "source": "/agents",
+    "destination": "/command-center"
+  },
+  {
+    "type": "redirect",
+    "source": "/agents/",
+    "destination": "/command-center"
+  },
+  {
+    "type": "rewrite",
+    "source": "/global",
+    "destination": "/global/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/global/",
+    "destination": "/global/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/register",
+    "destination": "/register/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/register/",
+    "destination": "/register/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/login",
+    "destination": "/login/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/login/",
+    "destination": "/login/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/search",
+    "destination": "/search/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/search/",
+    "destination": "/search/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/privacy",
+    "destination": "/privacy/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/privacy/",
+    "destination": "/privacy/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/terms",
+    "destination": "/terms/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/terms/",
+    "destination": "/terms/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/child-safety",
+    "destination": "/child-safety/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/child-safety/",
+    "destination": "/child-safety/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/forgot-password",
+    "destination": "/forgot-password/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/forgot-password/",
+    "destination": "/forgot-password/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/reset-password",
+    "destination": "/reset-password/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/reset-password/",
+    "destination": "/reset-password/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/onboarding",
+    "destination": "/onboarding/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/onboarding/",
+    "destination": "/onboarding/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/videos",
+    "destination": "/videos/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/videos/",
+    "destination": "/videos/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/you",
+    "destination": "/you/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/you/",
+    "destination": "/you/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/music",
+    "destination": "/music/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/music/",
+    "destination": "/music/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/groups",
+    "destination": "/groups/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/groups/",
+    "destination": "/groups/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/groups/post",
+    "destination": "/groups/post/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/groups/post/",
+    "destination": "/groups/post/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/opportunities",
+    "destination": "/opportunities/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/opportunities/",
+    "destination": "/opportunities/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/resume-builder",
+    "destination": "/resume-builder/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/resume-builder/",
+    "destination": "/resume-builder/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/resume-builder/cover-letter/preview",
+    "destination": "/resume-builder/cover-letter/preview/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/resume-builder/cover-letter/preview/",
+    "destination": "/resume-builder/cover-letter/preview/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/messages",
+    "destination": "/messages/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/messages/",
+    "destination": "/messages/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/notifications",
+    "destination": "/notifications/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/notifications/",
+    "destination": "/notifications/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/profile",
+    "destination": "/profile/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/profile/",
+    "destination": "/profile/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/command-center",
+    "destination": "/command-center/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/command-center/",
+    "destination": "/command-center/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/connected-accounts",
+    "destination": "/connected-accounts/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/connected-accounts/",
+    "destination": "/connected-accounts/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/post",
+    "destination": "/post/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/post/",
+    "destination": "/post/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/settings",
+    "destination": "/settings/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/settings/",
+    "destination": "/settings/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/sources",
+    "destination": "/sources/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/sources/",
+    "destination": "/sources/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/saved/posts",
+    "destination": "/saved/posts/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/saved/posts/",
+    "destination": "/saved/posts/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/saved/jobs",
+    "destination": "/saved/jobs/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/saved/jobs/",
+    "destination": "/saved/jobs/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/groups/:id",
+    "destination": "/app.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/groups/:id/",
+    "destination": "/app.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/opportunities/:id",
+    "destination": "/app.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/opportunities/:id/",
+    "destination": "/app.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/messages/:userId",
+    "destination": "/app.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/messages/:userId/",
+    "destination": "/app.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/p/:id",
+    "destination": "/app.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/p/:id/",
+    "destination": "/app.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/u/:id",
+    "destination": "/app.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/u/:id/",
+    "destination": "/app.html"
+  }
+]

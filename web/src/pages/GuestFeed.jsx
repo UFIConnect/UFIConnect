@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import GuestShell from '../components/GuestShell';
+import PublicFooter from '../components/PublicFooter';
 import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
@@ -326,9 +327,16 @@ export default function GuestFeed() {
   return (
     <GuestShell>
       <Helmet>
-        <title>UFIconnect - Global Scroll</title>
+        <title>Global Feed | UFIconnect</title>
+        <meta name="description" content="Browse public posts and videos from across UFIconnect's supported sources. Explore the global feed before creating an account." />
+        <link rel="canonical" href="https://uficonnect.org/global" />
       </Helmet>
-      <div className="guest-feed-main">
+      <main className="guest-feed-main">
+        <section className="public-feed-intro" aria-labelledby="global-feed-title">
+          <h1 id="global-feed-title">Explore the global feed</h1>
+          <p>Browse public posts and videos from across UFIconnect's supported sources, without creating an account. Open a post to read more and see where it came from.</p>
+          <p><Link to="/register">Create an account</Link> to personalize your feed, follow communities, and join conversations. Already a member? <Link to="/login">Sign in</Link>.</p>
+        </section>
         <div className="guest-feed-banner">
           <div className="guest-feed-banner-actions" style={{ marginLeft: 'auto' }}>
             <button
@@ -353,7 +361,7 @@ export default function GuestFeed() {
         <style>{'@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }'}</style>
 
         {loading && (
-          <div style={{ textAlign: 'center', padding: 40 }}><span className="spinner spinner-primary" /></div>
+          <div role="status" style={{ textAlign: 'center', padding: 40 }}><span className="spinner spinner-primary" aria-hidden="true" /><span style={{ marginLeft: 8 }}>Loading public posts</span></div>
         )}
 
         {!loading && posts.map((p, i) => (
@@ -371,7 +379,7 @@ export default function GuestFeed() {
 
         {!loading && !posts.length && (
           <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)' }}>
-            Nothing to show right now. The feed is taking a dramatic pause.
+            No public posts are available right now. Use Refresh to try again.
           </div>
         )}
 
@@ -379,7 +387,8 @@ export default function GuestFeed() {
         {loadingMore && (
           <div style={{ textAlign: 'center', padding: 20 }}><span className="spinner spinner-primary" /></div>
         )}
-      </div>
+      </main>
+      <PublicFooter />
     </GuestShell>
   );
 }

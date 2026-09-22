@@ -30,6 +30,7 @@ jobs:
       - run: node scripts/sync-analytics-bridge.mjs --check
       - run: node scripts/sync-security-headers.mjs --check
       - run: node scripts/check-deployment-security.mjs
+      - run: node scripts/sync-web-routes.mjs --check
       - run: npm audit --prefix backend --audit-level=high
       - run: npm audit --prefix web --audit-level=high
       - run: npm audit --prefix office --audit-level=high
@@ -39,6 +40,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: node scripts/audit-security.mjs
       - run: node scripts/audit-csp.mjs
+      - run: node scripts/audit-public-seo.mjs
       - run: node scripts/audit-analytics.mjs
       - run: node scripts/audit-data-preferences.mjs
       - run: node scripts/audit-ui.mjs

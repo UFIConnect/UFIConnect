@@ -35,6 +35,7 @@ export default defineConfig({
   preview: { headers: { 'Referrer-Policy': 'no-referrer' } },
   build: {
     outDir: 'dist',
+    manifest: true,
     sourcemap: false,
     chunkSizeWarningLimit: 600,
     rollupOptions: {

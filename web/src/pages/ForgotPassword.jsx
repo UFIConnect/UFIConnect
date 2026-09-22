@@ -2,6 +2,7 @@
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import client from '../api/client';
+import PublicFooter from '../components/PublicFooter';
 
 export default function ForgotPassword() {
   const [email,     setEmail]     = useState('');
@@ -30,10 +31,11 @@ export default function ForgotPassword() {
     <>
       <Helmet>
         <title>Forgot Password | UFIconnect</title>
+        <meta name="description" content="Request a password reset link for your UFIconnect account and get help signing back in." />
         <meta name="robots" content="noindex" />
       </Helmet>
-      <div className="auth-page">
-        <div className="auth-card">
+      <div className="auth-page public-auth-page">
+        <main className="auth-card">
           <div className="auth-logo">
             <div className="auth-logo-icon">UFI</div>
             <span className="auth-logo-name">UFIconnect</span>
@@ -46,13 +48,14 @@ export default function ForgotPassword() {
               : "Enter your email and we'll send you a link to reset your password."}
           </p>
 
-          {error && <div className="auth-error">{error}</div>}
+          {error && <div className="auth-error" role="alert">{error}</div>}
 
           {!submitted && (
             <form onSubmit={handleSubmit}>
               <div className="form-group">
-                <label className="form-label">Email address</label>
+                <label className="form-label" htmlFor="reset-email">Email address</label>
                 <input
+                  id="reset-email"
                   className="form-input"
                   type="email"
                   placeholder="you@example.com"
@@ -71,7 +74,13 @@ export default function ForgotPassword() {
           <div className="auth-footer">
             <Link to="/login">← Back to sign in</Link>
           </div>
-        </div>
+          <section className="public-page-guidance" aria-labelledby="reset-guidance-title">
+            <h2 id="reset-guidance-title">Check the email linked to your account</h2>
+            <p>If an account matches your email, we will send reset instructions. Check your spam folder if the message does not arrive.</p>
+            <p>Open the link within 30 minutes and choose a new password. If the link has expired, request another one here.</p>
+          </section>
+        </main>
+        <PublicFooter />
       </div>
     </>
   );

@@ -17,6 +17,8 @@ for (const service of blueprint.services) {
     assert.match(header('Content-Security-Policy'), /script-src 'self'/);
     assert.doesNotMatch(header('Content-Security-Policy').split(';').find(value => value.trim().startsWith('script-src')), /unsafe-inline|unsafe-eval/);
     assert.doesNotMatch(header('Content-Security-Policy'), /googletagmanager|google-analytics|analytics\.google/, 'Google permissions belong only on the separate API bridge');
+    assert.match(header('Content-Security-Policy'), /(?:^|;\s*)script-src-attr 'none'(?:;|$)/, 'Inline event handlers must remain blocked');
+    assert.equal(header('X-XSS-Protection'), '0', 'Use CSP and explicitly disable the obsolete, unsafe browser XSS filter');
     assert.equal(header('Referrer-Policy'), 'no-referrer');
   } else {
     assert.ok(keys.includes('OAUTH_TOKEN_ENCRYPTION_KEY'), `${service.name}: encrypted credential key must be declared`);

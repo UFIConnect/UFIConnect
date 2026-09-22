@@ -4,6 +4,18 @@ import { validateNewPassword } from '../web/src/auth/passwordPolicy.js';
 import { redactTelemetry, telemetryPath } from '../web/src/api/telemetryPrivacy.js';
 import { createAuthenticatedStream } from '../web/src/api/authenticatedStream.js';
 import { isRelativeApiRequest, validateApiBaseUrl } from '../web/src/api/apiEndpointPolicy.js';
+import { browserSecurityPolicy } from '../web/securityPolicy.mjs';
+
+test('browser CSP allows approved script hashes while blocking inline handlers and eval', () => {
+  const html = '<script>window.approved = true;</script><script src="/app.js"></script>';
+  const policy = browserSecurityPolicy(html);
+  assert.match(policy, /script-src 'self' 'sha256-[A-Za-z0-9+/=]+'/);
+  assert.match(policy, /script-src-attr 'none'/);
+  assert.doesNotMatch(policy.split(';').find(value => value.trim().startsWith('script-src ')), /unsafe-inline|unsafe-eval/);
+  assert.match(policy, /frame-ancestors 'self'/);
+  assert.doesNotMatch(browserSecurityPolicy(html, { meta: true }), /frame-ancestors/);
+  assert.match(browserSecurityPolicy('<script src="/app.js"></script>'), /script-src 'self';/);
+});
 
 test('production API destinations require HTTPS and reject ambiguous credential URLs', () => {
   const production = { production: true, pageOrigin: 'https://uficonnect.org' };

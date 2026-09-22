@@ -61,6 +61,9 @@ function OptionalAuth0Provider({ children }) {
   );
 }
 
+// React 19 owns route metadata after boot. Remove only the build's marked
+// copies, preserving CSP, icons, verification tags, and structured data.
+document.querySelectorAll('[data-prerender-meta]').forEach(node => node.remove());
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <HelmetProvider>

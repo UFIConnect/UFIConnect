@@ -1,34 +1,7 @@
 User-agent: *
 Allow: /
-Allow: /global
 Disallow: /api/
-Disallow: /hq
-Disallow: /onboarding
-Disallow: /settings
-Disallow: /messages
-Disallow: /profile
-Disallow: /groups
-Disallow: /opportunities
-Disallow: /search
-Disallow: /notifications
-Disallow: /post
-Disallow: /sources
-Disallow: /connected-accounts
-Disallow: /u/
+Disallow: /search?
 
-User-agent: Googlebot
-Allow: /
-
-User-agent: Bingbot
-Allow: /
-
-User-agent: Slurp
-Allow: /
-
-User-agent: DuckDuckBot
-Allow: /
-
-User-agent: YandexBot
-Allow: /
-
+# Member pages carry noindex in HTML; robots.txt is not access control.
 Sitemap: https://uficonnect.org/sitemap.xml

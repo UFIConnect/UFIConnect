@@ -3,7 +3,12 @@ import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 import { trackPageview } from './analytics';
 import { getGoogleAnalytics } from './analytics/browserAnalytics';
-import AnalyticsPrivacy from './components/AnalyticsPrivacy';
+import { publicRoutes } from './seo-routes.mjs';
+
+// Privacy controls load independently so their UI and styles never hold up
+// route content. The consent controller still prevents optional collection
+// until the visitor has made a choice.
+const AnalyticsPrivacy = lazy(() => import('./components/AnalyticsPrivacy'));
 
 const MAINTENANCE = import.meta.env.VITE_MAINTENANCE_MODE === 'true';
 
@@ -69,6 +74,12 @@ const CoverLetterPreview = lazy(() => import('./pages/CoverLetterPreview'));
 const YourPostsFeed  = lazy(() => import('./pages/YourPostsFeed'));
 const SavedItems = lazy(() => import('./pages/SavedItems'));
 const GroupPost = lazy(() => import('./pages/GroupPost'));
+const NotFound = lazy(() => import('./pages/NotFound'));
+const SearchGuide = lazy(() => import('./pages/SearchGuide'));
+
+function AnalyticsPrivacyControls() {
+  return <Suspense fallback={null}><AnalyticsPrivacy /></Suspense>;
+}
 
 function RequireAuth({ children }) {
   const { token, loading } = useAuth();
@@ -94,12 +105,28 @@ function PageviewTracker() {
 
 function HomeRoute() {
   const { token, profile, loading } = useAuth();
-  if (loading) return <div className="splash">Loading...</div>;
+  if (loading) return <Landing />;
   if (!token) {
     return <Landing />;
   }
   if (profile && !profile.onboardingComplete) return <Navigate to="/onboarding" replace />;
   return <Feed />;
+}
+
+function SearchRoute() {
+  const { token } = useAuth();
+  return token ? <RequireAuth><RequireOnboarding><Search /></RequireOnboarding></RequireAuth> : <SearchGuide />;
+}
+
+function RouteLoading() {
+  const { pathname } = useLocation();
+  const page = publicRoutes.find(route => route.path === pathname);
+  return <main className="public-guide" aria-busy="true">
+    <h1>{page ? page.title.split(' | ')[0] : 'UFIconnect'}</h1>
+    <p>{page?.description || 'Open your account or browse public posts and communities.'}</p>
+    <p role="status">Opening your page…</p>
+    <nav aria-label="Public pages"><a href="/">Home</a><a href="/global">Global feed</a><a href="/login">Sign in</a><a href="/privacy">Privacy policy</a></nav>
+  </main>;
 }
 
 export default function App() {
@@ -113,12 +140,12 @@ export default function App() {
     return sessionStorage.getItem('ufi_preview') === '1';
   });
 
-  if (MAINTENANCE && !preview) return <><PageviewTracker /><MaintenancePage /><AnalyticsPrivacy /></>;
+  if (MAINTENANCE && !preview) return <><PageviewTracker /><MaintenancePage /><AnalyticsPrivacyControls /></>;
 
   return (
     <>
     <PageviewTracker />
-    <Suspense fallback={<div className="splash">Loading...</div>}>
+    <Suspense fallback={<RouteLoading />}>
     <Routes>
       {/* Public */}
       <Route path="/login"    element={<Login />} />
@@ -189,9 +216,7 @@ export default function App() {
           whoever clicks it, logged in or not. PostDetail itself branches on
           whether a session exists for its own chrome/actions. */}
       <Route path="/p/:id" element={<PostDetail />}/>
-      <Route path="/search" element={
-        <RequireAuth><RequireOnboarding><Search /></RequireOnboarding></RequireAuth>
-      }/>
+      <Route path="/search" element={<SearchRoute />}/>
       <Route path="/u/:id" element={
         <RequireAuth><RequireOnboarding><PublicProfile /></RequireOnboarding></RequireAuth>
       }/>
@@ -216,10 +241,10 @@ export default function App() {
       <Route path="/child-safety" element={<ChildSafety />} />
 
       {/* Fallback */}
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<NotFound />} />
     </Routes>
     </Suspense>
-    <AnalyticsPrivacy />
+    <AnalyticsPrivacyControls />
     </>
   );
 }

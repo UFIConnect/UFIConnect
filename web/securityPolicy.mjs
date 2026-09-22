@@ -17,6 +17,7 @@ export function analyticsBridgeSecurityPolicy(html) {
 export function browserSecurityPolicy(html, { meta = false } = {}) {
   const hashes = inlineScriptHashes(html);
   return ["default-src 'self'", `script-src 'self' ${hashes.join(' ')}`.trim(),
+    "script-src-attr 'none'",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com", "img-src 'self' https: data: blob:",
     "font-src 'self' https://fonts.gstatic.com data:", "connect-src 'self' https:",
     "media-src 'self' https: blob:", "frame-src 'self' https:", "worker-src 'self' blob:",
