@@ -1,0 +1,28 @@
+/* The noscript override preserves readable public HTML without JavaScript. */
+#root[data-session-shell] { display: none; }
+.static-session-loading { display: none; }
+#root[data-session-shell] + .static-session-loading {
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  box-sizing: border-box;
+  color: #102a6b;
+  background: #f8fafc;
+  font: 600 1rem/1.5 system-ui, sans-serif;
+}
+.session-recovery {
+  min-height: 70svh;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 48px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 16px;
+}
+.session-recovery h1 { font-size: 1.4rem; margin: 0; }
+.session-recovery p { color: var(--muted); margin: 0; line-height: 1.6; }
+.session-recovery a { color: var(--primary); text-decoration: underline; }

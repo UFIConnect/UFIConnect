@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import LegalLinks from './LegalLinks';
 import './PublicFooter.css';
 
 const links = [
@@ -7,9 +8,6 @@ const links = [
   ['/search', 'Search'],
   ['/login', 'Sign in'],
   ['/register', 'Create account'],
-  ['/privacy', 'Privacy policy'],
-  ['/terms', 'Terms of service'],
-  ['/child-safety', 'Child safety'],
 ];
 
 export default function PublicFooter() {
@@ -18,6 +16,7 @@ export default function PublicFooter() {
       <nav aria-label="Public site links">
         {links.map(([to, label]) => <Link key={to} to={to}>{label}</Link>)}
       </nav>
+      <LegalLinks />
       <p>UFIconnect — social connection and job discovery.</p>
     </footer>
   );

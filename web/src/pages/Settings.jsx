@@ -13,6 +13,7 @@ import { pushSupported, getPushSubscriptionState, enablePush, disablePush } from
 import BillingSettings from '../components/BillingSettings';
 import DataPrivacySettings from '../components/DataPrivacySettings';
 import ConfirmActionDialog from '../components/ConfirmActionDialog';
+import LegalLinks from '../components/LegalLinks';
 
 // ── Shared preference constants ───────────────────────────────────────────────
 const GOALS = [
@@ -1001,6 +1002,10 @@ export default function Settings() {
           <SaveBar />
         </form>
       )}
+      <section className="card settings-policy-links" aria-labelledby="settings-policy-heading">
+        <h2 id="settings-policy-heading" style={{ fontSize: '1rem', margin: '0 0 8px' }}>Help and policies</h2>
+        <LegalLinks />
+      </section>
     </Layout>
   );
 }

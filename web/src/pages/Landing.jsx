@@ -4,6 +4,7 @@ import { Helmet } from 'react-helmet-async';
 import { TIERS } from '../components/PricingModal';
 import { SOURCE_META } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
+import LegalLinks from '../components/LegalLinks';
 
 const SOURCES = [
   'reddit', 'youtube', 'github', 'hackernews', 'linkedin', 'instagram', 'facebook',
@@ -319,12 +320,7 @@ export default function Landing() {
 
         <footer className="landing-footer">
           <p>&copy; {new Date().getFullYear()} UFIconnect</p>
-          <p>
-            <Link to="/terms">Terms</Link>
-            <Link to="/privacy">Privacy</Link>
-            <Link to="/child-safety">Child Safety</Link>
-            <a href="mailto:support@uficonnect.org">support@uficonnect.org</a>
-          </p>
+          <LegalLinks />
         </footer>
       </div>
     </>

@@ -5,6 +5,12 @@ import { redactTelemetry, telemetryPath } from '../web/src/api/telemetryPrivacy.
 import { createAuthenticatedStream } from '../web/src/api/authenticatedStream.js';
 import { isRelativeApiRequest, validateApiBaseUrl } from '../web/src/api/apiEndpointPolicy.js';
 import { browserSecurityPolicy } from '../web/securityPolicy.mjs';
+import { safeReturnPath } from '../web/src/auth/returnPath.js';
+
+test('sign-in resumes internal destinations without allowing external redirects or auth loops', () => {
+  for (const path of ['/videos?source=reddit#resume', '/music', '/?feed=restaurants']) assert.equal(safeReturnPath(path), path);
+  for (const path of [undefined, '//example.org', '/\\example.org', 'https://example.org', '/login', '/reset-password?token=private', '/\n/example.org']) assert.equal(safeReturnPath(path), '/');
+});
 
 test('browser CSP allows approved script hashes while blocking inline handlers and eval', () => {
   const html = '<script>window.approved = true;</script><script src="/app.js"></script>';
