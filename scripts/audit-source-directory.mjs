@@ -116,7 +116,9 @@ try {
     await page.getByRole('heading', { name: 'Feed Sources', exact: true }).waitFor();
     await page.getByRole('switch').first().waitFor();
     assert.equal(await page.getByPlaceholder(/Search sources/).count(), 0, 'Full Feed Sources page has no search bar');
-    assert.equal(await page.getByRole('searchbox').count(), 0);
+    assert.equal(await page.getByRole('search', { name: 'Search UFIconnect', exact: true })
+      .getByRole('searchbox', { name: 'Search UFIconnect', exact: true }).count(), 1, 'Global header search remains available');
+    assert.equal(await page.getByRole('main').getByRole('searchbox').count(), 0, 'Feed Sources content has no source-specific search bar');
     assert.equal(await page.getByRole('button', { name: 'Select favorites', exact: true }).count(), 0);
     assert.ok(await page.getByRole('switch').count() > 30, 'Removing search does not hide sources');
     await page.getByText('audit-source', { exact: true }).waitFor();
