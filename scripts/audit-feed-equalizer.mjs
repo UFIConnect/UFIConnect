@@ -26,6 +26,8 @@ try {
     const errors = [], requests = [];
     page.on('pageerror', error => errors.push(error.message));
     let revision = 0;
+    let holdNextPage = false, pageHeld, resumePage;
+    const paginationHeld = new Promise(resolve => { pageHeld = resolve; });
     await context.route('**/api/**', async route => {
       const url = new URL(route.request().url()), endpoint = url.pathname.replace(/^\/api/, '');
       if (/events|stream/.test(endpoint)) return route.abort();
@@ -46,6 +48,10 @@ try {
         author: { id: 'other', name: 'Community developer' },
         sourceUrl: `https://example.org/articles/${key}/${i}`,
       }));
+      if (batch && holdNextPage && params.get('mode') === 'feed' && sources.join(',') === 'reddit,hackernews' && revision === 0) {
+        holdNextPage = false;
+        await new Promise(resolve => { resumePage = resolve; pageHeld(); });
+      }
       return route.fulfill({ json: { posts, cursor: 'audit-page-2', hasMore: !batch, nativeUficonnectIncluded: true } });
     });
     const titles = () => page.locator('[data-feed-position]').evaluateAll(elements => elements.map(element => element.textContent.match(/Equalizer story [a-z0-9-]+/)?.[0]).filter(Boolean));
@@ -64,12 +70,18 @@ try {
     await checkStart('reddit-hackernews');
     assert.ok(requests.some(params => params.get('sources')?.split(',').length === 2));
     // Trigger the same next-page path used by scrolling near the feed tail.
+    holdNextPage = true;
     await page.locator('[data-feed-position]').last().dispatchEvent('pointerenter');
     await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await page.getByText(expected('reddit-hackernews', 0, 1)[3], { exact: true }).waitFor();
-    assert.deepEqual((await titles()).slice(0, 8), [...expected('reddit-hackernews', 0, 0), ...expected('reddit-hackernews', 0, 1)]);
+    await Promise.race([paginationHeld, new Promise((_, reject) => setTimeout(() => reject(new Error('Pagination never started')), 10000))]);
     revision = 1;
     await page.evaluate(() => window.dispatchEvent(new Event('ufi:refresh-selected-feed')));
+    resumePage();
+    await page.getByText(expected('reddit-hackernews', 0, 1)[3], { exact: true }).waitFor().catch(async error => {
+      console.log('Equalizer failure context', JSON.stringify({ requests: requests.map(params => params.toString()), titles: await titles(), errors }));
+      throw error;
+    });
+    assert.deepEqual((await titles()).slice(0, 8), [...expected('reddit-hackernews', 0, 0), ...expected('reddit-hackernews', 0, 1)]);
     await page.getByText(expected('reddit-hackernews', 1, 0)[3], { exact: true }).waitFor();
     assert.deepEqual((await titles()).slice(0, 12), [...expected('reddit-hackernews', 0, 0), ...expected('reddit-hackernews', 0, 1), ...expected('reddit-hackernews', 1, 0)]);
     await auditReload(page);
