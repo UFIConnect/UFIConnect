@@ -71,6 +71,36 @@ try {
     await page.locator('[data-post-id="genre-0"]').waitFor();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/music-${width}.png`) });
+    await page.getByRole('button', { name: 'Filter videos', exact: true }).click();
+    const selectAndRead = async (name) => {
+      const [request] = await Promise.all([
+        page.waitForRequest(request => {
+          if (!request.url().includes('/office/feed/music?')) return false;
+          const params = new URL(request.url()).searchParams;
+          if (name === 'Clear platforms') return !params.has('source') && !params.has('sources');
+          if (name === 'Clear genres') return !params.has('genre');
+          if (name === 'Clear video topics') return !params.has('topics');
+          if (name === 'YouTube') return params.get('source') === 'youtube';
+          return params.get('topics') === 'Open Source';
+        }),
+        page.getByRole('button', { name, exact: true }).click(),
+      ]);
+      return new URL(request.url()).searchParams;
+    };
+    await selectAndRead('YouTube');
+    await selectAndRead('Open Source');
+    const clearedPlatforms = await selectAndRead('Clear platforms');
+    assert.equal(clearedPlatforms.has('source') || clearedPlatforms.has('sources'), false);
+    assert.equal(clearedPlatforms.get('genre'), 'Acoustic');
+    assert.equal(clearedPlatforms.get('topics'), 'Open Source');
+    const clearedGenres = await selectAndRead('Clear genres');
+    assert.equal(clearedGenres.has('genre'), false);
+    assert.equal(clearedGenres.get('topics'), 'Open Source');
+    const clearedTopics = await selectAndRead('Clear video topics');
+    assert.equal(clearedTopics.has('topics'), false);
+    assert.ok(await page.getByRole('button', { name: 'Clear platforms', exact: true }).isDisabled());
+    assert.ok(await page.getByRole('button', { name: 'Clear genres', exact: true }).isDisabled());
+    assert.ok(await page.getByRole('button', { name: 'Clear video topics', exact: true }).isDisabled());
     console.log(`PASS: Music playback without hover, manual pause, filter and scroll refresh at ${width}px`);
     await context.close();
   }

@@ -2665,6 +2665,12 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     });
   }, [loadFeed]);
 
+  const clearSourceSelection = useCallback(() => {
+    activeTabsRef.current = [];
+    setActiveTabs([]);
+    applyFilters({ ...filtersRef.current, sources: [] });
+  }, [applyFilters]);
+
   const applyTopicFilters = useCallback((topics) => {
     applyFilters({
       ...filtersRef.current,
@@ -3554,6 +3560,9 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         <div className="feed-source-filter-row feed-unified-control-bar">
           <div className="feed-source-picker">
             <div className="feed-source-tabs feed-source-tabs--compact" role="group" aria-label={`${viewMode === 'following' ? 'Following' : 'Home'} sources`}>
+              <button type="button" className="btn btn-ghost btn-sm"
+                aria-label="Clear sources" disabled={selectedSourceKeys.length === 0}
+                onClick={clearSourceSelection}>Clear</button>
               {compactSourceTabs.map(tab => (
                 <FeedSourceOption
                   key={tab.key}

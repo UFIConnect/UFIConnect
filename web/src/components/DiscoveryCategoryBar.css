@@ -10,6 +10,8 @@
   scrollbar-width: thin;
 }
 .discovery-category-bar .feed-toolbar-control { flex: 0 0 auto; }
+.discovery-category-bar .discovery-category-clear { position: sticky; left: 0; z-index: 1; background: var(--card, #fff); }
+.discovery-category-bar .discovery-category-clear:disabled { opacity: .5; cursor: default; }
 .feed-specialized-toolbar--location .discovery-category-bar { grid-column: 1 / -1; }
 .feed-specialized-toolbar--location .feed-specialized-actions { position: relative; }
 .feed-specialized-toolbar--location .feed-specialized-actions .feed-topic-filter { position: static; }
