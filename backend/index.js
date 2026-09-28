@@ -14836,6 +14836,19 @@ const FOLLOWING_FAVORITE_FEED_SOURCE_SET = new Set([
   ...[...CONNECTED_SOCIAL_PLATFORMS].filter(source => !['instagram', 'tiktok'].includes(source)),
 ]);
 
+// External feed accounts a member blocked from their feeds, as "source:account"
+// keys (for example "mastodon:@name@server"). Bounded; the newest are kept.
+function normalizeBlockedFeedAccounts(value) {
+  const keys = [];
+  for (const item of asArray(value)) {
+    const key = String(item || '').trim().toLowerCase().slice(0, 200);
+    const separator = key.indexOf(':');
+    if (separator < 1 || !/^[a-z0-9_-]{1,40}$/.test(key.slice(0, separator)) || !key.slice(separator + 1).trim()) continue;
+    if (!keys.includes(key)) keys.push(key);
+  }
+  return keys.slice(-500);
+}
+
 function normalizeFeedSourceFavorites(value) {
   const saved = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const normalizeList = (items, allowed) => {
@@ -20852,6 +20865,9 @@ app.patch('/profile', authenticate, async (req, res) => {
     }
     if (Object.prototype.hasOwnProperty.call(nextRoleSettings, 'feedSourceFavorites')) {
       nextRoleSettings.feedSourceFavorites = normalizeFeedSourceFavorites(nextRoleSettings.feedSourceFavorites);
+    }
+    if (Object.prototype.hasOwnProperty.call(nextRoleSettings, 'blockedFeedAccounts')) {
+      nextRoleSettings.blockedFeedAccounts = normalizeBlockedFeedAccounts(nextRoleSettings.blockedFeedAccounts);
     }
     user.roleSettings = { ...(user.roleSettings || {}), ...nextRoleSettings };
   }

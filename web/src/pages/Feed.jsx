@@ -36,6 +36,7 @@ import { useToast } from '../contexts/ToastContext';
 import { UfiFeedContent } from './Post';
 import ConnectedPostActions from '../components/ConnectedPostActions';
 import { SavePostButton } from '../components/SaveButtons';
+import { CommentIcon, HeartIcon, OpenOnSource, PostHeader, PostOptionsMenu, SharePostButton, feedAccountKey } from '../components/PostCardChrome';
 
 const COMMAND_CENTER_PRO_TIER = TIERS.find((tier) => tier.tier === 'pro');
 const HOME_VIEW_MODES = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants', 'bars']);
@@ -553,14 +554,22 @@ function catStyle(cat) {
 // content, so that link only ever pointed at the *original* source, never
 // showed anything this card couldn't already show itself).
 const POST_TEXT_COLLAPSE_LENGTH = 320;
-function PostText({ text }) {
+// Hashtags take the source's brand colour, as they do on the source itself.
+function withTags(text, accent) {
+  if (!accent) return text;
+  return text.split(/(#[\p{L}\p{N}_]+)/u).map((part, index) => (
+    index % 2 ? <span key={index} className="post-chrome-tag" style={{ '--source-color': accent }}>{part}</span> : part
+  ));
+}
+
+function PostText({ text, accent }) {
   const [expanded, setExpanded] = useState(false);
   if (!text) return null;
   const needsCollapse = text.length > POST_TEXT_COLLAPSE_LENGTH;
   const shown = needsCollapse && !expanded ? text.slice(0, POST_TEXT_COLLAPSE_LENGTH).trimEnd() : text;
   return (
     <p className="post-content" style={{ margin: '0 0 4px', whiteSpace: 'pre-wrap', lineHeight: 1.65 }}>
-      {shown}{needsCollapse && !expanded ? '… ' : ''}
+      {withTags(shown, accent)}{needsCollapse && !expanded ? '… ' : ''}
       {needsCollapse && (
         <button
           onClick={e => { e.stopPropagation(); e.preventDefault(); setExpanded(x => !x); }}
@@ -1237,18 +1246,16 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
   const [imageFailed, setImageFailed] = useState(false);
   useEffect(() => setImageFailed(false), [post?.id, post?.mediaUrl]);
   return (
-    <div ref={cardRef} className="card post-card" style={{ marginBottom: 12 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-        <SourceMark source="youtube" label={src.icon} size={14} />
-        <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color }}>YouTube</span>
-        {post.group && <span style={{ fontSize: '.68rem', fontWeight: 600, background: c.bg, color: c.text, padding: '2px 7px', borderRadius: 5 }}>{post.group.name}</span>}
-        {post.topic && <span style={{ fontSize: '.65rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4 }}>{post.topic}</span>}
-        <LocationMatchBadge post={post} />
-        <Link to={`/p/${encodeURIComponent(post.id)}`} style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)', textDecoration: 'none' }}>
-          {timeAgo(post.createdAt)}
-        </Link>
-      </div>
-      <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 10px', lineHeight: 1.4 }}>{post.title}</p>
+    <div ref={cardRef} className="card post-card" style={{ marginBottom: 12, '--source-color': src.color }}>
+      <PostHeader post={post} />
+      {(post.group || post.topic || post.matchedByLocation) && (
+        <div className="post-chrome-chips">
+          {post.group && <span style={{ fontSize: '.68rem', fontWeight: 600, background: c.bg, color: c.text, padding: '2px 7px', borderRadius: 5 }}>{post.group.name}</span>}
+          {post.topic && <span style={{ fontSize: '.65rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4 }}>{post.topic}</span>}
+          <LocationMatchBadge post={post} />
+        </div>
+      )}
+      <p style={{ fontWeight: 700, fontSize: '1.08rem', margin: '0 0 10px', lineHeight: 1.35 }}>{post.title}</p>
       {embedId ? (
         <div style={{ marginBottom: 10, position: 'relative' }}>
           <YouTubeEmbedBlock embedId={embedId} videoKey={post.id} poster={post.mediaUrl} title={post.title} maxHeight={280} forcePause={isMediaOpen} />
@@ -1260,18 +1267,13 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
             onError={() => setImageFailed(true)} />
         </div>
       ) : null}
-      {post.content && <PostText text={post.content} />}
+      {post.content && <PostText text={post.content} accent={src.color} />}
       <ConnectedPostActions post={post} />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
-        <SavePostButton post={post} className="btn btn-ghost btn-sm save-item-button" />
-        {post.sourceUrl && (
-          <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 6, textDecoration: 'none', color: src.color }}>
-            <SourceMark source="youtube" label={src.icon} size={11} />
-            <span style={{ fontSize: '.7rem', color: 'var(--muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{post.sourceUrl}</span>
-            <span style={{ fontSize: '.65rem', fontWeight: 700, color: src.color, background: `${src.color}14`, padding: '2px 7px', borderRadius: 4, flexShrink: 0 }}>Watch</span>
-          </a>
-        )}
+      <div className="post-chrome-actions">
+        <SavePostButton post={post} className="post-chrome-action save-item-button" showLabel={false} />
+        <SharePostButton post={post} />
       </div>
+      <OpenOnSource post={post} label="Watch on YouTube" />
     </div>
   );
 }
@@ -1439,13 +1441,11 @@ function commentUrl(post) {
   }
 }
 
-export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMediaOpen }) {
-  const { profile, token } = useAuth();
+export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMediaOpen, onBlocked }) {
+  const { profile, token, updateProfileLocally } = useAuth();
+  const [blockBusy, setBlockBusy] = useState(false);
   const { showToast } = useToast();
-  const [moreOpen,   setMoreOpen]   = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
-  const moreBtnRef  = useRef(null);
-  const moreMenuRef = useRef(null);
   const [showComments,    setShowComments]    = useState(false);
   const [comments,        setComments]        = useState(null);
   const [commentsLive,    setCommentsLive]    = useState(false);
@@ -1523,22 +1523,6 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
     return () => window.clearInterval(interval);
   }, [showComments, post?.id, commentsLive, commentsLoading, commentsLoadingMore, commentSending, fetchComments]);
 
-  // Close the "more options" menu on an outside click (same pattern as
-  // PublicProfile's). Listener is only attached while open — PostCard is
-  // repeated for every post on screen, so a permanently-mounted document
-  // listener per card would add up.
-  useEffect(() => {
-    if (!moreOpen) return;
-    function handleClick(e) {
-      if (
-        moreMenuRef.current && !moreMenuRef.current.contains(e.target) &&
-        moreBtnRef.current && !moreBtnRef.current.contains(e.target)
-      ) setMoreOpen(false);
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [moreOpen]);
-
   if (!post || typeof post !== 'object') return null;
 
   const c   = catStyle(post.group?.category);
@@ -1548,6 +1532,8 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
 
   const isExternal     = post.isExternal;
   const isJob          = JOB_SOURCES.has(post.source);
+  // Social posts often reuse their opening words as a title; show that text once.
+  const showTitle      = Boolean(post.title) && !String(post.content || '').startsWith(String(post.title).replace(/(?:…|\.\.\.)$/, '').trim());
   const isCommunityPost = !isExternal && ['uficonnect', 'livecamera'].includes(post.source || 'uficonnect');
   const isRestaurantPost = post.source === 'restaurants' && post.ufiInteractive;
   const isUFIconnectInteractive = isCommunityPost || isRestaurantPost;
@@ -1646,58 +1632,54 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
     }
   }
 
+  // Members are blocked account-wide; external accounts are hidden from this member's feeds.
+  const accountKey = isExternal ? feedAccountKey(post) : '';
+  const blockTarget = isExternal
+    ? (accountKey ? { label: post.sourceLabel || post.author?.name || src.label } : null)
+    : (post.author?.id && post.author.id !== profile?.id ? { label: post.author?.name || 'this member' } : null);
+  async function blockAuthor() {
+    if (!token) { showToast('Sign in to block accounts.', 'info'); return; }
+    if (!blockTarget || blockBusy) return;
+    const message = isExternal
+      ? `Block ${blockTarget.label}? Their ${src.label} posts will no longer appear in your feeds.`
+      : `Block ${blockTarget.label}? They won't be able to follow, message, or connect with you, and their posts will be hidden. You can unblock from Settings > Privacy at any time.`;
+    if (!window.confirm(message)) return;
+    setBlockBusy(true);
+    try {
+      if (isExternal) {
+        const current = Array.isArray(profile?.roleSettings?.blockedFeedAccounts) ? profile.roleSettings.blockedFeedAccounts : [];
+        const { data } = await client.patch('/profile', {
+          roleSettings: { ...(profile?.roleSettings || {}), blockedFeedAccounts: [...new Set([...current, accountKey])] },
+        });
+        updateProfileLocally(data.profile || data);
+      } else {
+        await client.post(`/users/${encodeURIComponent(post.author.id)}/block`);
+      }
+      onBlocked?.(post);
+      showToast(`Blocked ${blockTarget.label}.`, 'success');
+    } catch {
+      showToast('Could not block this account. Please try again.', 'error');
+    } finally {
+      setBlockBusy(false);
+    }
+  }
+
   return (
-    <div ref={cardRef} className="card post-card" style={{ marginBottom: 12 }}>
-      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-        <SourceMark source={post.source} label={src.icon} size={13} />
-        <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color }}>{post.sourceLabel || src.label}</span>
-        {post.isLiveCamera && <span style={{ fontSize: '.62rem', fontWeight: 800, color: '#B91C1C', background: '#FEE2E2', border: '1px solid #FECACA', padding: '2px 6px', borderRadius: 4 }}>LIVE</span>}
-        {isJob && <span style={{ fontSize: '.65rem', fontWeight: 700, color: '#059669', background: '#ECFDF5', padding: '2px 8px', borderRadius: 5 }}>Job</span>}
-        {post.group && <span style={{ fontSize: '.68rem', fontWeight: 700, background: c.bg, color: c.text, padding: '2px 8px', borderRadius: 5 }}>{post.group.name}</span>}
-        {post.topic && <span style={{ fontSize: '.65rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4 }}>{post.topic}</span>}
-        <LocationMatchBadge post={post} />
-        {post.fromJoinedGroup && <span style={{ fontSize: '.68rem', color: 'var(--muted)' }}>· your group</span>}
-        <Link to={`/p/${encodeURIComponent(post.id)}`} style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)', textDecoration: 'none' }}>
-          {post.isLiveCamera ? 'Live feed' : timeAgo(post.createdAt)}
-        </Link>
-        <div style={{ position: 'relative' }}>
-          <button
-            ref={moreBtnRef}
-            onClick={() => setMoreOpen(o => !o)}
-            aria-label="More options"
-            aria-expanded={moreOpen}
-            style={{ all: 'unset', cursor: 'pointer', padding: '2px 4px', fontSize: '.9rem', fontWeight: 700, color: 'var(--muted)', lineHeight: 1 }}
-          >
-            •••
-          </button>
-          {moreOpen && (
-            <div
-              ref={moreMenuRef}
-              role="menu"
-              style={{
-                position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 20,
-                minWidth: 160, background: 'var(--card)', border: '1px solid var(--border)',
-                borderRadius: 10, boxShadow: '0 8px 24px rgba(0,0,0,.12)', overflow: 'hidden',
-                textAlign: 'left',
-              }}
-            >
-              <button
-                role="menuitem"
-                onClick={() => { setMoreOpen(false); token ? setReportOpen(true) : showToast('Sign in to report a post.', 'info'); }}
-                style={{
-                  all: 'unset', boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 8,
-                  width: '100%', padding: '9px 12px', fontSize: '.82rem', fontWeight: 600,
-                  color: 'var(--text)', cursor: 'pointer',
-                }}
-                onMouseOver={e => e.currentTarget.style.background = 'var(--hover, rgba(0,0,0,.04))'}
-                onMouseOut={e => e.currentTarget.style.background = 'transparent'}
-              >
-                Report post
-              </button>
-            </div>
-          )}
+    <div ref={cardRef} className="card post-card" style={{ marginBottom: 12, '--source-color': src.color }}>
+      <PostHeader
+        post={post}
+        member={!isExternal}
+        to={!isExternal && post.author?.id ? (post.author.id === profile?.id ? '/profile' : `/u/${post.author.id}`) : undefined}
+      />
+      {(isJob || post.group || post.topic || post.fromJoinedGroup || post.matchedByLocation) && (
+        <div className="post-chrome-chips">
+          {isJob && <span style={{ fontSize: '.65rem', fontWeight: 700, color: '#059669', background: '#ECFDF5', padding: '2px 8px', borderRadius: 5 }}>Job</span>}
+          {post.group && <span style={{ fontSize: '.68rem', fontWeight: 700, background: c.bg, color: c.text, padding: '2px 8px', borderRadius: 5 }}>{post.group.name}</span>}
+          {post.topic && <span style={{ fontSize: '.65rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4 }}>{post.topic}</span>}
+          <LocationMatchBadge post={post} />
+          {post.fromJoinedGroup && <span style={{ fontSize: '.68rem', color: 'var(--muted)' }}>your group</span>}
         </div>
-      </div>
+      )}
       {reportOpen && (
         <ReportModal
           targetType="post"
@@ -1708,42 +1690,19 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
         />
       )}
 
-      {!isExternal && post.author?.id && (
-        <Link
-          to={post.author.id === profile?.id ? '/profile' : `/u/${post.author.id}`}
-          className="post-header"
-          style={{ marginBottom: 8, textDecoration: 'none', color: 'inherit' }}
-        >
-          <div className="avatar avatar-md">{initials(post.author?.name)}</div>
-          <div className="post-meta">
-            <div className="post-author">{post.author?.name || 'Member'}</div>
-            <div className="post-source">{post.author?.title}{post.author?.organization ? ` · ${post.author.organization}` : ''}</div>
-          </div>
-        </Link>
-      )}
-      {isExternal && post.author?.name && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <SourceMark source={post.source} label={src.icon} size={17} />
-          <div>
-            <div style={{ fontWeight: 700, fontSize: '.82rem' }}>{post.author.name}</div>
-            <div style={{ fontSize: '.7rem', color: 'var(--muted)' }}>{src.label}</div>
-          </div>
-        </div>
-      )}
-
-      {post.title && (
+      {showTitle && (
         isExternal && post.sourceUrl ? (
           <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', color: 'inherit' }}>
-            <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 6px', lineHeight: 1.4 }}>
-              {post.title}<span style={{ marginLeft: 5, fontSize: '.75rem', color: src.color, opacity: 0.8 }}>↗</span>
+            <p style={{ fontWeight: 700, fontSize: '1.08rem', margin: '0 0 6px', lineHeight: 1.35 }}>
+              {post.title}<span style={{ marginLeft: 5, fontSize: '.8rem', color: src.color }}>↗</span>
             </p>
           </a>
         ) : (
-          <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 6px', lineHeight: 1.4 }}>{post.title}</p>
+          <p style={{ fontWeight: 700, fontSize: '1.08rem', margin: '0 0 6px', lineHeight: 1.35 }}>{post.title}</p>
         )
       )}
 
-      <PostText text={post.content} />
+      <PostText text={post.content} accent={isExternal ? src.color : undefined} />
 
       {post.mediaUrl && post.mediaType === 'image' && !imageFailed && (
         <button
@@ -1822,63 +1781,50 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
         </button>
         ) : null}
 
-      {/* Stats + actions bar */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+      {/* Actions: comments, likes on UFIconnect posts, save and share; then the source link. */}
+      <div className="post-chrome-actions">
+        {hasComments && (
+          <button
+            type="button"
+            className="post-chrome-action"
+            onClick={toggleComments}
+            aria-expanded={showComments}
+            aria-label={showComments ? `Hide ${sectionLabel}` : `Show ${sectionLabel}${commentCount > 0 ? ` (${commentCount.toLocaleString()})` : ''}`}
+            title={showComments ? `Hide ${sectionLabel}` : sectionLabel}
+          >
+            <CommentIcon />{commentCount > 0 && <span>{commentCount.toLocaleString()}</span>}
+          </button>
+        )}
         {isUFIconnectInteractive && (
           <button
             type="button"
+            className="post-chrome-action"
             onClick={toggleLike}
             disabled={likeBusy}
-            style={{
-              all: 'unset', cursor: likeBusy ? 'default' : 'pointer', fontSize: '.75rem',
-              color: post.likedByMe ? src.color : 'var(--muted)', fontWeight: post.likedByMe ? 700 : 500,
-              opacity: likeBusy ? 0.6 : 1,
-            }}
+            aria-pressed={!!post.likedByMe}
+            aria-label={post.likedByMe ? 'Liked' : 'Like'}
+            title={post.likedByMe ? 'Unlike' : 'Like'}
           >
-            {post.likedByMe ? 'Liked' : 'Like'}{post.likesCount > 0 ? ` ${post.likesCount.toLocaleString()}` : ''}
+            <HeartIcon filled={post.likedByMe} />{post.likesCount > 0 && <span>{post.likesCount.toLocaleString()}</span>}
           </button>
         )}
-        {!isUFIconnectInteractive && post.likesCount > 0 && (
-          // GitHub/GitLab post likesCount is actually the repo/project's
-          // star count (backend/index.js resolveVideoSource-adjacent
-          // fetchers repurpose stargazers_count/star_count there, since
-          // neither platform has a real per-post "like") — a heart implies
-          // someone liked *this post*, which never happened. Star icon for
-          // just those two keeps the real number (still a genuine, useful
-          // signal) without misrepresenting what it means.
-          <span style={{ fontSize: '.75rem', color: 'var(--muted)' }}>
-            {post.likesCount.toLocaleString()} likes
-          </span>
-        )}
-        {hasComments && (
-          <button
-            onClick={toggleComments}
-            style={{ all: 'unset', cursor: 'pointer', fontSize: '.75rem', color: showComments ? src.color : 'var(--muted)', display: 'flex', alignItems: 'center', gap: 4, fontWeight: showComments ? 700 : 400 }}
-          >
-            {commentCount > 0 ? `${commentCount.toLocaleString()} ` : ''}{showComments ? `Hide ${sectionLabel}` : sectionLabel}
-          </button>
-        )}
-        <SavePostButton
-          post={post}
-          className="feed-save-post-button"
-          style={{
-            all: 'unset', cursor: 'pointer', fontSize: '.75rem', color: 'var(--muted)',
-            display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 500,
-          }}
+        <SavePostButton post={post} className="post-chrome-action feed-save-post-button" showLabel={false} />
+        <SharePostButton post={post} />
+        <PostOptionsMenu
+          onReport={() => (token ? setReportOpen(true) : showToast('Sign in to report a post.', 'info'))}
+          blockLabel={blockTarget?.label}
+          blockBusy={blockBusy}
+          onBlock={blockAuthor}
         />
-        {post.sourceUrl && (
-          <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
-            onClick={e => {
-              e.stopPropagation();
-              reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true });
-            }}
-            style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, textDecoration: 'none' }}>
-            <span style={{ fontSize: '.65rem', fontWeight: 700, color: src.color, background: `${src.color}14`, padding: '3px 8px', borderRadius: 5 }}>
-              {isJob ? 'Apply' : post.isLiveCamera ? 'Watch live' : hasVideo ? 'Watch' : 'Open'}{post.isLiveCamera ? '' : ` on ${src.label}`} ↗
-            </span>
-          </a>
-        )}
       </div>
+      <OpenOnSource
+        post={post}
+        label={`${isJob ? 'Apply' : post.isLiveCamera ? 'Watch live' : hasVideo ? 'Watch' : 'Open'}${post.isLiveCamera ? '' : ` on ${src.label}`}`}
+        onClick={event => {
+          event.stopPropagation();
+          reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true });
+        }}
+      />
 
       {!isUFIconnectInteractive && <ConnectedPostActions post={post} />}
 
@@ -3237,9 +3183,18 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   // Live cameras have a dedicated carousel in Travel. Keeping them out of
   // the long-form list means its cards stay focused on guides, openings,
   // and current travel stories instead of repeating the same camera feeds.
+  // Blocked members and external accounts disappear from every feed immediately.
+  const [blockedMembers, setBlockedMembers] = useState(() => new Set());
+  const blockedAccountsKey = JSON.stringify(profile?.roleSettings?.blockedFeedAccounts || []);
+  const blockedAccounts = useMemo(() => new Set(JSON.parse(blockedAccountsKey)), [blockedAccountsKey]);
+  const handleBlocked = useCallback(post => {
+    if (!post?.isExternal && post?.author?.id) setBlockedMembers(current => new Set([...current, post.author.id]));
+  }, []);
   const contentPosts = useMemo(
-    () => viewMode === 'countries' ? displayed.filter(post => !post?.isLiveCamera) : displayed,
-    [displayed, viewMode]
+    () => displayed.filter(post => !(viewMode === 'countries' && post?.isLiveCamera)
+      && !(post?.isExternal && blockedAccounts.has(feedAccountKey(post)))
+      && !(!post?.isExternal && blockedMembers.has(post?.author?.id))),
+    [displayed, viewMode, blockedAccounts, blockedMembers]
   );
   const requestNextPageAtPosition = useCallback((index) => {
     if (index >= Math.max(0, contentPosts.length - FEED_POSITION_PREFETCH_POSTS)) loadMoreRemote();
@@ -3884,6 +3839,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                       post={post}
                       onMediaOpen={p => setMediaLightboxPostId(p.id)}
                       onPostUpdated={updateFeedPost}
+                      onBlocked={handleBlocked}
                       isMediaOpen={post.id != null && post.id === mediaLightboxPostId}
                     />
                   </div>
