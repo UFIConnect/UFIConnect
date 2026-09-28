@@ -3237,7 +3237,8 @@ export default function App() {
     borderBottom: isMobile ? '1px solid rgba(255,255,255,.08)' : 'none',
     display: 'flex',
     flexDirection: 'column',
-    position: isMobile ? 'sticky' : 'static',
+    // Local web scrolls the header away so phone editing keeps the whole screen.
+    position: isMobile && view !== 'local-web' ? 'sticky' : 'static',
     top: 0,
     zIndex: 20,
   };

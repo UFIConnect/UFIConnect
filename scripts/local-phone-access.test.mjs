@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import { createServer, request as httpRequest } from 'node:http';
 import { createPhoneGateway } from './local-phone-access.mjs';
 
-async function setup(t, kind = 'office') {
+async function setup(t, kind = 'office', code = 'test-phone-code') {
   const seen = [];
   const upstream = createServer((req, res) => { seen.push({ url: req.url, headers: req.headers }); res.setHeader('Content-Type', 'application/json'); res.end('{"ok":true}'); });
   await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
   const target = `http://127.0.0.1:${upstream.address().port}`;
-  const gateway = createPhoneGateway({ target, code: 'test-phone-code', kind, phoneStatus: () => ({ previewUrl: 'https://preview.trycloudflare.com', code: 'must-not-leak' }) });
+  const gateway = createPhoneGateway({ target, code, kind, phoneStatus: () => ({ previewUrl: 'https://preview.trycloudflare.com', code: 'must-not-leak' }) });
   const origin = `https://${kind}.trycloudflare.com`;
   gateway.setOrigin(origin);
   await new Promise(resolve => gateway.server.listen(0, '127.0.0.1', resolve));
@@ -19,7 +19,7 @@ async function setup(t, kind = 'office') {
     });
     req.on('error', reject); req.end(body);
   });
-  const pair = (code = 'test-phone-code') => request('/__phone/pair', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/x-www-form-urlencoded' }, body: `code=${code}` });
+  const pair = (entered = code) => request('/__phone/pair', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/x-www-form-urlencoded' }, body: `code=${encodeURIComponent(entered)}` });
   return { request, pair, origin, seen, target };
 }
 
@@ -36,6 +36,25 @@ test('phone gateway requires pairing before exposing code or local endpoints', a
   const paired = await pair();
   assert.equal(paired.status, 303);
   assert.match(paired.headers['set-cookie'][0], /HttpOnly; Secure; SameSite=Strict/);
+});
+
+test('pairing accepts the grouped code as typed on a phone and explains a mismatch on the form', async t => {
+  const { pair } = await setup(t, 'office', '0123456789abcdef01234567');
+  const wrong = await pair('0123 4567 89ab cdef 0123 4568');
+  assert.equal(wrong.status, 403);
+  assert.match(wrong.headers['content-type'], /^text\/html/);
+  assert.ok(wrong.text.includes('did not match') && wrong.text.includes('name="code"'), 'A mistyped code returns to the form with an explanation');
+  assert.ok(!wrong.text.includes('0123456789abcdef01234567'));
+  assert.equal((await pair('')).status, 403);
+  assert.equal((await pair(' 0123 4567 89AB CDEF 0123-4567 ')).status, 303);
+});
+
+test('pairing stays rate limited', async t => {
+  const { pair } = await setup(t);
+  for (let attempt = 0; attempt < 10; attempt++) assert.equal((await pair('wrong')).status, 403);
+  const limited = await pair();
+  assert.equal(limited.status, 429, 'The correct code is refused once the attempt limit is reached');
+  assert.ok(limited.text.includes('Too many attempts'));
 });
 
 test('paired requests preserve local origin guards and reject hostile origins and filesystem URLs', async t => {

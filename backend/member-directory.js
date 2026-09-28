@@ -4,6 +4,8 @@ const { searchTermGroups } = require('./search');
 const publicProfile = `u.profile_hidden IS NOT TRUE AND COALESCE(u.role_settings ->> 'privacy_publicProfile', 'true') <> 'false'`;
 const escapeLike = value => String(value).replace(/[\\%_]/g, '\\$&');
 const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// Older databases store interests as JSONB, newer ones as TEXT[]; read either as text values.
+const interestValues = column => `jsonb_array_elements_text(CASE WHEN jsonb_typeof(to_jsonb(${column})) = 'array' THEN to_jsonb(${column}) ELSE '[]'::jsonb END)`;
 
 // Page in PostgreSQL so account discovery never stops at an in-memory ceiling.
 async function searchMemberDirectory(db, { myId, q = '', role = '', sort = 'relevance', limit = 24, offset = 0 }) {
@@ -46,10 +48,10 @@ async function searchMemberDirectory(db, { myId, q = '', role = '', sort = 'rele
       CROSS JOIN LATERAL (
         SELECT ARRAY(
           SELECT DISTINCT LOWER(BTRIM(topic))
-          FROM UNNEST(COALESCE(u.interests, ARRAY[]::text[])) AS candidate(topic)
+          FROM ${interestValues('u.interests')} AS candidate(topic)
           WHERE BTRIM(topic) <> '' AND LOWER(BTRIM(topic)) IN (
             SELECT LOWER(BTRIM(interest))
-            FROM users viewer, UNNEST(COALESCE(viewer.interests, ARRAY[]::text[])) AS own(interest)
+            FROM users viewer, ${interestValues('viewer.interests')} AS own(interest)
             WHERE viewer.id::text = $1
           )
           ORDER BY 1

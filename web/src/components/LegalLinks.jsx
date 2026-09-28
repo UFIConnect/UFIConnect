@@ -5,6 +5,7 @@ export default function LegalLinks() {
   return (
     <nav className="legal-links" aria-label="Policies and support">
       <Link to="/privacy">Privacy policy</Link>
+      <Link to="/privacy#analytics">Analytics privacy</Link>
       <Link to="/terms">Terms of use</Link>
       <a href="mailto:support@uficonnect.org">Contact support</a>
       <details className="legal-links-safety">

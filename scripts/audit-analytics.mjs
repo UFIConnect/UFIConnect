@@ -97,13 +97,12 @@ try {
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.locator('#login-password').waitFor();
     // Privacy controls load in a separate lazy chunk from the login form.
-    // Wait for that UI, then verify the saved choice rather than route timing.
-    await page.getByRole('button', { name: 'Analytics privacy', exact: true }).waitFor();
-    check(await page.getByRole('button', { name: 'Analytics privacy', exact: true }).isVisible(), 'Decline is remembered across reload');
+    await page.waitForLoadState('networkidle');
     check(await page.evaluate(key => localStorage.getItem(key), ANALYTICS_CONSENT_KEY) === 'denied', 'Declined consent is persisted across reload');
     check(await page.locator('.analytics-privacy-panel').count() === 0, 'Remembered decline does not ask for consent again');
+    check(await page.getByRole('button', { name: 'Analytics privacy', exact: true }).count() === 0, 'Pages no longer end with an analytics button');
     check(googleRequests.length === 0, 'Remembered decline prevents Google initialization');
-    await page.getByRole('button', { name: 'Analytics privacy', exact: true }).click();
+    await openPreferences(page);
     await page.locator('#login-password').fill(seed);
     await page.evaluate(secret => { document.title = secret; }, seed);
     await page.getByRole('button', { name: 'Accept analytics', exact: true }).click();
@@ -144,8 +143,8 @@ try {
     await page.waitForFunction(() => document.activeElement?.id === 'analytics-privacy-title');
     check(await page.getByRole('button', { name: 'Decline analytics', exact: true }).isVisible(), 'Account navigation opens preferences without reaching the feed footer');
     await page.keyboard.press('Escape');
-    await page.waitForFunction(() => document.activeElement?.classList.contains('analytics-privacy-trigger'));
-    check(await page.getByRole('button', { name: 'Analytics privacy', exact: true }).isVisible(), 'Closing linked preferences restores keyboard focus to the control');
+    await page.locator('.analytics-privacy-panel').waitFor({ state: 'detached' });
+    check(await page.getByRole('heading', { name: 'Privacy Policy', exact: false }).first().isVisible(), 'Closing linked preferences leaves the privacy policy in place');
     const routes = [
       ['/settings', '/settings'], ['/messages/' + seed, '/messages/conversation'],
       ['/groups/' + seed, '/groups/details'], ['/u/' + seed, '/u/member'],
@@ -182,7 +181,7 @@ try {
     check(!JSON.stringify(googleRequests).includes(seed), 'No private title, URL, fragment, message ID or password reaches Google');
     check(pageViews.every(view => view.dr === '' && view.tid === 'G-F68DRQ6CC5'), 'Every view uses the correct property and empty referrer');
     const oldClient = pageViews[0].cid;
-    await page.getByRole('button', { name: 'Analytics privacy', exact: true }).click();
+    await openPreferences(page);
     await page.getByRole('button', { name: 'Decline analytics', exact: true }).click();
     await page.locator('iframe[title="Optional page analytics"]').waitFor({ state: 'detached' });
     check(await page.evaluate(key => localStorage.getItem(key), ANALYTICS_CLIENT_KEY) === null, 'Revocation deletes the local analytics identifier');
@@ -191,9 +190,9 @@ try {
     await page.waitForTimeout(150);
     check(googleRequests.length === countAfterStop, 'Revocation stops subsequent Google requests');
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await page.getByRole('button', { name: 'Analytics privacy', exact: true }).waitFor();
+    await page.waitForLoadState('networkidle');
     check(await page.evaluate(key => localStorage.getItem(key), ANALYTICS_CONSENT_KEY) === 'denied', 'Revocation persists across reload');
-    await page.getByRole('button', { name: 'Analytics privacy', exact: true }).click();
+    await openPreferences(page);
     await page.getByRole('button', { name: 'Accept analytics', exact: true }).click();
     await assertEventually(() => pageViews.at(-1)?.dl === origin + '/privacy' && pageViews.at(-1)?.cid !== oldClient);
     check(pageViews.at(-1).cid !== oldClient, 'New consent generates a new random identifier');
@@ -206,11 +205,11 @@ try {
     check(new URL(page.url()).hash === '#analytics', 'Guest infinite feeds have direct access to analytics preferences');
     const beforeCloseScroll = await page.evaluate(() => scrollY);
     await page.keyboard.press('Escape');
-    await page.waitForFunction(() => document.activeElement?.classList.contains('analytics-privacy-trigger'));
+    await page.locator('.analytics-privacy-panel').waitFor({ state: 'detached' });
     check(Math.abs(await page.evaluate(() => scrollY) - beforeCloseScroll) < 2, 'Closing preferences preserves page position');
-    check(await page.locator('.analytics-privacy').evaluate(element => getComputedStyle(element).position === 'static'), 'The compact control stays in normal page flow');
+    check(await page.locator('.analytics-privacy').count() === 0, 'Closed preferences leave nothing at the bottom of the page');
     await fs.mkdir(path.join(root, '.cache/audit-ui'), { recursive: true });
-    await page.getByRole('button', { name: 'Analytics privacy', exact: true }).click();
+    await openPreferences(page);
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/analytics-preferences-${width}.png`) });
     await page.getByRole('button', { name: 'Decline analytics', exact: true }).click();
     await page.locator('iframe[title="Optional page analytics"]').waitFor({ state: 'detached' });
@@ -222,7 +221,7 @@ try {
         return originalSetItem.call(this, key, value);
       };
     });
-    await page.getByRole('button', { name: 'Analytics privacy', exact: true }).click();
+    await openPreferences(page);
     await page.getByRole('button', { name: 'Accept analytics', exact: true }).click();
     check(await page.locator('.analytics-privacy-panel [role="status"]').filter({ hasText: 'could not save your choice' }).isVisible(), 'Failed consent saves display a warning even when consent stays denied');
     check(await page.getByRole('button', { name: 'Accept analytics', exact: true }).isVisible(), 'Failed choices keep preferences open for review');
@@ -232,6 +231,15 @@ try {
   }
   console.log(`${checks} analytics browser checks passed; all Google requests were intercepted.`);
 } finally { await browser.close(); }
+
+// "Analytics privacy" links open preferences through #analytics; this opens them on the current page.
+async function openPreferences(page) {
+  await page.evaluate(() => {
+    history.pushState({ key: crypto.randomUUID() }, '', `${location.pathname}${location.search}#analytics`);
+    dispatchEvent(new PopStateEvent('popstate'));
+  });
+  await page.locator('.analytics-privacy-panel').waitFor();
+}
 
 async function assertEventually(condition) {
   for (let i = 0; i < 100; i += 1) { if (condition()) return; await new Promise(resolve => setTimeout(resolve, 50)); }
