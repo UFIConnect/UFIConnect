@@ -29,6 +29,9 @@ export async function installAuditMember(page, app, userId) {
 }
 
 async function signIn(page, origin, state) {
+  // Starting a fresh sign-in must not restore this fixture's previous session
+  // after a password change or logout has returned the browser to /login.
+  state.authenticated = false;
   await page.goto(origin + '/login', { waitUntil: 'domcontentloaded' });
   await page.locator('input[name="email"]').fill('ui-audit@example.invalid');
   await page.locator('input[name="password"]').fill('UI audit passphrase only');
