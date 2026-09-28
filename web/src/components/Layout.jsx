@@ -416,6 +416,10 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
         </Link>
 
         <nav className="sidebar-nav">
+          <Link to="/?feed=ufi" className="nav-link" aria-label="People feed" title="People feed">
+            <span className="nav-icon"><UsersRound size={20} aria-hidden="true" /></span>
+            <span className="nav-label">People feed</span>
+          </Link>
           <Link to="/?feed=ufi&compose=1" className="nav-link" aria-label="Post" title="Post">
             <span className="nav-icon"><SquarePen size={17} aria-hidden="true" /></span>
             <span className="nav-label">Post</span>
@@ -632,6 +636,9 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
             </button>
           </div>
           <div className="mobile-feed-drawer-content">
+            <Link to="/?feed=ufi" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
+              <UsersRound size={20} aria-hidden="true" />People feed
+            </Link>
             <Link to="/?feed=ufi&compose=1" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
               <SquarePen size={20} aria-hidden="true" />
               Post
