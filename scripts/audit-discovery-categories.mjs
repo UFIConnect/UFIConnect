@@ -82,12 +82,12 @@ try {
     await page.getByText('Japanese restaurant opens downtown', { exact: true }).first().waitFor();
     await cuisines.getByRole('button', { name: 'Italian', exact: true }).click();
     await cuisines.locator('..').getByRole('link', { name: 'Post to Restaurants', exact: true }).click();
-    await page.getByRole('form', { name: 'Create UFI post', exact: true }).waitFor();
+    await page.getByRole('form', { name: 'Create Restaurants post', exact: true }).waitFor();
     await page.getByRole('checkbox', { name: 'UFIconnect', exact: true }).waitFor();
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=bars');
     const themes = page.getByRole('group', { name: 'Bar and club themes', exact: true });
     await assertInlineActions(themes, 'Bars and clubs');
-    assert.equal(await themes.locator('..').getByRole('link', { name: 'Post to Bars and clubs', exact: true }).getAttribute('href'), '/?feed=ufi&compose=1');
+    assert.equal(await themes.locator('..').getByRole('link', { name: 'Post to Bars and clubs', exact: true }).getAttribute('href'), '/?feed=bars&compose=1');
     await themes.getByRole('button', { name: 'Clubs', exact: true }).click();
     await page.waitForTimeout(100);
     assert.ok(queries.some(query => query.get('mode') === 'bars' && query.get('q') === 'club'));

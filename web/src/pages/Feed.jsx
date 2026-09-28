@@ -3417,7 +3417,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     : selectedSourceKeys.includes(key);
 
   const discoveryActions = isLocationFeed && <>
-    <Link to="/?feed=ufi&compose=1"
+    <Link to={"/?feed=" + viewMode + "&compose=1"}
       aria-label={`Post to ${DISCOVERY_CATEGORIES[viewMode].label}`}
       className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action ufi-compose-button feed-category-post ufi-post-action">
       Post<span className="feed-category-post-context"> to {DISCOVERY_CATEGORIES[viewMode].label}</span>
@@ -3716,6 +3716,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         />
         <DiscoveryCategoryBar mode={viewMode} filters={filters} onChange={applyFilters} actions={discoveryActions} />
       </>}
+
+      {isLocationFeed && <UfiFeedContent embedded composeOnly categoryLabel={DISCOVERY_CATEGORIES[viewMode].label} />}
 
       {visibleFilterCount > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 12, fontSize: '.78rem' }}>

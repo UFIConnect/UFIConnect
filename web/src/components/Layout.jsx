@@ -416,6 +416,10 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
         </Link>
 
         <nav className="sidebar-nav">
+          <Link to="/?feed=ufi" className="nav-link" aria-label="People feed" title="People feed">
+            <span className="nav-icon"><UsersRound size={20} aria-hidden="true" /></span>
+            <span className="nav-label">People feed</span>
+          </Link>
           <Link to="/?feed=ufi&compose=1" className="nav-link" aria-label="Post" title="Post">
             <span className="nav-icon"><SquarePen size={17} aria-hidden="true" /></span>
             <span className="nav-label">Post</span>
@@ -425,7 +429,7 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
             { category: 'restaurants', icon: 'restaurants', label: 'Restaurants' },
             { category: 'bars', icon: 'bars', label: 'Bars and clubs' },
           ].map(({ category, icon, label }) => <Link key={category}
-            to="/?feed=ufi&compose=1"
+            to={"/?feed=" + category + "&compose=1"}
             className="nav-link" aria-label={`Post to ${label}`} title={`Post to ${label}`}>
             <span className="nav-icon"><ShellIcon name={icon} size={17} /></span>
             <span className="nav-label">Post to {label}</span>
@@ -632,6 +636,9 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
             </button>
           </div>
           <div className="mobile-feed-drawer-content">
+            <Link to="/?feed=ufi" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
+              <UsersRound size={20} aria-hidden="true" />People feed
+            </Link>
             <Link to="/?feed=ufi&compose=1" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
               <SquarePen size={20} aria-hidden="true" />
               Post
@@ -641,7 +648,7 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
               { category: 'restaurants', icon: 'restaurants', label: 'Restaurants' },
               { category: 'bars', icon: 'bars', label: 'Bars and clubs' },
             ].map(({ category, icon, label }) => <Link key={category}
-              to="/?feed=ufi&compose=1"
+              to={"/?feed=" + category + "&compose=1"}
               className="mobile-command-menu-item" onClick={closeMobileOverlays}>
               <ShellIcon name={icon} size={18} />Post to {label}
             </Link>)}
