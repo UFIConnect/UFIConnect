@@ -1,54 +1,46 @@
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1024 1024" width="1024" height="1024">
   <title>UFIconnect</title>
   <defs>
-    <radialGradient id="ufi-tile" cx="28%" cy="20%" r="95%">
-      <stop offset="0" stop-color="#2E55B3"/><stop offset=".55" stop-color="#102A6B"/><stop offset="1" stop-color="#091A45"/>
+    <radialGradient id="ufi-tile" cx="26%" cy="18%" r="100%">
+      <stop offset="0" stop-color="#2A4FA8"/><stop offset=".5" stop-color="#132F76"/><stop offset="1" stop-color="#0A1B47"/>
+    </radialGradient>
+    <pattern id="ufi-dots" width="32" height="32" patternUnits="userSpaceOnUse">
+      <circle cx="16" cy="16" r="1.6" fill="#FFFFFF" fill-opacity=".12"/>
+    </pattern>
+    <radialGradient id="ufi-vignette" cx="50%" cy="50%" r="72%">
+      <stop offset=".6" stop-color="#050F2E" stop-opacity="0"/><stop offset="1" stop-color="#050F2E" stop-opacity=".45"/>
     </radialGradient>
     <linearGradient id="ufi-face" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#DCE6F8"/>
+      <stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#E2E9F6"/>
     </linearGradient>
-    <filter id="ufi-shadow" x="-15%" y="-15%" width="130%" height="160%">
-      <feDropShadow dx="0" dy="26" stdDeviation="24" flood-color="#030B24" flood-opacity=".55"/>
+    <filter id="ufi-shadow" x="-10%" y="-10%" width="120%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#030B24" flood-opacity=".45"/>
     </filter>
-    <path id="ufi-letters" d="M0 0H135V220A45 45 0 0 0 225 220V0H360V220A180 180 0 0 1 0 220ZM396 0H686V130H531V185H651V295H531V400H396ZM716 0H851V400H716Z"/>
+    <path id="ufi-letters" d="M0 0H100V235A65 65 0 0 0 230 235V0H330V235A165 165 0 0 1 0 235ZM366 0H626V100H466V175H591V265H466V400H366ZM656 0H756V400H656Z"/>
   </defs>
   <rect width="1024" height="1024" fill="url(#ufi-tile)"/>
-  <g transform="translate(127.55 321.09) scale(0.86957)">
+  <rect width="1024" height="1024" fill="url(#ufi-dots)"/>
+  <svg viewBox="0 0 1024 1024" width="1024" height="1024" style="opacity:0.16">
+    <g fill="none" stroke="#8FB0E6" stroke-width="1.4"><path d="M417.7 751.5 Q477.7 768.4 501.4 821.8"/><path d="M417.7 751.5 Q348.6 790.7 285.9 823.5"/><path d="M846.2 606.6 Q783.5 608.4 734.1 596.7"/><path d="M846.2 606.6 Q903.0 521.0 929.6 465.6"/><path d="M253.1 680.6 Q236.3 694.1 179.9 747.1"/><path d="M253.1 680.6 Q250.4 756.6 276.1 804.4"/><path d="M634.9 855.8 Q600.6 806.3 501.4 821.8"/><path d="M634.9 855.8 Q756.2 846.1 807.1 906.8"/><path d="M203.2 382.3 Q170.9 450.0 88.6 567.8"/><path d="M203.2 382.3 Q257.8 288.1 319.0 187.5"/><path d="M501.4 821.8 Q441.2 804.9 417.7 751.5"/><path d="M501.4 821.8 Q591.4 815.5 634.9 855.8"/><path d="M838.1 211.5 Q860.7 248.0 910.3 257.5"/><path d="M838.1 211.5 Q777.9 290.5 759.7 327.3"/><path d="M429.4 301.6 Q432.9 375.1 490.8 394.1"/><path d="M429.4 301.6 Q416.1 260.8 453.4 169.2"/><path d="M179.9 747.1 Q209.5 720.9 253.1 680.6"/><path d="M179.9 747.1 Q247.4 756.3 276.1 804.4"/><path d="M636.0 127.2 Q669.7 91.3 664.2 94.5"/><path d="M636.0 127.2 Q561.6 164.4 519.5 169.2"/><path d="M162.8 90.6 Q147.5 44.6 121.2 9.7"/><path d="M162.8 90.6 Q277.1 102.8 319.0 187.5"/><path d="M734.1 596.7 Q764.0 627.8 846.2 606.6"/><path d="M734.1 596.7 Q640.4 634.8 586.9 632.7"/><path d="M807.1 906.8 Q888.9 928.3 917.7 1002.9"/><path d="M807.1 906.8 Q745.0 857.3 634.9 855.8"/><path d="M88.6 567.8 Q143.9 651.1 253.1 680.6"/><path d="M88.6 567.8 Q105.2 686.4 179.9 747.1"/><path d="M425.5 149.2 Q462.9 135.8 453.4 169.2"/><path d="M425.5 149.2 Q500.0 131.7 519.5 169.2"/><path d="M917.7 1002.9 Q892.2 925.1 807.1 906.8"/><path d="M917.7 1002.9 Q756.7 949.0 634.9 855.8"/><path d="M983.0 206.1 Q934.0 244.4 910.3 257.5"/><path d="M983.0 206.1 Q909.0 210.4 838.1 211.5"/><path d="M586.9 632.7 Q577.8 614.4 576.9 587.9"/><path d="M586.9 632.7 Q591.6 586.4 588.2 548.4"/><path d="M576.9 587.9 Q552.7 598.0 588.2 548.4"/><path d="M576.9 587.9 Q615.6 576.6 586.9 632.7"/><path d="M759.7 327.3 Q830.3 238.1 838.1 211.5"/><path d="M759.7 327.3 Q848.3 279.1 910.3 257.5"/><path d="M319.0 187.5 Q410.2 130.4 425.5 149.2"/><path d="M319.0 187.5 Q375.9 188.7 453.4 169.2"/><path d="M910.3 257.5 Q843.6 265.1 838.1 211.5"/><path d="M910.3 257.5 Q916.2 262.3 983.0 206.1"/><path d="M929.6 465.6 Q913.4 510.6 846.2 606.6"/><path d="M929.6 465.6 Q889.5 392.1 910.3 257.5"/><path d="M276.1 804.4 Q270.2 824.7 285.9 823.5"/><path d="M276.1 804.4 Q226.4 777.3 179.9 747.1"/><path d="M453.4 169.2 Q470.1 128.6 425.5 149.2"/><path d="M453.4 169.2 Q486.2 169.5 519.5 169.2"/><path d="M843.9 2.0 Q741.8 60.5 664.2 94.5"/><path d="M843.9 2.0 Q848.8 99.0 838.1 211.5"/><path d="M664.2 94.5 Q620.5 140.5 636.0 127.2"/><path d="M664.2 94.5 Q623.8 99.8 519.5 169.2"/><path d="M121.2 9.7 Q163.2 29.0 162.8 90.6"/><path d="M121.2 9.7 Q197.6 121.1 319.0 187.5"/><path d="M285.9 823.5 Q262.3 832.6 276.1 804.4"/><path d="M285.9 823.5 Q219.5 798.7 179.9 747.1"/><path d="M588.2 548.4 Q550.6 600.1 576.9 587.9"/><path d="M588.2 548.4 Q558.8 519.9 518.3 502.5"/><path d="M519.5 169.2 Q509.6 146.1 453.4 169.2"/><path d="M519.5 169.2 Q446.3 185.4 425.5 149.2"/><path d="M518.3 502.5 Q578.1 500.6 588.2 548.4"/><path d="M518.3 502.5 Q566.5 526.4 576.9 587.9"/><path d="M490.8 394.1 Q488.8 319.1 429.4 301.6"/><path d="M490.8 394.1 Q474.1 478.7 518.3 502.5"/></g><g fill="#B9CCF0"><circle cx="468.6" cy="777.5" r="3"/><circle cx="350.2" cy="789.1" r="3"/><circle cx="417.7" cy="751.5" r="5"/><circle cx="786.8" cy="605.0" r="3"/><circle cx="895.5" cy="528.6" r="3"/><circle cx="846.2" cy="606.6" r="5"/><circle cx="226.4" cy="704.0" r="3"/><circle cx="257.5" cy="749.6" r="3"/><circle cx="253.1" cy="680.6" r="5"/><circle cx="584.4" cy="822.5" r="3"/><circle cx="738.6" cy="863.7" r="3"/><circle cx="634.9" cy="855.8" r="5"/><circle cx="158.4" cy="462.5" r="3"/><circle cx="259.5" cy="286.5" r="3"/><circle cx="203.2" cy="382.3" r="5"/><circle cx="450.4" cy="795.8" r="3"/><circle cx="579.8" cy="827.2" r="3"/><circle cx="501.4" cy="821.8" r="5"/><circle cx="867.5" cy="241.3" r="3"/><circle cx="788.4" cy="279.9" r="3"/><circle cx="838.1" cy="211.5" r="5"/><circle cx="446.5" cy="361.5" r="3"/><circle cx="428.8" cy="248.1" r="3"/><circle cx="429.4" cy="301.6" r="5"/><circle cx="213.0" cy="717.4" r="3"/><circle cx="237.7" cy="766.0" r="3"/><circle cx="179.9" cy="747.1" r="5"/><circle cx="659.9" cy="101.1" r="3"/><circle cx="569.7" cy="156.3" r="3"/><circle cx="636.0" cy="127.2" r="5"/><circle cx="144.8" cy="47.4" r="3"/><circle cx="259.0" cy="120.9" r="3"/><circle cx="162.8" cy="90.6" r="5"/><circle cx="777.1" cy="614.7" r="3"/><circle cx="650.4" cy="624.7" r="3"/><circle cx="734.1" cy="596.7" r="5"/><circle cx="875.7" cy="941.6" r="3"/><circle cx="733.0" cy="869.3" r="3"/><circle cx="807.1" cy="906.8" r="5"/><circle cx="157.4" cy="637.7" r="3"/><circle cx="119.7" cy="671.9" r="3"/><circle cx="88.6" cy="567.8" r="5"/><circle cx="451.2" cy="147.5" r="3"/><circle cx="486.3" cy="145.5" r="3"/><circle cx="425.5" cy="149.2" r="5"/><circle cx="877.3" cy="940.0" r="3"/><circle cx="766.5" cy="939.2" r="3"/><circle cx="917.7" cy="1002.9" r="5"/><circle cx="940.3" cy="238.1" r="3"/><circle cx="909.8" cy="209.6" r="3"/><circle cx="983.0" cy="206.1" r="5"/><circle cx="579.8" cy="612.3" r="3"/><circle cx="589.6" cy="588.5" r="3"/><circle cx="586.9" cy="632.7" r="5"/><circle cx="567.6" cy="583.0" r="3"/><circle cx="598.7" cy="593.4" r="3"/><circle cx="576.9" cy="587.9" r="5"/><circle cx="814.6" cy="253.7" r="3"/><circle cx="841.7" cy="285.8" r="3"/><circle cx="759.7" cy="327.3" r="5"/><circle cx="391.2" cy="149.4" r="3"/><circle cx="381.0" cy="183.5" r="3"/><circle cx="319.0" cy="187.5" r="5"/><circle cx="858.9" cy="249.8" r="3"/><circle cx="931.4" cy="247.0" r="3"/><circle cx="910.3" cy="257.5" r="5"/><circle cx="900.7" cy="523.4" r="3"/><circle cx="904.7" cy="376.8" r="3"/><circle cx="929.6" cy="465.6" r="5"/><circle cx="275.6" cy="819.3" r="3"/><circle cx="227.2" cy="776.5" r="3"/><circle cx="276.1" cy="804.4" r="5"/><circle cx="454.8" cy="143.9" r="3"/><circle cx="486.3" cy="169.3" r="3"/><circle cx="453.4" cy="169.2" r="5"/><circle cx="747.9" cy="54.4" r="3"/><circle cx="844.9" cy="102.9" r="3"/><circle cx="843.9" cy="2.0" r="5"/><circle cx="635.3" cy="125.6" r="3"/><circle cx="607.8" cy="115.8" r="3"/><circle cx="664.2" cy="94.5" r="5"/><circle cx="152.6" cy="39.6" r="3"/><circle cx="208.8" cy="109.9" r="3"/><circle cx="121.2" cy="9.7" r="5"/><circle cx="271.6" cy="823.3" r="3"/><circle cx="226.2" cy="792.0" r="3"/><circle cx="285.9" cy="823.5" r="5"/><circle cx="566.5" cy="584.1" r="3"/><circle cx="556.0" cy="522.6" r="3"/><circle cx="588.2" cy="548.4" r="5"/><circle cx="498.0" cy="157.7" r="3"/><circle cx="459.4" cy="172.3" r="3"/><circle cx="519.5" cy="169.2" r="5"/><circle cx="565.7" cy="513.0" r="3"/><circle cx="557.0" cy="535.8" r="3"/><circle cx="518.3" cy="502.5" r="5"/><circle cx="474.5" cy="333.5" r="3"/><circle cx="489.3" cy="463.5" r="3"/><circle cx="490.8" cy="394.1" r="5"/></g></svg>
+  <rect width="1024" height="1024" fill="url(#ufi-vignette)"/>
+  <g transform="translate(84.80 281.78) scale(1.11111)">
     <g filter="url(#ufi-shadow)">
-      <use xlink:href="#ufi-letters" transform="translate(33.23 39.10)" fill="#122c73"/>
-      <use xlink:href="#ufi-letters" transform="translate(32.26 37.95)" fill="#163076"/>
-      <use xlink:href="#ufi-letters" transform="translate(31.28 36.80)" fill="#1a347a"/>
-      <use xlink:href="#ufi-letters" transform="translate(30.30 35.65)" fill="#1e387d"/>
-      <use xlink:href="#ufi-letters" transform="translate(29.32 34.50)" fill="#223b80"/>
-      <use xlink:href="#ufi-letters" transform="translate(28.35 33.35)" fill="#263f84"/>
-      <use xlink:href="#ufi-letters" transform="translate(27.37 32.20)" fill="#294387"/>
-      <use xlink:href="#ufi-letters" transform="translate(26.39 31.05)" fill="#2d478b"/>
-      <use xlink:href="#ufi-letters" transform="translate(25.41 29.90)" fill="#314b8e"/>
-      <use xlink:href="#ufi-letters" transform="translate(24.44 28.75)" fill="#354f91"/>
-      <use xlink:href="#ufi-letters" transform="translate(23.46 27.60)" fill="#395295"/>
-      <use xlink:href="#ufi-letters" transform="translate(22.48 26.45)" fill="#3d5698"/>
-      <use xlink:href="#ufi-letters" transform="translate(21.50 25.30)" fill="#415a9b"/>
-      <use xlink:href="#ufi-letters" transform="translate(20.53 24.15)" fill="#455e9f"/>
-      <use xlink:href="#ufi-letters" transform="translate(19.55 23.00)" fill="#4962a2"/>
-      <use xlink:href="#ufi-letters" transform="translate(18.57 21.85)" fill="#4d66a5"/>
-      <use xlink:href="#ufi-letters" transform="translate(17.59 20.70)" fill="#516aa9"/>
-      <use xlink:href="#ufi-letters" transform="translate(16.62 19.55)" fill="#546dac"/>
-      <use xlink:href="#ufi-letters" transform="translate(15.64 18.40)" fill="#5871b0"/>
-      <use xlink:href="#ufi-letters" transform="translate(14.66 17.25)" fill="#5c75b3"/>
-      <use xlink:href="#ufi-letters" transform="translate(13.69 16.10)" fill="#6079b6"/>
-      <use xlink:href="#ufi-letters" transform="translate(12.71 14.95)" fill="#647dba"/>
-      <use xlink:href="#ufi-letters" transform="translate(11.73 13.80)" fill="#6881bd"/>
-      <use xlink:href="#ufi-letters" transform="translate(10.75 12.65)" fill="#6c85c0"/>
-      <use xlink:href="#ufi-letters" transform="translate(9.78 11.50)" fill="#7088c4"/>
-      <use xlink:href="#ufi-letters" transform="translate(8.80 10.35)" fill="#748cc7"/>
-      <use xlink:href="#ufi-letters" transform="translate(7.82 9.20)" fill="#7890ca"/>
-      <use xlink:href="#ufi-letters" transform="translate(6.84 8.05)" fill="#7c94ce"/>
-      <use xlink:href="#ufi-letters" transform="translate(5.86 6.90)" fill="#7f98d1"/>
-      <use xlink:href="#ufi-letters" transform="translate(4.89 5.75)" fill="#839cd5"/>
-      <use xlink:href="#ufi-letters" transform="translate(3.91 4.60)" fill="#879fd8"/>
-      <use xlink:href="#ufi-letters" transform="translate(2.93 3.45)" fill="#8ba3db"/>
-      <use xlink:href="#ufi-letters" transform="translate(1.96 2.30)" fill="#8fa7df"/>
-      <use xlink:href="#ufi-letters" transform="translate(0.98 1.15)" fill="#93abe2"/>
+      <use xlink:href="#ufi-letters" transform="translate(12.96 14.40)" fill="#0f2663"/>
+      <use xlink:href="#ufi-letters" transform="translate(12.15 13.50)" fill="#162e6b"/>
+      <use xlink:href="#ufi-letters" transform="translate(11.34 12.60)" fill="#1e3572"/>
+      <use xlink:href="#ufi-letters" transform="translate(10.53 11.70)" fill="#253d7a"/>
+      <use xlink:href="#ufi-letters" transform="translate(9.72 10.80)" fill="#2d4582"/>
+      <use xlink:href="#ufi-letters" transform="translate(8.91 9.90)" fill="#344c89"/>
+      <use xlink:href="#ufi-letters" transform="translate(8.10 9.00)" fill="#3c5491"/>
+      <use xlink:href="#ufi-letters" transform="translate(7.29 8.10)" fill="#435c99"/>
+      <use xlink:href="#ufi-letters" transform="translate(6.48 7.20)" fill="#4b63a0"/>
+      <use xlink:href="#ufi-letters" transform="translate(5.67 6.30)" fill="#526ba8"/>
+      <use xlink:href="#ufi-letters" transform="translate(4.86 5.40)" fill="#5a73b0"/>
+      <use xlink:href="#ufi-letters" transform="translate(4.05 4.50)" fill="#617ab7"/>
+      <use xlink:href="#ufi-letters" transform="translate(3.24 3.60)" fill="#6982bf"/>
+      <use xlink:href="#ufi-letters" transform="translate(2.43 2.70)" fill="#708ac7"/>
+      <use xlink:href="#ufi-letters" transform="translate(1.62 1.80)" fill="#7891ce"/>
+      <use xlink:href="#ufi-letters" transform="translate(0.81 0.90)" fill="#7f99d6"/>
     </g>
     <use xlink:href="#ufi-letters" fill="url(#ufi-face)"/>
   </g>

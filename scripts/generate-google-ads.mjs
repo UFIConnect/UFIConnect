@@ -384,12 +384,12 @@ function composition(theme, size, shots) {
   </body></html>`;
 }
 
-// The UFI mark as bold geometric outlines (U, F, I in a 851×400 box), so the
-// icon renders the same everywhere without a font. The letters are extruded
-// toward the lower right and filled with a lit face on a full navy tile.
-const UFI_LETTERS = 'M0 0H135V220A45 45 0 0 0 225 220V0H360V220A180 180 0 0 1 0 220Z'
-  + 'M396 0H686V130H531V185H651V295H531V400H396Z'
-  + 'M716 0H851V400H716Z';
+// The UFI mark as geometric outlines (U, F, I in a 756×400 box), so the icon
+// renders the same everywhere without a font. The letters span most of the
+// tile with a shallow extrusion, over a dot grid and a faint network pattern.
+const UFI_LETTERS = 'M0 0H100V235A65 65 0 0 0 230 235V0H330V235A165 165 0 0 1 0 235Z'
+  + 'M366 0H626V100H466V175H591V265H466V400H366Z'
+  + 'M656 0H756V400H656Z';
 
 function mixColor(from, to, amount) {
   const channels = hex => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
@@ -398,32 +398,43 @@ function mixColor(from, to, amount) {
 }
 
 function ufiIconSvg(size = 1024) {
-  const scale = 740 / 851;
-  const steps = 34;
-  const [stepX, stepY] = [0.85, 1];
-  const x = (1024 - 851 * scale - steps * stepX) / 2;
+  const scale = 840 / 756;
+  const steps = 16;
+  const [stepX, stepY] = [0.9, 1];
+  const x = (1024 - 756 * scale - steps * stepX) / 2;
   const y = (1024 - 400 * scale - steps * stepY) / 2;
   // Draw the extrusion back to front, darkening with depth.
   const depth = Array.from({ length: steps }, (_, i) => {
     const step = steps - i;
     const offset = `${(step * stepX / scale).toFixed(2)} ${(step * stepY / scale).toFixed(2)}`;
-    return `<use xlink:href="#ufi-letters" transform="translate(${offset})" fill="${mixColor('#93ABE2', '#122C73', (step - 1) / (steps - 1))}"/>`;
+    return `<use xlink:href="#ufi-letters" transform="translate(${offset})" fill="${mixColor('#7F99D6', '#0F2663', (step - 1) / (steps - 1))}"/>`;
   }).join('\n      ');
+  const network = networkSvg(1024, 1024, 20260928, { line: '#8FB0E6', dot: '#B9CCF0', opacity: 0.16 })
+    .replace('<svg class="network"', '<svg');
   return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1024 1024" width="${size}" height="${size}">
   <title>UFIconnect</title>
   <defs>
-    <radialGradient id="ufi-tile" cx="28%" cy="20%" r="95%">
-      <stop offset="0" stop-color="#2E55B3"/><stop offset=".55" stop-color="#102A6B"/><stop offset="1" stop-color="#091A45"/>
+    <radialGradient id="ufi-tile" cx="26%" cy="18%" r="100%">
+      <stop offset="0" stop-color="#2A4FA8"/><stop offset=".5" stop-color="#132F76"/><stop offset="1" stop-color="#0A1B47"/>
+    </radialGradient>
+    <pattern id="ufi-dots" width="32" height="32" patternUnits="userSpaceOnUse">
+      <circle cx="16" cy="16" r="1.6" fill="#FFFFFF" fill-opacity=".12"/>
+    </pattern>
+    <radialGradient id="ufi-vignette" cx="50%" cy="50%" r="72%">
+      <stop offset=".6" stop-color="#050F2E" stop-opacity="0"/><stop offset="1" stop-color="#050F2E" stop-opacity=".45"/>
     </radialGradient>
     <linearGradient id="ufi-face" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#DCE6F8"/>
+      <stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#E2E9F6"/>
     </linearGradient>
-    <filter id="ufi-shadow" x="-15%" y="-15%" width="130%" height="160%">
-      <feDropShadow dx="0" dy="26" stdDeviation="24" flood-color="#030B24" flood-opacity=".55"/>
+    <filter id="ufi-shadow" x="-10%" y="-10%" width="120%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#030B24" flood-opacity=".45"/>
     </filter>
     <path id="ufi-letters" d="${UFI_LETTERS}"/>
   </defs>
   <rect width="1024" height="1024" fill="url(#ufi-tile)"/>
+  <rect width="1024" height="1024" fill="url(#ufi-dots)"/>
+  ${network}
+  <rect width="1024" height="1024" fill="url(#ufi-vignette)"/>
   <g transform="translate(${x.toFixed(2)} ${y.toFixed(2)}) scale(${scale.toFixed(5)})">
     <g filter="url(#ufi-shadow)">
       ${depth}
@@ -440,7 +451,7 @@ function logo(size) {
     ? ufiIconSvg(width)
     : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;gap:44px;background:#fff">
         <span style="width:200px;height:200px;border-radius:46px;overflow:hidden;display:block;box-shadow:0 10px 24px rgba(11,30,77,.25)">${ufiIconSvg(200)}</span>
-        <span style="color:#102A6B;font-size:124px;font-weight:900;letter-spacing:-3px">UFIconnect</span></div>`;
+        <span style="color:#102A6B;font-size:124px;font-weight:700;letter-spacing:-2px">UFIconnect</span></div>`;
   return `<!doctype html><html><head><meta charset="utf-8"><style>* { margin:0; box-sizing:border-box; } body { width:${width}px; height:${height}px; font-family:${FONT}; } svg { display:block; }</style></head><body>${body}</body></html>`;
 }
 
