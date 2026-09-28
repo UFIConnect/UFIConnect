@@ -45,6 +45,20 @@ test('member and group routes enforce their actual HTTP contracts', async t => {
     assert.equal(profile.roleSettings.privacy_messagePermission, 'connections');
     assert.deepEqual((await app.request('/profile', { userId: 'bob' })).data.roleSettings, {});
   });
+  await t.test('blocked feed accounts are saved as bounded, normalized source keys', async () => {
+    const blockedFeedAccounts = ['Mastodon:@Traveller234@mastodon.social', 'mastodon:@traveller234@mastodon.social', 'reddit:r/aviation', 'no-separator', ':missing-source', 'bad source:x', 42,
+      ...Array.from({ length: 510 }, (_, i) => `rss:feed-${i}`)];
+    const result = await app.request('/profile', { userId: 'alice', method: 'PATCH', body: { roleSettings: { blockedFeedAccounts } } });
+    assert.equal(result.status, 200);
+    const saved = (await app.request('/profile', { userId: 'alice' })).data.roleSettings.blockedFeedAccounts;
+    assert.equal(saved.length, 500);
+    assert.equal(saved.at(-1), 'rss:feed-509', 'The newest blocks are kept');
+    assert.ok(saved.every(key => /^[a-z0-9_-]+:.+/.test(key) && key === key.toLowerCase()));
+    const short = await app.request('/profile', { userId: 'alice', method: 'PATCH', body: { roleSettings: { blockedFeedAccounts: blockedFeedAccounts.slice(0, 7) } } });
+    assert.deepEqual(short.status, 200);
+    assert.deepEqual((await app.request('/profile', { userId: 'alice' })).data.roleSettings.blockedFeedAccounts, ['mastodon:@traveller234@mastodon.social', 'reddit:r/aviation']);
+    assert.deepEqual((await app.request('/profile', { userId: 'alice' })).data.roleSettings.feedLanguages, ['en'], 'Other settings are preserved');
+  });
   await t.test('three-step onboarding saves without goals and preserves existing goals', async () => {
     const alice = app.users.find(user => user.id === 'alice');
     alice.preferences.goals = ['networking'];

@@ -5,39 +5,14 @@ import GuestShell from '../components/GuestShell';
 import PublicFooter from '../components/PublicFooter';
 import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
-import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
+import { OpenOnSource, PostHeader } from '../components/PostCardChrome';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, youTubeEmbedUrl, HlsVideoPlayer, useGlobalMuted, SoundIcon } from '../components/videoMedia';
 
-function timeAgo(iso) {
-  if (!iso) return '';
-  const diff = (Date.now() - new Date(iso)) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
-
 const GUEST_FEED_AUTO_REFRESH_MS = 2 * 60 * 1000;
 const GUEST_DEDUP_WINDOW = 500;
 const GUEST_EMPTY_STREAK_LIMIT = 6;
-
-function SourceMark({ source, label }) {
-  const meta = SOURCE_META[source] || {};
-  if (hasBrandIcon(source)) {
-    return (
-      <span style={{ width: 22, height: 22, borderRadius: '50%', background: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border)', flexShrink: 0 }}>
-        <BrandIcon platform={source} size={14} />
-      </span>
-    );
-  }
-  return (
-    <span style={{ width: 22, height: 22, borderRadius: '50%', background: `${meta.color || 'var(--primary)'}18`, color: meta.color || 'var(--primary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 900, flexShrink: 0 }}>
-      {String(label || meta.icon || source || 'UFI').slice(0, 3).toUpperCase()}
-    </span>
-  );
-}
 
 function guestPostIdentity(post) {
   return post?.id || `${post?.source || 'feed'}:${post?.sourceUrl || post?.title || ''}:${post?.createdAt || ''}`;
@@ -139,21 +114,21 @@ function GuestPostCard({ post, active, muted, registerRef }) {
   const isVideo = post.mediaType === 'video';
   const isImage = post.mediaType === 'image';
   return (
-    <div ref={registerRef} data-post-id={post.id} className="card post-card" style={{ marginBottom: 12, overflow: 'hidden' }}>
-      <Link
-        to={`/p/${encodeURIComponent(post.id)}`}
-        style={{ display: 'block', padding: '14px 14px 0', textDecoration: 'none', color: 'inherit' }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
-          <SourceMark source={post.source} label={src.icon} />
-          <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color }}>{post.sourceLabel || src.label}</span>
-          {post.matchedByLocation && (
+    <div ref={registerRef} data-post-id={post.id} className="card post-card" style={{ marginBottom: 12, overflow: 'hidden', '--source-color': src.color }}>
+      <div style={{ padding: '14px 14px 0' }}>
+        <PostHeader post={post} member={!post.isExternal} />
+        {post.matchedByLocation && (
+          <div className="post-chrome-chips">
             <span style={{ fontSize: '.65rem', fontWeight: 700, color: '#047857', background: '#ECFDF5', border: '1px solid #A7F3D0', padding: '2px 7px', borderRadius: 5 }}>
               {post.locationMatchLabel || 'Near you'}
             </span>
-          )}
-          <span style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)' }}>{timeAgo(post.createdAt)}</span>
-        </div>
+          </div>
+        )}
+      </div>
+      <Link
+        to={`/p/${encodeURIComponent(post.id)}`}
+        style={{ display: 'block', padding: '0 14px', textDecoration: 'none', color: 'inherit' }}
+      >
         {post.title && <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 6px', lineHeight: 1.4 }}>{post.title}</p>}
         {post.content && (
           <p style={{
@@ -174,12 +149,10 @@ function GuestPostCard({ post, active, muted, registerRef }) {
           <GuestVideoPlayer post={post} active={active} muted={muted} />
         </div>
       )}
-      {(post.likesCount > 0 || post.commentsCount > 0) && (
-        <div style={{ display: 'flex', gap: 14, padding: '10px 14px 14px', fontSize: '.75rem', color: 'var(--muted)' }}>
-          {post.likesCount > 0 && <span>{post.likesCount.toLocaleString()} likes</span>}
-          {post.commentsCount > 0 && <span>{post.commentsCount.toLocaleString()} comments</span>}
-        </div>
-      )}
+      <div style={{ padding: '0 14px 14px' }}>
+        {post.commentsCount > 0 && <div style={{ marginTop: 10, fontSize: '.8rem', color: 'var(--muted)' }}>{post.commentsCount.toLocaleString()} comments</div>}
+        <OpenOnSource post={post} />
+      </div>
     </div>
   );
 }
