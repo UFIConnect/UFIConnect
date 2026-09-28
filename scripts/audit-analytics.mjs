@@ -150,7 +150,7 @@ try {
       ['/settings', '/settings'], ['/messages/' + seed, '/messages/conversation'],
       ['/groups/' + seed, '/groups/details'], ['/u/' + seed, '/u/member'],
       ['/p/' + seed, '/p/details'], ['/search?q=' + seed, '/search'], ['/privacy', '/privacy'],
-      ['/reset-password?token=' + seed + '#' + seed, '/reset-password'], ['/login', '/login'],
+      ['/reset-password?token=' + seed + '#' + seed, '/reset-password'], ['/settings', '/settings'],
     ];
     for (const [route, expectedPath] of routes) {
       const before = pageViews.length;
@@ -158,6 +158,14 @@ try {
       await assertEventually(() => pageViews.length > before);
       check(pageViews.length === before + 1 && pageViews.at(-1).dl === origin + expectedPath, 'SPA navigation records one canonical view: ' + expectedPath);
     }
+    // Login redirects existing members to their feed. End the member session
+    // through the real control before checking guest login navigation.
+    if (width <= 768) await page.getByRole('button', { name: 'Open account menu', exact: true }).click();
+    const beforeLogout = pageViews.length;
+    await page.getByRole('button', { name: 'Log out', exact: true }).click();
+    await page.locator('#login-email').waitFor();
+    await assertEventually(() => pageViews.at(-1)?.dl === origin + '/login');
+    check(pageViews.length === beforeLogout + 1, 'Signing out records one canonical login view');
     const beforeFragment = pageViews.length;
     await page.evaluate(secret => { history.pushState({}, '', '/login?password=' + secret + '#' + secret); dispatchEvent(new PopStateEvent('popstate')); }, seed);
     await page.waitForTimeout(150);
