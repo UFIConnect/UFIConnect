@@ -416,7 +416,7 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
         </Link>
 
         <nav className="sidebar-nav">
-          <Link to="/search?tab=people" className="nav-link" aria-label="People" title="People">
+          <Link to="/people" className={"nav-link" + (location.pathname === "/people" ? " active" : "")} aria-current={location.pathname === "/people" ? "page" : undefined} aria-label="People" title="People">
             <span className="nav-icon"><UsersRound size={20} aria-hidden="true" /></span>
             <span className="nav-label">People</span>
           </Link>
@@ -636,7 +636,7 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
             </button>
           </div>
           <div className="mobile-feed-drawer-content">
-            <Link to="/search?tab=people" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
+            <Link to="/people" className={"mobile-command-menu-item" + (location.pathname === "/people" ? " active" : "")} onClick={closeMobileOverlays}>
               <UsersRound size={20} aria-hidden="true" />People
             </Link>
             <Link to="/?feed=ufi&compose=1" className="mobile-command-menu-item" onClick={closeMobileOverlays}>

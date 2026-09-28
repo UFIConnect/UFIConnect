@@ -1,0 +1,19 @@
+.people-feed { min-width: 0; }
+.people-feed-heading { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.people-feed-heading h1 { margin: 0 0 6px; }
+.people-feed-heading p, .people-feed-options p { color: var(--muted); font-size: .82rem; line-height: 1.5; margin: 6px 0; }
+.people-group-actions, .people-option-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.people-feed-options { margin-bottom: 16px; }
+.people-option-row .search-filter-chip { display: inline-flex; align-items: center; gap: 6px; }
+.people-topic-row { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 9px; }
+.people-topic-row > * { flex-shrink: 0; }
+.people-networks { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px; }
+.people-networks summary { cursor: pointer; font-size: .85rem; }
+.people-network-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 7px; margin-top: 12px; }
+.people-network-grid a { display: flex; justify-content: flex-start; gap: 7px; }
+.people-discovery-reason { font-size: .74rem; color: var(--muted); }
+.people-card-actions { margin-top: 12px; flex-wrap: wrap; }
+.people-feed-more { text-align: center; padding: 18px 0; }
+.people-feed .search-person-card { cursor: default; }
+@media (max-width: 480px) { .people-feed-heading { align-items: flex-start; } .people-feed .search-person-topline { flex-wrap: wrap; } }
+
