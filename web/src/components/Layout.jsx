@@ -425,7 +425,7 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
             { category: 'restaurants', icon: 'restaurants', label: 'Restaurants' },
             { category: 'bars', icon: 'bars', label: 'Bars and clubs' },
           ].map(({ category, icon, label }) => <Link key={category}
-            to="/?feed=ufi&compose=1"
+            to={"/?feed=" + category + "&compose=1"}
             className="nav-link" aria-label={`Post to ${label}`} title={`Post to ${label}`}>
             <span className="nav-icon"><ShellIcon name={icon} size={17} /></span>
             <span className="nav-label">Post to {label}</span>
@@ -641,7 +641,7 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
               { category: 'restaurants', icon: 'restaurants', label: 'Restaurants' },
               { category: 'bars', icon: 'bars', label: 'Bars and clubs' },
             ].map(({ category, icon, label }) => <Link key={category}
-              to="/?feed=ufi&compose=1"
+              to={"/?feed=" + category + "&compose=1"}
               className="mobile-command-menu-item" onClick={closeMobileOverlays}>
               <ShellIcon name={icon} size={18} />Post to {label}
             </Link>)}

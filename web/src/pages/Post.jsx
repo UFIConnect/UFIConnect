@@ -25,11 +25,11 @@ const PROMPTS = [
   "What's one thing you wish someone had told you earlier?",
 ];
 
-export function UfiFeedContent({ embedded = false, initialShop = false }) {
-  return <UfiPostArea key={initialShop ? 'shop' : 'ufi'} embedded={embedded} initialShop={initialShop} />;
+export function UfiFeedContent({ embedded = false, initialShop = false, composeOnly = false, categoryLabel = '' }) {
+  return <UfiPostArea key={categoryLabel || (initialShop ? 'shop' : 'ufi')} embedded={embedded} initialShop={initialShop} composeOnly={composeOnly} categoryLabel={categoryLabel} />;
 }
 
-function UfiPostArea({ embedded, initialShop }) {
+function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel }) {
   const { profile } = useAuth();
   const { showToast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -66,16 +66,17 @@ function UfiPostArea({ embedded, initialShop }) {
   const targets = usePublishingTargets({ enabled: composing, media: uploadedMedia });
   const [mediaError,    setMediaError]    = useState('');
 
-  const placeholder = PROMPTS[Math.floor(Math.random() * PROMPTS.length)];
+  const placeholder = categoryLabel ? 'What would you like to share about ' + categoryLabel.toLowerCase() + '?' : PROMPTS[Math.floor(Math.random() * PROMPTS.length)];
 
   useEffect(() => {
+    if (composeOnly) return;
     client.get('/groups/internal')
       .then(({ data }) => {
         const internal = data.groups || [];
         setGroups(internal);
       })
       .catch(() => {});
-  }, [initialShop]);
+  }, [initialShop, composeOnly]);
 
   useEffect(() => {
     if (!topicFilterOpen) return undefined;
@@ -101,6 +102,7 @@ function UfiPostArea({ embedded, initialShop }) {
 
   const selectedTopicKey = selectedTopicIds.join(',');
   const loadRecentFeed = useCallback(async ({ silent = false } = {}) => {
+    if (composeOnly) return;
     if (!silent) setFeedLoading(true);
     try {
       const params = { limit: FEED_PAGE_SIZE };
@@ -113,7 +115,7 @@ function UfiPostArea({ embedded, initialShop }) {
     } finally {
       setFeedLoading(false);
     }
-  }, [selectedTopicKey, initialShop]);
+  }, [selectedTopicKey, initialShop, composeOnly]);
 
   useEffect(() => {
     loadRecentFeed();
@@ -121,7 +123,7 @@ function UfiPostArea({ embedded, initialShop }) {
 
   const scrollRefresh = useScrollToRefresh(
     () => loadRecentFeed({ silent: true }),
-    { enabled: !feedLoading && !feedLoadingMore }
+    { enabled: !composeOnly && !feedLoading && !feedLoadingMore }
   );
 
   useEffect(() => {
@@ -270,7 +272,7 @@ function UfiPostArea({ embedded, initialShop }) {
       )}
       {!embedded && <h1 className="page-title" style={{ marginBottom: 20 }}>UFI</h1>}
 
-      <div className="ufi-feed-toolbar" style={{ maxWidth: embedded ? 'none' : 640 }}>
+      {!composeOnly && <div className="ufi-feed-toolbar" style={{ maxWidth: embedded ? 'none' : 640 }}>
         <button type="button" className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action ufi-compose-button ufi-post-action" onClick={openCompose}>
           Post
         </button>
@@ -338,11 +340,12 @@ function UfiPostArea({ embedded, initialShop }) {
             </div>
           )}
         </div>}
-      </div>
+      </div>}
 
       {composing && (
         <div className="card ufi-compose-card" style={{ maxWidth: embedded ? 'none' : 640 }}>
-          <form onSubmit={handleSubmit} aria-label={initialShop ? 'Create Shop post' : 'Create UFI post'}>
+          {categoryLabel && <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: '0 0 14px' }}>Post to {categoryLabel}</h2>}
+          <form onSubmit={handleSubmit} aria-label={categoryLabel ? 'Create ' + categoryLabel + ' post' : initialShop ? 'Create Shop post' : 'Create UFI post'}>
             <PublishingTargets targets={targets} disabled={loading || uploading} />
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
               <div className="avatar avatar-md" style={{ flexShrink: 0, marginTop: 4 }}>
@@ -426,7 +429,7 @@ function UfiPostArea({ embedded, initialShop }) {
       )}
 
       {/* ── Community feed ── */}
-      <div style={{ maxWidth: embedded ? 'none' : 640 }}>
+      {!composeOnly && <div style={{ maxWidth: embedded ? 'none' : 640 }}>
         <PostList
           posts={feed}
           loading={feedLoading}
@@ -437,7 +440,7 @@ function UfiPostArea({ embedded, initialShop }) {
           onNearEnd={loadMoreFeed}
           maxWidth={embedded ? 'none' : 640}
         />
-      </div>
+      </div>}
     </ContentShell>
   );
 }
