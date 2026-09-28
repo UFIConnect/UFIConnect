@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { observeAgentPayload, mergeObservedAgents } from '../office/src/office-telemetry.mjs';
 import { buildCityModel, observationState, CITY_FRESH_MS, CITY_DISTRICTS } from '../office/src/city-model.mjs';
-import { buildCityStreets, cityJourney } from '../office/src/city-streets.mjs';
+import { buildCityGrid, buildCityStreets, cityJourney, GRID_POLE_OFFSET } from '../office/src/city-streets.mjs';
 
 test('city blends 71 homes with workplaces and connects each commute and lunch route', () => {
   const homes = Array.from({ length: 71 }, (_, i) => ({ id: `resident_${i}`, district: i < 37 ? 'sources' : 'runtime' }));
@@ -57,6 +57,54 @@ test('Source collection has a west entrance and east exit used by its residents'
     assert.ok(home.commutePoints.some(([x, y]) => Math.abs(x - source.entry[0]) <= 6 && Math.abs(y - source.entry[1]) <= 6));
     assert.ok(home.returnPoints.some(([x, y]) => Math.abs(x - source.exit[0]) <= 6 && Math.abs(y - source.exit[1]) <= 6));
     assert.deepEqual(home.returnPoints.at(-1), home.commutePoints[0]);
+  }
+});
+
+test('the utility grid links stage buildings along streets and gives every home a service drop', () => {
+  const homes = Array.from({ length: 71 }, (_, i) => ({ id: `resident_${i}`, district: i < 37 ? 'sources' : 'runtime' }));
+  const city = buildCityStreets({ districts: CITY_DISTRICTS, homes });
+  const edges = [{ from: 'sources', to: 'equalizer', active: true }, { from: 'sort', to: 'staging', active: false }, { from: 'missing', to: 'feed', active: true }];
+  const grid = buildCityGrid(city, edges);
+  assert.deepEqual(grid.links.map(link => [link.from, link.to, link.active]), [['sources', 'equalizer', true], ['sort', 'staging', false]], 'Only known buildings are linked and activity is carried through');
+  for (const link of grid.links) {
+    const [start, end] = [link.points[0], link.points.at(-1)], a = city.byId[link.from], b = city.byId[link.to];
+    assert.ok(Math.hypot(start[0] - a.x, start[1] - (a.y + 38)) <= GRID_POLE_OFFSET + 1, 'Backbone starts at the source building');
+    assert.ok(Math.hypot(end[0] - b.x, end[1] - (b.y + 38)) <= GRID_POLE_OFFSET + 1, 'Backbone ends at the destination building');
+    for (const [x, y] of link.points) assert.ok(x > 0 && x < city.width && y > 0 && y < city.height);
+  }
+  assert.equal(grid.drops.length, 71);
+  assert.equal(new Set(grid.drops.map(drop => drop.homeId)).size, 71, 'Every home is wired exactly once');
+  for (const drop of grid.drops) {
+    const home = city.homes.find(item => item.id === drop.homeId);
+    const feeder = grid.feeders.find(item => item.x === drop.pole[0]);
+    assert.ok(feeder?.homes.includes(home.id), 'Each drop hangs from its avenue feeder');
+    assert.ok(drop.pole[1] >= feeder.points[0][1] && drop.pole[1] <= feeder.points[1][1], 'Drop poles lie within the feeder span');
+    assert.equal(Math.abs(drop.pole[0] - home.junction[0]), GRID_POLE_OFFSET, 'Poles stand on the sidewalk beside the driveway');
+    assert.ok(Math.abs(drop.house[0] - home.x) === home.house.width / 2 && Math.sign(drop.pole[0] - home.x) === Math.sign(drop.house[0] - home.x), 'Drops attach to the wall facing the avenue');
+  }
+  const streetRows = new Set(city.blocks.flatMap(block => [block.y - 170, block.y + 170]));
+  assert.ok(grid.feeders.every(feeder => feeder.points.every(([, y]) => streetRows.has(y))), 'Feeders tie into the cross streets');
+});
+
+test('residents walk between the parked car and a door that opens only as they pass', () => {
+  assert.equal(cityJourney(.02).home, true);
+  assert.equal(cityJourney(.02).doorOpen, 0, 'Doors stay closed while residents are inside');
+  const leaving = cityJourney(.056);
+  assert.equal(leaving.homeWalk.leaving, true);
+  assert.equal(leaving.doorOpen, 1, 'The door opens as the resident leaves');
+  assert.equal(cityJourney(.07).doorOpen, 0, 'The door closes behind them');
+  assert.equal(cityJourney(.3).homeWalk, null);
+  assert.equal(cityJourney(.3).doorOpen, 0);
+  const arriving = cityJourney(.89);
+  assert.equal(arriving.homeWalk.leaving, false);
+  assert.ok(arriving.carVisible, 'The car is parked on the driveway while its driver walks in');
+  assert.equal(cityJourney(.905).doorOpen, 1, 'The door is open as the resident reaches it');
+  assert.equal(cityJourney(.95).doorOpen, 0);
+  assert.equal(cityJourney(.95).home, true);
+  for (let phase = 0; phase < 1; phase += .001) {
+    const journey = cityJourney(phase);
+    assert.ok(journey.doorOpen >= 0 && journey.doorOpen <= 1);
+    assert.ok(!(journey.homeWalk && journey.walkerVisible), 'One walker is never in two places');
   }
 });
 

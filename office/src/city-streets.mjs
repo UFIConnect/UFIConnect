@@ -18,11 +18,22 @@ function drivingLane(points) {
   }), clean.at(-1)];
 }
 
+const ramp = (phase, start, end) => Math.max(0, Math.min(1, (phase - start) / (end - start)));
+
 export function cityJourney(phase) {
   // Residents park inside their workplace and enter the cafe during breaks,
   // rather than leaving every car and pedestrian stacked at one doorway.
+  // At home they walk between the front door and the car parked on the
+  // driveway; the door opens only while someone passes through it.
+  const leaving = phase >= .05 && phase < .08, arriving = phase >= .88 && phase < .92;
+  const doorOpen = phase < .5
+    ? Math.min(ramp(phase, .05, .054), 1 - ramp(phase, .062, .068))
+    : Math.min(ramp(phase, .895, .9), 1 - ramp(phase, .91, .918));
   return { carVisible: phase < .24 || phase >= .68, returning: phase >= .68,
-    walkerVisible: (phase >= .36 && phase < .46) || (phase >= .55 && phase < .65) };
+    walkerVisible: (phase >= .36 && phase < .46) || (phase >= .55 && phase < .65),
+    homeWalk: leaving && phase >= .052 && phase < .075 ? { leaving: true, progress: ramp(phase, .052, .075) }
+      : arriving && phase < .905 ? { leaving: false, progress: ramp(phase, .88, .905) } : null,
+    doorOpen: Math.max(0, doorOpen), home: phase < .052 || phase >= .905 };
 }
 
 export function buildCityStreets(model) {
@@ -66,7 +77,9 @@ export function buildCityStreets(model) {
     const workFront = [work.x - 42 + index % 8 * 12, work.y + 52];
     const cafe = cafes[Math.floor((work.x - 260) / 360)];
     const lunch = [workFront, [work.x - 94, work.y + 52], [work.x - 94, work.streetY - 20], [work.x - 160, work.streetY - 20], [work.x - 160, cafe.streetY - 20], [cafe.x, cafe.streetY - 20], [cafe.x, cafe.y + 24]];
-    const placed = { ...home, index, block: block.index, x, y, work, cafe,
+    // The house sits behind its lot's driveway; its door faces the street-side lawn.
+    const house = { x, y: y - 18, width: 56, depth: 46 };
+    const placed = { ...home, index, block: block.index, x, y, work, cafe, house, door: [x, house.y + house.depth / 2], junction,
       arrivalBay, driveway: path([front, junction]), commutePoints: commute, returnPoints: returning, commuteStop, lunchPoints: lunch,
       commutePath: path([...commute, ...returning.slice(1)]), lunchPath: roundTrip(lunch) };
     block.homes.push(placed);
@@ -83,11 +96,60 @@ export function buildCityStreets(model) {
     const left = Math.max(0, Math.min(...items.map(item => item.x)) - 100), top = Math.max(0, Math.min(...items.map(item => item.y)) - 180);
     return `${left} ${top} ${Math.min(width, Math.max(...items.map(item => item.x)) + 100) - left} ${Math.min(height, Math.max(...items.map(item => item.y)) + 130) - top}`;
   };
+  const serviceRoute = (from, to) => {
+    const a = byId[from], b = byId[to];
+    return [[a.x, a.y + 38], [a.x, a.streetY], [a.x + 180, a.streetY], [a.x + 180, b.streetY], [b.x, b.streetY], [b.x, b.y + 38]];
+  };
   return { width, height, bottom, blocks, districts, byId, homes, cafes, roads, highway,
     homesView: bounds(homes), buildingsView: bounds(districts),
-    servicePath(from, to) {
-      const a = byId[from], b = byId[to];
-      return path([[a.x, a.y + 38], [a.x, a.streetY], [a.x + 180, a.streetY], [a.x + 180, b.streetY], [b.x, b.streetY], [b.x, b.y + 38]]);
-    },
+    serviceRoute, servicePath: (from, to) => path(serviceRoute(from, to)),
   };
+}
+
+// The utility grid follows the streets: a backbone links stage buildings in
+// pipeline order, each avenue carries a feeder along the side its homes face,
+// and every home has a service drop from the feeder pole at its driveway.
+// Like the traffic, it is a map of relationships, not a packet capture.
+export const GRID_POLE_OFFSET = 20;
+export function buildCityGrid(city, edges = []) {
+  const links = edges.filter(edge => city.byId[edge.from] && city.byId[edge.to]).map((edge, index) => ({
+    from: edge.from, to: edge.to, active: Boolean(edge.active), lane: index % 3,
+    points: offsetRoute(city.serviceRoute(edge.from, edge.to), GRID_POLE_OFFSET),
+  }));
+  const streetRows = [...new Set(city.blocks.flatMap(block => [block.y - 170, block.y + 170]))].sort((a, b) => a - b);
+  const feeders = new Map(), drops = [];
+  for (const home of city.homes) {
+    // side -1: the home is west of its avenue, so its feeder runs on the avenue's west sidewalk.
+    const side = home.x < home.junction[0] ? -1 : 1;
+    const poleX = home.junction[0] + side * GRID_POLE_OFFSET;
+    if (!feeders.has(poleX)) feeders.set(poleX, { x: poleX, avenue: home.junction[0], side, homes: [], ys: [] });
+    const feeder = feeders.get(poleX);
+    feeder.homes.push(home.id); feeder.ys.push(home.junction[1]);
+    drops.push({ homeId: home.id, pole: [poleX, home.junction[1]], house: [home.x - side * home.house.width / 2, home.house.y] });
+  }
+  const feederLines = [...feeders.values()].map(feeder => {
+    const top = Math.min(...feeder.ys), bottom = Math.max(...feeder.ys);
+    // Tie each feeder into the street grid at the cross streets above and below its homes.
+    const above = [...streetRows].reverse().find(y => y <= top) ?? top;
+    const below = streetRows.find(y => y >= bottom) ?? bottom;
+    return { x: feeder.x, avenue: feeder.avenue, side: feeder.side, homes: feeder.homes, points: [[feeder.x, above], [feeder.x, below]] };
+  });
+  return { links, feeders: feederLines, drops };
+}
+
+// Shift a street route to one side so overhead lines run beside the road, not over its center line.
+function offsetRoute(points, offset) {
+  const clean = points.filter((point, index) => !index || point.some((value, axis) => value !== points[index - 1][axis]));
+  if (clean.length < 2) return clean;
+  const normals = clean.slice(1).map(([x, y], index) => {
+    const dx = x - clean[index][0], dy = y - clean[index][1], length = Math.hypot(dx, dy);
+    return [-dy / length * offset, dx / length * offset];
+  });
+  return clean.map(([x, y], index) => {
+    const before = normals[Math.max(0, index - 1)], after = normals[Math.min(normals.length - 1, index)];
+    // Corners keep both offsets so the line turns around the outside of the curb.
+    const nx = index === 0 ? after[0] : index === clean.length - 1 ? before[0] : before[0] + after[0];
+    const ny = index === 0 ? after[1] : index === clean.length - 1 ? before[1] : before[1] + after[1];
+    return [x + nx, y + ny];
+  });
 }
