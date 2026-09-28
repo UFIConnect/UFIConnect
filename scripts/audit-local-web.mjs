@@ -39,6 +39,12 @@ async function fixture(context, remote = false) {
       assert.equal(request.headers()['x-office-token'], undefined, 'Administrative tokens stay out of local file requests');
       if (url.pathname.endsWith('/status')) return route.fulfill({ json: { previewUrl: remote ? 'https://phone-preview.trycloudflare.com' : 'http://127.0.0.1:4173', phone: remote ? { remote: true } : { state: 'off' }, officeUrl: 'http://127.0.0.1:4174', writeHeader: 'X-Local-Web-Editor' } });
       if (url.pathname.endsWith('/files')) return route.fulfill({ json: { files: [{ path: filePath }] } });
+      if (url.pathname.endsWith('/phone')) {
+        assert.equal(request.headers()['x-local-web-editor'], '1');
+        return route.fulfill({ json: request.postDataJSON().action === 'start'
+          ? { state: 'ready', url: 'https://phone-office.trycloudflare.com', previewUrl: 'https://phone-preview.trycloudflare.com', code: '0123456789abcdef01234567' }
+          : { state: 'off' } });
+      }
       if (url.pathname.endsWith('/file') && request.method() === 'PUT') {
         const body = request.postDataJSON();
         assert.equal(request.headers()['x-local-web-editor'], '1');
@@ -66,6 +72,12 @@ async function fixture(context, remote = false) {
   return state;
 }
 
+// Phones show one Local web step at a time; wider screens show every section and hide the step buttons.
+async function step(page, name) {
+  const button = page.getByRole('group', { name: 'Local web steps' }).getByRole('button', { name, exact: true });
+  if (await button.isVisible()) await button.click();
+}
+
 async function open(page, url) {
   await page.goto(`${url}#local-web`, { waitUntil: 'domcontentloaded' });
   await page.getByRole('heading', { name: 'Local web', exact: true }).waitFor();
@@ -84,12 +96,30 @@ try {
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await open(page, localUrl);
+    await page.getByLabel('Website file', { exact: true }).waitFor();
+    const phoneWidth = width <= 760;
+    assert.equal(await page.getByRole('navigation', { name: 'Office sections' }).evaluate(nav => getComputedStyle(nav.closest('aside')).position), 'static', 'The Office header scrolls away instead of covering the editor');
+    assert.equal(await page.getByRole('group', { name: 'Local web steps' }).isVisible(), phoneWidth);
+    assert.equal(await page.getByRole('heading', { name: 'Local preview', exact: true }).isVisible(), !phoneWidth, 'Phones start on the edit step only');
+    assert.equal(await page.getByRole('heading', { name: 'Update the public website', exact: true }).isVisible(), !phoneWidth);
+
+    await page.getByRole('button', { name: 'Start phone connection', exact: true }).click();
+    await page.getByRole('img', { name: 'QR code for the phone workspace link', exact: true }).waitFor();
+    await page.getByText('0123 4567 89ab cdef 0123 4567', { exact: true }).waitFor();
+    assert.equal(await page.getByLabel('Phone workspace link', { exact: true }).inputValue(), 'https://phone-office.trycloudflare.com/#local-web');
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'The phone connection panel fits the screen');
+    await page.getByRole('button', { name: 'Stop phone connection', exact: true }).click();
+    await page.getByRole('button', { name: 'Start phone connection', exact: true }).waitFor();
+
     await page.getByLabel('Website file', { exact: true }).selectOption(filePath);
     const editor = page.getByLabel(filePath, { exact: true });
     await editor.waitFor();
     const changed = "export const label = 'Reviewed local change';\n";
     await editor.fill(changed);
+    await step(page, 'Publish');
     assert.ok(await page.getByRole('button', { name: 'Review for public update', exact: true }).isDisabled());
+    await page.getByText('Save your edits locally before preparing the public review.', { exact: true }).waitFor();
+    await step(page, 'Edit');
     page.once('dialog', dialog => dialog.dismiss());
     await page.getByRole('navigation', { name: 'Office sections' }).getByRole('button', { name: 'Overview', exact: true }).click();
     assert.equal(await editor.inputValue(), changed, 'Declining navigation retains the unsaved draft');
@@ -98,6 +128,8 @@ try {
     assert.equal(state.saves.length, 1);
     assert.equal(state.content, changed);
     assert.equal(state.publishes.length, 0, 'Saving locally never publishes');
+    await step(page, 'Preview');
+    assert.equal(await editor.isVisible(), !phoneWidth, 'The preview step replaces the editor on phones');
     await page.getByRole('button', { name: 'Mobile', exact: true }).click();
     const preview = page.getByTitle('Local UFIConnect website preview', { exact: true });
     assert.ok((await preview.boundingBox()).width <= 390, 'Mobile preview uses a narrow viewport');
@@ -107,17 +139,25 @@ try {
     assert.equal(await page.frameLocator('iframe').locator('body').evaluate(() => innerWidth), 1280, 'Desktop mode tests the desktop layout even in a narrow console');
     await page.getByRole('button', { name: 'Mobile', exact: true }).click();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
+    await step(page, 'Publish');
     await page.getByRole('button', { name: 'Review for public update', exact: true }).click();
     await page.getByLabel('Access token', { exact: true }).fill(TOKEN);
     await page.getByRole('button', { name: 'Unlock Office', exact: true }).click();
-    await page.getByLabel('Current public release source', { exact: true }).waitFor();
+    const changes = page.getByRole('region', { name: 'Changes to publish', exact: true });
+    await changes.waitFor();
+    assert.deepEqual(await changes.locator('del').allTextContents(), ["export const label = 'Public base';"]);
+    assert.deepEqual(await changes.locator('ins').allTextContents(), ["export const label = 'Reviewed local change';"]);
+    await changes.getByText('1 line added, 1 line removed', { exact: true }).waitFor();
+    assert.equal(await page.getByLabel('Saved local file to publish', { exact: true }).isVisible(), false, 'Full files stay folded away');
+    await page.getByText('Compare full files', { exact: true }).click();
     assert.equal(await page.getByLabel('Saved local file to publish', { exact: true }).inputValue(), changed);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'The review fits the screen');
     const publish = page.getByRole('button', { name: 'Publish this file', exact: true });
     assert.ok(await publish.isDisabled(), 'Publication requires explicit review and a message');
     await page.getByLabel('Describe this public update', { exact: true }).fill('Update the reviewed website label');
     await page.getByRole('checkbox').check();
     await publish.click();
-    await page.getByRole('status').filter({ hasText: 'Verification must pass' }).waitFor();
+    await page.getByRole('status').filter({ hasText: 'updates after verification passes' }).waitFor();
     assert.equal(state.publishes.length, 1);
     assert.equal(state.publishes[0].content, changed);
     assert.equal(state.publishes[0].expectedSha, 'a'.repeat(40));
@@ -125,13 +165,14 @@ try {
     assert.equal(state.publishes[0].confirmed, true);
 
     await page.getByRole('button', { name: 'Review for public update', exact: true }).click();
-    await page.getByLabel('Current public release source', { exact: true }).waitFor();
+    await changes.waitFor();
     state.content = "export const label = 'External editor change';\n";
     await page.getByLabel('Describe this public update', { exact: true }).fill('Do not overwrite an external edit');
     await page.getByRole('checkbox').check();
     await publish.click();
     await page.getByRole('alert').filter({ hasText: 'changed on disk' }).waitFor();
     assert.equal(state.publishes.length, 1, 'An external edit invalidates the reviewed local file');
+    await step(page, 'Edit');
     await page.getByRole('button', { name: 'Reload file', exact: true }).click();
     await page.waitForFunction(content => document.querySelector('#local-web-content')?.value === content, state.content);
     await editor.fill('unsaved change preserved after a conflict');
@@ -143,8 +184,9 @@ try {
     state.staleSave = false;
     await page.getByRole('button', { name: 'Reset unsaved', exact: true }).click();
     assert.equal(await editor.inputValue(), state.content);
+    await step(page, 'Publish');
     await page.getByRole('button', { name: 'Review for public update', exact: true }).click();
-    await page.getByLabel('Current public release source', { exact: true }).waitFor();
+    await changes.waitFor();
     await page.getByLabel('Describe this public update', { exact: true }).fill('Review public concurrency handling');
     await page.getByRole('checkbox').check();
     state.failPublish = true;
@@ -173,17 +215,25 @@ try {
   await phonePage.getByLabel('Website file', { exact: true }).selectOption(filePath);
   await phonePage.getByLabel(filePath, { exact: true }).fill('phone edit');
   await phonePage.getByRole('button', { name: 'Save locally', exact: true }).click();
-  await phonePage.getByRole('status').filter({ hasText: 'Saved on this computer' }).waitFor();
+  await phonePage.getByRole('status').filter({ hasText: 'Refresh the phone preview' }).waitFor();
   assert.equal(phoneState.content, 'phone edit');
-  assert.equal(await phonePage.getByRole('link', { name: 'Open phone preview', exact: true }).getAttribute('href'), 'https://phone-preview.trycloudflare.com');
+  assert.equal(await phonePage.getByRole('button', { name: 'Start phone connection', exact: true }).count(), 0, 'A connected phone cannot open more connections');
+  await step(phonePage, 'Preview');
+  const phonePreview = phonePage.getByRole('link', { name: 'Open phone preview', exact: true });
+  assert.ok(await phonePreview.isVisible());
+  assert.equal(await phonePreview.getAttribute('href'), 'https://phone-preview.trycloudflare.com');
+  assert.equal(await phonePage.getByRole('button', { name: 'Refresh', exact: true }).count(), 0, 'The phone preview is refreshed in its own tab');
   assert.equal(await phonePage.locator('iframe').count(), 0, 'Phone preview is isolated from the file editor on its own secure origin');
   await open(phonePage, hostedUrl);
   await phonePage.getByLabel('Computer connection link', { exact: true }).fill('javascript:alert(1)');
   assert.equal(await phonePage.getByRole('link', { name: 'Connect to my computer', exact: true }).count(), 0);
+  assert.ok(await phonePage.getByRole('button', { name: 'Connect to my computer', exact: true }).isDisabled());
+  await phonePage.getByText('Use the https://…trycloudflare.com link shown on your computer.', { exact: true }).waitFor();
   await phonePage.getByLabel('Computer connection link', { exact: true }).fill('https://my-computer.trycloudflare.com');
   assert.equal(await phonePage.getByRole('link', { name: 'Connect to my computer', exact: true }).getAttribute('href'), 'https://my-computer.trycloudflare.com/#local-web');
   assert.equal(await phonePage.getByRole('link', { name: 'Open local web workspace', exact: true }).isVisible(), false, 'Phones are not sent to their own localhost');
   assert.ok(await phonePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
+  await phonePage.screenshot({ path: path.join(root, '.cache/audit-ui/local-web-phone-connect.png'), fullPage: true });
   await phoneContext.close();
   console.log('PASS: Phone editing, isolated HTTPS preview and hosted phone connection flow');
 } finally {

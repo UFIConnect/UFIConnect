@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createLocalWebMiddleware, localWebWorkbench } from './local-web-workbench.mjs';
+import { lineChanges } from '../office/src/line-changes.mjs';
 
 async function fixture(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'uficonnect-local-web-'));
@@ -157,4 +158,43 @@ test('rejects binary data and content larger than the editor limit', async t => 
   assert.equal((await save('binary\0data', revision)).status, 413);
   await writeFile(path.join(root, 'web/src/binary.js'), Buffer.from([0xff, 0xfe]));
   assert.equal((await load('web/src/binary.js')).response.status, 415);
+});
+
+test('publication review lists only changed lines with nearby context', () => {
+  const lines = count => Array.from({ length: count }, (_, index) => `line ${index + 1}`);
+  const before = lines(40);
+  const after = [...before];
+  after[4] = 'line 5 edited';
+  after.splice(30, 1);
+  after.push('line 41');
+  const result = lineChanges(before.join('\n'), after.join('\n'));
+  assert.equal(result.added, 2);
+  assert.equal(result.removed, 2);
+  assert.deepEqual(result.hunks.map(hunk => hunk.line), [3, 29, 38]);
+  assert.deepEqual(result.hunks[0].rows.map(row => [row.kind, row.text]), [
+    ['same', 'line 3'], ['same', 'line 4'], ['removed', 'line 5'], ['added', 'line 5 edited'], ['same', 'line 6'], ['same', 'line 7'],
+  ]);
+  assert.deepEqual(result.hunks[1].rows.filter(row => row.kind !== 'same').map(row => [row.kind, row.text]), [['removed', 'line 31']]);
+  assert.deepEqual(result.hunks[2].rows.map(row => [row.kind, row.text]), [['same', 'line 39'], ['same', 'line 40'], ['added', 'line 41']]);
+  assert.deepEqual(lineChanges('same\n', 'same\n'), { hunks: [], added: 0, removed: 0, endings: '' });
+});
+
+test('publication review handles additions, removals and very large rewrites', () => {
+  assert.deepEqual(lineChanges('', 'new').hunks[0].rows.map(row => row.kind), ['removed', 'added']);
+  const removal = lineChanges('a\nb\nc', 'a\nc');
+  assert.deepEqual([removal.added, removal.removed, removal.hunks[0].rows.map(row => row.kind)], [0, 1, ['same', 'removed', 'same']]);
+  const before = Array.from({ length: 1200 }, (_, index) => `old ${index}`).join('\n');
+  const after = Array.from({ length: 1200 }, (_, index) => `new ${index}`).join('\n');
+  const rewrite = lineChanges(before, after);
+  assert.equal(rewrite.removed, 1200);
+  assert.equal(rewrite.added, 1200);
+  assert.equal(rewrite.hunks.length, 1);
+});
+
+test('publication review reports a Windows line ending change once instead of every line', () => {
+  assert.deepEqual(lineChanges('a\nb\n', 'a\r\nb\r\n'), { hunks: [], added: 0, removed: 0, endings: 'CRLF' });
+  const edited = lineChanges('a\r\nb\r\nc\r\n', 'a\nB\nc\n');
+  assert.equal(edited.endings, 'LF');
+  assert.deepEqual([edited.added, edited.removed], [1, 1]);
+  assert.deepEqual(edited.hunks[0].rows.map(row => row.text), ['a', 'b', 'B', 'c', '']);
 });

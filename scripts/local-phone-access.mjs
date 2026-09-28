@@ -5,12 +5,15 @@ import path from 'node:path';
 
 const COOKIE = 'ufi_local_phone';
 const hash = text => createHash('sha256').update(text).digest();
-const pairingPage = () => `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect to local UFIConnect</title><style>body{margin:0;background:#0a1220;color:#e2e8f0;font:16px system-ui;padding:24px}main{max-width:420px;margin:10vh auto}input,button{box-sizing:border-box;width:100%;padding:14px;margin-top:12px;border-radius:8px;border:1px solid #496179;background:#162b43;color:inherit;font:inherit}button{background:#2563eb}p{line-height:1.6;color:#afc4d9}</style></head><body><main><h1>Connect your phone</h1><p>Enter the connection code shown in Local web on your computer. The computer must stay running.</p><form method="post" action="/__phone/pair"><label for="code">Connection code</label><input id="code" name="code" type="password" autocomplete="off" required maxlength="64"><button>Connect</button></form></main></body></html>`;
+// Codes are shown in groups of four; spaces, dashes and capitals typed on a phone are ignored.
+const normalizeCode = value => String(value).replace(/[\s-]+/g, '').toLowerCase();
+const pairingPage = (problem = '') => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect to local UFIConnect</title><style>body{margin:0;background:#0a1220;color:#e2e8f0;font:16px system-ui;padding:24px}main{max-width:420px;margin:10vh auto}input,button{box-sizing:border-box;width:100%;padding:14px;margin-top:12px;border-radius:8px;border:1px solid #496179;background:#162b43;color:inherit;font:inherit}input{font-family:ui-monospace,monospace;letter-spacing:.08em}button{background:#2563eb}p{line-height:1.6;color:#afc4d9}.problem{color:#fecdd3;background:#3b1421;border:1px solid #7f1d3e;border-radius:8px;padding:12px}</style></head><body><main><h1>Connect your phone</h1><p>Enter the connection code shown in Local web on your computer. The computer must stay running.</p>${problem ? `<p class="problem" role="alert">${problem}</p>` : ''}<form method="post" action="/__phone/pair"><label for="code">Connection code</label><input id="code" name="code" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" required maxlength="64"><button>Connect</button></form></main></body></html>`;
 
 export function createPhoneGateway({ target, code, kind = 'office', phoneStatus = () => ({}) }) {
   const upstream = new URL(target);
   if (upstream.hostname !== '127.0.0.1' || upstream.protocol !== 'http:') throw new Error('Phone gateway targets must be loopback services.');
-  const codeHash = hash(code);
+  if (!normalizeCode(code)) throw new Error('Phone gateways require a connection code.');
+  const codeHash = hash(normalizeCode(code));
   const sessions = new Map();
   let origin = '', attempts = 0, attemptWindow = 0;
   const authenticated = req => {
@@ -35,12 +38,12 @@ export function createPhoneGateway({ target, code, kind = 'office', phoneStatus 
     if (url.pathname === '/__phone/pair' && req.method === 'POST') {
       if (req.headers.origin !== origin || !String(req.headers['content-type']).startsWith('application/x-www-form-urlencoded')) return respond(res, 403, { error: 'Use the connection form.' });
       if (Date.now() - attemptWindow > 60000) { attemptWindow = Date.now(); attempts = 0; }
-      if (++attempts > 10) return respond(res, 429, { error: 'Wait a minute before trying again.' });
+      if (++attempts > 10) return respond(res, 429, pairingPage('Too many attempts. Wait a minute, then try again.'), 'text/html');
       let body = '';
       try { for await (const part of req) { body += part; if (body.length > 4096) return respond(res, 413, { error: 'Connection request is too large.' }); } }
       catch { return respond(res, 400, { error: 'Connection request interrupted.' }); }
-      const entered = new URLSearchParams(body).get('code') || '';
-      if (!timingSafeEqual(hash(entered.trim()), codeHash)) return respond(res, 403, { error: 'That connection code is incorrect. Return and try again.' });
+      const entered = normalizeCode(new URLSearchParams(body).get('code') || '');
+      if (!timingSafeEqual(hash(entered), codeHash)) return respond(res, 403, pairingPage('That code did not match. Check it on your computer and try again.'), 'text/html');
       const session = randomBytes(32).toString('hex');
       if (sessions.size >= 32) sessions.delete(sessions.keys().next().value);
       sessions.set(session, Date.now() + 8 * 3600000);
