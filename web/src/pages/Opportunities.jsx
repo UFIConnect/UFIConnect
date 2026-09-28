@@ -158,10 +158,10 @@ export function JobDetail({ job }) {
   );
 }
 
-function OpportunityFrame({ embedded, children }) {
+function OpportunityFrame({ embedded, children, feedSearch }) {
   return embedded
     ? <section className="search-jobs-panel">{children}</section>
-    : <Layout wide>{children}</Layout>;
+    : <Layout wide feedSearch={feedSearch}>{children}</Layout>;
 }
 
 function mergeOpportunities(current, incoming) {
@@ -189,11 +189,9 @@ function isRemoteJob(job) {
 export default function Opportunities({ embedded = false, searchQuery = null } = {}) {
   const { profile } = useAuth();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const postedWithin = ['1', '7', '30'].includes(searchParams.get('postedWithin')) ? searchParams.get('postedWithin') : '';
-  const initialRouteQuery = embedded
-    ? String(searchQuery ?? searchParams.get('q') ?? '').trim().slice(0, 200)
-    : '';
+  const initialRouteQuery = String((embedded ? searchQuery : null) ?? searchParams.get('q') ?? '').trim().slice(0, 200);
   const [allOpps,   setAllOpps]   = useState([]);
   const [liveCount, setLiveCount] = useState(0);
   const filter = 'job';
@@ -215,6 +213,8 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
   const [refreshing, setRefreshing] = useState(false);
   const silentRefreshRef = useRef(false);
   const refreshRequestRef = useRef(null);
+  const refreshPageRef = useRef(null);
+  const [refreshMessage, setRefreshMessage] = useState('');
   const loadingMoreRef = useRef(false);
   const nextOffsetRef = useRef(0);
   const requestGenerationRef = useRef(0);
@@ -225,9 +225,7 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
   const bustOnNextFetchRef = useRef(false);
 
   useEffect(() => {
-    const nextQuery = embedded
-      ? String(searchQuery ?? searchParams.get('q') ?? '').trim().slice(0, 200)
-      : '';
+    const nextQuery = String((embedded ? searchQuery : null) ?? searchParams.get('q') ?? '').trim().slice(0, 200);
     const timer = window.setTimeout(() => setSearch(nextQuery), 280);
     return () => window.clearTimeout(timer);
   }, [embedded, searchParams, searchQuery]);
@@ -274,6 +272,7 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
     const params = { sort, limit: PAGE_SIZE, offset: 0 };
     if (postedWithin) params.postedWithin = postedWithin;
     const refreshRequest = refreshRequestRef.current;
+    refreshPageRef.current = refreshRequest;
     if (refreshRequest) {
       params.bust = '1';
       params.refresh = refreshRequest.key;
@@ -299,7 +298,9 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
       .then(({ data }) => {
         if (requestGeneration !== requestGenerationRef.current) return;
         const list = data.opportunities || [];
-        setAllOpps(list);
+        setAllOpps(current => refreshRequest && !list.length ? current : list);
+        setRefreshMessage(refreshRequest && (data.refreshMode === 'unchanged' || !list.length)
+          ? 'You’re up to date. No new matching jobs yet.' : '');
         nextOffsetRef.current = list.length;
         setTotalCount(data.totalCount || list.length);
         setHasMore(!!data.hasMore);
@@ -323,12 +324,13 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
   }, [filter, sort, workSetting, liveOnly, search, sourceFilter, refreshTick, postedWithin]);
 
   const requestRefresh = useCallback(() => {
-    if (refreshing) return;
+    if (refreshing || refreshRequestRef.current) return;
     refreshRequestRef.current = {
       key: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       excludeIds: allOpps.map((opportunity) => opportunity.id).filter(Boolean).slice(0, 100),
     };
     silentRefreshRef.current = true;
+    setRefreshMessage('');
     setRefreshing(true);
     setRefreshTick((tick) => tick + 1);
   }, [allOpps, refreshing]);
@@ -339,6 +341,11 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
     loadingMoreRef.current = true;
     setLoadingMore(true);
     const params = { sort, limit: PAGE_SIZE, offset: nextOffsetRef.current };
+    // Keep the same unseen-first cohort for every page of this refresh.
+    if (refreshPageRef.current) {
+      params.refresh = refreshPageRef.current.key;
+      params.exclude = refreshPageRef.current.excludeIds.join(',');
+    }
     if (postedWithin) params.postedWithin = postedWithin;
     if (filter !== 'all') params.type = filter;
     if (search) params.search = search;
@@ -382,7 +389,7 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
 
   // Scrolling back up to the top acts as pull-to-refresh, same as every
   // other list page on the site.
-  useScrollToRefresh(() => {
+  const scrollRefresh = useScrollToRefresh(() => {
     requestRefresh();
   }, { enabled: !loading && !refreshing });
 
@@ -403,9 +410,20 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
         <meta name="keywords" content="live jobs, career listings, remote jobs, personalized jobs, tech jobs, startup jobs, internships" />
         <link rel="canonical" href="https://uficonnect.org/opportunities" />
       </Helmet>}
-      <OpportunityFrame embedded={embedded}>
+      <OpportunityFrame embedded={embedded} feedSearch={{
+        query: search, label: 'Search jobs', target: 'jobs', actionLabel: 'Update jobs',
+        onSubmit: query => {
+          const next = new URLSearchParams(searchParams);
+          if (query.trim()) next.set('q', query.trim().slice(0, 200)); else next.delete('q');
+          setSearchParams(next, { replace: true });
+        },
+      }}>
         <div className={embedded ? 'jobs-page-content jobs-page-content--embedded' : 'jobs-page-layout'}>
         <div className={embedded ? undefined : 'jobs-page-content'}>
+        {(scrollRefresh.pulling || refreshing) && <div className="scroll-refresh-status" role="status" aria-live="polite">
+          <span>{refreshing ? 'Refreshing jobs' : scrollRefresh.progress >= 1 ? 'Release to refresh jobs' : 'Pull to refresh jobs'}</span>
+        </div>}
+        {refreshMessage && <p role="status" className="muted">{refreshMessage}</p>}
         {embedded && <div className="page-header opportunities-page-header">
           <h1 className="page-title">
             {embedded ? 'Live Jobs' : 'Jobs'}

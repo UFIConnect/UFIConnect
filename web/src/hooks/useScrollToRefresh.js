@@ -9,13 +9,15 @@ const IDLE_STATE = Object.freeze({ pulling: false, progress: 0, refreshing: fals
 export function useScrollToRefresh(onRefresh, {
   enabled = true,
   containerRef = null,
-  cooldownMs = 8000,
+  cooldownMs = 1500,
   minScrollBeforePull = 40,
   touchPullDistance = 56,
   wheelPullDistance = 100,
   topThreshold = 12,
 } = {}) {
   const onRefreshRef = useRef(onRefresh);
+  const lastRefreshAtRef = useRef(0);
+  const refreshInFlightRef = useRef(false);
   const [state, setState] = useState(IDLE_STATE);
   onRefreshRef.current = onRefresh;
 
@@ -33,9 +35,8 @@ export function useScrollToRefresh(onRefresh, {
       const documentY = document.scrollingElement?.scrollTop;
       return Math.max(0, Number.isFinite(documentY) ? documentY : (window.scrollY || window.pageYOffset || 0));
     };
-    let lastY = getY();
-    let lastRefreshAt = 0;
-    let refreshInFlight = false;
+    let travelledDown = getY() > minScrollBeforePull;
+    let active = true;
     let touchStartY = null;
     let touchStartX = null;
     let touchDistance = 0;
@@ -44,27 +45,28 @@ export function useScrollToRefresh(onRefresh, {
 
     const triggerRefresh = () => {
       const now = Date.now();
-      if (refreshInFlight || now - lastRefreshAt < cooldownMs) return;
-      lastRefreshAt = now;
-      refreshInFlight = true;
+      if (refreshInFlightRef.current || now - lastRefreshAtRef.current < cooldownMs) return;
+      lastRefreshAtRef.current = now;
+      refreshInFlightRef.current = true;
       setState({ pulling: false, progress: 1, refreshing: true });
       try {
         Promise.resolve(onRefreshRef.current?.())
           .catch(() => {})
           .finally(() => {
-            refreshInFlight = false;
-            setState(IDLE_STATE);
+            refreshInFlightRef.current = false;
+            if (active) setState(IDLE_STATE);
           });
       } catch {
-        refreshInFlight = false;
+        refreshInFlightRef.current = false;
         setState(IDLE_STATE);
       }
     };
 
     const handleScroll = () => {
       const y = getY();
-      const returnedToTop = y <= topThreshold && lastY > minScrollBeforePull;
-      lastY = y;
+      if (y > minScrollBeforePull) travelledDown = true;
+      const returnedToTop = y <= topThreshold && travelledDown;
+      if (returnedToTop) travelledDown = false;
       // Reaching the top after a real scroll is itself a refresh gesture on
       // every input type. Touch users can additionally pull while already at
       // the top; desktop users can keep wheeling upward there.
@@ -97,7 +99,7 @@ export function useScrollToRefresh(onRefresh, {
     const handleTouchEnd = () => {
       if (touchStartY != null && touchDistance >= touchPullDistance && getY() <= topThreshold) {
         triggerRefresh();
-      } else if (!refreshInFlight) {
+      } else if (!refreshInFlightRef.current) {
         setState(IDLE_STATE);
       }
       touchStartY = null;
@@ -131,6 +133,7 @@ export function useScrollToRefresh(onRefresh, {
     target.addEventListener('wheel', handleWheel, { passive: true });
 
     return () => {
+      active = false;
       if (wheelResetTimer) window.clearTimeout(wheelResetTimer);
       target.removeEventListener('scroll', handleScroll);
       target.removeEventListener('touchstart', handleTouchStart, true);

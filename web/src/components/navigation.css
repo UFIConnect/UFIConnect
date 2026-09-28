@@ -21,6 +21,39 @@
 .shell .feed-source-option:focus-visible,
 .shell .feed-source-menu-button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 
+/* Clear belongs to the same raised control family as the source marks. */
+:is(.shell, .video-feed-view) .ufi-clear-control {
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
+  min-width: 44px; min-height: 34px; padding: 6px 10px; border-radius: 17px;
+  border: 1px solid #d5deeb; color: #425a7b; font: inherit; font-size: .73rem; font-weight: 700;
+  background: linear-gradient(145deg, #fff 12%, #f5f8fc 58%, #e8eef7);
+  box-shadow: inset 0 1px 1px #fff, inset 0 -2px 2px #102a6b0d, 0 2px 3px #102a6b14;
+  cursor: pointer; white-space: nowrap;
+}
+:is(.shell, .video-feed-view) .ufi-clear-control:hover:not(:disabled) { color: #174ea6; border-color: #a7bddc; }
+:is(.shell, .video-feed-view) .ufi-clear-control:active:not(:disabled) { box-shadow: inset 0 1px 3px #102a6b26; }
+:is(.shell, .video-feed-view) .ufi-clear-control:disabled { opacity: .5; cursor: default; }
+:is(.shell, .video-feed-view) .ufi-clear-control:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.shell .feed-source-tabs--compact:has(> .ufi-clear-control) { grid-template-columns: 48px; }
+
+/* Publishing actions stay visibly distinct from filter and navigation controls. */
+.shell .ufi-post-action,
+.shell .feed-category-post,
+.shell .group-post-button,
+.shell a.btn[href="/groups/post"],
+.shell form[aria-label^="Create post"] button[type="submit"],
+.shell form[aria-label="Create UFI post"] button[type="submit"] {
+  color: #fff; background: linear-gradient(150deg, #247cff, #1259d6);
+  border-color: #1259d6; font-weight: 800;
+  box-shadow: inset 0 1px 0 #ffffff38, 0 2px 4px #1259d626;
+}
+.shell .ufi-post-action:hover,
+.shell .feed-category-post:hover,
+.shell .group-post-button:hover,
+.shell a.btn[href="/groups/post"]:hover { color: #fff; background: #1259d6; }
+.shell .ufi-post-action:focus-visible { outline: 2px solid #1259d6; outline-offset: 2px; }
+.shell .ufi-post-action .nav-icon { color: #1259d6; }
+
 /* Restore the original navy UFI mark and use it to open the left drawer. */
 :root .sidebar-logo-icon,
 :root .mobile-app-header-mark,
@@ -64,7 +97,17 @@
   background: var(--card, #fff); box-shadow: 0 2px 8px #102a6b04; backdrop-filter: none;
 }
 .shell .global-app-header .mobile-app-header-start { display: none; }
-.shell .global-search-center { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; max-width: 660px; }
+.shell .global-search-center { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; max-width: 1000px; }
+.shell .global-primary-nav { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+.shell .global-primary-link {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-width: 40px; height: 40px; padding: 0 10px; border: 1px solid transparent; border-radius: 20px;
+  font-size: .77rem; font-weight: 650; color: #526780; text-decoration: none; white-space: nowrap;
+}
+.shell .global-primary-link svg { flex: 0 0 18px; }
+.shell .global-primary-link:hover { color: #102a6b; background: #f3f6fa; }
+.shell .global-primary-link.active { color: #174ea6; border-color: #d5e1f4; background: linear-gradient(145deg, #fff, #e7effb); box-shadow: inset 0 1px 0 #fff, 0 1px 3px #102a6b14; }
+.shell .global-primary-link:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .shell .global-search-bar {
   display: flex; align-items: center; flex: 1; min-width: 0; gap: 8px;
   height: 40px; padding: 0 10px; border: 1px solid #dfe5ed; border-radius: 20px;
@@ -79,12 +122,14 @@
 .shell .global-search-bar input::placeholder { color: #8591a3; }
 .shell .global-search-bar input::-webkit-search-cancel-button { display: none; }
 .shell .global-search-bar .global-search-open,
+.shell .global-search-bar .global-search-submit,
 .shell .global-search-bar .global-search-clear {
   display: inline-flex; align-items: center; justify-content: center; flex: 0 0 26px;
   width: 26px; height: 30px; padding: 0; border: 0; border-radius: 6px;
   background: transparent; color: #6b7a90; cursor: pointer;
 }
 .shell .global-search-bar .global-search-open:hover,
+.shell .global-search-bar .global-search-submit:hover,
 .shell .global-search-bar .global-search-clear:hover { color: #102a6b; background: #e7edf5; }
 .shell .global-search-bar button:focus-visible { outline: 2px solid var(--primary); outline-offset: -1px; }
 .shell .global-search-bar select {
@@ -126,6 +171,10 @@
   .saved-navigation-links { margin-left: 0; padding-left: 0; border-left: 0; }
   .saved-navigation-toggle .saved-navigation-chevron { position: absolute; right: 1px; width: 10px; }
 }
+@media (min-width: 769px) and (max-width: 1240px) {
+  .shell .global-primary-link { width: 40px; padding: 0; }
+  .shell .global-primary-link > span { display: none; }
+}
 @media (max-width: 768px) {
   .shell .feed-group-filter-row { flex-wrap: wrap; }
   .shell .feed-group-filter-row .group-feed-scope-tabs { flex: 1 0 100%; width: 100%; margin-right: 0; }
@@ -133,6 +182,7 @@
   .shell .global-app-header { gap: 4px; min-height: 58px; padding: 6px; }
   .shell .global-app-header .mobile-app-header-start { display: flex; flex: 0 0 44px; }
   .shell .global-search-center { gap: 3px; max-width: none; }
+  .shell .global-primary-nav { display: none; }
   .shell .global-search-bar { height: 38px; padding-inline: 8px; gap: 6px; }
   .shell .global-search-bar input { height: 34px; font-size: 16px; }
   .shell .global-search-bar select { flex-basis: 23px; width: 23px; max-width: 23px; padding-left: 2px; font-size: 0; }
@@ -150,7 +200,9 @@
   .global-search-dialog-body .search-tab-strip { top: -12px; }
   .shell .global-search-bar { gap: 4px; }
   .shell .global-search-bar .global-search-open,
+  .shell .global-search-bar .global-search-submit,
   .shell .global-search-bar .global-search-clear { flex-basis: 23px; width: 23px; }
+  .shell .mobile-account-drawer .ufi-post-action { margin-bottom: 4px; flex-shrink: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   .saved-navigation-chevron { transition: none; }

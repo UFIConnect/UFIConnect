@@ -47,14 +47,15 @@ try {
     await installAuditMember(page, app, 'interface-member');
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=feed');
     const sources = page.getByRole('group', { name: 'Home sources', exact: true }); await sources.waitFor();
-    assert.equal(await sources.getByRole('button', { name: 'All sources', exact: true }).count(), 1);
-    assert.equal(await sources.getByRole('button', { name: 'All sources', exact: true }).getAttribute('aria-pressed'), 'true');
+    assert.equal(await sources.getByRole('button', { name: 'All sources', exact: true }).count(), 0);
+    const clearSources = sources.getByRole('button', { name: 'Clear sources', exact: true });
+    assert.equal(await clearSources.isDisabled(), true, 'Clear is inactive before any source is selected');
     await sources.getByRole('button', { name: 'Reddit', exact: true }).click();
     await sources.getByRole('button', { name: 'Hacker News', exact: true }).click();
     await page.waitForTimeout(150);
     assert.equal(await sources.getByRole('button', { name: 'Reddit', exact: true }).getAttribute('aria-pressed'), 'true');
     assert.equal(await sources.getByRole('button', { name: 'Hacker News', exact: true }).getAttribute('aria-pressed'), 'true');
-    assert.equal(await sources.getByRole('button', { name: 'All sources', exact: true }).getAttribute('aria-pressed'), 'false');
+    assert.equal(await clearSources.isEnabled(), true, 'Clear becomes available for a source selection');
     assert.ok(feedRequests.some(params => params.get('sources')?.split(',').includes('reddit') && params.get('sources')?.split(',').includes('hackernews')));
     const dimensions = await sources.getByRole('button', { name: 'Reddit', exact: true }).evaluate(el => ({ width: el.offsetWidth, height: el.offsetHeight, radius: getComputedStyle(el).borderRadius }));
     assert.equal(dimensions.width, dimensions.height); assert.equal(dimensions.radius, '50%');
@@ -84,15 +85,18 @@ try {
     await page.getByRole('button', { name: 'View all feed sources', exact: true }).click();
     const sourceMenu = page.getByRole('group', { name: 'Feed sources and favorites', exact: true });
     assert.equal(await sourceMenu.locator('.feed-source-option').count(), await sources.locator('.feed-source-option').count(), 'the menu exposes the complete source rail');
+    assert.equal(await sourceMenu.getByRole('button', { name: 'All sources', exact: true }).count(), 0);
+    await page.getByRole('button', { name: 'View all feed sources', exact: true }).click();
+    await sourceMenu.waitFor({ state: 'hidden' });
     await Promise.all([
       page.waitForResponse(response => {
         const url = new URL(response.url());
         return url.pathname.endsWith('/office/feed') && url.searchParams.get('mode') === 'feed'
           && !url.searchParams.has('source') && !url.searchParams.has('sources');
       }),
-      sourceMenu.getByRole('button', { name: 'All sources', exact: true }).click(),
+      clearSources.click(),
     ]);
-    assert.equal(await sources.getByRole('button', { name: 'All sources', exact: true }).getAttribute('aria-pressed'), 'true');
+    assert.equal(await clearSources.isDisabled(), true, 'Clearing restores the unfiltered source feed');
     assert.equal(await sources.getByRole('button', { name: 'Reddit', exact: true }).getAttribute('aria-pressed'), 'false');
     assert.equal(await sources.getByRole('button', { name: 'Hacker News', exact: true }).getAttribute('aria-pressed'), 'false');
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/interface-sources-${width}.png`) });

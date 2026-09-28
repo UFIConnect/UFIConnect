@@ -2242,6 +2242,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       filters: requestedFilters,
       mode: requestedMode,
       replace = false,
+      promoteIncoming = false,
       // Server-side bust=1 with no ?source forces EVERY source worker (30+)
       // to refetch from its external API right now — that's what a tab
       // click should never trigger for "All"/view-mode tabs, since it's the
@@ -2357,9 +2358,16 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       // reason counts never appeared to update no matter how long a post
       // sat in the feed. This order makes the fresh copy win instead.
       const preserveEqualizer = usesMemberEqualizer(activeMode, activeSearch);
-      const nextPosts = shouldMerge
+      let nextPosts = shouldMerge
         ? mergeFeedPosts([...previous, ...incoming], activeFilters.sort, preserveEqualizer)
         : mergeFeedPosts(incoming, activeFilters.sort, preserveEqualizer);
+      if (shouldMerge && promoteIncoming && incoming.length) {
+        // An explicit refresh brings the new balanced cohort to the top.
+        // Keep older cards underneath and retain refreshed engagement data.
+        const first = mergeFeedPosts(incoming, activeFilters.sort, preserveEqualizer);
+        const incomingIds = new Set(first.map(post => post.id));
+        nextPosts = [...first, ...nextPosts.filter(post => !incomingIds.has(post.id))];
+      }
 
       if (shouldMerge) {
         const prevIds = new Set(previous.map(p => p.id).filter(Boolean));
@@ -3007,6 +3015,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     }
     return loadFeed(true, activeTabsRef.current, {
       preserveScroll: true,
+      promoteIncoming: true,
       bust: activeTabsRef.current.length === 1,
     });
   }, [loadFeed, profile?.id, publicGroupsFeed]);
@@ -3381,13 +3390,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     .filter(Boolean);
   const favoriteCompactSourceKeys = new Set(favoriteCompactSourceTabs.map(tab => tab.key));
   const compactSourceTabs = [
-    { key: 'all', label: 'All sources', icon: 'All' },
     ...favoriteCompactSourceTabs,
     ...currentSourceTabs.filter(tab => tab.key !== 'all' && !favoriteCompactSourceKeys.has(tab.key)),
   ];
   const favoriteSourceOrder = new Map(sourceFavoriteDraft.map((key, index) => [key, index]));
   const fullSourceTabs = [
-    { key: 'all', label: 'All sources', icon: 'All' },
     ...currentSourceTabs
       .filter(tab => tab.key !== 'all')
       .map((tab, index) => ({ tab, index }))
@@ -3412,7 +3419,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const discoveryActions = isLocationFeed && <>
     <Link to={`/command-center?tab=crosspost&category=${viewMode}`} state={{ discoveryPost: postContext }}
       aria-label={`Post to ${DISCOVERY_CATEGORIES[viewMode].label}`}
-      className="feed-toolbar-control feed-topic-filter-trigger feed-category-post">
+      className="feed-toolbar-control feed-topic-filter-trigger feed-category-post ufi-post-action">
       Post<span className="feed-category-post-context"> to {DISCOVERY_CATEGORIES[viewMode].label}</span>
     </Link>
     <TopicFilterControl topics={filters.topics} options={ALL_INTERESTS} onChange={applyTopicFilters}
@@ -3421,7 +3428,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   </>;
 
   return (
-    <Layout wide={!forcedMode} feedSearch={EMBEDDED_HOME_MODES.has(viewMode) ? undefined : {
+    <Layout wide={!forcedMode} discoveryPost={postContext} feedSearch={EMBEDDED_HOME_MODES.has(viewMode) ? undefined : {
       query: search,
       onSubmit: submitFeedSearch,
       label: 'Search this feed',
@@ -3536,7 +3543,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                   {locationSaving ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Search'}
                 </button>
                 {(locationFilters.country || locationFilters.city) && (
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={clearLocationFilters} disabled={locationSaving}>
+                  <button type="button" className="btn btn-ghost btn-sm ufi-clear-control" onClick={clearLocationFilters} disabled={locationSaving}>
                     Clear
                   </button>
                 )}
@@ -3555,7 +3562,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         <div className="feed-source-filter-row feed-unified-control-bar">
           <div className="feed-source-picker">
             <div className="feed-source-tabs feed-source-tabs--compact" role="group" aria-label={`${viewMode === 'following' ? 'Following' : 'Home'} sources`}>
-              <button type="button" className="btn btn-ghost btn-sm"
+              <button type="button" className="btn btn-ghost btn-sm ufi-clear-control"
                 aria-label="Clear sources" disabled={selectedSourceKeys.length === 0}
                 onClick={clearSourceSelection}>Clear</button>
               {compactSourceTabs.map(tab => (
@@ -3678,7 +3685,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           <Link to="/search?tab=groups&create=1" className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action group-create-button">
             Create a group
           </Link>
-          <Link to="/groups/post" className="btn btn-ghost btn-sm feed-toolbar-control group-post-button">Post to your group</Link>
+          <Link to="/groups/post" className="btn btn-ghost btn-sm feed-toolbar-control group-post-button ufi-post-action">Post to your group</Link>
           </div>
           <TopicFilterControl
             topics={filters.topics}
@@ -3743,8 +3750,9 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           ))}
 
           <button
+            type="button"
+            className="ufi-clear-control"
             onClick={clearFeedControls}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: '.75rem', fontWeight: 600, padding: '2px 4px', textDecoration: 'underline' }}
           >
             Clear all
           </button>
@@ -3842,7 +3850,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             {search ? (
               <>
                 <p style={{ marginBottom: 8 }}>Try a different search term or clear your filters.</p>
-                <button className="btn btn-ghost btn-sm" onClick={() => submitFeedSearch('')}>Clear search</button>
+                <button className="btn btn-ghost btn-sm ufi-clear-control" onClick={() => submitFeedSearch('')}>Clear search</button>
               </>
             ) : activeFilterCount > 0 ? (
               <>

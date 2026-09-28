@@ -29,8 +29,9 @@ try {
     await page.route('**/api/opportunities?*', async route => {
       const p = new URL(route.request().url()).searchParams;
       const offset = Number(p.get('offset') || 0);
-      requests.push({ offset, bust: p.get('bust'), postedWithin: p.get('postedWithin') });
-      await route.fulfill({ json: { opportunities: jobs.slice(offset, offset + 20).map(job => p.get('postedWithin') ? { ...job, id: `${job.id}-date-${p.get('postedWithin')}` } : job), hasMore: offset + 20 < jobs.length, totalCount: jobs.length, availableSources: ['Remotive'] } });
+      requests.push({ offset, bust: p.get('bust'), postedWithin: p.get('postedWithin'), refresh: p.get('refresh'), exclude: p.get('exclude'), search: p.get('search') });
+      const rows = p.get('refresh') ? jobs.map(job => ({ ...job, id: job.id + '-fresh', title: job.title + ' refreshed' })) : jobs;
+      await route.fulfill({ json: { opportunities: rows.slice(offset, offset + 20).map(job => p.get('postedWithin') ? { ...job, id: `${job.id}-date-${p.get('postedWithin')}` } : job), hasMore: offset + 20 < jobs.length, totalCount: jobs.length, availableSources: ['Remotive'], refreshMode: p.get('refresh') ? 'unseen' : null } });
     });
     await auditNavigate(page, server.resolvedUrls.local[0]);
     await installAuditMember(page, app, 'jobs-audit');
@@ -47,12 +48,25 @@ try {
     assert.equal(await page.locator('.job-result-tab').count(), 65);
     assert.deepEqual([...new Set(requests.map(r => r.offset))], [0, 20, 40, 60]);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
-    await page.evaluate(() => window.scrollTo(0, 0));
+    // Real trackpads return gradually; no single final scroll delta exceeds
+    // the old refresh threshold. Remember the excursion until reaching top.
+    await page.evaluate(async () => {
+      for (const y of [600, 180, 50, 35, 20, 8, 0]) {
+        window.scrollTo(0, y);
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      }
+    });
     await page.waitForFunction(() => document.querySelectorAll('.job-result-tab').length === 20);
     assert.ok(requests.some(r => r.bust === '1' && r.offset === 0));
+    assert.match(await page.locator('.job-result-tab').first().textContent(), /Engineer 0 refreshed/);
+    const freshRequest = requests.find(r => r.refresh && r.offset === 0);
+    assert.ok(freshRequest.exclude.includes('job-0'), 'Refresh excludes the previously shown jobs');
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.waitForFunction(() => document.querySelectorAll('.job-result-tab').length > 20);
+    assert.ok(requests.some(r => r.offset === 20 && r.refresh === freshRequest.refresh && r.exclude === freshRequest.exclude), 'Pagination keeps the refresh cohort');
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/jobs-feed-${width}.png`) });
-    await page.getByRole('button', { name: 'Open Engineer 1 at Example', exact: true }).click();
-    await page.getByRole('heading', { name: 'Engineer 1', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Open Engineer 1 refreshed at Example', exact: true }).click();
+    await page.getByRole('heading', { name: 'Engineer 1 refreshed', exact: true }).waitFor();
     assert.match(await page.locator('.job-detail-facts').textContent(), /Feb 3, 2025/);
     await auditNavigate(page, server.resolvedUrls.local[0] + 'opportunities?postedWithin=7');
     await page.locator('.job-result-tab').first().waitFor().catch(async error => {
@@ -60,6 +74,13 @@ try {
       throw error;
     });
     assert.ok(requests.some(r => r.postedWithin === '7' && r.offset === 0));
+    const jobSearch = page.locator('.global-search-bar input');
+    await jobSearch.fill('Engineer');
+    const searched = page.waitForResponse(r => r.url().includes('/opportunities?') && new URL(r.url()).searchParams.get('search') === 'Engineer');
+    await jobSearch.press('Enter');
+    await searched;
+    assert.equal(new URL(page.url()).searchParams.get('q'), 'Engineer');
+    assert.equal(new URL(page.url()).searchParams.get('postedWithin'), '7');
     if (width === 1440) {
       const response = page.waitForResponse(r => r.url().includes('/opportunities?') && new URL(r.url()).searchParams.get('postedWithin') === '1');
       await page.getByRole('radio', { name: 'Today', exact: true }).click();

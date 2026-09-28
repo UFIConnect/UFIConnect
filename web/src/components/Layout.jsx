@@ -46,23 +46,21 @@ function ShellIcon({ name, size = 20 }) {
   return <svg {...common}>{paths[name] || paths.home}</svg>;
 }
 
-// shortLabel is used only in the mobile bottom-nav so longer destination
-// names stay readable. The desktop sidebar always uses the full label.
+// The primary destinations sit beside desktop search and in the mobile tab bar.
 const HOME_FEED_PATH = '/?feed=feed&all=1';
 const MOBILE_FEED_OPTIONS = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants', 'bars']);
 
 const NAV = [
   { to: HOME_FEED_PATH,  icon: 'home',           label: 'Home'         },
   { to: '/videos',        icon: 'videos',        label: 'Videos'       },
-  { to: '/notifications', icon: 'notifications', label: 'Notifications', shortLabel: 'Alerts' },
   { to: '/opportunities', icon: 'opportunities', label: 'Jobs'          },
   { to: '/profile',       icon: 'profile',       label: 'Profile'      },
 ];
-const MOBILE_BOTTOM_NAV = NAV
-  .filter(({ icon }) => icon !== 'search')
-  .map((item) => item.icon === 'notifications'
-    ? { to: '/?feed=groups', feed: 'groups', icon: 'groups', label: 'Groups', shortLabel: 'Groups' }
-    : item);
+const MOBILE_BOTTOM_NAV = [
+  ...NAV.slice(0, 2),
+  { to: '/?feed=groups', feed: 'groups', icon: 'groups', label: 'Groups' },
+  ...NAV.slice(2),
+];
 
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -110,7 +108,7 @@ function SavedNavigation({ mobile = false, expanded, onToggle, onNavigate }) {
   </div>;
 }
 
-export default function Layout({ children, wide = false, feedSearch }) {
+export default function Layout({ children, wide = false, feedSearch, discoveryPost }) {
   const { profile, logout, updateProfileLocally } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
@@ -337,6 +335,7 @@ export default function Layout({ children, wide = false, feedSearch }) {
   function openSearchPopup() {
     searchPopupOpenerRef.current = document.activeElement;
     closeMobileOverlays();
+    if (isJobsRoute || feedSearch?.target === 'jobs') setMobileSearchTarget('jobs');
     setSearchPopupSeed(mobileSearchQuery.trim());
     setSearchPopupQuery(mobileSearchQuery.trim());
     setSearchPopupOpen(true);
@@ -417,7 +416,7 @@ export default function Layout({ children, wide = false, feedSearch }) {
         </Link>
 
         <nav className="sidebar-nav">
-          {[...NAV,
+          {[
             { to: '/search?tab=groups&create=1', icon: 'groups', label: 'Create a group' },
             { to: '/command-center?tab=crosspost', icon: 'crosspost', label: 'Cross post' },
           ].map(({ to, icon, label }) => (
@@ -428,7 +427,7 @@ export default function Layout({ children, wide = false, feedSearch }) {
               aria-label={label}
               title={label}
               onClick={icon === 'home' ? handleAllFeedHomeClick : undefined}
-              className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
+              className={({ isActive }) => `nav-link${icon === 'crosspost' ? ' ufi-post-action' : ''}${isActive ? ' active' : ''}`}
             >
               <span className="nav-icon" style={{ position: 'relative' }}>
                 <ShellIcon name={icon} size={17} />
@@ -515,8 +514,15 @@ export default function Layout({ children, wide = false, feedSearch }) {
           </div>
 
           <div className="global-search-center">
+            <nav className="global-primary-nav" aria-label="Main navigation">
+              {NAV.map(({ to, icon, label }) => <NavLink key={to} to={to} end={icon === 'home'}
+                aria-label={label} title={label} onClick={icon === 'home' ? handleAllFeedHomeClick : closeMobileOverlays}
+                className={({ isActive }) => `global-primary-link${(icon === 'home' ? isHomeFeedRoute && mobileFeedMode === 'feed' : isActive) ? ' active' : ''}`}>
+                <ShellIcon name={icon} size={18} /><span>{label}</span>
+              </NavLink>)}
+            </nav>
             <form className="global-search-bar" role="search" aria-label="Search UFIconnect" onSubmit={submitMobileSearch}>
-              <ShellIcon name="search" size={17} />
+              <button type="submit" className="global-search-submit" aria-label={isJobsRoute ? 'Search jobs' : feedSearch ? 'Search current feed' : 'Search'} title={isJobsRoute ? 'Search jobs' : 'Search'}><ShellIcon name="search" size={17} /></button>
               <input type="search" value={mobileSearchQuery} aria-label="Search UFIconnect" placeholder={feedSearch?.label || 'Search'} title={feedSearch?.label || 'Search UFIconnect'} enterKeyHint="search"
                 onFocus={closeMobileOverlays} onChange={event => setMobileSearchQuery(event.target.value)} />
               {mobileSearchQuery && <button type="button" className="global-search-clear" aria-label="Clear feed search" title="Clear search" onClick={() => { setMobileSearchQuery(''); feedSearch?.onSubmit(''); }}><ShellIcon name="close" size={14} /></button>}
@@ -567,7 +573,7 @@ export default function Layout({ children, wide = false, feedSearch }) {
         <section className="global-search-dialog" ref={searchPopupRef} role="dialog" aria-modal="true" aria-labelledby="global-search-title">
           <div className="global-search-dialog-header">
             <h2 id="global-search-title">Search UFIconnect</h2>
-            {feedSearch?.onSubmit && <button type="button" className="btn btn-primary btn-sm" onClick={applyPopupSearch}>Update feed</button>}
+            {feedSearch?.onSubmit && <button type="button" className="btn btn-primary btn-sm" onClick={applyPopupSearch}>{feedSearch.actionLabel || 'Update feed'}</button>}
             <button type="button" className="global-search-dialog-close" aria-label="Close search" onClick={() => setSearchPopupOpen(false)}><ShellIcon name="close" size={19} /></button>
           </div>
           <div className="global-search-dialog-body">
@@ -608,15 +614,25 @@ export default function Layout({ children, wide = false, feedSearch }) {
             </button>
           </div>
           <div className="mobile-feed-drawer-content">
-            <Link to="/?feed=ufi&compose=1" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
+            <Link to="/?feed=ufi&compose=1" className="mobile-command-menu-item ufi-post-action" onClick={closeMobileOverlays}>
               <SquarePen size={20} aria-hidden="true" />
               Post
             </Link>
+            {[
+              { category: 'countries', icon: 'countries', label: 'Travel' },
+              { category: 'restaurants', icon: 'restaurants', label: 'Restaurants' },
+              { category: 'bars', icon: 'bars', label: 'Bars and clubs' },
+            ].map(({ category, icon, label }) => <Link key={category}
+              to={`/command-center?tab=crosspost&category=${category}`}
+              state={discoveryPost?.mode === category ? { discoveryPost } : undefined}
+              className="mobile-command-menu-item ufi-post-action" onClick={closeMobileOverlays}>
+              <ShellIcon name={icon} size={18} />Post to {label}
+            </Link>)}
             <Link to="/search?tab=groups&create=1" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
               <UsersRound size={20} aria-hidden="true" />
               Create a group
             </Link>
-            <Link to="/command-center?tab=crosspost" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
+            <Link to="/command-center?tab=crosspost" className="mobile-command-menu-item ufi-post-action" onClick={closeMobileOverlays}>
               <ShellIcon name="crosspost" size={18} />
               Cross post
             </Link>
