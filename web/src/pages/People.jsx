@@ -10,6 +10,7 @@ import client from '../api/client';
 import './People.css';
 
 const FEED_SOURCES = ['uficonnect', 'github', 'bluesky'];
+const PAGE_SIZE = 20;
 const NETWORKS = {
   linkedin: 'https://www.linkedin.com/search/results/people/',
   twitter: 'https://x.com/explore', facebook: 'https://www.facebook.com/search/people/',
@@ -44,14 +45,16 @@ export default function People() {
   const paging = useRef({});
   const requestId = useRef(0);
   const busy = useRef(false);
-  const sentinel = useRef(null);
+  const resultsHeading = useRef(null);
+  const [page, setPage] = useState(1);
+  const [requestedPage, setRequestedPage] = useState(null);
   const sourceKey = sources.join(',');
   const defaultTopic = interests[0] || 'community';
   const load = useCallback(async (reset = false) => {
     if (!reset && busy.current) return;
     const seq = ++requestId.current;
     busy.current = true; setLoading(true);
-    if (reset) { paging.current = {}; setErrors({}); setPeople([]); }
+    if (reset) { paging.current = {}; setErrors({}); setPeople([]); setPage(1); setRequestedPage(null); }
     const selected = sourceKey.split(',').filter(Boolean);
     const requested = selected.filter(source => reset || paging.current[source]?.hasMore);
     const chunks = await Promise.all(requested.map(async source => {
@@ -95,12 +98,19 @@ export default function People() {
     const timer = setTimeout(() => load(true), 250);
     return () => { clearTimeout(timer); requestId.current++; busy.current = false; };
   }, [load]);
+  const loadedPages = Math.max(1, Math.ceil(people.length / PAGE_SIZE));
+  const visiblePeople = people.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const focusResults = () => resultsHeading.current?.focus({ preventScroll: false });
   useEffect(() => {
-    if (!hasMore || loading || !sentinel.current) return;
-    const observer = new IntersectionObserver(([entry]) => { if (entry.isIntersecting) load(); }, { rootMargin: '300px' });
-    observer.observe(sentinel.current);
-    return () => observer.disconnect();
-  }, [hasMore, loading, load]);
+    if (requestedPage === null || loading) return;
+    if (requestedPage <= loadedPages) { setPage(requestedPage); focusResults(); }
+    setRequestedPage(null);
+  }, [requestedPage, loading, loadedPages]);
+  function changePage(next) {
+    if (loading || next < 1) return;
+    if (next <= loadedPages) { setPage(next); focusResults(); }
+    else if (hasMore) { setRequestedPage(next); load(); }
+  }
   const refresh = useScrollToRefresh(() => load(true), { enabled: !loading });
   function toggleSource(source) {
     setSources(current => current.includes(source) ? current.filter(item => item !== source) : [...current, source]);
@@ -156,7 +166,8 @@ export default function People() {
       </div>)}
       {!sources.length && <div className="card">Select a feed source above, or explore another network.</div>}
       {!loading && sources.length > 0 && !people.length && !Object.keys(errors).length && <div className="card">No people found. Try another interest or search.</div>}
-      <div className="search-people-results">{people.map(person => {
+      <h2 className="people-results-heading" ref={resultsHeading} tabIndex={-1}>People for you <span>{people.length ? `Page ${page}` : ''}</span></h2>
+      <div className="search-people-results" aria-busy={loading}>{visiblePeople.map(person => {
         const native = person.source === 'uficonnect';
         return <article className="card search-person-card" key={person.feedId}>
           <div className="avatar avatar-md search-result-avatar">{initials(person.name)}{safeAvatar(person.avatarUrl) &&
@@ -186,7 +197,15 @@ export default function People() {
         </article>;
       })}</div>
       {loading && <p role="status">Loading people…</p>}
-      {hasMore && <div ref={sentinel} className="people-feed-more"><button type="button" className="btn btn-ghost" disabled={loading} onClick={() => load()}>More people</button></div>}
+      {(people.length > 0 || hasMore) && <nav className="card people-pagination" aria-label="People pages">
+        <button type="button" className="btn btn-ghost btn-sm" disabled={loading || page === 1} onClick={() => changePage(page - 1)}>Previous</button>
+        <div className="people-page-numbers">
+          {Array.from({ length: loadedPages }, (_, index) => index + 1).filter(number => number === 1 || Math.abs(number - page) <= 2 || number === loadedPages).map((number, index, numbers) =>
+            <span key={number}>{index > 0 && number > numbers[index - 1] + 1 && <span aria-hidden="true">…</span>}<button type="button" className="btn btn-ghost btn-sm" aria-current={number === page ? 'page' : undefined} disabled={loading} onClick={() => changePage(number)}>{number}</button></span>)}
+        </div>
+        <button type="button" className="btn btn-ghost btn-sm" disabled={loading || (page >= loadedPages && !hasMore)} onClick={() => changePage(page + 1)}>Next</button>
+        <p className="people-page-status" role="status">Page {page}{!hasMore ? ` of ${loadedPages}` : ''} · {visiblePeople.length} people</p>
+      </nav>}
     </main>
   </Layout>;
 }

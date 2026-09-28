@@ -14,6 +14,13 @@
 .people-discovery-reason { font-size: .74rem; color: var(--muted); }
 .people-card-actions { margin-top: 12px; flex-wrap: wrap; }
 .people-feed-more { text-align: center; padding: 18px 0; }
+.people-results-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 1rem; margin: 22px 0 14px; scroll-margin-top: 110px; }
+.people-results-heading span { font-size: .8rem; font-weight: 400; color: var(--muted); }
+.people-pagination { display: flex; justify-content: center; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
+.people-page-numbers { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; justify-content: center; }
+.people-page-numbers > span { display: inline-flex; align-items: center; gap: 4px; }
+.people-page-numbers [aria-current=page] { color: var(--primary); background: var(--bg); box-shadow: inset 0 0 0 1px var(--primary); }
+.people-page-status { flex-basis: 100%; text-align: center; color: var(--muted); font-size: .8rem; margin: 0; }
 .people-feed .search-person-card { cursor: default; }
 @media (max-width: 480px) { .people-feed-heading { align-items: flex-start; } .people-feed .search-person-topline { flex-wrap: wrap; } }
 
