@@ -417,6 +417,16 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
 
         <nav className="sidebar-nav">
           {[
+            { category: 'countries', icon: 'countries', label: 'Travel' },
+            { category: 'restaurants', icon: 'restaurants', label: 'Restaurants' },
+            { category: 'bars', icon: 'bars', label: 'Bars and clubs' },
+          ].map(({ category, icon, label }) => <Link key={category}
+            to="/connected-accounts"
+            className="nav-link" aria-label={`Post to ${label}`} title={`Post to ${label}`}>
+            <span className="nav-icon"><ShellIcon name={icon} size={17} /></span>
+            <span className="nav-label">Post to {label}</span>
+          </Link>)}
+          {[
             { to: '/search?tab=groups&create=1', icon: 'groups', label: 'Create a group' },
             { to: '/command-center?tab=crosspost', icon: 'crosspost', label: 'Cross post' },
           ].map(({ to, icon, label }) => (
@@ -427,7 +437,7 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
               aria-label={label}
               title={label}
               onClick={icon === 'home' ? handleAllFeedHomeClick : undefined}
-              className={({ isActive }) => `nav-link${icon === 'crosspost' ? ' ufi-post-action' : ''}${isActive ? ' active' : ''}`}
+              className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
             >
               <span className="nav-icon" style={{ position: 'relative' }}>
                 <ShellIcon name={icon} size={17} />
@@ -518,7 +528,7 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
               {NAV.map(({ to, icon, label }) => <NavLink key={to} to={to} end={icon === 'home'}
                 aria-label={label} title={label} onClick={icon === 'home' ? handleAllFeedHomeClick : closeMobileOverlays}
                 className={({ isActive }) => `global-primary-link${(icon === 'home' ? isHomeFeedRoute && mobileFeedMode === 'feed' : isActive) ? ' active' : ''}`}>
-                <ShellIcon name={icon} size={18} /><span>{label}</span>
+                <ShellIcon name={icon} size={18} />
               </NavLink>)}
             </nav>
             <form className="global-search-bar" role="search" aria-label="Search UFIconnect" onSubmit={submitMobileSearch}>
@@ -614,7 +624,7 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
             </button>
           </div>
           <div className="mobile-feed-drawer-content">
-            <Link to="/?feed=ufi&compose=1" className="mobile-command-menu-item ufi-post-action" onClick={closeMobileOverlays}>
+            <Link to="/?feed=ufi&compose=1" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
               <SquarePen size={20} aria-hidden="true" />
               Post
             </Link>
@@ -623,16 +633,15 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
               { category: 'restaurants', icon: 'restaurants', label: 'Restaurants' },
               { category: 'bars', icon: 'bars', label: 'Bars and clubs' },
             ].map(({ category, icon, label }) => <Link key={category}
-              to={`/command-center?tab=crosspost&category=${category}`}
-              state={discoveryPost?.mode === category ? { discoveryPost } : undefined}
-              className="mobile-command-menu-item ufi-post-action" onClick={closeMobileOverlays}>
+              to="/connected-accounts"
+              className="mobile-command-menu-item" onClick={closeMobileOverlays}>
               <ShellIcon name={icon} size={18} />Post to {label}
             </Link>)}
             <Link to="/search?tab=groups&create=1" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
               <UsersRound size={20} aria-hidden="true" />
               Create a group
             </Link>
-            <Link to="/command-center?tab=crosspost" className="mobile-command-menu-item ufi-post-action" onClick={closeMobileOverlays}>
+            <Link to="/command-center?tab=crosspost" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
               <ShellIcon name="crosspost" size={18} />
               Cross post
             </Link>

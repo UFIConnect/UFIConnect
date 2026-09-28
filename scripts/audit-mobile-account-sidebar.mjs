@@ -135,9 +135,9 @@ try {
         check(await drawer.locator('.mobile-feed-drawer-content').evaluate(element => element.clientHeight > 0 && getComputedStyle(element).overflowY === 'auto'), 'Long menus must scroll to their bottom actions');
         for (const [label, category] of [['Travel', 'countries'], ['Restaurants', 'restaurants'], ['Bars and clubs', 'bars']]) {
           const postLink = drawer.getByRole('link', { name: `Post to ${label}`, exact: true });
-          check(await postLink.getAttribute('href') === `/command-center?tab=crosspost&category=${category}`, `Post to ${label} must open its publishing category`);
+          check(await postLink.getAttribute('href') === '/connected-accounts', `Post to ${label} must open Connected Accounts`);
           const postStyle = await postLink.evaluate(element => ({ weight: getComputedStyle(element).fontWeight, background: getComputedStyle(element).backgroundImage }));
-          check(Number(postStyle.weight) >= 700 && postStyle.background.includes('36, 124, 255'), 'Publishing links must use bold blue actions');
+          check(Number(postStyle.weight) < 700 && postStyle.background === 'none', 'Sidebar posting links use regular navigation styling');
         }
         check(await drawer.locator('img').evaluate(img => img.complete && img.naturalWidth > 0), 'Saved avatar did not load');
         check(await drawer.evaluate(el => el.scrollWidth <= el.clientWidth + 1), 'Long profile name overflows the drawer');
@@ -157,8 +157,8 @@ try {
           await opener.click();
           await waitOpen();
           await drawer.getByRole('link', { name: `Post to ${label}`, exact: true }).click();
-          await page.waitForURL(`**/command-center?tab=crosspost&category=${category}`);
-          await page.getByRole('heading', { name: 'Command Center', exact: true }).waitFor();
+          await page.waitForURL('**/connected-accounts');
+          await page.getByRole('heading', { name: 'Connected Accounts', exact: true }).waitFor();
           await waitClosed();
         }
 
