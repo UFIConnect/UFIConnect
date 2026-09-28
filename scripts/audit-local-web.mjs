@@ -206,6 +206,9 @@ try {
   await open(page, hostedUrl);
   assert.equal(state.localCalls.length, 0, 'Hosted Office never probes local files or services');
   assert.equal(await page.locator('iframe').count(), 0, 'Hosted Office does not embed a local service');
+  const hostedStart = page.getByRole('link', { name: 'Start phone connection', exact: true });
+  assert.ok(await hostedStart.isVisible(), 'Hosted Office shows where to start a phone connection');
+  assert.equal(await hostedStart.getAttribute('href'), 'http://127.0.0.1:4174/#local-web', 'Starting a phone connection opens the local workspace');
   await context.close();
   console.log('PASS: Hosted Local web tab requires the local console');
   const phoneContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
@@ -232,6 +235,7 @@ try {
   await phonePage.getByLabel('Computer connection link', { exact: true }).fill('https://my-computer.trycloudflare.com');
   assert.equal(await phonePage.getByRole('link', { name: 'Connect to my computer', exact: true }).getAttribute('href'), 'https://my-computer.trycloudflare.com/#local-web');
   assert.equal(await phonePage.getByRole('link', { name: 'Open local web workspace', exact: true }).isVisible(), false, 'Phones are not sent to their own localhost');
+  assert.equal(await phonePage.getByRole('link', { name: 'Start phone connection', exact: true }).isVisible(), false, 'Phones are not sent to their own localhost to start a connection');
   assert.ok(await phonePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
   await phonePage.screenshot({ path: path.join(root, '.cache/audit-ui/local-web-phone-connect.png'), fullPage: true });
   await phoneContext.close();

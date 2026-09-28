@@ -372,7 +372,7 @@ function PhoneConnection() {
   return <section className="local-web-panel local-web-phone" aria-labelledby="phone-connect-heading">
     <h2 id="phone-connect-heading">Edit from your phone</h2>
     <ol className="local-web-steps-list">
-      <li>On your computer, open Local web and choose <strong>Start phone connection</strong>.</li>
+      <li>On your computer, run <code>npm run office:release-local</code> and choose <strong>Start phone connection</strong> in the local workspace it opens.</li>
       <li>Scan the QR code with this phone, or paste its link below.</li>
       <li>Enter the connection code shown on your computer.</li>
     </ol>
@@ -396,8 +396,11 @@ export default function LocalWeb({ apiBase = '', request }) {
         <h2>Make changes on your computer</h2>
         <p>Start the local console from your UFIConnect repository:</p>
         <pre className="local-web-command">npm run office:release-local</pre>
-        <a className="local-web-button local-web-primary" href={LOCAL_CONSOLE} target="_blank" rel="noreferrer">Open local web workspace</a>
-        <p className="local-web-hint">The console opens on this computer at 127.0.0.1:4174. Publishing a reviewed file asks for your Office access token.</p>
+        <div className="local-web-actions">
+          <a className="local-web-button local-web-primary" href={LOCAL_CONSOLE} target="_blank" rel="noreferrer">Open local web workspace</a>
+          <a className="local-web-button" href={LOCAL_CONSOLE} target="_blank" rel="noreferrer">Start phone connection</a>
+        </div>
+        <p className="local-web-hint">Both open the console on this computer at 127.0.0.1:4174. <strong>Start phone connection</strong> is at the top of that page; this hosted site cannot reach your computer. Publishing a reviewed file asks for your Office access token.</p>
       </section>
       <PhoneConnection />
     </>}
