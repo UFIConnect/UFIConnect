@@ -1,7 +1,13 @@
 # Office Live City
 
 Open **Office → Live City** (`#city`) to inspect the running post pipeline as an
-interactive city. Buildings represent operating stages, and the agent directory
+interactive city.
+
+Live City and the **More tools** group are only in the local Office: run
+`npm run office:release-local` and open `http://127.0.0.1:4174`. The hosted
+Office at office.uficonnect.org carries only Overview, Local web, Setup,
+Controls and Deploy Center, and its production build leaves the Live City code
+out entirely until it is finalized. Buildings represent operating stages, and the agent directory
 contains agents returned by the authenticated services. Select a building or
 agent for its measurements, role, recent activity and explanation.
 
