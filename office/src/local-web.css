@@ -36,6 +36,7 @@
 .local-web .local-web-pair-code { margin: 4px 0 0; color: #f1f5f9; font: 600 20px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .06em; overflow-wrap: anywhere; }
 .local-web-steps-list { margin: 10px 0 4px; padding-left: 20px; color: #b3bfd1; font-size: 13px; line-height: 1.6; }
 .local-web-steps-list li { margin: 4px 0; }
+.local-web-steps-list code { color: #93c5fd; font: 12px ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
 @media(max-width:760px) { .local-web-desktop-start { display:none; } }
 .local-web-review { border-top: 1px solid #293851; padding-top: 18px; margin-top: 18px; }
 .local-web .local-web-changes-summary { margin: 14px 0 8px; color: #cbd5e1; font-size: 12px; }
