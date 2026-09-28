@@ -139,6 +139,7 @@ export default function TermsOfService() {
             do not control it, and do not endorse the views expressed in it. Your use of any linked
             third-party site is governed by that site's own terms.
           </P>
+          <P>UFIConnect uses YouTube API Services. By using its YouTube features, you agree to the <a href="https://www.youtube.com/t/terms" style={{ color: 'var(--primary)' }}>YouTube Terms of Service</a>. See our <Link to="/privacy" style={{ color: 'var(--primary)' }}>Privacy Policy</Link> for YouTube data use and connection controls.</P>
         </Section>
 
         <Section title="6. Connected accounts">
