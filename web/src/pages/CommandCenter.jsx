@@ -287,7 +287,7 @@ function ConnectedFeedSection() {
             <button
               key={src} type="button" onClick={() => setSourceFilter(active ? null : src)}
               className="btn btn-sm"
-              style={{ background: active ? 'var(--primary)' : 'var(--bg-secondary)', color: active ? '#fff' : 'var(--text)', border: 'none' }}
+              style={{ background: active ? 'var(--border)' : 'var(--bg-secondary)', color: 'var(--text)', border: 'none' }}
             >
               <SourceMark source={src} label={meta.icon} active={active} /> {meta.label} · {bySource.get(src).length}
             </button>
@@ -1404,6 +1404,7 @@ const PLATFORM_RESULT_META = {
 // Server-provided platform capabilities are the source of truth here. That
 // keeps the composer from offering a connection that cannot actually publish.
 function CrossPostSection() {
+  const { profile } = useAuth();
   const { showToast } = useToast();
   const location = useLocation();
   const category = new URLSearchParams(location.search).get('category');
@@ -1455,6 +1456,7 @@ function CrossPostSection() {
   }, [loadCrossPostData]);
 
   function toggle(platform) {
+    if (platform === 'uficonnect') { setSelected(prev => { const next = new Set(prev); if (next.has(platform)) next.delete(platform); else next.add(platform); return next; }); return; }
     const capability = platforms[platform]?.crossPost;
     if (media?.type === 'video' && capability?.media !== 'link') {
       showToast(`${SOURCE_META[platform]?.label || platform} needs a native video publishing connection.`, 'error');
@@ -1509,21 +1511,29 @@ function CrossPostSection() {
     if ((!content.trim() && !media) || !selected.size || posting || uploadingMedia) return;
     setPosting(true);
     setLastResult(null);
+    const nativeTargets = [];
     try {
-      const { data } = await client.post('/command-center/cross-post', {
+      if (selected.has('uficonnect')) {
+        const result = await client.post('/groups/ufi-general/posts', { content: content.trim(), mediaUrl: media?.url, mediaType: media?.type });
+        nativeTargets.push({ platform: 'uficonnect', status: 'posted', postedUrl: result.data?.post?.id ? '/p/' + result.data.post.id : '/?feed=ufi' });
+        setSelected(prev => new Set([...prev].filter(key => key !== 'uficonnect')));
+      }
+      const external = [...selected].filter(key => key !== 'uficonnect');
+      const { data } = external.length ? await client.post('/command-center/cross-post', {
         content: content.trim(),
         mediaUrl: media?.url,
         mediaType: media?.type,
-        platforms: [...selected],
-      });
-      setLastResult(data.targets || []);
-      setHistory(prev => [{ id: data.id, content: content.trim(), mediaUrl: data.mediaUrl, targets: data.targets, createdAt: new Date().toISOString() }, ...(prev || [])]);
+        platforms: external,
+      }) : { data: { targets: [], historySaved: true } };
+      setLastResult([...nativeTargets, ...(data.targets || [])]);
+      if (data.id) setHistory(prev => [{ id: data.id, content: content.trim(), mediaUrl: data.mediaUrl, targets: data.targets, createdAt: new Date().toISOString() }, ...(prev || [])]);
       if (!data.historySaved) showToast('Your post was sent, but its history will finish syncing shortly.', 'error');
       setContent('');
       setSelected(new Set());
       setMedia(null);
     } catch (err) {
-      showToast(err?.response?.data?.message || 'Could not send your post. Please try again.', 'error');
+      if (nativeTargets.length) setLastResult(nativeTargets);
+      showToast((nativeTargets.length ? 'UFIconnect published; it is deselected to avoid duplicates. ' : '') + (err?.response?.data?.message || 'Could not send your post. Please try again.'), 'error');
     } finally {
       setPosting(false);
     }
@@ -1533,10 +1543,6 @@ function CrossPostSection() {
   const publishingPlatforms = CROSS_POST_PLATFORM_IDS.filter(platform => platforms[platform]);
   const shownPlatforms = new Set(categoryContext?.sources.map(source => source.platform) || []);
   const orderedPublishingPlatforms = [...publishingPlatforms].sort((left, right) => Number(shownPlatforms.has(right)) - Number(shownPlatforms.has(left)));
-  const connectedPlatforms = publishingPlatforms.filter(platform => connected[platform] && platforms[platform]?.crossPost?.supported);
-  const commandCenterPublishingPath = publishingPlatforms.some(platform => (
-    platforms[platform]?.commandCenterOnly && platforms[platform]?.crossPost?.supported
-  )) ? '/command-center?tab=accounts' : '/connected-accounts';
   const connectionPath = (platform) => platforms[platform]?.commandCenterOnly
     ? '/command-center?tab=accounts'
     : '/connected-accounts';
@@ -1549,7 +1555,7 @@ function CrossPostSection() {
     const deliveryHint = capability.delivery === 'handoff' ? ' · TikTok inbox' : capability.requiresPhoto ? ' · photo' : '';
     return (
       <button
-        key={p} type="button" onClick={() => toggle(p)} disabled={needsPhoto}
+        key={p} type="button" onClick={() => toggle(p)} disabled={needsPhoto || profile?.plan === 'free'} aria-pressed={active}
         className="btn btn-sm"
         title={needsPhoto ? 'Add a photo to publish to this account.' : undefined}
         style={{ background: active ? 'var(--primary)' : 'var(--bg-secondary)', color: active ? '#fff' : 'var(--text)', border: 'none', opacity: needsPhoto ? .55 : 1 }}
@@ -1612,14 +1618,12 @@ function CrossPostSection() {
         <div style={{ marginTop: 16, padding: 12, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
           <div style={{ fontSize: '.75rem', fontWeight: 800, color: 'var(--muted)', marginBottom: 8 }}>Publishing destinations</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button type="button" className="btn btn-ghost btn-sm" aria-pressed={selected.has('uficonnect')} onClick={() => toggle('uficonnect')} style={{ background: selected.has('uficonnect') ? 'var(--border)' : undefined }}>UFIconnect</button>
             {orderedPublishingPlatforms.map(publishingDestination)}
           </div>
         </div>
-        {!connectedPlatforms.length ? (
-          <div style={{ marginTop: 16 }}>
-            <Link to={commandCenterPublishingPath} className="btn btn-primary btn-sm">Connect a publishing account</Link>
-          </div>
-        ) : (
+        {profile?.plan === 'free' && <p style={{ fontSize: '.8rem' }}>UFIconnect posting is available to everyone. Publishing to connected accounts requires Pro.</p>}
+        {
           <form onSubmit={handlePost} style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 16 }}>
             <textarea
               value={content} onChange={e => setContent(e.target.value)} rows={4}
@@ -1647,7 +1651,7 @@ function CrossPostSection() {
               {posting ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Send'}
             </button>
           </form>
-        )}
+        }
       </div>
 
       {lastResult && (
@@ -1939,7 +1943,7 @@ export default function CommandCenter() {
 
   // Connections themselves are available to every signed-in member. The
   // remaining Command Center tools keep their paid-plan gate below.
-  const locked = profile.plan === 'free' && !['accounts', 'content', 'media'].includes(section);
+  const locked = profile.plan === 'free' && !['accounts', 'content', 'media', 'crosspost'].includes(section);
 
   return (
     <Layout>

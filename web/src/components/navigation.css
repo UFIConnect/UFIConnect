@@ -36,23 +36,23 @@
 :is(.shell, .video-feed-view) .ufi-clear-control:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .shell .feed-source-tabs--compact:has(> .ufi-clear-control) { grid-template-columns: 48px; }
 
-/* Publishing actions stay visibly distinct from filter and navigation controls. */
+/* Posting commands use the same neutral treatment as other controls. */
 .shell .ufi-post-action,
 .shell .feed-category-post,
 .shell .group-post-button,
 .shell a.btn[href="/groups/post"],
 .shell form[aria-label^="Create post"] button[type="submit"],
 .shell form[aria-label="Create UFI post"] button[type="submit"] {
-  color: #fff; background: linear-gradient(150deg, #247cff, #1259d6);
-  border-color: #1259d6; font-weight: 800;
-  box-shadow: inset 0 1px 0 #ffffff38, 0 2px 4px #1259d626;
+  color: var(--text); background: var(--bg-secondary);
+  border-color: var(--border); font-weight: 500;
+  box-shadow: inset 0 1px 0 #ffffff38, 0 2px 4px #00000012;
 }
 .shell .ufi-post-action:hover,
 .shell .feed-category-post:hover,
 .shell .group-post-button:hover,
-.shell a.btn[href="/groups/post"]:hover { color: #fff; background: #1259d6; }
+.shell a.btn[href="/groups/post"]:hover { color: var(--text); background: var(--border); }
 .shell .ufi-post-action:focus-visible { outline: 2px solid #1259d6; outline-offset: 2px; }
-.shell .ufi-post-action .nav-icon { color: #1259d6; }
+.shell .ufi-post-action .nav-icon { color: inherit; }
 
 /* Restore the original navy UFI mark and use it to open the left drawer. */
 :root .sidebar-logo-icon,
@@ -207,3 +207,14 @@
 @media (prefers-reduced-motion: reduce) {
   .saved-navigation-chevron { transition: none; }
 }
+
+/* Desktop chrome ends with its controls beside the UFI sidebar. */
+@media (min-width: 769px) {
+  .shell .global-app-header {
+    width: calc(100% - 32px); max-width: 1080px; margin: 10px 16px 0;
+    top: 10px; padding: 8px 12px; min-height: 58px;
+    border: 1px solid var(--border); border-radius: 16px;
+    box-sizing: border-box;
+  }
+}
+
