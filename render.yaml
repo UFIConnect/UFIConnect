@@ -634,6 +634,12 @@ services:
         source: /forgot-password/
         destination: /forgot-password/index.html
       - type: rewrite
+        source: /people
+        destination: /people/index.html
+      - type: rewrite
+        source: /people/
+        destination: /people/index.html
+      - type: rewrite
         source: /reset-password
         destination: /reset-password/index.html
       - type: rewrite

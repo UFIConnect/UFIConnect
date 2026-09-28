@@ -23,6 +23,10 @@ test('People supports production UUID accounts with text relationship IDs', asyn
   const result = await searchMemberDirectory(pg, { myId: '00000000-0000-4000-8000-000000000001' });
   assert.equal(result.totalCount, 2);
   assert.equal(result.users.find(user => user.name === 'Jordan Smith').isFollowing, true);
+  await pg.exec(`UPDATE users SET interests = ARRAY['Design', 'Music'] WHERE name = 'Alex Morgan';
+    UPDATE users SET interests = ARRAY[' design ', 'Travel'] WHERE name = 'Jordan Smith';`);
+  const shared = await searchMemberDirectory(pg, { myId: '00000000-0000-4000-8000-000000000001', sort: 'interests' });
+  assert.deepEqual(shared.users[0].sharedInterests, ['design']);
 });
 
 test('member directory paginates all public accounts without leaking private account fields', async t => {
@@ -75,6 +79,13 @@ test('member directory paginates all public accounts without leaking private acc
   assert.equal((await search({ q: 'art' })).users.some(u => u.id === 'word-match'), false);
   assert.equal((await search({ q: 'specialist garden' })).users.some(u => u.id === 'word-match'), false);
   assert.equal((await search({ q: "' OR 1=1 --" })).users.some(u => u.id === 'private'), false);
+  // Older databases keep interests as JSONB; shared interests must still work and tolerate non-array values.
+  await pg.exec(`UPDATE users SET interests = '["Design", "Music"]' WHERE id = 'member-1';
+    UPDATE users SET interests = '["design", "Travel"]' WHERE id = 'member-2';
+    UPDATE users SET interests = '{"not": "a list"}' WHERE id = 'member-3';`);
+  const shared = await search({ sort: 'interests', limit: 3 });
+  assert.equal(shared.users[0].id, 'member-2');
+  assert.deepEqual(shared.users[0].sharedInterests, ['design']);
 });
 
 test('search reports database failure instead of a misleading partial cache', async t => {

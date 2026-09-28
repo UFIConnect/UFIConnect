@@ -1,23 +1,20 @@
-/* Keep the compact control in the page flow so it never covers page actions.
-   Only the open nonmodal panel floats, below drawers and modal backdrops. */
-.analytics-privacy { display: flex; justify-content: flex-end; padding: 12px; color: var(--text, #0f172a); font-size: 13px; }
+/* Nothing is shown at the bottom of pages; "Analytics privacy" links open the
+   nonmodal panel, which floats below drawers and modal backdrops. */
+.analytics-privacy { color: var(--text, #0f172a); font-size: 13px; }
+.analytics-privacy > .auth-error { margin: 12px; }
 .analytics-privacy-panel { position: fixed; z-index: 150; left: 12px; bottom: 12px; max-width: min(420px, calc(100vw - 24px)); padding: 16px; background: var(--card, #fff); border: 1px solid var(--border, #cbd5e1); border-radius: 14px; box-shadow: 0 4px 24px #0002; max-height: calc(100dvh - 120px); overflow-y: auto; }
-/* Preserve the footer's space while the panel is open, avoiding scroll jumps. */
-.analytics-privacy--open .analytics-privacy-trigger { visibility: hidden; }
 .analytics-privacy-panel h2 { margin: 0 0 8px; font-size: 17px; }
 .analytics-privacy-panel p { margin: 8px 0; line-height: 1.5; }
 .analytics-privacy-panel a { color: var(--primary, #102a6b); text-decoration: underline; }
 .analytics-privacy-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
-.analytics-privacy-actions button, .analytics-privacy-trigger, .analytics-privacy-close { min-height: 44px; border: 1px solid var(--border, #cbd5e1); border-radius: 8px; background: var(--card, #fff); color: var(--text, #0f172a); padding: 8px 12px; font: inherit; cursor: pointer; }
+.analytics-privacy-actions button, .analytics-privacy-close { min-height: 44px; border: 1px solid var(--border, #cbd5e1); border-radius: 8px; background: var(--card, #fff); color: var(--text, #0f172a); padding: 8px 12px; font: inherit; cursor: pointer; }
 .analytics-privacy-actions button { font-weight: 650; }
-.analytics-privacy-actions button:hover, .analytics-privacy-trigger:hover, .analytics-privacy-close:hover { background: var(--bg, #f1f5f9); }
+.analytics-privacy-actions button:hover, .analytics-privacy-close:hover { background: var(--bg, #f1f5f9); }
 .analytics-privacy button:focus-visible, .analytics-privacy a:focus-visible { outline: 3px solid #2563eb; outline-offset: 3px; }
 .analytics-privacy-close { margin-top: 8px; width: 100%; }
-.analytics-privacy-trigger { min-height: 32px; font-size: 12px; box-shadow: 0 2px 10px #0001; }
 .sidebar-analytics-link { margin: 0 12px 8px; flex-shrink: 0; }
-/* Reserve the fixed mobile tab bar's space below the footer. Match tablets
-   exactly 768px wide as well as phones. */
+/* Keep the panel above the fixed mobile tab bar. Match tablets exactly 768px
+   wide as well as phones. */
 @media (max-width: 768px) {
-  .analytics-privacy { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
   .analytics-privacy-panel { bottom: calc(76px + env(safe-area-inset-bottom)); }
 }
