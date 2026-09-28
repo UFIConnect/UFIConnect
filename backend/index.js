@@ -28029,6 +28029,8 @@ async function getSearchMembersFromDatabase({ myId }) {
   };
 }
 
+require('./people-discovery').registerPeopleDiscovery(app, authenticate);
+
 app.get('/users/search', authenticate, async (req, res) => {
   res.set('Cache-Control', 'private, no-store');
   if (['q', 'role'].some(key => req.query[key] != null && (typeof req.query[key] !== 'string' || req.query[key].length > 500))) {

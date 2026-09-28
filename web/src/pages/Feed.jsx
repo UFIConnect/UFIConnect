@@ -436,27 +436,9 @@ const DEFAULT_FILTERS = { sort: 'newest', sources: [], timeRange: 'all', topics:
 const FEED_PAGE_SIZE = 50;
 const FEED_AUTO_REFRESH_MS = 2 * 60 * 1000;
 const FEED_STATE_KEY = 'ufi_feed_state';
-const SOCIAL_CONNECT_PROMPT_KEY = 'ufi_social_connect_prompt_v1';
-const SOCIAL_CONNECT_PROMPT_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 
 function memberStorageKey(baseKey, userId) {
   return userId ? `${baseKey}:${userId}` : null;
-}
-
-function wasSocialConnectPromptRecentlyShown(userId) {
-  try {
-    const key = memberStorageKey(SOCIAL_CONNECT_PROMPT_KEY, userId);
-    if (!key) return false;
-    const shownAt = Number(privateSessionStorage.getItem(key));
-    return Number.isFinite(shownAt) && Date.now() - shownAt < SOCIAL_CONNECT_PROMPT_COOLDOWN_MS;
-  } catch { return false; }
-}
-
-function markSocialConnectPromptShown(userId) {
-  try {
-    const key = memberStorageKey(SOCIAL_CONNECT_PROMPT_KEY, userId);
-    if (key) privateSessionStorage.setItem(key, String(Date.now()));
-  } catch {}
 }
 
 function normalizeLocationFilters(value = {}) {
@@ -2109,9 +2091,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const routeFeedParams = new URLSearchParams(routeLocation.search);
   const routeRequestedFeed = routeFeedParams.get('feed');
   const routeRequestsAllHome = !forcedMode && routeRequestedFeed === 'feed' && routeFeedParams.get('all') === '1';
-  const [connectedSocial, setConnectedSocial] = useState(null); // null = not yet fetched
-  const [socialBannerDismissed, setSocialBannerDismissed] = useState(() => wasSocialConnectPromptRecentlyShown(profile?.id));
-  const socialConnectPromptShownRef = useRef(false);
   const [connecting,    setConnecting]   = useState(false);
   // Set from a single-source-tab response's `locked:true` (see FEED_SOCIAL_TABS
   // server-side) — a gated platform tab clicked without that account connected.
@@ -3041,30 +3020,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     return () => window.removeEventListener('ufi:refresh-selected-feed', refreshCurrentFeed);
   }, [refreshCurrentFeed]);
 
-  // Fetch social connection status for personalisation banners
-  useEffect(() => {
-    if (!profile) { setConnectedSocial({}); return; }
-    client.get('/profile/social').then(({ data }) => setConnectedSocial(data.connected || {})).catch(() => setConnectedSocial({}));
-  }, [profile]);
-
-  useEffect(() => {
-    socialConnectPromptShownRef.current = false;
-    setSocialBannerDismissed(wasSocialConnectPromptRecentlyShown(profile?.id));
-  }, [profile?.id]);
-
-  useEffect(() => {
-    if (!profile?.id) return;
-    if (viewMode !== 'feed') {
-      if (socialConnectPromptShownRef.current) setSocialBannerDismissed(true);
-      return;
-    }
-    if (connectedSocial === null || socialBannerDismissed || socialConnectPromptShownRef.current) return;
-    if (Object.values(connectedSocial).some(Boolean)) return;
-    markSocialConnectPromptShown(profile.id);
-    socialConnectPromptShownRef.current = true;
-  }, [connectedSocial, profile?.id, socialBannerDismissed, viewMode]);
-
-
   // SSE: stream new posts from all source workers in real time — with reconnection logic
   useEffect(() => {
     let es = null;
@@ -3758,43 +3713,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           >
             Clear all
           </button>
-        </div>
-      )}
-
-      {/* Social connect prompt — logged-in users with no social accounts connected */}
-      {profile && viewMode === 'feed' && connectedSocial !== null && !socialBannerDismissed && !Object.values(connectedSocial).some(Boolean) && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16,
-          padding: '12px 16px', borderRadius: 12,
-          background: 'linear-gradient(135deg, #FFF7ED 0%, #FEF3C7 100%)',
-          border: '1.5px solid #FED7AA',
-          fontSize: '.85rem', fontWeight: 500, color: '#92400E',
-          boxShadow: '0 2px 8px rgba(234, 88, 12, 0.1)',
-        }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700, marginBottom: 2 }}>Personalize your feed</div>
-            <div style={{ fontSize: '.78rem', opacity: 0.9 }}>Connect accounts to add more of your world to the feed.</div>
-          </div>
-          <Link to="/connected-accounts" style={{
-            background: '#EA580C', color: '#fff', fontWeight: 700, fontSize: '.8rem',
-            padding: '7px 14px', borderRadius: 6, textDecoration: 'none', whiteSpace: 'nowrap', flexShrink: 0,
-            display: 'inline-block',
-            transition: 'background 0.2s'
-          }}>
-            Connect now
-          </Link>
-          <button
-            onClick={() => {
-              markSocialConnectPromptShown(profile.id);
-              setSocialBannerDismissed(true);
-            }}
-            style={{
-              marginLeft: 4, background: 'none', border: 'none', cursor: 'pointer', color: '#92400E',
-              fontSize: '1.1rem', opacity: 0.6, padding: '0 4px', flexShrink: 0,
-              transition: 'opacity 0.2s'
-            }}
-            aria-label="Dismiss"
-          >×</button>
         </div>
       )}
 

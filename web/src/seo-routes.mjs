@@ -11,6 +11,6 @@ export const publicRoutes = [
   { path: '/child-safety', page: 'childSafety', title: 'Child safety standards | UFIconnect', description: 'Learn about UFIconnect child safety standards, prohibited content, and how to report a safety concern.', index: true },
   { path: '/forgot-password', page: 'forgotPassword', title: 'Reset your password | UFIconnect', description: 'Request a password-reset link for your UFIconnect account and learn how to return to sign-in.', index: false },
 ];
-export const memberRoutes = ['/reset-password','/onboarding','/videos','/you','/music','/groups','/groups/post','/opportunities','/resume-builder','/resume-builder/cover-letter/preview','/messages','/notifications','/profile','/command-center','/connected-accounts','/post','/settings','/sources','/saved/posts','/saved/jobs'];
+export const memberRoutes = ['/people','/reset-password','/onboarding','/videos','/you','/music','/groups','/groups/post','/opportunities','/resume-builder','/resume-builder/cover-letter/preview','/messages','/notifications','/profile','/command-center','/connected-accounts','/post','/settings','/sources','/saved/posts','/saved/jobs'];
 export const dynamicRoutes = ['/groups/:id','/opportunities/:id','/messages/:userId','/p/:id','/u/:id'];
 export const redirectRoutes = [{ source:'/global-scroll', destination:'/global' },{ source:'/hq', destination:'/command-center' },{ source:'/agents', destination:'/command-center' }];

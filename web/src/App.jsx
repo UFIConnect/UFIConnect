@@ -62,6 +62,7 @@ const ConnectedAccounts = lazy(() => import('./pages/ConnectedAccounts'));
 const Post           = lazy(() => import('./pages/Post'));
 const PostDetail     = lazy(() => import('./pages/PostDetail'));
 const Search         = lazy(() => import('./pages/SearchExperience'));
+const People         = lazy(() => import('./pages/People'));
 const Opportunities  = lazy(() => import('./pages/Opportunities'));
 const PublicProfile  = lazy(() => import('./pages/PublicProfile'));
 const Settings       = lazy(() => import('./pages/Settings'));
@@ -244,6 +245,7 @@ export default function App() {
           whether a session exists for its own chrome/actions. */}
       <Route path="/p/:id" element={<PostDetail />}/>
       <Route path="/search" element={<SearchRoute />}/>
+      <Route path="/people" element={<RequireAuth><RequireOnboarding><People /></RequireOnboarding></RequireAuth>} />
       <Route path="/u/:id" element={
         <RequireAuth><RequireOnboarding><PublicProfile /></RequireOnboarding></RequireAuth>
       }/>
