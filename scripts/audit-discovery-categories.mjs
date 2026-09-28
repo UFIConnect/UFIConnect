@@ -52,7 +52,7 @@ try {
       const toolbar = bar.locator('..');
       const post = toolbar.getByRole('link', { name: `Post to ${label}`, exact: true });
       const topics = toolbar.getByRole('button', { name: 'Filter feed by topic', exact: true });
-      assert.equal(await page.getByRole('link', { name: `Post to ${label}`, exact: true }).count(), 1);
+      assert.equal(await post.count(), 1, 'Each category toolbar has one posting action alongside Topics');
       const [barBox, postBox, topicBox] = await Promise.all([bar.boundingBox(), post.boundingBox(), topics.boundingBox()]);
       const center = box => box.y + box.height / 2;
       assert.ok(Math.abs(center(barBox) - center(postBox)) < 2 && Math.abs(center(barBox) - center(topicBox)) < 2, `${label} chips, Post and Topics share one row`);
@@ -81,7 +81,7 @@ try {
     assert.ok(await cuisines.getByRole('button', { name: 'Clear cuisines', exact: true }).isDisabled());
     await page.getByText('Japanese restaurant opens downtown', { exact: true }).first().waitFor();
     await cuisines.getByRole('button', { name: 'Italian', exact: true }).click();
-    await page.getByRole('link', { name: 'Post to Restaurants', exact: true }).click();
+    await cuisines.locator('..').getByRole('link', { name: 'Post to Restaurants', exact: true }).click();
     await page.getByRole('heading', { name: 'Post to Restaurants', exact: true }).waitFor();
     assert.equal(await page.getByRole('link', { name: 'Open Food circle', exact: true }).getAttribute('href'), 'https://www.reddit.com/r/food/');
     await page.getByRole('button', { name: /Reddit/, exact: false }).first().click();
@@ -92,7 +92,7 @@ try {
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=bars');
     const themes = page.getByRole('group', { name: 'Bar and club themes', exact: true });
     await assertInlineActions(themes, 'Bars and clubs');
-    assert.match(await page.getByRole('link', { name: 'Post to Bars and clubs', exact: true }).getAttribute('href'), /command-center\?tab=crosspost&category=bars$/);
+    assert.match(await themes.locator('..').getByRole('link', { name: 'Post to Bars and clubs', exact: true }).getAttribute('href'), /command-center\?tab=crosspost&category=bars$/);
     await themes.getByRole('button', { name: 'Clubs', exact: true }).click();
     await page.waitForTimeout(100);
     assert.ok(queries.some(query => query.get('mode') === 'bars' && query.get('q') === 'club'));
