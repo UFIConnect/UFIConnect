@@ -1,0 +1,24 @@
+Campaign,Ad Group,Keyword,Criterion Type,Status
+UFIconnect | Search | Sign-ups,Brand,uficonnect,Exact,Enabled
+UFIconnect | Search | Sign-ups,Brand,uficonnect,Phrase,Enabled
+UFIconnect | Search | Sign-ups,Brand,ufi connect,Phrase,Enabled
+UFIconnect | Search | Sign-ups,Ad-free social network,ad free social network,Exact,Enabled
+UFIconnect | Search | Sign-ups,Ad-free social network,social network without ads,Phrase,Enabled
+UFIconnect | Search | Sign-ups,Ad-free social network,social media without ads,Phrase,Enabled
+UFIconnect | Search | Sign-ups,Ad-free social network,new social network,Phrase,Enabled
+UFIconnect | Search | Sign-ups,Ad-free social network,interest based social network,Phrase,Enabled
+UFIconnect | Search | Sign-ups,Communities,online communities,Phrase,Enabled
+UFIconnect | Search | Sign-ups,Communities,join an online community,Phrase,Enabled
+UFIconnect | Search | Sign-ups,Communities,find people with similar interests,Phrase,Enabled
+UFIconnect | Search | Sign-ups,Communities,meet people with shared interests,Phrase,Enabled
+UFIconnect | Search | Sign-ups,Communities,interest based communities,Phrase,Enabled
+UFIconnect | Search | Sign-ups,Jobs and opportunities,networking app for jobs,Phrase,Enabled
+UFIconnect | Search | Sign-ups,Jobs and opportunities,professional networking app,Phrase,Enabled
+UFIconnect | Search | Sign-ups,Jobs and opportunities,job search social network,Phrase,Enabled
+UFIconnect | Search | Sign-ups,Jobs and opportunities,find remote jobs,Phrase,Enabled
+UFIconnect | Search | Sign-ups,Jobs and opportunities,find gigs online,Phrase,Enabled
+UFIconnect | Search | Sign-ups,,login,Campaign Negative Phrase,Enabled
+UFIconnect | Search | Sign-ups,,log in,Campaign Negative Phrase,Enabled
+UFIconnect | Search | Sign-ups,,sign in,Campaign Negative Phrase,Enabled
+UFIconnect | Search | Sign-ups,,apk,Campaign Negative Phrase,Enabled
+UFIconnect | Search | Sign-ups,,hack,Campaign Negative Phrase,Enabled
