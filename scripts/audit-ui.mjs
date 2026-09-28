@@ -229,7 +229,6 @@ try {
     assert.equal(await page.locator('.video-feed-youtube-player iframe').evaluate(el => getComputedStyle(el).pointerEvents), 'auto', 'Official player controls remain usable inside the media area');
     const firstSlide = page.locator('[data-post-id="audit-video-0"]');
     assert.equal(await firstSlide.getByRole('button', { name: 'Show video controls', exact: true }).count(), 0, 'Video commands no longer occupy the bottom caption');
-    await page.locator('.video-feed-frame header').getByRole('button', { name: 'Show video controls', exact: true }).click();
     assert.ok(await firstSlide.getByRole('group', { name: 'Video controls and engagement', exact: true }).isVisible());
     const original = firstSlide.getByRole('link', { name: /View original post/ });
     assert.ok(await original.isVisible());
