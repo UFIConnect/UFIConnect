@@ -16,7 +16,7 @@ const entry = fs.readFileSync(require.resolve('./index'), 'utf8');
 const tables = new Set(['users', 'auth_sessions', 'community_groups', 'follows', 'connections', 'blocks',
   'reports', 'attachments', 'notifications', 'push_subscriptions', 'job_tracking', 'saved_posts',
   'resume_drafts', 'cross_posts', 'seen_posts', 'user_engagement_affinity', 'community_posts',
-  'post_comments', 'restaurant_post_likes', 'direct_messages', 'page_views', 'user_sign_in_events',
+  'post_comments', 'restaurant_post_likes', 'external_post_likes', 'direct_messages', 'page_views', 'user_sign_in_events',
   'client_error_reports', 'server_error_events', 'negative_usage_signals']);
 
 // Execute actual runtime CREATE/ADD COLUMN statements, so a field mismatch in
@@ -59,6 +59,7 @@ async function seed(pg) {
     await insert('seen_posts', { user_id: uid, post_id: `${prefix}-seen` });
     await insert('user_engagement_affinity', { user_id: uid, affinity_key: `topic:${prefix}` });
     await insert('restaurant_post_likes', { user_id: uid, post_id: `${prefix}-restaurant` });
+    await insert('external_post_likes', { user_id: uid, post_id: `${prefix}-external` });
     await insert('notifications', { id: `${prefix}-notice`, user_id: uid, type: 'follow', actor_id: carol, preview: `${prefix}-preview` });
     await insert('push_subscriptions', { id: `${prefix}-push`, user_id: uid, endpoint: `https://secret-push.invalid/${prefix}`, p256dh: 'secret-push-key', auth: 'secret-push-auth' });
     await insert('reports', { id: `${prefix}-report`, reporter_id: uid, target_type: 'user', target_id: carol, reason: 'spam', details: `${prefix}-report-details` });
@@ -134,7 +135,7 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
     assert.equal(exported.social.connections[0].status, 'pending');
     assert.equal(exported.social.blocks[0].blockedId, carol);
     for (const key of ['posts', 'comments', 'attachments', 'savedPosts', 'trackedJobs', 'generatedContent', 'resumeDrafts',
-      'crossPosts', 'ownedGroups', 'notifications', 'reports', 'seenPosts', 'engagementPreferences', 'restaurantLikes',
+      'crossPosts', 'ownedGroups', 'notifications', 'reports', 'seenPosts', 'engagementPreferences', 'restaurantLikes', 'externalPostLikes',
       'pushRegistrations', 'signIns', 'legacyPageViews', 'legacyClientErrors', 'legacyServerErrors', 'legacyUsageSignals', 'billingCheckouts']) {
       assert.equal(exported[key].length, 1, key);
     }
