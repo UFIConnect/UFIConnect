@@ -36,8 +36,15 @@ export function buildCityStreets(model) {
     const col = Math.round((district.x - 190) / 240), row = Math.round((district.y - 220) / 270);
     const block = blocks[row * 4 + col];
     const bays = Array.from({ length: 8 }, (_, index) => [block.x - 63 + index * 18, block.y + 119]);
-    const arrivalRoad = [[block.x - 82, block.bottom], [block.x - 82, block.y + 138], [block.x + 82, block.y + 138], [block.x + 82, block.bottom]];
-    return { ...district, x: block.x, y: block.y, block: block.index, streetY: block.bottom, bays, arrivalRoad, arrivalPath: path(arrivalRoad), residents: 0 };
+    const throughAccess = district.id === 'sources';
+    const entry = throughAccess ? [block.x - 180, block.y + 138] : [block.x - 82, block.bottom];
+    const exit = throughAccess ? [block.x + 180, block.y + 138] : [block.x + 82, block.bottom];
+    const arrivalRoad = [entry, [block.x - 82, block.y + 138], [block.x + 82, block.y + 138], exit];
+    const accessRoutes = throughAccess ? [
+      { id: 'in', label: 'SOURCE IN', color: '#38bdf8', points: [entry, [block.x - 82, block.y + 138]] },
+      { id: 'out', label: 'SOURCE OUT', color: '#4ade80', points: [[block.x + 82, block.y + 138], exit] },
+    ].map(route => ({ ...route, path: path(route.points) })) : [];
+    return { ...district, x: block.x, y: block.y, block: block.index, streetY: block.bottom, bays, entry, exit, accessRoutes, arrivalRoad, arrivalPath: path(arrivalRoad), residents: 0 };
   });
   const byId = Object.fromEntries(districts.map(district => [district.id, district]));
   const cafes = Array.from({ length: 4 }, (_, col) => ({ x: 260 + col * 360, y: bottom + 92, streetY: bottom + 160, label: ['Corner Cafe', 'Garden Kitchen', 'Market Square', 'Riverside Deli'][col] }));
@@ -52,8 +59,8 @@ export function buildCityStreets(model) {
     const streetX = block.x + side * 180;
     const front = [x, y + 20], junction = [streetX, y + 20];
     const arrivalBay = work.bays[work.residents++ % work.bays.length];
-    const inbound = [front, junction, [streetX, work.streetY], [work.x - 82, work.streetY], [work.x - 82, work.y + 138], [arrivalBay[0], work.y + 138], arrivalBay];
-    const outbound = [arrivalBay, [arrivalBay[0], work.y + 138], [work.x + 82, work.y + 138], [work.x + 82, work.streetY], [streetX, work.streetY], junction, front];
+    const inbound = [front, junction, [streetX, work.streetY], [work.entry[0], work.streetY], work.entry, [work.x - 82, work.y + 138], [arrivalBay[0], work.y + 138], arrivalBay];
+    const outbound = [arrivalBay, [arrivalBay[0], work.y + 138], [work.x + 82, work.y + 138], work.exit, [work.exit[0], work.streetY], [streetX, work.streetY], junction, front];
     const commute = drivingLane(inbound), returning = drivingLane(outbound);
     const commuteStop = distance(commute) / (distance(commute) + distance(returning)) * 100;
     const workFront = [work.x - 42 + index % 8 * 12, work.y + 52];

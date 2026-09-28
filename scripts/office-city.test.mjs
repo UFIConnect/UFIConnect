@@ -47,6 +47,19 @@ test('busy source and runtime buildings distribute arrivals without parking crow
   assert.equal(cityJourney(.7).returning, true);
 });
 
+test('Source collection has a west entrance and east exit used by its residents', () => {
+  const city = buildCityStreets({ districts: CITY_DISTRICTS, homes: Array.from({ length: 37 }, (_, i) => ({ id: `source_${i}`, district: 'sources' })) });
+  const source = city.byId.sources;
+  assert.equal(source.entry[0], city.blocks[source.block].x - 180);
+  assert.equal(source.exit[0], city.blocks[source.block].x + 180);
+  assert.deepEqual(source.accessRoutes.map(route => route.id), ['in', 'out']);
+  for (const home of city.homes) {
+    assert.ok(home.commutePoints.some(([x, y]) => Math.abs(x - source.entry[0]) <= 6 && Math.abs(y - source.entry[1]) <= 6));
+    assert.ok(home.returnPoints.some(([x, y]) => Math.abs(x - source.exit[0]) <= 6 && Math.abs(y - source.exit[1]) <= 6));
+    assert.deepEqual(home.returnPoints.at(-1), home.commutePoints[0]);
+  }
+});
+
 const earlier = Date.parse('2026-09-15T10:00:00Z');
 const later = earlier + 60000;
 const iso = value => new Date(value).toISOString();

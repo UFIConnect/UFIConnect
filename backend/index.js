@@ -7196,6 +7196,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
   const numShards = Math.max(1, Math.min(SOURCE_CONFIG[agentId]?.shards ?? 1, FEED_TOPICS.length));
   const sliceSize = Math.ceil(FEED_TOPICS.length / numShards);
   const shardResetFns = []; // per-shard circuit-state reset — called by the manual trigger
+  let manualTopicIndex = 0;
 
   // Shared health tracking for all shards of this agent
   workerHealth.set(agentId, {
@@ -7358,7 +7359,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
       if (health) health.skippedForStability = (health.skippedForStability || 0) + 1;
       refreshControl.skippedFetches += 1;
       logAgentAction('stability', '??', `Skipped manual ${agentId} refresh while stability guard is critical`, '#FBBF24');
-      return;
+      return { deferred: true };
     }
     if (health) { health.paused = false; health.consecutiveErrors = 0; updateAgentStatus(agentId); }
     shardResetFns.forEach(fn => fn()); // reset all shard circuit state
@@ -7369,8 +7370,10 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
     // capped even outside pressure mode (see RATE_LIMITED_MANUAL_SWEEP),
     // and pressure mode can still cut an already-uncapped source shorter.
     const topicLimit = Math.min(FEED_TOPICS.length, pressureLimit, rateLimitedSweep?.topicCap ?? FEED_TOPICS.length);
-    for (const topic of FEED_TOPICS) {
+    for (let attempted = 0; attempted < FEED_TOPICS.length; attempted++) {
       if (isStabilityCritical() || scannedTopics >= topicLimit) break;
+      const topic = FEED_TOPICS[manualTopicIndex];
+      manualTopicIndex = (manualTopicIndex + 1) % FEED_TOPICS.length;
       scannedTopics++;
       const key = keyMapper(topic);
       if (!key) continue;
@@ -7414,6 +7417,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
       // problem for these specific sources, not just an inefficiency.
       await waitMs(rateLimitedSweep?.delayMs ?? (refreshControl.mode === 'normal' ? 60 : 150));
     }
+    return { deferred: isStabilityCritical(), scannedTopics, nextTopic: manualTopicIndex };
   };
 
   // Return start function — launches all shards staggered within one delay window
@@ -12694,6 +12698,7 @@ function runStabilityGuard() {
     if (mode !== 'normal') {
       trimRuntimeCaches(mode);
     }
+    if (mode !== 'critical') resumeSourceRefreshQueue();
   }, 100);
   if (typeof timer.unref === 'function') timer.unref();
 }
@@ -12841,25 +12846,21 @@ async function refreshDbFeedPostCount() {
 // of indirection to notice it.
 function enqueueSourceRefresh(ids, reason = 'manual') {
   if (!IS_PIPELINE_ROLE) return;
-  const requestedIds = (Array.isArray(ids) ? ids : [ids]).filter(id => typeof SOURCE_FETCHERS[id] === 'function');
+  const requestedIds = [...new Set(Array.isArray(ids) ? ids : [ids])].filter(id => typeof SOURCE_FETCHERS[id] === 'function');
   if (!requestedIds.length) return;
 
-  if (isStabilityCritical()) {
-    refreshControl.skippedFetches += requestedIds.length;
-    logAgentAction('refresh_queue', '??', `Skipped ${requestedIds.length} queued refresh(es) while stability guard is critical`, '#FBBF24');
-    return;
-  }
-
-  requestedIds.forEach(id => sourceRefreshQueue.pendingIds.add(id));
+  const newlyQueued = requestedIds.filter(id => !sourceRefreshQueue.pendingIds.has(id) && !sourceRefreshQueue.currentIds.includes(id));
+  const wasEmpty = !sourceRefreshQueue.running && !sourceRefreshQueue.pendingIds.size;
+  newlyQueued.forEach(id => sourceRefreshQueue.pendingIds.add(id));
   sourceRefreshQueue.lastReason = reason;
   // batchTotal/batchDone track this specific batch (reset when the queue was
   // idle) so the office can show "N of M done" instead of just a raw pending
   // count that doesn't say how big the job was to begin with.
-  if (!sourceRefreshQueue.running) {
-    sourceRefreshQueue.batchTotal = requestedIds.length;
+  if (wasEmpty) {
+    sourceRefreshQueue.batchTotal = newlyQueued.length;
     sourceRefreshQueue.batchDone = 0;
   } else {
-    sourceRefreshQueue.batchTotal += requestedIds.length;
+    sourceRefreshQueue.batchTotal += newlyQueued.length;
   }
   logAgentAction('refresh_queue', '??',
     `Queued ${requestedIds.length} source refresh(es) - ${sourceRefreshQueue.pendingIds.size} pending`, '#38BDF8');
@@ -12867,6 +12868,11 @@ function enqueueSourceRefresh(ids, reason = 'manual') {
   // used to require someone to click "Transfer content to website" in the
   // office by hand)
 
+  resumeSourceRefreshQueue();
+}
+
+function resumeSourceRefreshQueue() {
+  if (!IS_PIPELINE_ROLE || isStabilityCritical() || !sourceRefreshQueue.pendingIds.size) return;
   if (!sourceRefreshQueue.running) {
     setImmediate(() => drainSourceRefreshQueue().catch((err) => {
       sourceRefreshQueue.running = false;
@@ -12891,8 +12897,6 @@ function enqueueSourceRefresh(ids, reason = 'manual') {
 async function transferWorker(slot, stats, priorityOrder) {
   while (sourceRefreshQueue.pendingIds.size > 0) {
     if (isStabilityCritical()) {
-      refreshControl.skippedFetches += sourceRefreshQueue.pendingIds.size;
-      sourceRefreshQueue.pendingIds.clear();
       break;
     }
 
@@ -12915,7 +12919,12 @@ async function transferWorker(slot, stats, priorityOrder) {
     const fetcher = SOURCE_FETCHERS[id];
     if (typeof fetcher === 'function') {
       try {
-        await fetcher();
+        const result = await fetcher();
+        if (result?.deferred) {
+          sourceRefreshQueue.pendingIds.add(id);
+          sourceRefreshQueue.currentIds[slot] = null;
+          break;
+        }
         stats.processed++;
       } catch (err) {
         const h = workerHealth.get(id);
@@ -12924,6 +12933,10 @@ async function transferWorker(slot, stats, priorityOrder) {
           h.totalErrors += 1;
           h.lastError = err?.message || String(err);
         }
+        sourceRefreshQueue.lastError = err?.message || String(err);
+        sourceRefreshQueue.pendingIds.add(id);
+        sourceRefreshQueue.currentIds[slot] = null;
+        break;
       }
     }
     sourceRefreshQueue.currentIds[slot] = null;
@@ -12956,7 +12969,7 @@ function rankPendingTransferSources() {
 }
 
 async function drainSourceRefreshQueue() {
-  if (sourceRefreshQueue.running) return;
+  if (sourceRefreshQueue.running || isStabilityCritical() || !sourceRefreshQueue.pendingIds.size) return;
   sourceRefreshQueue.running = true;
   sourceRefreshQueue.totalRuns += 1;
   sourceRefreshQueue.lastStarted = Date.now();
@@ -12966,13 +12979,14 @@ async function drainSourceRefreshQueue() {
   const stats = { processed: 0 };
   const priorityOrder = rankPendingTransferSources();
   try {
-    await Promise.all(Array.from({ length: TRANSFER_WORKER_COUNT }, (_, slot) => transferWorker(slot, stats, priorityOrder)));
+    const workers = refreshControl.mode === 'pressure' ? 1 : TRANSFER_WORKER_COUNT;
+    await Promise.all(Array.from({ length: workers }, (_, slot) => transferWorker(slot, stats, priorityOrder)));
   } finally {
     sourceRefreshQueue.running = false;
     sourceRefreshQueue.currentIds = new Array(TRANSFER_WORKER_COUNT).fill(null);
     sourceRefreshQueue.lastFinished = Date.now();
     logAgentAction('refresh_queue', '?',
-      `Refresh queue complete - ${stats.processed} source(s) processed`, '#4ADE80');
+      `Refresh queue ${sourceRefreshQueue.pendingIds.size ? 'paused with work retained' : 'complete'} - ${stats.processed} source(s) processed, ${sourceRefreshQueue.pendingIds.size} pending`, sourceRefreshQueue.pendingIds.size ? '#FBBF24' : '#4ADE80');
   }
 }
 
@@ -25698,6 +25712,8 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
     refreshQueue: {
       running: sourceRefreshQueue.running,
       pending: sourceRefreshQueue.pendingIds.size,
+      pausedForStability: isStabilityCritical() && sourceRefreshQueue.pendingIds.size > 0,
+      workerLimit: refreshControl.mode === 'pressure' ? 1 : TRANSFER_WORKER_COUNT,
       totalRuns: sourceRefreshQueue.totalRuns,
       lastStarted: sourceRefreshQueue.lastStarted,
       lastFinished: sourceRefreshQueue.lastFinished,

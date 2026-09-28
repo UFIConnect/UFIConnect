@@ -352,6 +352,7 @@ try {
     check(await page.locator('.lc-commuter').count()===71,'Every home has a commuting car');
     check(await page.locator('.lc-lunch-walker').count()===71,'Every agent has a lunch route');
     check(await page.locator('.lc-arrival-courts [data-garage="sources"]').count() === 1 && await page.locator('.lc-arrival-courts [data-garage="runtime"]').count() === 1, 'Both busy workplaces have dedicated arrival courts');
+    check(await page.locator('[data-source-route="in"]').count() === 1 && await page.locator('[data-source-route="out"]').count() === 1, 'Source collection exposes separate entrance and exit routes');
     const parkedOpacity = await page.locator('.lc-commuter').first().evaluate(element => {
       const animation = element.getAnimations()[0], timing = animation.effect.getTiming();
       animation.pause(); animation.currentTime = timing.delay + Number(timing.duration) * 1.5;

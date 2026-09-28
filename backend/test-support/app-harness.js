@@ -70,6 +70,8 @@ async function createAppHarness({ env = {}, connected = false, query, modules = 
       normalizeFeedPost, dbRowToFeedPost, mapSharedJobPost,
       getFollowingFeedPosts, getCommunityPosts, followingSourceCache,
       getVideoCapableSources, videoReadAdmission,
+      sourceRefreshQueue, refreshControl, SOURCE_FETCHERS, enqueueSourceRefresh, drainSourceRefreshQueue,
+      makeTopicCycler, FEED_TOPICS, setSourceRefreshWait(handler) { waitMs = handler; },
       addAndBroadcast, flushFeedPersistenceQueue, ingestPersistenceQueues, transferStagedPosts,
       COUNTRIES_DESTINATION_GUIDES, LIVE_CAMERA_CATALOG, liveCameraDiscoveryCache,
       fetchYouTubeLiveStates, fetchTravelGuidePosts, fetchSelectedTravelNewsPosts, fetchSelectedTravelEventPosts,

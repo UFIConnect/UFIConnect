@@ -180,6 +180,11 @@ function CityMap({ model, selected, selectedAgent, onSelectAgent, onEnter, pause
             <path d={district.arrivalPath} fill="none" stroke="#52666d" strokeWidth="30" strokeLinejoin="round" />
             <path d={district.arrivalPath} fill="none" stroke="#23343e" strokeWidth="24" strokeLinejoin="round" />
             <path d={district.arrivalPath} fill="none" stroke="#a6bba8" strokeWidth="1" strokeDasharray="6 7" />
+            {district.accessRoutes.map(route => <g key={route.id} data-source-route={route.id} aria-label={route.id === 'in' ? 'Source collection entrance from west street' : 'Source collection exit to east street'}>
+              <path d={route.path} fill="none" stroke={route.color} strokeWidth="3" />
+              <path d={`M${(route.points[0][0] + route.points[1][0]) / 2 - 5} ${route.points[0][1] - 6}l7 6-7 6`} fill="none" stroke={route.color} strokeWidth="3" />
+              <text x={(route.points[0][0] + route.points[1][0]) / 2} y={route.points[0][1] + 27} textAnchor="middle" className="lc-street-label" style={{ fill: route.color }}>{route.label}</text>
+            </g>)}
             <rect x={district.x - 82} y={district.y + 103} width="164" height="21" rx="3" fill="#425c68" stroke="#849eaa" />
             {district.bays.map(([x, y], index) => <g key={index}><rect x={x - 6} y={y - 4} width="12" height="9" fill="#122a34" /><path d={`M${x - 8} ${y + 6}v10m16-10v10`} stroke="#8fa89f" strokeWidth="1" /></g>)}
           </g>)}</g>
@@ -202,7 +207,7 @@ function CityMap({ model, selected, selectedAgent, onSelectAgent, onEnter, pause
       </svg>}
       <div className="lc-map-live"><span className={motion === 'active' ? 'lc-dot-active' : ''} />{motion === 'active' ? `${motionScope === 'all' ? 'Whole city' : 'Observed activity'} / ${speed}x` : motion === 'paused' ? 'Motion paused' : motion === 'reduced' ? 'Reduced motion' : 'No recent work to animate'}</div>
     </div>
-    <div className="lc-map-legend"><p><Home size={14} />Green: working · Gray: inactive · Amber: attention · Dim: unobserved.</p><p>Separate arrival lanes and indoor parking keep building entrances clear. Commutes are illustrative; status labels use live telemetry.</p></div>
+    <div className="lc-map-legend"><p><Home size={14} />Green: working · Gray: inactive · Amber: attention · Dim: unobserved.</p><p>Source collection: blue entrance from the west, green exit to the east. Indoor parking keeps entrances clear. Commutes are illustrative; status labels use live telemetry.</p></div>
     <div className="lc-district-nav" aria-label="Enter city buildings">{model.districts.map(district => <button key={district.id} type="button" aria-pressed={selected === district.id} onClick={() => onEnter(district.id)} style={{ '--district-color': district.color }}><span />{district.label}</button>)}</div>
   </section>;
 }

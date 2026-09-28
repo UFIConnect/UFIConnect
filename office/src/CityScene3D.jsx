@@ -119,6 +119,16 @@ export default function CityScene3D({ city, motion, speed, motionScope, homeFilt
       const destination = { kind: 'building', id: district.id, label: district.label };
       street(x, wz(district.y + 38), x, wz(district.streetY), 1.2);
       district.arrivalRoad.slice(1).forEach(([px, pz], i) => street(wx(district.arrivalRoad[i][0]), wz(district.arrivalRoad[i][1]), wx(px), wz(pz), 2.6));
+      district.accessRoutes.forEach(route => {
+        const [[x1, z1], [x2, z2]] = route.points;
+        const center = wx((x1 + x2) / 2), laneZ = wz(z1);
+        box(center, .36, laneZ, Math.abs(x2 - x1) / 10, .04, .15, route.color);
+        for (const side of [-1, 1]) {
+          const arrow = box(center, .39, laneZ + side * .22, .75, .04, .14, route.color);
+          arrow.rotation.y = side * Math.PI / 5;
+        }
+        label(route.label, center, 3.8, wz(z2 + 16), route.color);
+      });
       box(x, 1.25, wz(district.y + 107), 16.4, 2, 3.2, '#536b76', scene, destination);
       box(x, 2.4, wz(district.y + 107), 16.8, .3, 3.6, '#95aaa9');
       district.bays.forEach(([px, pz]) => {

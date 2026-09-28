@@ -1451,8 +1451,8 @@ function RefetchHelperPanel({ status, triggerAgent, triggering }) {
         </Btn>
       </div>
       <p style={{ fontSize: 12, color: '#64748b', margin: '4px 0 16px' }}>
-        Queues every source worker to refetch, then drains the queue 4 at a time in parallel (paced — this is
-        the same mechanism a full refresh always used, just now with visible progress instead of firing blind).
+        Queues every source worker to refetch in paced batches within the current memory budget.
+        Pending sources wait during critical pressure and resume automatically when the guard recovers.
         Runs on the pipeline service — separate from the Staging → Cache transfer that promotes what gets fetched
         here into the table users actually read from (see Pipeline).
       </p>
@@ -1499,6 +1499,11 @@ function RefetchHelperPanel({ status, triggerAgent, triggering }) {
               <div style={{ height: '100%', width: `${pct}%`, background: '#38bdf8', transition: 'width .3s' }} />
             </div>
           </>
+        ) : q?.pending > 0 ? (
+          <div role="status" style={{ fontSize: 12, color: '#fbbf24' }}>
+            {q.pending.toLocaleString()} sources queued — {q.pausedForStability ? 'waiting for memory to recover' : 'waiting for the next collection pass'}.
+            <div style={{ marginTop: 4 }}>Pending work is retained. Skipped fetch attempts are historical checks, not a count of lost posts.</div>
+          </div>
         ) : (
           <div style={{ fontSize: 12, color: '#64748b' }}>
             Idle — {q?.lastFinished ? `last refetch finished ${fmtAgo(q.lastFinished)}` : 'no refetch run yet'}
