@@ -11,6 +11,19 @@ const phoneUrl = value => {
   try { const url = new URL(value); return url.protocol === 'https:' && url.hostname.endsWith('.trycloudflare.com') && !url.username && !url.password ? url.origin : ''; }
   catch { return ''; }
 };
+// Phones often drop "https://", add capitals, or paste surrounding text. Keep only a
+// trycloudflare.com host, so the link can never lead to another site or scheme.
+const TUNNEL_HOST = /(?:^|[^a-z0-9.-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+trycloudflare\.com)(?![a-z0-9.-]*[a-z0-9])/;
+function readPhoneLink(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (!text) return { url: '', problem: '' };
+  const host = text.replace(/^[a-z][a-z0-9+.-]*:\/\/[^@/\s]*@/, '').match(TUNNEL_HOST)?.[1];
+  if (host) return { url: `https://${host}`, problem: '' };
+  if (/(?:^|[/@\s])(?:127\.0\.0\.1|localhost|0\.0\.0\.0)(?:[:/\s]|$)/.test(text)) {
+    return { url: '', problem: 'That is your computer’s own address, which a phone cannot open. On your computer, choose Start phone connection and use the link it shows, ending in .trycloudflare.com.' };
+  }
+  return { url: '', problem: 'This is not a phone connection link. On your computer, choose Start phone connection and copy or scan the link it shows. It ends in .trycloudflare.com.' };
+}
 
 async function payloadOf(response) {
   let payload;
@@ -368,7 +381,7 @@ function LocalEditor({ apiBase, request }) {
 
 function PhoneConnection() {
   const [address, setAddress] = useState(() => { try { return localStorage.getItem('ufi-local-computer-link') || ''; } catch { return ''; } });
-  const url = phoneUrl(address.trim());
+  const { url, problem } = readPhoneLink(address);
   return <section className="local-web-panel local-web-phone" aria-labelledby="phone-connect-heading">
     <h2 id="phone-connect-heading">Edit from your phone</h2>
     <ol className="local-web-steps-list">
@@ -378,7 +391,7 @@ function PhoneConnection() {
     </ol>
     <label className="local-web-label" htmlFor="phone-workspace-address">Computer connection link</label>
     <input id="phone-workspace-address" type="url" inputMode="url" autoCapitalize="off" autoCorrect="off" spellCheck={false} value={address} onChange={event => setAddress(event.target.value)} placeholder="https://your-connection.trycloudflare.com" />
-    {address.trim() && !url && <p className="local-web-hint">Use the https://…trycloudflare.com link shown on your computer.</p>}
+    {problem && <p className="local-web-hint" role="status">{problem}</p>}
     <div className="local-web-actions">
       {url ? <a className="local-web-button local-web-primary" href={`${url}/#local-web`} rel="noreferrer" onClick={() => { try { localStorage.setItem('ufi-local-computer-link', url); } catch {} }}>Connect to my computer</a>
         : <button type="button" className="local-web-primary" disabled>Connect to my computer</button>}

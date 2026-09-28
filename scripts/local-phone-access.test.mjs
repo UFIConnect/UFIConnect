@@ -49,6 +49,17 @@ test('pairing accepts the grouped code as typed on a phone and explains a mismat
   assert.equal((await pair(' 0123 4567 89AB CDEF 0123-4567 ')).status, 303);
 });
 
+test('an old or unknown phone link explains how to get the current one', async t => {
+  const { request } = await setup(t);
+  const browser = await request('/', { headers: { Host: 'old-link.trycloudflare.com', Accept: 'text/html,application/xhtml+xml' } });
+  assert.equal(browser.status, 403);
+  assert.match(browser.headers['content-type'], /^text\/html/);
+  assert.ok(browser.text.includes('Start phone connection'));
+  const api = await request('/__local-web/files', { headers: { Host: 'old-link.trycloudflare.com' } });
+  assert.equal(api.status, 403);
+  assert.match(api.headers['content-type'], /^application\/json/);
+});
+
 test('pairing stays rate limited', async t => {
   const { pair } = await setup(t);
   for (let attempt = 0; attempt < 10; attempt++) assert.equal((await pair('wrong')).status, 403);

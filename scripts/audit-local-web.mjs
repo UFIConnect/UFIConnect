@@ -231,9 +231,17 @@ try {
   await phonePage.getByLabel('Computer connection link', { exact: true }).fill('javascript:alert(1)');
   assert.equal(await phonePage.getByRole('link', { name: 'Connect to my computer', exact: true }).count(), 0);
   assert.ok(await phonePage.getByRole('button', { name: 'Connect to my computer', exact: true }).isDisabled());
-  await phonePage.getByText('Use the https://…trycloudflare.com link shown on your computer.', { exact: true }).waitFor();
+  await phonePage.getByRole('status').filter({ hasText: 'not a phone connection link' }).waitFor();
+  await phonePage.getByLabel('Computer connection link', { exact: true }).fill('http://127.0.0.1:4174/#local-web');
+  await phonePage.getByRole('status').filter({ hasText: 'your computer’s own address' }).waitFor();
+  assert.equal(await phonePage.getByRole('link', { name: 'Connect to my computer', exact: true }).count(), 0, 'A phone is never sent to its own localhost');
+  for (const typed of ['https://my-computer.trycloudflare.com', 'My-Computer.TryCloudflare.com', 'Phone workspace link https://my-computer.trycloudflare.com/#local-web.']) {
+    await phonePage.getByLabel('Computer connection link', { exact: true }).fill(typed);
+    assert.equal(await phonePage.getByRole('link', { name: 'Connect to my computer', exact: true }).getAttribute('href'), 'https://my-computer.trycloudflare.com/#local-web', `Accepts the link as typed: ${typed}`);
+  }
+  await phonePage.getByLabel('Computer connection link', { exact: true }).fill('https://my-computer.trycloudflare.com.example.invalid');
+  assert.equal(await phonePage.getByRole('link', { name: 'Connect to my computer', exact: true }).count(), 0, 'Look-alike hosts are rejected');
   await phonePage.getByLabel('Computer connection link', { exact: true }).fill('https://my-computer.trycloudflare.com');
-  assert.equal(await phonePage.getByRole('link', { name: 'Connect to my computer', exact: true }).getAttribute('href'), 'https://my-computer.trycloudflare.com/#local-web');
   assert.equal(await phonePage.getByRole('link', { name: 'Open local web workspace', exact: true }).isVisible(), false, 'Phones are not sent to their own localhost');
   assert.equal(await phonePage.getByRole('link', { name: 'Start phone connection', exact: true }).isVisible(), false, 'Phones are not sent to their own localhost to start a connection');
   assert.ok(await phonePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
