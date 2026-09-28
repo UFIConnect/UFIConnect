@@ -1,3 +1,4 @@
+import PublishingTargets, { usePublishingTargets } from '../components/PublishingTargets';
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
@@ -49,6 +50,7 @@ function GroupPostArea({ id }) {
   const [uploadedMedia, setUploadedMedia] = useState(null); // { url, type }
   const [uploading,     setUploading]     = useState(false);
   const [uploadProgress,setUploadProgress]= useState(0);
+  const targets = usePublishingTargets({ enabled: composing, group: true, media: uploadedMedia });
   const [mediaError,    setMediaError]    = useState('');
 
   // Only the group's own creator gets this at all — external/seeded groups
@@ -174,21 +176,19 @@ function GroupPostArea({ id }) {
   async function handlePost(e) {
     e.preventDefault();
     if (!content.trim() && !uploadedMedia) { setPostError('Write something or attach a photo/video before posting.'); return; }
+    if (posting) return;
     if (uploading) { setPostError('Your photo/video is still uploading — one moment.'); return; }
     setPostError('');
     setPosting(true);
     try {
-      const { data } = await client.post(`/groups/${id}/posts`, {
-        content: content.trim(),
-        mediaUrl: uploadedMedia?.url || undefined,
-        mediaType: uploadedMedia?.type || undefined,
-      });
-      setGroupPosts((prev) => [data.post, ...prev]);
+      const payload = { content: content.trim(), mediaUrl: uploadedMedia?.url, mediaType: uploadedMedia?.type };
+      const result = await targets.publish(() => client.post(`/groups/${id}/posts`, payload), payload);
+      if (result?.data?.post) setGroupPosts(prev => [result.data.post, ...prev]);
       setContent('');
       resetMedia();
       setComposing(false);
     } catch (err) {
-      setPostError(err.response?.data?.message || 'Failed to publish. Please try again.');
+      setPostError(err.response?.data?.message || err.message || 'Failed to publish. Please try again.');
     } finally {
       setPosting(false);
     }
@@ -261,6 +261,7 @@ function GroupPostArea({ id }) {
             </div>
           ) : (
             <form onSubmit={handlePost} aria-label={`Create post in ${group.name}`}>
+              <PublishingTargets targets={targets} disabled={posting || uploading} />
               <textarea
                 ref={textareaRef}
                 className="form-textarea"

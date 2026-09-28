@@ -204,7 +204,6 @@ try {
       await page.getByRole('button', { name: 'Refresh videos', exact: true }).click();
       await page.waitForFunction(() => !document.querySelector('[aria-label="Refresh videos"]').disabled);
       assert.equal(await page.locator(`[data-post-id="fresh-${surface}"]`).count(), 1, 'No-new-content refresh preserves the current queue');
-      await page.getByRole('button', { name: 'Filter videos', exact: true }).click();
       await page.getByRole('button', { name: 'YouTube', exact: true }).click();
       await page.waitForFunction(() => document.querySelector('[data-post-id^="fresh-"]'));
       await page.getByRole('button', { name: 'Clear platforms', exact: true }).click();

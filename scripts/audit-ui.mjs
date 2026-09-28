@@ -240,7 +240,8 @@ try {
     assert.ok(clickable, `Original link is covered at ${viewport.width}`);
     await firstSlide.getByRole('button', { name: /Comments/ }).click();
     await page.getByRole('button', { name: 'Close comments' }).click();
-    await firstSlide.getByRole('button', { name: 'Next video', exact: true }).click();
+    await videoScroll.focus();
+    await page.keyboard.press('ArrowDown');
     try {
       await page.waitForFunction(() => document.querySelector('.video-feed-scroll').scrollTop > 100);
     } catch (error) {

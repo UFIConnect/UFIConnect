@@ -1,3 +1,4 @@
+import PublishingTargets, { usePublishingTargets } from '../components/PublishingTargets';
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
@@ -19,6 +20,7 @@ export default function GroupPost() {
   const [error, setError] = useState('');
   const [postedGroup, setPostedGroup] = useState(null);
   const [retry, setRetry] = useState(0);
+  const targets = usePublishingTargets({ group: true, media });
   useEffect(() => {
     let cancelled = false;
     setLoading(true); setError(''); setGroups([]);
@@ -46,9 +48,10 @@ export default function GroupPost() {
     if (posting || uploading || !groupId || !groups.some(group => group.id === groupId) || (!content.trim() && !media)) return;
     setPosting(true); setError('');
     try {
-      await client.post(`/groups/${encodeURIComponent(groupId)}/posts`, { content: content.trim(), ...(media ? { mediaUrl: media.url, mediaType: media.type } : {}) });
-      setPostedGroup(groups.find(group => group.id === groupId)); setContent(''); setMedia(null);
-    } catch (err) { setError(err.response?.data?.message || 'Your post could not be published. Please try again.'); }
+      const payload = { content: content.trim(), mediaUrl: media?.url, mediaType: media?.type };
+      const groupResult = await targets.publish(() => client.post(`/groups/${encodeURIComponent(groupId)}/posts`, payload), payload);
+      setPostedGroup(groupResult ? groups.find(group => group.id === groupId) : null); setContent(''); setMedia(null);
+    } catch (err) { setError(err.response?.data?.message || err.message || 'Your post could not be published. Please try again.'); }
     finally { setPosting(false); }
   }
   return <Layout><main className="saved-page">
@@ -56,6 +59,7 @@ export default function GroupPost() {
     {error && <div className="auth-error" role="alert">{error}{!groups.length && <button className="btn btn-ghost" onClick={() => setRetry(value => value + 1)}>Try again</button>}</div>}
     {postedGroup && <div className="card" role="status">Posted to {postedGroup.name}. <Link to={`/groups/${encodeURIComponent(postedGroup.id)}`}>View group</Link></div>}
     {loading ? <p role="status">Loading your groups…</p> : !groups.length ? <div className="card"><p>Join or create a UFIconnect group to share a post.</p><Link className="btn btn-primary" to="/groups">Find a group</Link></div> : <form className="card" onSubmit={submit}>
+      <PublishingTargets targets={targets} disabled={posting || uploading} />
       <label className="form-label" htmlFor="post-group">Select a group to post to</label>
       <select id="post-group" className="form-input" value={groupId} disabled={posting} onChange={event => { setGroupId(event.target.value); setPostedGroup(null); }} required>
         <option value="">Select a group</option>{groups.map(group => <option key={group.id} value={group.id}>{group.name}{group.isPrivate ? ' (Private)' : ''}</option>)}

@@ -1,3 +1,4 @@
+import ProfilePhoto from '../components/ProfilePhoto';
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -265,18 +266,18 @@ export default function PublicProfile() {
 
       {/* Cover — the user's own photo if they've set one, else a role-colored gradient */}
       <div style={{
-        height: 100, borderRadius: '12px 12px 0 0', marginBottom: 0,
+        position: 'relative', height: 100, borderRadius: '12px 12px 0 0', marginBottom: 0,
         ...(user.coverUrl
           ? { backgroundImage: `url(${user.coverUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' }
           : { background: `linear-gradient(135deg, ${meta.color}22 0%, ${meta.color}44 100%)` }),
         border: `1px solid ${meta.color}22`,
-      }} />
+      }} >{user.coverUrl && <ProfilePhoto src={user.coverUrl} label={user.name + " cover photo"} cover />}</div>
 
       {/* Header card */}
       <div className="profile-header" style={{ borderTop: 'none', borderRadius: '0 0 12px 12px' }}>
         <div className="profile-avatar-wrap" style={{ marginTop: -40 }}>
           {user.avatarUrl ? (
-            <img src={user.avatarUrl} alt="" className="avatar-xl" style={{ borderRadius: '50%', objectFit: 'cover', display: 'block', border: `3px solid ${meta.color}` }} />
+            <ProfilePhoto src={user.avatarUrl} label={user.name + " profile photo"}><img src={user.avatarUrl} alt="" className="avatar-xl" style={{ borderRadius: '50%', objectFit: 'cover', display: 'block', border: `3px solid ${meta.color}` }} /></ProfilePhoto>
           ) : (
             <div className="avatar avatar-xl" style={{ border: `3px solid ${meta.color}`, background: meta.color }}>
               {initials(user.name)}

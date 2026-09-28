@@ -63,15 +63,12 @@ try {
     await scroll.evaluate(el => el.scrollTo(0, 0));
     await page.waitForTimeout(500);
     assert.ok(calls.some(p => p.get('bust') === '1'));
-    await page.getByRole('button', { name: 'Filter videos', exact: true }).click();
     await page.getByRole('button', { name: 'Acoustic', exact: true }).click();
     await page.waitForTimeout(300);
     assert.ok(calls.some(p => p.get('genre') === 'Acoustic'));
-    await page.getByRole('button', { name: 'Done', exact: true }).first().click();
     await page.locator('[data-post-id="genre-0"]').waitFor();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/music-${width}.png`) });
-    await page.getByRole('button', { name: 'Filter videos', exact: true }).click();
     const selectAndRead = async (name) => {
       const [request] = await Promise.all([
         page.waitForRequest(request => {

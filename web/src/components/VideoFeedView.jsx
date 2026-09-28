@@ -10,7 +10,7 @@ import { reportNegativeSignal } from '../api/errorReporting';
 import { ALL_INTERESTS } from '../pages/Onboarding';
 import ConnectedPostActions from './ConnectedPostActions';
 import { SavePostButton } from './SaveButtons';
-import { ArrowUp, ArrowDown, ChevronDown, Search, SlidersHorizontal, Ellipsis, RotateCw, Play, Pause, MessageCircle, Heart, ExternalLink } from 'lucide-react';
+import { ChevronDown, Search, Ellipsis, RotateCw, Play, Pause, MessageCircle, Heart, ExternalLink } from 'lucide-react';
 import { videoDurationSeconds, isShortFeedVideo, videoSourceKey, safeMediaUrl, fitVideoFrame } from '../utils/videoFeedPolicy.mjs';
 import './VideoFeedView.css';
 import './navigation.css';
@@ -203,7 +203,7 @@ function formatTime(sec) {
 // its own top comment) instead of each slide owning/destroying its own.
 // Only meaningful when src.kind === 'youtube'; file/hls/vimeo keep their
 // existing fully-local state below, untouched.
-function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComments, sharedYt, onDurationResolved, onNavigate, hasPrevious, hasNext, controlsVisible }) {
+function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComments, sharedYt, onDurationResolved, controlsVisible }) {
   const src = resolveVideoSource(post);
   const meta = SOURCE_META[post.source] || SOURCE_META.uficonnect;
   const fileVideoRef = useRef(null);
@@ -600,10 +600,6 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
         <SavePostButton post={post} className="video-feed-save-button" showLabel={false} />
         {originalUrl && <a href={originalUrl} target="_blank" rel="noopener noreferrer" aria-label="View original post" title="View original post"
           onClick={() => reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true })}><ExternalLink size={17} aria-hidden="true" /></a>}
-        <div className="video-feed-step-controls" role="group" aria-label="Browse videos">
-          <button type="button" disabled={!hasPrevious} onClick={() => onNavigate(-1)} aria-label="Previous video" title="Previous video"><ArrowUp size={18} aria-hidden="true" /></button>
-          <button type="button" disabled={!hasNext} onClick={() => onNavigate(1)} aria-label="Next video" title="Next video"><ArrowDown size={18} aria-hidden="true" /></button>
-        </div>
       </div>
       <div className="video-feed-details video-caption-scroll" data-video-details>
         {isYoutube && sharedYt?.failed && <p className="video-feed-playback-note" role="status">The embedded player could not start. Try its play button{originalUrl ? ' or open the original video.' : '.'}</p>}
@@ -885,19 +881,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   // maxSharePct comment in handleVideoFeedRequest) actually apply here; a
   // single-value toggle could never combine sources in the first place.
   const [sourceFilter, setSourceFilter] = useState([]);
-  // Search and topic each have their own small floating button (searchOpen/
-  // filterOpen below) rather than a single always-visible bar/row — a
-  // permanent search bar floating over a full-bleed swipe feed would
-  // compete with the video for the very top of the screen, exactly the
-  // "look ugly" this was asked to avoid. Topic (multi-select — any post
-  // matching ANY of the picked topics) and Platform apply immediately on
-  // tap, same as before — no separate "uncommitted" state needed for
-  // either. Search is the one exception: searchInput is the raw,
-  // uncommitted textbox value, searchQuery/searchQueryRef is what's
-  // actually been applied and sent to loadPage, only updated on the
-  // search sheet's own Done/Enter (applySearch) — live-as-you-type doesn't
-  // make much sense tucked inside a sheet the user has to deliberately
-  // open anyway.
+  // Bottom filter rails apply immediately; search keeps a draft until Done.
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [topicFilters, setTopicFilters] = useState([]);
@@ -905,12 +889,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   const genreRef = useRef('');
   const searchQueryRef = useRef('');
   const topicFiltersRef = useRef([]);
-  // Whether the search sheet (just the text input) or the filter sheet
-  // (topic/platform) is open — two separate buttons/sheets rather
-  // than one combined one, so each stays focused and quick to scan
-  // instead of a single sheet trying to do three different jobs at once.
   const [searchOpen, setSearchOpen] = useState(false);
-  const [filterOpen, setFilterOpen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(false);
   // Mirrors state into refs so loadPage (called from effects/callbacks that
   // don't want to be redeclared on every mode/filter change) always reads
@@ -1312,26 +1291,11 @@ export default function VideoFeedView({ onExit, music = false }) {
     loadPage({ reset: true });
   }, [loadPage]);
 
-  // Filter sheet's "Clear all" resets source and topic together. Search
-  // remains independent in its own sheet.
   const selectGenre = (value) => {
     genreRef.current = value; setGenre(value); setActiveIndex(0);
     if (containerRef.current) containerRef.current.scrollTop = 0;
     setLoading(true); loadPage({ reset: true });
   };
-
-  const clearFilters = useCallback(() => {
-    if (!sourceFilterRef.current.length && !topicFiltersRef.current.length && !genreRef.current) return;
-    genreRef.current = ''; setGenre('');
-    sourceFilterRef.current = [];
-    setSourceFilter([]);
-    topicFiltersRef.current = [];
-    setTopicFilters([]);
-    setActiveIndex(0);
-    if (containerRef.current) containerRef.current.scrollTop = 0;
-    setLoading(true);
-    loadPage({ reset: true });
-  }, [loadPage]);
 
   // Search sheet's own Done/Enter — uncommitted searchInput (the textbox)
   // vs. committed searchQuery/searchQueryRef (what's actually applied and
@@ -2065,11 +2029,6 @@ export default function VideoFeedView({ onExit, music = false }) {
           <Search size={18} aria-hidden="true" />
           {searchQuery && <span className="video-feed-filter-dot" aria-hidden="true" />}
         </button>
-        <button type="button" className="video-feed-header-button" onClick={() => setFilterOpen(true)}
-          aria-label="Filter videos" title="Sources, genres and topics" aria-expanded={filterOpen} data-active={Boolean(sourceFilter.length || topicFilters.length || genre)}>
-          <SlidersHorizontal size={18} aria-hidden="true" />
-          {Boolean(sourceFilter.length || topicFilters.length || genre) && <span className="video-feed-filter-dot" aria-hidden="true" />}
-        </button>
         <button type="button" className="video-feed-header-button" onClick={handleRefresh} disabled={refreshing} aria-label="Refresh videos" title="Refresh videos">
           <RotateCw size={18} aria-hidden="true" className={refreshing ? 'video-feed-refreshing' : undefined} />
         </button>
@@ -2152,152 +2111,6 @@ export default function VideoFeedView({ onExit, music = false }) {
         </div>
       )}
 
-      {filterOpen && (
-        <div
-          onClick={e => { if (e.target === e.currentTarget) setFilterOpen(false); }}
-          style={{
-            position: 'fixed', inset: 0, zIndex: 1000,
-            background: 'rgba(0,0,0,.55)', display: 'flex',
-            alignItems: 'flex-end', justifyContent: 'center',
-          }}
-        >
-          <div style={{
-            background: '#161616', color: '#fff', borderRadius: '20px 20px 0 0',
-            // maxHeight back to the original 72vh (was briefly bumped to
-            // 80vh when Topic/Platform both landed in this one sheet)
-            // — the sheet's own on-screen footprint shouldn't grow just
-            // because there's more to scroll through inside it; the
-            // content area's own overflowY:auto (below) is what's meant to
-            // absorb that, not the sheet itself taking up more of the screen.
-            width: '100%', maxWidth: 540, maxHeight: '72vh',
-            display: 'flex', flexDirection: 'column',
-            boxShadow: '0 -4px 32px rgba(0,0,0,.4)',
-          }}>
-            <div style={{ padding: '12px 20px 0', textAlign: 'center', flexShrink: 0 }}>
-              <div style={{ width: 36, height: 4, borderRadius: 2, background: 'rgba(255,255,255,.25)', margin: '0 auto 14px' }} />
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>Filter</h2>
-                {/* Every selection here already applies immediately on tap
-                    (Topic/Platform, unlike Search's own deferred
-                    text input) — this Done button, same as the one in the
-                    footer below, is really just "close the sheet," not
-                    "apply." A proper button up here instead of just the
-                    small × means closing doesn't require scrolling all
-                    the way down through Topic's ~230 chips first. */}
-                <button
-                  onClick={() => setFilterOpen(false)}
-                  style={{
-                    background: '#fff', border: 'none', borderRadius: 14,
-                    padding: '5px 14px', color: '#000', fontWeight: 700, fontSize: '.78rem', cursor: 'pointer',
-                  }}
-                >Done</button>
-              </div>
-            </div>
-            <div style={{ overflowY: 'auto', padding: '0 20px 16px', flex: 1 }}>
-              {/* Platform before Topic (was the reverse) — Topic's ~230
-                  chips are by far the longest list in this sheet, so with
-                  it first, Platform ended up buried below a whole
-                  separately-scrolling box for it, on top of the sheet's
-                  own outer scroll — two nested scroll regions stacked on
-                  top of each other, confirmed live as genuinely hard to
-                  use (unclear which region a scroll gesture was even going
-                  to, plus Topic's own box was so short it took many small
-                  scrolls just to get through). Platform first means it's
-                  reachable immediately with no scrolling. Topic now flows
-                  as a normal part of the SAME single outer scroll instead
-                  of its own bounded box — one predictable scroll region
-                  for the whole sheet, and since Topic is last, scrolling
-                  further into it never blocks reaching anything else
-                  (Clear all/Done sit in their own fixed footer below,
-                  outside this scrollable area entirely already). */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
-                <span style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.02em', opacity: 0.6, textTransform: 'uppercase' }}>Platform</span>
-                <button type="button" className="ufi-clear-control" onClick={clearSourceFilter} disabled={!sourceFilter.length} aria-label="Clear platforms">Clear</button>
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>
-                {(viewMode === 'following' ? FOLLOWING_VIDEO_SOURCES : FEED_VIDEO_SOURCES).map(key => {
-                  const meta = SOURCE_META[key] || {};
-                  const active = sourceFilter.includes(key);
-                  return (
-                    <button
-                      key={key}
-                      onClick={() => toggleSourceFilter(key)}
-                      aria-label={meta.label || key}
-                      aria-pressed={active}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 5,
-                        padding: '7px 12px', borderRadius: 18, cursor: 'pointer', whiteSpace: 'nowrap',
-                        fontWeight: 700, fontSize: '.78rem',
-                        border: `1px solid ${active ? '#fff' : 'rgba(255,255,255,.25)'}`,
-                        background: active ? 'rgba(255,255,255,.22)' : 'rgba(255,255,255,.06)',
-                        color: '#fff',
-                      }}
-                    >
-                      <SourceMark source={key} label={meta.icon} size={13} active={active} />{meta.label || key}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {music && <section aria-label="Music genres" style={{ marginBottom: 20 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                  <h3 style={{ fontSize: '.85rem' }}>Genres</h3>
-                  <button type="button" className="ufi-clear-control" onClick={() => selectGenre('')} disabled={!genre} aria-label="Clear genres">Clear</button>
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  {['Pop', 'Rock', 'Hip hop', 'Rap', 'R&B', 'Jazz', 'Classical', 'Country', 'Electronic', 'Latin', 'Reggae', 'Metal', 'Folk', 'Acoustic', 'Live'].map(value => <button type="button" key={value} aria-pressed={genre === value} onClick={() => selectGenre(value)} style={{ borderRadius: 20, padding: '8px 12px', border: '1px solid #777', background: genre === value ? '#fff' : '#252525', color: genre === value ? '#111' : '#fff', cursor: 'pointer' }}>{value}</button>)}
-                </div>
-              </section>}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
-                <span style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.02em', opacity: 0.6, textTransform: 'uppercase' }}>Topics</span>
-                <button type="button" className="ufi-clear-control" onClick={clearTopicFilter} disabled={!topicFilters.length} aria-label="Clear video topics">Clear</button>
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                {ALL_INTERESTS.map(topic => {
-                  const active = topicFilters.includes(topic);
-                  return (
-                    <button
-                      key={topic}
-                      onClick={() => toggleTopicFilter(topic)}
-                      aria-pressed={active}
-                      style={{
-                        padding: '6px 12px', borderRadius: 16, cursor: 'pointer', whiteSpace: 'nowrap',
-                        fontWeight: 600, fontSize: '.75rem',
-                        border: `1px solid ${active ? '#fff' : 'rgba(255,255,255,.2)'}`,
-                        background: active ? 'rgba(255,255,255,.22)' : 'rgba(255,255,255,.05)',
-                        color: '#fff',
-                      }}
-                    >
-                      {active ? 'Selected: ' : ''}{topic}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            <div style={{ padding: '10px 20px 18px', display: 'flex', gap: 10, borderTop: '1px solid rgba(255,255,255,.12)', flexShrink: 0 }}>
-              <button
-                className="ufi-clear-control"
-                onClick={() => clearFilters()}
-                disabled={sourceFilter.length === 0 && topicFilters.length === 0 && !genre}
-                style={{
-                  flex: 1, padding: '10px 0', borderRadius: 10, marginTop: 10,
-                  fontWeight: 700, fontSize: '.85rem',
-                  cursor: (sourceFilter.length === 0 && topicFilters.length === 0 && !genre) ? 'default' : 'pointer',
-                }}
-              >
-                Clear all
-              </button>
-              <button
-                onClick={() => setFilterOpen(false)}
-                style={{ flex: 1, padding: '10px 0', borderRadius: 10, marginTop: 10, border: 'none', background: '#fff', color: '#000', fontWeight: 700, fontSize: '.85rem', cursor: 'pointer' }}
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className="video-feed-body">
         {loading && videoPosts.length > 0 && <div className="video-feed-loading" role="status">Loading videos…</div>}
         <div ref={containerRef} data-video-feed-scroll className="video-feed-scroll" tabIndex={0} aria-label={music ? 'Music videos' : 'Videos'}>
@@ -2309,8 +2122,7 @@ export default function VideoFeedView({ onExit, music = false }) {
               {Math.abs(idx - activeIndex) <= VIDEO_MOUNT_RADIUS ? <VideoSlide post={post} active={idx === activeIndex}
                 controlsVisible={controlsVisible}
                 muted={muted} onToggleMute={toggleMuted} isScrolling={isScrolling} onOpenComments={setCommentsPost}
-                onDurationResolved={onDurationResolved} hasPrevious={idx > 0} hasNext={idx < videoPosts.length - 1}
-                onNavigate={direction => containerRef.current?.scrollTo({ top: (idx + direction) * containerRef.current.clientHeight, behavior: 'smooth' })}
+                onDurationResolved={onDurationResolved}
                 sharedYt={idx === activeIndex ? { ...sharedYt, togglePlay: sharedYtTogglePlay, seekTo: sharedYtSeekTo, seekingRef: sharedYtSeekingRef } : undefined} />
                 : <div className="video-feed-placeholder" />}
             </div>)}
@@ -2332,6 +2144,40 @@ export default function VideoFeedView({ onExit, music = false }) {
         </div>
         </div>
       </div>
+
+      <footer className="video-feed-filters" aria-label={music ? 'Music filters' : 'Video filters'}>
+        <section className="video-feed-filter-row" aria-label="Video sources">
+          <span className="video-feed-filter-label">Sources</span>
+          <div className="video-feed-filter-options">
+            {(viewMode === 'following' ? FOLLOWING_VIDEO_SOURCES : FEED_VIDEO_SOURCES).map(key => {
+              const meta = SOURCE_META[key] || {};
+              const active = sourceFilter.includes(key);
+              return <button type="button" className="video-feed-filter-chip" key={key}
+                onClick={() => toggleSourceFilter(key)} aria-label={meta.label || key} aria-pressed={active}>
+                <SourceMark source={key} label={meta.icon} size={13} active={active} />{meta.label || key}
+              </button>;
+            })}
+          </div>
+          <button type="button" className="ufi-clear-control" onClick={clearSourceFilter} disabled={!sourceFilter.length} aria-label="Clear platforms">Clear</button>
+        </section>
+        {music && <section className="video-feed-filter-row" aria-label="Music genres">
+          <span className="video-feed-filter-label">Genres</span>
+          <div className="video-feed-filter-options">
+            {['Pop', 'Rock', 'Hip hop', 'Rap', 'R&B', 'Jazz', 'Classical', 'Country', 'Electronic', 'Latin', 'Reggae', 'Metal', 'Folk', 'Acoustic', 'Live'].map(value =>
+              <button type="button" className="video-feed-filter-chip" key={value} aria-pressed={genre === value} onClick={() => selectGenre(value)}>{value}</button>)}
+          </div>
+          <button type="button" className="ufi-clear-control" onClick={() => selectGenre('')} disabled={!genre} aria-label="Clear genres">Clear</button>
+        </section>}
+        <section className="video-feed-filter-row" aria-label="Video topics">
+          <span className="video-feed-filter-label">Topics</span>
+          <div className="video-feed-filter-options">
+            {ALL_INTERESTS.map(topic => <button type="button" className="video-feed-filter-chip" key={topic}
+              onClick={() => toggleTopicFilter(topic)} aria-pressed={topicFilters.includes(topic)}>{topic}</button>)}
+          </div>
+          <button type="button" className="ufi-clear-control" onClick={clearTopicFilter} disabled={!topicFilters.length} aria-label="Clear video topics">Clear</button>
+        </section>
+      </footer>
+
       </div>
       {commentsPost && <CommentsSheet post={commentsPost} onClose={() => setCommentsPost(null)} />}
     </div>

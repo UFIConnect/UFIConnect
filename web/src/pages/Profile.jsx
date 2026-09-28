@@ -1,3 +1,4 @@
+import ProfilePhoto from '../components/ProfilePhoto';
 ﻿import { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -452,12 +453,12 @@ export default function Profile() {
       {/* Cover */}
       <div className="profile-cover">
         {coverImageUrl && !coverLoadFailed && (
-          <img
+          <ProfilePhoto src={coverImageUrl} label="cover photo" cover><img
             className="profile-cover-image"
             src={coverImageUrl}
             alt=""
             onError={() => setCoverLoadFailed(true)}
-          />
+          /></ProfilePhoto>
         )}
         <div className="profile-cover-actions">
           <PhotoPickerButton
@@ -478,13 +479,13 @@ export default function Profile() {
       <div className="profile-header">
         <div className="profile-avatar-wrap">
           {avatarImageUrl && !avatarLoadFailed ? (
-            <img
+            <ProfilePhoto src={avatarImageUrl} label="profile photo"><img
               src={avatarImageUrl}
               alt=""
               className="avatar-xl"
               onError={() => setAvatarLoadFailed(true)}
               style={{ borderRadius: '50%', objectFit: 'cover', display: 'block' }}
-            />
+            /></ProfilePhoto>
           ) : (
             <div className="avatar avatar-xl">{initials(profile.name)}</div>
           )}

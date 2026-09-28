@@ -1,3 +1,4 @@
+import PublishingTargets, { usePublishingTargets } from '../components/PublishingTargets';
 ﻿import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useSearchParams } from 'react-router-dom';
@@ -62,6 +63,7 @@ function UfiPostArea({ embedded, initialShop }) {
   const [uploadedMedia, setUploadedMedia] = useState(null); // { url, type }
   const [uploading,     setUploading]     = useState(false);
   const [uploadProgress,setUploadProgress]= useState(0);
+  const targets = usePublishingTargets({ enabled: composing, media: uploadedMedia });
   const [mediaError,    setMediaError]    = useState('');
 
   const placeholder = PROMPTS[Math.floor(Math.random() * PROMPTS.length)];
@@ -228,22 +230,20 @@ function UfiPostArea({ embedded, initialShop }) {
   async function handleSubmit(e) {
     e.preventDefault();
     if (!content.trim() && !uploadedMedia) { setError('Write something or attach a photo/video before posting.'); return; }
+    if (loading) return;
     if (uploading) { setError('Your photo/video is still uploading — one moment.'); return; }
     setError('');
     setLoading(true);
     try {
-      await client.post(`/groups/${groupId}/posts`, {
-        content: content.trim(),
-        mediaUrl: uploadedMedia?.url || undefined,
-        mediaType: uploadedMedia?.type || undefined,
-      });
+      const payload = { content: content.trim(), mediaUrl: uploadedMedia?.url, mediaType: uploadedMedia?.type };
+      await targets.publish(() => client.post(`/groups/${groupId}/posts`, payload), payload);
       setContent('');
       resetMedia();
       setComposing(false);
       setPosted(p => !p); // trigger feed reload
       showToast('Post published!', 'success');
-    } catch {
-      setError('Failed to publish. Please try again.');
+    } catch (failure) {
+      setError(failure.message || 'Failed to publish. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -343,6 +343,7 @@ function UfiPostArea({ embedded, initialShop }) {
       {composing && (
         <div className="card ufi-compose-card" style={{ maxWidth: embedded ? 'none' : 640 }}>
           <form onSubmit={handleSubmit} aria-label={initialShop ? 'Create Shop post' : 'Create UFI post'}>
+            <PublishingTargets targets={targets} disabled={loading || uploading} />
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
               <div className="avatar avatar-md" style={{ flexShrink: 0, marginTop: 4 }}>
                 {initials(profile?.name)}

@@ -207,9 +207,7 @@ try {
     const failedPage = page.waitForResponse(response => response.url().includes(`/office/feed/${surface}?`) && response.status() === 503);
     await page.locator('[data-post-id="overload-7"]').evaluate(el => el.scrollIntoView({ block: 'start', behavior: 'instant' }));
     await failedPage;
-    await page.getByRole('button', { name: 'Filter videos', exact: true }).click();
     await page.getByRole('button', { name: 'YouTube', exact: true }).click();
-    await page.getByRole('button', { name: 'Done', exact: true }).first().click();
     await page.waitForTimeout(800);
     assert.equal(calls.filter(call => call.phase === 'overload').length, 2, 'Backoff suppresses generic retries and immediate filter retries');
     assert.ok(await page.locator('[data-post-id="overload-0"]').count(), 'Existing playable queue stays available during overload');
