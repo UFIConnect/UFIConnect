@@ -107,7 +107,7 @@ try {
         const messagesBounds = await page.locator('.global-messages-link').boundingBox();
         const alertsBounds = await page.locator('.global-desktop-alerts').boundingBox();
         check(Math.abs(searchBounds.y - navBounds.y) < 2 && navBounds.x + navBounds.width <= searchBounds.x, 'Main destinations must sit left of search in the same row');
-        check(messagesBounds.x >= searchBounds.x + searchBounds.width && alertsBounds.x >= messagesBounds.x + messagesBounds.width, 'Messages and Alerts must sit right of search');
+        check(alertsBounds.x >= searchBounds.x + searchBounds.width && messagesBounds.x >= alertsBounds.x + alertsBounds.width, 'Alerts and Messages must sit right of search');
         await headerNav.getByRole('link', { name: 'Jobs', exact: true }).click();
         await page.waitForURL('**/opportunities');
         await page.locator('.jobs-page-layout').waitFor();
@@ -135,7 +135,7 @@ try {
         check(await drawer.locator('.mobile-feed-drawer-content').evaluate(element => element.clientHeight > 0 && getComputedStyle(element).overflowY === 'auto'), 'Long menus must scroll to their bottom actions');
         for (const [label, category] of [['Travel', 'countries'], ['Restaurants', 'restaurants'], ['Bars and clubs', 'bars']]) {
           const postLink = drawer.getByRole('link', { name: `Post to ${label}`, exact: true });
-          check(await postLink.getAttribute('href') === '/connected-accounts', `Post to ${label} must open Connected Accounts`);
+          check(await postLink.getAttribute('href') === `/?feed=${category}&compose=1`, `Post to ${label} must open the composer in its feed`);
           const postStyle = await postLink.evaluate(element => ({ weight: getComputedStyle(element).fontWeight, background: getComputedStyle(element).backgroundImage }));
           check(Number(postStyle.weight) < 700 && postStyle.background === 'none', 'Sidebar posting links use regular navigation styling');
         }
@@ -157,8 +157,8 @@ try {
           await opener.click();
           await waitOpen();
           await drawer.getByRole('link', { name: `Post to ${label}`, exact: true }).click();
-          await page.waitForURL('**/connected-accounts');
-          await page.getByRole('heading', { name: 'Connected Accounts', exact: true }).waitFor();
+          await page.waitForURL(url => new URL(url).searchParams.get('feed') === category);
+          await page.getByRole('form', { name: `Create ${label} post`, exact: true }).waitFor();
           await waitClosed();
         }
 
