@@ -1,7 +1,7 @@
 ﻿import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 
-const EFFECTIVE_DATE = 'September 22, 2026';
+const EFFECTIVE_DATE = 'September 28, 2026';
 const CONTACT_EMAIL  = 'privacy@uficonnect.org';
 const APP_NAME       = 'UFIconnect';
 const APP_URL        = 'https://uficonnect.org';
@@ -108,7 +108,7 @@ export default function PrivacyPolicy() {
           <P><strong>Core service metrics and aggregate usage counts</strong> — these are always active. We count visits to general page and app-screen categories and measure request outcomes and service response times. These metrics do not store account IDs, visitor IDs, IP addresses, full page links, search terms, passwords, or message content. Counts represent views, not individual people. Hosting and security systems still process connection information, including IP addresses, to deliver and protect the service.</P>
           <P><strong>Optional performance insights</strong> — when enabled on your browser or app, we count general error categories to identify reliability problems. These reports exclude raw error messages, stack traces, account details, and personal content. You can turn future reporting off in Data and privacy settings.</P>
 
-          <P><strong>Social account tokens</strong> — if you connect a social platform (LinkedIn, Twitter/X, Instagram, or Facebook) via the Connected Accounts feature, we store the OAuth access token you authorise. This token is used only to fetch content relevant to your feed and is never shared with third parties.</P>
+          <P><strong>Connected-account credentials</strong> — when you connect an available provider, such as YouTube or GitHub, we store the OAuth access token and any refresh token the provider issues. Our servers send these credentials to that provider to retrieve your connected content or perform actions you request. We never receive your provider password.</P>
 
           <P><strong>Feed interactions</strong> — likes, saves, and clicks on posts. Used to personalise your feed.</P>
           <P><strong>Membership billing</strong> — Stripe hosts checkout and manages payment methods. We store Stripe customer and subscription references, membership status, and limited checkout and webhook records to confirm access and prevent duplicate processing. Card numbers and security codes are entered on Stripe’s website and are not stored by UFIConnect.</P>
@@ -142,16 +142,20 @@ export default function PrivacyPolicy() {
 
         <Section title="5. Connected social accounts (OAuth)">
           <P>
-            The Connected Accounts feature lets you link LinkedIn, Twitter/X, Instagram, and Facebook
-            to your {APP_NAME} profile via OAuth 2.0. When you connect a platform:
+            The Connected Accounts feature lets you link supported providers to your {APP_NAME}
+            account through their official authorization flow. Availability depends on provider access and app approval. When you connect a platform:
           </P>
           <UL items={[
             'You are redirected to that platform\'s official login page — we never see your social password',
-            'You grant us a limited-scope access token (e.g. read-only access to your posts or feed)',
+            'You choose the permissions shown by the provider; reading content and publishing interactions may require different permissions',
             'Connected-account tokens are encrypted before database storage and used for the connection you authorise',
             'You can disconnect any platform at any time from your Profile → Connected Accounts page',
             'Disconnecting removes the active connection credentials; backup copies follow the backup retention policy',
           ]} />
+          <P><strong>Google and YouTube data</strong> — UFIConnect uses YouTube API Services. If you connect YouTube, read access lets us retrieve your channel subscriptions and recent videos from those channels, and your own channel and upload metadata. This includes video identifiers, titles, descriptions, thumbnail links, publication dates, durations, and available engagement counts. We use this information to display your connected feed and your own content. We do not download YouTube video files.</P>
+          <P>If you separately authorize interaction permissions, we send a video rating or comment to YouTube when you select the corresponding action in UFIConnect. Comments and ratings are then subject to YouTube's visibility rules. Read-only authorization does not permit these writes. We do not request YouTube upload permission in the standard connection flow.</P>
+          <P>Connection credentials are encrypted before database storage. Connected-feed metadata is cached on our servers to deliver the requested features. Render hosts these systems. Google and YouTube receive the API requests and any comments or ratings you ask us to send. Google user data is not sold or used for advertising. Our use and transfer of this data is limited to the authorized features and permitted security or legal purposes under the <a href="https://developers.google.com/terms/api-services-user-data-policy" style={{ color: 'var(--primary)' }}>Google API Services User Data Policy</a>, including its Limited Use requirements.</P>
+          <P>Disconnect YouTube in Connected Accounts to remove active connection credentials and stop future authorized requests. You can also revoke UFIConnect's access through <a href="https://myaccount.google.com/connections" style={{ color: 'var(--primary)' }}>Google Account connections</a>. Disconnecting does not delete videos, comments, or ratings already on YouTube; manage those on YouTube. To request deletion of data held by UFIConnect, use Settings → Account or contact {CONTACT_EMAIL}. Backup retention is described below. Google's processing is covered by the <a href="https://policies.google.com/privacy" style={{ color: 'var(--primary)' }}>Google Privacy Policy</a>.</P>
         </Section>
 
         <Section title="6. Data sharing">
