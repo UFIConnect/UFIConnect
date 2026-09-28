@@ -3417,9 +3417,9 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     : selectedSourceKeys.includes(key);
 
   const discoveryActions = isLocationFeed && <>
-    <Link to={`/command-center?tab=crosspost&category=${viewMode}`} state={{ discoveryPost: postContext }}
+    <Link to="/?feed=ufi&compose=1"
       aria-label={`Post to ${DISCOVERY_CATEGORIES[viewMode].label}`}
-      className="feed-toolbar-control feed-topic-filter-trigger feed-category-post ufi-post-action">
+      className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action ufi-compose-button feed-category-post ufi-post-action">
       Post<span className="feed-category-post-context"> to {DISCOVERY_CATEGORIES[viewMode].label}</span>
     </Link>
     <TopicFilterControl topics={filters.topics} options={ALL_INTERESTS} onChange={applyTopicFilters}

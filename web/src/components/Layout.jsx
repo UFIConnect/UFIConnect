@@ -425,7 +425,7 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
             { category: 'restaurants', icon: 'restaurants', label: 'Restaurants' },
             { category: 'bars', icon: 'bars', label: 'Bars and clubs' },
           ].map(({ category, icon, label }) => <Link key={category}
-            to={"/command-center?tab=crosspost&category=" + category}
+            to="/?feed=ufi&compose=1"
             className="nav-link" aria-label={`Post to ${label}`} title={`Post to ${label}`}>
             <span className="nav-icon"><ShellIcon name={icon} size={17} /></span>
             <span className="nav-label">Post to {label}</span>
@@ -546,13 +546,13 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
               {mobileSearchQuery && <button type="button" className="global-search-clear" aria-label="Clear feed search" title="Clear search" onClick={() => { setMobileSearchQuery(''); feedSearch?.onSubmit(''); }}><ShellIcon name="close" size={14} /></button>}
               <button type="button" className="global-search-open" aria-label="Open search" title="Search posts, people, groups and jobs" aria-haspopup="dialog" aria-expanded={searchPopupOpen} onClick={openSearchPopup}><ChevronDown size={16} aria-hidden="true" /></button>
             </form>
+          <NavLink to="/notifications" className="global-desktop-alerts" aria-label="Alerts" title="Alerts">
+            <ShellIcon name="notifications" size={19} /><NavBadge count={notifBadge} />
+          </NavLink>
             <NavLink to="/messages" className={({ isActive }) => `global-messages-link${isActive ? ' active' : ''}`} aria-label="Messages" title="Messages" onClick={closeMobileOverlays}>
               <ShellIcon name="messages" size={20} />
             </NavLink>
           </div>
-          <NavLink to="/notifications" className="global-desktop-alerts" aria-label="Alerts" title="Alerts">
-            <ShellIcon name="notifications" size={19} /><NavBadge count={notifBadge} />
-          </NavLink>
           <div className="mobile-command-menu">
             <button
               type="button"
@@ -641,7 +641,7 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
               { category: 'restaurants', icon: 'restaurants', label: 'Restaurants' },
               { category: 'bars', icon: 'bars', label: 'Bars and clubs' },
             ].map(({ category, icon, label }) => <Link key={category}
-              to={"/command-center?tab=crosspost&category=" + category}
+              to="/?feed=ufi&compose=1"
               className="mobile-command-menu-item" onClick={closeMobileOverlays}>
               <ShellIcon name={icon} size={18} />Post to {label}
             </Link>)}

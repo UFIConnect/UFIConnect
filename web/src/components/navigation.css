@@ -218,3 +218,36 @@
   }
 }
 
+
+/* Align the UFI rail with Messages when the desktop feed is at the top. */
+@media (min-width: 769px) {
+  .shell-content:has(.home-feed-right-tabs) {
+    --feed-page-inset: 32px;
+    --feed-rail-width: 248px;
+    --feed-column-gap: 20px;
+    --feed-page-top: 28px;
+  }
+  .shell-content:has(.home-feed-right-tabs) > .global-app-header {
+    width: calc(min(100%, 1480px) - 2 * var(--feed-page-inset) - var(--feed-rail-width) - var(--feed-column-gap));
+    max-width: none;
+    margin-left: calc(max(0px, (100% - 1480px) / 2) + var(--feed-page-inset));
+    margin-right: 0;
+  }
+  .shell-content:has(> .global-app-header) .home-feed-right-tabs {
+    margin-top: calc(-58px - var(--feed-page-top) + 9px);
+    top: 19px;
+  }
+  .shell-content:has(.home-feed-right-tabs) .home-feed-layout {
+    grid-template-columns: minmax(0, 1fr) var(--feed-rail-width);
+    gap: var(--feed-column-gap);
+  }
+}
+@media (min-width: 769px) and (max-width: 1180px) {
+  .shell-content:has(.home-feed-right-tabs) { --feed-rail-width: 225px; }
+}
+@media (min-width: 769px) and (max-width: 1100px) {
+  .shell-content:has(.home-feed-right-tabs) {
+    --feed-page-inset: 24px; --feed-column-gap: 16px; --feed-page-top: 24px;
+  }
+}
+

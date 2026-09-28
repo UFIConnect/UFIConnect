@@ -73,18 +73,7 @@ try {
       await accepted.waitFor();
       assert.equal(await page.locator('[data-post-id="below-five"], [data-post-id="unsupported"]').count(), 0);
       const headerControls = page.locator('.video-feed-top-controls');
-      const showControls = headerControls.getByRole('button', { name: 'Show video controls', exact: true });
-      await showControls.waitFor({ state: 'visible' });
-      assert.equal(await showControls.getAttribute('aria-expanded'), 'false');
-      assert.equal(await accepted.locator('[data-video-actions]').isVisible(), false, 'Video opens with app commands collapsed');
-      const collapsedMedia = await accepted.locator('[data-video-media]').boundingBox();
-      // The surrounding app controls remain operable with a keyboard, without
-      // intercepting pointer input intended for the provider's own frame.
-      await showControls.focus();
-      await page.keyboard.press('Enter');
-      const hideControls = headerControls.getByRole('button', { name: 'Hide video controls', exact: true });
-      await hideControls.waitFor({ state: 'visible' });
-      assert.equal(await hideControls.getAttribute('aria-expanded'), 'true');
+      assert.equal(await headerControls.getByRole('button', { name: /Show video controls|Hide video controls/ }).count(), 0);
       await accepted.locator('[data-video-actions]').waitFor({ state: 'visible' });
       const rectangles = await accepted.evaluate(element => {
         const box = selector => { const r = element.querySelector(selector).getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, height: r.height }; };
@@ -100,15 +89,7 @@ try {
         && rectangles.media.bottom > rectangles.actions.top + 1;
       assert.equal(mediaOverlapsActions, false, 'Commands stay outside the full video frame');
       assert.equal(rectangles.fit, 'contain', 'Native video preserves the full frame');
-      assert.ok(collapsedMedia.height >= rectangles.media.height - 1, 'Collapsed commands preserve space for the video');
-      await hideControls.focus();
-      await page.keyboard.press('Space');
-      await showControls.waitFor({ state: 'visible' });
-      assert.equal(await accepted.locator('[data-video-actions]').isVisible(), false, 'Keyboard users can collapse app commands again');
-      assert.equal(await page.locator('[data-video-details] .lucide-sliders-horizontal, [data-video-details] [aria-label="Show video controls"], [data-video-details] [aria-label="Hide video controls"]').count(), 0,
-        'No bottom sliders or controls toggle remains in the video caption');
-      assert.equal(await showControls.locator('.lucide-ellipsis').count(), 1, 'Playback commands have a distinct ellipsis in the header');
-      assert.equal(await showControls.evaluate(element => document.activeElement === element), true, 'Collapsing controls retains keyboard focus on the toggle');
+      assert.equal(await page.getByRole('button', { name: /^(Previous|Next) video$/ }).count(), 0);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     }
     await visit('videos', [post('native-short'), post('native-long', { mediaUrl: 'https://media.example.invalid/long.mp4', videoDurationSeconds: 20 })]);
@@ -138,7 +119,6 @@ try {
     await frame.focus();
     assert.equal(await frame.evaluate(element => document.activeElement === element), true, 'Keyboard users can focus the provider frame');
     const youtubePost = page.locator('[data-post-id="youtube-long"]');
-    await page.locator('.video-feed-top-controls').getByRole('button', { name: 'Show video controls', exact: true }).click();
     await youtubePost.locator('[data-video-actions]').waitFor({ state: 'visible' });
     await page.waitForFunction(() => {
       const frame = document.querySelector('.video-feed-youtube-player iframe')?.getBoundingClientRect();
@@ -204,6 +184,7 @@ try {
       await page.getByRole('button', { name: 'Refresh videos', exact: true }).click();
       await page.waitForFunction(() => !document.querySelector('[aria-label="Refresh videos"]').disabled);
       assert.equal(await page.locator(`[data-post-id="fresh-${surface}"]`).count(), 1, 'No-new-content refresh preserves the current queue');
+      await page.getByRole('button', { name: 'Filter videos', exact: true }).click();
       await page.getByRole('button', { name: 'YouTube', exact: true }).click();
       await page.waitForFunction(() => document.querySelector('[data-post-id^="fresh-"]'));
       await page.getByRole('button', { name: 'Clear platforms', exact: true }).click();
@@ -220,7 +201,7 @@ try {
       }
     }
     assert.deepEqual(errors, []);
-    console.log(`PASS: collapsed/revealed controls, full media, 5-second boundary, metadata filtering, cross-origin wheel/touch browsing in Videos + Music, one persistent interactive iframe, fresh-batch refresh at ${width}px`);
+    console.log(`PASS: permanent playback controls, full media, 5-second boundary, metadata filtering, cross-origin wheel/touch browsing in Videos + Music, one persistent interactive iframe, fresh-batch refresh at ${width}px`);
     await context.close();
   }
 } finally { await browser?.close(); await server.close(); await app.close(); }
