@@ -21,6 +21,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const output = path.join(root, 'marketing/google-ads');
 const imageDir = path.join(output, 'images');
 const editorDir = path.join(output, 'google-ads-editor');
+const iconFile = path.join(output, 'ufi-icon-3d.svg');
 const check = process.argv.includes('--check');
 const copyOnly = process.argv.includes('--copy-only');
 
@@ -383,14 +384,64 @@ function composition(theme, size, shots) {
   </body></html>`;
 }
 
+// The UFI mark as bold geometric outlines (U, F, I in a 851×400 box), so the
+// icon renders the same everywhere without a font. The letters are extruded
+// toward the lower right and filled with a lit face on a full navy tile.
+const UFI_LETTERS = 'M0 0H135V220A45 45 0 0 0 225 220V0H360V220A180 180 0 0 1 0 220Z'
+  + 'M396 0H686V130H531V185H651V295H531V400H396Z'
+  + 'M716 0H851V400H716Z';
+
+function mixColor(from, to, amount) {
+  const channels = hex => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
+  const [a, b] = [channels(from), channels(to)];
+  return '#' + a.map((value, i) => Math.round(value + (b[i] - value) * amount).toString(16).padStart(2, '0')).join('');
+}
+
+function ufiIconSvg(size = 1024) {
+  const scale = 740 / 851;
+  const steps = 34;
+  const [stepX, stepY] = [0.85, 1];
+  const x = (1024 - 851 * scale - steps * stepX) / 2;
+  const y = (1024 - 400 * scale - steps * stepY) / 2;
+  // Draw the extrusion back to front, darkening with depth.
+  const depth = Array.from({ length: steps }, (_, i) => {
+    const step = steps - i;
+    const offset = `${(step * stepX / scale).toFixed(2)} ${(step * stepY / scale).toFixed(2)}`;
+    return `<use xlink:href="#ufi-letters" transform="translate(${offset})" fill="${mixColor('#93ABE2', '#122C73', (step - 1) / (steps - 1))}"/>`;
+  }).join('\n      ');
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1024 1024" width="${size}" height="${size}">
+  <title>UFIconnect</title>
+  <defs>
+    <radialGradient id="ufi-tile" cx="28%" cy="20%" r="95%">
+      <stop offset="0" stop-color="#2E55B3"/><stop offset=".55" stop-color="#102A6B"/><stop offset="1" stop-color="#091A45"/>
+    </radialGradient>
+    <linearGradient id="ufi-face" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#DCE6F8"/>
+    </linearGradient>
+    <filter id="ufi-shadow" x="-15%" y="-15%" width="130%" height="160%">
+      <feDropShadow dx="0" dy="26" stdDeviation="24" flood-color="#030B24" flood-opacity=".55"/>
+    </filter>
+    <path id="ufi-letters" d="${UFI_LETTERS}"/>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#ufi-tile)"/>
+  <g transform="translate(${x.toFixed(2)} ${y.toFixed(2)}) scale(${scale.toFixed(5)})">
+    <g filter="url(#ufi-shadow)">
+      ${depth}
+    </g>
+    <use xlink:href="#ufi-letters" fill="url(#ufi-face)"/>
+  </g>
+</svg>
+`;
+}
+
 function logo(size) {
   const [width, height] = imageSizes[size];
   const body = size === 'logo-square'
-    ? `<div style="width:100%;height:100%;display:grid;place-items:center;background:#102A6B;color:#fff;font-size:400px;font-weight:900;letter-spacing:-16px">UFI</div>`
+    ? ufiIconSvg(width)
     : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;gap:44px;background:#fff">
-        <span style="width:176px;height:176px;border-radius:40px;background:#102A6B;color:#fff;display:grid;place-items:center;font-size:70px;font-weight:900;letter-spacing:-3px">UFI</span>
-        <span style="color:#102A6B;font-size:124px;font-weight:800;letter-spacing:-3px">UFIconnect</span></div>`;
-  return `<!doctype html><html><head><meta charset="utf-8"><style>* { margin:0; box-sizing:border-box; } body { width:${width}px; height:${height}px; font-family:${FONT}; }</style></head><body>${body}</body></html>`;
+        <span style="width:200px;height:200px;border-radius:46px;overflow:hidden;display:block;box-shadow:0 10px 24px rgba(11,30,77,.25)">${ufiIconSvg(200)}</span>
+        <span style="color:#102A6B;font-size:124px;font-weight:900;letter-spacing:-3px">UFIconnect</span></div>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><style>* { margin:0; box-sizing:border-box; } body { width:${width}px; height:${height}px; font-family:${FONT}; } svg { display:block; }</style></head><body>${body}</body></html>`;
 }
 
 function previewSheet() {
@@ -450,10 +501,12 @@ if (check) {
     const current = await fs.readFile(path.join(editorDir, name), 'utf8').catch(() => null);
     if (current !== content) problems.push(`google-ads-editor/${name} is out of date; run node scripts/generate-google-ads.mjs --copy-only`);
   }
+  if (await fs.readFile(iconFile, 'utf8').catch(() => null) !== ufiIconSvg()) problems.push('ufi-icon-3d.svg is out of date; run node scripts/generate-google-ads.mjs --copy-only');
   problems.push(...await checkImages());
 } else if (!problems.length) {
   await fs.mkdir(editorDir, { recursive: true });
   for (const [name, content] of Object.entries(csvFiles)) await fs.writeFile(path.join(editorDir, name), content);
+  await fs.writeFile(iconFile, ufiIconSvg());
   if (!copyOnly) await renderImages();
   problems.push(...await checkImages());
 }

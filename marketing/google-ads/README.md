@@ -12,6 +12,7 @@ advertising to the app.
 | --- | --- |
 | `campaign.mjs` | All ad text: search ad groups, keywords, sitelinks, callouts, snippets and display text |
 | `images/` | Nine marketing images (three themes × landscape 1200×628, square 1200×1200, portrait 960×1200) and two logos (1200×1200, 1200×300) |
+| `ufi-icon-3d.svg` | Source for the logos' bold 3D UFI icon: vector letters that need no font, extruded on a full navy tile |
 | `google-ads-editor/1-…7-*.csv` | Search campaign for Google Ads Editor. It imports **paused** |
 | `google-ads-editor/display-and-pmax-assets.csv` | Text and image checklist for responsive display, Demand Gen and Performance Max |
 | `preview.jpg` | Contact sheet of every image |
