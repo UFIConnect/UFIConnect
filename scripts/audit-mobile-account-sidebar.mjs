@@ -94,7 +94,7 @@ try {
         await saved.click();
         check(!(await page.locator('#sidebar-saved-links').isVisible()), 'Desktop Saved must hide its child pages');
         check(await page.locator('.sidebar').getByRole('link', { name: 'Cross post', exact: true }).getAttribute('href') === '/command-center?tab=crosspost', 'Cross post must open Command Center publishing');
-        check(await page.locator('.sidebar').getByRole('link', { name: 'Post to your group', exact: true }).count() === 0, 'Group posting must move out of the left sidebar');
+        check(await page.locator('.sidebar').getByRole('link', { name: 'Post to a group', exact: true }).getAttribute('href') === '/groups/post', 'Desktop group posting opens the group composer');
         const headerNav = page.getByRole('navigation', { name: 'Main navigation', exact: true });
         for (const label of ['Home', 'Videos', 'Jobs', 'Profile']) {
           check(await headerNav.getByRole('link', { name: label, exact: true }).isVisible(), `${label} must appear beside desktop search`);

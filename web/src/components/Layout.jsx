@@ -416,6 +416,10 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
         </Link>
 
         <nav className="sidebar-nav">
+          <Link to="/?feed=ufi&compose=1" className="nav-link" aria-label="Post" title="Post">
+            <span className="nav-icon"><SquarePen size={17} aria-hidden="true" /></span>
+            <span className="nav-label">Post</span>
+          </Link>
           {[
             { category: 'countries', icon: 'countries', label: 'Travel' },
             { category: 'restaurants', icon: 'restaurants', label: 'Restaurants' },
@@ -446,6 +450,10 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
               <span className="nav-label">{label}</span>
             </NavLink>
           ))}
+          <Link to="/groups/post" className="nav-link" aria-label="Post to a group" title="Post to a group">
+            <span className="nav-icon"><ShellIcon name="groups" size={17} /></span>
+            <span className="nav-label">Post to a group</span>
+          </Link>
           <SavedNavigation expanded={savedExpanded} onToggle={toggleSavedNavigation} />
         </nav>
 
