@@ -11,6 +11,7 @@ async function searchMemberDirectory(db, { myId, q = '', role = '', sort = 'rele
   const bind = value => { params.push(value); return `$${params.length}`; };
   // Account IDs are UUIDs, while relationship tables store text IDs.
   const where = [`((${publicProfile}) OR u.id::text = $1)`];
+  if (sort === 'interests') where.push('u.id::text <> $1');
   where.push(`NOT EXISTS (SELECT 1 FROM blocks b WHERE
     (b.blocker_id = $1 AND b.blocked_id = u.id::text) OR (b.blocked_id = $1 AND b.blocker_id = u.id::text))`);
   let nameRank = '(0::integer)';
@@ -28,18 +29,33 @@ async function searchMemberDirectory(db, { myId, q = '', role = '', sort = 'rele
   const baseParams = [...params];
   if (q && !q.includes('@')) nameRank = `CASE WHEN LOWER(u.name) = ${bind(q)} THEN 2 WHEN LOWER(u.name) LIKE ${bind(escapeLike(q) + '%')} ESCAPE E'\\\\' THEN 1 ELSE 0 END`;
   const followerCount = `(SELECT COUNT(*) FROM follows f WHERE f.following_id = u.id::text)`;
-  const order = sort === 'followers' ? `followers_count DESC, ${nameRank} DESC` : `${nameRank} DESC, (u.id::text = $1) DESC`;
+  const order = sort === 'interests'
+    ? `CARDINALITY(shared.interests) DESC, ${nameRank} DESC`
+    : sort === 'followers' ? `followers_count DESC, ${nameRank} DESC` : `${nameRank} DESC, (u.id::text = $1) DESC`;
   const [page, counts] = await Promise.all([
     db.query(`SELECT u.id, u.name, u.title, u.bio, u.organization,
       CASE WHEN u.id::text = $1 OR COALESCE(u.role_settings ->> 'privacy_showSkills', 'true') <> 'false' THEN u.skills ELSE NULL END AS skills,
-      u.role, u.interests, u.avatar_url,
+      u.role, u.interests, u.avatar_url, shared.interests AS shared_interests,
       ${followerCount} AS followers_count,
       EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = $1 AND f.following_id = u.id::text) AS is_following,
       (SELECT CASE WHEN c.status = 'accepted' THEN 'connected'
         WHEN c.from_id = $1 THEN 'pending_sent' ELSE 'pending_received' END
         FROM connections c WHERE (c.from_id = $1 AND c.to_id = u.id::text) OR (c.to_id = $1 AND c.from_id = u.id::text)
         ORDER BY c.created_at DESC LIMIT 1) AS connection_status
-      FROM users u WHERE ${where.join(' AND ')} ORDER BY ${order}, u.created_at DESC, u.id
+      FROM users u
+      CROSS JOIN LATERAL (
+        SELECT ARRAY(
+          SELECT DISTINCT LOWER(BTRIM(topic))
+          FROM UNNEST(COALESCE(u.interests, ARRAY[]::text[])) AS candidate(topic)
+          WHERE BTRIM(topic) <> '' AND LOWER(BTRIM(topic)) IN (
+            SELECT LOWER(BTRIM(interest))
+            FROM users viewer, UNNEST(COALESCE(viewer.interests, ARRAY[]::text[])) AS own(interest)
+            WHERE viewer.id::text = $1
+          )
+          ORDER BY 1
+        ) AS interests
+      ) shared
+      WHERE ${where.join(' AND ')} ORDER BY ${order}, u.created_at DESC, u.id
       LIMIT ${bind(limit)} OFFSET ${bind(offset)}`, params),
     db.query(`SELECT (SELECT COUNT(*) FROM users) AS registered,
       (SELECT COUNT(*) FROM users u WHERE ${publicProfile}) AS discoverable,
@@ -55,7 +71,9 @@ async function searchMemberDirectory(db, { myId, q = '', role = '', sort = 'rele
       interests: Array.isArray(u.interests) ? u.interests.slice(0, 6) : [], avatarUrl: u.avatar_url || '',
       followersCount: Number(u.followers_count), isFollowing: u.is_following,
       connectionStatus: u.id === myId ? 'self' : (u.connection_status || 'none'),
-      sharedInterests: [], isSelf: u.id === myId,
+      sharedInterests: Array.isArray(u.shared_interests) ? u.shared_interests.slice(0, 6) : [],
+      sharedInterestCount: Array.isArray(u.shared_interests) ? u.shared_interests.length : 0,
+      isSelf: u.id === myId,
     })),
   };
 }

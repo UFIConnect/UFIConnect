@@ -229,7 +229,7 @@ export default function SearchExperience({ initialTab = null, initialQuery = nul
     [routeSeed.tab]: routeSeed.query,
   }));
   const [roleFilter, setRoleFilter] = useState('All');
-  const [sortBy, setSortBy] = useState('relevance');
+  const [sortBy, setSortBy] = useState('interests');
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [peopleLoadingMore, setPeopleLoadingMore] = useState(false);
@@ -327,7 +327,7 @@ export default function SearchExperience({ initialTab = null, initialQuery = nul
       const params = new URLSearchParams();
       if (value) params.set('q', value);
       if (role && role !== 'All') params.set('role', role);
-      params.set('sort', order === 'followers' ? 'followers' : 'relevance');
+      params.set('sort', ['followers', 'interests'].includes(order) ? order : 'relevance');
       params.set('limit', String(DIRECTORY_PAGE_SIZE));
       params.set('offset', String(offset));
       const { data } = await client.get(`/users/search?${params}`);
@@ -660,7 +660,7 @@ export default function SearchExperience({ initialTab = null, initialQuery = nul
       )}
 
       <div className="search-page-shell">
-        {!embedded && <div className="page-header"><h1 className="page-title">Search</h1></div>}
+        {!embedded && <div className="page-header"><h1 className="page-title">{activeTab === 'people' ? 'People' : 'Search'}</h1></div>}
 
         <div className="search-tab-strip" role="tablist" aria-label="Search sections">
           {SEARCH_TABS.map((tab) => (
@@ -775,6 +775,16 @@ export default function SearchExperience({ initialTab = null, initialQuery = nul
 
         {activeTab === 'people' && (
           <>
+            <section className="card" aria-label="Discover people with shared interests" style={{ marginBottom: 16 }}>
+              <p style={{ margin: '0 0 12px', color: 'var(--muted)' }}>Meet people who share your interests, then find a group or start one together.</p>
+              {!profile?.preferences?.interests?.length && <p>Add interests to your profile to get more relevant suggestions.</p>}
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <Link to="/search?tab=groups" className="btn btn-ghost btn-sm">Find groups</Link>
+                <Link to="/search?tab=groups&create=1" className="btn btn-ghost btn-sm">Create a group</Link>
+                <Link to="/profile?tab=about" className="btn btn-ghost btn-sm">Your interests</Link>
+              </div>
+            </section>
+
             <div className="search-people-controls">
               <div className="search-filter-rail search-people-filter" role="group" aria-label="Filter people by role">
                 {ROLE_FILTERS.map((role) => {
@@ -792,6 +802,7 @@ export default function SearchExperience({ initialTab = null, initialQuery = nul
                 })}
               </div>
               <select className="search-sort-select" value={sortBy} onChange={(event) => setSortBy(event.target.value)} aria-label="Sort people">
+                <option value="interests">Shared interests</option>
                 <option value="relevance">Relevance</option>
                 <option value="followers">Most followers</option>
               </select>
@@ -814,7 +825,7 @@ export default function SearchExperience({ initialTab = null, initialQuery = nul
             {!loading && !peopleError && registeredCount === null && countSource === 'unavailable' && (
               <div className="search-result-summary">Registered-member count is temporarily unavailable.</div>
             )}
-            {!loading && !peopleError && !hasQuery && sortedResults.length > 0 && <div className="search-result-summary">Suggested for you</div>}
+            {!loading && !peopleError && !hasQuery && sortedResults.length > 0 && <div className="search-result-summary">{sortBy === 'interests' ? 'People with the most shared interests appear first.' : 'Suggested for you'}</div>}
 
             {!loading && !peopleError && sortedResults.length === 0 && (
               <div className="card search-empty-state"><strong>No people found</strong><p>Try a different name, skill, or role.</p></div>
@@ -852,10 +863,18 @@ export default function SearchExperience({ initialTab = null, initialQuery = nul
                           {user.skills.slice(0, 5).map((skill) => <span key={skill} className="tag tag-primary">{skill}</span>)}
                         </div>
                       )}
+                      {!user.isSelf && user.sharedInterests?.length > 0 && <div className="search-person-skills" aria-label="Shared interests">
+                        {user.sharedInterests.map(interest => <Link key={interest} className="tag tag-secondary"
+                          to={'/search?tab=groups&q=' + encodeURIComponent(interest)}
+                          title={'Find groups about ' + interest}>
+                          {profile?.preferences?.interests?.find(value => value.trim().toLowerCase() === interest.toLowerCase()) || interest}
+                        </Link>)}
+                      </div>}
+
                       <div className="search-person-meta">
                         {user.role && roleMeta && <span style={{ color: roleMeta.color, background: roleMeta.bg }}>{user.role}</span>}
                         <span>{user.followersCount || 0} follower{user.followersCount === 1 ? '' : 's'}</span>
-                        {!user.isSelf && user.sharedInterests?.length > 0 && <span>{user.sharedInterests.length} shared interest{user.sharedInterests.length === 1 ? '' : 's'}</span>}
+                        {!user.isSelf && user.sharedInterests?.length > 0 && <span>{(user.sharedInterestCount ?? user.sharedInterests.length)} shared interest{(user.sharedInterestCount ?? user.sharedInterests.length) === 1 ? '' : 's'}</span>}
                       </div>
                     </div>
                   </article>

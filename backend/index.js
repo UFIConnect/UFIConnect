@@ -28036,7 +28036,7 @@ app.get('/users/search', authenticate, async (req, res) => {
   }
   const q    = (req.query.q    || '').toLowerCase().trim();
   const role = (req.query.role || '').toLowerCase().trim();
-  const sort = req.query.sort === 'followers' ? 'followers' : 'relevance';
+  const sort = ['followers', 'interests'].includes(req.query.sort) ? req.query.sort : 'relevance';
   const myId = req.user.id;
 
   if (db.isConnected()) {
@@ -28054,7 +28054,7 @@ app.get('/users/search', authenticate, async (req, res) => {
   }
 
   const myUser      = await getUser(myId);
-  const myInterests = new Set((myUser?.preferences?.interests || []).map(i => i.toLowerCase()));
+  const myInterests = new Set((myUser?.preferences?.interests || []).map(i => String(i).trim().toLowerCase()));
   const myRole      = (myUser?.preferences?.role || '').toLowerCase();
   const memberSearch = await getSearchMembersFromDatabase({ myId, q, role });
 
@@ -28079,6 +28079,8 @@ app.get('/users/search', authenticate, async (req, res) => {
     results = results.filter(u => (u.preferences?.role || '').toLowerCase().includes(role));
   }
 
+  if (sort === 'interests') results = results.filter(user => user.id !== myId);
+
   const myFollowing = new Set(follows.filter(f => f.followerId === myId).map(f => f.followingId));
   const followerCount = {};
   follows.forEach(f => { followerCount[f.followingId] = (followerCount[f.followingId] || 0) + 1; });
@@ -28087,8 +28089,8 @@ app.get('/users/search', authenticate, async (req, res) => {
   const scored = results.map(u => {
     const uName      = (u.name || '').toLowerCase();
     const uRole      = (u.preferences?.role || '').toLowerCase();
-    const uInterests = (u.preferences?.interests || []).map(i => i.toLowerCase());
-    const shared     = uInterests.filter(i => myInterests.has(i));
+    const uInterests = (u.preferences?.interests || []).map(i => String(i).trim().toLowerCase());
+    const shared     = [...new Set(uInterests.filter(i => i && myInterests.has(i)))];
     let score = 0;
 
     // Name match quality
@@ -28121,14 +28123,16 @@ app.get('/users/search', authenticate, async (req, res) => {
     // Self always first
     if (u.id === myId) score += 200;
 
-    return { u, score, sharedInterests: shared.slice(0, 3) };
+    return { u, score, sharedInterests: shared.slice(0, 6), sharedInterestCount: shared.length };
   });
 
-  scored.sort((a, b) => sort === 'followers'
+  scored.sort((a, b) => sort === 'interests'
+    ? b.sharedInterestCount - a.sharedInterestCount || b.score - a.score
+    : sort === 'followers'
     ? (followerCount[b.u.id] || 0) - (followerCount[a.u.id] || 0) || b.score - a.score
     : b.score - a.score);
 
-  const allResults = scored.map(({ u, sharedInterests }) => ({
+  const allResults = scored.map(({ u, sharedInterests, sharedInterestCount }) => ({
     id: u.id, name: u.name, title: u.title || '', bio: u.bio || '',
     organization: u.organization || '', skills: u.id === myId || u.roleSettings?.privacy_showSkills !== false ? asArray(u.skills) : [],
     role: u.preferences?.role || '',
@@ -28136,7 +28140,7 @@ app.get('/users/search', authenticate, async (req, res) => {
     followersCount: followerCount[u.id] || 0,
     isFollowing: myFollowing.has(u.id),
     connectionStatus: u.id === myId ? 'self' : getConnectionStatus(myId, u.id),
-    sharedInterests,
+    sharedInterests, sharedInterestCount,
     isSelf: u.id === myId,
   }));
   const totalCount = allResults.length;
