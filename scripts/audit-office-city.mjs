@@ -354,7 +354,8 @@ try {
     check(await page.locator('.lc-map-home-art').evaluateAll(elements=>elements.every(element=>getComputedStyle(element).animationName!=='none')),'All 71 home buildings animate in whole-city mode');
     await page.getByRole('button',{name:'Homes',exact:true}).click();
     check(await page.locator('.lc-canvas').getAttribute('data-area')==='homes','Homes control focuses the integrated neighborhoods');
-    check(await page.locator('.lc-map-home').evaluateAll(elements=>new Set(elements.map(element=>element.dataset.block)).size===12),'Homes are blended through all twelve city blocks');
+    check(await page.locator('.lc-map-home').evaluateAll(elements=>new Set(elements.map(element=>element.dataset.town)).size>=4&&elements.every(element=>element.dataset.town)),'Homes are split into separate towns');
+    check(await page.locator('.lc-town-labels [data-town]').count()>=4&&await page.getByText('Downtown',{exact:true}).count()===1,'Each town and downtown are labelled on the map');
     check(await page.locator('.lc-commuter').count()===71,'Every home has a commuting car');
     check(await page.locator('.lc-lunch-walker').count()===71,'Every agent has a lunch route');
     check(await page.locator('.lc-arrival-courts [data-garage="sources"]').count() === 1 && await page.locator('.lc-arrival-courts [data-garage="runtime"]').count() === 1, 'Both busy workplaces have dedicated arrival courts');

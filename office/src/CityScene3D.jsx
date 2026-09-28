@@ -148,8 +148,9 @@ export default function CityScene3D({ city, edges = [], motion, speed, motionSco
     element.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    const W = city.width / 10, H = city.height / 10;
-    const wx = x => x / 10 - W / 2, wz = z => z / 10 - H / 2;
+    // Scene units are a tenth of the map; the scene is centred on the whole region, towns included.
+    const W = city.width / 10, H = city.height / 10, CX = city.minX + city.width / 2, CZ = city.minY + city.height / 2;
+    const wx = x => (x - CX) / 10, wz = z => (z - CZ) / 10;
     const textures = [], geometries = [], materialsList = [];
     const keep = (list, item) => { list.push(item); return item; };
     const standard = options => keep(materialsList, new THREE.MeshStandardMaterial(options));
@@ -227,12 +228,13 @@ export default function CityScene3D({ city, edges = [], motion, speed, motionSco
       geometry.rotateY(rotation).translate(cx, y + (thickness ? thickness / 2 : 0), cz);
       flat[kind].push(geometry);
     }
-    slab('concrete', 0, 0, W - 5, H - 5, 0, 0, 3);
-    const avenueX = Array.from({ length: 5 }, (_, col) => 80 + col * 360);
-    const rows = Math.round((city.bottom - 80) / 340);
-    const streetZ = [...Array.from({ length: rows + 1 }, (_, row) => 80 + row * 340), city.bottom + 160];
+    // Downtown is paved; each town gets its own paved core.
+    const downtown = city.downtown;
+    slab('concrete', wx(downtown.width / 2), wz(downtown.height / 2), downtown.width / 10 - 5, downtown.height / 10 - 5, 0, 0, 3);
+    city.towns.forEach(town => slab('concrete', wx(town.x), wz(town.y), (town.right - town.left) / 10 + 4, (town.bottom - town.top) / 10 + 4, 0, 0, 3));
+    const avenueX = downtown.avenueX, streetZ = downtown.streetY;
     const avenueWidth = col => col === 2 ? 4.4 : 2.6;
-    const top = 40, bottom = city.height - 40, left = 40, right = 1560;
+    const top = downtown.top, bottom = downtown.bottom, left = downtown.left, right = downtown.right;
     avenueX.forEach((x, col) => slab('asphalt', wx(x), wz((top + bottom) / 2), avenueWidth(col), (bottom - top) / 10, .05));
     streetZ.forEach(z => slab('asphalt', wx((left + right) / 2), wz(z), (right - left) / 10, 2.6, .051));
     // Highway ring with rounded corners, matching the route its traffic follows.
@@ -269,8 +271,23 @@ export default function CityScene3D({ city, edges = [], motion, speed, motionSco
     });
     for (let x = left + 50; x < right - 50; x += 32) { slab('white', wx(x), z0 - .8, 1.4, .12, .072); slab('white', wx(x), z0 + .8, 1.4, .12, .072); slab('white', wx(x), z1 - .8, 1.4, .12, .072); slab('white', wx(x), z1 + .8, 1.4, .12, .072); }
     for (let z = top + 50; z < bottom - 50; z += 32) { slab('white', x0 - .8, wz(z), .12, 1.4, .072); slab('white', x0 + .8, wz(z), .12, 1.4, .072); slab('white', x1 - .8, wz(z), .12, 1.4, .072); slab('white', x1 + .8, wz(z), .12, 1.4, .072); }
+    // Town streets, spurs, the beltway and its connectors into downtown, with centre markings between junctions.
+    const OUTER_WIDTH = { 'town-avenue': 2.4, 'town-street': 2.4, spur: 3, connector: 3.4, beltway: 4.4 };
+    const outerRoads = city.segments.filter(segment => OUTER_WIDTH[segment.kind]);
+    const outerJunctions = city.junctions.map(([px, pz]) => [wx(px), wz(pz)]);
+    outerRoads.forEach(({ a, b, kind }) => {
+      const width = OUTER_WIDTH[kind], horizontal = a[1] === b[1];
+      const [ax, az, bx, bz] = [wx(a[0]), wz(a[1]), wx(b[0]), wz(b[1])], length = Math.hypot(bx - ax, bz - az);
+      slab('asphalt', (ax + bx) / 2, (az + bz) / 2, horizontal ? length + width : width, horizontal ? width : length + width, .049);
+      const dash = kind === 'beltway' ? 'yellow' : 'white';
+      for (let t = 3; t < length - 3; t += 2.6) {
+        const px = lerp(ax, bx, t / length), pz = lerp(az, bz, t / length);
+        if (outerJunctions.some(([jx, jz]) => Math.hypot(jx - px, jz - pz) < width + 1.2)) continue;
+        slab(dash, px, pz, horizontal ? 1.1 : .12, horizontal ? .12 : 1.1, .07);
+      }
+    });
     // Lawns are raised above the curb.
-    city.blocks.forEach(block => slab('lawn', wx(block.x), wz(block.y), 30.2, 28.2, 0, 0, 10, .22));
+    city.blocks.forEach(block => slab('lawn', wx(block.x), wz(block.y), block.lawn[0] / 10, block.lawn[1] / 10, 0, 0, 10, .22));
 
     const picks = [], markers = [], labels = [], buildingGroups = [];
     // Stage buildings: podium, tower, setback crown, rooftop plant and a lit sign in the district colour.
@@ -346,14 +363,19 @@ export default function CityScene3D({ city, edges = [], motion, speed, motionSco
     };
     // Trees line the blocks, shade the cafes and fill the countryside beyond the highway.
     const trees = [];
-    city.blocks.forEach(block => [-1, 1].forEach(side => [-122, -30, 62].forEach(dy => trees.push([wx(block.x + side * 150), wz(block.y + dy), 1]))));
+    city.blocks.forEach(block => block.trees.forEach(([px, pz]) => trees.push([wx(px), wz(pz), block.kind === 'town' ? .9 : 1])));
     city.cafes.forEach(cafe => [-12, 12].forEach(dx => trees.push([wx(cafe.x) + dx, wz(cafe.y) - 4, 1.1])));
+    // Woods fill the countryside between downtown and the towns, clear of every road and lot.
     const countryside = seeded(41);
-    for (let i = 0; i < 420; i++) {
-      const angle = countryside() * Math.PI * 2, reach = 1 + countryside() * .55;
-      const px = Math.cos(angle) * (W / 2 + 6) * reach + (countryside() - .5) * 8, pz = Math.sin(angle) * (H / 2 + 6) * reach + (countryside() - .5) * 8;
-      if (Math.abs(px) < W / 2 + 3 && Math.abs(pz) < H / 2 + 3) continue;
-      trees.push([px, pz, .8 + countryside() * .9, countryside() < .35]);
+    const builtUp = [[wx(0) - 3, wz(0) - 3, wx(downtown.width) + 3, wz(downtown.height) + 3],
+      ...city.towns.map(town => [wx(town.left) - 5, wz(town.top) - 5, wx(town.right) + 5, wz(town.bottom) + 5])];
+    const roadLines = [...outerRoads, ...city.segments.filter(segment => segment.kind === 'ring')].map(({ a, b }) => [wx(a[0]), wz(a[1]), wx(b[0]), wz(b[1])]);
+    const nearRoad = (px, pz) => roadLines.some(([ax, az, bx, bz]) => px > Math.min(ax, bx) - 4.5 && px < Math.max(ax, bx) + 4.5 && pz > Math.min(az, bz) - 4.5 && pz < Math.max(az, bz) + 4.5);
+    for (let i = 0; i < 2600 && trees.length < 1300; i++) {
+      const px = (countryside() - .5) * (W + 40), pz = (countryside() - .5) * (H + 40);
+      const size = .8 + countryside() * .9, conifer = countryside() < .35;
+      if (builtUp.some(([x0, z0, x1, z1]) => px > x0 && px < x1 && pz > z0 && pz < z1) || nearRoad(px, pz)) continue;
+      trees.push([px, pz, size, conifer]);
     }
     const trunkMaterial = standard({ color: '#6e5a45', roughness: .9 });
     const leafMaterial = standard({ color: '#ffffff', roughness: .85, flatShading: true });
@@ -373,6 +395,14 @@ export default function CityScene3D({ city, edges = [], motion, speed, motionSco
     const lamps = [];
     avenueX.forEach((x, col) => { for (let z = top + 40; z < bottom - 40; z += 70) if (!nearJunction(z, streetZ, 30)) [-1, 1].forEach(side => lamps.push([wx(x) + side * (avenueWidth(col) / 2 + .55), wz(z), side > 0 ? Math.PI : 0])); });
     streetZ.forEach(z => { for (let x = left + 60; x < right - 60; x += 70) if (!nearJunction(x, avenueX, 36)) [-1, 1].forEach(side => lamps.push([wx(x), wz(z) + side * 1.85, side > 0 ? Math.PI / 2 : -Math.PI / 2])); });
+    outerRoads.forEach(({ a, b, kind }) => {
+      const width = OUTER_WIDTH[kind], horizontal = a[1] === b[1], length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      for (let t = 40, n = 0; t < length - 30; t += 90, n++) {
+        const px = lerp(wx(a[0]), wx(b[0]), t / length), pz = lerp(wz(a[1]), wz(b[1]), t / length), side = n % 2 ? 1 : -1;
+        if (outerJunctions.some(([jx, jz]) => Math.hypot(jx - px, jz - pz) < 4)) continue;
+        lamps.push(horizontal ? [px, pz + side * (width / 2 + .55), side > 0 ? Math.PI / 2 : -Math.PI / 2] : [px + side * (width / 2 + .55), pz, side > 0 ? Math.PI : 0]);
+      }
+    });
     const lampPoles = instanced(new THREE.CylinderGeometry(.06, .08, 3.4, 6), standard({ color: '#3c4449', metalness: .6, roughness: .45 }), lamps.length);
     const lampHeadMaterial = basic({ color: '#fff4d6' });
     const lampHeads = instanced(new THREE.BoxGeometry(.5, .14, .26), lampHeadMaterial, lamps.length, false);
@@ -427,6 +457,11 @@ export default function CityScene3D({ city, edges = [], motion, speed, motionSco
     grid.feeders.forEach(feeder => {
       const samples = sampleLine(feeder.points, 7);
       samples.slice(1).forEach((sample, i) => addWire(samples[i], sample, 5.25, 5.25, 'feeder', 0));
+    });
+    // Trunk lines strung in pairs carry power out to every town.
+    grid.trunks.forEach(trunk => {
+      const samples = sampleLine(trunk.points, 10);
+      samples.slice(1).forEach((sample, i) => { addWire(samples[i], sample, 5.3, 5.3, 'trunk', -.4, .5); addWire(samples[i], sample, 5.3, 5.3, 'trunk', .4, .5); });
     });
     const homeWires = new Map();
     grid.drops.forEach(drop => {
@@ -538,6 +573,14 @@ export default function CityScene3D({ city, edges = [], motion, speed, motionSco
       label.position.set(x, 6.4, z); label.scale.set(12, 2.25, 1); scene.add(label);
     });
 
+    // Each town's name hangs above it, on the side away from downtown.
+    city.towns.forEach(town => {
+      const label = new THREE.Sprite(keep(materialsList, new THREE.SpriteMaterial({ map: keep(textures, labelTexture(town.name, '#8de8d3')), depthWrite: false })));
+      const [px, pz] = town.side === 'top' ? [town.x, town.top - 60] : town.side === 'bottom' ? [town.x, town.bottom + 60] : town.side === 'left' ? [town.left - 20, town.top - 40] : [town.right + 20, town.top - 40];
+      label.position.set(wx(px), 12, wz(pz)); label.scale.set(32, 6, 1); label.renderOrder = 3; scene.add(label);
+      labels.push({ mesh: label, height: 12 });
+    });
+
     for (const [kind, parts] of Object.entries(flat)) {
       if (!parts.length) continue;
       const geometry = keep(geometries, mergeGeometries(parts.map(part => part.index ? part.toNonIndexed() : part)));
@@ -600,7 +643,7 @@ export default function CityScene3D({ city, edges = [], motion, speed, motionSco
     }
     const tangent = new THREE.Vector3(), point = new THREE.Vector3();
     // Driveways and paths sit on the raised lawns; streets are at road level.
-    const raised = [...city.blocks.map(block => [wx(block.x), wz(block.y), 15.1, 14.1]), ...city.cafes.map(cafe => [wx(cafe.x), wz(cafe.y), 15.5, 6.25])];
+    const raised = [...city.blocks.map(block => [wx(block.x), wz(block.y), block.lawn[0] / 20, block.lawn[1] / 20]), ...city.cafes.map(cafe => [wx(cafe.x), wz(cafe.y), 15.5, 6.25])];
     const groundAt = (px, pz) => raised.some(([bx, bz, hx, hz]) => Math.abs(px - bx) < hx && Math.abs(pz - bz) < hz) ? .24 : .05;
     function along(route, progress) {
       const t = clamp01(progress);

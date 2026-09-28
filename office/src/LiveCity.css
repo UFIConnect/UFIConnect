@@ -49,6 +49,7 @@
 .lc-3d-navigation span { padding:7px 10px; border-radius:7px; background:#102431dd; color:#cbdde6; font-size:11px; }
 .lc-city-driveways path { fill:none; stroke:#425758; stroke-width:9; stroke-linecap:round; }
 .lc-street-label { fill:#9caeaa; font-size:8px; letter-spacing:1.6px; font-weight:600; }
+.lc-town-name { fill:#d8efe6; font-size:26px; font-weight:700; letter-spacing:.5px; }
 .lc-cafe-label { fill:#d7e3d2; font-size:11px; letter-spacing:1px; font-weight:600; }
 .lc-city-traffic { pointer-events:none; }
 .lc-arrival-courts { pointer-events:none; }
