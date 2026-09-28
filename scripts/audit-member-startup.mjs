@@ -46,7 +46,7 @@ try {
     await context.route('**/*', async route => {
       const request = route.request();
       const url = new URL(request.url());
-      if (request.resourceType() === 'script' && url.origin === server.origin && scriptGate) await scriptGate.promise;
+      if (['script', 'stylesheet'].includes(request.resourceType()) && url.origin === server.origin && scriptGate) await scriptGate.promise;
       const endpoint = url.pathname.replace(/^\/(api|fallback)(?=\/)/, '');
       const isApi = /^\/(api|fallback)\//.test(url.pathname)
         || ['xhr', 'fetch', 'eventsource'].includes(request.resourceType()) && !url.pathname.startsWith('/assets/');
@@ -125,9 +125,9 @@ try {
       await toggle.click();
     }
 
-    // Delay all application modules, not CSS, so this observes the actual
-    // prerender paint before React can replace it. Both member documents and
-    // the shared dynamic shell must avoid an incorrect public-page flash.
+    // Delay modules and stylesheets to check the initial HTML while assets are
+    // still downloading. The inline startup style must prevent a public-page
+    // flash before React or external CSS can load.
     for (const target of ['/', '/videos', '/messages/startup-audit-peer']) {
       scriptGate = gate();
       await page.goto(server.origin + target, { waitUntil: 'commit' });
