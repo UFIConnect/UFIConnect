@@ -10,9 +10,10 @@ import { reportNegativeSignal } from '../api/errorReporting';
 import { ALL_INTERESTS } from '../pages/Onboarding';
 import ConnectedPostActions from './ConnectedPostActions';
 import { SavePostButton } from './SaveButtons';
-import { ArrowUp, ArrowDown, ChevronDown, Search, SlidersHorizontal, RotateCw, Play, Pause, MessageCircle, Heart, ExternalLink } from 'lucide-react';
+import { ArrowUp, ArrowDown, ChevronDown, Search, SlidersHorizontal, Ellipsis, RotateCw, Play, Pause, MessageCircle, Heart, ExternalLink } from 'lucide-react';
 import { videoDurationSeconds, isShortFeedVideo, videoSourceKey, safeMediaUrl, fitVideoFrame } from '../utils/videoFeedPolicy.mjs';
 import './VideoFeedView.css';
+import './navigation.css';
 
 // A video counts as genuinely watched (as opposed to just scrolled past —
 // see api/engagement.js for the view-vs-seen distinction) once playback
@@ -202,7 +203,7 @@ function formatTime(sec) {
 // its own top comment) instead of each slide owning/destroying its own.
 // Only meaningful when src.kind === 'youtube'; file/hls/vimeo keep their
 // existing fully-local state below, untouched.
-function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComments, sharedYt, onDurationResolved, onNavigate, hasPrevious, hasNext, controlsVisible, onToggleControls }) {
+function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComments, sharedYt, onDurationResolved, onNavigate, hasPrevious, hasNext, controlsVisible }) {
   const src = resolveVideoSource(post);
   const meta = SOURCE_META[post.source] || SOURCE_META.uficonnect;
   const fileVideoRef = useRef(null);
@@ -608,7 +609,6 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
         {isYoutube && sharedYt?.failed && <p className="video-feed-playback-note" role="status">The embedded player could not start. Try its play button{originalUrl ? ' or open the original video.' : '.'}</p>}
         <div className="video-feed-caption" data-video-caption data-expanded={captionExpanded}>
           <div className="video-feed-caption-summary">
-            <button type="button" className="video-feed-controls-toggle" onClick={onToggleControls} aria-expanded={controlsVisible} aria-label={controlsVisible ? 'Hide video controls' : 'Show video controls'} title={controlsVisible ? 'Hide video controls' : 'Show video controls'}><SlidersHorizontal size={17} aria-hidden="true" /></button>
             <div className="video-feed-byline"><SourceMark source={post.source} label={meta.icon} size={11} /><strong>{post.sourceLabel || meta.label}</strong></div>
             {post.title && <h2>{post.title}</h2>}
             <span className="video-feed-like-count" aria-label={`Likes ${(post.likesCount || 0).toLocaleString()}`}><Heart size={12} aria-hidden="true" />{(post.likesCount || 0).toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 1 })}</span>
@@ -919,7 +919,6 @@ export default function VideoFeedView({ onExit, music = false }) {
   const viewModeRef = useRef('feed');
   const sourceFilterRef = useRef([]);
   const containerRef = useRef(null);
-  const mediaBodyRef = useRef(null);
   const slideRefs = useRef([]);
   const consumedVideoIds = useRef(new Set());
   // Consecutive pages that came back with zero results after a search/topic
@@ -1044,7 +1043,14 @@ export default function VideoFeedView({ onExit, music = false }) {
         // Search is the explicit exception to the no-repeat rule.
         knownIds.current = new Set();
       }
-      const fresh = isExplicitSearch ? incoming : incoming.filter(p => !knownIds.current.has(p.id));
+      // Picking/clearing a filter can legitimately return an unwatched item
+      // already waiting in the current queue. The delivery dedupe must not
+      // turn that selection into an empty feed. Refresh and cursor requests
+      // still require new IDs, and consumed videos are never reintroduced.
+      const retainedUnwatched = reset && !bust && !preserveOnEmpty && !preserveQueue
+        ? new Set(queueRef.current.filter(post => !consumedVideoIds.current.has(post.id)).map(post => post.id))
+        : null;
+      const fresh = isExplicitSearch ? incoming : incoming.filter(p => !knownIds.current.has(p.id) || retainedUnwatched?.has(p.id));
       fresh.forEach(p => markKnownId(p.id));
       const previousQueue = queueRef.current;
       const nextQueue = (() => {
@@ -1229,7 +1235,7 @@ export default function VideoFeedView({ onExit, music = false }) {
     setRefreshing(true);
     setActiveIndex(0);
     if (containerRef.current) containerRef.current.scrollTop = 0;
-    await loadPage({ reset: true, bust: true });
+    await loadPage({ reset: true, bust: true, preserveOnEmpty: true });
     setRefreshing(false);
   }, [refreshing, loadPage]);
 
@@ -1455,8 +1461,9 @@ export default function VideoFeedView({ onExit, music = false }) {
   // exactly like it does after a wheel scroll, settling on the nearest
   // slide without any extra code here.
   //
-  // The shared YouTube layer is click-through, so input over video pixels
-  // reaches this native scroll container as well.
+  // The shared YouTube frame lives inside this scrolling region. Its own
+  // controls handle their input; the browser chains wheel/touch scrolling
+  // to this ancestor without a transparent layer covering the player.
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -1733,21 +1740,25 @@ export default function VideoFeedView({ onExit, music = false }) {
   // the way it's supposed to.
   const sharedYtWrapperRef = useRef(null);
   const [ytBoxSize, setYtBoxSize] = useState({ width: 0, height: 0, top: 0, left: 0 });
-  useEffect(() => {
+  useLayoutEffect(() => {
     const stage = slideRefs.current[activeIndex]?.querySelector('[data-video-media]');
-    const body = mediaBodyRef.current;
-    if (!stage || !body) return;
+    const container = containerRef.current;
+    if (!stage || !container) return;
     const recompute = () => {
       const stageRect = stage.getBoundingClientRect();
-      const bodyRect = body.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
       const fitted = fitVideoFrame(stageRect.width, stageRect.height, activeSrc?.vertical ? 9 / 16 : 16 / 9);
-      // Snap geometry uses the active slide's media height; scrolling only
-      // changes visibility, not the fitted frame's position in the viewport.
-      setYtBoxSize({ ...fitted, left: fitted.left + stageRect.left - bodyRect.left });
+      // Content coordinates keep one persistent iframe in the native scroll
+      // chain. A sibling layer outside this container trapped wheel/touch
+      // gestures because it had no scrollable ancestor to advance the feed.
+      setYtBoxSize({ ...fitted,
+        top: fitted.top + stageRect.top - containerRect.top + container.scrollTop,
+        left: fitted.left + stageRect.left - containerRect.left + container.scrollLeft,
+      });
     };
     const observer = new ResizeObserver(recompute);
     observer.observe(stage);
-    observer.observe(body);
+    observer.observe(container);
     recompute();
     return () => observer.disconnect();
   }, [activeIndex, activeSrc?.vertical, videoPosts]);
@@ -2062,6 +2073,11 @@ export default function VideoFeedView({ onExit, music = false }) {
         <button type="button" className="video-feed-header-button" onClick={handleRefresh} disabled={refreshing} aria-label="Refresh videos" title="Refresh videos">
           <RotateCw size={18} aria-hidden="true" className={refreshing ? 'video-feed-refreshing' : undefined} />
         </button>
+        <button type="button" className="video-feed-header-button" onClick={() => setControlsVisible(value => !value)}
+          aria-expanded={controlsVisible} data-active={controlsVisible}
+          aria-label={controlsVisible ? 'Hide video controls' : 'Show video controls'} title={controlsVisible ? 'Hide video controls' : 'Show video controls'}>
+          <Ellipsis size={20} aria-hidden="true" />
+        </button>
       </header>
       {searchOpen && (
         <div
@@ -2114,12 +2130,11 @@ export default function VideoFeedView({ onExit, music = false }) {
             </div>
             <div style={{ padding: '10px 20px 18px', display: 'flex', gap: 10, borderTop: '1px solid rgba(255,255,255,.12)', flexShrink: 0 }}>
               <button
+                className="ufi-clear-control"
                 onClick={() => clearSearch()}
                 disabled={!searchInput && !searchQuery}
                 style={{
                   flex: 1, padding: '10px 0', borderRadius: 10, marginTop: 10,
-                  border: '1px solid rgba(255,255,255,.25)', background: 'transparent',
-                  color: (!searchInput && !searchQuery) ? 'rgba(255,255,255,.35)' : '#fff',
                   fontWeight: 700, fontSize: '.85rem',
                   cursor: (!searchInput && !searchQuery) ? 'default' : 'pointer',
                 }}
@@ -2197,8 +2212,7 @@ export default function VideoFeedView({ onExit, music = false }) {
                   outside this scrollable area entirely already). */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
                 <span style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.02em', opacity: 0.6, textTransform: 'uppercase' }}>Platform</span>
-                <button type="button" onClick={clearSourceFilter} disabled={!sourceFilter.length} aria-label="Clear platforms"
-                  style={{ border: 0, background: 'transparent', color: '#fff', fontSize: '.78rem', padding: '6px 8px', cursor: sourceFilter.length ? 'pointer' : 'default', opacity: sourceFilter.length ? 1 : .4 }}>Clear</button>
+                <button type="button" className="ufi-clear-control" onClick={clearSourceFilter} disabled={!sourceFilter.length} aria-label="Clear platforms">Clear</button>
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>
                 {(viewMode === 'following' ? FOLLOWING_VIDEO_SOURCES : FEED_VIDEO_SOURCES).map(key => {
@@ -2228,17 +2242,15 @@ export default function VideoFeedView({ onExit, music = false }) {
               {music && <section aria-label="Music genres" style={{ marginBottom: 20 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                   <h3 style={{ fontSize: '.85rem' }}>Genres</h3>
-                  <button type="button" onClick={() => selectGenre('')} disabled={!genre} aria-label="Clear genres"
-                    style={{ border: 0, background: 'transparent', color: '#fff', fontSize: '.78rem', padding: '6px 8px', cursor: genre ? 'pointer' : 'default', opacity: genre ? 1 : .4 }}>Clear</button>
+                  <button type="button" className="ufi-clear-control" onClick={() => selectGenre('')} disabled={!genre} aria-label="Clear genres">Clear</button>
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  {['', 'Pop', 'Rock', 'Hip hop', 'Rap', 'R&B', 'Jazz', 'Classical', 'Country', 'Electronic', 'Latin', 'Reggae', 'Metal', 'Folk', 'Acoustic', 'Live'].map(value => <button type="button" key={value} aria-pressed={genre === value} onClick={() => selectGenre(value)} style={{ borderRadius: 20, padding: '8px 12px', border: '1px solid #777', background: genre === value ? '#fff' : '#252525', color: genre === value ? '#111' : '#fff', cursor: 'pointer' }}>{value || 'All genres'}</button>)}
+                  {['Pop', 'Rock', 'Hip hop', 'Rap', 'R&B', 'Jazz', 'Classical', 'Country', 'Electronic', 'Latin', 'Reggae', 'Metal', 'Folk', 'Acoustic', 'Live'].map(value => <button type="button" key={value} aria-pressed={genre === value} onClick={() => selectGenre(value)} style={{ borderRadius: 20, padding: '8px 12px', border: '1px solid #777', background: genre === value ? '#fff' : '#252525', color: genre === value ? '#111' : '#fff', cursor: 'pointer' }}>{value}</button>)}
                 </div>
               </section>}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
                 <span style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.02em', opacity: 0.6, textTransform: 'uppercase' }}>Topics</span>
-                <button type="button" onClick={clearTopicFilter} disabled={!topicFilters.length} aria-label="Clear video topics"
-                  style={{ border: 0, background: 'transparent', color: '#fff', fontSize: '.78rem', padding: '6px 8px', cursor: topicFilters.length ? 'pointer' : 'default', opacity: topicFilters.length ? 1 : .4 }}>Clear</button>
+                <button type="button" className="ufi-clear-control" onClick={clearTopicFilter} disabled={!topicFilters.length} aria-label="Clear video topics">Clear</button>
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {ALL_INTERESTS.map(topic => {
@@ -2264,12 +2276,11 @@ export default function VideoFeedView({ onExit, music = false }) {
             </div>
             <div style={{ padding: '10px 20px 18px', display: 'flex', gap: 10, borderTop: '1px solid rgba(255,255,255,.12)', flexShrink: 0 }}>
               <button
+                className="ufi-clear-control"
                 onClick={() => clearFilters()}
                 disabled={sourceFilter.length === 0 && topicFilters.length === 0 && !genre}
                 style={{
                   flex: 1, padding: '10px 0', borderRadius: 10, marginTop: 10,
-                  border: '1px solid rgba(255,255,255,.25)', background: 'transparent',
-                  color: (sourceFilter.length === 0 && topicFilters.length === 0 && !genre) ? 'rgba(255,255,255,.35)' : '#fff',
                   fontWeight: 700, fontSize: '.85rem',
                   cursor: (sourceFilter.length === 0 && topicFilters.length === 0 && !genre) ? 'default' : 'pointer',
                 }}
@@ -2287,31 +2298,30 @@ export default function VideoFeedView({ onExit, music = false }) {
         </div>
       )}
 
-      <div className="video-feed-body" ref={mediaBodyRef}>
-        {videoPosts.length === 0 ? <div className="video-feed-empty" role="status">
+      <div className="video-feed-body">
+        {loading && videoPosts.length > 0 && <div className="video-feed-loading" role="status">Loading videos…</div>}
+        <div ref={containerRef} data-video-feed-scroll className="video-feed-scroll" tabIndex={0} aria-label={music ? 'Music videos' : 'Videos'}>
+        {videoPosts.length === 0 && <div className="video-feed-empty" role="status">
           {loading ? 'Loading videos…' : error ? 'Could not load videos. Try refreshing.' : 'No playable videos of at least 5 seconds found. Try another source or filter.'}
-        </div> : <>
-          {loading && <div className="video-feed-loading" role="status">Loading videos…</div>}
-          <div ref={containerRef} data-video-feed-scroll className="video-feed-scroll" tabIndex={0} aria-label={music ? 'Music videos' : 'Videos'}>
+        </div>}
             {videoPosts.map((post, idx) => <div key={post.id || idx} ref={element => { slideRefs.current[idx] = element; }}
               data-idx={idx} data-post-id={post.id || ''} data-source={post.source || ''} className="video-feed-snap-item">
               {Math.abs(idx - activeIndex) <= VIDEO_MOUNT_RADIUS ? <VideoSlide post={post} active={idx === activeIndex}
-                controlsVisible={controlsVisible} onToggleControls={() => setControlsVisible(value => !value)}
+                controlsVisible={controlsVisible}
                 muted={muted} onToggleMute={toggleMuted} isScrolling={isScrolling} onOpenComments={setCommentsPost}
                 onDurationResolved={onDurationResolved} hasPrevious={idx > 0} hasNext={idx < videoPosts.length - 1}
                 onNavigate={direction => containerRef.current?.scrollTo({ top: (idx + direction) * containerRef.current.clientHeight, behavior: 'smooth' })}
                 sharedYt={idx === activeIndex ? { ...sharedYt, togglePlay: sharedYtTogglePlay, seekTo: sharedYtSeekTo, seekingRef: sharedYtSeekingRef } : undefined} />
                 : <div className="video-feed-placeholder" />}
             </div>)}
-          </div>
-        </>}
-        {/* Keep the iframe alive across filters and mixed-source slides. Its
-            fitted rectangle belongs only to the media area, above no app UI. */}
+        {/* Keep the iframe alive inside the scrolling region across filters
+            and mixed-source slides. Native wheel/touch scrolling chains to
+            this ancestor while provider controls remain fully interactive. */}
         <div ref={sharedYtWrapperRef} className="video-feed-youtube-player"
           aria-hidden={activeSrc?.kind !== 'youtube' || isScrolling}
           inert={activeSrc?.kind !== 'youtube' || isScrolling}
-          style={{ position: 'absolute', zIndex: 1, left: ytBoxSize.left, top: ytBoxSize.top,
-            width: ytBoxSize.width, height: ytBoxSize.height,
+          style={{ position: 'absolute', zIndex: 1,
+            ...(activeSrc?.kind === 'youtube' ? ytBoxSize : { left: 0, top: 0, width: 0, height: 0 }),
             visibility: activeSrc?.kind === 'youtube' && !isScrolling ? 'visible' : 'hidden' }}>
           <div ref={sharedYtHostRef} style={{ width: '100%', height: '100%', display: sharedYt.failed ? 'none' : 'block' }} />
           {sharedYt.failed && activeSrc?.kind === 'youtube' && <iframe
@@ -2319,6 +2329,7 @@ export default function VideoFeedView({ onExit, music = false }) {
             referrerPolicy="strict-origin-when-cross-origin"
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }}
             allow="autoplay; encrypted-media; fullscreen; picture-in-picture" allowFullScreen title={videoPosts[activeIndex]?.title || 'YouTube video'} />}
+        </div>
         </div>
       </div>
       </div>

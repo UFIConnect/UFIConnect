@@ -81,9 +81,8 @@ try {
       console.log('Equalizer failure context', JSON.stringify({ requests: requests.map(params => params.toString()), titles: await titles(), errors }));
       throw error;
     });
-    assert.deepEqual((await titles()).slice(0, 8), [...expected('reddit-hackernews', 0, 0), ...expected('reddit-hackernews', 0, 1)]);
     await page.getByText(expected('reddit-hackernews', 1, 0)[3], { exact: true }).waitFor();
-    assert.deepEqual((await titles()).slice(0, 12), [...expected('reddit-hackernews', 0, 0), ...expected('reddit-hackernews', 0, 1), ...expected('reddit-hackernews', 1, 0)]);
+    assert.deepEqual((await titles()).slice(0, 12), [...expected('reddit-hackernews', 1, 0), ...expected('reddit-hackernews', 0, 0), ...expected('reddit-hackernews', 0, 1)], 'Refresh promotes the fresh balanced batch ahead of older cards');
     await auditReload(page);
     await checkStart('reddit-hackernews');
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/equalizer-${width}.png`) });
@@ -116,10 +115,11 @@ try {
           && url.searchParams.get('topics') === 'Open Source'
           && !url.searchParams.has('source') && !url.searchParams.has('sources');
       }),
-      followingSources.getByRole('button', { name: 'All sources', exact: true }).click(),
+      followingSources.getByRole('button', { name: 'Clear sources', exact: true }).click(),
     ]);
-    assert.ok(allSourcesResponse.ok(), 'All sources preserves topic filters and the equalized request path');
-    assert.equal(await followingSources.getByRole('button', { name: 'All sources', exact: true }).getAttribute('aria-pressed'), 'true');
+    assert.ok(allSourcesResponse.ok(), 'Clearing sources preserves topic filters and the equalized request path');
+    assert.ok(await followingSources.getByRole('button', { name: 'Clear sources', exact: true }).isDisabled());
+    assert.equal(await followingSources.getByRole('button', { name: 'All sources', exact: true }).count(), 0);
     assert.deepEqual(errors, []);
     console.log(`PASS: equalized Home/Following, single/multiple selections, pagination, refresh and reload at ${width}px`);
     await context.close();

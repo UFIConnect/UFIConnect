@@ -271,7 +271,7 @@ function UfiPostArea({ embedded, initialShop }) {
       {!embedded && <h1 className="page-title" style={{ marginBottom: 20 }}>UFI</h1>}
 
       <div className="ufi-feed-toolbar" style={{ maxWidth: embedded ? 'none' : 640 }}>
-        <button type="button" className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action ufi-compose-button" onClick={openCompose}>
+        <button type="button" className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action ufi-compose-button ufi-post-action" onClick={openCompose}>
           Post
         </button>
         {!initialShop && <div className="feed-topic-filter ufi-topic-filter">
@@ -411,7 +411,7 @@ function UfiPostArea({ embedded, initialShop }) {
                 </button>
                 <button
                   type="submit"
-                  className="btn btn-primary btn-sm"
+                  className="btn btn-primary btn-sm ufi-post-action"
                   disabled={loading || uploading || (!content.trim() && !uploadedMedia) || !groupId}
                   style={{ minWidth: 90 }}
                 >
@@ -431,7 +431,7 @@ function UfiPostArea({ embedded, initialShop }) {
           loading={feedLoading}
           emptyTitle={shopActive ? 'No Shop posts yet' : 'Nothing here yet'}
           emptyDesc={shopActive ? 'Be the first member to share something in Shop.' : 'Be the first to post to the UFIconnect community.'}
-          emptyAction={<button className="btn btn-primary btn-sm" onClick={openCompose}>{shopActive ? 'Create a Shop post' : 'Write a post'}</button>}
+          emptyAction={<button className="btn btn-primary btn-sm ufi-post-action" onClick={openCompose}>{shopActive ? 'Create a Shop post' : 'Write a post'}</button>}
           currentUserId={profile?.id}
           onNearEnd={loadMoreFeed}
           maxWidth={embedded ? 'none' : 640}

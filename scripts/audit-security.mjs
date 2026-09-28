@@ -321,6 +321,10 @@ try {
       check((await app.request('/profile', { headers: { authorization: beforeChange } })).status === 401, 'Password change must revoke the previous bearer');
       await checkPrivateStorage(page, [beforeChange.slice(7)]);
 
+      // The synthetic cookie fixture must observe the revocation too. It
+      // otherwise mints a fresh session on the next /login navigation, which
+      // correctly redirects an authenticated member away from the form.
+      await installAuditMember(page, app, userId);
       await auditNavigate(page, base + 'settings');
       await page.getByRole('button', { name: 'Security', exact: true }).click();
       const revoke = page.getByRole('button', { name: 'Sign out all sessions', exact: true });

@@ -95,6 +95,26 @@ try {
         check(!(await page.locator('#sidebar-saved-links').isVisible()), 'Desktop Saved must hide its child pages');
         check(await page.locator('.sidebar').getByRole('link', { name: 'Cross post', exact: true }).getAttribute('href') === '/command-center?tab=crosspost', 'Cross post must open Command Center publishing');
         check(await page.locator('.sidebar').getByRole('link', { name: 'Post to your group', exact: true }).count() === 0, 'Group posting must move out of the left sidebar');
+        const headerNav = page.getByRole('navigation', { name: 'Main navigation', exact: true });
+        for (const label of ['Home', 'Videos', 'Jobs', 'Profile']) {
+          check(await headerNav.getByRole('link', { name: label, exact: true }).isVisible(), `${label} must appear beside desktop search`);
+          check(await page.locator('.sidebar-nav').getByRole('link', { name: label, exact: true }).count() === 0, `${label} must not be duplicated in the left bar`);
+        }
+        check(await page.locator('.sidebar').getByRole('link', { name: 'Notifications', exact: true }).count() === 0, 'Notifications must leave the desktop left bar');
+        check(await page.locator('.global-desktop-alerts').isVisible(), 'Alerts remain accessible beside search');
+        const searchBounds = await page.locator('.global-search-bar').boundingBox();
+        const navBounds = await headerNav.boundingBox();
+        const messagesBounds = await page.locator('.global-messages-link').boundingBox();
+        const alertsBounds = await page.locator('.global-desktop-alerts').boundingBox();
+        check(Math.abs(searchBounds.y - navBounds.y) < 2 && navBounds.x + navBounds.width <= searchBounds.x, 'Main destinations must sit left of search in the same row');
+        check(messagesBounds.x >= searchBounds.x + searchBounds.width && alertsBounds.x >= messagesBounds.x + messagesBounds.width, 'Messages and Alerts must sit right of search');
+        await headerNav.getByRole('link', { name: 'Jobs', exact: true }).click();
+        await page.waitForURL('**/opportunities');
+        await page.locator('.jobs-page-layout').waitFor();
+        await page.getByRole('button', { name: 'Open search', exact: true }).click();
+        const searchDialog = page.getByRole('dialog', { name: 'Search UFIconnect', exact: true });
+        check(await searchDialog.getByRole('tab', { name: 'Jobs', exact: true }).getAttribute('aria-selected') === 'true', 'Jobs opens the jobs search context');
+        await searchDialog.getByRole('button', { name: 'Close search', exact: true }).click();
       } else {
         await opener.waitFor();
         const openerBounds = await opener.boundingBox();
@@ -112,7 +132,13 @@ try {
         check(Math.abs(bounds.x) < 1 && bounds.width <= viewport.width, 'Drawer must open on the left');
         check(post.y < 110 && post.y + post.height <= createGroup.y && createGroup.y + createGroup.height <= shop.y, 'The sidebar must start with Post, Create a group, then Shop');
         check(profile.y > viewport.height * 0.55 && logout.y > profile.y, 'Profile and account actions belong at the bottom');
-        check(logout.y + logout.height <= viewport.height, 'Bottom actions must remain on screen');
+        check(await drawer.locator('.mobile-feed-drawer-content').evaluate(element => element.clientHeight > 0 && getComputedStyle(element).overflowY === 'auto'), 'Long menus must scroll to their bottom actions');
+        for (const [label, category] of [['Travel', 'countries'], ['Restaurants', 'restaurants'], ['Bars and clubs', 'bars']]) {
+          const postLink = drawer.getByRole('link', { name: `Post to ${label}`, exact: true });
+          check(await postLink.getAttribute('href') === `/command-center?tab=crosspost&category=${category}`, `Post to ${label} must open its publishing category`);
+          const postStyle = await postLink.evaluate(element => ({ weight: getComputedStyle(element).fontWeight, background: getComputedStyle(element).backgroundImage }));
+          check(Number(postStyle.weight) >= 700 && postStyle.background.includes('36, 124, 255'), 'Publishing links must use bold blue actions');
+        }
         check(await drawer.locator('img').evaluate(img => img.complete && img.naturalWidth > 0), 'Saved avatar did not load');
         check(await drawer.evaluate(el => el.scrollWidth <= el.clientWidth + 1), 'Long profile name overflows the drawer');
         check(await drawer.getByRole('link', { name: 'Cross post', exact: true }).getAttribute('href') === '/command-center?tab=crosspost', 'Mobile Cross post must open the publishing tab');
@@ -126,6 +152,15 @@ try {
         await page.keyboard.press('Escape');
         await waitClosed();
         check(await opener.evaluate(el => el === document.activeElement), 'Closing should return focus to the opener');
+
+        for (const [label, category] of [['Travel', 'countries'], ['Restaurants', 'restaurants'], ['Bars and clubs', 'bars']]) {
+          await opener.click();
+          await waitOpen();
+          await drawer.getByRole('link', { name: `Post to ${label}`, exact: true }).click();
+          await page.waitForURL(`**/command-center?tab=crosspost&category=${category}`);
+          await page.getByRole('heading', { name: 'Command Center', exact: true }).waitFor();
+          await waitClosed();
+        }
 
         await opener.click();
         await waitOpen();

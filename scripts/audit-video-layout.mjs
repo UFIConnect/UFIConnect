@@ -54,7 +54,11 @@ try {
     await page.route('https://vimeo.com/api/oembed.json?*', route => route.fulfill({ json: { duration: 3, thumbnail_url: null } }));
     await page.route('https://media.example.invalid/**', route => route.fulfill({ status: 404, body: '' }));
     let posts = [];
-    await page.route(/\/api\/office\/feed\/(?:videos|music)(?:\/following)?\?/, route => route.fulfill({ json: { posts, hasMore: false, waitingForNew: true } }));
+    const feedRequests = [];
+    await page.route(/\/api\/office\/feed\/(?:videos|music)(?:\/following)?\?/, route => {
+      feedRequests.push(new URL(route.request().url()));
+      return route.fulfill({ json: { posts, hasMore: false, waitingForNew: true } });
+    });
     const origin = server.resolvedUrls.local[0];
     const visit = async (surface, nextPosts) => {
       posts = nextPosts;
@@ -68,7 +72,8 @@ try {
       const accepted = page.locator('[data-post-id="exactly-five"]');
       await accepted.waitFor();
       assert.equal(await page.locator('[data-post-id="below-five"], [data-post-id="unsupported"]').count(), 0);
-      const showControls = accepted.getByRole('button', { name: 'Show video controls', exact: true });
+      const headerControls = page.locator('.video-feed-top-controls');
+      const showControls = headerControls.getByRole('button', { name: 'Show video controls', exact: true });
       await showControls.waitFor({ state: 'visible' });
       assert.equal(await showControls.getAttribute('aria-expanded'), 'false');
       assert.equal(await accepted.locator('[data-video-actions]').isVisible(), false, 'Video opens with app commands collapsed');
@@ -77,7 +82,7 @@ try {
       // intercepting pointer input intended for the provider's own frame.
       await showControls.focus();
       await page.keyboard.press('Enter');
-      const hideControls = accepted.getByRole('button', { name: 'Hide video controls', exact: true });
+      const hideControls = headerControls.getByRole('button', { name: 'Hide video controls', exact: true });
       await hideControls.waitFor({ state: 'visible' });
       assert.equal(await hideControls.getAttribute('aria-expanded'), 'true');
       await accepted.locator('[data-video-actions]').waitFor({ state: 'visible' });
@@ -100,6 +105,9 @@ try {
       await page.keyboard.press('Space');
       await showControls.waitFor({ state: 'visible' });
       assert.equal(await accepted.locator('[data-video-actions]').isVisible(), false, 'Keyboard users can collapse app commands again');
+      assert.equal(await page.locator('[data-video-details] .lucide-sliders-horizontal, [data-video-details] [aria-label="Show video controls"], [data-video-details] [aria-label="Hide video controls"]').count(), 0,
+        'No bottom sliders or controls toggle remains in the video caption');
+      assert.equal(await showControls.locator('.lucide-ellipsis').count(), 1, 'Playback commands have a distinct ellipsis in the header');
       assert.equal(await showControls.evaluate(element => document.activeElement === element), true, 'Collapsing controls retains keyboard focus on the toggle');
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     }
@@ -130,7 +138,7 @@ try {
     await frame.focus();
     assert.equal(await frame.evaluate(element => document.activeElement === element), true, 'Keyboard users can focus the provider frame');
     const youtubePost = page.locator('[data-post-id="youtube-long"]');
-    await youtubePost.getByRole('button', { name: 'Show video controls', exact: true }).click();
+    await page.locator('.video-feed-top-controls').getByRole('button', { name: 'Show video controls', exact: true }).click();
     await youtubePost.locator('[data-video-actions]').waitFor({ state: 'visible' });
     await page.waitForFunction(() => {
       const frame = document.querySelector('.video-feed-youtube-player iframe')?.getBoundingClientRect();
@@ -149,8 +157,71 @@ try {
       'Revealed app commands remain below the actual provider frame');
     await providerFrame.getByRole('button', { name: 'Provider controls' }).click();
     assert.ok(embedRequests.some(request => request.headers.referer === new URL(origin).origin + '/'), 'First provider request includes the real origin referrer');
+    for (const surface of ['videos', 'music']) {
+      const nextPosts = Array.from({ length: 8 }, (_, index) => post(`scroll-${surface}-${index}`, {
+        source: 'youtube', embedId: `scroll0000${index}`, sourceUrl: `https://youtube.com/shorts/scroll0000${index}`,
+      }));
+      await visit(surface, nextPosts);
+      const scroll = page.locator('[data-video-feed-scroll]');
+      const sharedFrame = page.locator('.video-feed-youtube-player iframe');
+      await sharedFrame.waitFor({ state: 'visible' });
+      assert.equal(await sharedFrame.evaluate(element => Boolean(element.closest('[data-video-feed-scroll]'))), true,
+        'Cross-origin player belongs to the native scrolling region');
+      await sharedFrame.evaluate(element => { element.dataset.stablePlayer = 'true'; });
+      const rect = await sharedFrame.boundingBox();
+      const centerX = rect.x + rect.width / 2;
+      const centerY = rect.y + rect.height / 2;
+      if (width < 600) {
+        const cdp = await context.newCDPSession(page);
+        const startY = rect.y + rect.height * .92;
+        const endY = rect.y + rect.height * .06;
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: centerX, y: startY }] });
+        for (let step = 1; step <= 8; step += 1) {
+          await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: centerX, y: startY + (endY - startY) * step / 8 }] });
+          await page.waitForTimeout(25);
+        }
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await cdp.detach();
+      } else {
+        await page.mouse.move(centerX, centerY);
+        await page.mouse.wheel(0, 650);
+      }
+      await page.waitForFunction(() => {
+        const scroll = document.querySelector('[data-video-feed-scroll]');
+        return scroll && scroll.scrollTop >= scroll.clientHeight * .9;
+      });
+      await page.waitForFunction(() => document.querySelector('.video-feed-youtube-player')?.getAttribute('aria-hidden') === 'false');
+      assert.equal(await sharedFrame.getAttribute('data-stable-player'), 'true', 'Scrolling reuses the original provider iframe');
+      await page.frameLocator('.video-feed-youtube-player iframe').getByRole('button', { name: 'Provider controls' }).click();
+      assert.equal(await sharedFrame.count(), 1, 'Only one YouTube player stays mounted');
+      // Refresh must request a fresh batch and display genuinely new IDs.
+      posts = [post(`fresh-${surface}`, { source: 'youtube', embedId: 'fresh000001', sourceUrl: 'https://youtube.com/shorts/fresh000001' })];
+      await page.getByRole('button', { name: 'Refresh videos', exact: true }).click();
+      await page.locator(`[data-post-id="fresh-${surface}"]`).waitFor();
+      assert.equal(feedRequests.at(-1).searchParams.get('bust'), '1');
+      assert.equal(await scroll.locator('[data-post-id^="scroll-"]').count(), 0, 'Refresh replaces the old batch with new videos');
+      // An upstream pool with nothing newer must not blank the existing video.
+      await page.getByRole('button', { name: 'Refresh videos', exact: true }).click();
+      await page.waitForFunction(() => !document.querySelector('[aria-label="Refresh videos"]').disabled);
+      assert.equal(await page.locator(`[data-post-id="fresh-${surface}"]`).count(), 1, 'No-new-content refresh preserves the current queue');
+      await page.getByRole('button', { name: 'Filter videos', exact: true }).click();
+      await page.getByRole('button', { name: 'YouTube', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('[data-post-id^="fresh-"]'));
+      await page.getByRole('button', { name: 'Clear platforms', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('[aria-label="Clear platforms"]').disabled);
+      assert.equal(await page.getByRole('button', { name: 'YouTube', exact: true }).getAttribute('aria-pressed'), 'false');
+      assert.equal(await page.locator(`[data-post-id="fresh-${surface}"]`).count(), 1,
+        'Selecting and clearing a source retains matching videos that have not been watched');
+      assert.equal(await page.getByRole('button', { name: 'Clear platforms', exact: true }).evaluate(el => el.classList.contains('ufi-clear-control')), true);
+      if (surface === 'music') {
+        assert.equal(await page.getByRole('button', { name: 'All genres', exact: true }).count(), 0);
+        await page.getByRole('button', { name: 'Pop', exact: true }).click();
+        await page.getByRole('button', { name: 'Clear genres', exact: true }).click();
+        assert.equal(await page.getByRole('button', { name: 'Pop', exact: true }).getAttribute('aria-pressed'), 'false');
+      }
+    }
     assert.deepEqual(errors, []);
-    console.log(`PASS: collapsed/revealed video controls, full media layout, 5-second boundary, native/Vimeo/YouTube metadata filtering, iframe identity and provider controls at ${width}px`);
+    console.log(`PASS: collapsed/revealed controls, full media, 5-second boundary, metadata filtering, cross-origin wheel/touch browsing in Videos + Music, one persistent interactive iframe, fresh-batch refresh at ${width}px`);
     await context.close();
   }
 } finally { await browser?.close(); await server.close(); await app.close(); }

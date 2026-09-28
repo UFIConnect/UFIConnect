@@ -64,7 +64,7 @@ export default function GroupPost() {
       <textarea id="group-post-content" className="form-textarea" rows={6} maxLength={5000} value={content} disabled={posting} onChange={event => setContent(event.target.value)} placeholder="What would you like to share?" />
       {media && <div>{media.type === 'video' ? <video controls src={media.url} style={{ maxWidth: '100%' }} /> : <img alt="Attachment preview" src={media.url} style={{ maxWidth: '100%', maxHeight: 280 }} />}<button type="button" className="btn btn-ghost" disabled={posting} onClick={() => setMedia(null)}>Remove attachment</button></div>}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 14 }}><PhotoPickerButton onFileSelected={attach} accept="image/*,video/*" disabled={uploading || posting} />
-        <button className="btn btn-primary" type="submit" disabled={posting || uploading || !groupId || (!content.trim() && !media)}>{uploading ? 'Uploading…' : posting ? 'Publishing…' : 'Post to group'}</button></div>
+        <button className="btn btn-primary ufi-post-action" type="submit" disabled={posting || uploading || !groupId || (!content.trim() && !media)}>{uploading ? 'Uploading…' : posting ? 'Publishing…' : 'Post to group'}</button></div>
     </form>}
   </main></Layout>;
 }

@@ -101,7 +101,7 @@ try {
       await page.locator('.video-feed-view').waitFor({ state: 'detached' });
       await auditNavigate(page, origin + surface);
       await page.locator(`[data-post-id="${phase}-0"]`).waitFor();
-      await page.locator(`[data-post-id="${phase}-0"]`).getByRole('button', { name: 'Show video controls', exact: true }).click();
+      await page.locator('.video-feed-top-controls').getByRole('button', { name: 'Show video controls', exact: true }).click();
     };
     const activeId = () => page.evaluate(() => {
       const scroll = document.querySelector('[data-video-feed-scroll]');

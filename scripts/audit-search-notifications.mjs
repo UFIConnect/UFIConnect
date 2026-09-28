@@ -91,7 +91,10 @@ try {
       await auditNavigate(page, server.resolvedUrls.local[0] + `?feed=${mode}`);
       const sources = page.getByRole('group', { name: mode === 'feed' ? 'Home sources' : 'Following sources', exact: true });
       await sources.waitFor();
-      await Promise.all([feedResponse(mode, '', [], null), sources.getByRole('button', { name: 'All sources', exact: true }).click()]);
+      assert.equal(await sources.getByRole('button', { name: 'All sources', exact: true }).count(), 0);
+      const clearSources = sources.getByRole('button', { name: 'Clear sources', exact: true });
+      if (await clearSources.isEnabled()) await Promise.all([feedResponse(mode, '', [], null), clearSources.click()]);
+      assert.equal(await clearSources.isDisabled(), true);
       await Promise.all([feedResponse(mode, '', ['reddit'], null), sources.getByRole('button', { name: 'Reddit', exact: true }).click()]);
       await Promise.all([feedResponse(mode, '', ['github', 'reddit'], null), sources.getByRole('button', { name: 'GitHub', exact: true }).click()]);
       await page.getByRole('button', { name: 'Filter feed by topic', exact: true }).click();

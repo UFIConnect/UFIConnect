@@ -729,7 +729,7 @@ function MediaStudioSection({ onOpenCrossPost, readOnly = false }) {
             ? <video src={asset.url} controls playsInline style={{ width: '100%', maxHeight: 420, borderRadius: 8, background: '#111' }} />
             : <img src={asset.url} alt="Generated for your post" style={{ width: '100%', maxHeight: 520, objectFit: 'contain', borderRadius: 8, background: 'var(--bg-secondary)' }} />}
           {(asset.type === 'image' || asset.type === 'video') && (
-            <button type="button" className="btn btn-primary btn-sm" onClick={() => sendToCrossPost()} style={{ alignSelf: 'flex-start' }}>
+            <button type="button" className="btn btn-primary btn-sm ufi-post-action" onClick={() => sendToCrossPost()} style={{ alignSelf: 'flex-start' }}>
               Use in Cross-Post
             </button>
           )}
@@ -1643,7 +1643,7 @@ function CrossPostSection() {
               )}
               {mediaError && <span style={{ color: 'var(--danger)', fontSize: '.76rem' }}>{mediaError}</span>}
             </div>
-            <button className="btn btn-primary" type="submit" disabled={posting || uploadingMedia || (!content.trim() && !media) || !selected.size} style={{ alignSelf: 'flex-start' }}>
+            <button className="btn btn-primary ufi-post-action" type="submit" disabled={posting || uploadingMedia || (!content.trim() && !media) || !selected.size} style={{ alignSelf: 'flex-start' }}>
               {posting ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Send'}
             </button>
           </form>

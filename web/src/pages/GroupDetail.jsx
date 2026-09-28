@@ -255,7 +255,7 @@ function GroupPostArea({ id }) {
               }}>
                 Share something with {group.name}…
               </div>
-              <button className="btn btn-primary btn-sm" style={{ minWidth: 80 }}>
+              <button className="btn btn-primary btn-sm ufi-post-action" style={{ minWidth: 80 }}>
                 Post
               </button>
             </div>
@@ -315,7 +315,7 @@ function GroupPostArea({ id }) {
                   <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setComposing(false); setContent(''); setPostError(''); resetMedia(); }}>
                     Cancel
                   </button>
-                  <button type="submit" className="btn btn-primary btn-sm" disabled={posting || uploading || (!content.trim() && !uploadedMedia)} style={{ minWidth: 90 }}>
+                  <button type="submit" className="btn btn-primary btn-sm ufi-post-action" disabled={posting || uploading || (!content.trim() && !uploadedMedia)} style={{ minWidth: 90 }}>
                     {posting ? <span className="spinner" /> : uploading ? 'Uploading...' : 'Publish'}
                   </button>
                 </div>
@@ -335,7 +335,7 @@ function GroupPostArea({ id }) {
           emptyDesc={group.isExternal
             ? 'Posts will appear here when they are available from the source.'
             : joined ? 'Be the first to post in this group.' : 'Join the group to start the conversation.'}
-          emptyAction={joined && !group.isExternal ? <button className="btn btn-primary btn-sm" onClick={openCompose}>Write a post</button> : null}
+          emptyAction={joined && !group.isExternal ? <button className="btn btn-primary btn-sm ufi-post-action" onClick={openCompose}>Write a post</button> : null}
           currentUserId={profile?.id}
           onPostDeleted={(id) => setGroupPosts((prev) => prev.filter((p) => p.id !== id))}
           onNearEnd={loadMoreGroupPosts}

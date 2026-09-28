@@ -9,7 +9,7 @@ export default function DiscoveryCategoryBar({ mode, filters, onChange, actions 
     <div className="discovery-toolbar">
       <div className="discovery-category-bar" role="group" aria-label={category.filterLabel}>
       <button type="button"
-        className="feed-toolbar-control feed-topic-filter-trigger discovery-category-clear"
+        className="feed-toolbar-control feed-topic-filter-trigger discovery-category-clear ufi-clear-control"
         aria-label={`Clear ${category.filterLabel.toLowerCase()}`}
         disabled={!selected}
         onClick={() => onChange({ ...filters, discovery: { ...filters.discovery, [mode]: '' } })}>

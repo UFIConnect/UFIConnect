@@ -542,6 +542,7 @@ function parseTimestampMs(value) {
 }
 
 const { JOB_SOURCES, jobPostedDate } = require('./job-dates');
+const { reorderOpportunitiesForRefresh } = require('./opportunity-refresh');
 
 function normalizeTimestamp(value, fallback = Date.now()) {
   const fallbackMs = parseTimestampMs(fallback) || Date.now();
@@ -29432,25 +29433,6 @@ function requestOpportunityRefresh(reason) {
   enqueueSourceRefresh(['indeed', 'remoteok', 'usajobs'], reason);
 }
 
-function reorderOpportunitiesForRefresh(results, shownIds, refreshKey) {
-  if (!refreshKey || results.length < 2) return { results, mode: null };
-  const unseen = results.filter((item) => !shownIds.has(item.id));
-  if (unseen.length) {
-    return {
-      results: [...unseen, ...results.filter((item) => shownIds.has(item.id))],
-      mode: 'unseen',
-    };
-  }
-  // Same listings is still a useful refresh: give every existing result a
-  // new deterministic order for this click, without inventing listings.
-  const shuffled = [...results].sort((a, b) => {
-    const aRank = crypto.createHash('sha256').update(`${refreshKey}:${a.id}`).digest('hex');
-    const bRank = crypto.createHash('sha256').update(`${refreshKey}:${b.id}`).digest('hex');
-    return aRank.localeCompare(bRank);
-  });
-  return { results: shuffled, mode: 'shuffled' };
-}
-
 function equalizeNewestOpportunitiesByDay(results, postedAt, maxConsecutive = 2) {
   const dayBuckets = new Map();
   for (const opportunity of results) {
@@ -29804,9 +29786,7 @@ app.get('/opportunities', authenticate, async (req, res) => {
       .filter(Boolean)
       .slice(0, 100)
   );
-  const refresh = sortMode === 'newest'
-    ? { results, mode: 'newest' }
-    : reorderOpportunitiesForRefresh(results, shownIds, String(req.query.refresh || ''));
+  const refresh = reorderOpportunitiesForRefresh(results, shownIds, String(req.query.refresh || ''));
   results = refresh.results;
 
   // Server-side page slice — added so the Opportunities page can scroll-load
