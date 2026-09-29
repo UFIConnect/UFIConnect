@@ -1,5 +1,7 @@
-import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Controls from './Controls';
+import PostPipeline from './PostPipeline';
+import LiveCity from './LiveCity';
 import LocalWeb from './LocalWeb';
 import Setup from './Setup';
 import RecoveryOverview from './RecoveryOverview';
@@ -22,15 +24,7 @@ const PIPELINE_API = import.meta.env.VITE_PIPELINE_API_URL || API;
 // to notice a real backlog (how the 8+ day stale-pipeline backlog went
 // unnoticed for so long in the first place).
 const STAGING_BACKLOG_WARN = 20000;
-// The hosted Office (the production build on GitHub Pages) carries only the public
-// views. Live City and the More tools stay in the local Office (the development and
-// release-local builds that Local web runs) until they are finalized; the production
-// build leaves their code out entirely.
-const LOCAL_OFFICE = import.meta.env.MODE !== 'production';
-const PUBLIC_OFFICE_VIEWS = new Set(['overview', 'local-web', 'setup', 'controls', 'deploy']);
-const LiveCity = LOCAL_OFFICE ? lazy(() => import('./LiveCity')) : null;
-const PostPipeline = LOCAL_OFFICE ? lazy(() => import('./PostPipeline')) : null;
-const PRIMARY_OFFICE_VIEWS = LOCAL_OFFICE ? new Set(['overview', 'city', 'controls', 'setup', 'deploy']) : PUBLIC_OFFICE_VIEWS;
+const PRIMARY_OFFICE_VIEWS = new Set(['overview', 'city', 'controls', 'setup', 'deploy']);
 
 // ─── office auth ────────────────────────────────────────────────────────────
 // Office requires a configured server token and a matching x-office-token
@@ -3011,8 +3005,7 @@ function TopicsView() {
 // ─── App (root) ───────────────────────────────────────────────────────────────
 
 export default function App() {
-  const officeViews = ['overview', 'city', 'local-web', 'setup', 'controls', 'sources', 'pipeline', 'post-pipeline', 'topics', 'agents', 'feed', 'analytics', 'deploy', 'autofix', 'versions']
-    .filter(id => LOCAL_OFFICE || PUBLIC_OFFICE_VIEWS.has(id));
+  const officeViews = ['overview', 'city', 'local-web', 'setup', 'controls', 'sources', 'pipeline', 'post-pipeline', 'topics', 'agents', 'feed', 'analytics', 'deploy', 'autofix', 'versions'];
   const [view, setView] = useState(() => {
     const requested = typeof window !== 'undefined' ? window.location.hash.slice(1) : '';
     return officeViews.includes(requested) ? requested : 'overview';
@@ -3224,7 +3217,7 @@ export default function App() {
     { id: 'deploy',   label: 'Deploy Center' },
     { id: 'autofix',  label: 'Autofix' },
     { id: 'versions', label: 'Versions' },
-  ].filter(({ id }) => officeViews.includes(id));
+  ];
   const apiDbFailover = !!status?.server?.dbReadFailoverActive;
   const pipelineDbFailover = !!pipelineStatus?.server?.dbReadFailoverActive;
   const isMobile = useMediaQuery('(max-width: 760px)');
@@ -3314,7 +3307,7 @@ export default function App() {
           </div>
 
           <nav style={navStyle} aria-label="Office sections">
-          {(LOCAL_OFFICE ? ['primary', 'more'] : ['primary']).map(section => <div key={section} className="office-nav-section">
+          {['primary', 'more'].map(section => <div key={section} className="office-nav-section">
           {section === 'more' && <button className="office-nav-toggle" aria-expanded={moreToolsOpen} aria-controls="office-more-tools" onClick={() => setMoreToolsOpen(open => !open)}>
             More tools <span aria-hidden="true">{moreToolsOpen ? '▴' : '▾'}</span>
           </button>}
@@ -3416,33 +3409,33 @@ export default function App() {
         {/* ── Main content ── */}
         <main style={mainStyle}>
           {actionError && <div role="alert" style={{ color: '#fca5a5', paddingBottom: 16 }}>{actionError}</div>}
-          {LOCAL_OFFICE && view === 'city' && <Suspense fallback={<p style={{ color: '#64748b' }}>Opening Live City…</p>}><LiveCity status={status} pipelineStatus={pipelineStatus} agents={agents} log={log}
+          {view === 'city' && <LiveCity status={status} pipelineStatus={pipelineStatus} agents={agents} log={log}
             telemetry={{ ...telemetry, streamConnected: connected }} officeFetch={officeFetch}
-            apiBase={API} pipelineBase={PIPELINE_API} onNavigate={navigateOffice} /></Suspense>}
-          {LOCAL_OFFICE && view === 'post-pipeline' && <Suspense fallback={<p style={{ color: '#64748b' }}>Opening Post Pipeline…</p>}><PostPipeline apiBase={API} request={officeFetch} pipelineStatus={pipelineStatus} /></Suspense>}
+            apiBase={API} pipelineBase={PIPELINE_API} onNavigate={navigateOffice} />}
+          {view === 'post-pipeline' && <PostPipeline apiBase={API} request={officeFetch} pipelineStatus={pipelineStatus} />}
           {view === 'local-web' && <LocalWeb apiBase={API} request={officeFetch} />}
           {view === 'overview' && <OverviewView status={status} pipelineStatus={pipelineStatus} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'controls' && <Controls apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} />}
           {/* Source health (workerHealth/agentSourceCache) only has real
               data on the pipeline role now — see pipelineStatus above. */}
-          {LOCAL_OFFICE && view === 'sources' && <SourcesView status={pipelineStatus} triggerAgent={triggerAgent} triggering={triggering} />}
+          {view === 'sources'  && <SourcesView status={pipelineStatus} triggerAgent={triggerAgent} triggering={triggering} />}
           {/* Genuinely spans both roles internally now — see PipelineView's
               own top-of-function comment for exactly which stage reads
               from which status object (Sources/Equalizer/Filter/Sort&Rank/
               Refetch Queue from pipelineStatus; the new Staging→Cache stage
               and Topic Filter from status). */}
-          {LOCAL_OFFICE && view === 'pipeline' && <PipelineView status={status} pipelineStatus={pipelineStatus} compact={isMobile} />}
-          {LOCAL_OFFICE && view === 'topics' && <TopicsView />}
-          {LOCAL_OFFICE && view === 'agents' && <AgentsView agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
+          {view === 'pipeline' && <PipelineView status={status} pipelineStatus={pipelineStatus} compact={isMobile} />}
+          {view === 'topics'   && <TopicsView />}
+          {view === 'agents'   && <AgentsView agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {/* Sort/refetch-queue state is pipeline-only real data (see
               FeedManagerView's own top-of-function comment) — same reason
               SourcesView reads pipelineStatus, not status. */}
-          {LOCAL_OFFICE && view === 'feed' && <FeedManagerView pipelineStatus={pipelineStatus} triggerAgent={triggerAgent} triggering={triggering} />}
-          {LOCAL_OFFICE && view === 'analytics' && <AnalyticsView />}
+          {view === 'feed'     && <FeedManagerView pipelineStatus={pipelineStatus} triggerAgent={triggerAgent} triggering={triggering} />}
+          {view === 'analytics'&& <AnalyticsView />}
           {view === 'setup' && <Setup apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} />}
           {view === 'deploy'   && <DeployView triggerDeploy={triggerDeploy} deploying={deploying} log={log} />}
-          {LOCAL_OFFICE && view === 'autofix' && <AutofixView />}
-          {LOCAL_OFFICE && view === 'versions' && <VersionsView versions={versions} status={status} pipelineStatus={pipelineStatus} />}
+          {view === 'autofix'  && <AutofixView />}
+          {view === 'versions' && <VersionsView versions={versions} status={status} pipelineStatus={pipelineStatus} />}
         </main>
       </div>
     </>
