@@ -48,8 +48,25 @@ const near = (a, b) => Math.abs(a - b) < .01;
 const between = (value, a, b) => value >= Math.min(a, b) - .01 && value <= Math.max(a, b) + .01;
 
 // Big workplaces get towns of their own; small ones share a town in pipeline order.
+// Homes that name a group (such as a source category) live together in that group's town instead.
 function groupTowns(homes, districts, capacity) {
   const towns = []; let shared = null;
+  if (homes.some(resident => resident.home.group)) {
+    const groups = new Map();
+    homes.forEach(resident => {
+      const key = resident.home.group || 'other';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(resident);
+    });
+    for (const [group, residents] of groups) {
+      const parts = Math.ceil(residents.length / capacity);
+      for (let part = 0; part < parts; part++) {
+        const members = residents.slice(part * capacity, (part + 1) * capacity);
+        towns.push({ group, part: parts > 1 ? part + 1 : 0, workplaces: [...new Set(members.map(member => member.work.id))], homes: members });
+      }
+    }
+    return towns;
+  }
   for (const district of districts) {
     const residents = homes.filter(home => home.work.id === district.id);
     if (!residents.length) continue;
@@ -215,8 +232,10 @@ export function buildCityStreets(model) {
     const left = group.site.x - width / 2, top = group.site.y - height / 2;
     const id = `town-${index}`;
     const labels = group.workplaces.map(workplace => byId[workplace].label);
-    const town = { id, index, name: TOWN_NAMES[index % TOWN_NAMES.length], workplaces: group.workplaces,
-      label: `Works at ${labels.length > 2 ? `${labels.slice(0, -1).join(', ')} and ${labels.at(-1)}` : labels.join(' and ')}`,
+    const theme = group.group ? group.homes[0].home : null;
+    const town = { id, index, workplaces: group.workplaces, color: theme?.townColor,
+      name: theme ? `${theme.townName || group.group}${group.part ? ` ${group.part}` : ''}` : TOWN_NAMES[index % TOWN_NAMES.length],
+      label: theme ? theme.townLabel || group.group : `Works at ${labels.length > 2 ? `${labels.slice(0, -1).join(', ')} and ${labels.at(-1)}` : labels.join(' and ')}`,
       side: group.site.side, x: group.site.x, y: group.site.y, left, top, right: left + width, bottom: top + height, cols: townCols, rows: townRows, homes: [], blocks: [] };
     for (let col = 0; col <= townCols; col++) road([left + col * TOWN_BLOCK_WIDTH, top], [left + col * TOWN_BLOCK_WIDTH, top + height], 'town-avenue', id);
     for (let row = 0; row <= townRows; row++) road([left, top + row * CITY_BLOCK_HEIGHT], [left + width, top + row * CITY_BLOCK_HEIGHT], 'town-street', id);
