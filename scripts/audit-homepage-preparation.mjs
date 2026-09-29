@@ -17,7 +17,7 @@ await fs.mkdir(output, { recursive: true });
 const app = await createAppHarness({ connected: true });
 app.seedUser(member('prep-audit', { resumeBuilderAddon: true }));
 const proxy = prefix => ({ target: app.base, rewrite: value => value.replace(prefix, '') });
-const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envFile: false,
+const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api'), 'import.meta.env.VITE_API_FALLBACK_URL': JSON.stringify('/fallback') },
   server: { host: '127.0.0.1', port: 5199, strictPort: false, proxy: { '/api': proxy(/^\/api/), '/fallback': proxy(/^\/fallback/) } },
 });

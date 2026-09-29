@@ -24,7 +24,7 @@ try {
   const web = await createWebServer({
     root: webRoot,
     configFile: path.join(webRoot, 'vite.config.js'),
-    envFile: false,
+    envDir: false,
     define: {
       'import.meta.env.VITE_API_URL': JSON.stringify('/api'),
       'import.meta.env.VITE_API_FALLBACK_URL': JSON.stringify(''),

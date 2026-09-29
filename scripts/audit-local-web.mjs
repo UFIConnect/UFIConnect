@@ -16,7 +16,7 @@ let browser;
 
 async function start(local) {
   const server = await createServer({
-    root: path.join(root, 'office'), configFile: path.join(root, 'office/vite.config.js'), envFile: false,
+    root: path.join(root, 'office'), configFile: path.join(root, 'office/vite.config.js'), envDir: false,
     define: {
       'import.meta.env.MODE': JSON.stringify(local ? 'release-local' : 'production'),
       'import.meta.env.VITE_API_URL': JSON.stringify(API),

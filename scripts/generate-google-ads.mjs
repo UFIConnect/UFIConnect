@@ -225,7 +225,7 @@ async function captureScreens(browser) {
   app.seedUser(member('ads-member', { name: 'Alex Morgan', title: 'Product designer' }));
   const proxy = prefix => ({ target: app.base, rewrite: value => value.replace(prefix, '') });
   const server = await createServer({
-    root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envFile: false, logLevel: 'error',
+    root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false, logLevel: 'error',
     define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api'), 'import.meta.env.VITE_API_FALLBACK_URL': JSON.stringify('/fallback') },
     server: { host: '127.0.0.1', port: 5240, strictPort: false, proxy: { '/api': proxy(/^\/api/), '/fallback': proxy(/^\/fallback/) } },
   });

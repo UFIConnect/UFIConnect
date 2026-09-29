@@ -13,7 +13,7 @@ const { createAppHarness, member } = require('../backend/test-support/app-harnes
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const app = await createAppHarness();
 app.seedUser(member('data-preferences-audit'));
-const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envFile: false,
+const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api'), 'import.meta.env.VITE_API_FALLBACK_URL': JSON.stringify('') },
   server: { host: '127.0.0.1', port: 5238, strictPort: false, proxy: { '/api': { target: app.base, rewrite: p => p.replace(/^\/api/, '') } } },
 });

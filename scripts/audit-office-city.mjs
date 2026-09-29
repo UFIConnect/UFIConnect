@@ -9,7 +9,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const API = 'https://api.city.invalid';
 const PIPELINE = 'https://pipeline.city.invalid';
 const TOKEN = 'synthetic-city-audit-token';
-const server = await createServer({ root: path.join(root, 'office'), configFile: path.join(root, 'office/vite.config.js'), envFile: false,
+const server = await createServer({ root: path.join(root, 'office'), configFile: path.join(root, 'office/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify(API), 'import.meta.env.VITE_PIPELINE_API_URL': JSON.stringify(PIPELINE) },
   server: { host: '127.0.0.1', port: 5218, strictPort: false },
 });

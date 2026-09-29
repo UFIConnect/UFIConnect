@@ -19,7 +19,7 @@ await pg.exec(HISTORY_SCHEMA);
 const app = await createAppHarness({ connected: true, query: (sql, params) => /generated_content/.test(sql) ? pg.query(sql, params) : { rows: [] } });
 const store = createGeneratedContentStore(app.db);
 const server = await createServer({
-  root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envFile: false,
+  root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api'), 'import.meta.env.VITE_API_FALLBACK_URL': JSON.stringify('') },
   server: { host: '127.0.0.1', port: 5193, strictPort: false,
     proxy: { '/api': { target: app.base, rewrite: value => value.replace(/^\/api/, '') } } },
