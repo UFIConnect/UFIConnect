@@ -366,30 +366,36 @@ export default function CityScene3D({ city, edges = [], motion, speed, motionSco
     city.blocks.forEach(block => block.trees.forEach(([px, pz]) => trees.push([wx(px), wz(pz), block.kind === 'town' ? .9 : 1])));
     city.cafes.forEach(cafe => [-12, 12].forEach(dx => trees.push([wx(cafe.x) + dx, wz(cafe.y) - 4, 1.1])));
     // Woods fill the countryside between downtown and the towns, clear of every road and lot.
+    // They cast no shadows, so the far larger region renders as fast as downtown alone.
+    const woods = [];
     const countryside = seeded(41);
     const builtUp = [[wx(0) - 3, wz(0) - 3, wx(downtown.width) + 3, wz(downtown.height) + 3],
       ...city.towns.map(town => [wx(town.left) - 5, wz(town.top) - 5, wx(town.right) + 5, wz(town.bottom) + 5])];
     const roadLines = [...outerRoads, ...city.segments.filter(segment => segment.kind === 'ring')].map(({ a, b }) => [wx(a[0]), wz(a[1]), wx(b[0]), wz(b[1])]);
     const nearRoad = (px, pz) => roadLines.some(([ax, az, bx, bz]) => px > Math.min(ax, bx) - 4.5 && px < Math.max(ax, bx) + 4.5 && pz > Math.min(az, bz) - 4.5 && pz < Math.max(az, bz) + 4.5);
-    for (let i = 0; i < 2600 && trees.length < 1300; i++) {
+    for (let i = 0; i < 2600 && woods.length < 800; i++) {
       const px = (countryside() - .5) * (W + 40), pz = (countryside() - .5) * (H + 40);
       const size = .8 + countryside() * .9, conifer = countryside() < .35;
       if (builtUp.some(([x0, z0, x1, z1]) => px > x0 && px < x1 && pz > z0 && pz < z1) || nearRoad(px, pz)) continue;
-      trees.push([px, pz, size, conifer]);
+      woods.push([px, pz, size, conifer]);
     }
     const trunkMaterial = standard({ color: '#6e5a45', roughness: .9 });
     const leafMaterial = standard({ color: '#ffffff', roughness: .85, flatShading: true });
-    const trunks = instanced(new THREE.CylinderGeometry(.16, .24, 2.2, 6), trunkMaterial, trees.length);
-    const broadleaf = trees.filter(tree => !tree[3]), conifers = trees.filter(tree => tree[3]);
-    const crowns = instanced(new THREE.IcosahedronGeometry(1.45, 1), leafMaterial, broadleaf.length);
-    const pines = instanced(new THREE.ConeGeometry(1.25, 3.6, 7), leafMaterial, conifers.length);
     const treeRandom = seeded(53);
-    trees.forEach(([px, pz, size], i) => { compose(px, 1.1 * size, pz, 0, size, size, size); trunks.setMatrixAt(i, matrix); });
-    broadleaf.forEach(([px, pz, size], i) => {
-      compose(px, 3.05 * size, pz, treeRandom() * 6, size * (.9 + treeRandom() * .25), size * (.85 + treeRandom() * .3), size * (.9 + treeRandom() * .25));
-      crowns.setMatrixAt(i, matrix); crowns.setColorAt(i, color.set(['#4f7f45', '#5d8c4b', '#46723f', '#6a9552'][i % 4]));
-    });
-    conifers.forEach(([px, pz, size], i) => { compose(px, 3.4 * size, pz, 0, size, size, size); pines.setMatrixAt(i, matrix); pines.setColorAt(i, color.set(['#3d6445', '#46704c'][i % 2])); });
+    function plant(list, shadow) {
+      const trunks = instanced(new THREE.CylinderGeometry(.16, .24, 2.2, 6), trunkMaterial, list.length, shadow);
+      const broadleaf = list.filter(tree => !tree[3]), conifers = list.filter(tree => tree[3]);
+      const crowns = instanced(new THREE.IcosahedronGeometry(1.45, 1), leafMaterial, broadleaf.length, shadow);
+      const pines = instanced(new THREE.ConeGeometry(1.25, 3.6, 7), leafMaterial, conifers.length, shadow);
+      list.forEach(([px, pz, size], i) => { compose(px, 1.1 * size, pz, 0, size, size, size); trunks.setMatrixAt(i, matrix); });
+      broadleaf.forEach(([px, pz, size], i) => {
+        compose(px, 3.05 * size, pz, treeRandom() * 6, size * (.9 + treeRandom() * .25), size * (.85 + treeRandom() * .3), size * (.9 + treeRandom() * .25));
+        crowns.setMatrixAt(i, matrix); crowns.setColorAt(i, color.set(['#4f7f45', '#5d8c4b', '#46723f', '#6a9552'][i % 4]));
+      });
+      conifers.forEach(([px, pz, size], i) => { compose(px, 3.4 * size, pz, 0, size, size, size); pines.setMatrixAt(i, matrix); pines.setColorAt(i, color.set(['#3d6445', '#46704c'][i % 2])); });
+      return [trunks, crowns, pines];
+    }
+    const treeMeshes = [...plant(trees, true), ...plant(woods, false)];
 
     // Street lamps light every avenue and street; they glow at night.
     const lamps = [];
@@ -725,7 +731,7 @@ export default function CityScene3D({ city, edges = [], motion, speed, motionSco
       }
       fly(best, target, 1400);
     }
-    const blockers = [crowns, pines, trunks, bodies, roofs, chimneys, poles, crossarms, ...picks];
+    const blockers = [...treeMeshes, bodies, roofs, chimneys, poles, crossarms, ...picks];
     const sight = new THREE.Raycaster(), sightDirection = new THREE.Vector3(), sightStart = new THREE.Vector3(), sightEnd = new THREE.Vector3();
     const lensRight = new THREE.Vector3(), lensUp = new THREE.Vector3(), worldUp = new THREE.Vector3(0, 1, 0);
     function clearView(target, position, home) {
@@ -779,7 +785,7 @@ export default function CityScene3D({ city, edges = [], motion, speed, motionSco
       } else frame('all');
     }
 
-    let frameId, last = performance.now(), elapsed = savedCamera.current?.elapsed || 0, lastRender = 0;
+    let frameId, last = performance.now(), elapsed = savedCamera.current?.elapsed || 0, lastRender = 0, frameCost = 0;
     const built = performance.now(), buildSkip = Boolean(savedCamera.current) || current.current.motion === 'reduced';
     const visibleFrustum = new THREE.Frustum(), viewProjection = new THREE.Matrix4();
     let edgeSignature = '';
@@ -788,7 +794,9 @@ export default function CityScene3D({ city, edges = [], motion, speed, motionSco
       const delta = Math.max(0, Math.min((now - last) / 1000, .1)); last = now;
       const live = current.current;
       if (!document.hidden && live.motion === 'active') elapsed += delta * live.speed;
-      if (document.hidden || now - lastRender < 32) return;
+      // A frame waits at least as long as the last one took, so slow devices keep time for taps and scrolling.
+      if (document.hidden || now - lastRender < Math.max(32, frameCost * 2)) return;
+      const frameStart = performance.now();
       const renderDelta = Math.min((now - lastRender) / 1000, .25); lastRender = now;
 
       // Day and night blend smoothly; the sky's reflections refresh once the change settles.
@@ -917,6 +925,7 @@ export default function CityScene3D({ city, edges = [], motion, speed, motionSco
       }
       labels.forEach(({ mesh }) => { mesh.material.opacity = clamp01((camera.position.distanceTo(mesh.position) - 12) / 20); });
       controls.update(); renderer.render(scene, camera);
+      frameCost = performance.now() - frameStart;
 
       camera.updateMatrixWorld();
       visibleFrustum.setFromProjectionMatrix(viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
