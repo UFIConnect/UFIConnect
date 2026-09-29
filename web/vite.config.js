@@ -1,6 +1,9 @@
-import { defineConfig } from 'vite';
+import { fileURLToPath } from 'node:url';
+import { defineConfig, searchForWorkspaceRoot } from 'vite';
 import react from '@vitejs/plugin-react';
 import { browserSecurityPolicy } from './securityPolicy.mjs';
+
+const localPath = relative => fileURLToPath(new URL(relative, import.meta.url));
 
 export default defineConfig({
   // On GitHub Pages the app lives at /UFIConnect/; locally it's at /
@@ -18,8 +21,12 @@ export default defineConfig({
       },
     },
   }],
+  // The dev-only Maps page renders the Office's Live City from ../office/src;
+  // deduping keeps a single copy of React and the icons across both folders.
+  resolve: { dedupe: ['react', 'react-dom', 'lucide-react'] },
   server: {
     port: 5173,
+    fs: { allow: [searchForWorkspaceRoot(localPath('.')), localPath('../office/src'), localPath('../office/node_modules')] },
     // Applies before Vite's injected client module can request a reset URL
     // as its referrer. Production hosts must send the same policy.
     headers: { 'Referrer-Policy': 'no-referrer' },

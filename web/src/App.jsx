@@ -78,6 +78,9 @@ const SavedItems = lazy(() => import('./pages/SavedItems'));
 const GroupPost = lazy(() => import('./pages/GroupPost'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 const SearchGuide = lazy(() => import('./pages/SearchGuide'));
+// Maps shows the Office's Live City for review in the local website preview.
+// Only the dev server (npm run office:release-local) has it; builds leave it out.
+const LocalMaps = import.meta.env.DEV ? lazy(() => import('./pages/LocalMaps')) : null;
 
 function AnalyticsPrivacyControls() {
   return <Suspense fallback={null}><AnalyticsPrivacy /></Suspense>;
@@ -259,6 +262,7 @@ export default function App() {
 
       <Route path="/saved/:kind" element={<RequireAuth><RequireOnboarding><SavedItems /></RequireOnboarding></RequireAuth>} />
       <Route path="/groups/post" element={<RequireAuth><RequireOnboarding><GroupPost /></RequireOnboarding></RequireAuth>} />
+      {LocalMaps && <Route path="/maps" element={<LocalMaps />} />}
 
       {/* Agent Control Room — live on public domain */}
       <Route path="/hq"     element={<Navigate to="/command-center" replace />} />

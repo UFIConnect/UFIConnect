@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { observeAgentPayload, mergeObservedAgents } from '../office/src/office-telemetry.mjs';
 import { buildCityModel, observationState, CITY_FRESH_MS, CITY_DISTRICTS } from '../office/src/city-model.mjs';
 import { buildCityGrid, buildCityStreets, cityJourney, GRID_POLE_OFFSET } from '../office/src/city-streets.mjs';
+import { SAMPLE_CITY_AGENTS, sampleCityObservations } from '../office/src/city-sample.mjs';
 
 const inside = (city, [x, y]) => Number.isFinite(x) && Number.isFinite(y) && x > city.minX && x < city.minX + city.width && y > city.minY && y < city.minY + city.height;
 const overlaps = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
@@ -365,4 +366,19 @@ test('every city building exposes detailed levels backed by its own metrics, inc
       assert.ok(level.metrics.length,`${district.id} level ${level.number} attaches live evidence`);
     }
   }
+});
+
+test('the Maps preview sample houses all 71 registered agents with every home light and a working pipeline', () => {
+  assert.equal(SAMPLE_CITY_AGENTS.length, 71);
+  assert.equal(new Set(SAMPLE_CITY_AGENTS.map(([id]) => id)).size, 71, 'Each agent appears once');
+  const now = Date.parse('2026-09-29T12:00:00Z');
+  const model = buildCityModel({ ...sampleCityObservations(now), now });
+  assert.equal(model.homes.length, 71);
+  assert.deepEqual([...new Set(model.homes.map(home => home.homeState))].sort(), ['attention', 'inactive', 'unobserved', 'working']);
+  assert.ok(model.edges.every(edge => edge.active), 'Content moves along every pipeline road');
+  const later = buildCityModel({ ...sampleCityObservations(now + CITY_FRESH_MS * 3), now: now + CITY_FRESH_MS * 3 });
+  assert.equal(later.observations.api.state, 'fresh', 'Sample observations stay fresh as the clock advances');
+  const city = buildCityStreets(model);
+  assert.equal(city.homes.length, 71);
+  assert.ok(city.towns.length >= 4 && city.towns.every(town => town.homes.length <= 12), 'Homes fill separate towns');
 });

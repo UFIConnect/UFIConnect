@@ -110,7 +110,7 @@ function CityTraffic({ homes, highway, speed, motionScope }) {
   </g>;
 }
 
-function CityMap({ model, selected, selectedAgent, onSelectAgent, onEnter, paused, setPaused, reduced, speed, setSpeed, motionScope, setMotionScope }) {
+export function CityMap({ model, selected, selectedAgent, onSelectAgent, onEnter, paused, setPaused, reduced, speed, setSpeed, motionScope, setMotionScope }) {
   const [zoom, setZoom] = useState(1), [offset, setOffset] = useState({ x: 0, y: 0 });
   const [dimension, setDimension] = useState('3d'), [cameraReset, setCameraReset] = useState(0), [graphicsFallback, setGraphicsFallback] = useState(false);
   const [area, setArea] = useState('all'), [homeFilter, setHomeFilter] = useState('all');

@@ -6,6 +6,8 @@ const LOCAL_CONSOLE = 'http://127.0.0.1:4174/#local-web';
 const LOCAL_PREVIEW = 'http://127.0.0.1:4173';
 const isLocalConsole = import.meta.env.MODE === 'release-local';
 const STEPS = [['edit', 'Edit'], ['preview', 'Preview'], ['publish', 'Publish']];
+// Maps is the Live City map on sample agents, served only by the local website.
+const PREVIEW_PAGES = [['/', 'Home'], ['/maps', 'Maps']];
 const MAX_CHANGE_ROWS = 400;
 const phoneUrl = value => {
   try { const url = new URL(value); return url.protocol === 'https:' && url.hostname.endsWith('.trycloudflare.com') && !url.username && !url.password ? url.origin : ''; }
@@ -42,7 +44,7 @@ function assertSameFile(current, saved) {
   }
 }
 
-function LocalPreview({ size, version }) {
+function LocalPreview({ size, version, page }) {
   const container = useRef(null);
   const [availableWidth, setAvailableWidth] = useState(0);
   useEffect(() => {
@@ -55,7 +57,7 @@ function LocalPreview({ size, version }) {
   const height = 900;
   const scale = availableWidth ? Math.min(1, availableWidth / width) : 1;
   return <div ref={container} className={`local-web-preview local-web-preview-${size}`} style={{ height: height * scale }}>
-    <iframe key={version} src={LOCAL_PREVIEW} title="Local UFIConnect website preview"
+    <iframe key={version} src={`${LOCAL_PREVIEW}${page === '/' ? '' : page}`} title="Local UFIConnect website preview"
       style={{ width, height, transform: `scale(${scale})`, transformOrigin: 'top left' }} />
   </div>;
 }
@@ -150,6 +152,7 @@ function LocalEditor({ apiBase, request }) {
   const [commitMessage, setCommitMessage] = useState('');
   const [previewSize, setPreviewSize] = useState('desktop');
   const [previewVersion, setPreviewVersion] = useState(0);
+  const [previewPage, setPreviewPage] = useState('/');
   const [connectionAttempt, setConnectionAttempt] = useState(0);
   const [phone, setPhone] = useState({ state: 'off' });
   const [previewUrl, setPreviewUrl] = useState(LOCAL_PREVIEW);
@@ -336,7 +339,7 @@ function LocalEditor({ apiBase, request }) {
           <div className="local-web-section-heading"><h2 id="local-web-preview-heading">Local preview</h2>
             {!phone.remote && <div className="local-web-heading-actions">
               <button type="button" onClick={() => setPreviewVersion(value => value + 1)}>Refresh</button>
-              <a className="local-web-button" href={previewUrl} target="_blank" rel="noreferrer">Open local website</a>
+              <a className="local-web-button" href={`${previewUrl}${previewPage === '/' ? '' : previewPage}`} target="_blank" rel="noreferrer">Open local website</a>
             </div>}
           </div>
           <p className="local-web-hint">Account actions in the preview use the live service.</p>
@@ -344,11 +347,14 @@ function LocalEditor({ apiBase, request }) {
             <p>The preview opens in its own tab. Enter the same connection code there, then refresh it after each save.</p>
             <a href={previewUrl} target="_blank" rel="noreferrer" className="local-web-button local-web-primary">Open phone preview</a>
           </div> : <>
+            <div className="local-web-actions" role="group" aria-label="Preview page">
+              {PREVIEW_PAGES.map(([page, label]) => <button type="button" key={page} aria-pressed={previewPage === page} onClick={() => setPreviewPage(page)}>{label}</button>)}
+            </div>
             <div className="local-web-actions" role="group" aria-label="Preview size">
               <button type="button" aria-pressed={previewSize === 'desktop'} onClick={() => setPreviewSize('desktop')}>Desktop</button>
               <button type="button" aria-pressed={previewSize === 'mobile'} onClick={() => setPreviewSize('mobile')}>Mobile</button>
             </div>
-            <LocalPreview size={previewSize} version={previewVersion} />
+            <LocalPreview size={previewSize} version={previewVersion} page={previewPage} />
           </>}
         </section>
       </div>
