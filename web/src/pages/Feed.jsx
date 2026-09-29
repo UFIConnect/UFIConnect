@@ -34,7 +34,7 @@ import { ALL_INTERESTS } from './Onboarding';
 import ReportModal from '../components/ReportModal';
 import { useToast } from '../contexts/ToastContext';
 import { UfiFeedContent } from './Post';
-import ConnectedPostActions from '../components/ConnectedPostActions';
+import ConnectedPostActions, { useSourceCapability } from '../components/ConnectedPostActions';
 import { SavePostButton } from '../components/SaveButtons';
 import { CommentIcon, OpenOnSource, PostHeader, PostOptionsMenu, SharePostButton, feedAccountKey } from '../components/PostCardChrome';
 import PostLikes from '../components/PostLikes';
@@ -1442,9 +1442,11 @@ function commentUrl(post) {
   }
 }
 
-export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMediaOpen, onBlocked }) {
+export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMediaOpen, onBlocked, onRemoved }) {
   const { profile, token, updateProfileLocally } = useAuth();
+  const navigate = useNavigate();
   const [blockBusy, setBlockBusy] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const { showToast } = useToast();
   const [reportOpen, setReportOpen] = useState(false);
   const [showComments,    setShowComments]    = useState(false);
@@ -1494,6 +1496,11 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
       const { data } = await client.get(`/feed/${encodeURIComponent(post.id)}/comments`, {
         params: { limit },
       });
+      // The source could not be reached: say so rather than showing "no comments".
+      if (data.unavailable) {
+        if (!background) { setCommentsError(true); setComments([]); }
+        return;
+      }
       const incoming = data.comments || [];
       setComments(prev => background ? mergeCommentLists(incoming, prev || []) : incoming);
       setCommentsLive(!!data.live);
@@ -1523,6 +1530,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
     return () => window.clearInterval(interval);
   }, [showComments, post?.id, commentsLive, commentsLoading, commentsLoadingMore, commentSending, fetchComments]);
 
+  const sourceCapability = useSourceCapability(post?.isExternal ? post : null);
   if (!post || typeof post !== 'object') return null;
 
   const c   = catStyle(post.group?.category);
@@ -1642,6 +1650,35 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
     }
   }
 
+  const ownPost = !isExternal && !!profile?.id && post.author?.id === profile.id && isCommunityPost;
+  async function copyPostLink() {
+    const url = isExternal && post.sourceUrl ? post.sourceUrl : `${window.location.origin}/p/${encodeURIComponent(post.id)}`;
+    try { await navigator.clipboard.writeText(url); showToast('Link copied.', 'success'); }
+    catch { showToast('Could not copy the link. Open the post to share it.', 'error'); }
+  }
+  async function deletePost() {
+    if (deleteBusy || !window.confirm('Delete this post? Its comments are deleted too. This cannot be undone.')) return;
+    setDeleteBusy(true);
+    try {
+      await client.delete(`/posts/${encodeURIComponent(post.id)}`);
+      onRemoved?.(post);
+      showToast('Post deleted.', 'success');
+    } catch (error) {
+      showToast(error?.response?.data?.message || 'Could not delete this post. Please try again.', 'error');
+      setDeleteBusy(false);
+    }
+  }
+  // UFIconnect posts: copy the post link, open it, report or block its author,
+  // and delete your own. External posts: copy the original link, report or block the account.
+  const optionItems = [
+    { label: isExternal ? 'Copy original link' : 'Copy link to post', onSelect: copyPostLink },
+    !isExternal && { label: 'Open post', onSelect: () => navigate(`/p/${encodeURIComponent(post.id)}`) },
+    !isExternal && post.author?.id && !ownPost && { label: 'View profile', detail: post.author?.name, onSelect: () => navigate(`/u/${post.author.id}`) },
+    !ownPost && { label: 'Report post', onSelect: () => (token ? setReportOpen(true) : showToast('Sign in to report a post.', 'info')) },
+    blockTarget && { label: isExternal ? 'Block account' : 'Block member', detail: blockTarget.label, danger: true, busy: blockBusy, ariaLabel: `Block ${blockTarget.label}`, onSelect: blockAuthor },
+    ownPost && { label: 'Delete post', danger: true, busy: deleteBusy, onSelect: deletePost },
+  ];
+
   return (
     <div ref={cardRef} className="card post-card" style={{ marginBottom: 12, '--source-color': src.color }}>
       <PostHeader
@@ -1758,8 +1795,9 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
         </button>
         ) : null}
 
-      {/* Actions: comments, likes, save, share and the source link, then the options menu. */}
+      {/* Actions: likes, comments, save, share, the options menu, then the source link. */}
       <div className="post-chrome-actions">
+        <PostLikes post={post} onPostUpdated={onPostUpdated} />
         {hasComments && (
           <button
             type="button"
@@ -1772,9 +1810,9 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
             <CommentIcon />{commentCount > 0 && <span>{commentCount.toLocaleString()}</span>}
           </button>
         )}
-        <PostLikes post={post} onPostUpdated={onPostUpdated} />
         <SavePostButton post={post} className="post-chrome-action feed-save-post-button" showLabel={false} />
         <SharePostButton post={post} />
+        <PostOptionsMenu items={optionItems} />
         <OpenOnSource
           post={post}
           label={`${isJob ? 'Apply' : post.isLiveCamera ? 'Watch live' : hasVideo ? 'Watch' : 'Open'}${post.isLiveCamera ? '' : ` on ${src.label}`}`}
@@ -1782,12 +1820,6 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
             event.stopPropagation();
             reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true });
           }}
-        />
-        <PostOptionsMenu
-          onReport={() => (token ? setReportOpen(true) : showToast('Sign in to report a post.', 'info'))}
-          blockLabel={blockTarget?.label}
-          blockBusy={blockBusy}
-          onBlock={blockAuthor}
         />
       </div>
 
@@ -1851,11 +1883,17 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
 
           {!commentsLoading && commentsError && (
             <div style={{ fontSize: '.78rem', color: 'var(--danger)', margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: 8 }}>
-              Couldn't load comments.
+              {post.isExternal ? `Couldn't reach ${src.label} for ${sectionLabel.toLowerCase()} right now.` : "Couldn't load comments."}
               <button onClick={fetchComments} style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', fontSize: '.78rem', fontWeight: 600, padding: 0 }}>
                 Try again
               </button>
             </div>
+          )}
+          {/* Replying to an external post happens through the member's connected account. */}
+          {isExternal && sourceCapability && !sourceCapability.connected && (
+            <p style={{ fontSize: '.78rem', color: 'var(--muted)', margin: '0 0 10px' }}>
+              <Link to="/connected-accounts?interactions=1">Connect your {sourceCapability.label} account</Link> to like and comment on its posts.
+            </p>
           )}
           {!commentsLoading && !commentsError && comments?.length === 0 && (
             <p style={{ fontSize: '.78rem', color: 'var(--muted)', margin: '0 0 10px' }}>No {sectionLabel.toLowerCase()} found.</p>
@@ -3155,11 +3193,16 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const handleBlocked = useCallback(post => {
     if (!post?.isExternal && post?.author?.id) setBlockedMembers(current => new Set([...current, post.author.id]));
   }, []);
+  const [removedPosts, setRemovedPosts] = useState(() => new Set());
+  const handleRemoved = useCallback(post => {
+    if (post?.id) setRemovedPosts(current => new Set([...current, post.id]));
+  }, []);
   const contentPosts = useMemo(
     () => displayed.filter(post => !(viewMode === 'countries' && post?.isLiveCamera)
+      && !removedPosts.has(post?.id)
       && !(post?.isExternal && blockedAccounts.has(feedAccountKey(post)))
       && !(!post?.isExternal && blockedMembers.has(post?.author?.id))),
-    [displayed, viewMode, blockedAccounts, blockedMembers]
+    [displayed, viewMode, blockedAccounts, blockedMembers, removedPosts]
   );
   const requestNextPageAtPosition = useCallback((index) => {
     if (index >= Math.max(0, contentPosts.length - FEED_POSITION_PREFETCH_POSTS)) loadMoreRemote();
@@ -3805,6 +3848,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                       onMediaOpen={p => setMediaLightboxPostId(p.id)}
                       onPostUpdated={updateFeedPost}
                       onBlocked={handleBlocked}
+                      onRemoved={handleRemoved}
                       isMediaOpen={post.id != null && post.id === mediaLightboxPostId}
                     />
                   </div>

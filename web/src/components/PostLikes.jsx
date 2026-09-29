@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import FollowListModal from './FollowListModal';
 import { HeartIcon, postSource } from './PostCardChrome';
+import { sendSourceInteraction, useSourceCapability } from './ConnectedPostActions';
 
 // Member likes on external posts are per viewer, so the shared feed snapshot
 // never carries them. Cards on screen ask for theirs, batched into one request.
@@ -35,8 +36,10 @@ function useMemberLikes(postId, enabled, viewerId) {
 }
 
 // Heart plus like count. The heart likes or unlikes; the count opens who liked it.
-// Member posts keep their own likes; external posts add members' likes to the
-// count the source reports (sources don't share who liked a post).
+// Member posts keep their own likes. An external post can be liked only through
+// the member's connected account on that source: the like is sent to the source
+// and recorded here too, so its count adds members' likes to the source's own
+// and "Liked by" lists the members (sources don't share who liked a post).
 export default function PostLikes({ post, onPostUpdated }) {
   const { token, profile } = useAuth();
   const { showToast } = useToast();
@@ -46,6 +49,7 @@ export default function PostLikes({ post, onPostUpdated }) {
   const isMember = !post.isExternal && ['uficonnect', 'livecamera'].includes(post.source || 'uficonnect');
   const interactive = isMember || isRestaurant;
   const member = useMemberLikes(post.id, !interactive, profile?.id || '');
+  const capability = useSourceCapability(interactive ? null : post);
   const src = postSource(post);
   const liked = interactive ? Boolean(post.likedByMe) : Boolean(member?.likedByMe);
   const memberCount = interactive ? Number(post.likesCount || 0) : Number(member?.count || 0);
@@ -55,17 +59,27 @@ export default function PostLikes({ post, onPostUpdated }) {
   async function toggle() {
     if (busy) return;
     if (!token) { showToast('Sign in to like this post.', 'info'); return; }
+    if (!interactive && !capability?.connected) {
+      showToast(capability === null ? 'Checking your connected accounts…'
+        : capability ? `Connect your ${capability.label} account in Connected accounts to like its posts.`
+          : `Liking isn't available for ${src.label} posts. Open the original to react there.`, 'info');
+      return;
+    }
     setBusy(true);
     try {
       if (interactive) {
         const { data } = await client.post(`/${isRestaurant ? 'restaurants' : 'posts'}/${encodeURIComponent(post.id)}/like`);
         onPostUpdated?.(data.post || { ...post, likedByMe: data.likedByMe, likesCount: data.likesCount });
       } else {
-        const { data } = await client.post(`/feed/${encodeURIComponent(post.id)}/like`);
+        const next = !liked;
+        await sendSourceInteraction(post, 'like', { liked: next });
+        let { data } = await client.post(`/feed/${encodeURIComponent(post.id)}/like`);
+        // The UFIconnect record follows the source; a stale local state self-corrects.
+        if (Boolean(data.likedByMe) !== next) ({ data } = await client.post(`/feed/${encodeURIComponent(post.id)}/like`));
         memberLikes.set(post.id, { count: Number(data.memberLikesCount || 0), likedByMe: Boolean(data.likedByMe) }); emit();
       }
-    } catch {
-      showToast('Could not update that like. Please try again.', 'error');
+    } catch (error) {
+      showToast(error?.response?.data?.message || 'Could not update that like. Please try again.', 'error');
     } finally {
       setBusy(false);
     }
@@ -81,7 +95,9 @@ export default function PostLikes({ post, onPostUpdated }) {
     : `${memberCount.toLocaleString()} ${memberCount === 1 ? 'like' : 'likes'}`;
   return (
     <div className={`post-chrome-like${total > 0 ? ' post-chrome-like-counted' : ''}`}>
-      <button type="button" className="post-chrome-action" onClick={toggle} disabled={busy} aria-pressed={liked} aria-label={liked ? 'Unlike' : 'Like'} title={liked ? 'Unlike' : 'Like'}>
+      <button type="button" className="post-chrome-action" onClick={toggle} disabled={busy} aria-pressed={liked} aria-label={liked ? 'Unlike' : 'Like'}
+        title={interactive || capability?.connected ? (liked ? 'Unlike' : `Like${interactive ? '' : ` on ${capability.label}`}`) : capability ? `Connect ${capability.label} to like` : `Likes on ${src.label}`}
+        data-locked={!interactive && !capability?.connected ? 'true' : undefined}>
         <HeartIcon filled={liked} />
       </button>
       {total > 0 && (

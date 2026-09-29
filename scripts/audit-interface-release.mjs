@@ -22,7 +22,7 @@ try {
   for (const width of [1440, 768, 390, 320]) {
     const context = await browser.newContext({ viewport: { width, height: 950 }, isMobile: width < 600, hasTouch: width <= 768 });
     const page = await context.newPage(); page.setDefaultTimeout(15000);
-    const errors = [], feedRequests = [], published = [], interactions = [];
+    const errors = [], feedRequests = [], published = [], interactions = [], memberLikes = [];
     page.on('pageerror', e => errors.push(e.message));
     await context.route('**/api/**', async route => {
       const url = new URL(route.request().url()), endpoint = url.pathname.replace(/^\/api/, '');
@@ -40,6 +40,8 @@ try {
       if (endpoint === '/jobs/tracking') return route.fulfill({ json: { jobs: [{ id: 'saved-job', title: 'Community engineer', org: 'Example Company', status: 'saved' }] } });
       if (endpoint === '/social/interaction-capabilities') return route.fulfill({ json: { sources: { reddit: { connected: true, label: 'Reddit', likeLabel: 'Upvote', maxLength: 1000 } } } });
       if (endpoint === '/social/interactions') { const body = route.request().postDataJSON(); interactions.push(body); return route.fulfill({ json: { published: true, liked: body.liked, commentId: 'remote-comment' } }); }
+      if (endpoint === '/feed/likes') return route.fulfill({ json: { likes: {} } });
+      if (/^\/feed\/[^/]+\/like$/.test(endpoint) && route.request().method() === 'POST') { memberLikes.push(endpoint); return route.fulfill({ json: { likedByMe: memberLikes.length % 2 === 1, memberLikesCount: memberLikes.length % 2 } }); }
       if (endpoint === '/users/public-member') return route.fulfill({ json: { id: 'public-member', name: 'Jordan', bio: 'Building useful communities.', interests: ['Open Source'], goals: ['Learn new skills'], skills: [], followersCount: 0, followingCount: 0 } });
       if (endpoint === '/users/public-member/posts') return route.fulfill({ json: { posts: [], hasMore: false } });
       return route.continue();
@@ -74,8 +76,12 @@ try {
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=feed'); await sources.waitFor();
     assert.equal(await sources.getByRole('button', { name: 'Reddit', exact: true }).getAttribute('aria-pressed'), 'true');
     assert.equal(await sources.getByRole('button', { name: 'Hacker News', exact: true }).getAttribute('aria-pressed'), 'true');
-    await page.getByRole('button', { name: 'Upvote on Reddit', exact: true }).click();
-    await page.getByRole('button', { name: 'Remove upvote on Reddit', exact: true }).waitFor();
+    // Liking a Reddit post goes through the member's connected Reddit account and is recorded on UFIconnect.
+    const redditCard = page.locator('.post-card').filter({ has: page.getByRole('link', { name: 'Open on Reddit', exact: true }) }).first();
+    await redditCard.getByRole('button', { name: 'Like', exact: true }).click();
+    await redditCard.getByRole('button', { name: 'Unlike', exact: true }).waitFor();
+    assert.deepEqual(memberLikes, ['/feed/reddit-story/like'], 'The like is recorded for "Liked by"');
+    assert.equal(await page.getByRole('button', { name: 'Upvote on Reddit', exact: true }).count(), 0, 'One heart replaces the separate upvote button');
     await page.getByRole('button', { name: 'Comment on Reddit', exact: true }).click();
     await page.getByLabel('Publish a comment on Reddit', { exact: true }).fill('Thank you for the useful update.');
     await page.getByRole('button', { name: 'Publish on Reddit', exact: true }).click();

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { SOURCE_META } from './sourceMeta';
@@ -45,24 +45,66 @@ function SourceBadge({ source, src }) {
   );
 }
 
-// External posts show the author's initials in the source colour (or the
-// source's own mark for publishers), always carrying the source badge.
-export function PostAvatar({ post, member = false }) {
+// Author avatars: the author's photo when the source provides one (tap to view
+// it full size), otherwise their initials in the source colour, or the
+// source's own mark for publishers. External authors carry the source badge.
+export function PostAvatar({ post, member = false, onView }) {
   const src = postSource(post);
   const avatarUrl = post?.author?.avatarUrl;
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [avatarUrl]);
   const publisher = !member && (!post?.author?.name || post.author.name === src.label);
-  if (publisher) {
+  if (publisher && !avatarUrl) {
     return (
       <span className="post-chrome-avatar post-chrome-avatar-source" style={{ '--source-color': src.color }} aria-hidden="true">
         {hasBrandIcon(post.source) ? <BrandIcon platform={post.source} size={26} /> : <b>{src.icon}</b>}
       </span>
     );
   }
-  return (
-    <span className="post-chrome-avatar" style={{ '--source-color': member ? 'var(--primary)' : src.color }} aria-hidden="true">
-      {avatarUrl ? <img src={avatarUrl} alt="" /> : <b>{initialsOf(post?.author?.name)}</b>}
+  const photo = avatarUrl && !failed;
+  const content = (
+    <>
+      {photo ? <img src={avatarUrl} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} /> : <b>{initialsOf(post?.author?.name)}</b>}
       {!member && <SourceBadge source={post.source} src={src} />}
-    </span>
+    </>
+  );
+  const style = { '--source-color': member ? 'var(--primary)' : src.color };
+  if (photo && onView) {
+    return (
+      <button type="button" className="post-chrome-avatar post-chrome-avatar-button" style={style}
+        aria-label={`View ${post?.author?.name || 'author'}'s profile photo`} onClick={() => onView(avatarUrl)}>
+        {content}
+      </button>
+    );
+  }
+  return <span className="post-chrome-avatar" style={style} aria-hidden="true">{content}</span>;
+}
+
+// A full-size view of an author's profile photo; Escape, the backdrop or Close dismiss it.
+export function ProfilePhotoViewer({ url, name, handle, profileTo, onClose }) {
+  const closeButton = useRef(null);
+  useEffect(() => {
+    const previous = document.activeElement;
+    closeButton.current?.focus();
+    const escape = event => { if (event.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('keydown', escape); previous?.focus?.(); };
+  }, [onClose]);
+  return (
+    <div className="post-chrome-photo-viewer" role="dialog" aria-modal="true" aria-label={`${name}'s profile photo`}
+      onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
+      <figure>
+        <img src={url} alt={`${name}'s profile photo`} referrerPolicy="no-referrer" />
+        <figcaption>
+          <strong>{name}</strong>
+          {handle && <span>{handle}</span>}
+          <span className="post-chrome-photo-actions">
+            {profileTo && <Link to={profileTo} onClick={onClose}>View profile</Link>}
+            <button ref={closeButton} type="button" onClick={onClose}>Close</button>
+          </span>
+        </figcaption>
+      </figure>
+    </div>
   );
 }
 
@@ -90,24 +132,26 @@ export function PostTime({ post, live = false }) {
 export function PostHeader({ post, member = false, to }) {
   const src = postSource(post);
   const name = post?.author?.name || src.label;
-  const identity = (
-    <>
-      <PostAvatar post={post} member={member} />
-      <span className="post-chrome-who">
-        <span className="post-chrome-name">{name}</span>
-        <span className="post-chrome-handle-row">
-          <span className="post-chrome-handle">{postHandle(post, member)}</span>
-          {post?.topic && <span className="post-chrome-topic">{post.topic}</span>}
-        </span>
+  const handle = postHandle(post, member);
+  const [viewing, setViewing] = useState('');
+  const closeViewer = useCallback(() => setViewing(''), []);
+  const who = (
+    <span className="post-chrome-who">
+      <span className="post-chrome-name">{name}</span>
+      <span className="post-chrome-handle-row">
+        <span className="post-chrome-handle">{handle}</span>
+        {post?.topic && <span className="post-chrome-topic">{post.topic}</span>}
       </span>
-    </>
+    </span>
   );
   return (
     <div className="post-chrome-header">
-      {to ? <Link to={to} className="post-chrome-identity">{identity}</Link> : <div className="post-chrome-identity">{identity}</div>}
+      <PostAvatar post={post} member={member} onView={setViewing} />
+      {to ? <Link to={to} className="post-chrome-identity">{who}</Link> : <div className="post-chrome-identity">{who}</div>}
       <div className="post-chrome-corner">
         <PostTime post={post} live={post?.isLiveCamera} />
       </div>
+      {viewing && <ProfilePhotoViewer url={viewing} name={name} handle={handle} profileTo={to} onClose={closeViewer} />}
     </div>
   );
 }
@@ -122,8 +166,9 @@ function ShareIcon() {
   return <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 15V3m0 0-4 4m4-4 4 4" /><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" /></svg>;
 }
 
-// The last action opens the post's options: Report, and Block when the author can be blocked.
-export function PostOptionsMenu({ onReport, blockLabel, blockBusy, onBlock }) {
+// The "more" button opens the post's options. Each item is
+// { label, detail?, danger?, busy?, ariaLabel?, onSelect }; hidden items are left out.
+export function PostOptionsMenu({ items = [] }) {
   const [open, setOpen] = useState(false);
   const wrapper = useRef(null), button = useRef(null);
   useEffect(() => {
@@ -133,7 +178,8 @@ export function PostOptionsMenu({ onReport, blockLabel, blockBusy, onBlock }) {
     document.addEventListener('pointerdown', outside); document.addEventListener('keydown', escape);
     return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
   }, [open]);
-  const choose = action => () => { setOpen(false); action(); };
+  const visible = items.filter(Boolean);
+  if (!visible.length) return null;
   return (
     <div className="post-chrome-more" ref={wrapper}>
       <button ref={button} type="button" className="post-chrome-action" aria-label="More options" aria-haspopup="menu" aria-expanded={open} title="More options" onClick={() => setOpen(value => !value)}>
@@ -141,12 +187,12 @@ export function PostOptionsMenu({ onReport, blockLabel, blockBusy, onBlock }) {
       </button>
       {open && (
         <div className="post-chrome-menu" role="menu">
-          <button type="button" role="menuitem" onClick={choose(onReport)}>Report post</button>
-          {blockLabel && (
-            <button type="button" role="menuitem" className="post-chrome-menu-danger" aria-label={`Block ${blockLabel}`} disabled={blockBusy} onClick={choose(onBlock)}>
-              {blockBusy ? 'Blocking…' : 'Block account'}<small>{blockLabel}</small>
+          {visible.map(item => (
+            <button key={item.label} type="button" role="menuitem" className={item.danger ? 'post-chrome-menu-danger' : undefined}
+              aria-label={item.ariaLabel} disabled={item.busy} onClick={() => { setOpen(false); item.onSelect(); }}>
+              {item.busy ? `${item.label}…` : item.label}{item.detail && <small>{item.detail}</small>}
             </button>
-          )}
+          ))}
         </div>
       )}
     </div>

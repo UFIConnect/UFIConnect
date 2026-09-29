@@ -13,7 +13,31 @@ function getCapabilities(userId) {
   requests.set(userId, { promise, expiresAt: Date.now() + 60000 });
   return promise;
 }
-const SUPPORTED = new Set(['reddit', 'twitter', 'bluesky', 'youtube', 'github', 'gitlab']);
+export const INTERACTIVE_SOURCES = new Set(['reddit', 'twitter', 'bluesky', 'youtube', 'github', 'gitlab']);
+const SUPPORTED = INTERACTIVE_SOURCES;
+
+// What this member can do on a post's source: null while loading, undefined
+// when the source takes no interactions, else { connected, label, likeLabel, maxLength }.
+export function useSourceCapability(post) {
+  const { profile } = useAuth();
+  const [capability, setCapability] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    setCapability(null);
+    if (!profile?.id || !SUPPORTED.has(post?.source)) { setCapability(undefined); return undefined; }
+    getCapabilities(profile.id).then(sources => { if (!cancelled) setCapability(sources[post.source] || undefined); });
+    return () => { cancelled = true; };
+  }, [profile?.id, post?.source]);
+  return capability;
+}
+
+// Sends a like or comment through the member's connected source account.
+export async function sendSourceInteraction(post, action, { liked, content, requestId = crypto.randomUUID() } = {}) {
+  const payload = { source: post.source, sourceUrl: post.sourceUrl, action, ...(action === 'like' ? { liked } : { content }) };
+  const { data } = await client.post('/social/interactions', { ...payload, requestId });
+  if (!data.published) throw new Error('The source did not confirm this action.');
+  return data;
+}
 
 export default function ConnectedPostActions({ post }) {
   const { profile } = useAuth();
@@ -31,8 +55,9 @@ export default function ConnectedPostActions({ post }) {
     if (profile?.id && SUPPORTED.has(post?.source)) getCapabilities(profile.id).then(sources => { if (!cancelled) setCapability(sources[post.source]); });
     return () => { cancelled = true; };
   }, [profile?.id, post?.id, post?.source]);
-  if (!capability?.connected || !post?.sourceUrl) return null;
-  const canComment = !['github', 'gitlab'].includes(post.source) || /\/(?:issues|pull|merge_requests)\/\d+(?:[/?#]|$)/.test(post.sourceUrl);
+  const canComment = !['github', 'gitlab'].includes(post?.source) || /\/(?:issues|pull|merge_requests)\/\d+(?:[/?#]|$)/.test(post?.sourceUrl || '');
+  // Likes go through the heart in the action row; this offers commenting on the source.
+  if (!capability?.connected || !post?.sourceUrl || !canComment) return null;
   async function send(action) {
     if (busy) return;
     const payload = { source: post.source, sourceUrl: post.sourceUrl, action, ...(action === 'like' ? { liked: !liked } : { content: draft.trim() }) };
@@ -50,7 +75,6 @@ export default function ConnectedPostActions({ post }) {
   }
   return <div className="connected-post-actions" onClick={event => event.stopPropagation()}>
     <div className="connected-post-action-buttons">
-      <button className="btn btn-ghost btn-sm" type="button" disabled={busy} aria-pressed={liked} onClick={() => send('like')}>{liked ? (post.source === 'reddit' ? 'Remove upvote' : ['github', 'gitlab'].includes(post.source) ? 'Unstar' : 'Unlike') : capability.likeLabel} on {capability.label}</button>
       {canComment && <button className="btn btn-ghost btn-sm" type="button" aria-expanded={open} disabled={busy} onClick={() => setOpen(value => !value)}>Comment on {capability.label}</button>}
     </div>
     {error && <div role="alert" className="connected-post-action-error">{error} <Link to="/connected-accounts?interactions=1">Manage connection</Link></div>}
