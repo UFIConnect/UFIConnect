@@ -12,11 +12,9 @@ More tools. Buildings represent operating stages, and the agent directory
 contains agents returned by the authenticated services. Select a building or
 agent for its measurements, role, recent activity and explanation.
 
-To review the city map without signing in to the Office, open **Local web →
-Local preview → Maps**. It shows the local website's `/maps` page, which draws
-the same map on sample observations of the 71 registered agents
-(`office/src/city-sample.mjs`). Only the local website dev server has this page;
-the public website build leaves it and the Office code out.
+The website's **Maps** page (`/maps`, local preview only for now) reuses this 3D
+engine for sources: one home per source, a nature-themed town per category and
+this same downtown. Open it from **Local web → Local preview → Maps**.
 
 Every building can be entered from the map or district strip. Its four-level
 interior is a scrollable, read-only walkthrough of what enters the stage, how

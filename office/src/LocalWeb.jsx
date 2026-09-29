@@ -6,7 +6,7 @@ const LOCAL_CONSOLE = 'http://127.0.0.1:4174/#local-web';
 const LOCAL_PREVIEW = 'http://127.0.0.1:4173';
 const isLocalConsole = import.meta.env.MODE === 'release-local';
 const STEPS = [['edit', 'Edit'], ['preview', 'Preview'], ['publish', 'Publish']];
-// Maps is the Live City map on sample agents, served only by the local website.
+// Maps is the website's 3D source map, served only by the local website.
 const PREVIEW_PAGES = [['/', 'Home'], ['/maps', 'Maps']];
 const MAX_CHANGE_ROWS = 400;
 const phoneUrl = value => {

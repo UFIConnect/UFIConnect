@@ -78,7 +78,7 @@ const SavedItems = lazy(() => import('./pages/SavedItems'));
 const GroupPost = lazy(() => import('./pages/GroupPost'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 const SearchGuide = lazy(() => import('./pages/SearchGuide'));
-// Maps shows the Office's Live City for review in the local website preview.
+// Maps is the 3D source map, for review in the local website preview first.
 // Only the dev server (npm run office:release-local) has it; builds leave it out.
 const LocalMaps = import.meta.env.DEV ? lazy(() => import('./pages/LocalMaps')) : null;
 

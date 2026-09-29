@@ -71,12 +71,16 @@ function facadeTextures(style, seed) {
   });
   return { map, emissiveMap, glass: style !== 1 };
 }
-function labelTexture(text, accent) {
-  const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 96;
+function drawLabel(canvas, text, accent) {
   const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = 'rgba(11,23,33,.86)'; ctx.beginPath(); ctx.roundRect(4, 8, 504, 80, 40); ctx.fill();
   ctx.fillStyle = accent; ctx.beginPath(); ctx.arc(48, 48, 12, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = '#eef5f8'; ctx.font = '600 34px system-ui, sans-serif'; ctx.textBaseline = 'middle'; ctx.fillText(text, 76, 50, 410);
+}
+function labelTexture(text, accent) {
+  const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 96;
+  drawLabel(canvas, text, accent);
   const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
 }
@@ -290,6 +294,16 @@ export default function CityScene3D({ city, edges = [], motion, speed, motionSco
     city.blocks.forEach(block => slab('lawn', wx(block.x), wz(block.y), block.lawn[0] / 10, block.lawn[1] / 10, 0, 0, 10, .22));
 
     const picks = [], markers = [], labels = [], buildingGroups = [];
+    // Labels whose text follows the page: a building's `badge` replaces its name, and a home's
+    // `badge` (such as a post count) floats above it. Each keeps its canvas and redraws on change.
+    const liveLabels = [];
+    function liveLabel(text, accent, read) {
+      const texture = keep(textures, labelTexture(text, accent));
+      const sprite = new THREE.Sprite(keep(materialsList, new THREE.SpriteMaterial({ map: texture, depthWrite: false })));
+      const item = { sprite, texture, text, accent, read };
+      liveLabels.push(item);
+      return item;
+    }
     // Stage buildings: podium, tower, setback crown, rooftop plant and a lit sign in the district colour.
     const facades = [0, 1, 2].map(style => facadeTextures(style, 29 + style * 7));
     facades.forEach(facade => { textures.push(facade.map, facade.emissiveMap); });
@@ -348,7 +362,8 @@ export default function CityScene3D({ city, edges = [], motion, speed, motionSco
         const tag = new THREE.Sprite(keep(materialsList, new THREE.SpriteMaterial({ map: keep(textures, labelTexture(route.label, route.color)), depthWrite: false })));
         tag.position.set(wx((ax + bx) / 2), 3.6, wz(az) + 1.6); tag.scale.set(9, 1.7, 1); scene.add(tag);
       });
-      const label = new THREE.Sprite(keep(materialsList, new THREE.SpriteMaterial({ map: keep(textures, labelTexture(district.label, district.color)), depthWrite: false })));
+      const districtText = live => { const d = live.districts.get(district.id); return d?.badge ? [d.badge, d.badgeColor || district.color] : [district.label, district.color]; };
+      const label = liveLabel(...districtText(current.current), districtText).sprite;
       label.position.set(x, roofTop + 5.4, z); label.scale.set(15, 2.8, 1); label.renderOrder = 3; scene.add(label);
       labels.push({ mesh: label, height: roofTop + 5.4 });
       buildingGroups.push({ group, index, height: roofTop + 4 });
@@ -559,6 +574,14 @@ export default function CityScene3D({ city, edges = [], motion, speed, motionSco
     homeState.forEach((_, i) => writeHome(i));
     [bodies, roofs, doors].forEach(mesh => { if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true; });
     bodies.userData.homes = roofs.userData.homes = true;
+    homeList.forEach((home, i) => {
+      if (home.badge == null) return;
+      const homeText = live => { const h = live.homes.get(home.id); return [String(h?.badge ?? ''), h?.badgeColor || '#8de8d3']; };
+      const tag = liveLabel(...homeText(current.current), homeText);
+      tag.home = i;
+      tag.sprite.position.set(homeState[i].x, homeState[i].wallH + 4.2, homeState[i].z); tag.sprite.scale.set(7.2, 1.35, 1); tag.sprite.renderOrder = 3;
+      scene.add(tag.sprite);
+    });
 
     // Cafes and gardens along the southern boulevard.
     city.cafes.forEach((cafe, index) => {
@@ -581,7 +604,7 @@ export default function CityScene3D({ city, edges = [], motion, speed, motionSco
 
     // Each town's name hangs above it, on the side away from downtown.
     city.towns.forEach(town => {
-      const label = new THREE.Sprite(keep(materialsList, new THREE.SpriteMaterial({ map: keep(textures, labelTexture(town.name, '#8de8d3')), depthWrite: false })));
+      const label = new THREE.Sprite(keep(materialsList, new THREE.SpriteMaterial({ map: keep(textures, labelTexture(town.name, town.color || '#8de8d3')), depthWrite: false })));
       const [px, pz] = town.side === 'top' ? [town.x, town.top - 60] : town.side === 'bottom' ? [town.x, town.bottom + 60] : town.side === 'left' ? [town.left - 20, town.top - 40] : [town.right + 20, town.top - 40];
       label.position.set(wx(px), 12, wz(pz)); label.scale.set(32, 6, 1); label.renderOrder = 3; scene.add(label);
       labels.push({ mesh: label, height: 12 });
@@ -848,6 +871,14 @@ export default function CityScene3D({ city, edges = [], motion, speed, motionSco
         }
       });
       if (homesChanged) markHomesDirty();
+      liveLabels.forEach(item => {
+        const [text, accent] = item.read(live);
+        if (text !== item.text || accent !== item.accent) {
+          item.text = text; item.accent = accent;
+          drawLabel(item.texture.image, text, accent); item.texture.needsUpdate = true;
+        }
+        if (item.home != null) { const state = homeState[item.home]; item.sprite.visible = state.visible && state.rise > .6 && Boolean(text); }
+      });
       buildingGroups.forEach(({ group, index, height }) => {
         const rise = buildSkip ? 1 : ease(((now - built) / 1000 - index * .06) / .9);
         group.position.y = -(1 - rise) * height;
