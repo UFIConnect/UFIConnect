@@ -139,6 +139,12 @@ try {
     assert.equal(await page.frameLocator('iframe').locator('body').evaluate(() => innerWidth), 1280, 'Desktop mode tests the desktop layout even in a narrow console');
     await page.getByRole('button', { name: 'Mobile', exact: true }).click();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
+    const previewPages = page.getByRole('group', { name: 'Preview page', exact: true });
+    await previewPages.getByRole('button', { name: 'Maps', exact: true }).click();
+    assert.equal(await preview.getAttribute('src'), 'http://127.0.0.1:4173/maps', 'Maps opens the Live City page of the local website');
+    await page.frameLocator('iframe').getByRole('heading', { name: 'Local website preview' }).waitFor();
+    await previewPages.getByRole('button', { name: 'Home', exact: true }).click();
+    assert.equal(await preview.getAttribute('src'), 'http://127.0.0.1:4173');
     await step(page, 'Publish');
     await page.getByRole('button', { name: 'Review for public update', exact: true }).click();
     await page.getByLabel('Access token', { exact: true }).fill(TOKEN);
