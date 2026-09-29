@@ -6,6 +6,7 @@ import PublicFooter from '../components/PublicFooter';
 import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
 import { OpenOnSource, PostHeader } from '../components/PostCardChrome';
+import PostLikes from '../components/PostLikes';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, youTubeEmbedUrl, HlsVideoPlayer, useGlobalMuted, SoundIcon } from '../components/videoMedia';
@@ -104,9 +105,10 @@ function GuestVideoPlayer({ post, active, muted }) {
   return null;
 }
 
-// Deliberately simpler than Feed.jsx's own PostCard — no comments, no
-// like/report actions (those still route through PostDetail, already
-// guest-safe — see its own GuestShell branch). Video now plays inline
+// Deliberately simpler than Feed.jsx's own PostCard — no comments or
+// report actions (those still route through PostDetail, already
+// guest-safe — see its own GuestShell branch). The like count shows, and
+// liking asks the guest to sign in. Video now plays inline
 // (see GuestVideoPlayer) since a static "tap to watch" tile read as dead
 // weight in a feed that's supposed to feel alive while scrolling.
 function GuestPostCard({ post, active, muted, registerRef }) {
@@ -150,8 +152,11 @@ function GuestPostCard({ post, active, muted, registerRef }) {
         </div>
       )}
       <div style={{ padding: '0 14px 14px' }}>
-        {post.commentsCount > 0 && <div style={{ marginTop: 10, fontSize: '.8rem', color: 'var(--muted)' }}>{post.commentsCount.toLocaleString()} comments</div>}
-        <OpenOnSource post={post} />
+        <div className="post-chrome-actions">
+          <PostLikes post={post} />
+          {post.commentsCount > 0 && <span style={{ fontSize: '.8rem', color: 'var(--muted)' }}>{post.commentsCount.toLocaleString()} comments</span>}
+          <OpenOnSource post={post} />
+        </div>
       </div>
     </div>
   );

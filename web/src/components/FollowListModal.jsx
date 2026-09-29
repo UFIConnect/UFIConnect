@@ -12,7 +12,7 @@ function initials(name = '') {
 // action below (follow toggle, message) already works generically against
 // any user list, not just a follow relationship, so only the fetch itself
 // needed to become swappable.
-export default function FollowListModal({ userId, type, title, onClose, fetchUrl, emptyLabel }) {
+export default function FollowListModal({ userId, type, title, onClose, fetchUrl, emptyLabel, note }) {
   const navigate = useNavigate();
   const [users,      setUsers]      = useState([]);
   const [loading,    setLoading]    = useState(true);
@@ -72,6 +72,7 @@ export default function FollowListModal({ userId, type, title, onClose, fetchUrl
 
         {/* List */}
         <div style={{ overflowY: 'auto', padding: '0 16px 24px', flex: 1 }}>
+          {note && <p style={{ margin: '0 4px 8px', fontSize: '.8rem', color: 'var(--muted)', lineHeight: 1.5 }}>{note}</p>}
           {loading && (
             <div style={{ textAlign: 'center', padding: 40 }}>
               <span className="spinner spinner-primary" />

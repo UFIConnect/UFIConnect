@@ -17345,6 +17345,18 @@ async function migrateDB() {
     `);
     await db.query(`CREATE INDEX IF NOT EXISTS restaurant_post_likes_post_idx ON restaurant_post_likes(post_id, created_at DESC)`);
 
+    // Members can like any external feed post too. Likes are keyed by the
+    // feed post id, so the source's own count stays separate from these.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS external_post_likes (
+        post_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (post_id, user_id)
+      )
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS external_post_likes_post_idx ON external_post_likes(post_id, created_at DESC)`);
+
     // Feed post cache — stores fetched external posts across restarts
     await db.query(`
       CREATE TABLE IF NOT EXISTS direct_messages (
@@ -23998,6 +24010,22 @@ app.get('/feed/sources', authenticate, (req, res) => {
 // anyone without an account straight to login instead of the post itself).
 // serializeCommunityPost already treats a null viewerId as "not liked by
 // anyone in particular" rather than crashing (see its own likedByMe line).
+// Member likes for a page of external feed cards. The shared feed snapshot
+// never carries per-viewer state, so cards read these separately.
+app.get('/feed/likes', authenticateOptional, async (req, res) => {
+  const ids = [...new Set(String(req.query.ids || '').split(',').map(id => id.trim()).filter(id => id && id.length <= 300))].slice(0, 100);
+  if (!ids.length) return res.json({ likes: {} });
+  if (!db.isConnected()) return res.json({ likes: {}, unavailable: true });
+  try {
+    const { rows } = await db.query(
+      `SELECT post_id, COUNT(*)::integer AS likes_count, BOOL_OR(user_id = $2) AS liked_by_me
+         FROM external_post_likes WHERE post_id = ANY($1::text[]) GROUP BY post_id`,
+      [ids, req.user?.id || ''],
+    );
+    res.json({ likes: Object.fromEntries(rows.map(row => [row.post_id, { count: Number(row.likes_count || 0), likedByMe: Boolean(row.liked_by_me) }])) });
+  } catch (e) { console.error('GET /feed/likes:', e); res.status(500).json({ error: 'Internal server error' }); }
+});
+
 app.get('/feed/:postId', authenticateOptional, async (req, res) => {
   const { postId } = req.params;
 
@@ -27497,24 +27525,39 @@ app.post('/restaurants/:postId/comments', authenticate, contentSubmissionLimiter
 // already applies, for the same reason: a hidden third party shouldn't
 // show up by name here just because they liked something, regardless of
 // their own profile-visibility setting.
+async function likerProfiles(userIds, myId) {
+  const myFollowingSet = new Set(follows.filter(f => f.followerId === myId).map(f => f.followingId));
+  const likerUsers = (await Promise.all(userIds.map(id => getUser(id))))
+    .filter(Boolean)
+    .filter(u => !isProfileHidden(u) || canViewHiddenProfile(u, myId));
+  return likerUsers.map(u => ({
+    id: u.id, name: u.name, title: u.title || '', avatarUrl: u.avatarUrl || '',
+    organization: u.organization || '', role: u.preferences?.role || '',
+    isFollowing: myFollowingSet.has(u.id),
+    isSelf: u.id === myId,
+  }));
+}
+
 app.get('/posts/:postId/likes', authenticate, async (req, res) => {
   try {
     const post = await getCommunityPostById(req.params.postId);
     if (!post) return res.status(404).json({ message: 'Post not found.' });
-    const myId = req.user.id;
-    const myFollowingSet = new Set(follows.filter(f => f.followerId === myId).map(f => f.followingId));
-    const likerUsers = (await Promise.all((post.likes || []).map(id => getUser(id))))
-      .filter(Boolean)
-      .filter(u => !isProfileHidden(u) || canViewHiddenProfile(u, myId));
-    res.json({
-      users: likerUsers.map(u => ({
-        id: u.id, name: u.name, title: u.title || '', avatarUrl: u.avatarUrl || '',
-        organization: u.organization || '', role: u.preferences?.role || '',
-        isFollowing: myFollowingSet.has(u.id),
-        isSelf: u.id === myId,
-      })),
-    });
+    res.json({ users: await likerProfiles(post.likes || [], req.user.id) });
   } catch (e) { console.error('GET /posts/:postId/likes:', e); res.status(500).json({ error: 'Internal server error' }); }
+});
+
+// "Liked by" for any feed card: community posts keep their likes inline,
+// restaurant stories and external posts in their own tables (newest first).
+app.get('/feed/:postId/likes', authenticate, async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const post = await getCommunityPostById(postId);
+    if (post) return res.json({ users: await likerProfiles(post.likes || [], req.user.id) });
+    if (!db.isConnected()) return res.status(503).json({ message: 'Likes are temporarily unavailable — please try again in a moment.' });
+    const table = isRestaurantDiscoveryPostId(postId) ? 'restaurant_post_likes' : 'external_post_likes';
+    const { rows } = await db.query(`SELECT user_id FROM ${table} WHERE post_id=$1 ORDER BY created_at DESC LIMIT 500`, [postId]);
+    res.json({ users: await likerProfiles(rows.map(row => row.user_id), req.user.id) });
+  } catch (e) { console.error('GET /feed/:postId/likes:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 app.get('/posts/:postId/comments', authenticate, async (req, res) => {
@@ -28028,7 +28071,38 @@ app.post('/groups/:id/posts', authenticate, contentSubmissionLimiter, async (req
   } catch (e) { console.error('POST /groups/:id/posts:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
-app.post('/feed/:postId/like', authenticate, toggleCommunityPostLike);
+// Community posts toggle their own likes; any other post that is really in
+// the feed stores a member like in external_post_likes.
+async function toggleFeedPostLike(req, res) {
+  const { postId } = req.params;
+  try {
+    if (await getCommunityPostById(postId)) return toggleCommunityPostLike(req, res);
+    if (!db.isConnected()) {
+      return res.status(503).json({ message: 'Liking is temporarily unavailable — please try again in a moment.' });
+    }
+    if (typeof postId !== 'string' || postId.length > 300 || !(await findPostByIdWithDbFallback(postId))) {
+      return res.status(404).json({ message: 'Post not found.' });
+    }
+    const removed = await db.query(
+      `DELETE FROM external_post_likes WHERE post_id=$1 AND user_id=$2 RETURNING post_id`,
+      [postId, req.user.id],
+    );
+    const likedByMe = !removed.rowCount;
+    if (likedByMe) {
+      await db.query(
+        `INSERT INTO external_post_likes (post_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [postId, req.user.id],
+      );
+    }
+    const { rows } = await db.query(
+      `SELECT COUNT(*)::integer AS likes_count FROM external_post_likes WHERE post_id=$1`,
+      [postId],
+    );
+    return res.json({ likedByMe, memberLikesCount: Number(rows[0]?.likes_count || 0) });
+  } catch (e) { console.error('toggleFeedPostLike:', e); return res.status(500).json({ error: 'Internal server error' }); }
+}
+
+app.post('/feed/:postId/like', authenticate, toggleFeedPostLike);
 
 // --- People search & public profiles -----------------------------------------
 // Search must not depend on the process-local users[] cache. A newly started

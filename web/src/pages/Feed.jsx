@@ -36,7 +36,8 @@ import { useToast } from '../contexts/ToastContext';
 import { UfiFeedContent } from './Post';
 import ConnectedPostActions from '../components/ConnectedPostActions';
 import { SavePostButton } from '../components/SaveButtons';
-import { CommentIcon, HeartIcon, OpenOnSource, PostHeader, PostOptionsMenu, SharePostButton, feedAccountKey } from '../components/PostCardChrome';
+import { CommentIcon, OpenOnSource, PostHeader, PostOptionsMenu, SharePostButton, feedAccountKey } from '../components/PostCardChrome';
+import PostLikes from '../components/PostLikes';
 
 const COMMAND_CENTER_PRO_TIER = TIERS.find((tier) => tier.tier === 'pro');
 const HOME_VIEW_MODES = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants', 'bars']);
@@ -1248,10 +1249,9 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
   return (
     <div ref={cardRef} className="card post-card" style={{ marginBottom: 12, '--source-color': src.color }}>
       <PostHeader post={post} />
-      {(post.group || post.topic || post.matchedByLocation) && (
+      {(post.group || post.matchedByLocation) && (
         <div className="post-chrome-chips">
           {post.group && <span style={{ fontSize: '.68rem', fontWeight: 600, background: c.bg, color: c.text, padding: '2px 7px', borderRadius: 5 }}>{post.group.name}</span>}
-          {post.topic && <span style={{ fontSize: '.65rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4 }}>{post.topic}</span>}
           <LocationMatchBadge post={post} />
         </div>
       )}
@@ -1270,10 +1270,11 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
       {post.content && <PostText text={post.content} accent={src.color} />}
       <ConnectedPostActions post={post} />
       <div className="post-chrome-actions">
+        <PostLikes post={post} />
         <SavePostButton post={post} className="post-chrome-action save-item-button" showLabel={false} />
         <SharePostButton post={post} />
+        <OpenOnSource post={post} label="Watch on YouTube" />
       </div>
-      <OpenOnSource post={post} label="Watch on YouTube" />
     </div>
   );
 }
@@ -1456,7 +1457,6 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
   const [commentDraft,    setCommentDraft]    = useState('');
   const [commentSending,  setCommentSending]  = useState(false);
   const [commentPostError,setCommentPostError]= useState(false);
-  const [likeBusy,        setLikeBusy]        = useState(false);
   const [imageFailed,     setImageFailed]     = useState(false);
   // Genuine-read engagement (see api/engagement.js) — declared before the
   // early returns below so it runs unconditionally on every render
@@ -1557,28 +1557,6 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
   const isArticle      = ARTICLE_SOURCES.has(post.source);
   const canWriteComment = isUFIconnectInteractive && !!token;
 
-  async function toggleLike() {
-    if (!isUFIconnectInteractive || likeBusy) return;
-    if (!token) {
-      showToast('Sign in to like this post.', 'info');
-      return;
-    }
-    setLikeBusy(true);
-    try {
-      const interactionPath = isRestaurantPost ? 'restaurants' : 'posts';
-      const { data } = await client.post(`/${interactionPath}/${encodeURIComponent(post.id)}/like`);
-      onPostUpdated?.(data.post || {
-        ...post,
-        likedByMe: data.likedByMe,
-        likesCount: data.likesCount,
-      });
-    } catch {
-      showToast('Could not update that like. Please try again.', 'error');
-    } finally {
-      setLikeBusy(false);
-    }
-  }
-
   async function loadMoreComments() {
     if (commentsLoadingMore || !comments) return;
     setCommentsLoadingMore(true);
@@ -1671,11 +1649,10 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
         member={!isExternal}
         to={!isExternal && post.author?.id ? (post.author.id === profile?.id ? '/profile' : `/u/${post.author.id}`) : undefined}
       />
-      {(isJob || post.group || post.topic || post.fromJoinedGroup || post.matchedByLocation) && (
+      {(isJob || post.group || post.fromJoinedGroup || post.matchedByLocation) && (
         <div className="post-chrome-chips">
           {isJob && <span style={{ fontSize: '.65rem', fontWeight: 700, color: '#059669', background: '#ECFDF5', padding: '2px 8px', borderRadius: 5 }}>Job</span>}
           {post.group && <span style={{ fontSize: '.68rem', fontWeight: 700, background: c.bg, color: c.text, padding: '2px 8px', borderRadius: 5 }}>{post.group.name}</span>}
-          {post.topic && <span style={{ fontSize: '.65rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4 }}>{post.topic}</span>}
           <LocationMatchBadge post={post} />
           {post.fromJoinedGroup && <span style={{ fontSize: '.68rem', color: 'var(--muted)' }}>your group</span>}
         </div>
@@ -1781,7 +1758,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
         </button>
         ) : null}
 
-      {/* Actions: comments, likes on UFIconnect posts, save and share; then the source link. */}
+      {/* Actions: comments, likes, save, share and the source link, then the options menu. */}
       <div className="post-chrome-actions">
         {hasComments && (
           <button
@@ -1795,21 +1772,17 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
             <CommentIcon />{commentCount > 0 && <span>{commentCount.toLocaleString()}</span>}
           </button>
         )}
-        {isUFIconnectInteractive && (
-          <button
-            type="button"
-            className="post-chrome-action"
-            onClick={toggleLike}
-            disabled={likeBusy}
-            aria-pressed={!!post.likedByMe}
-            aria-label={post.likedByMe ? 'Liked' : 'Like'}
-            title={post.likedByMe ? 'Unlike' : 'Like'}
-          >
-            <HeartIcon filled={post.likedByMe} />{post.likesCount > 0 && <span>{post.likesCount.toLocaleString()}</span>}
-          </button>
-        )}
+        <PostLikes post={post} onPostUpdated={onPostUpdated} />
         <SavePostButton post={post} className="post-chrome-action feed-save-post-button" showLabel={false} />
         <SharePostButton post={post} />
+        <OpenOnSource
+          post={post}
+          label={`${isJob ? 'Apply' : post.isLiveCamera ? 'Watch live' : hasVideo ? 'Watch' : 'Open'}${post.isLiveCamera ? '' : ` on ${src.label}`}`}
+          onClick={event => {
+            event.stopPropagation();
+            reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true });
+          }}
+        />
         <PostOptionsMenu
           onReport={() => (token ? setReportOpen(true) : showToast('Sign in to report a post.', 'info'))}
           blockLabel={blockTarget?.label}
@@ -1817,14 +1790,6 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
           onBlock={blockAuthor}
         />
       </div>
-      <OpenOnSource
-        post={post}
-        label={`${isJob ? 'Apply' : post.isLiveCamera ? 'Watch live' : hasVideo ? 'Watch' : 'Open'}${post.isLiveCamera ? '' : ` on ${src.label}`}`}
-        onClick={event => {
-          event.stopPropagation();
-          reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true });
-        }}
-      />
 
       {!isUFIconnectInteractive && <ConnectedPostActions post={post} />}
 

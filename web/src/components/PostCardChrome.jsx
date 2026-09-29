@@ -94,7 +94,10 @@ export function PostHeader({ post, member = false, to }) {
       <PostAvatar post={post} member={member} />
       <span className="post-chrome-who">
         <span className="post-chrome-name">{name}</span>
-        <span className="post-chrome-handle">{postHandle(post, member)}</span>
+        <span className="post-chrome-handle-row">
+          <span className="post-chrome-handle">{postHandle(post, member)}</span>
+          {post?.topic && <span className="post-chrome-topic">{post.topic}</span>}
+        </span>
       </span>
     </>
   );
@@ -165,14 +168,16 @@ export function SharePostButton({ post }) {
   return <button type="button" className="post-chrome-action" aria-label="Share post" title="Share post" onClick={share}><ShareIcon /></button>;
 }
 
+// Compact source link that sits in the action row: the source's own mark and
+// an arrow, named for screen readers ("Open on Reddit", "Apply on Indeed").
 export function OpenOnSource({ post, label, onClick }) {
   const src = postSource(post);
   if (!post?.sourceUrl) return null;
+  const name = label || `Open on ${src.label}`;
   return (
-    <a className="post-chrome-open" href={post.sourceUrl} target="_blank" rel="noopener noreferrer" onClick={onClick} style={{ '--source-color': src.color }}>
-      <span className="post-chrome-open-mark" aria-hidden="true">{hasBrandIcon(post.source) ? <BrandIcon platform={post.source} size={18} /> : <b>{src.icon}</b>}</span>
-      <span className="post-chrome-open-label">{label || `Open on ${src.label}`}</span>
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></svg>
+    <a className="post-chrome-action post-chrome-source-link" href={post.sourceUrl} target="_blank" rel="noopener noreferrer" onClick={onClick} style={{ '--source-color': src.color }} aria-label={name} title={name}>
+      <span className="post-chrome-open-mark" aria-hidden="true">{hasBrandIcon(post.source) ? <BrandIcon platform={post.source} size={16} /> : <b>{src.icon}</b>}</span>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></svg>
     </a>
   );
 }

@@ -47,7 +47,7 @@ async function deleteAccountData(db, userId) {
     // These rows have no user foreign key in the live migration schema.
     for (const table of [
       'attachments', 'saved_posts', 'job_tracking', 'generated_content', 'resume_drafts',
-      'cross_posts', 'seen_posts', 'restaurant_post_likes', 'user_engagement_affinity',
+      'cross_posts', 'seen_posts', 'restaurant_post_likes', 'external_post_likes', 'user_engagement_affinity',
       'push_subscriptions', 'page_views', 'client_error_reports', 'server_error_events',
       'negative_usage_signals',
     ]) await query(`DELETE FROM ${table} WHERE user_id=$1`);
@@ -105,6 +105,7 @@ async function exportAccountData(db, userId) {
       engagementPreferences: `SELECT affinity_key AS "affinityKey",weight,updated_at AS "updatedAt"
         FROM user_engagement_affinity WHERE user_id=$1 ORDER BY affinity_key`,
       restaurantLikes: `SELECT post_id AS "postId",created_at AS "createdAt" FROM restaurant_post_likes WHERE user_id=$1 ORDER BY created_at,post_id`,
+      externalPostLikes: `SELECT post_id AS "postId",created_at AS "createdAt" FROM external_post_likes WHERE user_id=$1 ORDER BY created_at,post_id`,
       postLikes: `SELECT id AS "postId" FROM community_posts WHERE $1=ANY(likes) ORDER BY id`,
       pushRegistrations: `SELECT id,created_at AS "createdAt" FROM push_subscriptions WHERE user_id=$1 ORDER BY created_at,id`,
       signIns: `SELECT provider,created_at AS "createdAt" FROM user_sign_in_events WHERE user_id=$1 ORDER BY created_at,id`,
