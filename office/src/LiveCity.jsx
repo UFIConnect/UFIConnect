@@ -69,7 +69,7 @@ function Building({ district, selected, onEnter, animationIndex }) {
 }
 
 function CityHome({ home, index, selected, onSelect }) {
-  return <g transform={`translate(${home.x} ${home.y}) scale(.8)`} className="lc-map-home" data-home-id={home.id} data-home-state={home.homeState} data-block={home.block}
+  return <g transform={`translate(${home.x} ${home.y}) scale(.8)`} className="lc-map-home" data-home-id={home.id} data-home-state={home.homeState} data-block={home.block} data-town={home.town}
     role="button" tabIndex={0} aria-label={`Visit ${home.name}'s home · ${homeStateName(home.homeState)}`} aria-pressed={selected}
     onClick={onSelect} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(); } }}
     style={{ '--home-color': home.color || '#64748b', '--home-delay': `${index * -0.17}s` }}>
@@ -116,7 +116,7 @@ function CityMap({ model, selected, selectedAgent, onSelectAgent, onEnter, pause
   const [area, setArea] = useState('all'), [homeFilter, setHomeFilter] = useState('all');
   const drag = useRef(null);
   const city = useMemo(() => buildCityStreets(model), [model]);
-  const mapView = area === 'homes' ? city.homesView : area === 'services' ? city.buildingsView : `0 0 ${city.width} ${city.height}`;
+  const mapView = area === 'homes' ? city.homesView : area === 'services' ? city.buildingsView : city.viewBox;
   const [viewX, viewY, viewWidth, viewHeight] = mapView.split(' ').map(Number);
   const centerX = viewX + viewWidth / 2, centerY = viewY + viewHeight / 2;
   const homeTotals = model.homes.reduce((counts, home) => ({ ...counts, [home.homeState]: (counts[home.homeState] || 0) + 1 }), {});
@@ -139,12 +139,12 @@ function CityMap({ model, selected, selectedAgent, onSelectAgent, onEnter, pause
       <button type="button" className="lc-scope-button" aria-label="Change animation scope" aria-pressed={motionScope === 'all'} disabled={reduced} title="All animates every city element; observed limits strong motion to reported activity." onClick={() => setMotionScope(value => value === 'all' ? 'observed' : 'all')}><Activity size={15} /><span>{motionScope === 'all' ? 'All city' : 'Observed'}</span></button>
       <button type="button" className="lc-motion-button" aria-label={paused ? 'Resume motion' : 'Pause motion'} aria-pressed={paused} disabled={reduced} title={reduced ? 'Reduced motion is enabled in your system settings' : undefined} onClick={() => setPaused(value => !value)}>{paused || reduced ? <Play size={15} /> : <Pause size={15} />}<span>{reduced ? 'Reduced motion' : paused ? 'Resume' : 'Pause'}</span></button>
     </div></div>
-    <div className="lc-city-navigation"><div className="lc-area-controls" aria-label="City map view">{[['3d', '3D city'], ['plan', 'Street map']].map(([id, label]) => <button type="button" key={id} aria-pressed={dimension === id} onClick={() => { setDimension(id); reset(); }}>{label}</button>)}</div><div className="lc-area-controls" aria-label="City map area">{[['all', 'Whole city'], ['services', 'Buildings'], ['homes', 'Homes']].map(([id, label]) => <button type="button" key={id} aria-pressed={area === id} onClick={() => { setArea(id); reset(); }}>{label}</button>)}</div>
+    <div className="lc-city-navigation"><div className="lc-area-controls" aria-label="City map view">{[['3d', '3D city'], ['plan', 'Street map']].map(([id, label]) => <button type="button" key={id} aria-pressed={dimension === id} onClick={() => { setDimension(id); reset(); }}>{label}</button>)}</div><div className="lc-area-controls" aria-label="City map area">{[['all', 'All'], ['services', 'Buildings'], ['homes', 'Homes']].map(([id, label]) => <button type="button" key={id} aria-pressed={area === id} title={id === 'all' ? 'The whole region in 3D: downtown, every town, the roads and the grid' : undefined} onClick={() => { setArea(id); if (id === 'all' && !graphicsFallback) setDimension('3d'); reset(); }}>{label}</button>)}</div>
       <div className="lc-home-controls" aria-label="Filter agent homes">{['all', 'working', 'inactive', 'attention', 'unobserved'].map(state => <button type="button" key={state} aria-pressed={homeFilter === state} onClick={() => setHomeFilter(state)}>{state === 'all' ? `All ${model.homes.length}` : `${homeStateName(state)} ${homeTotals[state] || 0}`}</button>)}</div>
     </div>
     {graphicsFallback && <p className="lc-hint">Street map is available while 3D graphics are unavailable on this device.</p>}
     <div className="lc-canvas" data-motion={motion} data-zoom={zoom} data-area={area}>
-      {dimension === '3d' ? <Suspense fallback={<div className="lc-3d-loading">Opening the city…</div>}><CityScene3D city={city} motion={motion} speed={speed} motionScope={motionScope} homeFilter={homeFilter} area={area} zoom={zoom} resetKey={cameraReset} onEnter={onEnter} onSelectAgent={onSelectAgent} onFallback={() => { setGraphicsFallback(true); setDimension('plan'); }} /></Suspense> : <svg viewBox={mapView} aria-label="Live city: a logical map of UFIConnect services and agent homes" onPointerDown={event => {
+      {dimension === '3d' ? <Suspense fallback={<div className="lc-3d-loading">Opening the city…</div>}><CityScene3D city={city} edges={model.edges} motion={motion} speed={speed} motionScope={motionScope} homeFilter={homeFilter} area={area} zoom={zoom} resetKey={cameraReset} selectedHomeId={selectedAgent?.id} onEnter={onEnter} onSelectAgent={onSelectAgent} onFallback={() => { setGraphicsFallback(true); setDimension('plan'); }} /></Suspense> : <svg viewBox={mapView} aria-label="Live city: a logical map of UFIConnect services and agent homes" onPointerDown={event => {
         if (event.button !== 0 || event.target.closest('[role="button"]')) return;
         drag.current = { pointerX: event.clientX, pointerY: event.clientY, ...offset }; event.currentTarget.setPointerCapture(event.pointerId);
       }} onPointerMove={move} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
@@ -152,9 +152,14 @@ function CityMap({ model, selected, selectedAgent, onSelectAgent, onEnter, pause
           <pattern id="lc-grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" fill="none" stroke="#294638" strokeWidth=".6" /></pattern>
           <radialGradient id="lc-ground"><stop stopColor="#15364c" stopOpacity=".5" /><stop offset="1" stopColor="#080e19" stopOpacity="0" /></radialGradient>
         </defs>
-        <rect width={city.width} height={city.height} fill="#0d211f" /><rect width={city.width} height={city.height} fill="url(#lc-grid)" opacity=".4" />
+        <rect x={city.minX} y={city.minY} width={city.width} height={city.height} fill="#0d211f" /><rect x={city.minX} y={city.minY} width={city.width} height={city.height} fill="url(#lc-grid)" opacity=".4" />
         <g transform={`translate(${centerX + offset.x} ${centerY + offset.y}) scale(${zoom}) translate(${-centerX} ${-centerY})`}>
-          <g className="lc-city-blocks" aria-hidden="true">{city.blocks.map(block => <g key={block.id}>
+          <g className="lc-town-grounds" aria-hidden="true">{city.towns.map(town => <rect key={town.id} x={town.left - 24} y={town.top - 24} width={town.right - town.left + 48} height={town.bottom - town.top + 48} rx="30" fill="#152a2b" stroke="#2d4744" strokeWidth="2" />)}
+            <rect x="20" y="20" width={city.downtown.width - 40} height={city.downtown.height - 40} rx="40" fill="#142629" stroke="#2d4744" strokeWidth="2" /></g>
+          <g className="lc-city-blocks" aria-hidden="true">{city.blocks.map(block => block.kind === 'town' ? <g key={block.id} data-town-block={block.town}>
+            <rect x={block.x - block.lawn[0] / 2} y={block.y - block.lawn[1] / 2} width={block.lawn[0]} height={block.lawn[1]} rx="16" fill="#1a3031" stroke="#35504c" strokeWidth="2" />
+            {block.trees.map(([x, y]) => <g key={`${x}-${y}`} transform={`translate(${x} ${y})`}><ellipse cy="6" rx="10" ry="5" fill="#091c20" /><circle cy="-8" r="11" fill="#2b5146" /><circle cx="-3" cy="-12" r="6" fill="#467657" /></g>)}
+          </g> : <g key={block.id}>
             <rect x={block.x - 160} y={block.y - 150} width="320" height="300" rx="18" fill="#1a3031" stroke="#35504c" strokeWidth="2" />
             <rect x={block.x - 108} y={block.y - 120} width="216" height="237" rx="12" fill="#142a31" />
             {[-1, 1].flatMap(side => [-115, -30].map((dy, i) => <g key={`${side}-${dy}`} transform={`translate(${block.x + side * 86} ${block.y + dy})`}>
@@ -164,13 +169,13 @@ function CityMap({ model, selected, selectedAgent, onSelectAgent, onEnter, pause
           <g className="lc-street-grid" aria-label="Connected city street grid">{city.roads.map((d, i) => <g key={i}>
             <path d={d} fill="none" stroke="#536069" strokeWidth="30" /><path d={d} fill="none" stroke="#23323e" strokeWidth="24" /><path d={d} fill="none" stroke="#819293" strokeWidth="1" strokeDasharray="8 10" />
           </g>)}</g>
-          <g className="lc-city-highways" aria-label="City highway loop and central expressway">
-            {[city.highway, `M800 40V${city.height - 40}`].map((d, i) => <g key={i}>
+          <g className="lc-city-highways" aria-label="Downtown highway loop, central expressway and the beltway joining the towns">
+            {[city.highway, `M800 40V${city.downtown.bottom}`, ...city.beltway].map((d, i) => <g key={i}>
               <path d={d} fill="none" stroke="#789091" strokeWidth="46" /><path d={d} fill="none" stroke="#1e2c39" strokeWidth="40" /><path d={d} fill="none" stroke="#59685d" strokeWidth="4" /><path d={d} fill="none" stroke="#b3b39b" strokeWidth="1" strokeDasharray="10 12" />
             </g>)}
             <text x="1140" y="29" className="lc-street-label">NORTH LOOP · H1</text><text x="813" y="65" className="lc-street-label">CENTRAL EXPRESSWAY</text>
           </g>
-          <g className="lc-city-crosswalks" aria-hidden="true">{city.blocks.map(block => <g key={block.id}>
+          <g className="lc-city-crosswalks" aria-hidden="true">{city.blocks.filter(block => block.kind === 'downtown').map(block => <g key={block.id}>
             <path d={`M${block.x - 160} ${block.bottom - 9}v18M${block.x + 160} ${block.bottom - 9}v18`} stroke="#c9d0bd" strokeWidth="16" strokeDasharray="2 3" opacity=".6" />
             <text x={block.x} y={block.bottom - 22} textAnchor="middle" className="lc-street-label">{['COLLECTION AVENUE', 'CIVIC BOULEVARD', 'DELIVERY WAY'][block.row % 3]}</text>
           </g>)}</g>
@@ -202,12 +207,16 @@ function CityMap({ model, selected, selectedAgent, onSelectAgent, onEnter, pause
           {city.districts.map((district, index) => <Building key={district.id} district={district} selected={selected === district.id} animationIndex={index} onEnter={() => onEnter(district.id)} />)}
           <g className="lc-map-homes" aria-label="Agent homes">{city.homes.map((home, index) => (homeFilter === 'all' || home.homeState === homeFilter) && <CityHome key={home.id} home={home} index={index} selected={selectedAgent?.id === home.id} onSelect={() => onSelectAgent(home.primaryKey)} />)}</g>
           <CityTraffic homes={city.homes.filter(home => homeFilter === 'all' || home.homeState === homeFilter)} highway={city.highway} speed={speed} motionScope={motionScope} />
-          {!model.homes.length && <text x="800" y={city.height - 65} textAnchor="middle" className="lc-home-address">Waiting for the protected agent registry</text>}
+          <g className="lc-town-labels" aria-label="Towns">{city.towns.map(town => <g key={town.id} data-town={town.id} aria-label={`${town.name}: ${town.homes.length} homes. ${town.label}.`}>
+            <text x={town.x} y={town.top - 58} textAnchor="middle" className="lc-town-name">{town.name}</text>
+            <text x={town.x} y={town.top - 36} textAnchor="middle" className="lc-street-label">{town.label.toUpperCase()}</text>
+          </g>)}<text x="800" y="16" textAnchor="middle" className="lc-town-name">Downtown</text></g>
+          {!model.homes.length && <text x="800" y={city.downtown.height - 65} textAnchor="middle" className="lc-home-address">Waiting for the protected agent registry</text>}
         </g>
       </svg>}
       <div className="lc-map-live"><span className={motion === 'active' ? 'lc-dot-active' : ''} />{motion === 'active' ? `${motionScope === 'all' ? 'Whole city' : 'Observed activity'} / ${speed}x` : motion === 'paused' ? 'Motion paused' : motion === 'reduced' ? 'Reduced motion' : 'No recent work to animate'}</div>
     </div>
-    <div className="lc-map-legend"><p><Home size={14} />Green: working · Gray: inactive · Amber: attention · Dim: unobserved.</p><p>Source collection: blue entrance from the west, green exit to the east. Indoor parking keeps entrances clear. Commutes are illustrative; status labels use live telemetry.</p></div>
+    <div className="lc-map-legend"><p><Home size={14} />Green: working · Gray: inactive · Amber: attention · Dim: unobserved.</p>{dimension === '3d' && <p><Activity size={14} />Downtown holds every building; agents live in towns named for where they work, joined to downtown by the beltway. Streets carry each commute. The grid, the lines on utility poles, links buildings that hand work to each other; pulses run along a line while the services report that handoff active.</p>}<p>Source collection: blue entrance from the west, green exit to the east. Indoor parking keeps entrances clear. Commutes are illustrative; status labels use live telemetry.</p></div>
     <div className="lc-district-nav" aria-label="Enter city buildings">{model.districts.map(district => <button key={district.id} type="button" aria-pressed={selected === district.id} onClick={() => onEnter(district.id)} style={{ '--district-color': district.color }}><span />{district.label}</button>)}</div>
   </section>;
 }

@@ -339,8 +339,14 @@ try {
     await page.getByRole('button',{name:'Rotate city right',exact:true}).click();
     await page.getByRole('button',{name:'Reset view',exact:true}).click();
     await eventually(async()=>await scene.getAttribute('data-framed-homes')==='71','Reset view fits all 71 homes after rotating the city');
+    check(Number(await scene.getAttribute('data-grid-links'))>0,'Grid lines on utility poles connect the buildings that hand work to each other');
+    await eventually(async()=>Number(await scene.getAttribute('data-active-grid-links'))>0,'Grid lines carry pulses for handoffs the services report as active');
     await scene.scrollIntoViewIfNeeded();
     await page.screenshot({path:path.join(root,`.cache/audit-ui/city-3d-${width}.png`),fullPage:false});
+    await page.getByRole('button',{name:'Inspect Resident 5 · API',exact:true}).click();
+    await eventually(async()=>/^\d+$/.test(await scene.getAttribute('data-entrance-view')||''),'Selecting an agent flies to a clear view of its front door');
+    await eventually(async()=>Number(await scene.getAttribute('data-open-doors'))>0,'The visited home opens its front door');
+    await page.getByRole('button',{name:'Reset view',exact:true}).click();
     await page.getByRole('button',{name:'Street map',exact:true}).click();
     await eventually(async()=>await page.locator('.lc-canvas [data-home-id]').count()===71,'All 71 homes must also be inside the city SVG');
     const ids=await page.locator('.lc-map-home').evaluateAll(elements=>elements.map(element=>element.dataset.homeId));
@@ -348,7 +354,8 @@ try {
     check(await page.locator('.lc-map-home-art').evaluateAll(elements=>elements.every(element=>getComputedStyle(element).animationName!=='none')),'All 71 home buildings animate in whole-city mode');
     await page.getByRole('button',{name:'Homes',exact:true}).click();
     check(await page.locator('.lc-canvas').getAttribute('data-area')==='homes','Homes control focuses the integrated neighborhoods');
-    check(await page.locator('.lc-map-home').evaluateAll(elements=>new Set(elements.map(element=>element.dataset.block)).size===12),'Homes are blended through all twelve city blocks');
+    check(await page.locator('.lc-map-home').evaluateAll(elements=>new Set(elements.map(element=>element.dataset.town)).size>=4&&elements.every(element=>element.dataset.town)),'Homes are split into separate towns');
+    check(await page.locator('.lc-town-labels [data-town]').count()>=4&&await page.getByText('Downtown',{exact:true}).count()===1,'Each town and downtown are labelled on the map');
     check(await page.locator('.lc-commuter').count()===71,'Every home has a commuting car');
     check(await page.locator('.lc-lunch-walker').count()===71,'Every agent has a lunch route');
     check(await page.locator('.lc-arrival-courts [data-garage="sources"]').count() === 1 && await page.locator('.lc-arrival-courts [data-garage="runtime"]').count() === 1, 'Both busy workplaces have dedicated arrival courts');
@@ -375,6 +382,10 @@ try {
     await page.getByRole('button',{name:'Homes',exact:true}).scrollIntoViewIfNeeded();
     await page.screenshot({path:path.join(root,`.cache/audit-ui/city-71-homes-${width}.png`),fullPage:false});
     check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'The full neighborhood fits mobile and desktop');
+    await page.getByRole('button',{name:'All',exact:true}).click();
+    await page.locator('.lc-3d-scene canvas[data-rendered="true"]').waitFor();
+    check(await page.locator('.lc-canvas').getAttribute('data-area')==='all','All shows the whole city again');
+    check(await page.getByRole('button',{name:'3D city',exact:true}).getAttribute('aria-pressed')==='true','All opens the whole city in 3D');
     await context.close();
     console.log(`PASS: 71 mapped homes, animation and keyboard access at ${width}px`);
   }
