@@ -436,6 +436,7 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
           </Link>)}
           {[
             { to: '/search?tab=groups&create=1', icon: 'groups', label: 'Create a group' },
+            { to: '/groups/post', icon: 'groups', label: 'Post to a group' },
             { to: '/command-center?tab=crosspost', icon: 'crosspost', label: 'Cross post' },
           ].map(({ to, icon, label }) => (
             <NavLink
@@ -454,10 +455,6 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
               <span className="nav-label">{label}</span>
             </NavLink>
           ))}
-          <Link to="/groups/post" className="nav-link" aria-label="Post to a group" title="Post to a group">
-            <span className="nav-icon"><ShellIcon name="groups" size={17} /></span>
-            <span className="nav-label">Post to a group</span>
-          </Link>
           <SavedNavigation expanded={savedExpanded} onToggle={toggleSavedNavigation} />
         </nav>
 
@@ -655,6 +652,10 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
             <Link to="/search?tab=groups&create=1" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
               <UsersRound size={20} aria-hidden="true" />
               Create a group
+            </Link>
+            <Link to="/groups/post" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
+              <SquarePen size={20} aria-hidden="true" />
+              Post to a group
             </Link>
             <Link to="/command-center?tab=crosspost" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
               <ShellIcon name="crosspost" size={18} />

@@ -1898,13 +1898,31 @@ function AutomationSection({ onSelectSection }) {
 }
 
 export default function CommandCenter() {
-  const { profile } = useAuth();
+  const { profile, refreshProfile } = useAuth();
   const { showToast } = useToast();
   const location = useLocation();
   const navigate = useNavigate();
   const section = commandCenterSection(location.search);
   const [pricingOpen, setPricingOpen] = useState(false);
   const [upgrading, setUpgrading] = useState(null);
+  const [checkingMembership, setCheckingMembership] = useState(false);
+  const membershipChecked = useRef('');
+
+  // A stored "free" plan can lag behind Stripe (a missed webhook, or a renewal
+  // that was still being invoiced). Reconcile once per member before showing
+  // the locked state, so an active subscription unlocks without a Settings visit.
+  const profileId = profile?.id, profilePlan = profile?.plan;
+  useEffect(() => {
+    if (!profileId || profilePlan !== 'free' || membershipChecked.current === profileId) return;
+    membershipChecked.current = profileId;
+    let cancelled = false;
+    setCheckingMembership(true);
+    client.get('/billing/status')
+      .then(({ data }) => (data?.plan && data.plan !== 'free' ? refreshProfile() : null))
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setCheckingMembership(false); });
+    return () => { cancelled = true; };
+  }, [profileId, profilePlan, refreshProfile]);
 
   const selectSection = useCallback((nextSection, { replace = false } = {}) => {
     if (!SECTION_KEYS.has(nextSection)) return;
@@ -1959,7 +1977,9 @@ export default function CommandCenter() {
         </p>
       </div>
 
-      {locked ? (
+      {locked && checkingMembership ? (
+        <div className="empty-state" role="status"><span className="spinner spinner-primary" /> Checking your membership…</div>
+      ) : locked ? (
         <>
           <LockedState onUpgrade={() => setPricingOpen(true)} />
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 16 }}>

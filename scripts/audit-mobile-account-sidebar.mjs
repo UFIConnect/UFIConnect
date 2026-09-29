@@ -95,6 +95,10 @@ try {
         check(!(await page.locator('#sidebar-saved-links').isVisible()), 'Desktop Saved must hide its child pages');
         check(await page.locator('.sidebar').getByRole('link', { name: 'Cross post', exact: true }).getAttribute('href') === '/command-center?tab=crosspost', 'Cross post must open Command Center publishing');
         check(await page.locator('.sidebar').getByRole('link', { name: 'Post to a group', exact: true }).getAttribute('href') === '/groups/post', 'Desktop group posting opens the group composer');
+        check(await page.locator('.sidebar nav').evaluate(nav => {
+          const labels = [...nav.querySelectorAll('a')].map(link => link.getAttribute('aria-label'));
+          return labels.indexOf('Post to a group') === labels.indexOf('Create a group') + 1;
+        }), 'Post to a group sits directly under Create a group');
         const headerNav = page.getByRole('navigation', { name: 'Main navigation', exact: true });
         for (const label of ['Home', 'Videos', 'Jobs', 'Profile']) {
           check(await headerNav.getByRole('link', { name: label, exact: true }).isVisible(), `${label} must appear beside desktop search`);
@@ -126,6 +130,8 @@ try {
         const bounds = await drawer.boundingBox();
         const post = await drawer.getByRole('link', { name: 'Post', exact: true }).boundingBox();
         const createGroup = await drawer.getByRole('link', { name: 'Create a group', exact: true }).boundingBox();
+        const postToGroup = await drawer.getByRole('link', { name: 'Post to a group', exact: true }).boundingBox();
+        check(Math.abs(postToGroup.y - (createGroup.y + createGroup.height)) < 12, 'The mobile menu lists Post to a group directly under Create a group');
         const shop = await drawer.getByRole('link', { name: 'Shop', exact: true }).boundingBox();
         const profile = await drawer.getByRole('link', { name: 'Profile', exact: true }).boundingBox();
         const logout = await drawer.getByRole('button', { name: 'Log out', exact: true }).boundingBox();

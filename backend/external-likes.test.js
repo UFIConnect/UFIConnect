@@ -1,7 +1,9 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { PGlite } = require('@electric-sql/pglite');
+const { randomBytes } = require('node:crypto');
 const { createAppHarness, member } = require('./test-support/app-harness');
+const { createTokenVault } = require('./token-vault');
 
 const A = 'a0000000-0000-4000-8000-000000000001';
 const B = 'b0000000-0000-4000-8000-000000000002';
@@ -9,20 +11,30 @@ const POST = 'reddit_likes_audit';
 
 test('members like external feed posts, see counts per viewer, and see who liked them', async t => {
   const pg = new PGlite(); t.after(() => pg.close());
-  await pg.exec(`CREATE TABLE users(id UUID PRIMARY KEY,name TEXT,email TEXT,plan TEXT DEFAULT 'free',auth_version INTEGER DEFAULT 0,billing_closed BOOLEAN DEFAULT false);
+  const env = { OAUTH_TOKEN_ENCRYPTION_KEY: randomBytes(32).toString('base64') };
+  const vault = createTokenVault(env);
+  await pg.exec(`CREATE TABLE users(id UUID PRIMARY KEY,name TEXT,email TEXT,plan TEXT DEFAULT 'free',auth_version INTEGER DEFAULT 0,billing_closed BOOLEAN DEFAULT false,social_tokens JSONB DEFAULT '{}');
     CREATE TABLE external_post_likes (post_id TEXT NOT NULL, user_id TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (post_id, user_id))`);
-  await pg.query("INSERT INTO users(id,name,email) VALUES($1,'Alice','alice@example.invalid'),($2,'Bob','bob@example.invalid')", [A, B]);
+  // Alice and Bob have connected Reddit (their credentials are stored encrypted, as in production).
+  await pg.query("INSERT INTO users(id,name,email,social_tokens) VALUES($1,'Alice','alice@example.invalid',$3),($2,'Bob','bob@example.invalid',$4)",
+    [A, B, JSON.stringify(vault.encryptMap({ reddit: 'token-a' }, A, 'access')), JSON.stringify(vault.encryptMap({ reddit: 'token-b' }, B, 'access'))]);
   const feedRow = { id: POST, source: 'reddit', title: 'A post in the feed', content: 'Body', source_url: 'https://www.reddit.com/r/test/comments/abc/a_post/',
     topic: 'Technology', likes_count: 40, comments_count: 3, created_at: new Date().toISOString() };
-  const app = await createAppHarness({ connected: true, query: async (sql, params) => {
+  const app = await createAppHarness({ env, connected: true, query: async (sql, params) => {
     if (sql.startsWith('SELECT id FROM auth_sessions')) return { rows: [{ id: params[0] }] };
     if (sql.includes('external_post_likes') || sql.includes('FROM users WHERE id')) return pg.query(sql, params);
     if (sql.includes('FROM feed_posts_cache WHERE id')) return { rows: params[0] === POST ? [feedRow] : [] };
     return { rows: [], rowCount: 0 };
   } });
   t.after(() => app.close());
+  const C = 'c0000000-0000-4000-8000-000000000003';
+  await pg.query("INSERT INTO users(id,name,email) VALUES($1,'Carol','carol@example.invalid')", [C]);
   app.seedUser(member(A, { name: 'Alice' })); app.seedUser(member(B, { name: 'Bob' }));
+  app.seedUser(member(C, { name: 'Carol' }));
+  const unconnected = await app.request(`/feed/${POST}/like`, { userId: C, method: 'POST' });
+  assert.equal(unconnected.status, 403, 'Members without a connected Reddit account cannot like Reddit posts');
+  assert.match(unconnected.data.message, /Connect this source/);
 
   const like = await app.request(`/feed/${POST}/like`, { userId: A, method: 'POST' });
   assert.equal(like.status, 200);

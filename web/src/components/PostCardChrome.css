@@ -1,7 +1,18 @@
-.post-chrome-header { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; min-width: 0; }
+.post-chrome-header { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 12px; min-width: 0; }
 .post-chrome-identity { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1; color: inherit; text-decoration: none; }
 .post-chrome-avatar { position: relative; flex-shrink: 0; width: 48px; height: 48px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--source-color) 14%, var(--card, #fff)); color: var(--source-color); font-size: .95rem; }
 .post-chrome-avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+.post-chrome-avatar-button { padding: 0; border: 0; cursor: zoom-in; font: inherit; }
+.post-chrome-avatar-button:focus-visible { outline: 3px solid #2563eb; outline-offset: 2px; }
+/* Full-size profile photo. */
+.post-chrome-photo-viewer { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 16px; background: rgba(8, 12, 20, .78); }
+.post-chrome-photo-viewer figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 14px; max-width: min(92vw, 520px); }
+.post-chrome-photo-viewer img { width: min(80vmin, 420px); height: min(80vmin, 420px); border-radius: 50%; object-fit: cover; background: var(--card, #fff); box-shadow: 0 18px 50px rgba(0, 0, 0, .45); }
+.post-chrome-photo-viewer figcaption { display: flex; flex-direction: column; align-items: center; gap: 4px; color: #fff; text-align: center; overflow-wrap: anywhere; }
+.post-chrome-photo-viewer figcaption > span:not(.post-chrome-photo-actions) { color: rgba(255, 255, 255, .72); font-size: .85rem; }
+.post-chrome-photo-actions { display: flex; gap: 10px; margin-top: 8px; }
+.post-chrome-photo-actions a, .post-chrome-photo-actions button { min-height: 40px; padding: 0 16px; border-radius: 10px; border: 0; display: inline-flex; align-items: center; font: inherit; font-weight: 700; font-size: .88rem; cursor: pointer; text-decoration: none; background: #fff; color: #0f172a; }
+.post-chrome-photo-actions a { background: var(--primary, #2563eb); color: #fff; }
 .post-chrome-avatar-source { border-radius: 12px; background: var(--card, #fff); border: 1px solid var(--border); }
 .post-chrome-avatar-source b { color: #fff; background: var(--source-color); width: 100%; height: 100%; border-radius: 11px; display: grid; place-items: center; font-size: .78rem; }
 .post-chrome-badge { position: absolute; right: -3px; bottom: -3px; width: 22px; height: 22px; border-radius: 7px; background: var(--card, #fff); border: 2px solid var(--card, #fff); box-shadow: 0 0 0 1px var(--border); display: grid; place-items: center; overflow: hidden; }
@@ -21,7 +32,7 @@
 .post-chrome-menu button:hover:not(:disabled), .post-chrome-menu button:focus-visible { background: var(--bg, #f1f5f9); outline: none; }
 .post-chrome-menu .post-chrome-menu-danger { color: #B91C1C; }
 .post-chrome-menu button small { display: block; margin-top: 2px; color: var(--muted); font-size: .74rem; font-weight: 500; overflow-wrap: anywhere; }
-.post-chrome-time time > span { white-space: nowrap; }
+.post-chrome-time time { white-space: nowrap; }
 .post-chrome-live { font-weight: 800; color: #B91C1C; }
 .post-chrome-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 10px; }
 .post-chrome-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
@@ -31,20 +42,19 @@
 .post-chrome-action[aria-pressed="true"], .post-chrome-action[aria-expanded="true"] { color: var(--source-color, var(--primary)); background: color-mix(in srgb, var(--source-color, var(--primary)) 12%, var(--card, #fff)); }
 /* Likes: the heart and its count join into one pill; the count opens "Liked by". */
 .post-chrome-like { display: inline-flex; }
+.post-chrome-like .post-chrome-action[data-locked="true"] { opacity: .55; }
 .post-chrome-like-counted > .post-chrome-action:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; padding-right: 8px; }
 .post-chrome-like-count { min-width: 0; padding: 0 12px 0 6px; border-top-left-radius: 0; border-bottom-left-radius: 0; }
 .post-chrome-like .post-chrome-action[aria-pressed="true"] { color: #E0245E; background: color-mix(in srgb, #E0245E 12%, var(--card, #fff)); }
 .post-chrome-like-counted .post-chrome-action[aria-pressed="true"] + .post-chrome-like-count { background: color-mix(in srgb, #E0245E 12%, var(--card, #fff)); color: #E0245E; }
-/* The source link and options menu sit together at the end of the row. */
-.post-chrome-source-link { margin-left: auto; gap: 4px; color: var(--source-color); background: color-mix(in srgb, var(--source-color) 10%, var(--card, #fff)); text-decoration: none; }
+/* The options menu and then the source link sit together at the end of the row. */
+.post-chrome-actions > .post-chrome-more { margin-left: auto; }
+.post-chrome-source-link { gap: 4px; color: var(--source-color); background: color-mix(in srgb, var(--source-color) 10%, var(--card, #fff)); text-decoration: none; }
 .post-chrome-open-mark { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; background: var(--card, #fff); flex-shrink: 0; }
 .post-chrome-open-mark b { font-size: .58rem; color: var(--source-color); }
 .post-chrome-action:focus-visible, .post-chrome-time:focus-visible { outline: 3px solid #2563eb; outline-offset: 2px; }
 .post-chrome-tag { color: var(--source-color); font-weight: 600; }
-/* On phones the date and time stack so the author's name keeps its room. */
 @media (max-width: 480px) {
-  .post-chrome-time time { display: flex; flex-direction: column; align-items: flex-end; }
-  .post-chrome-time-sep { display: none; }
   .post-chrome-avatar { width: 44px; height: 44px; }
   /* One row on phones: tighter buttons, and the source link keeps just its mark. */
   .post-chrome-actions { gap: 4px; }

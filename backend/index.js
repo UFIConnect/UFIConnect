@@ -847,6 +847,21 @@ const redditCache = new Map(); // subreddit ? { posts, fetchedAt }
 const REDDIT_TTL  = 30 * 60 * 1000; // 30 minutes
 
 const { fetchJSON, fetchJSONWithHeaders } = require('./provider-json').createProviderJsonClient(https);
+// Author photos from a source are shown on post cards; only plain HTTPS image URLs are kept.
+function safeAvatarUrl(value) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!text || text.length > 500) return null;
+  try {
+    const url = new URL(text);
+    return url.protocol === 'https:' && !url.username && !url.password ? url.toString() : null;
+  } catch { return null; }
+}
+// Reddit's own default avatars, chosen per username, since listings carry no author photo.
+function redditDefaultAvatar(author) {
+  let hash = 0;
+  for (const char of String(author || '')) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return `https://www.redditstatic.com/avatars/defaults/v2/avatar_default_${hash % 8}.png`;
+}
 
 // --- Social OAuth config -----------------------------------------------------
 const API_BASE      = process.env.API_BASE_URL  || 'http://localhost:3000';
@@ -2632,7 +2647,7 @@ function parseRedditRSSFeed(xml, topicKeyword) {
       sourceLabel: `r/${sub}`,
       sourceUrl:   link.replace(/\?.*$/, ''),
       topic:       topicKeyword,
-      author:      { id: `reddit_${author}`, name: `u/${author}`, title: `r/${sub}`, organization: 'Reddit' },
+      author:      { id: `reddit_${author}`, name: `u/${author}`, title: `r/${sub}`, organization: 'Reddit', avatarUrl: redditDefaultAvatar(author) },
       likes: [], likesCount: 0, commentsCount: 0,
       createdAt:   normalizeTimestamp(published || updated),
       isExternal:  true,
@@ -2716,7 +2731,7 @@ function parseRedditJSON(data, topicKeyword) {
         sourceLabel: `r/${sub}`,
         sourceUrl:   selfUrl,
         topic:       topicKeyword,
-        author:      { id: `reddit_${d.author}`, name: `u/${d.author}`, title: `r/${sub}`, organization: 'Reddit' },
+        author:      { id: `reddit_${d.author}`, name: `u/${d.author}`, title: `r/${sub}`, organization: 'Reddit', avatarUrl: redditDefaultAvatar(d.author) },
         likes: [], likesCount: d.score || 0, commentsCount: d.num_comments || 0,
         createdAt:   normalizeTimestamp(d.created_utc),
         isExternal:  true,
@@ -2991,7 +3006,7 @@ async function fetchDevToByTag(tag) {
         sourceLabel:   'DEV Community',
         sourceUrl:     a.url,
         topic:         tag,
-        author:        { id: `devto_${a.user?.username}`, name: a.user?.name || a.user?.username, title: 'DEV Community', organization: 'DEV Community' },
+        author:        { id: `devto_${a.user?.username}`, name: a.user?.name || a.user?.username, title: 'DEV Community', organization: 'DEV Community', avatarUrl: safeAvatarUrl(a.user?.profile_image_90 || a.user?.profile_image) },
         likes: [], likesCount: a.public_reactions_count || 0, commentsCount: a.comments_count || 0,
         createdAt:     a.published_at,
         isExternal:    true,
@@ -3031,7 +3046,7 @@ async function fetchDevToByTag(tag) {
           sourceLabel: 'DEV Community',
           sourceUrl:   `https://dev.to${v.path}`,
           topic:       tag,
-          author:      { id: `devto_${v.user?.name || 'creator'}`, name: v.user?.name || 'DEV Community', title: 'DEV Community', organization: 'DEV Community' },
+          author:      { id: `devto_${v.user?.name || 'creator'}`, name: v.user?.name || 'DEV Community', title: 'DEV Community', organization: 'DEV Community', avatarUrl: safeAvatarUrl(v.user?.profile_image_90 || v.user?.profile_image) },
           likes: [], likesCount: 0, commentsCount: 0,
           createdAt:   normalizeTimestamp(now - i * 5 * 60000),
           isExternal:  true,
@@ -3117,7 +3132,7 @@ async function fetchGitHubByKeyword(keyword) {
         sourceLabel: `${r.stargazers_count?.toLocaleString() || 0} stars - ${r.language || 'GitHub'}`,
         sourceUrl:   r.html_url,
         topic:       keyword,
-        author:      { id: `github_${r.owner?.login}`, name: r.owner?.login, title: r.language || 'GitHub', organization: 'GitHub' },
+        author:      { id: `github_${r.owner?.login}`, name: r.owner?.login, title: r.language || 'GitHub', organization: 'GitHub', avatarUrl: safeAvatarUrl(r.owner?.avatar_url) },
         likes: [], likesCount: r.stargazers_count || 0, commentsCount: r.open_issues_count || 0,
         createdAt:   r.pushed_at || r.updated_at,
         isExternal:  true,
@@ -4249,7 +4264,7 @@ async function fetchStackOverflowByTag(tag) {
         sourceLabel: 'Stack Overflow',
         sourceUrl:   q.link,
         topic:       tag,
-        author:      { id: `so_${q.owner?.user_id}`, name: q.owner?.display_name, title: 'Stack Overflow', organization: 'Stack Exchange' },
+        author:      { id: `so_${q.owner?.user_id}`, name: q.owner?.display_name, title: 'Stack Overflow', organization: 'Stack Exchange', avatarUrl: safeAvatarUrl(q.owner?.profile_image) },
         likes: [], likesCount: q.score || 0, commentsCount: q.answer_count || 0,
         createdAt:   normalizeTimestamp(q.creation_date),
         isExternal:  true,
@@ -4340,7 +4355,7 @@ function mapMastodonPosts(data, tag) {
         sourceLabel: `@${t.account.acct}`,
         sourceUrl:   t.url,
         topic:       tag,
-        author:      { id: `mastodon_${t.account.id}`, name: t.account.display_name || t.account.username, title: 'Mastodon', organization: 'Mastodon' },
+        author:      { id: `mastodon_${t.account.id}`, name: t.account.display_name || t.account.username, title: 'Mastodon', organization: 'Mastodon', avatarUrl: safeAvatarUrl(t.account.avatar_static || t.account.avatar) },
         likes: [], likesCount: t.favourites_count || 0, commentsCount: t.replies_count || 0,
         createdAt:   t.created_at,
         isExternal:  true,
@@ -4450,7 +4465,7 @@ async function fetchLobstersByTag(tag) {
         sourceLabel: 'Lobsters',
         sourceUrl:   `https://lobste.rs/s/${s.short_id}`,
         topic:       tag,
-        author:      { id: `lobsters_${s.submitter_user}`, name: s.submitter_user, title: 'Lobsters', organization: 'Lobsters' },
+        author:      { id: `lobsters_${s.submitter_user}`, name: s.submitter_user, title: 'Lobsters', organization: 'Lobsters', avatarUrl: typeof s.submitter_user === 'string' && /^[A-Za-z0-9_-]{1,50}$/.test(s.submitter_user) ? `https://lobste.rs/avatars/${s.submitter_user}-100.png` : null },
         likes: [], likesCount: s.score || 0, commentsCount: s.comment_count || 0,
       createdAt:   normalizeTimestamp(s.created_at),
         isExternal:  true,
@@ -5888,7 +5903,7 @@ async function fetchBlueskyByKeyword(keyword) {
       sourceLabel: `@${handle}`,
       sourceUrl:   `https://bsky.app/profile/${handle}/post/${(p.uri || '').split('/').pop()}`,
       topic:       keyword,
-      author:      { id: `bluesky_${p.author?.did}`, name: p.author?.displayName || handle, title: 'Bluesky', organization: 'Bluesky' },
+      author:      { id: `bluesky_${p.author?.did}`, name: p.author?.displayName || handle, title: 'Bluesky', organization: 'Bluesky', avatarUrl: safeAvatarUrl(p.author?.avatar) },
       likes: [], likesCount: p.likeCount || 0, commentsCount: p.replyCount || 0,
       createdAt:   normalizeTimestamp(p.record?.createdAt || p.indexedAt),
       isExternal:  true,
@@ -6047,7 +6062,7 @@ async function fetchBlueskyFollowingTimeline(token, { bust = false, connectedAt 
           sourceLabel: `@${handle}`,
           sourceUrl:   `https://bsky.app/profile/${handle}/post/${(p.uri || '').split('/').pop()}`,
           topic:       null,
-          author:      { id: `bluesky_${p.author?.did}`, name: p.author?.displayName || handle, title: 'Bluesky', organization: 'Bluesky' },
+          author:      { id: `bluesky_${p.author?.did}`, name: p.author?.displayName || handle, title: 'Bluesky', organization: 'Bluesky', avatarUrl: safeAvatarUrl(p.author?.avatar) },
           likes: [], likesCount: p.likeCount || 0, commentsCount: p.replyCount || 0,
           createdAt:   normalizeTimestamp(p.record?.createdAt || p.indexedAt),
           isExternal:  true,
@@ -17399,6 +17414,7 @@ async function migrateDB() {
     // non-YouTube/Vimeo/Bluesky video rendered as a blank tile until
     // playback actually started (see resolveVideoSource client-side).
     await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS media_poster TEXT`);
+    await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS author_avatar_url TEXT`);
     await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS video_duration_seconds INTEGER`);
     await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS group_id TEXT`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_source_idx ON feed_posts_cache(source)`);
@@ -17482,6 +17498,7 @@ async function migrateDB() {
     `);
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS location TEXT`);
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS media_poster TEXT`);
+    await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS author_avatar_url TEXT`);
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS video_duration_seconds INTEGER`);
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS group_id TEXT`);
     // fetched_at + id matches the transfer job's oldest-first drain order.
@@ -18905,8 +18922,8 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
     try {
       await db.query(
         `INSERT INTO ${targetTable}
-           (id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+           (id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
          ON CONFLICT (id) DO UPDATE SET
            group_id       = COALESCE(EXCLUDED.group_id, ${targetTable}.group_id),
            title          = EXCLUDED.title,
@@ -18922,6 +18939,7 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
            post_created_at= EXCLUDED.post_created_at,
            location       = EXCLUDED.location,
            media_poster   = EXCLUDED.media_poster,
+           author_avatar_url = COALESCE(EXCLUDED.author_avatar_url, ${targetTable}.author_avatar_url),
            fetched_at     = NOW()`,
         [
           p.id, p.source,
@@ -18939,6 +18957,7 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
           p.createdAt,
           p.location ? String(p.location).slice(0, 200) : null,
           p.mediaPoster || null,
+          safeAvatarUrl(p.author?.avatarUrl),
         ]
       );
       saved++;
@@ -18983,6 +19002,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
       post_created_at: clean(p.createdAt),
       location: p.location ? clean(p.location, 200) : null,
       media_poster: p.mediaPoster ? clean(p.mediaPoster) : null,
+      author_avatar_url: safeAvatarUrl(p.author?.avatarUrl),
     });
   }
   if (!rows.length) return 0;
@@ -19005,12 +19025,13 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
          comments_count INTEGER,
          post_created_at TIMESTAMPTZ,
          location TEXT,
-         media_poster TEXT
+         media_poster TEXT,
+         author_avatar_url TEXT
        )
      )
      INSERT INTO ${targetTable} AS existing
-       (id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster)
-     SELECT id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster
+       (id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url)
+     SELECT id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url
      FROM incoming
      ON CONFLICT (id) DO UPDATE SET
        group_id       = COALESCE(EXCLUDED.group_id, existing.group_id),
@@ -19027,6 +19048,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
        post_created_at= EXCLUDED.post_created_at,
        location       = EXCLUDED.location,
        media_poster   = EXCLUDED.media_poster,
+       author_avatar_url = COALESCE(EXCLUDED.author_avatar_url, existing.author_avatar_url),
        fetched_at     = NOW()
      WHERE (EXCLUDED.group_id IS NOT NULL AND existing.group_id IS DISTINCT FROM EXCLUDED.group_id)
         OR existing.title IS DISTINCT FROM EXCLUDED.title
@@ -19041,7 +19063,8 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
         OR existing.comments_count IS DISTINCT FROM EXCLUDED.comments_count
         OR existing.post_created_at IS DISTINCT FROM EXCLUDED.post_created_at
         OR existing.location IS DISTINCT FROM EXCLUDED.location
-        OR existing.media_poster IS DISTINCT FROM EXCLUDED.media_poster`,
+        OR existing.media_poster IS DISTINCT FROM EXCLUDED.media_poster
+        OR (EXCLUDED.author_avatar_url IS NOT NULL AND existing.author_avatar_url IS DISTINCT FROM EXCLUDED.author_avatar_url)`,
     [JSON.stringify(rows).replace(/\\u0000/gi, '')]
   );
   if (!options.skipTrim && targetTable === 'feed_posts_cache') trimFeedPostsCache();
@@ -19141,7 +19164,7 @@ function dbRowToFeedPost(r) {
     createdAt:   JOB_SOURCES.has(r.source)
       ? jobPostedDate(r.post_created_at)
       : normalizeTimestamp(r.post_created_at, r.fetched_at || Date.now()),
-    author:      { name: r.author_name },
+    author:      { name: r.author_name, ...(safeAvatarUrl(r.author_avatar_url) ? { avatarUrl: safeAvatarUrl(r.author_avatar_url) } : {}) },
     isExternal:  true,
   };
 }
@@ -21194,6 +21217,17 @@ async function getBillingCatalog() {
     }
     const valid = validRecurringPrice(price);
     if (valid) allowedPrices.set(price.id, tier);
+    // Members who subscribed on an earlier price of the same product keep their
+    // membership after the configured price changes; new checkouts use priceId.
+    const product = typeof price?.product === 'string' ? price.product : price?.product?.id;
+    if (valid && product) {
+      try {
+        const siblings = await stripe.prices.list({ product, type: 'recurring', limit: 100 });
+        for (const sibling of siblings.data || []) if (validRecurringPrice(sibling) && !allowedPrices.has(sibling.id)) allowedPrices.set(sibling.id, tier);
+      } catch (error) {
+        console.warn(`[billing/config] Could not list earlier ${tier} prices:`, error.message);
+      }
+    }
     tiers[tier] = { priceId: valid ? price.id : null, available: valid && price.active === true,
       summary: valid ? summarizeStripePrice(price, tier) : null };
   }));
@@ -24359,14 +24393,15 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
 
   // -- Reddit ------------------------------------------------------------------
   if (postId.startsWith('reddit_')) {
-    const redditId = postId.replace(/^reddit_/, '');
+    // Posts from a member's own connected account are stored as reddit_own_<id>.
+    const cleanId = postId.replace(/^reddit_(?:own_)?/, '').replace(/^t3_/, '');
+    if (!/^[a-z0-9]{1,16}$/i.test(cleanId)) return res.json({ comments: [], hasMore: false, source: 'reddit', live: false });
     try {
-      const { comments, hasMore, total } = await paginateComments(`comments_reddit_${redditId}`, async () => {
-        const cleanId = redditId.replace('t3_', '');
+      const { comments, hasMore, total } = await paginateComments(`comments_reddit_${cleanId}`, async () => {
         const mapChildren = (data) => {
           const listing = Array.isArray(data) ? data[1]?.data?.children : [];
           return (listing || [])
-            .filter(c => c.kind === 't1' && c.data?.body && c.data.body !== '[deleted]')
+            .filter(c => c.kind === 't1' && c.data?.body && !['[deleted]', '[removed]'].includes(c.data.body))
             .map(c => ({
               id:      c.data.id,
               author:  `u/${c.data.author}`,
@@ -24375,32 +24410,33 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
               created: normalizeTimestamp(c.data.created_utc),
             }));
         };
-        // OAuth first, same as fetchRedditSub — anonymous requests from a
-        // cloud-host IP are frequently blocked wholesale for extended
-        // periods (see redditAnonOutageUntil's own comment), which is
-        // exactly what confirmed live here: every single Reddit post tried
-        // came back empty via the plain www.reddit.com anonymous path,
-        // regardless of headers.
-        const token = await getRedditToken();
-        if (token) {
+        // Anonymous requests from a cloud-host IP are frequently blocked
+        // wholesale (see redditAnonOutageUntil), so authenticated reads come
+        // first: the viewer's own connected Reddit account, then the app's
+        // OAuth client. A source that could not be reached throws, so an
+        // outage is never cached as "no comments".
+        const viewer = req.user?.id ? await getUser(req.user.id) : null;
+        const tokens = [viewer?.socialTokens?.reddit, await getRedditToken()].filter(Boolean);
+        for (const token of tokens) {
           try {
             const data = await fetchJSON(
               `https://oauth.reddit.com/comments/${cleanId}?limit=100&depth=2&raw_json=1`,
               { 'Authorization': `Bearer ${token}`, 'User-Agent': 'UFIconnect/1.0 by /u/uficonnect' }
             );
-            return mapChildren(data);
+            if (Array.isArray(data)) return mapChildren(data);
           } catch (e) {
             console.warn(`[Reddit] OAuth comments failed for ${cleanId}: ${e.message}`);
           }
         }
-        if (Date.now() < redditAnonOutageUntil) return [];
-        const data = await fetchJSON(`https://www.reddit.com/comments/${cleanId}.json?limit=100&depth=2`, REDDIT_HEADERS);
+        if (Date.now() < redditAnonOutageUntil) throw new Error('Reddit is temporarily unreachable');
+        const data = await fetchJSON(`https://www.reddit.com/comments/${cleanId}.json?limit=100&depth=2&raw_json=1`, REDDIT_HEADERS);
+        if (!Array.isArray(data)) throw new Error('Reddit returned an unexpected comments response');
         return mapChildren(data);
       }, offset, limit);
       return res.json({ comments, hasMore, total, source: 'reddit', live: true });
     } catch (e) {
       console.warn('Reddit comments fetch:', e.message);
-      return res.json({ comments: [], hasMore: false, source: 'reddit', live: false });
+      return res.json({ comments: [], hasMore: false, source: 'reddit', live: false, unavailable: true });
     }
   }
 
@@ -28072,7 +28108,9 @@ app.post('/groups/:id/posts', authenticate, contentSubmissionLimiter, async (req
 });
 
 // Community posts toggle their own likes; any other post that is really in
-// the feed stores a member like in external_post_likes.
+// the feed stores a member like in external_post_likes, once the member has
+// liked it through their connected account on that source.
+const EXTERNAL_LIKE_SOURCES = new Set(['reddit', 'twitter', 'bluesky', 'youtube', 'github', 'gitlab']);
 async function toggleFeedPostLike(req, res) {
   const { postId } = req.params;
   try {
@@ -28080,8 +28118,14 @@ async function toggleFeedPostLike(req, res) {
     if (!db.isConnected()) {
       return res.status(503).json({ message: 'Liking is temporarily unavailable — please try again in a moment.' });
     }
-    if (typeof postId !== 'string' || postId.length > 300 || !(await findPostByIdWithDbFallback(postId))) {
-      return res.status(404).json({ message: 'Post not found.' });
+    const feedPost = typeof postId === 'string' && postId.length <= 300 ? await findPostByIdWithDbFallback(postId) : null;
+    if (!feedPost) return res.status(404).json({ message: 'Post not found.' });
+    // External posts are liked through the member's own account on that source.
+    const liker = await getUser(req.user.id);
+    if (!EXTERNAL_LIKE_SOURCES.has(feedPost.source) || !liker?.socialTokens?.[feedPost.source]) {
+      return res.status(403).json({ message: EXTERNAL_LIKE_SOURCES.has(feedPost.source)
+        ? 'Connect this source in Connected accounts to like its posts.'
+        : "Liking isn't available for posts from this source." });
     }
     const removed = await db.query(
       `DELETE FROM external_post_likes WHERE post_id=$1 AND user_id=$2 RETURNING post_id`,

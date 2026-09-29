@@ -26,6 +26,7 @@ const EVENT_TYPES = new Set([
 const TIERS = ['pro', 'business', 'resume_builder'];
 const ACTIVE = new Set(['active', 'trialing']);
 const ENDED = new Set(['canceled', 'incomplete_expired']);
+const RENEWALS = new Set(['subscription_cycle', 'subscription_update', 'subscription_threshold']);
 const idOf = value => typeof value === 'string' ? value : value?.id;
 const fault = (status, message) => Object.assign(new Error(message), { status });
 
@@ -95,7 +96,12 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
     if (current && current !== subscription.id) return 'different_subscription';
     const invoice = typeof subscription.latest_invoice === 'string'
       ? await stripe.invoices.retrieve(subscription.latest_invoice) : subscription.latest_invoice;
-    const paid = subscription.status === 'trialing' || invoice?.status === 'paid';
+    // Stripe opens each renewal as a draft or open invoice while the
+    // subscription stays active; a failed renewal moves it to past_due. Only a
+    // first invoice (or an invoice sent for manual payment) must be paid first.
+    const renewing = subscription.status === 'active' && subscription.collection_method !== 'send_invoice'
+      && ['draft', 'open'].includes(invoice?.status) && RENEWALS.has(invoice?.billing_reason);
+    const paid = subscription.status === 'trialing' || invoice?.status === 'paid' || renewing;
     const active = !row.billing_closed && !!tier && ACTIVE.has(subscription.status) && paid;
     const linkedId = ENDED.has(subscription.status) ? null : subscription.id;
     let result;
