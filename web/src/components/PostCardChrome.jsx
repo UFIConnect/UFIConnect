@@ -21,8 +21,9 @@ function validDate(value) {
   return Number.isFinite(date.getTime()) && date.getTime() > 0 ? date : null;
 }
 
-// One timestamp: the latest one the source reports, e.g. "Sep 23, 2026 · 8:11 AM",
-// or "Edited Sep 23, 2026 · 8:15 AM" when the post was edited after publishing.
+// One timestamp: the time of the latest version the source reports, e.g. "8:11 AM",
+// or "Edited 8:15 AM" when the post was edited after publishing. The full date
+// stays in the tooltip and the accessible label.
 export function postTimes(post) {
   const created = validDate(post?.createdAt || post?.time);
   if (!created) return null;
@@ -80,8 +81,8 @@ export function PostTime({ post, live = false }) {
   const times = postTimes(post);
   if (!times) return null;
   return (
-    <Link to={`/p/${encodeURIComponent(post.id)}`} className="post-chrome-time" title={times.full}>
-      <time dateTime={times.iso}><span>{times.edited && <span className="post-chrome-edited">Edited </span>}{times.day}</span><span className="post-chrome-time-sep" aria-hidden="true"> · </span><span>{times.time}</span></time>
+    <Link to={`/p/${encodeURIComponent(post.id)}`} className="post-chrome-time" title={times.full} aria-label={times.full}>
+      <time dateTime={times.iso}>{times.edited && <span className="post-chrome-edited">Edited </span>}{times.time}</time>
     </Link>
   );
 }

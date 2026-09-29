@@ -21,7 +21,7 @@
 .post-chrome-menu button:hover:not(:disabled), .post-chrome-menu button:focus-visible { background: var(--bg, #f1f5f9); outline: none; }
 .post-chrome-menu .post-chrome-menu-danger { color: #B91C1C; }
 .post-chrome-menu button small { display: block; margin-top: 2px; color: var(--muted); font-size: .74rem; font-weight: 500; overflow-wrap: anywhere; }
-.post-chrome-time time > span { white-space: nowrap; }
+.post-chrome-time time { white-space: nowrap; }
 .post-chrome-live { font-weight: 800; color: #B91C1C; }
 .post-chrome-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 10px; }
 .post-chrome-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
@@ -41,10 +41,7 @@
 .post-chrome-open-mark b { font-size: .58rem; color: var(--source-color); }
 .post-chrome-action:focus-visible, .post-chrome-time:focus-visible { outline: 3px solid #2563eb; outline-offset: 2px; }
 .post-chrome-tag { color: var(--source-color); font-weight: 600; }
-/* On phones the date and time stack so the author's name keeps its room. */
 @media (max-width: 480px) {
-  .post-chrome-time time { display: flex; flex-direction: column; align-items: flex-end; }
-  .post-chrome-time-sep { display: none; }
   .post-chrome-avatar { width: 44px; height: 44px; }
   /* One row on phones: tighter buttons, and the source link keeps just its mark. */
   .post-chrome-actions { gap: 4px; }

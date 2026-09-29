@@ -21194,6 +21194,17 @@ async function getBillingCatalog() {
     }
     const valid = validRecurringPrice(price);
     if (valid) allowedPrices.set(price.id, tier);
+    // Members who subscribed on an earlier price of the same product keep their
+    // membership after the configured price changes; new checkouts use priceId.
+    const product = typeof price?.product === 'string' ? price.product : price?.product?.id;
+    if (valid && product) {
+      try {
+        const siblings = await stripe.prices.list({ product, type: 'recurring', limit: 100 });
+        for (const sibling of siblings.data || []) if (validRecurringPrice(sibling) && !allowedPrices.has(sibling.id)) allowedPrices.set(sibling.id, tier);
+      } catch (error) {
+        console.warn(`[billing/config] Could not list earlier ${tier} prices:`, error.message);
+      }
+    }
     tiers[tier] = { priceId: valid ? price.id : null, available: valid && price.active === true,
       summary: valid ? summarizeStripePrice(price, tier) : null };
   }));

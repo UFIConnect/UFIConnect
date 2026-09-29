@@ -122,6 +122,26 @@ test('unpaid checkout and active subscription with unpaid invoice never unlock m
   assert.equal((await alice()).plan, 'pro');
 });
 
+test('an active membership stays unlocked while its renewal invoice is drafted or collected', async () => {
+  const f = setup(); f.sub(); f.session();
+  await f.service.handleEvent(f.event());
+  assert.equal((await alice()).plan, 'pro');
+  for (const [index, status] of ['draft', 'open'].entries()) {
+    f.sub('sub_a', { latest_invoice: { status, billing_reason: 'subscription_cycle' } });
+    await f.service.handleEvent(f.event(`evt_renew_${index}`, 'customer.subscription.updated', { id: 'sub_a', customer: 'cus_a' }));
+    assert.equal((await alice()).plan, 'pro', `A ${status} renewal invoice keeps the active membership`);
+  }
+  f.sub('sub_a', { collection_method: 'send_invoice', latest_invoice: { status: 'open', billing_reason: 'subscription_cycle' } });
+  await f.service.handleEvent(f.event('evt_manual', 'customer.subscription.updated', { id: 'sub_a', customer: 'cus_a' }));
+  assert.equal((await alice()).plan, 'free', 'Invoices sent for manual payment must be paid first');
+  f.sub('sub_a', { latest_invoice: { status: 'open', billing_reason: 'subscription_create' } });
+  await f.service.handleEvent(f.event('evt_first', 'customer.subscription.updated', { id: 'sub_a', customer: 'cus_a' }));
+  assert.equal((await alice()).plan, 'free', 'A first invoice must be paid before access');
+  f.sub('sub_a', { status: 'past_due', latest_invoice: { status: 'open', billing_reason: 'subscription_cycle' } });
+  await f.service.handleEvent(f.event('evt_failed', 'customer.subscription.updated', { id: 'sub_a', customer: 'cus_a' }));
+  assert.equal((await alice()).plan, 'free', 'A failed renewal still pauses access');
+});
+
 test('metadata cannot redirect another customer or upgrade an unapproved price', async () => {
   const f = setup(); f.sub(); f.session('cs_paid', 'sub_a', { client_reference_id: B, metadata: { uficonnect_user_id: B } });
   await f.service.handleEvent(f.event());
