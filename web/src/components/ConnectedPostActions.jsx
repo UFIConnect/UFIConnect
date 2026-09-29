@@ -5,7 +5,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 
 const requests = new Map();
-window.addEventListener('ufi-session-cleared', () => requests.clear());
+// Module scope also runs during prerendering, where there is no window.
+if (typeof window !== 'undefined') window.addEventListener('ufi-session-cleared', () => requests.clear());
 function getCapabilities(userId) {
   const existing = requests.get(userId);
   if (existing && existing.expiresAt > Date.now()) return existing.promise;
