@@ -14,7 +14,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const output = path.join(root, '.cache/audit-ui');
 const app = await createAppHarness();
 const server = await createServer({
-  root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envFile: false,
+  root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api'), 'import.meta.env.VITE_API_FALLBACK_URL': JSON.stringify('') },
   server: { host: '127.0.0.1', port: 5221, strictPort: false, proxy: { '/api': { target: app.base, rewrite: value => value.replace(/^\/api/, '') } } },
 });

@@ -2,6 +2,7 @@
   "name": "uficonnect-office",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "vite",
     "release:local": "node ../scripts/start-local-release.mjs",

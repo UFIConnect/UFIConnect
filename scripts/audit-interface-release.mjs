@@ -11,7 +11,7 @@ const { createAppHarness, member } = require('../backend/test-support/app-harnes
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const app = await createAppHarness();
 app.seedUser(member('interface-member', { name: 'Alex Member', joinedGroups: ['group-a', 'group-b'], bio: 'Building useful communities.', preferences: { role: 'Engineer / Developer', interests: ['Open Source'], goals: ['Learn new skills'] } }));
-const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envFile: false,
+const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api') }, server: { host: '127.0.0.1', port: 5216, strictPort: false, proxy: { '/api': { target: app.base, rewrite: p => p.replace(/^\/api/, '') } } } });
 let browser;
 const sample = (id, source, extra = {}) => ({ id, source, title: `Story ${id}`, content: 'A useful community update with details to discuss.', createdAt: new Date().toISOString(), sourceUrl: source === 'reddit' ? 'https://www.reddit.com/r/test/comments/abc123/story' : 'https://news.ycombinator.com/item?id=123', author: { id: 'other', name: 'Jordan Member' }, ...extra });

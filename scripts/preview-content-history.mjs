@@ -17,7 +17,7 @@ const userId = 'local-history-preview';
 app.seedUser(member(userId, { name: 'Local Preview', plan: 'pro' }));
 const store = createGeneratedContentStore(app.db);
 const server = await createServer({
-  root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envFile: false,
+  root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   plugins: [{ name: 'local-preview-session', transformIndexHtml() {
     return [{ tag: 'script', children: `localStorage.setItem('pc_token',${JSON.stringify(app.token(userId))});`, injectTo: 'head' }];
   } }],

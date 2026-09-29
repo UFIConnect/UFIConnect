@@ -6,7 +6,7 @@ import { chromium } from 'playwright';
 import { createServer } from '../office/node_modules/vite/dist/node/index.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const server = await createServer({ root: path.join(root, 'office'), configFile: path.join(root, 'office/vite.config.js'), envFile: false,
+const server = await createServer({ root: path.join(root, 'office'), configFile: path.join(root, 'office/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify(''), 'import.meta.env.VITE_PIPELINE_API_URL': JSON.stringify('') },
   server: { host: '127.0.0.1', port: 5213, strictPort: false },
 });

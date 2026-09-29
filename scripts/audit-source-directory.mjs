@@ -19,7 +19,7 @@ const platforms = {
   linkedin: { name: 'LinkedIn', configured: true, forceComingSoon: true, commandCenterOnly: true },
   indeed: { name: 'Indeed', category: 'career', configured: false },
 };
-const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envFile: false,
+const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api') },
   server: { host: '127.0.0.1', port: 5210, strictPort: false, proxy: { '/api': { target: app.base, rewrite: p => p.replace(/^\/api/, '') } } },
 });

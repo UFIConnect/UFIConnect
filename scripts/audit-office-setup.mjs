@@ -9,7 +9,7 @@ const require=createRequire(import.meta.url);
 const {buildOfficeSetup}=require('../backend/office-setup.js');
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const API='https://setup-api.invalid',PIPELINE='https://setup-pipeline.invalid',TOKEN='synthetic-setup-token';
-const server=await createServer({root:path.join(root,'office'),configFile:path.join(root,'office/vite.config.js'),envFile:false,
+const server=await createServer({root:path.join(root,'office'),configFile:path.join(root,'office/vite.config.js'),envDir:false,
  define:{'import.meta.env.VITE_API_URL':JSON.stringify(API),'import.meta.env.VITE_PIPELINE_API_URL':JSON.stringify(PIPELINE)},
  server:{host:'127.0.0.1',port:5235,strictPort:false}});
 let browser;

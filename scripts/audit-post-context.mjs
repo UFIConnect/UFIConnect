@@ -13,7 +13,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const app = await createAppHarness({ connected: true });
 app.seedUser(member('post-context', { joinedGroups: ['ufi-general', 'ufi-tech'] }));
 app.posts.push({ id: 'joined-tech-post', groupId: 'ufi-tech', authorId: 'post-context', source: 'uficonnect', content: 'A useful technology update from our joined community.', createdAt: new Date().toISOString(), likes: [], commentsCount: 0 });
-const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envFile: false,
+const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api') },
   server: { host: '127.0.0.1', port: 5209, strictPort: false, proxy: { '/api': { target: app.base, rewrite: p => p.replace(/^\/api/, '') } } },
 });

@@ -17,7 +17,7 @@ const app = await createAppHarness();
 app.seedUser(member('preview-member', { name: 'UFIconnect Member', resumeBuilderAddon: true, plan: 'pro', skills: ['Product design'] }));
 app.seedUser(member('other-member', { roleSettings: { feedSourceFavorites: { feed: ['github'], following: ['reddit'] } } }));
 const server = await createServer({
-  root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envFile: false,
+  root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api'), 'import.meta.env.VITE_API_FALLBACK_URL': JSON.stringify('/fallback') },
   server: { host: '127.0.0.1', port: 5190, strictPort: false,
     proxy: {

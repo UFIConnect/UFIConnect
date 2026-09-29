@@ -25,7 +25,7 @@ app = await createAppHarness({ env: { YOUTUBE_API_KEY: 'travel-ui-test' }, modul
     throw new Error('Guide provider unavailable in UI fixture');
   },
 } } });
-const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envFile: false,
+const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api') },
   server: { host: '127.0.0.1', port: 5214, strictPort: false, proxy: { '/api': { target: app.base, rewrite: p => p.replace(/^\/api/, '') } } },
 });
