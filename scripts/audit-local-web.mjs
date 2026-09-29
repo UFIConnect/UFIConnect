@@ -209,6 +209,15 @@ try {
   const hostedStart = page.getByRole('link', { name: 'Start phone connection', exact: true });
   assert.ok(await hostedStart.isVisible(), 'Hosted Office shows where to start a phone connection');
   assert.equal(await hostedStart.getAttribute('href'), 'http://127.0.0.1:4174/#local-web', 'Starting a phone connection opens the local workspace');
+  const officeNav = target => target.getByRole('navigation', { name: 'Office sections' }).getByRole('button');
+  assert.deepEqual(await officeNav(page).allTextContents(), ['Overview', 'Local web', 'Setup', 'Controls', 'Deploy Center'], 'Hosted Office shows only its public views');
+  await page.goto(`${hostedUrl}#city`, { waitUntil: 'domcontentloaded' });
+  await page.getByRole('heading', { name: 'Overview', exact: true }).first().waitFor().catch(() => {});
+  assert.equal(await page.locator('.lc-map-panel').count(), 0, 'Live City stays out of the hosted Office, even by direct link');
+  const localPage = await context.newPage();
+  await open(localPage, localUrl);
+  const localNav = (await officeNav(localPage).allTextContents()).map(label => label.trim().replace(/\s*[▴▾]$/, ''));
+  assert.ok(localNav.includes('Live City') && localNav.includes('More tools'), 'The local Office keeps Live City and More tools');
   await context.close();
   console.log('PASS: Hosted Local web tab requires the local console');
   const phoneContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });

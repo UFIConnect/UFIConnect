@@ -1,7 +1,13 @@
 # Office Live City
 
 Open **Office → Live City** (`#city`) to inspect the running post pipeline as an
-interactive city. Buildings represent operating stages, and the agent directory
+interactive city.
+
+Live City and the **More tools** group are only in the local Office: run
+`npm run office:release-local` and open `http://127.0.0.1:4174`. The hosted
+Office at office.uficonnect.org carries only Overview, Local web, Setup,
+Controls and Deploy Center, and its production build leaves the Live City code
+out entirely until it is finalized. Buildings represent operating stages, and the agent directory
 contains agents returned by the authenticated services. Select a building or
 agent for its measurements, role, recent activity and explanation.
 
@@ -12,7 +18,7 @@ display. The elevator jumps directly between levels. Inputs and outputs are
 system boundaries, not claims that a particular post completed them; missing
 measurements remain **Not reported**.
 
-The residential grid gives each of the 71 canonical agents one permanent home.
+The towns give each of the 71 canonical agents one permanent home.
 An agent that reports from both API and pipeline still has one home, while both
 service observations remain available in the directory and inspector. Home
 lights mean:
@@ -29,6 +35,40 @@ lights mean:
 A home light does not turn a presence heartbeat into completed work. Selecting
 a home opens that agent's owning service observation; the directory remains the
 place to switch between API and pipeline instances of shared agents.
+
+## The 3D city
+
+**All** shows the whole region in 3D, centred on desktop and phones.
+**Street map** keeps the flat plan, and devices without 3D graphics fall back
+to it automatically.
+
+- **Downtown** holds every stage building, one per block, with its garage and
+  the cafes along the southern boulevard. Nobody lives downtown.
+- **Towns** surround downtown, each with its own streets and up to twelve
+  homes. Homes are grouped by the building their agents work in: a busy
+  workplace fills towns of its own, and small workplaces share one. Each town
+  is labelled with its name and where its residents work, and sits on the side
+  of downtown nearest that workplace.
+- **The beltway** joins every town to downtown: a spur leaves each town's gate
+  for the beltway, and connectors carry the beltway into downtown's streets.
+
+- **Streets** carry each agent's commute. Cars leave home, take the shortest
+  roads out of town, around the beltway and into downtown, park inside the
+  agent's workplace and drive back; residents walk to the cafes at lunch.
+  Commutes are illustrative: they show where each agent lives and works, not
+  individual posts.
+- **The grid** is the lines strung on utility poles. It links buildings that
+  hand work to each other, following the pipeline from source collection
+  through balancing, filtering, sorting, staging and transfer to the database,
+  topics and the live feed, plus the database's recovery backup. Trunk lines
+  run beside the roads from downtown to every town, and each home has a
+  service drop from the pole at its driveway. Pulses run along a line while the services report that
+  handoff as active; an idle line stays dark.
+- Selecting an agent, or clicking its home, flies the camera to a clear view
+  of the front door, which swings open as the camera arrives. The camera picks
+  a viewpoint that trees, poles and neighbouring homes do not block.
+- Drag to orbit, pinch or scroll to zoom, and use the moon button for night
+  lighting. Reduced motion jumps straight to each view.
 
 ## Reading the city
 
