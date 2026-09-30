@@ -59,6 +59,7 @@ export function createLocalWebMiddleware({
   officeUrl = 'http://127.0.0.1:4174',
   previewUrl = 'http://127.0.0.1:4173',
   phoneAccess,
+  githubReview,
 } = {}) {
   const expected = new URL(officeUrl);
   if (expected.hostname !== '127.0.0.1' || expected.protocol !== 'http:') {
@@ -186,7 +187,18 @@ export function createLocalWebMiddleware({
         throw failure(403, 'Open the editor from the local Office address.', 'forbidden_origin');
       }
       if (request.method === 'GET' && url.pathname === '/__local-web/status') {
-        return send(200, { previewUrl, officeUrl, writeHeader: 'X-Local-Web-Editor', phone: phoneAccess?.getStatus() || { state: 'unavailable' } });
+        return send(200, { previewUrl, officeUrl, writeHeader: 'X-Local-Web-Editor', phone: phoneAccess?.getStatus() || { state: 'unavailable' },
+          github: githubReview?.getStatus() || { state: 'unavailable' } });
+      }
+      if (url.pathname === '/__local-web/github') {
+        if (!githubReview) throw failure(503, 'Restart with npm run office:release-local to preview GitHub.');
+        if (request.method === 'GET') return send(200, githubReview.getStatus());
+        if (request.method !== 'POST') throw failure(405, 'Use GET or POST.');
+        if (request.headers.origin !== expected.origin || request.headers['x-local-web-editor'] !== '1') {
+          throw failure(403, 'Update the GitHub preview from the local Office editor.', 'forbidden_origin');
+        }
+        const body = await readBody(request);
+        return send(202, githubReview.update(body.branch ?? 'main'));
       }
       if (url.pathname === '/__local-web/phone' && request.method === 'POST') {
         if (request.headers.origin !== expected.origin || request.headers['x-local-web-editor'] !== '1') throw failure(403, 'Manage phone access from the local Office editor.', 'forbidden_origin');
