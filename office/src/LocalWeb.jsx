@@ -44,7 +44,7 @@ function assertSameFile(current, saved) {
   }
 }
 
-function LocalPreview({ size, version, page, base = LOCAL_PREVIEW }) {
+function LocalPreview({ size, version, page }) {
   const container = useRef(null);
   const [availableWidth, setAvailableWidth] = useState(0);
   useEffect(() => {
@@ -57,7 +57,7 @@ function LocalPreview({ size, version, page, base = LOCAL_PREVIEW }) {
   const height = 900;
   const scale = availableWidth ? Math.min(1, availableWidth / width) : 1;
   return <div ref={container} className={`local-web-preview local-web-preview-${size}`} style={{ height: height * scale }}>
-    <iframe key={version} src={`${base}${page === '/' ? '' : page}`} title="Local UFIConnect website preview"
+    <iframe key={version} src={`${LOCAL_PREVIEW}${page === '/' ? '' : page}`} title="Local UFIConnect website preview"
       style={{ width, height, transform: `scale(${scale})`, transformOrigin: 'top left' }} />
   </div>;
 }
@@ -153,10 +153,6 @@ function LocalEditor({ apiBase, request }) {
   const [previewSize, setPreviewSize] = useState('desktop');
   const [previewVersion, setPreviewVersion] = useState(0);
   const [previewPage, setPreviewPage] = useState('/');
-  // The GitHub preview is a separate copy of the repository; it never touches the files edited here.
-  const [previewSource, setPreviewSource] = useState('local');
-  const [github, setGithub] = useState({ state: 'unavailable' });
-  const [branch, setBranch] = useState('main');
   const [connectionAttempt, setConnectionAttempt] = useState(0);
   const [phone, setPhone] = useState({ state: 'off' });
   const [previewUrl, setPreviewUrl] = useState(LOCAL_PREVIEW);
@@ -180,7 +176,6 @@ function LocalEditor({ apiBase, request }) {
       }
       setFiles(directory.files);
       setPhone(status.phone || { state: 'off' });
-      setGithub(status.github || { state: 'unavailable' });
       setPreviewUrl(status.previewUrl);
       setReady(true);
     }).catch(failure => {
@@ -211,23 +206,6 @@ function LocalEditor({ apiBase, request }) {
     };
   }, [dirty, busy]);
 
-  useEffect(() => {
-    if (github.state !== 'updating') return undefined;
-    const timer = setInterval(() => {
-      fetch('/__local-web/github', { cache: 'no-store' }).then(payloadOf).then(setGithub).catch(() => {});
-    }, 2000);
-    return () => clearInterval(timer);
-  }, [github.state]);
-  const getLatestFromGithub = async () => {
-    setPreviewSource('github');
-    try {
-      setGithub(await payloadOf(await fetch('/__local-web/github', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Local-Web-Editor': '1' }, body: JSON.stringify({ branch: branch.trim() || 'main' }),
-      })));
-    } catch (failure) { setGithub(current => ({ ...current, state: 'error', error: failure.message })); }
-  };
-  const githubReady = github.state === 'ready' || (github.state === 'updating' && github.sha);
-  const previewBase = previewSource === 'github' ? github.previewUrl : previewUrl;
   const clearReview = () => { setReview(null); setReviewed(false); setCommitMessage(''); };
   const connectPhone = async action => {
     setBusy('phone'); setError('');
@@ -361,7 +339,7 @@ function LocalEditor({ apiBase, request }) {
           <div className="local-web-section-heading"><h2 id="local-web-preview-heading">Local preview</h2>
             {!phone.remote && <div className="local-web-heading-actions">
               <button type="button" onClick={() => setPreviewVersion(value => value + 1)}>Refresh</button>
-              <a className="local-web-button" href={`${previewSource === 'github' && githubReady ? previewBase : previewUrl}${previewPage === '/' ? '' : previewPage}`} target="_blank" rel="noreferrer">Open local website</a>
+              <a className="local-web-button" href={`${previewUrl}${previewPage === '/' ? '' : previewPage}`} target="_blank" rel="noreferrer">Open local website</a>
             </div>}
           </div>
           <p className="local-web-hint">Account actions in the preview use the live service.</p>
@@ -369,23 +347,6 @@ function LocalEditor({ apiBase, request }) {
             <p>The preview opens in its own tab. Enter the same connection code there, then refresh it after each save.</p>
             <a href={previewUrl} target="_blank" rel="noreferrer" className="local-web-button local-web-primary">Open phone preview</a>
           </div> : <>
-            <div className="local-web-actions" role="group" aria-label="Preview source">
-              <button type="button" aria-pressed={previewSource === 'local'} onClick={() => setPreviewSource('local')}>Your files</button>
-              <button type="button" aria-pressed={previewSource === 'github'} disabled={github.state === 'unavailable'}
-                title={github.state === 'unavailable' ? 'Restart with npm run office:release-local to preview GitHub' : undefined}
-                onClick={() => setPreviewSource('github')}>GitHub</button>
-            </div>
-            {previewSource === 'github' && <div className="local-web-github">
-              <label className="local-web-label" htmlFor="local-web-branch">GitHub branch</label>
-              <div className="local-web-actions">
-                <input id="local-web-branch" value={branch} onChange={event => setBranch(event.target.value)} spellCheck={false} autoCapitalize="none" />
-                <button type="button" className="local-web-primary" disabled={github.state === 'updating'} onClick={getLatestFromGithub}>Get latest from GitHub</button>
-              </div>
-              <p className="local-web-hint" role="status">{github.state === 'updating' ? `${github.step || 'Updating'}…`
-                : github.state === 'ready' ? `Showing ${github.branch} at ${github.sha.slice(0, 7)}: ${github.subject}`
-                : github.state === 'error' ? `Could not load GitHub: ${github.error}`
-                : 'Get the latest from GitHub to preview it here. Your own files are not changed.'}</p>
-            </div>}
             <div className="local-web-actions" role="group" aria-label="Preview page">
               {PREVIEW_PAGES.map(([page, label]) => <button type="button" key={page} aria-pressed={previewPage === page} onClick={() => setPreviewPage(page)}>{label}</button>)}
             </div>
@@ -393,9 +354,7 @@ function LocalEditor({ apiBase, request }) {
               <button type="button" aria-pressed={previewSize === 'desktop'} onClick={() => setPreviewSize('desktop')}>Desktop</button>
               <button type="button" aria-pressed={previewSize === 'mobile'} onClick={() => setPreviewSize('mobile')}>Mobile</button>
             </div>
-            {previewSource === 'github' && !githubReady
-              ? <p className="local-web-empty">The GitHub version appears here once it has loaded.</p>
-              : <LocalPreview size={previewSize} version={`${previewVersion}:${previewSource}:${github.sha || ''}`} page={previewPage} base={previewBase} />}
+            <LocalPreview size={previewSize} version={previewVersion} page={previewPage} />
           </>}
         </section>
       </div>
