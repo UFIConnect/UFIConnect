@@ -13,7 +13,7 @@
     "@auth0/auth0-react": "^2.27.0",
     "axios": "^1.6.0",
     "hls.js": "^1.6.17",
-    "lucide-react": "^1.47.0",
+    "lucide-react": "^1.48.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-helmet-async": "^3.0.0",
