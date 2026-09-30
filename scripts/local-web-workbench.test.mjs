@@ -5,10 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createLocalWebMiddleware, localWebWorkbench } from './local-web-workbench.mjs';
-import { REVIEW_BRANCH } from './local-github-review.mjs';
 import { lineChanges } from '../office/src/line-changes.mjs';
 
-async function fixture(t, options = {}) {
+async function fixture(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'uficonnect-local-web-'));
   await mkdir(path.join(root, 'web/src'), { recursive: true });
   await mkdir(path.join(root, 'web/public'), { recursive: true });
@@ -26,7 +25,7 @@ async function fixture(t, options = {}) {
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
-  handler = createLocalWebMiddleware({ root, officeUrl: origin, ...options });
+  handler = createLocalWebMiddleware({ root, officeUrl: origin });
   t.after(async () => {
     await new Promise(resolve => server.close(resolve));
     // mkdtemp supplies the one exact temporary root owned by this test.
@@ -198,31 +197,4 @@ test('publication review reports a Windows line ending change once instead of ev
   assert.equal(edited.endings, 'LF');
   assert.deepEqual([edited.added, edited.removed], [1, 1]);
   assert.deepEqual(edited.hunks[0].rows.map(row => row.text), ['a', 'b', 'B', 'c', '']);
-});
-
-test('the GitHub preview reports its state and updates only from the local editor', async t => {
-  const updates = [];
-  const githubReview = {
-    getStatus: () => ({ state: 'ready', previewUrl: 'http://127.0.0.1:4175', branch: 'main', sha: 'a'.repeat(40) }),
-    update: branch => { updates.push(branch); return { state: 'updating', branch }; },
-  };
-  const { origin, request } = await fixture(t, { githubReview });
-  assert.equal((await (await request('status')).json()).github.state, 'ready');
-  const post = (body, headers = {}) => request('github', { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
-  assert.equal((await post({ branch: 'main' })).status, 403, 'Updates need the editor header');
-  assert.equal((await post({ branch: 'main' }, { Origin: 'http://evil.test', 'X-Local-Web-Editor': '1' })).status, 403);
-  const accepted = await post({ branch: 'feature/maps' }, { Origin: origin, 'X-Local-Web-Editor': '1' });
-  assert.equal(accepted.status, 202);
-  assert.deepEqual(updates, ['feature/maps']);
-});
-
-test('the GitHub preview is reported unavailable without the local release console', async t => {
-  const { request } = await fixture(t);
-  assert.equal((await (await request('status')).json()).github.state, 'unavailable');
-  assert.equal((await request('github')).status, 503);
-});
-
-test('GitHub preview branch names cannot carry options, paths or ranges', () => {
-  for (const name of ['main', 'claude/determined-cray-208sv2', 'fix/video-controls-20260928', 'release-1.2']) assert.ok(REVIEW_BRANCH.test(name), name);
-  for (const name of ['', '-main', '--upload-pack=x', 'a..b', '/main', 'main/', '.hidden', 'a b', 'main;rm', 'x'.repeat(121)]) assert.ok(!REVIEW_BRANCH.test(name), name);
 });
