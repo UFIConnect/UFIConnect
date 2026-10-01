@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
-import { ArrowUpRight, Check, ChevronRight, Clock3, Copy, Download, Eye, EyeOff, Globe2, Grid2X2, KeyRound, List, LockKeyhole, Plus, Power, RefreshCw, Search, ShieldCheck, Star, Trash2, Upload, X } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import VaultVpnPanel from '../components/VaultVpnPanel';
+import { VaultNavigation, VaultCardDesign } from './VaultDevice';
+import { ArrowUpRight, Check, ChevronRight, Clock3, Copy, Download, Eye, EyeOff, Globe2, Grid2X2, KeyRound, List, LockKeyhole, Plus, Search, ShieldCheck, Star, Trash2, Upload, X } from 'lucide-react';
 import Layout from '../components/Layout';
 import client from '../api/client';
 import { createAccountVault } from '../vault/accountVault.mjs';
@@ -11,12 +14,6 @@ const EMPTY_ENTRY = { name: '', url: '', appUrl: '', username: '', password: '',
 const COMMAND_LABELS = { add: 'Add password', import: 'Import passwords', backup: 'Encrypted backup', web: 'Open website', app: 'Open app', copy: 'Copy password' };
 const MAX_IMPORT_BYTES = 2 * 1024 * 1024;
 const LOCAL_PREVIEW = import.meta.env.VITE_VAULT_LOCAL_PREVIEW === 'true' && typeof window !== 'undefined' && ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
-
-function devicePlatform() {
-  if (typeof navigator === 'undefined') return 'other';
-  if (/iPad|iPhone|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) return 'ios';
-  return /Windows/i.test(navigator.userAgent) ? 'windows' : 'other';
-}
 
 function FaceScan({ size = 24 }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m8 0h3a2 2 0 0 0 2-2v-3M8 9v2m8-2v2m-4-2v5h-1m-3 2c2 2 6 2 8 0" /></svg>;
@@ -87,86 +84,6 @@ function HardwareVerification({ accountId }) {
   </section>;
 }
 
-function VpnPanel() {
-  const [platform, setPlatform] = useState(() => devicePlatform() === 'ios' ? 'ios' : 'windows');
-  const [state, setState] = useState(null);
-  const [selected, setSelected] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const mounted = useRef(true);
-  const generation = useRef(0);
-  const useLocalAdapter = LOCAL_PREVIEW && platform === 'windows';
-  const readStatus = useCallback(async () => {
-    if (!useLocalAdapter) return;
-    const request = generation.current;
-    try {
-      const response = await fetch('/__vault/vpn/status', { cache: 'no-store' });
-      if (!response.ok) throw new Error('The local VPN connection is unavailable.');
-      const next = await response.json();
-      if (mounted.current && request === generation.current) { setState(next); setError(''); }
-    } catch { if (mounted.current && request === generation.current) { setState({ available: false, profiles: [], activity: [] }); setError('Local VPN service unavailable.'); } }
-  }, [useLocalAdapter]);
-  useEffect(() => {
-    mounted.current = true;
-    generation.current += 1;
-    setState(null); setError(''); setBusy(false); setSelected('');
-    if (useLocalAdapter) readStatus();
-    const timer = useLocalAdapter ? window.setInterval(() => { if (!document.hidden) readStatus(); }, 15000) : null;
-    return () => { mounted.current = false; generation.current += 1; window.clearInterval(timer); };
-  }, [readStatus, useLocalAdapter]);
-  const profiles = useLocalAdapter && Array.isArray(state?.profiles) ? state.profiles : [];
-  const profile = profiles.find(item => item.id === selected) || profiles[0];
-  const connected = profile?.status === 'connected';
-  const pending = ['connecting', 'disconnecting'].includes(profile?.status);
-  const status = !useLocalAdapter ? 'Managed on your device' : connected ? 'Connected' : pending ? 'Pending' : profile?.status === 'disconnected' ? 'Not connected' : 'Status unavailable';
-  const activity = useLocalAdapter && Array.isArray(state?.activity) ? state.activity.filter(item => ['connect', 'disconnect'].includes(item.action) && Number.isFinite(new Date(item.timestamp).getTime())) : [];
-  const showWindowsSettings = platform === 'windows' && (devicePlatform() === 'windows' || (useLocalAdapter && state?.platform === 'windows'));
-  async function changeConnection() {
-    if (!useLocalAdapter || !profile || busy || !(connected ? profile.canDisconnect : profile.canConnect)) return;
-    const request = generation.current;
-    setBusy(true); setError('');
-    try {
-      const sessionResponse = await fetch('/__vault/session', { cache: 'no-store' });
-      if (!sessionResponse.ok) throw new Error('The local VPN session could not be verified.');
-      const { csrfToken } = await sessionResponse.json();
-      if (!csrfToken) throw new Error('The local VPN session could not be verified.');
-      if (!mounted.current || request !== generation.current) return;
-      const response = await fetch(`/__vault/vpn/${connected ? 'disconnect' : 'connect'}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Vault-CSRF': csrfToken }, body: JSON.stringify({ profileId: profile.id }) });
-      const next = await response.json();
-      if (!response.ok) throw new Error(next.error || 'The VPN could not change connection state.');
-      if (mounted.current && request === generation.current) setState(next);
-    } catch (failure) { if (mounted.current && request === generation.current) setError(failure.message); }
-    finally { if (mounted.current && request === generation.current) { setBusy(false); readStatus(); } }
-  }
-  return <>
-    <section className="vault-panel vault-vpn-panel" aria-labelledby="vault-vpn-title">
-      <div className="vault-panel-heading"><span className="vault-eyebrow"><Globe2 size={15} /> CONNECTION</span>{useLocalAdapter && <button className="vault-icon-button" type="button" aria-label="Refresh VPN status" onClick={readStatus}><RefreshCw size={15} /></button>}</div>
-      <div className="vault-vpn-heading"><h2 id="vault-vpn-title">Your VPN</h2><span className={`vault-status${connected ? ' is-connected' : ''}`}><i />{status}</span></div>
-      <div className="vault-platform-switch" role="group" aria-label="VPN device"><button type="button" aria-pressed={platform === 'windows'} onClick={() => setPlatform('windows')}>Windows</button><button type="button" aria-pressed={platform === 'ios'} onClick={() => setPlatform('ios')}>iPhone &amp; iPad</button></div>
-      <div className={`vault-connection-art${connected ? ' is-connected' : ''}`} aria-hidden="true"><div /><div /><ShieldCheck size={48} strokeWidth={1.3} /></div>
-      {useLocalAdapter ? <>
-      {profiles.length > 0 ? <label className="vault-field">Windows connection<select value={profile?.id || ''} onChange={event => setSelected(event.target.value)}>{profiles.map(item => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label> : <div className="vault-connection-empty"><strong>{state ? 'No supported VPN ready' : 'Checking this computer…'}</strong><p>Uses a VPN profile configured in Windows.</p></div>}
-      {profile && <p className="vault-helper">{profile.protocol}{profile.splitTunneling ? ' · Some traffic bypasses this VPN' : ''}</p>}
-      <button type="button" className={`vault-button vault-button--full${connected ? ' vault-button--secondary' : ' vault-button--primary'}`} disabled={busy || pending || !state?.available || !(connected ? profile?.canDisconnect : profile?.canConnect)} onClick={changeConnection}><Power size={17} />{busy ? 'Checking connection…' : connected ? 'Disconnect' : 'Connect VPN'}</button>
-      {(error || profile?.unavailableReason || state?.message) && <p className="vault-helper" role="status">{error || profile?.unavailableReason || state?.message}</p>}
-      <p className="vault-footnote">Connection status comes from Windows. A browser cannot protect traffic on its own.</p>
-      </> : <div className="vault-vpn-guide">
-        <h3>{platform === 'ios' ? 'Use your existing VPN' : 'Manage your Windows VPN'}</h3>
-        <p>{platform === 'ios' ? 'Connect or disconnect in your VPN provider’s app, or use a VPN profile already installed on your iPhone or iPad.' : 'Connect or disconnect using your VPN app or an existing profile in Windows Settings.'}</p>
-        <ol>{platform === 'ios' ? <><li>Open your VPN app, or go to <strong>Settings → General → VPN &amp; Device Management → VPN</strong>.</li><li>Select your existing connection and connect or disconnect there.</li><li>Check its status in the app or Settings, then return to Your Vault.</li></> : <><li>Open <strong>Settings → Network &amp; internet → VPN</strong>, or your VPN provider’s app.</li><li>Select your existing connection and connect or disconnect there.</li><li>Check its status on your device, then return to Your Vault.</li></>}</ol>
-        <p className="vault-footnote">Status unavailable in browser. Your Vault cannot see or control this device’s VPN from the public website.{platform === 'windows' ? ' In-page Windows controls require the separate local companion.' : ''}</p>
-        {platform === 'ios' && <a className="vault-text-button" href="https://www.apple.com/legal/privacy/data/en/vpns/" target="_blank" rel="noopener noreferrer">Apple VPN guidance <ArrowUpRight size={13} /></a>}
-      </div>}
-      {showWindowsSettings && <a className="vault-text-button" href="ms-settings:network-vpn">Open Windows VPN settings <ArrowUpRight size={13} /></a>}
-    </section>
-    <section className="vault-panel vault-activity" aria-labelledby="vault-activity-title">
-      <div className="vault-panel-heading"><h2 id="vault-activity-title">Connection activity</h2><Clock3 size={16} /></div>
-      <p className="vault-helper">{useLocalAdapter ? 'Connection requests and times only.' : 'VPN activity is managed by your device and provider. Your Vault does not receive that history.'}</p>
-      {activity.length ? <ol>{activity.slice(0, 5).map((item, index) => <li key={`${item.timestamp}-${index}`}><span className="vault-activity-dot" /><span>{item.action === 'connect' ? 'Connect requested' : 'Disconnect requested'}<time dateTime={item.timestamp}>{dateLabel(item.timestamp)}</time></span></li>)}</ol> : <div className="vault-activity-empty"><Clock3 size={20} /><span>{useLocalAdapter ? 'No connection activity yet' : 'Activity unavailable in browser'}</span></div>}
-    </section>
-  </>;
-}
-
 export default function Vault({ accountId }) {
   const vault = useMemo(() => createAccountVault(accountId), [accountId]);
   const { hasVault, createVault, unlockVault, saveEntries, parsePasswordImport, exportEncryptedVault, restoreEncryptedVault, hasDeviceUnlock, enableDeviceUnlock, unlockWithDevice } = vault;
@@ -228,12 +145,12 @@ export default function Vault({ accountId }) {
     finally { if (request === epoch.current) setBusy(false); }
   }
 
-  async function persist(entries, message) {
+  async function persist(entries, message, nextPreferences = preferences) {
     if (!session) return false;
     const request = epoch.current;
     setBusy(true); setError('');
     try {
-      const next = await saveEntries({ ...session, preferences }, entries);
+      const next = await saveEntries({ ...session, preferences: nextPreferences }, entries);
       if (request !== epoch.current) return false;
       setSession(next); setNotice(message); return true;
     } catch (failure) { if (request === epoch.current) setError(failure.message || 'Your changes could not be saved.'); return false; }
@@ -292,7 +209,7 @@ export default function Vault({ accountId }) {
   }
 
   async function copyPassword(value) {
-    try { await navigator.clipboard.writeText(value); setNotice('Password copied to your clipboard.'); }
+    try { await navigator.clipboard.writeText(value); setNotice('Password copied to your clipboard.'); if (session && !busy) void recordCommand('copy'); }
     catch { setError('Clipboard access is unavailable. Use Reveal password to copy it manually.'); }
   }
 
@@ -343,6 +260,7 @@ export default function Vault({ accountId }) {
     <section className="vault-page" aria-label="Your Vault">
       <header className="vault-page-heading"><div><div className="vault-wordmark"><ShieldCheck size={19} /><span>UFI<span>connect</span></span><span className="vault-preview-badge">{LOCAL_PREVIEW ? 'LOCAL PREVIEW' : 'BROWSER VAULT · BETA'}</span></div><h1>Your Vault<span>.</span></h1><p>Your passwords. Your connections. One private space.</p></div><div className="vault-heading-actions">{session && <button className="vault-button vault-button--secondary" onClick={() => lockVault()}><LockKeyhole size={16} />Lock vault</button>}<span className={`vault-status${session ? ' is-connected' : ''}`}><i />{session ? 'Unlocked' : 'Locked'}</span></div></header>
 
+      <VaultNavigation />
       <div className="vault-overview"><span><ShieldCheck size={16} />Encrypted on this browser</span><span><Clock3 size={16} />Auto-lock after 1 minute</span><span><Globe2 size={16} />No server sync</span></div>
       {notice && <div className="vault-feedback" role="status"><Check size={16} />{notice}<button aria-label="Dismiss message" onClick={() => setNotice('')}><X size={15} /></button></div>}
       {error && !editor && !restoreOpen && !deviceSetupOpen && <div className="vault-feedback vault-feedback--error" role="alert">{error}</div>}
@@ -373,10 +291,10 @@ export default function Vault({ accountId }) {
           <input className="vault-hidden-input" type="file" accept=".csv,.json,text/csv,application/json" ref={importRef} onChange={importPasswords} tabIndex={-1} aria-label="Import password file" />
         </section>}
 
-        <div className="vault-device-grid"><section className="vault-panel vault-device-panel" aria-labelledby="vault-device-title"><div className="vault-panel-heading"><span className="vault-eyebrow">UFI DEVICE</span><span className="vault-pending">Awaiting hardware</span></div><div className="vault-device-body"><div className="vault-hardware-art" aria-hidden="true"><span>ufi</span><i /><div /></div><div><h2 id="vault-device-title">Your physical connection.</h2><p>The UFI device will appear here when hardware integration is available.</p></div></div><button className="vault-button vault-button--secondary vault-button--full" disabled><Plus size={16} />Connect device · pending</button></section>
+        <div className="vault-device-grid"><section className="vault-panel vault-device-panel" aria-labelledby="vault-device-title"><div className="vault-panel-heading"><span className="vault-eyebrow">UFI DEVICE</span><span className="vault-pending">Awaiting hardware</span></div><div className="vault-device-body"><VaultCardDesign compact /><div><h2 id="vault-device-title">Your physical connection.</h2><p>Explore the UFI Vault Card design. Device pairing and orders are not open yet.</p></div></div><Link className="vault-text-button" to="/vault/device">View device <ArrowUpRight size={14} /></Link><button className="vault-button vault-button--secondary vault-button--full" disabled><Plus size={16} />Connect device · pending</button></section>
           <section className="vault-panel vault-face-panel" aria-labelledby="vault-face-title"><div className="vault-panel-heading"><span className="vault-eyebrow">QUICK ACCESS</span><span className="vault-pending">{deviceReady ? 'Configured' : 'Not configured'}</span></div><div className="vault-face-art"><FaceScan size={40} /></div><h2 id="vault-face-title">Face ID / device unlock</h2><p>Face ID on supported Apple devices; your browser controls device verification.</p>{deviceReady ? <button className="vault-button vault-button--secondary vault-button--full" disabled={busy || !!session} onClick={useDeviceUnlock}><FaceScan size={17} />{session ? 'Device unlock is ready' : 'Unlock with device'}</button> : <button className="vault-button vault-button--secondary vault-button--full" disabled={!session || busy} onClick={() => { setError(''); setDeviceSetupOpen(true); }}><FaceScan size={17} />{session ? 'Set up device unlock' : 'Unlock vault to set up'}</button>}</section></div>
         <p className="vault-local-note"><LockKeyhole size={14} />{LOCAL_PREVIEW ? 'Local preview. ' : 'Browser vault beta. '}Passwords are saved encrypted in this browser; they do not sync with your account or other devices. Keep an encrypted backup and its passphrase for recovery. Independent security review and UFI hardware integration are pending.</p>
-      </div><aside className="vault-secondary-column" aria-label="Connections and activity"><VpnPanel /><HardwareVerification accountId={accountId} /></aside></div>
+      </div><aside className="vault-secondary-column" aria-label="Connections and activity"><VaultVpnPanel accountId={accountId} /><HardwareVerification accountId={accountId} /></aside></div>
     </section>
 
     {editor && session && <VaultDialog title={editor.id ? 'Password details' : 'Add a password'} onClose={() => { setEditor(null); setShowPassword(false); setError(''); }}><form onSubmit={saveEntry} className="vault-entry-form">

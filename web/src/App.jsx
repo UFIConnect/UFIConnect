@@ -77,12 +77,13 @@ const CoverLetterPreview = lazy(() => import('./pages/CoverLetterPreview'));
 const YourPostsFeed  = lazy(() => import('./pages/YourPostsFeed'));
 const SavedItems = lazy(() => import('./pages/SavedItems'));
 const Vault = lazy(() => import('./pages/Vault'));
+const VaultDevice = lazy(() => import('./pages/VaultDevice'));
 
 const WorkspaceCenter = lazy(() => import('./pages/WorkspaceCenter'));
 const GroupPost = lazy(() => import('./pages/GroupPost'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 const SearchGuide = lazy(() => import('./pages/SearchGuide'));
-// This review branch includes the complete source map behind account sign-in.
+// Maps and workspaces are available behind account sign-in.
 const Maps = lazy(() => import('./pages/Maps'));
 
 function AnalyticsPrivacyControls() {
@@ -275,6 +276,7 @@ export default function App() {
 
       <Route path="/saved/:kind" element={<RequireAuth><RequireOnboarding><SavedItems /></RequireOnboarding></RequireAuth>} />
       <Route path="/vault" element={<RequireAuth><RequireOnboarding><VaultRoute /></RequireOnboarding></RequireAuth>} />
+      <Route path="/vault/device" element={<RequireAuth><RequireOnboarding><VaultDevice /></RequireOnboarding></RequireAuth>} />
       <Route path="/maps" element={<RequireAuth><RequireOnboarding><Maps /></RequireOnboarding></RequireAuth>} />
       <Route path="/centers/:kind" element={<RequireAuth><RequireOnboarding><WorkspaceCenter /></RequireOnboarding></RequireAuth>} />
       <Route path="/groups/post" element={<RequireAuth><RequireOnboarding><GroupPost /></RequireOnboarding></RequireAuth>} />
