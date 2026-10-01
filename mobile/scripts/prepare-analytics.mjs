@@ -1,11 +1,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const mobileRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const projectRoot = path.resolve(mobileRoot, '..');
 const assets = [
   ['web/src/analytics/googleAnalytics.mjs', 'analytics/generated/googleAnalytics.mjs'],
+  ['web/src/analytics/telemetryPrivacy.mjs', 'analytics/generated/telemetryPrivacy.mjs'],
 ];
 for (const [source, destination] of assets) {
   const content = await fs.readFile(path.join(projectRoot, source));
@@ -18,4 +19,7 @@ for (const [source, destination] of assets) {
     await fs.writeFile(target, content);
   }
 }
-console.log('Expo web analytics controller is synchronized.');
+// Resolve the generated module graph now so missing shared dependencies fail
+// during preparation, before Metro starts an Android, iOS, or web export.
+await import(pathToFileURL(path.join(mobileRoot, 'analytics/generated/googleAnalytics.mjs')).href);
+console.log('Expo web analytics controller and privacy filter are synchronized.');
