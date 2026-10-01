@@ -27,7 +27,7 @@ Command Center, and Vault. Open a city to reach its source houses and topic targ
 Use **Back to all cities** in the map controls to return to the complete overview.
 The desktop map has Customize your app, Sources, and Community collection on its
 right. City Topics and How your app works follow Community collection in that same
-rail, including when viewing one city. These controls stack below the map on mobile.
+rail, including when viewing one city. On mobile (up to 768px), a dedicated Map menu opens these controls from the right; the standard app menu remains available. Opening a source house or downtown building opens its related panel. Close, backdrop, and Escape return to the map. Only one copy of the controls is mounted at each screen size.
 Maps is at the bottom of the app sidebar; Analytics lives in Profile → More.
 
 Selecting a house or downtown building reveals and focuses the corresponding

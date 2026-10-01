@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
 import CategoryCity from '../components/SourceCity';
@@ -50,6 +51,15 @@ export default function Maps() {
   const [topicSearch, setTopicSearch] = useState('');
   const [activeBuilding, setActiveBuilding] = useState('feed');
   const [revealPanel, setRevealPanel] = useState('');
+  const [mobileTools, setMobileTools] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches);
+  const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 768px)');
+    const update = () => { setMobileTools(media.matches); if (!media.matches) setMobileToolsOpen(false); };
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
   const topicTargets = city.value.topicTargets || {};
   const paging = useRef({ page: 1, cursor: '' });
   const request = useRef(null);
@@ -57,6 +67,38 @@ export default function Maps() {
   const heading = useRef(null);
   const houseHeading = useRef(null);
   const guideHeading = useRef(null);
+  const mobileMenu = useRef(null);
+  const mobileMenuButton = useRef(null);
+  useEffect(() => {
+    if (!mobileTools || !mobileToolsOpen) return undefined;
+    const drawer = mobileMenu.current;
+    const previousFocus = document.activeElement;
+    const previousOverflow = document.body.style.overflow;
+    const initialFocus = revealPanel === 'topics' ? houseHeading.current : revealPanel === 'guide' ? guideHeading.current : drawer?.querySelector('button');
+    document.body.style.overflow = 'hidden';
+    const frame = window.requestAnimationFrame(() => initialFocus?.focus({ preventScroll: true }));
+    function handleKeys(event) {
+      if (event.key === 'Escape') { event.preventDefault(); setMobileToolsOpen(false); return; }
+      if (event.key !== 'Tab' || !drawer) return;
+      const items = [...drawer.querySelectorAll('a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex="0"]')]
+        .filter(element => element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden' && !element.closest('[hidden]'));
+      const first = items[0], last = items[items.length - 1];
+      if (!first) { event.preventDefault(); return; }
+      if (event.shiftKey && (document.activeElement === first || !drawer.contains(document.activeElement))) {
+        event.preventDefault(); last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !drawer.contains(document.activeElement))) {
+        event.preventDefault(); first.focus();
+      }
+    }
+    document.addEventListener('keydown', handleKeys);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleKeys);
+      const returnTarget = previousFocus instanceof HTMLElement && previousFocus !== document.body && previousFocus.isConnected ? previousFocus : mobileMenuButton.current;
+      returnTarget?.focus({ preventScroll: true });
+    };
+  }, [mobileTools, mobileToolsOpen]); // Focus the requested panel only when the drawer opens.
   const category = CITY_CATEGORIES.find(item => item.id === active) || CITY_CATEGORIES[0];
   const sources = Array.isArray(sourceSelections[active])
     ? [...new Set(sourceSelections[active].filter(source => CITY_SOURCE_IDS.includes(source)))]
@@ -133,7 +175,7 @@ export default function Maps() {
   }, [active, query, view, enabled.includes(active), sourceKey, requestedTopics]);
   useScrollToRefresh(() => load(true), { enabled: view === 'explore' && enabled.includes(active) && Boolean(sourceKey) && !loading });
   function chooseCategory(id) { setActive(id); setActiveSource(''); setView('explore'); setQuery(''); setPage(1); }
-  function openHouse(source) { setActiveSource(source); setView('explore'); setQuery(''); setPage(1); setRevealPanel('topics'); }
+  function openHouse(source) { setActiveSource(source); setView('explore'); setQuery(''); setPage(1); setRevealPanel('topics'); if (mobileTools) setMobileToolsOpen(true); }
   useEffect(() => {
     if (!revealPanel) return;
     const target = revealPanel === 'topics' ? houseHeading.current : revealPanel === 'guide' ? guideHeading.current : heading.current;
@@ -142,13 +184,14 @@ export default function Maps() {
       target.focus({ preventScroll: true });
       setRevealPanel('');
     }
-  }, [revealPanel, view, active, currentSource, enabled.includes(active)]);
-  function showBuilding(id) { setActiveBuilding(id); setRevealPanel('guide'); }
+  }, [revealPanel, view, active, currentSource, enabled.includes(active), mobileTools]);
+  function showBuilding(id) { setActiveBuilding(id); setRevealPanel('guide'); if (mobileTools) setMobileToolsOpen(true); }
   function exploreBuilding(action) {
     if (action !== 'collection' && !enabled.includes(active)) {
       setNotice('Enable ' + category.label + ' in Customize your app to choose its topics.');
       return;
     }
+    if (action === 'collection') setMobileToolsOpen(false);
     setView(action === 'collection' ? 'selected' : 'explore');
     setPage(1);
     setRevealPanel(action === 'collection' ? 'posts' : 'topics');
@@ -199,16 +242,7 @@ export default function Maps() {
     else if (view === 'explore' && hasMore && await load()) setPage(page + 1);
     heading.current?.focus();
   }
-  return <Layout wide feedSearch={{ query, label: 'Search city posts', onSubmit: value => { setQuery(value); setPage(1); } }}>
-    <Helmet><title>Maps · Your city | UFIconnect</title><meta name="robots" content="noindex" /></Helmet>
-    <div className="local-workspace city-workspace">
-      <header className="local-workspace-heading"><div><span className="local-eyebrow">YOUR WORLD, CONNECTED</span><h1>Maps</h1><p>Choose a city, open its source houses, and save posts about the topics you enjoy.</p></div><span className="local-status-pill">{selected.length} / {limit} posts selected</span></header>
-      <ol className="map-get-started"><li><b>1</b><span>Choose your city<small>A landscape for every interest</small></span></li><li><b>2</b><span>Open source houses<small>Pick the topics inside</small></span></li><li><b>3</b><span>Grow your collection<small>Raise your target and save posts</small></span></li></ol>
-      <div className="map-explorer-layout">
-        <div className="map-explorer-main">
-      <CategoryCity cities={allCities} onCivicSelect={showBuilding} houseSummaries={houseSummaries} cityCounts={cityCounts} enabled={enabled} active={active} onSelect={chooseCategory} counts={counts} sources={enabled.includes(active) ? sources : []} activeSource={currentSource} onSourceSelect={openHouse} />
-        </div>
-        <aside className="map-customization-rail" aria-label="Customize your city">
+  const cityControls = <aside className="map-customization-rail" aria-label="Customize your city">
       <details className="card city-customize"><summary>Customize your app</summary>
         <p>Choose your nature neighborhoods, add source houses, and keep up to 500 posts in your personal selection. Changes are saved for your account in this browser.</p>
         <div className="local-chip-row">{CITY_CATEGORIES.map(item => <label key={item.id} className="local-check-chip"><input type="checkbox" checked={enabled.includes(item.id)} onChange={() => toggleCategory(item.id)} />{item.label}</label>)}</div>
@@ -255,7 +289,17 @@ export default function Maps() {
 
       </section>}
       <CityAppGuide selected={activeBuilding} onSelect={setActiveBuilding} onAction={exploreBuilding} headingRef={guideHeading} />
-        </aside>
+        </aside>;
+  return <Layout wide feedSearch={{ query, label: 'Search city posts', onSubmit: value => { setQuery(value); setPage(1); } }}>
+    <Helmet><title>Maps · Your city | UFIconnect</title><meta name="robots" content="noindex" /></Helmet>
+    <div className="local-workspace city-workspace">
+      <header className="local-workspace-heading"><div><span className="local-eyebrow">YOUR WORLD, CONNECTED</span><h1>Maps</h1><p>Choose a city, open its source houses, and save posts about the topics you enjoy.</p></div><div className="map-heading-actions"><span className="local-status-pill">{selected.length} / {limit} posts selected</span>{mobileTools && <button ref={mobileMenuButton} type="button" className="btn btn-ghost btn-sm map-menu-toggle" aria-haspopup="dialog" aria-expanded={mobileToolsOpen} aria-controls="map-mobile-menu" onClick={() => setMobileToolsOpen(true)}>Map menu</button>}</div></header>
+      <ol className="map-get-started"><li><b>1</b><span>Choose your city<small>A landscape for every interest</small></span></li><li><b>2</b><span>Open source houses<small>Pick the topics inside</small></span></li><li><b>3</b><span>Grow your collection<small>Raise your target and save posts</small></span></li></ol>
+      <div className="map-explorer-layout">
+        <div className="map-explorer-main">
+      <CategoryCity cities={allCities} onCivicSelect={showBuilding} houseSummaries={houseSummaries} cityCounts={cityCounts} enabled={enabled} active={active} onSelect={chooseCategory} counts={counts} sources={enabled.includes(active) ? sources : []} activeSource={currentSource} onSourceSelect={openHouse} />
+        </div>
+        {!mobileTools && cityControls}
       </div>
       <div className="local-workspace-heading"><h2 ref={heading} tabIndex={-1}>{view === 'selected' ? 'Your selected posts' : currentSource ? sourceLabel(currentSource) + ' posts' : category.label + ' · Source posts'}</h2><div className="local-chip-row">
         <button type="button" className="btn btn-ghost btn-sm" aria-pressed={view === 'selected'} onClick={() => { setView(view === 'selected' ? 'explore' : 'selected'); setPage(1); }}>Your selection ({selected.length})</button>
@@ -275,5 +319,11 @@ export default function Maps() {
       {!loading && (!currentPosts.length || (view === 'explore' && !enabled.length)) && <p className="card">{view === 'selected' ? 'Select posts from your city to build your collection.' : !enabled.length ? 'Choose at least one category in Customize your app.' : !sourceKey ? 'Choose a source above to add its house and explore its posts.' : 'No posts match this source and topic selection yet. Try another house or clear its topics.'}</p>}
       <nav className="local-pagination" aria-label="City post pages"><button type="button" className="btn btn-ghost btn-sm" disabled={loading || page <= 1} onClick={() => setPage(page - 1)}>Previous</button><span>Page {Math.min(page, pages)}</span><button type="button" className="btn btn-ghost btn-sm" disabled={loading || (page >= pages && (view === 'selected' || !hasMore))} onClick={nextPage}>Next</button></nav>
     </div>
+    {mobileTools && mobileToolsOpen && createPortal(<div className="map-mobile-menu-backdrop" onClick={event => { if (event.target === event.currentTarget) setMobileToolsOpen(false); }}>
+      <section id="map-mobile-menu" ref={mobileMenu} className="map-mobile-menu" role="dialog" aria-modal="true" aria-labelledby="map-mobile-menu-title">
+        <header className="map-mobile-menu-heading"><h2 id="map-mobile-menu-title">Map menu</h2><button type="button" className="btn btn-ghost btn-sm" aria-label="Close map menu" onClick={() => setMobileToolsOpen(false)}>Close</button></header>
+        <div className="map-mobile-menu-content">{cityControls}</div>
+      </section>
+    </div>, document.body)}
   </Layout>;
 }
