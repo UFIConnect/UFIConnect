@@ -34,7 +34,7 @@ import { ALL_INTERESTS } from './Onboarding';
 import ReportModal from '../components/ReportModal';
 import { useToast } from '../contexts/ToastContext';
 import { UfiFeedContent } from './Post';
-import ConnectedPostActions, { useSourceCapability } from '../components/ConnectedPostActions';
+import ConnectedPostActions, { originalSourceUrl, useSourceCapability } from '../components/ConnectedPostActions';
 import { SavePostButton } from '../components/SaveButtons';
 import { CommentIcon, OpenOnSource, PostHeader, PostOptionsMenu, SharePostButton, feedAccountKey } from '../components/PostCardChrome';
 import PostLikes from '../components/PostLikes';
@@ -1245,7 +1245,10 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
   const c   = catStyle(post.group?.category);
   const embedId = post.embedId || extractYouTubeId(post.sourceUrl || post.mediaUrl);
   const [imageFailed, setImageFailed] = useState(false);
+  const [showComments, setShowComments] = useState(false);
   useEffect(() => setImageFailed(false), [post?.id, post?.mediaUrl]);
+  useEffect(() => setShowComments(false), [post?.id]);
+  const commentCount = Number.isFinite(post.commentsCount) && post.commentsCount > 0 ? post.commentsCount : null;
   return (
     <div ref={cardRef} className="card post-card" style={{ marginBottom: 12, '--source-color': src.color }}>
       <PostHeader post={post} />
@@ -1268,13 +1271,18 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
         </div>
       ) : null}
       {post.content && <PostText text={post.content} accent={src.color} />}
-      <ConnectedPostActions post={post} />
       <div className="post-chrome-actions">
         <PostLikes post={post} />
+        {originalSourceUrl(post) && <button type="button" className="post-chrome-action" aria-expanded={showComments}
+          aria-label={showComments ? 'Hide Comments' : `Show Comments${commentCount ? ` (${commentCount.toLocaleString()})` : ''}`}
+          title="Comments" onClick={() => setShowComments(value => !value)}>
+          <CommentIcon />{commentCount && <span>{commentCount.toLocaleString()}</span>}
+        </button>}
         <SavePostButton post={post} className="post-chrome-action save-item-button" showLabel={false} />
         <SharePostButton post={post} />
         <OpenOnSource post={post} label="Watch on YouTube" />
       </div>
+      <ConnectedPostActions post={post} active={showComments} />
     </div>
   );
 }
@@ -1560,7 +1568,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
   const videoIsPlayable = hasVideo && (videoPlaylistUrl || videoIsDirectFile || videoYouTubeId || videoVimeoId);
   const commentCount   = post.commentsCount || 0;
   const commUrl        = commentUrl(post);
-  const hasComments    = COMMENT_SOURCES.has(post.source) || isUFIconnectInteractive;
+  const hasComments    = COMMENT_SOURCES.has(post.source) || isUFIconnectInteractive || Boolean(originalSourceUrl(post));
   const sectionLabel   = commentSectionLabel(post.source);
   const isArticle      = ARTICLE_SOURCES.has(post.source);
   const canWriteComment = isUFIconnectInteractive && !!token;
@@ -1823,8 +1831,6 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
         />
       </div>
 
-      {!isUFIconnectInteractive && <ConnectedPostActions post={post} />}
-
       {/* Inline comments / replies / answers / reviews */}
       {showComments && (
         <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
@@ -1974,6 +1980,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
           )}
         </div>
       )}
+      {!isUFIconnectInteractive && <ConnectedPostActions post={post} active={showComments} showFallback={!commUrl} />}
     </div>
   );
 }); // PostCard memo

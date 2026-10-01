@@ -165,6 +165,9 @@ try {
           await drawer.getByRole('link', { name: `Post to ${label}`, exact: true }).click();
           await page.waitForURL(url => new URL(url).searchParams.get('feed') === category);
           await page.getByRole('form', { name: `Create ${label} post`, exact: true }).waitFor();
+          // Opening a linked composer consumes its command parameter in a second
+          // navigation. Wait for that route before the next shared-menu interaction.
+          await page.waitForURL(url => url.searchParams.get('feed') === category && !url.searchParams.has('compose'));
           await waitClosed();
         }
 
@@ -325,6 +328,14 @@ try {
       check(errors.length === 0, `Browser errors: ${errors.join(', ')}`);
       console.log(`PASS: account sidebar at ${viewport.width}px`);
     } catch (error) {
+      console.error('Account sidebar failure state:', await page.evaluate(() => ({
+        path: location.pathname + location.search,
+        width: innerWidth,
+        mobile: matchMedia('(max-width: 768px)').matches,
+        drawerHidden: document.querySelector('#mobile-account-drawer')?.getAttribute('aria-hidden'),
+        pageWidth: document.documentElement.scrollWidth,
+        active: document.activeElement?.getAttribute('aria-label'),
+      })));
       await page.screenshot({ path: path.join(output, `account-sidebar-failure-${viewport.width}.png`) });
       throw error;
     } finally {

@@ -4,17 +4,32 @@ const { randomUUID } = require('node:crypto');
 // payment credentials, card numbers, CVCs, or billing addresses.
 const BILLING_SCHEMA = [
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS billing_closed BOOLEAN NOT NULL DEFAULT false`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS vpn_connector_addon BOOLEAN NOT NULL DEFAULT false`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS vpn_connector_subscription_id TEXT`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS users_vpn_connector_sub_idx ON users(vpn_connector_subscription_id) WHERE vpn_connector_subscription_id IS NOT NULL`,
+  `CREATE TABLE IF NOT EXISTS vault_vpn_locations (
+    id UUID PRIMARY KEY, user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    platform TEXT NOT NULL CHECK (platform IN ('windows','linux','ios','android')),
+    name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 80),
+    country TEXT NOT NULL CHECK (length(country) BETWEEN 1 AND 80)
+  )`,
+  `CREATE INDEX IF NOT EXISTS vault_vpn_locations_user_idx ON vault_vpn_locations(user_id)`,
   `CREATE TABLE IF NOT EXISTS billing_webhook_events (
     event_id TEXT PRIMARY KEY, event_type TEXT NOT NULL,
     outcome TEXT NOT NULL, processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
   `CREATE TABLE IF NOT EXISTS billing_checkout_attempts (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    slot TEXT NOT NULL CHECK (slot IN ('plan', 'resume_builder')),
+    slot TEXT NOT NULL CHECK (slot IN ('plan', 'resume_builder', 'vpn_connector')),
     attempt_id UUID NOT NULL, tier TEXT NOT NULL, price_id TEXT NOT NULL,
     customer_id TEXT NOT NULL, session_id TEXT, return_base TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (user_id, slot)
   )`,
+  // One table lock covers the complete upgrade when API/pipeline workers start
+  // together; separate DROP and ADD statements can race between processes.
+  `ALTER TABLE billing_checkout_attempts
+    DROP CONSTRAINT IF EXISTS billing_checkout_attempts_slot_check,
+    ADD CONSTRAINT billing_checkout_attempts_slot_check CHECK (slot IN ('plan', 'resume_builder', 'vpn_connector'))`,
 ];
 const EVENT_TYPES = new Set([
   'checkout.session.completed', 'checkout.session.async_payment_succeeded',
@@ -23,7 +38,9 @@ const EVENT_TYPES = new Set([
   'customer.subscription.paused', 'customer.subscription.resumed',
   'invoice.paid', 'invoice.payment_failed', 'invoice.payment_action_required',
 ]);
-const TIERS = ['pro', 'business', 'resume_builder'];
+const TIERS = ['pro', 'business', 'resume_builder', 'vpn_connector'];
+const SLOTS = { plan: 'stripe_subscription_id', resume_builder: 'resume_builder_subscription_id', vpn_connector: 'vpn_connector_subscription_id' };
+const slotFor = tier => ['resume_builder', 'vpn_connector'].includes(tier) ? tier : 'plan';
 const ACTIVE = new Set(['active', 'trialing']);
 const ENDED = new Set(['canceled', 'incomplete_expired']);
 const RENEWALS = new Set(['subscription_cycle', 'subscription_update', 'subscription_threshold']);
@@ -96,26 +113,27 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
   async function applySubscription(client, row, subscription, catalog, { allowLink = false } = {}) {
     if (!checkOwner(subscription, row)) return 'customer_mismatch';
     const tier = tierFor(subscription, catalog);
-    const knownPlan = row.stripe_subscription_id === subscription.id;
-    const knownAddon = row.resume_builder_subscription_id === subscription.id;
-    if (!knownPlan && !knownAddon && (!allowLink || !tier)) return 'unlinked_subscription';
-    const addon = knownAddon || (!knownPlan && tier === 'resume_builder');
-    if ((knownPlan && tier === 'resume_builder') || (knownAddon && tier && tier !== 'resume_builder')) return 'wrong_subscription_kind';
-    const current = addon ? row.resume_builder_subscription_id : row.stripe_subscription_id;
+    const knownSlot = Object.keys(SLOTS).find(slot => row[SLOTS[slot]] === subscription.id);
+    if (!knownSlot && (!allowLink || !tier)) return 'unlinked_subscription';
+    const slot = knownSlot || slotFor(tier);
+    const wrongKind = knownSlot && tier && knownSlot !== slotFor(tier);
+    const current = row[SLOTS[slot]];
     // A delayed checkout/cancellation for an old subscription must never
     // replace or revoke the newer subscription in the same membership slot.
     if (current && current !== subscription.id) return 'different_subscription';
     const paid = await hasPaidInvoice(subscription);
-    const active = !row.billing_closed && !!tier && ACTIVE.has(subscription.status) && paid;
+    const active = !row.billing_closed && !!tier && !wrongKind && ACTIVE.has(subscription.status) && paid;
     const linkedId = ENDED.has(subscription.status) ? null : subscription.id;
     let result;
-    if (addon) {
+    if (slot === 'vpn_connector') {
+      result = await client.query('UPDATE users SET vpn_connector_addon=$1, vpn_connector_subscription_id=$2 WHERE id=$3 RETURNING *', [active, linkedId, row.id]);
+    } else if (slot === 'resume_builder') {
       result = await client.query('UPDATE users SET resume_builder_addon=$1, resume_builder_subscription_id=$2 WHERE id=$3 RETURNING *', [active, linkedId, row.id]);
     } else {
       result = await client.query('UPDATE users SET plan=$1, stripe_subscription_id=$2 WHERE id=$3 RETURNING *', [active ? tier : 'free', linkedId, row.id]);
     }
     Object.assign(row, result.rows[0]);
-    return tier ? 'reconciled' : 'unsupported_price';
+    return wrongKind ? 'wrong_subscription_kind' : tier ? 'reconciled' : 'unsupported_price';
   }
   async function reconcileSession(client, row, session, catalog) {
     if (session.mode !== 'subscription' || !checkOwner(session, row, true)) return 'customer_mismatch';
@@ -181,11 +199,10 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
     Object.assign(row, rows[0]);
     return created.id;
   }
-  function checkCheckoutAllowed(row, addon) {
+  function checkCheckoutAllowed(row, slot) {
     if (!row) throw fault(404, 'Profile record not found.');
     if (row.billing_closed) throw fault(409, 'Billing is closed while account deletion is being completed.');
-    if (addon ? row.resume_builder_addon || row.resume_builder_subscription_id
-      : ['pro', 'business'].includes(row.plan) || row.stripe_subscription_id) {
+    if (row[SLOTS[slot]] || (slot === 'plan' ? ['pro', 'business'].includes(row.plan) : row[`${slot}_addon`])) {
       throw fault(409, 'A subscription already exists. Use Manage billing to update it or recover a failed payment.');
     }
   }
@@ -195,19 +212,19 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
     const catalog = await getCatalog();
     const priceId = catalog.tiers[tier]?.available && catalog.tiers[tier].priceId;
     if (!priceId) throw fault(503, 'This subscription is not available yet.');
-    const slot = tier === 'resume_builder' ? tier : 'plan';
+    const slot = slotFor(tier);
     // Persist the attempt BEFORE the remote API call. A crash after Stripe
     // accepts a request reuses this key, including on a different API worker.
     await transaction(async client => {
       const row = await lockUser(client, userId);
-      checkCheckoutAllowed(row, slot === 'resume_builder');
+      checkCheckoutAllowed(row, slot);
       const customer = await getOrCreateCustomer(client, row);
       const { rows: priorAttempts } = await client.query('SELECT * FROM billing_checkout_attempts WHERE user_id=$1 AND slot=$2', [userId, slot]);
       // Covers subscriptions and open checkouts created before the durable
       // attempt table was introduced, or before an initial webhook arrived.
       for await (const existing of stripe.subscriptions.list({ customer, status: 'all', limit: 100 })) {
         const existingTier = tierFor(existing, catalog);
-        if (!ENDED.has(existing.status) && existingTier && (existingTier === 'resume_builder') === (slot === 'resume_builder')) {
+        if (!ENDED.has(existing.status) && existingTier && slotFor(existingTier) === slot) {
           throw fault(409, 'A subscription already exists. Use Manage billing to update it or recover a failed payment.');
         }
       }
@@ -216,7 +233,7 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
         for await (const existing of stripe.checkout.sessions.list({ customer, status: 'open', limit: 100 })) {
           if (existing.client_reference_id === row.id && existing.mode === 'subscription'
             && TIERS.includes(existing.metadata?.tier)
-            && (existing.metadata.tier === 'resume_builder') === (slot === 'resume_builder')) {
+            && slotFor(existing.metadata.tier) === slot) {
             const items = await stripe.checkout.sessions.listLineItems(existing.id, { limit: 2 });
             if (existing.metadata.tier !== tier || items.data.length !== 1
               || items.data[0].quantity !== 1 || idOf(items.data[0].price) !== priceId) {
@@ -237,7 +254,7 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
       let changed;
       const session = await transaction(async client => {
         const row = await lockUser(client, userId);
-        checkCheckoutAllowed(row, slot === 'resume_builder');
+        checkCheckoutAllowed(row, slot);
         const { rows: [pending] } = await client.query('SELECT * FROM billing_checkout_attempts WHERE user_id=$1 AND slot=$2 FOR UPDATE', [userId, slot]);
         if (!pending || pending.customer_id !== row.stripe_customer_id) throw fault(409, 'Billing account changed. Please contact support.');
         if (pending.session_id) {
@@ -263,7 +280,7 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
         // older attempt needs reconciliation, never a speculative new charge.
         if (Date.now() - new Date(pending.created_at).getTime() >= 23 * 3600000) throw fault(409, 'An earlier checkout needs reconciliation. Please contact support before starting another payment.');
         if (pending.tier !== tier || pending.price_id !== priceId) throw fault(409, 'An earlier checkout is pending for another plan.');
-        const path = slot === 'resume_builder' ? '/resume-builder' : '/settings';
+        const path = slot === 'vpn_connector' ? '/vault' : slot === 'resume_builder' ? '/resume-builder' : '/settings';
         const created = await stripe.checkout.sessions.create({
           mode: 'subscription', customer: pending.customer_id,
           line_items: [{ price: pending.price_id, quantity: 1 }],
@@ -293,12 +310,13 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
       if (!row) throw fault(404, 'Profile record not found.');
       const { rows: attempts } = await client.query('SELECT * FROM billing_checkout_attempts WHERE user_id=$1', [userId]);
       for (const attempt of attempts) {
-        if (attempt.session_id && !(attempt.slot === 'plan' ? row.stripe_subscription_id : row.resume_builder_subscription_id)) {
+        if (attempt.session_id && !row[SLOTS[attempt.slot]]) {
           await reconcileSession(client, row, await stripe.checkout.sessions.retrieve(attempt.session_id), catalog);
         }
       }
       const subscriptions = [];
-      for (const [kind, subId] of [['plan', row.stripe_subscription_id], ['resume_builder', row.resume_builder_subscription_id]]) {
+      for (const [kind, column] of Object.entries(SLOTS)) {
+        const subId = row[column];
         if (!subId) continue;
         const sub = await readSubscription(subId);
         if (!checkOwner(sub, row)) throw fault(409, 'Billing account ownership needs review.');
@@ -313,7 +331,7 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
       // a plan label, email match, or subscription supplied by the browser is
       // never enough to grant access.
       if (row.stripe_customer_id && !row.billing_closed
-        && (!row.stripe_subscription_id || !row.resume_builder_subscription_id)) {
+        && Object.values(SLOTS).some(column => !row[column])) {
         const customer = await stripe.customers.retrieve(row.stripe_customer_id);
         if (customer.deleted || (customer.metadata?.uficonnect_user_id && customer.metadata.uficonnect_user_id !== row.id)) {
           throw fault(409, 'Billing account ownership needs review.');
@@ -324,13 +342,13 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
           if (++inspected > 100) throw fault(409, 'Subscription history needs review. Use Manage billing for help.');
           const candidateTier = tierFor(candidate, catalog);
           if (!candidateTier || !ACTIVE.has(candidate.status) || !checkOwner(candidate, row)) continue;
-          const kind = candidateTier === 'resume_builder' ? 'resume_builder' : 'plan';
-          if (kind === 'plan' ? row.stripe_subscription_id : row.resume_builder_subscription_id) continue;
+          const kind = slotFor(candidateTier);
+          if (row[SLOTS[kind]]) continue;
           // Read current state, including the invoice, rather than trusting the
           // list snapshot if a cancellation or payment update is in progress.
           const sub = await readSubscription(candidate.id);
           const tier = tierFor(sub, catalog);
-          if (!tier || (tier === 'resume_builder') !== (kind === 'resume_builder')
+          if (!tier || slotFor(tier) !== kind
             || !checkOwner(sub, row) || !ACTIVE.has(sub.status) || !await hasPaidInvoice(sub)) continue;
           if (recovered.has(kind) && recovered.get(kind).id !== sub.id) {
             throw fault(409, 'Multiple active subscriptions need review. Use Manage billing before starting another checkout.');
@@ -348,7 +366,7 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
         }
       }
       updated = row;
-      return { plan: row.plan || 'free', resumeBuilderAddon: !!row.resume_builder_addon,
+      return { plan: row.plan || 'free', resumeBuilderAddon: !!row.resume_builder_addon, vpnConnectorAddon: !!row.vpn_connector_addon,
         hasBillingAccount: !!row.stripe_customer_id, subscriptions,
         paymentProvider: 'stripe', management: 'hosted_portal' };
     });
@@ -384,7 +402,7 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
       if (session.client_reference_id === userId) await stripe.checkout.sessions.expire(session.id);
     }
     for await (const sub of stripe.subscriptions.list({ customer, status: 'all', limit: 100 })) {
-      if (sub.metadata?.uficonnect_user_id === userId || [row.stripe_subscription_id, row.resume_builder_subscription_id].includes(sub.id)) {
+      if (sub.metadata?.uficonnect_user_id === userId || Object.values(SLOTS).some(column => row[column] === sub.id)) {
         if (!ENDED.has(sub.status)) await stripe.subscriptions.cancel(sub.id, { prorate: false, invoice_now: false });
       }
     }

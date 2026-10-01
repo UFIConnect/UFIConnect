@@ -23,6 +23,7 @@ try {
     const context = await browser.newContext({ viewport: { width, height: 950 }, isMobile: width < 600, hasTouch: width <= 768 });
     const page = await context.newPage(); page.setDefaultTimeout(15000);
     const errors = [], feedRequests = [], published = [], interactions = [], memberLikes = [];
+    let rejectNextComment = false;
     page.on('pageerror', e => errors.push(e.message));
     await context.route('**/api/**', async route => {
       const url = new URL(route.request().url()), endpoint = url.pathname.replace(/^\/api/, '');
@@ -39,7 +40,15 @@ try {
       if (endpoint === '/saved/posts') return route.fulfill({ json: { posts: [sample('saved-story', 'reddit')], postIds: ['saved-story'], hasMore: false, total: 1 } });
       if (endpoint === '/jobs/tracking') return route.fulfill({ json: { jobs: [{ id: 'saved-job', title: 'Community engineer', org: 'Example Company', status: 'saved' }] } });
       if (endpoint === '/social/interaction-capabilities') return route.fulfill({ json: { sources: { reddit: { connected: true, like: true, comment: true, label: 'Reddit', likeLabel: 'Upvote', maxLength: 1000 } } } });
-      if (endpoint === '/social/interactions' && route.request().method() === 'POST') { const body = route.request().postDataJSON(); interactions.push(body); return route.fulfill({ json: { published: true, liked: body.liked, commentId: 'remote-comment' } }); }
+      if (endpoint === '/social/interactions' && route.request().method() === 'POST') {
+        const body = route.request().postDataJSON(); interactions.push(body);
+        if (body.action === 'comment' && rejectNextComment) {
+          rejectNextComment = false;
+          return route.fulfill({ status: 503, json: { message: 'Synthetic source timeout. Check the original before retrying.' } });
+        }
+        return route.fulfill({ json: { published: true, liked: body.liked, commentId: 'remote-comment' } });
+      }
+      if (/^\/feed\/[^/]+\/comments$/.test(endpoint)) return route.fulfill({ json: { comments: [], live: true, hasMore: false } });
       if (endpoint === '/feed/likes') return route.fulfill({ json: { likes: {} } });
       if (/^\/feed\/[^/]+\/like$/.test(endpoint) && route.request().method() === 'POST') { memberLikes.push(endpoint); return route.fulfill({ json: { likedByMe: memberLikes.length % 2 === 1, memberLikesCount: memberLikes.length % 2 } }); }
       if (endpoint === '/users/public-member') return route.fulfill({ json: { id: 'public-member', name: 'Jordan', bio: 'Building useful communities.', interests: ['Open Source'], goals: ['Learn new skills'], skills: [], followersCount: 0, followingCount: 0 } });
@@ -92,17 +101,33 @@ try {
     assert.deepEqual(memberLikes, [], 'External source actions never increment a local public like counter');
     assert.equal(await redditCard.locator('.post-chrome-like-count').innerText(), '31', 'A confirmed action does not manufacture a source count');
     assert.equal(await redditCard.locator('.post-chrome-like > button.post-chrome-action').count(), 1, 'One source action appears in the heart row');
-    await page.getByRole('button', { name: 'Comment on Reddit', exact: true }).click();
-    await page.getByLabel('Publish a comment on Reddit', { exact: true }).fill('Thank you for the useful update.');
-    await page.getByRole('button', { name: 'Publish on Reddit', exact: true }).click();
+    assert.equal(await redditCard.getByRole('button', { name: 'Comment on Reddit', exact: true }).count(), 0, 'No duplicate source comment action appears below the post');
+    const commentAction = redditCard.locator('.post-chrome-actions').getByRole('button', { name: 'Show Comments', exact: true });
+    assert.equal(await commentAction.count(), 1, 'One comments action is in the normal post action row');
+    assert.equal(await redditCard.getByLabel('Write a comment', { exact: true }).isVisible(), false, 'Composer follows the comments section visibility');
+    await commentAction.click();
+    await redditCard.getByLabel('Write a comment', { exact: true }).fill('Thank you for the useful update.');
+    rejectNextComment = true;
+    await redditCard.getByRole('button', { name: 'Publish on Reddit', exact: true }).click();
+    await redditCard.getByRole('alert').getByText('Synthetic source timeout.', { exact: false }).waitFor();
+    await redditCard.getByRole('button', { name: 'Hide Comments', exact: true }).click();
+    await commentAction.click();
+    assert.equal(await redditCard.getByLabel('Write a comment', { exact: true }).inputValue(), 'Thank you for the useful update.', 'Closing comments retains an unconfirmed draft');
+    await redditCard.getByRole('button', { name: 'Publish on Reddit', exact: true }).click();
     await page.getByText('Comment published on Reddit. Source counts update when the source supplies them.', { exact: true }).waitFor();
-    assert.deepEqual(interactions.map(item => item.action), ['like', 'comment']);
+    assert.deepEqual(interactions.map(item => item.action), ['like', 'comment', 'comment']);
     assert.ok(interactions.every(item => item.source === 'reddit' && item.sourceUrl === 'https://www.reddit.com/r/test/comments/abc123/story'), 'Both requests target the original Reddit post');
     assert.equal(interactions[0].liked, true);
     assert.ok(interactions.every(item => typeof item.requestId === 'string' && item.requestId.length > 0), 'Each action includes its duplicate-protection request ID');
     assert.notEqual(interactions[0].requestId, interactions[1].requestId);
+    assert.equal(interactions[1].requestId, interactions[2].requestId, 'Retry after closing/reopening reuses the original duplicate-protection ID');
     assert.equal(interactions[1].content, 'Thank you for the useful update.');
     assert.deepEqual(memberLikes, [], 'Neither official action produces a synthetic local like');
+    await hnCard.locator('.post-chrome-actions').getByRole('button', { name: 'Show Comments', exact: true }).click();
+    assert.equal(await hnCard.getByLabel('Write a comment', { exact: true }).count(), 0, 'An unsupported source never displays an API publishing form');
+    const originalComments = hnCard.getByRole('link', { name: /View all comments on Hacker News/ });
+    assert.equal(await originalComments.getAttribute('href'), 'https://news.ycombinator.com/item?id=123', 'Unsupported sources preserve the original-post comment link');
+    assert.equal(await originalComments.getAttribute('target'), '_blank');
     await page.getByRole('button', { name: 'View all feed sources', exact: true }).click();
     const sourceMenu = page.getByRole('group', { name: 'Feed sources and favorites', exact: true });
     assert.equal(await sourceMenu.locator('.feed-source-option').count(), await sources.locator('.feed-source-option').count(), 'the menu exposes the complete source rail');

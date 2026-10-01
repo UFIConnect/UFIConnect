@@ -4,6 +4,7 @@ import client from '../api/client';
 import ImageLightbox from './ImageLightbox';
 import { InlineAutoplayVideo } from './videoMedia';
 import { SavePostButton } from './SaveButtons';
+import ShopPostDetails from './ShopPostDetails';
 
 function timeAgo(iso) {
   const diff = (Date.now() - new Date(iso)) / 1000;
@@ -37,6 +38,7 @@ export default function PostList({
   emptyDesc = 'Posts shared by this member will show up here.',
   emptyAction = null,
   showAuthor = true,
+  shopMode = false,
   maxWidth = 640,
   interactive = true,
   onPostUpdated = null,
@@ -220,6 +222,7 @@ export default function PostList({
         const comments = commentsByPost[post.id] || [];
         const isExpanded = !!expandedPosts[post.id];
         const isLongPost = !!post.content && post.content.length > CONTENT_PREVIEW_LEN;
+        const isShopPost = shopMode || post.groupId === 'ufi-shop' || post.group?.id === 'ufi-shop';
         return (
           <div key={post.id} className="card post-card" style={{ marginBottom: 12 }}>
             {showAuthor ? (
@@ -281,7 +284,7 @@ export default function PostList({
               </div>
             )}
 
-            {post.content && (
+            {post.content && !isShopPost && (
               <p style={{ margin: '0 0 10px', fontSize: '.9rem', lineHeight: 1.6, color: 'var(--text)', whiteSpace: 'pre-wrap', overflowWrap: 'break-word', wordBreak: 'break-word' }}>
                 {isLongPost && !isExpanded
                   ? `${truncateAtWord(post.content, CONTENT_PREVIEW_LEN)}… `
@@ -325,6 +328,7 @@ export default function PostList({
               </div>
             )}
 
+            {isShopPost && <ShopPostDetails post={post} />}
             <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap', alignItems: 'center', borderTop: '1px solid var(--border)', paddingTop: 10 }}>
               <button
                 type="button"

@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ArrowUpRight, Clock3, Globe2, Plus, Power, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import './VaultVpnPanel.css';
+import client from '../api/client';
+import VaultVpnSubscription, { useVpnSubscription } from './VaultVpnSubscription';
 
 const LOCAL_PREVIEW = import.meta.env.VITE_VAULT_LOCAL_PREVIEW === 'true' && typeof window !== 'undefined' && ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
 const PLATFORMS = { windows: 'Windows', linux: 'Linux', ios: 'iOS', android: 'Android' };
@@ -20,7 +23,8 @@ function dateLabel(value) {
   return new Date(value).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
-export default function VaultVpnPanel({ accountId }) {
+export default function VaultVpnPanel({ accountId, activityTarget }) {
+  const billing = useVpnSubscription(accountId, LOCAL_PREVIEW);
   const [platform, setPlatform] = useState(devicePlatform);
   const [state, setState] = useState(null);
   const [selected, setSelected] = useState('');
@@ -31,9 +35,11 @@ export default function VaultVpnPanel({ accountId }) {
   const [draft, setDraft] = useState({ name: '', country: '', confirmed: false });
   const [adding, setAdding] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(false);
   const generation = useRef(0);
   const statusSequence = useRef(0);
   const operationActive = useRef(false);
+  const locationSequence = useRef(0);
   const localDesktop = LOCAL_PREVIEW && ['windows', 'linux'].includes(platform);
   const useLocalAdapter = localDesktop && state?.platform === platform;
   const readStatus = useCallback(async () => {
@@ -56,7 +62,17 @@ export default function VaultVpnPanel({ accountId }) {
     const timer = localDesktop ? window.setInterval(() => { if (!document.hidden) readStatus(); }, 15000) : null;
     return () => { generation.current += 1; window.clearInterval(timer); };
   }, [localDesktop, platform, readStatus]);
-  useEffect(() => { setLocations([]); setCountry(''); }, [accountId]);
+  useEffect(() => {
+    locationSequence.current++;
+    setLocations([]); setCountry('');
+    setBusy(false); setError(''); setAdding(false); setGuideOpen(false);
+    setDraft({ name: '', country: '', confirmed: false });
+    if (LOCAL_PREVIEW) return;
+    let stopped = false;
+    client.get('/vault/vpn/locations').then(({ data }) => { if (!stopped) setLocations(Array.isArray(data.locations) ? data.locations : []); })
+      .catch(() => { if (!stopped) setError('Saved VPN locations could not be loaded. Check your connection and reload.'); });
+    return () => { stopped = true; locationSequence.current++; };
+  }, [accountId]);
 
   const profiles = useLocalAdapter && Array.isArray(state?.profiles) ? state.profiles : [];
   const platformLocations = locations.filter(item => item.platform === platform && (!useLocalAdapter || profiles.some(profile => profile.id === item.profileId)));
@@ -94,20 +110,48 @@ export default function VaultVpnPanel({ accountId }) {
     } catch (failure) { if (request === generation.current) setError(failure.message); }
     finally { if (request === generation.current) { operationActive.current = false; statusSequence.current += 1; setBusy(false); } }
   }
-  function addLocation(event) {
+  async function addLocation(event) {
     event.preventDefault();
+    if (busy || (!LOCAL_PREVIEW && !billing.active)) return;
     const name = (useLocalAdapter ? profile?.name : draft.name)?.trim().slice(0, 80);
     const label = draft.country.trim().slice(0, 80);
     if (!name || !label || !draft.confirmed || (useLocalAdapter && !profile)) return;
-    const item = { id: crypto.randomUUID(), platform, name, country: label, ...(useLocalAdapter ? { profileId: profile.id } : {}) };
-    setLocations(previous => [...previous.filter(entry => !(entry.platform === platform && entry.country.toLowerCase() === label.toLowerCase() && entry.name === name)), item].slice(-40));
-    setCountry(label); setAdding(false); setDraft({ name: '', country: '', confirmed: false });
+    const request = locationSequence.current;
+    setBusy(true); setError('');
+    try {
+      const item = LOCAL_PREVIEW ? { id: crypto.randomUUID(), platform, name, country: label, ...(useLocalAdapter ? { profileId: profile.id } : {}) }
+        : (await client.post('/vault/vpn/locations', { platform, name, country: label })).data.location;
+      if (request !== locationSequence.current) return;
+      setLocations(previous => [...previous, item].slice(-40));
+      setCountry(label); setAdding(false); setDraft({ name: '', country: '', confirmed: false });
+    } catch (failure) { if (request === locationSequence.current) setError(failure?.response?.data?.message || 'Could not save this VPN location.'); }
+    finally { if (request === locationSequence.current) setBusy(false); }
+  }
+  async function removeLocation() {
+    if (!location || busy) return;
+    const request = locationSequence.current;
+    setBusy(true); setError('');
+    try {
+      if (!LOCAL_PREVIEW) await client.delete(`/vault/vpn/locations/${encodeURIComponent(location.id)}`);
+      if (request !== locationSequence.current) return;
+      setLocations(previous => previous.filter(item => item.id !== location.id)); setCountry('');
+    } catch (failure) { if (request === locationSequence.current) setError(failure?.response?.data?.message || 'Could not remove this VPN location.'); }
+    finally { if (request === locationSequence.current) setBusy(false); }
   }
 
   return <>
     <section className="vault-panel vault-vpn-panel" aria-labelledby="vault-vpn-title">
       <div className="vault-panel-heading"><span className="vault-eyebrow"><Globe2 size={15} /> CONNECTION</span>{localDesktop && <button className="vault-icon-button" type="button" aria-label="Refresh VPN status" disabled={busy} onClick={readStatus}><RefreshCw size={15} /></button>}</div>
       <div className="vault-vpn-heading"><h2 id="vault-vpn-title">Your VPN</h2><span className={`vault-status${connected ? ' is-connected' : ''}`}><i />{status}</span></div>
+      <div className="vault-vpn-quick-action">
+        {useLocalAdapter ? <button type="button" className="vault-button vault-button--full" disabled={busy || pending || !state?.available || !(connected ? profile?.canDisconnect : profile?.canConnect)} onClick={changeConnection}><Power size={19} />{busy || pending ? 'Checking connection…' : connected ? 'Disconnect VPN' : 'Connect VPN'}</button>
+          : platform === 'windows' && devicePlatform() === 'windows' ? <a className="vault-button vault-button--full" href="ms-settings:network-vpn"><Power size={19} />Open VPN controls</a>
+            : <button type="button" className="vault-button vault-button--full" onClick={() => { setGuideOpen(true); setSetupOpen(true); }}><Power size={19} />Open VPN connection steps</button>}
+        <p className="vault-footnote">{useLocalAdapter ? profile ? `Uses ${profile.name}. Change your profile in setup below.` : 'Choose an existing profile in setup below.' : platform === 'windows' && devicePlatform() === 'windows' ? 'Opens Windows VPN settings. Your device confirms the connection.' : 'Connect in your existing VPN app. Your browser cannot switch the VPN on or confirm its status.'}</p>
+      </div>
+      <VaultVpnSubscription billing={billing} />
+      <details className="vault-vpn-setup" open={setupOpen} onToggle={event => setSetupOpen(event.currentTarget.open)}>
+      <summary>Device, locations and setup</summary>
       <div className="vault-platform-switch" role="group" aria-label="VPN device">{Object.entries(PLATFORMS).map(([id, label]) => <button key={id} type="button" disabled={busy} aria-pressed={platform === id} onClick={() => setPlatform(id)}>{label}</button>)}</div>
       <p className="vault-helper">Use a profile from a trusted VPN provider or your organization. Device VPN settings need a configured server; they do not supply a VPN network.</p>
       <div className={`vault-connection-art${connected ? ' is-connected' : ''}`} aria-hidden="true"><div /><div /><ShieldCheck size={48} strokeWidth={1.3} /></div>
@@ -131,7 +175,6 @@ export default function VaultVpnPanel({ accountId }) {
       {useLocalAdapter ? <>
         {visibleProfiles.length ? <label className="vault-field">{PLATFORMS[platform]} connection<select disabled={busy} value={profile?.id || ''} onChange={event => setSelected(event.target.value)}>{visibleProfiles.map(item => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label> : <p className="vault-helper">No configured VPN profile is available here. Add one in your device settings.</p>}
         {profile && <p className="vault-helper">{profile.protocol}{profile.splitTunneling ? ' · Some traffic bypasses this VPN' : ''}. Routing, DNS protection, and a kill switch are managed by your VPN provider and operating system.</p>}
-        <button type="button" className="vault-button vault-button--full vault-button--secondary" disabled={busy || pending || !state?.available || !(connected ? profile?.canDisconnect : profile?.canConnect)} onClick={changeConnection}><Power size={17} />{busy ? 'Checking connection…' : connected ? 'Disconnect' : 'Connect selected profile'}</button>
         <p className="vault-footnote">Disconnect an active profile before changing countries. Use your provider’s kill switch to protect traffic between connections.</p>
       </> : <div className="vault-vpn-guide">
         {location && <p>Selected profile: <strong>{location.name}</strong> · {location.country}</p>}
@@ -144,22 +187,23 @@ export default function VaultVpnPanel({ accountId }) {
       <a className="vault-text-button" href={GUIDES[platform].link} target="_blank" rel="noopener noreferrer">{PLATFORMS[platform]} VPN guidance <ArrowUpRight size={13} /></a>
       {['windows', 'linux'].includes(platform) && <a className="vault-text-button" href="https://github.com/UFIConnect/UFIConnect/blob/main/docs/VAULT-VPN-CONNECTOR.md" target="_blank" rel="noopener noreferrer">Set up the local companion <ArrowUpRight size={13} /></a>}
 
-      <button type="button" className="vault-text-button" disabled={busy || (useLocalAdapter && !profile)} onClick={() => setAdding(!adding)} aria-expanded={adding}><Plus size={14} />{adding ? 'Cancel location' : 'Add configured location'}</button>
+      <button type="button" className="vault-text-button" disabled={busy || (useLocalAdapter && !profile) || (!LOCAL_PREVIEW && !billing.active)} onClick={() => setAdding(!adding)} aria-expanded={adding}><Plus size={14} />{adding ? 'Cancel location' : 'Add configured location'}</button>
       {adding && <form className="vault-vpn-location-form" onSubmit={addLocation}>
         {!useLocalAdapter && <label className="vault-field">Existing VPN app or profile name<input required maxLength={80} value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} autoComplete="off" /></label>}
         {useLocalAdapter && <p className="vault-helper">Label for {profile?.name}</p>}
         <label className="vault-field">Country shown by your provider<input required maxLength={80} value={draft.country} onChange={event => setDraft({ ...draft, country: event.target.value })} autoComplete="off" placeholder="For example, Canada" /></label>
         <label className="vault-vpn-confirm"><input type="checkbox" required checked={draft.confirmed} onChange={event => setDraft({ ...draft, confirmed: event.target.checked })} />This profile and location are already configured in my VPN app or device settings.</label>
-        <button className="vault-button vault-button--secondary" type="submit">Add location</button>
+        <button className="vault-button vault-button--secondary" disabled={busy || (!LOCAL_PREVIEW && !billing.active)} type="submit">{busy ? 'Saving…' : 'Add location'}</button>
       </form>}
-      {location && <button className="vault-text-button" type="button" onClick={() => { setLocations(previous => previous.filter(item => item.id !== location.id)); setCountry(''); }}><Trash2 size={13} />Remove this location label</button>}
-      <p className="vault-footnote">Labels stay in memory for this visit. No VPN credentials, browsing history, destinations, or IP addresses are sent to UFIconnect.</p>
+      {location && <button className="vault-text-button" disabled={busy} type="button" onClick={removeLocation}><Trash2 size={13} />Remove this location label</button>}
+      <p className="vault-footnote">{LOCAL_PREVIEW ? 'Preview labels stay in memory for this visit.' : 'Device types, profile labels and country labels are saved in your UFI account. You can read or remove existing labels after canceling.'} Never enter passwords or keys as labels. No VPN credentials, browsing history, destinations, or IP addresses are sent to UFIconnect.</p>
+      </details>
     </section>
-    <section className="vault-panel vault-activity" aria-labelledby="vault-activity-title">
+    {activityTarget && createPortal(<section className="vault-panel vault-activity" aria-labelledby="vault-activity-title">
       <div className="vault-panel-heading"><h2 id="vault-activity-title">Connection activity</h2><Clock3 size={16} /></div>
       <p className="vault-helper">{useLocalAdapter ? 'Local connection requests and timestamps only. Cleared when the local companion stops.' : 'Your device and VPN provider manage this activity. Your Vault cannot read it from the public website.'}</p>
       {activity.length ? <ol>{activity.slice(0, 5).map((item, index) => <li key={`${item.timestamp}-${index}`}><span className="vault-activity-dot" /><span>{item.action === 'connect' ? 'Connect requested' : 'Disconnect requested'}<time dateTime={item.timestamp}>{dateLabel(item.timestamp)}</time></span></li>)}</ol> : <div className="vault-activity-empty"><Clock3 size={20} /><span>{useLocalAdapter ? 'No connection activity yet' : 'Activity unavailable in browser'}</span></div>}
       <p className="vault-footnote">Timestamps limit visible history; they cannot prevent device cloning. Local connection approvals also use a short-lived, single-use request token. Hardware identity requires the device’s secure keys.</p>
-    </section>
+    </section>, activityTarget)}
   </>;
 }

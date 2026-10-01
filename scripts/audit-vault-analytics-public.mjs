@@ -88,7 +88,12 @@ try {
       await page.goto(origin + '/vault');
       await page.getByRole('heading', { name: 'Your Vault.' }).waitFor();
       await page.getByText('Awaiting hardware setup', { exact: true }).waitFor();
+      check(await page.locator('.vault-primary-column .vault-activity').count() === 1, 'Connection activity appears once in the left Vault column');
+      check(await page.locator('.vault-primary-column .vault-hardware-status').count() === 1, 'Hardware verification appears in the left Vault column');
       check(await page.getByText('Managed on your device', { exact: true }).count() === 1, 'Public bundle must not claim VPN control');
+      check(await page.locator('.vault-vpn-quick-action .vault-button').count() === 1, 'VPN has one prominent connection action');
+      check(await page.locator('.vault-vpn-setup').evaluate(element => !element.open), 'VPN setup starts collapsed');
+      await page.getByText('Device, locations and setup', { exact: true }).click();
       for (const platform of ['Windows', 'Linux', 'iOS', 'Android']) {
         await page.getByRole('group', { name: 'VPN device' }).getByRole('button', { name: platform, exact: true }).click();
         check(await page.getByText('Managed on your device', { exact: true }).count() === 1, `${platform} handoff must not fabricate a connection`);

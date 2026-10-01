@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet,
+  View, Text, Image, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Alert,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
@@ -41,7 +41,7 @@ export default function RegisterScreen({ navigation }) {
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
-          <Text style={styles.logo}>UFIconnect</Text>
+          <View style={styles.brand}><Image source={require('../assets/icon.png')} style={styles.brandIcon} accessible={false} /><Text style={styles.logo}>UFIconnect</Text></View>
           <Text style={styles.tagline}>Join your professional community</Text>
         </View>
 
@@ -89,6 +89,8 @@ const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: COLORS.background },
   container: { flexGrow: 1, justifyContent: 'center', padding: 24 },
   header: { alignItems: 'center', marginBottom: 32 },
+  brand: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  brandIcon: { width: 48, height: 48, borderRadius: 11 },
   logo: { fontSize: 36, fontWeight: '900', color: COLORS.primary, letterSpacing: -1 },
   tagline: { marginTop: 6, fontSize: 15, color: COLORS.muted },
   card: {

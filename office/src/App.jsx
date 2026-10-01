@@ -3303,8 +3303,8 @@ export default function App() {
         {/* ── Sidebar ── */}
         <aside style={asideStyle}>
           <div style={{ padding: isMobile ? '16px 14px 12px' : '26px 20px 18px' }}>
-            <div style={{ fontSize: 17, fontWeight: 800, color: '#fff', letterSpacing: -0.5 }}>
-              UFIConnect
+            <div style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 17, fontWeight: 800, color: '#fff', letterSpacing: -0.5 }}>
+              <img src="/icon.svg" alt="" width="33" height="33" style={{ borderRadius: 8 }} />UFIConnect
             </div>
             <div style={{ fontSize: 10, color: '#334155', marginTop: 2, textTransform: 'uppercase', letterSpacing: 1.2 }}>
               Operations Office

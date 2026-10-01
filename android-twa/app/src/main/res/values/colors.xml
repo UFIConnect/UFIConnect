@@ -15,4 +15,5 @@
 -->
 <resources>
     <color name="shortcut_background">#F5F5F5</color>
+    <color name="ufi_icon_background">#102A6B</color>
 </resources>

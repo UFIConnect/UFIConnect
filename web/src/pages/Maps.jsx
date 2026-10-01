@@ -95,7 +95,7 @@ export default function Maps() {
       window.cancelAnimationFrame(frame);
       document.body.style.overflow = previousOverflow;
       document.removeEventListener('keydown', handleKeys);
-      const returnTarget = previousFocus instanceof HTMLElement && previousFocus !== document.body && previousFocus.isConnected ? previousFocus : mobileMenuButton.current;
+      const returnTarget = mobileMenuButton.current || (previousFocus instanceof HTMLElement && previousFocus !== document.body && previousFocus.isConnected ? previousFocus : null);
       returnTarget?.focus({ preventScroll: true });
     };
   }, [mobileTools, mobileToolsOpen]); // Focus the requested panel only when the drawer opens.
@@ -290,10 +290,13 @@ export default function Maps() {
       </section>}
       <CityAppGuide selected={activeBuilding} onSelect={setActiveBuilding} onAction={exploreBuilding} headingRef={guideHeading} />
         </aside>;
-  return <Layout wide feedSearch={{ query, label: 'Search city posts', onSubmit: value => { setQuery(value); setPage(1); } }}>
+  return <Layout wide mobileRightMenu={mobileTools ? {
+    label: 'map menu', controls: 'map-mobile-menu', triggerRef: mobileMenuButton,
+    open: mobileToolsOpen, onOpenChange: setMobileToolsOpen,
+  } : undefined} feedSearch={{ query, label: 'Search city posts', onSubmit: value => { setQuery(value); setPage(1); } }}>
     <Helmet><title>Maps · Your city | UFIconnect</title><meta name="robots" content="noindex" /></Helmet>
     <div className="local-workspace city-workspace">
-      <header className="local-workspace-heading"><div><span className="local-eyebrow">YOUR WORLD, CONNECTED</span><h1>Maps</h1><p>Choose a city, open its source houses, and save posts about the topics you enjoy.</p></div><div className="map-heading-actions"><span className="local-status-pill">{selected.length} / {limit} posts selected</span>{mobileTools && <button ref={mobileMenuButton} type="button" className="btn btn-ghost btn-sm map-menu-toggle" aria-haspopup="dialog" aria-expanded={mobileToolsOpen} aria-controls="map-mobile-menu" onClick={() => setMobileToolsOpen(true)}>Map menu</button>}</div></header>
+      <header className="local-workspace-heading"><div><span className="local-eyebrow">YOUR WORLD, CONNECTED</span><h1>Maps</h1><p>Choose a city, open its source houses, and save posts about the topics you enjoy.</p></div><div className="map-heading-actions"><span className="local-status-pill">{selected.length} / {limit} posts selected</span></div></header>
       <ol className="map-get-started"><li><b>1</b><span>Choose your city<small>A landscape for every interest</small></span></li><li><b>2</b><span>Open source houses<small>Pick the topics inside</small></span></li><li><b>3</b><span>Grow your collection<small>Raise your target and save posts</small></span></li></ol>
       <div className="map-explorer-layout">
         <div className="map-explorer-main">

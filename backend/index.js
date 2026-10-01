@@ -16460,6 +16460,7 @@ function fullProfile(user) {
     isBusiness: user.plan === 'business',
     // Independent Resume Builder add-on — see checkout-session/webhook comments.
     resumeBuilderAddon: !!user.resumeBuilderAddon,
+    vpnConnectorAddon: !!user.vpnConnectorAddon,
   };
 }
 
@@ -16533,6 +16534,8 @@ function dbRowToMemUser(row) {
     // resume_builder_addon for why this isn't folded into `plan`.
     resumeBuilderAddon: !!row.resume_builder_addon,
     resumeBuilderSubscriptionId: row.resume_builder_subscription_id || null,
+    vpnConnectorAddon: !!row.vpn_connector_addon,
+    vpnConnectorSubscriptionId: row.vpn_connector_subscription_id || null,
     createdAt: row.created_at || null,
   };
 }
@@ -21003,6 +21006,12 @@ function isConfiguredResumeBuilderPrice(price) {
     && Number(price.recurring?.interval_count || 1) === RESUME_BUILDER_PRICE_REQUIREMENT.intervalCount;
 }
 
+function isConfiguredVpnConnectorPrice(price) {
+  return validRecurringPrice(price) && price.billing_scheme !== 'tiered'
+    && String(price.currency).toLowerCase() === 'usd' && price.unit_amount === 394
+    && price.recurring.interval === 'month' && price.recurring.interval_count === 1;
+}
+
 function getResumeBuilderPriceCandidates() {
   const configuredKeys = Object.keys(process.env)
     .filter(key => /resume/i.test(key) && /price/i.test(key) && (/_id$/i.test(key) || /_price$/i.test(key)));
@@ -21091,7 +21100,8 @@ async function resolveResumeBuilderPrice() {
 
 async function getBillingCatalog() {
   const configured = { pro: TIER_PRICE_IDS.pro(), business: TIER_PRICE_IDS.business() };
-  const cacheKey = 'catalog:' + JSON.stringify([configured, getResumeBuilderPriceCandidates()]);
+  const vpnPriceId = String(process.env.STRIPE_VPN_CONNECTOR_PRICE_ID || '').trim();
+  const cacheKey = 'catalog:' + JSON.stringify([configured, getResumeBuilderPriceCandidates(), vpnPriceId]);
   const cached = stripePriceSummaryCache.get(cacheKey);
   if (cached && Date.now() - cached.at < STRIPE_PRICE_SUMMARY_CACHE_MS) return cached.value;
   const allowedPrices = new Map();
@@ -21130,6 +21140,16 @@ async function getBillingCatalog() {
   for (const priceId of resume.allowedPriceIds || []) allowedPrices.set(priceId, 'resume_builder');
   tiers.resume_builder = { priceId: resume.priceId,
     available: resume.summary?.matchesRequiredPrice === true, summary: resume.summary };
+  let vpnPrice = null;
+  if (stripe && vpnPriceId) {
+    try { vpnPrice = await stripe.prices.retrieve(vpnPriceId, { expand: ['tiers'] }); }
+    catch { throw Object.assign(new Error('Subscription pricing is temporarily unavailable.'), { status: 503 }); }
+  }
+  const validVpn = isConfiguredVpnConnectorPrice(vpnPrice);
+  if (validVpn) allowedPrices.set(vpnPrice.id, 'vpn_connector');
+  tiers.vpn_connector = { priceId: validVpn ? vpnPrice.id : null,
+    available: validVpn && vpnPrice.active === true,
+    summary: vpnPrice ? { ...summarizeStripePrice(vpnPrice, 'vpn_connector'), matchesRequiredPrice: validVpn } : null };
   const value = { allowedPrices, tiers };
   stripePriceSummaryCache.set(cacheKey, { at: Date.now(), value });
   return value;
@@ -21169,6 +21189,13 @@ app.post('/billing/create-checkout-session', authenticate, billingLimiter, billi
 }));
 app.post('/billing/create-portal-session', authenticate, billingLimiter, billingResponse(req => billing.portal(req.user.id)));
 app.get('/billing/status', authenticate, billingLimiter, billingResponse(req => billing.status(req.user.id)));
+
+// Saved connector labels are a separate add-on. No VPN credentials, addresses,
+// browsing activity, or local profile identifiers are accepted by these routes.
+const vpnLocations = require('./vpn-locations').createVpnLocations({ db, billing });
+app.get('/vault/vpn/locations', authenticate, billingLimiter, billingResponse(req => vpnLocations.list(req.user.id)));
+app.post('/vault/vpn/locations', authenticate, billingLimiter, billingResponse(req => vpnLocations.add(req.user.id, req.body)));
+app.delete('/vault/vpn/locations/:id', authenticate, billingLimiter, billingResponse(req => vpnLocations.remove(req.user.id, req.params.id)));
 
 // --- Delete account -------------------------------------------------------------
 // Removes a user from every in-memory + DB store. Used by both DELETE

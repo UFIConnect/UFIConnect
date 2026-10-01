@@ -596,7 +596,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
         </button>
         {effectiveDuration > 0 && <span className="video-feed-time">{formatTime(effectiveCurrentTime)} / {formatTime(effectiveDuration)}</span>}
         <span className="video-feed-command-spacer" aria-hidden="true" />
-        <button type="button" onClick={() => onOpenComments?.(post)} aria-label={`Comments ${(post.commentsCount || 0).toLocaleString()}`} title="Comments and connected source actions">
+        <button type="button" onClick={() => onOpenComments?.(post)} aria-label={`Comments${Number.isFinite(post.commentsCount) ? ` ${post.commentsCount.toLocaleString()}` : ''}`} title="Comments">
           <MessageCircle size={18} aria-hidden="true" />
         </button>
         <SavePostButton post={post} className="video-feed-save-button" showLabel={false} />
@@ -744,7 +744,7 @@ function CommentsSheet({ post, onClose }) {
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: '100%', maxWidth: 560, maxHeight: '70dvh', background: '#fff',
+          width: '100%', maxWidth: 560, maxHeight: '70dvh', background: 'var(--surface)', color: 'var(--text)',
           borderRadius: '18px 18px 0 0', display: 'flex', flexDirection: 'column',
           animation: 'commentsSheetUp .22s ease-out',
         }}
@@ -752,29 +752,28 @@ function CommentsSheet({ post, onClose }) {
         <style>{'@keyframes commentsSheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }'}</style>
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '14px 16px', borderBottom: '1px solid rgba(0,0,0,.1)', flexShrink: 0,
+          padding: '14px 16px', borderBottom: '1px solid var(--border)', flexShrink: 0,
         }}>
-          <div style={{ color: '#000', fontWeight: 700, fontSize: '.92rem' }}>
+          <div style={{ color: 'var(--text)', fontWeight: 700, fontSize: '.92rem' }}>
             Comments {comments?.length > 0 ? `(${comments.length})` : ''}
           </div>
           <button
             onClick={onClose}
             aria-label="Close comments"
-            style={{ all: 'unset', color: 'rgba(0,0,0,.55)', fontSize: '1.3rem', cursor: 'pointer', lineHeight: 1, padding: 4 }}
+            style={{ all: 'unset', color: 'var(--muted)', fontSize: '1.3rem', cursor: 'pointer', lineHeight: 1, padding: 4 }}
           >×</button>
         </div>
         <div style={{ overflowY: 'auto', padding: '10px 16px 20px' }}>
-          <ConnectedPostActions post={post} />
           {loading && (
             <div style={{ textAlign: 'center', padding: '24px 0' }}>
               <span className="spinner spinner-primary" />
             </div>
           )}
           {!loading && comments?.length === 0 && (
-            <div style={{ textAlign: 'center', padding: '20px 8px', color: 'rgba(0,0,0,.55)', fontSize: '.85rem' }}>
+            <div style={{ textAlign: 'center', padding: '20px 8px', color: 'var(--muted)', fontSize: '.85rem' }}>
               {live === false && post.sourceUrl
                 ? <>No comments loaded from {post.sourceLabel || post.source} yet.<br />
-                    <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#000', fontWeight: 700 }}>
+                    <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--text)', fontWeight: 700 }}>
                       View the original post ↗
                     </a>
                   </>
@@ -785,18 +784,18 @@ function CommentsSheet({ post, onClose }) {
             <div key={c.id} style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
               <div style={{
                 width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
-                background: 'rgba(0,0,0,.08)', display: 'flex', alignItems: 'center',
-                justifyContent: 'center', fontSize: '.75rem', fontWeight: 700, color: '#000',
+                background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center',
+                justifyContent: 'center', fontSize: '.75rem', fontWeight: 700, color: 'var(--text)',
               }}>
                 {(c.author?.replace(/^(?:u\/|@)/, '') || '?')[0]?.toUpperCase()}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3, flexWrap: 'wrap' }}>
-                  <span style={{ fontWeight: 700, fontSize: '.8rem', color: '#000' }}>{c.author}</span>
-                  {c.score > 0 && <span style={{ fontSize: '.68rem', color: 'rgba(0,0,0,.55)' }}>▲ {c.score.toLocaleString()}</span>}
-                  <span style={{ fontSize: '.68rem', color: 'rgba(0,0,0,.55)', marginLeft: 'auto' }}>{timeAgo(c.created)}</span>
+                  <span style={{ fontWeight: 700, fontSize: '.8rem', color: 'var(--text)' }}>{c.author}</span>
+                  {c.score > 0 && <span style={{ fontSize: '.68rem', color: 'var(--muted)' }}>▲ {c.score.toLocaleString()}</span>}
+                  <span style={{ fontSize: '.68rem', color: 'var(--muted)', marginLeft: 'auto' }}>{timeAgo(c.created)}</span>
                 </div>
-                <p style={{ fontSize: '.84rem', lineHeight: 1.55, margin: 0, color: 'rgba(0,0,0,.92)', whiteSpace: 'pre-wrap' }}>{c.body}</p>
+                <p style={{ fontSize: '.84rem', lineHeight: 1.55, margin: 0, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>{c.body}</p>
               </div>
             </div>
           ))}
@@ -806,13 +805,14 @@ function CommentsSheet({ post, onClose }) {
               disabled={loadingMore}
               style={{
                 display: 'block', margin: '4px auto 8px', background: 'none', border: 'none',
-                color: '#000', cursor: loadingMore ? 'default' : 'pointer', fontSize: '.8rem', fontWeight: 700,
+                color: 'var(--text)', cursor: loadingMore ? 'default' : 'pointer', fontSize: '.8rem', fontWeight: 700,
                 opacity: 0.85, padding: '6px 10px',
               }}
             >
               {loadingMore ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Load more comments'}
             </button>
           )}
+          <ConnectedPostActions post={post} />
         </div>
       </div>
     </div>

@@ -1,9 +1,12 @@
 // Browser vault: Web Crypto encrypts every entry before browser storage.
 // Neither passphrases nor unwrapped encryption keys are persisted.
 import { safeLaunchUrl, cleanVaultPreferences } from './vaultLaunchers.mjs';
+import { cleanVaultFile, VAULT_FILE_KINDS } from './vaultFiles.mjs';
 export const VAULT_STORAGE_KEY = 'uficonnect.vault.encrypted.v1';
 const ITERATIONS = 600000;
-const MAX_TEXT = 2 * 1024 * 1024;
+export const MAX_VAULT_BYTES = 2 * 1024 * 1024;
+export const MAX_VAULT_BACKUP_BYTES = MAX_VAULT_BYTES * 2;
+const MAX_TEXT = MAX_VAULT_BYTES;
 const MAX_ENTRIES = 1000;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -12,6 +15,16 @@ const bytes = length => crypto.getRandomValues(new Uint8Array(length));
 const b64 = value => btoa(Array.from(new Uint8Array(value), byte => String.fromCharCode(byte)).join(''));
 const un64 = value => Uint8Array.from(atob(value), character => character.charCodeAt(0));
 const storageDefault = () => globalThis.localStorage;
+
+function writeRecord(storage, record) {
+  try { storage.setItem(VAULT_STORAGE_KEY, JSON.stringify(record)); }
+  catch (failure) {
+    if (failure?.name === 'QuotaExceededError' || failure?.name === 'NS_ERROR_DOM_QUOTA_REACHED') {
+      throw new Error('Browser storage is full. Your previous vault is unchanged. Download an encrypted backup, then remove unneeded vault items or free browser storage before trying again.');
+    }
+    throw failure;
+  }
+}
 
 function validBox(box) {
   return box && typeof box.iv === 'string' && typeof box.data === 'string'
@@ -57,10 +70,17 @@ async function open(key, box) {
   return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: un64(box.iv), additionalData: aad }, key, un64(box.data)));
 }
 function cleanEntries(entries) {
-  if (!Array.isArray(entries) || entries.length > MAX_ENTRIES) throw new Error('Import up to 1,000 passwords at a time.');
+  if (!Array.isArray(entries) || entries.length > MAX_ENTRIES) throw new Error('Your vault can hold up to 1,000 items.');
   const seen = new Set();
   return entries.map(entry => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error('A password entry is invalid.');
+    if (entry.kind && entry.kind !== 'password' && !VAULT_FILE_KINDS.includes(entry.kind)) throw new Error('This vault item type is not supported.');
+    if (VAULT_FILE_KINDS.includes(entry.kind)) {
+      const result = cleanVaultFile(entry);
+      result.id = typeof entry.id === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(entry.id) && !seen.has(entry.id) ? entry.id : crypto.randomUUID();
+      seen.add(result.id);
+      return result;
+    }
     const result = {};
     for (const field of ['name', 'url', 'username', 'password', 'notes']) {
       const value = entry[field] ?? '';
@@ -86,14 +106,17 @@ function cleanEntries(entries) {
 }
 async function contentBox(key, entries, preferences) {
   const data = encoder.encode(JSON.stringify({ entries: cleanEntries(entries), preferences: cleanVaultPreferences(preferences) }));
-  if (data.length > MAX_TEXT) throw new Error('The local vault is limited to 2 MB.');
+  if (data.length > MAX_TEXT) { data.fill(0); throw new Error('The local vault is limited to 2 MB including encoded files and passwords. Remove unneeded items before adding more.'); }
   try { return await seal(key, data); } finally { data.fill(0); }
 }
 async function sessionFromRaw(raw, record) {
   try {
     const key = await importKey(raw);
     const plaintext = await open(key, record.content);
-    try { const value = JSON.parse(decoder.decode(plaintext)); return { key, entries: cleanEntries(value.entries), preferences: cleanVaultPreferences(value.preferences), revision: record.content.data }; }
+    try {
+      if (plaintext.length > MAX_TEXT) throw new Error('The local vault is limited to 2 MB.');
+      const value = JSON.parse(decoder.decode(plaintext)); return { key, entries: cleanEntries(value.entries), preferences: cleanVaultPreferences(value.preferences), revision: record.content.data };
+    }
     finally { plaintext.fill(0); }
   } finally { raw.fill(0); }
 }
@@ -106,7 +129,7 @@ export async function createVault(passphrase, storage = storageDefault()) {
     const key = await importKey(raw);
     const record = { version: 1, kdf: { salt, iterations: ITERATIONS }, wrappedKey: await seal(await wrappingKey(passphrase, salt), raw), content: await contentBox(key, []) };
     if (hasVault(storage)) throw new Error('A vault was created in another window. Unlock it instead.');
-    storage.setItem(VAULT_STORAGE_KEY, JSON.stringify(record));
+    writeRecord(storage, record);
     return { key, entries: [], preferences: cleanVaultPreferences(), revision: record.content.data };
   } finally { raw.fill(0); }
 }
@@ -127,7 +150,7 @@ export async function saveEntries(session, entries, storage = storageDefault()) 
   const latest = readRecord(storage);
   if (latest.content.data !== record.content.data) throw new Error('This vault changed in another window. Lock and unlock it before saving.');
   latest.content = content;
-  storage.setItem(VAULT_STORAGE_KEY, JSON.stringify(latest));
+  writeRecord(storage, latest);
   return { key: session.key, entries: normalized, preferences, revision: content.data };
 }
 export function exportEncryptedVault(storage = storageDefault()) { return JSON.stringify(readRecord(storage), null, 2); }
@@ -138,7 +161,7 @@ export async function restoreEncryptedVault(text, passphrase, storage = storageD
   try { session = await sessionFromRaw(await open(await wrappingKey(String(passphrase), record.kdf.salt), record.wrappedKey), record); }
   catch { throw new Error('The backup passphrase is incorrect or the backup could not be verified. Your current vault has not changed.'); }
   if (storage.getItem(VAULT_STORAGE_KEY) !== previousRecord) throw new Error('The current vault changed while verifying the backup. Review it before restoring.');
-  storage.setItem(VAULT_STORAGE_KEY, JSON.stringify(record));
+  writeRecord(storage, record);
   return session;
 }
 
@@ -227,7 +250,7 @@ export async function enableDeviceUnlock(passphrase, storage = storageDefault())
     const latest = readRecord(storage);
     if (latest.wrappedKey.data !== record.wrappedKey.data || latest.kdf.salt !== record.kdf.salt) throw new Error('The vault was replaced during device setup. Unlock it and try again.');
     latest.device = device;
-    storage.setItem(VAULT_STORAGE_KEY, JSON.stringify(latest));
+    writeRecord(storage, latest);
   } finally { raw.fill(0); }
 }
 export async function unlockWithDevice(storage = storageDefault()) {
