@@ -310,7 +310,7 @@ export default function PostList({
                         badge — click-to-maximize is unchanged, same as
                         photos: this button still opens ImageLightbox for
                         sound, seeking, and next/prev. */}
-                    <InlineAutoplayVideo kind="file" src={post.mediaUrl}
+                    <InlineAutoplayVideo post={post} kind="file" src={post.mediaUrl}
                       style={{ width: '100%', maxHeight: 420, display: 'block' }}
                       forcePause={mediaLightboxPostId === post.id} />
                   </button>

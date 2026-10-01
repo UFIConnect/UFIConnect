@@ -30,16 +30,16 @@ try {
       if (endpoint === '/office/feed') {
         feedRequests.push(url.searchParams);
         const mode = url.searchParams.get('mode');
-        const posts = mode === 'groups' ? [sample('joined-good', 'uficonnect', { groupId: 'group-a' }), sample('wrong-native', 'uficonnect', { groupId: 'unjoined' }), sample('wrong-connected', 'reddit', { groupId: 'group-a', isExternal: true })]
-          : mode === 'bars' ? [sample('bar-story', 'bars', { topic: 'Wine & Spirits' })] : [sample('reddit-story', 'reddit'), sample('hn-story', 'hackernews')];
+        const posts = mode === 'groups' ? [sample('joined-good', 'uficonnect', { groupId: 'group-a', group: { id: 'group-a', name: 'Design circle' }, fromJoinedGroup: true }), sample('wrong-native', 'uficonnect', { groupId: 'unjoined' }), sample('wrong-connected', 'reddit', { groupId: 'group-a', isExternal: true })]
+          : mode === 'bars' ? [sample('bar-story', 'bars', { topic: 'Wine & Spirits' })] : [sample('reddit-story', 'reddit', { likesCount: 31 }), sample('hn-story', 'hackernews', { isExternal: true, groupId: 'ext_hn', group: { id: 'ext_hn', name: 'Hacker News' }, fromJoinedGroup: true })];
         return route.fulfill({ json: { posts, mode, hasMore: false, nativeUficonnectIncluded: true } });
       }
       if (endpoint === '/groups/internal') return route.fulfill({ json: { groups: [{ id: 'ufi-general', name: 'General' }, { id: 'group-a', name: 'Design circle', isJoined: true }, { id: 'group-b', name: 'Builders club', isJoined: true }, { id: 'not-joined', name: 'Another group' }] } });
       if (/^\/groups\/[^/]+\/posts$/.test(endpoint) && route.request().method() === 'POST') { published.push({ endpoint, body: route.request().postDataJSON() }); return route.fulfill({ status: 201, json: { post: { id: 'created' } } }); }
       if (endpoint === '/saved/posts') return route.fulfill({ json: { posts: [sample('saved-story', 'reddit')], postIds: ['saved-story'], hasMore: false, total: 1 } });
       if (endpoint === '/jobs/tracking') return route.fulfill({ json: { jobs: [{ id: 'saved-job', title: 'Community engineer', org: 'Example Company', status: 'saved' }] } });
-      if (endpoint === '/social/interaction-capabilities') return route.fulfill({ json: { sources: { reddit: { connected: true, label: 'Reddit', likeLabel: 'Upvote', maxLength: 1000 } } } });
-      if (endpoint === '/social/interactions') { const body = route.request().postDataJSON(); interactions.push(body); return route.fulfill({ json: { published: true, liked: body.liked, commentId: 'remote-comment' } }); }
+      if (endpoint === '/social/interaction-capabilities') return route.fulfill({ json: { sources: { reddit: { connected: true, like: true, comment: true, label: 'Reddit', likeLabel: 'Upvote', maxLength: 1000 } } } });
+      if (endpoint === '/social/interactions' && route.request().method() === 'POST') { const body = route.request().postDataJSON(); interactions.push(body); return route.fulfill({ json: { published: true, liked: body.liked, commentId: 'remote-comment' } }); }
       if (endpoint === '/feed/likes') return route.fulfill({ json: { likes: {} } });
       if (/^\/feed\/[^/]+\/like$/.test(endpoint) && route.request().method() === 'POST') { memberLikes.push(endpoint); return route.fulfill({ json: { likedByMe: memberLikes.length % 2 === 1, memberLikesCount: memberLikes.length % 2 } }); }
       if (endpoint === '/users/public-member') return route.fulfill({ json: { id: 'public-member', name: 'Jordan', bio: 'Building useful communities.', interests: ['Open Source'], goals: ['Learn new skills'], skills: [], followersCount: 0, followingCount: 0 } });
@@ -76,18 +76,33 @@ try {
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=feed'); await sources.waitFor();
     assert.equal(await sources.getByRole('button', { name: 'Reddit', exact: true }).getAttribute('aria-pressed'), 'true');
     assert.equal(await sources.getByRole('button', { name: 'Hacker News', exact: true }).getAttribute('aria-pressed'), 'true');
-    // Liking a Reddit post goes through the member's connected Reddit account and is recorded on UFIconnect.
+    // Official source actions update this viewer's state, while source counts
+    // remain unchanged until the provider supplies a new snapshot.
     const redditCard = page.locator('.post-card').filter({ has: page.getByRole('link', { name: 'Open on Reddit', exact: true }) }).first();
-    await redditCard.getByRole('button', { name: 'Like', exact: true }).click();
-    await redditCard.getByRole('button', { name: 'Unlike', exact: true }).waitFor();
-    assert.deepEqual(memberLikes, ['/feed/reddit-story/like'], 'The like is recorded for "Liked by"');
-    assert.equal(await page.getByRole('button', { name: 'Upvote on Reddit', exact: true }).count(), 0, 'One heart replaces the separate upvote button');
+    const hnCard = page.locator('.post-card').filter({ has: page.getByText('Story hn-story', { exact: false }) }).first();
+    await hnCard.getByText('Following source', { exact: true }).waitFor();
+    assert.equal(await hnCard.getByText('Following source', { exact: true }).getAttribute('title'), 'Following this source in UFIconnect.');
+    assert.equal(await hnCard.locator('.post-chrome-chips').getByText('Hacker News', { exact: true }).count(), 1, 'Keep the actual source name beside its local following status');
+    assert.equal(await hnCard.getByText('Joined', { exact: true }).count(), 0, 'A local source association does not claim membership at Hacker News');
+    assert.equal(await redditCard.getByText(/^(Following source|Joined)$/).count(), 0, 'Unjoined sources have no relationship badge');
+    assert.equal(await page.getByText('your group', { exact: true }).count(), 0);
+    assert.equal(await redditCard.locator('.post-chrome-like-count').innerText(), '31');
+    await redditCard.getByRole('button', { name: 'Upvote on Reddit', exact: true }).click();
+    await redditCard.getByRole('button', { name: 'Unlike on Reddit', exact: true }).waitFor();
+    assert.deepEqual(memberLikes, [], 'External source actions never increment a local public like counter');
+    assert.equal(await redditCard.locator('.post-chrome-like-count').innerText(), '31', 'A confirmed action does not manufacture a source count');
+    assert.equal(await redditCard.locator('.post-chrome-like > button.post-chrome-action').count(), 1, 'One source action appears in the heart row');
     await page.getByRole('button', { name: 'Comment on Reddit', exact: true }).click();
     await page.getByLabel('Publish a comment on Reddit', { exact: true }).fill('Thank you for the useful update.');
     await page.getByRole('button', { name: 'Publish on Reddit', exact: true }).click();
-    await page.getByText('Comment published on Reddit.', { exact: true }).waitFor();
+    await page.getByText('Comment published on Reddit. Source counts update when the source supplies them.', { exact: true }).waitFor();
     assert.deepEqual(interactions.map(item => item.action), ['like', 'comment']);
+    assert.ok(interactions.every(item => item.source === 'reddit' && item.sourceUrl === 'https://www.reddit.com/r/test/comments/abc123/story'), 'Both requests target the original Reddit post');
+    assert.equal(interactions[0].liked, true);
+    assert.ok(interactions.every(item => typeof item.requestId === 'string' && item.requestId.length > 0), 'Each action includes its duplicate-protection request ID');
+    assert.notEqual(interactions[0].requestId, interactions[1].requestId);
     assert.equal(interactions[1].content, 'Thank you for the useful update.');
+    assert.deepEqual(memberLikes, [], 'Neither official action produces a synthetic local like');
     await page.getByRole('button', { name: 'View all feed sources', exact: true }).click();
     const sourceMenu = page.getByRole('group', { name: 'Feed sources and favorites', exact: true });
     assert.equal(await sourceMenu.locator('.feed-source-option').count(), await sources.locator('.feed-source-option').count(), 'the menu exposes the complete source rail');
@@ -108,6 +123,10 @@ try {
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/interface-sources-${width}.png`) });
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=groups');
     await page.getByText('Story joined-good', { exact: true }).waitFor();
+    const joinedCard = page.locator('.post-card').filter({ has: page.getByText('Story joined-good', { exact: true }) });
+    assert.equal(await joinedCard.getByText('Joined', { exact: true }).getAttribute('title'), 'You joined this UFIconnect group.');
+    assert.equal(await joinedCard.locator('.post-chrome-chips').getByText('Design circle', { exact: true }).count(), 1);
+    assert.equal(await joinedCard.getByText('Following source', { exact: true }).count(), 0);
     assert.equal(await page.getByText('Story wrong-native', { exact: true }).count(), 0);
     assert.equal(await page.getByText('Story wrong-connected', { exact: true }).count(), 0);
     await auditNavigate(page, server.resolvedUrls.local[0] + 'groups/post');
@@ -138,7 +157,7 @@ try {
     await page.getByRole('button', { name: 'Apply topics', exact: true }).click();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
     assert.deepEqual(errors, []);
-    console.log(`PASS: circles, multi-source navigation, native source actions, group isolation/composer, saved pages, public About and Bars topics at ${width}px`);
+    console.log(`PASS: circles, multi-source navigation, native source actions, source/group relationship labels, group isolation/composer, saved pages, public About and Bars topics at ${width}px`);
     await context.close();
   }
 } finally { await browser?.close(); await server.close(); await app.close(); }

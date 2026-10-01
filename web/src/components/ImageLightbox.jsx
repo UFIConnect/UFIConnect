@@ -251,7 +251,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
       || extractYouTubeId(item?.url))
     : null;
   const playlistUrl = isVideo && !youtubeId && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(item.url) : null;
-  const directVideoUrl = isVideo && !youtubeId && !playlistUrl && item?.url && isDirectVideoUrl(item.url) ? item.url : null;
+  const directVideoUrl = isVideo && !youtubeId && !playlistUrl && item?.url && isDirectVideoUrl(item.url, post) ? item.url : null;
   const playableVideo = !!(youtubeId || playlistUrl || directVideoUrl);
 
   const getNativeEl = useCallback(

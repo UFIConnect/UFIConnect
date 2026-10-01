@@ -635,6 +635,18 @@ services:
         source: /forgot-password/
         destination: /forgot-password/index.html
       - type: rewrite
+        source: /analytics
+        destination: /analytics/index.html
+      - type: rewrite
+        source: /analytics/
+        destination: /analytics/index.html
+      - type: rewrite
+        source: /vault
+        destination: /vault/index.html
+      - type: rewrite
+        source: /vault/
+        destination: /vault/index.html
+      - type: rewrite
         source: /people
         destination: /people/index.html
       - type: rewrite

@@ -110,6 +110,8 @@ export default function ConnectedAccounts() {
     const connectParams = new URLSearchParams();
     if (handle) connectParams.set('handle', handle.trim());
     if (searchParams.get('interactions') === '1') connectParams.set('interactions', '1');
+    if (platform === 'youtube' && searchParams.get('analytics') === '1') connectParams.set('analytics', '1');
+    if (platform === 'youtube' && searchParams.get('monetization') === '1') connectParams.set('monetization', '1');
     const handleParam = connectParams.size ? `?${connectParams}` : '';
     setConnecting(platform);
     try {
@@ -254,6 +256,14 @@ export default function ConnectedAccounts() {
             <p>Authorize publishing actions on a connected source. Your comments will be published on that platform.</p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {['reddit', 'twitter', 'youtube', 'github', 'gitlab', 'bluesky'].filter(key => connected[key]).map(key => <button key={key} className="btn btn-outline btn-sm" disabled={!!connecting} onClick={() => handleConnect(key)}>Enable actions on {key === 'twitter' ? 'X' : key}</button>)}
+            </div>
+          </section>}
+          {(searchParams.get('analytics') === '1' || searchParams.get('monetization') === '1') && <section className="card" aria-labelledby="source-analytics-permissions" style={{ marginBottom: 20, padding: 20 }}>
+            <h2 id="source-analytics-permissions" style={{ fontSize: '1.1rem', margin: '0 0 8px' }}>YouTube analytics permissions</h2>
+            <p style={{ color: 'var(--muted)', fontSize: '.85rem', lineHeight: 1.6 }}>Authorize read access to your channel analytics{searchParams.get('monetization') === '1' ? ' and estimated revenue' : ''}. YouTube controls eligibility, reporting delays, advertising, and payouts. Review the permissions on Google’s authorization screen.</p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 14 }}>
+              <button type="button" className="btn btn-primary btn-sm" disabled={!!connecting || !platforms.some(([key, item]) => key === 'youtube' && item.configured && !item.forceComingSoon)} onClick={() => handleConnect('youtube')}>{connecting === 'youtube' ? 'Opening Google…' : connected.youtube ? 'Update YouTube permissions' : 'Connect YouTube analytics'}</button>
+              <Link className="btn btn-ghost btn-sm" to="/analytics">Return to analytics</Link>
             </div>
           </section>}
           <div className="account-directory-page">

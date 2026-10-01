@@ -1,5 +1,6 @@
 // This module never loads a Google script in the application document. Only
 // fixed page categories cross into a sandbox on a different origin.
+import { isPrivateTelemetryPath, setTelemetryRoute } from './telemetryPrivacy.mjs';
 export const GA_MEASUREMENT_ID = 'G-F68DRQ6CC5';
 export const ANALYTICS_CONSENT_KEY = 'uficonnect.analytics.consent.v1';
 export const ANALYTICS_CLIENT_KEY = 'uficonnect.analytics.client.v1';
@@ -124,6 +125,15 @@ export function createAnalyticsController({ window, document, bridgeUrl }) {
     }
   }
 
+  function suspendPrivatePage() {
+    // Remove the bridge immediately, including a frame awaiting opt-out ack.
+    // Preserve the user's choice; entering Vault is not a consent change.
+    latest = null;
+    stop({ clearIdentifier: false });
+    retiringFrames.forEach(previousFrame => previousFrame.remove());
+    retiringFrames.clear();
+  }
+
   function consentedClientId() {
     try {
       const stored = JSON.parse(window.localStorage.getItem(ANALYTICS_CLIENT_KEY));
@@ -145,6 +155,7 @@ export function createAnalyticsController({ window, document, bridgeUrl }) {
   }
 
   function sendLatest() {
+    if (isPrivateTelemetryPath(window.location.pathname)) { suspendPrivatePage(); return; }
     if (window.navigator?.globalPrivacyControl === true) { updateConsent('denied', true); return; }
     if (!ready || consent !== 'granted') return;
     while (pending.length) {
@@ -156,6 +167,7 @@ export function createAnalyticsController({ window, document, bridgeUrl }) {
   }
 
   function activate() {
+    if (isPrivateTelemetryPath(window.location.pathname)) { suspendPrivatePage(); return; }
     if (window.navigator?.globalPrivacyControl === true && consent !== 'denied') { updateConsent('denied', true); return; }
     if (disposed || consent !== 'granted' || !latest) return;
     queueLatest();
@@ -243,6 +255,8 @@ export function createAnalyticsController({ window, document, bridgeUrl }) {
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     setConsent(value) { if (value === 'granted' || value === 'denied') updateConsent(value, true); },
     trackPage(path, navigationKey = path) {
+      setTelemetryRoute(path);
+      if (isPrivateTelemetryPath(path)) { suspendPrivatePage(); return; }
       if (disposed || (latest && latest.navigationKey === navigationKey && latest.sourcePath === path)) return;
       latest = { page: canonicalPage(path), sourcePath: path, navigationKey, visit: ++visit };
       activate();
