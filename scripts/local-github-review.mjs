@@ -22,7 +22,8 @@ function run(command, args, cwd, timeout = 15 * 60_000) {
   });
 }
 
-export function createGithubReview({ root, port = 4175, webConfig = () => ({}) }) {
+export function createGithubReview({ root, port = 4175, defaultBranch = 'review/local-web', startPreview, webConfig = () => ({}) }) {
+  if (!REVIEW_BRANCH.test(defaultBranch)) throw new Error('Invalid default review branch.');
   const dir = path.join(root, '.cache', 'github-review');
   const previewUrl = `http://127.0.0.1:${port}`;
   let state = { state: 'off', previewUrl };
@@ -75,6 +76,10 @@ export function createGithubReview({ root, port = 4175, webConfig = () => ({}) }
     state = { ...state, step: 'Starting the preview' };
     await server?.close();
     server = null;
+    if (startPreview) {
+      server = await startPreview({ root: dir, port });
+      return;
+    }
     const { createServer } = await import(pathToFileURL(path.join(dir, 'web', 'node_modules', 'vite', 'dist', 'node', 'index.js')).href);
     const config = webConfig();
     server = await createServer({ ...config, root: path.join(dir, 'web'), configFile: path.join(dir, 'web', 'vite.config.js'),
@@ -82,7 +87,7 @@ export function createGithubReview({ root, port = 4175, webConfig = () => ({}) }
     await server.listen();
   }
 
-  function update(branch = 'main') {
+  function update(branch = defaultBranch) {
     if (stopped) throw new Error('The local workspace is stopping.');
     if (typeof branch !== 'string' || !REVIEW_BRANCH.test(branch)) {
       throw Object.assign(new Error('Enter a GitHub branch name, such as main.'), { status: 400 });
@@ -102,11 +107,11 @@ export function createGithubReview({ root, port = 4175, webConfig = () => ({}) }
         } finally { pending = null; }
       })();
     }
-    return { ...state };
+    return { ...state, defaultBranch };
   }
 
   return {
-    getStatus: () => ({ ...state }),
+    getStatus: () => ({ ...state, defaultBranch }),
     update,
     async stop() { stopped = true; await pending; await server?.close(); server = null; },
   };

@@ -5,7 +5,7 @@ import { createVault, unlockVault, saveEntries, hasVault, parsePasswordImport, e
 
 const memory = () => { const values = new Map(); return { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) }; };
 const phrase = 'Local review long passphrase';
-const entry = { id: 'one', name: 'Private service', url: 'https://private.example/', username: 'private-user', password: 'private-password-42', notes: 'private-note' };
+const entry = { id: 'one', name: 'Private service', url: 'https://private.example/', username: 'private-user', password: 'private-password-42', notes: 'private-note', appUrl: 'https://private.example/app', favorite: true, launchCount: 3 };
 
 test('vault persists authenticated ciphertext only, locks key export, and round-trips entries and backups', async () => {
   const storage = memory();

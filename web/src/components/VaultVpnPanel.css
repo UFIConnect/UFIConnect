@@ -1,0 +1,9 @@
+.vault-vpn-panel .vault-platform-switch { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.vault-vpn-panel .vault-platform-switch button { flex: 1 1 58px; }
+.vault-vpn-panel .vault-text-button { display: flex; align-items: center; gap: 6px; margin-top: 12px; }
+.vault-vpn-panel .vault-field { margin-top: 14px; }
+.vault-vpn-location-form { display: grid; gap: 12px; margin-top: 15px; padding: 14px; border: 1px solid var(--vault-border, #253750); border-radius: 10px; }
+.vault-vpn-confirm { display: flex; gap: 8px; align-items: flex-start; font-size: 11px; color: #aabed8; line-height: 1.6; }
+.vault-vpn-confirm input { margin-top: 4px; flex: 0 0 auto; }
+.vault-vpn-panel select { max-width: 100%; }
+.vault-vpn-panel button:disabled { cursor: not-allowed; opacity: .6; }

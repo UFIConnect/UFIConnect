@@ -129,7 +129,7 @@ export default function Analytics() {
         <Link to="/connected-accounts" className="btn btn-ghost">Manage accounts</Link>
       </header>
       <div className="creator-analytics-toolbar">
-        <label htmlFor="analytics-period">Reporting period<select id="analytics-period" value={days} disabled={refreshing || submitting} onChange={event => { setNotice(''); setDays(Number(event.target.value)); }}><option value={7}>Last 7 days</option><option value={30}>Last 30 days</option></select></label>
+        <Link className="btn btn-ghost btn-sm" to="/centers/source-analytics">Imported reports</Link><Link className="btn btn-ghost btn-sm" to="/centers/monetization">Monetization workspace</Link><Link className="btn btn-ghost btn-sm" to="/centers/deep-learning">Deep learning workspace</Link><label htmlFor="analytics-period">Reporting period<select id="analytics-period" value={days} disabled={refreshing || submitting} onChange={event => { setNotice(''); setDays(Number(event.target.value)); }}><option value={7}>Last 7 days</option><option value={30}>Last 30 days</option></select></label>
         <span className="creator-analytics-muted">{report ? `Report updated ${dateLabel(report.generatedAt)}` : 'Your account only'}</span>
         <button type="button" className="btn btn-primary" onClick={refresh} disabled={refreshing || loading || submitting}><RefreshCw size={15} aria-hidden="true" />{refreshing ? 'Refreshing sources…' : 'Refresh sources'}</button>
       </div>

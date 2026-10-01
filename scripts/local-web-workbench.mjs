@@ -199,7 +199,7 @@ export function createLocalWebMiddleware({
           throw failure(403, 'Update the GitHub preview from the local Office editor.', 'forbidden_origin');
         }
         const body = await readBody(request);
-        return send(202, githubReview.update(body.branch ?? 'main'));
+        return send(202, githubReview.update(body.branch));
       }
       if (url.pathname === '/__local-web/phone' && request.method === 'POST') {
         if (request.headers.origin !== expected.origin || request.headers['x-local-web-editor'] !== '1') throw failure(403, 'Manage phone access from the local Office editor.', 'forbidden_origin');

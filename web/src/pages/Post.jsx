@@ -25,11 +25,11 @@ const PROMPTS = [
   "What's one thing you wish someone had told you earlier?",
 ];
 
-export function UfiFeedContent({ embedded = false, initialShop = false, composeOnly = false, categoryLabel = '' }) {
-  return <UfiPostArea key={categoryLabel || (initialShop ? 'shop' : 'ufi')} embedded={embedded} initialShop={initialShop} composeOnly={composeOnly} categoryLabel={categoryLabel} />;
+export function UfiFeedContent({ embedded = false, initialShop = false, composeOnly = false, categoryLabel = '', initialContent = '', initiallyOpen = false }) {
+  return <UfiPostArea key={categoryLabel || (initialShop ? 'shop' : 'ufi')} embedded={embedded} initialShop={initialShop} composeOnly={composeOnly} categoryLabel={categoryLabel} initialContent={initialContent} initiallyOpen={initiallyOpen} />;
 }
 
-function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel }) {
+function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initialContent = '', initiallyOpen = false }) {
   const { profile } = useAuth();
   const { showToast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -44,8 +44,8 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel }) {
   const [draftTopicIds, setDraftTopicIds] = useState([]);
   const [topicFilterOpen, setTopicFilterOpen] = useState(false);
   const [topicSearch, setTopicSearch] = useState('');
-  const [content,  setContent]  = useState('');
-  const [composing, setComposing] = useState(false);
+  const [content,  setContent]  = useState(initialContent);
+  const [composing, setComposing] = useState(initiallyOpen);
   const [loading,  setLoading]  = useState(false);
   const [posted,   setPosted]   = useState(false);
   const [error,    setError]    = useState('');

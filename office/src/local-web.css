@@ -6,6 +6,7 @@
 .local-web .local-web-subtitle { color: #94a3b8; margin: 0 0 20px; max-width: 900px; }
 .local-web-panel { background: #0d0d1a; border: 1px solid rgba(255,255,255,.09); border-radius: 12px; padding: 18px; min-width: 0; }
 .local-web-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; margin-top: 18px; align-items: start; }
+.local-web-workspace.local-web-workspace-preview { grid-template-columns: minmax(0, 1fr); }
 .local-web-section-heading { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 14px; }
 .local-web-section-heading > span { font-size: 11px; color: #94a3b8; }
 .local-web-heading-actions { display: flex; gap: 8px; flex-wrap: wrap; }

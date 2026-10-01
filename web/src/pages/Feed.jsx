@@ -3938,6 +3938,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
               <button key={key} type="button" className={`home-feed-rail-tab home-feed-rail-tab--icon${viewMode === key ? ' active' : ''}`} onClick={() => activateHomeView(key)}><Icon size={16} strokeWidth={2.2} aria-hidden="true" />{label}</button>
             ))}
             <Link to="/music" className="home-feed-rail-tab">Music</Link>
+            <Link to="/vault" className="home-feed-rail-tab">Your Vault</Link>
           </div>
           <div className="home-feed-rail-bottom">
             <Link to="/groups" className="home-feed-rail-tab">Discover groups</Link>

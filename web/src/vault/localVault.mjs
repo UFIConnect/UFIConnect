@@ -1,5 +1,6 @@
 // Browser vault: Web Crypto encrypts every entry before browser storage.
 // Neither passphrases nor unwrapped encryption keys are persisted.
+import { safeLaunchUrl, cleanVaultPreferences } from './vaultLaunchers.mjs';
 export const VAULT_STORAGE_KEY = 'uficonnect.vault.encrypted.v1';
 const ITERATIONS = 600000;
 const MAX_TEXT = 2 * 1024 * 1024;
@@ -75,12 +76,16 @@ function cleanEntries(entries) {
       } catch { throw new Error('Use a valid website URL without embedded credentials.'); }
     }
     result.id = typeof entry.id === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(entry.id) && !seen.has(entry.id) ? entry.id : crypto.randomUUID();
+    result.appUrl = entry.appUrl ? safeLaunchUrl(entry.appUrl, true) : '';
+    if (entry.appUrl && !result.appUrl) throw new Error('Use an HTTPS app link, a Spotify content URI, or an official Teams app link.');
+    result.favorite = entry.favorite === true;
+    result.launchCount = Number.isSafeInteger(entry.launchCount) ? Math.max(0, Math.min(1000000, entry.launchCount)) : 0;
     seen.add(result.id);
     return result;
   });
 }
-async function contentBox(key, entries) {
-  const data = encoder.encode(JSON.stringify({ entries: cleanEntries(entries) }));
+async function contentBox(key, entries, preferences) {
+  const data = encoder.encode(JSON.stringify({ entries: cleanEntries(entries), preferences: cleanVaultPreferences(preferences) }));
   if (data.length > MAX_TEXT) throw new Error('The local vault is limited to 2 MB.');
   try { return await seal(key, data); } finally { data.fill(0); }
 }
@@ -88,7 +93,7 @@ async function sessionFromRaw(raw, record) {
   try {
     const key = await importKey(raw);
     const plaintext = await open(key, record.content);
-    try { return { key, entries: cleanEntries(JSON.parse(decoder.decode(plaintext)).entries), revision: record.content.data }; }
+    try { const value = JSON.parse(decoder.decode(plaintext)); return { key, entries: cleanEntries(value.entries), preferences: cleanVaultPreferences(value.preferences), revision: record.content.data }; }
     finally { plaintext.fill(0); }
   } finally { raw.fill(0); }
 }
@@ -102,7 +107,7 @@ export async function createVault(passphrase, storage = storageDefault()) {
     const record = { version: 1, kdf: { salt, iterations: ITERATIONS }, wrappedKey: await seal(await wrappingKey(passphrase, salt), raw), content: await contentBox(key, []) };
     if (hasVault(storage)) throw new Error('A vault was created in another window. Unlock it instead.');
     storage.setItem(VAULT_STORAGE_KEY, JSON.stringify(record));
-    return { key, entries: [], revision: record.content.data };
+    return { key, entries: [], preferences: cleanVaultPreferences(), revision: record.content.data };
   } finally { raw.fill(0); }
 }
 export async function unlockVault(passphrase, storage = storageDefault()) {
@@ -117,12 +122,13 @@ export async function saveEntries(session, entries, storage = storageDefault()) 
   // Confirm this session still belongs to the stored vault before replacing it.
   const previous = await open(session.key, record.content); previous.fill(0);
   const normalized = cleanEntries(entries);
-  const content = await contentBox(session.key, normalized);
+  const preferences = cleanVaultPreferences(session.preferences);
+  const content = await contentBox(session.key, normalized, preferences);
   const latest = readRecord(storage);
   if (latest.content.data !== record.content.data) throw new Error('This vault changed in another window. Lock and unlock it before saving.');
   latest.content = content;
   storage.setItem(VAULT_STORAGE_KEY, JSON.stringify(latest));
-  return { key: session.key, entries: normalized, revision: content.data };
+  return { key: session.key, entries: normalized, preferences, revision: content.data };
 }
 export function exportEncryptedVault(storage = storageDefault()) { return JSON.stringify(readRecord(storage), null, 2); }
 export async function restoreEncryptedVault(text, passphrase, storage = storageDefault()) {
