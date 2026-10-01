@@ -87,8 +87,18 @@ try {
       await page.goto(origin + '/vault');
       await page.getByRole('heading', { name: 'Your Vault.' }).waitFor();
       await page.getByText('Awaiting hardware setup', { exact: true }).waitFor();
-      check(await page.getByText('Status unavailable in browser.', { exact: false }).count() === 1, 'Public bundle must not claim VPN control');
-      check(await page.getByRole('button', { name: /Connect device/ }).isDisabled(), 'Unintegrated hardware cannot be connected');
+      check(await page.getByText('Managed on your device', { exact: true }).count() === 1, 'Public bundle must not claim VPN control');
+      for (const platform of ['Windows', 'Linux', 'iOS', 'Android']) {
+        await page.getByRole('group', { name: 'VPN device' }).getByRole('button', { name: platform, exact: true }).click();
+        check(await page.getByText('Managed on your device', { exact: true }).count() === 1, `${platform} handoff must not fabricate a connection`);
+      }
+      check(await page.getByLabel('Your configured countries', { exact: true }).isDisabled(), 'Country switching requires a configured profile');
+      await page.getByRole('navigation', { name: 'Vault pages' }).getByRole('link', { name: 'Device', exact: true }).click();
+      check(await page.getByRole('button', { name: 'Orders are not open yet', exact: true }).isDisabled(), 'Device ordering remains locked');
+      check(await page.locator('.vault-device-page input,.vault-device-page form').count() === 0, 'Locked ordering does not collect personal or payment details');
+      check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Device page fits the viewport');
+      await page.screenshot({ path: path.join(output, `public-vault-device-${width}.png`), fullPage: true });
+      await page.getByRole('navigation', { name: 'Vault pages' }).getByRole('link', { name: 'Your Vault', exact: true }).click();
       await page.getByLabel('Vault passphrase', { exact: true }).fill(vaultPassphrase);
       await page.getByLabel('Confirm passphrase', { exact: true }).fill(vaultPassphrase);
       await page.getByRole('button', { name: 'Create vault', exact: true }).click();
@@ -96,7 +106,7 @@ try {
       await page.getByLabel('App or website name', { exact: true }).fill('Synthetic private entry');
       await page.getByLabel('Password', { exact: true }).fill(secret);
       await page.getByRole('button', { name: 'Save password', exact: true }).click();
-      await page.getByRole('button', { name: 'Open Synthetic private entry', exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Details for Synthetic private entry', exact: true }).waitFor();
       const stored = await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }));
       check(![secret, vaultPassphrase, 'Synthetic private entry'].some(value => stored.includes(value)), 'Persisted vault contains no plaintext entry, secret, or passphrase');
       await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
@@ -104,7 +114,7 @@ try {
       memberId = `built-vault-b-${width}`;
       await page.reload();
       await page.getByRole('button', { name: 'Create vault', exact: true }).waitFor();
-      check(await page.getByRole('button', { name: 'Open Synthetic private entry', exact: true }).count() === 0, 'Another account never inherits the first account vault');
+      check(await page.getByRole('button', { name: 'Details for Synthetic private entry', exact: true }).count() === 0, 'Another account never inherits the first account vault');
       await page.screenshot({ path: path.join(output, `public-vault-${width}.png`), fullPage: true });
       await page.goto(origin + '/analytics');
       await page.getByRole('heading', { name: 'Analytics and rights', exact: true }).waitFor();

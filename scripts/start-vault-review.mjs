@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer } from '../web/node_modules/vite/dist/node/index.js';
 import { createLocalVaultVpn } from './local-vault-vpn.mjs';
+import { createVpnChallenges } from './local-vault-vpn-challenges.mjs';
 import { createLocalReviewSamples } from './local-review-samples.mjs';
 
 const require = createRequire(import.meta.url);
@@ -21,6 +22,7 @@ export async function createVaultPreview({ port = 4187, projectRoot = root, vpn 
   const sampleFeed = samples ? createLocalReviewSamples() : null;
   if (samples) app.groups.push({ id: 'local-review-builders', name: 'Local sample builders', description: 'Sample group for local review only.', memberIds: [userId], creatorId: userId, visibility: 'public' });
   const csrfToken = randomBytes(32).toString('hex');
+  const vpnChallenges = createVpnChallenges();
   let listeningPort = port;
   const send = (res, status, value) => {
     res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
@@ -61,7 +63,7 @@ export async function createVaultPreview({ port = 4187, projectRoot = root, vpn 
           if (!pathname.startsWith('/__vault/')) return next();
           if (req.method === 'GET' && pathname === '/__vault/session') return send(res, 200, { csrfToken });
           if (req.method === 'GET' && pathname === '/__vault/vpn/status') return send(res, 200, await vpn.status());
-          if (req.method !== 'POST' || !['/__vault/vpn/connect', '/__vault/vpn/disconnect'].includes(pathname)) return send(res, 404, { error: 'Unknown local action.' });
+          if (req.method !== 'POST' || !['/__vault/vpn/challenge', '/__vault/vpn/connect', '/__vault/vpn/disconnect'].includes(pathname)) return send(res, 404, { error: 'Unknown local action.' });
           const supplied = Buffer.from(String(req.headers['x-vault-csrf'] || ''));
           const expected = Buffer.from(csrfToken);
           if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected) || req.headers.origin !== `http://${req.headers.host}`) return send(res, 403, { error: 'Reload the local preview before connecting.' });
@@ -70,6 +72,12 @@ export async function createVaultPreview({ port = 4187, projectRoot = root, vpn 
           for await (const chunk of req) { body += chunk.toString('utf8'); if (Buffer.byteLength(body) > 2048) return send(res, 413, { error: 'Request is too large.' }); }
           let value; try { value = JSON.parse(body); } catch { return send(res, 400, { error: 'Invalid request.' }); }
           if (typeof value?.profileId !== 'string' || value.profileId.length > 500) return send(res, 400, { error: 'Select a configured VPN connection.' });
+          if (pathname.endsWith('/challenge')) {
+            const challenge = vpnChallenges.issue({ action: value.action, profileId: value.profileId, origin: req.headers.origin });
+            return challenge ? send(res, 200, challenge) : send(res, 429, { error: 'A connection approval could not be issued. Wait a moment, then try again.' });
+          }
+          const action = pathname.endsWith('/disconnect') ? 'disconnect' : 'connect';
+          if (!vpnChallenges.consume({ nonce: value.nonce, action, profileId: value.profileId, origin: req.headers.origin })) return send(res, 403, { error: 'This connection approval expired or was already used. Try again.' });
           const result = pathname.endsWith('/disconnect') ? await vpn.disconnect(value.profileId) : await vpn.connect(value.profileId);
           return send(res, 200, result);
         } catch (error) {
