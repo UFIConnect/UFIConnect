@@ -27,7 +27,7 @@ const check = (value, message) => { assert.ok(value, message); checks++; };
 try {
   await fs.mkdir(output, { recursive: true });
   for (const width of [1440, 390]) {
-    const context = await browser.newContext({ viewport: { width, height: 950 }, serviceWorkers: 'block' });
+    const context = await browser.newContext({ viewport: { width, height: 950 }, locale: 'en-US', serviceWorkers: 'block' });
     const page = await context.newPage();
     page.setDefaultTimeout(12_000);
     const errors = []; const requests = [];
