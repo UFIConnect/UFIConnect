@@ -92,8 +92,8 @@ try {
       await page.goto(origin + '/vault');
       await page.getByRole('heading', { name: 'Your Vault.' }).waitFor();
       await page.getByText('Awaiting hardware setup', { exact: true }).waitFor();
-      check(await page.locator('.vault-primary-column .vault-activity').count() === 1, 'Connection activity appears once in the left Vault column');
-      check(await page.locator('.vault-primary-column .vault-hardware-status').count() === 1, 'Hardware verification appears in the left Vault column');
+      check(await page.locator('.vault-secondary-column .vault-activity').count() === 1, 'Connection activity appears once in the right Vault column');
+      check(await page.locator('.vault-secondary-column .vault-hardware-status').count() === 1, 'Hardware verification appears in the right Vault column');
       await page.getByRole('button', { name: 'Subscribe — coming soon', exact: true }).waitFor();
       check(await page.getByRole('button', { name: 'Subscribe — coming soon', exact: true }).isDisabled(), 'VPN checkout remains locked until real service is ready');
       check(await page.getByRole('button', { name: 'VPN locked', exact: true }).isDisabled(), 'Unsubscribed public VPN controls are locked');
