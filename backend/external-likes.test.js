@@ -9,7 +9,7 @@ const A = 'a0000000-0000-4000-8000-000000000001';
 const B = 'b0000000-0000-4000-8000-000000000002';
 const POST = 'reddit_likes_audit';
 
-test('members like external feed posts, see counts per viewer, and see who liked them', async t => {
+test('external feed likes require a provider action and never manufacture local source counts', async t => {
   const pg = new PGlite(); t.after(() => pg.close());
   const env = { OAUTH_TOKEN_ENCRYPTION_KEY: randomBytes(32).toString('base64') };
   const vault = createTokenVault(env);
@@ -32,27 +32,24 @@ test('members like external feed posts, see counts per viewer, and see who liked
   await pg.query("INSERT INTO users(id,name,email) VALUES($1,'Carol','carol@example.invalid')", [C]);
   app.seedUser(member(A, { name: 'Alice' })); app.seedUser(member(B, { name: 'Bob' }));
   app.seedUser(member(C, { name: 'Carol' }));
-  const unconnected = await app.request(`/feed/${POST}/like`, { userId: C, method: 'POST' });
-  assert.equal(unconnected.status, 403, 'Members without a connected Reddit account cannot like Reddit posts');
-  assert.match(unconnected.data.message, /Connect this source/);
-
-  const like = await app.request(`/feed/${POST}/like`, { userId: A, method: 'POST' });
-  assert.equal(like.status, 200);
-  assert.deepEqual(like.data, { likedByMe: true, memberLikesCount: 1 });
-  assert.equal((await app.request(`/feed/${POST}/like`, { userId: B, method: 'POST' })).data.memberLikesCount, 2);
+  for (const userId of [A, B, C]) {
+    const response = await app.request(`/feed/${POST}/like`, { userId, method: 'POST' });
+    assert.equal(response.status, 422, 'External actions must use the approved provider route regardless of local account connection');
+    assert.equal(response.data.likedByMe, undefined);
+    assert.equal(response.data.memberLikesCount, undefined);
+  }
+  assert.equal(feedRow.likes_count, 40, 'Provider metric remains unchanged after rejected local requests');
+  assert.equal((await pg.query('SELECT COUNT(*)::integer AS count FROM external_post_likes')).rows[0].count, 0);
 
   const forAlice = await app.request(`/feed/likes?ids=${POST},unknown_post`, { userId: A });
-  assert.deepEqual(forAlice.data.likes, { [POST]: { count: 2, likedByMe: true } });
+  assert.deepEqual(forAlice.data.likes, {});
   const forGuest = await app.request(`/feed/likes?ids=${POST}`);
-  assert.deepEqual(forGuest.data.likes[POST], { count: 2, likedByMe: false }, 'Guests see the count, never a like of their own');
+  assert.deepEqual(forGuest.data.likes, {}, 'Guests receive no fabricated source reactions');
 
   const likers = await app.request(`/feed/${POST}/likes`, { userId: B });
   assert.equal(likers.status, 200);
-  assert.deepEqual(likers.data.users.map(user => user.name).sort(), ['Alice', 'Bob']);
-  assert.equal(likers.data.users.find(user => user.id === B).isSelf, true);
+  assert.deepEqual(likers.data.users, []);
 
-  const unlike = await app.request(`/feed/${POST}/like`, { userId: A, method: 'POST' });
-  assert.deepEqual(unlike.data, { likedByMe: false, memberLikesCount: 1 });
   assert.equal((await app.request(`/feed/missing_post/like`, { userId: A, method: 'POST' })).status, 404, 'Only posts that are really in the feed can be liked');
   assert.equal((await app.request(`/feed/${POST}/like`, { method: 'POST' })).status, 401);
 });

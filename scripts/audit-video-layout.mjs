@@ -16,6 +16,8 @@ const server = await createServer({ root: path.join(root, 'web'), configFile: pa
 let browser;
 const post = (id, extra = {}) => ({ id, source: 'reddit', title: `Video ${id}`, content: 'Details belong below the video.',
   mediaType: 'video', mediaUrl: 'https://media.example.invalid/fixture.mp4', sourceUrl: 'https://example.com/original',
+  // Synthetic media is fulfilled locally; this fixture grants its playback rights explicitly.
+  directPlaybackAuthorized: true,
   isExternal: true, createdAt: '2026-09-22T12:00:00Z', ...extra });
 try {
   await server.listen();

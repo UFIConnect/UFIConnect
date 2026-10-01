@@ -37,7 +37,7 @@ export default function AnalyticsPrivacy() {
     {visible && <section className="analytics-privacy-panel" aria-labelledby="analytics-privacy-title"
       onKeyDown={event => { if (event.key === 'Escape' && consent) { setOpen(false); restoreFocus(); } }}>
       <h2 id="analytics-privacy-title" ref={heading} tabIndex={-1}>Your analytics choice</h2>
-      <p>Core service metrics and aggregate page-category counts are always active. These counts exclude account and visitor identifiers. Google Analytics is optional.</p>
+      <p>Core service metrics and aggregate page-category counts exclude account and visitor identifiers. Your Vault is excluded from page analytics and optional diagnostics. Google Analytics is optional.</p>
       <p>Allow Google Analytics to measure page categories and basic device information? Google receives your IP address when connecting. We exclude passwords, messages, account details and full page links.</p>
       <p>You can decline and change your choice here anytime. <a href={`${import.meta.env.BASE_URL}privacy`}>Privacy policy</a></p>
       {consent && <p className="analytics-privacy-status" role="status">Analytics is {consent === 'granted' ? 'on' : 'off'} for this browser.</p>}

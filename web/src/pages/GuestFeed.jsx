@@ -44,7 +44,7 @@ function GuestVideoPlayer({ post, active, muted }) {
   const videoUrl = post.source === 'youtube' ? (post.sourceUrl || post.mediaUrl) : (post.mediaUrl || post.sourceUrl);
   const youtubeId = post.embedId || extractYouTubeId(videoUrl);
   const playlistUrl = !youtubeId && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(post.mediaUrl) : null;
-  const directUrl = !youtubeId && !playlistUrl && videoUrl && isDirectVideoUrl(videoUrl) ? videoUrl : null;
+  const directUrl = !youtubeId && !playlistUrl && videoUrl && isDirectVideoUrl(videoUrl, post) ? videoUrl : null;
 
   useEffect(() => {
     const video = directVideoRef.current;

@@ -10,7 +10,7 @@ import NotificationInbox from './NotificationInbox';
 import './social-surfaces.css';
 import './navigation.css';
 import { HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS } from './sourceMeta';
-import { SquarePen, UsersRound, ShoppingBag, Music, ShieldCheck, ChevronDown } from 'lucide-react';
+import { SquarePen, UsersRound, ShoppingBag, Music, ShieldCheck, ChevronDown, ChartNoAxesCombined } from 'lucide-react';
 
 const SearchPopupContent = lazy(() => import('../pages/SearchExperience'));
 
@@ -488,6 +488,8 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
           </button>
         )}
 
+        {profile && <NavLink to="/analytics" className="nav-link" title="Analytics and rights"><span className="nav-icon"><ChartNoAxesCombined size={20} aria-hidden="true" /></span><span className="nav-label">Analytics</span></NavLink>}
+        {profile && <NavLink to="/vault" className="nav-link" title="Your Vault"><span className="nav-icon"><ShieldCheck size={20} aria-hidden="true" /></span><span className="nav-label">Your Vault</span></NavLink>}
         {profile && <NavLink to="/privacy#analytics" className="nav-link sidebar-analytics-link" title="Analytics privacy" aria-label="Analytics privacy">
           <ShieldCheck size={20} aria-hidden="true" />
           <span className="nav-label">Analytics privacy</span>
@@ -671,6 +673,8 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
             </Link>
             <SavedNavigation mobile expanded={savedExpanded} onToggle={toggleSavedNavigation} onNavigate={closeMobileOverlays} />
             <div className="mobile-feed-drawer-bottom mobile-account-drawer-bottom">
+              <NavLink to="/analytics" className="mobile-command-menu-item" onClick={closeMobileOverlays}><ChartNoAxesCombined size={20} aria-hidden="true" />Analytics and rights</NavLink>
+              <NavLink to="/vault" className="mobile-command-menu-item" onClick={closeMobileOverlays}><ShieldCheck size={20} aria-hidden="true" />Your Vault</NavLink>
               <NavLink to="/privacy#analytics" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
                 <ShieldCheck size={18} aria-hidden="true" />
                 Analytics privacy

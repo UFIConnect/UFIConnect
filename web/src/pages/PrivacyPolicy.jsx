@@ -1,7 +1,7 @@
 ﻿import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 
-const EFFECTIVE_DATE = 'September 28, 2026';
+const EFFECTIVE_DATE = 'September 30, 2026';
 const CONTACT_EMAIL  = 'privacy@uficonnect.org';
 const APP_NAME       = 'UFIconnect';
 const APP_URL        = 'https://uficonnect.org';
@@ -109,6 +109,8 @@ export default function PrivacyPolicy() {
           <P><strong>Optional performance insights</strong> — when enabled on your browser or app, we count general error categories to identify reliability problems. These reports exclude raw error messages, stack traces, account details, and personal content. You can turn future reporting off in Data and privacy settings.</P>
 
           <P><strong>Connected-account credentials</strong> — when you connect an available provider, such as YouTube or GitHub, we store the OAuth access token and any refresh token the provider issues. Our servers send these credentials to that provider to retrieve your connected content or perform actions you request. We never receive your provider password.</P>
+          <P><strong>Creator analytics and copyright concerns</strong> — your private analytics page shows available authorized source metrics and your own UFIconnect activity. Separately authorized YouTube access can include channel analytics and estimated revenue. We keep source snapshots for one day, source-action request and audit records for 30 days, and copyright concerns, including your reason and original URL, for 90 days; expired records are removed during regular cleanup. Source snapshots stop displaying after 15 minutes until refreshed. Copyright concerns are stored for operator review and do not automatically send a legal notice or remove source content.</P>
+          <P><strong>Activity insights and your browser Vault</strong> — when enabled, an experimental model analyzes your daily activity counts on our server. It does not use source engagement, revenue, message content, credentials, or device-verification records. Your browser Vault stores encrypted entries locally; its passwords, passphrase, and entry contents are excluded from telemetry and learning. Hardware device protection remains a separate prototype and does not protect the browser Vault.</P>
 
           <P><strong>Feed interactions</strong> — likes, saves, and clicks on posts. Used to personalise your feed.</P>
           <P><strong>Membership billing</strong> — Stripe hosts checkout and manages payment methods. We store Stripe customer and subscription references, membership status, and limited checkout and webhook records to confirm access and prevent duplicate processing. Card numbers and security codes are entered on Stripe’s website and are not stored by UFIConnect.</P>

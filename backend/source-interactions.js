@@ -1,6 +1,8 @@
 // Provider writes only occur on an authenticated member's explicit action.
 // Fixed API origins and strict target parsing prevent forwarding credentials
 // to a URL supplied by a post. Never log tokens or provider response bodies.
+const { normalizeSource, getSourcePolicy, isSourceActionAllowed, getInteractionCapabilities, validateOriginalUrl } = require('./source-policy');
+const { createHash } = require('node:crypto');
 const SUPPORTED = Object.freeze({
   reddit: { label: 'Reddit', likeLabel: 'Upvote', maxLength: 1000 },
   twitter: { label: 'X', likeLabel: 'Like', maxLength: 280 },
@@ -12,20 +14,21 @@ const SUPPORTED = Object.freeze({
 
 function failure(message, status = 400) { return Object.assign(new Error(message), { status }); }
 function parseTarget(source, sourceUrl) {
-  let url;
-  try { url = new URL(sourceUrl); } catch { throw failure('This post has no valid original link.'); }
-  if (url.protocol !== 'https:' || url.username || url.password || url.port) throw failure('Unsupported original link.');
+  source = normalizeSource(source);
+  const original = validateOriginalUrl(source, sourceUrl);
+  if (!original) throw failure('This post has no valid original link.');
+  const url = new URL(original);
   const host = url.hostname.toLowerCase(), parts = url.pathname.split('/').filter(Boolean);
   if (source === 'reddit' && ['reddit.com', 'www.reddit.com', 'old.reddit.com', 'oauth.reddit.com'].includes(host)) {
     const index = parts.indexOf('comments'), id = index >= 0 ? parts[index + 1] : null;
-    if (/^[a-z0-9]+$/i.test(id || '')) return { id: `t3_${id}`, comment: true };
+    if ((index === 0 || (index === 2 && parts[0] === 'r')) && /^[a-z0-9]+$/i.test(id || '')) return { id: `t3_${id}`, comment: true };
   }
   if (source === 'twitter' && ['x.com', 'www.x.com', 'twitter.com', 'www.twitter.com'].includes(host)) {
     const id = parts[parts.indexOf('status') + 1];
-    if (parts.includes('status') && /^\d+$/.test(id || '')) return { id, comment: true };
+    if ((parts[1] === 'status' || (parts[0] === 'i' && parts[1] === 'web' && parts[2] === 'status')) && /^\d+$/.test(id || '')) return { id, comment: true };
   }
   if (source === 'youtube' && ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be'].includes(host)) {
-    const id = host === 'youtu.be' ? parts[0] : url.searchParams.get('v') || (['shorts', 'live', 'embed'].includes(parts[0]) ? parts[1] : '');
+    const id = host === 'youtu.be' && parts.length === 1 ? parts[0] : parts[0] === 'watch' && parts.length === 1 && url.searchParams.getAll('v').length === 1 ? url.searchParams.get('v') : ['shorts', 'live', 'embed'].includes(parts[0]) && parts.length === 2 ? parts[1] : '';
     if (/^[\w-]{11}$/.test(id || '')) return { id, comment: true };
   }
   if (source === 'bluesky' && host === 'bsky.app' && parts.length === 4 && parts[0] === 'profile' && parts[2] === 'post') {
@@ -44,7 +47,7 @@ function parseTarget(source, sourceUrl) {
   throw failure('This source does not support actions for that original link.');
 }
 
-function createSourceInteractions({ fetchImpl = fetch, atprotoGet, atprotoPostJSON }) {
+function createSourceInteractions({ fetchImpl = fetch, atprotoGet, atprotoPostJSON, policyEnv = process.env } = {}) {
   async function request(url, token, method = 'GET', body, form = false) {
     let response;
     try {
@@ -95,12 +98,14 @@ function createSourceInteractions({ fetchImpl = fetch, atprotoGet, atprotoPostJS
     return { commentId: data.uri };
   }
   async function perform({ user, source, sourceUrl, action, content, liked }) {
+    source = normalizeSource(source);
+    if (!['like', 'comment'].includes(action)) throw failure('Unsupported action.');
+    if (!isSourceActionAllowed(source, action, { env: policyEnv })) throw failure('This action is unavailable here. Open the original source to continue.', 422);
     const capability = SUPPORTED[source];
     if (!capability) throw failure('Open the original source to interact with this post.', 422);
     const token = user?.socialTokens?.[source];
     if (!token) throw failure('Connect this source before interacting with its posts.', 403);
     const target = parseTarget(source, sourceUrl);
-    if (!['like', 'comment'].includes(action)) throw failure('Unsupported action.');
     if (action === 'like' && typeof liked !== 'boolean') throw failure('Choose whether to like this post.');
     if (action === 'comment') {
       if (!target.comment) throw failure('Open the original source to comment on this item.', 422);
@@ -149,20 +154,22 @@ function createSourceInteractions({ fetchImpl = fetch, atprotoGet, atprotoPostJS
   return { perform };
 }
 
-function registerSourceInteractionRoutes(app, { authenticate, limiter, getUser, screenMemberContent, ...transport }) {
-  const { perform } = createSourceInteractions(transport);
+function registerSourceInteractionRoutes(app, { authenticate, limiter, getUser, screenMemberContent, auditInteraction, reserveInteraction, completeInteraction, policyEnv = process.env, ...transport }) {
+  if ((typeof reserveInteraction === 'function') !== (typeof completeInteraction === 'function')) throw new Error('Source reservations require both reserveInteraction and completeInteraction.');
+  const { perform } = createSourceInteractions({ ...transport, policyEnv });
   const requests = new Map();
   app.get('/social/interaction-capabilities', authenticate, async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
     try {
       const user = await getUser(req.user.id);
-      res.json({ sources: Object.fromEntries(Object.entries(SUPPORTED).map(([source, info]) => [source, { ...info, connected: Boolean(user?.socialTokens?.[source]) }])) });
+      res.json({ sources: getInteractionCapabilities(user, { env: policyEnv }) });
     } catch { res.status(503).json({ message: 'Connected source actions are temporarily unavailable.' }); }
   });
   app.post('/social/interactions', authenticate, limiter, async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
-    const { source, sourceUrl, action, content, liked, requestId } = req.body || {};
-    if (typeof source !== 'string' || typeof sourceUrl !== 'string' || sourceUrl.length > 2048 || !/^[a-zA-Z0-9-]{16,80}$/.test(requestId || '')) return res.status(400).json({ message: 'Invalid source action.' });
+    const { source: suppliedSource, sourceUrl, action, content, liked, requestId } = req.body || {};
+    if (typeof suppliedSource !== 'string' || typeof sourceUrl !== 'string' || sourceUrl.length > 2048 || !/^[a-zA-Z0-9-]{16,80}$/.test(requestId || '')) return res.status(400).json({ message: 'Invalid source action.' });
+    const source = normalizeSource(suppliedSource);
     const fingerprint = JSON.stringify([source, sourceUrl, action, content, liked]);
     const key = `${req.user.id}:${requestId}`;
     const now = Date.now();
@@ -171,10 +178,22 @@ function registerSourceInteractionRoutes(app, { authenticate, limiter, getUser, 
     if (previous && previous.fingerprint !== fingerprint) return res.status(409).json({ message: 'This request was already used for another action.' });
     if (!previous && requests.size >= 2000) return res.status(503).json({ message: 'Source actions are busy. Try again shortly.' });
     const run = async () => {
+      let target, result, reserved = false;
       try {
+        if (typeof reserveInteraction === 'function') {
+          let previousResult;
+          try {
+            previousResult = await reserveInteraction({ memberId: req.user.id, requestId,
+              fingerprint: createHash('sha256').update(fingerprint).digest('hex') });
+          } catch { throw failure('Source action storage is temporarily unavailable. Try again later.', 503); }
+          if (previousResult) return previousResult;
+          reserved = true;
+        }
+        if (!['like', 'comment'].includes(action)) throw failure('Unsupported action.');
+        if (!isSourceActionAllowed(source, action, { env: policyEnv })) throw failure('This action is unavailable here. Open the original source to continue.', 422);
         const user = await getUser(req.user.id);
         if (!SUPPORTED[source] || !user?.socialTokens?.[source]) throw failure('Connect a supported source to use this action.', 403);
-        parseTarget(source, sourceUrl);
+        target = parseTarget(source, sourceUrl);
         let text = content;
         if (action === 'comment') {
           if (typeof content !== 'string' || !content.trim() || Array.from(content.trim()).length > SUPPORTED[source].maxLength) throw failure(`Comments must be between 1 and ${SUPPORTED[source].maxLength} characters.`);
@@ -182,8 +201,40 @@ function registerSourceInteractionRoutes(app, { authenticate, limiter, getUser, 
           if (!screened.allowed) throw failure(screened.reason === 'screening_unavailable' ? 'Comment screening is temporarily unavailable.' : 'This comment cannot be published.', screened.reason === 'screening_unavailable' ? 503 : 422);
           text = screened.content;
         }
-        return { status: 200, body: { source, action, published: true, ...await perform({ user, source, sourceUrl, action, content: text, liked }) } };
-      } catch (error) { return { status: error.status || 502, body: { message: error.status ? error.message : 'The source did not confirm this action. Check the original post before retrying.' } }; }
+        result = { status: 200, body: { source, action, published: true, ...await perform({ user, source, sourceUrl, action, content: text, liked }) } };
+      } catch (error) {
+        const originalUrl = validateOriginalUrl(source, sourceUrl, { env: policyEnv });
+        const policy = getSourcePolicy(source, { env: policyEnv });
+        result = { status: error.status || 502, body: {
+          message: error.status ? error.message : 'The source did not confirm this action. Check the original post before retrying.',
+          ...(originalUrl && policy ? { fallback: { url: originalUrl, label: `${action === 'comment' ? 'Comment' : policy.likeLabel} on ${policy.label}` } } : {}),
+        } };
+      }
+      if (typeof auditInteraction === 'function') {
+        // Audit only request metadata. Never copy credentials, comment bodies,
+        // provider responses or URL query strings into analytics storage.
+        const sourcePostId = target?.id || (target?.actor ? `${target.actor}/${target.rkey}` : target?.project ? `${target.project}${target.number ? `/${target.number}` : ''}` : null);
+        try {
+          await auditInteraction({ memberId: req.user.id, interactionRequestId: requestId,
+            sourcePlatform: Object.hasOwn(SUPPORTED, source) || getSourcePolicy(source) ? source : 'unknown',
+            sourcePostId, actionType: ['like', 'comment'].includes(action) ? action : 'unknown',
+            status: result.status === 200 ? 'succeeded' : result.status < 500 ? 'denied' : 'unconfirmed',
+            timestamp: new Date().toISOString() });
+        } catch {
+          // A confirmed provider write must not become a retryable failure just
+          // because audit storage is unavailable after the source accepted it.
+          result.body.auditRecorded = false;
+        }
+      }
+      if (reserved) {
+        try { await completeInteraction({ memberId: req.user.id, requestId, result }); }
+        catch {
+          // Keep the durable reservation pending so another worker cannot
+          // repeat a provider write whose response was already confirmed.
+          result.body.completionRecorded = false;
+        }
+      }
+      return result;
     };
     const entry = previous || { fingerprint, expiresAt: now + 10 * 60 * 1000, result: run() };
     if (!previous) requests.set(key, entry);

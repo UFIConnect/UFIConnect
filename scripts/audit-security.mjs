@@ -103,6 +103,12 @@ async function checkProtectedField(page, selector, autoComplete) {
   }), 'A hidden tab must conceal the password synchronously');
   await toggle.click();
   await input.fill('');
+  await page.waitForFunction(value => document.querySelector(value)?.type === 'password', selector, { timeout: 1000 }).catch(async error => {
+    const state = await input.evaluate(element => ({ type: element.type, length: element.value.length,
+      controlledLength: element[Object.keys(element).find(key => key.startsWith('__reactProps'))]?.value?.length,
+      focused: element === document.activeElement }));
+    throw new Error(`${selector} empty-field visibility ${JSON.stringify(state)}: ${error.message}`);
+  });
   check(await input.getAttribute('type') === 'password', 'Clearing a field must reset password visibility');
   await input.fill(fixturePassword);
 }
