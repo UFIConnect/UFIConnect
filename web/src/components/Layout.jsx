@@ -5,7 +5,6 @@ import { useToast } from '../contexts/ToastContext';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import client from '../api/client';
 import HomeFeedTools from './HomeFeedTools';
-import AppearanceControl from './AppearanceControl';
 import JobsSidebarControls from './JobsSidebarControls';
 import NotificationInbox from './NotificationInbox';
 import './social-surfaces.css';
@@ -499,7 +498,6 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
           </button>
         )}
 
-        <div className="sidebar-appearance"><AppearanceControl compact /></div>
         <NavLink to="/maps" className="nav-link sidebar-maps-link" title="Maps" aria-label="Maps"><span className="nav-icon"><MapIcon size={17} aria-hidden="true" /></span><span className="nav-label">Maps</span></NavLink>
         {profile && (
           <div className="sidebar-user">
@@ -684,7 +682,6 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
             </Link>
             <SavedNavigation mobile expanded={savedExpanded} onToggle={toggleSavedNavigation} onNavigate={closeMobileOverlays} />
             <div className="mobile-feed-drawer-bottom mobile-account-drawer-bottom">
-              <AppearanceControl compact />
               <NavLink to="/maps" className="mobile-command-menu-item" onClick={closeMobileOverlays}><MapIcon size={18} aria-hidden="true" />Maps</NavLink>
               <NavLink to="/profile" className="mobile-command-menu-item mobile-account-profile" aria-label="Profile" onClick={closeMobileOverlays}>
                 <span className="mobile-account-avatar" aria-hidden="true">
