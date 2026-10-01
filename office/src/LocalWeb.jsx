@@ -57,7 +57,7 @@ function LocalPreview({ size, version, page, base = LOCAL_PREVIEW }) {
   const height = 900;
   const scale = availableWidth ? Math.min(1, availableWidth / width) : 1;
   return <div ref={container} className={`local-web-preview local-web-preview-${size}`} style={{ height: height * scale }}>
-    <iframe key={version} src={`${base}${page === '/' ? '' : page}`} title="Local UFIConnect website preview"
+    <iframe key={version} src={`${base}${page === '/' ? '' : page}`} title="Local UFIConnect website preview" referrerPolicy="origin"
       style={{ width, height, transform: `scale(${scale})`, transformOrigin: 'top left' }} />
   </div>;
 }
