@@ -39,7 +39,8 @@ try {
       revenue: { amount: null }, originalUrl: 'https://www.youtube.com/', lastSyncedAt: '2026-09-30T12:00:00Z' };
     const report = { generatedAt: '2026-09-30T12:00:00Z', sources: [source, { id: 'reddit', label: 'Reddit', connected: false,
       status: 'not_connected', metrics: { views: null, likes: null, comments: null, posts: null }, revenue: { amount: null }, originalUrl: 'https://www.reddit.com/' }],
-      uficonnect: { status: 'available', posts: 3, likesReceived: 5, commentsReceived: 2, interactionRequests: 1, daily: [] },
+      uficonnect: { status: 'available', posts: 3, likesReceived: 5, commentsReceived: 2, interactionRequests: 1,
+        daily: [{ day: '2026-09-29', posts: 1 }, { day: '2026-09-30', posts: 2 }] },
       monetization: { plan: 'free', status: 'active', sourceRevenueAvailable: false },
       deepLearning: { status: 'disabled', reason: 'Enable authorized first-party analysis in your preferences.' },
       copyright: { reports: [] }, security: { credentialStorage: 'Connected credentials are encrypted on the server.', auditRetentionDays: 30, rules: [], vault: vaultStatus } };
@@ -117,13 +118,76 @@ try {
       check(await page.getByRole('button', { name: 'Details for Synthetic private entry', exact: true }).count() === 0, 'Another account never inherits the first account vault');
       await page.screenshot({ path: path.join(output, `public-vault-${width}.png`), fullPage: true });
       await page.goto(origin + '/analytics');
-      await page.getByRole('heading', { name: 'Analytics and rights', exact: true }).waitFor();
+      await page.getByRole('heading', { name: 'Analytics', exact: true }).waitFor();
+      const tabs = page.getByRole('tablist', { name: 'Analytics sections', exact: true });
+      const panel = page.getByRole('tabpanel');
+      const selectedTab = name => tabs.getByRole('tab', { name, exact: true, selected: true });
+      async function selectTab(name) {
+        await tabs.getByRole('tab', { name, exact: true }).click();
+        await selectedTab(name).waitFor();
+        await panel.waitFor();
+        check(await panel.count() === 1, `${name} mounts only its active panel`);
+      }
+      async function checkDailyPosts() {
+        await panel.getByRole('heading', { name: 'Posts over time', exact: true }).waitFor();
+        const table = panel.getByRole('table', { name: 'Your UFIconnect posts by creation date', exact: true, includeHidden: true });
+        const details = panel.locator('details').filter({ has: page.getByRole('table', { name: 'Your UFIconnect posts by creation date', exact: true, includeHidden: true }) });
+        if (await details.count() && !(await details.evaluate(element => element.open))) await details.locator('summary').click();
+        await table.waitFor({ state: 'visible' });
+        check(await table.getByRole('row', { name: '2026-09-29 1', exact: true }).count() === 1, 'Daily table shows the first reported date and count');
+        check(await table.getByRole('row', { name: '2026-09-30 2', exact: true }).count() === 1, 'Daily table shows the second reported date and count');
+        check(await table.getByRole('row').count() === 3, 'Daily chart table contains only the reported dates');
+      }
+      await selectedTab('Overview').waitFor();
+      check(await tabs.getByRole('tab').allTextContents().then(names => names.join('|') === 'Overview|Content|Audience|Connected sources|Earnings|Tools'), 'Analytics provides the six named sections in order');
+      check(await panel.count() === 1, 'Overview mounts only one panel');
+      check(await panel.locator('.creator-analytics-metric').count() === 3, 'Overview shows the three first-party metric cards');
+      for (const [label, value] of [['Your posts', '3'], ['Likes received', '5'], ['Comments received', '2']]) {
+        const card = panel.locator('.creator-analytics-metric').filter({ has: page.getByText(label, { exact: true }) });
+        check(await card.locator('dd').innerText() === value, `${label} reflects the account report`);
+      }
+      check(await page.locator('.creator-analytics-source,#copyright-source').count() === 0, 'Overview does not mount source cards or the copyright form');
+      await checkDailyPosts();
+      check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Analytics Overview fits the viewport');
+      await page.screenshot({ path: path.join(output, `public-analytics-${width}.png`), fullPage: true });
+
+      await tabs.getByRole('tab', { name: 'Overview', exact: true }).focus();
+      await page.keyboard.press('ArrowRight');
+      await selectedTab('Content').waitFor();
+      check(await selectedTab('Content').evaluate(element => element === document.activeElement), 'ArrowRight focuses and activates the next tab');
+      await checkDailyPosts();
+      await tabs.getByRole('tab', { name: 'Content', exact: true }).focus();
+      await page.keyboard.press('End');
+      await selectedTab('Tools').waitFor();
+      check(await selectedTab('Tools').evaluate(element => element === document.activeElement), 'End focuses and activates the final tab');
+      await page.keyboard.press('Home');
+      await selectedTab('Overview').waitFor();
+      check(await selectedTab('Overview').evaluate(element => element === document.activeElement), 'Home focuses and activates the first tab');
+
+      await selectTab('Audience');
+      check(await panel.getByText(/unavailable/i).count() > 0, 'Audience states that audience data is unavailable');
+      check(await panel.locator('.creator-analytics-metric').count() === 0, 'Audience does not invent demographic or reach metrics');
+      check(await panel.getByRole('heading', { name: 'Posts over time', exact: true }).count() === 0, 'Audience does not substitute post counts for audience measurements');
+
+      await selectTab('Connected sources');
       await page.getByText('1,800,000', { exact: true }).waitFor();
       const youtube = page.locator('.creator-analytics-source').filter({ has: page.getByRole('heading', { name: 'YouTube', exact: true }) });
-      check(await youtube.getByText('Unavailable', { exact: true }).count() >= 3, 'Missing source engagement and revenue stay unavailable');
+      check(await youtube.getByText('Unavailable', { exact: true }).count() >= 2, 'Missing source engagement stays unavailable');
+      check(await youtube.getByText('Estimated source revenue', { exact: true }).count() === 0, 'Source earnings are separated from engagement');
+      await page.locator('#analytics-source-filter').selectOption('youtube');
+      check(await page.locator('.creator-analytics-source').count() === 1, 'Source filter limits the section to the selected source');
+      await page.locator('#analytics-source-filter').selectOption('reddit');
+      check(await page.locator('.creator-analytics-source').getByRole('heading', { name: 'Reddit', exact: true }).count() === 1, 'Source filter can select a disconnected source without inventing metrics');
+      await page.locator('#analytics-source-filter').selectOption('all');
+      check(await page.locator('.creator-analytics-source').count() === 2, 'All sources restores the reported source cards');
       await page.getByRole('button', { name: 'Refresh sources', exact: true }).click();
       await page.getByText('Refresh finished. Each source shows its latest sync status.', { exact: true }).waitFor();
       check(refreshes === 1, 'Refresh submits exactly one request');
+      check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Connected source cards fit the viewport');
+      await selectTab('Earnings');
+      check(await panel.getByText('Unavailable', { exact: true }).count() >= 2, 'Unreported revenue remains unavailable for each source');
+      check(await panel.getByText('1,800,000', { exact: true }).count() === 0, 'Earnings does not present source views as revenue');
+      await selectTab('Tools');
       await page.locator('#copyright-source').selectOption('youtube');
       await page.getByLabel('Original post URL', { exact: true }).fill('https://www.youtube.com/watch?v=abcdefghijk');
       await page.getByLabel('Describe your concern', { exact: true }).fill('Synthetic copyright concern for browser smoke testing.');
@@ -131,8 +195,9 @@ try {
       await page.getByText('Your copyright concern was recorded for review.', { exact: true }).waitFor();
       await page.getByText('received', { exact: true }).waitFor();
       check(await page.getByRole('heading', { name: 'Deep learning insights', exact: true }).count() === 1, 'Learning status is visible without invented predictions');
-      check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Public analytics fits the viewport');
-      await page.screenshot({ path: path.join(output, `public-analytics-${width}.png`), fullPage: true });
+      check(await page.getByRole('heading', { name: 'Connection safeguards', exact: true }).count() === 1, 'Tools retains connection safeguards');
+      check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Analytics Tools fits the viewport');
+      await selectTab('Connected sources');
       outage = true;
       await page.locator('#analytics-period').selectOption('7');
       await page.getByRole('alert').filter({ hasText: 'Analytics temporarily unavailable.' }).waitFor();
@@ -143,7 +208,7 @@ try {
       check(requests.every(item => ![secret, vaultPassphrase].some(value => item.url.includes(value) || item.body.includes(value))), 'Vault plaintext never leaves in network requests');
       check(!requests.some(item => item.url.includes('/__vault/')), 'Public bundle never calls local companion endpoints');
       check(errors.length === 0, `No runtime errors: ${errors.join('; ')}`);
-      console.log(`PASS: built public Vault and analytics at ${width}px; account isolation, ciphertext storage, source truth, refresh, reports, outage recovery, no runtime errors`);
+      console.log(`PASS: built public Vault and analytics at ${width}px; account isolation, ciphertext storage, section tabs, keyboard navigation, daily posts, source truth, refresh, reports, outage recovery, no runtime errors`);
     } catch (error) {
       await page.screenshot({ path: path.join(output, `public-vault-analytics-failure-${width}.png`), fullPage: true }).catch(() => {});
       throw error;

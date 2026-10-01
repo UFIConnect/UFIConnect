@@ -4,6 +4,12 @@ Implementation baseline: 30 September 2026.
 
 The authenticated `/analytics` page covers 18 source capability records, your own UFIconnect activity, source revenue availability, copyright concerns, and security status. **YouTube is the only implemented source analytics collector.** A listed source, connected account, or enabled capability flag does not mean its analytics collector is live.
 
+## Page navigation
+
+Open **Profile → More → Analytics**. **Overview** shows UFIconnect posts created in the selected period and the current likes/comments on those posts, followed by the daily post chart. **Content** adds the daily UTC data table. The chart also has an accessible table in Overview. **Audience** explicitly remains unavailable because this report has no follower-growth, unique-reach, or demographic dataset.
+
+**Connected sources** keeps each platform's metrics and reporting scope separate, with a source filter. **Earnings** shows each authorized source estimate with its currency and dates. There is no combined cross-platform reach or revenue total. **Tools** holds imported reports, workspaces, copyright concerns, connection safeguards, and privacy settings. The reporting-period and refresh controls remain above all sections; arrow keys, Home, and End operate the section tabs.
+
 ## Design inputs
 
 The supplied source-control brief requires official APIs and players, original links, source attribution, runtime capability controls, and source-owned engagement counts. Its example numbers are illustrative and are never seeded as live analytics.
