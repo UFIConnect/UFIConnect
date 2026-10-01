@@ -14,9 +14,21 @@
 .map-customization-rail .city-customize p { font-size: .78rem; line-height: 1.6; }
 .map-customization-rail summary { cursor: pointer; }
 .map-customization-rail .local-field select { max-width: 100%; }
+.map-customization-rail .city-house-topics { scroll-margin-block: 10px; }
+.map-customization-rail .map-selected-topics { margin-top: 14px; }
+.map-customization-rail .map-selected-topics h3 { font-size: .9rem; }
+.map-customization-rail .map-topic-row { flex-wrap: wrap; gap: 9px; }
+.map-customization-rail .map-topic-row > div:first-child { flex-basis: 100%; min-width: 0; }
+.map-customization-rail .map-topic-row > .btn { margin-left: auto; }
+.map-customization-rail .map-more-topics .local-chip-row { max-height: 230px; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-width: thin; }
+.map-customization-rail .map-downtown h2 { margin: 5px 0 14px; }
+.map-customization-rail .map-civic-buttons { display: grid; grid-template-columns: minmax(0, 1fr); }
+.map-customization-rail .map-civic-buttons button { text-align: left; }
+.map-customization-rail .map-building-detail { margin-top: 14px; }
 .map-scene-toolbar { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; padding: 0 20px 15px; }
 .map-scene-toolbar button, .map-scene-toolbar select { background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 9px; padding: 7px 9px; font: inherit; font-size: .73rem; }
 .map-scene-toolbar button { cursor: pointer; }
+.map-scene-toolbar .map-back-to-all { font-weight: 600; border-color: #8196ac; }
 .map-scene-toolbar label { display: flex; align-items: center; gap: 6px; font-size: .7rem; color: var(--muted); }
 .map-motion-status { display: inline-flex; align-items: center; gap: 7px; margin-right: auto; font-size: .72rem; color: var(--muted); }
 .map-motion-status i { width: 7px; height: 7px; border-radius: 50%; background: #8c969c; }

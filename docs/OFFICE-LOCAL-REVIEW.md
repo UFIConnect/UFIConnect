@@ -24,14 +24,28 @@ Updating the launcher itself requires pulling this branch and restarting it.
 Maps opens with an animated overview of all 16 nature cities around UFI downtown.
 Downtown buildings explain feeds, sources, topics, collections, groups, people,
 Command Center, and Vault. Open a city to reach its source houses and topic targets.
+Use **Back to all cities** in the map controls to return to the complete overview.
 The desktop map has Customize your app, Sources, and Community collection on its
-right; these controls stack below the map on mobile. Maps is at the bottom of the
-app sidebar; Analytics lives in Profile → More.
+right. City Topics and How your app works follow Community collection in that same
+rail, including when viewing one city. These controls stack below the map on mobile.
+Maps is at the bottom of the app sidebar; Analytics lives in Profile → More.
 
-Cars, walkers, birds, clouds, water, and trees animate in the scene. Full motion is
-the default, with Calm and Pause controls. Reduced-motion preferences pause it
-initially; offscreen and hidden views suspend rendering. Traffic is illustrative,
-not a live count of members. Geometry is instanced across cities.
+Selecting a house or downtown building reveals and focuses the corresponding
+right-hand heading. Selecting the same house again also reveals its topics.
+Feed results and pagination are scoped to the current city, sources, topics, and
+search: changing those inputs immediately hides previous results during loading,
+so saving a page cannot accidentally use the preceding selection.
+
+Cars, walkers, cyclists, trams, delivery shuttles, birds, clouds, fountains, water,
+and trees animate in the scene. Homes and downtown include windows, rooftops,
+landscaping, and street furniture. Full motion is the default, with Calm and Pause
+controls. Reduced-motion preferences pause it initially; offscreen and hidden
+views suspend rendering. Traffic is illustrative, not a live count of members.
+Geometry and palette colors are instanced across cities. The renderer begins with
+physical lighting and cached shadows, then adjusts resolution, surface shading,
+and subpixel geometry when measured frame time is too high. Every city, source,
+and animation remains available at each quality level. Picking accepts deliberate
+primary-pointer clicks and cancels on drag, multi-touch, and pointer cancellation.
 
 Maps also preserves topic selections, loaded/saved counts, and per-topic post targets.
 Vault is below Music. Profile's More area includes the

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
 import CategoryCity from '../components/SourceCity';
+import CityAppGuide from '../components/CityAppGuide';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { SOURCE_META } from '../components/sourceMeta';
 import { CITY_SOURCE_PRESETS, CITY_SOURCE_IDS, CITY_ALL_TOPICS, houseTopics } from '../local/citySources';
@@ -37,21 +38,25 @@ export default function Maps() {
   const [active, setActive] = useState(enabled[0] || 'community');
   const [activeSource, setActiveSource] = useState('');
   const [view, setView] = useState('explore');
-  const [posts, setPosts] = useState([]);
+  const [loadedPosts, setPosts] = useState([]);
+  const [loadedScope, setLoadedScope] = useState('');
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [moreAvailable, setHasMore] = useState(false);
+  const [fetching, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [sample, setSample] = useState(false);
   const [topicSearch, setTopicSearch] = useState('');
+  const [activeBuilding, setActiveBuilding] = useState('feed');
+  const [revealPanel, setRevealPanel] = useState('');
   const topicTargets = city.value.topicTargets || {};
   const paging = useRef({ page: 1, cursor: '' });
   const request = useRef(null);
   const sequence = useRef(0);
   const heading = useRef(null);
-  const housePanel = useRef(null);
+  const houseHeading = useRef(null);
+  const guideHeading = useRef(null);
   const category = CITY_CATEGORIES.find(item => item.id === active) || CITY_CATEGORIES[0];
   const sources = Array.isArray(sourceSelections[active])
     ? [...new Set(sourceSelections[active].filter(source => CITY_SOURCE_IDS.includes(source)))]
@@ -67,6 +72,13 @@ export default function Maps() {
   const requestedSources = currentSource ? [currentSource] : sources;
   const sourceKey = requestedSources.join(',');
   const requestedTopics = topics.join(',');
+  // Hide results from the previous selection immediately, including during debounce.
+  // Only a completed request for this exact scope may supply posts or pagination.
+  const feedScope = JSON.stringify([active, sourceKey, requestedTopics, query.trim(), enabled.includes(active)]);
+  const hasCurrentResults = loadedScope === feedScope;
+  const posts = hasCurrentResults ? loadedPosts : [];
+  const hasMore = hasCurrentResults && moreAvailable;
+  const loading = fetching || (view === 'explore' && enabled.includes(active) && Boolean(sourceKey) && !hasCurrentResults && !error);
   const primarySources = [...new Set([...(CITY_SOURCE_PRESETS[active] || []), ...sources])];
   const otherSources = CITY_SOURCE_IDS.filter(source => !primarySources.includes(source));
   const counts = useMemo(() => selected.reduce((result, post) => {
@@ -99,6 +111,7 @@ export default function Maps() {
       const { data } = await client.get('/office/feed', { params, signal: controller.signal });
       if (id !== sequence.current) return 0;
       const incoming = Array.isArray(data.posts) ? data.posts.filter(post => post?.id != null && requestedSources.includes(String(post.source || 'uficonnect').toLowerCase())).map(post => snapshot(post, active)) : [];
+      setLoadedScope(feedScope);
       setPosts(current => {
         const seen = new Set(reset ? [] : current.map(post => post.key));
         return [...(reset ? [] : current), ...incoming.filter(post => { if (seen.has(post.key)) return false; seen.add(post.key); return true; })].slice(0, 500);
@@ -120,11 +133,26 @@ export default function Maps() {
   }, [active, query, view, enabled.includes(active), sourceKey, requestedTopics]);
   useScrollToRefresh(() => load(true), { enabled: view === 'explore' && enabled.includes(active) && Boolean(sourceKey) && !loading });
   function chooseCategory(id) { setActive(id); setActiveSource(''); setView('explore'); setQuery(''); setPage(1); }
-  function openHouse(source) { setActiveSource(source); setView('explore'); setQuery(''); setPage(1); }
+  function openHouse(source) { setActiveSource(source); setView('explore'); setQuery(''); setPage(1); setRevealPanel('topics'); }
   useEffect(() => {
-    if (!currentSource || view !== 'explore') return;
-    housePanel.current?.scrollIntoView({ block: 'nearest', behavior: 'auto' });
-  }, [currentSource, view]);
+    if (!revealPanel) return;
+    const target = revealPanel === 'topics' ? houseHeading.current : revealPanel === 'guide' ? guideHeading.current : heading.current;
+    if (target) {
+      target.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+      target.focus({ preventScroll: true });
+      setRevealPanel('');
+    }
+  }, [revealPanel, view, active, currentSource, enabled.includes(active)]);
+  function showBuilding(id) { setActiveBuilding(id); setRevealPanel('guide'); }
+  function exploreBuilding(action) {
+    if (action !== 'collection' && !enabled.includes(active)) {
+      setNotice('Enable ' + category.label + ' in Customize your app to choose its topics.');
+      return;
+    }
+    setView(action === 'collection' ? 'selected' : 'explore');
+    setPage(1);
+    setRevealPanel(action === 'collection' ? 'posts' : 'topics');
+  }
   function setSources(next) {
     if (saveCity({ sourceSelections: { ...sourceSelections, [active]: next } }) && !next.includes(activeSource)) setActiveSource('');
   }
@@ -178,27 +206,7 @@ export default function Maps() {
       <ol className="map-get-started"><li><b>1</b><span>Choose your city<small>A landscape for every interest</small></span></li><li><b>2</b><span>Open source houses<small>Pick the topics inside</small></span></li><li><b>3</b><span>Grow your collection<small>Raise your target and save posts</small></span></li></ol>
       <div className="map-explorer-layout">
         <div className="map-explorer-main">
-      <CategoryCity cities={allCities} onAction={action => { if (action === 'collection') { setView('selected'); setPage(1); heading.current?.scrollIntoView({ block: 'start', behavior: 'auto' }); } else housePanel.current?.scrollIntoView({ block: 'start', behavior: 'auto' }); }} houseSummaries={houseSummaries} cityCounts={cityCounts} enabled={enabled} active={active} onSelect={chooseCategory} counts={counts} sources={enabled.includes(active) ? sources : []} activeSource={currentSource} onSourceSelect={openHouse} />
-      {enabled.includes(active) && view === 'explore' && <section ref={housePanel} id="city-source-house" className="card city-house-topics" aria-labelledby="house-topics-heading">
-        <div className="local-workspace-heading"><div><span className="local-eyebrow">{currentSource ? 'INSIDE THE HOUSE' : 'CITY TOPICS'}</span><h2 id="house-topics-heading">{currentSource ? sourceLabel(currentSource) : category.label} · Topics</h2></div>
-          {currentSource && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setActiveSource('')}>Back to city topics</button>}
-        </div>
-        <p className="local-muted">{currentSource ? 'These topics apply to this source house.' : 'These topics apply across the sources in this city.'} Clear topics to broaden your selection.</p>
-        <div className="map-selected-topics" aria-label="Selected topics">
-          <div className="local-workspace-heading"><h3>Selected topics ({topics.length})</h3><button type="button" className="ufi-clear-control" disabled={!topics.length} onClick={() => saveCity({ topicSelections: { ...topicSelections, [topicKey]: [] } })}>Clear topics</button></div>
-          {!topics.length && <p className="local-muted">No topics selected. This house currently shows any topic. Add topics below to build your selection.</p>}
-          {topics.map(topic => { const count = topicCount(selected, topic, active, currentSource), loaded = topicCount(posts, topic, active, currentSource), target = topicTarget(topicTargets, topicKey, topic); return <div key={topic} className="map-topic-row">
-            <div><strong>{topic}</strong><span>{loaded} loaded · {count} saved / {target} target</span></div>
-            <div className="map-topic-counter"><button type="button" aria-label={'Fewer ' + topic + ' posts'} disabled={target <= Math.max(1, count)} onClick={() => setTopicTarget(topic, Math.max(1, count, target - 5))}>−</button><label>Post target<input type="number" min={Math.max(1, count)} max="500" key={topic + ':' + target} defaultValue={target} aria-label={topic + ' post target'} onBlur={event => { const next = Math.min(500, Math.max(1, count, Math.round(Number(event.target.value) || target))); event.target.value = next; setTopicTarget(topic, next); }} /></label><button type="button" aria-label={'More ' + topic + ' posts'} disabled={target >= 500} onClick={() => setTopicTarget(topic, Math.min(500, target + 5))}>+</button></div>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => toggleTopic(topic)}>Remove</button>
-          </div>; })}
-          <p className="local-muted">Counts describe posts loaded in this view and saved in your collection, not every post on the platform. Topic targets control how many matching posts you can save. A post matching multiple selected topics counts toward each.</p>
-        </div>
-        <details className="map-more-topics" open={!topics.length || undefined}><summary>Add more topics</summary><label className="local-field">Find a topic<input type="search" value={topicSearch} onChange={event => setTopicSearch(event.target.value)} placeholder="Search topics across categories" /></label><div className="local-chip-row" role="group" aria-label="Available house topics">
-          {availableTopics.filter(topic => !topics.includes(topic) && topic.toLowerCase().includes(topicSearch.toLowerCase())).map(topic => <button type="button" key={topic} className="search-filter-chip" onClick={() => toggleTopic(topic)}>+ {topic}</button>)}
-        </div></details>
-
-      </section>}
+      <CategoryCity cities={allCities} onCivicSelect={showBuilding} houseSummaries={houseSummaries} cityCounts={cityCounts} enabled={enabled} active={active} onSelect={chooseCategory} counts={counts} sources={enabled.includes(active) ? sources : []} activeSource={currentSource} onSourceSelect={openHouse} />
         </div>
         <aside className="map-customization-rail" aria-label="Customize your city">
       <details className="card city-customize"><summary>Customize your app</summary>
@@ -226,6 +234,27 @@ export default function Maps() {
           saveCity({ cityLimits: { ...cityLimits, [active]: next }, limit: Math.max(limit, next) });
         }}>{[50, 100, 250, 350, 500].map(value => <option key={value} value={value}>{value} posts</option>)}</select><small>Raising a target makes room; select posts below to fill it.</small></label>
       </section>
+      {enabled.includes(active) && view === 'explore' && <section id="city-source-house" className="card city-house-topics" aria-labelledby="house-topics-heading">
+        <div className="local-workspace-heading"><div><span className="local-eyebrow">{currentSource ? 'INSIDE THE HOUSE' : 'CITY TOPICS'}</span><h2 ref={houseHeading} tabIndex={-1} id="house-topics-heading">{currentSource ? sourceLabel(currentSource) : category.label} · Topics</h2></div>
+          {currentSource && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setActiveSource('')}>Back to city topics</button>}
+        </div>
+        <p className="local-muted">{currentSource ? 'These topics apply to this source house.' : 'These topics apply across the sources in this city.'} Clear topics to broaden your selection.</p>
+        <div className="map-selected-topics" aria-label="Selected topics">
+          <div className="local-workspace-heading"><h3>Selected topics ({topics.length})</h3><button type="button" className="ufi-clear-control" disabled={!topics.length} onClick={() => saveCity({ topicSelections: { ...topicSelections, [topicKey]: [] } })}>Clear topics</button></div>
+          {!topics.length && <p className="local-muted">No topics selected. This house currently shows any topic. Add topics below to build your selection.</p>}
+          {topics.map(topic => { const count = topicCount(selected, topic, active, currentSource), loaded = topicCount(posts, topic, active, currentSource), target = topicTarget(topicTargets, topicKey, topic); return <div key={topic} className="map-topic-row">
+            <div><strong>{topic}</strong><span>{loaded} loaded · {count} saved / {target} target</span></div>
+            <div className="map-topic-counter"><button type="button" aria-label={'Fewer ' + topic + ' posts'} disabled={target <= Math.max(1, count)} onClick={() => setTopicTarget(topic, Math.max(1, count, target - 5))}>−</button><label>Post target<input type="number" min={Math.max(1, count)} max="500" key={topic + ':' + target} defaultValue={target} aria-label={topic + ' post target'} onBlur={event => { const next = Math.min(500, Math.max(1, count, Math.round(Number(event.target.value) || target))); event.target.value = next; setTopicTarget(topic, next); }} /></label><button type="button" aria-label={'More ' + topic + ' posts'} disabled={target >= 500} onClick={() => setTopicTarget(topic, Math.min(500, target + 5))}>+</button></div>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => toggleTopic(topic)}>Remove</button>
+          </div>; })}
+          <p className="local-muted">Counts describe posts loaded in this view and saved in your collection, not every post on the platform. Topic targets control how many matching posts you can save. A post matching multiple selected topics counts toward each.</p>
+        </div>
+        <details className="map-more-topics" open={!topics.length || undefined}><summary>Add more topics</summary><label className="local-field">Find a topic<input type="search" value={topicSearch} onChange={event => setTopicSearch(event.target.value)} placeholder="Search topics across categories" /></label><div className="local-chip-row" role="group" aria-label="Available house topics">
+          {availableTopics.filter(topic => !topics.includes(topic) && topic.toLowerCase().includes(topicSearch.toLowerCase())).map(topic => <button type="button" key={topic} className="search-filter-chip" onClick={() => toggleTopic(topic)}>+ {topic}</button>)}
+        </div></details>
+
+      </section>}
+      <CityAppGuide selected={activeBuilding} onSelect={setActiveBuilding} onAction={exploreBuilding} headingRef={guideHeading} />
         </aside>
       </div>
       <div className="local-workspace-heading"><h2 ref={heading} tabIndex={-1}>{view === 'selected' ? 'Your selected posts' : currentSource ? sourceLabel(currentSource) + ' posts' : category.label + ' · Source posts'}</h2><div className="local-chip-row">
