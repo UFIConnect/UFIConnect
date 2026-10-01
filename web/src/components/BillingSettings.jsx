@@ -31,7 +31,7 @@ export default function BillingSettings({ profile, onProfileUpdate }) {
           const { data } = await client.get('/billing/status', { signal: controller.signal });
           if (stopped) return;
           setStatus(data);
-          if (['free', 'pro', 'business'].includes(data.plan)) updateProfile.current({ plan: data.plan, resumeBuilderAddon: Boolean(data.resumeBuilderAddon) });
+          if (['free', 'pro', 'business'].includes(data.plan)) updateProfile.current({ plan: data.plan, resumeBuilderAddon: Boolean(data.resumeBuilderAddon), vpnConnectorAddon: Boolean(data.vpnConnectorAddon) });
           if (returnState.current !== 'success') break;
           if (['pro', 'business'].includes(data.plan)) {
             setNotice(`Your ${data.plan === 'pro' ? 'Pro' : 'Business'} membership is active.`);
@@ -63,7 +63,7 @@ export default function BillingSettings({ profile, onProfileUpdate }) {
   }
 
   const plan = status?.plan || profile.plan || 'free';
-  const hasBillingAccount = status?.hasBillingAccount || plan !== 'free' || profile.resumeBuilderAddon;
+  const hasBillingAccount = status?.hasBillingAccount || plan !== 'free' || profile.resumeBuilderAddon || profile.vpnConnectorAddon;
   const pending = status?.subscriptions?.some(item => item.kind === 'plan' && !['canceled', 'incomplete_expired'].includes(item.status));
   return <section className="card" aria-labelledby="membership-settings-title" style={{ padding: '18px', display: 'grid', gap: 12 }}>
     <div>
@@ -71,7 +71,7 @@ export default function BillingSettings({ profile, onProfileUpdate }) {
       <p style={{ fontSize: '.85rem', margin: '6px 0 0', color: 'var(--muted)' }}>Review your membership, payment methods, invoices, and cancellation options.</p>
     </div>
     {status?.subscriptions?.map(item => <div key={item.kind} style={{ fontSize: '.82rem', lineHeight: 1.6 }}>
-      <strong>{item.kind === 'resume_builder' ? 'Resume Builder' : item.tier === 'business' ? 'Business' : 'Pro'}:</strong>{' '}{String(item.status).replaceAll('_', ' ')}
+      <strong>{item.kind === 'vpn_connector' ? 'UFI VPN Connector' : item.kind === 'resume_builder' ? 'Resume Builder' : item.tier === 'business' ? 'Business' : 'Pro'}:</strong>{' '}{String(item.status).replaceAll('_', ' ')}
       {item.cancelAtPeriodEnd && <> · Cancellation scheduled{item.currentPeriodEnd ? ` for ${new Date(item.currentPeriodEnd * 1000).toLocaleDateString()}` : ''}</>}
     </div>)}
     {notice && !pricingOpen && <p role="status" style={{ margin: 0, fontSize: '.85rem', lineHeight: 1.6 }}>{notice}</p>}

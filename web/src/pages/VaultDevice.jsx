@@ -1,6 +1,6 @@
 import { Helmet } from 'react-helmet-async';
 import { NavLink, Link } from 'react-router-dom';
-import { ArrowRight, CreditCard, KeyRound, LockKeyhole, Power, ScanFace, ShieldCheck, Smartphone, Wifi } from 'lucide-react';
+import { ArrowRight, CreditCard, KeyRound, LockKeyhole, Power, ShieldCheck, Smartphone, Wifi } from 'lucide-react';
 import Layout from '../components/Layout';
 import './Vault.css';
 import './VaultDevice.css';
@@ -24,13 +24,6 @@ export function VaultCardDesign({ compact = false }) {
   </div>;
 }
 
-const DEVICE_STEPS = [
-  { icon: Smartphone, title: 'Choose your app', copy: 'Start with an app or website saved in Your Vault.' },
-  { icon: ScanFace, title: 'Verify it’s you', copy: 'Use Face ID on compatible Apple devices, or the verification method your device supports.' },
-  { icon: CreditCard, title: 'Approve with your card', copy: 'The planned card connection asks you to approve a specific action. Hardware pairing is not available yet.' },
-  { icon: ArrowRight, title: 'Continue to your app', copy: 'Open the app or website. Automatic sign-in will depend on supported integrations.' },
-];
-
 export default function VaultDevice() {
   return <Layout wide>
     <Helmet><title>Vault Device | UFIconnect</title><meta name="robots" content="noindex,nofollow" /></Helmet>
@@ -49,7 +42,7 @@ export default function VaultDevice() {
         <section className="vault-device-order" aria-labelledby="vault-device-order-title">
           <span className="vault-device-release"><LockKeyhole size={13} />Ordering locked</span>
           <h2 id="vault-device-order-title">Carry your connection.</h2>
-          <p>A compact card concept that pairs with Your Vault. Designed around a simple flow: open, authenticate, approve and use.</p>
+          <p>A compact card concept that pairs with Your Vault. Choose your app and continue—the device is designed to handle the rest.</p>
           <dl><div><dt>Finish</dt><dd>Matte black concept</dd></div><div><dt>Control</dt><dd>Top-edge on/off button</dd></div><div><dt>Availability</dt><dd>To be announced</dd></div></dl>
           <button className="vault-button vault-button--secondary vault-button--full" type="button" disabled aria-describedby="vault-device-order-note"><LockKeyhole size={17} />Orders are not open yet</button>
           <p id="vault-device-order-note" className="vault-footnote">Hardware integration, security validation, pricing and availability are pending. No orders, payments or shipping details are collected.</p>
@@ -58,8 +51,8 @@ export default function VaultDevice() {
       </div>
 
       <section className="vault-device-flow" aria-labelledby="vault-device-flow-title">
-        <div className="vault-device-section-heading"><div><span className="vault-eyebrow">THE PLANNED EXPERIENCE</span><h2 id="vault-device-flow-title">Open. Authenticate. Use.</h2></div><p>A familiar journey, with an approval that stays in your hands.</p></div>
-        <ol>{DEVICE_STEPS.map(({ icon: Icon, title, copy }, index) => <li key={title}><div className="vault-device-step-top"><Icon size={23} strokeWidth={1.5} /><span>0{index + 1}</span></div><h3>{title}</h3><p>{copy}</p></li>)}</ol>
+        <div className="vault-device-section-heading"><div><span className="vault-eyebrow">THE PLANNED EXPERIENCE</span><h2 id="vault-device-flow-title">One step. Your app.</h2></div><p>You choose where to go. Your device takes care of the rest.</p></div>
+        <ol><li><div className="vault-device-step-top"><Smartphone size={23} strokeWidth={1.5} /><span>01</span></div><h3>Choose your app and continue.</h3><p>Select an app or website saved in Your Vault. The planned device handles authentication and secure credential handoff for supported apps, so you can continue straight to what you need.</p><p className="vault-footnote">Design preview. Automatic sign-in requires the finished device and a supported app integration.</p><Link className="vault-text-button" to="/vault">View your saved apps <ArrowRight size={14} /></Link></li></ol>
       </section>
 
       <section className="vault-device-protection" aria-labelledby="vault-device-protection-title">

@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import client from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
@@ -45,15 +45,17 @@ export async function sendSourceInteraction(post, action, { liked, content, requ
   return data;
 }
 
-export default function ConnectedPostActions({ post }) {
+// The surrounding post owns the single comments action. This composer stays
+// mounted while that section is collapsed so retries retain their request ID.
+export default function ConnectedPostActions({ post, active = true, showFallback = true }) {
   const { showToast } = useToast();
   const capability = useSourceCapability(post);
-  const [open, setOpen] = useState(false);
+  const inputId = useId();
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [lastRequest, setLastRequest] = useState(null);
-  useEffect(() => { setOpen(false); setDraft(''); setError(''); setLastRequest(null); }, [post?.id, post?.source]);
+  useEffect(() => { setDraft(''); setError(''); setLastRequest(null); }, [post?.id, post?.source]);
   const sourceUrl = originalSourceUrl(post);
   const label = capability?.label || post?.sourceLabel || post?.source;
   const supportedPost = !['github', 'gitlab'].includes(post?.source) || /\/(?:issues|pull|merge_requests)\/\d+(?:[/?#]|$)/.test(sourceUrl || '');
@@ -67,21 +69,18 @@ export default function ConnectedPostActions({ post }) {
     setLastRequest({ content, requestId }); setBusy(true); setError('');
     try {
       await sendSourceInteraction(post, 'comment', { content, requestId });
-      setDraft(''); setOpen(false); setLastRequest(null);
+      setDraft(''); setLastRequest(null);
       showToast('Comment published on ' + label + '. Source counts update when the source supplies them.', 'success');
     } catch (err) { setError(err.response?.data?.message || 'The source did not confirm this comment. Check the original post before retrying.'); }
     finally { setBusy(false); }
   }
-  return <div className="connected-post-actions" onClick={event => event.stopPropagation()}>
-    <div className="connected-post-action-buttons">
-      {canComment ? <button className="btn btn-ghost btn-sm" type="button" aria-expanded={open} disabled={busy} onClick={() => setOpen(value => !value)}>Comment on {label}</button>
-        : <a className="btn btn-ghost btn-sm" href={sourceUrl} target="_blank" rel="noopener noreferrer">Comment on {label} ↗</a>}
-    </div>
+  return <div className="connected-post-actions" hidden={!active} onClick={event => event.stopPropagation()}>
     {error && <div role="alert" className="connected-post-action-error">{error} <Link to="/connected-accounts?interactions=1">Manage connection</Link></div>}
-    {open && canComment && <form onSubmit={event => { event.preventDefault(); send(); }}>
-      <label className="form-label" htmlFor={'source-comment-' + post.id}>Publish a comment on {label}</label>
-      <textarea id={'source-comment-' + post.id} className="form-textarea" rows={3} value={draft} onChange={event => setDraft(event.target.value)} maxLength={capability.maxLength || 1000} disabled={busy} required />
+    {canComment && <form onSubmit={event => { event.preventDefault(); send(); }}>
+      <label className="form-label" htmlFor={inputId}>Write a comment</label>
+      <textarea id={inputId} className="form-textarea" rows={3} value={draft} onChange={event => setDraft(event.target.value)} maxLength={capability.maxLength || 1000} disabled={busy} required />
       <button className="btn btn-primary btn-sm" type="submit" disabled={busy || !draft.trim()}>{busy ? 'Publishing…' : 'Publish on ' + label}</button>
     </form>}
+    {!canComment && showFallback && <a className="post-chrome-action" href={sourceUrl} target="_blank" rel="noopener noreferrer">Open original to reply ↗</a>}
   </div>;
 }

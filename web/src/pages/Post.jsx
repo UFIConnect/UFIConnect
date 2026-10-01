@@ -11,6 +11,8 @@ import EmojiPicker from '../components/EmojiPicker';
 import PhotoPickerButton from '../components/PhotoPickerButton';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { orderNewestFeedCohorts } from '../utils/feedOrdering';
+import { SHOP_CURRENCIES, formatShopPost } from '../utils/shopPost.mjs';
+import '../components/ShopPosts.css';
 
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -45,6 +47,9 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
   const [topicFilterOpen, setTopicFilterOpen] = useState(false);
   const [topicSearch, setTopicSearch] = useState('');
   const [content,  setContent]  = useState(initialContent);
+  const [shopTitle, setShopTitle] = useState('');
+  const [shopPrice, setShopPrice] = useState('');
+  const [shopCurrency, setShopCurrency] = useState('USD');
   const [composing, setComposing] = useState(initiallyOpen);
   const [loading,  setLoading]  = useState(false);
   const [posted,   setPosted]   = useState(false);
@@ -66,7 +71,7 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
   const targets = usePublishingTargets({ enabled: composing, media: uploadedMedia });
   const [mediaError,    setMediaError]    = useState('');
 
-  const placeholder = categoryLabel ? 'What would you like to share about ' + categoryLabel.toLowerCase() + '?' : PROMPTS[Math.floor(Math.random() * PROMPTS.length)];
+  const placeholder = initialShop ? 'Describe the item, its condition, and collection or delivery details.' : categoryLabel ? 'What would you like to share about ' + categoryLabel.toLowerCase() + '?' : PROMPTS[Math.floor(Math.random() * PROMPTS.length)];
 
   useEffect(() => {
     if (composeOnly) return;
@@ -234,12 +239,18 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
     if (!content.trim() && !uploadedMedia) { setError('Write something or attach a photo/video before posting.'); return; }
     if (loading) return;
     if (uploading) { setError('Your photo/video is still uploading — one moment.'); return; }
+    let postContent = content.trim();
+    if (initialShop) {
+      try { postContent = formatShopPost({ title: shopTitle, price: shopPrice, currency: shopCurrency, description: content }); }
+      catch (failure) { setError(failure.message); return; }
+    }
     setError('');
     setLoading(true);
     try {
-      const payload = { content: content.trim(), mediaUrl: uploadedMedia?.url, mediaType: uploadedMedia?.type };
+      const payload = { content: postContent, mediaUrl: uploadedMedia?.url, mediaType: uploadedMedia?.type };
       await targets.publish(() => client.post(`/groups/${groupId}/posts`, payload), payload);
       setContent('');
+      setShopTitle(''); setShopPrice('');
       resetMedia();
       setComposing(false);
       setPosted(p => !p); // trigger feed reload
@@ -345,6 +356,7 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
       {composing && (
         <div className="card ufi-compose-card" style={{ maxWidth: embedded ? 'none' : 640 }}>
           {categoryLabel && <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: '0 0 14px' }}>Post to {categoryLabel}</h2>}
+          {initialShop && <><h2 className="shop-compose-heading">Create a Shop post</h2><p className="shop-compose-helper">Add your item details, then choose where to share it.</p></>}
           <form onSubmit={handleSubmit} aria-label={categoryLabel ? 'Create ' + categoryLabel + ' post' : initialShop ? 'Create Shop post' : 'Create UFI post'}>
             <PublishingTargets targets={targets} disabled={loading || uploading} />
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
@@ -359,12 +371,21 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
               </div>
             </div>
 
+            {initialShop && <div className="shop-compose-fields">
+              <label>Item title<input className="form-input" required maxLength={120} value={shopTitle} onChange={event => { setShopTitle(event.target.value); setError(''); }} placeholder="What are you selling?" /></label>
+              <label>Price<input className="form-input" required inputMode="decimal" maxLength={11} pattern="[0-9]{1,8}(\.[0-9]{1,2})?" value={shopPrice} onChange={event => { setShopPrice(event.target.value); setError(''); }} placeholder="0.00" /></label>
+              <label>Currency<select aria-label="Currency" className="form-input" value={shopCurrency} onChange={event => setShopCurrency(event.target.value)}>{SHOP_CURRENCIES.map(currency => <option key={currency}>{currency}</option>)}</select></label>
+            </div>}
+            {initialShop && <label className="form-label" htmlFor="ufi-shop-description">Description</label>}
             <textarea
+              id={initialShop ? 'ufi-shop-description' : undefined}
               ref={textareaRef}
               className="form-textarea"
               rows={4}
               placeholder={placeholder}
               value={content}
+              required={initialShop}
+              maxLength={initialShop ? 1800 : 2000}
               onChange={e => { setContent(e.target.value); setError(''); }}
               style={{ resize: 'vertical', fontSize: '.93rem', lineHeight: 1.6, marginBottom: 10 }}
             />
@@ -406,11 +427,11 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
                 />
                 <EmojiPicker textareaRef={textareaRef} value={content} onChange={setContent} />
                 <span style={{ fontSize: '.72rem', whiteSpace: 'nowrap', color: content.length > 1800 ? '#DC2626' : 'var(--muted)' }}>
-                  {content.length} / 2000
+                  {content.length} / {initialShop ? 1800 : 2000}
                 </span>
               </div>
               <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setComposing(false); setContent(''); setError(''); resetMedia(); }}>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setComposing(false); setContent(''); setShopTitle(''); setShopPrice(''); setError(''); resetMedia(); }}>
                   Cancel
                 </button>
                 <button
@@ -432,6 +453,7 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
       {!composeOnly && <div style={{ maxWidth: embedded ? 'none' : 640 }}>
         <PostList
           posts={feed}
+          shopMode={initialShop}
           loading={feedLoading}
           emptyTitle={shopActive ? 'No Shop posts yet' : 'Nothing here yet'}
           emptyDesc={shopActive ? 'Be the first member to share something in Shop.' : 'Be the first to post to the UFIconnect community.'}

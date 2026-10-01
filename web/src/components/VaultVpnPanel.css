@@ -2,8 +2,13 @@
 .vault-vpn-panel .vault-platform-switch button { flex: 1 1 58px; }
 .vault-vpn-panel .vault-text-button { display: flex; align-items: center; gap: 6px; margin-top: 12px; }
 .vault-vpn-panel .vault-field { margin-top: 14px; }
-.vault-vpn-location-form { display: grid; gap: 12px; margin-top: 15px; padding: 14px; border: 1px solid var(--vault-border, #253750); border-radius: 10px; }
-.vault-vpn-confirm { display: flex; gap: 8px; align-items: flex-start; font-size: 11px; color: #aabed8; line-height: 1.6; }
+.vault-vpn-location-form { display: grid; gap: 12px; margin-top: 15px; padding: 14px; border: 1px solid var(--vault-border, var(--border)); border-radius: 10px; }
+.vault-vpn-confirm { display: flex; gap: 8px; align-items: flex-start; font-size: 11px; color: var(--vault-text, var(--text)); line-height: 1.6; }
 .vault-vpn-confirm input { margin-top: 4px; flex: 0 0 auto; }
 .vault-vpn-panel select { max-width: 100%; }
 .vault-vpn-panel button:disabled { cursor: not-allowed; opacity: .6; }
+.vault-vpn-quick-action { margin: 18px 0; }
+.vault-vpn-quick-action > .vault-button { min-height: 48px; text-decoration: none; }
+.vault-vpn-setup { margin-top: 18px; border-top: 1px solid var(--vault-border, var(--border)); padding-top: 14px; }
+.vault-vpn-setup > summary { cursor: pointer; color: var(--vault-text, var(--text)); font-weight: 600; font-size: .85rem; }
+.vault-vpn-setup[open] > summary { margin-bottom: 16px; }

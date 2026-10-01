@@ -72,8 +72,8 @@ function setup() {
     },
     billingPortal: { sessions: { async create(data) { portalCustomers.push(data.customer); return { url: 'https://billing.stripe.com/test' }; } } },
   };
-  const catalog = { allowedPrices: new Map([['price_pro', 'pro'], ['price_business', 'business'], ['price_resume', 'resume_builder']]),
-    tiers: Object.fromEntries([['pro', 'price_pro'], ['business', 'price_business'], ['resume_builder', 'price_resume']].map(([tier, priceId]) => [tier, { available: true, priceId }])) };
+  const catalog = { allowedPrices: new Map([['price_pro', 'pro'], ['price_business', 'business'], ['price_resume', 'resume_builder'], ['price_vpn', 'vpn_connector']]),
+    tiers: Object.fromEntries([['pro', 'price_pro'], ['business', 'price_business'], ['resume_builder', 'price_resume'], ['vpn_connector', 'price_vpn']].map(([tier, priceId]) => [tier, { available: true, priceId }])) };
   const service = createBilling({ db, stripe, getCatalog: async () => catalog, frontendBase: 'https://uficonnect.org' });
   const sub = (id = 'sub_a', overrides = {}) => {
     const value = { id, customer: 'cus_a', status: 'active', latest_invoice: { status: 'paid' },
@@ -91,6 +91,105 @@ function setup() {
     failWrite() { failWrite = true; }, providerOutage() { failProvider = true; } };
 }
 async function alice() { return (await pg.query('SELECT * FROM users WHERE id=$1', [A])).rows[0]; }
+
+test('billing schema reruns preserve valid checkout slots and reject unsupported slots', async () => {
+  for (let pass = 0; pass < 2; pass++) for (const statement of BILLING_SCHEMA) await pg.exec(statement);
+  const f = setup();
+  await f.service.createCheckout(A, 'vpn_connector');
+  const { rows: [attempt] } = await pg.query('SELECT slot FROM billing_checkout_attempts WHERE user_id=$1', [A]);
+  assert.equal(attempt.slot, 'vpn_connector');
+  await assert.rejects(pg.query("UPDATE billing_checkout_attempts SET slot='unsupported' WHERE user_id=$1", [A]), error => error.code === '23514');
+  assert.equal((await pg.query('SELECT slot FROM billing_checkout_attempts WHERE user_id=$1', [A])).rows[0].slot, 'vpn_connector');
+});
+
+test('VPN is an independent paid add-on, rejects duplicate checkout and revokes only its own slot', async () => {
+  const f = setup(); f.sub(); f.session(); await f.service.handleEvent(f.event());
+  const checkout = await f.service.createCheckout(A, 'vpn_connector');
+  assert.match(checkout.url, /^https:\/\/checkout.stripe.com\//);
+  assert.equal((await f.service.createCheckout(A, 'vpn_connector')).url, checkout.url);
+  const call = f.creates.find(item => item.data.metadata.tier === 'vpn_connector');
+  assert.equal(call.data.line_items[0].price, 'price_vpn'); assert.equal(call.data.line_items[0].quantity, 1);
+  assert.match(call.data.success_url, /\/vault\?upgrade=success$/);
+  const overrides = { metadata: { tier: 'vpn_connector', uficonnect_user_id: A }, items: { data: [{ price: { id: 'price_vpn' }, quantity: 1 }] } };
+  f.sub('sub_vpn', { ...overrides, latest_invoice: { status: 'open' } });
+  await f.service.handleEvent(f.event('evt_vpn_unpaid', 'customer.subscription.created', { id: 'sub_vpn', customer: 'cus_a' }));
+  assert.equal((await alice()).vpn_connector_addon, false);
+  f.sub('sub_vpn', overrides);
+  await f.service.handleEvent(f.event('evt_vpn_paid', 'invoice.paid', { subscription: 'sub_vpn', customer: 'cus_a' }));
+  assert.equal((await f.service.status(A)).vpnConnectorAddon, true);
+  assert.equal((await alice()).plan, 'pro'); assert.equal((await f.service.status(B)).vpnConnectorAddon, false);
+  await assert.rejects(f.service.createCheckout(A, 'vpn_connector'), { status: 409 });
+  for (const status of ['past_due', 'unpaid', 'canceled', 'incomplete_expired']) {
+    f.sub('sub_vpn', { ...overrides, status });
+    await f.service.handleEvent(f.event(`evt_vpn_${status}`, 'customer.subscription.updated', { id: 'sub_vpn', customer: 'cus_a' }));
+    assert.equal((await alice()).vpn_connector_addon, false);
+    assert.equal((await alice()).plan, 'pro');
+  }
+});
+
+test('VPN price grants cannot be forged by metadata, quantity or a different owner', async () => {
+  const f = setup();
+  for (const [id, overrides] of [
+    ['wrong_price', { items: { data: [{ price: { id: 'price_unapproved' }, quantity: 1 }] } }],
+    ['wrong_quantity', { items: { data: [{ price: { id: 'price_vpn' }, quantity: 2 }] } }],
+    ['wrong_owner', { customer: 'cus_b', items: { data: [{ price: { id: 'price_vpn' }, quantity: 1 }] } }],
+  ]) {
+    f.sub(id, { metadata: { tier: 'vpn_connector', uficonnect_user_id: A }, ...overrides });
+    await f.service.handleEvent(f.event(`evt_${id}`, 'customer.subscription.created', { id, customer: 'cus_a' }));
+    assert.equal((await alice()).vpn_connector_addon, false);
+  }
+});
+
+test('changing a linked VPN subscription to a plan price revokes the old entitlement without granting a plan', async () => {
+  const f = setup();
+  const original = { metadata: { tier: 'vpn_connector', uficonnect_user_id: A }, items: { data: [{ price: { id: 'price_vpn' }, quantity: 1 }] } };
+  f.sub('sub_vpn', original);
+  await f.service.handleEvent(f.event('evt_initial_vpn', 'customer.subscription.created', { id: 'sub_vpn', customer: 'cus_a' }));
+  assert.equal((await alice()).vpn_connector_addon, true);
+  f.sub('sub_vpn', { items: { data: [{ price: { id: 'price_pro' }, quantity: 1 }] } });
+  await f.service.handleEvent(f.event('evt_changed_kind', 'customer.subscription.updated', { id: 'sub_vpn', customer: 'cus_a' }));
+  const row = await alice();
+  assert.equal(row.vpn_connector_addon, false); assert.equal(row.vpn_connector_subscription_id, 'sub_vpn');
+  assert.equal(row.plan, 'free'); assert.equal(row.stripe_subscription_id, null);
+  const status = await f.service.status(A);
+  assert.equal(status.plan, 'free'); assert.equal(status.vpnConnectorAddon, false);
+});
+
+test('VPN location metadata is gated, isolated by owner, bounded, exportable and deletable after cancellation', async () => {
+  const f = setup();
+  const { createVpnLocations } = require('./vpn-locations');
+  const locations = createVpnLocations({ db: f.db, billing: f.service });
+  const label = { platform: 'ios', name: 'Personal Proton', country: 'Canada' };
+  await assert.rejects(locations.add(A, label), { status: 403 });
+  f.sub('sub_vpn', { metadata: { tier: 'vpn_connector', uficonnect_user_id: A }, items: { data: [{ price: { id: 'price_vpn' }, quantity: 1 }] } });
+  const saved = await locations.add(A, label);
+  assert.equal((await locations.list(A)).locations[0].name, label.name);
+  assert.equal((await locations.list(B)).locations.length, 0);
+  await locations.remove(B, saved.location.id);
+  assert.equal((await locations.list(A)).locations.length, 1);
+  await assert.rejects(locations.add(A, { ...label, password: 'must-not-store' }), { status: 400 });
+  await assert.rejects(locations.add(A, { ...label, name: 'a'.repeat(81) }), { status: 400 });
+  await pg.query('INSERT INTO vault_vpn_locations(id,user_id,platform,name,country) SELECT gen_random_uuid(),$1,\'ios\',\'Profile\',\'Country\' FROM generate_series(1,39)', [A]);
+  await assert.rejects(locations.add(A, label), { status: 409 });
+  f.sub('sub_vpn', { status: 'canceled', metadata: { tier: 'vpn_connector', uficonnect_user_id: A }, items: { data: [{ price: { id: 'price_vpn' }, quantity: 1 }] } });
+  await assert.rejects(locations.add(A, label), { status: 403 });
+  assert.equal((await locations.list(A)).locations.length, 40);
+  await locations.remove(A, saved.location.id);
+  assert.equal((await locations.list(A)).locations.length, 39);
+});
+
+test('VPN billing config requires exactly USD 3.94 monthly licensed flat pricing', async t => {
+  for (const override of [{}, { currency: 'eur' }, { unit_amount: 395 }, { active: false }, { recurring: { interval: 'month', interval_count: 2 } }, { recurring: { interval: 'month', interval_count: 1, usage_type: 'metered' } }]) {
+    const app = await createAppHarness({ connected: true,
+      env: { STRIPE_SECRET_KEY: 'sk_test_fixture', STRIPE_WEBHOOK_SECRET: 'whsec_fixture', STRIPE_VPN_CONNECTOR_PRICE_ID: 'price_vpn' },
+      modules: { stripe: () => ({ prices: { async retrieve() { return { id: 'price_vpn', type: 'recurring', active: true, currency: 'usd', unit_amount: 394, recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' }, ...override }; } } }) },
+    });
+    t.after(() => app.close());
+    const result = await app.request('/billing/config');
+    assert.equal(result.status, 200); assert.equal(result.data.tiers.vpn_connector, Object.keys(override).length === 0);
+    assert.equal((await app.request('/vault/vpn/locations')).status, 401);
+  }
+});
 
 test('status recovers a paid legacy subscription without a checkout attempt', async () => {
   const f = setup(); f.sub();

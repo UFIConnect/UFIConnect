@@ -39,6 +39,7 @@ function buildOfficeSetup({ env = {}, role = 'api', database = false, backup = {
     add('push', 'Browser notifications', 'Accounts and notifications', ['VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY'], 'Enables web push after the user grants notification permission.');
     add('billing', 'Subscriptions', 'Accounts and notifications', ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'STRIPE_PRICE_ID', 'STRIPE_PRICE_ID_BUSINESS'], 'Enables subscription checkout and webhook processing. Price IDs must belong to the configured Stripe account.');
     add('resume-billing', 'Resume Builder subscription', 'Accounts and notifications', ['STRIPE_RESUME_BUILDER_PRICE_ID'], 'Requires an active USD 149.94 price recurring every six months.', { configured: present('STRIPE_RESUME_BUILDER_PRICE_ID') || present('STRIPE_PRICE_ID_RESUME_BUILDER') });
+    add('vpn-billing', 'VPN Connector subscription', 'Accounts and notifications', ['STRIPE_VPN_CONNECTOR_PRICE_ID'], 'Requires an active USD 3.94 price recurring every month. This pays for saved UFI connector locations, not a VPN provider plan.');
     for (const [provider, status] of Object.entries(social)) {
       add(`social-${provider}`, `${provider[0].toUpperCase()}${provider.slice(1)} account connection`, 'Connected accounts', status.requiredEnv || [], 'Users connect their own accounts after the provider app and callback are approved.', {
         configured: Boolean(status.configured),

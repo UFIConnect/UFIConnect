@@ -51,6 +51,7 @@ async function seed(pg) {
   }
   await insert('community_groups', { id: 'shared-group', name: 'Shared group', category: 'Test', created_by: alice, member_count: 3 });
   for (const [uid, prefix] of [[alice, 'a'], [bob, 'b']]) {
+    await insert('vault_vpn_locations', { id: uid, user_id: uid, platform: 'ios', name: `${prefix}-vpn-profile`, country: 'Canada' });
     await insert('community_posts', { id: `${prefix}-post`, group_id: 'shared-group', author_id: uid, content: `${prefix}-post-content`, likes: [alice, bob], comments_count: 1 });
     await insert('post_comments', { id: `${prefix}-comment`, post_id: 'b-post', author_id: uid, content: `${prefix}-comment-content` });
     await insert('attachments', { id: `${prefix}-file`, user_id: uid, filename: `${prefix}.txt`, file_size: 9, file_data: Buffer.from(`${prefix}-contents`), extracted_text: `${prefix}-resume-text` });
@@ -137,13 +138,14 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
     assert.equal(Buffer.from(exported.attachments[0].fileBase64, 'base64').toString(), 'a-contents');
     assert.equal(exported.social.connections[0].status, 'pending');
     assert.equal(exported.social.blocks[0].blockedId, carol);
+    assert.equal(exported.vpnLocations[0].name, 'a-vpn-profile');
     for (const key of ['posts', 'comments', 'attachments', 'savedPosts', 'trackedJobs', 'generatedContent', 'resumeDrafts',
       'crossPosts', 'ownedGroups', 'notifications', 'reports', 'seenPosts', 'engagementPreferences', 'restaurantLikes', 'externalPostLikes',
-      'pushRegistrations', 'signIns', 'legacyPageViews', 'legacyClientErrors', 'legacyServerErrors', 'legacyUsageSignals', 'billingCheckouts']) {
+      'pushRegistrations', 'signIns', 'legacyPageViews', 'legacyClientErrors', 'legacyServerErrors', 'legacyUsageSignals', 'billingCheckouts', 'vpnLocations']) {
       assert.equal(exported[key].length, 1, key);
     }
     const serialized = JSON.stringify(exported);
-    for (const forbidden of ['secret-', 'other-private-conversation', 'b-summary', 'b-report-details', 'b-resume-text', 'b-prompt']) {
+    for (const forbidden of ['secret-', 'other-private-conversation', 'b-summary', 'b-report-details', 'b-resume-text', 'b-prompt', 'b-vpn-profile']) {
       assert.equal(serialized.includes(forbidden), false, forbidden);
     }
   });
@@ -156,9 +158,10 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
       assert.equal((await pg.query(`SELECT COUNT(*)::integer AS count FROM ${table} WHERE user_id=$1`, [alice])).rows[0].count, 0, table);
       assert.equal((await pg.query(`SELECT COUNT(*)::integer AS count FROM ${table} WHERE user_id=$1`, [bob])).rows[0].count, 1, table);
     }
-    for (const table of ['generated_content', 'billing_checkout_attempts']) {
+    for (const table of ['generated_content', 'billing_checkout_attempts', 'vault_vpn_locations']) {
       assert.equal((await pg.query(`SELECT COUNT(*)::integer AS count FROM ${table} WHERE user_id=$1`, [alice])).rows[0].count, 0, table);
     }
+    assert.equal((await pg.query('SELECT name FROM vault_vpn_locations WHERE user_id=$1', [bob])).rows[0].name, 'b-vpn-profile');
     assert.deepEqual((await pg.query('SELECT created_by,member_count FROM community_groups')).rows[0], { created_by: null, member_count: 2 });
     assert.deepEqual((await pg.query('SELECT id,likes FROM community_posts')).rows, [{ id: 'b-post', likes: [bob] }]);
     assert.equal((await pg.query('SELECT comments_count FROM community_posts')).rows[0].comments_count, 1);

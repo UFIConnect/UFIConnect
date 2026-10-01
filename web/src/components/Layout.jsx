@@ -5,6 +5,7 @@ import { useToast } from '../contexts/ToastContext';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import client from '../api/client';
 import HomeFeedTools from './HomeFeedTools';
+import AppearanceControl from './AppearanceControl';
 import JobsSidebarControls from './JobsSidebarControls';
 import NotificationInbox from './NotificationInbox';
 import './social-surfaces.css';
@@ -108,7 +109,7 @@ function SavedNavigation({ mobile = false, expanded, onToggle, onNavigate }) {
   </div>;
 }
 
-export default function Layout({ children, wide = false, feedSearch, discoveryPost }) {
+export default function Layout({ children, wide = false, feedSearch, discoveryPost, mobileRightMenu }) {
   const { profile, logout, updateProfileLocally } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
@@ -170,6 +171,13 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
     setMobileHeaderPopup(null);
     setSearchPopupOpen(false);
   }, [location.pathname, location.search]);
+
+  useEffect(() => {
+    if (!mobileRightMenu?.open) return;
+    setMobileMenuOpen(false);
+    setMobileAccountOpen(false);
+    setMobileHeaderPopup(null);
+  }, [mobileRightMenu?.open]);
 
   useEffect(() => {
     if (feedSearch) setMobileSearchQuery(feedSearch.query || '');
@@ -286,7 +294,8 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
       if (start.action === 'open' && start.x - touch.clientX >= 56) {
         setMobileHeaderPopup(null);
         setMobileAccountOpen(false);
-        setMobileMenuOpen(true);
+        if (mobileRightMenu) mobileRightMenu.onOpenChange(true);
+        else setMobileMenuOpen(true);
       } else if (start.action === 'close' && touch.clientX - start.x >= 56) {
         setMobileMenuOpen(false);
       } else if (start.action === 'open-account' && touch.clientX - start.x >= 56) {
@@ -309,15 +318,17 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
       document.removeEventListener('touchend', handleTouchEnd);
       document.removeEventListener('touchcancel', cancelSwipe);
     };
-  }, [mobileHeaderPopup, mobileMenuOpen, mobileAccountOpen, profile]);
+  }, [mobileHeaderPopup, mobileMenuOpen, mobileAccountOpen, profile, mobileRightMenu]);
 
   function closeMobileOverlays() {
+    mobileRightMenu?.onOpenChange(false);
     setMobileMenuOpen(false);
     setMobileAccountOpen(false);
     setMobileHeaderPopup(null);
   }
 
   function toggleMobileHeaderPopup(name) {
+    mobileRightMenu?.onOpenChange(false);
     const opening = mobileHeaderPopup !== name;
     setMobileMenuOpen(false);
     setMobileAccountOpen(false);
@@ -488,6 +499,7 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
           </button>
         )}
 
+        <div className="sidebar-appearance"><AppearanceControl compact /></div>
         <NavLink to="/maps" className="nav-link sidebar-maps-link" title="Maps" aria-label="Maps"><span className="nav-icon"><MapIcon size={17} aria-hidden="true" /></span><span className="nav-label">Maps</span></NavLink>
         {profile && (
           <div className="sidebar-user">
@@ -520,6 +532,7 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
               aria-controls="mobile-account-drawer"
               title="Account menu"
               onClick={() => {
+                mobileRightMenu?.onOpenChange(false);
                 setMobileMenuOpen(false);
                 setMobileHeaderPopup(null);
                 setMobileAccountOpen(open => !open);
@@ -568,15 +581,18 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
             </button>
             <button
               type="button"
-              className={`mobile-app-header-action${mobileMenuOpen ? ' active' : ''}`}
-              aria-label="Open menu"
-              aria-expanded={mobileMenuOpen}
-              aria-controls="mobile-feed-drawer"
-              title="Menu"
+              ref={mobileRightMenu?.triggerRef}
+              className={`mobile-app-header-action${(mobileRightMenu ? mobileRightMenu.open : mobileMenuOpen) ? ' active' : ''}`}
+              aria-label={mobileRightMenu ? 'Open ' + mobileRightMenu.label : 'Open menu'}
+              aria-expanded={mobileRightMenu ? mobileRightMenu.open : mobileMenuOpen}
+              aria-controls={mobileRightMenu?.controls || 'mobile-feed-drawer'}
+              aria-haspopup="dialog"
+              title={mobileRightMenu?.label || 'Menu'}
               onClick={() => {
                 setMobileHeaderPopup(null);
                 setMobileAccountOpen(false);
-                setMobileMenuOpen(open => !open);
+                if (mobileRightMenu) mobileRightMenu.onOpenChange(!mobileRightMenu.open);
+                else setMobileMenuOpen(open => !open);
               }}
             >
               <ShellIcon name="menu" size={21} />
@@ -668,6 +684,7 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
             </Link>
             <SavedNavigation mobile expanded={savedExpanded} onToggle={toggleSavedNavigation} onNavigate={closeMobileOverlays} />
             <div className="mobile-feed-drawer-bottom mobile-account-drawer-bottom">
+              <AppearanceControl compact />
               <NavLink to="/maps" className="mobile-command-menu-item" onClick={closeMobileOverlays}><MapIcon size={18} aria-hidden="true" />Maps</NavLink>
               <NavLink to="/profile" className="mobile-command-menu-item mobile-account-profile" aria-label="Profile" onClick={closeMobileOverlays}>
                 <span className="mobile-account-avatar" aria-hidden="true">
@@ -694,7 +711,7 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
           </div>
         </aside>
       )}
-      {profile && (
+      {profile && !mobileRightMenu && (
         <aside
           id="mobile-feed-drawer"
           className={`mobile-feed-drawer${mobileMenuOpen ? ' open' : ''}`}

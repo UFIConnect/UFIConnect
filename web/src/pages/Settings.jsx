@@ -7,6 +7,7 @@ import { useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import Layout from '../components/Layout';
+import AppearanceControl from '../components/AppearanceControl';
 import client from '../api/client';
 import { ALL_ROLES, EXTRA_INTERESTS, roleCode } from '../data/roles';
 import { pushSupported, getPushSubscriptionState, enablePush, disablePush } from '../api/push';
@@ -544,6 +545,8 @@ export default function Settings() {
       </div>
 
       {/* ── Preferences tab ──────────────────────────────────────────────────── */}
+      <section className="card settings-appearance" aria-label="Appearance settings"><AppearanceControl /></section>
+
       {activeTab === 'data' && <DataPrivacySettings />}
 
       {activeTab === 'preferences' && (

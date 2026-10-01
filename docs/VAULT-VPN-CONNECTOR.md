@@ -4,13 +4,29 @@ Your Vault uses a VPN app or profile you already configured. The VPN settings bu
 
 ## Public website
 
-Open **Your Vault → Your VPN**, choose Windows, Linux, iOS, or Android, then use **Connect using device settings**. Windows also has a direct system-settings link. iOS, Android, and Linux show the correct settings/app steps and official platform guidance. No unsupported private settings URL schemes are used.
+Open **Your Vault → Your VPN** and use its top connection button. On Windows it opens system VPN controls; on other public-web platforms it reveals the connection steps for your existing app. The local companion can connect or disconnect an existing profile with the top button. **Device, locations and setup** holds the platform selector, optional profile labels and provider guidance. No unsupported private settings URL schemes or invented connected states are used.
 
-The public website does not claim to create a tunnel or detect VPN status. It does not probe localhost or expose the local companion to public origins. Country selection is based only on existing profile locations confirmed by the user. Choosing a country prepares the matching profile instructions; switch the actual connection in the VPN app/settings. Labels stay in memory for the visit and are not transmitted or persisted.
+The public website does not claim to create a tunnel or detect VPN status. It does not probe localhost or expose the local companion to public origins. Country selection is based only on existing profile locations confirmed by the user. Choosing a country prepares the matching profile instructions; switch the actual connection in the VPN app/settings.
+
+### Device imports and local Vault storage
+
+Vault Home includes Passwords, Documents and Keys. **Import from this device** opens the current phone or computer's native picker for documents and key files. Browsers cannot bulk-read the operating system's password store; passwords can be added manually. Nothing in this import flow reads another device or the pending UFI hardware.
+
+Files are limited to 512 KiB each and share the existing 2 MiB encoded Vault payload limit with passwords. Filenames and file bytes stay inside the authenticated encrypted record in browser storage. Locking hides all collections. Downloads require a user action, and encrypted backup/restore includes all three collections. Storage-quota or validation errors preserve the previous record. Imported files are not rendered or executed, and are never uploaded to the API.
+
+The Device page presents the planned one-step experience: choose your app and continue while the device handles authentication for supported integrations. Hardware pairing, automatic sign-in and ordering remain unavailable until the hardware integration is ready.
+
+### UFI VPN Connector subscription
+
+The optional **$3.94 USD per month** UFI VPN Connector subscription saves up to 40 device types, profile labels and country labels in the user's UFI account for access across devices. It does **not** include a VPN service, Proton subscription or remote tunnel control. Provider links, operating-system guidance, and local encrypted password/document/key storage remain free. The synthetic local review stores labels in memory and never grants a paid entitlement.
+
+Checkout uses the existing Stripe integration with the independent `vpn_connector` subscription slot. Set `STRIPE_VPN_CONNECTOR_PRICE_ID` on the API to an active licensed flat USD 394-cent recurring price with `interval=month` and `interval_count=1`. The server rejects an incorrect price, quantity, owner or unpaid subscription; only reconciled Stripe state grants access. No existing users are automatically enrolled. Subscribers can cancel through Settings → Manage billing, and retain read/delete access to saved labels after cancellation. Account export includes these labels; account deletion cascades their removal and cancels the subscription.
+
+`GET /vault/vpn/locations`, `POST /vault/vpn/locations` and `DELETE /vault/vpn/locations/:id` require the signed-in account. Creating labels additionally requires the active subscription and enforces the per-user limit in a transaction. Neither API accepts VPN credentials, traffic, IP addresses or native profile IDs. Labels never enter the timestamp-only connection activity log. Production websites still do not access the synthetic local companion or claim it has a verified paid account.
 
 ### Use an existing Proton VPN subscription
 
-Install the [official Proton VPN app](https://protonvpn.com/download) for Windows, Linux, iOS, or Android and sign in directly with Proton using your existing subscription. Choose the desired country in Proton's app and connect there. Your Vault does not need another subscription, does not receive your Proton credentials or keys, and cannot verify your Proton plan or connection. The official app manages Proton's country selection; Vault's optional country labels are only shortcuts to the instructions for profiles you already configured.
+Install the [official Proton VPN app](https://protonvpn.com/download) for Windows, Linux, iOS, or Android and sign in directly with Proton using your existing subscription. Choose the desired country in Proton's app and connect there. Following these links and instructions does not need a UFI subscription. Your Vault does not receive your Proton credentials or keys and cannot verify your Proton plan or connection. The official app manages Proton's country selection; the separate paid UFI Connector saves optional labels for profiles you already configured.
 
 Enable Proton's [kill switch](https://protonvpn.com/support/what-is-kill-switch) using its platform-specific instructions. Windows and Linux GUI apps support Advanced mode for blocking traffic even after a deliberate disconnect. Android uses its Always-on VPN and Block connections without VPN settings. iOS offers a kill switch, but some Apple DNS traffic can bypass the VPN; follow Proton's documented limits. Do not assume every platform or mode behaves identically.
 
@@ -26,7 +42,7 @@ From a trusted clone of this repository with Node.js and the repository's web an
 node scripts/start-vault-review.mjs
 ```
 
-Open the exact localhost URL printed by the launcher, then `/vault`. This opens a separate local review. It does not connect any VPN until you select a currently configured profile and press **Connect selected profile**.
+Open the exact localhost URL printed by the launcher, then `/vault`. This opens a separate local review. Choose a configured profile under **Device, locations and setup**, then press the top **Connect VPN** button. No VPN is connected automatically.
 
 - Windows: controls existing IKEv2/SSTP profiles using Windows' saved credentials and scope-specific phonebooks. Automatic, PPTP, and L2TP profiles cannot be activated here.
 - Linux: requires NetworkManager and `/usr/bin/nmcli`. Controls existing WireGuard and OpenVPN profiles using UUIDs. Required VPN plugins and credentials must already be configured through the operating system. Other types remain visible but unavailable for activation.

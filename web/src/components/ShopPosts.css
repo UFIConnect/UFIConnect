@@ -1,0 +1,14 @@
+.shop-post-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin: 12px 0; }
+.shop-post-heading > div { min-width: 0; }
+.shop-post-label { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: .72rem; margin-bottom: 5px; }
+.shop-post-heading h3 { margin: 0; font-size: 1.1rem; color: var(--text); overflow-wrap: anywhere; }
+.shop-post-price { color: var(--primary); background: var(--primary-light); border-radius: 9px; padding: 9px 12px; font-size: 1rem; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.shop-post-details h4 { font-size: .73rem; color: var(--muted); margin: 14px 0 5px; font-weight: 600; }
+.shop-post-details p { font-size: .9rem; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.shop-description-toggle { background: transparent; color: var(--primary); border: 0; font: inherit; font-size: .8rem; padding: 5px 0; cursor: pointer; }
+.shop-compose-fields { display: grid; grid-template-columns: minmax(0, 1fr) 110px; gap: 12px; margin-bottom: 15px; }
+.shop-compose-fields label { display: flex; flex-direction: column; gap: 6px; font-size: .8rem; color: var(--text); font-weight: 600; min-width: 0; }
+.shop-compose-fields label:first-child { grid-column: 1 / -1; }
+.shop-compose-heading { font-size: 1.05rem; margin: 0 0 8px; }
+.shop-compose-helper { font-size: .8rem; color: var(--muted); margin: 0 0 15px; }
+@media (max-width: 420px) { .shop-post-heading { flex-wrap: wrap; } .shop-post-price { font-size: .9rem; } }
