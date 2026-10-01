@@ -41,19 +41,35 @@ try {
       const form = page.getByRole('form', { name: `Create ${area} post`, exact: true });
       await form.waitFor();
       assert.equal(await form.getByText('Post to:', { exact: true }).count(), 0);
-      assert.equal(await form.getByRole('textbox').inputValue(), '');
+      const bodyInput = area === 'Shop' ? form.getByLabel('Description', { exact: true }) : form.getByRole('textbox');
+      assert.equal(await bodyInput.inputValue(), '');
       const content = `A thoughtful ${area} update from our community at ${width}.`;
-      await form.getByRole('textbox').fill(content);
+      let publishedContent = content;
+      if (area === 'Shop') {
+        assert.equal(await form.getByLabel('Item title', { exact: true }).inputValue(), '', 'Shop title starts empty in its own posting context');
+        assert.equal(await form.getByLabel('Price', { exact: true }).inputValue(), '', 'Shop price starts empty in its own posting context');
+        await form.getByLabel('Item title', { exact: true }).fill(`Community item ${width}`);
+        await form.getByLabel('Price', { exact: true }).fill('24.50');
+        await form.getByRole('combobox', { name: 'Currency', exact: true }).selectOption('EUR');
+        publishedContent = `Item: Community item ${width}\nPrice: EUR 24.50\n\n${content}`;
+      }
+      await bodyInput.fill(content);
       const response = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith(`/groups/${groupId}/posts`));
       await form.getByRole('button', { name: 'Publish', exact: true }).click();
       assert.equal((await response).status(), 201);
-      assert.ok(app.queries.some(q => q.sql.includes('INSERT INTO community_posts') && q.params[1] === groupId && q.params[4] === content));
+      assert.ok(app.queries.some(q => q.sql.includes('INSERT INTO community_posts') && q.params[1] === groupId && q.params[4] === publishedContent));
       await page.getByText(content, { exact: true }).waitFor();
       if (area === 'Shop') {
         assert.equal(await page.getByText('A useful technology update from our joined community.', { exact: true }).count(), 0);
       }
       await page.getByRole('button', { name: 'Post', exact: true }).click();
-      await page.getByRole('form', { name: `Create ${area} post`, exact: true }).getByRole('textbox').fill('Unsubmitted draft stays in its posting area.');
+      const draftForm = page.getByRole('form', { name: `Create ${area} post`, exact: true });
+      const draftInput = area === 'Shop' ? draftForm.getByLabel('Description', { exact: true }) : draftForm.getByRole('textbox');
+      await draftInput.fill('Unsubmitted draft stays in its posting area.');
+      if (area === 'Shop') {
+        await draftForm.getByLabel('Item title', { exact: true }).fill('Unsubmitted Shop item');
+        await draftForm.getByLabel('Price', { exact: true }).fill('10.00');
+      }
     }
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/post-context-${width}.png`) });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Composer must fit the viewport');
