@@ -12,3 +12,11 @@
 .vault-vpn-setup { margin-top: 18px; border-top: 1px solid var(--vault-border, var(--border)); padding-top: 14px; }
 .vault-vpn-setup > summary { cursor: pointer; color: var(--vault-text, var(--text)); font-weight: 600; font-size: .85rem; }
 .vault-vpn-setup[open] > summary { margin-bottom: 16px; }
+.vault-subscription-slot { min-width: 0; }
+.vault-subscription-slot .vault-vpn-subscription { margin-top: 22px; border-top: 1px solid var(--vault-border, var(--border)); padding-top: 18px; }
+.vault-subscription-slot .vault-vpn-subscription h3 { font-size: .9rem; line-height: 1.5; scroll-margin-top: 90px; }
+.vault-subscription-slot .vault-vpn-subscription p { font-size: 12px; line-height: 1.7; color: var(--vault-muted, var(--muted)); margin: 10px 0; }
+.vault-subscription-slot .vault-vpn-subscription .vault-button { width: 100%; white-space: normal; }
+.vault-subscription-slot .vault-vpn-subscription .vault-text-button { display: block; margin-top: 12px; }
+.vault-access-home { margin-bottom: 24px; }
+.vault-access-home .vault-vpn-subscription { margin-top: 8px; border-top: 0; padding-top: 0; }

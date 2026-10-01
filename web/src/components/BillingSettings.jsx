@@ -71,7 +71,7 @@ export default function BillingSettings({ profile, onProfileUpdate }) {
       <p style={{ fontSize: '.85rem', margin: '6px 0 0', color: 'var(--muted)' }}>Review your membership, payment methods, invoices, and cancellation options.</p>
     </div>
     {status?.subscriptions?.map(item => <div key={item.kind} style={{ fontSize: '.82rem', lineHeight: 1.6 }}>
-      <strong>{item.kind === 'vpn_connector' ? 'UFI VPN Connector' : item.kind === 'resume_builder' ? 'Resume Builder' : item.tier === 'business' ? 'Business' : 'Pro'}:</strong>{' '}{String(item.status).replaceAll('_', ' ')}
+      <strong>{item.kind === 'vpn_connector' ? 'UFI Vault' : item.kind === 'resume_builder' ? 'Resume Builder' : item.tier === 'business' ? 'Business' : 'Pro'}:</strong>{' '}{String(item.status).replaceAll('_', ' ')}
       {item.cancelAtPeriodEnd && <> · Cancellation scheduled{item.currentPeriodEnd ? ` for ${new Date(item.currentPeriodEnd * 1000).toLocaleDateString()}` : ''}</>}
     </div>)}
     {notice && !pricingOpen && <p role="status" style={{ margin: 0, fontSize: '.85rem', lineHeight: 1.6 }}>{notice}</p>}

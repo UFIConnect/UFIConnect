@@ -34,6 +34,7 @@ try {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, isMobile: width < 600, hasTouch: width < 600, acceptDownloads: true });
     const page = await context.newPage(); page.setDefaultTimeout(12_000);
     const errors = [], outbound = [];
+    let vaultPaid = false;
     page.on('pageerror', failure => errors.push(failure.message));
     page.on('request', request => outbound.push(request.url() + (request.postData() || '')));
     const origin = server.resolvedUrls.local[0];
@@ -42,10 +43,23 @@ try {
       if (url.origin !== new URL(origin).origin) return route.abort();
       if (/\/api\/(?:feed\/stream|office\/events)/.test(url.pathname)) return route.abort();
       if (url.pathname === '/api/security/vault/status') return route.fulfill({ json: { phase: 'software-prototype', state: 'disabled', available: false } });
+      if (url.pathname === '/api/billing/config') return route.fulfill({ json: { paymentsReady: false, tiers: { vpn_connector: false }, pricing: { vpn_connector: { unitAmount: 394, currency: 'USD', interval: 'month', intervalCount: 1, comingSoon: true } } } });
+      if (url.pathname === '/api/billing/status') return route.fulfill({ json: { plan: 'free', vpnConnectorAddon: vaultPaid, hasBillingAccount: vaultPaid, subscriptions: vaultPaid ? [{ kind: 'vpn_connector', status: 'active' }] : [] } });
       return route.continue();
     });
+    async function refreshEntitlement(paid) {
+      vaultPaid = paid;
+      await Promise.all([
+        page.waitForResponse(response => new URL(response.url()).pathname === '/api/billing/status'),
+        page.getByRole('button', { name: 'Check subscription status', exact: true }).click(),
+      ]);
+      await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent.trim() === 'Check subscription status' && !button.disabled));
+    }
     await installAuditMember(page, app, 'vault-files-audit');
     await auditNavigate(page, origin + 'vault');
+    await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent.trim() === 'Check subscription status' && !button.disabled));
+    assert.equal(await page.getByRole('button', { name: 'Create vault', exact: true }).isDisabled(), true, 'New unpaid accounts cannot create a paid vault');
+    await refreshEntitlement(true);
     await page.getByLabel('Vault passphrase', { exact: true }).fill(phrase);
     await page.getByLabel('Confirm passphrase', { exact: true }).fill(phrase);
     await page.getByRole('button', { name: 'Create vault', exact: true }).click();
@@ -82,6 +96,23 @@ try {
     await page.locator('.vault-password-footer').getByRole('button', { name: 'Encrypted backup', exact: true }).click();
     const backup = await readDownload(await pendingBackup);
     for (const secret of secrets) assert.ok(!backup.toString().includes(secret), 'Backup contains only encrypted item data');
+    await refreshEntitlement(false);
+    assert.equal(await page.getByRole('button', { name: 'Import key', exact: true }).isDisabled(), true, 'Expired members cannot import new keys');
+    assert.equal(await page.locator('.vault-password-footer').getByRole('button', { name: 'Import from this device', exact: true }).isDisabled(), true);
+    const expiredDownload = page.waitForEvent('download');
+    await page.getByRole('button', { name: `Download ${key.name}`, exact: true }).click();
+    assert.deepEqual(await readDownload(await expiredDownload), key.buffer, 'Subscription expiry never blocks downloading an existing key');
+    await collections.getByRole('button', { name: /^Passwords/ }).click();
+    assert.equal(await page.getByRole('button', { name: 'Add password', exact: true }).isDisabled(), true);
+    await page.getByRole('button', { name: 'Details for Existing password account', exact: true }).click();
+    const passwordDialog = page.getByRole('dialog', { name: 'Password details', exact: true });
+    await passwordDialog.getByRole('button', { name: 'Reveal password', exact: true }).click();
+    assert.equal(await passwordDialog.getByLabel('Password', { exact: true }).inputValue(), password, 'Existing password remains readable after expiry');
+    assert.equal(await passwordDialog.getByRole('button', { name: 'Save password', exact: true }).isDisabled(), true, 'Expired membership blocks editing existing passwords');
+    await passwordDialog.getByRole('button', { name: 'Close dialog', exact: true }).click();
+    const expiredBackup = page.waitForEvent('download');
+    await page.locator('.vault-password-footer').getByRole('button', { name: 'Encrypted backup', exact: true }).click();
+    assert.ok((await readDownload(await expiredBackup)).length > 0, 'Owner backup is always available');
     await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
     await page.getByRole('button', { name: 'Unlock vault', exact: true }).waitFor();
     assert.equal(await page.locator('.vault-file-entry').count(), 0);
@@ -109,6 +140,8 @@ try {
       await collections.getByRole('button', { name: new RegExp(`^${label}`) }).click();
       await page.getByRole('button', { name: `Download ${file.name}`, exact: true }).waitFor();
     }
+    assert.equal(vaultPaid, false, 'Owner unlock, delete, and authenticated restore were checked without an active subscription');
+    await refreshEntitlement(true);
     await page.getByLabel('Key from this device', { exact: true }).setInputFiles({ name: 'too-large.key', mimeType: 'application/octet-stream', buffer: Buffer.alloc(512 * 1024 + 1) });
     await page.getByRole('alert').getByText('Choose a nonempty document or key up to 512 KB.', { exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Download too-large.key', exact: true }).count(), 0);
@@ -135,10 +168,28 @@ try {
     await page.getByRole('button', { name: 'Unlock vault', exact: true }).click();
     await collections.getByRole('button', { name: /^Keys/ }).click();
     assert.equal(await page.getByRole('button', { name: 'Download late-secret.key', exact: true }).count(), 0);
+    const beforeExpiredImport = await page.evaluate(() => JSON.stringify({ ...localStorage }));
+    await page.evaluate(() => {
+      window.__originalVaultFileRead = File.prototype.arrayBuffer;
+      File.prototype.arrayBuffer = function () {
+        return new Promise(resolve => { window.__releaseVaultFileRead = async () => resolve(await window.__originalVaultFileRead.call(this)); });
+      };
+    });
+    await page.getByLabel('Key from this device', { exact: true }).setInputFiles({ name: 'expired-import.key', mimeType: 'application/octet-stream', buffer: Buffer.from('EXPIRED_IMPORT_PRIVATE_BYTES') });
+    await page.waitForFunction(() => typeof window.__releaseVaultFileRead === 'function');
+    await refreshEntitlement(false);
+    await page.evaluate(async () => {
+      await window.__releaseVaultFileRead();
+      File.prototype.arrayBuffer = window.__originalVaultFileRead;
+      delete window.__originalVaultFileRead; delete window.__releaseVaultFileRead;
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    });
+    assert.equal(await page.evaluate(() => JSON.stringify({ ...localStorage })), beforeExpiredImport, 'A file read finishing after subscription expiry cannot write the vault');
+    assert.equal(await page.getByRole('button', { name: 'Download expired-import.key', exact: true }).count(), 0);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Collections fit the viewport');
     for (const secret of secrets) assert.ok(outbound.every(value => !value.includes(secret)), 'No private item content or filename is sent to an API');
     assert.deepEqual(errors, []);
-    console.log(`PASS: device picker, documents/keys, inert downloads, encrypted storage/backup, lock, restore, password compatibility, and upload bounds at ${width}px`);
+    console.log(`PASS: device imports, encrypted storage/backup, locking, bounds, paid writes, expired owner recovery/access, and delayed expiry guard at ${width}px`);
     await context.close();
   }
 } finally { await browser?.close(); await server.close(); await app.close(); }

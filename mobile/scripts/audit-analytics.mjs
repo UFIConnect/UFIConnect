@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 
 const mobileRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const exportRoot = path.join(mobileRoot, '.cache/export-sdk57');
+const exportRoot = process.env.EXPO_AUDIT_EXPORT_DIR ? path.resolve(process.env.EXPO_AUDIT_EXPORT_DIR) : path.join(mobileRoot, '.cache/export-sdk57');
 const server = http.createServer(async (request, response) => {
   try {
     const pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
@@ -29,6 +29,14 @@ let browser;
 let checks = 0;
 const check = (condition, message) => { assert.ok(condition, message); checks += 1; };
 const allScreens = new Set();
+
+async function closeAuditContext(context) {
+  // Finish intercepted asset responses before disposing the context's request
+  // client. Any request arriving during teardown remains network-isolated.
+  await context.route('**/*', route => route.abort());
+  await Promise.all(context.pages().map(page => page.unrouteAll({ behavior: 'wait' })));
+  await context.close();
+}
 
 async function readEvents(page) {
   const frame = page.frames().find(value => value.url().includes('/analytics-bridge.html'));
@@ -159,7 +167,7 @@ try {
   await page.getByLabel('Password', { exact: true }).waitFor();
   check(googleRequests.length === countBefore && page.frames().length === 1, 'Withdrawing consent persists across navigation and reload');
   check(errors.length === 0, `No app runtime errors: ${errors.join('; ')}`);
-  await context.close();
+  await closeAuditContext(context);
 
   const onboardingContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const onboardingPage = await onboardingContext.newPage();
@@ -170,7 +178,7 @@ try {
   await onboardingPage.getByLabel('Password', { exact: true }).fill(password);
   await onboardingPage.getByText('Sign in', { exact: true }).click();
   await expectScreen(onboardingPage, '/app/onboarding');
-  await onboardingContext.close();
+  await closeAuditContext(onboardingContext);
   check(allScreens.size === 13, 'All thirteen rendered screens are counted with fixed names');
 
   const blockedContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
@@ -202,7 +210,7 @@ try {
   await blockedPage.getByLabel('Password', { exact: true }).waitFor();
   check(blockedPage.frames().length === 1 && blockedGoogle.length === googleBeforeReload, 'A saved grant cannot restart Google while storage is blocked');
   check(await blockedPage.getByRole('alert').filter({hasText:'This browser could not save your choice'}).first().isVisible(), 'Reload reports unavailable persistence instead of a saved choice');
-  await blockedContext.close();
+  await closeAuditContext(blockedContext);
 
   for (const platform of ['android', 'ios']) {
     const directory = path.join(exportRoot, '_expo/static/js', platform);
@@ -213,6 +221,7 @@ try {
   }
   console.log(`Expo analytics export audit: ${checks} checks passed, all 13 screens covered.`);
 } finally {
+  if (browser) await Promise.all(browser.contexts().map(closeAuditContext));
   await browser?.close();
   server.closeAllConnections();
   await new Promise(resolve => server.close(resolve));
