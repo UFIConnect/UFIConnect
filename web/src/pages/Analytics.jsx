@@ -32,6 +32,22 @@ function Metric({ label, value }) {
   return <div className="creator-analytics-metric"><dt>{label}</dt><dd className={unavailable ? 'is-unavailable' : undefined}>{metric(value)}</dd></div>;
 }
 
+const SECTIONS = [['overview', 'Overview'], ['content', 'Content'], ['audience', 'Audience'], ['sources', 'Connected sources'], ['earnings', 'Earnings'], ['tools', 'Tools']];
+
+function DailyPosts({ native, expanded = false }) {
+  const daily = (Array.isArray(native?.daily) ? native.daily : []).filter(day => /^\d{4}-\d{2}-\d{2}$/.test(day.day)
+    && typeof day.posts === 'number' && Number.isFinite(day.posts) && day.posts >= 0).slice().sort((a, b) => a.day.localeCompare(b.day));
+  const peak = Math.max(1, ...daily.map(day => day.posts));
+  const table = <div className="creator-analytics-table-wrap" tabIndex={0} role="region" aria-label="Daily UFIconnect posts"><table><caption>Your UFIconnect posts by creation date</caption><thead><tr><th scope="col">Day (UTC)</th><th scope="col">Posts created</th></tr></thead><tbody>{daily.map(day => <tr key={day.day}><th scope="row">{day.day}</th><td>{metric(day.posts)}</td></tr>)}</tbody></table></div>;
+  return <section className="creator-analytics-card creator-analytics-chart-card" aria-labelledby="analytics-posts-over-time">
+    <div className="creator-analytics-section-heading"><div><h2 id="analytics-posts-over-time">Posts over time</h2><p>Your UFIconnect posts, grouped by creation day in UTC.</p></div><span className="creator-analytics-status">UFIconnect</span></div>
+    {daily.length ? <>
+      <div className="creator-analytics-chart" aria-hidden="true"><span className="creator-analytics-chart-peak">{metric(peak)}</span><div className="creator-analytics-bars">{daily.map(day => <div key={day.day} className="creator-analytics-bar-track" title={`${day.day}: ${metric(day.posts)} posts`}><span style={{ height: `${day.posts / peak * 100}%` }} /></div>)}</div><div className="creator-analytics-chart-dates"><span>{daily[0].day}</span><span>{daily.at(-1).day}</span></div></div>
+      {expanded ? table : <details className="creator-analytics-details"><summary>View daily data</summary>{table}</details>}
+    </> : <div className="creator-analytics-empty"><h3>{native?.status === 'available' ? 'No daily data for this period' : 'Post history unavailable'}</h3><p>Your daily chart will appear when this report includes post activity.</p></div>}
+  </section>;
+}
+
 function SourceCard({ source }) {
   return <article className="creator-analytics-card creator-analytics-source">
     <header>
@@ -47,7 +63,6 @@ function SourceCard({ source }) {
     </dl>
     {source.metricScope && <p className="creator-analytics-caption">{source.metricScope}</p>}
     {source.periodMetrics && <div className="creator-analytics-source-period"><h4>Selected period</h4>{source.periodRange && <p className="creator-analytics-caption">{source.periodRange.startDate} to {source.periodRange.endDate} (source reporting dates)</p>}<dl className="creator-analytics-metrics"><Metric label="Views" value={source.periodMetrics.views} /><Metric label="Likes" value={source.periodMetrics.likes} /><Metric label="Comments" value={source.periodMetrics.comments} /></dl></div>}
-    <div className="creator-analytics-source-revenue"><span>Estimated source revenue</span><strong>{revenueLabel(source.revenue)}</strong>{source.revenue?.startDate && <small>{source.revenue.startDate} to {source.revenue.endDate}</small>}{source.revenue?.note && <p className="creator-analytics-caption">{source.revenue.note}</p>}</div>
     <p className="creator-analytics-muted">{source.reason || 'Engagement metrics are provided by the original source.'}</p>
     {source.note && <p className="creator-analytics-muted">{source.note}</p>}
     {source.capabilities && <details className="creator-analytics-source-controls"><summary>Source controls</summary><dl className="creator-analytics-facts">{[['officialPlayer', 'Official player'], ['like', 'Like through API'], ['comment', 'Comment through API'], ['sourceAnalytics', 'Analytics API']].map(([key, label]) => <div key={key}><dt>{label}</dt><dd>{source.capabilities[key] === true ? 'Requires source authorization' : 'Unavailable'}</dd></div>)}</dl><p className="creator-analytics-caption">Playback, advertising, and content restrictions remain with the source.</p></details>}
@@ -56,6 +71,8 @@ function SourceCard({ source }) {
 }
 
 export default function Analytics() {
+  const [section, setSection] = useState('overview');
+  const tabs = useRef(null);
   const [days, setDays] = useState(30);
   const [sourceFilter, setSourceFilter] = useState('all');
   const [report, setReport] = useState(null);
@@ -121,39 +138,71 @@ export default function Analytics() {
   const learning = report?.deepLearning;
   const copyright = report?.copyright;
 
+  function openSources() {
+    setSection('sources');
+    tabs.current?.querySelector('#analytics-tab-sources')?.focus();
+  }
+
+  function navigateTabs(event) {
+    const current = SECTIONS.findIndex(([id]) => id === section);
+    const next = event.key === 'ArrowRight' ? (current + 1) % SECTIONS.length
+      : event.key === 'ArrowLeft' ? (current + SECTIONS.length - 1) % SECTIONS.length
+      : event.key === 'Home' ? 0 : event.key === 'End' ? SECTIONS.length - 1 : null;
+    if (next === null) return;
+    event.preventDefault();
+    setSection(SECTIONS[next][0]);
+    tabs.current?.querySelectorAll('[role="tab"]')[next]?.focus();
+  }
+
   return <Layout wide>
-    <Helmet><title>Analytics and rights | UFIconnect</title><meta name="robots" content="noindex" /></Helmet>
+    <Helmet><title>Analytics | UFIconnect</title><meta name="robots" content="noindex" /></Helmet>
     <div className="creator-analytics">
       <header className="creator-analytics-header">
-        <div><p className="creator-analytics-eyebrow">Your creator workspace</p><h1><ChartNoAxesCombined size={27} aria-hidden="true" />Analytics and rights</h1><p>Source engagement, your UFIconnect activity, and copyright concerns in one place.</p></div>
+        <div><p className="creator-analytics-eyebrow">Your performance</p><h1><ChartNoAxesCombined size={27} aria-hidden="true" />Analytics</h1><p>Understand your content, engagement, and connected accounts.</p></div>
         <Link to="/connected-accounts" className="btn btn-ghost">Manage accounts</Link>
       </header>
       <div className="creator-analytics-toolbar">
-        <Link className="btn btn-ghost btn-sm" to="/centers/source-analytics">Imported reports</Link><Link className="btn btn-ghost btn-sm" to="/centers/monetization">Monetization workspace</Link><Link className="btn btn-ghost btn-sm" to="/centers/deep-learning">Deep learning workspace</Link><label htmlFor="analytics-period">Reporting period<select id="analytics-period" value={days} disabled={refreshing || submitting} onChange={event => { setNotice(''); setDays(Number(event.target.value)); }}><option value={7}>Last 7 days</option><option value={30}>Last 30 days</option></select></label>
+        <label htmlFor="analytics-period">Reporting period<select id="analytics-period" value={days} disabled={refreshing || submitting} onChange={event => { setNotice(''); setDays(Number(event.target.value)); }}><option value={7}>Last 7 days</option><option value={30}>Last 30 days</option></select></label>
         <span className="creator-analytics-muted">{report ? `Report updated ${dateLabel(report.generatedAt)}` : 'Your account only'}</span>
         <button type="button" className="btn btn-primary" onClick={refresh} disabled={refreshing || loading || submitting}><RefreshCw size={15} aria-hidden="true" />{refreshing ? 'Refreshing sources…' : 'Refresh sources'}</button>
       </div>
+      <div className="creator-analytics-tabs" role="tablist" aria-label="Analytics sections" ref={tabs} onKeyDown={navigateTabs}>{SECTIONS.map(([id, label]) => <button key={id} type="button" id={`analytics-tab-${id}`} role="tab" aria-selected={section === id} aria-controls={`analytics-panel-${id}`} tabIndex={section === id ? 0 : -1} onClick={() => setSection(id)}>{label}</button>)}</div>
       {error && <div className="creator-analytics-message is-error" role="alert">{error}<button type="button" className="btn btn-ghost btn-sm" onClick={loadReport} disabled={loading || refreshing}>Try again</button></div>}
       {notice && <p className="creator-analytics-message" role="status">{notice}</p>}
       {report?.localPreview && <p className="creator-analytics-message" role="status">Local preview account. Connected source metrics and production activity are unavailable here.</p>}
       {loading && !report && <div className="creator-analytics-card creator-analytics-loading" role="status">Loading your analytics…</div>}
-      {report && <div aria-busy={loading || refreshing}>
-        <section className="creator-analytics-section" aria-labelledby="source-analytics-title">
-          <div className="creator-analytics-section-heading"><div><h2 id="source-analytics-title">Across your sources</h2><p>Engagement metrics are provided by the original source. Each platform decides what qualifies as a view. A watch in UFIconnect does not guarantee a source view.</p></div><label htmlFor="analytics-source-filter">Source<select id="analytics-source-filter" value={sourceFilter} onChange={event => setSourceFilter(event.target.value)}><option value="all">All sources ({sources.length})</option>{sources.map(source => <option key={source.id} value={source.id}>{source.label}</option>)}</select></label></div>
-          <p className="creator-analytics-caption">Source totals and selected-period analytics are labeled separately. Unavailable means the source has not supplied that metric. Counts from different platforms are not a shared measure of reach.</p>
+      {report && <div role="tabpanel" id={`analytics-panel-${section}`} aria-labelledby={`analytics-tab-${section}`} tabIndex={0} aria-busy={loading || refreshing}>
+        {section === 'sources' && <section className="creator-analytics-section" aria-labelledby="source-analytics-title">
+          <div className="creator-analytics-section-heading"><div><h2 id="source-analytics-title">Connected sources</h2><p>Review performance reported by each platform, with its own reporting scope.</p></div><label htmlFor="analytics-source-filter">Source<select id="analytics-source-filter" value={sourceFilter} onChange={event => setSourceFilter(event.target.value)}><option value="all">All sources ({sources.length})</option>{sources.map(source => <option key={source.id} value={source.id}>{source.label}</option>)}</select></label></div>
+          <p className="creator-analytics-caption">Source totals and selected-period analytics are labeled separately. Unavailable means the source has not supplied that metric. Each platform defines a view; playback here may not count. Counts from different platforms are not a shared measure of reach.</p>
           <div className="creator-analytics-source-grid">{shownSources.map(source => <SourceCard key={source.id} source={source} />)}</div>
           {!shownSources.length && <p className="creator-analytics-card">No source data is available. <Link to="/connected-accounts">Manage your connections</Link>.</p>}
-        </section>
+        </section>}
 
+        {['overview', 'content'].includes(section) && <>
         <section className="creator-analytics-section creator-analytics-card" aria-labelledby="ufi-analytics-title">
           <div className="creator-analytics-section-heading"><div><h2 id="ufi-analytics-title">Your UFIconnect activity</h2><p>Posts created during the selected period, with their current likes and comments.</p></div><span className="creator-analytics-status">{statusLabel(native?.status)}</span></div>
-          <dl className="creator-analytics-metrics creator-analytics-native-metrics"><Metric label="Your posts" value={native?.posts} /><Metric label="Likes received" value={native?.likesReceived} /><Metric label="Comments received" value={native?.commentsReceived} /><Metric label="Source action requests" value={native?.interactionRequests} /></dl>
-          <p className="creator-analytics-caption">Source action requests are audit records. Source platforms confirm engagement and publish their own counts.</p>
-          {native?.daily?.length > 0 && <details className="creator-analytics-details"><summary>Daily posts (UTC)</summary><div className="creator-analytics-table-wrap" tabIndex={0} role="region" aria-label="Daily UFIconnect posts"><table><caption>Your native UFIconnect posts by creation date</caption><thead><tr><th scope="col">Day</th><th scope="col">Posts created</th></tr></thead><tbody>{native.daily.map(day => <tr key={day.day}><th scope="row">{day.day}</th><td>{metric(day.posts)}</td></tr>)}</tbody></table></div></details>}
+          <dl className="creator-analytics-metrics creator-analytics-native-metrics"><Metric label="Your posts" value={native?.posts} /><Metric label="Likes received" value={native?.likesReceived} /><Metric label="Comments received" value={native?.commentsReceived} /></dl>
+          <p className="creator-analytics-caption">Likes and comments are the current totals on these posts, including engagement received after they were created. Connected platform totals are shown separately.</p>
         </section>
+        <DailyPosts native={native} expanded={section === 'content'} />
+        {section === 'overview' && <div className="creator-analytics-overview-actions"><p className="creator-analytics-muted">Looking for another platform?</p><button type="button" className="btn btn-ghost btn-sm" onClick={openSources}>View connected sources<ArrowUpRight size={14} aria-hidden="true" /></button></div>}
+        </>}
 
+        {section === 'audience' && <section className="creator-analytics-card creator-analytics-audience" aria-labelledby="analytics-audience-title"><h2 id="analytics-audience-title">Audience</h2><div className="creator-analytics-empty"><h3>Audience data is not available yet</h3><p>This report does not include follower growth, unique reach, or audience demographics. Views, likes, and comments are shown in their own sections.</p><span className="creator-analytics-status">Unavailable</span></div><button type="button" className="btn btn-ghost btn-sm" onClick={openSources}>View connected source metrics</button></section>}
+
+        {section === 'earnings' && <section className="creator-analytics-section" aria-labelledby="analytics-earnings-title">
+          <div className="creator-analytics-section-heading"><div><h2 id="analytics-earnings-title"><CircleDollarSign size={20} aria-hidden="true" />Earnings</h2><p>Estimates supplied by your authorized sources. Each amount keeps its source, currency, and reporting dates.</p></div></div>
+          <p className="creator-analytics-caption">{report.monetization?.note || 'Creator earnings and advertising remain with the original source. An unavailable estimate is not a zero balance.'}</p>
+          <div className="creator-analytics-source-grid">{sources.map(source => <article key={source.id} className="creator-analytics-card creator-analytics-earnings-card"><h3>{source.label}</h3><dl><dt>Estimated source revenue</dt><dd>{revenueLabel(source.revenue)}</dd></dl>{source.revenue?.startDate && <p className="creator-analytics-caption">{source.revenue.startDate} to {source.revenue.endDate}</p>}{source.revenue?.note && <p className="creator-analytics-muted">{source.revenue.note}</p>}<SourceLink url={source.originalUrl}>Open {source.label}</SourceLink></article>)}</div>
+          {!sources.length && <p className="creator-analytics-card">Source earnings are unavailable. Connect an account and authorize its analytics to see supported estimates.</p>}
+          <div className="creator-analytics-inline-actions creator-analytics-overview-actions"><Link className="btn btn-ghost btn-sm" to="/connected-accounts?analytics=1&monetization=1">Authorize source analytics</Link><Link className="btn btn-ghost btn-sm" to="/centers/monetization">Monetization workspace</Link></div>
+        </section>}
+
+        {section === 'tools' && <>
+        <div className="creator-analytics-section-heading"><div><h2>Tools and settings</h2><p>Manage reports, permissions, rights, and your analysis workspaces.</p></div></div>
         <div className="creator-analytics-pair">
-          <section className="creator-analytics-card" aria-labelledby="analytics-monetization-title"><h2 id="analytics-monetization-title"><CircleDollarSign size={20} aria-hidden="true" />Monetization</h2><dl className="creator-analytics-facts"><div><dt>UFIconnect membership</dt><dd>{statusLabel(report.monetization?.plan)} · {statusLabel(report.monetization?.status)}</dd></div><div><dt>Source revenue</dt><dd>{report.monetization?.sourceRevenueAvailable ? 'See source estimates above' : 'Unavailable'}</dd></div></dl><p>{report.monetization?.note || 'Creator earnings and advertising remain with the original source. Revenue is shown only when an authorized source supplies it.'}</p><div className="creator-analytics-inline-actions"><Link className="btn btn-ghost btn-sm" to="/settings?tab=account">Manage membership</Link><Link className="btn btn-ghost btn-sm" to="/connected-accounts?analytics=1&monetization=1">Authorize source analytics</Link></div></section>
+          <section className="creator-analytics-card" aria-labelledby="analytics-workspace-title"><h2 id="analytics-workspace-title">Your workspaces</h2><div className="creator-analytics-tool-links"><Link to="/centers/source-analytics">Imported reports<ArrowUpRight size={15} aria-hidden="true" /></Link><Link to="/centers/monetization">Monetization workspace<ArrowUpRight size={15} aria-hidden="true" /></Link><Link to="/centers/deep-learning">Deep learning workspace<ArrowUpRight size={15} aria-hidden="true" /></Link><Link to="/connected-accounts">Connected account permissions<ArrowUpRight size={15} aria-hidden="true" /></Link></div><dl className="creator-analytics-facts"><div><dt>UFIconnect membership</dt><dd>{statusLabel(report.monetization?.plan)} · {statusLabel(report.monetization?.status)}</dd></div><div><dt>Source action requests</dt><dd>{metric(native?.interactionRequests)}</dd></div></dl><p className="creator-analytics-caption">Source action requests are audit records, not confirmed engagement. Source platforms publish their own counts.</p><Link className="btn btn-ghost btn-sm" to="/settings?tab=account">Manage membership</Link></section>
           <section className="creator-analytics-card" aria-labelledby="analytics-learning-title"><h2 id="analytics-learning-title"><Sparkles size={20} aria-hidden="true" />Deep learning insights</h2><span className="creator-analytics-status">{statusLabel(learning?.status)}</span><p>{learning?.reason || 'Insights will appear when an enabled model has enough authorized data.'}</p>{learning?.model && <p className="creator-analytics-caption">Model: {learning.model}</p>}{learning?.insights?.length > 0 && <ul className="creator-analytics-insights">{learning.insights.map((insight, index) => <li key={index}>{typeof insight === 'string' ? insight : <><strong>{insight.title}</strong>{insight.detail && <p>{insight.detail}</p>}</>}</li>)}</ul>}</section>
         </div>
 
@@ -166,6 +215,7 @@ export default function Analytics() {
         </section>
 
         <section className="creator-analytics-section creator-analytics-card" aria-labelledby="analytics-security-title"><h2 id="analytics-security-title"><ShieldCheck size={20} aria-hidden="true" />Connection safeguards</h2><p>{report.security?.credentialStorage}</p>{report.security?.rules?.length > 0 && <ul className="creator-analytics-security-rules">{report.security.rules.map(rule => <li key={rule}>{rule}</li>)}</ul>}<p className="creator-analytics-caption">{typeof report.security?.auditRetentionDays === 'number' && <>Interaction audit retention: {report.security.auditRetentionDays} days. </>}<Link to="/privacy#analytics">Analytics privacy controls</Link></p>{report.security?.vault && <div className="creator-analytics-vault"><h3>Device security architecture</h3><span className="creator-analytics-status">{statusLabel(report.security.vault.state || report.security.vault.status)}</span><p>{report.security.vault.reason || (report.security.vault.hardwareIntegrated === false ? 'The device verification service is a software prototype. Secure-element hardware, attestation, NFC pairing, recovery, and hardware VPN keys still require integration. It does not protect the browser Vault.' : 'Device verification status is provided by the configured service.')}</p><Link to="/vault" className="btn btn-ghost btn-sm">Open UFI Vault</Link></div>}</section>
+        </>}
       </div>}
     </div>
   </Layout>;
