@@ -35,7 +35,7 @@ export function createGithubReview({ root, port = 4175, webConfig = () => ({}) }
       const text = readFileSync(marker, 'utf8');
       if (text.startsWith('gitdir: ')) prefix = ['--git-dir=' + path.relative(cwd, path.resolve(cwd, text.slice(8).trim())), '--work-tree=.'];
     } catch { /* Normal repository directory. */ }
-    return run(process.env.GIT_BINARY || 'git', [...prefix, '-c', 'gc.auto=0', ...args], cwd);
+    return run(process.env.GIT_BINARY || 'git', [...prefix, '-c', 'gc.auto=0', '-c', 'core.longpaths=true', ...args], cwd);
   };
 
   async function checkout(branch) {
