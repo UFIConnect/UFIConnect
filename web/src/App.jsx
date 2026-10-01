@@ -80,7 +80,7 @@ const NotFound = lazy(() => import('./pages/NotFound'));
 const SearchGuide = lazy(() => import('./pages/SearchGuide'));
 // Maps is the 3D source map, for review in the local website preview first.
 // Only the dev server (npm run office:release-local) has it; builds leave it out.
-const LocalMaps = import.meta.env.DEV ? lazy(() => import('./pages/LocalMaps')) : null;
+const Maps = import.meta.env.DEV ? lazy(() => import('./pages/Maps')) : null;
 
 function AnalyticsPrivacyControls() {
   return <Suspense fallback={null}><AnalyticsPrivacy /></Suspense>;
@@ -262,7 +262,7 @@ export default function App() {
 
       <Route path="/saved/:kind" element={<RequireAuth><RequireOnboarding><SavedItems /></RequireOnboarding></RequireAuth>} />
       <Route path="/groups/post" element={<RequireAuth><RequireOnboarding><GroupPost /></RequireOnboarding></RequireAuth>} />
-      {LocalMaps && <Route path="/maps" element={<LocalMaps />} />}
+      {Maps && <Route path="/maps" element={<Maps />} />}
 
       {/* Agent Control Room — live on public domain */}
       <Route path="/hq"     element={<Navigate to="/command-center" replace />} />

@@ -1,0 +1,9 @@
+.lc-3d-wrap { position:relative; }
+.lc-3d-scene,.lc-3d-loading { width:100%; height:clamp(420px,70vh,780px); }
+/* Phones get a squarer canvas so the centred city fills it instead of floating in empty sky. */
+@media (max-width:760px){ .lc-3d-scene,.lc-3d-loading { height:clamp(340px,118vw,72vh); } }
+.lc-3d-loading { display:grid; place-items:center; color:#a7bbcb; }
+.lc-3d-scene canvas { display:block; width:100%; height:100%; touch-action:none; outline-offset:-4px; }
+.lc-3d-navigation { position:absolute; left:12px; right:12px; bottom:36px; display:flex; align-items:center; gap:8px; pointer-events:none; }
+.lc-3d-navigation button { pointer-events:auto; width:34px; height:34px; border-radius:8px; border:1px solid #446074; background:#102431; color:#e2eff4; font-size:21px; }
+.lc-3d-navigation span { padding:7px 10px; border-radius:7px; background:#102431dd; color:#cbdde6; font-size:11px; }

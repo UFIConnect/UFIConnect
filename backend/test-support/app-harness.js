@@ -11,6 +11,9 @@ const jwt = require('jsonwebtoken');
 async function createAppHarness({ env = {}, connected = false, query, modules = {} } = {}) {
   const entry = path.resolve(__dirname, '../index.js');
   const localRequire = createRequire(entry);
+  // Cold SDK loading can exceed the route VM's execution limit on Windows.
+  // Load the storage module before entering the timed application context.
+  localRequire('./generated-media');
   const queries = [];
   const errors = [];
   const db = {

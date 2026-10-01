@@ -82,6 +82,17 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
     return catalog.allowedPrices.get(idOf(items[0].price)) || null;
   }
   const readSubscription = id => stripe.subscriptions.retrieve(id, { expand: ['latest_invoice'] });
+  async function hasPaidInvoice(subscription) {
+    if (subscription.status === 'trialing') return true;
+    const invoice = typeof subscription.latest_invoice === 'string'
+      ? await stripe.invoices.retrieve(subscription.latest_invoice) : subscription.latest_invoice;
+    // Stripe opens each renewal as a draft or open invoice while the
+    // subscription stays active; a failed renewal moves it to past_due. Only a
+    // first invoice (or an invoice sent for manual payment) must be paid first.
+    const renewing = subscription.status === 'active' && subscription.collection_method !== 'send_invoice'
+      && ['draft', 'open'].includes(invoice?.status) && RENEWALS.has(invoice?.billing_reason);
+    return subscription.status === 'trialing' || invoice?.status === 'paid' || renewing;
+  }
   async function applySubscription(client, row, subscription, catalog, { allowLink = false } = {}) {
     if (!checkOwner(subscription, row)) return 'customer_mismatch';
     const tier = tierFor(subscription, catalog);
@@ -94,14 +105,7 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
     // A delayed checkout/cancellation for an old subscription must never
     // replace or revoke the newer subscription in the same membership slot.
     if (current && current !== subscription.id) return 'different_subscription';
-    const invoice = typeof subscription.latest_invoice === 'string'
-      ? await stripe.invoices.retrieve(subscription.latest_invoice) : subscription.latest_invoice;
-    // Stripe opens each renewal as a draft or open invoice while the
-    // subscription stays active; a failed renewal moves it to past_due. Only a
-    // first invoice (or an invoice sent for manual payment) must be paid first.
-    const renewing = subscription.status === 'active' && subscription.collection_method !== 'send_invoice'
-      && ['draft', 'open'].includes(invoice?.status) && RENEWALS.has(invoice?.billing_reason);
-    const paid = subscription.status === 'trialing' || invoice?.status === 'paid' || renewing;
+    const paid = await hasPaidInvoice(subscription);
     const active = !row.billing_closed && !!tier && ACTIVE.has(subscription.status) && paid;
     const linkedId = ENDED.has(subscription.status) ? null : subscription.id;
     let result;
@@ -302,6 +306,46 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
         subscriptions.push({ kind, tier: tierFor(sub, catalog), status: sub.status,
           cancelAtPeriodEnd: sub.cancel_at_period_end === true,
           currentPeriodEnd: sub.current_period_end || sub.items?.data?.[0]?.current_period_end || null });
+      }
+      // Older checkouts predate our durable attempt records. A missed webhook
+      // must not leave their paying customer permanently on Free. Recover only
+      // current, paid subscriptions on this member's persisted Stripe customer;
+      // a plan label, email match, or subscription supplied by the browser is
+      // never enough to grant access.
+      if (row.stripe_customer_id && !row.billing_closed
+        && (!row.stripe_subscription_id || !row.resume_builder_subscription_id)) {
+        const customer = await stripe.customers.retrieve(row.stripe_customer_id);
+        if (customer.deleted || (customer.metadata?.uficonnect_user_id && customer.metadata.uficonnect_user_id !== row.id)) {
+          throw fault(409, 'Billing account ownership needs review.');
+        }
+        const recovered = new Map();
+        let inspected = 0;
+        for await (const candidate of stripe.subscriptions.list({ customer: row.stripe_customer_id, status: 'all', limit: 100 })) {
+          if (++inspected > 100) throw fault(409, 'Subscription history needs review. Use Manage billing for help.');
+          const candidateTier = tierFor(candidate, catalog);
+          if (!candidateTier || !ACTIVE.has(candidate.status) || !checkOwner(candidate, row)) continue;
+          const kind = candidateTier === 'resume_builder' ? 'resume_builder' : 'plan';
+          if (kind === 'plan' ? row.stripe_subscription_id : row.resume_builder_subscription_id) continue;
+          // Read current state, including the invoice, rather than trusting the
+          // list snapshot if a cancellation or payment update is in progress.
+          const sub = await readSubscription(candidate.id);
+          const tier = tierFor(sub, catalog);
+          if (!tier || (tier === 'resume_builder') !== (kind === 'resume_builder')
+            || !checkOwner(sub, row) || !ACTIVE.has(sub.status) || !await hasPaidInvoice(sub)) continue;
+          if (recovered.has(kind) && recovered.get(kind).id !== sub.id) {
+            throw fault(409, 'Multiple active subscriptions need review. Use Manage billing before starting another checkout.');
+          }
+          recovered.set(kind, sub);
+        }
+        for (const [kind, sub] of recovered) {
+          await applySubscription(client, row, sub, catalog, { allowLink: true });
+          // Replace a just-ended membership's summary with its recovered one.
+          const previous = subscriptions.findIndex(item => item.kind === kind);
+          if (previous !== -1) subscriptions.splice(previous, 1);
+          subscriptions.push({ kind, tier: tierFor(sub, catalog), status: sub.status,
+            cancelAtPeriodEnd: sub.cancel_at_period_end === true,
+            currentPeriodEnd: sub.current_period_end || sub.items?.data?.[0]?.current_period_end || null });
+        }
       }
       updated = row;
       return { plan: row.plan || 'free', resumeBuilderAddon: !!row.resume_builder_addon,

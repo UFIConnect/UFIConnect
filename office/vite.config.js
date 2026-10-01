@@ -5,6 +5,7 @@ export default defineConfig(({ mode }) => {
   const releaseLocal = mode === 'release-local';
   return {
     plugins: [react()],
+    resolve: { dedupe: ['react', 'react-dom', 'three'] },
     server: {
       port: releaseLocal ? 4174 : 5174,
       host: releaseLocal ? '127.0.0.1' : undefined,

@@ -557,12 +557,13 @@ services:
     buildFilter:
       paths:
         - web/**
+        - shared/city/**
     domains:
       - uficonnect.org
       - www.uficonnect.org
-    rootDir: web
-    buildCommand: npm ci && npm run build
-    staticPublishPath: dist
+    rootDir: .
+    buildCommand: npm ci --prefix web && npm run build --prefix web
+    staticPublishPath: web/dist
     routes:
       - type: rewrite
         source: /health
@@ -865,11 +866,12 @@ services:
     buildFilter:
       paths:
         - office/**
+        - shared/city/**
     domains:
       - office.uficonnect.org
-    rootDir: office
-    buildCommand: npm ci && npm run build
-    staticPublishPath: dist
+    rootDir: .
+    buildCommand: npm ci --prefix office && npm run build --prefix office
+    staticPublishPath: office/dist
     routes:
       - type: rewrite
         source: /health
