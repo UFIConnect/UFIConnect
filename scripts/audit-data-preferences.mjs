@@ -58,6 +58,8 @@ try {
       if (url.pathname === '/api/office/feed') return route.fulfill({ json: { posts: [{
         id: 'data-preview-' + previewKind, source: previewKind === 'youtube' ? 'youtube' : 'reddit', title: 'Synthetic preview ' + previewKind,
         content: 'A synthetic preview for preference checks.', mediaType: 'video',
+        // The direct-file case uses our repository fixture with explicit playback rights.
+        directPlaybackAuthorized: previewKind === 'file',
         mediaUrl: previewKind === 'youtube' ? 'https://www.youtube.com/watch?v=abcdefghijk' : previewKind === 'vimeo' ? 'https://vimeo.com/123456789' : base + 'media/preparation/tailored-resume.mp4',
         sourceUrl: previewKind === 'youtube' ? 'https://www.youtube.com/watch?v=abcdefghijk' : 'https://example.invalid/video', isExternal: true, createdAt: new Date().toISOString(),
       }], hasMore: false } });
