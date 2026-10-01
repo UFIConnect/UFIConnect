@@ -21148,8 +21148,12 @@ async function getBillingCatalog() {
   const validVpn = isConfiguredVpnConnectorPrice(vpnPrice);
   if (validVpn) allowedPrices.set(vpnPrice.id, 'vpn_connector');
   tiers.vpn_connector = { priceId: validVpn ? vpnPrice.id : null,
-    available: validVpn && vpnPrice.active === true,
-    summary: vpnPrice ? { ...summarizeStripePrice(vpnPrice, 'vpn_connector'), matchesRequiredPrice: validVpn } : null };
+    // A configured Stripe price is not a functioning VPN service. Keep new
+    // purchases locked until provider provisioning and real client connection
+    // are implemented; do not sell saved metadata as VPN connectivity.
+    available: false,
+    unavailableMessage: 'VPN subscriptions are coming soon. Checkout will open when VPN connections are ready.',
+    summary: vpnPrice ? { ...summarizeStripePrice(vpnPrice, 'vpn_connector'), matchesRequiredPrice: validVpn, comingSoon: true } : null };
   const value = { allowedPrices, tiers };
   stripePriceSummaryCache.set(cacheKey, { at: Date.now(), value });
   return value;

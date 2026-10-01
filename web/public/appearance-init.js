@@ -1,4 +1,4 @@
-/* Runs before styles and React. This external script is allowed by script-src 'self'. */
+/* Deferred to keep parsing unblocked; the head render hint applies the saved theme before paint. */
 (() => {
   'use strict';
   const key = 'ufi:appearance';

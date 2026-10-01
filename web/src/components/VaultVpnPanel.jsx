@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowUpRight, Clock3, Globe2, Plus, Power, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
+import { ArrowUpRight, Clock3, Globe2, LockKeyhole, Plus, Power, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import './VaultVpnPanel.css';
 import client from '../api/client';
-import VaultVpnSubscription, { useVpnSubscription } from './VaultVpnSubscription';
+import VaultVpnSubscription from './VaultVpnSubscription';
 
 const LOCAL_PREVIEW = import.meta.env.VITE_VAULT_LOCAL_PREVIEW === 'true' && typeof window !== 'undefined' && ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
 const PLATFORMS = { windows: 'Windows', linux: 'Linux', ios: 'iOS', android: 'Android' };
@@ -23,8 +23,8 @@ function dateLabel(value) {
   return new Date(value).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
-export default function VaultVpnPanel({ accountId, activityTarget }) {
-  const billing = useVpnSubscription(accountId, LOCAL_PREVIEW);
+export default function VaultVpnPanel({ accountId, activityTarget, subscriptionTarget, billing }) {
+  const connectorAccess = LOCAL_PREVIEW || billing.active;
   const [platform, setPlatform] = useState(devicePlatform);
   const [state, setState] = useState(null);
   const [selected, setSelected] = useState('');
@@ -82,10 +82,11 @@ export default function VaultVpnPanel({ accountId, activityTarget }) {
   const countries = [...new Set(platformLocations.map(item => item.country))].sort();
   const connected = Boolean(useLocalAdapter && profile?.status === 'connected');
   const pending = ['connecting', 'disconnecting'].includes(profile?.status);
-  const status = !useLocalAdapter ? 'Managed on your device' : connected ? 'Connected' : pending ? 'Pending' : profile?.status === 'disconnected' ? 'Not connected' : 'Status unavailable';
+  const status = !connectorAccess && !connected ? 'Subscription required' : !useLocalAdapter ? 'Managed on your device' : connected ? 'Connected' : pending ? 'Pending' : profile?.status === 'disconnected' ? 'Not connected' : 'Status unavailable';
   const activity = useLocalAdapter && Array.isArray(state?.activity) ? state.activity.filter(item => ['connect', 'disconnect'].includes(item.action) && Number.isFinite(new Date(item.timestamp).getTime())) : [];
 
   async function changeConnection() {
+    if (!connected && !connectorAccess) return;
     if (!useLocalAdapter || !profile || busy || !(connected ? profile.canDisconnect : profile.canConnect)) return;
     const request = generation.current;
     const action = connected ? 'disconnect' : 'connect';
@@ -144,12 +145,11 @@ export default function VaultVpnPanel({ accountId, activityTarget }) {
       <div className="vault-panel-heading"><span className="vault-eyebrow"><Globe2 size={15} /> CONNECTION</span>{localDesktop && <button className="vault-icon-button" type="button" aria-label="Refresh VPN status" disabled={busy} onClick={readStatus}><RefreshCw size={15} /></button>}</div>
       <div className="vault-vpn-heading"><h2 id="vault-vpn-title">Your VPN</h2><span className={`vault-status${connected ? ' is-connected' : ''}`}><i />{status}</span></div>
       <div className="vault-vpn-quick-action">
-        {useLocalAdapter ? <button type="button" className="vault-button vault-button--full" disabled={busy || pending || !state?.available || !(connected ? profile?.canDisconnect : profile?.canConnect)} onClick={changeConnection}><Power size={19} />{busy || pending ? 'Checking connection…' : connected ? 'Disconnect VPN' : 'Connect VPN'}</button>
+        {!connectorAccess && !connected ? <button type="button" className="vault-button vault-button--full" disabled><LockKeyhole size={19} />VPN locked</button> : useLocalAdapter ? <button type="button" className="vault-button vault-button--full" disabled={busy || pending || !state?.available || !(connected ? profile?.canDisconnect : profile?.canConnect)} onClick={changeConnection}><Power size={19} />{busy || pending ? 'Checking connection…' : connected ? 'Disconnect VPN' : 'Connect VPN'}</button>
           : platform === 'windows' && devicePlatform() === 'windows' ? <a className="vault-button vault-button--full" href="ms-settings:network-vpn"><Power size={19} />Open VPN controls</a>
             : <button type="button" className="vault-button vault-button--full" onClick={() => { setGuideOpen(true); setSetupOpen(true); }}><Power size={19} />Open VPN connection steps</button>}
-        <p className="vault-footnote">{useLocalAdapter ? profile ? `Uses ${profile.name}. Change your profile in setup below.` : 'Choose an existing profile in setup below.' : platform === 'windows' && devicePlatform() === 'windows' ? 'Opens Windows VPN settings. Your device confirms the connection.' : 'Connect in your existing VPN app. Your browser cannot switch the VPN on or confirm its status.'}</p>
+        <p className="vault-footnote">{!connectorAccess && !connected ? <>Subscribe in <a href="#vpn-subscription-title">A space that’s yours</a> to unlock UFI’s connector tools. Your existing VPN app remains available on your device.</> : useLocalAdapter ? profile ? `Uses ${profile.name}. Change your profile in setup below.` : 'Choose an existing profile in setup below.' : platform === 'windows' && devicePlatform() === 'windows' ? 'Opens Windows VPN settings. Your device confirms the connection.' : 'Connect in your existing VPN app. Your browser cannot switch the VPN on or confirm its status.'}</p>
       </div>
-      <VaultVpnSubscription billing={billing} />
       <details className="vault-vpn-setup" open={setupOpen} onToggle={event => setSetupOpen(event.currentTarget.open)}>
       <summary>Device, locations and setup</summary>
       <div className="vault-platform-switch" role="group" aria-label="VPN device">{Object.entries(PLATFORMS).map(([id, label]) => <button key={id} type="button" disabled={busy} aria-pressed={platform === id} onClick={() => setPlatform(id)}>{label}</button>)}</div>
@@ -157,8 +157,8 @@ export default function VaultVpnPanel({ accountId, activityTarget }) {
       <div className={`vault-connection-art${connected ? ' is-connected' : ''}`} aria-hidden="true"><div /><div /><ShieldCheck size={48} strokeWidth={1.3} /></div>
 
       <div className="vault-vpn-guide vault-vpn-providers">
-        <h3>Use Proton VPN</h3>
-        <p>Already subscribed? Sign in to the official Proton VPN app with your existing account. Choose a country in the app and connect there, then return to Your Vault.</p>
+        <h3>Optional: your existing Proton VPN</h3>
+        <p>This is separate from the planned UFI VPN service. Already subscribed to Proton? Sign in to its official app, choose a country and connect there. These links remain free and do not activate UFI VPN.</p>
         <a className="vault-text-button" href="https://protonvpn.com/download" target="_blank" rel="noopener noreferrer">Official Proton VPN apps <ArrowUpRight size={13} /></a>
         <details><summary>Connection protection</summary>
           <p>{platform === 'android' ? 'In Android VPN settings, enable Always-on VPN and Block connections without VPN for Proton VPN.' : platform === 'ios' ? 'Enable Kill switch in Proton VPN Settings → Security Options. Some Apple services can still bypass the VPN for DNS requests.' : 'Enable Kill switch in Proton VPN settings. Advanced kill switch can also block traffic while deliberately disconnected.'}</p>
@@ -178,12 +178,12 @@ export default function VaultVpnPanel({ accountId, activityTarget }) {
         <p className="vault-footnote">Disconnect an active profile before changing countries. Use your provider’s kill switch to protect traffic between connections.</p>
       </> : <div className="vault-vpn-guide">
         {location && <p>Selected profile: <strong>{location.name}</strong> · {location.country}</p>}
-        <button type="button" className="vault-button vault-button--full vault-button--secondary" aria-expanded={guideOpen} onClick={() => setGuideOpen(!guideOpen)}><Power size={17} />{guideOpen ? 'Hide connection steps' : 'Connect using device settings'}</button>
-        {guideOpen && <ol><li>Open your existing VPN app, or <strong>{GUIDES[platform].settings}</strong>.</li><li>{location ? <>Select <strong>{location.name}</strong> and its configured {location.country} location.</> : 'Select a profile already configured by your VPN provider or organization.'} Connect or disconnect there.</li><li>Confirm the VPN status in the app or device settings, then return to Your Vault.</li></ol>}
+        <button type="button" className="vault-button vault-button--full vault-button--secondary" disabled={!connectorAccess} aria-expanded={guideOpen && connectorAccess} onClick={() => setGuideOpen(!guideOpen)}><Power size={17} />{guideOpen && connectorAccess ? 'Hide connection steps' : 'Connect using device settings'}</button>
+        {guideOpen && connectorAccess && <ol><li>Open your existing VPN app, or <strong>{GUIDES[platform].settings}</strong>.</li><li>{location ? <>Select <strong>{location.name}</strong> and its configured {location.country} location.</> : 'Select a profile already configured by your VPN provider or organization.'} Connect or disconnect there.</li><li>Confirm the VPN status in the app or device settings, then return to Your Vault.</li></ol>}
         <p className="vault-footnote">The public website cannot control or verify an operating system VPN. {['windows', 'linux'].includes(platform) ? 'In-page controls are available only in the separate local companion on a supported computer.' : 'Your existing VPN app or installed profile handles the connection.'}</p>
       </div>}
       {(error || profile?.unavailableReason || state?.message) && <p className="vault-helper" role="status">{error || profile?.unavailableReason || state?.message}</p>}
-      {platform === 'windows' && devicePlatform() === 'windows' && <a className="vault-text-button" href="ms-settings:network-vpn">Open Windows VPN settings <ArrowUpRight size={13} /></a>}
+      {connectorAccess && platform === 'windows' && devicePlatform() === 'windows' && <a className="vault-text-button" href="ms-settings:network-vpn">Open Windows VPN settings <ArrowUpRight size={13} /></a>}
       <a className="vault-text-button" href={GUIDES[platform].link} target="_blank" rel="noopener noreferrer">{PLATFORMS[platform]} VPN guidance <ArrowUpRight size={13} /></a>
       {['windows', 'linux'].includes(platform) && <a className="vault-text-button" href="https://github.com/UFIConnect/UFIConnect/blob/main/docs/VAULT-VPN-CONNECTOR.md" target="_blank" rel="noopener noreferrer">Set up the local companion <ArrowUpRight size={13} /></a>}
 
@@ -199,6 +199,7 @@ export default function VaultVpnPanel({ accountId, activityTarget }) {
       <p className="vault-footnote">{LOCAL_PREVIEW ? 'Preview labels stay in memory for this visit.' : 'Device types, profile labels and country labels are saved in your UFI account. You can read or remove existing labels after canceling.'} Never enter passwords or keys as labels. No VPN credentials, browsing history, destinations, or IP addresses are sent to UFIconnect.</p>
       </details>
     </section>
+    {subscriptionTarget && createPortal(<VaultVpnSubscription billing={billing} />, subscriptionTarget)}
     {activityTarget && createPortal(<section className="vault-panel vault-activity" aria-labelledby="vault-activity-title">
       <div className="vault-panel-heading"><h2 id="vault-activity-title">Connection activity</h2><Clock3 size={16} /></div>
       <p className="vault-helper">{useLocalAdapter ? 'Local connection requests and timestamps only. Cleared when the local companion stops.' : 'Your device and VPN provider manage this activity. Your Vault cannot read it from the public website.'}</p>

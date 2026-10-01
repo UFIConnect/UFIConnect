@@ -46,6 +46,7 @@ try {
       copyright: { reports: [] }, security: { credentialStorage: 'Connected credentials are encrypted on the server.', auditRetentionDays: 30, rules: [], vault: vaultStatus } };
     let refreshes = 0;
     let outage = false;
+    let vpnPaid = false;
     page.on('pageerror', error => errors.push(error.message));
     page.on('request', request => requests.push({ url: request.url(), body: request.postData() || '' }));
     await page.addInitScript(() => localStorage.setItem('uficonnect.analytics.consent.v1', 'denied'));
@@ -60,6 +61,9 @@ try {
         if (endpoint === '/readyz' || endpoint === '/health') return route.fulfill({ headers, json: { status: 'ok' } });
         if (endpoint === '/auth/session') return route.fulfill({ headers, json: { token: app.token(memberId), profile: (await app.request('/profile', { userId: memberId })).data } });
         if (endpoint === '/security/vault/status') return route.fulfill({ headers, json: vaultStatus });
+        if (endpoint === '/billing/config') return route.fulfill({ headers, json: { paymentsReady: false, tiers: { vpn_connector: false }, pricing: { vpn_connector: { unitAmount: 394, currency: 'USD', interval: 'month', intervalCount: 1, comingSoon: true } } } });
+        if (endpoint === '/billing/status') return route.fulfill({ headers, json: { plan: 'free', vpnConnectorAddon: vpnPaid, hasBillingAccount: vpnPaid, subscriptions: vpnPaid ? [{ kind: 'vpn_connector', status: 'active' }] : [] } });
+        if (endpoint === '/vault/vpn/locations') return route.fulfill({ headers, json: { locations: [] } });
         if (endpoint === '/creator-analytics/report') return route.fulfill({ status: outage ? 503 : 200, headers,
           json: outage ? { message: 'Analytics temporarily unavailable.' } : report });
         if (endpoint === '/creator-analytics/refresh') { refreshes++; return route.fulfill({ headers, json: { refreshed: true } }); }
@@ -90,24 +94,42 @@ try {
       await page.getByText('Awaiting hardware setup', { exact: true }).waitFor();
       check(await page.locator('.vault-primary-column .vault-activity').count() === 1, 'Connection activity appears once in the left Vault column');
       check(await page.locator('.vault-primary-column .vault-hardware-status').count() === 1, 'Hardware verification appears in the left Vault column');
-      check(await page.getByText('Managed on your device', { exact: true }).count() === 1, 'Public bundle must not claim VPN control');
+      await page.getByRole('button', { name: 'Subscribe — coming soon', exact: true }).waitFor();
+      check(await page.getByRole('button', { name: 'Subscribe — coming soon', exact: true }).isDisabled(), 'VPN checkout remains locked until real service is ready');
+      check(await page.getByRole('button', { name: 'VPN locked', exact: true }).isDisabled(), 'Unsubscribed public VPN controls are locked');
+      check(await page.getByRole('button', { name: 'Create vault', exact: true }).isDisabled(), 'New Vault creation requires an active subscription');
+      check(await page.locator('.vault-unlock-content .vault-vpn-subscription').count() === 1, 'VPN offer is in A space that’s yours');
+      check(await page.locator('.vault-secondary-column .vault-vpn-subscription').count() === 0, 'VPN offer has no duplicate in the right column');
       check(await page.locator('.vault-vpn-quick-action .vault-button').count() === 1, 'VPN has one prominent connection action');
       check(await page.locator('.vault-vpn-setup').evaluate(element => !element.open), 'VPN setup starts collapsed');
+      vpnPaid = true;
+      await page.getByRole('button', { name: 'Check subscription status', exact: true }).click();
+      await page.getByRole('button', { name: 'Manage or cancel subscription', exact: true }).waitFor();
+      check(await page.getByText('Managed on your device', { exact: true }).count() === 1, 'Confirmed billing never fabricates an active VPN tunnel');
       await page.getByText('Device, locations and setup', { exact: true }).click();
       for (const platform of ['Windows', 'Linux', 'iOS', 'Android']) {
         await page.getByRole('group', { name: 'VPN device' }).getByRole('button', { name: platform, exact: true }).click();
         check(await page.getByText('Managed on your device', { exact: true }).count() === 1, `${platform} handoff must not fabricate a connection`);
       }
       check(await page.getByLabel('Your configured countries', { exact: true }).isDisabled(), 'Country switching requires a configured profile');
+      vpnPaid = false;
+      await page.getByRole('button', { name: 'Check subscription status', exact: true }).click();
+      await page.getByRole('button', { name: 'VPN locked', exact: true }).waitFor();
+      check(await page.getByRole('button', { name: 'Connect using device settings', exact: true }).isDisabled(), 'Loss of entitlement locks public connector actions');
       await page.getByRole('navigation', { name: 'Vault pages' }).getByRole('link', { name: 'Device', exact: true }).click();
       check(await page.getByRole('button', { name: 'Orders are not open yet', exact: true }).isDisabled(), 'Device ordering remains locked');
       check(await page.locator('.vault-device-page input,.vault-device-page form').count() === 0, 'Locked ordering does not collect personal or payment details');
       check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Device page fits the viewport');
       await page.screenshot({ path: path.join(output, `public-vault-device-${width}.png`), fullPage: true });
       await page.getByRole('navigation', { name: 'Vault pages' }).getByRole('link', { name: 'Your Vault', exact: true }).click();
+      vpnPaid = true;
+      await page.getByRole('button', { name: 'Check subscription status', exact: true }).click();
+      await page.getByRole('button', { name: 'Manage or cancel subscription', exact: true }).waitFor();
       await page.getByLabel('Vault passphrase', { exact: true }).fill(vaultPassphrase);
       await page.getByLabel('Confirm passphrase', { exact: true }).fill(vaultPassphrase);
       await page.getByRole('button', { name: 'Create vault', exact: true }).click();
+      await page.locator('.vault-access-home .vault-vpn-subscription').waitFor();
+      check(await page.locator('.vault-access-home .vault-vpn-subscription').count() === 1, 'Subscription stays visible after Vault unlock');
       await page.getByRole('button', { name: 'Add password', exact: true }).click();
       await page.getByLabel('App or website name', { exact: true }).fill('Synthetic private entry');
       await page.getByLabel('Password', { exact: true }).fill(secret);
@@ -115,11 +137,25 @@ try {
       await page.getByRole('button', { name: 'Details for Synthetic private entry', exact: true }).waitFor();
       const stored = await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }));
       check(![secret, vaultPassphrase, 'Synthetic private entry'].some(value => stored.includes(value)), 'Persisted vault contains no plaintext entry, secret, or passphrase');
+      vpnPaid = false;
+      await page.getByRole('button', { name: 'Check subscription status', exact: true }).click();
+      await page.getByRole('button', { name: 'Subscribe — coming soon', exact: true }).waitFor();
+      check(await page.getByRole('button', { name: 'Add password', exact: true }).isDisabled(), 'Expired entitlement locks new password writes');
       await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
       await page.getByRole('button', { name: 'Unlock vault', exact: true }).waitFor();
+      check(await page.getByRole('button', { name: 'Unlock vault', exact: true }).isEnabled(), 'Existing owners may unlock after subscription expiry');
+      await page.getByLabel('Vault passphrase', { exact: true }).fill(vaultPassphrase);
+      await page.getByRole('button', { name: 'Unlock vault', exact: true }).click();
+      await page.getByRole('button', { name: 'Details for Synthetic private entry', exact: true }).click();
+      check(await page.getByRole('button', { name: 'Save password', exact: true }).isDisabled(), 'Existing password details remain read-only without entitlement');
+      await page.getByRole('button', { name: 'Reveal password', exact: true }).click();
+      check(await page.getByLabel('Password', { exact: true }).inputValue() === secret, 'Expired owners can still read their saved password');
+      await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
+      await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
       memberId = `built-vault-b-${width}`;
       await page.reload();
       await page.getByRole('button', { name: 'Create vault', exact: true }).waitFor();
+      check(await page.getByRole('button', { name: 'Create vault', exact: true }).isDisabled(), 'A different unpaid account does not inherit Vault write access');
       check(await page.getByRole('button', { name: 'Details for Synthetic private entry', exact: true }).count() === 0, 'Another account never inherits the first account vault');
       await page.screenshot({ path: path.join(output, `public-vault-${width}.png`), fullPage: true });
       await page.goto(origin + '/analytics');

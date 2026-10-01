@@ -211,7 +211,7 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
     available();
     const catalog = await getCatalog();
     const priceId = catalog.tiers[tier]?.available && catalog.tiers[tier].priceId;
-    if (!priceId) throw fault(503, 'This subscription is not available yet.');
+    if (!priceId) throw fault(503, catalog.tiers[tier]?.unavailableMessage || 'This subscription is not available yet.');
     const slot = slotFor(tier);
     // Persist the attempt BEFORE the remote API call. A crash after Stripe
     // accepts a request reuses this key, including on a different API worker.

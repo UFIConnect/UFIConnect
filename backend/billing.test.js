@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { before, after, beforeEach, test } = require('node:test');
 const { PGlite } = require('@electric-sql/pglite');
 const { BILLING_SCHEMA, createBilling, quantityOneAmount, validRecurringPrice } = require('./billing');
-const { createAppHarness } = require('./test-support/app-harness');
+const { createAppHarness, member } = require('./test-support/app-harness');
 
 const A = 'a0000000-0000-4000-8000-000000000001';
 const B = 'b0000000-0000-4000-8000-000000000002';
@@ -178,15 +178,20 @@ test('VPN location metadata is gated, isolated by owner, bounded, exportable and
   assert.equal((await locations.list(A)).locations.length, 39);
 });
 
-test('VPN billing config requires exactly USD 3.94 monthly licensed flat pricing', async t => {
+test('VPN validates USD 3.94 monthly pricing but new checkout stays locked until connection service is ready', async t => {
   for (const override of [{}, { currency: 'eur' }, { unit_amount: 395 }, { active: false }, { recurring: { interval: 'month', interval_count: 2 } }, { recurring: { interval: 'month', interval_count: 1, usage_type: 'metered' } }]) {
     const app = await createAppHarness({ connected: true,
       env: { STRIPE_SECRET_KEY: 'sk_test_fixture', STRIPE_WEBHOOK_SECRET: 'whsec_fixture', STRIPE_VPN_CONNECTOR_PRICE_ID: 'price_vpn' },
       modules: { stripe: () => ({ prices: { async retrieve() { return { id: 'price_vpn', type: 'recurring', active: true, currency: 'usd', unit_amount: 394, recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' }, ...override }; } } }) },
     });
     t.after(() => app.close());
+    app.seedUser(member('vpn-buyer'));
     const result = await app.request('/billing/config');
-    assert.equal(result.status, 200); assert.equal(result.data.tiers.vpn_connector, Object.keys(override).length === 0);
+    assert.equal(result.status, 200); assert.equal(result.data.tiers.vpn_connector, false);
+    assert.equal(result.data.pricing.vpn_connector.matchesRequiredPrice, Object.keys(override).length === 0 || Object.keys(override).every(key => key === 'active'));
+    assert.equal(result.data.pricing.vpn_connector.comingSoon, true);
+    const checkout = await app.request('/billing/create-checkout-session', { method: 'POST', userId: 'vpn-buyer', body: { tier: 'vpn_connector' } });
+    assert.equal(checkout.status, 503); assert.match(checkout.data.message, /coming soon/);
     assert.equal((await app.request('/vault/vpn/locations')).status, 401);
   }
 });
