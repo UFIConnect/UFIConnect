@@ -1691,7 +1691,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
           {isJob && <span style={{ fontSize: '.65rem', fontWeight: 700, color: '#059669', background: '#ECFDF5', padding: '2px 8px', borderRadius: 5 }}>Job</span>}
           {post.group && <span style={{ fontSize: '.68rem', fontWeight: 700, background: c.bg, color: c.text, padding: '2px 8px', borderRadius: 5 }}>{post.group.name}</span>}
           <LocationMatchBadge post={post} />
-          {post.fromJoinedGroup && <span style={{ fontSize: '.68rem', color: 'var(--muted)' }}>your group</span>}
+          {post.fromJoinedGroup && <span title={isExternal ? 'Following this source in UFIconnect.' : 'You joined this UFIconnect group.'} style={{ fontSize: '.68rem', color: 'var(--muted)' }}>{isExternal ? 'Following source' : 'Joined'}</span>}
         </div>
       )}
       {reportOpen && (
