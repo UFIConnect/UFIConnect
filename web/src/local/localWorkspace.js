@@ -1,13 +1,17 @@
 import { useEffect, useState } from 'react';
 
 export const CENTERS = [
+  { id: 'sports', label: 'Sports center', description: 'Follow your teams and organize your match calendar.', topic: 'Sports' },
+  { id: 'gym', label: 'Gym', description: 'Keep workout plans and notes, and explore fitness posts and groups.', topic: 'Fitness' },
+  { id: 'yoga', label: 'Yoga', description: 'Save practice notes and discover yoga posts and groups.', topic: 'Yoga' },
+  { id: 'cooking', label: 'Cooking center', description: 'Save recipes, plan meals, and scale ingredient quantities.', topic: 'Cooking' },
+  { id: 'hikes', label: 'Hikes', description: 'Plan hikes, keep trail notes, and explore hiking posts and groups.', topic: 'Hiking' },
+  { id: 'dating', label: 'Dating', description: 'Keep personal notes and explore dating conversations and groups.', topic: 'Dating' },
   { id: 'monetization', label: 'Monetization', description: 'Plan source revenue, track reported earnings, and compare monetization ideas.', topic: 'Business' },
   { id: 'deep-learning', label: 'Deep learning', description: 'Prepare source datasets and model experiments with clear training and evaluation plans.', topic: 'AI & Machine Learning' },
   { id: 'source-analytics', label: 'Analytics', route: '/analytics', description: 'View UFI activity, authorized source analytics, and your imported reports.', topic: 'Technology' },
   { id: 'writing', label: 'Article writing', description: 'Draft an article, then review it in the UFI composer.', topic: 'Writing' },
   { id: 'research', label: 'Research center', description: 'Keep sources and notes together in a research notebook.', topic: 'Science' },
-  { id: 'cooking', label: 'Cooking center', description: 'Save recipes, plan meals, and scale ingredient quantities.', topic: 'Cooking' },
-  { id: 'sports', label: 'Sports center', description: 'Follow your teams and organize your match calendar.', topic: 'Sports' },
   { id: 'developer', label: 'Developer', description: 'Write a frontend prototype and preview it in a sandbox.', topic: 'Technology' },
   { id: 'developer-analytics', label: 'Developer analytics', description: 'See activity from your local workspaces.', topic: 'Technology' },
   { id: 'backend', label: 'Backend developer', description: 'Design request examples and validate JSON payloads.', topic: 'Technology' },
