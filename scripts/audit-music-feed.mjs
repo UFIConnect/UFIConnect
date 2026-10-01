@@ -29,7 +29,8 @@ try {
     await page.route('**/api/office/feed/music?*', async route => {
       calls.push(new URL(route.request().url()).searchParams);
       const prefix = calls.at(-1).get('genre') ? 'genre-' : 'music-';
-      await route.fulfill({ json: { posts: Array.from({ length: 4 }, (_, i) => ({ id: prefix + i, source: 'reddit', title: 'Acoustic song ' + i, content: 'Original test media', mediaType: 'video', mediaUrl: server.resolvedUrls.local[0] + 'media/preparation/tailored-resume.mp4', sourceUrl: 'https://example.com/song', isExternal: true, createdAt: '2026-09-01T12:00:00Z' })), hasMore: false } });
+      // This is our local fixture asset; source labels exercise filter behavior only.
+      await route.fulfill({ json: { posts: Array.from({ length: 4 }, (_, i) => ({ id: prefix + i, source: 'reddit', title: 'Acoustic song ' + i, content: 'Original test media', mediaType: 'video', directPlaybackAuthorized: true, mediaUrl: server.resolvedUrls.local[0] + 'media/preparation/tailored-resume.mp4', sourceUrl: 'https://example.com/song', isExternal: true, createdAt: '2026-09-01T12:00:00Z' })), hasMore: false } });
     });
     await auditNavigate(page, server.resolvedUrls.local[0] + 'music');
     await page.getByRole('button', { name: 'Music', exact: true }).waitFor();

@@ -77,6 +77,8 @@ try {
     let overloadFailureAt = 0;
     const makePost = (index) => ({ id: `${phase}-${index}`, source: phase === 'native' ? 'reddit' : 'youtube',
       title: `Controlled video ${index}`, content: 'Local playback and scheduling fixture.', mediaType: 'video', videoDurationSeconds: 30,
+      // The native phase plays the repository's own fixture, with explicit playback rights.
+      directPlaybackAuthorized: phase === 'native',
       ...(phase === 'native' ? { mediaUrl: `${origin}media/preparation/tailored-resume.mp4?audit=${index}` }
         : { embedId: `audit${String(index).padStart(6, '0')}`, mediaUrl: `https://www.youtube.com/watch?v=audit${String(index).padStart(6, '0')}` }),
       sourceUrl: 'https://example.com/original', isExternal: true, createdAt: new Date(Date.UTC(2026, 8, 22) - index * 1000).toISOString() });

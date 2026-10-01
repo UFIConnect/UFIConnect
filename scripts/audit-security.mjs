@@ -102,7 +102,13 @@ async function checkProtectedField(page, selector, autoComplete) {
     return element.type === 'password';
   }), 'A hidden tab must conceal the password synchronously');
   await toggle.click();
+  // PasswordInput restores the reveal selection on its next animation frame.
+  // Playwright fill('') selects all, then sends Delete in a separate browser
+  // operation. Finish that restoration before it can overwrite select-all.
+  await input.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+  check(await input.getAttribute('type') === 'text', 'The clearing check must begin with a revealed password');
   await input.fill('');
+  check(await input.inputValue() === '', 'The clear operation must actually remove the complete password');
   check(await input.getAttribute('type') === 'password', 'Clearing a field must reset password visibility');
   await input.fill(fixturePassword);
 }

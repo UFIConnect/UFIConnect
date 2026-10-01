@@ -92,7 +92,7 @@ export default function Analytics() {
   async function refresh() {
     setRefreshing(true); setError(''); setNotice('');
     try {
-      await client.post('/creator-analytics/refresh', { days });
+      await client.post('/creator-analytics/refresh', { days }, { timeout: 30000 });
       if (await loadReport()) setNotice('Refresh finished. Each source shows its latest sync status.');
     } catch (err) {
       setError(err.response?.data?.message || 'Source refresh could not finish. Try again.');

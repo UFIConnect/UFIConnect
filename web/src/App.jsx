@@ -71,6 +71,8 @@ const PrivacyPolicy  = lazy(() => import('./pages/PrivacyPolicy'));
 const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 const ChildSafety    = lazy(() => import('./pages/ChildSafety'));
 const Sources        = lazy(() => import('./pages/Sources'));
+const Analytics = lazy(() => import('./pages/Analytics'));
+const Vault = lazy(() => import('./pages/Vault'));
 const CommandCenter  = lazy(() => import('./pages/CommandCenter'));
 const ResumeBuilder  = lazy(() => import('./pages/ResumeBuilder'));
 const CoverLetterPreview = lazy(() => import('./pages/CoverLetterPreview'));
@@ -88,6 +90,11 @@ const Maps = lazy(() => import('./pages/Maps'));
 
 function AnalyticsPrivacyControls() {
   return <Suspense fallback={null}><AnalyticsPrivacy /></Suspense>;
+}
+
+function VaultRoute() {
+  const { profile } = useAuth();
+  return profile?.id ? <Vault key={profile.id} accountId={profile.id} /> : <SessionLoading />;
 }
 
 function RequireAuth({ children }) {
@@ -286,6 +293,8 @@ export default function App() {
       <Route path="/hq"     element={<Navigate to="/command-center" replace />} />
       <Route path="/agents" element={<Navigate to="/command-center" replace />} />
 
+      <Route path="/analytics" element={<RequireAuth><RequireOnboarding><Analytics /></RequireOnboarding></RequireAuth>} />
+      <Route path="/vault" element={<RequireAuth><RequireOnboarding><VaultRoute /></RequireOnboarding></RequireAuth>} />
       {/* Legal */}
       <Route path="/privacy" element={<PrivacyPolicy />} />
       <Route path="/terms" element={<TermsOfService />} />

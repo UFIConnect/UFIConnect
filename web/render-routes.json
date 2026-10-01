@@ -116,6 +116,46 @@
   },
   {
     "type": "rewrite",
+    "source": "/analytics",
+    "destination": "/analytics/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/analytics/",
+    "destination": "/analytics/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/vault",
+    "destination": "/vault/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/vault/",
+    "destination": "/vault/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/vault/device",
+    "destination": "/vault/device/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/vault/device/",
+    "destination": "/vault/device/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/maps",
+    "destination": "/maps/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/maps/",
+    "destination": "/maps/index.html"
+  },
+  {
+    "type": "rewrite",
     "source": "/people",
     "destination": "/people/index.html"
   },
@@ -323,6 +363,16 @@
     "type": "rewrite",
     "source": "/saved/jobs/",
     "destination": "/saved/jobs/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/centers/:kind",
+    "destination": "/app.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/centers/:kind/",
+    "destination": "/app.html"
   },
   {
     "type": "rewrite",

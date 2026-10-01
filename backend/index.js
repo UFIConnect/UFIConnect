@@ -2982,8 +2982,10 @@ async function fetchDevToByTag(tag) {
     // that lives entirely on a separate, unfiltered (no ?tag= support)
     // /api/videos endpoint. Merged in here rather than a whole new source
     // worker since it's genuinely the same platform/community, just a
-    // different content type. Use the original YouTube player where available.
-    // Direct copies without recorded playback rights are not selected.
+    // different content type. Real videos, not embeds: video_source_url is
+    // always a youtube.com/youtu.be link, cloudinary_video_url when set is a
+    // self-hosted direct file — either way playable the same way any other
+    // YouTube/direct-file video post already is.
     try {
       const videos = await fetchJSON('https://dev.to/api/videos?per_page=24');
       // The endpoint exposes no publish date at all (unlike /api/articles'
@@ -3515,7 +3517,6 @@ async function fetchMediumByTag(tag) {
   }
 }
 
-// YouTube content uses its official Data API and source-hosted RSS only.
 // --- YouTube: channel RSS feeds (no API key needed, served by YouTube directly) -
 // Organized by topic so each keyword query hits the right channels.
 const TOPIC_YT_CHANNELS = {
@@ -3883,9 +3884,8 @@ function youtubeApiBlocked() {
 // official Shorts search filter in the public API), then confirms each
 // result is actually short via a batched contentDetails lookup rather than
 // trusting the query bias alone (a channel can title a regular video
-// "... #shorts" without it being one). Requires YOUTUBE_API_KEY — the RSS/
-// channel feeds below have no duration field to filter on at all, so
-// this tier simply contributes nothing (not an error) when no key is set.
+// "... #shorts" without it being one). Requires YOUTUBE_API_KEY; this tier
+// contributes no results when no key is set.
 async function fetchYouTubeShortsByKeyword(keyword, apiKey) {
   try {
     const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(keyword + ' #shorts')}&type=video&videoDuration=short&maxResults=25&key=${encodeURIComponent(apiKey)}&order=date&relevanceLanguage=en`;
@@ -27444,6 +27444,7 @@ const creatorAnalytics = createCreatorAnalytics({ db, getUser: getPublicTargetUs
   localPreview: process.env.NODE_ENV === 'test' && process.env.CREATOR_ANALYTICS_LOCAL_PREVIEW === 'true',
   getLocalPosts: () => posts, getLocalComments: () => postComments, vaultStatus: id => ufiVault.status(id) });
 registerCreatorAnalyticsRoutes(app, {service:creatorAnalytics,authenticate,limiter:contentSubmissionLimiter});
+scheduleRecurring(() => creatorAnalytics.prune().catch(() => {}), 60 * 60 * 1000);
 registerUfiVaultRoutes(app, {vault:ufiVault,authenticate,limiter:contentSubmissionLimiter});
 require('./source-interactions').registerSourceInteractionRoutes(app, {
   authenticate, limiter: contentSubmissionLimiter, getUser, screenMemberContent,

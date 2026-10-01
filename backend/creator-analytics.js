@@ -196,6 +196,7 @@ function createCreatorAnalytics({ db, getUser, fetchImpl = fetch, env = process.
     if (!db.isConnected()) throw failure(503,'Analytics storage is unavailable.');
     const policy = getSourcePolicy('youtube',{env});
     if (!user.socialTokens?.youtube || !policy.enabled || !policy.features.sourceAnalytics) return {refreshed:0,message:'Connect an available analytics source first.'};
+    const capturedConnection = connectionHash(user,'youtube');
     const key = `${id}:${days}`;
     if (inFlight.has(key)) return inFlight.get(key);
     if (inFlight.size >= 20) throw failure(503,'Source refresh is busy. Try again shortly.');
@@ -206,10 +207,10 @@ function createCreatorAnalytics({ db, getUser, fetchImpl = fetch, env = process.
       try { data = {status:'available',...await collectYouTube({user,days,now:now(),fetchImpl,features:policy.features})}; }
       catch (error) { data = {status:error.status===403 ? 'requires_permission':'unavailable',metrics:emptyMetrics(),revenue:{amount:null,currency:null,status:'unavailable'},reason:error.status ? error.message:'Source metrics are temporarily unavailable.'}; }
       const current = await member(id);
-      if (!current.socialTokens?.youtube || connectionHash(current,'youtube') !== connectionHash(user,'youtube')) throw failure(409,'The account connection changed. Refresh again.');
+      if (!current.socialTokens?.youtube || connectionHash(current,'youtube') !== capturedConnection) throw failure(409,'The account connection changed. Refresh again.');
       await db.query(`INSERT INTO creator_source_snapshots(user_id,source,period_days,connection_hash,data,fetched_at) VALUES($1,$2,$3,$4,$5,$6)
         ON CONFLICT(user_id,source,period_days) DO UPDATE SET connection_hash=EXCLUDED.connection_hash,data=EXCLUDED.data,fetched_at=EXCLUDED.fetched_at`,
-      [id,'youtube',days,connectionHash(user,'youtube'),JSON.stringify(data),new Date(now()).toISOString()]);
+      [id,'youtube',days,capturedConnection,JSON.stringify(data),new Date(now()).toISOString()]);
       return {refreshed:data.status==='available'?1:0,status:data.status};
     })();
     inFlight.set(key,run);

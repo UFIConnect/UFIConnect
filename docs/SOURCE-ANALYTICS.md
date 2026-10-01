@@ -6,9 +6,9 @@ The authenticated `/analytics` page covers 18 source capability records, your ow
 
 ## Design inputs
 
-The supplied [source-control brief](<C:/Users/Yosuf/.codex/attachments/c4c1d822-68a1-42cb-95a4-c46c24e5ffbf/Pasted text.txt>) requires official APIs and players, original links, source attribution, runtime capability controls, and source-owned engagement counts. Its example numbers are illustrative and are never seeded as live analytics.
+The supplied source-control brief requires official APIs and players, original links, source attribution, runtime capability controls, and source-owned engagement counts. Its example numbers are illustrative and are never seeded as live analytics.
 
-The supplied [Security Architecture.pdf](<C:/Users/Yosuf/Downloads/Security Architecture.pdf>), **UFI Vault Security Architecture v0.1**, prepared 27 September 2026, is the device-security design baseline. Those two links identify files on the originating workstation; the files are not redistributed with this release. See [the Vault implementation and remaining hardware work](UFI-VAULT-IMPLEMENTATION.md) for the portable engineering record.
+The supplied Security Architecture.pdf, **UFI Vault Security Architecture v0.1**, prepared 27 September 2026, is the device-security design baseline. The original design files are not redistributed with this release. See [the Vault implementation and remaining hardware work](UFI-VAULT-IMPLEMENTATION.md) for the portable engineering record.
 
 ## Counts, playback, and revenue
 

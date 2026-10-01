@@ -93,6 +93,8 @@ try {
           content: 'Practical advice for preparing a clear professional introduction. '.repeat(8),
           sourceUrl: i % 3 === 0 ? 'https://www.youtube.com/watch?v=aaaaaaaaaaa' : 'https://example.org/clip',
           mediaType: 'video', mediaUrl: i % 3 === 0 ? 'https://www.youtube.com/watch?v=aaaaaaaaaaa' : base + 'media/preparation/professional-introduction.mp4',
+          // Source labels test filtering; direct playback uses an authorized local fixture.
+          directPlaybackAuthorized: i % 3 !== 0,
           duration: 45, likesCount: 3, commentsCount: 1,
         })), hasMore: false,
       } });

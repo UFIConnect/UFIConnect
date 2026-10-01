@@ -62,6 +62,16 @@ test('audit omits secrets, retention prunes history, and account deletion cascad
   assert.equal(rows.length,1);assert.ok(!JSON.stringify(rows).includes('must-not-store'));assert.ok(!JSON.stringify(rows).includes('private comment'));
   await pg.query('DELETE FROM users WHERE id=$1',[A]);assert.equal((await pg.query('SELECT * FROM source_interaction_audit')).rows.length,0);
 });
+test('a reconnection during collection cannot attach old metrics to the new connection',async t=>{
+  let users;
+  const fixtureData=await fixture(t,{fetchImpl:async url=>{
+    users[A].socialTokens.youtube='replacement-token';
+    return url.includes('/channels?')?Response.json({items:[{id:'UC'+'a'.repeat(22),statistics:{viewCount:'18'}}]}):new Response('',{status:403});
+  }});
+  users=fixtureData.users;users[A].socialTokens.youtube='original-token';
+  await assert.rejects(fixtureData.service.refresh(A,30),error=>error.status===409);
+  assert.equal((await fixtureData.pg.query('SELECT * FROM creator_source_snapshots')).rows.length,0);
+});
 test('runtime policy switches prevent collector calls and redact previously fetched metrics',async t=>{
   const env={};const urls=[];
   const {service,users}=await fixture(t,{env,fetchImpl:async url=>{urls.push(url);
