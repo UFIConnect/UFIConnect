@@ -92,6 +92,30 @@ function setup() {
 }
 async function alice() { return (await pg.query('SELECT * FROM users WHERE id=$1', [A])).rows[0]; }
 
+test('status recovers a paid legacy subscription without a checkout attempt', async () => {
+  const f = setup(); f.sub();
+  assert.equal((await f.service.status(A)).plan, 'pro');
+  assert.equal((await alice()).stripe_subscription_id, 'sub_a');
+  assert.equal((await f.service.status(B)).plan, 'free');
+});
+
+test('legacy recovery rejects ambiguous subscriptions and rolls back', async () => {
+  const f = setup(); f.sub(); f.sub('sub_duplicate');
+  await assert.rejects(f.service.status(A), { status: 409 });
+  assert.equal((await alice()).plan, 'free');
+  assert.equal((await alice()).stripe_subscription_id, null);
+});
+
+test('legacy recovery cannot grant unpaid, foreign, unknown-price or canceled memberships', async () => {
+  const f = setup();
+  f.sub('sub_unpaid', { latest_invoice: { status: 'open', billing_reason: 'subscription_create' } });
+  f.sub('sub_foreign', { metadata: { uficonnect_user_id: B } });
+  f.sub('sub_unknown', { items: { data: [{ price: { id: 'price_unknown' }, quantity: 1 }] } });
+  f.sub('sub_canceled', { status: 'canceled' });
+  assert.equal((await f.service.status(A)).plan, 'free');
+  assert.equal((await alice()).stripe_subscription_id, null);
+});
+
 test('quantity-one tiered Pro price is validated and accurately displayed', () => {
   const price = { id: 'price_tiered', type: 'recurring', active: true, currency: 'usd', unit_amount: null,
     billing_scheme: 'tiered', tiers_mode: 'volume', recurring: { interval: 'month', interval_count: 1 },

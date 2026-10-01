@@ -6,39 +6,20 @@ import { SOURCE_META } from '../components/sourceMeta';
 import { MAP_TOWNS, SOURCE_ALIASES } from '../data/mapTowns';
 // The 3D city engine is shared with the Office. Only the local website preview has
 // this page; the public build leaves it and the engine out (see App.jsx).
-import { CITY_DISTRICTS } from '../../../office/src/city-model.mjs';
-import { buildCityStreets } from '../../../office/src/city-streets.mjs';
-import '../../../office/src/LiveCity.css';
+import { CITY_DISTRICTS } from '../data/mapDistricts.js';
+import { buildCityStreets } from '../../../shared/city/city-streets.mjs';
+import '../../../shared/city/scene.css';
 import './Maps.css';
 
-const CityScene3D = lazy(() => import('../../../office/src/CityScene3D.jsx'));
+const CityScene3D = lazy(() => import('../../../shared/city/CityScene3D.jsx'));
 
-// Content moves between downtown buildings in this order.
-const ROUTES = [['sources', 'equalizer'], ['equalizer', 'filter'], ['filter', 'sort'], ['sort', 'staging'], ['staging', 'transfer'],
-  ['transfer', 'database'], ['database', 'topics'], ['topics', 'feed'], ['database', 'backup']];
-const BUILDING_NOTES = {
-  sources: 'Every source home sends its posts here first.',
-  equalizer: 'Balances sources so no single one floods the feed.',
-  filter: 'Screens out duplicates and posts that do not belong.',
-  sort: 'Orders posts for each feed.',
-  staging: 'Posts wait here before they go live.',
-  transfer: 'Moves checked posts into the live store.',
-  database: 'Keeps every live post.',
-  topics: 'Matches posts to the topics people follow.',
-  feed: 'Serves the feeds people read.',
-  backup: 'Keeps a recovery copy of the feed.',
-  security: 'Watches sign-ins and unusual activity.',
-  runtime: 'Keeps the services steady under load.',
-};
 const REFRESH_MS = 60_000;
 const number = value => Math.round(value).toLocaleString();
 const colorOf = id => { const color = SOURCE_META[id]?.color || ''; return color.startsWith('#') ? color : '#6366f1'; };
 
 // One home per source, grouped into its category's town.
 const ROSTER = MAP_TOWNS.flatMap(town => town.sources.map(id => ({ id, town })));
-function sampleCounts() {
-  return Object.fromEntries(ROSTER.map(({ id }, index) => [id, 40 + ((index * 73) % 260)]));
-}
+
 
 // Counts glide to each new value, so the city reads as live without jumping.
 function useGlidingCounts(targets) {
@@ -57,7 +38,7 @@ function useGlidingCounts(targets) {
   return shown;
 }
 
-export default function LocalMaps() {
+export default function Maps() {
   const [counts, setCounts] = useState(() => Object.fromEntries(ROSTER.map(({ id }) => [id, 0])));
   const [live, setLive] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -68,30 +49,22 @@ export default function LocalMaps() {
   const [noGraphics, setNoGraphics] = useState(false);
   const [reduced] = useState(() => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
 
-  // Live counts come from the signed-in feed; without them the map shows marked sample counts.
+  // Keep the last real counts on refresh failure; never invent source activity.
   useEffect(() => {
-    let active = true, sampleTimer, gotLive = false;
+    let active = true;
     const load = () => client.get('/feed/sources?sample=1').then(response => {
       if (!active) return;
       const byId = Object.fromEntries((response.data?.sources || []).map(source => [source.id, source.postCount || 0]));
-      clearInterval(sampleTimer); sampleTimer = null; gotLive = true;
+      
       setCounts(Object.fromEntries(ROSTER.map(({ id }) => [id, byId[id] ?? byId[SOURCE_ALIASES[id]] ?? 0])));
       setLive({ at: new Date() });
     }).catch(() => {
-      // A failed refresh keeps the last live counts.
-      if (!active || gotLive) return;
-      setLive(false);
-      setCounts(current => Object.values(current).some(Boolean) ? current : sampleCounts());
-      if (sampleTimer) return;
-      sampleTimer = setInterval(() => setCounts(current => {
-        const next = { ...current };
-        ROSTER.forEach(({ id }, index) => { if ((index + Date.now() / 4000) % 5 < 1) next[id] += 1 + (index % 3); });
-        return next;
-      }), 4000);
+      if (!active) return;
+      setLive(previous => previous ? { ...previous, stale: true } : false);
     });
     load();
     const refresh = setInterval(load, REFRESH_MS);
-    return () => { active = false; clearInterval(refresh); clearInterval(sampleTimer); };
+    return () => { active = false; clearInterval(refresh); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const shown = useGlidingCounts(counts);
@@ -101,7 +74,7 @@ export default function LocalMaps() {
   // The layout depends only on the roster, so it is built once.
   const layout = useMemo(() => buildCityStreets({
     districts: CITY_DISTRICTS,
-    homes: ROSTER.map(({ id, town }) => ({ id, name: SOURCE_META[id]?.label || id, district: 'sources', primaryKey: id,
+    homes: ROSTER.map(({ id, town }) => ({ id, name: SOURCE_META[id]?.label || id, district: town.id, primaryKey: id,
       group: town.id, townName: town.town, townLabel: town.label, townColor: town.color })),
   }), []);
   // Labels and lights change every tick without moving anything.
@@ -109,12 +82,10 @@ export default function LocalMaps() {
     const labelOf = id => SOURCE_META[id]?.label || id;
     const homes = layout.homes.map(home => ({ ...home, homeState: shown[home.id] > 0 ? 'working' : 'inactive',
       badge: `${labelOf(home.id)} · ${number(shown[home.id] || 0)}`, badgeColor: colorOf(home.id) }));
-    const districts = layout.districts.map(district => selectedSource
-      ? { ...district, badge: `${labelOf(selectedSource.id)} · ${number(shown[selectedSource.id] || 0)} posts`, badgeColor: colorOf(selectedSource.id) }
-      : district);
+    const districts = layout.districts;
     return { ...layout, homes, districts, byId: Object.fromEntries(districts.map(district => [district.id, district])) };
   }, [layout, shown, selectedSource]);
-  const edges = useMemo(() => ROUTES.map(([from, to]) => ({ from, to, active: true })), []);
+  const edges = useMemo(() => [], []);
   const total = Object.values(shown).reduce((sum, value) => sum + value, 0);
 
   return <Layout wide>
@@ -122,11 +93,11 @@ export default function LocalMaps() {
     <header className="page-header maps-header">
       <div>
         <h1 className="page-title">Maps</h1>
-        <p className="page-subtitle">Every source has a home in its category's town. Posts travel the highways into downtown, and the grid lights up as they move.</p>
+        <p className="page-subtitle">Explore category neighborhoods and source houses. Traffic is decorative; counts come from your feed.</p>
       </div>
       <p className={`maps-status${live ? ' maps-status-live' : ''}`} role="status">
-        {live ? `Live · ${number(total)} posts · updated ${live.at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
-          : live === false ? `Sample counts · ${number(total)} posts` : 'Loading post counts…'}
+        {live ? `${live.stale ? 'Last available counts' : 'Feed counts'} · ${number(total)} posts · updated ${live.at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+          : live === false ? 'Post counts unavailable. Sign in or try again later.' : 'Loading post counts…'}
       </p>
     </header>
 
@@ -164,17 +135,17 @@ export default function LocalMaps() {
             <span className="maps-eyebrow" style={{ '--town': selectedSource.town.color }}>{selectedSource.town.town} · {selectedSource.town.label}</span>
             <h2>{SOURCE_META[selectedSource.id]?.label || selectedSource.id}</h2>
             <p className="maps-big-count">{number(shown[selectedSource.id] || 0)} <small>posts</small></p>
-            <p>Downtown now follows this source: every building shows its posts on their way to the feed.</p>
+            <p><a href={`/?sources=${encodeURIComponent(SOURCE_ALIASES[selectedSource.id] || selectedSource.id)}`}>Open source feed</a></p>
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSelected(null)}>Show every source</button>
           </> : selectedBuilding ? <>
-            <span className="maps-eyebrow" style={{ '--town': selectedBuilding.color }}>Downtown</span>
+            <span className="maps-eyebrow" style={{ '--town': selectedBuilding.color }}>Category neighborhoods</span>
             <h2>{selectedBuilding.label}</h2>
-            <p>{BUILDING_NOTES[selectedBuilding.id]}</p>
-            <p className="maps-hint">Select a home to see its posts in every downtown building.</p>
+            <p>{selectedBuilding.description}</p>
+            <p className="maps-hint">Choose a source house in this category.</p>
           </> : <>
-            <span className="maps-eyebrow">Downtown</span>
+            <span className="maps-eyebrow">Category neighborhoods</span>
             <h2>All sources</h2>
-            <p>Select a home on the map or a source below. Downtown's buildings then show that source.</p>
+            <p>Select a home on the map or a source below. Each house belongs to a category neighborhood.</p>
           </>}
         </section>
         <ul className="maps-towns">

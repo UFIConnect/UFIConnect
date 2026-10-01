@@ -21,12 +21,11 @@ export default defineConfig({
       },
     },
   }],
-  // The dev-only Maps page renders the Office's Live City from ../office/src;
-  // deduping keeps a single copy of React and the icons across both folders.
-  resolve: { dedupe: ['react', 'react-dom', 'lucide-react'] },
+  // Shared city geometry resolves this application's own React and Three dependencies.
+  resolve: { dedupe: ['react', 'react-dom', 'lucide-react', 'three'] },
   server: {
     port: 5173,
-    fs: { allow: [searchForWorkspaceRoot(localPath('.')), localPath('../office/src'), localPath('../office/node_modules')] },
+    fs: { allow: [searchForWorkspaceRoot(localPath('.')), localPath('../shared')] },
     // Applies before Vite's injected client module can request a reset URL
     // as its referrer. Production hosts must send the same policy.
     headers: { 'Referrer-Policy': 'no-referrer' },

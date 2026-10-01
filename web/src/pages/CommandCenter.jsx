@@ -1905,24 +1905,52 @@ export default function CommandCenter() {
   const section = commandCenterSection(location.search);
   const [pricingOpen, setPricingOpen] = useState(false);
   const [upgrading, setUpgrading] = useState(null);
-  const [checkingMembership, setCheckingMembership] = useState(false);
-  const membershipChecked = useRef('');
+  const [membershipChecking, setMembershipChecking] = useState(true);
+  const [membershipError, setMembershipError] = useState('');
+  const [membershipRefresh, setMembershipRefresh] = useState(0);
 
-  // A stored "free" plan can lag behind Stripe (a missed webhook, or a renewal
-  // that was still being invoiced). Reconcile once per member before showing
-  // the locked state, so an active subscription unlocks without a Settings visit.
-  const profileId = profile?.id, profilePlan = profile?.plan;
   useEffect(() => {
-    if (!profileId || profilePlan !== 'free' || membershipChecked.current === profileId) return;
-    membershipChecked.current = profileId;
-    let cancelled = false;
-    setCheckingMembership(true);
-    client.get('/billing/status')
-      .then(({ data }) => (data?.plan && data.plan !== 'free' ? refreshProfile() : null))
-      .catch(() => {})
-      .finally(() => { if (!cancelled) setCheckingMembership(false); });
-    return () => { cancelled = true; };
-  }, [profileId, profilePlan, refreshProfile]);
+    if (!profile?.id) return undefined;
+    const controller = new AbortController();
+    let stopped = false;
+    let pending = false;
+    let lastChecked = 0;
+    async function checkMembership() {
+      if (pending) return;
+      pending = true;
+      lastChecked = Date.now();
+      setMembershipChecking(true);
+      setMembershipError('');
+      try {
+        // Reconcile delayed/older checkouts before reading the authoritative
+        // profile. The sign-in snapshot can still say Free after payment.
+        await client.get('/billing/status', { signal: controller.signal });
+        if (!stopped) await refreshProfile();
+      } catch {
+        if (!stopped) {
+          // A webhook may already have updated the profile even if Stripe is
+          // temporarily unavailable. Never invent an entitlement in the UI.
+          try { await refreshProfile(); } catch { /* Keep the current profile. */ }
+          if (!stopped) setMembershipError('Could not confirm your latest billing status. Retry or open Manage billing in Settings before starting another checkout.');
+        }
+      } finally {
+        pending = false;
+        if (!stopped) setMembershipChecking(false);
+      }
+    }
+    function refreshOnReturn() {
+      if (document.visibilityState === 'visible' && Date.now() - lastChecked >= 60000) checkMembership();
+    }
+    checkMembership();
+    window.addEventListener('focus', refreshOnReturn);
+    document.addEventListener('visibilitychange', refreshOnReturn);
+    return () => {
+      stopped = true;
+      controller.abort();
+      window.removeEventListener('focus', refreshOnReturn);
+      document.removeEventListener('visibilitychange', refreshOnReturn);
+    };
+  }, [profile?.id, refreshProfile, membershipRefresh]);
 
   const selectSection = useCallback((nextSection, { replace = false } = {}) => {
     if (!SECTION_KEYS.has(nextSection)) return;
@@ -1961,7 +1989,8 @@ export default function CommandCenter() {
 
   // Connections themselves are available to every signed-in member. The
   // remaining Command Center tools keep their paid-plan gate below.
-  const locked = profile.plan === 'free' && !['accounts', 'content', 'media', 'crosspost'].includes(section);
+  const hasPaidMembership = ['pro', 'business'].includes(profile.plan);
+  const locked = !hasPaidMembership && !['accounts', 'content', 'media', 'crosspost'].includes(section);
 
   return (
     <Layout>
@@ -1977,8 +2006,16 @@ export default function CommandCenter() {
         </p>
       </div>
 
-      {locked && checkingMembership ? (
-        <div className="empty-state" role="status"><span className="spinner spinner-primary" /> Checking your membership…</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', margin: '12px 0 18px' }}>
+        <span role="status" style={{ color: 'var(--muted)', fontSize: '.82rem' }}>
+          {membershipChecking ? 'Refreshing membership...' : membershipError || (hasPaidMembership ? `${profile.plan === 'business' ? 'Business' : 'Pro'} membership active` : 'Free membership')}
+        </span>
+        <button type="button" className="btn btn-ghost btn-sm" disabled={membershipChecking} onClick={() => setMembershipRefresh(value => value + 1)}>Refresh membership</button>
+        <Link className="btn btn-ghost btn-sm" to="/settings">Manage billing</Link>
+      </div>
+
+      {!hasPaidMembership && membershipChecking ? (
+        <div className="card" role="status" style={{ padding: 24 }}>Checking your Command Center access...</div>
       ) : locked ? (
         <>
           <LockedState onUpgrade={() => setPricingOpen(true)} />
@@ -2015,9 +2052,9 @@ export default function CommandCenter() {
             className="command-center-panel"
           >
             {section === 'feed' && <ConnectedFeedSection />}
-            {profile.plan === 'free' && ['content', 'media'].includes(section) && <button type="button" className="btn btn-primary btn-sm" onClick={() => setPricingOpen(true)}>Upgrade to create new content</button>}
-            {section === 'content' && <ContentHubSection key={profile.id} readOnly={profile.plan === 'free'} />}
-            {section === 'media' && <MediaStudioSection key={profile.id} readOnly={profile.plan === 'free'} onOpenCrossPost={() => selectSection('crosspost')} />}
+            {!hasPaidMembership && ['content', 'media'].includes(section) && <button type="button" className="btn btn-primary btn-sm" onClick={() => setPricingOpen(true)}>Upgrade to create new content</button>}
+            {section === 'content' && <ContentHubSection key={profile.id} readOnly={!hasPaidMembership} />}
+            {section === 'media' && <MediaStudioSection key={profile.id} readOnly={!hasPaidMembership} onOpenCrossPost={() => selectSection('crosspost')} />}
             {section === 'yourfeed' && <YourFeedSection />}
             {section === 'accounts' && <MemberAccountsSection />}
             {section === 'automation' && <AutomationSection onSelectSection={selectSection} />}
