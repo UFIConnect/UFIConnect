@@ -1,4 +1,4 @@
-﻿import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
 import { useLayoutEffect } from 'react';
 import { useAuth } from './contexts/AuthContext';
@@ -59,6 +59,7 @@ const Conversation   = lazy(() => import('./pages/Conversation'));
 const Notifications  = lazy(() => import('./pages/Notifications'));
 const Profile        = lazy(() => import('./pages/Profile'));
 const ConnectedAccounts = lazy(() => import('./pages/ConnectedAccounts'));
+const Analytics      = lazy(() => import('./pages/Analytics'));
 const Post           = lazy(() => import('./pages/Post'));
 const PostDetail     = lazy(() => import('./pages/PostDetail'));
 const Search         = lazy(() => import('./pages/SearchExperience'));
@@ -75,12 +76,14 @@ const ResumeBuilder  = lazy(() => import('./pages/ResumeBuilder'));
 const CoverLetterPreview = lazy(() => import('./pages/CoverLetterPreview'));
 const YourPostsFeed  = lazy(() => import('./pages/YourPostsFeed'));
 const SavedItems = lazy(() => import('./pages/SavedItems'));
+const Vault = lazy(() => import('./pages/Vault'));
+
+const WorkspaceCenter = lazy(() => import('./pages/WorkspaceCenter'));
 const GroupPost = lazy(() => import('./pages/GroupPost'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 const SearchGuide = lazy(() => import('./pages/SearchGuide'));
-// Maps is the 3D source map, for review in the local website preview first.
-// Only the dev server (npm run office:release-local) has it; builds leave it out.
-const Maps = import.meta.env.DEV ? lazy(() => import('./pages/Maps')) : null;
+// This review branch includes the complete source map behind account sign-in.
+const Maps = lazy(() => import('./pages/Maps'));
 
 function AnalyticsPrivacyControls() {
   return <Suspense fallback={null}><AnalyticsPrivacy /></Suspense>;
@@ -141,6 +144,13 @@ function SearchRoute() {
   if (loading) return <SessionLoading />;
   if (sessionError) return <SessionRecovery />;
   return token ? <RequireAuth><RequireOnboarding><Search /></RequireOnboarding></RequireAuth> : <SearchGuide />;
+}
+
+function VaultRoute() {
+  const { profile, loading } = useAuth();
+  if (loading) return <SessionLoading />;
+  if (!profile?.id) return <SessionRecovery />;
+  return <Vault key={profile.id} accountId={profile.id} />;
 }
 
 function RouteLoading() {
@@ -240,6 +250,9 @@ export default function App() {
       <Route path="/connected-accounts" element={
         <RequireAuth><RequireOnboarding><ConnectedAccounts /></RequireOnboarding></RequireAuth>
       }/>
+      <Route path="/analytics" element={
+        <RequireAuth><RequireOnboarding><Analytics /></RequireOnboarding></RequireAuth>
+      }/>
       <Route path="/post" element={
         <RequireAuth><RequireOnboarding><Post /></RequireOnboarding></RequireAuth>
       }/>
@@ -261,8 +274,11 @@ export default function App() {
       }/>
 
       <Route path="/saved/:kind" element={<RequireAuth><RequireOnboarding><SavedItems /></RequireOnboarding></RequireAuth>} />
+      <Route path="/vault" element={<RequireAuth><RequireOnboarding><VaultRoute /></RequireOnboarding></RequireAuth>} />
+      <Route path="/maps" element={<RequireAuth><RequireOnboarding><Maps /></RequireOnboarding></RequireAuth>} />
+      <Route path="/centers/:kind" element={<RequireAuth><RequireOnboarding><WorkspaceCenter /></RequireOnboarding></RequireAuth>} />
       <Route path="/groups/post" element={<RequireAuth><RequireOnboarding><GroupPost /></RequireOnboarding></RequireAuth>} />
-      {Maps && <Route path="/maps" element={<Maps />} />}
+
 
       {/* Agent Control Room — live on public domain */}
       <Route path="/hq"     element={<Navigate to="/command-center" replace />} />

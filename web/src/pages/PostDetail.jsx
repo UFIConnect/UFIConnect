@@ -225,7 +225,7 @@ export default function PostDetail() {
   const isVideo = post.mediaType === 'video';
   const isImage = post.mediaType === 'image';
   const playlistUrl = isVideo && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(post.mediaUrl) : null;
-  const directVideoUrl = isVideo && !playlistUrl && !youtubeId && post.mediaUrl && isDirectVideoUrl(post.mediaUrl) ? post.mediaUrl : null;
+  const directVideoUrl = isVideo && !playlistUrl && !youtubeId && post.mediaUrl && isDirectVideoUrl(post.mediaUrl, post) ? post.mediaUrl : null;
   const canComment = !post.isExternal && !!token;
 
   return (

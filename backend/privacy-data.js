@@ -51,6 +51,7 @@ async function deleteAccountData(db, userId) {
       'push_subscriptions', 'page_views', 'client_error_reports', 'server_error_events',
       'negative_usage_signals',
     ]) await query(`DELETE FROM ${table} WHERE user_id=$1`);
+    for (const table of ['ufi_vault_challenges','ufi_vault_credentials','ufi_vault_security_events']) await query(`DELETE FROM ${table} WHERE account_id=$1`);
     await query('DELETE FROM reports WHERE reporter_id=$1');
     // auth_sessions, user_sign_in_events and billing_checkout_attempts cascade.
     await query('DELETE FROM users WHERE id=$1');
@@ -76,6 +77,10 @@ async function exportAccountData(db, userId) {
       FROM users WHERE id=$1`);
     const result = { exportedAt: new Date().toISOString(), formatVersion: 2, profile, billing };
     const collections = {
+      copyrightReports: `SELECT id,source,source_url AS "sourceUrl",reason,status,created_at AS "createdAt" FROM creator_copyright_reports WHERE user_id=$1 ORDER BY created_at,id`,
+      sourceInteractionRequests: `SELECT request_id AS "requestId",source,source_post_id AS "sourcePostId",action,status,created_at AS "createdAt" FROM source_interaction_audit WHERE user_id=$1 ORDER BY created_at,request_id`,
+      sourceMetricSnapshots: `SELECT source,period_days AS "periodDays",data,fetched_at AS "fetchedAt" FROM creator_source_snapshots WHERE user_id=$1 ORDER BY source,period_days`,
+
       posts: `SELECT id,group_id AS "groupId",title,content,url,media_url AS "mediaUrl",media_type AS "mediaType",
         cardinality(likes) AS "likesCount",created_at AS "createdAt" FROM community_posts WHERE author_id=$1 ORDER BY created_at,id`,
       comments: `SELECT id,post_id AS "postId",content,created_at AS "createdAt" FROM post_comments WHERE author_id=$1 ORDER BY created_at,id`,

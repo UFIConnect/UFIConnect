@@ -6,8 +6,11 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { SESSION_TTL_SECONDS, resolveJwtSecret, passwordPolicyError, signSecurityToken, verifySecurityToken, publicRoleSettings } = require('./auth-security');
 const { createTokenVault, migrateSocialCredentials } = require('./token-vault');
+const { isSourceDisplayAllowed } = require('./source-policy');
 const { createAnalyticsBridgeHandler } = require('./analytics-bridge');
 const { ANALYTICS_SCHEMA, createAggregateAnalytics } = require('./aggregate-analytics');
+const { CREATOR_ANALYTICS_SCHEMA, createCreatorAnalytics, registerCreatorAnalyticsRoutes } = require('./creator-analytics');
+const { createUfiVault, registerUfiVaultRoutes, UFI_VAULT_SCHEMA } = require('./ufi-vault');
 const { createOfficeAgentChat, sanitizeSnapshot: sanitizeAgentSnapshot } = require('./office-agent-chat');
 const { buildOfficeSetup } = require('./office-setup');
 const { createManagedRecovery } = require('./managed-recovery');
@@ -2746,62 +2749,23 @@ function parseRedditJSON(data, topicKeyword) {
 }
 
 async function fetchRedditSub(sub, keyword) {
-  // OAuth path — authenticated requests are not rate-limited like anonymous ones
+  // Authorized API access only. Failed authorization never triggers scraping
+  // or anonymous JSON/RSS access through a different endpoint.
   const token = await getRedditToken();
-  if (token) {
-    try {
-      const data = await fetchJSON(
-        `https://oauth.reddit.com/r/${sub}/new.json?limit=100&raw_json=1`,
-        { 'Authorization': `Bearer ${token}`, 'User-Agent': 'UFIconnect/1.0 by /u/uficonnect' }
-      );
-      const posts = parseRedditJSON(data, keyword);
-      if (posts.length) {
-        console.log(`[Reddit] OAuth: fetched ${posts.length} posts from r/${sub}`);
-        return posts;
-      }
-    } catch (e) {
-      console.warn(`[Reddit] OAuth API failed for r/${sub}: ${e.message}`);
-      // Clear token on auth errors so next call re-fetches it
-      if (e.message.includes('401') || e.message.includes('403')) {
-        _redditToken = null;
-        _redditTokenExpiry = 0;
-        console.warn(`[Reddit] OAuth token invalidated due to ${e.message.match(/40[13]/)?.[0] || 'auth error'}`);
-      }
-    }
-  }
-  // Anonymous fallbacks are frequently blocked wholesale for extended periods —
-  // skip straight to returning empty during a known outage window rather than
-  // spending two more failing requests per subreddit.
-  if (Date.now() < redditAnonOutageUntil) {
-    return [];
-  }
-  // Anonymous JSON — www.reddit.com
+  if (!token) return [];
   try {
     const data = await fetchJSON(
-      `https://www.reddit.com/r/${sub}/new.json?limit=100&raw_json=1`,
-      REDDIT_HEADERS
+      `https://oauth.reddit.com/r/${encodeURIComponent(sub)}/new.json?limit=100&raw_json=1`,
+      { 'Authorization': `Bearer ${token}`, 'User-Agent': 'UFIconnect/1.0 by /u/uficonnect' }
     );
-    const posts = parseRedditJSON(data, keyword);
-    if (posts.length) {
-      console.log(`[Reddit] Anon: fetched ${posts.length} posts from r/${sub}`);
-      return posts;
+    return parseRedditJSON(data, keyword);
+  } catch (error) {
+    if (error.message.includes('401') || error.message.includes('403')) {
+      _redditToken = null;
+      _redditTokenExpiry = 0;
     }
-  } catch (e) {
-    console.warn(`[Reddit] anon JSON failed for r/${sub}: ${e.message}`);
+    throw new Error('The authorized Reddit API is unavailable.');
   }
-  // RSS fallback
-  try {
-    const xml = await fetchText(`https://www.reddit.com/r/${sub}/new.rss?limit=100`, REDDIT_RSS_HEADERS);
-    const posts = parseRedditRSSFeed(xml, keyword);
-    if (posts.length) {
-      console.log(`[Reddit] RSS: fetched ${posts.length} posts from r/${sub}`);
-      return posts;
-    }
-  } catch (e) {
-    console.warn(`[Reddit] RSS failed for r/${sub}: ${e.message}`);
-  }
-  console.warn(`[Reddit] All methods exhausted for r/${sub} (${keyword}), returning 0 posts`);
-  return [];
 }
 
 async function fetchRedditByKeyword(keyword) {
@@ -2869,7 +2833,7 @@ async function fetchRedditByKeyword(keyword) {
   if (redditConsecutiveFullMisses >= REDDIT_OUTAGE_MISS_THRESHOLD && Date.now() >= redditAnonOutageUntil) {
     redditAnonOutageUntil = Date.now() + REDDIT_OUTAGE_COOLDOWN_MS;
     redditConsecutiveFullMisses = 0;
-    console.warn(`[Reddit] ${REDDIT_OUTAGE_MISS_THRESHOLD} consecutive empty fetches — pausing anon/RSS requests for ${REDDIT_OUTAGE_COOLDOWN_MS / 60000}min`);
+    console.warn(`[Reddit] ${REDDIT_OUTAGE_MISS_THRESHOLD} consecutive empty fetches — pausing authorized source refresh for ${REDDIT_OUTAGE_COOLDOWN_MS / 60000}min`);
   }
 
   const fallback = getCached(key) || [];
@@ -3018,10 +2982,8 @@ async function fetchDevToByTag(tag) {
     // that lives entirely on a separate, unfiltered (no ?tag= support)
     // /api/videos endpoint. Merged in here rather than a whole new source
     // worker since it's genuinely the same platform/community, just a
-    // different content type. Real videos, not embeds: video_source_url is
-    // always a youtube.com/youtu.be link, cloudinary_video_url when set is a
-    // self-hosted direct file — either way playable the same way any other
-    // YouTube/direct-file video post already is.
+    // different content type. Use the original YouTube player where available.
+    // Direct copies without recorded playback rights are not selected.
     try {
       const videos = await fetchJSON('https://dev.to/api/videos?per_page=24');
       // The endpoint exposes no publish date at all (unlike /api/articles'
@@ -3034,7 +2996,7 @@ async function fetchDevToByTag(tag) {
       (videos || []).forEach((v, i) => {
         if (!v.id || !v.path || !v.title) return;
         const ytId = (v.video_source_url || v.video || '').match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/i)?.[1];
-        const mediaUrl = v.cloudinary_video_url || (ytId ? `https://www.youtube.com/watch?v=${ytId}` : null);
+        const mediaUrl = ytId ? `https://www.youtube.com/watch?v=${ytId}` : null;
         if (!mediaUrl) return;
         posts.push({
           id:          `devto_video_${v.id}`,
@@ -3553,34 +3515,7 @@ async function fetchMediumByTag(tag) {
   }
 }
 
-// --- YouTube: official API when key is set, Invidious proxy otherwise --------
-// Confirmed live (2026-08-19) against api.invidious.io's own health tracker:
-// of the previous 8 entries, 6 were completely unreachable (dead instances —
-// public Invidious instances churn constantly under sustained pressure from
-// both YouTube and scraper abuse; self-hosting is the project's own current
-// recommendation over relying on public ones), one had been repurposed into
-// an unrelated redirect service, and the last 404'd outright. None of these
-// 4 reliably return real search JSON either — most either block (401/403)
-// or, one case, serve an anti-bot HTML challenge page disguised as a 200 —
-// but they at least respond quickly instead of costing a full connection
-// timeout each, and there's no cost to trying. See youtubeInvidiousOutageUntil
-// below for what happens once even that stops being worth attempting.
-const INVIDIOUS_INSTANCES = [
-  'https://inv.nadeko.net',
-  'https://invidious.nerdvpn.de',
-  'https://invidious.tiekoetter.com',
-  'https://yt.chocolatemoo53.com',
-];
-
-// Same reasoning as redditAnonOutageUntil/blueskyAnonOutageUntil — once the
-// entire Invidious tier is confirmed exhausted for a keyword (every
-// instance in the list failed), stop re-attempting all of them again on
-// every subsequent keyword fetch until this cools down.
-let youtubeInvidiousOutageUntil = 0;
-let youtubeInvidiousConsecutiveFullMisses = 0;
-const YOUTUBE_INVIDIOUS_OUTAGE_MISS_THRESHOLD = 3;
-const YOUTUBE_INVIDIOUS_OUTAGE_COOLDOWN_MS = 20 * 60 * 1000;
-
+// YouTube content uses its official Data API and source-hosted RSS only.
 // --- YouTube: channel RSS feeds (no API key needed, served by YouTube directly) -
 // Organized by topic so each keyword query hits the right channels.
 const TOPIC_YT_CHANNELS = {
@@ -3949,7 +3884,7 @@ function youtubeApiBlocked() {
 // result is actually short via a batched contentDetails lookup rather than
 // trusting the query bias alone (a channel can title a regular video
 // "... #shorts" without it being one). Requires YOUTUBE_API_KEY — the RSS/
-// Invidious fallbacks below have no duration field to filter on at all, so
+// channel feeds below have no duration field to filter on at all, so
 // this tier simply contributes nothing (not an error) when no key is set.
 async function fetchYouTubeShortsByKeyword(keyword, apiKey) {
   try {
@@ -4068,65 +4003,6 @@ async function fetchYouTubeByKeyword(keyword) {
         .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
       setCached(cacheKey, result);
       return result;
-    }
-
-    // Backup: Invidious instances — skip straight past during a known
-    // outage window rather than spending 4 requests already confirmed to
-    // fail (see youtubeInvidiousOutageUntil's own comment above the list).
-    //
-    // Fired in parallel with a short per-instance timeout, not the previous
-    // sequential `for` + fetchJSON's own 15s timeout each — confirmed live
-    // as a real production regression: with tier 2 also empty, a request
-    // could burn up to 4×15s = 60s waiting through every dead/slow instance
-    // one at a time before ever reaching the circuit breaker, which was the
-    // actual cause of "the videos feed is not working" (it was working, just
-    // taking up to a minute). Racing them bounds the wait to one short
-    // timeout regardless of how many instances are configured.
-    if (Date.now() >= youtubeInvidiousOutageUntil) {
-      const invidiousFetch = (instanceUrl) => new Promise((resolve, reject) => {
-        const url = `${instanceUrl}/api/v1/search?q=${encodeURIComponent(keyword)}&type=video&sort_by=upload_date`;
-        https.get(url, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            'Accept': 'application/json',
-          },
-        }, (res) => {
-          if (res.statusCode < 200 || res.statusCode >= 300) { res.resume(); return reject(new Error(`HTTP ${res.statusCode}`)); }
-          let d = ''; res.on('data', c => d += c);
-          res.on('end', () => { try { resolve(JSON.parse(d)); } catch (e) { reject(e); } });
-        }).on('error', reject).setTimeout(5000, function() { this.destroy(new Error('timeout')); });
-      });
-
-      const results = await Promise.allSettled(INVIDIOUS_INSTANCES.map(invidiousFetch));
-      let anyInstanceAnswered = false;
-      for (const r of results) {
-        if (r.status === 'rejected') { lastError = r.reason; continue; }
-        anyInstanceAnswered = true;
-        lastError = null; // this instance answered, even if with nothing usable
-        const data = r.value;
-        if (!Array.isArray(data) || !data.length) continue;
-        const posts = data.filter(v => v.videoId && v.title).map(v => {
-          const thumb = (v.videoThumbnails || []).find(t => t.quality === 'high') || (v.videoThumbnails || [])[0];
-          return mapYouTubePost(
-            v.videoId, v.title, v.description, v.author, v.authorId,
-            v.published,
-            thumb?.url, keyword, false, v.lengthSeconds
-          );
-        });
-        if (posts.length) {
-          youtubeInvidiousConsecutiveFullMisses = 0;
-          setCached(cacheKey, posts);
-          return posts;
-        }
-      }
-      if (!anyInstanceAnswered) {
-        youtubeInvidiousConsecutiveFullMisses++;
-        if (youtubeInvidiousConsecutiveFullMisses >= YOUTUBE_INVIDIOUS_OUTAGE_MISS_THRESHOLD && Date.now() >= youtubeInvidiousOutageUntil) {
-          youtubeInvidiousOutageUntil = Date.now() + YOUTUBE_INVIDIOUS_OUTAGE_COOLDOWN_MS;
-          youtubeInvidiousConsecutiveFullMisses = 0;
-          console.warn(`[YouTube] ${YOUTUBE_INVIDIOUS_OUTAGE_MISS_THRESHOLD} consecutive fully-unreachable Invidious cycles — pausing for ${YOUTUBE_INVIDIOUS_OUTAGE_COOLDOWN_MS / 60000}min`);
-        }
-      }
     }
 
     // Only surface to the shared circuit breaker if every tier that ran actually failed.
@@ -6901,6 +6777,7 @@ function realFeedPosts(posts = []) {
   const approved = [];
   for (const rawPost of posts || []) {
     if (!rawPost?.id || isFallbackFeedPost(rawPost)) continue;
+    if (!isSourceDisplayAllowed(rawPost.source, { env: process.env })) continue;
     const screened = screenFeedPost(rawPost);
     if (screened.allowed) approved.push(screened.post);
   }
@@ -7205,6 +7082,8 @@ const RATE_LIMITED_MANUAL_SWEEP = {
 };
 
 function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
+  const approvedFetcher = fetchFn;
+  fetchFn = (...args) => isSourceDisplayAllowed(agentId, { env: process.env }) ? approvedFetcher(...args) : Promise.resolve([]);
   const sourceTtl   = SOURCE_CONFIG[agentId]?.ttl ?? 5 * 60 * 1000;
   const cachePrefix = CACHE_KEY_PREFIX[agentId];
   const topicFetchedAt = new Map(); // mappedKey ? timestamp of last real API fetch
@@ -15933,6 +15812,7 @@ async function refreshFollowingSourceCaches() {
     const tokens = user?.socialTokens;
     if (!tokens) continue;
     for (const [source, fetcher] of Object.entries(FOLLOWING_SOURCE_FETCHERS)) {
+      if (!isSourceDisplayAllowed(source, { env: process.env })) continue;
       const token = tokens[source];
       if (!token) continue;
       try {
@@ -15990,7 +15870,8 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
   const wanted = sourceFilter == null ? null : new Set(Array.isArray(sourceFilter) ? sourceFilter : [sourceFilter]);
   const isFollowingSurface = surface === 'feed' || surface === 'videos';
   const wantsSource = (src) => (
-    (!isFollowingSurface || isFollowingSourceAllowed(src))
+    isSourceDisplayAllowed(src, { env: process.env })
+    && (!isFollowingSurface || isFollowingSourceAllowed(src))
     && (!wanted || wanted.has(src))
   );
 
@@ -17593,6 +17474,8 @@ async function migrateDB() {
     await db.query(`CREATE INDEX IF NOT EXISTS wor_created_idx ON website_optimization_runs(created_at DESC)`);
 
     await db.query(ANALYTICS_SCHEMA);
+    for (const statement of CREATOR_ANALYTICS_SCHEMA) await db.query(statement);
+    for (const statement of UFI_VAULT_SCHEMA) await db.query(statement);
 
     // Legacy first-party pageview log — there was no way to tell whether the site
     // was actually getting traffic at all (no GA/Plausible/etc. installed),
@@ -20581,6 +20464,15 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
       : cfg.scope,
     ...(cfg.extraAuthParams || {}),
   });
+
+  if (platform === 'youtube' && req.query.analytics === '1') {
+    const scopes = new Set(params.get('scope').split(' '));
+    scopes.add('https://www.googleapis.com/auth/youtube.readonly');
+    scopes.add('https://www.googleapis.com/auth/yt-analytics.readonly');
+    if (req.query.monetization === '1') scopes.add('https://www.googleapis.com/auth/yt-analytics-monetary.readonly');
+    params.set('scope', [...scopes].join(' '));
+    params.set('include_granted_scopes', 'true');
+  }
 
   if (cfg.pkce) {
     codeVerifier = pkceVerifier();
@@ -24428,10 +24320,7 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
             console.warn(`[Reddit] OAuth comments failed for ${cleanId}: ${e.message}`);
           }
         }
-        if (Date.now() < redditAnonOutageUntil) throw new Error('Reddit is temporarily unreachable');
-        const data = await fetchJSON(`https://www.reddit.com/comments/${cleanId}.json?limit=100&depth=2&raw_json=1`, REDDIT_HEADERS);
-        if (!Array.isArray(data)) throw new Error('Reddit returned an unexpected comments response');
-        return mapChildren(data);
+        throw new Error('Authorized Reddit comments are unavailable.');
       }, offset, limit);
       return res.json({ comments, hasMore, total, source: 'reddit', live: true });
     } catch (e) {
@@ -27547,9 +27436,19 @@ async function createRestaurantPostComment(req, res) {
   }
 }
 
+const ufiVault = createUfiVault({ db, enabled: process.env.UFI_VAULT_ENABLED === 'true',
+  relyingPartyId: process.env.UFI_VAULT_RP_ID || '',
+  allowedOrigins: (process.env.UFI_VAULT_ALLOWED_ORIGINS || '').split(',').map(value => value.trim()).filter(Boolean),
+  firmwarePolicy: [], environment: process.env.NODE_ENV === 'production' ? 'production' : 'development' });
+const creatorAnalytics = createCreatorAnalytics({ db, getUser: getPublicTargetUser, env: process.env,
+  localPreview: process.env.NODE_ENV === 'test' && process.env.CREATOR_ANALYTICS_LOCAL_PREVIEW === 'true',
+  getLocalPosts: () => posts, getLocalComments: () => postComments, vaultStatus: id => ufiVault.status(id) });
+registerCreatorAnalyticsRoutes(app, {service:creatorAnalytics,authenticate,limiter:contentSubmissionLimiter});
+registerUfiVaultRoutes(app, {vault:ufiVault,authenticate,limiter:contentSubmissionLimiter});
 require('./source-interactions').registerSourceInteractionRoutes(app, {
   authenticate, limiter: contentSubmissionLimiter, getUser, screenMemberContent,
-  fetchImpl: fetch, atprotoGet, atprotoPostJSON,
+  fetchImpl: fetch, atprotoGet, atprotoPostJSON, policyEnv: process.env,
+  auditInteraction: creatorAnalytics.auditInteraction, reserveInteraction: creatorAnalytics.reserveInteraction, completeInteraction: creatorAnalytics.completeInteraction,
 });
 
 app.post('/restaurants/:postId/like', authenticate, toggleRestaurantPostLike);
@@ -28120,29 +28019,9 @@ async function toggleFeedPostLike(req, res) {
     }
     const feedPost = typeof postId === 'string' && postId.length <= 300 ? await findPostByIdWithDbFallback(postId) : null;
     if (!feedPost) return res.status(404).json({ message: 'Post not found.' });
-    // External posts are liked through the member's own account on that source.
-    const liker = await getUser(req.user.id);
-    if (!EXTERNAL_LIKE_SOURCES.has(feedPost.source) || !liker?.socialTokens?.[feedPost.source]) {
-      return res.status(403).json({ message: EXTERNAL_LIKE_SOURCES.has(feedPost.source)
-        ? 'Connect this source in Connected accounts to like its posts.'
-        : "Liking isn't available for posts from this source." });
-    }
-    const removed = await db.query(
-      `DELETE FROM external_post_likes WHERE post_id=$1 AND user_id=$2 RETURNING post_id`,
-      [postId, req.user.id],
-    );
-    const likedByMe = !removed.rowCount;
-    if (likedByMe) {
-      await db.query(
-        `INSERT INTO external_post_likes (post_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-        [postId, req.user.id],
-      );
-    }
-    const { rows } = await db.query(
-      `SELECT COUNT(*)::integer AS likes_count FROM external_post_likes WHERE post_id=$1`,
-      [postId],
-    );
-    return res.json({ likedByMe, memberLikesCount: Number(rows[0]?.likes_count || 0) });
+    const originalUrl = require('./source-policy').validateOriginalUrl(feedPost.source, feedPost.sourceUrl);
+    return res.status(422).json({ message: 'Use the connected source action or open the original post. Source engagement counts are controlled by the source.',
+      ...(originalUrl ? { originalUrl } : {}) });
   } catch (e) { console.error('toggleFeedPostLike:', e); return res.status(500).json({ error: 'Internal server error' }); }
 }
 
@@ -32848,6 +32727,8 @@ db.initDB().then(async () => {
   console.log('[startup] Beginning background data initialization...');
   try {
     await migrateDB();
+    await ufiVault.initialize();
+    await creatorAnalytics.prune();
     // Start the optional feed recovery loop as soon as its primary schema is
     // ready. Connection failures are retried by db.js; unrelated warm-up or
     // preload failures must not prevent the backup from ever connecting.

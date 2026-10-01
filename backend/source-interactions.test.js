@@ -122,3 +122,118 @@ test('route authenticates, screens, deduplicates and isolates member requests', 
   assert.equal(capabilities.headers.get('cache-control'), 'private, no-store');
   const body = await capabilities.text(); assert.ok(!body.includes('secret'));
 });
+
+test('runtime revocation blocks transport and supplies only a safe source fallback', async t => {
+  const app = express(); app.use(express.json());
+  const mock = transport();
+  const env = { SOURCE_GITHUB_LIKE_ENABLED: 'false' };
+  const audits = [];
+  registerSourceInteractionRoutes(app, { ...mock, policyEnv: env,
+    authenticate: (req, _res, next) => { req.user = { id: 'member' }; next(); },
+    limiter: (_req, _res, next) => next(), getUser: async () => user,
+    screenMemberContent: async ({ content }) => ({ allowed: true, content }),
+    auditInteraction: async event => audits.push(event),
+  });
+  const server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve)); t.after(() => new Promise(resolve => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const payload = { source: 'github', sourceUrl: 'https://github.com/org/repo', action: 'like', liked: true, requestId: 'runtime-disabled-0001' };
+  const send = body => fetch(base + '/social/interactions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const denied = await send(payload);
+  assert.equal(denied.status, 422);
+  assert.deepEqual((await denied.json()).fallback, { url: payload.sourceUrl, label: 'Star repository on GitHub' });
+  assert.equal(mock.calls.length, 0);
+  const malicious = await send({ ...payload, sourceUrl: 'https://github.com.evil.test/org/repo', requestId: 'runtime-disabled-0002' });
+  assert.equal((await malicious.json()).fallback, undefined);
+  env.SOURCE_GITHUB_LIKE_ENABLED = 'true';
+  const successful = { ...payload, requestId: 'runtime-enabled-00003' };
+  assert.equal((await send(successful)).status, 200);
+  assert.equal((await send(successful)).status, 200);
+  assert.equal(mock.calls.length, 1);
+  assert.equal(audits.length, 3);
+  assert.deepEqual(Object.keys(audits[2]).sort(), ['memberId', 'interactionRequestId', 'sourcePlatform', 'sourcePostId', 'actionType', 'status', 'timestamp'].sort());
+  assert.equal(audits[2].sourcePostId, 'org/repo');
+  assert.equal(audits[2].status, 'succeeded');
+  assert.equal(JSON.stringify(audits).includes('secret'), false);
+});
+
+test('policy is checked again after comment screening and confirmed writes survive audit outage', async t => {
+  const app = express(); app.use(express.json());
+  const mock = transport([{ status: 201, body: { id: 99 } }]);
+  const env = {};
+  registerSourceInteractionRoutes(app, { ...mock, policyEnv: env,
+    authenticate: (req, _res, next) => { req.user = { id: 'member' }; next(); },
+    limiter: (_req, _res, next) => next(), getUser: async () => user,
+    screenMemberContent: async ({ content }) => { if (content === 'revoke') env.SOURCE_GITHUB_COMMENT_ENABLED = 'false'; return { allowed: true, content }; },
+    auditInteraction: async () => { throw new Error('database unavailable'); },
+  });
+  const server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve)); t.after(() => new Promise(resolve => server.close(resolve)));
+  const send = body => fetch(`http://127.0.0.1:${server.address().port}/social/interactions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const payload = { source: 'github', sourceUrl: 'https://github.com/org/repo/issues/3', action: 'comment', content: 'revoke', requestId: 'revoked-comment-0001' };
+  assert.equal((await send(payload)).status, 422);
+  assert.equal(mock.calls.length, 0);
+  env.SOURCE_GITHUB_COMMENT_ENABLED = 'true';
+  const response = await send({ ...payload, content: 'A useful comment', requestId: 'accepted-comment-0002' });
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(data.published, true);
+  assert.equal(data.auditRecorded, false);
+  assert.equal(data.commentId, '99');
+  assert.equal(data.likesCount, undefined);
+  assert.equal(mock.calls.length, 1);
+});
+
+test('durable reservations prevent another worker from repeating a pending or completed source action', async t => {
+  const reservations = new Map(), fingerprints = [];
+  let sourceCalls = 0, releaseSource, announceStarted;
+  const started = new Promise(resolve => { announceStarted = resolve; });
+  const transportOptions = {
+    policyEnv: {},
+    fetchImpl: async () => { sourceCalls++; announceStarted(); await new Promise(resolve => { releaseSource = resolve; }); return new Response(null, { status: 204 }); },
+    authenticate: (req, _res, next) => { req.user = { id: 'member' }; next(); },
+    limiter: (_req, _res, next) => next(), getUser: async () => user,
+    screenMemberContent: async ({content}) => ({allowed:true,content}),
+    reserveInteraction: async ({memberId,requestId,fingerprint}) => {
+      fingerprints.push(fingerprint);
+      const key = `${memberId}:${requestId}`, existing = reservations.get(key);
+      if (existing && existing.fingerprint !== fingerprint) return {status:409,body:{message:'Request identity conflict.'}};
+      if (existing) return existing.result || {status:409,body:{message:'Pending source request.'}};
+      reservations.set(key,{fingerprint}); return null;
+    },
+    completeInteraction: async ({memberId,requestId,result}) => { reservations.get(`${memberId}:${requestId}`).result = result; },
+  };
+  const startWorker = async () => {
+    const app = express(); app.use(express.json()); registerSourceInteractionRoutes(app,transportOptions);
+    const server=app.listen(0,'127.0.0.1'); await new Promise(resolve=>server.once('listening',resolve));
+    t.after(()=>new Promise(resolve=>server.close(resolve)));
+    return `http://127.0.0.1:${server.address().port}/social/interactions`;
+  };
+  const [workerA,workerB,workerC]=await Promise.all([startWorker(),startWorker(),startWorker()]);
+  const body={source:'github',sourceUrl:'https://github.com/org/repo',action:'like',liked:true,requestId:'durable-request-0001'};
+  const send=(url,payload=body)=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const first=send(workerA); await started;
+  assert.equal((await send(workerB)).status,409);
+  assert.equal(sourceCalls,1);
+  releaseSource(); const confirmed=await first; assert.equal(confirmed.status,200);
+  assert.equal((await send(workerC)).status,200);
+  assert.equal(sourceCalls,1);
+  assert.ok(fingerprints.every(value=>/^[a-f0-9]{64}$/.test(value)));
+  assert.equal((await send(workerA,{...body,liked:false})).status,409);
+});
+
+test('reservation outage fails closed and completion outage preserves confirmed success', async t => {
+  let unavailable=true, sourceCalls=0;
+  const app=express(); app.use(express.json());
+  registerSourceInteractionRoutes(app,{
+    policyEnv:{},fetchImpl:async()=>{sourceCalls++;return new Response(null,{status:204});},
+    authenticate:(req,_res,next)=>{req.user={id:'member'};next();},limiter:(_req,_res,next)=>next(),getUser:async()=>user,
+    screenMemberContent:async({content})=>({allowed:true,content}),
+    reserveInteraction:async()=>{if(unavailable)throw new Error('DB-SECRET');return null;},
+    completeInteraction:async()=>{throw new Error('DB-SECRET');},
+  });
+  const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const send=requestId=>fetch(`http://127.0.0.1:${server.address().port}/social/interactions`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:'github',sourceUrl:'https://github.com/org/repo',action:'like',liked:true,requestId})});
+  const denied=await send('storage-unavailable-0001');assert.equal(denied.status,503);assert.equal(sourceCalls,0);assert.equal((await denied.text()).includes('SECRET'),false);
+  unavailable=false;
+  const response=await send('completion-unavailable-0002');assert.equal(response.status,200);
+  const body=await response.json();assert.equal(body.published,true);assert.equal(body.completionRecorded,false);assert.equal(sourceCalls,1);
+});

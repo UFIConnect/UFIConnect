@@ -182,6 +182,17 @@ function LocalEditor({ apiBase, request }) {
       setFiles(directory.files);
       setPhone(status.phone || { state: 'off' });
       setGithub(status.github || { state: 'unavailable' });
+      const defaultBranch = status.github?.defaultBranch || 'main';
+      setBranch(defaultBranch);
+      if (status.github && status.github.state !== 'unavailable' && !status.phone?.remote) {
+        setPreviewSource('github');
+        fetch('/__local-web/github', {
+          method: 'POST', signal: controller.signal,
+          headers: { 'Content-Type': 'application/json', 'X-Local-Web-Editor': '1' },
+          body: JSON.stringify({ branch: defaultBranch }),
+        }).then(payloadOf).then(value => { if (active) setGithub(value); })
+          .catch(failure => { if (active) setGithub(current => ({ ...current, state: 'error', error: failure.message })); });
+      }
       setPreviewUrl(status.previewUrl);
       setReviewOnly(Boolean(status.reviewOnly));
       setReady(true);
@@ -224,11 +235,14 @@ function LocalEditor({ apiBase, request }) {
     setPreviewSource('github');
     try {
       setGithub(await payloadOf(await fetch('/__local-web/github', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Local-Web-Editor': '1' }, body: JSON.stringify({ branch: branch.trim() || 'main' }),
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Local-Web-Editor': '1' }, body: JSON.stringify({ branch: branch.trim() || github.defaultBranch || 'main' }),
       })));
     } catch (failure) { setGithub(current => ({ ...current, state: 'error', error: failure.message })); }
   };
   const githubReady = github.state === 'ready' && github.previewUrl === 'http://127.0.0.1:4175';
+  useEffect(() => {
+    if (!reviewOnly && previewSource === 'github' && !PREVIEW_PAGES.some(([page]) => page === previewPage)) setPreviewPage('/');
+  }, [previewSource, previewPage, reviewOnly]);
   const previewBase = previewSource === 'github' ? github.previewUrl : previewUrl;
   const clearReview = () => { setReview(null); setReviewed(false); setCommitMessage(''); };
   const connectPhone = async action => {
@@ -362,11 +376,11 @@ function LocalEditor({ apiBase, request }) {
         <section className={`local-web-panel${stepClass('preview')}`} aria-labelledby="local-web-preview-heading">
           <div className="local-web-section-heading"><h2 id="local-web-preview-heading">Local preview</h2>
             {!phone.remote && <div className="local-web-heading-actions">
-              <button type="button" onClick={() => setPreviewVersion(value => value + 1)}>Refresh</button>
+              <button type="button" disabled={previewSource === 'github' && github.state === 'updating'} onClick={() => previewSource === 'github' ? getLatestFromGithub() : setPreviewVersion(value => value + 1)}>{previewSource === 'github' ? 'Refresh from GitHub' : 'Refresh'}</button>
               <a className="local-web-button" href={`${previewSource === 'github' && githubReady ? previewBase : previewUrl}${previewPage === '/' ? '' : previewPage}`} target="_blank" rel="noreferrer">Open local website</a>
             </div>}
           </div>
-          <p className="local-web-hint">{reviewOnly && previewSource === 'local' ? 'Sample account and local data. Vault and workspace tools stay on this computer.' : 'Account actions in the GitHub or release preview use the live service.'}</p>
+          <p className="local-web-hint">{reviewOnly ? 'Sample account and local data. Review changes here before publishing the public site.' : 'Account actions in the GitHub or release preview use the live service.'}</p>
           {phone.remote ? <div className="local-web-phone-preview">
             <p>The preview opens in its own tab. Enter the same connection code there, then refresh it after each save.</p>
             <a href={previewUrl} target="_blank" rel="noreferrer" className="local-web-button local-web-primary">Open phone preview</a>
@@ -375,7 +389,7 @@ function LocalEditor({ apiBase, request }) {
               <button type="button" aria-pressed={previewSource === 'local'} onClick={() => setPreviewSource('local')}>{reviewOnly ? 'Local review · Vault & tools' : 'Your files'}</button>
               <button type="button" aria-pressed={previewSource === 'github'} disabled={github.state === 'unavailable'}
                 title={github.state === 'unavailable' ? 'Restart with npm run office:release-local to preview GitHub' : undefined}
-                onClick={() => setPreviewSource('github')}>GitHub</button>
+                onClick={() => setPreviewSource('github')}>GitHub{reviewOnly ? ' · Default' : ''}</button>
             </div>
             {previewSource === 'github' && <div className="local-web-github"><p className="local-web-hint">A separate GitHub snapshot. The editor changes your local files only. Local Vault data is not copied here.</p>
               <label className="local-web-label" htmlFor="local-web-branch">GitHub branch</label>
@@ -389,7 +403,7 @@ function LocalEditor({ apiBase, request }) {
                 : 'Get the latest from GitHub to preview it here. Your own files are not changed.'}</p>
             </div>}
             <div className="local-web-actions" role="group" aria-label="Preview page">
-              {(previewSource === 'local' && reviewOnly ? [...PREVIEW_PAGES, ['/vault', 'Your Vault'], ['/profile?tab=more', 'Profile · More'], ['/command-center', 'Command Center']] : PREVIEW_PAGES).map(([page, label]) => <button type="button" key={page} aria-pressed={previewPage === page} onClick={() => setPreviewPage(page)}>{label}</button>)}
+              {(reviewOnly ? [...PREVIEW_PAGES, ['/vault', 'Your Vault'], ['/profile?tab=more', 'Profile · More'], ['/command-center', 'Command Center']] : PREVIEW_PAGES).map(([page, label]) => <button type="button" key={page} aria-pressed={previewPage === page} onClick={() => setPreviewPage(page)}>{label}</button>)}
             </div>
             <div className="local-web-actions" role="group" aria-label="Preview size">
               <button type="button" aria-pressed={previewSize === 'desktop'} onClick={() => setPreviewSize('desktop')}>Desktop</button>

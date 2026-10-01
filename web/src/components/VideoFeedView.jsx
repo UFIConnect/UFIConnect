@@ -1,5 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import client from '../api/client';
+import { directMediaPlaybackAllowed } from '../utils/sourceMediaPolicy.mjs';
 import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, isYouTubeShortsUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, useGlobalMuted, fetchVimeoMetadata, youTubePosterUrl, SoundIcon, createYouTubePlayerFrame, youTubeEmbedUrl } from './videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
@@ -147,13 +148,14 @@ function resolveVideoSource(post) {
   });
   const vimeoId = extractVimeoId(vimeoUrl);
   if (vimeoId) return { kind: 'vimeo', id: vimeoId, poster: null };
+  if (!directMediaPlaybackAllowed(post)) return null;
   if (post.source === 'bluesky' && safeMediaUrl(post.mediaUrl)) {
     const playlist = deriveBlueskyPlaylistUrl(post.mediaUrl);
     return playlist ? { kind: 'hls', src: playlist, poster: post.mediaPoster || null } : null;
   }
   const hlsUrl = [post.mediaUrl, post.sourceUrl].find(url => safeMediaUrl(url) && /\.m3u8(\?|$)/i.test(String(url || '')));
   if (hlsUrl) return { kind: 'hls', src: hlsUrl, poster: post.mediaPoster || null };
-  if (safeMediaUrl(post.mediaUrl) && isDirectVideoUrl(post.mediaUrl)) {
+  if (safeMediaUrl(post.mediaUrl) && isDirectVideoUrl(post.mediaUrl, post)) {
     // mediaPoster is a real static preview frame server-side extracts
     // alongside the video itself where the source actually has one (Reddit's
     // own preview image, Mastodon's preview_url, Threads' thumbnail_url, an

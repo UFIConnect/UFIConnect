@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useDataPreferences, previewPlaybackAllowed } from '../preferences';
+import { directMediaPlaybackAllowed, officialYouTubeId, officialVimeoId } from '../utils/sourceMediaPolicy.mjs';
 
 // Every video surface (the Videos swipe feed, the photo/video lightbox, and
 // each inline YouTube card in the Feed) starts muted by default and only
@@ -160,9 +161,7 @@ export function useSoloVideoPlayback(id, inView) {
 // (watch?v=..., youtu.be/..., Shorts, or a live URL), which is always
 // persisted.
 export function extractYouTubeId(url) {
-  if (!url) return null;
-  const m = String(url).match(/(?:youtube(?:-nocookie)?\.com\/(?:watch\?(?:[^#\s]*?&)?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([\w-]{11})/i);
-  return m ? m[1] : null;
+  return officialYouTubeId(url);
 }
 
 export function youTubePosterUrl(videoId, quality = 'hqdefault') {
@@ -188,21 +187,14 @@ export function isYouTubeShortsUrl(url) {
 // numeric ID, recoverable from either the canonical vimeo.com/{id} watch URL
 // mediaUrl is normalized to, or a raw player.vimeo.com/video/{id} embed URL.
 export function extractVimeoId(url) {
-  if (!url) return null;
-  const m = String(url).match(/vimeo\.com\/(?:video\/)?(\d+)/);
-  return m ? m[1] : null;
+  return officialVimeoId(url);
 }
 
-// Bluesky video posts store the HLS playlist URL and its thumbnail at the
-// same path, differing only in filename (.../thumbnail.jpg vs
-// .../playlist.m3u8) — mediaUrl only ever holds the thumbnail (the DB
-// column it persists through already existed; a separate stream-url column
-// didn't), so the playlist URL is recovered by swapping the filename.
-export function deriveBlueskyPlaylistUrl(thumbnailUrl) {
-  if (!thumbnailUrl) return null;
-  if (/\.m3u8(\?|$)/i.test(thumbnailUrl)) return thumbnailUrl;
-  if (!thumbnailUrl.includes('/thumbnail.')) return null;
-  return thumbnailUrl.replace(/\/thumbnail\.[a-z0-9]+(\?.*)?$/i, '/playlist.m3u8');
+// Retain the helper contract while disabling guessed media endpoints.
+export function deriveBlueskyPlaylistUrl() {
+  // Deriving a media endpoint from a thumbnail bypasses the source player.
+  // Until an approved embed is installed, callers offer the original link.
+  return null;
 }
 
 // Vimeo posts (see resolveVideoSource's own 'vimeo' branch in
@@ -238,11 +230,9 @@ export async function fetchVimeoThumbnail(vimeoId) {
   return (await fetchVimeoMetadata(vimeoId))?.thumbnailUrl || null;
 }
 
-// Reddit/Mastodon (and any other source) can store a direct, already-playable
-// video file URL in mediaUrl rather than a poster image — no separate
-// thumbnail exists, so this URL needs a plain <video> element, not an <img>.
-export function isDirectVideoUrl(url) {
-  return !!url && /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url);
+// Direct file playback requires native media or an explicit backend rights flag.
+export function isDirectVideoUrl(url, post) {
+  return directMediaPlaybackAllowed(post) && !!url && /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url);
 }
 
 // A raw <iframe src="youtube.com/embed/..."> has no programmatic control at
@@ -404,7 +394,7 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
 // once — matches the "only the active slide actually plays" behavior
 // VideoFeedView already uses, just triggered by real scroll position
 // instead of a swipe-snap container.
-export function InlineAutoplayVideo({ kind, src, videoKey, poster, style, forcePause = false }) {
+export function InlineAutoplayVideo({ kind, src, post, videoKey, poster, style, forcePause = false }) {
   const preferences = useDataPreferences();
   const automaticPlayback = previewPlaybackAllowed(preferences);
   const containerRef = useRef(null);
@@ -443,7 +433,8 @@ export function InlineAutoplayVideo({ kind, src, videoKey, poster, style, forceP
   // shared solo-playback arbiter (see useSoloVideoPlayback) so only the
   // most-recently-scrolled-to video across the whole Feed plays at once.
   const isSolo = useSoloVideoPlayback(videoKey || src, automaticPlayback && inView && playbackAllowed && !forcePause);
-  const shouldPlay = automaticPlayback && isSolo && !forcePause;
+  const sourceAllowed = directMediaPlaybackAllowed(post);
+  const shouldPlay = sourceAllowed && automaticPlayback && isSolo && !forcePause;
 
   // Direct-file case drives its own <video> element here; the HLS case
   // (below, in the render) hands autoplay off to HlsVideoPlayer instead,
@@ -464,6 +455,7 @@ export function InlineAutoplayVideo({ kind, src, videoKey, poster, style, forceP
     }
   }, [shouldPlay, kind]);
 
+  if (!sourceAllowed) return <span style={{ display: 'block', padding: 24, color: '#fff', background: '#111827' }}>Open the original source to watch</span>;
   return (
     <div ref={containerRef} {...pointerHandlers}>
       {preferences.dataSaver ? (

@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import { canonicalPage, createAnalyticsController, PAGE_CATEGORIES, ANALYTICS_CONSENT_KEY,
   ANALYTICS_CLIENT_KEY, ANALYTICS_CLIENT_LIFETIME_MS } from '../web/src/analytics/googleAnalytics.mjs';
 import { analyticsBridgeHtml } from '../web/analyticsBridge.mjs';
+import { isPrivateTelemetryPath, setTelemetryRoute, subscribeTelemetryPrivacy, telemetrySuppressed } from '../web/src/analytics/telemetryPrivacy.mjs';
 
 const require = createRequire(import.meta.url);
 const { PAGE_CATEGORIES: BACKEND_CATEGORIES, createAggregateAnalytics } = require('../backend/aggregate-analytics');
@@ -64,6 +65,87 @@ function fixture(entries = [], navigator = {}) {
   }
   return { controller, frames, storage, window, document, events, ready };
 }
+
+test('Vault privacy policy covers route variants and notifies pending metrics only at route boundaries', () => {
+  for (const path of ['/vault', '/vault/', '/VAULT', '/vault?secret=private#value', '/%76ault', '/UFIConnect/vault']) {
+    assert.equal(isPrivateTelemetryPath(path), true, path);
+  }
+  for (const path of ['/', '/vaulting', '/music', undefined]) assert.equal(isPrivateTelemetryPath(path), false);
+  const changes = [];
+  setTelemetryRoute('/');
+  const unsubscribe = subscribeTelemetryPrivacy(value => changes.push(value));
+  try {
+    setTelemetryRoute('/vault'); setTelemetryRoute('/vault/');
+    assert.equal(telemetrySuppressed('/music'), true, 'Background errors remain suppressed while Vault is active');
+    setTelemetryRoute('/music');
+    assert.equal(telemetrySuppressed('/music'), false);
+    assert.equal(telemetrySuppressed('/vault'), true);
+    assert.deepEqual(changes, [true, false]);
+  } finally { unsubscribe(); setTelemetryRoute('/'); }
+});
+
+test('opening Vault with granted consent creates no bridge or identifier and resumes normally after leaving', () => {
+  const { controller, frames, storage, ready } = fixture([[ANALYTICS_CONSENT_KEY, 'granted']]);
+  controller.trackPage('/vault');
+  controller.setConsent('granted');
+  assert.equal(frames.length, 0);
+  assert.equal(storage.has(ANALYTICS_CLIENT_KEY), false);
+  assert.equal(controller.getConsent(), 'granted');
+  controller.trackPage('/music'); ready();
+  assert.deepEqual(frames[0].messages.map(message => message.category), ['music']);
+  controller.dispose();
+});
+
+test('entering Vault removes a live bridge without changing consent and drops pending pageviews', () => {
+  const { controller, frames, storage, ready, events } = fixture([[ANALYTICS_CONSENT_KEY, 'granted']]);
+  controller.trackPage('/settings'); ready();
+  const original = frames[0];
+  const identifier = storage.get(ANALYTICS_CLIENT_KEY);
+  controller.trackPage('/vault');
+  assert.equal(original.removed, true);
+  assert.equal(original.messages.length, 1);
+  assert.equal(storage.get(ANALYTICS_CONSENT_KEY), 'granted');
+  assert.equal(storage.get(ANALYTICS_CLIENT_KEY), identifier);
+  events.get('storage')({ key: ANALYTICS_CONSENT_KEY, newValue: 'granted' });
+  ready(original);
+  assert.equal(frames.length, 1, 'Late bridge readiness and consent events cannot resume tracking in Vault');
+  controller.trackPage('/music');
+  controller.trackPage('/groups');
+  const pending = frames[1];
+  controller.trackPage('/vault?private=value');
+  assert.equal(pending.removed, true);
+  ready(pending);
+  assert.equal(pending.messages.length, 0);
+  controller.trackPage('/videos'); ready();
+  assert.deepEqual(frames[2].messages.map(message => message.category), ['videos']);
+  controller.dispose();
+});
+
+test('the browser URL blocks delayed bridge events even before the route effect runs', () => {
+  const { controller, frames, ready, window } = fixture([[ANALYTICS_CONSENT_KEY, 'granted']]);
+  controller.trackPage('/settings');
+  window.location.pathname = '/vault';
+  ready();
+  assert.equal(frames[0].removed, true);
+  assert.equal(frames[0].messages.length, 0);
+  window.location.pathname = '/music';
+  controller.trackPage('/music'); ready();
+  assert.deepEqual(frames[1].messages.map(message => message.category), ['music']);
+  controller.dispose();
+});
+
+test('entering Vault also removes retiring analytics frames waiting for an opt-out acknowledgement', () => {
+  const { controller, frames, ready } = fixture([[ANALYTICS_CONSENT_KEY, 'granted']]);
+  controller.trackPage('/settings'); ready();
+  controller.setConsent('denied');
+  assert.notEqual(frames[0].removed, true);
+  controller.trackPage('/vault');
+  assert.equal(frames[0].removed, true);
+  assert.equal(controller.getConsent(), 'denied');
+  controller.trackPage('/music');
+  assert.equal(frames.length, 1);
+  controller.dispose();
+});
 
 test('all page categories are constants; secret dynamic route values, queries and fragments never become metadata', () => {
   for (const page of Object.values(PAGE_CATEGORIES)) assert.equal(canonicalPage(page.path), page);
@@ -279,7 +361,7 @@ test('the bridge must remain a static, separate-origin URL and its generated all
     assert.throws(() => createAnalyticsController({ window, document, bridgeUrl }));
   }
   const bridge = await fs.readFile(new URL('../backend/public/analytics-bridge.html', import.meta.url), 'utf8');
-  assert.equal(bridge.replace(/\r\n/g, '\n'), analyticsBridgeHtml());
+  assert.equal(bridge.replace(/\r\n/g, '\n'), analyticsBridgeHtml().replace(/\r\n/g, '\n'));
   assert.match(bridge, /name="referrer" content="no-referrer"/);
   assert.match(bridge, /default-src 'none'/);
   assert.doesNotMatch(bridge, /unsafe-inline|unsafe-eval/);

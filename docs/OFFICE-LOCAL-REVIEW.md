@@ -1,0 +1,33 @@
+# GitHub updates, reviewed inside Office
+
+`review/local-web` is the default branch for local website updates. Push completed
+review changes to that branch. Keep public deployment on `main` separate until the
+owner asks to publish. Do not merge this review branch just to refresh the preview.
+
+Open Office at http://127.0.0.1:4174/#local-web. GitHub is selected automatically.
+Opening Local web or clicking **Refresh from GitHub** fetches the latest branch
+commit into an isolated checkout, installs changed dependencies, and restarts the
+embedded website. The status displays the branch and commit actually loaded.
+The branch field can temporarily preview another branch; reopening defaults to
+`review/local-web`. **Your files / Local review** remains available for local edits.
+
+For a fresh checkout, switch to `review/local-web`, install dependencies with
+`npm ci --prefix web`, `npm ci --prefix office`, and `npm ci --prefix backend`,
+then run `npm run office:review`. Node 24 and authenticated Git access to this
+repository are required. Servers listen only on this computer.
+
+The review launcher supplies a synthetic account and sample posts. GitHub supplies
+the website source; the local launcher supplies the sample API and optional
+Windows VPN adapter. Nothing is sent to production by this sample launcher.
+Updating the launcher itself requires pulling this branch and restarting it.
+
+Maps contains nature cities, platform houses, topic selections, loaded/saved counts,
+and per-topic post targets. Vault is below Music. Profile's More area includes the
+writing, research, cooking, sports, developer, monetization, analytics, and learning
+workspaces. Learning tools prepare experiments and datasets; no model is trained.
+
+The GitHub website uses http://127.0.0.1:4175. Existing Vault data stays at the
+original http://localhost:4188 origin, accessible with **Local review**. Encrypted
+Vault data and browser workspaces are never uploaded to GitHub or transferred
+between origins. Open the website in its own tab for device-unlock prompts if the
+browser restricts them inside Office.

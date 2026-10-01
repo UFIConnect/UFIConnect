@@ -1,6 +1,7 @@
 import { resolveApiBaseUrl } from './apiOrigin';
 import { canonicalPage } from '../analytics/googleAnalytics.mjs';
 import { getDataPreferences, subscribeDataPreferences } from '../preferences/dataPreferences';
+import { subscribeTelemetryPrivacy, telemetrySuppressed } from '../analytics/telemetryPrivacy.mjs';
 
 const allowedCodes = new Set(['script_error', 'unhandled_rejection', 'render_error', 'request_failed']);
 const reported = new Set();
@@ -12,11 +13,18 @@ subscribeDataPreferences(() => {
   pending.clear();
   reported.clear();
 });
+subscribeTelemetryPrivacy(suppressed => {
+  if (!suppressed) return;
+  pending.forEach(controller => controller.abort());
+  pending.clear();
+  reported.clear();
+});
 
 // Optional diagnostics send broad, allowlisted error categories only. Message
 // text, stack traces, component names, source URLs and account IDs are excluded.
 export function reportClientError({ code = 'render_error', urlPath } = {}) {
-  if (!getDataPreferences().performanceInsights || !allowedCodes.has(code)) return;
+  if (import.meta.env.VITE_VAULT_LOCAL_PREVIEW === 'true' || telemetrySuppressed(urlPath)
+    || !getDataPreferences().performanceInsights || !allowedCodes.has(code)) return;
   const category = canonicalPage(urlPath || (typeof location !== 'undefined' ? location.pathname : '/')).category;
   const signature = `${category}:${code}`;
   if (reported.has(signature)) return;
@@ -24,7 +32,7 @@ export function reportClientError({ code = 'render_error', urlPath } = {}) {
   const controller = new AbortController();
   pending.add(controller);
   void resolveApiBaseUrl().then(apiBase => {
-    if (controller.signal.aborted || !getDataPreferences().performanceInsights) return;
+    if (controller.signal.aborted || telemetrySuppressed(urlPath) || !getDataPreferences().performanceInsights) return;
     return fetch(apiBase + '/analytics/performance', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ category, kind: 'client_error', code }),

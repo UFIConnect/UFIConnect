@@ -1556,7 +1556,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
   // Same idea, for RSS articles embedding a Vimeo player instead (see
   // parseRSSItems' vimeo detection backend-side).
   const videoVimeoId = hasVideo && !videoYouTubeId ? extractVimeoId(videoLinkUrl) : null;
-  const videoIsDirectFile = hasVideo && !videoPlaylistUrl && !videoYouTubeId && !videoVimeoId && isDirectVideoUrl(videoLinkUrl);
+  const videoIsDirectFile = hasVideo && !videoPlaylistUrl && !videoYouTubeId && !videoVimeoId && isDirectVideoUrl(videoLinkUrl, post);
   const videoIsPlayable = hasVideo && (videoPlaylistUrl || videoIsDirectFile || videoYouTubeId || videoVimeoId);
   const commentCount   = post.commentsCount || 0;
   const commUrl        = commentUrl(post);
@@ -1779,7 +1779,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
             {/* Autoplays muted/looping as it scrolls into view (see
                 InlineAutoplayVideo); unsupported external media is omitted
                 instead of producing a dead card. */}
-            <InlineAutoplayVideo
+            <InlineAutoplayVideo post={post}
               kind={videoPlaylistUrl ? 'hls' : 'file'}
               src={videoPlaylistUrl || videoLinkUrl}
               videoKey={post.id}
@@ -3938,6 +3938,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
               <button key={key} type="button" className={`home-feed-rail-tab home-feed-rail-tab--icon${viewMode === key ? ' active' : ''}`} onClick={() => activateHomeView(key)}><Icon size={16} strokeWidth={2.2} aria-hidden="true" />{label}</button>
             ))}
             <Link to="/music" className="home-feed-rail-tab">Music</Link>
+            <Link to="/vault" className="home-feed-rail-tab">Your Vault</Link>
           </div>
           <div className="home-feed-rail-bottom">
             <Link to="/groups" className="home-feed-rail-tab">Discover groups</Link>
