@@ -21,8 +21,20 @@ the website source; the local launcher supplies the sample API and optional
 Windows VPN adapter. Nothing is sent to production by this sample launcher.
 Updating the launcher itself requires pulling this branch and restarting it.
 
-Maps contains nature cities, platform houses, topic selections, loaded/saved counts,
-and per-topic post targets. Vault is below Music. Profile's More area includes the
+Maps opens with an animated overview of all 16 nature cities around UFI downtown.
+Downtown buildings explain feeds, sources, topics, collections, groups, people,
+Command Center, and Vault. Open a city to reach its source houses and topic targets.
+The desktop map has Customize your app, Sources, and Community collection on its
+right; these controls stack below the map on mobile. Maps is at the bottom of the
+app sidebar; Analytics lives in Profile → More.
+
+Cars, walkers, birds, clouds, water, and trees animate in the scene. Full motion is
+the default, with Calm and Pause controls. Reduced-motion preferences pause it
+initially; offscreen and hidden views suspend rendering. Traffic is illustrative,
+not a live count of members. Geometry is instanced across cities.
+
+Maps also preserves topic selections, loaded/saved counts, and per-topic post targets.
+Vault is below Music. Profile's More area includes the
 writing, research, cooking, sports, developer, monetization, analytics, and learning
 workspaces. Learning tools prepare experiments and datasets; no model is trained.
 

@@ -10,7 +10,7 @@ import NotificationInbox from './NotificationInbox';
 import './social-surfaces.css';
 import './navigation.css';
 import { HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS } from './sourceMeta';
-import { SquarePen, UsersRound, ShoppingBag, Music, ShieldCheck, ChevronDown, Map as MapIcon, ChartNoAxesCombined } from 'lucide-react';
+import { SquarePen, UsersRound, ShoppingBag, Music, ShieldCheck, ChevronDown, Map as MapIcon } from 'lucide-react';
 
 const SearchPopupContent = lazy(() => import('../pages/SearchExperience'));
 
@@ -456,11 +456,6 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
             </NavLink>
           ))}
           <SavedNavigation expanded={savedExpanded} onToggle={toggleSavedNavigation} />
-          <NavLink to="/analytics" className="nav-link" aria-label="Analytics" title="Analytics">
-            <span className="nav-icon"><ChartNoAxesCombined size={17} aria-hidden="true" /></span>
-            <span className="nav-label">Analytics</span>
-          </NavLink>
-          <NavLink to="/maps" className="nav-link" title="Maps" aria-label="Maps"><span className="nav-icon"><MapIcon size={17} aria-hidden="true" /></span><span className="nav-label">Maps</span></NavLink>
         </nav>
 
         {canInstall && (
@@ -493,6 +488,7 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
           </button>
         )}
 
+        <NavLink to="/maps" className="nav-link sidebar-maps-link" title="Maps" aria-label="Maps"><span className="nav-icon"><MapIcon size={17} aria-hidden="true" /></span><span className="nav-label">Maps</span></NavLink>
         {profile && (
           <div className="sidebar-user">
             <div className="avatar avatar-sm">{initials(profile.name)}</div>
@@ -671,11 +667,8 @@ export default function Layout({ children, wide = false, feedSearch, discoveryPo
               Shop
             </Link>
             <SavedNavigation mobile expanded={savedExpanded} onToggle={toggleSavedNavigation} onNavigate={closeMobileOverlays} />
-            <NavLink to="/analytics" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
-              <ChartNoAxesCombined size={20} aria-hidden="true" />Analytics
-            </NavLink>
-            <NavLink to="/maps" className="mobile-command-menu-item" onClick={closeMobileOverlays}><MapIcon size={18} aria-hidden="true" />Maps</NavLink>
             <div className="mobile-feed-drawer-bottom mobile-account-drawer-bottom">
+              <NavLink to="/maps" className="mobile-command-menu-item" onClick={closeMobileOverlays}><MapIcon size={18} aria-hidden="true" />Maps</NavLink>
               <NavLink to="/profile" className="mobile-command-menu-item mobile-account-profile" aria-label="Profile" onClick={closeMobileOverlays}>
                 <span className="mobile-account-avatar" aria-hidden="true">
                   {profile.avatarUrl && failedAvatarUrl !== profile.avatarUrl

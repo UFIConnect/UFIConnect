@@ -57,6 +57,9 @@ export default function Maps() {
     ? [...new Set(sourceSelections[active].filter(source => CITY_SOURCE_IDS.includes(source)))]
     : CITY_SOURCE_PRESETS[active] || ['uficonnect'];
   const currentSource = sources.includes(activeSource) ? activeSource : '';
+  const allCities = CITY_CATEGORIES.map(item => ({ ...item, sources: Array.isArray(sourceSelections[item.id])
+    ? [...new Set(sourceSelections[item.id].filter(source => CITY_SOURCE_IDS.includes(source)))]
+    : CITY_SOURCE_PRESETS[item.id] || ['uficonnect'] }));
   const topicKey = active + ':' + (currentSource || 'city');
   const availableTopics = [...new Set([...houseTopics(active, currentSource), ...CITY_ALL_TOPICS])];
   const topics = Array.isArray(topicSelections[topicKey])
@@ -173,32 +176,9 @@ export default function Maps() {
     <div className="local-workspace city-workspace">
       <header className="local-workspace-heading"><div><span className="local-eyebrow">YOUR WORLD, CONNECTED</span><h1>Maps</h1><p>Choose a city, open its source houses, and save posts about the topics you enjoy.</p></div><span className="local-status-pill">{selected.length} / {limit} posts selected</span></header>
       <ol className="map-get-started"><li><b>1</b><span>Choose your city<small>A landscape for every interest</small></span></li><li><b>2</b><span>Open source houses<small>Pick the topics inside</small></span></li><li><b>3</b><span>Grow your collection<small>Raise your target and save posts</small></span></li></ol>
-      <CategoryCity houseSummaries={houseSummaries} cityCounts={cityCounts} enabled={enabled} active={active} onSelect={chooseCategory} counts={counts} sources={enabled.includes(active) ? sources : []} activeSource={currentSource} onSourceSelect={openHouse} />
-      <section className="card map-city-budget" aria-label="City post target">
-        <div><span className="local-eyebrow">{category.label} collection</span><h2>{citySelected} / {cityLimit} posts saved</h2><p>{sources.length} sources · {topics.length || 'Any'} topics · {posts.length} matching posts loaded</p><progress max={cityLimit} value={citySelected} aria-label={category.label + ' saved post target'} /></div>
-        <label className="local-field">Posts from this city<select value={cityLimit} onChange={event => {
-          const next = Number(event.target.value);
-          if (citySelected > next) return setNotice('Remove some posts from this city before lowering its target.');
-          saveCity({ cityLimits: { ...cityLimits, [active]: next }, limit: Math.max(limit, next) });
-        }}>{[50, 100, 250, 350, 500].map(value => <option key={value} value={value}>{value} posts</option>)}</select><small>Raising a target makes room; select posts below to fill it.</small></label>
-      </section>
-      <details className="card city-customize"><summary>Customize your app</summary>
-        <p>Choose your nature neighborhoods, add source houses, and keep up to 500 posts in your personal selection. Changes are saved for your account in this browser.</p>
-        <div className="local-chip-row">{CITY_CATEGORIES.map(item => <label key={item.id} className="local-check-chip"><input type="checkbox" checked={enabled.includes(item.id)} onChange={() => toggleCategory(item.id)} />{item.label}</label>)}</div>
-        <label className="local-field">Post selection limit<select value={limit} onChange={event => {
-          const next = Number(event.target.value);
-          if (selected.length > next) setNotice('Remove some selected posts before reducing your limit.');
-          else saveCity({ limit: next });
-        }}><option value="250">250 posts</option><option value="350">350 posts</option><option value="500">500 posts</option></select></label>
-        <button className="btn btn-ghost btn-sm" type="button" onClick={() => saveCity({ enabled: DEFAULT_CITY.enabled })}>Restore all categories</button>
-      </details>
-      {enabled.includes(active) && <section className="card city-source-picker" aria-labelledby="city-sources-heading">
-        <div className="local-workspace-heading"><div><h2 id="city-sources-heading">Sources</h2><p>Each source gets a house in {category.label}. Open its house to choose the topics inside.</p></div>
-          <button type="button" className="ufi-clear-control" disabled={!sources.length} onClick={() => setSources([])}>Clear</button>
-        </div>
-        <div className="local-chip-row" role="group" aria-label={category.label + ' sources'}>{primarySources.map(sourceButton)}</div>
-        {otherSources.length > 0 && <details className="city-more-sources"><summary>More sources ({otherSources.length})</summary><div className="local-chip-row">{otherSources.map(sourceButton)}</div></details>}
-      </section>}
+      <div className="map-explorer-layout">
+        <div className="map-explorer-main">
+      <CategoryCity cities={allCities} onAction={action => { if (action === 'collection') { setView('selected'); setPage(1); heading.current?.scrollIntoView({ block: 'start', behavior: 'auto' }); } else housePanel.current?.scrollIntoView({ block: 'start', behavior: 'auto' }); }} houseSummaries={houseSummaries} cityCounts={cityCounts} enabled={enabled} active={active} onSelect={chooseCategory} counts={counts} sources={enabled.includes(active) ? sources : []} activeSource={currentSource} onSourceSelect={openHouse} />
       {enabled.includes(active) && view === 'explore' && <section ref={housePanel} id="city-source-house" className="card city-house-topics" aria-labelledby="house-topics-heading">
         <div className="local-workspace-heading"><div><span className="local-eyebrow">{currentSource ? 'INSIDE THE HOUSE' : 'CITY TOPICS'}</span><h2 id="house-topics-heading">{currentSource ? sourceLabel(currentSource) : category.label} · Topics</h2></div>
           {currentSource && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setActiveSource('')}>Back to city topics</button>}
@@ -219,6 +199,35 @@ export default function Maps() {
         </div></details>
 
       </section>}
+        </div>
+        <aside className="map-customization-rail" aria-label="Customize your city">
+      <details className="card city-customize"><summary>Customize your app</summary>
+        <p>Choose your nature neighborhoods, add source houses, and keep up to 500 posts in your personal selection. Changes are saved for your account in this browser.</p>
+        <div className="local-chip-row">{CITY_CATEGORIES.map(item => <label key={item.id} className="local-check-chip"><input type="checkbox" checked={enabled.includes(item.id)} onChange={() => toggleCategory(item.id)} />{item.label}</label>)}</div>
+        <label className="local-field">Post selection limit<select value={limit} onChange={event => {
+          const next = Number(event.target.value);
+          if (selected.length > next) setNotice('Remove some selected posts before reducing your limit.');
+          else saveCity({ limit: next });
+        }}><option value="250">250 posts</option><option value="350">350 posts</option><option value="500">500 posts</option></select></label>
+        <button className="btn btn-ghost btn-sm" type="button" onClick={() => saveCity({ enabled: DEFAULT_CITY.enabled })}>Restore all categories</button>
+      </details>
+      {enabled.includes(active) && <section className="card city-source-picker" aria-labelledby="city-sources-heading">
+        <div className="local-workspace-heading"><div><h2 id="city-sources-heading">Sources</h2><p>Each source gets a house in {category.label}. Open its house to choose the topics inside.</p></div>
+          <button type="button" className="ufi-clear-control" disabled={!sources.length} onClick={() => setSources([])}>Clear</button>
+        </div>
+        <div className="local-chip-row" role="group" aria-label={category.label + ' sources'}>{primarySources.map(sourceButton)}</div>
+        {otherSources.length > 0 && <details className="city-more-sources"><summary>More sources ({otherSources.length})</summary><div className="local-chip-row">{otherSources.map(sourceButton)}</div></details>}
+      </section>}
+      <section className="card map-city-budget" aria-label="City post target">
+        <div><span className="local-eyebrow">{category.label}</span><h2>Community collection</h2><strong>{citySelected} / {cityLimit} posts saved</strong><p>{sources.length} sources · {topics.length || 'Any'} topics · {posts.length} matching posts loaded</p><progress max={cityLimit} value={citySelected} aria-label={category.label + ' saved post target'} /></div>
+        <label className="local-field">Posts from this city<select value={cityLimit} onChange={event => {
+          const next = Number(event.target.value);
+          if (citySelected > next) return setNotice('Remove some posts from this city before lowering its target.');
+          saveCity({ cityLimits: { ...cityLimits, [active]: next }, limit: Math.max(limit, next) });
+        }}>{[50, 100, 250, 350, 500].map(value => <option key={value} value={value}>{value} posts</option>)}</select><small>Raising a target makes room; select posts below to fill it.</small></label>
+      </section>
+        </aside>
+      </div>
       <div className="local-workspace-heading"><h2 ref={heading} tabIndex={-1}>{view === 'selected' ? 'Your selected posts' : currentSource ? sourceLabel(currentSource) + ' posts' : category.label + ' · Source posts'}</h2><div className="local-chip-row">
         <button type="button" className="btn btn-ghost btn-sm" aria-pressed={view === 'selected'} onClick={() => { setView(view === 'selected' ? 'explore' : 'selected'); setPage(1); }}>Your selection ({selected.length})</button>
         {view === 'explore' && sourceKey && <Link className="btn btn-ghost btn-sm" to={'/?feed=' + (category.mode || 'feed') + '&sources=' + encodeURIComponent(sourceKey)}>Open source feed</Link>}
