@@ -1,0 +1,91 @@
+﻿/* Shared appearance tokens load before the app so saved choices do not flash. */
+:root {
+  color-scheme: light;
+  --bg-secondary: var(--surface);
+  --action-bg: #102a6b;
+  --action-hover: #0b1e4d;
+  --on-primary: #fff;
+  --control-surface: linear-gradient(145deg, #fff 12%, #f5f8fc 58%, #e8eef7);
+  --control-border: #d5deeb;
+  --glass-bg: rgb(255 255 255 / 94%);
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --primary: #86b4ff;
+  --primary-hover: #a7c9ff;
+  --primary-light: #203655;
+  --secondary: #86b4ff;
+  --secondary-light: #203655;
+  --bg: #0d1422;
+  --surface: #162236;
+  --card: #111d30;
+  --text: #e6edf7;
+  --muted: #a2b2c9;
+  --border: #2a3a52;
+  --success: #63d6a0;
+  --danger: #ff939e;
+  --warning: #efc16a;
+  --action-bg: #2856a6;
+  --action-hover: #3266bd;
+  --control-surface: linear-gradient(145deg, #223550 12%, #192a43 58%, #162236);
+  --control-border: #3a5070;
+  --glass-bg: rgb(17 29 48 / 96%);
+  --shadow: 0 1px 3px rgb(0 0 0 / 25%);
+  --shadow-md: 0 4px 12px rgb(0 0 0 / 24%);
+  --shadow-lg: 0 12px 32px rgb(0 0 0 / 28%);
+}
+html[data-theme="dark"], html[data-theme="dark"] body { background: var(--bg); color: var(--text); }
+html[data-theme="dark"] #root[data-session-shell] + .static-session-loading { background: var(--bg); color: var(--text); }
+
+.appearance-control { display: grid; grid-template-columns: minmax(0, 1fr) minmax(130px, 210px); gap: 10px 16px; align-items: center; min-width: 0; }
+.appearance-control label { font-size: .85rem; font-weight: 650; color: var(--text); }
+.appearance-control select { width: 100%; min-width: 0; min-height: 38px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; color: var(--text); background: var(--surface); font: inherit; font-size: .8rem; }
+.appearance-control select:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.appearance-control p { grid-column: 1 / -1; color: var(--muted); font-size: .78rem; line-height: 1.5; margin: 0; }
+.appearance-control--compact { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.sidebar-appearance { padding: 12px 16px; margin-top: auto; }
+.mobile-account-drawer-bottom > .appearance-control { padding: 10px; }
+.settings-appearance { margin-bottom: 20px; }
+@media (min-width: 769px) and (max-width: 1100px) { .sidebar-appearance { display: none; } }
+@media (max-width: 420px) { .appearance-control { grid-template-columns: minmax(0, 1fr); } }
+
+/* Theme the app's chrome; logos, photos, videos and document previews retain their colors. */
+html[data-theme="dark"] :is(.btn-primary, .profile-content-tabs button.active, .msg-send, .msg-row.me .msg-bubble) {
+  background: var(--action-bg); color: var(--on-primary);
+}
+html[data-theme="dark"] .btn-primary:hover { background: var(--action-hover); }
+/* Older JSX surfaces express this same semantic fill as an inline style. */
+html[data-theme="dark"] [style*="background: var(--primary)"] { background-color: var(--action-bg) !important; }
+html[data-theme="dark"] :is(.btn-ghost, .form-input, .search-filter-chip, .search-tab-strip, .post-card, .profile-card, .modal, .dropdown-menu) { border-color: var(--border); }
+html[data-theme="dark"] .shell :is(.feed-source-tabs--compact .feed-source-option.compact, .feed-source-menu-button, .nav-link .nav-icon),
+html[data-theme="dark"] :is(.shell, .video-feed-view) .ufi-clear-control { background: var(--control-surface); border-color: var(--control-border); color: var(--text); box-shadow: inset 0 1px 0 rgb(255 255 255 / 8%), 0 2px 4px rgb(0 0 0 / 24%); }
+html[data-theme="dark"] .shell .feed-source-tabs--compact .feed-source-option.compact.active { border-color: var(--feed-source-color, var(--primary)); box-shadow: inset 0 0 0 1px var(--feed-source-color, var(--primary)); }
+html[data-theme="dark"] .shell :is(.nav-link.active .nav-icon, .global-primary-link.active) { background: var(--primary-light); color: var(--primary); border-color: var(--control-border); }
+html[data-theme="dark"] .shell .feed-source-option.compact > span:first-child,
+html[data-theme="dark"] .shell :is(.mobile-command-menu-item, .mobile-app-header-action) > svg { filter: none; }
+html[data-theme="dark"] .shell :is(.global-primary-link, .global-messages-link, .global-desktop-alerts) { color: var(--muted); }
+html[data-theme="dark"] .shell :is(.global-primary-link:hover, .global-messages-link:hover, .global-messages-link.active, .global-desktop-alerts:hover) { background: var(--primary-light); color: var(--primary); }
+html[data-theme="dark"] .shell .global-search-bar { color: var(--muted); background: var(--surface); border-color: var(--border); }
+html[data-theme="dark"] .shell .global-search-bar:focus-within { background: var(--card); border-color: var(--primary); }
+html[data-theme="dark"] .shell .global-search-bar :is(button, select) { color: var(--muted); border-color: var(--border); }
+html[data-theme="dark"] .shell .global-search-bar button:hover { color: var(--text); background: var(--primary-light); }
+html[data-theme="dark"] .shell .global-search-bar input::placeholder { color: var(--muted); }
+html[data-theme="dark"] :is(.global-search-dialog, .global-search-dialog-close) { border-color: var(--border); background: var(--card); color: var(--text); }
+html[data-theme="dark"] .mobile-app-header { background: var(--glass-bg); }
+html[data-theme="dark"] :is(.home-feed-source-mark, .jobs-sidebar-source-mark, .jobs-career-source-mark, .search-source-mark) { background: var(--surface); }
+html[data-theme="dark"] :is(.local-error, .creator-analytics-message.is-error) { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); background: color-mix(in srgb, var(--danger) 9%, var(--card)); }
+html[data-theme="dark"] .map-get-started b { background: var(--primary-light); color: var(--primary); }
+html[data-theme="dark"] .city-source-mark { box-shadow: inset 0 1px 0 rgb(255 255 255 / 8%), 0 2px 4px rgb(0 0 0 / 20%); }
+
+/* Public pages share the same preference as the signed-in workspace. */
+html[data-theme="dark"] :is(.landing-page, .landing-header-refined, .landing-hero-refined, .landing-proof-inner, .landing-product-shot, .landing-step-card, .landing-plan-card, .landing-faq-item) { background: var(--card); color: var(--text); border-color: var(--border); }
+html[data-theme="dark"] .landing-hero-refined { background: linear-gradient(120deg, var(--bg), var(--surface)); }
+html[data-theme="dark"] :is(.landing-hero-copy h1, .landing-section-heading h2, .landing-step-card h3, .landing-plan-card h3, .landing-faq-item summary, .landing-brand) { color: var(--text); }
+html[data-theme="dark"] :is(.landing-hero-copy p, .landing-proof-inner span, .landing-section-heading p, .landing-step-card p, .landing-plan-card p, .landing-faq-item p) { color: var(--muted); }
+html[data-theme="dark"] :is(.landing-secondary-action, .landing-hero-copy .landing-secondary-action, .landing-source-row > span, .landing-share-actions a, .landing-share-actions button) { background: var(--surface); color: var(--text); border-color: var(--border); }
+html[data-theme="dark"] .landing-shell { background: var(--bg); color: var(--text); }
+html[data-theme="dark"] :is(.landing-feature-row, .landing-proof-inner div) { border-color: var(--border); }
+html[data-theme="dark"] .landing-feature-row > span { color: var(--primary); }
+html[data-theme="dark"] .landing-feature-row p { color: var(--muted); }
+html[data-theme="dark"] :is(.landing-source-mark, .landing-source-fallback, .landing-step-card > span, .landing-plan-top span) { background: var(--primary-light); color: var(--primary); border-color: var(--border); }
+html[data-theme="dark"] :is(.auth-error, .sidebar-logout--danger) { background: color-mix(in srgb, var(--danger) 10%, var(--card)); border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); color: var(--danger); }
