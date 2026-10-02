@@ -1,5 +1,6 @@
-// Keep every first-party app icon aligned with the approved 3D UFI artwork.
-// Run after changing the original marketing artwork; --check only compares.
+// Keep every first-party app icon aligned with the approved UFI logo, a rounded
+// tile with transparent corners. Run after changing marketing/brand/ufi-logo.png;
+// --check only compares.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,8 +8,7 @@ import { chromium } from 'playwright';
 import { deflateSync, inflateSync, crc32 } from 'node:zlib';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const original = await fs.readFile(path.join(root, 'marketing/google-ads/images/logo-square.png'));
-const vector = await fs.readFile(path.join(root, 'marketing/google-ads/ufi-icon-3d.svg'));
+const original = await fs.readFile(path.join(root, 'marketing/brand/ufi-logo.png'));
 const checkOnly = process.argv.includes('--check');
 const outputs = new Map();
 const browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
@@ -36,25 +36,29 @@ function compressPng(data) {
   })]);
 }
 
-async function png(size, scale = 1) {
-  const key = `${size}:${scale}`;
+// App icons fill the logo's transparent corners with navy so platform masks
+// never show a light edge; type 'image/webp' keeps them transparent instead.
+async function raster(size, scale = 1, type = 'image/png') {
+  const key = `${size}:${scale}:${type}`;
   if (rasterCache.has(key)) return rasterCache.get(key);
-  const encoded = await page.evaluate(async ({ source, size, scale }) => {
+  const encoded = await page.evaluate(async ({ source, size, scale, type }) => {
     const image = new Image();
     image.src = source;
     await image.decode();
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = size;
     const context = canvas.getContext('2d');
-    context.fillStyle = '#102A6B';
-    context.fillRect(0, 0, size, size);
+    if (type === 'image/png') {
+      context.fillStyle = '#102A6B';
+      context.fillRect(0, 0, size, size);
+    }
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = 'high';
     const inset = size * (1 - scale) / 2;
     context.drawImage(image, inset, inset, size * scale, size * scale);
-    return canvas.toDataURL('image/png').split(',')[1];
-  }, { source: `data:image/png;base64,${original.toString('base64')}`, size, scale });
-  const data = compressPng(Buffer.from(encoded, 'base64'));
+    return canvas.toDataURL(type, .88).split(',')[1];
+  }, { source: `data:image/png;base64,${original.toString('base64')}`, size, scale, type });
+  const data = type === 'image/png' ? compressPng(Buffer.from(encoded, 'base64')) : Buffer.from(encoded, 'base64');
   rasterCache.set(key, data);
   return data;
 }
@@ -62,7 +66,7 @@ async function png(size, scale = 1) {
 // PNG images inside ICO keep all sizes crisp without changing the artwork.
 async function ico(sizes) {
   const images = [];
-  for (const size of sizes) images.push(await png(size));
+  for (const size of sizes) images.push(await raster(size));
   const header = Buffer.alloc(6 + sizes.length * 16);
   header.writeUInt16LE(1, 2);
   header.writeUInt16LE(sizes.length, 4);
@@ -80,6 +84,13 @@ async function ico(sizes) {
   return Buffer.concat([header, ...images]);
 }
 
+// SVG icons (favicon, manifest "any" icon and in-app marks) wrap a compact
+// 512px copy of the logo that stays sharp at every size they are shown.
+const vector = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 512 512" width="512" height="512">
+  <title>UFIconnect</title>
+  <image width="512" height="512" xlink:href="data:image/webp;base64,${(await raster(512, 1, 'image/webp')).toString('base64')}"/>
+</svg>
+`);
 for (const file of ['web/public/icon.svg', 'web/public/favicon.svg', 'web/public/uficonnect-google-verification-icon.svg', 'office/public/icon.svg']) outputs.set(file, vector);
 for (const [file, size, scale] of [
   ['web/public/uficonnect-google-verification-icon.png', 512, 1],
@@ -87,7 +98,7 @@ for (const [file, size, scale] of [
   ['web/public/icon-maskable-512.png', 512, .7],
   ['mobile/assets/icon.png', 1024, 1], ['mobile/assets/adaptive-icon.png', 1024, .62],
   ['mobile/assets/splash.png', 1024, 1], ['mobile/assets/favicon.png', 48, 1],
-]) outputs.set(file, await png(size, scale));
+]) outputs.set(file, await raster(size, scale));
 outputs.set('web/public/favicon.ico', await ico([16, 32, 48, 256]));
 
 // Preserve each existing native resource's density/dimensions. Adaptive artwork
@@ -99,7 +110,7 @@ for (const dir of await fs.readdir(path.join(root, 'android-twa/app/src/main/res
     const existing = await fs.readFile(path.join(root, file));
     const size = existing.readUInt32BE(16);
     if (size < 16 || size > 2048 || size !== existing.readUInt32BE(20)) throw Error(`Unexpected icon dimensions: ${file}`);
-    outputs.set(file, await png(size, name === 'ic_maskable.png' ? .7 : 1));
+    outputs.set(file, await raster(size, name === 'ic_maskable.png' ? .7 : 1));
   }
 }
 
