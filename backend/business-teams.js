@@ -53,6 +53,16 @@ function createBusinessTeams({ db, billing, now = Date.now }) {
       FROM business_team_members m JOIN users u ON u.id=m.member_id
       WHERE m.owner_id=$1 ORDER BY m.joined_at,m.member_id`, [ownerId])).rows;
   }
+  async function ownsTeamRecords(client, userId) {
+    // Call while holding this user's account lock, which is also required by
+    // invitations, acceptance, removal and revocation. Cancellation alone
+    // does not remove the team records its owner still needs to manage.
+    const { rows: [result] } = await client.query(`SELECT
+      EXISTS(SELECT 1 FROM business_team_members WHERE owner_id=$1)
+      OR EXISTS(SELECT 1 FROM business_team_invitations WHERE owner_id=$1 AND expires_at>$2) AS owned`,
+    [userId, new Date(now())]);
+    return result.owned;
+  }
   async function effectiveMembership(userId) {
     ready(userId);
     // Recompute the rank against the owner's paid capacity on every check.
@@ -101,6 +111,7 @@ function createBusinessTeams({ db, billing, now = Date.now }) {
       if (capacity(owner) < 2) throw fault(403, 'An active Business membership for two or more people is required to invite teammates.');
       if (!invitee || invitee.billing_closed || emailOf(invitee.email) !== email) throw fault(400, 'This registered account is no longer available.');
       if (invitee.plan === 'business') throw fault(409, 'This person already manages a Business membership.');
+      if (await ownsTeamRecords(client, target.id)) throw fault(409, 'This person must remove their team members and revoke pending invitations in Settings before joining another team.');
       const { rows: existingMember } = await client.query('SELECT owner_id FROM business_team_members WHERE member_id=$1', [target.id]);
       if (existingMember.length) throw fault(409, 'This person must leave their current team before accepting another invitation.');
       await client.query('DELETE FROM business_team_invitations WHERE owner_id=$1 AND expires_at<=$2', [ownerId, new Date(now())]);
@@ -133,6 +144,7 @@ function createBusinessTeams({ db, billing, now = Date.now }) {
         || !invitee || invitee.billing_closed || emailOf(invitee.email) !== invitation.email) throw fault(404, 'This invitation has expired or is unavailable for your account.');
       if (capacity(owner) < 2) throw fault(403, 'This team does not currently have an active membership for two or more people.');
       if (invitee.plan === 'business') throw fault(409, 'Leave or cancel your own Business membership before joining another team.');
+      if (await ownsTeamRecords(client, userId)) throw fault(409, 'Remove your team members and revoke pending invitations in Settings before joining another team.');
       const { rows: existing } = await client.query('SELECT owner_id FROM business_team_members WHERE member_id=$1', [userId]);
       if (existing.length) throw fault(409, 'You already belong to a team. Leave it before accepting another invitation.');
       const { rows: [count] } = await client.query('SELECT COUNT(*)::int AS total FROM business_team_members WHERE owner_id=$1', [owner.id]);

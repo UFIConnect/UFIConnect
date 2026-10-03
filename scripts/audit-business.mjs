@@ -19,6 +19,7 @@ try {
     const page = await context.newPage();
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     let plan = 'free';
+    let addons = { resumeBuilderAddon: false, vpnConnectorAddon: false };
     const requests = [];
     const price = amount => ({ active: true, unitAmount: amount, display: '$' + (amount / 100).toFixed(2), currency: 'USD', interval: 'month', intervalCount: 1, matchesRequiredPrice: true });
     await context.route('**/*', async route => {
@@ -28,8 +29,8 @@ try {
       if (!['fetch', 'xhr'].includes(request.resourceType())) return url.origin === server.origin ? route.continue() : route.abort();
       const endpoint = url.pathname.replace(/^\/(api|fallback)/, '');
       const fulfill = json => route.fulfill({ json, headers });
-      if (endpoint === '/profile') return fulfill({ ...app.fullProfile(app.users[0]), plan, businessSeats: plan === 'business' ? 3 : 0 });
-      if (endpoint === '/billing/status') return fulfill({ plan, businessSeats: plan === 'business' ? 3 : 0, hasBillingAccount: plan === 'business', subscriptions: plan === 'business' ? [{ kind: 'plan', tier: 'business', status: 'active' }] : [] });
+      if (endpoint === '/profile') return fulfill({ ...app.fullProfile(app.users[0]), plan, ...addons, businessSeats: plan === 'business' ? 3 : 0 });
+      if (endpoint === '/billing/status') return fulfill({ plan, ...addons, businessSeats: plan === 'business' ? 3 : 0, hasBillingAccount: plan === 'business', subscriptions: plan === 'business' ? [{ kind: 'plan', tier: 'business', status: 'active' }] : [] });
       if (endpoint === '/billing/config') return fulfill({ paymentsReady: true, tiers: { pro: true, business: true, business_team: true }, pricing: { pro: price(1994), business: price(19994), business_team: price(1994) } });
       if (endpoint === '/billing/create-checkout-session') { requests.push(request.postDataJSON()); return fulfill({ url: 'https://invalid.example/checkout' }); }
       if (endpoint === '/users/search') return fulfill({ users: [{ id: 'candidate-1', name: 'Candidate Example', title: 'Software engineer', organization: 'Example Company', skills: ['React', 'TypeScript'] }], hasMore: false });
@@ -71,6 +72,24 @@ try {
     check(await page.getByRole('link', { name: 'Contact about a role', exact: true }).getAttribute('href') === '/messages/candidate-1', 'Candidate contact starts a direct conversation');
     check(await page.getByText('TypeScript', { exact: true }).isVisible(), 'Candidate skills are visible');
     check(await page.getByRole('link', { name: 'Create a group', exact: true }).count() === 0, 'Candidate search has no social group actions');
+    await auditNavigate(page, server.origin + '/settings/');
+    await page.getByRole('heading', { name: 'Business plan', exact: true }).waitFor();
+    check(new URL(page.url()).pathname === '/settings/', 'Business keeps supported trailing-slash URLs');
+    check(await page.getByRole('link', { name: 'Open Vault and recovery', exact: true }).isVisible(), 'Vault recovery remains reachable without an active add-on');
+    addons = { resumeBuilderAddon: true, vpnConnectorAddon: true };
+    await page.getByRole('button', { name: 'Check billing status', exact: true }).click();
+    const navigation = page.getByRole('navigation', { name: 'Recruiting workspace' });
+    await navigation.getByRole('link', { name: 'Resume Builder', exact: true }).waitFor();
+    await navigation.getByRole('link', { name: 'Resume Builder', exact: true }).click();
+    await page.getByRole('heading', { name: 'Resume Builder', exact: true }).waitFor();
+    check(new URL(page.url()).pathname === '/resume-builder', 'Business keeps independently purchased Resume Builder accessible');
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Business add-on navigation fits ${width}px`);
+    await auditNavigate(page, server.origin + '/resume-builder/cover-letter/preview');
+    await page.getByText('Cover letter preview', { exact: true }).waitFor();
+    check(new URL(page.url()).pathname === '/resume-builder/cover-letter/preview', 'Business can open its paid cover letter preview');
+    await navigation.getByRole('link', { name: 'Vault', exact: true }).click();
+    await page.locator('.vault-page').waitFor();
+    check(new URL(page.url()).pathname === '/vault', 'Business keeps independently purchased Vault accessible');
     check(errors.length === 0, `No browser errors at ${width}px: ${errors.join('; ')}`);
     await context.close();
   }

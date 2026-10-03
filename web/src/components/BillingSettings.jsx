@@ -76,6 +76,7 @@ export default function BillingSettings({ profile, onProfileUpdate }) {
     </div>
     {teamMember && <p style={{ margin: 0, fontSize: '.85rem' }}>Your company manages this Business membership. Any personal subscriptions below are billed separately. <Link to="/recruiting">Open recruiting workspace</Link></p>}
     {plan === 'business' && <p style={{ margin: 0, fontSize: '.85rem' }}>{status?.businessSeats || profile.businessSeats || 1} {Number(status?.businessSeats || profile.businessSeats || 1) === 1 ? 'person' : 'people'} in your recruiting membership. <Link to="/recruiting">Open recruiting workspace</Link></p>}
+    {profile.plan === 'business' && <p style={{ margin: 0, fontSize: '.85rem' }}><Link to="/vault">Open Vault and recovery</Link>{profile.resumeBuilderAddon && <> · <Link to="/resume-builder">Open Resume Builder</Link></>}</p>}
     {status?.subscriptions?.map(item => <div key={item.kind} style={{ fontSize: '.82rem', lineHeight: 1.6 }}>
       <strong>{item.kind === 'vpn_connector' ? 'UFI Vault' : item.kind === 'resume_builder' ? 'Resume Builder' : item.tier === 'business' ? 'Business' : 'Pro'}:</strong>{' '}{String(item.status).replaceAll('_', ' ')}
       {item.cancelAtPeriodEnd && <> · Cancellation scheduled{item.currentPeriodEnd ? ` for ${new Date(item.currentPeriodEnd * 1000).toLocaleDateString()}` : ''}</>}

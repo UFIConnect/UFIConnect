@@ -26,7 +26,7 @@ beforeEach(async () => {
   }
 });
 
-function fixture() {
+function fixture({ beforeBillingStatus = async () => {} } = {}) {
   let connected = true;
   let billingAvailable = true;
   let clock = Date.now();
@@ -40,6 +40,7 @@ function fixture() {
       return current;
     } };
   const billing = { async status(id) {
+    await beforeBillingStatus(id);
     if (!billingAvailable) throw Object.assign(new Error('Billing unavailable.'), { status: 503 });
     const { rows: [row] } = await pg.query('SELECT plan,business_seats FROM users WHERE id=$1', [id]);
     return { plan: row?.plan, businessSeats: row?.business_seats };
@@ -104,6 +105,66 @@ test('seat reduction and cancellation revoke derived access while existing perso
   await teams.leave(ALICE);
   assert.equal(await teams.effectiveMembership(ALICE), null);
   assert.equal(await teams.effectiveMembership(BOB), null);
+});
+
+test('canceled owners must remove members and revoke pending invitations before joining another team', async () => {
+  const { teams } = fixture();
+  await pg.query("UPDATE users SET plan='free',business_seats=0 WHERE id=$1", [OWNER]);
+  const incoming = await teams.invite(OTHER, { email: 'owner@example.invalid' });
+  await pg.query("UPDATE users SET plan='business',business_seats=3 WHERE id=$1", [OWNER]);
+  const alice = await invite(teams, ALICE);
+  await teams.accept(ALICE, { token: tokenOf(alice) });
+  const bob = await invite(teams, BOB);
+  await pg.query("UPDATE users SET plan='free',business_seats=0 WHERE id=$1", [OWNER]);
+  const rejectJoin = () => assert.rejects(teams.accept(OWNER, { token: tokenOf(incoming) }),
+    error => error.status === 409 && /Remove your team members and revoke pending invitations/.test(error.message));
+  await rejectJoin();
+  await assert.rejects(teams.invite(OTHER, { email: 'owner@example.invalid' }), { status: 409 });
+  assert.equal((await teams.list(OWNER)).role, 'owner');
+  assert.equal(await teams.effectiveMembership(OWNER), null);
+  await teams.remove(OWNER, ALICE);
+  await rejectJoin();
+  await teams.revoke(OWNER, bob.invitation.id);
+  assert.equal((await teams.accept(OWNER, { token: tokenOf(incoming) })).joined, true);
+  assert.equal((await teams.list(OWNER)).role, 'member');
+  await teams.leave(OWNER);
+  assert.equal((await teams.list(OWNER)).role, 'none');
+});
+
+test('expired outgoing invitations do not trap a canceled owner outside another team', async () => {
+  const f = fixture();
+  await invite(f.teams);
+  await pg.query("UPDATE users SET plan='free',business_seats=0 WHERE id=$1", [OWNER]);
+  await assert.rejects(f.teams.invite(OTHER, { email: 'owner@example.invalid' }), { status: 409 });
+  f.advance(8 * 24 * 60 * 60 * 1000);
+  const incoming = await f.teams.invite(OTHER, { email: 'owner@example.invalid' });
+  assert.equal((await f.teams.accept(OWNER, { token: tokenOf(incoming) })).joined, true);
+  assert.equal((await f.teams.list(OWNER)).role, 'member');
+});
+
+test('acceptance rechecks ownership under account locks when team records appear during billing reconciliation', async () => {
+  let pause = false;
+  let markPaused;
+  let resume;
+  const paused = new Promise(resolve => { markPaused = resolve; });
+  const resumed = new Promise(resolve => { resume = resolve; });
+  const { teams } = fixture({ beforeBillingStatus: async id => {
+    if (pause && id === OTHER) { markPaused(); await resumed; }
+  } });
+  await pg.query("UPDATE users SET plan='free',business_seats=0 WHERE id=$1", [OWNER]);
+  const incoming = await teams.invite(OTHER, { email: 'owner@example.invalid' });
+  pause = true;
+  const accepting = assert.rejects(teams.accept(OWNER, { token: tokenOf(incoming) }), { status: 409 });
+  await paused;
+  try {
+    await pg.query("UPDATE users SET plan='business',business_seats=3 WHERE id=$1", [OWNER]);
+    const alice = await invite(teams);
+    await teams.accept(ALICE, { token: tokenOf(alice) });
+    await pg.query("UPDATE users SET plan='free',business_seats=0 WHERE id=$1", [OWNER]);
+  } finally { resume(); }
+  await accepting;
+  assert.equal(await teams.effectiveMembership(OWNER), null);
+  assert.equal((await teams.list(OWNER)).members[0].id, ALICE);
 });
 
 test('reissued, expired, revoked or email-changed invitations never grant membership', async () => {

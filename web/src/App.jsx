@@ -118,8 +118,9 @@ function SessionRecovery() {
 
 function RequireOnboarding({ children }) {
   const { profile, loading } = useAuth();
+  const location = useLocation();
   if (loading) return <div className="splash">Loading...</div>;
-  if (profile && !profile.onboardingComplete) return <Navigate to="/onboarding" replace />;
+  if (profile && !profile.onboardingComplete) return <Navigate to="/onboarding" state={{ from: location.pathname + location.search + location.hash }} replace />;
   return children;
 }
 
@@ -129,7 +130,7 @@ function BusinessRoutes({ children }) {
   // Each protected route handles restoration. Keep public sign-in and
   // recovery pages usable while an older session lookup is still pending.
   if (loading) return children;
-  return profile?.plan === 'business' && !isBusinessRouteAllowed(pathname)
+  return profile?.plan === 'business' && !isBusinessRouteAllowed(pathname, profile)
     ? <Navigate to="/recruiting" replace /> : children;
 }
 

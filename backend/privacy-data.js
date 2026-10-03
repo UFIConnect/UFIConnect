@@ -71,7 +71,7 @@ async function exportAccountData(db, userId) {
     if (!profile) throw Object.assign(new Error('Account not found.'), { status: 404 });
     profile.preferences = { role: profile.role, experience: profile.experience, goals: profile.goals, interests: profile.interests };
     delete profile.role; delete profile.experience; delete profile.goals; delete profile.interests;
-    const [billing] = await rows(`SELECT plan,resume_builder_addon AS "resumeBuilderAddon",vpn_connector_addon AS "vpnConnectorAddon",
+    const [billing] = await rows(`SELECT plan,business_seats AS "businessSeats",resume_builder_addon AS "resumeBuilderAddon",vpn_connector_addon AS "vpnConnectorAddon",
       stripe_customer_id AS "customerId",stripe_subscription_id AS "subscriptionId",
       resume_builder_subscription_id AS "resumeBuilderSubscriptionId",vpn_connector_subscription_id AS "vpnConnectorSubscriptionId",billing_closed AS "closed"
       FROM users WHERE id=$1`);

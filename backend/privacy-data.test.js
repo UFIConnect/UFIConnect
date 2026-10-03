@@ -158,6 +158,18 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
     }
   });
 
+  await t.test('billing exports the account paid Business seat count rather than its assigned member count', async () => {
+    await pg.query("UPDATE users SET plan='business',business_seats=5 WHERE id=$1", [alice]);
+    await pg.query("UPDATE users SET plan='business',business_seats=9 WHERE id=$1", [carol]);
+    const { db } = harness(pg);
+    const owner = await exportAccountData(db, alice);
+    assert.equal(owner.billing.businessSeats, 5);
+    assert.equal(owner.businessTeamSeats.length, 1);
+    const teammate = await exportAccountData(db, bob);
+    assert.equal(teammate.billing.businessSeats, 0);
+    assert.equal(teammate.businessTeamSeats[0].ownerId, alice);
+  });
+
   await t.test('purges owned records and cascades while preserving unrelated members and shared communities', async () => {
     const { db } = harness(pg);
     await deleteAccountData(db, alice);

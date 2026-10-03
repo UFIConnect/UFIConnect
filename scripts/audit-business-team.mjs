@@ -19,12 +19,16 @@ try {
   for (const width of [1440, 390]) {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, serviceWorkers: 'block' });
     const page = await context.newPage(); page.setDefaultTimeout(12000);
-    await page.addInitScript(() => localStorage.setItem('uficonnect.analytics.consent.v1', 'denied'));
+    await page.addInitScript(() => {
+      if (location.protocol === 'http:' || location.protocol === 'https:') localStorage.setItem('uficonnect.analytics.consent.v1', 'denied');
+    });
     const errors = []; const mutations = [];
     let current = 'team-owner'; let invitation = null; let joined = false; let generation = 0; let rejectInvite = false;
+    let authenticated = true; let onboardingComplete = true;
     const owner = { id: 'team-owner', name: 'Team owner', organization: 'Talent Company' };
     const borrowed = () => ({ ownerId: owner.id, ownerName: owner.name, organization: owner.organization, seats: 3, active: joined });
     const profile = () => ({ ...app.fullProfile(app.users.find(user => user.id === current)),
+      onboardingComplete: current === 'team-owner' || onboardingComplete,
       plan: current === 'team-owner' || joined ? 'business' : 'pro',
       personalPlan: current === 'team-owner' ? 'business' : 'pro',
       businessTeam: current === 'team-alice' && joined ? borrowed() : null,
@@ -43,7 +47,14 @@ try {
       if (!['fetch', 'xhr'].includes(request.resourceType())) return url.origin === server.origin ? route.continue() : route.abort();
       const endpoint = url.pathname.replace(/^\/(api|fallback)/, '');
       const fulfill = (json, status = 200) => route.fulfill({ json, status, headers });
-      if (endpoint === '/auth/session') return fulfill({ token: app.token(current), profile: profile() });
+      if (endpoint === '/auth/session') return authenticated
+        ? fulfill({ token: app.token(current), profile: profile() }) : fulfill({ message: 'Sign in to continue.' }, 401);
+      if (endpoint === '/auth/login') { authenticated = true; return fulfill({ token: app.token(current), profile: profile() }); }
+      if (endpoint === '/profile/onboarding') {
+        mutations.push({ endpoint, body: request.postDataJSON() });
+        onboardingComplete = true;
+        return fulfill({ profile: profile() });
+      }
       if (endpoint === '/profile') return fulfill(profile());
       if (endpoint === '/billing/status') return fulfill({ plan: current === 'team-owner' ? 'business' : 'pro', effectivePlan: profile().plan,
         businessSeats: current === 'team-owner' ? 3 : 0, businessTeam: profile().businessTeam, hasBillingAccount: true, subscriptions: [{ kind: 'plan', status: 'active', tier: current === 'team-owner' ? 'business' : 'pro' }] });
@@ -103,6 +114,33 @@ try {
     await page.goto(server.origin + '/recruiting#invite=' + 'X'.repeat(43));
     await page.getByText('This invitation is unavailable for your signed-in account.', { exact: true }).waitFor();
     check(await page.getByRole('button', { name: 'Accept invitation', exact: true }).count() === 0, 'Invalid invitations cannot be accepted');
+    const onboardingInvitation = new URL(invitationUrl);
+    onboardingInvitation.search = '?source=team-invite';
+    for (const session of ['signed-out', 'restored']) {
+      authenticated = session === 'restored'; onboardingComplete = false;
+      await page.goto('about:blank');
+      await page.goto(onboardingInvitation.href);
+      if (!authenticated) {
+        await page.locator('input[name="email"]').fill('alice@example.invalid');
+        await page.locator('input[name="password"]').fill('Synthetic test password only');
+        await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+      }
+      await page.getByRole('heading', { name: 'What best describes you?', exact: true }).waitFor();
+      check(new URL(page.url()).pathname === '/onboarding', `${session} invitee completes onboarding before viewing the invitation`);
+      await page.reload();
+      await page.getByRole('heading', { name: 'What best describes you?', exact: true }).waitFor();
+      await page.getByRole('button', { name: /^Software Engineer / }).click();
+      await page.getByRole('button', { name: 'Continue', exact: true }).click();
+      await page.getByRole('heading', { name: 'What topics interest you?', exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Selected: Career Growth', exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Continue', exact: true }).click();
+      await page.getByRole('button', { name: /^Mid-level / }).click();
+      await page.getByRole('button', { name: 'Finish setup', exact: true }).click();
+      await page.getByRole('button', { name: 'Accept invitation', exact: true }).waitFor();
+      check(page.url() === onboardingInvitation.href, `${session} onboarding preserves the full invitation path, query, and fragment after reload`);
+      check(!joined, `${session} onboarding does not accept the invitation automatically`);
+      check(await page.locator('.business-team-settings').getByText('alice@example.invalid', { exact: true }).isVisible(), `${session} invitee returns to the correct invitation`);
+    }
     await page.goto(invitationUrl);
     await page.getByRole('button', { name: 'Accept invitation', exact: true }).waitFor();
     check(await page.locator('.business-team-settings').getByText('Talent Company', { exact: true }).count() === 1, 'Invitee sees the team before accepting');
