@@ -114,6 +114,11 @@ try {
     check(await page.getByRole('navigation', { name: 'Recruiting workspace' }).isVisible(), 'Accepted teammate gets the Business navigation');
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Member team controls fit ${width}px`);
     await page.screenshot({ path: `.cache/audit-ui/business-team-member-${width}.png`, fullPage: true });
+    await page.goto(server.origin + '/settings');
+    await page.getByRole('heading', { name: 'Business team membership', exact: true }).waitFor();
+    check(await page.getByText(/Your company manages this Business membership/).isVisible(), 'Borrowed seat is labeled as a company membership without a role field');
+    check(await page.getByRole('button', { name: 'Upgrade', exact: true }).count() === 0, 'Active teammate is not prompted to buy another membership');
+    await page.goto(server.origin + '/recruiting');
     await page.getByRole('button', { name: 'Leave team', exact: true }).click();
     await page.waitForURL('**/settings');
     check(!joined, 'Member can leave and return to their personal account');

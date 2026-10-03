@@ -66,7 +66,7 @@ export default function BillingSettings({ profile, onProfileUpdate }) {
   }
 
   const plan = status?.plan || profile.personalPlan || profile.plan || 'free';
-  const teamMember = profile.businessTeam?.role === 'member' && profile.businessTeam?.active;
+  const teamMember = profile.businessTeam?.active && plan !== 'business';
   const hasBillingAccount = status?.hasBillingAccount || plan !== 'free' || profile.resumeBuilderAddon || profile.vpnConnectorAddon;
   const pending = status?.subscriptions?.some(item => item.kind === 'plan' && !['canceled', 'incomplete_expired'].includes(item.status));
   return <section className="card" aria-labelledby="membership-settings-title" style={{ padding: '18px', display: 'grid', gap: 12 }}>
