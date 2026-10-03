@@ -1,0 +1,1 @@
+function e(e){if(typeof e!=`string`||!e.startsWith(`/`)||e.startsWith(`//`)||/[\\\u0000-\u0020]/.test(e))return`/`;try{let t=new URL(e,`https://uficonnect.invalid`);return t.origin!==`https://uficonnect.invalid`||/^\/(?:login|register|forgot-password|reset-password|onboarding)(?:\/|$)/.test(t.pathname)?`/`:t.pathname+t.search+t.hash}catch{return`/`}}export{e as t};
