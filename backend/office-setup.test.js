@@ -22,3 +22,13 @@ test('disabled integrations and runtime autofix state are reported independently
   assert.equal(report.items.find(item=>item.id==='autofix').status,'configured');
   assert.equal(report.items.find(item=>item.id==='social-linkedin').status,'disabled');
 });
+
+test('Resume Builder reports monthly and six-month price configuration independently', () => {
+  const monthlyOnly = buildOfficeSetup({ env: { STRIPE_PRICE_ID_RESUME_BUILDER_MONTHLY: 'private-monthly-price' } });
+  assert.equal(monthlyOnly.items.find(item => item.id === 'resume-monthly-billing').status, 'configured');
+  assert.equal(monthlyOnly.items.find(item => item.id === 'resume-billing').status, 'missing');
+  const sixMonthOnly = buildOfficeSetup({ env: { STRIPE_RESUME_BUILDER_PRICE_ID: 'private-six-month-price' } });
+  assert.equal(sixMonthOnly.items.find(item => item.id === 'resume-monthly-billing').status, 'missing');
+  assert.equal(sixMonthOnly.items.find(item => item.id === 'resume-billing').status, 'configured');
+  assert.ok(!JSON.stringify([monthlyOnly, sixMonthOnly]).includes('private-'));
+});

@@ -4,7 +4,8 @@ import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import GuestShell from '../components/GuestShell';
-import FollowListModal from '../components/FollowListModal';
+import PostLikes from '../components/PostLikes';
+import { PostTime } from '../components/PostCardChrome';
 import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
@@ -56,8 +57,6 @@ export default function PostDetail() {
   const [post, setPost] = useState(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
-  const [likeBusy, setLikeBusy] = useState(false);
-  const [likesModalOpen, setLikesModalOpen] = useState(false);
 
   const [comments, setComments] = useState(null);
   const [commentsLoading, setCommentsLoading] = useState(true);
@@ -166,16 +165,6 @@ export default function PostDetail() {
 
   useEffect(() => { loadPost(); loadComments(); }, [loadPost, loadComments]);
 
-  async function toggleLike() {
-    if (!post || likeBusy) return;
-    setLikeBusy(true);
-    try {
-      const { data } = await client.post(`/posts/${encodeURIComponent(post.id)}/like`);
-      setPost(prev => ({ ...prev, ...(data.post || { likedByMe: data.likedByMe, likesCount: data.likesCount }) }));
-    } catch { /* keep existing state if it fails */ }
-    finally { setLikeBusy(false); }
-  }
-
   async function submitComment(e) {
     e.preventDefault();
     const content = commentDraft.trim();
@@ -245,7 +234,7 @@ export default function PostDetail() {
                 <div className="avatar avatar-md">{initials(post.author?.name)}</div>
                 <div>
                   <div style={{ fontWeight: 700, fontSize: '.88rem' }}>{post.author?.name || 'Member'}</div>
-                  <div style={{ fontSize: '.72rem', color: 'var(--muted)' }}>{timeAgo(post.createdAt)}</div>
+                  <PostTime post={post} />
                 </div>
               </Link>
             ) : (
@@ -254,7 +243,7 @@ export default function PostDetail() {
                 <div>
                   <div style={{ fontWeight: 700, fontSize: '.82rem', color: src.color }}>{post.sourceLabel || src.label}</div>
                   <div style={{ fontSize: '.72rem', color: 'var(--muted)' }}>
-                    {post.author?.name ? `${post.author.name} · ` : ''}{timeAgo(post.createdAt)}
+                    {post.author?.name || ''}<PostTime post={post} />
                   </div>
                 </div>
               </>
@@ -311,34 +300,7 @@ export default function PostDetail() {
           )}
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-            {!post.isExternal ? (
-              token ? (
-                <button
-                  onClick={toggleLike}
-                  disabled={likeBusy}
-                  className={post.likedByMe ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}
-                >
-                  {post.likedByMe ? 'Liked' : 'Like'} {post.likesCount || 0}
-                </button>
-              ) : (
-                <Link to="/login" className="btn btn-ghost btn-sm" style={{ textDecoration: 'none' }}>
-                  Sign in to like {post.likesCount > 0 ? `· ${post.likesCount}` : ''}
-                </Link>
-              )
-            ) : (
-              // Same GitHub/GitLab star-vs-like distinction as Feed.jsx's
-              // stats bar — those two sources' likesCount is really a repo/
-              // project star count, not a like on this specific post.
-              post.likesCount > 0 && <span style={{ fontSize: '.78rem', color: 'var(--muted)' }}>{post.likesCount.toLocaleString()} {(post.source === 'github' || post.source === 'gitlab') ? 'stars' : 'likes'}</span>
-            )}
-            {!post.isExternal && post.likesCount > 0 && token && (
-              <button
-                onClick={() => setLikesModalOpen(true)}
-                style={{ all: 'unset', cursor: 'pointer', fontSize: '.78rem', color: 'var(--muted)', fontWeight: 600 }}
-              >
-                See who liked this
-              </button>
-            )}
+            <PostLikes post={post} onPostUpdated={updated => setPost(current => ({ ...current, ...updated }))} />
             {token && <SavePostButton post={post} className="btn btn-ghost btn-sm save-item-button" />}
             {post.sourceUrl && (
               <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
@@ -423,15 +385,6 @@ export default function PostDetail() {
         </div>
       </div>
 
-      {likesModalOpen && (
-        <FollowListModal
-          userId={post.id}
-          fetchUrl={`/posts/${encodeURIComponent(post.id)}/likes`}
-          title={`Liked by · ${post.likesCount || 0}`}
-          emptyLabel="No likes yet."
-          onClose={() => setLikesModalOpen(false)}
-        />
-      )}
     </Shell>
   );
 }

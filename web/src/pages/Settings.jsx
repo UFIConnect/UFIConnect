@@ -12,6 +12,7 @@ import client from '../api/client';
 import { ALL_ROLES, EXTRA_INTERESTS, roleCode } from '../data/roles';
 import { pushSupported, getPushSubscriptionState, enablePush, disablePush } from '../api/push';
 import BillingSettings from '../components/BillingSettings';
+import BusinessTeamSettings from '../components/BusinessTeamSettings';
 import DataPrivacySettings from '../components/DataPrivacySettings';
 import ConfirmActionDialog from '../components/ConfirmActionDialog';
 import LegalLinks from '../components/LegalLinks';
@@ -207,7 +208,7 @@ export default function Settings() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const tab = params.get('tab');
-    if (['account', 'security', 'privacy', 'notifications', 'preferences'].includes(tab)) setActiveTab(tab);
+    if (['account', 'security', 'privacy', 'notifications', 'preferences'].includes(tab) && !(profile?.plan === 'business' && tab === 'preferences')) setActiveTab(tab);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [form, setForm] = useState({
@@ -534,9 +535,10 @@ export default function Settings() {
         <p className="page-subtitle">Manage your account, privacy, and preferences.</p>
       </div>
 
+      {activeTab === 'account' && <BusinessTeamSettings />}
       {/* Tab bar */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid var(--border)', paddingBottom: 0, overflowX: 'auto' }}>
-        {TABS.map(tab => (
+        {TABS.filter(tab => profile?.plan !== 'business' || tab.key !== 'preferences').map(tab => (
           <button key={tab.key} type="button" onClick={() => setActiveTab(tab.key)}
             style={{ padding: '8px 16px', border: 'none', background: 'none', cursor: 'pointer', fontWeight: activeTab === tab.key ? 700 : 500, fontSize: '.875rem', color: activeTab === tab.key ? 'var(--primary)' : 'var(--muted)', borderBottom: activeTab === tab.key ? '2px solid var(--primary)' : '2px solid transparent', marginBottom: -1, display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
             {tab.label}
@@ -545,11 +547,11 @@ export default function Settings() {
       </div>
 
       {/* ── Preferences tab ──────────────────────────────────────────────────── */}
-      <section className="card settings-appearance" aria-label="Appearance settings"><AppearanceControl /></section>
+      <section className="card settings-appearance" aria-label="Appearance settings"><AppearanceControl business={profile?.plan === 'business'} /></section>
 
       {activeTab === 'data' && <DataPrivacySettings />}
 
-      {activeTab === 'preferences' && (
+      {activeTab === 'preferences' && profile?.plan !== 'business' && (
         <form onSubmit={handlePrefSave} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {prefError && <div className="auth-error">{prefError}</div>}
           {prefSaved && (
@@ -732,15 +734,15 @@ export default function Settings() {
               <input className="form-input" type="tel" name="phone" value={form.phone} onChange={handleChange} placeholder="+1 555 123 4567" autoComplete="tel" inputMode="tel" />
               <span style={{ fontSize: '.72rem', color: 'var(--muted)', marginTop: 3, display: 'block' }}>Include your country code. This stays private and is used only to keep Stripe billing accurate.</span>
             </div>
-            <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>
+            {profile?.plan !== 'business' && <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>
               Profile photo and cover image are managed from your <Link to="/profile">profile page</Link>.
-            </div>
+            </div>}
           </div>
 
           <BillingSettings profile={profile} onProfileUpdate={updateProfileLocally} />
 
           {/* Role badge */}
-          {role && (
+          {role && profile?.plan !== 'business' && (
             <div className="card" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 18px' }}>
               <div style={{ width: 44, height: 44, borderRadius: 12, background: meta.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.4rem', flexShrink: 0 }}>{meta.icon}</div>
               <div style={{ flex: 1 }}>
@@ -923,7 +925,7 @@ export default function Settings() {
               { key: 'showEmail',       label: 'Show email address',  desc: 'Display your email on your public profile.' },
               { key: 'showSkills',      label: 'Show skills',         desc: 'Display your skill tags on your profile card.' },
               { key: 'showConnections', label: 'Show connections',    desc: "Let others see your followers/following lists. People you're connected with can always see it." },
-            ].map(({ key, label, desc }) => (
+            ].filter(item => profile?.plan !== 'business' || item.key !== 'showConnections').map(({ key, label, desc }) => (
               <div key={key} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)', gap: 12 }}>
                 <div>
                   <div style={{ fontWeight: 600, fontSize: '.875rem' }}>{label}</div>
@@ -984,7 +986,7 @@ export default function Settings() {
       {activeTab === 'notifications' && (
         <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <PushNotificationsCard />
-          <div className="card">
+          {profile?.plan !== 'business' && <div className="card">
             <SectionHeading>Notifications</SectionHeading>
             {[
               { key: 'emailDigest',       label: 'Weekly email digest',     desc: 'A summary of top posts and opportunities in your groups.' },
@@ -1000,9 +1002,9 @@ export default function Settings() {
                 <Toggle value={!!notifs[key]} onChange={() => setNotifs(n => ({ ...n, [key]: !n[key] }))} />
               </div>
             ))}
-          </div>
+          </div>}
 
-          <SaveBar />
+          {profile?.plan !== 'business' && <SaveBar />}
         </form>
       )}
       <section className="card settings-policy-links" aria-labelledby="settings-policy-heading">

@@ -116,6 +116,16 @@
   },
   {
     "type": "rewrite",
+    "source": "/recruiting",
+    "destination": "/recruiting/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/recruiting/",
+    "destination": "/recruiting/index.html"
+  },
+  {
+    "type": "rewrite",
     "source": "/analytics",
     "destination": "/analytics/index.html"
   },

@@ -71,12 +71,16 @@ async function exportAccountData(db, userId) {
     if (!profile) throw Object.assign(new Error('Account not found.'), { status: 404 });
     profile.preferences = { role: profile.role, experience: profile.experience, goals: profile.goals, interests: profile.interests };
     delete profile.role; delete profile.experience; delete profile.goals; delete profile.interests;
-    const [billing] = await rows(`SELECT plan,resume_builder_addon AS "resumeBuilderAddon",vpn_connector_addon AS "vpnConnectorAddon",
+    const [billing] = await rows(`SELECT plan,business_seats AS "businessSeats",resume_builder_addon AS "resumeBuilderAddon",vpn_connector_addon AS "vpnConnectorAddon",
       stripe_customer_id AS "customerId",stripe_subscription_id AS "subscriptionId",
       resume_builder_subscription_id AS "resumeBuilderSubscriptionId",vpn_connector_subscription_id AS "vpnConnectorSubscriptionId",billing_closed AS "closed"
       FROM users WHERE id=$1`);
     const result = { exportedAt: new Date().toISOString(), formatVersion: 2, profile, billing };
     const collections = {
+      businessTeamSeats: `SELECT owner_id AS "ownerId",member_id AS "memberId",joined_at AS "joinedAt"
+        FROM business_team_members WHERE owner_id=$1 OR member_id=$1 ORDER BY owner_id,joined_at,member_id`,
+      businessTeamInvitations: `SELECT id,owner_id AS "ownerId",invitee_id AS "inviteeId",email,created_at AS "createdAt",expires_at AS "expiresAt"
+        FROM business_team_invitations WHERE owner_id=$1 OR invitee_id=$1 ORDER BY created_at,id`,
       vpnLocations: `SELECT id,platform,name,country FROM vault_vpn_locations WHERE user_id=$1 ORDER BY country,name,id`,
       copyrightReports: `SELECT id,source,source_url AS "sourceUrl",reason,status,created_at AS "createdAt" FROM creator_copyright_reports WHERE user_id=$1 ORDER BY created_at,id`,
       sourceInteractionRequests: `SELECT request_id AS "requestId",source,source_post_id AS "sourcePostId",action,status,created_at AS "createdAt" FROM source_interaction_audit WHERE user_id=$1 ORDER BY created_at,request_id`,

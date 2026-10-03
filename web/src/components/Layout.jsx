@@ -5,6 +5,7 @@ import { useToast } from '../contexts/ToastContext';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import client from '../api/client';
 import HomeFeedTools from './HomeFeedTools';
+import BusinessLayout from './BusinessLayout';
 import JobsSidebarControls from './JobsSidebarControls';
 import NotificationInbox from './NotificationInbox';
 import './social-surfaces.css';
@@ -108,7 +109,12 @@ function SavedNavigation({ mobile = false, expanded, onToggle, onNavigate }) {
   </div>;
 }
 
-export default function Layout({ children, wide = false, feedSearch, discoveryPost, mobileRightMenu }) {
+export default function Layout(props) {
+  const { profile } = useAuth();
+  return profile?.plan === 'business' ? <BusinessLayout>{props.children}</BusinessLayout> : <PersonalLayout {...props} />;
+}
+
+function PersonalLayout({ children, wide = false, feedSearch, discoveryPost, mobileRightMenu }) {
   const { profile, logout, updateProfileLocally } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();

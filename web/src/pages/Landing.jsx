@@ -5,6 +5,7 @@ import { TIERS } from '../components/PricingModal';
 import { SOURCE_META } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import LegalLinks from '../components/LegalLinks';
+import './LandingPricing.css';
 
 const SOURCES = [
   'reddit', 'youtube', 'github', 'hackernews', 'linkedin', 'instagram', 'facebook',
@@ -56,7 +57,7 @@ const FAQS = [
   },
   {
     q: 'Is Resume Builder available?',
-    a: 'Yes. Resume Builder is available as a paid add-on for $149.94 per 6 mo.',
+    a: 'Yes. Choose $30/month or $149.94 every 6 months. Both options include the same Resume Builder tools.',
   },
 ];
 
@@ -97,6 +98,13 @@ function PlanCard({ title, price, tagline }) {
         ${price}<small>/mo</small>
       </div>
       <p>{tagline}</p>
+      {title === 'Business' && (
+        <div className="landing-plan-alternative">
+          <span>One person at the price above</span>
+          <strong>Teams: $19.94 per person/month</strong>
+          <span>For 2 or more people, including the owner. A workspace for recruiting, candidates, and career sources.</span>
+        </div>
+      )}
       <Link to="/settings" className="landing-plan-link">View {title} membership</Link>
     </div>
   );
@@ -246,7 +254,7 @@ export default function Landing() {
 
           <section id="pricing" className="landing-section landing-pricing-section">
             <SectionHeading eyebrow="Plans" title="Start free. Grow from there.">
-              The main feed stays free. Explore Pro and Business memberships, or add Resume Builder to your account.
+              The main feed stays free. Choose a membership, or add Vault and Resume Builder to your account.
             </SectionHeading>
             <div className="landing-plan-grid">
               <div className="landing-plan-card">
@@ -255,6 +263,7 @@ export default function Landing() {
                 </div>
                 <div className="landing-plan-price">$0<small>/mo</small></div>
                 <p>Feed, communities, messaging, posting, and opportunities.</p>
+                <Link to="/register" className="landing-plan-link">Join free</Link>
               </div>
               {TIERS.map(t => (
                 <PlanCard
@@ -264,15 +273,32 @@ export default function Landing() {
                   tagline={t.tagline}
                 />
               ))}
+              <div className="landing-plan-card">
+                <div className="landing-plan-top">
+                  <h3>Vault</h3>
+                </div>
+                <div className="landing-plan-price">$3.94<small>/mo</small></div>
+                <p>Encrypted storage for your passwords, documents, and keys.</p>
+                <div className="landing-plan-alternative">
+                  <strong>UFI VPN included when ready</strong>
+                  <span>VPN setup is pending.</span>
+                </div>
+                <Link to="/vault" className="landing-plan-link">View Vault membership</Link>
+              </div>
               <div className="landing-plan-card landing-resume-live">
                 <div className="landing-plan-top">
                   <h3>Resume Builder</h3>
                 </div>
-                <div className="landing-plan-price">$149.94<small> per 6 mo</small></div>
+                <div className="landing-plan-price">$30<small>/mo</small></div>
                 <p>Draft, polish, export, and save an ATS-scored resume to your profile.</p>
+                <div className="landing-plan-alternative">
+                  <strong>Or $149.94 every 6 months</strong>
+                  <span>The same tools, with your choice of billing interval.</span>
+                </div>
                 <Link to="/resume-builder" className="landing-plan-link">Open Resume Builder</Link>
               </div>
             </div>
+            <p className="landing-pricing-terms">Prices are in USD. Paid memberships and add-ons renew automatically. Review any applicable tax and your total at checkout. Manage or cancel in Settings.</p>
           </section>
 
           <section className="landing-section landing-share-section">

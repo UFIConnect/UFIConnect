@@ -23,7 +23,10 @@
 .post-chrome-handle { font-size: .8rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .post-chrome-topic { flex-shrink: 0; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .68rem; font-weight: 600; color: var(--muted); background: var(--border); padding: 1px 7px; border-radius: 5px; }
 .post-chrome-corner { display: flex; align-items: flex-start; gap: 6px; flex-shrink: 0; margin-left: auto; }
-.post-chrome-time { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; padding-top: 3px; font-size: .74rem; color: var(--muted); text-decoration: none; text-align: right; line-height: 1.3; }
+.post-chrome-time { display: flex; flex-direction: column; align-items: flex-end; padding: 5px 8px; font-size: .8rem; color: var(--text); background: var(--bg-secondary, var(--bg)); border-radius: 8px; text-decoration: none; text-align: right; line-height: 1.45; font-variant-numeric: tabular-nums; }
+.post-chrome-time time { display: flex; flex-direction: column; gap: 1px; }
+.post-chrome-day { font-size: .73rem; font-weight: 600; }
+.post-chrome-clock { font-weight: 700; }
 .post-chrome-time:hover { color: var(--text); }
 .post-chrome-edited { font-weight: 600; }
 .post-chrome-more { position: relative; }
@@ -41,7 +44,9 @@
 .post-chrome-action:disabled { opacity: .6; cursor: default; }
 .post-chrome-action[aria-pressed="true"], .post-chrome-action[aria-expanded="true"] { color: var(--source-color, var(--primary)); background: color-mix(in srgb, var(--source-color, var(--primary)) 12%, var(--card, #fff)); }
 /* Likes: the heart and its count join into one pill; the count opens "Liked by". */
-.post-chrome-like { display: inline-flex; }
+.post-chrome-like { display: inline-flex; align-items: center; flex-wrap: wrap; }
+.post-chrome-like a { text-decoration: none; }
+.post-chrome-source-count { margin-left: 8px; font-size: .72rem; color: var(--muted); }
 .post-chrome-like .post-chrome-action[data-locked="true"] { opacity: .55; }
 .post-chrome-like-counted > .post-chrome-action:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; padding-right: 8px; }
 .post-chrome-like-count { min-width: 0; padding: 0 12px 0 6px; border-top-left-radius: 0; border-bottom-left-radius: 0; }

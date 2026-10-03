@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import client from '../api/client';
 import { hostedBillingUrl } from '../api/hostedBilling.mjs';
+import './ResumeBuilderPricing.css';
 import {
   PREPARATION_ASSET_VERSION,
   PREPARATION_TOPICS,
@@ -119,7 +120,18 @@ function toJobContact(listing) {
   };
 }
 
-function LockedState({ onUnlock, unlocking, billingReady, price }) {
+const RESUME_PLANS = [
+  { tier: 'resume_builder_monthly', label: 'Monthly' },
+  { tier: 'resume_builder', label: '6 months' },
+];
+
+function resumePlanReady(config, tier) {
+  const price = config?.pricing?.[tier];
+  return config?.paymentsReady === true && config?.tiers?.[tier] === true
+    && price?.active === true && price?.matchesRequiredPrice === true && Boolean(price?.display);
+}
+
+function LockedState({ onUnlock, unlocking, billingReady, price, billingConfig, selectedTier, onSelectTier }) {
   const priceLabel = price?.active && price?.matchesRequiredPrice && price?.display ? price.display + priceCadence(price) : null;
   return (
     <div className="card" style={{ textAlign: 'center', padding: '52px 24px' }}>
@@ -128,7 +140,27 @@ function LockedState({ onUnlock, unlocking, billingReady, price }) {
         Prepare for interviews, build an ATS-friendly resume with original templates, use AI-assisted writing,
         and export a scored PDF that is saved to your profile.
       </p>
-      <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', alignItems: 'baseline', gap: 7, marginBottom: 18, fontSize: '.86rem' }}>
+      <fieldset className="resume-billing-options" disabled={unlocking}>
+        <legend>Choose your billing interval</legend>
+        <div className="resume-billing-grid">
+          {RESUME_PLANS.map(plan => {
+            const optionPrice = billingConfig?.pricing?.[plan.tier];
+            const available = resumePlanReady(billingConfig, plan.tier);
+            return (
+              <label key={plan.tier} className={`resume-billing-option${selectedTier === plan.tier ? ' is-selected' : ''}`}>
+                <input type="radio" name="resume-billing-interval" value={plan.tier} checked={selectedTier === plan.tier}
+                  onChange={() => onSelectTier(plan.tier)} disabled={!available} />
+                <span>
+                  <strong>{plan.label}</strong>
+                  <span>{available ? optionPrice.display + priceCadence(optionPrice) : billingConfig === null ? 'Checking price…' : 'Currently unavailable'}</span>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+        <p>Both options include the same tools.</p>
+      </fieldset>
+      <div aria-live="polite" style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', alignItems: 'baseline', gap: 7, marginBottom: 18, fontSize: '.86rem' }}>
         <span style={{ color: 'var(--muted)' }}>Resume Builder add-on</span>
         <strong>{priceLabel || (billingReady === null ? 'Checking current price…' : 'Price unavailable')}</strong>
       </div>
@@ -461,8 +493,8 @@ export default function ResumeBuilder() {
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [loadAttempt, setLoadAttempt] = useState(0);
-  const [billingReady, setBillingReady] = useState(null);
-  const [resumeBuilderPrice, setResumeBuilderPrice] = useState(null);
+  const [billingConfig, setBillingConfig] = useState(null);
+  const [resumeTier, setResumeTier] = useState('resume_builder_monthly');
   const [unlocking, setUnlocking] = useState(false);
   const [template, setTemplate] = useState('modern');
   const [templatePage, setTemplatePage] = useState(0);
@@ -483,18 +515,19 @@ export default function ResumeBuilder() {
   const [trackedJobsLoading, setTrackedJobsLoading] = useState(false);
 
   const unlocked = !!profile?.resumeBuilderAddon;
+  const billingReady = billingConfig === null ? null : resumePlanReady(billingConfig, resumeTier);
+  const resumeBuilderPrice = billingConfig?.pricing?.[resumeTier] || null;
 
   useEffect(() => {
     let cancelled = false;
     client.get('/billing/config')
       .then(({ data: config }) => {
         if (cancelled) return;
-        const price = config?.pricing?.resume_builder || null;
-        setResumeBuilderPrice(price);
-        setBillingReady(config?.paymentsReady === true && config?.tiers?.resume_builder === true && price?.active === true && price?.matchesRequiredPrice === true && Boolean(price?.display));
+        setBillingConfig(config || {});
+        setResumeTier(RESUME_PLANS.find(plan => resumePlanReady(config, plan.tier))?.tier || 'resume_builder_monthly');
       })
       .catch(() => {
-        if (!cancelled) setBillingReady(false);
+        if (!cancelled) setBillingConfig({});
       });
     return () => { cancelled = true; };
   }, []);
@@ -579,7 +612,7 @@ export default function ResumeBuilder() {
     if (unlocking || billingReady !== true) return;
     setUnlocking(true);
     try {
-      const { data: checkout } = await client.post('/billing/create-checkout-session', { tier: 'resume_builder' });
+      const { data: checkout } = await client.post('/billing/create-checkout-session', { tier: resumeTier });
       window.location.assign(hostedBillingUrl(checkout.url));
     } catch (err) {
       showToast(err?.response?.data?.message || 'Could not start checkout. Please try again.', 'error');
@@ -858,7 +891,8 @@ export default function ResumeBuilder() {
         {!profile ? (
           <div className="empty-state"><span className="spinner spinner-primary" /></div>
         ) : !unlocked ? (
-          <LockedState onUnlock={unlockResumeBuilder} unlocking={unlocking} billingReady={billingReady} price={resumeBuilderPrice} />
+          <LockedState onUnlock={unlockResumeBuilder} unlocking={unlocking} billingReady={billingReady} price={resumeBuilderPrice}
+            billingConfig={billingConfig} selectedTier={resumeTier} onSelectTier={setResumeTier} />
         ) : loadError ? (
           <div className="empty-state" role="alert">
             <p>{loadError}</p>

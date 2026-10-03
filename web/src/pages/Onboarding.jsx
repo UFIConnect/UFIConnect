@@ -1,9 +1,10 @@
 import { privateSessionStorage } from '../auth/session';
 import { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import client from '../api/client';
 import { ALL_ROLES, ROLE_TOPICS, EXTRA_INTERESTS } from '../data/roles';
+import { safeReturnPath } from '../auth/returnPath';
 
 /* ─── Data ─────────────────────────────────────────────────────────────────── */
 
@@ -211,6 +212,8 @@ function loadSignupCtx() {
 export default function Onboarding() {
   const { updateProfileLocally } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const returnTo = safeReturnPath(location.state?.from);
 
   // Read registration context once on mount
   const signupCtx = loadSignupCtx();
@@ -277,7 +280,7 @@ export default function Onboarding() {
       const { data } = await client.post('/profile/onboarding', payload);
       privateSessionStorage.removeItem('ufi_signup_ctx');
       updateProfileLocally(data.profile || data);
-      navigate('/', { replace: true });
+      navigate(returnTo, { replace: true });
     } catch {
       setError('We could not save your setup. Check your connection and try again.');
     } finally {

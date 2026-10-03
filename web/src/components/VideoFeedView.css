@@ -79,4 +79,7 @@
   .video-feed-view .video-feed-byline strong { max-width: 70px; font-size: .63rem; }
   .video-feed-view .video-feed-caption h2 { font-size: .7rem; }
 }
+.video-feed-caption-summary .post-chrome-like { flex-shrink: 0; }
+.video-feed-caption-summary .post-chrome-action { min-height: 36px; min-width: 32px; padding: 0 6px; color: #fff; background: #ffffff18; }
+.video-feed-caption-summary .post-chrome-source-count { display: none; }
 @media (prefers-reduced-motion: reduce) { .video-feed-view .video-feed-refreshing { animation: none; } }

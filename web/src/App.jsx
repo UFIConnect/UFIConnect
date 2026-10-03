@@ -5,6 +5,7 @@ import { useAuth } from './contexts/AuthContext';
 import { trackPageview } from './analytics';
 import { getGoogleAnalytics } from './analytics/browserAnalytics';
 import { publicRoutes } from './seo-routes.mjs';
+import { isBusinessRouteAllowed } from './businessRoutes.mjs';
 
 // Privacy controls load independently so their UI and styles never hold up
 // route content. The consent controller still prevents optional collection
@@ -64,6 +65,8 @@ const Post           = lazy(() => import('./pages/Post'));
 const PostDetail     = lazy(() => import('./pages/PostDetail'));
 const Search         = lazy(() => import('./pages/SearchExperience'));
 const People         = lazy(() => import('./pages/People'));
+const Recruiting     = lazy(() => import('./pages/Recruiting'));
+const Candidates     = lazy(() => import('./pages/Candidates'));
 const Opportunities  = lazy(() => import('./pages/Opportunities'));
 const PublicProfile  = lazy(() => import('./pages/PublicProfile'));
 const Settings       = lazy(() => import('./pages/Settings'));
@@ -115,9 +118,25 @@ function SessionRecovery() {
 
 function RequireOnboarding({ children }) {
   const { profile, loading } = useAuth();
+  const location = useLocation();
   if (loading) return <div className="splash">Loading...</div>;
-  if (profile && !profile.onboardingComplete) return <Navigate to="/onboarding" replace />;
+  if (profile && !profile.onboardingComplete) return <Navigate to="/onboarding" state={{ from: location.pathname + location.search + location.hash }} replace />;
   return children;
+}
+
+function BusinessRoutes({ children }) {
+  const { profile, loading } = useAuth();
+  const { pathname } = useLocation();
+  // Each protected route handles restoration. Keep public sign-in and
+  // recovery pages usable while an older session lookup is still pending.
+  if (loading) return children;
+  return profile?.plan === 'business' && !isBusinessRouteAllowed(pathname, profile)
+    ? <Navigate to="/recruiting" replace /> : children;
+}
+
+function PeopleRoute() {
+  const { profile } = useAuth();
+  return profile?.plan === 'business' ? <Candidates /> : <People />;
 }
 
 function PageviewTracker() {
@@ -188,6 +207,7 @@ export default function App() {
     <>
     <PageviewTracker />
     <Suspense fallback={<RouteLoading />}>
+    <BusinessRoutes>
     <Routes>
       {/* Public */}
       <Route path="/login"    element={<Login />} />
@@ -262,7 +282,8 @@ export default function App() {
           whether a session exists for its own chrome/actions. */}
       <Route path="/p/:id" element={<PostDetail />}/>
       <Route path="/search" element={<SearchRoute />}/>
-      <Route path="/people" element={<RequireAuth><RequireOnboarding><People /></RequireOnboarding></RequireAuth>} />
+      <Route path="/people" element={<RequireAuth><RequireOnboarding><PeopleRoute /></RequireOnboarding></RequireAuth>} />
+      <Route path="/recruiting" element={<RequireAuth><RequireOnboarding><Recruiting /></RequireOnboarding></RequireAuth>} />
       <Route path="/u/:id" element={
         <RequireAuth><RequireOnboarding><PublicProfile /></RequireOnboarding></RequireAuth>
       }/>
@@ -294,6 +315,7 @@ export default function App() {
       {/* Fallback */}
       <Route path="*" element={<NotFound />} />
     </Routes>
+    </BusinessRoutes>
     </Suspense>
     <AnalyticsPrivacyControls />
     </>
