@@ -21763,14 +21763,16 @@ async function handleFeedRequest(req, res) {
   const refreshSeed = (req.query.seed || '').toString().slice(0, 64);
   const requestedSourceFilter = canonicalFeedSourceId(req.query.source) || null;
   const requestedSourcesParam = req.query.sources
-    ? req.query.sources.split(',').map(canonicalFeedSourceId).filter(Boolean)
+    ? [...new Set(req.query.sources.split(',').map(canonicalFeedSourceId).filter(Boolean))]
     : [];
-  const sourceFilter = isFollowingRequest || isAggregateFeedSource(requestedSourceFilter)
-    ? requestedSourceFilter
-    : null;
   const sourcesParam = isFollowingRequest
     ? requestedSourcesParam
     : requestedSourcesParam.filter(isAggregateFeedSource);
+  // Maps and other multi-select clients also send ?sources= for one source.
+  // Promote the accepted singleton before the shared single/multi-source paths.
+  const sourceFilter = ((isFollowingRequest || isAggregateFeedSource(requestedSourceFilter))
+    ? requestedSourceFilter
+    : null) || (sourcesParam.length === 1 ? sourcesParam[0] : null);
   const isDefaultAggregateView = !sourceFilter && sourcesParam.length === 0;
   const usesBlendedSources = isBlendedFeedSelection(sourceFilter, sourcesParam);
   const requestedMemberOnlySource = !isFollowingRequest
@@ -23374,11 +23376,12 @@ async function handleVideoFeedRequest(req, res) {
   try {
     const feedLimit = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
     const requestedSourcesParam = req.query.sources
-      ? req.query.sources.split(',').map(canonicalFeedSourceId).filter(Boolean)
+      ? [...new Set(req.query.sources.split(',').map(canonicalFeedSourceId).filter(Boolean))]
       : [];
     const requestedSourceFilter = canonicalFeedSourceId(req.query.source) || null;
-    const sourceFilter = isAggregateFeedSource(requestedSourceFilter) ? requestedSourceFilter : null;
     const sourcesParam = requestedSourcesParam.filter(isAggregateFeedSource);
+    const sourceFilter = (isAggregateFeedSource(requestedSourceFilter) ? requestedSourceFilter : null)
+      || (sourcesParam.length === 1 ? sourcesParam[0] : null);
     const usesBlendedVideoSources = isBlendedFeedSelection(sourceFilter, sourcesParam);
     const requestedMemberOnlySource = [requestedSourceFilter, ...requestedSourcesParam]
       .some(source => MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(source));
@@ -23664,9 +23667,9 @@ async function handleFollowingVideoFeedRequest(req, res) {
     const feedLimit = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
     const reqPage = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
     const sourcesParam = req.query.sources
-      ? req.query.sources.split(',').map(canonicalFeedSourceId).filter(Boolean)
+      ? [...new Set(req.query.sources.split(',').map(canonicalFeedSourceId).filter(Boolean))]
       : [];
-    const sourceFilter = sourcesParam.length > 1 ? sourcesParam : (canonicalFeedSourceId(req.query.source) || null);
+    const sourceFilter = sourcesParam.length > 1 ? sourcesParam : (canonicalFeedSourceId(req.query.source) || sourcesParam[0] || null);
     const usesBlendedFollowingVideos = isBlendedFeedSelection(sourceFilter, sourcesParam);
     const followingIds = new Set(follows.filter(f => f.followerId === req.user.id).map(f => f.followingId));
 
