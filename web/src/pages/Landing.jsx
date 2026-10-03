@@ -182,9 +182,9 @@ export default function Landing() {
                 </div>
               </div>
               <div className="landing-network-art">
-                <img src="/homepage-app-network-2026-09.jpg"
+                <img src="/homepage-app-network-2026-10.jpg"
                   alt="UFIconnect at the center of a connected network of social, community, and creative apps"
-                  width="1536" height="1024" fetchPriority="high" />
+                  width="1206" height="669" fetchPriority="high" />
               </div>
             </div>
           </section>
