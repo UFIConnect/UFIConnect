@@ -17,7 +17,10 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (token && !restoring) navigate(profile && !profile.onboardingComplete ? '/onboarding' : returnTo, { replace: true });
+    if (token && !restoring) {
+      const needsOnboarding = profile && !profile.onboardingComplete;
+      navigate(needsOnboarding ? '/onboarding' : returnTo, { replace: true, state: needsOnboarding ? { from: returnTo } : undefined });
+    }
   }, [token, profile, restoring, navigate, returnTo]);
 
   function handleChange(e) {
@@ -32,7 +35,9 @@ export default function Login() {
     try {
       const user = await login(form.email, form.password);
       setForm({ email: '', password: '' });
-      navigate(user.onboardingComplete ? returnTo : '/onboarding', { replace: true });
+      navigate(user.onboardingComplete ? returnTo : '/onboarding', {
+        replace: true, state: user.onboardingComplete ? undefined : { from: returnTo },
+      });
     } catch (err) {
       if (!err.response) {
         setError('Server is starting up — wait 30 seconds and try again.');

@@ -16,6 +16,7 @@ const { buildOfficeSetup } = require('./office-setup');
 const { createManagedRecovery } = require('./managed-recovery');
 const { withActiveMembers } = require('./member-write');
 const { BILLING_SCHEMA, validRecurringPrice, quantityOneAmount, createBilling } = require('./billing');
+const { BUSINESS_TEAM_SCHEMA, createBusinessTeams, registerBusinessTeamRoutes } = require('./business-teams');
 const dotenv = require('dotenv');
 const http   = require('http');
 const https  = require('https');
@@ -1496,7 +1497,7 @@ app.get('/oauth/bluesky/jwks.json', (_req, res) => {
 // in up front (there's no fixed authUrl to just redirect to) and a real
 // PAR round-trip before it has anything to redirect the browser to at all.
 app.get('/auth/social/bluesky/start', authenticate, async (req, res) => {
-  const user = await getUser(req.user.id);
+  const user = await getEffectiveUser(req.user.id);
   if (!user) return res.status(401).json({ error: 'User not found' });
   if (user.plan === 'business') {
     return res.status(403).json({
@@ -8396,6 +8397,14 @@ function findPostById(postId) {
   // Check per-source caches
   for (const cache of agentSourceCache.values()) {
     const hit = (cache.posts || []).find(p => p.id === postId);
+    if (hit) {
+      const screened = screenFeedPost(hit);
+      return screened.allowed ? screened.post : null;
+    }
+  }
+  // Discovery cards use their own bounded cache rather than the main source pool.
+  for (const cache of locationLiveFeedCache.values()) {
+    const hit = (cache.posts || []).find(post => post.id === postId);
     if (hit) {
       const screened = screenFeedPost(hit);
       return screened.allowed ? screened.post : null;
@@ -16458,12 +16467,15 @@ function fullProfile(user) {
     connectedSocial: Object.fromEntries([...CONNECTED_SOCIAL_PLATFORMS].map(platform => [platform, connectedPlatforms.includes(platform)])),
     socialConnectedAt: Object.fromEntries(connectedPlatforms.map(platform => [platform, connectedSourceWindow(user, platform).connectedAt])),
     plan: user.plan || 'free',
+    personalPlan: user.personalPlan || user.plan || 'free',
+    businessTeam: user.businessTeam || null,
     // Business is a superset tier, not a separate track — isPro true for
     // either paid plan so any future Pro-gated feature doesn't also need
     // its own Business check. isBusiness is the narrower one, for whatever
     // ends up being Business-only.
     isPro: ['pro', 'business'].includes(user.plan),
     isBusiness: user.plan === 'business',
+    businessSeats: user.businessSeats || 0,
     // Independent Resume Builder add-on — see checkout-session/webhook comments.
     resumeBuilderAddon: !!user.resumeBuilderAddon,
     vpnConnectorAddon: !!user.vpnConnectorAddon,
@@ -16536,6 +16548,7 @@ function dbRowToMemUser(row) {
     plan: row.plan || 'free',
     stripeCustomerId: row.stripe_customer_id || null,
     stripeSubscriptionId: row.stripe_subscription_id || null,
+    businessSeats: row.business_seats || 0,
     // Independent of plan — see the checkout-session/webhook comments on
     // resume_builder_addon for why this isn't folded into `plan`.
     resumeBuilderAddon: !!row.resume_builder_addon,
@@ -16594,6 +16607,22 @@ async function getUser(id) {
   if (mem) return mem;
   return fetchAndSyncUser(id);
 }
+
+async function withBusinessMembership(user) {
+  if (!user || !isDBId(user.id)) return user;
+  let team;
+  try { team = await businessTeams.effectiveMembership(user.id); }
+  catch { throw Object.assign(new Error('Team membership storage is temporarily unavailable.'), { status: 503 }); }
+  // Keep billing ownership separate: derived team access is never persisted to
+  // users.plan or the shared account cache, and never cancels a personal plan.
+  const usesTeamSeat = team?.active && user.plan !== 'business';
+  return { ...user, personalPlan: user.plan || 'free', businessTeam: team,
+    plan: usesTeamSeat ? 'business' : user.plan,
+    businessSeats: usesTeamSeat ? team.seats : user.businessSeats };
+}
+
+async function getEffectiveUser(id) { return withBusinessMembership(await getUser(id)); }
+async function effectiveProfile(user) { return fullProfile(await withBusinessMembership(user)); }
 
 // Public target profiles must not survive deletion in another API worker's
 // memory. Keep authoritative reads bounded to profile and messaging routes.
@@ -16849,6 +16878,7 @@ async function migrateDB() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS resume_builder_subscription_id TEXT`);
     await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_resume_builder_sub_idx ON users(resume_builder_subscription_id) WHERE resume_builder_subscription_id IS NOT NULL`);
     for (const statement of BILLING_SCHEMA) await db.query(statement);
+    for (const statement of BUSINESS_TEAM_SCHEMA) await db.query(statement);
 
     // Groups table — persists across deploys
     await db.query(`
@@ -20147,7 +20177,7 @@ app.get('/auth/me', authenticate, async (req, res) => {
     ? (await fetchAndSyncUser(req.user.id) || await getUser(req.user.id))
     : await getUser(req.user.id);
   if (!user) return res.status(401).json({ message: 'User not found.' });
-  res.json({ profile: fullProfile(user) });
+  res.json({ profile: await effectiveProfile(user) });
 });
 
 app.get('/auth/session', authenticate, async (req, res) => {
@@ -20155,7 +20185,7 @@ app.get('/auth/session', authenticate, async (req, res) => {
   if (!user) return res.status(401).json({ message: 'User not found.' });
   setSessionCookie(res, req.authToken);
   res.set('Cache-Control', 'no-store');
-  res.json({ token: req.authToken, profile: fullProfile(user) });
+  res.json({ token: req.authToken, profile: await effectiveProfile(user) });
 });
 
 app.post('/auth/register', registerLimiter, async (req, res) => {
@@ -20182,7 +20212,7 @@ app.post('/auth/register', registerLimiter, async (req, res) => {
       const mem = syncToMemory(dbRowToMemUser(rows[0]));
       const token = await issueSession(mem);
       setSessionCookie(res, token);
-      return res.status(201).json({ token, profile: fullProfile(mem) });
+      return res.status(201).json({ token, profile: await effectiveProfile(mem) });
     } catch (err) {
       if (err.code === '23505') return res.status(409).json({ message: 'Email already registered.' });
       console.error('register DB error:', err.message);
@@ -20229,7 +20259,7 @@ app.post('/auth/login', authLimiter, async (req, res) => {
     const token = await issueSession(user);
     recordSuccessfulSignIn(user, req);
     setSessionCookie(res, token);
-    res.json({ token, profile: fullProfile(user) });
+    res.json({ token, profile: await effectiveProfile(user) });
   } catch (error) {
     console.error('Sign-in storage failed.');
     res.status(503).json({ message: 'Sign-in storage is temporarily unavailable.' });
@@ -20424,7 +20454,7 @@ app.get('/auth/social/config', authenticate, async (req, res) => {
 app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
   const { platform } = req.params;
   if (!PLATFORMS[platform]) return res.status(404).json({ error: 'Unknown platform' });
-  const user = await getUser(req.user.id);
+  const user = await getEffectiveUser(req.user.id);
   if (!user) return res.status(401).json({ error: 'User not found' });
   if (CAREER_ACCOUNT_PLATFORMS.has(platform) && user.plan !== 'business') {
     return res.status(403).json({
@@ -20644,7 +20674,7 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
 
 // --- Profile: social connection status + disconnect ---------------------------
 app.get('/social/platforms', authenticate, async (req, res) => {
-  const user = await getUser(req.user.id);
+  const user = await getEffectiveUser(req.user.id);
   const careerOnly = user?.plan === 'business';
   const visiblePlatforms = careerOnly
     ? [...CAREER_ACCOUNT_PLATFORMS]
@@ -20686,7 +20716,7 @@ app.get('/social/platforms', authenticate, async (req, res) => {
 });
 
 app.get('/profile/social', authenticate, async (req, res) => {
-  const user = await getUser(req.user.id);
+  const user = await getEffectiveUser(req.user.id);
   const careerOnly = user?.plan === 'business';
   const platforms = careerOnly ? [] : [...CONNECTED_SOCIAL_PLATFORMS];
   const connected = Object.fromEntries(platforms.map(p => {
@@ -20748,7 +20778,7 @@ app.get('/profile', authenticate, async (req, res) => {
     ? (await fetchAndSyncUser(req.user.id) || await getUser(req.user.id))
     : await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
-  res.json(fullProfile(user));
+  res.json(await effectiveProfile(user));
 });
 
 app.patch('/profile', authenticate, async (req, res) => {
@@ -20836,7 +20866,7 @@ app.patch('/profile', authenticate, async (req, res) => {
       filestore.saveUsers(users);
     }
     invalidateUserFeedSnapshots(user.id);
-    res.json(fullProfile(user));
+    res.json(await effectiveProfile(user));
   } catch (e) {
     console.error('PATCH /profile DB:', e.message);
     Object.assign(user, prev);
@@ -20965,7 +20995,7 @@ app.post('/profile/onboarding', authenticate, async (req, res) => {
       if (group) group.members += 1;
     });
     invalidateUserFeedSnapshots(user.id);
-    res.json({ profile: fullProfile(user), autoJoined });
+    res.json({ profile: await effectiveProfile(user), autoJoined });
   } catch (e) {
     console.error('POST /profile/onboarding DB:', e.message);
     Object.assign(user, prev);
@@ -20987,11 +21017,16 @@ app.post('/profile/onboarding', authenticate, async (req, res) => {
 const TIER_PRICE_IDS = {
   pro:            () => process.env.STRIPE_PRICE_ID,
   business:       () => process.env.STRIPE_PRICE_ID_BUSINESS,
+  business_team:  () => process.env.STRIPE_PRICE_ID_BUSINESS_TEAM,
 };
 const RESUME_BUILDER_PRICE_ID_ENV_KEYS = [
   'STRIPE_RESUME_BUILDER_PRICE_ID',
   'RESUME_BUILDER_PRICE_ID',
   'STRIPE_PRICE_ID_RESUME_BUILDER',
+];
+const RESUME_BUILDER_MONTHLY_PRICE_ID_ENV_KEYS = [
+  'STRIPE_RESUME_BUILDER_MONTHLY_PRICE_ID',
+  'STRIPE_PRICE_ID_RESUME_BUILDER_MONTHLY',
 ];
 
 const STRIPE_PRICE_SUMMARY_CACHE_MS = 5 * 60 * 1000;
@@ -21018,9 +21053,21 @@ function isConfiguredVpnConnectorPrice(price) {
     && price.recurring.interval === 'month' && price.recurring.interval_count === 1;
 }
 
+function isConfiguredResumeBuilderMonthlyPrice(price) {
+  return validRecurringPrice(price) && price.billing_scheme !== 'tiered'
+    && String(price.currency).toLowerCase() === 'usd' && price.unit_amount === 3000
+    && price.recurring.interval === 'month' && price.recurring.interval_count === 1;
+}
+
+function isConfiguredBusinessPrice(price, team = false) {
+  return validRecurringPrice(price) && price.billing_scheme !== 'tiered'
+    && String(price.currency).toLowerCase() === 'usd' && price.unit_amount === (team ? 1994 : 19994)
+    && price.recurring.interval === 'month' && price.recurring.interval_count === 1;
+}
+
 function getResumeBuilderPriceCandidates() {
   const configuredKeys = Object.keys(process.env)
-    .filter(key => /resume/i.test(key) && /price/i.test(key) && (/_id$/i.test(key) || /_price$/i.test(key)));
+    .filter(key => /resume/i.test(key) && !/monthly/i.test(key) && /price/i.test(key) && (/_id$/i.test(key) || /_price$/i.test(key)));
   return [...new Set([...RESUME_BUILDER_PRICE_ID_ENV_KEYS, ...configuredKeys]
     .map(key => String(process.env[key] || '').trim())
     .filter(Boolean))];
@@ -21041,6 +21088,7 @@ function summarizeStripePrice(price, tier) {
       interval: price.recurring?.interval || null,
       intervalCount: Number(price.recurring?.interval_count || 1),
       ...(tier === 'resume_builder' ? { matchesRequiredPrice: isConfiguredResumeBuilderPrice(price) } : {}),
+      ...(tier === 'resume_builder_monthly' ? { matchesRequiredPrice: isConfiguredResumeBuilderMonthlyPrice(price) } : {}),
     };
   } catch {
     return null;
@@ -21105,14 +21153,16 @@ async function resolveResumeBuilderPrice() {
 }
 
 async function getBillingCatalog() {
-  const configured = { pro: TIER_PRICE_IDS.pro(), business: TIER_PRICE_IDS.business() };
+  const configured = { pro: TIER_PRICE_IDS.pro(), business: TIER_PRICE_IDS.business(), business_team: TIER_PRICE_IDS.business_team() };
   const vpnPriceId = String(process.env.STRIPE_VPN_CONNECTOR_PRICE_ID || '').trim();
-  const cacheKey = 'catalog:' + JSON.stringify([configured, getResumeBuilderPriceCandidates(), vpnPriceId]);
+  const resumeMonthlyIds = [...new Set(RESUME_BUILDER_MONTHLY_PRICE_ID_ENV_KEYS
+    .map(key => String(process.env[key] || '').trim()).filter(Boolean))];
+  const cacheKey = 'catalog:' + JSON.stringify([configured, getResumeBuilderPriceCandidates(), resumeMonthlyIds, vpnPriceId]);
   const cached = stripePriceSummaryCache.get(cacheKey);
   if (cached && Date.now() - cached.at < STRIPE_PRICE_SUMMARY_CACHE_MS) return cached.value;
   const allowedPrices = new Map();
   const tiers = {};
-  await Promise.all(['pro', 'business'].map(async tier => {
+  await Promise.all(['pro', 'business', 'business_team'].map(async tier => {
     const priceId = String(configured[tier] || '').trim();
     let price = null;
     if (stripe && priceId) {
@@ -21124,20 +21174,27 @@ async function getBillingCatalog() {
       }
     }
     const valid = validRecurringPrice(price);
-    if (valid) allowedPrices.set(price.id, tier);
+    if (valid && (tier !== 'business_team' || isConfiguredBusinessPrice(price, true))) {
+      allowedPrices.set(price.id, tier.startsWith('business') && isConfiguredBusinessPrice(price, true) ? 'business_team' : tier);
+    }
     // Members who subscribed on an earlier price of the same product keep their
     // membership after the configured price changes; new checkouts use priceId.
     const product = typeof price?.product === 'string' ? price.product : price?.product?.id;
     if (valid && product) {
       try {
         const siblings = await stripe.prices.list({ product, type: 'recurring', limit: 100 });
-        for (const sibling of siblings.data || []) if (validRecurringPrice(sibling) && !allowedPrices.has(sibling.id)) allowedPrices.set(sibling.id, tier);
+        for (const sibling of siblings.data || []) {
+          if (!validRecurringPrice(sibling)) continue;
+          if (tier.startsWith('business') && isConfiguredBusinessPrice(sibling, true)) allowedPrices.set(sibling.id, 'business_team');
+          else if (tier !== 'business_team' && !allowedPrices.has(sibling.id)) allowedPrices.set(sibling.id, tier);
+        }
       } catch (error) {
         console.warn(`[billing/config] Could not list earlier ${tier} prices:`, error.message);
       }
     }
-    tiers[tier] = { priceId: valid ? price.id : null, available: valid && price.active === true,
-      summary: valid ? summarizeStripePrice(price, tier) : null };
+    const matchesRequiredPrice = tier === 'pro' || isConfiguredBusinessPrice(price, tier === 'business_team');
+    tiers[tier] = { priceId: valid ? price.id : null, available: valid && price.active === true && matchesRequiredPrice,
+      summary: valid ? { ...summarizeStripePrice(price, tier), matchesRequiredPrice } : null };
   }));
   const resume = await resolveResumeBuilderPrice();
   if (stripe && getResumeBuilderPriceCandidates().length && !resume.priceId) {
@@ -21146,6 +21203,23 @@ async function getBillingCatalog() {
   for (const priceId of resume.allowedPriceIds || []) allowedPrices.set(priceId, 'resume_builder');
   tiers.resume_builder = { priceId: resume.priceId,
     available: resume.summary?.matchesRequiredPrice === true, summary: resume.summary };
+  // Both billing cadences grant the same add-on. Keep the monthly choice
+  // explicit so a configured six-month price cannot open a monthly checkout.
+  const monthlyPrices = [];
+  for (const priceId of resumeMonthlyIds) {
+    if (!stripe) break;
+    try { monthlyPrices.push(await stripe.prices.retrieve(priceId, { expand: ['tiers'] })); }
+    catch { throw Object.assign(new Error('Subscription pricing is temporarily unavailable.'), { status: 503 }); }
+  }
+  for (const price of monthlyPrices) {
+    // Retired configured prices still reconcile existing paying subscriptions.
+    if (isConfiguredResumeBuilderMonthlyPrice(price)) allowedPrices.set(price.id, 'resume_builder_monthly');
+  }
+  const monthlyPrice = monthlyPrices.find(price => price.active === true && isConfiguredResumeBuilderMonthlyPrice(price)) || monthlyPrices[0];
+  const validMonthly = isConfiguredResumeBuilderMonthlyPrice(monthlyPrice);
+  tiers.resume_builder_monthly = { priceId: validMonthly ? monthlyPrice.id : null,
+    available: validMonthly && monthlyPrice.active === true,
+    summary: monthlyPrice ? summarizeStripePrice(monthlyPrice, 'resume_builder_monthly') : null };
   let vpnPrice = null;
   if (stripe && vpnPriceId) {
     try { vpnPrice = await stripe.prices.retrieve(vpnPriceId, { expand: ['tiers'] }); }
@@ -21154,12 +21228,11 @@ async function getBillingCatalog() {
   const validVpn = isConfiguredVpnConnectorPrice(vpnPrice);
   if (validVpn) allowedPrices.set(vpnPrice.id, 'vpn_connector');
   tiers.vpn_connector = { priceId: validVpn ? vpnPrice.id : null,
-    // A configured Stripe price is not a functioning VPN service. Keep new
-    // purchases locked until provider provisioning and real client connection
-    // are implemented; do not sell saved metadata as VPN connectivity.
-    available: false,
-    unavailableMessage: 'VPN subscriptions are coming soon. Checkout will open when VPN connections are ready.',
-    summary: vpnPrice ? { ...summarizeStripePrice(vpnPrice, 'vpn_connector'), matchesRequiredPrice: validVpn, comingSoon: true } : null };
+    // The existing Vault subscription enables encrypted passwords, documents
+    // and keys. VPN connections stay pending until their service is configured.
+    available: validVpn && vpnPrice.active === true,
+    unavailableMessage: 'Vault checkout is temporarily unavailable. Please try again later.',
+    summary: vpnPrice ? { ...summarizeStripePrice(vpnPrice, 'vpn_connector'), matchesRequiredPrice: validVpn } : null };
   const value = { allowedPrices, tiers };
   stripePriceSummaryCache.set(cacheKey, { at: Date.now(), value });
   return value;
@@ -21168,6 +21241,7 @@ async function getBillingCatalog() {
 const billing = createBilling({ db, stripe, getCatalog: getBillingCatalog, frontendBase: FRONTEND_BASE,
   onUserUpdated: row => syncToMemory(dbRowToMemUser(row)),
 });
+const businessTeams = createBusinessTeams({ db, billing });
 const billingLimiter = rateLimit({ windowMs: 60 * 1000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false,
   message: { message: 'Please wait a moment before trying billing again.' } });
 const billingResponse = action => async (req, res) => {
@@ -21190,15 +21264,23 @@ app.get('/billing/config', billingResponse(async () => {
   };
 }));
 
-app.post('/billing/create-checkout-session', authenticate, billingLimiter, billingResponse(req => {
+app.post('/billing/create-checkout-session', authenticate, billingLimiter, billingResponse(async req => {
   if (!process.env.STRIPE_WEBHOOK_SECRET) throw Object.assign(new Error('Billing is not configured yet.'), { status: 503 });
-  if (!req.body || Object.keys(req.body).some(key => key !== 'tier')) {
-    throw Object.assign(new Error('Send only the subscription tier. Payment details are collected by Stripe.'), { status: 400 });
+  if (!req.body || Object.keys(req.body).some(key => !['tier', 'quantity'].includes(key))) {
+    throw Object.assign(new Error('Send only the subscription tier and number of people. Payment details are collected by Stripe.'), { status: 400 });
   }
-  return billing.createCheckout(req.user.id, req.body.tier);
+  if (req.body.tier === 'business' && isDBId(req.user.id) && await businessTeams.effectiveMembership(req.user.id)) {
+    throw Object.assign(new Error('Leave your current Business team in Settings before starting your own Business membership.'), { status: 409 });
+  }
+  return billing.createCheckout(req.user.id, req.body.tier, req.body.quantity);
 }));
 app.post('/billing/create-portal-session', authenticate, billingLimiter, billingResponse(req => billing.portal(req.user.id)));
-app.get('/billing/status', authenticate, billingLimiter, billingResponse(req => billing.status(req.user.id)));
+app.get('/billing/status', authenticate, billingLimiter, billingResponse(async req => {
+  const status = await billing.status(req.user.id);
+  const businessTeam = isDBId(req.user.id) ? await businessTeams.effectiveMembership(req.user.id) : null;
+  return { ...status, personalPlan: status.plan, effectivePlan: businessTeam?.active ? 'business' : status.plan, businessTeam };
+}));
+registerBusinessTeamRoutes(app, { teams: businessTeams, authenticate, limiter: billingLimiter });
 
 // Saved connector labels are a separate add-on. No VPN credentials, addresses,
 // browsing activity, or local profile identifiers are accepted by these routes.
@@ -21547,7 +21629,7 @@ app.get('/groups/:id/posts', authenticate, async (req, res) => {
     const limit = boundedLimit(req.query.limit, 50, 100);
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
     const { posts: groupPosts, hasMore } = await getCommunityPosts({ viewerId: req.user.id, groupId: group.id, limit, offset });
-    res.json({ posts: groupPosts, hasMore });
+    await sendFeedResponse(req, res, { posts: groupPosts, hasMore });
   } catch (e) { console.error('GET /groups/:id/posts:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
@@ -21855,7 +21937,7 @@ async function handleFeedRequest(req, res) {
   const searchQuery = (req.query.q || '').trim().toLowerCase();
 
   if (requestedMemberOnlySource && !sourceFilter && !sourcesParam.length) {
-    return res.json({
+    return await sendFeedResponse(req, res, {
       posts: [], hasMore: false, totalAvailable: 0,
       source: requestedSourceFilter || 'instagram', memberOnly: true,
     });
@@ -21894,7 +21976,7 @@ async function handleFeedRequest(req, res) {
       ? await hydrateRestaurantPostEngagement(pageRows, req.user.id)
       : pageRows;
     trackPostsSeen(hydratedPageRows);
-    return res.json({
+    return await sendFeedResponse(req, res, {
       posts: hydratedPageRows,
       // Travel's looping live-camera rail is deliberately separate from
       // paginated discovery cards. Do not run it through `filterUnseen` --
@@ -22034,7 +22116,7 @@ async function handleFeedRequest(req, res) {
     });
     const pageRows = groupPage.posts;
     trackPostsSeen(pageRows);
-    return res.json({
+    return await sendFeedResponse(req, res, {
       posts: pageRows,
       page: reqPage,
       mode: 'groups',
@@ -22133,7 +22215,7 @@ async function handleFeedRequest(req, res) {
       relevance:       1,
     }));
     trackPostsSeen(result);
-    return res.json({
+    return await sendFeedResponse(req, res, {
       posts: result,
       sort: sortMode,
       cursor: nextCursor,
@@ -22189,7 +22271,7 @@ async function handleFeedRequest(req, res) {
     });
     const pageRows = followingPage.posts;
     trackPostsSeen(pageRows);
-    return res.json({
+    return await sendFeedResponse(req, res, {
       posts: pageRows,
       page: reqPage,
       mode: 'following',
@@ -22271,7 +22353,7 @@ async function handleFeedRequest(req, res) {
         relevance:       1,
       }));
       trackPostsSeen(result);
-      return res.json({
+      return await sendFeedResponse(req, res, {
         posts: result,
         mode: 'archive',
         sort: sortMode,
@@ -22298,7 +22380,7 @@ async function handleFeedRequest(req, res) {
         const pageRows = enforceFeedDiversity(personalizeForUser(balanced), feedLimit, sortMode);
         const hasMore = balanced.length > pageRows.length || balanced.length >= perSourcePageSize;
         trackPostsSeen(pageRows);
-        return res.json({
+        return await sendFeedResponse(req, res, {
           posts: pageRows.map(mapFeedRow),
           page: reqPage,
           mode: 'archive',
@@ -22358,7 +22440,7 @@ async function handleFeedRequest(req, res) {
     pageRows = personalizeForUser(pageRows);
     if (usesBlendedSources) pageRows = enforceFeedDiversity(pageRows, feedLimit, sortMode);
     trackPostsSeen(pageRows);
-    return res.json({
+    return await sendFeedResponse(req, res, {
       posts: pageRows.map(mapFeedRow),
       page: reqPage,
       mode: 'archive',
@@ -22492,7 +22574,7 @@ async function handleFeedRequest(req, res) {
         })
       : '';
     trackPostsSeen(searchPageRows);
-    return res.json({
+    return await sendFeedResponse(req, res, {
       posts: searchPageRows,
       page: reqPage,
       cursor: nextCursor,
@@ -22557,7 +22639,7 @@ async function handleFeedRequest(req, res) {
         // shouldn't just stop.
         const pageSlice = enforceFeedDiversity(personalized, feedLimit, sortMode);
         trackPostsSeen(pageSlice);
-        return res.json({
+        return await sendFeedResponse(req, res, {
           posts: pageSlice.map(p => ({
             ...p,
             group:           groups.find(g => g.id === p.groupId) || p.group,
@@ -22592,7 +22674,7 @@ async function handleFeedRequest(req, res) {
         const pageRows = enforceFeedDiversity(personalizeForUser(balanced), feedLimit, sortMode);
         const hasMore = balanced.length >= perSourcePageSize;
         trackPostsSeen(pageRows);
-        return res.json({
+        return await sendFeedResponse(req, res, {
           posts: pageRows.map(p => ({
             ...p,
             group:           groups.find(g => g.id === p.groupId) || p.group,
@@ -22666,7 +22748,7 @@ async function handleFeedRequest(req, res) {
     const result = pageRows.map(mapDbPost);
 
     trackPostsSeen(pageRows);
-    return res.json({ posts: result, page: reqPage, hasMore, sort: sortMode });
+    return await sendFeedResponse(req, res, { posts: result, page: reqPage, hasMore, sort: sortMode });
   }
 
   // Native UFIconnect posts are exclusive to Following, where the follow
@@ -22699,7 +22781,7 @@ async function handleFeedRequest(req, res) {
       // personalizeForUser already applies location ranking before equalizing.
       const finalPosts = enforceFeedDiversity([...internal, ...externalPosts], feedLimit, sortMode);
       trackPostsSeen(finalPosts);
-      return res.json({
+      return await sendFeedResponse(req, res, {
         posts: finalPosts,
         sort: sortMode,
         hasMore: personalized.length > finalPosts.length,
@@ -22748,7 +22830,7 @@ async function handleFeedRequest(req, res) {
   if (sourceFilter && FEED_SOCIAL_TABS.has(sourceFilter)) {
     const token = user?.socialTokens?.[sourceFilter];
     if (!token) {
-      return res.json({ locked: true, reason: 'connect', source: sourceFilter, posts: [] });
+      return await sendFeedResponse(req, res, { locked: true, reason: 'connect', source: sourceFilter, posts: [] });
     }
     const socialFetchFn = { twitter: fetchTwitter, linkedin: fetchLinkedIn, instagram: fetchInstagram, facebook: fetchFacebook }[sourceFilter];
     const socialKws = (prefs.interests || []).map(interestKeyword).filter(Boolean).slice(0, 5);
@@ -22790,7 +22872,7 @@ async function handleFeedRequest(req, res) {
     const rotated = filterUnseen(personalizeForUser(rotateForUser(pool, req.user.id, refreshSeed)), seenIds);
     const connectedPageRows = sliceCircular(rotated, 0, feedLimit);
     trackPostsSeen(connectedPageRows);
-    return res.json({
+    return await sendFeedResponse(req, res, {
       posts: connectedPageRows,
       source: sourceFilter,
       connected: true,
@@ -22820,7 +22902,7 @@ async function handleFeedRequest(req, res) {
     const rotated = filterUnseen(personalizeForUser(rotateForUser(pool, req.user.id, refreshSeed)), seenIds);
     const multiSourcePageRows = sliceCircular(rotated, 0, feedLimit).map(p => mapExternalPost(p, p.source));
     trackPostsSeen(multiSourcePageRows);
-    return res.json({
+    return await sendFeedResponse(req, res, {
       posts: multiSourcePageRows,
       sources: sourcesParam,
       sort: sortMode,
@@ -22845,7 +22927,7 @@ async function handleFeedRequest(req, res) {
     const sourceTabPageRows = sliceCircular(rotated, 0, feedLimit).map(p => mapExternalPost(p, sourceFilter));
     trackPostsSeen(sourceTabPageRows);
 
-    return res.json({
+    return await sendFeedResponse(req, res, {
       posts: sourceTabPageRows,
       source: sourceFilter,
       sort: sortMode,
@@ -23118,7 +23200,7 @@ async function handleFeedRequest(req, res) {
 
   // Persist only the final location-ranked slice the client receives.
   trackPostsSeen(responsePosts);
-  res.json({
+  await sendFeedResponse(req, res, {
     posts: responsePosts,
     sort: sortMode,
     hasMore: externalDiversified.length > 0,
@@ -23128,7 +23210,7 @@ async function handleFeedRequest(req, res) {
   });
   } catch (e) {
     console.error('[/feed] unhandled error:', e.message || e);
-    if (!res.headersSent) res.json({ posts: [], hasMore: false, totalAvailable: 0, error: true });
+    if (!res.headersSent) await sendFeedResponse(req, res, { posts: [], hasMore: false, totalAvailable: 0, error: true });
   }
 }
 app.get('/feed', authenticate, handleFeedRequest);
@@ -23163,7 +23245,7 @@ app.get('/feed/guest', async (req, res) => {
     });
     const locationContext = getFeedLocationContext(req);
     const locationRanked = rankFeedPostsForLocation(realFeedPosts(posts).filter(isRegularFeedSurfacePost), locationContext);
-    res.json({ posts: orderNewestFeedCohorts(locationRanked), cursor: nextCursor, hasMore, guest: true });
+    await sendFeedResponse(req, res, { posts: orderNewestFeedCohorts(locationRanked), cursor: nextCursor, hasMore, guest: true });
   } catch (e) {
     console.error('[/feed/guest] error:', e.message);
     res.status(500).json({ posts: [], hasMore: false });
@@ -23323,9 +23405,9 @@ function parseVideoFilters(req) {
 // once a final page of posts is decided is identical everywhere: mark them
 // seen (context 'videos', kept separate from the main Feed's own seen-
 // tracking) and send a consistently-shaped response.
-function sendVideoPage(req, res, posts, meta) {
+async function sendVideoPage(req, res, posts, meta) {
   markPostsSeen(req.user.id, posts, 'videos');
-  res.json({ posts, ...meta, ...continuousVideoPageMeta(req.query, meta?.hasMore) });
+  await sendFeedResponse(req, res, { posts, ...meta, ...continuousVideoPageMeta(req.query, meta?.hasMore) });
 }
 
 async function fetchPlayableVideoPage(params, attempts = 8) {
@@ -23620,7 +23702,7 @@ async function handleVideoFeedRequest(req, res) {
 
     const videoCandidates = personalizeVideosForUser([...introPosts, ...mixPosts]);
     const posts = enforceFeedDiversity(videoCandidates, feedLimit, 'balanced');
-    sendVideoPage(req, res, posts, { cursor: nextCursor, hasMore: hasMore || videoCandidates.length > posts.length });
+    await sendVideoPage(req, res, posts, { cursor: nextCursor, hasMore: hasMore || videoCandidates.length > posts.length });
   } catch (e) {
     console.error('[/feed/videos] error:', e.message);
     res.status(500).json({ posts: [], hasMore: false });
@@ -23721,7 +23803,7 @@ async function handleFollowingVideoFeedRequest(req, res) {
       laneForPost: post => post?.source || 'unknown',
       maxPerLane: usesBlendedFollowingVideos ? BLENDED_FEED_MAX_POSTS_PER_SOURCE : null,
     });
-    sendVideoPage(req, res, followingVideoPage.posts, {
+    await sendVideoPage(req, res, followingVideoPage.posts, {
       page: reqPage,
       mode: 'following',
       cursor: followingVideoPage.nextCursor,
@@ -23979,16 +24061,16 @@ app.get('/feed/sources', authenticate, (req, res) => {
 // Member likes for a page of external feed cards. The shared feed snapshot
 // never carries per-viewer state, so cards read these separately.
 app.get('/feed/likes', authenticateOptional, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
   const ids = [...new Set(String(req.query.ids || '').split(',').map(id => id.trim()).filter(id => id && id.length <= 300))].slice(0, 100);
   if (!ids.length) return res.json({ likes: {} });
   if (!db.isConnected()) return res.json({ likes: {}, unavailable: true });
   try {
-    const { rows } = await db.query(
-      `SELECT post_id, COUNT(*)::integer AS likes_count, BOOL_OR(user_id = $2) AS liked_by_me
-         FROM external_post_likes WHERE post_id = ANY($1::text[]) GROUP BY post_id`,
-      [ids, req.user?.id || ''],
-    );
-    res.json({ likes: Object.fromEntries(rows.map(row => [row.post_id, { count: Number(row.likes_count || 0), likedByMe: Boolean(row.liked_by_me) }])) });
+    const stats = await readTableLikes(db, 'external_post_likes', ids, req.user?.id);
+    res.json({ likes: Object.fromEntries(ids.map(id => {
+      const value = stats.get(id) || { likesCount: 0, likedByMe: false };
+      return [id, { ...value, count: value.likesCount, likesScope: 'uficonnect' }];
+    })) });
   } catch (e) { console.error('GET /feed/likes:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
@@ -23997,7 +24079,8 @@ app.get('/feed/:postId', authenticateOptional, async (req, res) => {
 
   const communityPost = await getCommunityPostById(postId);
   if (communityPost) {
-    return res.json({ post: serializeCommunityPost(communityPost, req.user?.id) });
+    if (!canSeePostLikes(communityPost, req.user?.id)) return res.status(404).json({ message: 'Post not found.' });
+    return await sendFeedResponse(req, res, { post: serializeCommunityPost(communityPost, req.user?.id) });
   }
 
   const rawMemPost = findPostById(postId);
@@ -24008,7 +24091,7 @@ app.get('/feed/:postId', authenticateOptional, async (req, res) => {
   // the DB lookup below instead of returning a near-empty post.
   if (memPost?.allowed && memPost.post.title) {
     const group = groups.find(g => g.id === memPost.post.groupId);
-    return res.json({
+    return await sendFeedResponse(req, res, {
       post: { ...memPost.post, group: group ? { id: group.id, name: group.name, category: group.category } : memPost.post.group },
     });
   }
@@ -24018,7 +24101,7 @@ app.get('/feed/:postId', authenticateOptional, async (req, res) => {
       const { rows } = await db.query('SELECT * FROM feed_posts_cache WHERE id = $1 LIMIT 1', [postId]);
       if (rows.length) {
         const screened = screenFeedPost(dbRowToFeedPost(rows[0]));
-        if (screened.allowed) return res.json({ post: screened.post });
+        if (screened.allowed) return await sendFeedResponse(req, res, { post: screened.post });
       }
     } catch (e) {
       console.warn('GET /feed/:postId DB lookup:', e.message);
@@ -27340,15 +27423,33 @@ app.get('/posts', authenticate, async (req, res) => {
       limit,
       offset,
     });
-    res.json({ posts: communityPosts, hasMore });
+    await sendFeedResponse(req, res, { posts: communityPosts, hasMore });
   } catch (e) { console.error('GET /posts:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
+const { desiredLike, readTableLikes, setTableLike, setCommunityLike, hydratePostLikes } = require('./post-likes');
+
+async function sendFeedResponse(req, res, payload) {
+  const viewerId = req.user?.id || null;
+  res.set?.('Cache-Control', viewerId ? 'private, no-store' : 'no-cache');
+  const result = { ...payload };
+  if (Array.isArray(payload.posts)) result.posts = await hydratePostLikes(db, payload.posts, viewerId);
+  if (Array.isArray(payload.liveFeeds)) result.liveFeeds = await hydratePostLikes(db, payload.liveFeeds, viewerId);
+  if (payload.post) [result.post] = await hydratePostLikes(db, [payload.post], viewerId);
+  return res.json(result);
+}
+
+function canSeePostLikes(post, viewerId) {
+  const group = groups.find(candidate => candidate.id === post.groupId);
+  return !group || canSeeGroup(group, viewerId);
+}
+
 async function toggleCommunityPostLike(req, res) {
   try {
+    res.set('Cache-Control', 'private, no-store');
+    const desired = desiredLike(req.body);
     const post = await getCommunityPostById(req.params.postId);
-    if (!post) return res.status(404).json({ message: 'Post not found.' });
-    if (!Array.isArray(post.likes)) post.likes = [];
+    if (!post || !canSeePostLikes(post, req.user.id)) return res.status(404).json({ message: 'Post not found.' });
     if (!db.isConnected()) {
       return res.status(503).json({ message: 'Liking is temporarily unavailable — please try again in a moment.' });
     }
@@ -27356,20 +27457,14 @@ async function toggleCommunityPostLike(req, res) {
     if (post.source === LIVE_CAMERA_SOURCE) await seedLiveCameraPosts();
 
     const uid = req.user.id;
-    const idx = post.likes.indexOf(uid);
-    const isUnlike = idx > -1;
-    if (isUnlike) post.likes.splice(idx, 1);
-    else if (!post.likes.includes(uid)) post.likes.push(uid);
-
-    const likeUpdate = await db.query(
-      `UPDATE community_posts SET likes=$1 WHERE id=$2 RETURNING id`,
-      [post.likes, post.id]
-    );
-    if (!likeUpdate.rowCount) throw new Error('Community post did not persist before its like was updated.');
+    const state = await setCommunityLike(db, post.id, uid, desired);
+    post.likes = state.likes;
+    const cached = posts.find(candidate => candidate.id === post.id);
+    if (cached) cached.likes = state.likes;
 
     // Only on a genuine like, not an unlike — nobody wants a notification
     // for someone changing their mind back to nothing.
-    if (!isUnlike && post.authorId) {
+    if (state.added && post.authorId) {
       getUser(uid).then(liker => {
         if (!liker) return;
         createNotification({
@@ -27383,14 +27478,15 @@ async function toggleCommunityPostLike(req, res) {
     res.json({
       likedByMe: post.likes.includes(uid),
       likesCount: post.likes.length,
-      post: serializeCommunityPost(post, uid),
+      post: { ...serializeCommunityPost(post, uid), likesScope: 'uficonnect', likesAvailable: true },
     });
-  } catch (e) { console.error('toggleCommunityPostLike:', e); res.status(500).json({ error: 'Internal server error' }); }
+  } catch (e) { console.error('toggleCommunityPostLike:', e); res.status(e.status || 500).json({ message: e.status ? e.message : 'Unable to save this like. Please try again.' }); }
 }
 
 app.post('/posts/:postId/like', authenticate, toggleCommunityPostLike);
 
 async function toggleRestaurantPostLike(req, res) {
+  res.set('Cache-Control', 'private, no-store');
   const postId = req.params.postId;
   if (!isRestaurantDiscoveryPostId(postId)) {
     return res.status(404).json({ message: 'Restaurant post not found.' });
@@ -27400,32 +27496,15 @@ async function toggleRestaurantPostLike(req, res) {
   }
 
   try {
-    // Delete-first gives a single click its natural toggle behavior while the
-    // primary key keeps repeated requests from creating duplicate likes.
-    const removed = await db.query(
-      `DELETE FROM restaurant_post_likes WHERE post_id=$1 AND user_id=$2 RETURNING post_id`,
-      [postId, req.user.id],
-    );
-    const likedByMe = !removed.rowCount;
-    if (likedByMe) {
-      await db.query(
-        `INSERT INTO restaurant_post_likes (post_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-        [postId, req.user.id],
-      );
-    }
-    const { rows } = await db.query(
-      `SELECT COUNT(*)::integer AS likes_count FROM restaurant_post_likes WHERE post_id=$1`,
-      [postId],
-    );
-    const likesCount = Number(rows[0]?.likes_count || 0);
+    const { likedByMe, likesCount } = await setTableLike(db, 'restaurant_post_likes', postId, req.user.id, desiredLike(req.body));
     return res.json({
       likedByMe,
       likesCount,
-      post: { id: postId, ufiInteractive: true, likedByMe, likesCount },
+      post: { id: postId, ufiInteractive: true, likedByMe, likesCount, likesScope: 'uficonnect', likesAvailable: true },
     });
   } catch (error) {
     console.error('toggleRestaurantPostLike:', error);
-    return res.status(500).json({ error: 'Internal server error' });
+    return res.status(error.status || 500).json({ message: error.status ? error.message : 'Unable to save this like. Please try again.' });
   }
 }
 
@@ -27514,27 +27593,30 @@ async function likerProfiles(userIds, myId) {
   }));
 }
 
-app.get('/posts/:postId/likes', authenticate, async (req, res) => {
+async function getPostLikes(req, res) {
   try {
-    const post = await getCommunityPostById(req.params.postId);
-    if (!post) return res.status(404).json({ message: 'Post not found.' });
-    res.json({ users: await likerProfiles(post.likes || [], req.user.id) });
-  } catch (e) { console.error('GET /posts/:postId/likes:', e); res.status(500).json({ error: 'Internal server error' }); }
-});
-
-// "Liked by" for any feed card: community posts keep their likes inline,
-// restaurant stories and external posts in their own tables (newest first).
-app.get('/feed/:postId/likes', authenticate, async (req, res) => {
-  try {
+    res.set('Cache-Control', 'private, no-store');
     const { postId } = req.params;
+    const viewerId = req.user?.id || null;
+    if (!db.isConnected()) return res.status(503).json({ message: 'Likes are temporarily unavailable. Please try again.' });
     const post = await getCommunityPostById(postId);
-    if (post) return res.json({ users: await likerProfiles(post.likes || [], req.user.id) });
-    if (!db.isConnected()) return res.status(503).json({ message: 'Likes are temporarily unavailable — please try again in a moment.' });
+    if (post) {
+      if (!canSeePostLikes(post, viewerId)) return res.status(404).json({ message: 'Post not found.' });
+      const { rows } = await db.query('SELECT likes FROM community_posts WHERE id=$1', [postId]);
+      const likes = rows[0]?.likes || post.likes || [];
+      return res.json({ likesCount: likes.length, likedByMe: Boolean(viewerId && likes.includes(viewerId)),
+        users: viewerId ? await likerProfiles(likes, viewerId) : [] });
+    }
+    if (!isRestaurantDiscoveryPostId(postId) && !await findPostByIdWithDbFallback(postId)) return res.status(404).json({ message: 'Post not found.' });
     const table = isRestaurantDiscoveryPostId(postId) ? 'restaurant_post_likes' : 'external_post_likes';
-    const { rows } = await db.query(`SELECT user_id FROM ${table} WHERE post_id=$1 ORDER BY created_at DESC LIMIT 500`, [postId]);
-    res.json({ users: await likerProfiles(rows.map(row => row.user_id), req.user.id) });
+    const stats = (await readTableLikes(db, table, [postId], viewerId)).get(postId) || { likesCount: 0, likedByMe: false };
+    const rows = viewerId ? (await db.query(`SELECT user_id FROM ${table} WHERE post_id=$1 ORDER BY created_at DESC LIMIT 500`, [postId])).rows : [];
+    res.json({ ...stats, users: viewerId ? await likerProfiles(rows.map(row => row.user_id), viewerId) : [] });
   } catch (e) { console.error('GET /feed/:postId/likes:', e); res.status(500).json({ error: 'Internal server error' }); }
-});
+}
+
+app.get('/posts/:postId/likes', authenticateOptional, getPostLikes);
+app.get('/feed/:postId/likes', authenticateOptional, getPostLikes);
 
 app.get('/posts/:postId/comments', authenticate, async (req, res) => {
   try {
@@ -28047,23 +28129,23 @@ app.post('/groups/:id/posts', authenticate, contentSubmissionLimiter, async (req
   } catch (e) { console.error('POST /groups/:id/posts:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
-// Community posts toggle their own likes; any other post that is really in
-// the feed stores a member like in external_post_likes, once the member has
-// liked it through their connected account on that source.
-const EXTERNAL_LIKE_SOURCES = new Set(['reddit', 'twitter', 'bluesky', 'youtube', 'github', 'gitlab']);
+// UFIconnect reactions are independent of connected-provider actions.
 async function toggleFeedPostLike(req, res) {
   const { postId } = req.params;
   try {
+    res.set('Cache-Control', 'private, no-store');
+    const desired = desiredLike(req.body);
     if (await getCommunityPostById(postId)) return toggleCommunityPostLike(req, res);
+    if (isRestaurantDiscoveryPostId(postId)) return toggleRestaurantPostLike(req, res);
     if (!db.isConnected()) {
       return res.status(503).json({ message: 'Liking is temporarily unavailable — please try again in a moment.' });
     }
     const feedPost = typeof postId === 'string' && postId.length <= 300 ? await findPostByIdWithDbFallback(postId) : null;
     if (!feedPost) return res.status(404).json({ message: 'Post not found.' });
-    const originalUrl = require('./source-policy').validateOriginalUrl(feedPost.source, feedPost.sourceUrl);
-    return res.status(422).json({ message: 'Use the connected source action or open the original post. Source engagement counts are controlled by the source.',
-      ...(originalUrl ? { originalUrl } : {}) });
-  } catch (e) { console.error('toggleFeedPostLike:', e); return res.status(500).json({ error: 'Internal server error' }); }
+    const state = await setTableLike(db, 'external_post_likes', postId, req.user.id, desired);
+    return res.json({ ...state, post: { id: postId, ...state, likesScope: 'uficonnect', likesAvailable: true,
+      sourceLikesCount: Number(feedPost.sourceLikesCount ?? feedPost.likesCount) || 0 } });
+  } catch (e) { console.error('toggleFeedPostLike:', e); return res.status(e.status || 500).json({ message: e.status ? e.message : 'Unable to save this like. Please try again.' }); }
 }
 
 app.post('/feed/:postId/like', authenticate, toggleFeedPostLike);
@@ -28287,7 +28369,7 @@ app.get('/users/:id/posts', authenticate, async (req, res) => {
     const limit = boundedLimit(req.query.limit, 50, 100);
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
     const { posts: userPosts, hasMore } = await getCommunityPosts({ viewerId: req.user.id, authorId: user.id, limit, offset });
-    res.json({ posts: userPosts, hasMore });
+    await sendFeedResponse(req, res, { posts: userPosts, hasMore });
   } catch (e) { console.error('GET /users/:id/posts:', e); res.status(e.status === 404 ? 404 : e.status === 503 ? 503 : 500).json({ error: e.status ? e.message : 'Internal server error' }); }
 });
 
@@ -30026,6 +30108,7 @@ function buildSavedPostSnapshot(rawPost) {
     embedId: savedPostString(post.embedId, 160),
     createdAt: savedPostDate(post.createdAt || post.publishedAt || post.postedAt),
     likesCount: Math.max(0, Math.floor(Number(post.likesCount) || 0)),
+    ...(post.sourceLikesCount != null ? { sourceLikesCount: Math.max(0, Math.floor(Number(post.sourceLikesCount) || 0)) } : {}),
     commentsCount: Math.max(0, Math.floor(Number(post.commentsCount) || 0)),
     isExternal: Boolean(post.isExternal),
     ufiInteractive: Boolean(post.ufiInteractive),
@@ -30043,7 +30126,7 @@ app.get('/saved/posts', authenticate, async (req, res) => {
         `SELECT post_id FROM saved_posts WHERE user_id = $1 ORDER BY created_at DESC`,
         [req.user.id]
       );
-      return res.json({ postIds: rows.map(row => row.post_id) });
+      return await sendFeedResponse(req, res, { postIds: rows.map(row => row.post_id) });
     }
 
     const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 50));
@@ -30056,7 +30139,7 @@ app.get('/saved/posts', authenticate, async (req, res) => {
       db.query(`SELECT COUNT(*)::int AS total FROM saved_posts WHERE user_id = $1`, [req.user.id]),
     ]);
     const total = Number(countResult.rows[0]?.total || 0);
-    return res.json({
+    return await sendFeedResponse(req, res, {
       posts: rows.map(row => ({
         ...(row.post_snapshot || {}),
         savedByMe: true,

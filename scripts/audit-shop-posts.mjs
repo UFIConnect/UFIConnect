@@ -27,7 +27,7 @@ try {
     const context = await browser.newContext({ viewport: { width, height: 950 }, isMobile: width < 600, hasTouch: width < 600 });
     const page = await context.newPage();
     page.setDefaultTimeout(12_000);
-    const posts = [], publications = [], errors = [];
+    const posts = [], publications = [], errors = [], likeWrites = [];
     let uploadCount = 0;
     page.on('pageerror', error => errors.push(error.message));
     await context.route('**/*', async route => {
@@ -55,15 +55,24 @@ try {
         publications.push({ groupId: publish[1], ...body });
         const post = { ...body, id: `synthetic-${width}-${posts.length}`, groupId: publish[1], source: 'uficonnect',
           authorId: 'shop-audit', author: { id: 'shop-audit', name: 'Synthetic Shop Member' },
-          createdAt: new Date().toISOString(), likesCount: 0, commentsCount: 0, likedByMe: false };
+          createdAt: new Date().toISOString(), likesCount: 0, commentsCount: 0, likedByMe: false, likesScope: 'uficonnect', likesAvailable: true };
         posts.unshift(post);
         return route.fulfill({ status: 201, json: { post } });
       }
-      const like = endpoint.match(/^\/posts\/([^/]+)\/like$/);
+      const like = endpoint.match(/^\/feed\/([^/]+)\/like$/);
       if (like && request.method() === 'POST') {
         const post = posts.find(item => item.id === like[1]);
-        post.likedByMe = !post.likedByMe; post.likesCount += post.likedByMe ? 1 : -1;
-        return route.fulfill({ json: { post } });
+        const body = request.postDataJSON();
+        assert.equal(typeof body.liked, 'boolean', 'Native like writes specify the desired state');
+        likeWrites.push({ endpoint, ...body });
+        post.likedByMe = body.liked; post.likesCount = Number(body.liked);
+        return route.fulfill({ json: { post, likedByMe: post.likedByMe, likesCount: post.likesCount } });
+      }
+      const likers = endpoint.match(/^\/feed\/([^/]+)\/likes$/);
+      if (likers) {
+        const post = posts.find(item => item.id === likers[1]);
+        return route.fulfill({ json: { likesCount: post.likesCount, users: post.likedByMe
+          ? [{ id: 'shop-audit', name: 'Synthetic Shop Member', isSelf: true }] : [] } });
       }
       if (/^\/posts\/[^/]+\/comments$/.test(endpoint)) return route.fulfill({ json: { comments: [], hasMore: false } });
       return route.continue();
@@ -86,7 +95,11 @@ try {
     await form.getByRole('button', { name: 'Publish', exact: true }).waitFor();
     await form.getByRole('button', { name: 'Publish', exact: true }).click();
     const listing = page.locator('.post-card').filter({ has: page.getByRole('heading', { name: 'City bicycle', exact: true }) });
-    await listing.waitFor();
+    try { await listing.waitFor(); }
+    catch (error) {
+      console.error('Shop publish diagnostics:', JSON.stringify({ publications, uploadCount, errors, page: await page.locator('body').innerText() }));
+      throw error;
+    }
     assert.equal(uploadCount, 1, 'The photo uses the existing upload flow');
     assert.equal(publications.length, 1);
     assert.equal(publications[0].groupId, 'ufi-shop');
@@ -96,11 +109,24 @@ try {
     assert.match(await listing.locator('.shop-post-price').innerText(), /EUR\s*125[.,]50/);
     await listing.getByText('Recently serviced bicycle. Collection near the city library.', { exact: true }).waitFor();
     assert.equal(await listing.locator('img').last().getAttribute('src'), mediaUrl);
-    await listing.getByRole('button', { name: 'Like 0', exact: true }).click();
-    await listing.getByRole('button', { name: 'Liked 1', exact: true }).waitFor();
+    await listing.getByRole('button', { name: '0 likes: see who liked this', exact: true }).waitFor();
+    await listing.getByRole('button', { name: 'Like', exact: true }).click();
+    await listing.getByRole('button', { name: 'Unlike', exact: true }).waitFor();
+    await listing.getByRole('button', { name: '1 likes: see who liked this', exact: true }).click();
+    const likerDialog = page.getByRole('dialog', { name: 'Liked by · 1', exact: true });
+    await likerDialog.getByText('Synthetic Shop Member', { exact: true }).waitFor();
+    await likerDialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await listing.getByRole('button', { name: 'Unlike', exact: true }).click();
+    await listing.getByRole('button', { name: '0 likes: see who liked this', exact: true }).waitFor();
+    await listing.getByRole('button', { name: 'Like', exact: true }).click();
+    await listing.getByRole('button', { name: '1 likes: see who liked this', exact: true }).waitFor();
+    assert.deepEqual(likeWrites.map(item => item.liked), [true, false, true]);
+    assert.ok(likeWrites.every(item => item.endpoint === `/feed/${posts[0].id}/like`));
+    assert.equal(await listing.locator('.post-chrome-source-count').count(), 0, 'Native posts show only their real UFIconnect count');
     await listing.getByRole('button', { name: 'Comment 0', exact: true }).waitFor();
     await auditReload(page);
-    await listing.getByRole('button', { name: 'Liked 1', exact: true }).waitFor();
+    await listing.getByRole('button', { name: 'Unlike', exact: true }).waitFor();
+    await listing.getByRole('button', { name: '1 likes: see who liked this', exact: true }).waitFor();
     assert.match(await listing.locator('.shop-post-price').innerText(), /EUR\s*125[.,]50/, 'Price survives feed reload');
     assert.equal(await listing.getByRole('region', { name: 'Item details' }).count(), 1, 'Shop details render once');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Shop fits the viewport');

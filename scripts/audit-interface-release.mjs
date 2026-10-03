@@ -23,6 +23,7 @@ try {
     const context = await browser.newContext({ viewport: { width, height: 950 }, isMobile: width < 600, hasTouch: width <= 768 });
     const page = await context.newPage(); page.setDefaultTimeout(15000);
     const errors = [], feedRequests = [], published = [], interactions = [], memberLikes = [];
+    const likesByPost = new Map();
     let rejectNextComment = false;
     page.on('pageerror', e => errors.push(e.message));
     await context.route('**/api/**', async route => {
@@ -31,8 +32,10 @@ try {
       if (endpoint === '/office/feed') {
         feedRequests.push(url.searchParams);
         const mode = url.searchParams.get('mode');
+        const selectedSources = (url.searchParams.get('sources') || url.searchParams.get('source') || '').split(',').filter(Boolean);
         const posts = mode === 'groups' ? [sample('joined-good', 'uficonnect', { groupId: 'group-a', group: { id: 'group-a', name: 'Design circle' }, fromJoinedGroup: true }), sample('wrong-native', 'uficonnect', { groupId: 'unjoined' }), sample('wrong-connected', 'reddit', { groupId: 'group-a', isExternal: true })]
           : mode === 'bars' ? [sample('bar-story', 'bars', { topic: 'Wine & Spirits' })] : [sample('reddit-story', 'reddit', { likesCount: 31 }), sample('hn-story', 'hackernews', { isExternal: true, groupId: 'ext_hn', group: { id: 'ext_hn', name: 'Hacker News' }, fromJoinedGroup: true })];
+        if (mode === 'feed' && !selectedSources.length) posts.push(sample('unfiltered-only', 'devto', { sourceUrl: 'https://dev.to/example/an-unfiltered-story' }));
         return route.fulfill({ json: { posts, mode, hasMore: false, nativeUficonnectIncluded: true } });
       }
       if (endpoint === '/groups/internal') return route.fulfill({ json: { groups: [{ id: 'ufi-general', name: 'General' }, { id: 'group-a', name: 'Design circle', isJoined: true }, { id: 'group-b', name: 'Builders club', isJoined: true }, { id: 'not-joined', name: 'Another group' }] } });
@@ -49,8 +52,21 @@ try {
         return route.fulfill({ json: { published: true, liked: body.liked, commentId: 'remote-comment' } });
       }
       if (/^\/feed\/[^/]+\/comments$/.test(endpoint)) return route.fulfill({ json: { comments: [], live: true, hasMore: false } });
-      if (endpoint === '/feed/likes') return route.fulfill({ json: { likes: {} } });
-      if (/^\/feed\/[^/]+\/like$/.test(endpoint) && route.request().method() === 'POST') { memberLikes.push(endpoint); return route.fulfill({ json: { likedByMe: memberLikes.length % 2 === 1, memberLikesCount: memberLikes.length % 2 } }); }
+      if (endpoint === '/feed/likes') return route.fulfill({ json: { likes: Object.fromEntries((url.searchParams.get('ids') || '').split(',').filter(Boolean).map(id => {
+        const likedByMe = likesByPost.get(id) || false;
+        return [id, { count: Number(likedByMe), likesCount: Number(likedByMe), likedByMe, likesScope: 'uficonnect', likesAvailable: true }];
+      })) } });
+      const like = endpoint.match(/^\/feed\/([^/]+)\/like$/);
+      if (like && route.request().method() === 'POST') {
+        const body = route.request().postDataJSON();
+        assert.equal(typeof body.liked, 'boolean', 'Like writes specify the desired state');
+        memberLikes.push({ endpoint, ...body }); likesByPost.set(like[1], body.liked);
+        const state = { likedByMe: body.liked, likesCount: Number(body.liked) };
+        return route.fulfill({ json: { ...state, post: { id: like[1], ...state, likesScope: 'uficonnect', likesAvailable: true, sourceLikesCount: like[1] === 'reddit-story' ? 31 : 0 } } });
+      }
+      const likers = endpoint.match(/^\/feed\/([^/]+)\/likes$/);
+      if (likers) return route.fulfill({ json: { likesCount: Number(likesByPost.get(likers[1]) || false), users: likesByPost.get(likers[1])
+        ? [{ id: 'interface-member', name: 'Alex Member', isSelf: true }] : [] } });
       if (endpoint === '/users/public-member') return route.fulfill({ json: { id: 'public-member', name: 'Jordan', bio: 'Building useful communities.', interests: ['Open Source'], goals: ['Learn new skills'], skills: [], followersCount: 0, followingCount: 0 } });
       if (endpoint === '/users/public-member/posts') return route.fulfill({ json: { posts: [], hasMore: false } });
       return route.continue();
@@ -85,8 +101,7 @@ try {
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=feed'); await sources.waitFor();
     assert.equal(await sources.getByRole('button', { name: 'Reddit', exact: true }).getAttribute('aria-pressed'), 'true');
     assert.equal(await sources.getByRole('button', { name: 'Hacker News', exact: true }).getAttribute('aria-pressed'), 'true');
-    // Official source actions update this viewer's state, while source counts
-    // remain unchanged until the provider supplies a new snapshot.
+    // UFIconnect reactions persist independently of reported source metrics.
     const redditCard = page.locator('.post-card').filter({ has: page.getByRole('link', { name: 'Open on Reddit', exact: true }) }).first();
     const hnCard = page.locator('.post-card').filter({ has: page.getByText('Story hn-story', { exact: false }) }).first();
     await hnCard.getByText('Following source', { exact: true }).waitFor();
@@ -95,12 +110,29 @@ try {
     assert.equal(await hnCard.getByText('Joined', { exact: true }).count(), 0, 'A local source association does not claim membership at Hacker News');
     assert.equal(await redditCard.getByText(/^(Following source|Joined)$/).count(), 0, 'Unjoined sources have no relationship badge');
     assert.equal(await page.getByText('your group', { exact: true }).count(), 0);
-    assert.equal(await redditCard.locator('.post-chrome-like-count').innerText(), '31');
-    await redditCard.getByRole('button', { name: 'Upvote on Reddit', exact: true }).click();
-    await redditCard.getByRole('button', { name: 'Unlike on Reddit', exact: true }).waitFor();
-    assert.deepEqual(memberLikes, [], 'External source actions never increment a local public like counter');
-    assert.equal(await redditCard.locator('.post-chrome-like-count').innerText(), '31', 'A confirmed action does not manufacture a source count');
-    assert.equal(await redditCard.locator('.post-chrome-like > button.post-chrome-action').count(), 1, 'One source action appears in the heart row');
+    await redditCard.getByRole('button', { name: '0 likes: see who liked this', exact: true }).waitFor();
+    const reportedCount = redditCard.getByRole('link', { name: '31 reactions on Reddit', exact: true });
+    assert.equal(await reportedCount.getAttribute('href'), 'https://www.reddit.com/r/test/comments/abc123/story');
+    await redditCard.getByRole('button', { name: 'Like', exact: true }).click();
+    await redditCard.getByRole('button', { name: 'Unlike', exact: true }).waitFor();
+    await redditCard.getByRole('button', { name: '1 likes: see who liked this', exact: true }).click();
+    const likerDialog = page.getByRole('dialog', { name: 'Liked by · 1', exact: true });
+    await likerDialog.getByText('Alex Member', { exact: true }).waitFor();
+    await likerDialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await redditCard.getByRole('button', { name: 'Unlike', exact: true }).click();
+    await redditCard.getByRole('button', { name: '0 likes: see who liked this', exact: true }).waitFor();
+    await redditCard.getByRole('button', { name: 'Like', exact: true }).click();
+    await redditCard.getByRole('button', { name: '1 likes: see who liked this', exact: true }).waitFor();
+    assert.deepEqual(memberLikes.map(item => item.liked), [true, false, true], 'Repeated clicks like, unlike, and restore the local reaction');
+    assert.ok(memberLikes.every(item => item.endpoint === '/feed/reddit-story/like'));
+    assert.deepEqual(interactions, [], 'Local likes require no upstream provider action');
+    await auditReload(page);
+    await redditCard.getByRole('button', { name: 'Unlike', exact: true }).waitFor();
+    await redditCard.getByRole('button', { name: '1 likes: see who liked this', exact: true }).waitFor();
+    assert.equal(await redditCard.locator('.post-chrome-like-count').innerText(), '1', 'The local count survives reload');
+    await reportedCount.waitFor();
+    assert.equal(await redditCard.locator('.post-chrome-source-count').innerText(), '31 reactions on Reddit', 'Local clicks never change the source metric');
+    assert.equal(await redditCard.locator('.post-chrome-like > button.post-chrome-action').count(), 2, 'The like control and clickable count are separate buttons');
     assert.equal(await redditCard.getByRole('button', { name: 'Comment on Reddit', exact: true }).count(), 0, 'No duplicate source comment action appears below the post');
     const commentAction = redditCard.locator('.post-chrome-actions').getByRole('button', { name: 'Show Comments', exact: true });
     assert.equal(await commentAction.count(), 1, 'One comments action is in the normal post action row');
@@ -115,33 +147,36 @@ try {
     assert.equal(await redditCard.getByLabel('Write a comment', { exact: true }).inputValue(), 'Thank you for the useful update.', 'Closing comments retains an unconfirmed draft');
     await redditCard.getByRole('button', { name: 'Publish on Reddit', exact: true }).click();
     await page.getByText('Comment published on Reddit. Source counts update when the source supplies them.', { exact: true }).waitFor();
-    assert.deepEqual(interactions.map(item => item.action), ['like', 'comment', 'comment']);
+    assert.deepEqual(interactions.map(item => item.action), ['comment', 'comment']);
     assert.ok(interactions.every(item => item.source === 'reddit' && item.sourceUrl === 'https://www.reddit.com/r/test/comments/abc123/story'), 'Both requests target the original Reddit post');
-    assert.equal(interactions[0].liked, true);
     assert.ok(interactions.every(item => typeof item.requestId === 'string' && item.requestId.length > 0), 'Each action includes its duplicate-protection request ID');
-    assert.notEqual(interactions[0].requestId, interactions[1].requestId);
-    assert.equal(interactions[1].requestId, interactions[2].requestId, 'Retry after closing/reopening reuses the original duplicate-protection ID');
-    assert.equal(interactions[1].content, 'Thank you for the useful update.');
-    assert.deepEqual(memberLikes, [], 'Neither official action produces a synthetic local like');
+    assert.equal(interactions[0].requestId, interactions[1].requestId, 'Retry after closing/reopening reuses the original duplicate-protection ID');
+    assert.equal(interactions[0].content, 'Thank you for the useful update.');
+    assert.equal(memberLikes.length, 3, 'Source comment actions do not change local likes');
+    assert.equal(await redditCard.locator('.post-chrome-like-count').innerText(), '1');
+    assert.equal(await redditCard.locator('.post-chrome-source-count').innerText(), '31 reactions on Reddit');
     await hnCard.locator('.post-chrome-actions').getByRole('button', { name: 'Show Comments', exact: true }).click();
     assert.equal(await hnCard.getByLabel('Write a comment', { exact: true }).count(), 0, 'An unsupported source never displays an API publishing form');
     const originalComments = hnCard.getByRole('link', { name: /View all comments on Hacker News/ });
     assert.equal(await originalComments.getAttribute('href'), 'https://news.ycombinator.com/item?id=123', 'Unsupported sources preserve the original-post comment link');
     assert.equal(await originalComments.getAttribute('target'), '_blank');
+    // The persistence check reloads the page; restore this filter test's
+    // selection when a new session starts with the unfiltered feed.
+    for (const name of ['Reddit', 'Hacker News']) {
+      const button = sources.getByRole('button', { name, exact: true });
+      if (await button.getAttribute('aria-pressed') !== 'true') await button.click();
+      assert.equal(await button.getAttribute('aria-pressed'), 'true');
+    }
+    assert.equal(await clearSources.isEnabled(), true);
     await page.getByRole('button', { name: 'View all feed sources', exact: true }).click();
     const sourceMenu = page.getByRole('group', { name: 'Feed sources and favorites', exact: true });
     assert.equal(await sourceMenu.locator('.feed-source-option').count(), await sources.locator('.feed-source-option').count(), 'the menu exposes the complete source rail');
     assert.equal(await sourceMenu.getByRole('button', { name: 'All sources', exact: true }).count(), 0);
     await page.getByRole('button', { name: 'View all feed sources', exact: true }).click();
     await sourceMenu.waitFor({ state: 'hidden' });
-    await Promise.all([
-      page.waitForResponse(response => {
-        const url = new URL(response.url());
-        return url.pathname.endsWith('/office/feed') && url.searchParams.get('mode') === 'feed'
-          && !url.searchParams.has('source') && !url.searchParams.has('sources');
-      }),
-      clearSources.click(),
-    ]);
+    await clearSources.click();
+    await page.getByText('Story unfiltered-only', { exact: true }).waitFor();
+    assert.ok(feedRequests.some(params => params.get('mode') === 'feed' && !params.has('source') && !params.has('sources')), 'Unfiltered results came from an unfiltered API request, including a cached response');
     assert.equal(await clearSources.isDisabled(), true, 'Clearing restores the unfiltered source feed');
     assert.equal(await sources.getByRole('button', { name: 'Reddit', exact: true }).getAttribute('aria-pressed'), 'false');
     assert.equal(await sources.getByRole('button', { name: 'Hacker News', exact: true }).getAttribute('aria-pressed'), 'false');
@@ -182,7 +217,7 @@ try {
     await page.getByRole('button', { name: 'Apply topics', exact: true }).click();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
     assert.deepEqual(errors, []);
-    console.log(`PASS: circles, multi-source navigation, native source actions, source/group relationship labels, group isolation/composer, saved pages, public About and Bars topics at ${width}px`);
+    console.log(`PASS: circles, multi-source navigation, persisted local likes and separate source counts, source comments, source/group relationship labels, group isolation/composer, saved pages, public About and Bars topics at ${width}px`);
     await context.close();
   }
 } finally { await browser?.close(); await server.close(); await app.close(); }

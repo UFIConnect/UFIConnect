@@ -208,13 +208,21 @@ services:
         sync: false
       - key: STRIPE_PRICE_ID_BUSINESS
         sync: false
+      - key: STRIPE_PRICE_ID_BUSINESS_TEAM
+        sync: false
       # Resume Builder is an independent recurring add-on. Set the preferred
       # value below to an active USD $149.94 Price billed every 6 months.
       - key: STRIPE_RESUME_BUILDER_PRICE_ID
         sync: false
+      # Optional monthly cadence for the same Resume Builder access: USD $30/month.
+      - key: STRIPE_RESUME_BUILDER_MONTHLY_PRICE_ID
+        sync: false
       # Legacy fallback for a pre-existing Price ID. It is only used when the
       # preferred value above is absent and still must match the same price.
       - key: STRIPE_PRICE_ID_RESUME_BUILDER
+        sync: false
+      # UFI Vault membership: USD $3.94/month. VPN setup is still pending.
+      - key: STRIPE_VPN_CONNECTOR_PRICE_ID
         sync: false
       # Web Push (VAPID). Until both are set, pushConfigured() is false and
       # createNotification/sendPushToUser silently skip the push step — the
@@ -634,6 +642,12 @@ services:
       - type: rewrite
         source: /forgot-password/
         destination: /forgot-password/index.html
+      - type: rewrite
+        source: /recruiting
+        destination: /recruiting/index.html
+      - type: rewrite
+        source: /recruiting/
+        destination: /recruiting/index.html
       - type: rewrite
         source: /analytics
         destination: /analytics/index.html

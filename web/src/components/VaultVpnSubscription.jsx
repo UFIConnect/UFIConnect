@@ -19,9 +19,9 @@ export function useVpnSubscription(accountId, preview) {
       if (request !== sequence.current) return;
       setConfig(configResponse.data); setStatus(statusResponse.data);
       const result = new URLSearchParams(window.location.search).get('upgrade');
-      setNotice(result === 'success' ? statusResponse.data.vpnConnectorAddon ? 'Your UFI VPN Connector subscription is active.' : 'Payment is still being confirmed. Check status again shortly before starting another checkout.' : result === 'cancelled' ? 'Checkout was closed. No subscription was activated here.' : '');
+      setNotice(result === 'success' ? statusResponse.data.vpnConnectorAddon ? 'Your UFI Vault membership is active.' : 'Payment is still being confirmed. Check status again shortly before starting another checkout.' : result === 'cancelled' ? 'Checkout was closed. No subscription was activated here.' : '');
     } catch {
-      if (request === sequence.current) { setStatus(null); setNotice('Could not confirm VPN Connector billing. Check status again before subscribing.'); }
+      if (request === sequence.current) { setStatus(null); setNotice('Could not confirm Vault billing. Check status again before subscribing.'); }
     } finally { if (request === sequence.current) setChecking(false); }
   }, [accountId, preview]);
   useEffect(() => { setConfig(null); setStatus(null); setOpening(''); refresh(); return () => { sequence.current++; }; }, [refresh]);
@@ -45,21 +45,22 @@ export function useVpnSubscription(accountId, preview) {
   const price = config?.pricing?.vpn_connector;
   return { status, checking, opening, notice, refresh, open, preview,
     active: !checking && status?.vpnConnectorAddon === true,
-    available: config?.paymentsReady === true && config?.tiers?.vpn_connector === true && price?.unitAmount === 394 && price?.currency === 'USD' && price?.interval === 'month' && price?.intervalCount === 1 };
+    available: config?.paymentsReady === true && config?.tiers?.vpn_connector === true && price?.active === true && price?.unitAmount === 394 && price?.currency === 'USD' && price?.interval === 'month' && price?.intervalCount === 1 };
 }
 
 export default function VaultVpnSubscription({ billing }) {
   const pending = billing.status?.subscriptions?.find(item => item.kind === 'vpn_connector' && !['canceled', 'incomplete_expired'].includes(item.status));
   return <section className="vault-vpn-guide vault-vpn-subscription" aria-labelledby="vpn-subscription-title">
     <h3 id="vpn-subscription-title">UFI Vault · $3.94 USD / month</h3>
-    <p>One planned subscription for passwords, documents, keys and UFI VPN. New vaults and new or edited items require an active subscription. Checkout will open when UFI’s secure VPN service is ready.</p>
+    <p>Create your encrypted vault and add, edit or import passwords, documents and keys with one membership. Items are saved in this browser; keep an encrypted backup for recovery.</p>
+    <p>UFI VPN is included in this membership when service setup is complete. UFI VPN connections are not available yet.</p>
     <p>Your existing encrypted items remain yours: unlock, view, download, restore or delete them even without a subscription. Other VPN providers are separate from the planned UFI service.</p>
-    {billing.preview ? <><button type="button" className="vault-button vault-button--secondary" disabled>Subscribe — coming soon</button><p role="status">Local review: sample Vault and connector controls only. No payment is taken and this preview does not grant a paid subscription.</p></> : <>
+    {billing.preview ? <><button type="button" className="vault-button vault-button--secondary" disabled>Subscribe — local preview</button><p role="status">Local review: sample Vault and connector controls only. No payment is taken and this preview does not grant a paid subscription.</p></> : <>
       {billing.active && <p role="status">Active{pending?.cancelAtPeriodEnd ? ` · Cancels${pending.currentPeriodEnd ? ` on ${new Date(pending.currentPeriodEnd * 1000).toLocaleDateString()}` : ' at the end of your billing period'}` : ''}</p>}
-      {pending || billing.active ? <button className="vault-button vault-button--secondary" type="button" disabled={Boolean(billing.opening) || billing.checking} onClick={() => billing.open(true)}>Manage or cancel subscription</button> : <button className="vault-button vault-button--secondary" type="button" disabled={!billing.available || !billing.status || billing.checking || Boolean(billing.opening)} onClick={() => billing.open()}>{billing.opening ? 'Opening secure checkout…' : billing.checking ? 'Checking subscription…' : billing.available ? 'Subscribe for $3.94 USD / month' : 'Subscribe — coming soon'}</button>}
+      {pending || billing.active ? <button className="vault-button vault-button--secondary" type="button" disabled={Boolean(billing.opening) || billing.checking} onClick={() => billing.open(true)}>Manage or cancel subscription</button> : <button className="vault-button vault-button--secondary" type="button" disabled={!billing.available || !billing.status || billing.checking || Boolean(billing.opening)} onClick={() => billing.open()}>{billing.opening ? 'Opening secure checkout…' : billing.checking ? 'Checking subscription…' : billing.available ? 'Subscribe for $3.94 USD / month' : 'Checkout unavailable'}</button>}
       <button className="vault-text-button" type="button" disabled={billing.checking || Boolean(billing.opening)} onClick={billing.refresh}>Check subscription status</button>
       {billing.notice && <p role="status">{billing.notice}</p>}
-      <p className="vault-footnote">Planned price: $3.94 USD per month, renewing until canceled. Existing users are never subscribed automatically. Billing will open only after VPN service activation is available. <Link to="/terms">Terms</Link> · <Link to="/privacy">Privacy</Link></p>
+      <p className="vault-footnote">$3.94 USD per month, renewing until canceled. Review the total, including applicable tax, in Stripe before paying. Manage or cancel your subscription here or in Settings. <Link to="/terms">Terms</Link> · <Link to="/privacy">Privacy</Link></p>
     </>}
   </section>;
 }

@@ -47,6 +47,9 @@ try {
     let refreshes = 0;
     let outage = false;
     let vpnPaid = false;
+    let vaultCheckoutReady = true;
+    let checkoutFailure = true;
+    let checkoutRequests = 0;
     page.on('pageerror', error => errors.push(error.message));
     page.on('request', request => requests.push({ url: request.url(), body: request.postData() || '' }));
     await page.addInitScript(() => localStorage.setItem('uficonnect.analytics.consent.v1', 'denied'));
@@ -61,8 +64,14 @@ try {
         if (endpoint === '/readyz' || endpoint === '/health') return route.fulfill({ headers, json: { status: 'ok' } });
         if (endpoint === '/auth/session') return route.fulfill({ headers, json: { token: app.token(memberId), profile: (await app.request('/profile', { userId: memberId })).data } });
         if (endpoint === '/security/vault/status') return route.fulfill({ headers, json: vaultStatus });
-        if (endpoint === '/billing/config') return route.fulfill({ headers, json: { paymentsReady: false, tiers: { vpn_connector: false }, pricing: { vpn_connector: { unitAmount: 394, currency: 'USD', interval: 'month', intervalCount: 1, comingSoon: true } } } });
+        if (endpoint === '/billing/config') return route.fulfill({ headers, json: { paymentsReady: vaultCheckoutReady, tiers: { vpn_connector: vaultCheckoutReady }, pricing: { vpn_connector: { active: true, unitAmount: 394, currency: 'USD', interval: 'month', intervalCount: 1 } } } });
         if (endpoint === '/billing/status') return route.fulfill({ headers, json: { plan: 'free', vpnConnectorAddon: vpnPaid, hasBillingAccount: vpnPaid, subscriptions: vpnPaid ? [{ kind: 'vpn_connector', status: 'active' }] : [] } });
+        if (endpoint === '/billing/create-checkout-session') {
+          checkoutRequests++;
+          check(JSON.stringify(request.postDataJSON()) === JSON.stringify({ tier: 'vpn_connector' }), 'Vault checkout sends only the existing tier');
+          return route.fulfill({ headers, status: checkoutFailure ? 503 : 200,
+            json: checkoutFailure ? { message: 'Synthetic checkout failure. Please retry.' } : { url: 'https://checkout.stripe.com/synthetic-vault' } });
+        }
         if (endpoint === '/vault/vpn/locations') return route.fulfill({ headers, json: { locations: [] } });
         if (endpoint === '/creator-analytics/report') return route.fulfill({ status: outage ? 503 : 200, headers,
           json: outage ? { message: 'Analytics temporarily unavailable.' } : report });
@@ -78,6 +87,7 @@ try {
           ...(request.postData() ? { body: request.postDataJSON() } : {}) });
         return route.fulfill({ status: result.status, headers, json: result.data });
       }
+      if (url.href === 'https://checkout.stripe.com/synthetic-vault') return route.fulfill({ contentType: 'text/html', body: '<p>Synthetic Stripe checkout</p>' });
       if (url.origin !== origin) return route.abort();
       if (request.resourceType() === 'document') return route.fulfill({ contentType: 'text/html', body: html,
         headers: { 'Content-Security-Policy': policy, 'Referrer-Policy': 'no-referrer' } });
@@ -94,8 +104,19 @@ try {
       await page.getByText('Awaiting hardware setup', { exact: true }).waitFor();
       check(await page.locator('.vault-secondary-column .vault-activity').count() === 1, 'Connection activity appears once in the right Vault column');
       check(await page.locator('.vault-secondary-column .vault-hardware-status').count() === 1, 'Hardware verification appears in the right Vault column');
-      await page.getByRole('button', { name: 'Subscribe — coming soon', exact: true }).waitFor();
-      check(await page.getByRole('button', { name: 'Subscribe — coming soon', exact: true }).isDisabled(), 'VPN checkout remains locked until real service is ready');
+      const subscribe = page.getByRole('button', { name: 'Subscribe for $3.94 USD / month', exact: true });
+      await subscribe.waitFor();
+      check(await subscribe.isEnabled(), 'Configured Vault membership opens checkout');
+      check(await page.getByRole('heading', { name: 'UFI VPN · setup pending', exact: true }).count() === 1, 'UFI VPN remains pending until hosting and gateway setup');
+      await subscribe.click();
+      await page.getByText('Synthetic checkout failure. Please retry.', { exact: true }).waitFor();
+      check(await subscribe.isEnabled(), 'Checkout failure leaves a usable retry button');
+      checkoutFailure = false;
+      await Promise.all([page.waitForURL('https://checkout.stripe.com/synthetic-vault'), subscribe.click()]);
+      check(checkoutRequests === 2, 'Subscribe opens the hosted Stripe checkout once per click');
+      await page.goto(origin + '/vault?upgrade=success');
+      await page.getByText('Payment is still being confirmed. Check status again shortly before starting another checkout.', { exact: true }).waitFor();
+      check(await page.getByRole('button', { name: 'Create vault', exact: true }).isDisabled(), 'A checkout return URL cannot grant membership');
       check(await page.getByRole('button', { name: 'VPN locked', exact: true }).isDisabled(), 'Unsubscribed public VPN controls are locked');
       check(await page.getByRole('button', { name: 'Create vault', exact: true }).isDisabled(), 'New Vault creation requires an active subscription');
       check(await page.locator('.vault-unlock-content .vault-vpn-subscription').count() === 1, 'VPN offer is in A space that’s yours');
@@ -138,8 +159,10 @@ try {
       const stored = await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }));
       check(![secret, vaultPassphrase, 'Synthetic private entry'].some(value => stored.includes(value)), 'Persisted vault contains no plaintext entry, secret, or passphrase');
       vpnPaid = false;
+      vaultCheckoutReady = false;
       await page.getByRole('button', { name: 'Check subscription status', exact: true }).click();
-      await page.getByRole('button', { name: 'Subscribe — coming soon', exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Checkout unavailable', exact: true }).waitFor();
+      check(await page.getByRole('button', { name: 'Checkout unavailable', exact: true }).isDisabled(), 'Unavailable billing keeps new checkout disabled');
       check(await page.getByRole('button', { name: 'Add password', exact: true }).isDisabled(), 'Expired entitlement locks new password writes');
       await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
       await page.getByRole('button', { name: 'Unlock vault', exact: true }).waitFor();

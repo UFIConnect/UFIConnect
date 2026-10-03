@@ -8,6 +8,7 @@ const { PGlite } = require('@electric-sql/pglite');
 const { deleteAccountData, exportAccountData } = require('./privacy-data');
 const { HISTORY_SCHEMA } = require('./generated-content');
 const { BILLING_SCHEMA } = require('./billing');
+const { BUSINESS_TEAM_SCHEMA } = require('./business-teams');
 const { CREATOR_ANALYTICS_SCHEMA } = require('./creator-analytics');
 const { UFI_VAULT_SCHEMA } = require('./ufi-vault');
 
@@ -33,6 +34,7 @@ async function schema(pg) {
   }
   await pg.exec(HISTORY_SCHEMA);
   for (const sql of BILLING_SCHEMA) await pg.exec(sql);
+  for (const sql of BUSINESS_TEAM_SCHEMA) await pg.exec(sql);
   for (const sql of [...CREATOR_ANALYTICS_SCHEMA, ...UFI_VAULT_SCHEMA]) await pg.exec(sql);
 }
 
@@ -49,6 +51,9 @@ async function seed(pg) {
       social_connected_at: JSON.stringify({ github: '2026-09-22T00:00:00Z' }), joined_groups: ['shared-group'],
       role_settings: JSON.stringify({ privacy_publicProfile: false }), interests: ['security'], stripe_customer_id: `cus_${name}` });
   }
+  await insert('business_team_members', { owner_id: alice, member_id: bob });
+  await insert('business_team_invitations', { id: alice, owner_id: alice, invitee_id: carol,
+    email: 'carol@example.invalid', token_hash: 'secret-invitation-hash', expires_at: '2027-01-01T00:00:00Z' });
   await insert('community_groups', { id: 'shared-group', name: 'Shared group', category: 'Test', created_by: alice, member_count: 3 });
   for (const [uid, prefix] of [[alice, 'a'], [bob, 'b']]) {
     await insert('vault_vpn_locations', { id: uid, user_id: uid, platform: 'ios', name: `${prefix}-vpn-profile`, country: 'Canada' });
@@ -139,6 +144,9 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
     assert.equal(exported.social.connections[0].status, 'pending');
     assert.equal(exported.social.blocks[0].blockedId, carol);
     assert.equal(exported.vpnLocations[0].name, 'a-vpn-profile');
+    assert.equal(exported.businessTeamSeats[0].memberId, bob);
+    assert.equal(exported.businessTeamInvitations[0].inviteeId, carol);
+    assert.equal(Object.hasOwn(exported.businessTeamInvitations[0], 'token_hash'), false);
     for (const key of ['posts', 'comments', 'attachments', 'savedPosts', 'trackedJobs', 'generatedContent', 'resumeDrafts',
       'crossPosts', 'ownedGroups', 'notifications', 'reports', 'seenPosts', 'engagementPreferences', 'restaurantLikes', 'externalPostLikes',
       'pushRegistrations', 'signIns', 'legacyPageViews', 'legacyClientErrors', 'legacyServerErrors', 'legacyUsageSignals', 'billingCheckouts', 'vpnLocations']) {
@@ -148,6 +156,18 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
     for (const forbidden of ['secret-', 'other-private-conversation', 'b-summary', 'b-report-details', 'b-resume-text', 'b-prompt', 'b-vpn-profile']) {
       assert.equal(serialized.includes(forbidden), false, forbidden);
     }
+  });
+
+  await t.test('billing exports the account paid Business seat count rather than its assigned member count', async () => {
+    await pg.query("UPDATE users SET plan='business',business_seats=5 WHERE id=$1", [alice]);
+    await pg.query("UPDATE users SET plan='business',business_seats=9 WHERE id=$1", [carol]);
+    const { db } = harness(pg);
+    const owner = await exportAccountData(db, alice);
+    assert.equal(owner.billing.businessSeats, 5);
+    assert.equal(owner.businessTeamSeats.length, 1);
+    const teammate = await exportAccountData(db, bob);
+    assert.equal(teammate.billing.businessSeats, 0);
+    assert.equal(teammate.businessTeamSeats[0].ownerId, alice);
   });
 
   await t.test('purges owned records and cascades while preserving unrelated members and shared communities', async () => {
@@ -162,6 +182,8 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
       assert.equal((await pg.query(`SELECT COUNT(*)::integer AS count FROM ${table} WHERE user_id=$1`, [alice])).rows[0].count, 0, table);
     }
     assert.equal((await pg.query('SELECT name FROM vault_vpn_locations WHERE user_id=$1', [bob])).rows[0].name, 'b-vpn-profile');
+    assert.equal((await pg.query('SELECT * FROM business_team_members')).rows.length, 0);
+    assert.equal((await pg.query('SELECT * FROM business_team_invitations')).rows.length, 0);
     assert.deepEqual((await pg.query('SELECT created_by,member_count FROM community_groups')).rows[0], { created_by: null, member_count: 2 });
     assert.deepEqual((await pg.query('SELECT id,likes FROM community_posts')).rows, [{ id: 'b-post', likes: [bob] }]);
     assert.equal((await pg.query('SELECT comments_count FROM community_posts')).rows[0].comments_count, 1);

@@ -1,0 +1,34 @@
+.business-shell { min-height: 100vh; background: var(--bg); color: var(--text); }
+.business-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 5%; background: var(--card); border-bottom: 1px solid var(--border); }
+.business-brand { font-size: 21px; font-weight: 750; color: var(--text); text-decoration: none; }
+.business-brand span { font-size: 11px; color: var(--primary); border: 1px solid var(--border); border-radius: 5px; padding: 4px 7px; margin-left: 8px; }
+.business-header > div { display: flex; align-items: center; gap: 12px; font-size: 13px; }
+.business-body { display: grid; grid-template-columns: 220px minmax(0, 1fr); max-width: 1440px; margin: auto; }
+.business-nav { display: flex; flex-direction: column; gap: 6px; padding: 30px 14px; }
+.business-nav a { display: flex; align-items: center; gap: 10px; padding: 13px; text-decoration: none; color: var(--muted); border-radius: 8px; font-size: 13px; }
+.business-nav a.active, .business-nav a:hover { background: var(--primary-light); color: var(--primary); }
+.business-nav p { margin: 20px 14px; font-size: 12px; line-height: 1.7; color: var(--muted); }
+.business-main { min-width: 0; padding: 36px clamp(18px, 4vw, 54px); }
+.recruiting-heading { margin-bottom: 30px; }
+.recruiting-heading h1 { font-size: clamp(26px, 4vw, 36px); margin: 12px 0; letter-spacing: -.8px; }
+.recruiting-heading p { color: var(--muted); line-height: 1.7; max-width: 640px; }
+.recruiting-eyebrow { color: var(--primary); font-size: 11px; letter-spacing: 1.3px; font-weight: 650; text-transform: uppercase; }
+.recruiting-stats, .recruiting-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; margin-bottom: 25px; }
+.recruiting-stats > div, .recruiting-actions > a { padding: 22px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
+.recruiting-stats strong { display: block; font-size: 25px; margin-bottom: 7px; }
+.recruiting-stats span { font-size: 12px; color: var(--muted); }
+.recruiting-actions > a { color: var(--text); text-decoration: none; }
+.recruiting-actions > a:hover { border-color: var(--primary); }
+.recruiting-actions svg { color: var(--primary); }
+.recruiting-actions h2 { font-size: 16px; margin: 15px 0 9px; }
+.recruiting-actions p { font-size: 13px; line-height: 1.7; color: var(--muted); }
+.recruiting-search { display: flex; gap: 10px; margin: 25px 0; }
+.recruiting-search input { flex: 1; min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--card); color: var(--text); }
+.recruiting-candidates { display: grid; gap: 13px; }
+.recruiting-candidate { padding: 24px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; }
+.recruiting-candidate h2 { margin: 0 0 8px; font-size: 18px; }
+.recruiting-candidate p { color: var(--muted); font-size: 13px; line-height: 1.7; }
+.recruiting-candidate .tag { margin-right: 7px; margin-bottom: 10px; }
+.recruiting-pagination { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-top: 20px; }
+@media (max-width: 850px) { .business-body { grid-template-columns: minmax(0, 1fr); } .business-nav { flex-direction: row; overflow-x: auto; padding: 12px; border-bottom: 1px solid var(--border); } .business-nav a { white-space: nowrap; } .business-nav p { display: none; } .business-main { padding: 26px 18px; } }
+@media (max-width: 600px) { .business-header { padding: 18px; } .business-header > div > span { display: none; } .recruiting-actions, .recruiting-stats { grid-template-columns: minmax(0, 1fr); } .recruiting-stats > div { display: flex; align-items: center; gap: 13px; padding: 16px; } .recruiting-stats strong { margin: 0; } }

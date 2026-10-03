@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useId } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, Link } from 'react-router-dom';
 import client from '../api/client';
 
@@ -17,14 +18,27 @@ export default function FollowListModal({ userId, type, title, onClose, fetchUrl
   const [users,      setUsers]      = useState([]);
   const [loading,    setLoading]    = useState(true);
   const [restricted, setRestricted] = useState(false);
+  const [error, setError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const closeRef = useRef(null);
+  const titleId = useId();
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
+    setError(false);
     client.get(fetchUrl || `/users/${userId}/${type}`)
-      .then(({ data }) => { setUsers(data.users || []); setRestricted(!!data.restricted); })
-      .catch(() => setUsers([]))
-      .finally(() => setLoading(false));
-  }, [userId, type, fetchUrl]);
+      .then(({ data }) => { if (!cancelled) { setUsers(data.users || []); setRestricted(!!data.restricted); } })
+      .catch(() => { if (!cancelled) setError(true); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [userId, type, fetchUrl, attempt]);
+
+  useEffect(() => {
+    const previous = document.activeElement;
+    closeRef.current?.focus();
+    return () => previous?.focus?.();
+  }, []);
 
   async function toggleFollow(user, e) {
     e.stopPropagation();
@@ -43,10 +57,19 @@ export default function FollowListModal({ userId, type, title, onClose, fetchUrl
     } catch {}
   }
 
-  return (
+  return createPortal(
     <div
+      role="dialog" aria-modal="true" aria-labelledby={titleId}
+      onKeyDown={event => {
+        if (event.key === 'Escape') { event.stopPropagation(); onClose(); }
+        if (event.key !== 'Tab') return;
+        const controls = [...event.currentTarget.querySelectorAll('button:not(:disabled), a[href]')];
+        const first = controls[0]; const last = controls.at(-1);
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }}
       style={{
-        position: 'fixed', inset: 0, zIndex: 1000,
+        position: 'fixed', inset: 0, zIndex: 4000,
         background: 'rgba(0,0,0,.45)', display: 'flex',
         alignItems: 'flex-end', justifyContent: 'center',
       }}
@@ -62,8 +85,9 @@ export default function FollowListModal({ userId, type, title, onClose, fetchUrl
         <div style={{ padding: '12px 20px 0', textAlign: 'center' }}>
           <div style={{ width: 36, height: 4, borderRadius: 2, background: 'var(--border)', margin: '0 auto 14px' }} />
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-            <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>{title}</h2>
+            <h2 id={titleId} style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>{title}</h2>
             <button
+              ref={closeRef} type="button" aria-label="Close"
               onClick={onClose}
               style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', color: 'var(--muted)', lineHeight: 1 }}
             >×</button>
@@ -83,7 +107,8 @@ export default function FollowListModal({ userId, type, title, onClose, fetchUrl
               This list is private.
             </div>
           )}
-          {!loading && !restricted && users.length === 0 && (
+          {!loading && error && <p role="alert">Could not load this list. <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAttempt(value => value + 1)}>Try again</button></p>}
+          {!loading && !error && !restricted && users.length === 0 && (
             <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--muted)', fontSize: '.9rem' }}>
               {emptyLabel || 'Nobody here yet.'}
             </div>
@@ -131,6 +156,6 @@ export default function FollowListModal({ userId, type, title, onClose, fetchUrl
           ))}
         </div>
       </div>
-    </div>
+    </div>, document.body
   );
 }

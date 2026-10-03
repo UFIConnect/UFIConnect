@@ -42,7 +42,10 @@ try {
   await server.listen();
   browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
   for (const width of [1440, 390]) {
-    const context = await browser.newContext({ viewport: { width, height: 1000 }, isMobile: width < 600, hasTouch: width < 600 });
+    // This audit exercises settings and real pointer clicks. Keep the 3D city
+    // paused through its supported preference so software-rendered CI frames
+    // do not compete with scrolling/actionability checks.
+    const context = await browser.newContext({ viewport: { width, height: 1000 }, isMobile: width < 600, hasTouch: width < 600, reducedMotion: 'reduce' });
     const page = await context.newPage();
     page.setDefaultTimeout(15000);
     const errors = [], requests = [];
@@ -164,7 +167,7 @@ try {
         localStorage.setItem(key, JSON.stringify(settings));
         window.__mapAuditUpdateProfile({ id: 'maps-second-account' });
       }, { key: secondKey, settings: sameSettings });
-      await page.waitForFunction(() => !document.querySelector('.city-post-grid')?.textContent.includes('uficonnect map post'));
+      await page.getByRole('heading', { name: 'uficonnect map post', exact: true }).waitFor({ state: 'hidden' });
       await page.getByRole('heading', { name: 'Second account uficonnect map post', exact: true }).waitFor();
       releaseHeld();
       releaseHeld = null;
