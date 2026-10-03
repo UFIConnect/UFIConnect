@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 require('../backend/generated-media');
 const { createAppHarness, member } = require('../backend/test-support/app-harness');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const output = path.join(root, '.cache/audit-map-settings');
+const output = path.join(root, '.cache/audit-ui/map-settings');
 await fs.mkdir(output, { recursive: true });
 const app = await createAppHarness();
 const userId = 'maps-settings-audit';
@@ -46,6 +46,7 @@ try {
     // paused through its supported preference so software-rendered CI frames
     // do not compete with scrolling/actionability checks.
     const context = await browser.newContext({ viewport: { width, height: 1000 }, isMobile: width < 600, hasTouch: width < 600, reducedMotion: 'reduce' });
+    await context.tracing.start({ screenshots: true, snapshots: true, sources: false });
     const page = await context.newPage();
     page.setDefaultTimeout(15000);
     const errors = [], requests = [];
@@ -91,8 +92,66 @@ try {
       assert.equal(await actions.getByRole('button', { name: 'Apply changes', exact: true }).isDisabled(), true);
 
       let tools = await openTools();
+      const redditSource = tools.getByRole('group', { name: 'Community sources', exact: true }).getByRole('button', { name: 'Reddit', exact: true });
+      // Read geometry without changing scroll position, focus, or click behavior.
+      const readClickDiagnostics = () => redditSource.evaluate(button => {
+        const describe = element => {
+          if (!element) return null;
+          const rect = element.getBoundingClientRect(), style = getComputedStyle(element);
+          return {
+            tag: element.tagName, id: element.id, className: element.getAttribute('class'),
+            rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+            scroll: { left: element.scrollLeft, top: element.scrollTop, width: element.scrollWidth, height: element.scrollHeight, clientWidth: element.clientWidth, clientHeight: element.clientHeight },
+            style: { position: style.position, overflowX: style.overflowX, overflowY: style.overflowY, display: style.display, visibility: style.visibility, transform: style.transform },
+          };
+        };
+        const ancestors = [];
+        for (let element = button.parentElement; element; element = element.parentElement) ancestors.push(describe(element));
+        const rect = button.getBoundingClientRect();
+        const point = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+        const hit = document.elementFromPoint(point.x, point.y);
+        return {
+          viewport: { width: innerWidth, height: innerHeight, scrollX, scrollY, devicePixelRatio, visualViewport: window.visualViewport ? { width: visualViewport.width, height: visualViewport.height, offsetLeft: visualViewport.offsetLeft, offsetTop: visualViewport.offsetTop, scale: visualViewport.scale } : null },
+          button: describe(button), ancestors,
+          hitTest: { point, insideViewport: point.x >= 0 && point.y >= 0 && point.x < innerWidth && point.y < innerHeight, hitsButton: hit === button || button.contains(hit), element: describe(hit) },
+        };
+      });
+      let clickDiagnostics = await readClickDiagnostics();
+      if (width >= 600) {
+        console.log('MAP_SOURCE_REVEAL_START ' + JSON.stringify({ width, ...clickDiagnostics }));
+        const railFor = diagnostics => diagnostics.ancestors.find(element => element.className?.split(/\s+/).includes('map-customization-rail'));
+        const clipFor = diagnostics => {
+          const rail = railFor(diagnostics)?.rect;
+          assert.ok(rail, 'The source button must belong to the settings rail');
+          return { left: Math.max(0, rail.x), top: Math.max(0, rail.y), right: Math.min(diagnostics.viewport.width, rail.x + rail.width), bottom: Math.min(diagnostics.viewport.height, rail.y + rail.height) };
+        };
+        const isRevealed = diagnostics => {
+          const rect = diagnostics.button.rect, clip = clipFor(diagnostics);
+          return rect.width > 0 && rect.height > 0 && rect.x >= clip.left && rect.y >= clip.top
+            && rect.x + rect.width <= clip.right && rect.y + rect.height <= clip.bottom && diagnostics.hitTest.hitsButton;
+        };
+        const clip = clipFor(clickDiagnostics), initialWindowScroll = clickDiagnostics.viewport.scrollY;
+        assert.ok(clip.right > clip.left && clip.bottom > clip.top, 'The settings rail must intersect the viewport');
+        // Scroll the visible nested rail as a user would. locator.hover() would
+        // itself auto-scroll, so move the pointer within the measured viewport.
+        await page.mouse.move((clip.left + clip.right) / 2, (clip.top + clip.bottom) / 2);
+        const revealDeadline = Date.now() + 5000;
+        for (let attempt = 0; attempt < 6 && !isRevealed(clickDiagnostics) && Date.now() < revealDeadline; attempt++) {
+          const previousScroll = railFor(clickDiagnostics).scroll.top;
+          await page.mouse.wheel(0, 160);
+          for (let poll = 0; poll < 10 && Date.now() < revealDeadline; poll++) {
+            await page.waitForTimeout(50);
+            clickDiagnostics = await readClickDiagnostics();
+            if (isRevealed(clickDiagnostics)) break;
+          }
+          if (railFor(clickDiagnostics).scroll.top === previousScroll) break;
+        }
+        assert.ok(isRevealed(clickDiagnostics), 'Reddit source must be revealed by bounded rail scrolling: ' + JSON.stringify(clickDiagnostics));
+        assert.equal(clickDiagnostics.viewport.scrollY, initialWindowScroll, 'Revealing a source must scroll the settings rail without moving the page');
+      }
+      console.log('MAP_FIRST_SOURCE_CLICK_DIAGNOSTICS ' + JSON.stringify({ width, ...clickDiagnostics }));
       const before = JSON.stringify(await state()), beforeRequests = requests.length;
-      await tools.getByRole('group', { name: 'Community sources', exact: true }).getByRole('button', { name: 'Reddit', exact: true }).click();
+      await redditSource.click();
       await page.waitForTimeout(350);
       assert.equal(JSON.stringify(await state()), before, 'Draft source edits must not save');
       assert.equal(requests.length, beforeRequests, 'Draft source edits must not refetch');
@@ -185,9 +244,16 @@ try {
         await page.screenshot({ path: path.join(output, 'map-settings-mobile-menu.png') });
       }
       assert.deepEqual(errors, []);
+      await context.tracing.stop();
       console.log(`PASS: Maps Apply, Refresh, Discard, storage failure, saved settings and responsive controls at ${width}px`);
     } catch (error) {
-      await page.screenshot({ path: path.join(output, `map-settings-failure-${width}.png`), fullPage: true });
+      const captures = await Promise.allSettled([
+        context.tracing.stop({ path: path.join(output, `map-settings-failure-${width}.zip`) }),
+        page.screenshot({ path: path.join(output, `map-settings-failure-${width}.png`), fullPage: true }),
+      ]);
+      captures.forEach((capture, index) => {
+        if (capture.status === 'rejected') console.error(`Map ${index === 0 ? 'trace' : 'screenshot'} capture failed at ${width}px:`, capture.reason?.message);
+      });
       throw error;
     } finally { releaseHeld?.(); await context.close(); }
   }
