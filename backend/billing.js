@@ -40,9 +40,10 @@ const EVENT_TYPES = new Set([
   'customer.subscription.paused', 'customer.subscription.resumed',
   'invoice.paid', 'invoice.payment_failed', 'invoice.payment_action_required',
 ]);
-const TIERS = ['pro', 'business', 'resume_builder', 'vpn_connector'];
+const TIERS = ['pro', 'business', 'resume_builder', 'resume_builder_monthly', 'vpn_connector'];
 const SLOTS = { plan: 'stripe_subscription_id', resume_builder: 'resume_builder_subscription_id', vpn_connector: 'vpn_connector_subscription_id' };
-const slotFor = tier => ['resume_builder', 'vpn_connector'].includes(tier) ? tier : 'plan';
+const slotFor = tier => tier === 'resume_builder_monthly' ? 'resume_builder'
+  : ['resume_builder', 'vpn_connector'].includes(tier) ? tier : 'plan';
 const ACTIVE = new Set(['active', 'trialing']);
 const ENDED = new Set(['canceled', 'incomplete_expired']);
 const RENEWALS = new Set(['subscription_cycle', 'subscription_update', 'subscription_threshold']);

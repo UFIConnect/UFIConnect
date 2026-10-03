@@ -21024,6 +21024,10 @@ const RESUME_BUILDER_PRICE_ID_ENV_KEYS = [
   'RESUME_BUILDER_PRICE_ID',
   'STRIPE_PRICE_ID_RESUME_BUILDER',
 ];
+const RESUME_BUILDER_MONTHLY_PRICE_ID_ENV_KEYS = [
+  'STRIPE_RESUME_BUILDER_MONTHLY_PRICE_ID',
+  'STRIPE_PRICE_ID_RESUME_BUILDER_MONTHLY',
+];
 
 const STRIPE_PRICE_SUMMARY_CACHE_MS = 5 * 60 * 1000;
 const stripePriceSummaryCache = new Map();
@@ -21049,6 +21053,12 @@ function isConfiguredVpnConnectorPrice(price) {
     && price.recurring.interval === 'month' && price.recurring.interval_count === 1;
 }
 
+function isConfiguredResumeBuilderMonthlyPrice(price) {
+  return validRecurringPrice(price) && price.billing_scheme !== 'tiered'
+    && String(price.currency).toLowerCase() === 'usd' && price.unit_amount === 3000
+    && price.recurring.interval === 'month' && price.recurring.interval_count === 1;
+}
+
 function isConfiguredBusinessPrice(price, team = false) {
   return validRecurringPrice(price) && price.billing_scheme !== 'tiered'
     && String(price.currency).toLowerCase() === 'usd' && price.unit_amount === (team ? 1994 : 19994)
@@ -21057,7 +21067,7 @@ function isConfiguredBusinessPrice(price, team = false) {
 
 function getResumeBuilderPriceCandidates() {
   const configuredKeys = Object.keys(process.env)
-    .filter(key => /resume/i.test(key) && /price/i.test(key) && (/_id$/i.test(key) || /_price$/i.test(key)));
+    .filter(key => /resume/i.test(key) && !/monthly/i.test(key) && /price/i.test(key) && (/_id$/i.test(key) || /_price$/i.test(key)));
   return [...new Set([...RESUME_BUILDER_PRICE_ID_ENV_KEYS, ...configuredKeys]
     .map(key => String(process.env[key] || '').trim())
     .filter(Boolean))];
@@ -21078,6 +21088,7 @@ function summarizeStripePrice(price, tier) {
       interval: price.recurring?.interval || null,
       intervalCount: Number(price.recurring?.interval_count || 1),
       ...(tier === 'resume_builder' ? { matchesRequiredPrice: isConfiguredResumeBuilderPrice(price) } : {}),
+      ...(tier === 'resume_builder_monthly' ? { matchesRequiredPrice: isConfiguredResumeBuilderMonthlyPrice(price) } : {}),
     };
   } catch {
     return null;
@@ -21144,7 +21155,9 @@ async function resolveResumeBuilderPrice() {
 async function getBillingCatalog() {
   const configured = { pro: TIER_PRICE_IDS.pro(), business: TIER_PRICE_IDS.business(), business_team: TIER_PRICE_IDS.business_team() };
   const vpnPriceId = String(process.env.STRIPE_VPN_CONNECTOR_PRICE_ID || '').trim();
-  const cacheKey = 'catalog:' + JSON.stringify([configured, getResumeBuilderPriceCandidates(), vpnPriceId]);
+  const resumeMonthlyIds = [...new Set(RESUME_BUILDER_MONTHLY_PRICE_ID_ENV_KEYS
+    .map(key => String(process.env[key] || '').trim()).filter(Boolean))];
+  const cacheKey = 'catalog:' + JSON.stringify([configured, getResumeBuilderPriceCandidates(), resumeMonthlyIds, vpnPriceId]);
   const cached = stripePriceSummaryCache.get(cacheKey);
   if (cached && Date.now() - cached.at < STRIPE_PRICE_SUMMARY_CACHE_MS) return cached.value;
   const allowedPrices = new Map();
@@ -21190,6 +21203,23 @@ async function getBillingCatalog() {
   for (const priceId of resume.allowedPriceIds || []) allowedPrices.set(priceId, 'resume_builder');
   tiers.resume_builder = { priceId: resume.priceId,
     available: resume.summary?.matchesRequiredPrice === true, summary: resume.summary };
+  // Both billing cadences grant the same add-on. Keep the monthly choice
+  // explicit so a configured six-month price cannot open a monthly checkout.
+  const monthlyPrices = [];
+  for (const priceId of resumeMonthlyIds) {
+    if (!stripe) break;
+    try { monthlyPrices.push(await stripe.prices.retrieve(priceId, { expand: ['tiers'] })); }
+    catch { throw Object.assign(new Error('Subscription pricing is temporarily unavailable.'), { status: 503 }); }
+  }
+  for (const price of monthlyPrices) {
+    // Retired configured prices still reconcile existing paying subscriptions.
+    if (isConfiguredResumeBuilderMonthlyPrice(price)) allowedPrices.set(price.id, 'resume_builder_monthly');
+  }
+  const monthlyPrice = monthlyPrices.find(price => price.active === true && isConfiguredResumeBuilderMonthlyPrice(price)) || monthlyPrices[0];
+  const validMonthly = isConfiguredResumeBuilderMonthlyPrice(monthlyPrice);
+  tiers.resume_builder_monthly = { priceId: validMonthly ? monthlyPrice.id : null,
+    available: validMonthly && monthlyPrice.active === true,
+    summary: monthlyPrice ? summarizeStripePrice(monthlyPrice, 'resume_builder_monthly') : null };
   let vpnPrice = null;
   if (stripe && vpnPriceId) {
     try { vpnPrice = await stripe.prices.retrieve(vpnPriceId, { expand: ['tiers'] }); }

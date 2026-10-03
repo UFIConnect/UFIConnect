@@ -24,6 +24,7 @@ try {
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     let status = { plan: 'free', resumeBuilderAddon: false, hasBillingAccount: false, subscriptions: [] };
     let ready = true; let businessReady = false; let configWait = null;
+    let monthlyReady = true; let sixMonthReady = true; let monthlyMatches = true;
     let checkoutUrl = 'https://evil.invalid/checkout'; const requests = [];
     await context.route('**/*', async route => {
       const request = route.request(); const url = new URL(request.url());
@@ -36,11 +37,12 @@ try {
       if (endpoint === '/billing/config') {
         if (configWait) await configWait;
         return fulfill({ stripeConfigured: true, webhookConfigured: true, paymentsReady: ready,
-          tiers: { pro: ready, business: ready && businessReady, resume_builder: ready },
+          tiers: { pro: ready, business: ready && businessReady, resume_builder: ready && sixMonthReady, resume_builder_monthly: ready && monthlyReady },
           pricing: {
             pro: { active: true, display: '$19.94', unitAmount: 1994, currency: 'USD', interval: 'month', intervalCount: 1 },
             business: businessReady ? { active: true, display: '$199.94', unitAmount: 19994, currency: 'USD', interval: 'month', intervalCount: 1 } : null,
             resume_builder: { active: true, matchesRequiredPrice: true, display: '$149.94', currency: 'USD', interval: 'month', intervalCount: 6 },
+            resume_builder_monthly: { active: true, matchesRequiredPrice: monthlyMatches, display: '$30.00', currency: 'USD', interval: 'month', intervalCount: 1 },
           },
         });
       }
@@ -52,6 +54,23 @@ try {
       return fulfill({ sources: [], posts: [], groups: [], connected: {}, items: [] });
     });
     await installAuditMember(page, app, 'membership-audit');
+    await auditNavigate(page, server.origin + '/?audit-public');
+    await page.getByRole('heading', { name: 'Start free. Grow from there.', exact: true }).waitFor();
+    const pricing = page.locator('#pricing');
+    const plan = name => pricing.locator('.landing-plan-card').filter({ has: page.getByRole('heading', { name, exact: true }) });
+    check(await plan('Free').locator('.landing-plan-price').textContent() === '$0/mo', 'Homepage keeps the free plan visible');
+    check((await plan('Pro').locator('.landing-plan-price').textContent()).includes('$19.94/mo'), 'Homepage shows the Pro monthly price');
+    check((await plan('Business').locator('.landing-plan-price').textContent()).includes('$199.94/mo'), 'Homepage shows the solo Business price');
+    check((await plan('Business').innerText()).includes('Teams: $19.94 per person/month'), 'Homepage explains per-person Business team billing');
+    check((await plan('Business').innerText()).includes('2 or more people'), 'Homepage explains team minimum size');
+    check((await plan('Vault').locator('.landing-plan-price').textContent()).includes('$3.94/mo'), 'Homepage shows the Vault monthly price');
+    check((await plan('Vault').innerText()).includes('VPN setup is pending.'), 'Homepage accurately labels pending VPN setup');
+    check((await plan('Resume Builder').locator('.landing-plan-price').textContent()).includes('$30/mo'), 'Homepage advertises monthly Resume Builder');
+    check((await plan('Resume Builder').innerText()).includes('$149.94 every 6 months'), 'Homepage keeps the six-month Resume Builder option');
+    check(await plan('Vault').getByRole('link').getAttribute('href') === '/vault', 'Homepage opens the Vault membership');
+    check(await plan('Resume Builder').getByRole('link').getAttribute('href') === '/resume-builder', 'Homepage opens Resume Builder');
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Homepage pricing fits ${width}px`);
+    await pricing.screenshot({ path: `.cache/audit-ui/homepage-pricing-${width}.png` });
     await auditNavigate(page, server.origin + '/settings');
     const section = page.getByRole('region', { name: 'Free plan', exact: true });
     const upgrade = section.getByRole('button', { name: 'Upgrade', exact: true });
@@ -103,16 +122,44 @@ try {
     await page.getByRole('button', { name: 'Checking billing…', exact: true }).waitFor();
     check(await page.getByRole('button', { name: 'Checking billing…', exact: true }).isDisabled(), 'Resume Builder cannot be bought before its price is validated');
     configWait = null; releaseConfig();
-    const resumePurchase = page.getByRole('button', { name: 'Unlock for $149.94 per 6 mo', exact: true });
+    const resumePurchase = page.getByRole('button', { name: 'Unlock for $30.00 / month', exact: true });
     await resumePurchase.waitFor();
     check(await resumePurchase.isEnabled(), 'Validated Resume Builder configuration enables checkout');
+    check(await page.getByRole('radio', { name: /Monthly/ }).isChecked(), 'Monthly Resume Builder is selected by default');
+    check(await page.getByRole('radio', { name: /6 months/ }).isEnabled(), 'Six-month Resume Builder remains available');
     check(await page.getByText(/This add-on renews automatically/).isVisible(), 'Resume Builder explains renewal before checkout');
     check(await page.getByRole('link', { name: 'Settings → Manage billing', exact: true }).isVisible(), 'Resume Builder provides billing recovery and cancellation access');
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Resume Builder checkout fits ${width}px`);
     await resumePurchase.click();
     await page.getByText('Could not start checkout. Please try again.', { exact: true }).waitFor();
-    assert.deepEqual(requests.at(-1), { tier: 'resume_builder' }); checks++;
+    assert.deepEqual(requests.at(-1), { tier: 'resume_builder_monthly' }); checks++;
     check(page.url().startsWith(server.origin), 'Resume Builder blocks untrusted payment redirects');
+    await page.getByRole('radio', { name: /6 months/ }).check();
+    const sixMonthPurchase = page.getByRole('button', { name: 'Unlock for $149.94 per 6 mo', exact: true });
+    check(await sixMonthPurchase.isEnabled(), 'Choosing six months updates the checkout price');
+    await sixMonthPurchase.click();
+    await page.getByText('Could not start checkout. Please try again.', { exact: true }).last().waitFor();
+    assert.deepEqual(requests.at(-1), { tier: 'resume_builder' }); checks++;
+    await page.screenshot({ path: `.cache/audit-ui/resume-pricing-${width}.png`, fullPage: true });
+    const reopenResume = async () => {
+      await auditNavigate(page, server.origin + '/settings');
+      await page.getByRole('heading', { name: 'Pro plan', exact: true }).waitFor();
+      await auditNavigate(page, server.origin + '/resume-builder');
+    };
+    sixMonthReady = false;
+    await reopenResume();
+    await resumePurchase.waitFor();
+    check(await resumePurchase.isEnabled(), 'Monthly checkout works while six-month checkout is unavailable');
+    check(await page.getByRole('radio', { name: /6 months/ }).isDisabled(), 'An unavailable six-month option cannot be selected');
+    monthlyReady = false; sixMonthReady = true;
+    await reopenResume();
+    await sixMonthPurchase.waitFor();
+    check(await page.getByRole('radio', { name: /6 months/ }).isChecked(), 'Six-month checkout is selected when monthly billing is unavailable');
+    check(await page.getByRole('radio', { name: /Monthly/ }).isDisabled(), 'An unavailable monthly option cannot be selected');
+    monthlyReady = true; monthlyMatches = false;
+    await reopenResume();
+    await sixMonthPurchase.waitFor();
+    check(await page.getByRole('radio', { name: /Monthly/ }).isDisabled(), 'A monthly price that fails validation cannot be purchased');
     ready = false;
     await auditNavigate(page, server.origin + '/settings');
     await page.getByRole('heading', { name: 'Pro plan', exact: true }).waitFor();

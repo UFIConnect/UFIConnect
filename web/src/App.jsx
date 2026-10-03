@@ -126,7 +126,9 @@ function RequireOnboarding({ children }) {
 function BusinessRoutes({ children }) {
   const { profile, loading } = useAuth();
   const { pathname } = useLocation();
-  if (loading) return <SessionLoading />;
+  // Each protected route handles restoration. Keep public sign-in and
+  // recovery pages usable while an older session lookup is still pending.
+  if (loading) return children;
   return profile?.plan === 'business' && !isBusinessRouteAllowed(pathname)
     ? <Navigate to="/recruiting" replace /> : children;
 }
