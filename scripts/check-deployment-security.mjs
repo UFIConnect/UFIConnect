@@ -56,7 +56,7 @@ for (const required of ['actions/workflows/verify.yml/runs', 'head_sha=${VERIFIE
 const verification = load('.github/workflows/verify.yml');
 assert.ok(verification.jobs.native, 'Native verification must gate releases alongside the web checks');
 const nativeSteps = verification.jobs.native.steps.map(step => step.run || '').join('\n');
-for (const required of ['npm ci --prefix mobile', 'npm run test:security', 'npm audit', 'npm run doctor', 'npm run export', 'npm run test:export', 'npm run test:analytics']) {
+for (const required of ['npm ci --prefix mobile', 'npm run test:security', 'npm run audit:security', 'npm run doctor', 'npm run export', 'npm run test:export', 'npm run test:analytics']) {
   assert.ok(nativeSteps.includes(required), `Missing native verification: ${required}`);
 }
 const mobileRelease = load('.github/workflows/mobile-release.yml');
@@ -64,9 +64,12 @@ const releaseSteps = mobileRelease.jobs.build.steps;
 const buildIndex = releaseSteps.findIndex(step => step.run?.startsWith('eas build'));
 assert.ok(buildIndex >= 0, 'Mobile release must queue an EAS build');
 const precedingSteps = releaseSteps.slice(0, buildIndex).map(step => step.run || '').join('\n');
-for (const required of ['npm ci', 'npm run test:security', 'npm audit', 'npm run doctor', 'npm run export', 'npm run test:export', 'npm run test:analytics']) {
+for (const required of ['npm ci', 'npm run test:security', 'npm run audit:security', 'npm run doctor', 'npm run export', 'npm run test:export', 'npm run test:analytics']) {
   assert.ok(precedingSteps.includes(required), `Mobile build must first pass: ${required}`);
 }
+const mobilePackage = JSON.parse(fs.readFileSync(path.join(root, 'mobile/package.json'), 'utf8'));
+assert.equal(mobilePackage.scripts.postinstall, 'node security/dependencyPatches.cjs', 'Locked installs must apply reviewed security backports');
+assert.equal(mobilePackage.scripts['audit:security'], 'node --test security/dependencyBackports.test.js && node security/dependencyAudit.cjs', 'Audit must require attack regressions before scoped advisory evaluation');
 load('.github/dependabot.yml');
 for (const file of ['docker-compose.yml', 'docker-compose.lb.yml']) {
   const compose = load(file);
