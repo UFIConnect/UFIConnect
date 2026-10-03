@@ -972,7 +972,7 @@ const SOCIAL_CFG = {
     // exists; Google recommends requesting elevated scopes in context.
     scope: 'https://www.googleapis.com/auth/youtube.readonly',
     pkce: true,
-    extraAuthParams: { access_type: 'online', prompt: 'consent' },
+    extraAuthParams: { access_type: 'offline', prompt: 'consent' },
   },
   reddit: {
     authUrl:  'https://www.reddit.com/api/v1/authorize',
@@ -6313,6 +6313,9 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false, userId = null
     if (/HTTP 401/.test(e.message) && userId && !_retried) {
       const newToken = await refreshGoogleAccessToken(userId);
       if (newToken) return fetchYouTubeSubscriptionFeed(newToken, { bust: true, userId, connectedAt, _retried: true });
+    }
+    if (/HTTP 401/.test(e.message)) {
+      throw new Error('YouTube access expired or was revoked. Reconnect YouTube in Connected accounts to resume video syncing.');
     }
     console.warn('YouTube subscription feed fetch:', e.message);
     const stale = postCache.get(key)?.v;
@@ -15461,6 +15464,9 @@ async function fetchYouTubeOwnUploads(token, { bust = false, userId = null, conn
       const newToken = await refreshGoogleAccessToken(userId);
       if (newToken) return fetchYouTubeOwnUploads(newToken, { bust: true, userId, connectedAt, _retried: true });
     }
+    if (/HTTP 401/.test(e.message)) {
+      throw new Error('YouTube access expired or was revoked. Reconnect YouTube in Connected accounts to resume video syncing.');
+    }
     console.warn('YouTube own uploads fetch:', e.message);
     const stale = postCache.get(key)?.v;
     if (stale) return stale;
@@ -20339,9 +20345,8 @@ async function saveSocialToken(userId, platform, token, refreshToken, connectedA
   }
 }
 
-// Online YouTube connections normally have no refresh token. This remains a
-// backward-compatible fallback for older connections that already stored one;
-// newer members reconnect when their access token expires.
+// Offline consent supplies the refresh token needed for ongoing feed sync.
+// Legacy online-only connections must consent once again to obtain one.
 async function refreshGoogleAccessToken(userId) {
   const user = await getUser(userId);
   const refreshToken = user?.socialRefreshTokens?.youtube;
@@ -20655,6 +20660,7 @@ app.get('/social/platforms', authenticate, async (req, res) => {
     return [key, {
       ...PLATFORMS[key],
       connected: connected[key],
+      reconnectRequired: key === 'youtube' && Boolean(token) && !user?.socialRefreshTokens?.youtube,
       connectedAt: token ? connectedSourceWindow(user, key).connectedAt : null,
       syncStartAt: token ? connectedSourceWindow(user, key).startAt : null,
       configured: status.configured,
@@ -31675,6 +31681,9 @@ app.get('/command-center/your-content', authenticate, async (req, res) => {
     res.json({ posts: locationRanked, connectedAt: window.connectedAt, syncStartAt: window.startAt, totalAvailable: locationRanked.length });
   } catch (e) {
     console.error(`[/command-center/your-content] ${platform}:`, e.message);
+    if (platform === 'youtube' && e.message.startsWith('YouTube access expired or was revoked.')) {
+      return res.status(502).json({ message: e.message, reconnectRequired: true });
+    }
     res.status(502).json({ message: `Could not load your ${platform} content right now.` });
   }
 });

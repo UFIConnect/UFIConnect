@@ -448,10 +448,10 @@ function PlatformCard({
             <span style={{ fontWeight: 700, fontSize: '.92rem' }}>{p.name}</span>
             {isConnected && (
               <span style={{
-                fontSize: '.65rem', fontWeight: 700, color: '#059669',
-                background: '#ECFDF5', padding: '1px 6px', borderRadius: 4,
+                fontSize: '.65rem', fontWeight: 700, color: p.reconnectRequired ? '#92400E' : '#059669',
+                background: p.reconnectRequired ? '#FEF3C7' : '#ECFDF5', padding: '1px 6px', borderRadius: 4,
               }}>
-                Connected
+                {p.reconnectRequired ? 'Reconnect needed' : 'Connected'}
               </span>
             )}
             {comingSoon && (
@@ -473,11 +473,13 @@ function PlatformCard({
           </div>
           <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 1 }}>
             {p.description}
+            {isConnected && p.reconnectRequired && <p role="status" style={{ margin: '6px 0 0' }}>Reconnect YouTube once to keep your videos syncing when access expires.</p>}
           </div>
         </div>
 
         {/* Action buttons */}
         <div className="account-platform-card-actions">
+          {isConnected && platformKey === 'youtube' && <button type="button" className="btn btn-outline btn-sm" onClick={onConnect} disabled={connecting || disconnecting || !p.configured}>{connecting ? 'Opening Google…' : 'Reconnect YouTube'}</button>}
           <button onClick={onToggle} className="btn btn-ghost btn-sm" style={{ fontSize: '.72rem', padding: '4px 8px' }}>
             {expanded ? '▲' : '▼'} Details
           </button>

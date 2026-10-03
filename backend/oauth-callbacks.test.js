@@ -28,7 +28,33 @@ test('configured providers send the public callback, independent of Render trans
       assert.equal(authorization.searchParams.get('client_id'), 'test-client-id');
       assert.ok(authorization.searchParams.get('state'));
       assert.equal(authorization.searchParams.has('client_secret'), false);
+      if (provider === 'youtube') {
+        assert.equal(authorization.searchParams.get('access_type'), 'offline');
+        assert.equal(authorization.searchParams.get('prompt'), 'consent');
+        assert.equal(authorization.searchParams.get('scope'), 'https://www.googleapis.com/auth/youtube.readonly');
+        assert.equal(authorization.searchParams.get('code_challenge_method'), 'S256');
+      }
     }
     assert.deepEqual(app.errors, []);
+  } finally { await app.close(); }
+});
+
+test('legacy YouTube connections request re-consent without exposing stored credentials', async () => {
+  const app = await createAppHarness();
+  const user = member('youtube-renewal', { socialTokens: { youtube: 'synthetic-access' } });
+  app.seedUser(user);
+  try {
+    let result = await app.request('/social/platforms', { userId: user.id });
+    assert.equal(result.status, 200);
+    assert.equal(result.data.connected.youtube, true);
+    assert.equal(result.data.platforms.youtube.reconnectRequired, true);
+    await app.saveSocialToken(user.id, 'youtube', 'synthetic-new-access', 'synthetic-refresh');
+    const connectedAt = user.socialConnectedAt.youtube;
+    await app.saveSocialToken(user.id, 'youtube', 'synthetic-renewed-access');
+    assert.equal(user.socialRefreshTokens.youtube, 'synthetic-refresh');
+    assert.equal(user.socialConnectedAt.youtube, connectedAt);
+    result = await app.request('/social/platforms', { userId: user.id });
+    assert.equal(result.data.platforms.youtube.reconnectRequired, false);
+    assert.equal(JSON.stringify(result.data).includes('synthetic-'), false);
   } finally { await app.close(); }
 });
