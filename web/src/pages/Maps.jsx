@@ -243,6 +243,7 @@ export default function Maps() {
     heading.current?.focus();
   }
   const cityControls = <aside className="map-customization-rail" aria-label="Customize your city">
+      <CityAppGuide selected={activeBuilding} onSelect={setActiveBuilding} onAction={exploreBuilding} headingRef={guideHeading} />
       <details className="card city-customize"><summary>Customize your app</summary>
         <p>Choose your nature neighborhoods, add source houses, and keep up to 500 posts in your personal selection. Changes are saved for your account in this browser.</p>
         <div className="local-chip-row">{CITY_CATEGORIES.map(item => <label key={item.id} className="local-check-chip"><input type="checkbox" checked={enabled.includes(item.id)} onChange={() => toggleCategory(item.id)} />{item.label}</label>)}</div>
@@ -288,7 +289,6 @@ export default function Maps() {
         </div></details>
 
       </section>}
-      <CityAppGuide selected={activeBuilding} onSelect={setActiveBuilding} onAction={exploreBuilding} headingRef={guideHeading} />
         </aside>;
   return <Layout wide mobileRightMenu={mobileTools ? {
     label: 'map menu', controls: 'map-mobile-menu', triggerRef: mobileMenuButton,
@@ -297,7 +297,6 @@ export default function Maps() {
     <Helmet><title>Maps · Your city | UFIconnect</title><meta name="robots" content="noindex" /></Helmet>
     <div className="local-workspace city-workspace">
       <header className="local-workspace-heading"><div><span className="local-eyebrow">YOUR WORLD, CONNECTED</span><h1>Maps</h1><p>Choose a city, open its source houses, and save posts about the topics you enjoy.</p></div><div className="map-heading-actions"><span className="local-status-pill">{selected.length} / {limit} posts selected</span></div></header>
-      <ol className="map-get-started"><li><b>1</b><span>Choose your city<small>A landscape for every interest</small></span></li><li><b>2</b><span>Open source houses<small>Pick the topics inside</small></span></li><li><b>3</b><span>Grow your collection<small>Raise your target and save posts</small></span></li></ol>
       <div className="map-explorer-layout">
         <div className="map-explorer-main">
       <CategoryCity cities={allCities} onCivicSelect={showBuilding} houseSummaries={houseSummaries} cityCounts={cityCounts} enabled={enabled} active={active} onSelect={chooseCategory} counts={counts} sources={enabled.includes(active) ? sources : []} activeSource={currentSource} onSourceSelect={openHouse} />
