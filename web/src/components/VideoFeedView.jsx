@@ -11,7 +11,8 @@ import { reportNegativeSignal } from '../api/errorReporting';
 import { ALL_INTERESTS } from '../pages/Onboarding';
 import ConnectedPostActions from './ConnectedPostActions';
 import { SavePostButton } from './SaveButtons';
-import { ChevronDown, Search, SlidersHorizontal, RotateCw, Play, Pause, MessageCircle, Heart, ExternalLink } from 'lucide-react';
+import PostLikes from './PostLikes';
+import { ChevronDown, Search, SlidersHorizontal, RotateCw, Play, Pause, MessageCircle, ExternalLink } from 'lucide-react';
 import { videoDurationSeconds, isShortFeedVideo, videoSourceKey, safeMediaUrl, fitVideoFrame } from '../utils/videoFeedPolicy.mjs';
 import './VideoFeedView.css';
 import './navigation.css';
@@ -205,7 +206,7 @@ function formatTime(sec) {
 // its own top comment) instead of each slide owning/destroying its own.
 // Only meaningful when src.kind === 'youtube'; file/hls/vimeo keep their
 // existing fully-local state below, untouched.
-function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComments, sharedYt, onDurationResolved, controlsVisible }) {
+function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComments, sharedYt, onDurationResolved, controlsVisible, onPostUpdated }) {
   const src = resolveVideoSource(post);
   const meta = SOURCE_META[post.source] || SOURCE_META.uficonnect;
   const fileVideoRef = useRef(null);
@@ -609,7 +610,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           <div className="video-feed-caption-summary">
             <div className="video-feed-byline"><SourceMark source={post.source} label={meta.icon} size={11} /><strong>{post.sourceLabel || meta.label}</strong></div>
             {post.title && <h2>{post.title}</h2>}
-            <span className="video-feed-like-count" aria-label={`Likes ${(post.likesCount || 0).toLocaleString()}`}><Heart size={12} aria-hidden="true" />{(post.likesCount || 0).toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 1 })}</span>
+            <PostLikes post={post} onPostUpdated={onPostUpdated} />
             {(post.title || hasExtraCaption || post.author?.name) && <button type="button" className="video-feed-caption-toggle" onClick={() => setCaptionExpanded(value => !value)} aria-label={captionExpanded ? 'Show less' : 'Read more'} title={captionExpanded ? 'Show less' : 'Read more'} aria-expanded={captionExpanded}><ChevronDown size={16} aria-hidden="true" /></button>}
           </div>
           {captionExpanded && <div className="video-feed-caption-expanded">
@@ -821,6 +822,7 @@ function CommentsSheet({ post, onClose }) {
 
 export default function VideoFeedView({ onExit, music = false }) {
   const [videoPosts, setVideoPosts] = useState([]);
+  const updatePost = useCallback(updated => setVideoPosts(posts => posts.map(post => post.id === updated.id ? { ...post, ...updated } : post)), []);
   const [activeIndex, setActiveIndex] = useState(0);
   const durationCacheRef = useRef(new Map());
   const queueRef = useRef(videoPosts);
@@ -2299,7 +2301,7 @@ export default function VideoFeedView({ onExit, music = false }) {
         </div>}
             {videoPosts.map((post, idx) => <div key={post.id || idx} ref={element => { slideRefs.current[idx] = element; }}
               data-idx={idx} data-post-id={post.id || ''} data-source={post.source || ''} className="video-feed-snap-item">
-              {Math.abs(idx - activeIndex) <= VIDEO_MOUNT_RADIUS ? <VideoSlide post={post} active={idx === activeIndex}
+              {Math.abs(idx - activeIndex) <= VIDEO_MOUNT_RADIUS ? <VideoSlide post={post} onPostUpdated={updatePost} active={idx === activeIndex}
                 controlsVisible={controlsVisible}
                 muted={muted} onToggleMute={toggleMuted} isScrolling={isScrolling} onOpenComments={setCommentsPost}
                 onDurationResolved={onDurationResolved}

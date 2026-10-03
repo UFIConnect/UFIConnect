@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { PGlite } = require('@electric-sql/pglite');
+const { BUSINESS_TEAM_SCHEMA } = require('./business-teams');
 const { createAppHarness, member } = require('./test-support/app-harness');
 const { passwordPolicyError, resolveJwtSecret, publicRoleSettings } = require('./auth-security');
 const { createTokenVault, migrateSocialCredentials } = require('./token-vault');
@@ -215,11 +216,13 @@ test('reset links are single-use even when two reset requests race', async t => 
 test('password and session changes are authoritative across workers and database outages fail closed', async t => {
   const pg = new PGlite();
   t.after(() => pg.close());
-  await pg.exec(`CREATE TABLE users (id UUID PRIMARY KEY, name TEXT, email TEXT UNIQUE, password_hash TEXT, auth_version INTEGER NOT NULL DEFAULT 0);
+  await pg.exec(`CREATE TABLE users (id UUID PRIMARY KEY, name TEXT, email TEXT UNIQUE, password_hash TEXT, auth_version INTEGER NOT NULL DEFAULT 0,
+      organization TEXT, plan TEXT NOT NULL DEFAULT 'free', business_seats INTEGER NOT NULL DEFAULT 0, billing_closed BOOLEAN NOT NULL DEFAULT false);
     CREATE TABLE auth_sessions (id UUID PRIMARY KEY, user_id UUID, expires_at TIMESTAMPTZ);`);
+  for (const sql of BUSINESS_TEAM_SCHEMA) await pg.exec(sql);
   const id = crypto.randomUUID();
   const hash = await bcrypt.hash(oldPassword, 4);
-  await pg.query('INSERT INTO users VALUES ($1,$2,$3,$4,0)', [id, 'Alice', 'alice@example.invalid', hash]);
+  await pg.query('INSERT INTO users(id,name,email,password_hash,auth_version) VALUES ($1,$2,$3,$4,0)', [id, 'Alice', 'alice@example.invalid', hash]);
   let outage = false;
   let sessionOutage = false;
   const app = await createAppHarness({ connected: true, query: (sql, params) => {
@@ -250,11 +253,13 @@ test('password and session changes are authoritative across workers and database
 test('database password updates reject concurrent changes and never report success for a failed write', async t => {
   const pg = new PGlite();
   t.after(() => pg.close());
-  await pg.exec(`CREATE TABLE users (id UUID PRIMARY KEY, name TEXT, email TEXT UNIQUE, password_hash TEXT, auth_version INTEGER NOT NULL DEFAULT 0);
+  await pg.exec(`CREATE TABLE users (id UUID PRIMARY KEY, name TEXT, email TEXT UNIQUE, password_hash TEXT, auth_version INTEGER NOT NULL DEFAULT 0,
+      organization TEXT, plan TEXT NOT NULL DEFAULT 'free', business_seats INTEGER NOT NULL DEFAULT 0, billing_closed BOOLEAN NOT NULL DEFAULT false);
     CREATE TABLE auth_sessions (id UUID PRIMARY KEY, user_id UUID, expires_at TIMESTAMPTZ);`);
+  for (const sql of BUSINESS_TEAM_SCHEMA) await pg.exec(sql);
   const id = crypto.randomUUID();
   const email = 'alice@example.invalid';
-  await pg.query('INSERT INTO users VALUES ($1,$2,$3,$4,0)', [id, 'Alice', email, await bcrypt.hash(newPassword, 4)]);
+  await pg.query('INSERT INTO users(id,name,email,password_hash,auth_version) VALUES ($1,$2,$3,$4,0)', [id, 'Alice', email, await bcrypt.hash(newPassword, 4)]);
   let failPasswordWrite = false;
   let revokeOnAccountRead = 0;
   const query = async (sql, params) => {

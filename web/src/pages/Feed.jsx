@@ -1240,7 +1240,7 @@ function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, location, locati
   );
 }
 
-function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
+function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen, onPostUpdated }) {
   const src = SOURCE_META.youtube;
   const c   = catStyle(post.group?.category);
   const embedId = post.embedId || extractYouTubeId(post.sourceUrl || post.mediaUrl);
@@ -1272,7 +1272,7 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
       ) : null}
       {post.content && <PostText text={post.content} accent={src.color} />}
       <div className="post-chrome-actions">
-        <PostLikes post={post} />
+        <PostLikes post={post} onPostUpdated={onPostUpdated} />
         {originalSourceUrl(post) && <button type="button" className="post-chrome-action" aria-expanded={showComments}
           aria-label={showComments ? 'Hide Comments' : `Show Comments${commentCount ? ` (${commentCount.toLocaleString()})` : ''}`}
           title="Comments" onClick={() => setShowComments(value => !value)}>
@@ -1544,7 +1544,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
   const c   = catStyle(post.group?.category);
   const src = SOURCE_META[post.source] || SOURCE_META.uficonnect;
 
-  if (post.source === 'youtube') return <YouTubeCard post={post} cardRef={cardRef} onMediaOpen={onMediaOpen} isMediaOpen={isMediaOpen} />;
+  if (post.source === 'youtube') return <YouTubeCard post={post} cardRef={cardRef} onMediaOpen={onMediaOpen} isMediaOpen={isMediaOpen} onPostUpdated={onPostUpdated} />;
 
   const isExternal     = post.isExternal;
   const isJob          = JOB_SOURCES.has(post.source);

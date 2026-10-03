@@ -208,6 +208,8 @@ services:
         sync: false
       - key: STRIPE_PRICE_ID_BUSINESS
         sync: false
+      - key: STRIPE_PRICE_ID_BUSINESS_TEAM
+        sync: false
       # Resume Builder is an independent recurring add-on. Set the preferred
       # value below to an active USD $149.94 Price billed every 6 months.
       - key: STRIPE_RESUME_BUILDER_PRICE_ID
@@ -634,6 +636,12 @@ services:
       - type: rewrite
         source: /forgot-password/
         destination: /forgot-password/index.html
+      - type: rewrite
+        source: /recruiting
+        destination: /recruiting/index.html
+      - type: rewrite
+        source: /recruiting/
+        destination: /recruiting/index.html
       - type: rewrite
         source: /analytics
         destination: /analytics/index.html

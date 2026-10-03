@@ -72,8 +72,8 @@ function setup() {
     },
     billingPortal: { sessions: { async create(data) { portalCustomers.push(data.customer); return { url: 'https://billing.stripe.com/test' }; } } },
   };
-  const catalog = { allowedPrices: new Map([['price_pro', 'pro'], ['price_business', 'business'], ['price_resume', 'resume_builder'], ['price_vpn', 'vpn_connector']]),
-    tiers: Object.fromEntries([['pro', 'price_pro'], ['business', 'price_business'], ['resume_builder', 'price_resume'], ['vpn_connector', 'price_vpn']].map(([tier, priceId]) => [tier, { available: true, priceId }])) };
+  const catalog = { allowedPrices: new Map([['price_pro', 'pro'], ['price_business', 'business'], ['price_business_team', 'business_team'], ['price_resume', 'resume_builder'], ['price_vpn', 'vpn_connector']]),
+    tiers: Object.fromEntries([['pro', 'price_pro'], ['business', 'price_business'], ['business_team', 'price_business_team'], ['resume_builder', 'price_resume'], ['vpn_connector', 'price_vpn']].map(([tier, priceId]) => [tier, { available: true, priceId }])) };
   const service = createBilling({ db, stripe, getCatalog: async () => catalog, frontendBase: 'https://uficonnect.org' });
   const sub = (id = 'sub_a', overrides = {}) => {
     const value = { id, customer: 'cus_a', status: 'active', latest_invoice: { status: 'paid' },
@@ -178,21 +178,53 @@ test('VPN location metadata is gated, isolated by owner, bounded, exportable and
   assert.equal((await locations.list(A)).locations.length, 39);
 });
 
-test('VPN validates USD 3.94 monthly pricing but new checkout stays locked until connection service is ready', async t => {
+test('Vault enables hosted checkout only for the active USD 3.94 monthly price', async t => {
   for (const override of [{}, { currency: 'eur' }, { unit_amount: 395 }, { active: false }, { recurring: { interval: 'month', interval_count: 2 } }, { recurring: { interval: 'month', interval_count: 1, usage_type: 'metered' } }]) {
+    const f = setup();
+    const available = Object.keys(override).length === 0;
     const app = await createAppHarness({ connected: true,
+      query: (sql, params) => sql.startsWith('SELECT id FROM auth_sessions')
+        ? { rows: [{ id: params[0] }] } : pg.query(sql, params),
       env: { STRIPE_SECRET_KEY: 'sk_test_fixture', STRIPE_WEBHOOK_SECRET: 'whsec_fixture', STRIPE_VPN_CONNECTOR_PRICE_ID: 'price_vpn' },
-      modules: { stripe: () => ({ prices: { async retrieve() { return { id: 'price_vpn', type: 'recurring', active: true, currency: 'usd', unit_amount: 394, recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' }, ...override }; } } }) },
+      modules: { stripe: () => ({ ...f.stripe, prices: { async retrieve() { return { id: 'price_vpn', type: 'recurring', active: true, currency: 'usd', unit_amount: 394, recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' }, ...override }; } } }) },
     });
     t.after(() => app.close());
-    app.seedUser(member('vpn-buyer'));
+    app.seedUser(member(A));
     const result = await app.request('/billing/config');
-    assert.equal(result.status, 200); assert.equal(result.data.tiers.vpn_connector, false);
+    assert.equal(result.status, 200); assert.equal(result.data.tiers.vpn_connector, available);
+    assert.equal(result.data.paymentsReady, available);
     assert.equal(result.data.pricing.vpn_connector.matchesRequiredPrice, Object.keys(override).length === 0 || Object.keys(override).every(key => key === 'active'));
-    assert.equal(result.data.pricing.vpn_connector.comingSoon, true);
-    const checkout = await app.request('/billing/create-checkout-session', { method: 'POST', userId: 'vpn-buyer', body: { tier: 'vpn_connector' } });
-    assert.equal(checkout.status, 503); assert.match(checkout.data.message, /coming soon/);
+    const checkout = await app.request('/billing/create-checkout-session', { method: 'POST', userId: A, body: { tier: 'vpn_connector' } });
+    if (available) {
+      assert.equal(checkout.status, 200, JSON.stringify({ response: checkout.data, errors: app.errors }));
+      assert.match(checkout.data.url, /^https:\/\/checkout.stripe.com\//);
+      assert.equal(f.creates[0].data.line_items[0].price, 'price_vpn');
+      assert.equal(f.creates[0].data.line_items[0].quantity, 1);
+      assert.match(f.creates[0].data.success_url, /\/vault\?upgrade=success$/);
+      assert.equal((await alice()).vpn_connector_addon, false, 'Opening checkout does not activate unpaid membership');
+    } else {
+      assert.equal(checkout.status, 503); assert.match(checkout.data.message, /Vault checkout is temporarily unavailable/);
+      assert.equal(f.creates.length, 0);
+    }
     assert.equal((await app.request('/vault/vpn/locations')).status, 401);
+  }
+});
+
+test('Vault checkout remains unavailable without webhook, database or configured price', async t => {
+  for (const missing of ['webhook', 'database', 'price']) {
+    const app = await createAppHarness({ connected: missing !== 'database',
+      env: { STRIPE_SECRET_KEY: 'sk_test_fixture', ...(missing === 'webhook' ? {} : { STRIPE_WEBHOOK_SECRET: 'whsec_fixture' }),
+        ...(missing === 'price' ? {} : { STRIPE_VPN_CONNECTOR_PRICE_ID: 'price_vpn' }) },
+      modules: { stripe: () => ({ prices: { async retrieve() { return { id: 'price_vpn', type: 'recurring', active: true, currency: 'usd', unit_amount: 394, recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' } }; } } }) },
+    });
+    t.after(() => app.close());
+    app.seedUser(member('vault-buyer'));
+    const result = await app.request('/billing/config');
+    assert.equal(result.status, 200);
+    assert.equal(result.data.tiers.vpn_connector, false);
+    assert.equal(result.data.paymentsReady, false);
+    const checkout = await app.request('/billing/create-checkout-session', { method: 'POST', userId: 'vault-buyer', body: { tier: 'vpn_connector' } });
+    assert.equal(checkout.status, 503);
   }
 });
 
@@ -349,6 +381,74 @@ test('Business checkout selects its approved price and signed webhooks grant onl
   assert.equal((await app.request('/billing/webhook', { method: 'POST', body: paid, headers: signed(paid) })).status, 200);
   assert.equal((await alice()).plan, 'business');
   assert.equal((await alice()).stripe_subscription_id, 'sub_business');
+});
+
+test('Business team checkout persists quantities and rejects changed, fractional, and non-Business quantities', async () => {
+  const f = setup();
+  for (const quantity of [0, -1, 1.5, 101, '2', null]) await assert.rejects(f.service.createCheckout(A, 'business', quantity), { status: 400 });
+  await assert.rejects(f.service.createCheckout(A, 'pro', 2), { status: 400 });
+  const result = await f.service.createCheckout(A, 'business', 3);
+  assert.equal(f.creates[0].data.line_items[0].price, 'price_business_team');
+  assert.equal(f.creates[0].data.line_items[0].quantity, 3);
+  assert.equal((await f.service.createCheckout(A, 'business', 3)).url, result.url);
+  await assert.rejects(f.service.createCheckout(A, 'business', 4), { status: 409 });
+  await assert.rejects(f.service.createCheckout(A, 'business', 1), { status: 409 });
+  const pending = (await pg.query('SELECT quantity FROM billing_checkout_attempts WHERE user_id=$1', [A])).rows[0];
+  assert.equal(pending.quantity, 3);
+});
+
+test('paid Business team quantities control access and invoice failure clears all seats', async () => {
+  const f = setup();
+  const business = { metadata: { tier: 'business', quantity: '100', uficonnect_user_id: A },
+    items: { data: [{ price: { id: 'price_business_team' }, quantity: 3 }] } };
+  f.sub('sub_business_team', { ...business, latest_invoice: { status: 'open' } });
+  await f.service.handleEvent(f.event('evt_team_unpaid', 'customer.subscription.created', { id: 'sub_business_team', customer: 'cus_a' }));
+  assert.equal((await alice()).business_seats, 0);
+  f.sub('sub_business_team', business);
+  await f.service.handleEvent(f.event('evt_team_paid', 'invoice.paid', { subscription: 'sub_business_team', customer: 'cus_a' }));
+  assert.equal((await alice()).plan, 'business');
+  assert.equal((await f.service.status(A)).businessSeats, 3);
+  f.sub('sub_business_team', { ...business, items: { data: [{ price: { id: 'price_business_team' }, quantity: 1 }] } });
+  await f.service.handleEvent(f.event('evt_team_too_small', 'customer.subscription.updated', { id: 'sub_business_team', customer: 'cus_a' }));
+  assert.equal((await alice()).plan, 'free'); assert.equal((await alice()).business_seats, 0);
+  f.sub('sub_business_team', business);
+  await f.service.handleEvent(f.event('evt_team_restored', 'invoice.paid', { subscription: 'sub_business_team', customer: 'cus_a' }));
+  f.sub('sub_business_team', { ...business, status: 'past_due', latest_invoice: { status: 'open' } });
+  await f.service.handleEvent(f.event('evt_team_failed', 'invoice.payment_failed', { subscription: 'sub_business_team', customer: 'cus_a' }));
+  assert.equal((await alice()).plan, 'free'); assert.equal((await alice()).business_seats, 0);
+});
+
+test('new Business checkout rejects wrong amount, currency, cadence, or tiered price', async t => {
+  const invalid = [
+    { unit_amount: 5994 }, { currency: 'eur' },
+    { recurring: { interval: 'year', interval_count: 1 } },
+    { recurring: { interval: 'month', interval_count: 2 } },
+    { billing_scheme: 'tiered', tiers_mode: 'volume', tiers: [{ up_to: null, unit_amount: 19994 }] },
+  ];
+  for (const override of invalid) {
+    const app = await createAppHarness({ connected: true,
+      env: { STRIPE_SECRET_KEY: 'sk_test_fixture', STRIPE_WEBHOOK_SECRET: 'whsec_fixture', STRIPE_PRICE_ID_BUSINESS: 'price_wrong' },
+      modules: { stripe: () => ({ prices: { async retrieve(id) { return { id, type: 'recurring', active: true, currency: 'usd', unit_amount: 19994, recurring: { interval: 'month', interval_count: 1 }, ...override }; } } }) },
+    });
+    try { const config = await app.request('/billing/config'); assert.equal(config.status, 200); assert.equal(config.data.tiers.business, false); }
+    finally { await app.close(); }
+  }
+});
+
+test('a portal seat increase keeps paid seats until the proration invoice is paid', async () => {
+  const f = setup();
+  const business = { metadata: { tier: 'business', uficonnect_user_id: A },
+    items: { data: [{ price: { id: 'price_business_team' }, quantity: 2 }] } };
+  f.sub('sub_team', business);
+  await f.service.handleEvent(f.event('evt_team_initial', 'customer.subscription.created', { id: 'sub_team', customer: 'cus_a' }));
+  assert.equal((await alice()).business_seats, 2);
+  const expanded = { ...business, items: { data: [{ price: { id: 'price_business_team' }, quantity: 5 }] } };
+  f.sub('sub_team', { ...expanded, latest_invoice: { status: 'open', billing_reason: 'subscription_update' } });
+  await f.service.handleEvent(f.event('evt_team_expanding', 'customer.subscription.updated', { id: 'sub_team', customer: 'cus_a' }));
+  assert.equal((await alice()).plan, 'business'); assert.equal((await alice()).business_seats, 2);
+  f.sub('sub_team', expanded);
+  await f.service.handleEvent(f.event('evt_team_expanded', 'invoice.paid', { subscription: 'sub_team', customer: 'cus_a' }));
+  assert.equal((await alice()).business_seats, 5);
 });
 
 test('Pro and Resume Builder have independent durable checkout slots and repeat requests reuse each', async () => {
@@ -522,14 +622,15 @@ test('public billing config reports the verified tiered Pro price and authentica
   assert.equal((await app.request('/billing/create-portal-session', { method: 'POST', body: {} })).status, 401);
 });
 
-test('public config enables configured Business and exactly priced six-month Resume Builder', async t => {
+test('public config enables exact Business prices and six-month Resume Builder', async t => {
   const prices = {
-    price_business: { unit_amount: 5994, recurring: { interval: 'month', interval_count: 1 } },
+    price_business: { unit_amount: 19994, recurring: { interval: 'month', interval_count: 1 } },
+    price_business_team: { unit_amount: 1994, recurring: { interval: 'month', interval_count: 1 } },
     price_resume: { unit_amount: 14994, recurring: { interval: 'month', interval_count: 6 } },
   };
   const app = await createAppHarness({ connected: true,
     env: { STRIPE_SECRET_KEY: 'sk_test_fixture', STRIPE_WEBHOOK_SECRET: 'whsec_fixture',
-      STRIPE_PRICE_ID_BUSINESS: 'price_business', STRIPE_RESUME_BUILDER_PRICE_ID: 'price_resume' },
+      STRIPE_PRICE_ID_BUSINESS: 'price_business', STRIPE_PRICE_ID_BUSINESS_TEAM: 'price_business_team', STRIPE_RESUME_BUILDER_PRICE_ID: 'price_resume' },
     modules: { stripe: () => ({ prices: { async retrieve(id, options) {
       assert.ok(prices[id]); assert.deepEqual(Array.from(options.expand), ['tiers']);
       return { id, type: 'recurring', active: true, currency: 'usd', ...prices[id] };
@@ -539,7 +640,9 @@ test('public config enables configured Business and exactly priced six-month Res
   const config = await app.request('/billing/config');
   assert.equal(config.status, 200); assert.equal(config.data.paymentsReady, true);
   assert.equal(config.data.tiers.pro, false); assert.equal(config.data.tiers.business, true);
-  assert.equal(config.data.pricing.business.unitAmount, 5994);
+  assert.equal(config.data.pricing.business.unitAmount, 19994);
+  assert.equal(config.data.tiers.business_team, true);
+  assert.equal(config.data.pricing.business_team.unitAmount, 1994);
   assert.equal(config.data.tiers.resume_builder, true);
   assert.equal(config.data.pricing.resume_builder.unitAmount, 14994);
   assert.equal(config.data.pricing.resume_builder.interval, 'month');

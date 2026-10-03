@@ -7,7 +7,7 @@ const subscribe = callback => {
 const preference = () => window.__ufiAppearance?.preference || 'system';
 const serverPreference = () => 'system';
 
-export default function AppearanceControl({ compact = false }) {
+export default function AppearanceControl({ compact = false, business = false }) {
   const id = useId();
   const selected = useSyncExternalStore(subscribe, preference, serverPreference);
   return <div className={'appearance-control' + (compact ? ' appearance-control--compact' : '')}>
@@ -17,6 +17,6 @@ export default function AppearanceControl({ compact = false }) {
       <option value="light">Light</option>
       <option value="dark">Dark</option>
     </select>
-    {!compact && <p>Light or Dark for all of UFIconnect, including Your Vault. Auto follows your device appearance. Saved on this browser.</p>}
+    {!compact && <p>{business ? 'Choose Light or Dark for your recruiting workspace.' : 'Light or Dark for all of UFIconnect, including Your Vault.'} Auto follows your device appearance. Saved on this browser.</p>}
   </div>;
 }

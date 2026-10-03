@@ -1972,10 +1972,10 @@ export default function CommandCenter() {
     window.requestAnimationFrame(() => document.getElementById(`command-center-tab-${nextSection.key}`)?.focus());
   }
 
-  async function handleUpgrade(tier) {
+  async function handleUpgrade(tier, quantity = 1) {
     setUpgrading(tier);
     try {
-      const { data } = await client.post('/billing/create-checkout-session', { tier });
+      const { data } = await client.post('/billing/create-checkout-session', { tier, quantity });
       window.location.href = data.url;
     } catch (err) {
       showToast(err?.response?.data?.message || 'Could not start checkout. Please try again.', 'error');

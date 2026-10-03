@@ -17,9 +17,9 @@ export const TIERS = [
     tier: 'business',
     name: 'Business',
     price: '199.94',
-    tagline: 'For hiring teams',
+    tagline: 'For recruiting companies',
     icon: 'Biz',
-    note: 'Career sources, role-matched opportunities, and hiring workflows.',
+    note: 'One person: $199.94/month. Teams of 2 or more: $19.94 per person/month. Includes a workspace for recruiting and career sources.',
   },
 ];
 
@@ -29,6 +29,7 @@ export const TIERS = [
 // configured in Render.
 export default function PricingModal({ onClose, onSelectTier, loadingTier, error }) {
   const [billingConfig, setBillingConfig] = useState(null);
+  const [businessPeople, setBusinessPeople] = useState('1');
   const closeButton = useRef(null);
 
   useEffect(() => {
@@ -51,7 +52,7 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier, error
       onKeyDown={event => {
         if (event.key === 'Escape' && !loadingTier) onClose();
         if (event.key !== 'Tab') return;
-        const controls = [...event.currentTarget.querySelectorAll('button:not(:disabled), a[href]')];
+        const controls = [...event.currentTarget.querySelectorAll('button:not(:disabled), input:not(:disabled), a[href]')];
         const first = controls[0]; const last = controls.at(-1);
         if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
@@ -81,8 +82,11 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier, error
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {TIERS.map(t => {
-            const pricing = billingConfig?.pricing?.[t.tier];
-            const available = billingConfig?.paymentsReady === true && billingConfig?.tiers?.[t.tier] === true && pricing?.active === true && pricing?.display && pricing?.interval;
+            const quantity = t.tier === 'business' ? Number(businessPeople) : 1;
+            const validQuantity = Number.isInteger(quantity) && quantity >= 1 && quantity <= 100;
+            const priceTier = t.tier === 'business' && quantity >= 2 ? 'business_team' : t.tier;
+            const pricing = billingConfig?.pricing?.[priceTier];
+            const available = validQuantity && billingConfig?.paymentsReady === true && billingConfig?.tiers?.[priceTier] === true && pricing?.active === true && pricing?.display && pricing?.interval;
             const unavailable = !available;
             const unavailableLabel = !billingConfig ? 'CHECKING' : !available ? 'UNAVAILABLE' : '';
             const cadence = pricing?.intervalCount > 1 ? `every ${pricing.intervalCount} ${pricing.interval}s` : `every ${pricing?.interval}`;
@@ -114,14 +118,20 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier, error
                 <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 2 }}>{t.tagline}</div>
               </div>
               <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                <div style={{ fontWeight: 800, fontSize: '1.05rem' }}>{pricing?.display || '—'}</div>
+                <div style={{ fontWeight: 800, fontSize: '1.05rem' }}>{pricing?.display && validQuantity ? t.tier === 'business' ? new Intl.NumberFormat('en-US', { style: 'currency', currency: pricing.currency }).format(pricing.unitAmount * quantity / 100) : pricing.display : '—'}</div>
                 <div style={{ fontSize: '.68rem', color: 'var(--muted)' }}>{pricing?.interval ? cadence : 'Price unavailable'}</div>
+                {t.tier === 'business' && quantity >= 2 && <div style={{ fontSize: '.68rem', color: 'var(--muted)' }}>Total for {quantity} people</div>}
               </div>
+              {t.tier === 'business' && <label style={{ display: 'grid', gridColumn: '2 / -1', gap: 6, fontSize: '.78rem' }}>Number of people, including you
+                <input type="number" min="1" max="100" step="1" value={businessPeople} disabled={!!loadingTier} onChange={event => setBusinessPeople(event.target.value)} style={{ width: 90, padding: 8 }} />
+                <span>{quantity >= 2 ? '$19.94 per person/month (2–100 people)' : '$199.94/month for one person'}</span>
+                {!validQuantity && <span role="alert">Enter a whole number from 1 to 100.</span>}
+              </label>}
               <button
                 type="button"
                 className="btn btn-primary btn-sm membership-choose"
                 disabled={!!loadingTier || unavailable}
-                onClick={() => onSelectTier(t.tier)}
+                onClick={() => onSelectTier(t.tier, quantity)}
                 style={{ flexShrink: 0 }}
               >
                 {unavailable ? 'Unavailable' : (loadingTier === t.tier ? 'Opening checkout…' : `Choose ${t.name}`)}

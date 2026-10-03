@@ -97,6 +97,7 @@ function PlanCard({ title, price, tagline }) {
         ${price}<small>/mo</small>
       </div>
       <p>{tagline}</p>
+      {title === 'Business' && <p>One person: $199.94/month. Teams of 2 or more: $19.94 per person/month.</p>}
       <Link to="/settings" className="landing-plan-link">View {title} membership</Link>
     </div>
   );

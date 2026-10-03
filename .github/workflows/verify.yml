@@ -26,6 +26,7 @@ jobs:
       - run: npm test --prefix backend
       - run: node --test scripts/office-security.test.mjs scripts/web-security.test.mjs scripts/office-city.test.mjs scripts/office-recovery.test.mjs
       - run: node --test scripts/analytics.test.mjs scripts/data-preferences.test.mjs
+      - run: node --test web/src/businessRoutes.test.mjs
       - run: node --test scripts/local-web-workbench.test.mjs scripts/local-phone-access.test.mjs
       - run: node --test scripts/account-vault.test.mjs scripts/vault-crypto.test.mjs scripts/vault-files.test.mjs scripts/vault-launch-preferences.test.mjs scripts/local-vault-vpn.test.mjs scripts/city-topic-targets.test.mjs
       - run: node scripts/sync-analytics-bridge.mjs --check
@@ -44,6 +45,9 @@ jobs:
       - run: node scripts/audit-public-seo.mjs
       - run: node scripts/audit-member-startup.mjs
       - run: node scripts/audit-memberships.mjs
+      - run: node scripts/audit-business.mjs
+      - run: node scripts/audit-business-team.mjs
+      - run: node scripts/audit-post-likes.mjs
       - run: node scripts/audit-confirmations.mjs
       - run: node scripts/audit-analytics.mjs
       - run: node scripts/audit-data-preferences.mjs

@@ -4,6 +4,7 @@ const { randomUUID } = require('node:crypto');
 // payment credentials, card numbers, CVCs, or billing addresses.
 const BILLING_SCHEMA = [
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS billing_closed BOOLEAN NOT NULL DEFAULT false`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS business_seats INTEGER NOT NULL DEFAULT 0 CHECK (business_seats BETWEEN 0 AND 100)`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS vpn_connector_addon BOOLEAN NOT NULL DEFAULT false`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS vpn_connector_subscription_id TEXT`,
   `CREATE UNIQUE INDEX IF NOT EXISTS users_vpn_connector_sub_idx ON users(vpn_connector_subscription_id) WHERE vpn_connector_subscription_id IS NOT NULL`,
@@ -30,6 +31,7 @@ const BILLING_SCHEMA = [
   `ALTER TABLE billing_checkout_attempts
     DROP CONSTRAINT IF EXISTS billing_checkout_attempts_slot_check,
     ADD CONSTRAINT billing_checkout_attempts_slot_check CHECK (slot IN ('plan', 'resume_builder', 'vpn_connector'))`,
+  `ALTER TABLE billing_checkout_attempts ADD COLUMN IF NOT EXISTS quantity INTEGER NOT NULL DEFAULT 1 CHECK (quantity BETWEEN 1 AND 100)`,
 ];
 const EVENT_TYPES = new Set([
   'checkout.session.completed', 'checkout.session.async_payment_succeeded',
@@ -95,8 +97,11 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
   }
   function tierFor(subscription, catalog) {
     const items = subscription.items?.data || [];
-    if (items.length !== 1 || items[0].quantity !== 1) return null;
-    return catalog.allowedPrices.get(idOf(items[0].price)) || null;
+    if (items.length !== 1) return null;
+    const tier = catalog.allowedPrices.get(idOf(items[0].price));
+    const quantity = items[0].quantity;
+    if (tier === 'business_team') return Number.isInteger(quantity) && quantity >= 2 && quantity <= 100 ? 'business' : null;
+    return quantity === 1 ? tier || null : null;
   }
   const readSubscription = id => stripe.subscriptions.retrieve(id, { expand: ['latest_invoice'] });
   async function hasPaidInvoice(subscription) {
@@ -130,7 +135,17 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
     } else if (slot === 'resume_builder') {
       result = await client.query('UPDATE users SET resume_builder_addon=$1, resume_builder_subscription_id=$2 WHERE id=$3 RETURNING *', [active, linkedId, row.id]);
     } else {
-      result = await client.query('UPDATE users SET plan=$1, stripe_subscription_id=$2 WHERE id=$3 RETURNING *', [active ? tier : 'free', linkedId, row.id]);
+      let plan = active ? tier : 'free';
+      let seats = active && tier === 'business' ? subscription.items.data[0].quantity : 0;
+      if (active && tier === 'business' && (row.plan !== 'business' || seats > row.business_seats) && subscription.status !== 'trialing') {
+        const invoice = typeof subscription.latest_invoice === 'string'
+          ? await stripe.invoices.retrieve(subscription.latest_invoice) : subscription.latest_invoice;
+        // An active subscription can have an open proration invoice while a
+        // portal upgrade is awaiting payment. Keep the previously paid plan
+        // and seats until the invoice confirms the expanded membership.
+        if (invoice?.status !== 'paid') { plan = row.plan || 'free'; seats = row.business_seats || 0; }
+      }
+      result = await client.query('UPDATE users SET plan=$1, stripe_subscription_id=$2, business_seats=$4 WHERE id=$3 RETURNING *', [plan, linkedId, row.id, seats]);
     }
     Object.assign(row, result.rows[0]);
     return wrongKind ? 'wrong_subscription_kind' : tier ? 'reconciled' : 'unsupported_price';
@@ -206,12 +221,16 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
       throw fault(409, 'A subscription already exists. Use Manage billing to update it or recover a failed payment.');
     }
   }
-  async function createCheckout(userId, tier) {
+  async function createCheckout(userId, tier, quantity = 1) {
     if (!TIERS.includes(tier)) throw fault(400, 'Choose a valid subscription tier.');
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100 || (tier !== 'business' && quantity !== 1)) {
+      throw fault(400, 'Business supports 1 to 100 people. Other memberships are for one person.');
+    }
     available();
     const catalog = await getCatalog();
-    const priceId = catalog.tiers[tier]?.available && catalog.tiers[tier].priceId;
-    if (!priceId) throw fault(503, catalog.tiers[tier]?.unavailableMessage || 'This subscription is not available yet.');
+    const priceTier = tier === 'business' && quantity >= 2 ? 'business_team' : tier;
+    const priceId = catalog.tiers[priceTier]?.available && catalog.tiers[priceTier].priceId;
+    if (!priceId) throw fault(503, catalog.tiers[priceTier]?.unavailableMessage || 'This subscription is not available yet.');
     const slot = slotFor(tier);
     // Persist the attempt BEFORE the remote API call. A crash after Stripe
     // accepts a request reuses this key, including on a different API worker.
@@ -236,7 +255,7 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
             && slotFor(existing.metadata.tier) === slot) {
             const items = await stripe.checkout.sessions.listLineItems(existing.id, { limit: 2 });
             if (existing.metadata.tier !== tier || items.data.length !== 1
-              || items.data[0].quantity !== 1 || idOf(items.data[0].price) !== priceId) {
+              || items.data[0].quantity !== quantity || idOf(items.data[0].price) !== priceId) {
               throw fault(409, 'An existing checkout is open for another plan or price. Finish it or wait for it to expire before changing plans.');
             }
             legacySession = existing.id;
@@ -244,9 +263,9 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
           }
         }
       }
-      await client.query(`INSERT INTO billing_checkout_attempts(user_id,slot,attempt_id,tier,price_id,customer_id,return_base)
-        VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (user_id,slot) DO NOTHING`,
-      [row.id, slot, randomUUID(), tier, priceId, customer, frontendBase]);
+      await client.query(`INSERT INTO billing_checkout_attempts(user_id,slot,attempt_id,tier,price_id,customer_id,return_base,quantity)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (user_id,slot) DO NOTHING`,
+      [row.id, slot, randomUUID(), tier, priceId, customer, frontendBase, quantity]);
       if (legacySession) await client.query('UPDATE billing_checkout_attempts SET session_id=$1 WHERE user_id=$2 AND slot=$3 AND session_id IS NULL', [legacySession, row.id, slot]);
     });
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -266,26 +285,26 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
             return { complete: true };
           }
           if (existing.status === 'open') {
-            if (pending.tier !== tier || pending.price_id !== priceId) throw fault(409, 'An existing checkout is open for another plan. Finish it or wait for it to expire before changing plans.');
+            if (pending.tier !== tier || pending.price_id !== priceId || pending.quantity !== quantity) throw fault(409, 'An existing checkout is open for another plan or number of people. Finish it or wait for it to expire before changing plans.');
             return existing;
           }
           if (existing.status !== 'expired') throw fault(409, 'Checkout status needs review.');
           await client.query(`UPDATE billing_checkout_attempts SET attempt_id=$1,tier=$2,price_id=$3,
-            session_id=NULL,return_base=$4,created_at=NOW() WHERE user_id=$5 AND slot=$6`,
-          [randomUUID(), tier, priceId, frontendBase, userId, slot]);
+            session_id=NULL,return_base=$4,created_at=NOW(),quantity=$7 WHERE user_id=$5 AND slot=$6`,
+          [randomUUID(), tier, priceId, frontendBase, userId, slot, quantity]);
           renewed = true;
           return null;
         }
         // Stripe may prune idempotency keys after 24 hours. An unresolved
         // older attempt needs reconciliation, never a speculative new charge.
         if (Date.now() - new Date(pending.created_at).getTime() >= 23 * 3600000) throw fault(409, 'An earlier checkout needs reconciliation. Please contact support before starting another payment.');
-        if (pending.tier !== tier || pending.price_id !== priceId) throw fault(409, 'An earlier checkout is pending for another plan.');
+        if (pending.tier !== tier || pending.price_id !== priceId || pending.quantity !== quantity) throw fault(409, 'An earlier checkout is pending for another plan or number of people.');
         const path = slot === 'vpn_connector' ? '/vault' : slot === 'resume_builder' ? '/resume-builder' : '/settings';
         const created = await stripe.checkout.sessions.create({
           mode: 'subscription', customer: pending.customer_id,
-          line_items: [{ price: pending.price_id, quantity: 1 }],
-          metadata: { tier, uficonnect_user_id: userId, uficonnect_attempt_id: pending.attempt_id },
-          subscription_data: { metadata: { tier, uficonnect_user_id: userId } },
+          line_items: [{ price: pending.price_id, quantity: pending.quantity }],
+          metadata: { tier, quantity: String(pending.quantity), uficonnect_user_id: userId, uficonnect_attempt_id: pending.attempt_id },
+          subscription_data: { metadata: { tier, quantity: String(pending.quantity), uficonnect_user_id: userId } },
           phone_number_collection: { enabled: false }, client_reference_id: userId,
           success_url: `${pending.return_base}${path}?upgrade=success`,
           cancel_url: `${pending.return_base}${path}?upgrade=cancelled`,
@@ -366,7 +385,7 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
         }
       }
       updated = row;
-      return { plan: row.plan || 'free', resumeBuilderAddon: !!row.resume_builder_addon, vpnConnectorAddon: !!row.vpn_connector_addon,
+      return { plan: row.plan || 'free', businessSeats: row.business_seats || 0, resumeBuilderAddon: !!row.resume_builder_addon, vpnConnectorAddon: !!row.vpn_connector_addon,
         hasBillingAccount: !!row.stripe_customer_id, subscriptions,
         paymentProvider: 'stripe', management: 'hosted_portal' };
     });

@@ -77,6 +77,10 @@ async function exportAccountData(db, userId) {
       FROM users WHERE id=$1`);
     const result = { exportedAt: new Date().toISOString(), formatVersion: 2, profile, billing };
     const collections = {
+      businessTeamSeats: `SELECT owner_id AS "ownerId",member_id AS "memberId",joined_at AS "joinedAt"
+        FROM business_team_members WHERE owner_id=$1 OR member_id=$1 ORDER BY owner_id,joined_at,member_id`,
+      businessTeamInvitations: `SELECT id,owner_id AS "ownerId",invitee_id AS "inviteeId",email,created_at AS "createdAt",expires_at AS "expiresAt"
+        FROM business_team_invitations WHERE owner_id=$1 OR invitee_id=$1 ORDER BY created_at,id`,
       vpnLocations: `SELECT id,platform,name,country FROM vault_vpn_locations WHERE user_id=$1 ORDER BY country,name,id`,
       copyrightReports: `SELECT id,source,source_url AS "sourceUrl",reason,status,created_at AS "createdAt" FROM creator_copyright_reports WHERE user_id=$1 ORDER BY created_at,id`,
       sourceInteractionRequests: `SELECT request_id AS "requestId",source,source_post_id AS "sourcePostId",action,status,created_at AS "createdAt" FROM source_interaction_audit WHERE user_id=$1 ORDER BY created_at,request_id`,

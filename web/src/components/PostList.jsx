@@ -1,6 +1,8 @@
 ﻿import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import client from '../api/client';
+import PostLikes from './PostLikes';
+import { PostTime } from './PostCardChrome';
 import ImageLightbox from './ImageLightbox';
 import { InlineAutoplayVideo } from './videoMedia';
 import { SavePostButton } from './SaveButtons';
@@ -51,7 +53,6 @@ export default function PostList({
   onNearEnd = null,
 }) {
   const [localPosts, setLocalPosts] = useState(posts);
-  const [likeBusy, setLikeBusy] = useState({});
   const [openComments, setOpenComments] = useState({});
   const [commentsByPost, setCommentsByPost] = useState({});
   const [commentsLoading, setCommentsLoading] = useState({});
@@ -104,23 +105,6 @@ export default function PostList({
       post.id === updatedPost.id ? { ...post, ...updatedPost } : post
     ));
     onPostUpdated?.(updatedPost);
-  }
-
-  async function toggleLike(post) {
-    if (!interactive || likeBusy[post.id]) return;
-    setLikeBusy(prev => ({ ...prev, [post.id]: true }));
-    try {
-      const { data } = await client.post(`/posts/${encodeURIComponent(post.id)}/like`);
-      updatePost(data.post || {
-        ...post,
-        likedByMe: data.likedByMe,
-        likesCount: data.likesCount,
-      });
-    } catch {
-      // Keep the existing state if the action fails.
-    } finally {
-      setLikeBusy(prev => ({ ...prev, [post.id]: false }));
-    }
   }
 
   async function toggleComments(post) {
@@ -244,9 +228,7 @@ export default function PostList({
                   </div>
                 </Link>
                 <span style={{ fontSize: '.7rem', color: 'var(--muted)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Link to={`/p/${encodeURIComponent(post.id)}`} style={{ color: 'inherit', textDecoration: 'none' }}>
-                    {timeAgo(post.createdAt)}
-                  </Link>
+                  <PostTime post={post} />
                   {currentUserId && post.authorId === currentUserId && (
                     <button
                       type="button"
@@ -266,9 +248,7 @@ export default function PostList({
                   {post.group?.name || 'UFIconnect'}
                 </span>
                 <span style={{ fontSize: '.7rem', color: 'var(--muted)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Link to={`/p/${encodeURIComponent(post.id)}`} style={{ color: 'inherit', textDecoration: 'none' }}>
-                    {timeAgo(post.createdAt)}
-                  </Link>
+                  <PostTime post={post} />
                   {currentUserId && post.authorId === currentUserId && (
                     <button
                       type="button"
@@ -330,15 +310,7 @@ export default function PostList({
 
             {isShopPost && <ShopPostDetails post={post} />}
             <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap', alignItems: 'center', borderTop: '1px solid var(--border)', paddingTop: 10 }}>
-              <button
-                type="button"
-                onClick={() => toggleLike(post)}
-                disabled={!interactive || likeBusy[post.id]}
-                className={post.likedByMe ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}
-                style={{ minWidth: 86 }}
-              >
-                {post.likedByMe ? 'Liked' : 'Like'} {post.likesCount || 0}
-              </button>
+              <PostLikes post={post} onPostUpdated={updatePost} />
 
               <button
                 type="button"

@@ -38,8 +38,8 @@ try {
         return fulfill({ stripeConfigured: true, webhookConfigured: true, paymentsReady: ready,
           tiers: { pro: ready, business: ready && businessReady, resume_builder: ready },
           pricing: {
-            pro: { active: true, display: '$19.94', currency: 'USD', interval: 'month', intervalCount: 1 },
-            business: businessReady ? { active: true, display: '$199.94', currency: 'USD', interval: 'month', intervalCount: 1 } : null,
+            pro: { active: true, display: '$19.94', unitAmount: 1994, currency: 'USD', interval: 'month', intervalCount: 1 },
+            business: businessReady ? { active: true, display: '$199.94', unitAmount: 19994, currency: 'USD', interval: 'month', intervalCount: 1 } : null,
             resume_builder: { active: true, matchesRequiredPrice: true, display: '$149.94', currency: 'USD', interval: 'month', intervalCount: 6 },
           },
         });
@@ -67,7 +67,7 @@ try {
     await dialog.getByRole('button', { name: 'Choose Pro', exact: true }).click();
     await page.getByText('Could not open secure billing. Please try again.', { exact: true }).waitFor();
     check(page.url().startsWith(server.origin), 'An untrusted checkout URL never receives the browser');
-    assert.deepEqual(requests, [{ tier: 'pro' }]); checks++;
+    assert.deepEqual(requests, [{ tier: 'pro', quantity: 1 }]); checks++;
     await dialog.getByRole('button', { name: 'Close', exact: true }).click();
     businessReady = true;
     await upgrade.click();
@@ -76,7 +76,7 @@ try {
     check(await dialog.getByText('$199.94', { exact: true }).isVisible(), 'Business shows its configured recurring price');
     await dialog.getByRole('button', { name: 'Choose Business', exact: true }).click();
     await page.getByText('Could not open secure billing. Please try again.', { exact: true }).waitFor();
-    assert.deepEqual(requests.at(-1), { tier: 'business' }); checks++;
+    assert.deepEqual(requests.at(-1), { tier: 'business', quantity: 1 }); checks++;
     await dialog.getByRole('button', { name: 'Close', exact: true }).click();
     ready = false;
     await upgrade.click();
