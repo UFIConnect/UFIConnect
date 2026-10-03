@@ -7,6 +7,8 @@
     "node": "^22.13.0 || >=24.3.0"
   },
   "scripts": {
+    "postinstall": "node security/dependencyPatches.cjs",
+    "audit:security": "node --test security/dependencyBackports.test.js && node security/dependencyAudit.cjs",
     "prepare:analytics": "node scripts/prepare-analytics.mjs",
     "prestart": "npm run prepare:analytics",
     "preandroid": "npm run prepare:analytics",
@@ -20,7 +22,7 @@
     "export": "expo export --platform all",
     "doctor": "expo-doctor",
     "test:export": "node scripts/audit-export.mjs",
-    "test:security": "node --test security/security.test.js security/dependencyCompatibility.test.js analytics/screenPolicy.test.js analytics/serviceMetrics.test.js",
+    "test:security": "node --test security/security.test.js security/dependencyCompatibility.test.js security/dependencyBackports.test.js analytics/screenPolicy.test.js analytics/serviceMetrics.test.js",
     "test:analytics": "node scripts/audit-analytics.mjs && node scripts/audit-preferences.mjs"
   },
   "dependencies": {

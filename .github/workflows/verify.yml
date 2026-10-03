@@ -94,7 +94,7 @@ jobs:
       - run: npm ci
       - run: npm ci --prefix mobile
       - run: npm run test:security --prefix mobile
-      - run: npm audit --prefix mobile --audit-level=high
+      - run: npm run audit:security --prefix mobile
       - run: npm run doctor --prefix mobile
       - run: npm run export -- --output-dir .cache/export-sdk57
         working-directory: mobile
@@ -105,5 +105,7 @@ jobs:
         if: always()
         with:
           name: native-web-security-screenshots
-          path: mobile/.cache/export-security-*.png
+          path: |
+            mobile/.cache/export-security-*.png
+            mobile/.cache/dependency-audit.json
           include-hidden-files: true

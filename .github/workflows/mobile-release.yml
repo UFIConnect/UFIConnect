@@ -59,7 +59,7 @@ jobs:
         run: npm run test:security
 
       - name: Check known dependency advisories
-        run: npm audit --audit-level=high
+        run: npm run audit:security
 
       - name: Validate Expo configuration
         run: npm run doctor
@@ -82,6 +82,14 @@ jobs:
         with:
           eas-version: latest
           token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Preserve dependency audit evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mobile-dependency-audit
+          path: mobile/.cache/dependency-audit.json
+          include-hidden-files: true
 
       - name: Queue EAS build
         env:
