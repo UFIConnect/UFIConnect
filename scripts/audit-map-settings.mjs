@@ -85,7 +85,8 @@ try {
       await (width < 600 ? tools : actions).getByRole('button', { name: 'Apply changes', exact: true }).click();
     };
     try {
-      await page.getByRole('heading', { name: 'reddit map post', exact: true }).waitFor();
+      // Initial navigation also initializes the scene on software-rendered CI.
+      await page.getByRole('heading', { name: 'reddit map post', exact: true }).waitFor({ timeout: 30000 });
       assert.equal(await actions.locator('xpath=ancestor::*[contains(@class,"map-city-card")]').count(), 1, 'Apply, Source feed and Refresh belong inside the map');
       assert.equal(await page.getByRole('button', { name: /^Your selection/ }).count(), 0);
       assert.equal(await page.locator('.city-post input[type="checkbox"]').count(), 0);
