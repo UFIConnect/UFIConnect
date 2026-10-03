@@ -205,7 +205,10 @@ try {
       await closeTools();
 
       await page.reload();
-      await page.getByRole('heading', { name: 'uficonnect map post', exact: true }).waitFor();
+      // A full reload restores auth and initializes the 3D scene again. The CI
+      // trace shows software rendering can take about 20 seconds here; keep
+      // the normal 15-second action limit and allow 30 seconds for this startup.
+      await page.getByRole('heading', { name: 'uficonnect map post', exact: true }).waitFor({ timeout: 30000 });
       assert.deepEqual((await state()).sourceSelections.community, ['uficonnect']);
       assert.deepEqual((await state()).topicSelections['community:city'], ['Community']);
 
