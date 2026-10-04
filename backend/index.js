@@ -11980,6 +11980,17 @@ function filterByUserTopics(posts, userTopics, { fallbackToInput = true } = {}) 
   return posts;
 }
 
+// YouTube subscriptions have no UFIconnect topic label. The member already
+// chose these channels, so an absent label must not erase their Following
+// feed. Call only after account/source scoping and explicit topic filtering.
+function filterFollowingBySavedTopics(posts, userTopics) {
+  const matching = new Set(userTopics.length
+    ? filterByUserTopics(posts, userTopics, { fallbackToInput: false })
+    : []);
+  return posts.filter(post => matching.has(post)
+    || (post?.source === 'youtube' && !String(post.topic || '').trim()));
+}
+
 // The actual shape of the default landing feed (and Videos' first page —
 // see handleVideoFeedRequest): two phases, both built from the same
 // roundRobinMerge primitive the rest of this pipeline already uses.
@@ -21821,22 +21832,24 @@ async function handleFeedRequest(req, res) {
         })
         .filter(matchesTopic)
       : [];
-    if (!topicsFilter.length && !hasSavedFeedScope) return [];
-    const scoped = topicsFilter.length ? list : filterByUserTopics(list, userTopics, { fallbackToInput: false });
+    if (!topicsFilter.length && !hasSavedFeedScope && !isFollowingRequest) return [];
+    const scoped = topicsFilter.length ? list
+      : isFollowingRequest ? filterFollowingBySavedTopics(list, userTopics)
+        : filterByUserTopics(list, userTopics, { fallbackToInput: false });
     return scoped.filter(matchesMemberJob);
   };
   const personalizeForUser = (items, options = {}) => {
     const scoped = filterForUser(items);
     const equalizerTopics = topicsFilter.length ? topicsFilter : userTopics;
     const preserveEqualizer = usesRegularFeedVideoPlacement && !hasExplicitSearch;
-    const candidates = preserveEqualizer ? scoped : buildFullMemberFeedEqualizer(scoped, equalizerTopics, userAffinity);
+    const candidates = preserveEqualizer ? scoped : buildFullMemberFeedEqualizer(scoped, equalizerTopics, userAffinity, { filterTopics: !isFollowingRequest });
     const personalized = personalizeAuthenticatedFeedPosts(candidates, user, prefs, userAffinity, { ...options, locationContext, request: req });
     const ordered = requestedSortMode === 'newest' ? orderNewestFeedCohorts(personalized) : personalized;
     // Home and Following always finish with source/topic balancing, including
     // single-source selections. Ranking the result by date or location again
     // would group a busier source (or topic) ahead of the quieter selections.
     // Date order still chooses the next item within each source/topic queue.
-    return preserveEqualizer ? buildFullMemberFeedEqualizer(ordered, equalizerTopics, userAffinity) : ordered;
+    return preserveEqualizer ? buildFullMemberFeedEqualizer(ordered, equalizerTopics, userAffinity, { filterTopics: !isFollowingRequest }) : ordered;
   };
   // Client-generated, changes only when the user explicitly hits refresh
   // (kept stable across pagination within that sitting) — see rotateForUser
@@ -21845,14 +21858,16 @@ async function handleFeedRequest(req, res) {
   const refreshSeed = (req.query.seed || '').toString().slice(0, 64);
   const requestedSourceFilter = canonicalFeedSourceId(req.query.source) || null;
   const requestedSourcesParam = req.query.sources
-    ? req.query.sources.split(',').map(canonicalFeedSourceId).filter(Boolean)
+    ? [...new Set(req.query.sources.split(',').map(canonicalFeedSourceId).filter(Boolean))]
     : [];
-  const sourceFilter = isFollowingRequest || isAggregateFeedSource(requestedSourceFilter)
-    ? requestedSourceFilter
-    : null;
   const sourcesParam = isFollowingRequest
     ? requestedSourcesParam
     : requestedSourcesParam.filter(isAggregateFeedSource);
+  // Maps and other multi-select clients also send ?sources= for one source.
+  // Promote the accepted singleton before the shared single/multi-source paths.
+  const sourceFilter = ((isFollowingRequest || isAggregateFeedSource(requestedSourceFilter))
+    ? requestedSourceFilter
+    : null) || (sourcesParam.length === 1 ? sourcesParam[0] : null);
   const isDefaultAggregateView = !sourceFilter && sourcesParam.length === 0;
   const usesBlendedSources = isBlendedFeedSelection(sourceFilter, sourcesParam);
   const requestedMemberOnlySource = !isFollowingRequest
@@ -23456,11 +23471,12 @@ async function handleVideoFeedRequest(req, res) {
   try {
     const feedLimit = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
     const requestedSourcesParam = req.query.sources
-      ? req.query.sources.split(',').map(canonicalFeedSourceId).filter(Boolean)
+      ? [...new Set(req.query.sources.split(',').map(canonicalFeedSourceId).filter(Boolean))]
       : [];
     const requestedSourceFilter = canonicalFeedSourceId(req.query.source) || null;
-    const sourceFilter = isAggregateFeedSource(requestedSourceFilter) ? requestedSourceFilter : null;
     const sourcesParam = requestedSourcesParam.filter(isAggregateFeedSource);
+    const sourceFilter = (isAggregateFeedSource(requestedSourceFilter) ? requestedSourceFilter : null)
+      || (sourcesParam.length === 1 ? sourcesParam[0] : null);
     const usesBlendedVideoSources = isBlendedFeedSelection(sourceFilter, sourcesParam);
     const requestedMemberOnlySource = [requestedSourceFilter, ...requestedSourcesParam]
       .some(source => MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(source));
@@ -23746,9 +23762,9 @@ async function handleFollowingVideoFeedRequest(req, res) {
     const feedLimit = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
     const reqPage = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
     const sourcesParam = req.query.sources
-      ? req.query.sources.split(',').map(canonicalFeedSourceId).filter(Boolean)
+      ? [...new Set(req.query.sources.split(',').map(canonicalFeedSourceId).filter(Boolean))]
       : [];
-    const sourceFilter = sourcesParam.length > 1 ? sourcesParam : (canonicalFeedSourceId(req.query.source) || null);
+    const sourceFilter = sourcesParam.length > 1 ? sourcesParam : (canonicalFeedSourceId(req.query.source) || sourcesParam[0] || null);
     const usesBlendedFollowingVideos = isBlendedFeedSelection(sourceFilter, sourcesParam);
     const followingIds = new Set(follows.filter(f => f.followerId === req.user.id).map(f => f.followingId));
 
@@ -23762,13 +23778,10 @@ async function handleFollowingVideoFeedRequest(req, res) {
     const user = await getUser(req.user.id);
     const prefs = user?.preferences || {};
     const userTopics = userDeclaredFeedTopics(user, prefs);
-    const hasSavedVideoScope = userTopics.length > 0;
     const videos = all.filter(isVideoSurfacePost).filter(matchesSearch).filter(matchesTopic);
     const scopedVideos = topicsFilter.length
       ? videos
-      : hasSavedVideoScope
-        ? filterByUserTopics(videos, userTopics, { fallbackToInput: false })
-        : [];
+      : filterFollowingBySavedTopics(videos, userTopics);
     // Same fix as handleFeedRequest's feedMode==='following' branch, applied
     // after the video-only filter above (equalizing the full mixed pool
     // first would waste round-robin fairness on posts that get dropped
