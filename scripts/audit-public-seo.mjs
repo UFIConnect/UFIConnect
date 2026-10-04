@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +16,12 @@ const decode = value => String(value).replace(/&(?:amp|lt|gt|quot|apos|#39|#\d+|
 });
 const attributes = tag => Object.fromEntries([...tag.matchAll(/([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)].map(match => [match[1].toLowerCase(), decode(match[2] ?? match[3])]));
 const stripTags = html => decode(html.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
+// The approved Google tag uses two small queue-initialization snippets. Keep
+// the exception exact and require their hashes in CSP; other inline code fails.
+const approvedGoogleSnippets = new Set([
+  "window.dataLayer = window.dataLayer || []; function gtag(){dataLayer.push(arguments);} gtag('js', new Date()); gtag('config', 'AW-18490754953');",
+  "gtag('event', 'conversion', {'send_to': 'AW-18490754953/s7sWCK_AsI4dEImPivFE'});",
+]);
 let checks = 0;
 function check(value, message) { assert.ok(value, message); checks++; }
 
@@ -43,13 +50,19 @@ try {
     check(canonicals.length === 1 && canonicals[0].href === `https://uficonnect.org${route.path}`, `${route.path}: one route-specific canonical URL`);
     const robots = meta.find(item => item.name === 'robots')?.content || '';
     check(route.index ? !/noindex/.test(robots) : /noindex/.test(robots), `${route.path}: account utility indexing policy`);
+    const scriptPolicy = response.headers.get('content-security-policy')?.split(';').find(value => value.trim().startsWith('script-src '));
     for (const match of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
       const attrs = attributes(match[1]);
       if (attrs.type === 'application/ld+json' || attrs.type === 'application/json') continue;
-      check(Boolean(attrs.src), `${route.path}: executable inline scripts must not block first paint`);
-      check(attrs.type === 'module' || /\b(?:defer|async)(?:\s|=|$)/i.test(match[1]), `${route.path}: external classic scripts must defer or load asynchronously`);
+      if (attrs.src) {
+        check(attrs.type === 'module' || /\b(?:defer|async)(?:\s|=|$)/i.test(match[1]), `${route.path}: external classic scripts must defer or load asynchronously`);
+      } else {
+        const source = match[2].replace(/\r\n?/g, '\n');
+        check(approvedGoogleSnippets.has(source.replace(/\s+/g, ' ').trim()), `${route.path}: inline scripts must match the approved Google initialization`);
+        const hash = createHash('sha256').update(source).digest('base64');
+        check(scriptPolicy?.includes(`'sha256-${hash}'`), `${route.path}: approved inline script must be authorized by its exact CSP hash`);
+      }
     }
-    const scriptPolicy = response.headers.get('content-security-policy')?.split(';').find(value => value.trim().startsWith('script-src '));
     check(Boolean(scriptPolicy) && !/unsafe-inline|unsafe-eval/.test(scriptPolicy), `${route.path}: production CSP keeps unsafe scripts blocked`);
     const links = [...html.matchAll(/<a\b[^>]*href="([^"]+)"[^>]*>/gi)].map(match => new URL(decode(match[1]), origin));
     pages.set(route.path, { html, links });
