@@ -1082,8 +1082,10 @@ export default function VideoFeedView({ onExit, music = false }) {
         // old and new videos interleaved indefinitely.
         if (reset && preserveOnEmpty && fresh.length === 0 && prev.length > 0) return prev;
         if (reset && preserveQueue) {
-          const freshIds = new Set(fresh.map(post => post.id));
-          return [...orderNewestFeedCohorts(fresh), ...prev.filter(post => !freshIds.has(post.id))];
+          // Background arrivals must never replace the clip being watched.
+          // Append new clips; only an explicit refresh resets the queue.
+          const existingIds = new Set(prev.map(post => post.id));
+          return [...prev, ...orderNewestFeedCohorts(fresh).filter(post => !existingIds.has(post.id))];
         }
         if (reset) return orderNewestFeedCohorts(fresh);
         // Cursor pages are already ordered by the API. Re-sorting the full
@@ -1858,7 +1860,7 @@ export default function VideoFeedView({ onExit, music = false }) {
       const isCurrent = () => sharedYtMountedRef.current && sharedYtLifecycleRef.current === lifecycle;
       sharedYtCreatingRef.current = true;
       host.replaceChildren();
-      const mount = createYouTubePlayerFrame(host, videoId, { autoplay: document.hidden ? 0 : 1, mute: 1, loop: 1, playlist: videoId }, queueRef.current[activeIndexRef.current]?.title);
+      const mount = createYouTubePlayerFrame(host, videoId, { autoplay: document.hidden ? 0 : 1, mute: 1, loop: 0 }, queueRef.current[activeIndexRef.current]?.title);
 
       clearTimeout(sharedYtReadyTimeoutRef.current);
       sharedYtReadyTimeoutRef.current = setTimeout(() => {
@@ -1873,8 +1875,8 @@ export default function VideoFeedView({ onExit, music = false }) {
         const player = new YT.Player(mount, {
           videoId: initialId,
           playerVars: {
-            autoplay: document.hidden ? 0 : 1, mute: 1, playsinline: 1, loop: 1,
-            controls: 1, rel: 0, playlist: initialId,
+            autoplay: document.hidden ? 0 : 1, mute: 1, playsinline: 1, loop: 0,
+            controls: 1, rel: 0,
             origin: window.location.origin,
           },
           events: {
@@ -1921,6 +1923,14 @@ export default function VideoFeedView({ onExit, music = false }) {
             },
             onStateChange: (e) => {
               if (!isCurrent()) return;
+              // loadVideoById does not replace the iframe's original playlist.
+              // Loop the currently selected clip ourselves so ending a later
+              // clip cannot jump back to the first video's stale playlist.
+              if (e.data === YT.PlayerState.ENDED && !document.hidden
+                && e.target.getVideoData?.()?.video_id === sharedYtDesiredIdRef.current) {
+                try { e.target.seekTo(0, true); e.target.playVideo(); } catch {}
+                return;
+              }
               if (document.hidden && e.data === YT.PlayerState.PLAYING) {
                 sharedYtHiddenResumeRef.current = sharedYtDesiredIdRef.current;
                 try { e.target.pauseVideo(); } catch {}

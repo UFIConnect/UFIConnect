@@ -391,10 +391,11 @@ test('Business team checkout persists quantities and rejects changed, fractional
   assert.equal(f.creates[0].data.line_items[0].price, 'price_business_team');
   assert.equal(f.creates[0].data.line_items[0].quantity, 3);
   assert.equal((await f.service.createCheckout(A, 'business', 3)).url, result.url);
-  await assert.rejects(f.service.createCheckout(A, 'business', 4), { status: 409 });
-  await assert.rejects(f.service.createCheckout(A, 'business', 1), { status: 409 });
+  await f.service.createCheckout(A, 'business', 4);
+  await f.service.createCheckout(A, 'business', 1);
+  assert.equal([...f.sessions.values()].filter(item => item.status === 'open').length, 1);
   const pending = (await pg.query('SELECT quantity FROM billing_checkout_attempts WHERE user_id=$1', [A])).rows[0];
-  assert.equal(pending.quantity, 3);
+  assert.equal(pending.quantity, 1);
 });
 
 test('paid Business team quantities control access and invoice failure clears all seats', async () => {
@@ -521,7 +522,8 @@ test('simultaneous checkout requests reuse one durable hosted Checkout', async (
   assert.equal(f.creates[0].data.line_items[0].price, 'price_pro');
   assert.equal(f.creates[0].data.client_reference_id, A);
   assert.equal(f.creates[0].data.phone_number_collection.enabled, false);
-  await assert.rejects(f.service.createCheckout(A, 'business'), { status: 409 });
+  assert.equal((await f.service.createCheckout(A, 'business')).url, 'https://checkout.stripe.com/cs_2');
+  assert.equal(f.sessions.get('cs_1').status, 'expired');
 });
 
 test('crash after Stripe accepts Checkout reuses the persisted idempotency key', async () => {
@@ -543,6 +545,31 @@ test('expired checkout starts a new attempt; aged unresolved attempts fail close
   await assert.rejects(f.service.createCheckout(A, 'pro'), { status: 409 });
 });
 
+test('switching an uncertain checkout recovers its original request before replacing it', async () => {
+  const f = setup(); f.failWrite();
+  await assert.rejects(f.service.createCheckout(A, 'resume_builder'), /simulated DB/);
+  const result = await f.service.createCheckout(A, 'resume_builder_monthly');
+  assert.equal(result.url, 'https://checkout.stripe.com/cs_2');
+  assert.equal(f.sessions.get('cs_1').status, 'expired');
+  assert.equal(f.creates[0].options.idempotencyKey, f.creates[1].options.idempotencyKey);
+  assert.deepEqual(f.creates[0].data, f.creates[1].data);
+  assert.equal(f.creates.at(-1).data.metadata.tier, 'resume_builder_monthly');
+});
+
+test('changing checkout stops if expiry fails or payment wins the race', async () => {
+  for (const paid of [false, true]) {
+    const f = setup();
+    await f.service.createCheckout(A, 'pro');
+    f.stripe.checkout.sessions.expire = async id => {
+      if (paid) f.sessions.get(id).status = 'complete';
+      throw new Error(paid ? 'checkout completed' : 'provider outage');
+    };
+    await assert.rejects(f.service.createCheckout(A, 'business'));
+    assert.equal(f.creates.length, 1, 'No second payable checkout is created');
+    await pg.query('DELETE FROM billing_checkout_attempts WHERE user_id=$1', [A]);
+  }
+});
+
 test('billing rejects invalid tiers and volatile storage before contacting Stripe', async () => {
   const f = setup(); await assert.rejects(f.service.createCheckout(A, 'admin'), { status: 400 });
   f.db.isConnected = () => false;
@@ -558,10 +585,11 @@ test('legacy open checkouts are adopted, but different prices and unrecorded sub
   assert.equal(f.creates.length, 0);
   await pg.query('DELETE FROM billing_checkout_attempts WHERE user_id=$1', [A]);
   f.sessions.get('cs_legacy').line_items[0].price = 'price_retired';
-  await assert.rejects(f.service.createCheckout(A, 'pro'), { status: 409 });
+  await f.service.createCheckout(A, 'pro');
+  assert.equal(f.sessions.get('cs_legacy').status, 'expired');
   f.sessions.clear(); f.sub();
   await assert.rejects(f.service.createCheckout(A, 'pro'), { status: 409 });
-  assert.equal(f.creates.length, 0);
+  assert.equal(f.creates.length, 1);
 });
 
 test('status and portal use only the authenticated customer; status catches up delayed webhooks', async () => {
@@ -699,27 +727,18 @@ test('Resume Builder monthly checkout requires an active fixed USD 30 monthly li
   }
 });
 
-test('Resume Builder cadences share one durable checkout slot across concurrent requests and process restarts', async () => {
+test('Resume Builder choices replace unpaid checkout across concurrent requests and process restarts', async () => {
   const f = setup();
-  const results = await Promise.allSettled([
-    f.service.createCheckout(A, 'resume_builder_monthly'),
-    f.service.createCheckout(A, 'resume_builder'),
-  ]);
-  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
-  assert.equal(results.find(result => result.status === 'rejected').reason.status, 409);
-  assert.equal(f.creates.length, 1);
+  await Promise.all([f.service.createCheckout(A, 'resume_builder_monthly'), f.service.createCheckout(A, 'resume_builder')]);
+  assert.equal([...f.sessions.values()].filter(item => item.status === 'open').length, 1);
   const attempts = (await pg.query('SELECT * FROM billing_checkout_attempts WHERE user_id=$1', [A])).rows;
   assert.equal(attempts.length, 1); assert.equal(attempts[0].slot, 'resume_builder');
   const chosen = attempts[0].tier;
   const other = chosen === 'resume_builder' ? 'resume_builder_monthly' : 'resume_builder';
   const restarted = createBilling({ db: f.db, stripe: f.stripe, getCatalog: async () => f.catalog, frontendBase: 'https://uficonnect.org' });
-  assert.equal((await restarted.createCheckout(A, chosen)).url, results.find(result => result.status === 'fulfilled').value.url);
-  await assert.rejects(restarted.createCheckout(A, other), { status: 409 });
-  assert.equal(f.creates.length, 1);
-  f.sessions.get(attempts[0].session_id).status = 'expired';
   await restarted.createCheckout(A, other);
-  assert.equal(f.creates.length, 2);
-  assert.notEqual(f.creates[0].options.idempotencyKey, f.creates[1].options.idempotencyKey);
+  assert.equal(f.sessions.get(attempts[0].session_id).status, 'expired');
+  assert.equal([...f.sessions.values()].filter(item => item.status === 'open').length, 1);
   const changed = (await pg.query('SELECT slot,tier FROM billing_checkout_attempts WHERE user_id=$1', [A])).rows;
   assert.deepEqual(changed, [{ slot: 'resume_builder', tier: other }]);
 });

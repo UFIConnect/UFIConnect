@@ -10,6 +10,8 @@ export function useVpnSubscription(accountId, preview) {
   const [opening, setOpening] = useState('');
   const [notice, setNotice] = useState('');
   const sequence = useRef(0);
+  const operation = useRef(0);
+  const openingRef = useRef(false);
   const refresh = useCallback(async () => {
     const request = ++sequence.current;
     setChecking(true);
@@ -24,7 +26,7 @@ export function useVpnSubscription(accountId, preview) {
       if (request === sequence.current) { setStatus(null); setNotice('Could not confirm Vault billing. Check status again before subscribing.'); }
     } finally { if (request === sequence.current) setChecking(false); }
   }, [accountId, preview]);
-  useEffect(() => { setConfig(null); setStatus(null); setOpening(''); refresh(); return () => { sequence.current++; }; }, [refresh]);
+  useEffect(() => { operation.current++; openingRef.current = false; setConfig(null); setStatus(null); setOpening(''); refresh(); return () => { sequence.current++; operation.current++; }; }, [refresh]);
   useEffect(() => {
     if (preview) return;
     const update = () => { if (!document.hidden) refresh(); };
@@ -33,14 +35,16 @@ export function useVpnSubscription(accountId, preview) {
     return () => { window.clearInterval(timer); window.removeEventListener('focus', update); };
   }, [preview, refresh]);
   async function open(portal = false) {
-    if (opening || checking || preview) return;
-    const request = sequence.current;
+    if (openingRef.current || checking || preview) return;
+    openingRef.current = true;
+    const request = operation.current;
     setOpening(portal ? 'portal' : 'checkout'); setNotice('');
     try {
       const { data } = await client.post(portal ? '/billing/create-portal-session' : '/billing/create-checkout-session', portal ? {} : { tier: 'vpn_connector' });
-      if (request !== sequence.current) return;
+      if (request !== operation.current) return;
       window.location.assign(hostedBillingUrl(data.url, portal ? 'portal' : 'checkout'));
-    } catch (error) { if (request === sequence.current) { setNotice(error?.response?.data?.message || 'Could not open secure billing. Try again.'); setOpening(''); } }
+    } catch (error) { if (request === operation.current) setNotice(error?.response?.data?.message || 'Could not open secure billing. Try again.'); }
+    finally { if (request === operation.current) { openingRef.current = false; setOpening(''); } }
   }
   const price = config?.pricing?.vpn_connector;
   return { status, checking, opening, notice, refresh, open, preview,

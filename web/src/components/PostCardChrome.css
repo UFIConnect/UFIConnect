@@ -43,8 +43,9 @@
 .post-chrome-action:hover:not(:disabled) { filter: brightness(.96); }
 .post-chrome-action:disabled { opacity: .6; cursor: default; }
 .post-chrome-action[aria-pressed="true"], .post-chrome-action[aria-expanded="true"] { color: var(--source-color, var(--primary)); background: color-mix(in srgb, var(--source-color, var(--primary)) 12%, var(--card, #fff)); }
-/* Likes: the heart and its count join into one pill; the count opens "Liked by". */
+/* Read-only counts use the source metric when one is supplied. */
 .post-chrome-like { display: inline-flex; align-items: center; flex-wrap: wrap; }
+.post-chrome-like-counted > svg { width: 18px; height: 18px; flex-shrink: 0; }
 .post-chrome-like a { text-decoration: none; }
 .post-chrome-source-count { margin-left: 8px; font-size: .72rem; color: var(--muted); }
 .post-chrome-like .post-chrome-action[data-locked="true"] { opacity: .55; }
