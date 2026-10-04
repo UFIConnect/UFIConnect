@@ -48,6 +48,10 @@ try {
     await context.route('**/*', async route => {
       const request = route.request();
       const url = new URL(request.url());
+      // The site-wide Google Ads tag is audited separately; this audit covers optional Analytics only.
+      if (url.hostname === 'www.googletagmanager.com' && url.pathname === '/gtag/js' && /[?&]id=AW-18490754953(?:&|$)/.test(url.search)) {
+        return route.fulfill({ contentType: 'text/javascript', body: '', headers: { 'Access-Control-Allow-Origin': '*' } });
+      }
       if (url.hostname.endsWith('googletagmanager.com') || url.hostname.endsWith('google-analytics.com')) {
         googleRequests.push({ url: url.href, headers: await request.allHeaders(), body: request.postData() });
         if (url.hostname === 'www.googletagmanager.com' && url.pathname === '/gtag/js') {
@@ -114,7 +118,7 @@ try {
     check(isolation.parentBlocked && isolation.referrer === '', 'Browser blocks analytics access to the parent document and referrer');
     check(isolation.location === bridgeOrigin + '/analytics-bridge.html' && isolation.title === 'UFIconnect analytics', 'The analytics document has no private URL or title');
     check(await page.locator('iframe[title="Optional page analytics"]').getAttribute('sandbox') === 'allow-scripts allow-same-origin', 'Bridge sandbox permits only scripts and its separate origin');
-    check(await page.evaluate(() => typeof window.gtag) === 'undefined', 'Google code never runs in the app document');
+    check(!JSON.stringify(await page.evaluate(() => (window.dataLayer || []).map(value => Array.from(value)))).includes('G-F68DRQ6CC5'), 'Google Analytics never runs in the app document');
     const beforeUnsafeEmbeds = googleRequests.length;
     for (const suffix of ['?token=' + seed, '#' + seed]) {
       await page.evaluate(({ url }) => new Promise(resolve => {

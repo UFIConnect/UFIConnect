@@ -178,6 +178,7 @@ try {
   const requests = [];
   await context.route('**/*', route => {
     const url = new URL(route.request().url());
+    if (url.hostname === 'www.googletagmanager.com' && /[?&]id=AW-18490754953(?:&|$)/.test(url.search)) return route.abort(); // site-wide Ads tag
     if (url.pathname === '/analytics-bridge.html' || /google-analytics|googletagmanager/.test(url.hostname)) requests.push(url.href);
     return url.origin === server.origin ? route.continue() : route.fulfill({ status: 401, json: {} });
   });

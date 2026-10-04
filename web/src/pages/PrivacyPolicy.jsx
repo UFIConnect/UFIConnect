@@ -128,7 +128,7 @@ export default function PrivacyPolicy() {
             <>To monitor platform health, prevent abuse, and enforce our <Link to="/terms" style={{ color: 'var(--primary)' }}>Terms of Service</Link></>,
             'To improve and develop new features',
           ]} />
-          <P>We do not sell your personal data. If you separately allow Google Ads measurement, we measure public homepage visits and ad click attribution. We do not use your account content for advertising or enable ad personalization.</P>
+          <P>We do not sell your personal data. We use the Google Ads tag to measure page visits and ad click attribution. We do not use your account content for advertising or enable ad personalization.</P>
         </Section>
 
         <Section title="4. Content feed and third-party sources">
@@ -170,8 +170,8 @@ export default function PrivacyPolicy() {
             'Legal requirements: if required by law, court order, or to protect our rights and users\' safety.',
             'Business transfer: if UFIconnect is acquired or merges, data may transfer to the new entity under the same policy.',
           ]} />
-          <P>Google Analytics keeps advertising storage, Google signals, advertising personalisation, and advertising user data disabled. Separately, optional Google Ads measurement runs only on the guest homepage after your consent. Google receives your IP address, browser/device information and ad click identifiers, and uses cookies to attribute homepage visits to ads. Ad personalization and enhanced conversions remain disabled. Signed-in pages and Vault do not load this advertising tag.</P>
-          <P>You can change either choice through Analytics privacy or Settings. Declining advertising measurement prevents the tag from loading; withdrawing consent stops it and clears its first-party attribution cookies. Global Privacy Control keeps optional analytics and advertising measurement off.</P>
+          <P>Google Analytics keeps advertising storage, Google signals, advertising personalisation, and advertising user data disabled. Separately, the Google Ads tag loads on our web pages to measure visits and attribute ad clicks. Google receives your IP address, browser/device information and ad click identifiers, and uses cookies for attribution.</P>
+          <P>You can change your analytics choice through Analytics privacy or Settings. Global Privacy Control keeps optional analytics off.</P>
           <P>Stripe processes payment details and the account information needed to manage your membership. You can review invoices, update payment methods, and cancel through Settings → Manage billing. Stripe’s handling of payment records is described in its <a href="https://stripe.com/privacy" style={{ color: 'var(--primary)' }}>privacy policy</a>.</P>
         </Section>
 

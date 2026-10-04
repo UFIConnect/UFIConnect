@@ -50,6 +50,7 @@ try {
     await page.route('**/*', async route => {
       const request = route.request();
       const url = new URL(request.url());
+      if (url.hostname === 'www.googletagmanager.com' && /[?&]id=AW-18490754953(?:&|$)/.test(url.search)) return route.abort(); // site-wide Ads tag
       if (/googletagmanager|google-analytics/.test(url.hostname)) { google.push(url.href); return route.abort(); }
       if (url.pathname.startsWith('/api/analytics/')) {
         metrics.push({ path: url.pathname, body: request.postDataJSON(), headers: await request.allHeaders() });
