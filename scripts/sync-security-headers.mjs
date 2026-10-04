@@ -13,7 +13,7 @@ for (const app of ['web', 'office']) {
   const html = fs.readFileSync(path.join(root, app, useBuild ? 'dist/index.html' : 'index.html'), 'utf8').replace(/\r\n/g, '\n');
   // Quote the scalar: CSP contains HTTPS/blob/data schemes followed by spaces,
   // which YAML otherwise interprets as nested mappings.
-  const policy = JSON.stringify(browserSecurityPolicy(html));
+  const policy = JSON.stringify(browserSecurityPolicy(html, { advertising: app === 'web', video: app === 'web' }));
   const block = new RegExp(`(name: uficonnect-${app}\\r?\\n[\\s\\S]*?name: Content-Security-Policy\\r?\\n\\s+value: )([^\\r\\n]+)`);
   if (!block.test(config)) throw new Error(`Missing ${app} CSP configuration`);
   config = config.replace(block, (whole, prefix, current) => {

@@ -7,7 +7,7 @@ import { browserSecurityPolicy } from '../web/securityPolicy.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dist = path.join(root, 'web/dist');
-const original = await fs.readFile(path.join(dist, 'index.html'), 'utf8');
+const original = await fs.readFile(path.join(dist, 'login/index.html'), 'utf8');
 const origin = 'https://security.example.invalid';
 const browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
 try {

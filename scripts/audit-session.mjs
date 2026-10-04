@@ -5,7 +5,10 @@ const sessions = new WeakMap();
 export async function installAuditMember(page, app, userId) {
   // General UI/security audits opt out of optional analytics. Analytics has a
   // separate browser audit that exercises both choices without this fixture.
-  await page.addInitScript(() => localStorage.setItem('uficonnect.analytics.consent.v1', 'denied'));
+  await page.addInitScript(() => {
+    localStorage.setItem('uficonnect.analytics.consent.v1', 'denied');
+    localStorage.setItem('uficonnect.ads.consent.v1', 'denied');
+  });
   const existing = sessions.get(page);
   if (existing) {
     existing.userId = userId;
