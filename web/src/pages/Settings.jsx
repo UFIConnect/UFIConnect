@@ -547,7 +547,11 @@ export default function Settings() {
       </div>
 
       {/* ── Preferences tab ──────────────────────────────────────────────────── */}
-      <section className="card settings-appearance" aria-label="Appearance settings"><AppearanceControl business={profile?.plan === 'business'} /></section>
+      {activeTab === 'preferences' && (
+        <>
+          <section className="card settings-appearance" aria-label="Appearance settings"><AppearanceControl business={profile?.plan === 'business'} /></section>
+        </>
+      )}
 
       {activeTab === 'data' && <DataPrivacySettings />}
 
