@@ -36,7 +36,7 @@ try {
    .replace(/<(meta|link) (?=(?:name="(?:description|robots|twitter:title|twitter:description)"|property="(?:og:title|og:description|og:url)"|rel="canonical"))/g,'<$1 data-prerender-meta ');
   const sessionShell = route.path === '/' || route.path === '/search' || memberRoutes.includes(route.path);
   html = html.replace(/<meta\b[^>]*http-equiv="Content-Security-Policy"[^>]*>/i,
-    `<meta http-equiv="Content-Security-Policy" content="${escape(browserSecurityPolicy(template, { meta: true, video: true, advertising: route.path === '/' && route.index === true }))}">`);
+    `<meta http-equiv="Content-Security-Policy" content="${escape(browserSecurityPolicy(template, { meta: true, video: true, advertising: true }))}">`);
   return html.replace('<div id="root"></div>',`<div id="root" data-prerendered="true"${sessionShell ? ' data-session-shell="true"' : ''}>${markup}</div>${sessionShell ? '<div class="static-session-loading" role="status">Opening UFIconnect…</div>' : ''}`);
  }
  for(const route of publicRoutes){
