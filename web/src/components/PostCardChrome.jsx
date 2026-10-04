@@ -130,7 +130,7 @@ export function PostTime({ post, live = false }) {
   if (!times) return null;
   return (
     <Link to={`/p/${encodeURIComponent(post.id)}`} className="post-chrome-time" title={times.full} aria-label={times.full}>
-      <time dateTime={times.iso}><span className="post-chrome-day">{times.edited ? 'Edited · ' : ''}{times.day}</span><span className="post-chrome-clock">at {times.time}</span></time>
+      <time dateTime={times.iso}><span className="post-chrome-day">{times.edited ? 'Edited · ' : ''}{times.relative}</span></time>
     </Link>
   );
 }
