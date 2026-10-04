@@ -38,12 +38,7 @@ export function postTimes(post) {
       : latest.toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(latest.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}) });
   const time = latest.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   const full = latest.toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'long' });
-  const diffSeconds = (now.getTime() - latest.getTime()) / 1000;
-  let relative = 'just now';
-  if (diffSeconds >= 60) relative = `${Math.floor(diffSeconds / 60)}m ago`;
-  if (diffSeconds >= 3600) relative = `${Math.floor(diffSeconds / 3600)}h ago`;
-  if (diffSeconds >= 86400) relative = `${Math.floor(diffSeconds / 86400)}d ago`;
-  return { day, time, edited, iso: latest.toISOString(), full: `${edited ? 'Edited' : 'Posted'} ${full}`, relative };
+  return { day, time, edited, iso: latest.toISOString(), full: `${edited ? 'Edited' : 'Posted'} ${full}` };
 }
 
 const initialsOf = name => String(name || '').trim().split(/\s+/).slice(0, 2).map(part => part[0] || '').join('').toUpperCase() || '·';
@@ -135,7 +130,7 @@ export function PostTime({ post, live = false }) {
   if (!times) return null;
   return (
     <Link to={`/p/${encodeURIComponent(post.id)}`} className="post-chrome-time" title={times.full} aria-label={times.full}>
-      <time dateTime={times.iso}><span className="post-chrome-day">{times.edited ? 'Edited · ' : ''}{times.relative}</span></time>
+      <time dateTime={times.iso}><span className="post-chrome-day">{times.edited ? 'Edited · ' : ''}{times.day}</span><span className="post-chrome-clock">at {times.time}</span></time>
     </Link>
   );
 }
