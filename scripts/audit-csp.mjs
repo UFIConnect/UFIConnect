@@ -14,10 +14,10 @@ try {
   for (const withHeader of [true, false]) {
     const context = await browser.newContext({ serviceWorkers: 'block' });
     const page = await context.newPage();
-    let googleRequests = 0;
+    let untrustedRequests = 0;
     await page.route('**/*', async route => {
       const url = new URL(route.request().url());
-      if (url.hostname === 'www.googletagmanager.com') googleRequests++;
+      if (url.hostname === 'untrusted-scripts.example.invalid') untrustedRequests++;
       if (url.origin !== origin) return route.abort();
       if (url.pathname.startsWith('/api/')) return route.fulfill({ status: 200, json: {} });
       if (url.pathname.startsWith('/assets/')) {
@@ -41,7 +41,7 @@ try {
     const blocked = await page.evaluate(() => new Promise(resolve => {
       const timer = setTimeout(() => resolve(false), 3000);
       const listener = event => {
-        if (event.blockedURI.startsWith('https://www.googletagmanager.com')) {
+        if (event.blockedURI.startsWith('https://untrusted-scripts.example.invalid')) {
           clearTimeout(timer);
           window.removeEventListener('securitypolicyviolation', listener);
           resolve(event.effectiveDirective === 'script-src-elem' || event.effectiveDirective === 'script-src');
@@ -49,12 +49,12 @@ try {
       };
       window.addEventListener('securitypolicyviolation', listener);
       const script = document.createElement('script');
-      script.src = 'https://www.googletagmanager.com/gtag/js?id=G-F68DRQ6CC5';
+      script.src = 'https://untrusted-scripts.example.invalid/injected.js';
       document.head.appendChild(script);
     }));
-    assert.equal(blocked, true, 'Google scripts must be blocked in the private application document');
-    assert.equal(googleRequests, 0, 'CSP must reject the script before any request leaves the app');
-    console.log(`PASS: production app boots and blocks injected script/handler and Google in the main document (${withHeader ? 'HTTP + meta CSP' : 'static-host meta CSP'})`);
+    assert.equal(blocked, true, 'Scripts from unlisted hosts must be blocked in the application document');
+    assert.equal(untrustedRequests, 0, 'CSP must reject the script before any request leaves the app');
+    console.log(`PASS: production app boots and blocks injected script/handler and unlisted script hosts in the main document (${withHeader ? 'HTTP + meta CSP' : 'static-host meta CSP'})`);
     await context.close();
   }
 } finally { await browser.close(); }

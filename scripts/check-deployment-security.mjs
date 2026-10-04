@@ -18,9 +18,7 @@ for (const service of blueprint.services) {
     assert.doesNotMatch(header('Content-Security-Policy').split(';').find(value => value.trim().startsWith('script-src')), /unsafe-inline|unsafe-eval/);
     assert.doesNotMatch(header('Content-Security-Policy'), /google-analytics|analytics\.google/, 'Analytics collection remains in the separate API bridge');
     if (service.name === 'uficonnect-web') {
-      assert.match(header('Content-Security-Policy'), /https:\/\/www\.googletagmanager\.com/, 'The public homepage can load the consented Ads tag');
-      // Per-document meta policies restrict Ads to the homepage. The browser
-      // audit verifies login, Vault and the dynamic app shell remain strict.
+      assert.match(header('Content-Security-Policy'), /https:\/\/www\.googletagmanager\.com/, 'The web app loads the site-wide Google Ads tag');
     } else assert.doesNotMatch(header('Content-Security-Policy'), /googletagmanager|googleadservices/, 'Office does not load advertising');
     assert.match(header('Content-Security-Policy'), /(?:^|;\s*)script-src-attr 'none'(?:;|$)/, 'Inline event handlers must remain blocked');
     assert.equal(header('X-XSS-Protection'), '0', 'Use CSP and explicitly disable the obsolete, unsafe browser XSS filter');
