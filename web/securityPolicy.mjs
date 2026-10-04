@@ -14,9 +14,11 @@ export function analyticsBridgeSecurityPolicy(html) {
     "base-uri 'none'", "form-action 'none'", "object-src 'none'"].join('; ');
 }
 
-export function browserSecurityPolicy(html, { meta = false } = {}) {
+export function browserSecurityPolicy(html, { meta = false, advertising = false, video = false } = {}) {
   const hashes = inlineScriptHashes(html);
-  return ["default-src 'self'", `script-src 'self' ${hashes.join(' ')}`.trim(),
+  const scripts = [...hashes, ...(video ? ['https://www.youtube.com', 'https://s.ytimg.com'] : []),
+    ...(advertising ? ['https://www.googletagmanager.com', 'https://www.googleadservices.com', 'https://www.google.com'] : [])];
+  return ["default-src 'self'", `script-src 'self' ${scripts.join(' ')}`.trim(),
     "script-src-attr 'none'",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com", "img-src 'self' https: data: blob:",
     "font-src 'self' https://fonts.gstatic.com data:", "connect-src 'self' https:",
