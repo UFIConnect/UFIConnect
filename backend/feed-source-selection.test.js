@@ -53,6 +53,43 @@ async function feedFixture(t, { duration = 1200, emptyFirstWindow = false } = {}
 const base = '/office/feed?mode=feed&sort=newest&passive=1&topics=Science&limit=3';
 const ids = response => response.data.posts.map(post => post.id);
 
+async function subscribedYouTubeFixture(t, interests) {
+  const app = await createAppHarness();
+  t.after(() => app.close());
+  const viewer = member('youtube-subscriber', { preferences: { interests }, socialTokens: { youtube: 'fixture-only' } });
+  app.seedUser(viewer);
+  app.seedUser(member('another-subscriber', { socialTokens: { youtube: 'other-fixture-only' } }));
+  const posts = [null, 'Science', 'Travel'].flatMap((label, index) => [120, 1200].map(duration => ({
+    ...app.dbRowToFeedPost(postRow('youtube', index + 1, duration)),
+    id: `subscribed-${label || 'untagged'}-${duration}`, topic: label,
+  })));
+  app.followingSourceCache.set(`${viewer.id}::youtube`, { fetchedAt: Date.now(), posts });
+  app.followingSourceCache.set('another-subscriber::youtube', { fetchedAt: Date.now(), posts: posts.map(post => ({ ...post, id: `other-${post.id}` })) });
+  return { app, viewer };
+}
+
+for (const route of ['/office/feed?mode=following&passive=1', '/office/feed/videos/following?']) {
+  for (const interests of [[], ['Science']]) {
+    test(`untagged subscribed YouTube videos survive default Following scope: ${route}, interests=${interests.length}`, async t => {
+      const { app, viewer } = await subscribedYouTubeFixture(t, interests);
+      assert.equal((await app.request(`${route}&source=youtube`)).status, 401);
+      const result = await app.request(`${route}&source=youtube&limit=20`, { userId: viewer.id });
+      assert.equal(result.status, 200);
+      assert.ok(result.data.posts.some(post => post.id.startsWith('subscribed-untagged-')), 'YouTube subscription API posts have no topic label and must not all disappear');
+      assert.ok(result.data.posts.every(post => post.source === 'youtube' && post.id.startsWith('subscribed-')));
+      assert.ok(result.data.posts.every(post => post.topic == null || interests.includes(post.topic)), 'Tagged posts still obey the saved topic scope');
+      assert.ok(result.data.posts.filter(post => post.id.startsWith('subscribed-untagged-')).every(post => post.topic == null), 'Do not invent a topic for a subscribed video');
+    });
+  }
+  test(`explicit Following topics still exclude untagged YouTube videos: ${route}`, async t => {
+    const { app, viewer } = await subscribedYouTubeFixture(t, ['Travel']);
+    const result = await app.request(`${route}&source=youtube&topics=Science&limit=20`, { userId: viewer.id });
+    assert.equal(result.status, 200);
+    assert.ok(result.data.posts.length > 0);
+    assert.ok(result.data.posts.every(post => post.topic === 'Science' && post.id.startsWith('subscribed-')));
+  });
+}
+
 test('Maps singleton sources returns only YouTube and advances its cursor', async t => {
   const { app, reads } = await feedFixture(t);
   assert.equal((await app.request(`${base}&sources=youtube`)).status, 401);
