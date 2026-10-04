@@ -1,6 +1,7 @@
 // Exercise device imports with synthetic files; all API calls stay in the local
 // harness and no vault contents are uploaded to a service.
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -35,15 +36,22 @@ try {
     const page = await context.newPage(); page.setDefaultTimeout(12_000);
     const errors = [], outbound = [];
     let vaultPaid = false;
+    let releaseCheckout;
     page.on('pageerror', failure => errors.push(failure.message));
     page.on('request', request => outbound.push(request.url() + (request.postData() || '')));
     const origin = server.resolvedUrls.local[0];
     await context.route('**/*', async route => {
       const url = new URL(route.request().url());
+      if (url.origin === 'https://checkout.stripe.com') return route.fulfill({ contentType: 'text/html', body: '<h1>Secure checkout fixture</h1>' });
       if (url.origin !== new URL(origin).origin) return route.abort();
       if (/\/api\/(?:feed\/stream|office\/events)/.test(url.pathname)) return route.abort();
       if (url.pathname === '/api/security/vault/status') return route.fulfill({ json: { phase: 'software-prototype', state: 'disabled', available: false } });
-      if (url.pathname === '/api/billing/config') return route.fulfill({ json: { paymentsReady: false, tiers: { vpn_connector: false }, pricing: { vpn_connector: { unitAmount: 394, currency: 'USD', interval: 'month', intervalCount: 1, comingSoon: true } } } });
+      if (url.pathname === '/api/billing/config') return route.fulfill({ json: { paymentsReady: true, tiers: { vpn_connector: true }, pricing: { vpn_connector: { active: true, unitAmount: 394, currency: 'USD', interval: 'month', intervalCount: 1 } } } });
+      if (url.pathname === '/api/billing/create-checkout-session') {
+        assert.deepEqual(route.request().postDataJSON(), { tier: 'vpn_connector' });
+        await new Promise(resolve => { releaseCheckout = resolve; });
+        return route.fulfill({ json: { url: 'https://checkout.stripe.com/vault-audit' } });
+      }
       if (url.pathname === '/api/billing/status') return route.fulfill({ json: { plan: 'free', vpnConnectorAddon: vaultPaid, hasBillingAccount: vaultPaid, subscriptions: vaultPaid ? [{ kind: 'vpn_connector', status: 'active' }] : [] } });
       return route.continue();
     });
@@ -59,6 +67,16 @@ try {
     await auditNavigate(page, origin + 'vault');
     await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent.trim() === 'Check subscription status' && !button.disabled));
     assert.equal(await page.getByRole('button', { name: 'Create vault', exact: true }).isDisabled(), true, 'New unpaid accounts cannot create a paid vault');
+    await page.getByRole('button', { name: 'Subscribe for $3.94 USD / month', exact: true }).click();
+    while (!releaseCheckout) await new Promise(resolve => setTimeout(resolve, 20));
+    await Promise.all([
+      page.waitForResponse(response => new URL(response.url()).pathname === '/api/billing/status'),
+      page.evaluate(() => window.dispatchEvent(new Event('focus'))),
+    ]);
+    releaseCheckout();
+    await page.waitForURL('https://checkout.stripe.com/vault-audit');
+    await auditNavigate(page, origin + 'vault');
+    await page.getByRole('button', { name: 'Subscribe for $3.94 USD / month', exact: true }).waitFor();
     await refreshEntitlement(true);
     await page.getByLabel('Vault passphrase', { exact: true }).fill(phrase);
     await page.getByLabel('Confirm passphrase', { exact: true }).fill(phrase);
@@ -67,7 +85,7 @@ try {
     await collections.waitFor();
     await page.locator('.vault-password-footer').getByRole('button', { name: 'Import from this device', exact: true }).click();
     let chooser = page.getByRole('dialog', { name: 'Import from this device', exact: true });
-    await chooser.getByText('Your browser cannot bulk-transfer passwords', { exact: false }).waitFor();
+    await chooser.getByText('Import a CSV or JSON password export on Android, Windows, Linux or iOS.', { exact: false }).waitFor();
     assert.equal(await chooser.getByRole('button', { name: 'Choose document', exact: true }).count(), 1);
     assert.equal(await chooser.getByRole('button', { name: 'Choose key file', exact: true }).count(), 1);
     await chooser.getByRole('button', { name: 'Add a password manually', exact: true }).click();
@@ -75,6 +93,27 @@ try {
     await page.getByLabel('Password', { exact: true }).fill(password);
     await page.getByRole('button', { name: 'Save password', exact: true }).click();
     await page.getByRole('button', { name: 'Details for Existing password account', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Import passwords', exact: true }).click();
+    const passwordChooser = page.waitForEvent('filechooser');
+    await page.getByRole('button', { name: 'Choose password file', exact: true }).click();
+    await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, value: true }); document.dispatchEvent(new Event('visibilitychange')); });
+    await (await passwordChooser).setFiles({ name: 'password-export.csv', mimeType: 'text/csv', buffer: Buffer.from('Title,URL,Username,Password,Notes\nImported account,https://example.com,member,IMPORTED_PRIVATE_PASSWORD,Device import\nImported account,https://example.com,member,IMPORTED_PRIVATE_PASSWORD,Device import') });
+    await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, value: false }); document.dispatchEvent(new Event('visibilitychange')); });
+    await page.getByLabel('Vault passphrase', { exact: true }).fill(phrase);
+    await page.getByRole('button', { name: 'Unlock vault', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Review password import', exact: true }).getByText('1 new password ready to import.', { exact: true }).waitFor();
+    await fs.mkdir(path.join(root, '.cache/audit-ui'), { recursive: true });
+    await page.getByRole('dialog', { name: 'Review password import', exact: true }).screenshot({ path: path.join(root, `.cache/audit-ui/vault-password-import-${width}.png`) });
+    await page.getByRole('button', { name: 'Import passwords now', exact: true }).click();
+    await page.getByRole('button', { name: 'Export passwords', exact: true }).click();
+    const passwordDownload = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download password CSV', exact: true }).click();
+    assert.ok((await readDownload(await passwordDownload)).toString().includes('IMPORTED_PRIVATE_PASSWORD'), 'Export preserves imported passwords');
+    await page.getByRole('button', { name: 'Details for Imported account', exact: true }).click();
+    assert.equal(await page.getByRole('dialog').getByLabel('Password', { exact: true }).inputValue(), 'IMPORTED_PRIVATE_PASSWORD');
+    page.once('dialog', dialog => dialog.accept());
+    await page.getByRole('dialog').getByRole('button', { name: 'Delete', exact: true }).click();
+    await page.getByRole('button', { name: 'Details for Imported account', exact: true }).waitFor({ state: 'detached' });
     for (const [kind, file] of [['document', document], ['key', key]]) {
       await page.locator('.vault-password-footer').getByRole('button', { name: 'Import from this device', exact: true }).click();
       chooser = page.getByRole('dialog', { name: 'Import from this device', exact: true });
@@ -186,8 +225,15 @@ try {
     });
     assert.equal(await page.evaluate(() => JSON.stringify({ ...localStorage })), beforeExpiredImport, 'A file read finishing after subscription expiry cannot write the vault');
     assert.equal(await page.getByRole('button', { name: 'Download expired-import.key', exact: true }).count(), 0);
+    await collections.getByRole('button', { name: /^Passwords/ }).click();
+    await page.getByRole('group', { name: 'Password tools', exact: true }).screenshot({ path: path.join(root, `.cache/audit-ui/vault-password-tools-${width}.png`) });
+    page.once('dialog', dialog => dialog.accept());
+    await page.getByRole('button', { name: 'Delete all passwords', exact: true }).click();
+    await page.getByRole('button', { name: 'Details for Existing password account', exact: true }).waitFor({ state: 'detached' });
+    await collections.getByRole('button', { name: /^Documents/ }).click();
+    assert.ok(await page.getByRole('button', { name: `Download ${document.name}`, exact: true }).isVisible(), 'Deleting passwords keeps documents');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Collections fit the viewport');
-    for (const secret of secrets) assert.ok(outbound.every(value => !value.includes(secret)), 'No private item content or filename is sent to an API');
+    for (const secret of [...secrets, 'IMPORTED_PRIVATE_PASSWORD', 'password-export.csv']) assert.ok(outbound.every(value => !value.includes(secret)), 'No private item content or filename is sent to an API');
     assert.deepEqual(errors, []);
     console.log(`PASS: device imports, encrypted storage/backup, locking, bounds, paid writes, expired owner recovery/access, and delayed expiry guard at ${width}px`);
     await context.close();

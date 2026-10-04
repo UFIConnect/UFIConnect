@@ -206,7 +206,20 @@ export function parsePasswordImport(text, fileName = '') {
     entries = rows.map(row => Object.fromEntries(Object.entries(aliases).map(([field, names]) => [field, row[normalized.findIndex(header => names.includes(header))] || ''])));
   }
   if (!entries.length) throw new Error('No password entries were found in this export.');
+  // Android password exports can identify an installed app instead of a web
+  // address. Keep that identifier encrypted as a note, never as a launch URL.
+  entries = entries.map(entry => typeof entry.url === 'string' && /^android:\/\//i.test(entry.url)
+    ? { ...entry, url: '', notes: [entry.notes, `Android app: ${entry.url}`].filter(Boolean).join('\n') } : entry);
   return cleanEntries(entries);
+}
+
+export function exportPasswordCsv(entries) {
+  const columns = ['name', 'url', 'username', 'password', 'notes'];
+  const passwords = cleanEntries(entries.filter(entry => !entry.kind || entry.kind === 'password'));
+  const cell = value => `"${String(value ?? '').replace(/"/g, '""')}"`;
+  // Password-manager CSV must preserve credential bytes, including leading
+  // punctuation. It is downloaded as data and never rendered or executed.
+  return '\uFEFF' + [columns.join(','), ...passwords.map(entry => columns.map(key => cell(entry[key])).join(','))].join('\r\n');
 }
 
 async function deviceKey(secret) {

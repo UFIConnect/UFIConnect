@@ -257,7 +257,11 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
             const items = await stripe.checkout.sessions.listLineItems(existing.id, { limit: 2 });
             if (existing.metadata.tier !== tier || items.data.length !== 1
               || items.data[0].quantity !== quantity || idOf(items.data[0].price) !== priceId) {
-              throw fault(409, 'An existing checkout is open for another plan or price. Finish it or wait for it to expire before changing plans.');
+              if (!checkOwner(existing, row, true)) throw fault(409, 'Checkout ownership needs review.');
+              await stripe.checkout.sessions.expire(existing.id);
+              const expired = await stripe.checkout.sessions.retrieve(existing.id);
+              if (expired.status !== 'expired') throw fault(409, 'The previous checkout could not be closed. Refresh your membership status.');
+              continue;
             }
             legacySession = existing.id;
             break;
@@ -269,7 +273,7 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
       [row.id, slot, randomUUID(), tier, priceId, customer, frontendBase, quantity]);
       if (legacySession) await client.query('UPDATE billing_checkout_attempts SET session_id=$1 WHERE user_id=$2 AND slot=$3 AND session_id IS NULL', [legacySession, row.id, slot]);
     });
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < 4; attempt++) {
       let renewed = false;
       let changed;
       const session = await transaction(async client => {
@@ -278,7 +282,7 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
         const { rows: [pending] } = await client.query('SELECT * FROM billing_checkout_attempts WHERE user_id=$1 AND slot=$2 FOR UPDATE', [userId, slot]);
         if (!pending || pending.customer_id !== row.stripe_customer_id) throw fault(409, 'Billing account changed. Please contact support.');
         if (pending.session_id) {
-          const existing = await stripe.checkout.sessions.retrieve(pending.session_id);
+          let existing = await stripe.checkout.sessions.retrieve(pending.session_id);
           if (!checkOwner(existing, row, true)) throw fault(409, 'Checkout ownership needs review.');
           if (existing.status === 'complete') {
             await reconcileSession(client, row, existing, catalog);
@@ -286,8 +290,12 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
             return { complete: true };
           }
           if (existing.status === 'open') {
-            if (pending.tier !== tier || pending.price_id !== priceId || pending.quantity !== quantity) throw fault(409, 'An existing checkout is open for another plan or number of people. Finish it or wait for it to expire before changing plans.');
-            return existing;
+            if (pending.tier === tier && pending.price_id === priceId && pending.quantity === quantity) return existing;
+            // Close the unpaid checkout before creating a different option.
+            // A completion race or provider failure stops here, so two links
+            // can never remain payable for the same membership slot.
+            await stripe.checkout.sessions.expire(existing.id);
+            existing = await stripe.checkout.sessions.retrieve(existing.id);
           }
           if (existing.status !== 'expired') throw fault(409, 'Checkout status needs review.');
           await client.query(`UPDATE billing_checkout_attempts SET attempt_id=$1,tier=$2,price_id=$3,
@@ -299,18 +307,21 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
         // Stripe may prune idempotency keys after 24 hours. An unresolved
         // older attempt needs reconciliation, never a speculative new charge.
         if (Date.now() - new Date(pending.created_at).getTime() >= 23 * 3600000) throw fault(409, 'An earlier checkout needs reconciliation. Please contact support before starting another payment.');
-        if (pending.tier !== tier || pending.price_id !== priceId || pending.quantity !== quantity) throw fault(409, 'An earlier checkout is pending for another plan or number of people.');
+        const changedSelection = pending.tier !== tier || pending.price_id !== priceId || pending.quantity !== quantity;
         const path = slot === 'vpn_connector' ? '/vault' : slot === 'resume_builder' ? '/resume-builder' : '/settings';
         const created = await stripe.checkout.sessions.create({
           mode: 'subscription', customer: pending.customer_id,
           line_items: [{ price: pending.price_id, quantity: pending.quantity }],
-          metadata: { tier, quantity: String(pending.quantity), uficonnect_user_id: userId, uficonnect_attempt_id: pending.attempt_id },
-          subscription_data: { metadata: { tier, quantity: String(pending.quantity), uficonnect_user_id: userId } },
+          metadata: { tier: pending.tier, quantity: String(pending.quantity), uficonnect_user_id: userId, uficonnect_attempt_id: pending.attempt_id },
+          subscription_data: { metadata: { tier: pending.tier, quantity: String(pending.quantity), uficonnect_user_id: userId } },
           phone_number_collection: { enabled: false }, client_reference_id: userId,
           success_url: `${pending.return_base}${path}?upgrade=success`,
           cancel_url: `${pending.return_base}${path}?upgrade=cancelled`,
         }, { idempotencyKey: `ufi-checkout:${pending.attempt_id}` });
         await client.query('UPDATE billing_checkout_attempts SET session_id=$1 WHERE user_id=$2 AND slot=$3', [created.id, userId, slot]);
+        // Recover the original idempotent request first, including after a
+        // crash, then let the next locked iteration close it safely.
+        if (changedSelection) { renewed = true; return null; }
         return created;
       });
       if (changed) onUserUpdated(changed);

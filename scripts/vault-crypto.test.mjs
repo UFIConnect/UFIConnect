@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { exportPasswordCsv } from '../web/src/vault/localVault.mjs';
 import { createVault, unlockVault, saveEntries, hasVault, parsePasswordImport, exportEncryptedVault, restoreEncryptedVault,
   enableDeviceUnlock, unlockWithDevice, hasDeviceUnlock, VAULT_STORAGE_KEY } from '../web/src/vault/localVault.mjs';
 
@@ -63,6 +64,30 @@ test('common JSON and CSV exports import only login entries and reject unsafe UR
   assert.throws(() => parsePasswordImport(JSON.stringify([{ name: 'App', url: 'https://user:secret@example.com' }]), 'export.json'), /valid website/);
   assert.throws(() => parsePasswordImport('null', 'export.json'), /No password/);
   await assert.rejects(restoreEncryptedVault('{"entries":[]}', phrase, memory()), /not a supported/);
+});
+
+test('password exports from Android, Windows, Linux and iOS retain exact credentials', () => {
+  const fixtures = [
+    ['android.csv', 'name,url,username,password,note\nAndroid app,android://hash@org.example.app,user,secret,Mobile login'],
+    ['windows.csv', 'name,url,username,password\r\nEdge,https://example.com,user,"comma,quote""password"'],
+    ['linux.csv', 'url,username,password,httpRealm,formActionOrigin,guid,timeCreated\nhttps://example.com,user,secret,,https://example.com,guid,100'],
+    ['ios.csv', '\uFEFFTitle,URL,Username,Password,Notes,OTPAuth\nApple,https://example.com,user,secret,Notes,'],
+  ];
+  for (const [filename, text] of fixtures) {
+    const [entry] = parsePasswordImport(text, filename);
+    assert.equal(entry.username, 'user');
+    assert.equal(entry.password, filename === 'windows.csv' ? 'comma,quote"password' : 'secret');
+    if (filename === 'android.csv') { assert.equal(entry.url, ''); assert.match(entry.notes, /android:\/\/hash@org.example.app/); }
+    else assert.equal(entry.url, 'https://example.com/');
+  }
+});
+
+test('password CSV export preserves punctuation, quotes, Unicode and newlines on reimport', () => {
+  const entry = { name: 'Example, app', url: 'https://example.com/', username: 'person@example.com', password: '=exact+秘密"\ncredential', notes: 'line one\nline two' };
+  const csv = exportPasswordCsv([entry]);
+  const [restored] = parsePasswordImport(csv, 'passwords.csv');
+  for (const key of Object.keys(entry)) assert.equal(restored[key], entry[key]);
+  assert.equal(exportPasswordCsv([{ kind: 'document' }]), '\uFEFFname,url,username,password,notes');
 });
 
 test('failed backup authentication leaves the existing vault intact', async () => {

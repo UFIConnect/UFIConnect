@@ -74,6 +74,7 @@ try {
     const origin = server.resolvedUrls.local[0];
     page.on('request', request => { if (request.url().includes('/media/preparation/tailored-resume.mp4')) nativeRequests.push(request.url()); });
     let phase = 'native';
+    let backgroundClip = false;
     let overloadFailureAt = 0;
     const makePost = (index) => ({ id: `${phase}-${index}`, source: phase === 'native' ? 'reddit' : 'youtube',
       title: `Controlled video ${index}`, content: 'Local playback and scheduling fixture.', mediaType: 'video', videoDurationSeconds: 30,
@@ -86,6 +87,7 @@ try {
       const params = new URL(route.request().url()).searchParams;
       const offset = Number(params.get('cursor') || 0);
       calls.push({ phase, offset, source: params.get('source'), at: Date.now() });
+      if (phase === 'native' && backgroundClip && offset === 0) return route.fulfill({ json: { posts: [{ ...makePost(500), id: 'new-background-clip' }], hasMore: false, waitingForNew: true } });
       if (phase === 'overload' && offset === 10 && !params.get('source') && !overloadFailureAt) {
         overloadFailureAt = Date.now();
         return route.fulfill({ status: 503, headers: { 'Retry-After': '2' }, json: { message: 'Controlled temporary overload.' } });
@@ -118,6 +120,18 @@ try {
     await page.waitForFunction(() => { const video = document.querySelector('[data-post-id="native-0"] video'); return video && !video.paused && video.currentTime > .1; });
     assert.ok(await page.locator('.video-feed-slide').count() <= MAX_MOUNTED_SLIDES);
     assert.ok(new Set(nativeRequests).size <= MAX_MOUNTED_SLIDES, 'Initial feed does not fetch every queued video');
+    backgroundClip = true;
+    const refreshResponse = page.waitForResponse(response => /\/office\/feed\/(videos|music)\?/.test(response.url()));
+    await page.evaluate(() => {
+      const now = Date.now.bind(Date);
+      Date.now = () => now() + 60000;
+      window.dispatchEvent(new Event('focus'));
+    });
+    await refreshResponse;
+    await page.waitForFunction(() => document.querySelector('[data-post-id="new-background-clip"]'));
+    assert.equal(await activeId(), 'native-0', 'New background clips must not replace the playing video');
+    await page.waitForFunction(() => { const video = document.querySelector('[data-post-id="native-0"] video'); return video && !video.paused; });
+    backgroundClip = false;
     await page.evaluate(() => window.__videoAuditVisibility(true));
     await page.waitForFunction(() => [...document.querySelectorAll('.video-feed-media video')].every(video => video.paused));
     const hiddenCalls = calls.length;
