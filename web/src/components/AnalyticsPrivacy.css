@@ -6,11 +6,15 @@
 .analytics-privacy-panel h2 { margin: 0 0 8px; font-size: 17px; }
 .analytics-privacy-panel p { margin: 8px 0; line-height: 1.5; }
 .analytics-privacy-panel a { color: var(--primary, #102a6b); text-decoration: underline; }
+.analytics-privacy-ads { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border, #cbd5e1); }
+.analytics-privacy-option { display: flex; align-items: flex-start; gap: 10px; min-height: 44px; cursor: pointer; font-weight: 650; line-height: 1.5; }
+.analytics-privacy-option input { flex-shrink: 0; width: 20px; height: 20px; margin: 0; accent-color: var(--primary, #102a6b); }
+.analytics-privacy-hint { font-size: 12px; }
 .analytics-privacy-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
 .analytics-privacy-actions button, .analytics-privacy-close { min-height: 44px; border: 1px solid var(--border, #cbd5e1); border-radius: 8px; background: var(--card, #fff); color: var(--text, #0f172a); padding: 8px 12px; font: inherit; cursor: pointer; }
 .analytics-privacy-actions button { font-weight: 650; }
 .analytics-privacy-actions button:hover, .analytics-privacy-close:hover { background: var(--bg, #f1f5f9); }
-.analytics-privacy button:focus-visible, .analytics-privacy a:focus-visible { outline: 3px solid #2563eb; outline-offset: 3px; }
+.analytics-privacy button:focus-visible, .analytics-privacy a:focus-visible, .analytics-privacy input:focus-visible { outline: 3px solid #2563eb; outline-offset: 3px; }
 .analytics-privacy-close { margin-top: 8px; width: 100%; }
 .sidebar-analytics-link { margin: 0 12px 8px; flex-shrink: 0; }
 /* Keep the panel above the fixed mobile tab bar. Match tablets exactly 768px

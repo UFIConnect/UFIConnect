@@ -4,6 +4,7 @@ import { useLayoutEffect } from 'react';
 import { useAuth } from './contexts/AuthContext';
 import { trackPageview } from './analytics';
 import { getGoogleAnalytics } from './analytics/browserAnalytics';
+import { getGoogleAds } from './analytics/browserAds';
 import { publicRoutes } from './seo-routes.mjs';
 import { isBusinessRouteAllowed } from './businessRoutes.mjs';
 
@@ -186,6 +187,17 @@ function RouteLoading() {
 }
 
 export default function App() {
+  const { token, loading, sessionError } = useAuth();
+  const { pathname } = useLocation();
+  const ads = getGoogleAds();
+  const guestHomepage = pathname === '/' && !token && !loading && !sessionError && !MAINTENANCE;
+  useLayoutEffect(() => { ads.setHomepageEligible(guestHomepage); }, [ads, guestHomepage]);
+  // A tag-loaded public document must end before rendering account content.
+  if (ads.mustLeave(guestHomepage)) return <SessionLoading />;
+  return <AppContent />;
+}
+
+function AppContent() {
   useLayoutEffect(() => {
     // Reveal React's committed route, not a pre-rendered guest page while
     // the member's saved session is still being restored.
