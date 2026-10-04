@@ -41,6 +41,8 @@ export default defineConfig({
   preview: { headers: { 'Referrer-Policy': 'no-referrer' } },
   build: {
     outDir: 'dist',
+    // Isolate releases from cached missing-file responses at an outer CDN.
+    assetsDir: `assets/${/^[a-f0-9]{40}$/.test(process.env.RENDER_GIT_COMMIT || '') ? process.env.RENDER_GIT_COMMIT.slice(0, 12) : 'web'}`,
     manifest: true,
     sourcemap: false,
     chunkSizeWarningLimit: 600,
