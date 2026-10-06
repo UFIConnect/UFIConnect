@@ -56,10 +56,10 @@ try {
     });
     await installAuditMember(page, app, 'membership-audit');
     await auditNavigate(page, server.origin + '/?audit-public');
-    await page.getByRole('heading', { name: 'Start free. Grow from there.', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Choose your membership.', exact: true }).waitFor();
     const pricing = page.locator('#pricing');
     const plan = name => pricing.locator('.landing-plan-card').filter({ has: page.getByRole('heading', { name, exact: true }) });
-    check(await plan('Free').locator('.landing-plan-price').textContent() === '$0/mo', 'Homepage keeps the free plan visible');
+    check(await plan('Free').count() === 0, 'Homepage membership choices omit the Free plan');
     check((await plan('Pro').locator('.landing-plan-price').textContent()).includes('$19.94/mo'), 'Homepage shows the Pro monthly price');
     check((await plan('Business').locator('.landing-plan-price').textContent()).includes('$199.94/mo'), 'Homepage shows the solo Business price');
     check((await plan('Business').innerText()).includes('Teams: $19.94 per person/month'), 'Homepage explains per-person Business team billing');
