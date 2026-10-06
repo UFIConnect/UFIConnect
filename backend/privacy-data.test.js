@@ -83,6 +83,8 @@ async function seed(pg) {
     await insert('negative_usage_signals', { user_id: uid, signal_type: 'failure', visitor_id: 'secret-visitor', context: JSON.stringify({ secret: 'secret-context' }) });
     await insert('user_sign_in_events', { user_id: uid, session_id: `secret-session-${prefix}`, ip_key: 'secret-ip' });
     await insert('auth_sessions', { id: uid, user_id: uid, expires_at: '2027-01-01T00:00:00Z' });
+    await insert('managed_vpn_launches', { token_hash: (prefix === 'a' ? 'a' : 'b').repeat(64), user_id: uid,
+      platform: 'windows', auth_version: 0, initiating_session_id: uid, expires_at: '2027-01-01T00:00:00Z' });
     await insert('billing_checkout_attempts', { user_id: uid, slot: 'plan', attempt_id: uid, tier: 'pro', price_id: 'price_pro', customer_id: `cus_${prefix}`, session_id: 'secret-checkout-session', return_base: 'https://uficonnect.org' });
   }
   await insert('follows', { follower_id: alice, following_id: bob });
@@ -184,7 +186,7 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
       assert.equal((await pg.query(`SELECT COUNT(*)::integer AS count FROM ${table} WHERE user_id=$1`, [alice])).rows[0].count, 0, table);
       assert.equal((await pg.query(`SELECT COUNT(*)::integer AS count FROM ${table} WHERE user_id=$1`, [bob])).rows[0].count, 1, table);
     }
-    for (const table of ['generated_content', 'billing_checkout_attempts', 'vault_vpn_locations', 'managed_vpn_devices']) {
+    for (const table of ['generated_content', 'billing_checkout_attempts', 'vault_vpn_locations', 'managed_vpn_devices', 'managed_vpn_launches']) {
       assert.equal((await pg.query(`SELECT COUNT(*)::integer AS count FROM ${table} WHERE user_id=$1`, [alice])).rows[0].count, 0, table);
     }
     assert.equal((await pg.query('SELECT name FROM vault_vpn_locations WHERE user_id=$1', [bob])).rows[0].name, 'b-vpn-profile');

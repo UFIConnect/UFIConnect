@@ -12,6 +12,7 @@ async function mutateAccountAndRevokeVpn(db, userId, change) {
       const result = await change(client);
       await client.query(`UPDATE managed_vpn_devices SET revoked_at=NOW(),lease_expires_at=NOW()
         WHERE user_id=$1 AND revoked_at IS NULL`, [userId]);
+      await client.query('DELETE FROM managed_vpn_launches WHERE user_id=$1', [userId]);
       await client.query('COMMIT');
       return result;
     } catch (error) {

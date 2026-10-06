@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { randomBytes } = require('node:crypto');
+const { randomBytes, randomUUID } = require('node:crypto');
 const { PGlite } = require('@electric-sql/pglite');
 const { createManagedVpn, registerManagedVpnRoutes, MANAGED_VPN_SCHEMA,
   gatewayRateLimitKey, isAuthenticatedGatewayPoll } = require('./managed-vpn');
@@ -296,6 +296,10 @@ test('member routes require authentication and never expose internal provider er
   t.after(() => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)); });
   const base = `http://127.0.0.1:${server.address().port}`;
   assert.equal((await fetch(base + '/vpn/config')).status, 401);
+  for (const route of ['/vpn/launch', '/vpn/launch/consume']) {
+    assert.equal((await fetch(base + route, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ platform: 'windows', code: randomBytes(32).toString('base64url') }) })).status, 401);
+  }
   // A middleware identity without the required verified session context must
   // not bypass the transaction's fresh authorization check.
   const unauthorized = await fetch(base + '/vpn/devices', { method: 'POST', headers: { 'x-test-account': ALICE, 'content-type': 'application/json' },
@@ -347,4 +351,77 @@ test('shared-IP abuse cannot consume a verified gateway polling allowance or byp
   assert.equal((await poll(second.id, 'Bearer ' + second.token)).status, 200);
   assert.equal(isAuthenticatedGatewayPoll({ method: 'POST', path: `/vpn/gateways/${gateway.id}/desired`, get: () => auth }, f.vpn), false);
   assert.throws(() => gatewayRateLimitKey({}), { status: 401 });
+});
+
+async function sessionIdentity(f, userId = ALICE, seconds = 3600) {
+  const sid = randomUUID();
+  await f.pg.query('INSERT INTO auth_sessions(id,user_id,expires_at) VALUES($1,$2,$3)', [sid, userId, new Date(f.control.now + seconds * 1000)]);
+  return { id: userId, sid, ver: 0 };
+}
+const launchCode = value => new URL(value.url).searchParams.get('code');
+
+test('app launch uses a short-lived hashed ticket and only one same-account app can redeem it', async t => {
+  const f = await fixture(t), browser = await sessionIdentity(f), native = await sessionIdentity(f);
+  const launch = await f.vpn.launch(ALICE, { platform: 'windows' }, browser);
+  assert.match(launch.url, /^uficonnect-vpn:\/\/connect\?code=[A-Za-z0-9_-]{43}$/);
+  assert.equal(Date.parse(launch.expiresAt) - f.control.now, 180000);
+  const stored = (await f.pg.query('SELECT * FROM managed_vpn_launches')).rows[0];
+  assert.equal(stored.token_hash.length, 64);
+  assert.equal(JSON.stringify(stored).includes(launchCode(launch)), false);
+  const results = await Promise.allSettled([1, 2].map(() => f.vpn.consumeLaunch(ALICE, { platform: 'windows', code: launchCode(launch) }, native)));
+  assert.deepEqual(results.find(item => item.status === 'fulfilled').value, { action: 'connect' });
+  assert.equal(results.filter(item => item.status === 'fulfilled').length, 1);
+  assert.equal(results.find(item => item.status === 'rejected').reason.status, 409);
+  assert.equal((await f.pg.query('SELECT * FROM managed_vpn_launches')).rows.length, 0);
+  assert.equal((await f.vpn.list(ALICE)).devices.length, 0, 'A launch ticket does not enroll or pretend to connect');
+});
+
+test('launch tickets reject account/platform mismatch, replacement, expiry and ended browser sessions', async t => {
+  const f = await fixture(t), browser = await sessionIdentity(f), native = await sessionIdentity(f), bob = await sessionIdentity(f, BOB);
+  const launch = await f.vpn.launch(ALICE, { platform: 'ios' }, browser);
+  const body = { code: launchCode(launch), platform: 'ios' };
+  await assert.rejects(f.vpn.consumeLaunch(BOB, body, bob), { status: 409 });
+  await assert.rejects(f.vpn.consumeLaunch(ALICE, { ...body, platform: 'android' }, native), { status: 409 });
+  assert.deepEqual(await f.vpn.consumeLaunch(ALICE, body, native), { action: 'connect' });
+  const stale = await f.vpn.launch(ALICE, { platform: 'ios' }, browser);
+  const replaced = await f.vpn.launch(ALICE, { platform: 'ios' }, browser);
+  await assert.rejects(f.vpn.consumeLaunch(ALICE, { ...body, code: launchCode(stale) }, native), { status: 409 });
+  f.control.now += 180001;
+  await assert.rejects(f.vpn.consumeLaunch(ALICE, { ...body, code: launchCode(replaced) }, native), { status: 409 });
+  const ended = await f.vpn.launch(ALICE, { platform: 'ios' }, browser);
+  await f.pg.query('DELETE FROM auth_sessions WHERE id=$1', [browser.sid]);
+  assert.equal((await f.pg.query('SELECT * FROM managed_vpn_launches')).rows.length, 0);
+  await assert.rejects(f.vpn.consumeLaunch(ALICE, { ...body, code: launchCode(ended) }, native), { status: 409 });
+});
+
+test('launch requires paid access, strict inputs and current identities after asynchronous billing', async t => {
+  const f = await fixture(t), browser = await sessionIdentity(f);
+  for (const body of [null, {}, { platform: 'linux' }, { platform: 'windows', url: 'https://untrusted.invalid' }]) {
+    await assert.rejects(f.vpn.launch(ALICE, body, browser), { status: 400 });
+  }
+  for (const body of [{ platform: 'windows', code: 'invalid' }, { platform: 'windows', code: 'a'.repeat(43) }]) {
+    await assert.rejects(f.vpn.consumeLaunch(ALICE, body, browser), { status: 400 });
+  }
+  await assert.rejects(f.vpn.launch(ALICE, { platform: 'windows' }, null), { status: 401 });
+  f.control.status[ALICE] = { vpnConnectorAddon: false, subscriptions: [] };
+  await assert.rejects(f.vpn.launch(ALICE, { platform: 'windows' }, browser), { status: 403 });
+  delete f.control.status[ALICE];
+  f.control.onStatus = () => f.pg.query('DELETE FROM auth_sessions WHERE id=$1', [browser.sid]);
+  await assert.rejects(f.vpn.launch(ALICE, { platform: 'windows' }, browser), { status: 401 });
+  assert.equal((await f.pg.query('SELECT * FROM managed_vpn_launches')).rows.length, 0);
+});
+
+test('launch intent expires with its browser session and cannot survive account revocation or Auth0 relinking', async t => {
+  const f = await fixture(t), browser = await sessionIdentity(f, ALICE, 30), native = await sessionIdentity(f);
+  const launch = await f.vpn.launch(ALICE, { platform: 'android' }, browser);
+  assert.equal(Date.parse(launch.expiresAt), f.control.now + 30000);
+  await f.pg.query('UPDATE users SET auth_version=1 WHERE id=$1', [ALICE]);
+  await assert.rejects(f.vpn.consumeLaunch(ALICE, { platform: 'android', code: launchCode(launch) }, { ...native, ver: 1 }), { status: 409 });
+  await f.pg.query("UPDATE users SET auth_version=0,auth_provider='auth0',auth_subject='auth0|alice' WHERE id=$1", [ALICE]);
+  const oauth = { id: ALICE, authProvider: 'auth0', sub: 'auth0|alice' };
+  const oauthLaunch = await f.vpn.launch(ALICE, { platform: 'android' }, oauth);
+  await f.pg.query("UPDATE users SET auth_subject='auth0|changed' WHERE id=$1", [ALICE]);
+  await assert.rejects(f.vpn.consumeLaunch(ALICE, { platform: 'android', code: launchCode(oauthLaunch) }, native), { status: 409 });
+  await f.pg.query('DELETE FROM users WHERE id=$1', [ALICE]);
+  assert.equal((await f.pg.query('SELECT * FROM managed_vpn_launches')).rows.length, 0);
 });

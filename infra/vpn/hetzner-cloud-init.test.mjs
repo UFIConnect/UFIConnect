@@ -9,6 +9,7 @@ test('gateway bootstrap keeps management restricted and rejects peer/private-net
   assert.equal(doc.disable_root, true);
   const files = new Map(doc.write_files.map(f => [f.path, f]));
   assert.equal(files.get('/etc/ufi-vpn/gateway.json').permissions, '0600');
+  assert.equal(JSON.parse(files.get('/etc/ufi-vpn/gateway.json').content).apiOrigin, 'https://uficonnect-api-708r.onrender.com');
   const firewall = files.get('/etc/nftables.conf').content;
   assert.match(firewall, /ip saddr 203\.0\.113\.7 tcp dport 22 accept/);
   assert.match(firewall, /iifname "ufi0" oifname "ufi0" drop/);
