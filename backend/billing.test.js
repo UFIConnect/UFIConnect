@@ -62,7 +62,7 @@ function setup() {
         }
         return idempotency.get(options.idempotencyKey);
       },
-      async *list({ customer }) { for (const value of sessions.values()) if (value.customer === customer && value.status === 'open') yield value; },
+      async *list({ customer, status }) { if (failProvider) throw new Error('provider outage'); for (const value of sessions.values()) if (value.customer === customer && (!status || value.status === status)) yield value; },
       async expire(id) { if (failProvider) throw new Error('provider outage'); sessions.get(id).status = 'expired'; },
     } },
     subscriptions: {
@@ -537,12 +537,68 @@ test('crash after Stripe accepts Checkout reuses the persisted idempotency key',
   assert.equal(f.sessions.size, 1);
 });
 
-test('expired checkout starts a new attempt; aged unresolved attempts fail closed', async () => {
+test('expired checkout starts a new attempt; aged unresolved attempts recover the existing session', async () => {
   const f = setup(); await f.service.createCheckout(A, 'pro');
   f.sessions.get('cs_1').status = 'expired';
   assert.equal((await f.service.createCheckout(A, 'pro')).url, 'https://checkout.stripe.com/cs_2');
   await pg.query("UPDATE billing_checkout_attempts SET session_id=NULL,created_at=NOW()-INTERVAL '25 hours' WHERE user_id=$1", [A]);
-  await assert.rejects(f.service.createCheckout(A, 'pro'), { status: 409 });
+  assert.equal((await f.service.createCheckout(A, 'pro')).url, 'https://checkout.stripe.com/cs_2');
+  assert.equal(f.creates.length, 2, 'Recovering the accepted session never replays the old key');
+});
+
+test('aged checkout without any accepted session rotates only after complete provider history', async () => {
+  const f = setup(); f.failWrite();
+  await assert.rejects(f.service.createCheckout(A, 'pro'), /simulated DB/);
+  const previous = (await pg.query('SELECT * FROM billing_checkout_attempts WHERE user_id=$1', [A])).rows[0];
+  f.sessions.clear();
+  await pg.query("UPDATE billing_checkout_attempts SET created_at=NOW()-INTERVAL '25 hours' WHERE user_id=$1", [A]);
+  const results = await Promise.all([f.service.createCheckout(A, 'business'), f.service.createCheckout(A, 'business')]);
+  assert.equal(results[0].url, results[1].url);
+  const pending = (await pg.query('SELECT * FROM billing_checkout_attempts WHERE user_id=$1', [A])).rows[0];
+  assert.notEqual(pending.attempt_id, previous.attempt_id);
+  assert.equal(pending.tier, 'business');
+  assert.equal(f.creates.length, 2, 'Only one replacement checkout is opened across simultaneous requests');
+  assert.notEqual(f.creates[0].options.idempotencyKey, f.creates[1].options.idempotencyKey);
+  assert.equal((await alice()).plan, 'free');
+});
+
+test('aged checkout recovers a completed payment instead of starting another purchase', async () => {
+  const f = setup(); f.failWrite();
+  await assert.rejects(f.service.createCheckout(A, 'pro'), /simulated DB/);
+  const pending = (await pg.query('SELECT * FROM billing_checkout_attempts WHERE user_id=$1', [A])).rows[0];
+  f.sub();
+  f.session('cs_1', 'sub_a', { metadata: { tier: 'pro', uficonnect_user_id: A, uficonnect_attempt_id: pending.attempt_id } });
+  // First subscription-list snapshot can lag behind checkout completion.
+  f.stripe.subscriptions.list = async function* () {};
+  await pg.query("UPDATE billing_checkout_attempts SET created_at=NOW()-INTERVAL '25 hours' WHERE user_id=$1", [A]);
+  await assert.rejects(f.service.createCheckout(A, 'pro'), /Checkout is complete/);
+  assert.equal((await alice()).plan, 'pro');
+  assert.equal((await alice()).stripe_subscription_id, 'sub_a');
+  assert.equal(f.creates.length, 1);
+});
+
+test('aged checkout stays blocked when provider history fails or another checkout may be payable', async () => {
+  for (const scenario of ['outage', 'other_open', 'wrong_owner', 'duplicate_attempt', 'too_much_history']) {
+    const f = setup(); f.failWrite();
+    await assert.rejects(f.service.createCheckout(A, 'pro'), /simulated DB/);
+    const pending = (await pg.query('SELECT * FROM billing_checkout_attempts WHERE user_id=$1', [A])).rows[0];
+    await pg.query("UPDATE billing_checkout_attempts SET created_at=NOW()-INTERVAL '25 hours' WHERE user_id=$1", [A]);
+    if (scenario === 'outage') f.providerOutage();
+    if (scenario === 'other_open') f.sessions.get('cs_1').metadata.uficonnect_attempt_id = 'older-attempt';
+    if (scenario === 'wrong_owner') f.sessions.get('cs_1').client_reference_id = B;
+    if (scenario === 'duplicate_attempt') f.sessions.set('cs_duplicate', { ...f.sessions.get('cs_1'), id: 'cs_duplicate' });
+    if (scenario === 'too_much_history') {
+      f.sessions.clear();
+      for (let i=0; i<1001; i++) f.session('cs_history_'+i, null, { status: 'expired', payment_status: 'unpaid' });
+    }
+    await assert.rejects(f.service.createCheckout(A, 'pro'), scenario === 'outage' ? /provider outage/ : { status: 409 });
+    const next = (await pg.query('SELECT * FROM billing_checkout_attempts WHERE user_id=$1', [A])).rows[0];
+    assert.equal(next.attempt_id, pending.attempt_id, scenario);
+    assert.equal(next.session_id, null, scenario);
+    assert.equal(f.creates.length, 1, scenario);
+    assert.equal((await alice()).plan, 'free', scenario);
+    await pg.query('DELETE FROM billing_checkout_attempts WHERE user_id=$1', [A]);
+  }
 });
 
 test('switching an uncertain checkout recovers its original request before replacing it', async () => {

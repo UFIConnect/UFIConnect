@@ -64,11 +64,9 @@ try {
     check((await plan('Business').locator('.landing-plan-price').textContent()).includes('$199.94/mo'), 'Homepage shows the solo Business price');
     check((await plan('Business').innerText()).includes('Teams: $19.94 per person/month'), 'Homepage explains per-person Business team billing');
     check((await plan('Business').innerText()).includes('2 or more people'), 'Homepage explains team minimum size');
-    check((await plan('Vault').locator('.landing-plan-price').textContent()).includes('$3.94/mo'), 'Homepage shows the Vault monthly price');
-    check((await plan('Vault').innerText()).includes('VPN setup is pending.'), 'Homepage accurately labels pending VPN setup');
+    check(await plan('Vault').count() === 0, 'Homepage does not advertise the Vault subscription');
     check((await plan('Resume Builder').locator('.landing-plan-price').textContent()).includes('$30/mo'), 'Homepage advertises monthly Resume Builder');
     check((await plan('Resume Builder').innerText()).includes('$149.94 every 6 months'), 'Homepage keeps the six-month Resume Builder option');
-    check(await plan('Vault').getByRole('link').getAttribute('href') === '/vault', 'Homepage opens the Vault membership');
     check(await plan('Resume Builder').getByRole('link').getAttribute('href') === '/resume-builder', 'Homepage opens Resume Builder');
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Homepage pricing fits ${width}px`);
     await pricing.screenshot({ path: `.cache/audit-ui/homepage-pricing-${width}.png` });

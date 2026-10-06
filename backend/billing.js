@@ -222,6 +222,52 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
       throw fault(409, 'A subscription already exists. Use Manage billing to update it or recover a failed payment.');
     }
   }
+  async function recoverAgedCheckout(client, row, pending, catalog) {
+    let recovered = null;
+    let inspected = 0;
+    // Use the complete customer list, not eventually consistent metadata
+    // search. A missing local session ID can mean Stripe accepted the request
+    // before the response/database write failed. Never replay an expired key.
+    for await (const session of stripe.checkout.sessions.list({ customer: pending.customer_id, limit: 100 })) {
+      if (++inspected > 1000) throw fault(409, 'Checkout history needs review. Please contact support.');
+      if (session.metadata?.uficonnect_attempt_id === pending.attempt_id) {
+        if (recovered || session.mode !== 'subscription' || !checkOwner(session, row, true)) {
+          throw fault(409, 'Checkout ownership needs review.');
+        }
+        recovered = session;
+        continue;
+      }
+      if (session.mode !== 'subscription' || session.status === 'expired') continue;
+      // An older checkout without attempt metadata may still be payable.
+      // Resolve its actual price before deciding it belongs to another slot.
+      const items = await stripe.checkout.sessions.listLineItems(session.id, { limit: 2 });
+      const otherTier = items.data.length === 1 && !items.has_more
+        ? catalog.allowedPrices.get(idOf(items.data[0].price)) : null;
+      if (otherTier && slotFor(otherTier) !== pending.slot) continue;
+      if (session.status === 'complete' && idOf(session.subscription)) {
+        const subscription = await readSubscription(idOf(session.subscription));
+        if (checkOwner(subscription, row) && ENDED.has(subscription.status)) continue;
+      }
+      throw fault(409, 'Another checkout or subscription needs review. Check billing status or use Manage billing.');
+    }
+    if (recovered) {
+      await client.query('UPDATE billing_checkout_attempts SET session_id=$1 WHERE user_id=$2 AND slot=$3', [recovered.id, row.id, pending.slot]);
+      pending.session_id = recovered.id;
+      return;
+    }
+    // Check subscriptions again under this row lock before rotating a key.
+    // This covers a completed payment whose webhook has not reached us yet.
+    inspected = 0;
+    for await (const subscription of stripe.subscriptions.list({ customer: pending.customer_id, status: 'all', limit: 100 })) {
+      if (++inspected > 1000) throw fault(409, 'Subscription history needs review. Please contact support.');
+      const tier = tierFor(subscription, catalog);
+      if (!ENDED.has(subscription.status) && (!tier || slotFor(tier) === pending.slot)) {
+        throw fault(409, 'A subscription already exists. Use Manage billing to update it or recover a failed payment.');
+      }
+    }
+    // Exhaustive successful provider reads prove no accepted/payable checkout
+    // remains. Keep the caller's transaction/row lock while replacing the key.
+  }
   async function createCheckout(userId, tier, quantity = 1) {
     if (!TIERS.includes(tier)) throw fault(400, 'Choose a valid subscription tier.');
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100 || (tier !== 'business' && quantity !== 1)) {
@@ -281,6 +327,16 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
         checkCheckoutAllowed(row, slot);
         const { rows: [pending] } = await client.query('SELECT * FROM billing_checkout_attempts WHERE user_id=$1 AND slot=$2 FOR UPDATE', [userId, slot]);
         if (!pending || pending.customer_id !== row.stripe_customer_id) throw fault(409, 'Billing account changed. Please contact support.');
+        if (!pending.session_id && Date.now() - new Date(pending.created_at).getTime() >= 23 * 3600000) {
+          await recoverAgedCheckout(client, row, pending, catalog);
+          if (!pending.session_id) {
+            await client.query(`UPDATE billing_checkout_attempts SET attempt_id=$1,tier=$2,price_id=$3,
+              session_id=NULL,return_base=$4,created_at=NOW(),quantity=$7 WHERE user_id=$5 AND slot=$6`,
+            [randomUUID(), tier, priceId, frontendBase, userId, slot, quantity]);
+            renewed = true;
+            return null;
+          }
+        }
         if (pending.session_id) {
           let existing = await stripe.checkout.sessions.retrieve(pending.session_id);
           if (!checkOwner(existing, row, true)) throw fault(409, 'Checkout ownership needs review.');
@@ -304,9 +360,6 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
           renewed = true;
           return null;
         }
-        // Stripe may prune idempotency keys after 24 hours. An unresolved
-        // older attempt needs reconciliation, never a speculative new charge.
-        if (Date.now() - new Date(pending.created_at).getTime() >= 23 * 3600000) throw fault(409, 'An earlier checkout needs reconciliation. Please contact support before starting another payment.');
         const changedSelection = pending.tier !== tier || pending.price_id !== priceId || pending.quantity !== quantity;
         const path = slot === 'vpn_connector' ? '/vault' : slot === 'resume_builder' ? '/resume-builder' : '/settings';
         const created = await stripe.checkout.sessions.create({

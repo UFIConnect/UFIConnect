@@ -363,7 +363,9 @@ app.get('/readyz', (_req, res) => res.status(securityStorageReady ? 200 : 503).s
 app.get('/health', (_req, res) => res.status(securityStorageReady ? 200 : 503).set('Cache-Control', 'no-store').json(securityStorageReady ? buildHealthProbePayload() : { status: 'initializing' }));
 // Detailed diagnostics remain available for manual operations checks, while
 // Render and the public uptime monitors stay on the constant-size probe above.
-app.get('/health/details', requireOfficeToken, (_req, res) => res.status(200).set('Cache-Control', 'no-store').json(buildHealthPayload()));
+app.get('/health/details', requireOfficeToken, (req, res) => res.status(200).set('Cache-Control', 'no-store').json({
+  ...buildHealthPayload(), network: require('./proxy-diagnostics').proxyDiagnostics(req),
+}));
 
 // Rate limits are independent of dashboard runtime metrics. Express resolves
 // req.ip using the explicitly configured TRUST_PROXY boundary; direct clients
