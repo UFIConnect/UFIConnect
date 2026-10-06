@@ -1,5 +1,6 @@
 # EAS replaces .gitignore rules when this file is present.
 # Keep build inputs, including mobile/native-vpn/{ios,android} templates.
+.git
 node_modules
 .expo
 .expo-shared
