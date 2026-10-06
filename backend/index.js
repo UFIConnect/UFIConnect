@@ -1,4 +1,5 @@
 const express = require('express');
+const { BLUESKY_OAUTH_SCOPE, pushBlueskyAuthorization } = require('./bluesky-oauth');
 const { importedContentLimit, jobDescriptionText, JOB_CONTENT_MAX_CHARS } = require('./job-content');
 const { extractFeedMedia } = require('./rss-media');
 const { normalizePostMedia } = require('./post-media');
@@ -1482,6 +1483,7 @@ async function resolveBlueskyAuthServer(handle) {
 // model: registration is just "the metadata is reachable at this URL").
 app.get('/oauth/bluesky/client-metadata.json', (_req, res) => {
   if (!BLUESKY_SIGNING_KEY) return res.status(501).json({ error: 'Bluesky OAuth not configured' });
+  res.set('Cache-Control', 'public, max-age=60, must-revalidate');
   res.json({
     client_id: blueskyClientId(),
     client_name: 'UFIconnect',
@@ -1492,7 +1494,7 @@ app.get('/oauth/bluesky/client-metadata.json', (_req, res) => {
     redirect_uris: [oauthCallbackUrl('bluesky')],
     grant_types: ['authorization_code', 'refresh_token'],
     response_types: ['code'],
-    scope: 'atproto transition:generic transition:chat.bsky',
+    scope: BLUESKY_OAUTH_SCOPE,
     token_endpoint_auth_method: 'private_key_jwt',
     token_endpoint_auth_signing_alg: 'ES256',
     dpop_bound_access_tokens: true,
@@ -1543,18 +1545,18 @@ app.get('/auth/social/bluesky/start', authenticate, async (req, res) => {
       did, pdsUrl,
     });
 
-    const parResult = await atprotoPost(authServerMeta.pushed_authorization_request_endpoint, {
+    const parResult = await pushBlueskyAuthorization(scope => atprotoPost(authServerMeta.pushed_authorization_request_endpoint, {
       client_id: clientId,
       response_type: 'code',
       code_challenge: pkceChallenge(codeVerifier),
       code_challenge_method: 'S256',
       state,
       redirect_uri: redirectUri,
-      scope: 'atproto transition:generic transition:chat.bsky',
+      scope,
       login_hint: handle,
       client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
       client_assertion: createBlueskyClientAssertion(authServerMeta.issuer),
-    });
+    }));
     if (!parResult?.data?.request_uri) {
       throw new Error(`PAR request failed (${parResult?.status}): ${JSON.stringify(parResult?.data).slice(0, 300)}`);
     }
