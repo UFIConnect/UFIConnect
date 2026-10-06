@@ -33,7 +33,7 @@ try {
     const post = {
       id: 'audit-likes', source: 'github', isExternal: true, title: 'Shared recruiting tools',
       content: 'A useful public post for checking likes.', author: { name: 'Community author' },
-      sourceUrl: 'https://github.com/example/project', createdAt: new Date().toISOString(),
+      sourceUrl: 'https://github.com/example/project', createdAt: new Date(Date.now() - 5 * 60_000).toISOString(),
       sourceLikesCount: 47, likesScope: 'uficonnect', likesAvailable: true, commentsCount: 0,
     };
     const context = await browser.newContext({ viewport });
@@ -74,8 +74,9 @@ try {
     await auditReload(page);
     await page.getByLabel('47 stars', { exact: true }).waitFor();
     assert.equal(writes, 0, 'Viewing counts never writes a like');
-    await page.locator('.post-chrome-day').getByText('Today', { exact: true }).waitFor();
-    assert.match(await page.locator('.post-chrome-clock').textContent(), /^at /);
+    await page.locator('.post-chrome-day').getByText('5 minutes ago', { exact: true }).waitFor();
+    assert.equal(await page.locator('.post-chrome-time time').getAttribute('datetime'), post.createdAt);
+    assert.match(await page.locator('.post-chrome-time').getAttribute('aria-label'), /^Posted /);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false);
     await page.screenshot({ path: path.join(output, `likes-${viewport.width}.png`), fullPage: true });
     await auditNavigate(page, base + 'videos');

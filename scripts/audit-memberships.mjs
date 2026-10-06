@@ -23,7 +23,7 @@ try {
     const page = await context.newPage();
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     let status = { plan: 'free', resumeBuilderAddon: false, hasBillingAccount: false, subscriptions: [] };
-    let ready = true; let businessReady = false; let configWait = null;
+    let ready = true; let businessReady = false; let configWait = null; let configHttpStatus = 200;
     let monthlyReady = true; let sixMonthReady = true; let monthlyMatches = true;
     let checkoutUrl = 'https://evil.invalid/checkout'; const requests = [];
     await context.route('**/*', async route => {
@@ -36,6 +36,7 @@ try {
       if (endpoint === '/billing/status') return fulfill(status);
       if (endpoint === '/billing/config') {
         if (configWait) await configWait;
+        if (configHttpStatus !== 200) return route.fulfill({ status: configHttpStatus, json: { message: 'Temporary test outage' }, headers });
         return fulfill({ stripeConfigured: true, webhookConfigured: true, paymentsReady: ready,
           tiers: { pro: ready, business: ready && businessReady, resume_builder: ready && sixMonthReady, resume_builder_monthly: ready && monthlyReady },
           pricing: {
@@ -101,7 +102,22 @@ try {
     await upgrade.click();
     await dialog.getByText('Membership checkout is currently unavailable. Please try again later.').waitFor();
     check(await dialog.getByRole('button', { name: 'Unavailable', exact: true }).first().isDisabled(), 'Unavailable processor disables checkout');
+    ready = true;
+    await dialog.getByRole('button', { name: 'Check billing availability', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Choose Pro', exact: true }).waitFor();
+    check(await dialog.getByRole('button', { name: 'Choose Pro', exact: true }).isEnabled(), 'Membership checkout recovers after availability changes without closing the modal');
     await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    if (width === 1440) {
+      configHttpStatus = 503;
+      await upgrade.click();
+      await dialog.getByText('We could not load current billing prices. Check your connection and try again.', { exact: true }).waitFor();
+      check(await dialog.getByRole('button', { name: 'Unavailable', exact: true }).first().isDisabled(), 'Failed price requests do not enable an unverified checkout');
+      configHttpStatus = 200;
+      await page.evaluate(() => window.dispatchEvent(new Event('online')));
+      await dialog.getByRole('button', { name: 'Choose Pro', exact: true }).waitFor();
+      check(await dialog.getByRole('button', { name: 'Choose Pro', exact: true }).isEnabled(), 'Restoring connectivity refreshes prices automatically');
+      await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    }
     status = { ...status, hasBillingAccount: true, subscriptions: [{ kind: 'plan', tier: 'pro', status: 'past_due', cancelAtPeriodEnd: false }] };
     await section.getByRole('button', { name: 'Check billing status', exact: true }).click();
     await section.getByText('past due', { exact: false }).waitFor();
@@ -166,6 +182,10 @@ try {
     await auditNavigate(page, server.origin + '/resume-builder');
     await page.getByRole('button', { name: 'Billing unavailable', exact: true }).waitFor();
     check(await page.getByRole('button', { name: 'Billing unavailable', exact: true }).isDisabled(), 'Unavailable Resume Builder checkout fails closed');
+    ready = true; monthlyMatches = true;
+    await page.getByRole('button', { name: 'Check billing availability', exact: true }).click();
+    await resumePurchase.waitFor();
+    check(await resumePurchase.isEnabled(), 'Resume Builder checkout recovers on the same page after a billing outage');
     check(errors.length === 0, `No browser errors at ${width}px: ${errors.join('; ')}`);
     await context.close();
   }

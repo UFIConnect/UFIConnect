@@ -3,7 +3,6 @@ import ProfilePhoto from '../components/ProfilePhoto';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
-import { CENTERS } from '../local/localWorkspace';
 import FollowListModal from '../components/FollowListModal';
 import PhotoPickerButton from '../components/PhotoPickerButton';
 import PostList from '../components/PostList';
@@ -173,6 +172,7 @@ export default function Profile() {
   }
 
   function selectProfileTab(tab) {
+    if (tab === 'more') return;
     setActiveProfileTab(tab);
     setEditing(null);
     setError('');
@@ -550,13 +550,15 @@ export default function Profile() {
           {[
             { key: 'posts', label: 'Posts' },
             { key: 'about', label: 'About' },
-            { key: 'more', label: 'More' },
+            { key: 'more', label: 'More · Locked' },
           ].map(tab => (
             <button
               key={tab.key}
               type="button"
               className={activeProfileTab === tab.key ? 'active' : ''}
               aria-current={activeProfileTab === tab.key ? 'page' : undefined}
+              disabled={tab.key === 'more'}
+              title={tab.key === 'more' ? 'Locked' : undefined}
               onClick={() => selectProfileTab(tab.key)}
             >
               {tab.label}
@@ -627,12 +629,8 @@ export default function Profile() {
               )}
             </div>
           ) : activeProfileTab === 'more' ? (
-            <div className="profile-more-options" aria-label="More profile options">
-              {CENTERS.map(center => <Link key={center.id} className="card" to={center.route || '/centers/' + center.id}><strong>{center.label}</strong><span>{center.description}</span></Link>)}
-              <Link className="card" to="/connected-accounts"><strong>Connected accounts</strong><span>Manage the sources you follow and publish to.</span></Link>
-              <Link className="card" to="/resume-builder"><strong>Resume builder</strong><span>Update your resume for your next opportunity.</span></Link>
-              <Link className="card" to="/settings"><strong>Settings and privacy</strong><span>Choose what other members can see.</span></Link>
-              <Link className="card" to="/privacy#analytics"><strong>Analytics privacy</strong><span>Review measurement and data preferences.</span></Link>
+            <div className="card" role="status">
+              <h2>More is locked</h2>
             </div>
           ) : (
             <>
