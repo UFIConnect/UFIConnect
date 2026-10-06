@@ -23,4 +23,11 @@ async function openMemberVpnProfile({session, getMembership, isCurrent, openURL}
   await openURL(PROFILE_URL);
   return isCurrent() ? 'opened' : 'stale';
 }
-module.exports = {PROFILE_URL, INSTALL_URL, hasPaidAccess, checkProfileAccess, openMemberVpnProfile};
+async function openProfileManagement({session, isCurrent, openURL}) {
+  // Owners can revoke saved profiles even after paid access ends. The website
+  // authenticates independently and authorizes every profile operation.
+  if (!session || !isCurrent()) return 'stale';
+  await openURL(PROFILE_URL);
+  return isCurrent() ? 'managed' : 'stale';
+}
+module.exports = {PROFILE_URL, INSTALL_URL, hasPaidAccess, checkProfileAccess, openMemberVpnProfile, openProfileManagement};

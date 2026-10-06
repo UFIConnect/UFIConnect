@@ -1,6 +1,6 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
-const {PROFILE_URL,INSTALL_URL,hasPaidAccess,checkProfileAccess,openMemberVpnProfile}=require('./officialWireGuard.cjs');
+const {PROFILE_URL,INSTALL_URL,hasPaidAccess,checkProfileAccess,openMemberVpnProfile,openProfileManagement}=require('./officialWireGuard.cjs');
 const paid = () => ({vpnConnectorAddon:true,subscriptions:[{kind:'vpn_connector',status:'active',currentPeriodEnd:Date.now()/1000+3600}]});
 test('only a current active membership opens the fixed HTTPS profile destination',async()=>{
   const calls=[];
@@ -41,4 +41,10 @@ test('paid access rejects trials, past-due, expired, duplicate and inconsistent 
   const duplicate=paid();duplicate.subscriptions.push({...duplicate.subscriptions[0]});assert.equal(hasPaidAccess(duplicate),false);
   assert.equal(hasPaidAccess({vpnConnectorAddon:true,subscriptions:[]}),false);
   assert.equal(hasPaidAccess({...paid(),vpnConnectorAddon:false}),false);
+});
+test('saved-profile management needs no active billing and cannot open after sign-out',async()=>{
+  const calls=[];
+  assert.equal(await openProfileManagement({session:'signed-in',isCurrent:()=>true,openURL:async(...args)=>calls.push(args)}),'managed');
+  assert.deepEqual(calls,[[PROFILE_URL]]);
+  for(const session of [null,'stale']) assert.equal(await openProfileManagement({session,isCurrent:()=>false,openURL:()=>assert.fail('must not open')}),'stale');
 });

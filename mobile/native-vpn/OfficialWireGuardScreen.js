@@ -3,7 +3,7 @@ import {ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, Text} fro
 import {useAuth} from '../context/AuthContext';
 import {COLORS} from '../theme';
 import {getVpnMembership} from './client';
-const {INSTALL_URL, checkProfileAccess, openMemberVpnProfile} = require('./officialWireGuard.cjs');
+const {INSTALL_URL, checkProfileAccess, openMemberVpnProfile, openProfileManagement} = require('./officialWireGuard.cjs');
 const {createVpnActionGate, runVpnAction} = require('./action.cjs');
 
 export default function OfficialWireGuardScreen() {
@@ -22,10 +22,12 @@ export default function OfficialWireGuardScreen() {
   async function act(open) {
     await runVpnAction({gate:gate.current, session:token,
       onStart:() => {setBusy(true); setError('');},
-      action:isCurrent => open
+      action:isCurrent => open === 'manage'
+        ? openProfileManagement({session:token,isCurrent,openURL:Linking.openURL})
+        : open
         ? openMemberVpnProfile({session:token,getMembership:getVpnMembership,isCurrent,openURL:Linking.openURL})
         : checkProfileAccess({session:token,getMembership:getVpnMembership,isCurrent}),
-      onSuccess:value => {if (value !== 'stale') setMembership({session:token,state:value === 'opened' ? 'active' : value});},
+      onSuccess:value => {if (!['stale','managed'].includes(value)) setMembership({session:token,state:value === 'opened' ? 'active' : value});},
       onError:() => {setMembership({session:token,state:'unknown'}); setError('Could not confirm access or open the profile page. Check your connection and try again.');},
       onFinish:() => setBusy(false),
     });
@@ -47,6 +49,7 @@ export default function OfficialWireGuardScreen() {
     <Text style={styles.body}>1. Install WireGuard.{ '\n' }2. Open your profile page, sign in to the same account if asked, and download your profile.{ '\n' }3. Import it in WireGuard and approve VPN permission.</Text>
     <Text style={styles.note}>Keep the profile private. Delete the downloaded file after import.</Text>
     <Text style={styles.note}>Check status and disconnect in WireGuard. UFIConnect cannot control its connection; signing out or closing your browser leaves it running. Revoke the profile on your profile page to remove server access.</Text>
+    {token && <Pressable accessibilityRole="link" disabled={busy} onPress={() => act('manage')}><Text style={styles.link}>Manage saved profiles</Text></Pressable>}
     <Text style={styles.note}>A password change or reset, signing out all devices, or account deletion invalidates your profiles. Remove old profiles in WireGuard.</Text>
     <Pressable accessibilityRole="link" onPress={() => Linking.openURL('https://uficonnect.org/privacy').catch(() => setError('Open uficonnect.org/privacy to read the privacy policy.'))}><Text style={styles.link}>Read the privacy policy</Text></Pressable>
   </ScrollView>;
