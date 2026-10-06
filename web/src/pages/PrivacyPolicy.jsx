@@ -1,9 +1,9 @@
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 
-const EFFECTIVE_DATE = 'September 30, 2026';
+const EFFECTIVE_DATE = 'October 5, 2026';
 const CONTACT_EMAIL  = 'privacy@uficonnect.org';
-const APP_NAME       = 'UFIconnect';
+const APP_NAME       = 'UFIConnect';
 const APP_URL        = 'https://uficonnect.org';
 
 function Section({ title, children }) {
@@ -39,13 +39,13 @@ export default function PrivacyPolicy() {
   return (
     <>
       <Helmet>
-        <title>Privacy Policy — UFIconnect</title>
-        <meta name="description" content="UFIconnect privacy policy — how we collect, use, and protect your data." />
+        <title>Privacy Policy — UFIConnect</title>
+        <meta name="description" content="UFIConnect privacy policy — how we collect, use, and protect your data." />
         <link rel="canonical" href="https://uficonnect.org/privacy" />
         <meta property="og:type" content="website" />
         <meta property="og:url" content="https://uficonnect.org/privacy" />
-        <meta property="og:title" content="Privacy Policy | UFIconnect" />
-        <meta property="og:description" content="How UFIconnect collects, uses, and protects your data." />
+        <meta property="og:title" content="Privacy Policy | UFIConnect" />
+        <meta property="og:description" content="How UFIConnect collects, uses, and protects your data." />
       </Helmet>
 
       {/* Nav bar */}
@@ -83,9 +83,10 @@ export default function PrivacyPolicy() {
 
         <Section title="1. Who we are">
           <P>
-            {APP_NAME} ("we", "us", or "our") operates the professional networking platform at {APP_URL}.
-            We connect professionals through a personalised content feed, communities, messaging, and
-            job opportunities. This policy explains what personal data we collect, why we collect it,
+            {APP_NAME} ("we", "us", or "our") is a trade name operating in California, United States,
+            and operates the platform at {APP_URL}. We provide a personalised feed, communities,
+            messaging, job and recruiting tools, resume tools and a local encrypted Vault.
+            This policy explains what personal data we collect, why we collect it,
             and how you can control it.
           </P>
           <P>
@@ -104,12 +105,14 @@ export default function PrivacyPolicy() {
           ]} />
 
           <P><strong>Content you create</strong> — posts, comments, and messages you send on the platform.</P>
+          <P><strong>Work and AI tools</strong> — resumes, draft content and prompts you choose to submit are processed to provide the requested feature. Where a tool uses an external AI provider, the submitted content is sent to that provider for generation or safety screening. The configured generation and screening services can include OpenAI. Avoid including information about other people that you are not entitled to share. Connected Google account data and local Vault contents are not used to train general-purpose AI models.</P>
+          <P><strong>Reports and correspondence</strong> — when you report content or contact support, we receive your account or contact information, the affected links, your explanation, and related review correspondence. Formal copyright notices and counter-notices can require additional contact details. See our <Link to="/copyright" style={{ color: 'var(--primary)' }}>copyright process</Link>.</P>
 
           <P><strong>Core service metrics and aggregate usage counts</strong> — these are always active. We count visits to general page and app-screen categories and measure request outcomes and service response times. These metrics do not store account IDs, visitor IDs, IP addresses, full page links, search terms, passwords, or message content. Counts represent views, not individual people. Hosting and security systems still process connection information, including IP addresses, to deliver and protect the service.</P>
           <P><strong>Optional performance insights</strong> — when enabled on your browser or app, we count general error categories to identify reliability problems. These reports exclude raw error messages, stack traces, account details, and personal content. You can turn future reporting off in Data and privacy settings.</P>
 
           <P><strong>Connected-account credentials</strong> — when you connect an available provider, such as YouTube or GitHub, we store the OAuth access token and any refresh token the provider issues. Our servers send these credentials to that provider to retrieve your connected content or perform actions you request. We never receive your provider password.</P>
-          <P><strong>Creator analytics and copyright concerns</strong> — your private analytics page shows available authorized source metrics and your own UFIconnect activity. Separately authorized YouTube access can include channel analytics and estimated revenue. We keep source snapshots for one day, source-action request and audit records for 30 days, and copyright concerns, including your reason and original URL, for 90 days; expired records are removed during regular cleanup. Source snapshots stop displaying after 15 minutes until refreshed. Copyright concerns are stored for operator review and do not automatically send a legal notice or remove source content.</P>
+          <P><strong>Creator analytics and copyright concerns</strong> — your private analytics page shows available authorized source metrics and your own UFIConnect activity. Separately authorized YouTube access can include channel analytics and estimated revenue. We keep source snapshots for one day, source-action request and audit records for 30 days, and copyright concerns, including your reason and original URL, for 90 days; expired records are removed during regular cleanup. Source snapshots stop displaying after 15 minutes until refreshed. Copyright concerns are stored for operator review and do not automatically send a legal notice or remove source content.</P>
           <P><strong>Activity insights and your browser Vault</strong> — when enabled, an experimental model analyzes your daily activity counts on our server. It does not use source engagement, revenue, message content, credentials, or device-verification records. Your browser Vault stores encrypted entries locally; its passwords, passphrase, and entry contents are excluded from telemetry and learning. Hardware device protection remains a separate prototype and does not protect the browser Vault.</P>
           <P><strong>VPN Connector labels</strong> — the optional paid connector saves device types, profile labels and country labels in your UFI account so you can access them on your devices. Do not enter credentials in these labels. This metadata is separate from your encrypted local Vault passwords, documents and keys. We do not receive VPN credentials, keys, traffic or browsing history. Saved labels are included in your account export and deleted with your account; you may also remove them individually, including after canceling. Local connection activity contains connect/disconnect request timestamps only and clears when the local companion stops.</P>
           <P><strong>Vault subscription and existing data</strong> — creating a new Vault or adding, editing and importing private items requires an active UFI Vault subscription. Your existing encrypted data remains accessible for unlocking, viewing, downloading, exporting, restoring and deletion even after cancellation or while checkout is unavailable. Billing status does not give UFI access to your Vault contents or passphrase.</P>
@@ -128,23 +131,26 @@ export default function PrivacyPolicy() {
             <>To monitor platform health, prevent abuse, and enforce our <Link to="/terms" style={{ color: 'var(--primary)' }}>Terms of Service</Link></>,
             'To improve and develop new features',
           ]} />
-          <P>We do not sell your personal data. We use the Google Ads tag to measure page visits and ad click attribution. We do not use your account content for advertising or enable ad personalization.</P>
+          <P>We do not sell your personal data. With your separate advertising consent, the Google Ads tag measures signed-out visits to the public homepage and ad click attribution. We do not use your account content or connected Google user data for advertising or enable ad personalization.</P>
         </Section>
 
         <Section title="4. Content feed and third-party sources">
           <P>
-            {APP_NAME} aggregates publicly available content from platforms including Reddit, Hacker News,
-            GitHub, DEV.to, Medium, YouTube, Stack Overflow, Mastodon, Lobsters, arXiv, Indeed,
-            Product Hunt, TechCrunch, The Verge, Indie Hackers, and Hashnode. This content is fetched
-            via public APIs and RSS feeds and is attributed to its original source.
+            {APP_NAME} displays content from available public APIs, feeds and supported connections,
+            with source attribution. Available sources and permissions can change. Opening a source
+            link or loading embedded media connects your browser to that provider, which can receive
+            your IP address, device information and its own cookies under its privacy policy.
           </P>
           <P>
-            We do not store third-party content permanently — posts are cached temporarily to reduce API
-            load and improve performance. Original attribution links are always preserved.
+            Public feed metadata is cached and may be archived to support the feed. Refresh intervals
+            differ from storage retention periods. See the{' '}
+            <Link to="/policies#retention" style={{ color: 'var(--primary)' }}>retention schedule</Link>
+            {' '}for the active cache and archive lifecycle. Source links identify the original content.
           </P>
         </Section>
 
         <Section title="5. Connected social accounts (OAuth)">
+          <P><strong>Provider sign-in</strong> — when configured, UFIConnect uses Auth0 to offer sign-in through supported identity providers, which can include Google. Auth0 and the selected provider handle authentication; UFIConnect receives the identity information needed to create or recognize your account, such as a provider identifier, name, email address and profile picture. We do not receive your provider password. Signing in does not itself grant access to your YouTube subscriptions, channel analytics or publishing actions; those features require separate authorization.</P>
           <P>
             The Connected Accounts feature lets you link supported providers to your {APP_NAME}
             account through their official authorization flow. Availability depends on provider access and app approval. When you connect a platform:
@@ -154,24 +160,24 @@ export default function PrivacyPolicy() {
             'You choose the permissions shown by the provider; reading content and publishing interactions may require different permissions',
             'Connected-account tokens are encrypted before database storage and used for the connection you authorise',
             'You can disconnect any platform at any time from your Profile → Connected Accounts page',
-            'Disconnecting removes the active connection credentials; backup copies follow the backup retention policy',
+            'Disconnecting removes the active connection credentials; hosting backups have separate retention settings',
           ]} />
           <P><strong>Google and YouTube data</strong> — UFIConnect uses YouTube API Services. If you connect YouTube, read access lets us retrieve your channel subscriptions and recent videos from those channels, and your own channel and upload metadata. This includes video identifiers, titles, descriptions, thumbnail links, publication dates, durations, and available engagement counts. We use this information to display your connected feed and your own content. We do not download YouTube video files.</P>
           <P>If you separately authorize interaction permissions, we send a video rating or comment to YouTube when you select the corresponding action in UFIConnect. Comments and ratings are then subject to YouTube's visibility rules. Read-only authorization does not permit these writes. We do not request YouTube upload permission in the standard connection flow.</P>
-          <P>Connection credentials are encrypted before database storage. Connected-feed metadata is cached on our servers to deliver the requested features. Render hosts these systems. Google and YouTube receive the API requests and any comments or ratings you ask us to send. Google user data is not sold or used for advertising. Our use and transfer of this data is limited to the authorized features and permitted security or legal purposes under the <a href="https://developers.google.com/terms/api-services-user-data-policy" style={{ color: 'var(--primary)' }}>Google API Services User Data Policy</a>, including its Limited Use requirements.</P>
+          <P>Connection credentials are encrypted before database storage. Connected-feed metadata is cached on our servers to deliver the requested features. Render hosts these systems. Google and YouTube receive the API requests and any comments or ratings you ask us to send. Google user data is not sold, used for advertising, or used to train general-purpose AI models. UFIConnect does not use Google APIs to create non-consensual intimate imagery. Our use and transfer of Google user data is limited to the authorized features and permitted security or legal purposes under the <a href="https://developers.google.com/terms/api-services-user-data-policy" style={{ color: 'var(--primary)' }}>Google API Services User Data Policy</a>, including its Limited Use requirements.</P>
           <P>Disconnect YouTube in Connected Accounts to remove active connection credentials and stop future authorized requests. You can also revoke UFIConnect's access through <a href="https://myaccount.google.com/connections" style={{ color: 'var(--primary)' }}>Google Account connections</a>. Disconnecting does not delete videos, comments, or ratings already on YouTube; manage those on YouTube. To request deletion of data held by UFIConnect, use Settings → Account or contact {CONTACT_EMAIL}. Backup retention is described below. Google's processing is covered by the <a href="https://policies.google.com/privacy" style={{ color: 'var(--primary)' }}>Google Privacy Policy</a>.</P>
         </Section>
 
         <Section title="6. Data sharing">
           <P>We share data only in the following limited circumstances:</P>
           <UL items={[
-            'Service providers: our hosting provider (Render) and database (PostgreSQL on Render) process data to operate the platform. They are contractually bound to keep it confidential.',
+            'Service providers: our hosting provider (Render) and database (PostgreSQL on Render) process data to operate the platform. Auth0 processes provider sign-in when configured. Email delivery, payment and configured AI providers process the information needed for their requested functions.',
             'Optional analytics: if you accept analytics in a browser, Google Analytics receives generic page categories, a random analytics identifier, and basic browser/device information. Google receives your IP address when your browser connects. We do not send passwords, messages, account details, search terms, or your full page links to Google Analytics.',
             'Legal requirements: if required by law, court order, or to protect our rights and users\' safety.',
-            'Business transfer: if UFIconnect is acquired or merges, data may transfer to the new entity under the same policy.',
+            'Business transfer: a change in ownership may involve a data transfer subject to applicable law, required notice and consent, and provider restrictions. Connected Google user data remains subject to Google’s Limited Use requirements.',
           ]} />
-          <P>Google Analytics keeps advertising storage, Google signals, advertising personalisation, and advertising user data disabled. Separately, the Google Ads tag loads on our web pages to measure visits and attribute ad clicks. Google receives your IP address, browser/device information and ad click identifiers, and uses cookies for attribution.</P>
-          <P>You can change your analytics choice through Analytics privacy or Settings. Global Privacy Control keeps optional analytics off.</P>
+          <P>Google Analytics keeps advertising storage, Google signals, advertising personalisation, and advertising user data disabled. Separately, after advertising consent, the Google Ads tag loads only on the signed-out public homepage to measure visits and attribute ad clicks. Google receives your IP address, browser/device information and permitted ad click identifiers, and uses cookies for attribution. Private page links and account content are excluded from the conversion event.</P>
+          <P>You can change analytics and advertising separately through <Link to="/privacy#analytics" style={{ color: 'var(--primary)' }}>Analytics privacy</Link> or Settings. Global Privacy Control keeps both optional integrations off, including when an earlier choice allowed collection.</P>
           <P>Stripe processes payment details and the account information needed to manage your membership. You can review invoices, update payment methods, and cancel through Settings → Manage billing. Stripe’s handling of payment records is described in its <a href="https://stripe.com/privacy" style={{ color: 'var(--primary)' }}>privacy policy</a>.</P>
         </Section>
 
@@ -204,22 +210,24 @@ export default function PrivacyPolicy() {
             still use data. Turning off optional analytics does not disable account security or the
             interactions needed for requested features, such as saving posts and personalising your feed.
           </P>
+          <P>Your advertising choice is stored separately in this browser. Advertising consent permits Google attribution cookies on the public homepage. Withdrawing it stops future Ads collection by this integration and clears its first-party attribution storage. It does not delete records already processed by Google. Google’s own cookie lifetimes and processing are described in its <a href="https://policies.google.com/technologies/cookies" style={{ color: 'var(--primary)' }}>cookie information</a>.</P>
         </Section>
 
         <Section title="8. Data retention">
           <UL items={[
-            'Account data: retained for as long as your account is active. Deleted within 30 days of account deletion request.',
-            'Posts and messages: deleted with your account. Community posts visible to others may be anonymised rather than deleted.',
-            'Feed cache: external posts are cached for up to 60 minutes and then evicted.',
-            'Server logs: retained for up to 90 days for security and debugging.',
+            'Account data and member content: retained to provide your account. Successful account deletion removes your account and associated records from active application storage, including authored posts, comments and account-linked messages. Shared communities and other members’ content remain.',
+            'Public feed cache: live items are generally subject to 8- or 20-day age limits by source volume and type, and an archive with a configurable age limit of 30 days by default. Count limits and source requirements can remove items sooner.',
+            'Hosting logs, backups and payment-provider records have separate retention settings and legal obligations. A successful account deletion does not erase every provider record or backup immediately.',
             'Aggregate page, app-screen, and optional performance counts: retained for 30 UTC calendar days. Request outcome and response-time counters reset when the server process restarts.',
-            'OAuth tokens: active credentials are removed when you disconnect; retained backups follow the backup retention policy.',
+            'OAuth tokens: active credentials are removed when you disconnect; backup copies follow the hosting service’s separate retention settings.',
+            'Local Vault data and downloaded exports remain on your device until you remove them. Account deletion cannot remotely erase these copies.',
           ]} />
+          <P>The <Link to="/policies#retention" style={{ color: 'var(--primary)' }}>data retention and deletion schedule</Link> also covers source metrics, action records and copyright concerns. A safety report, formal complaint or legal preservation request may require separate handling. Contact privacy support for requests involving retained records or provider copies.</P>
         </Section>
 
         <Section title="9. Your rights">
           <P>Use Settings → Account to download your account data, correct your profile, or request account deletion. For other requests, contact the privacy address below. Do not send passwords or full payment-card details.</P>
-          <P>We honor Global Privacy Control in supported browsers by keeping optional Google Analytics off, including when an earlier browser choice allowed it. You can review this in <Link to="/privacy#analytics" style={{ color: 'var(--primary)' }}>Analytics privacy</Link>. This does not disable security, login, or the aggregate service counts described above.</P>
+          <P>We honor Global Privacy Control in supported browsers by keeping optional Google Analytics and Google Ads off, including when an earlier browser choice allowed them. You can review this in <Link to="/privacy#analytics" style={{ color: 'var(--primary)' }}>Analytics privacy</Link>. This does not disable security, login, or the aggregate service counts described above.</P>
           <P>Depending on where you live, you may have the right to:</P>
           <UL items={[
             'Access the personal data we hold about you',
@@ -232,8 +240,11 @@ export default function PrivacyPolicy() {
           <P>
             To exercise any of these rights, email us at{' '}
             <a href={`mailto:${CONTACT_EMAIL}`} style={{ color: 'var(--primary)' }}>{CONTACT_EMAIL}</a>.
-            We will respond within 30 days.
+            We may ask for information reasonably needed to verify your request and will handle it
+            within the time required by applicable law. An authorized agent may contact us on your
+            behalf with evidence of authority. Do not send identity documents unless requested securely.
           </P>
+          <P>Where California privacy law applies, rights can include knowing, accessing, correcting and deleting personal information, opting out of sale or sharing, limiting certain uses of sensitive information, and exercising rights without unlawful discrimination. Contact privacy support or use the controls above. See the <a href="https://oag.ca.gov/privacy/ccpa" style={{ color: 'var(--primary)' }}>California Attorney General’s privacy rights information</a>.</P>
         </Section>
 
         <Section title="10. Security">
@@ -264,23 +275,27 @@ export default function PrivacyPolicy() {
 
         <Section title="11. Children">
           <P>
-            {APP_NAME} is not directed at children under 13 (or 16 in the EU). We do not knowingly
-            collect personal data from children. If you believe a child has registered, contact us and
-            we will delete the account promptly.
+            {APP_NAME} is not directed at children under 13, or under 16 in the EU, EEA and UK.
+            Users must meet any higher minimum age required where they live. We do not knowingly
+            collect personal information from users below these ages. If you believe an underage
+            account exists, contact us so we can investigate and take appropriate deletion steps.
+            Our <Link to="/child-safety" style={{ color: 'var(--primary)' }}>Child Safety Standards</Link>
+            {' '}explain how to report concerns.
           </P>
         </Section>
 
         <Section title="12. Changes to this policy">
           <P>
             We may update this policy as the platform evolves. We will post the new version here with
-            a revised effective date. For significant changes, we will notify you by email or an
-            in-app notice at least 14 days before they take effect.
+            a revised effective date. Material changes will receive notice and, where required,
+            renewed consent before a new use of personal information begins.
           </P>
         </Section>
 
         <Section title="13. Contact">
           <P>
             <strong>{APP_NAME}</strong><br />
+            California, United States<br />
             Email: <a href={`mailto:${CONTACT_EMAIL}`} style={{ color: 'var(--primary)' }}>{CONTACT_EMAIL}</a><br />
             Website: <a href={APP_URL} style={{ color: 'var(--primary)' }}>{APP_URL}</a>
           </P>
@@ -294,6 +309,8 @@ export default function PrivacyPolicy() {
         }}>
           <Link to="/"             style={{ color: '#64748B', textDecoration: 'none' }}>Home</Link>
           <Link to="/terms"        style={{ color: '#64748B', textDecoration: 'none' }}>Terms of Service</Link>
+          <Link to="/policies"     style={{ color: '#64748B', textDecoration: 'none' }}>Policies and safety</Link>
+          <Link to="/copyright"    style={{ color: '#64748B', textDecoration: 'none' }}>Copyright</Link>
           <Link to="/child-safety" style={{ color: '#64748B', textDecoration: 'none' }}>Child Safety Standards</Link>
           <Link to="/login"        style={{ color: '#64748B', textDecoration: 'none' }}>Sign in</Link>
           <Link to="/register"     style={{ color: '#64748B', textDecoration: 'none' }}>Register</Link>

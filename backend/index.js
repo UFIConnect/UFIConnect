@@ -7,6 +7,7 @@ const bcrypt = require('bcryptjs');
 const { SESSION_TTL_SECONDS, resolveJwtSecret, passwordPolicyError, signSecurityToken, verifySecurityToken, publicRoleSettings } = require('./auth-security');
 const { createTokenVault, migrateSocialCredentials } = require('./token-vault');
 const { isSourceDisplayAllowed } = require('./source-policy');
+const { REPORT_SCHEMA, COPYRIGHT_REPORT_BRIDGE_SCHEMA, registerContentReportRoutes } = require('./content-reports');
 const { createAnalyticsBridgeHandler } = require('./analytics-bridge');
 const { ANALYTICS_SCHEMA, createAggregateAnalytics } = require('./aggregate-analytics');
 const { CREATOR_ANALYTICS_SCHEMA, createCreatorAnalytics, registerCreatorAnalyticsRoutes } = require('./creator-analytics');
@@ -16994,6 +16995,7 @@ async function migrateDB() {
     `);
     await db.query(`CREATE INDEX IF NOT EXISTS reports_status_idx  ON reports(status, created_at DESC)`);
     await db.query(`CREATE INDEX IF NOT EXISTS reports_reason_idx  ON reports(reason)`);
+    for (const sql of REPORT_SCHEMA) await db.query(sql);
 
     // Profile attachments (resumes, etc.) — the file itself lives here as
     // bytea rather than in Cloudinary: these are small (capped well under
@@ -17533,6 +17535,7 @@ async function migrateDB() {
 
     await db.query(ANALYTICS_SCHEMA);
     for (const statement of CREATOR_ANALYTICS_SCHEMA) await db.query(statement);
+    await db.query(COPYRIGHT_REPORT_BRIDGE_SCHEMA);
     for (const statement of UFI_VAULT_SCHEMA) await db.query(statement);
 
     // Legacy first-party pageview log — there was no way to tell whether the site
@@ -20036,37 +20039,7 @@ function isLikelyBotRequest(req) {
 // in-app" a real, working claim rather than a form that submits into a
 // black hole — status defaults to 'open' at creation (see POST /reports);
 // this is where a human actually sees and closes them out.
-app.get('/office/reports', requireOfficeToken, async (req, res) => {
-  try {
-    if (!db.isConnected()) return res.json({ reports: [] });
-    const status = ['open', 'resolved'].includes(req.query.status) ? req.query.status : null;
-    const { rows } = await db.query(
-      `SELECT * FROM reports ${status ? 'WHERE status = $1' : ''} ORDER BY created_at DESC LIMIT 200`,
-      status ? [status] : []
-    );
-    res.json({
-      reports: rows.map(r => ({
-        id: r.id, reporterId: r.reporter_id, targetType: r.target_type, targetId: r.target_id,
-        reason: r.reason, details: r.details, status: r.status,
-        createdAt: r.created_at, resolvedAt: r.resolved_at, resolvedBy: r.resolved_by,
-      })),
-      openCount: rows.filter(r => r.status === 'open').length,
-    });
-  } catch (e) { console.error('GET /office/reports:', e); res.status(500).json({ error: 'Internal server error' }); }
-});
-app.patch('/office/reports/:id', requireOfficeToken, async (req, res) => {
-  try {
-    if (!db.isConnected()) return res.status(503).json({ message: 'Not available right now.' });
-    const status = req.body?.status === 'resolved' ? 'resolved' : 'open';
-    await db.query(
-      `UPDATE reports SET status = $2, resolved_at = CASE WHEN $2 = 'resolved' THEN NOW() ELSE NULL END,
-         resolved_by = CASE WHEN $2 = 'resolved' THEN $3 ELSE NULL END
-       WHERE id = $1`,
-      [req.params.id, status, req.get('x-office-token') ? 'office' : null]
-    );
-    res.json({ ok: true, status });
-  } catch (e) { console.error('PATCH /office/reports/:id:', e); res.status(500).json({ error: 'Internal server error' }); }
-});
+registerContentReportRoutes(app, { db, authenticate, requireOfficeToken, notifyChildSafety: sendChildSafetyAlertEmail });
 
 app.get('/office/analytics/pageviews', requireOfficeToken, aggregateAnalytics.report);
 
@@ -28657,22 +28630,12 @@ app.get('/users/blocked', authenticate, async (req, res) => {
 // in-app path for exactly this, and it's the one category that gets an
 // immediate email alert below rather than waiting to be noticed in the
 // office dashboard.
-const REPORT_REASONS = ['child_safety', 'harassment', 'spam', 'inappropriate', 'impersonation', 'other'];
-const REPORT_TARGET_TYPES = ['post', 'comment', 'user'];
-
 async function sendChildSafetyAlertEmail(report) {
   const transport = getMailTransport();
   const to = process.env.SAFETY_ALERT_EMAIL || 'support@uficonnect.org';
-  const body = `A child-safety report was just submitted on UFIconnect.
-
-Target: ${report.targetType} ${report.targetId}
-Reporter: ${report.reporterId}
-Details: ${report.details || '(none provided)'}
-Report id: ${report.id}
-
-Review it in the office dashboard under Reports.`;
+  const body = `A child-safety report is waiting for review. Reference: ${report.id}. Sign in to the Office Reports page to view it.`;
   if (!transport) {
-    console.warn(`[email] SMTP not configured — child-safety report alert would have gone to ${to}:\n${body}`);
+    console.warn('[email] Child-safety report persisted; alert delivery is not configured. Review the Office Reports queue.');
     return;
   }
   try {
@@ -28682,35 +28645,8 @@ Review it in the office dashboard under Reports.`;
       subject: '?? UFIconnect child-safety report submitted',
       text: body,
     });
-  } catch (e) { console.error('[email] child-safety alert failed:', e.message); }
+  } catch { console.error('[email] Child-safety alert delivery failed; report remains in the Office Reports queue.'); }
 }
-
-app.post('/reports', authenticate, async (req, res) => {
-  try {
-    const { targetType, targetId, reason, details } = req.body || {};
-    if (!REPORT_TARGET_TYPES.includes(targetType)) return res.status(400).json({ message: 'Invalid target type.' });
-    if (!targetId || typeof targetId !== 'string') return res.status(400).json({ message: 'Missing target.' });
-    if (!REPORT_REASONS.includes(reason)) return res.status(400).json({ message: 'Invalid reason.' });
-    // Same reasoning as blocking above: a report that "succeeds" but isn't
-    // durable is worse than an honest failure, especially for child-safety
-    // reports specifically — never silently drop one.
-    if (!db.isConnected()) {
-      return res.status(503).json({ message: 'Reporting is temporarily unavailable — please try again in a moment.' });
-    }
-    const report = {
-      id: `report_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      reporterId: req.user.id,
-      targetType, targetId, reason,
-      details: typeof details === 'string' ? details.slice(0, 1000) : null,
-    };
-    await db.query(
-      `INSERT INTO reports (id, reporter_id, target_type, target_id, reason, details) VALUES ($1,$2,$3,$4,$5,$6)`,
-      [report.id, report.reporterId, report.targetType, report.targetId, report.reason, report.details]
-    );
-    if (reason === 'child_safety') sendChildSafetyAlertEmail(report).catch(() => {});
-    res.json({ ok: true });
-  } catch (e) { console.error('POST /reports:', e); res.status(500).json({ error: 'Internal server error' }); }
-});
 
 // --- Notifications: pending connection requests + new followers ---------------
 app.get('/notifications', authenticate, async (req, res) => {

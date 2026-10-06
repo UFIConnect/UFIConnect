@@ -36,6 +36,46 @@
   },
   {
     "type": "rewrite",
+    "source": "/policies",
+    "destination": "/policies/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/policies/",
+    "destination": "/policies/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/copyright",
+    "destination": "/copyright/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/copyright/",
+    "destination": "/copyright/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/vault-device",
+    "destination": "/vault-device/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/vault-device/",
+    "destination": "/vault-device/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/how-office-works",
+    "destination": "/how-office-works/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/how-office-works/",
+    "destination": "/how-office-works/index.html"
+  },
+  {
+    "type": "rewrite",
     "source": "/global",
     "destination": "/global/index.html"
   },

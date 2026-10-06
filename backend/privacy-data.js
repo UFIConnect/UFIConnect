@@ -108,7 +108,7 @@ async function exportAccountData(db, userId) {
         FROM community_groups WHERE created_by=$1 ORDER BY created_at,id`,
       notifications: `SELECT id,type,actor_id AS "actorId",target_type AS "targetType",target_id AS "targetId",
         preview,read,created_at AS "createdAt" FROM notifications WHERE user_id=$1 ORDER BY created_at,id`,
-      reports: `SELECT id,target_type AS "targetType",target_id AS "targetId",reason,details,status,
+      reports: `SELECT id,target_type AS "targetType",target_id AS "targetId",reason,details,status,source,source_url AS "sourceUrl",
         created_at AS "createdAt",resolved_at AS "resolvedAt" FROM reports WHERE reporter_id=$1 ORDER BY created_at,id`,
       seenPosts: `SELECT post_id AS "postId",context,seen_at AS "seenAt",engaged_at AS "engagedAt"
         FROM seen_posts WHERE user_id=$1 ORDER BY seen_at,post_id,context`,

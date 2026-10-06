@@ -4,6 +4,7 @@ import { useLayoutEffect } from 'react';
 import { useAuth } from './contexts/AuthContext';
 import { trackPageview } from './analytics';
 import { getGoogleAnalytics } from './analytics/browserAnalytics';
+import { getGoogleAds } from './analytics/browserAds';
 import { publicRoutes } from './seo-routes.mjs';
 import { isBusinessRouteAllowed } from './businessRoutes.mjs';
 
@@ -73,6 +74,10 @@ const Settings       = lazy(() => import('./pages/Settings'));
 const PrivacyPolicy  = lazy(() => import('./pages/PrivacyPolicy'));
 const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 const ChildSafety    = lazy(() => import('./pages/ChildSafety'));
+const Policies = lazy(() => import('./pages/Policies'));
+const CopyrightPolicy = lazy(() => import('./pages/CopyrightPolicy'));
+const VaultDeviceOverview = lazy(() => import('./pages/VaultDeviceOverview'));
+const OfficeOverview = lazy(() => import('./pages/OfficeOverview'));
 const Sources        = lazy(() => import('./pages/Sources'));
 const CommandCenter  = lazy(() => import('./pages/CommandCenter'));
 const ResumeBuilder  = lazy(() => import('./pages/ResumeBuilder'));
@@ -186,6 +191,16 @@ function RouteLoading() {
 }
 
 export default function App() {
+  const { token, loading, sessionError } = useAuth();
+  const { pathname } = useLocation();
+  const ads = getGoogleAds();
+  const guestHomepage = pathname === '/' && !token && !loading && !sessionError && !MAINTENANCE;
+  useLayoutEffect(() => { ads.setHomepageEligible(guestHomepage); }, [ads, guestHomepage]);
+  if (ads.mustLeave(guestHomepage)) return <SessionLoading />;
+  return <AppContent />;
+}
+
+function AppContent() {
   useLayoutEffect(() => {
     // Reveal React's committed route, not a pre-rendered guest page while
     // the member's saved session is still being restored.
@@ -311,6 +326,10 @@ export default function App() {
       <Route path="/privacy" element={<PrivacyPolicy />} />
       <Route path="/terms" element={<TermsOfService />} />
       <Route path="/child-safety" element={<ChildSafety />} />
+      <Route path="/policies" element={<Policies />} />
+      <Route path="/copyright" element={<CopyrightPolicy />} />
+      <Route path="/vault-device" element={<VaultDeviceOverview />} />
+      <Route path="/how-office-works" element={<OfficeOverview />} />
 
       {/* Fallback */}
       <Route path="*" element={<NotFound />} />

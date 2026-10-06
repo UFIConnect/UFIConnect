@@ -6,6 +6,8 @@ const links = [
   ['/', 'Home'],
   ['/global', 'Global feed'],
   ['/search', 'Search'],
+  ['/vault-device', 'Vault device'],
+  ['/how-office-works', 'How Office works'],
   ['/login', 'Sign in'],
   ['/register', 'Create account'],
 ];

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { SOURCE_META } from './sourceMeta';
 import { useToast } from '../contexts/ToastContext';
+import ReportPostButton from './ReportPostButton';
 import './PostCardChrome.css';
 
 // Shared post-card chrome: author header with the source's own badge, the
@@ -137,7 +138,7 @@ export function PostTime({ post, live = false }) {
   if (!times) return null;
   return (
     <Link to={`/p/${encodeURIComponent(post.id)}`} className="post-chrome-time" title={times.full} aria-label={times.full}>
-      <time dateTime={times.iso}><span className="post-chrome-day">{times.edited ? 'Edited · ' : ''}{times.relative}</span></time>
+      <time dateTime={times.iso}><span className="post-chrome-day">{times.edited ? 'Edited ? ' : ''}{times.relative}</span></time>
     </Link>
   );
 }
@@ -163,6 +164,7 @@ export function PostHeader({ post, member = false, to }) {
       {to ? <Link to={to} className="post-chrome-identity">{who}</Link> : <div className="post-chrome-identity">{who}</div>}
       <div className="post-chrome-corner">
         <PostTime post={post} live={post?.isLiveCamera} />
+        <ReportPostButton post={post} />
       </div>
       {viewing && <ProfilePhotoViewer url={viewing} name={name} handle={handle} profileTo={to} onClose={closeViewer} />}
     </div>

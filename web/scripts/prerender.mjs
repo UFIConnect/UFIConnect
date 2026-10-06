@@ -17,7 +17,7 @@ try {
  const css=new Set();
  const seen=new Set();
  function collectCss(key){if(seen.has(key))return;seen.add(key);const entry=manifest[key];if(!entry)return;for(const file of entry.css||[])css.add(file);for(const imported of entry.imports||[])collectCss(imported);}
- for(const name of ['Landing','Login','Register','GuestFeed','PrivacyPolicy','TermsOfService','ChildSafety','ForgotPassword','SearchGuide','NotFound'])collectCss(`src/pages/${name}.jsx`);
+ for(const name of ['Landing','Login','Register','GuestFeed','PrivacyPolicy','TermsOfService','ChildSafety','ForgotPassword','SearchGuide','NotFound','Policies','CopyrightPolicy','VaultDeviceOverview','OfficeOverview'])collectCss(`src/pages/${name}.jsx`);
  const styles=[...css].filter(file=>!template.includes(file)).map(file=>`<link rel="stylesheet" href="${base}${file}">`).join('\n');
  function documentFor(route,markup){
   // React 19 hoists Helmet's native metadata into the server string. Route
@@ -36,7 +36,7 @@ try {
    .replace(/<(meta|link) (?=(?:name="(?:description|robots|twitter:title|twitter:description)"|property="(?:og:title|og:description|og:url)"|rel="canonical"))/g,'<$1 data-prerender-meta ');
   const sessionShell = route.path === '/' || route.path === '/search' || memberRoutes.includes(route.path);
   html = html.replace(/<meta\b[^>]*http-equiv="Content-Security-Policy"[^>]*>/i,
-    `<meta http-equiv="Content-Security-Policy" content="${escape(browserSecurityPolicy(template, { meta: true, video: true, advertising: true }))}">`);
+    `<meta http-equiv="Content-Security-Policy" content="${escape(browserSecurityPolicy(template, { meta: true, video: true, advertising: route.page === 'landing' }))}">`);
   return html.replace('<div id="root"></div>',`<div id="root" data-prerendered="true"${sessionShell ? ' data-session-shell="true"' : ''}>${markup}</div>${sessionShell ? '<div class="static-session-loading" role="status">Opening UFIconnect…</div>' : ''}`);
  }
  for(const route of publicRoutes){

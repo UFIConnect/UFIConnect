@@ -595,6 +595,30 @@ services:
         source: /agents/
         destination: /command-center
       - type: rewrite
+        source: /policies
+        destination: /policies/index.html
+      - type: rewrite
+        source: /policies/
+        destination: /policies/index.html
+      - type: rewrite
+        source: /copyright
+        destination: /copyright/index.html
+      - type: rewrite
+        source: /copyright/
+        destination: /copyright/index.html
+      - type: rewrite
+        source: /vault-device
+        destination: /vault-device/index.html
+      - type: rewrite
+        source: /vault-device/
+        destination: /vault-device/index.html
+      - type: rewrite
+        source: /how-office-works
+        destination: /how-office-works/index.html
+      - type: rewrite
+        source: /how-office-works/
+        destination: /how-office-works/index.html
+      - type: rewrite
         source: /global
         destination: /global/index.html
       - type: rewrite
@@ -859,7 +883,7 @@ services:
       # providers; executable scripts require the app origin or a fixed hash.
       - path: /*
         name: Content-Security-Policy
-        value: "default-src 'self'; script-src 'self' 'sha256-gLGGwnWLYJts3F1piq5Gz2YSkGtXpG27BBVWgtZhjg0=' 'sha256-yQYwz4SFs4YzFtAFqZlPauSUGnSXHraGVS6O2U2296g=' 'sha256-hzvAg/Ozuuw1ZD+hKpARLl/q75eYSZbf635R1dtB7LQ=' 'sha256-xlQGH6N38VuvQRm3XEsBymcaiLQ9XYjr+wCLp7K1eTk=' https://www.youtube.com https://s.ytimg.com https://www.googletagmanager.com https://www.googleadservices.com https://www.google.com; script-src-attr 'none'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' https: data: blob:; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' https:; media-src 'self' https: blob:; frame-src 'self' https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self' https://*.auth0.com https://checkout.stripe.com; frame-ancestors 'self'; upgrade-insecure-requests"
+        value: "default-src 'self'; script-src 'self' 'sha256-gLGGwnWLYJts3F1piq5Gz2YSkGtXpG27BBVWgtZhjg0=' 'sha256-F0CTsePvbvaJJUS918Ug2pR6wyVTBnyJ9A5RJ6xNZ3Y=' https://www.youtube.com https://s.ytimg.com https://www.googletagmanager.com https://www.googleadservices.com https://www.google.com; script-src-attr 'none'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' https: data: blob:; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' https:; media-src 'self' https: blob:; frame-src 'self' https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self' https://*.auth0.com https://checkout.stripe.com; frame-ancestors 'self'; upgrade-insecure-requests"
       - path: /*
         name: Strict-Transport-Security
         value: max-age=63072000; includeSubDomains; preload

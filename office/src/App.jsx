@@ -3,6 +3,7 @@ import Controls from './Controls';
 import PostPipeline from './PostPipeline';
 import LocalWeb from './LocalWeb';
 import Setup from './Setup';
+import Reports from './Reports';
 import RecoveryOverview from './RecoveryOverview';
 import { mergeObservedAgents, observeAgentPayload } from './office-telemetry.mjs';
 import { createOfficeClient, createOfficeEventSource, createTrustedOfficeFetch, connectOfficeStreams, mergeOfficeLog } from './office-runtime.mjs';
@@ -3010,7 +3011,7 @@ function TopicsView() {
 // ─── App (root) ───────────────────────────────────────────────────────────────
 
 export default function App() {
-  const officeViews = ['overview', 'city', 'local-web', 'setup', 'controls', 'sources', 'pipeline', 'post-pipeline', 'topics', 'agents', 'feed', 'analytics', 'deploy', 'autofix', 'versions'];
+  const officeViews = ['overview', 'city', 'local-web', 'setup', 'controls', 'sources', 'pipeline', 'post-pipeline', 'topics', 'agents', 'feed', 'analytics', 'reports', 'deploy', 'autofix', 'versions'];
   const [view, setView] = useState(() => {
     const requested = typeof window !== 'undefined' ? window.location.hash.slice(1) : '';
     return officeViews.includes(requested) ? requested : 'overview';
@@ -3019,7 +3020,7 @@ export default function App() {
   useEffect(() => {
     if (!PRIMARY_OFFICE_VIEWS.has(view)) setMoreToolsOpen(true);
   }, [view]);
-  const needsOfficeTelemetry = !['local-web', 'setup'].includes(view);
+  const needsOfficeTelemetry = !['local-web', 'setup', 'reports'].includes(view);
   const [status, setStatus] = useState(null);
   // Source-fetcher health (workerHealth/agentSourceCache) only ever has real
   // data on the pipeline role now — SourcesView/PipelineView read this
@@ -3219,6 +3220,7 @@ export default function App() {
     { id: 'agents',   label: 'Agents' },
     { id: 'feed',     label: 'Feed Manager' },
     { id: 'analytics',label: 'Analytics' },
+    { id: 'reports', label: 'Reports' },
     { id: 'deploy',   label: 'Deploy Center' },
     { id: 'autofix',  label: 'Autofix' },
     { id: 'versions', label: 'Versions' },
@@ -3351,7 +3353,7 @@ export default function App() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
               {needsOfficeTelemetry && <Dot ok={connected} pulse={connected} />}
               <span style={{ fontSize: 11, color: '#475569' }}>
-                {!needsOfficeTelemetry ? `Telemetry paused in ${view === 'setup' ? 'Setup' : 'Local web'}` : connected ? 'Live stream active' : 'Reconnecting...'}
+                {!needsOfficeTelemetry ? 'Telemetry paused for this view' : connected ? 'Live stream active' : 'Reconnecting...'}
               </span>
             </div>
             {/* Both services' own health, always visible regardless of which
@@ -3437,6 +3439,7 @@ export default function App() {
               SourcesView reads pipelineStatus, not status. */}
           {view === 'feed'     && <FeedManagerView pipelineStatus={pipelineStatus} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'analytics'&& <AnalyticsView />}
+          {view === 'reports' && <Reports apiBase={API} request={officeFetch} />}
           {view === 'setup' && <Setup apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} />}
           {view === 'deploy'   && <DeployView triggerDeploy={triggerDeploy} deploying={deploying} log={log} />}
           {view === 'autofix'  && <AutofixView />}

@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { Link } from 'react-router-dom';
 import { getGoogleAnalytics } from '../analytics/browserAnalytics';
+import { getGoogleAds } from '../analytics/browserAds';
 import { setDataPreferences, useDataPreferences, subscribeDataPreferences, getDataPreferencesPersistenceError } from '../preferences';
 import './DataPrivacySettings.css';
 
@@ -20,6 +21,10 @@ export default function DataPrivacySettings() {
   const analytics = getGoogleAnalytics();
   const consent = useSyncExternalStore(analytics.subscribe, analytics.getConsent, () => null);
   const analyticsPersistenceError = useSyncExternalStore(analytics.subscribe, analytics.getPersistenceError || (() => null), () => null);
+  const ads = getGoogleAds();
+  const adsConsent = useSyncExternalStore(ads.subscribe, ads.getConsent, () => null);
+  const adsPrivacySignal = useSyncExternalStore(ads.subscribe, ads.getPrivacySignal, () => false);
+  const adsPersistenceError = useSyncExternalStore(ads.subscribe, ads.getPersistenceError, () => null);
   return <div className="data-privacy-settings">
     <section className="card" aria-labelledby="data-usage-title">
       <h2 id="data-usage-title">Data use and playback</h2>
@@ -58,6 +63,11 @@ export default function DataPrivacySettings() {
         onChange={enabled => analytics.setConsent(enabled ? 'granted' : 'denied')}
         description={analytics.available ? 'Share page categories and basic device information with Google. Google receives your IP address when connecting. Turning this off stops new collection and clears this browser’s analytics identifier.' : 'Google Analytics is unavailable in this deployment.'} />
       {analyticsPersistenceError && <p className="auth-error" role="status">{analyticsPersistenceError}</p>}
+      <PreferenceSwitch label="Optional Google Ads measurement" checked={adsConsent === 'granted'} disabled={!ads.available || adsPrivacySignal}
+        onChange={enabled => ads.setConsent(enabled ? 'granted' : 'denied')}
+        description={ads.available ? 'Off unless you choose it separately. Only the guest homepage uses Google Ads to connect ad clicks with homepage visits. Google receives IP addresses, browser/device information and ad click identifiers, and uses cookies. Ad personalization stays off.' : 'Google Ads measurement is unavailable in this deployment.'} />
+      {adsPrivacySignal && <p className="data-preference-note" role="status">Global Privacy Control keeps optional ad measurement off in this browser.</p>}
+      {adsPersistenceError && <p className="auth-error" role="status">{adsPersistenceError}</p>}
       <p className="data-preference-note">Hosting receives connection information, including IP addresses, to deliver and secure requests. IP addresses are not used as sign-in credentials. <Link to="/privacy">Read the privacy policy</Link>.</p>
     </section>
   </div>;

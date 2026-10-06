@@ -97,10 +97,12 @@ function createCreatorAnalytics({ db, getUser, fetchImpl = fetch, env = process.
   let lastPrune = 0;
   async function prune() {
     if (!db.isConnected() || now() - lastPrune < 3600000) return;
-    await db.query(`DELETE FROM creator_source_snapshots WHERE fetched_at < $1`, [new Date(now() - DAY).toISOString()]);
+    const snapshotRetention = Math.min(...listSourcePolicies({ env }).map(policy => policy.rules.caching.metricSnapshotRetentionMs));
+    await db.query(`DELETE FROM creator_source_snapshots WHERE fetched_at < $1`, [new Date(now() - snapshotRetention).toISOString()]);
     await db.query(`DELETE FROM source_interaction_audit WHERE created_at < $1`, [new Date(now() - 30 * DAY).toISOString()]);
     await db.query(`DELETE FROM source_interaction_requests WHERE created_at < $1`, [new Date(now() - 30 * DAY).toISOString()]);
-    await db.query(`DELETE FROM creator_copyright_reports WHERE created_at < $1`, [new Date(now() - 90 * DAY).toISOString()]);
+    await db.query(`WITH removed AS (DELETE FROM creator_copyright_reports WHERE created_at < $1 RETURNING id)
+      DELETE FROM reports WHERE id IN (SELECT id::text FROM removed)`, [new Date(now() - 90 * DAY).toISOString()]);
     lastPrune = now();
   }
   async function member(id) { const user = await getUser(id); if (!user) throw failure(401, 'Sign in to view analytics.'); return user; }
@@ -171,7 +173,7 @@ function createCreatorAnalytics({ db, getUser, fetchImpl = fetch, env = process.
       const connected = Boolean(user.socialTokens?.[policy.source]);
       const snapshot = snapshots.find(row => row.source === policy.source);
       const allowed = policy.features.sourceAnalytics && policy.enabled;
-      const fresh = allowed && connected && snapshot && now() - new Date(snapshot.fetched_at).getTime() < 15 * 60000;
+      const fresh = allowed && connected && snapshot && now() - new Date(snapshot.fetched_at).getTime() < policy.rules.caching.metricSnapshotFreshnessMs;
       return { id:policy.source,label:policy.label,connected,capabilities:policy.features,documentation:policy.documentation,
         status: !connected ? 'not_connected' : !allowed ? 'disabled' : fresh ? snapshot.data.status : snapshot ? 'stale' : policy.source === 'youtube' ? 'not_synced' : 'not_supported',
         lastSyncedAt:snapshot?.fetched_at || null,metrics:emptyMetrics(),revenue:{amount:null,currency:null,status:'unavailable'},
@@ -225,7 +227,11 @@ function createCreatorAnalytics({ db, getUser, fetchImpl = fetch, env = process.
     if (preview) { if (localReports.length >= 200) localReports.shift(); localReports.unshift(record); }
     else {
       if (!db.isConnected()) throw failure(503,'Copyright report storage is unavailable.');
-      await db.query('INSERT INTO creator_copyright_reports(id,user_id,source,source_url,reason,status,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)',Object.values(record));
+      await db.query(`WITH submitted AS (
+        INSERT INTO creator_copyright_reports(id,user_id,source,source_url,reason,status,created_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *
+      ) INSERT INTO reports(id,reporter_id,target_type,target_id,reason,details,source,source_url,status,created_at)
+        SELECT id::text,user_id::text,'post',source_url,'copyright',reason,source,source_url,'open',created_at FROM submitted`,Object.values(record));
     }
     const {userId,...publicRecord} = record; return publicRecord;
   }

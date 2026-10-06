@@ -1,0 +1,42 @@
+.ufi-policy-page { min-height: 100vh; background: #f8fafc; color: #233247; }
+.ufi-policy-header { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 20px max(24px, calc((100% - 1000px) / 2)); border-bottom: 1px solid #dbe3ef; background: #fff; }
+.ufi-policy-header nav { display: flex; gap: 20px; flex-wrap: wrap; }
+.ufi-policy-page a { color: #174db5; text-underline-offset: 3px; }
+.ufi-policy-page a:hover { text-decoration-thickness: 2px; }
+.ufi-policy-page a:focus-visible { outline: 3px solid #1d63dc; outline-offset: 4px; border-radius: 3px; }
+.ufi-policy-brand { font-weight: 850; font-size: 1.15rem; text-decoration: none; }
+.ufi-policy-main { max-width: 1048px; margin: 0 auto; padding: 56px 24px 32px; }
+.ufi-policy-intro { max-width: 790px; margin-bottom: 32px; }
+.ufi-policy-intro h1 { font-size: clamp(2rem, 5vw, 3rem); line-height: 1.12; letter-spacing: -.03em; color: #12223b; margin: 12px 0 20px; }
+.ufi-policy-intro p { font-size: 1.05rem; line-height: 1.7; }
+.ufi-policy-intro .ufi-policy-eyebrow { font-size: .78rem; font-weight: 800; color: #2457aa; text-transform: uppercase; letter-spacing: .1em; }
+.ufi-policy-intro .ufi-policy-updated { font-size: .87rem; color: #536379; }
+.ufi-policy-index { padding: 24px; background: #eaf1fc; border: 1px solid #cddcf4; border-radius: 18px; margin-bottom: 28px; }
+.ufi-policy-index h2 { font-size: 1.15rem; margin: 0 0 16px; }
+.ufi-policy-index ul { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 28px; list-style: none; padding: 0; margin: 0; }
+.ufi-policy-index a { display: inline-block; padding: 3px 0; line-height: 1.5; }
+.ufi-policy-section { padding: 28px; background: #fff; border: 1px solid #dbe3ef; border-radius: 18px; margin-bottom: 20px; scroll-margin-top: 24px; }
+.ufi-policy-section h2 { color: #12223b; font-size: 1.35rem; line-height: 1.4; margin: 0 0 16px; }
+.ufi-policy-section h3 { font-size: 1.06rem; color: #12223b; margin: 24px 0 10px; }
+.ufi-policy-section p, .ufi-policy-section li { font-size: .98rem; line-height: 1.75; overflow-wrap: anywhere; }
+.ufi-policy-section p { margin: 0 0 14px; }
+.ufi-policy-section p:last-child { margin-bottom: 0; }
+.ufi-policy-section ul, .ufi-policy-section ol { padding-left: 24px; margin: 12px 0 18px; }
+.ufi-policy-section li { margin-bottom: 9px; }
+.ufi-policy-callout { border-left: 4px solid #2866c8; background: #eff5ff; padding: 16px; border-radius: 0 10px 10px 0; }
+.ufi-policy-table-wrap { overflow-x: auto; margin: 20px 0; border: 1px solid #dbe3ef; border-radius: 10px; }
+.ufi-policy-table { width: 100%; border-collapse: collapse; font-size: .92rem; line-height: 1.65; }
+.ufi-policy-table th, .ufi-policy-table td { text-align: left; vertical-align: top; padding: 14px; border-bottom: 1px solid #e3eaf4; }
+.ufi-policy-table thead th { background: #edf3fc; color: #193659; }
+.ufi-policy-table tbody th { width: 28%; font-weight: 700; }
+.ufi-policy-table tr:last-child th, .ufi-policy-table tr:last-child td { border-bottom: 0; }
+.ufi-policy-footer { display: flex; flex-wrap: wrap; gap: 16px 24px; max-width: 1048px; margin: 0 auto; padding: 24px 24px 48px; font-size: .9rem; }
+@media (max-width: 600px) {
+  .ufi-policy-header { padding: 18px; }
+  .ufi-policy-header nav { gap: 14px; font-size: .9rem; }
+  .ufi-policy-main { padding: 32px 16px 20px; }
+  .ufi-policy-index, .ufi-policy-section { padding: 20px; border-radius: 14px; }
+  .ufi-policy-index ul { grid-template-columns: 1fr; gap: 7px; }
+  .ufi-policy-table th, .ufi-policy-table td { padding: 10px; }
+  .ufi-policy-table tbody th { width: 34%; }
+}

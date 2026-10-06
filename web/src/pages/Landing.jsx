@@ -6,6 +6,7 @@ import { SOURCE_META } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import LegalLinks from '../components/LegalLinks';
 import './LandingPricing.css';
+import './LandingTrust.css';
 
 const SOURCES = [
   'reddit', 'youtube', 'github', 'hackernews', 'linkedin', 'instagram', 'facebook',
@@ -53,7 +54,7 @@ const FAQS = [
   },
   {
     q: 'Where does the feed content come from?',
-    a: 'UFIconnect combines member posts with live posts from public sources and connected accounts, then balances the mix by source.',
+    a: 'The feed includes UFIConnect member posts and content from available external sources. Source names and original links remain visible. Connections, playback, and actions depend on each provider’s permissions and availability.',
   },
   {
     q: 'Is Resume Builder available?',
@@ -162,11 +163,12 @@ export default function Landing() {
         <header className="landing-header landing-header-refined">
           <div className="landing-header-inner">
             <Link to="/" className="landing-brand" aria-label="UFIconnect home">
-              <span className="landing-brand-mark">UFI</span>
-              <span className="landing-logo-text">UFIconnect</span>
+              <img className="landing-identity" src="/uficonnect-wordmark.svg" width="180" height="36" alt="UFIConnect" />
             </Link>
             <nav className="landing-nav-actions" aria-label="Homepage">
               <Link to="/global">Global Feed</Link>
+              <Link to="/vault-device">Vault device</Link>
+              <Link to="/how-office-works">How Office works</Link>
               <Link to="/login">Sign in</Link>
               <Link to="/register" className="landing-nav-primary">Join free</Link>
             </nav>
@@ -180,29 +182,32 @@ export default function Landing() {
                 <div className="landing-eyebrow">Your world, connected</div>
                 <h1>UFIconnect</h1>
                 <p>
-                  Your interests. Your communities. Your people.
-                  Discover conversations across your favorite apps and bring
-                  your world together in one social network.
+                  A social and professional workspace for browsing public posts,
+                  joining communities, messaging people, and finding jobs.
+                  Connect supported accounts when you choose, with each source
+                  clearly identified.
                 </p>
                 <div className="landing-actions">
                   <Link to="/register" className="landing-primary-action">Join free</Link>
                   <Link to="/global" className="landing-secondary-action">Explore the feed</Link>
                 </div>
+                <p className="landing-trust-intro">Operated as UFIConnect in California, United States. <Link to="/privacy">Privacy policy</Link> · <Link to="/terms">Terms of service</Link> · <a href="mailto:support@uficonnect.org">Contact support</a></p>
               </div>
-              <div className="landing-network-art">
-                <img src="/homepage-app-network-2026-10.jpg"
-                  alt="UFIconnect at the center of a connected network of social, community, and creative apps"
-                  width="1206" height="669" fetchPriority="high" />
+              <div className="landing-purpose-visual" aria-label="UFIConnect brings community, career, and personal tools together">
+                <img src="/uficonnect-mark.svg" alt="" width="72" height="72" />
+                <h2>Your connections.<br />A clearer view.</h2>
+                <div className="landing-purpose-grid"><span>Public posts<small>Keep the original source in view</small></span><span>Communities<small>Share ideas and meet people</small></span><span>Career tools<small>Jobs, resumes and recruiting</small></span><span>Personal Vault<small>Encrypted browser storage</small></span></div>
+                <p>You choose which accounts to connect.</p>
               </div>
             </div>
           </section>
 
           <section className="landing-proof-strip" aria-label="UFIconnect at a glance">
             <div className="landing-proof-inner">
-              <div><strong>80+</strong><span>communities</span></div>
-              <div><strong>500+</strong><span>roles supported</span></div>
-              <div><strong>30+</strong><span>live sources</span></div>
-              <div><strong>0</strong><span>ads in the feed</span></div>
+              <div><strong>Explore</strong><span>Browse public posts</span></div>
+              <div><strong>Connect</strong><span>Choose supported accounts</span></div>
+              <div><strong>Work</strong><span>Discover career opportunities</span></div>
+              <div><strong>Control</strong><span>Manage your privacy choices</span></div>
             </div>
           </section>
 
@@ -211,8 +216,11 @@ export default function Landing() {
               Stay curious, meet people, and make your next move. There is more than one reason to connect.
             </SectionHeading>
             <div className="landing-product-grid">
-              <div className="landing-product-shot">
-                <img src="/homepage-feed-2026-09.png" alt="UFIconnect home feed with favorite sources and account tools" width="1440" height="1000" loading="lazy" />
+              <div className="landing-feed-preview" aria-label="Illustrative feed layout">
+                <span className="landing-preview-label">Illustrative feed layout</span><h3>A source you can recognize.</h3>
+                <article><span>UFIConnect · Community post</span><h4>What are you building?</h4><p>Share an update, ask a question, or find people with a common interest.</p><small>Source · Time · Report</small></article>
+                <article><span>External source · Original link</span><h4>Explore a useful perspective</h4><p>Open the original post or use an available authorized interaction.</p><small>Source attribution stays visible</small></article>
+                <p className="landing-preview-note">External services control their content, permissions and availability.</p>
               </div>
               <div className="landing-product-copy">
                 {FEATURES.map(({ label, title, desc }) => (
@@ -235,6 +243,21 @@ export default function Landing() {
             <div className="landing-source-row">
               {SOURCES.map(source => <SourceChip key={source} source={source} />)}
             </div>
+            <p className="landing-source-disclosure">Source names and marks identify their respective services. UFIConnect is independent and is not endorsed by these providers. A listed source does not promise account access, all content, or every interaction. <Link to="/policies#connected-services">Connected services and attribution</Link></p>
+          </section>
+
+          <section className="landing-section landing-trust-section" aria-labelledby="homepage-google-purpose">
+            <SectionHeading eyebrow="Purpose and permissions" title="Understand what you connect" />
+            <div className="landing-trust-grid">
+              <article><h3 id="homepage-google-purpose">How Google services are used</h3><p>Google sign-in can identify your account. An optional YouTube connection supports the YouTube features you authorize, such as subscribed content, channel analytics, or supported actions. Requested permissions are shown before access is granted.</p><p>Google account data is used to provide those features. It is not used to train general-purpose AI models or to target advertising. <Link to="/privacy">Read how data is accessed, stored, shared and deleted</Link>.</p></article>
+              <article><h3>Safety is part of using UFIConnect</h3><p>Non-consensual intimate imagery, including AI-generated content, is prohibited. UFIConnect does not use Google APIs to create or enable AI-generated non-consensual intimate imagery.</p><p>Report a post through its menu or use our <Link to="/copyright">copyright reporting process</Link>. <Link to="/policies#community">Community guidelines</Link> also cover harassment, exploitation, impersonation and other abuse.</p></article>
+              <article><h3>Your privacy choices</h3><p>Optional analytics and homepage ad measurement have separate consent controls. You can review or withdraw consent, disconnect supported accounts, and request access to or deletion of your information.</p><p><Link to="/#analytics">Cookie and tracking choices</Link> · <Link to="/policies#retention">Retention and deletion</Link> · <Link to="/policies">All policies</Link></p></article>
+            </div>
+          </section>
+
+          <section className="landing-section landing-explainers" aria-label="Explore UFIConnect products">
+            <article><span className="landing-eyebrow">Vault device</span><h2>A closer look at the device concept</h2><p>See how the proposed hardware relates to the available browser Vault, and which features are still in development.</p><Link to="/vault-device" className="landing-secondary-action">Explore the Vault device</Link></article>
+            <article><span className="landing-eyebrow">Office</span><h2>See how Office works</h2><p>Follow the diagram from an operator’s request through inspection, planning, authorized controls and results.</p><Link to="/how-office-works" className="landing-secondary-action">View the Office diagram</Link></article>
           </section>
 
           <section className="landing-section landing-start-section">
