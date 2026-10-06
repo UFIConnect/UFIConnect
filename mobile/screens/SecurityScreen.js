@@ -33,7 +33,9 @@ export default function SecurityScreen({ navigation }) {
     setBusy(true);
     try {
       const result = await changePassword(currentPassword, newPassword);
-      Alert.alert('Password updated', result.vpnDisconnected === false
+      Alert.alert('Password updated', Platform.OS === 'ios' && result.localCleared
+        ? 'Your existing sessions and VPN profiles were revoked. Remove any old UFIConnect profile from WireGuard. Sign in with your new password.'
+        : result.vpnDisconnected === false
         ? 'Your password was updated and existing sessions were revoked. Disconnect UFIConnect VPN in device VPN settings to finish.'
         : result.localCleared
         ? 'Your existing sessions have been signed out. Sign in with your new password.'
@@ -53,7 +55,8 @@ export default function SecurityScreen({ navigation }) {
         setBusy(true);
         try {
           const result = await logoutAll();
-          if (result.vpnDisconnected === false) Alert.alert('Sessions signed out', 'Server access was revoked. Disconnect UFIConnect VPN in device VPN settings to finish.');
+          if (Platform.OS === 'ios' && result.localCleared) Alert.alert('Sessions signed out', 'Your sessions and VPN profiles were revoked. Remove any old UFIConnect profile from WireGuard.');
+          else if (result.vpnDisconnected === false) Alert.alert('Sessions signed out', 'Server access was revoked. Disconnect UFIConnect VPN in device VPN settings to finish.');
           else if (!result.localCleared) Alert.alert('Sessions signed out', 'Server access was revoked, but this device could not clear its saved sign-in data.');
         } catch {
           Alert.alert('Could not confirm sign-out', 'Please try again when connected.');

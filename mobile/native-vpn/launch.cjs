@@ -40,7 +40,7 @@ function createVpnLaunch({consume, now = Date.now, platform}) {
   }
   function open(url) {
     const code = parseVpnLaunch(url);
-    if (!code || !['ios','android'].includes(platform)) return false;
+    if (!code || platform !== 'android') return false;
     for (const [value, at] of seen) if (now() - at >= LIFETIME_MS) seen.delete(value);
     if (seen.has(code)) return false;
     if (seen.size >= 128) { emit({type:'failed'}); return false; }

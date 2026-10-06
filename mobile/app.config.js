@@ -1,4 +1,5 @@
 const { resolveApiBase } = require('./security/apiConfig');
+const vpnBuildOptions = require('./native-vpn/build-options.json');
 const development = process.env.APP_ENV === 'development' && process.env.EAS_BUILD_PROFILE !== 'production';
 
 export default ({ config }) => ({
@@ -7,7 +8,7 @@ export default ({ config }) => ({
   slug: 'ufic',
   owner: 'uficonnect',
   version: '1.0.0',
-  scheme: [...new Set([...(Array.isArray(config.scheme) ? config.scheme : config.scheme ? [config.scheme] : []), 'uficonnect-vpn'])],
+  scheme: (Array.isArray(config.scheme) ? config.scheme : config.scheme ? [config.scheme] : []).filter(value => value !== 'uficonnect-vpn'),
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'light',
@@ -28,6 +29,7 @@ export default ({ config }) => ({
     },
   },
   android: {
+    scheme: 'uficonnect-vpn',
     adaptiveIcon: {
       foregroundImage: './assets/adaptive-icon.png',
       backgroundColor: '#102A6B',
@@ -58,6 +60,6 @@ export default ({ config }) => ({
     ['expo-secure-store', { configureAndroidBackup: false }],
     'expo-system-ui',
     './plugins/withSecurity',
-    './native-vpn/withUfiVpn',
+    ['./native-vpn/withUfiVpn', vpnBuildOptions],
   ],
 });

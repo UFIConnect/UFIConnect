@@ -6,6 +6,17 @@ const os = require('node:os');
 const {gunzipSync} = require('node:zlib');
 const xcode = require('xcode');
 const plugin = require('./withUfiVpn');
+test('official WireGuard mode omits all Apple mods and EAS extension metadata while retaining Android desugaring',()=>{
+  const config=plugin({name:'UFIConnect',slug:'ufi',ios:{bundleIdentifier:'org.uficonnect.app'},extra:{eas:{projectId:'fixture'}}},{iosNativeVpn:false});
+  assert.equal(config.mods?.ios,undefined);
+  assert.equal(config.extra.eas.build,undefined);
+  assert.equal(config.ios.entitlements,undefined);
+  assert.equal(typeof config.mods.android.appBuildGradle,'function');
+  const options=require('./build-options.json'), pkg=require('../package.json');
+  assert.equal(options.iosNativeVpn,false);
+  assert.ok(pkg.expo.autolinking.ios.exclude.includes('@uficonnect/native-vpn'));
+  assert.equal(pkg.expo.autolinking.android?.exclude?.includes('@uficonnect/native-vpn'),undefined);
+});
 test('Android consumer enables desugaring required by the VPN library without duplicate blocks',()=>{
   const original='plugins { id "com.android.application" }\nandroid { namespace "org.uficonnect.app" }\ndependencies {}\n';
   const result=plugin.addAndroidDesugaring(original);

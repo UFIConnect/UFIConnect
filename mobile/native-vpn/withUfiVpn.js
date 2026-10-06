@@ -54,12 +54,15 @@ function addExtension(project, bundleId, version, buildNumber, team) {
   phases.unshift(...phases.splice(phases.findIndex(value => value.value === phase.uuid), 1));
   return extension.uuid;
 }
-function withUfiVpn(config) {
+function withUfiVpn(config, { iosNativeVpn = true } = {}) {
   config = withAppBuildGradle(config, mod => {
     if (mod.modResults.language !== 'groovy') throw new Error('UFI VPN requires the Expo Groovy Android app build file');
     mod.modResults.contents = addAndroidDesugaring(mod.modResults.contents);
     return mod;
   });
+  // iPhone uses the official WireGuard app. Keep the Android plugin active
+  // without declaring an Apple extension or adding signing entitlements.
+  if (!iosNativeVpn) return config;
   const bundle = config.ios?.bundleIdentifier;
   if (!bundle || !/^[A-Za-z0-9.-]+$/.test(bundle)) throw new Error('UFI VPN needs a valid iOS bundle identifier');
   const keychainGroup = `$(AppIdentifierPrefix)${bundle}.vpn`;

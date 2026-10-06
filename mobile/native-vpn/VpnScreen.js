@@ -1,16 +1,20 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ScrollView, Text, Pressable, StyleSheet, ActivityIndicator, AppState, Linking } from 'react-native';
+import { ScrollView, Text, Pressable, StyleSheet, ActivityIndicator, AppState, Linking, Platform } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { COLORS } from '../theme';
 import { vpn } from './client';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { vpnLaunch } from './launchClient';
+import OfficialWireGuardScreen from './OfficialWireGuardScreen';
 
 const {disclosureKey,connectFromIntent} = require('./launchConnection.cjs');
 const {createVpnActionGate,runVpnAction} = require('./action.cjs');
 
 const LABELS = { unknown: 'VPN status unavailable', unavailable: 'Native VPN unavailable', disconnected: 'Disconnected', starting: 'Starting VPN', connecting: 'Waiting for secure connection', connected: 'Connected', stopping: 'Disconnecting' };
-export default function VpnScreen({route}) {
+export default function VpnScreen(props) {
+  return Platform.OS === 'ios' ? <OfficialWireGuardScreen /> : <NativeVpnScreen {...props} />;
+}
+function NativeVpnScreen({route}) {
   const { token, profile } = useAuth();
   const liveToken = useRef(token); liveToken.current = token;
   const operationGate = useRef(null);

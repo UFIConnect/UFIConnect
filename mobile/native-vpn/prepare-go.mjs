@@ -19,6 +19,12 @@ export async function verifyArchive(file, expected) {
   if (hash.digest('hex') !== expected) throw new Error('Go archive checksum mismatch; refusing to extract');
 }
 export async function prepareGo() {
+  const mobile = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const options = JSON.parse(await fs.readFile(path.join(mobile, 'native-vpn/build-options.json'), 'utf8'));
+  if (options.iosNativeVpn === false) {
+    console.log('Go bridge setup skipped: iOS uses the official WireGuard app.');
+    return;
+  }
   if (process.env.EAS_BUILD_PLATFORM && process.env.EAS_BUILD_PLATFORM !== 'ios') return;
   if (process.platform !== 'darwin') {
     if (process.env.EAS_BUILD_PLATFORM === 'ios') throw new Error('The iOS Go bridge requires a macOS builder');
@@ -27,7 +33,6 @@ export async function prepareGo() {
   }
   const release = GO_ARCHIVES[process.arch];
   if (!release) throw new Error('Unsupported macOS builder architecture');
-  const mobile = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const cache = path.join(mobile, '.cache', 'wireguard-toolchain');
   await fs.mkdir(cache, { recursive: true });
   const archive = path.join(cache, release.name);

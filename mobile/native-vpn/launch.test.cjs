@@ -6,7 +6,7 @@ const url = value => `uficonnect-vpn://connect?code=${value}`;
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function setup(consume = async () => ({action:'connect'})) {
   const events = []; let time = 1000;
-  const launch = createVpnLaunch({consume,platform:'ios',now:()=>time});
+  const launch = createVpnLaunch({consume,platform:'android',now:()=>time});
   launch.subscribe(event => events.push(event));
   return {launch,events,advance(ms){time+=ms;}};
 }
@@ -19,7 +19,7 @@ test('logged-out intent waits for authenticated onboarding and consumes once', a
   launch.open(url(code));await tick();assert.equal(calls.length,0);
   launch.bindSession('session',false);await launch.flush();assert.equal(calls.length,0);
   launch.bindSession('session',true);await launch.flush();
-  assert.deepEqual(calls,[[code,'ios','session']]);
+  assert.deepEqual(calls,[[code,'android','session']]);
   assert.equal(events[0].type,'request');
   assert.equal(launch.claim(events[0].id,'other'),false);
   assert.equal(launch.claim(events[0].id,'session'),true);
@@ -61,6 +61,8 @@ test('a newer link supersedes an in-flight link and is consumed serially', async
   resolvers[0]({action:'connect'});await tick();assert.equal(events.length,0);assert.equal(calls.length,2);
   resolvers[1]({action:'connect'});await tick();assert.equal(events.length,1);
 });
-test('web cannot consume or act on native VPN links', async () => {
-  const launch=createVpnLaunch({consume:()=>assert.fail('must not consume'),platform:'web'});launch.bindSession('session',true);assert.equal(launch.open(url(code)),false);await launch.flush();
+test('iOS and web cannot consume or act on native VPN links', async () => {
+  for (const platform of ['ios','web']) {
+    const launch=createVpnLaunch({consume:()=>assert.fail('must not consume'),platform});launch.bindSession('session',true);assert.equal(launch.open(url(code)),false);await launch.flush();
+  }
 });
