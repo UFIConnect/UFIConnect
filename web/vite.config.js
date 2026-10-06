@@ -17,7 +17,7 @@ export default defineConfig({
         // Render also sends an HTTP CSP. The meta policy protects executable
         // content on static hosts such as GitHub Pages that cannot set headers.
         return { html, tags: [{ tag: 'meta', attrs: { 'http-equiv': 'Content-Security-Policy',
-          content: browserSecurityPolicy(html, { meta: true, video: true, advertising: true }) }, injectTo: 'head-prepend' }] };
+          content: browserSecurityPolicy(html, { meta: true, video: true }) }, injectTo: 'head-prepend' }] };
       },
     },
   }],

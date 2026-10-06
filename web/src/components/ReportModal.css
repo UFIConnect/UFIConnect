@@ -1,0 +1,14 @@
+.report-overlay { position: fixed; inset: 0; z-index: 3000; display: grid; place-items: center; padding: 16px; background: rgba(8, 12, 20, .65); }
+.report-dialog { width: min(100%, 460px); max-height: calc(100dvh - 32px); overflow-y: auto; background: var(--card, #fff); color: var(--text, #162033); border: 1px solid var(--border, #dbe1eb); border-radius: 16px; padding: 22px; box-sizing: border-box; box-shadow: 0 18px 50px #0004; text-align: left; }
+.report-dialog h2 { font-size: 1.2rem; margin: 0 0 12px; }
+.report-dialog p { font-size: .86rem; line-height: 1.6; margin: 10px 0; }
+.report-dialog a { color: var(--primary, #2563eb); }
+.report-dialog fieldset { padding: 0; border: 0; margin: 16px 0; }
+.report-dialog legend, .report-dialog form > label { font-size: .88rem; font-weight: 700; margin-bottom: 8px; }
+.report-reason { display: flex; gap: 9px; align-items: center; min-height: 42px; padding: 4px 8px; font-size: .86rem; border-bottom: 1px solid var(--border, #dbe1eb); cursor: pointer; }
+.report-dialog textarea { width: 100%; box-sizing: border-box; margin-top: 8px; padding: 10px; border: 1px solid var(--border, #dbe1eb); border-radius: 8px; font: inherit; color: inherit; background: var(--bg, #f8fafc); resize: vertical; }
+.report-help { color: var(--muted, #536277); }
+.report-reference { overflow-wrap: anywhere; }
+.report-error { color: var(--danger, #b91c1c); }
+.report-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.report-buttons .btn-primary { color: #fff; }

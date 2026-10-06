@@ -1,18 +1,72 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-
-// The standard Google Ads tag ships in the web shell, so every built document
-// must carry it exactly once, together with the page-view conversion event.
-const ID = 'AW-18490754953';
-const CONVERSION = `${ID}/s7sWCK_AsI4dEImPivFE`;
-const count = (text, needle) => text.split(needle).length - 1;
-for (const file of ['index.html', 'login/index.html', 'vault/index.html', 'app.html']) {
-  const html = await fs.readFile(new URL('../web/dist/' + file, import.meta.url), 'utf8');
-  assert.equal(count(html, `https://www.googletagmanager.com/gtag/js?id=${ID}`), 1, file + ' loads the Google tag once');
-  assert.equal(count(html, `gtag('config', '${ID}')`), 1, file + ' configures the Google tag once');
-  assert.equal(count(html, `'send_to': '${CONVERSION}'`), 1, file + ' sends the conversion event once');
-  const policy = html.match(/http-equiv="Content-Security-Policy" content="([^"]*)/)[1];
-  assert.ok(policy.includes('https://www.googletagmanager.com'), file + ' allows the Google tag script');
-  assert.ok(!/unsafe-inline|unsafe-eval/.test(policy.split(';').find(value => value.trim().startsWith('script-src'))), file + ' keeps a strict script policy');
-}
-console.log('PASS: Google Ads tag and conversion event present in every built document');
+import { chromium } from 'playwright';
+import { startBuiltServer } from '../web/scripts/serve-built.mjs';
+import { ADS_CONSENT_KEY, ADS_CONVERSION } from '../web/src/analytics/googleAds.mjs';
+const server = await startBuiltServer({ port: 0 });
+const browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
+try {
+  for (const config of [{}, { ga: true }, { ads: true }, { ads: true, gpc: true }, { ads: true, path: '/login' }, { ads: true, member: true }]) {
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    await context.addInitScript(({ config, key }) => {
+      localStorage.setItem('uficonnect.analytics.consent.v1', config.ga ? 'granted' : 'denied');
+      if (config.ads && !localStorage.getItem(key)) localStorage.setItem(key, 'granted');
+      if (config.gpc) Object.defineProperty(navigator, 'globalPrivacyControl', { value: true });
+    }, { config, key: ADS_CONSENT_KEY });
+    let scripts = 0;
+    await context.route('**/*', async route => {
+      const request = route.request(), url = new URL(request.url());
+      if (url.hostname === 'www.googletagmanager.com') {
+        if (url.searchParams.get('id') === 'AW-18490754953') {
+          scripts++;
+          return route.fulfill({ contentType: 'text/javascript', body: 'window.__adsSdk = true;' });
+        }
+        return route.abort();
+      }
+      if (['fetch', 'xhr'].includes(request.resourceType()) || request.method() === 'OPTIONS') {
+        const endpoint = url.pathname.replace(/^\/api/, '');
+        const headers = { 'Access-Control-Allow-Origin': server.origin, 'Access-Control-Allow-Credentials': 'true', 'Access-Control-Allow-Headers': '*' };
+        const profile = { id: 'ads-audit', name: 'Audit member', plan: 'free', onboardingComplete: true };
+        if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
+        if (endpoint === '/auth/session') return route.fulfill({ status: config.member ? 200 : 401, headers, json: config.member ? { token: 'audit-member-token', profile } : {} });
+        return route.fulfill({ headers, json: endpoint === '/profile' ? profile : { posts: [], items: [], groups: [], notifications: [], sources: [], hasMore: false } });
+      }
+      return url.origin === server.origin ? route.continue() : route.abort();
+    });
+    const page = await context.newPage();
+    await page.goto(server.origin + (config.path || '/') + '?gclid=A_test-click-123&email=private%40example.invalid#private-value');
+    await page.waitForFunction(() => !document.querySelector('#root[data-session-shell]') && !document.querySelector('.splash'));
+    if (config.ads && !config.gpc && !config.path && !config.member) {
+      await page.waitForFunction(() => window.__adsSdk === true);
+      const events = await page.evaluate(() => window.dataLayer.map(value => Array.from(value)));
+      const conversions = events.filter(value => value[0] === 'event' && value[1] === 'conversion');
+      assert.equal(conversions.length, 1);
+      assert.equal(conversions[0][2].send_to, ADS_CONVERSION);
+      assert.equal(conversions[0][2].page_location, 'https://uficonnect.org/');
+      assert.ok(!JSON.stringify(events).includes('private@'));
+      assert.equal(new URL(page.url()).search, '?gclid=A_test-click-123');
+      assert.equal(new URL(page.url()).hash, '');
+      await page.evaluate(() => history.pushState({}, '', '/login'));
+      await page.waitForURL('**/login');
+      await page.locator('#login-password').waitFor();
+      assert.equal(await page.evaluate(() => window.__adsSdk), undefined, 'Leaving the homepage destroys the SDK document');
+      assert.equal(scripts, 1);
+      await page.goto(server.origin + '/#analytics');
+      await page.waitForFunction(() => window.__adsSdk === true);
+      await page.getByRole('checkbox', { name: 'Allow Google Ads measurement (optional)' }).uncheck();
+      await page.getByRole('button', { name: 'Decline analytics', exact: true }).click();
+      await page.waitForFunction(key => localStorage.getItem(key) === 'denied' && !window.__adsSdk, ADS_CONSENT_KEY);
+      assert.equal(scripts, 2, 'Withdrawing consent unloads the SDK without loading it again');
+    } else {
+      await page.waitForTimeout(300);
+      assert.equal(scripts, 0, JSON.stringify(config));
+    }
+    await context.close();
+    console.log('PASS Ads consent and document boundary', JSON.stringify(config));
+  }
+  for (const file of ['login/index.html', 'vault/index.html', 'app.html']) {
+    const html = await fs.readFile(new URL('../web/dist/' + file, import.meta.url), 'utf8');
+    const policy = html.match(/http-equiv="Content-Security-Policy" content="([^"]*)/)[1];
+    assert.ok(!policy.includes('googletagmanager.com'), file + ' forbids Ads scripts');
+  }
+} finally { await browser.close(); await server.close(); }

@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import GuestShell from '../components/GuestShell';
 import PostLikes from '../components/PostLikes';
+import ReportPostButton from '../components/ReportPostButton';
 import { PostTime } from '../components/PostCardChrome';
 import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
@@ -302,6 +303,7 @@ export default function PostDetail() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
             <PostLikes post={post} onPostUpdated={updated => setPost(current => ({ ...current, ...updated }))} />
             {token && <SavePostButton post={post} className="btn btn-ghost btn-sm save-item-button" />}
+            <ReportPostButton post={post} className="btn btn-ghost btn-sm" showLabel />
             {post.sourceUrl && (
               <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
                 style={{ marginLeft: 'auto', fontSize: '.75rem', fontWeight: 700, color: src.color, textDecoration: 'none' }}>

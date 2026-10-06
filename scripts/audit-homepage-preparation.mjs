@@ -35,14 +35,21 @@ try {
     try {
       await auditNavigate(page, server.resolvedUrls.local[0]);
       await page.getByRole('heading', { name: 'UFIconnect', exact: true }).waitFor();
-      assert.match(await page.locator('.landing-hero-copy p').textContent(), /Your interests. Your communities. Your people./);
-      await page.locator('.landing-network-art img').evaluate(img => img.decode());
-      assert.ok(await page.locator('.landing-network-art img').evaluate(img => img.complete && img.naturalWidth === 1206));
+      assert.match(await page.locator('.landing-hero-copy > p').first().textContent(), /social and professional workspace/);
+      assert.ok(await page.locator('.landing-purpose-visual').isVisible());
+      assert.equal(await page.locator('.landing-purpose-grid > span').count(), 4);
+      const dimensions = await page.locator('.landing-brand img').evaluate(async image => {
+        await image.decode();
+        const box = image.getBoundingClientRect();
+        return { rendered: box.width / box.height, original: image.naturalWidth / image.naturalHeight };
+      });
+      assert.ok(Math.abs(dimensions.rendered - dimensions.original) < 0.01, `Brand image stretched at ${width}px`);
       assert.equal(await page.getByRole('link', { name: 'Explore the feed', exact: true }).first().getAttribute('href'), '/global');
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
-      assert.ok(await page.locator('.landing-product-shot img').evaluate(img => img.complete && img.naturalWidth > 0));
+      assert.ok(await page.locator('.landing-feed-preview .landing-preview-label').isVisible());
+      assert.equal(await page.locator('.landing-feed-preview .landing-preview-label').textContent(), 'Illustrative feed layout');
       await page.screenshot({ path: path.join(output, `homepage-copy-${width}.png`), fullPage: true });
-      checks += 4;
+      checks += 8;
       await installAuditMember(page, app, 'prep-audit');
       await auditNavigate(page, server.resolvedUrls.local[0] + 'resume-builder?tab=preparation');
       await page.getByRole('heading', { name: 'Interview preparation', exact: true }).waitFor();

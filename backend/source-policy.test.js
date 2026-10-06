@@ -13,8 +13,14 @@ test('every source forbids extraction, synthetic metrics, scraping and rehosting
       assert.equal(policy.features[feature], false);
     }
     assert.ok(policy.documentation.every(url => url.startsWith('https://')));
+    for (const rule of ['authentication', 'api', 'display', 'trademark', 'caching', 'deletion', 'interactions', 'analytics']) assert.ok(policy.rules[rule]);
+    assert.equal(policy.rules.reporting.automaticProviderTakedown, false);
+    assert.equal(policy.rules.analytics.syntheticMetricsAllowed, false);
+    assert.ok(policy.rules.caching.metricSnapshotFreshnessMs <= policy.rules.caching.metricSnapshotRetentionMs);
   }
   assert.equal(Object.isFrozen(SOURCE_POLICY.youtube.capabilities.like), true);
+  assert.equal(Object.isFrozen(SOURCE_POLICY.youtube.rules.caching), true);
+  assert.notEqual(SOURCE_POLICY.bluesky.rules.authentication.requirement, SOURCE_POLICY.mastodon.rules.authentication.requirement);
 });
 
 test('runtime switches disable writes and cannot enable an unimplemented action', () => {

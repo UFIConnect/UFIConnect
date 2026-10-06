@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 64" role="img" aria-label="UFIConnect">
+ <rect width="64" height="64" rx="17" fill="#102a6b"/>
+ <path d="M17 18v20a15 15 0 0 0 30 0V18" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round"/>
+ <path d="M24 22h16M32 22v17" fill="none" stroke="#58d8ee" stroke-width="4" stroke-linecap="round"/>
+ <g fill="#58d8ee"><circle cx="17" cy="16" r="5"/><circle cx="47" cy="16" r="5"/><circle cx="32" cy="39" r="5"/></g>
+ <text x="81" y="43" font-family="Arial,Helvetica,sans-serif" font-size="37" font-weight="700" fill="#102a6b">UFIConnect</text>
+</svg>

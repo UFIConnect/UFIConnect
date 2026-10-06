@@ -48,7 +48,7 @@ try {
     await context.route('**/*', async route => {
       const request = route.request();
       const url = new URL(request.url());
-      // The site-wide Google Ads tag is audited separately; this audit covers optional Analytics only.
+      // Homepage Google Ads consent is audited separately; this audit covers optional Analytics only.
       if (url.hostname === 'www.googletagmanager.com' && url.pathname === '/gtag/js' && /[?&]id=AW-18490754953(?:&|$)/.test(url.search)) {
         return route.fulfill({ contentType: 'text/javascript', body: '', headers: { 'Access-Control-Allow-Origin': '*' } });
       }
@@ -91,6 +91,9 @@ try {
     check(await page.locator('iframe[title="Optional page analytics"]').count() === 0, 'No analytics frame before consent');
     const accept = page.getByRole('button', { name: 'Accept analytics', exact: true });
     const decline = page.getByRole('button', { name: 'Decline analytics', exact: true });
+    // Consent controls load independently from the form's lazy route chunk.
+    await accept.waitFor({ state: 'visible' });
+    await decline.waitFor({ state: 'visible' });
     check(await accept.isVisible() && await decline.isVisible(), 'Both consent choices are visible');
     const sizes = await Promise.all([accept, decline].map(button => button.boundingBox()));
     check(Math.abs(sizes[0].width - sizes[1].width) < 2 && sizes[0].height === sizes[1].height, 'Consent choices have equal visual prominence');

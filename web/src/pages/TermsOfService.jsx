@@ -1,9 +1,9 @@
 ﻿import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 
-const EFFECTIVE_DATE = 'August 20, 2026';
+const EFFECTIVE_DATE = 'October 5, 2026';
 const CONTACT_EMAIL  = 'support@uficonnect.org';
-const APP_NAME       = 'UFIconnect';
+const APP_NAME       = 'UFIConnect';
 const APP_URL        = 'https://uficonnect.org';
 
 function Section({ title, children }) {
@@ -39,13 +39,13 @@ export default function TermsOfService() {
   return (
     <>
       <Helmet>
-        <title>Terms of Service — UFIconnect</title>
-        <meta name="description" content="UFIconnect terms of service — the rules for using the platform." />
+        <title>Terms of Service — UFIConnect</title>
+        <meta name="description" content="UFIConnect terms of service — the rules for using the platform." />
         <link rel="canonical" href="https://uficonnect.org/terms" />
         <meta property="og:type" content="website" />
         <meta property="og:url" content="https://uficonnect.org/terms" />
-        <meta property="og:title" content="Terms of Service | UFIconnect" />
-        <meta property="og:description" content="The rules for using UFIconnect." />
+        <meta property="og:title" content="Terms of Service | UFIConnect" />
+        <meta property="og:description" content="The rules for using UFIConnect." />
       </Helmet>
 
       {/* Nav bar */}
@@ -85,7 +85,8 @@ export default function TermsOfService() {
           <P>
             These Terms of Service ("Terms") are an agreement between you and {APP_NAME} ("we", "us",
             or "our") governing your use of the platform at {APP_URL}, including the website, any
-            associated apps, and all features offered through them (collectively, the "Service"). By
+            associated apps, and all features offered through them (collectively, the "Service"). UFIConnect
+            is a trade name operating in California, United States. By
             creating an account or otherwise using the Service, you agree to these Terms. If you do not
             agree, do not use the Service.
           </P>
@@ -93,16 +94,17 @@ export default function TermsOfService() {
 
         <Section title="2. What the Service is">
           <P>
-            {APP_NAME} is a professional networking platform: a personalised content feed, communities,
-            direct messaging, and job/opportunity listings, built for engineers, designers, founders,
-            and other professionals. The feed aggregates publicly available content from third-party
-            sources (see Section 5) alongside content posted directly by members.
+            {APP_NAME} provides a personalised feed, communities, messaging, job listings, recruiting
+            tools, resume tools and a local encrypted Vault. The feed includes third-party sources
+            (see Section 5) alongside member posts. Features depend on your plan and availability.
+            Our <Link to="/policies" style={{ color: 'var(--primary)' }}>policies and safety page</Link>
+            {' '}sets out the community, acceptable-use and reporting rules that apply to the Service.
           </P>
         </Section>
 
         <Section title="3. Eligibility and accounts">
           <UL items={[
-            'You must be at least 13 years old (16 in the EU) to use the Service.',
+            'You must be at least 13 years old, or 16 in the EU, EEA and UK, and meet any higher minimum age required where you live.',
             'You must provide accurate information when registering and keep it up to date.',
             'You are responsible for maintaining the confidentiality of your password and for all activity under your account.',
             'One person may not maintain more than one account for deceptive or abusive purposes.',
@@ -123,6 +125,7 @@ export default function TermsOfService() {
             'Impersonates any person or entity, or misrepresents your affiliation with one',
             'Contains malware or is intended to disrupt the Service',
             'Is spam, or unauthorised commercial solicitation',
+            'Contains child sexual abuse or exploitation, non-consensual intimate imagery, or sexual deepfakes, including AI-generated material',
           ]} />
           <P>
             We may remove content or suspend accounts that violate these Terms, at our discretion, with
@@ -132,10 +135,9 @@ export default function TermsOfService() {
 
         <Section title="5. Third-party and aggregated content">
           <P>
-            Much of the feed consists of publicly available content aggregated from third-party
-            platforms (including Reddit, Hacker News, GitHub, DEV.to, Medium, YouTube, Stack Overflow,
-            Mastodon, Bluesky, Lobsters, arXiv, Indeed, Product Hunt, TechCrunch, The Verge, and others),
-            shown with attribution and a link back to its original source. We do not own this content,
+            The feed includes content from available third-party sources, shown with attribution
+            and a link to the original source. Public availability does not transfer ownership or
+            grant permission for unrestricted reuse. We do not own this content,
             do not control it, and do not endorse the views expressed in it. Your use of any linked
             third-party site is governed by that site's own terms.
           </P>
@@ -144,19 +146,20 @@ export default function TermsOfService() {
 
         <Section title="6. Connected accounts">
           <P>
-            The Connected Accounts feature lets you optionally link third-party platforms (for example
-            LinkedIn, Twitter/X, or Facebook) via that platform's official OAuth
-            login. Doing so is subject to that platform's own terms of service in addition to these
+            The Connected Accounts feature lets you optionally link supported third-party platforms
+            through their authorization flow. Availability depends on provider access and approval.
+            Doing so is subject to that platform's own terms of service in addition to these
             Terms. You can disconnect any linked platform at any time from Profile → Connected Accounts;
             see our <Link to="/privacy" style={{ color: 'var(--primary)' }}>Privacy Policy</Link> for
             how connected-account data is stored and used.
           </P>
         </Section>
 
-        <Section title="7. Pro subscription and billing">
+        <Section title="7. Memberships and billing">
           <P>
-            {APP_NAME} is free to join and use. We also offer an optional Pro subscription as a way to
-            support the platform, purchased and managed through Stripe. If you subscribe:
+            {APP_NAME} offers free access and optional paid memberships, including Pro, Business,
+            Resume Builder and UFI Vault, purchased and managed through Stripe. Review the selected
+            plan, seat count, price and renewal period on the checkout page before paying. If you subscribe:
           </P>
           <UL items={[
             'Billing is processed by Stripe; we never see or store your full card details.',
@@ -164,6 +167,10 @@ export default function TermsOfService() {
             'You can cancel or manage your subscription at any time from Settings, which opens Stripe\'s billing portal.',
             'Fees are non-refundable except where required by law.',
           ]} />
+          <P>Business access is for recruiting and work. A solo Business membership covers one person;
+            team pricing is per person. UFI Vault membership does not mean prototype hardware is
+            available to purchase or that a VPN service has been provisioned. Feature availability
+            is shown in the product before use.</P>
         </Section>
 
         <Section title="8. Acceptable use">
@@ -174,6 +181,7 @@ export default function TermsOfService() {
             'Interfere with or disrupt the Service, or introduce malicious code',
             'Use the Service to violate any applicable law',
             'Use another member\'s content or personal information outside the Service without their consent',
+            'Use AI tools or Google APIs to create, facilitate or distribute non-consensual intimate imagery',
           ]} />
         </Section>
 
@@ -183,11 +191,17 @@ export default function TermsOfService() {
             or our licensors and are protected by intellectual property law. These Terms do not grant
             you any right to use our trademarks or branding without prior written consent.
           </P>
+          <P>To report an infringement or respond to a removal, follow our{' '}
+            <Link to="/copyright" style={{ color: 'var(--primary)' }}>Copyright and takedown policy</Link>.
+            Repeated infringement can lead to account termination in appropriate circumstances.
+            Source trademarks remain the property of their owners; their display does not imply endorsement.</P>
         </Section>
 
         <Section title="10. Termination">
           <P>
-            You may stop using the Service and delete your account at any time from Settings. We may
+            You may stop using the Service and request account deletion from Settings. Keep any
+            exports you need first; local Vault data and downloaded backups must be removed on your device.
+            We may
             suspend or terminate your access to the Service if you violate these Terms, or at our
             discretion with reasonable notice where practical. Sections of these Terms that by their
             nature should survive termination (including Sections 4, 9, 11, and 12) will continue to
@@ -225,6 +239,7 @@ export default function TermsOfService() {
         <Section title="14. Contact">
           <P>
             <strong>{APP_NAME}</strong><br />
+            California, United States<br />
             Email: <a href={`mailto:${CONTACT_EMAIL}`} style={{ color: 'var(--primary)' }}>{CONTACT_EMAIL}</a><br />
             Website: <a href={APP_URL} style={{ color: 'var(--primary)' }}>{APP_URL}</a>
           </P>
@@ -238,6 +253,8 @@ export default function TermsOfService() {
         }}>
           <Link to="/"             style={{ color: '#64748B', textDecoration: 'none' }}>Home</Link>
           <Link to="/privacy"      style={{ color: '#64748B', textDecoration: 'none' }}>Privacy Policy</Link>
+          <Link to="/policies"     style={{ color: '#64748B', textDecoration: 'none' }}>Policies and safety</Link>
+          <Link to="/copyright"    style={{ color: '#64748B', textDecoration: 'none' }}>Copyright</Link>
           <Link to="/child-safety" style={{ color: '#64748B', textDecoration: 'none' }}>Child Safety Standards</Link>
           <Link to="/login"        style={{ color: '#64748B', textDecoration: 'none' }}>Sign in</Link>
           <Link to="/register"     style={{ color: '#64748B', textDecoration: 'none' }}>Register</Link>

@@ -1,9 +1,9 @@
 ﻿import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 
-const EFFECTIVE_DATE = 'August 25, 2026';
+const EFFECTIVE_DATE = 'October 5, 2026';
 const CONTACT_EMAIL  = 'support@uficonnect.org';
-const APP_NAME       = 'UFIconnect';
+const APP_NAME       = 'UFIConnect';
 const APP_URL        = 'https://uficonnect.org';
 
 function Section({ title, children }) {
@@ -39,12 +39,12 @@ export default function ChildSafety() {
   return (
     <>
       <Helmet>
-        <title>Child Safety Standards — UFIconnect</title>
-        <meta name="description" content="UFIconnect's standards on child sexual abuse and exploitation (CSAE): what we prohibit, how to report a concern, and what happens next." />
+        <title>Child Safety Standards — UFIConnect</title>
+        <meta name="description" content="UFIConnect's standards on child sexual abuse and exploitation (CSAE): what we prohibit, how to report a concern, and what happens next." />
         <link rel="canonical" href="https://uficonnect.org/child-safety" />
         <meta property="og:type" content="website" />
         <meta property="og:url" content="https://uficonnect.org/child-safety" />
-        <meta property="og:title" content="Child Safety Standards | UFIconnect" />
+        <meta property="og:title" content="Child Safety Standards | UFIConnect" />
         <meta property="og:description" content="Our standards on child sexual abuse and exploitation, and how to report a concern." />
       </Helmet>
 
@@ -90,10 +90,10 @@ export default function ChildSafety() {
           </P>
         </Section>
 
-        <Section title="2. Who can use UFIconnect">
+        <Section title="2. Who can use UFIConnect">
           <P>
             {APP_NAME} is a professional networking platform intended for users who are at least 13
-            years old (16 in the EU/EEA/UK), consistent with our{' '}
+            years old (16 in the EU/EEA/UK), and who meet any higher local minimum age, consistent with our{' '}
             <Link to="/terms" style={{ color: 'var(--primary)' }}>Terms of Service</Link>. It is not
             directed at children and is not designed or marketed to appeal primarily to minors.
           </P>
@@ -112,10 +112,9 @@ export default function ChildSafety() {
 
         <Section title="4. How to report a concern">
           <P>
-            Every profile and every post on {APP_NAME} has a <strong>Report</strong> option — open
-            the "•••" menu on a profile, or the "•••" menu on a post, choose <strong>Report</strong>,
+            Open the "•••" menu on a profile, comment or post, choose <strong>Report</strong>,
             and select <strong>"Child safety concern"</strong> as the reason. Reports filed under this
-            reason are routed to our team for immediate review.
+            reason are recorded in the review queue as child safety concerns. Review is not an emergency response service.
           </P>
           <P>
             If you can't access the in-app report option, or a child is in immediate danger, email{' '}
@@ -131,11 +130,12 @@ export default function ChildSafety() {
 
         <Section title="5. What happens after you report">
           <UL items={[
-            'Our team reviews every report — reports involving a child\'s safety are treated as highest priority.',
-            'Content that violates this policy is removed, and the account responsible is suspended or permanently banned.',
+            'Child safety reports are identified for priority review. The team may request more information to locate and assess the concern.',
+            'Confirmed violations can lead to content removal and account suspension or termination. Source platforms control removal of their own original content.',
             'Where required by law, we cooperate with law enforcement and report apparent CSAE violations to NCMEC or other appropriate authorities.',
-            'We keep the details of individual reports confidential, to protect both the reporter and any minor involved.',
+            'Report details are handled for review and safety purposes and may be disclosed when necessary for investigation or required by law.',
           ]} />
+          <P>Do not download or forward suspected abuse material to us. Send the content link, account name and a brief description without reproducing the material. You can follow up or appeal a restriction through the <Link to="/policies#reporting" style={{ color: 'var(--primary)' }}>reporting and appeals process</Link>.</P>
         </Section>
 
         <Section title="6. Contact">
@@ -155,6 +155,7 @@ export default function ChildSafety() {
           <Link to="/"         style={{ color: '#64748B', textDecoration: 'none' }}>Home</Link>
           <Link to="/terms"    style={{ color: '#64748B', textDecoration: 'none' }}>Terms of Service</Link>
           <Link to="/privacy"  style={{ color: '#64748B', textDecoration: 'none' }}>Privacy Policy</Link>
+          <Link to="/policies" style={{ color: '#64748B', textDecoration: 'none' }}>Policies and safety</Link>
           <span>© {new Date().getFullYear()} {APP_NAME}</span>
         </div>
       </main>

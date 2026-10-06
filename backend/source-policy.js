@@ -1,7 +1,7 @@
 // Source permissions are engineering controls, not a grant of platform access.
 // An available API still requires the member's OAuth scopes and provider approval.
 // Keep analytics permission separate from a deployed collector's availability.
-const POLICY_VERSION = '2026-09-30';
+const POLICY_VERSION = '2026-10-05';
 const METRICS_NOTICE = 'Engagement metrics are provided by the original source. The source determines whether playback qualifies as a view.';
 const NEVER = Object.freeze({ directRehosting: false, cacheVideo: false, scrapingFallback: false, mediaExtraction: false, syntheticMetrics: false });
 const SOURCES = {
@@ -30,9 +30,32 @@ function freezeDeep(value) {
   return value;
 }
 
+// Each adapter keeps its own access and lifecycle contract. These describe
+// controls in this application; they do not assert that a provider approved it.
+function adapterRules(source, info) {
+  const authentication = source === 'bluesky' ? 'Connected AT Protocol session; validated PDS origin'
+    : source === 'mastodon' ? 'Instance-specific authorization and configured original-link origins'
+      : ['github', 'gitlab'].includes(source) ? 'Connected member token with repository or project permissions'
+        : 'Provider authorization and product-specific scopes; API approval where required';
+  return {
+    authentication: { requirement: authentication, credentialLogging: false },
+    api: { documentation: info.docs, scrapingFallback: false, accessReviewRequired: true },
+    display: { sourceIdentityRequired: true, originalLinkRequired: true, preserveSafetyLabels: true, officialPlayer: Boolean(info.player) },
+    trademark: { attributionOnly: true, endorsementClaimAllowed: false },
+    // These limits apply to creator-metric snapshots. Feed metadata and provider
+    // media have separate storage paths; no universal platform cache grant exists.
+    caching: { videoFilesAllowed: false, metricSnapshotFreshnessMs: 15 * 60000, metricSnapshotRetentionMs: 86400000 },
+    deletion: { invalidateMetricsOnDisconnect: true, sourceRemovalRequiresSeparateAction: true },
+    interactions: { explicitMemberActionRequired: true, implemented: Boolean(info.actions), metricLabel: info.likeLabel || 'Like' },
+    analytics: { authorizationRequired: true, syntheticMetricsAllowed: false, sourceDecidesQualifiedView: true },
+    reporting: { destination: 'uficonnect_review', automaticProviderTakedown: false },
+  };
+}
+
 const SOURCE_POLICY = freezeDeep(Object.fromEntries(Object.entries(SOURCES).map(([source, info]) => [source, {
   source, label: info.label, hosts: info.hosts, likeLabel: info.likeLabel || 'Like', maxLength: info.maxLength || 1000,
   version: POLICY_VERSION, documentation: [info.docs], note: info.note,
+  rules: adapterRules(source, info),
   // Status describes the access review; enabled describes our runtime support.
   capabilities: {
     displayPost: { status: 'requires_approval', enabled: true },

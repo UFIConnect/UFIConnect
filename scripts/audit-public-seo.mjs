@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,12 +15,6 @@ const decode = value => String(value).replace(/&(?:amp|lt|gt|quot|apos|#39|#\d+|
 });
 const attributes = tag => Object.fromEntries([...tag.matchAll(/([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)].map(match => [match[1].toLowerCase(), decode(match[2] ?? match[3])]));
 const stripTags = html => decode(html.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
-// The approved Google tag uses two small queue-initialization snippets. Keep
-// the exception exact and require their hashes in CSP; other inline code fails.
-const approvedGoogleSnippets = new Set([
-  "window.dataLayer = window.dataLayer || []; function gtag(){dataLayer.push(arguments);} gtag('js', new Date()); gtag('config', 'AW-18490754953');",
-  "gtag('event', 'conversion', {'send_to': 'AW-18490754953/s7sWCK_AsI4dEImPivFE'});",
-]);
 let checks = 0;
 function check(value, message) { assert.ok(value, message); checks++; }
 
@@ -56,11 +49,9 @@ try {
       if (attrs.type === 'application/ld+json' || attrs.type === 'application/json') continue;
       if (attrs.src) {
         check(attrs.type === 'module' || /\b(?:defer|async)(?:\s|=|$)/i.test(match[1]), `${route.path}: external classic scripts must defer or load asynchronously`);
+        check(!/googletagmanager|googleadservices/.test(attrs.src), `${route.path}: optional Ads must wait for consent and the guest session check`);
       } else {
-        const source = match[2].replace(/\r\n?/g, '\n');
-        check(approvedGoogleSnippets.has(source.replace(/\s+/g, ' ').trim()), `${route.path}: inline scripts must match the approved Google initialization`);
-        const hash = createHash('sha256').update(source).digest('base64');
-        check(scriptPolicy?.includes(`'sha256-${hash}'`), `${route.path}: approved inline script must be authorized by its exact CSP hash`);
+        check(!match[2].trim(), `${route.path}: executable inline scripts must not bypass application consent controls`);
       }
     }
     check(Boolean(scriptPolicy) && !/unsafe-inline|unsafe-eval/.test(scriptPolicy), `${route.path}: production CSP keeps unsafe scripts blocked`);

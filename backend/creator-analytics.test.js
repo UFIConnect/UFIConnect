@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const {PGlite} = require('@electric-sql/pglite');
 const {CREATOR_ANALYTICS_SCHEMA,createCreatorAnalytics,collectYouTube,count,period} = require('./creator-analytics');
 const {analyzeActivity} = require('./activity-learning');
+const {REPORT_SCHEMA,COPYRIGHT_REPORT_BRIDGE_SCHEMA,createContentReports} = require('./content-reports');
 const A='a0000000-0000-4000-8000-000000000001', B='b0000000-0000-4000-8000-000000000002';
 const now=Date.parse('2026-09-30T12:00:00Z');
 async function fixture(t, options={}) {
@@ -11,6 +12,9 @@ async function fixture(t, options={}) {
     CREATE TABLE post_comments(id TEXT,post_id TEXT,author_id TEXT,created_at TIMESTAMPTZ);`);
   await pg.query('INSERT INTO users VALUES($1),($2)',[A,B]);
   for (const sql of CREATOR_ANALYTICS_SCHEMA) await pg.exec(sql);
+  await pg.exec(`CREATE TABLE reports(id TEXT PRIMARY KEY,reporter_id TEXT NOT NULL,target_type TEXT NOT NULL,target_id TEXT NOT NULL,
+    reason TEXT NOT NULL,details TEXT,status TEXT NOT NULL DEFAULT 'open',created_at TIMESTAMPTZ DEFAULT NOW(),resolved_at TIMESTAMPTZ,resolved_by TEXT)`);
+  for (const sql of REPORT_SCHEMA) await pg.exec(sql);
   const users={[A]:{id:A,plan:'pro',socialTokens:{},createdAt:'2026-08-01'},[B]:{id:B,plan:'free',socialTokens:{}}};
   const db={isConnected:()=>true,query:(...args)=>pg.query(...args)};
   const service=createCreatorAnalytics({db,getUser:async id=>users[id],now:()=>now,env:{},...options});
@@ -24,6 +28,13 @@ test('native metrics and copyright reports are account scoped, external metrics 
   const report=await service.report(A,7);
   assert.equal(report.uficonnect.posts,1);assert.equal(report.uficonnect.likesReceived,2);assert.equal(report.uficonnect.commentsReceived,1);
   assert.equal(report.copyright.reports[0].id,claim.id);assert.equal((await service.report(B,7)).copyright.reports.length,0);
+  const review=createContentReports({db:{isConnected:()=>true,query:(...args)=>pg.query(...args)}});
+  assert.equal((await review.list('open')).reports[0].id,claim.id);
+  await review.review(claim.id,{status:'resolved',note:'Reviewed original link and requested a formal notice.'});
+  assert.equal((await service.report(A,7)).copyright.reports[0].status,'resolved');
+  await pg.query('DELETE FROM reports WHERE id=$1',[claim.id]);
+  await pg.exec(COPYRIGHT_REPORT_BRIDGE_SCHEMA);
+  assert.equal((await review.list('resolved')).reports[0].id,claim.id,'Existing copyright concerns migrate to Office');
   assert.ok(report.sources.length>=16);assert.ok(report.sources.every(source=>source.metrics.views===null));
   assert.equal(report.monetization.sourceRevenueAvailable,false);assert.equal(JSON.stringify(report).includes('socialTokens'),false);
   await assert.rejects(service.copyrightReport(A,{source:'youtube',sourceUrl:'https://evil.example/watch?v=abcdefghijk',reason:'A legitimate explanation.'}),error=>error.status===400);

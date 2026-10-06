@@ -11,6 +11,7 @@ const { BILLING_SCHEMA } = require('./billing');
 const { BUSINESS_TEAM_SCHEMA } = require('./business-teams');
 const { CREATOR_ANALYTICS_SCHEMA } = require('./creator-analytics');
 const { UFI_VAULT_SCHEMA } = require('./ufi-vault');
+const { REPORT_SCHEMA } = require('./content-reports');
 
 const alice = '11111111-1111-4111-8111-111111111111';
 const bob = '22222222-2222-4222-8222-222222222222';
@@ -35,7 +36,7 @@ async function schema(pg) {
   await pg.exec(HISTORY_SCHEMA);
   for (const sql of BILLING_SCHEMA) await pg.exec(sql);
   for (const sql of BUSINESS_TEAM_SCHEMA) await pg.exec(sql);
-  for (const sql of [...CREATOR_ANALYTICS_SCHEMA, ...UFI_VAULT_SCHEMA]) await pg.exec(sql);
+  for (const sql of [...CREATOR_ANALYTICS_SCHEMA, ...UFI_VAULT_SCHEMA, ...REPORT_SCHEMA]) await pg.exec(sql);
 }
 
 async function seed(pg) {
