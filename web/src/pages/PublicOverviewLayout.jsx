@@ -11,7 +11,7 @@ export default function PublicOverviewLayout({ children }) {
       <nav aria-label="Explore UFIconnect"><div className="public-theme-control"><AppearanceControl compact /></div>
         <NavLink to="/global">Global Feed</NavLink>
         <NavLink to="/vault-device">Vault device</NavLink>
-        <NavLink to="/how-it-works">How UFIC works</NavLink>
+        <NavLink to="/how-it-works">How UFI works</NavLink>
         <Link to="/login">Sign in</Link>
         <Link to="/register" className="public-overview-button">Join free</Link>
       </nav>
