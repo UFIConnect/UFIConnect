@@ -71,6 +71,7 @@ async function createAppHarness({ env = {}, connected = false, query, modules = 
       pickOnboardingGroups, fullProfile, provisionAuth0User, issueSession, createPasswordResetToken, localSessions,
       createOAuthState, verifyOAuthState, dbRowToMemUser, saveSocialToken,
       normalizeFeedPost, dbRowToFeedPost, mapSharedJobPost,
+      getFeedLocationContext, mainFeedSnapshotKey, mainFeedSnapshots,
       getFollowingFeedPosts, getCommunityPosts, followingSourceCache,
       getVideoCapableSources, videoReadAdmission,
       sourceRefreshQueue, refreshControl, SOURCE_FETCHERS, enqueueSourceRefresh, drainSourceRefreshQueue,
