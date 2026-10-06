@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const { PGlite } = require('@electric-sql/pglite');
 const { createAppHarness, member } = require('./test-support/app-harness');
 const { hydratePostLikes } = require('./post-likes');
+const vault = require('./token-vault').createTokenVault({ OAUTH_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString('base64') });
 
 const A = 'a0000000-0000-4000-8000-000000000001';
 const B = 'b0000000-0000-4000-8000-000000000002';
@@ -35,11 +36,17 @@ async function fixture(t) {
   return { pg, feedRow, start, setFailWrite(value) { failWrite = value; } };
 }
 
-test('external likes persist without connected accounts, preserve provider counts, and expose public counts', async t => {
+test('external likes require the matching connected account, preserve provider counts, and expose public counts', async t => {
   const { pg, start, feedRow } = await fixture(t); const app = await start();
   const like = (userId, liked) => app.request(`/feed/${POST}/like`, { userId, method: 'POST', body: { liked } });
   assert.equal((await like(undefined, true)).status, 401);
   assert.equal((await like(A, 'true')).status, 400);
+  assert.equal((await like(A, true)).status, 403);
+  assert.equal((await pg.query('SELECT COUNT(*)::integer AS count FROM external_post_likes')).rows[0].count, 0);
+  await pg.query('UPDATE users SET social_tokens=$1::jsonb WHERE id=$2', [JSON.stringify(vault.encryptMap({ github: 'unrelated-test-token' }, A, 'access')), A]);
+  assert.equal((await like(A, true)).status, 403, 'A different connected source does not unlock likes');
+  for (const id of [A, B]) await pg.query('UPDATE users SET social_tokens=$1::jsonb WHERE id=$2', [JSON.stringify(vault.encryptMap({ reddit: 'test-source-token' }, id, 'access')), id]);
+  assert.equal((await app.request('/social/interaction-capabilities', { userId: A })).data.sources.reddit.connected, true);
   const first = await like(A, true);
   assert.equal(first.status, 200, JSON.stringify(first.data));
   assert.equal(first.data.likesCount, 1); assert.equal(first.data.likedByMe, true);
@@ -61,6 +68,9 @@ test('external likes persist without connected accounts, preserve provider count
   assert.equal((await like(A, false)).data.likesCount, 1);
   assert.equal((await like(A, false)).data.likesCount, 1);
   assert.equal((await like(B, false)).data.likesCount, 0);
+  await pg.query("UPDATE users SET social_tokens='{}'::jsonb WHERE id=$1", [A]);
+  assert.equal((await like(A, true)).status, 403, 'Disconnecting overrides a warm worker cache');
+  assert.equal((await app.request('/social/interaction-capabilities', { userId: A })).data.sources.reddit.connected, false);
   assert.equal(feedRow.likes_count, 40);
   assert.equal((await pg.query('SELECT COUNT(*)::integer AS count FROM external_post_likes')).rows[0].count, 0);
   assert.equal((await app.request('/feed/missing_post/like', { userId: A, method: 'POST', body: { liked: true } })).status, 404);
@@ -101,6 +111,7 @@ test('hydration stays viewer-specific without mutating shared snapshots; outages
   assert.deepEqual(posts, [{ id: POST, source: 'reddit', likesCount: 40 }]);
   assert.equal((await hydratePostLikes(app.db, own, A))[0].sourceLikesCount, 40);
   data.setFailWrite(true);
+  await data.pg.query('UPDATE users SET social_tokens=$1::jsonb WHERE id=$2', [JSON.stringify(vault.encryptMap({ reddit: 'test-source-token' }, B, 'access')), B]);
   assert.equal((await app.request(`/feed/${POST}/like`, { userId: B, method: 'POST', body: { liked: true } })).status, 500);
   assert.equal((await data.pg.query('SELECT COUNT(*)::integer AS count FROM external_post_likes')).rows[0].count, 1);
   app.db.isConnected = () => false;

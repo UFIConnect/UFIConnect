@@ -70,6 +70,9 @@ try {
         id: 'synthetic-member', name: 'Synthetic member', email: 'fixture@example.invalid', onboardingComplete: true,
         role: 'member', interests: [], skills: [], roleSettings: {},
       } } });
+      // A guest reload has no saved session. A generic 200 fixture would
+      // restore a bogus member and correctly redirect Global to Home.
+      if (url.pathname.endsWith('/auth/session')) return route.fulfill({ status: 401, json: { message: 'No saved session.' } });
       if (url.origin !== origin || url.pathname.startsWith('/api/')) {
         return route.fulfill({ status: 200, json: { items: [], posts: [], groups: [], messages: [], notifications: [], results: [],
           passwordChangeAvailable: true, passwordMinimumCharacters: 15, passwordMaximumUtf8Bytes: 72, sessionLifetimeSeconds: 2592000 } });

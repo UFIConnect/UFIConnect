@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { SOURCE_META } from './sourceMeta';
 import { useToast } from '../contexts/ToastContext';
-import ReportPostButton from './ReportPostButton';
+import { useAuth } from '../contexts/AuthContext';
+import ReportModal from './ReportModal';
+import { isMemberPost, postProfileLink, safePostLink } from '../../../backend/post-links.mjs';
 import './PostCardChrome.css';
 
 // Shared post-card chrome: author header with the source's own badge, the
@@ -95,7 +97,7 @@ export function PostAvatar({ post, member = false, onView }) {
 }
 
 // A full-size view of an author's profile photo; Escape, the backdrop or Close dismiss it.
-export function ProfilePhotoViewer({ url, name, handle, profileTo, onClose }) {
+export function ProfilePhotoViewer({ url, name, handle, profileTo, profileHref, onClose }) {
   const closeButton = useRef(null);
   useEffect(() => {
     const previous = document.activeElement;
@@ -114,6 +116,7 @@ export function ProfilePhotoViewer({ url, name, handle, profileTo, onClose }) {
           {handle && <span>{handle}</span>}
           <span className="post-chrome-photo-actions">
             {profileTo && <Link to={profileTo} onClick={onClose}>View profile</Link>}
+            {profileHref && <a href={profileHref} target="_blank" rel="noopener noreferrer" onClick={onClose}>Go to profile</a>}
             <button ref={closeButton} type="button" onClick={onClose}>Close</button>
           </span>
         </figcaption>
@@ -144,11 +147,14 @@ export function PostTime({ post, live = false }) {
 }
 
 export function PostHeader({ post, member = false, to }) {
+  const { profile } = useAuth();
   const src = postSource(post);
   const name = post?.author?.name || src.label;
   const handle = postHandle(post, member);
   const [viewing, setViewing] = useState('');
   const closeViewer = useCallback(() => setViewing(''), []);
+  const destination = to ? { to } : postProfileLink(post, profile?.id);
+  const profileHref = destination?.fallback ? null : destination?.href;
   const who = (
     <span className="post-chrome-who">
       <span className="post-chrome-name">{name}</span>
@@ -161,12 +167,13 @@ export function PostHeader({ post, member = false, to }) {
   return (
     <div className="post-chrome-header">
       <PostAvatar post={post} member={member} onView={setViewing} />
-      {to ? <Link to={to} className="post-chrome-identity">{who}</Link> : <div className="post-chrome-identity">{who}</div>}
+      {destination?.to ? <Link to={destination.to} className="post-chrome-identity">{who}</Link>
+        : profileHref ? <a href={profileHref} target="_blank" rel="noopener noreferrer" className="post-chrome-identity">{who}</a>
+          : <div className="post-chrome-identity">{who}</div>}
       <div className="post-chrome-corner">
         <PostTime post={post} live={post?.isLiveCamera} />
-        <ReportPostButton post={post} />
       </div>
-      {viewing && <ProfilePhotoViewer url={viewing} name={name} handle={handle} profileTo={to} onClose={closeViewer} />}
+      {viewing && <ProfilePhotoViewer url={viewing} name={name} handle={handle} profileTo={destination?.to} profileHref={profileHref} onClose={closeViewer} />}
     </div>
   );
 }
@@ -183,8 +190,10 @@ function ShareIcon() {
 
 // The "more" button opens the post's options. Each item is
 // { label, detail?, danger?, busy?, ariaLabel?, onSelect }; hidden items are left out.
-export function PostOptionsMenu({ items = [] }) {
+export function PostOptionsMenu({ post, items = [] }) {
+  const { profile, token } = useAuth();
   const [open, setOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const wrapper = useRef(null), button = useRef(null);
   useEffect(() => {
     if (!open) return undefined;
@@ -193,7 +202,18 @@ export function PostOptionsMenu({ items = [] }) {
     document.addEventListener('pointerdown', outside); document.addEventListener('keydown', escape);
     return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
   }, [open]);
-  const visible = items.filter(Boolean);
+  const destination = postProfileLink(post, profile?.id);
+  const native = isMemberPost(post);
+  const original = safePostLink(post?.sourceUrl);
+  const ownPost = native && profile?.id && (post?.authorId || post?.author?.id) === profile.id;
+  const visible = [
+    post?.id && (native ? { label: 'Likes on UFIconnect', to: `/p/${encodeURIComponent(post.id)}`, detail: 'View likes on the post.' }
+      : original && { label: `Likes on ${postSource(post).label}`, href: original, detail: 'View likes on the original post.' }),
+    post?.id && { label: 'Go to profile', ...destination, disabled: !destination,
+      detail: destination?.fallback ? 'Profile link unavailable; opens the original post.' : destination ? post.author?.name : 'Author profile unavailable.' },
+    ...items,
+    post?.id && !ownPost && !items.some(item => item?.label === 'Report post') && { label: 'Report post', onSelect: () => setReportOpen(true) },
+  ].filter(Boolean);
   if (!visible.length) return null;
   return (
     <div className="post-chrome-more" ref={wrapper}>
@@ -202,14 +222,18 @@ export function PostOptionsMenu({ items = [] }) {
       </button>
       {open && (
         <div className="post-chrome-menu" role="menu">
-          {visible.map(item => (
-            <button key={item.label} type="button" role="menuitem" className={item.danger ? 'post-chrome-menu-danger' : undefined}
-              aria-label={item.ariaLabel} disabled={item.busy} onClick={() => { setOpen(false); item.onSelect(); }}>
-              {item.busy ? `${item.label}…` : item.label}{item.detail && <small>{item.detail}</small>}
-            </button>
-          ))}
+          {visible.map(item => {
+            const content = <>{item.busy ? `${item.label}…` : item.label}{item.detail && <small>{item.detail}</small>}</>;
+            const props = { role: 'menuitem', className: item.danger ? 'post-chrome-menu-danger' : undefined,
+              'aria-label': item.ariaLabel, onClick: event => { event.stopPropagation(); setOpen(false); item.onSelect?.(); } };
+            return item.to ? <Link key={item.label} to={item.to} {...props}>{content}</Link>
+              : item.href ? <a key={item.label} href={item.href} target="_blank" rel="noopener noreferrer" {...props}>{content}</a>
+                : <button key={item.label} type="button" disabled={item.busy || item.disabled} {...props}>{content}</button>;
+          })}
         </div>
       )}
+      {reportOpen && <ReportModal targetType="post" targetId={String(post.id)} targetLabel="post" source={post.source}
+        sourceUrl={original || undefined} signInRequired={!token} onClose={() => setReportOpen(false)} />}
     </div>
   );
 }

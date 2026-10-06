@@ -1280,6 +1280,7 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen, onPostUpdated })
         </button>}
         <SavePostButton post={post} className="post-chrome-action save-item-button" showLabel={false} />
         <SharePostButton post={post} />
+        <PostOptionsMenu post={post} />
         <OpenOnSource post={post} label="Watch on YouTube" />
       </div>
       <ConnectedPostActions post={post} active={showComments} />
@@ -1681,7 +1682,6 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
   const optionItems = [
     { label: isExternal ? 'Copy original link' : 'Copy link to post', onSelect: copyPostLink },
     !isExternal && { label: 'Open post', onSelect: () => navigate(`/p/${encodeURIComponent(post.id)}`) },
-    !isExternal && post.author?.id && !ownPost && { label: 'View profile', detail: post.author?.name, onSelect: () => navigate(`/u/${post.author.id}`) },
     !ownPost && { label: 'Report post', onSelect: () => (token ? setReportOpen(true) : showToast('Sign in to report a post.', 'info')) },
     blockTarget && { label: isExternal ? 'Block account' : 'Block member', detail: blockTarget.label, danger: true, busy: blockBusy, ariaLabel: `Block ${blockTarget.label}`, onSelect: blockAuthor },
     ownPost && { label: 'Delete post', danger: true, busy: deleteBusy, onSelect: deletePost },
@@ -1820,7 +1820,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
         )}
         <SavePostButton post={post} className="post-chrome-action feed-save-post-button" showLabel={false} />
         <SharePostButton post={post} />
-        <PostOptionsMenu items={optionItems} />
+        <PostOptionsMenu post={post} items={optionItems} />
         <OpenOnSource
           post={post}
           label={`${isJob ? 'Apply' : post.isLiveCamera ? 'Watch live' : hasVideo ? 'Watch' : 'Open'}${post.isLiveCamera ? '' : ` on ${src.label}`}`}

@@ -70,6 +70,7 @@ export default function ConnectedAccounts() {
     const errPlatform = searchParams.get('social_error');
     const errReason   = searchParams.get('reason');
     if (connected_) {
+      window.dispatchEvent(new Event('ufi-connections-changed'));
       setConnected(prev => ({ ...prev, [connected_]: true }));
       flash_('success', `${connected_} connected successfully.`);
       setSearchParams({}, { replace: true });
@@ -140,6 +141,7 @@ export default function ConnectedAccounts() {
     setDisconnecting(platform);
     try {
       await client.delete(`/social/connect/${platform}`);
+      window.dispatchEvent(new Event('ufi-connections-changed'));
       setConnected(prev => { const n = { ...prev }; delete n[platform]; return n; });
       flash_('success', 'Account disconnected.');
     } catch (err) {

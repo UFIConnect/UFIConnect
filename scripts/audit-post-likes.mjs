@@ -28,11 +28,13 @@ try {
   for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
     let liked = false;
     let failWrite = false;
-    let failList = false;
+    let connected = false;
+    let heldWrite = null;
+    const requests = [];
     let writes = 0;
     const post = {
       id: 'audit-likes', source: 'github', isExternal: true, title: 'Shared recruiting tools',
-      content: 'A useful public post for checking likes.', author: { name: 'Community author' },
+      content: 'A useful public post for checking likes.', author: { name: 'Community author', profileUrl: 'https://github.com/example' },
       sourceUrl: 'https://github.com/example/project', createdAt: new Date(Date.now() - 5 * 60_000).toISOString(),
       sourceLikesCount: 47, likesScope: 'uficonnect', likesAvailable: true, commentsCount: 0,
     };
@@ -45,6 +47,21 @@ try {
     await context.route('**/api/**', async route => {
       const url = new URL(route.request().url());
       const endpoint = url.pathname.replace(/^\/api/, '');
+      if (endpoint === '/social/interaction-capabilities') return route.fulfill({ json: { sources: {
+        github: { connected, like: true, label: 'GitHub', likeLabel: 'Star repository' },
+        reddit: { connected, like: true, label: 'Reddit', likeLabel: 'Upvote' },
+      } } });
+      if (endpoint === '/social/interactions') {
+        writes++;
+        const payload = route.request().postDataJSON(); requests.push(payload);
+        if (heldWrite) await heldWrite;
+        if (!connected) return route.fulfill({ status: 403, json: { message: 'Connect this source.' } });
+        if (failWrite) return route.fulfill({ status: 503, json: { message: 'The source did not confirm this action.' } });
+        liked = payload.liked;
+        await new Promise(resolve => setTimeout(resolve, 150));
+        return route.fulfill({ json: { published: true, liked, source: payload.source, action: 'like' } });
+      }
+      if (endpoint === '/office/feed') return route.fulfill({ json: { posts: [{ ...post, likedByMe: true, likesCount: 3 }], hasMore: false } });
       if (endpoint.startsWith('/office/feed/videos')) return route.fulfill({ json: { posts: [{ ...post, source: 'reddit', sourceLikesCount: 47, likedByMe: liked, likesCount: 2 + Number(liked), mediaType: 'video', mediaUrl: 'https://media.example.invalid/likes.mp4', directPlaybackAuthorized: true, videoDurationSeconds: 30 }], hasMore: false } });
       if (endpoint === '/feed/audit-likes') return route.fulfill({ json: { post: { ...post, likedByMe: liked, likesCount: 2 + Number(liked) } } });
       if (endpoint === '/feed/audit-likes/comments') return route.fulfill({ json: { comments: [], hasMore: false } });
@@ -55,37 +72,93 @@ try {
         await new Promise(resolve => setTimeout(resolve, 150));
         return route.fulfill({ json: { likedByMe: liked, likesCount: 2 + Number(liked), post: { id: post.id, likedByMe: liked, likesCount: 2 + Number(liked), sourceLikesCount: 47 } } });
       }
-      if (endpoint === '/feed/audit-likes/likes') return failList
-        ? route.fulfill({ status: 400, json: { message: 'Unavailable' } })
-        : route.fulfill({ json: { likesCount: 2 + Number(liked), users: [{ id: 'likes-reader', name: 'Test likes-reader', isSelf: true }] } });
+      if (endpoint === '/feed/audit-likes/likes') return route.fulfill({ json: { likesCount: 2 + Number(liked), users: [{ id: 'likes-reader', name: 'Test likes-reader', isSelf: true }] } });
       if (/events|stream/.test(endpoint)) return route.abort();
       return route.continue();
     });
     await installAuditMember(page, app, 'likes-reader');
     await context.route('https://media.example.invalid/**', route => route.fulfill({ status: 404, body: '' }));
-    await page.goto(base + 'p/audit-likes?audit-public=1');
+    await page.goto(base + 'p/audit-likes?audit-public=1', { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.getByLabel('47 stars', { exact: true }).waitFor();
-    assert.equal(await page.getByRole('link', { name: 'Sign in to like', exact: true }).count(), 0);
+    assert.equal(await page.getByRole('link', { name: 'Sign in to like', exact: true }).count(), 1);
     assert.equal(writes, 0);
     await auditNavigate(page, base + 'p/audit-likes');
-    await page.goto(base + 'p/audit-likes');
+    await page.goto(base + 'p/audit-likes', { waitUntil: 'domcontentloaded' });
     await page.getByLabel('47 stars', { exact: true }).waitFor();
-    assert.equal(await page.getByRole('button', { name: /^(Like|Unlike)$/ }).count(), 0);
+    await page.getByRole('link', { name: 'Connect GitHub to like', exact: true }).waitFor();
+    assert.equal(await page.getByRole('link', { name: 'Connect GitHub to like' }).getAttribute('href'), '/connected-accounts?interactions=1');
+    assert.equal(await page.locator('.post-chrome-corner').getByRole('button', { name: /Report/ }).count(), 0);
+    await page.getByRole('button', { name: 'More options', exact: true }).click();
+    assert.equal(await page.getByRole('menuitem', { name: /^Likes on GitHub/ }).getAttribute('href'), post.sourceUrl);
+    assert.equal(await page.getByRole('menuitem', { name: /^Go to profile/ }).getAttribute('href'), post.author.profileUrl);
+    await page.getByRole('menuitem', { name: 'Report post', exact: true }).click();
+    await page.getByRole('dialog').waitFor();
+    await page.keyboard.press('Escape');
+    await page.getByRole('dialog').waitFor({ state: 'hidden' });
     await auditReload(page);
     await page.getByLabel('47 stars', { exact: true }).waitFor();
     assert.equal(writes, 0, 'Viewing counts never writes a like');
+    connected = true;
+    await page.evaluate(() => window.dispatchEvent(new Event('ufi-connections-changed')));
+    const star = page.getByRole('button', { name: 'Star repository on GitHub', exact: true });
+    await star.click();
+    await page.getByRole('button', { name: 'Remove star on GitHub', exact: true }).waitFor();
+    assert.equal(writes, 1);
+    assert.equal(requests[0].sourceUrl, post.sourceUrl);
+    await page.getByLabel('47 stars', { exact: true }).waitFor();
+    failWrite = true;
+    await page.getByRole('button', { name: 'Remove star on GitHub', exact: true }).click();
+    await page.getByText('The source did not confirm this action.', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Remove star on GitHub' }).getAttribute('aria-pressed'), 'true');
+    const failedRequest = requests.at(-1).requestId;
+    failWrite = false;
+    await page.getByRole('button', { name: 'Remove star on GitHub', exact: true }).click();
+    await star.waitFor();
+    assert.equal(requests.at(-1).requestId, failedRequest, 'An uncertain provider write reuses its request ID');
+    assert.equal(liked, false);
+    assert.equal(writes, 3);
+    let releaseWrite;
+    heldWrite = new Promise(resolve => { releaseWrite = resolve; });
+    const started = page.waitForRequest(request => new URL(request.url()).pathname.endsWith('/social/interactions'));
+    await star.click(); await started;
+    connected = false;
+    await page.evaluate(() => window.dispatchEvent(new Event('ufi-connections-changed')));
+    await page.getByRole('link', { name: 'Connect GitHub to like', exact: true }).waitFor();
+    connected = true;
+    await page.evaluate(() => window.dispatchEvent(new Event('ufi-connections-changed')));
+    await star.waitFor();
+    const completed = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/social/interactions'));
+    releaseWrite(); heldWrite = null; await completed;
+    await page.waitForTimeout(150);
+    assert.equal(await star.getAttribute('aria-pressed'), 'false', 'An old connection response cannot mark the new connection liked');
+    liked = false;
+    connected = false;
+    await page.evaluate(() => window.dispatchEvent(new Event('ufi-connections-changed')));
+    await page.getByRole('link', { name: 'Connect GitHub to like', exact: true }).waitFor();
     await page.locator('.post-chrome-day').getByText('5 minutes ago', { exact: true }).waitFor();
     assert.equal(await page.locator('.post-chrome-time time').getAttribute('datetime'), post.createdAt);
     assert.match(await page.locator('.post-chrome-time').getAttribute('aria-label'), /^Posted /);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false);
     await page.screenshot({ path: path.join(output, `likes-${viewport.width}.png`), fullPage: true });
+    await auditNavigate(page, base + '?feed=feed');
+    const home = page;
+    await home.getByLabel('47 stars', { exact: true }).waitFor();
+    await home.getByRole('link', { name: 'Connect GitHub to like', exact: true }).waitFor();
+    assert.equal(writes, 4, 'Home views must not submit provider writes');
     await auditNavigate(page, base + 'videos');
     const video = page.locator('[data-post-id="audit-likes"]');
     await video.getByLabel('47 likes', { exact: true }).waitFor();
-    assert.equal(await video.getByRole('button', { name: /^(Like|Unlike)$/ }).count(), 0);
-    assert.equal(writes, 0);
+    await video.getByRole('link', { name: 'Connect Reddit to like', exact: true }).waitFor();
+    assert.equal(writes, 4);
+    post.source = 'uficonnect'; post.isExternal = false; post.author.id = 'likes-reader';
+    await auditNavigate(page, base + 'p/audit-likes');
+    await page.getByLabel('2 likes', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Like', exact: true }).click();
+    await page.getByRole('button', { name: 'Unlike', exact: true }).waitFor();
+    await page.getByLabel('3 likes', { exact: true }).waitFor();
+    assert.equal(writes, 5, 'Native likes use the persisted UFI endpoint');
     assert.deepEqual(errors, []);
-    console.log(`PASS ${viewport.width}px: guest and member source counts, no like buttons or writes, readable time`);
+    console.log(`PASS ${viewport.width}px: source counts, guest/member gates, provider like/unlike, idempotent failure retry, disconnect, Home and Videos`);
     await context.close();
   }
 } catch (error) {
