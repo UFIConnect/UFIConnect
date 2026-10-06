@@ -14741,6 +14741,14 @@ function canonicalFeedSourceId(source) {
   const id = String(source || '').trim().toLowerCase();
   return FEED_SOURCE_ALIASES[id] || id;
 }
+function parseFeedSourceList(value) {
+  // Query parsers represent repeated keys as arrays. Accept those as well
+  // as the comma-separated selection used by the web source controls.
+  return [...new Set((Array.isArray(value) ? value : [value])
+    .filter(item => typeof item === 'string')
+    .flatMap(item => item.split(','))
+    .map(canonicalFeedSourceId).filter(Boolean))];
+}
 const AGGREGATE_FEED_SOURCES = [...new Set([
   ...Object.keys(SOURCE_CONFIG).map(canonicalFeedSourceId),
   ...PIPELINE_ONLY_FEED_SOURCES,
@@ -21832,8 +21840,10 @@ async function handleFeedRequest(req, res) {
         })
         .filter(matchesTopic)
       : [];
-    if (!topicsFilter.length && !hasSavedFeedScope && !isFollowingRequest) return [];
-    const scoped = topicsFilter.length ? list
+    if (!topicsFilter.length && !isSourceFiltered && !hasSavedFeedScope && !isFollowingRequest) return [];
+    // An explicit source choice is a browsing scope. Saved interests shape
+    // the default feed; only an explicit topic choice narrows source browsing.
+    const scoped = topicsFilter.length || isSourceFiltered ? list
       : isFollowingRequest ? filterFollowingBySavedTopics(list, userTopics)
         : filterByUserTopics(list, userTopics, { fallbackToInput: false });
     return scoped.filter(matchesMemberJob);
@@ -21842,14 +21852,15 @@ async function handleFeedRequest(req, res) {
     const scoped = filterForUser(items);
     const equalizerTopics = topicsFilter.length ? topicsFilter : userTopics;
     const preserveEqualizer = usesRegularFeedVideoPlacement && !hasExplicitSearch;
-    const candidates = preserveEqualizer ? scoped : buildFullMemberFeedEqualizer(scoped, equalizerTopics, userAffinity, { filterTopics: !isFollowingRequest });
+    const filterEqualizerTopics = !isFollowingRequest && !isSourceFiltered;
+    const candidates = preserveEqualizer ? scoped : buildFullMemberFeedEqualizer(scoped, equalizerTopics, userAffinity, { filterTopics: filterEqualizerTopics });
     const personalized = personalizeAuthenticatedFeedPosts(candidates, user, prefs, userAffinity, { ...options, locationContext, request: req });
     const ordered = requestedSortMode === 'newest' ? orderNewestFeedCohorts(personalized) : personalized;
     // Home and Following always finish with source/topic balancing, including
     // single-source selections. Ranking the result by date or location again
     // would group a busier source (or topic) ahead of the quieter selections.
     // Date order still chooses the next item within each source/topic queue.
-    return preserveEqualizer ? buildFullMemberFeedEqualizer(ordered, equalizerTopics, userAffinity, { filterTopics: !isFollowingRequest }) : ordered;
+    return preserveEqualizer ? buildFullMemberFeedEqualizer(ordered, equalizerTopics, userAffinity, { filterTopics: filterEqualizerTopics }) : ordered;
   };
   // Client-generated, changes only when the user explicitly hits refresh
   // (kept stable across pagination within that sitting) — see rotateForUser
@@ -21857,9 +21868,7 @@ async function handleFeedRequest(req, res) {
   // posts instead of re-displaying the same rotation of the same pool.
   const refreshSeed = (req.query.seed || '').toString().slice(0, 64);
   const requestedSourceFilter = canonicalFeedSourceId(req.query.source) || null;
-  const requestedSourcesParam = req.query.sources
-    ? [...new Set(req.query.sources.split(',').map(canonicalFeedSourceId).filter(Boolean))]
-    : [];
+  const requestedSourcesParam = parseFeedSourceList(req.query.sources);
   const sourcesParam = isFollowingRequest
     ? requestedSourcesParam
     : requestedSourcesParam.filter(isAggregateFeedSource);
@@ -22168,7 +22177,7 @@ async function handleFeedRequest(req, res) {
     const isUnfiltered = !sourceFilter && sourcesParam.length === 0;
     const cursorSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter ? [sourceFilter] : AGGREGATE_FEED_SOURCES;
     const cursorMap = decodeFeedCursor(req.query.cursor);
-    const usesSavedTopicScope = !topicsFilter.length && userTopicLabels.length > 0;
+    const usesSavedTopicScope = !isSourceFiltered && !topicsFilter.length && userTopicLabels.length > 0;
     const cursorTopics = topicsFilter.length ? topicsFilter : (usesSavedTopicScope ? userTopicLabels : null);
     // Was null (fully unbounded) for 'all' — getCursorFeedPage's query is a
     // PARTITION BY window function, same cost profile as getBalancedFeedPosts
@@ -22471,7 +22480,7 @@ async function handleFeedRequest(req, res) {
     // post arriving during an active search cannot shift page boundaries,
     // duplicate an earlier page, or make an older match unreachable.
     const rawRequestedSearchSources = req.query.sources
-      ? req.query.sources.split(',').map(canonicalFeedSourceId).filter(Boolean)
+      ? requestedSourcesParam
       : (req.query.source ? [canonicalFeedSourceId(req.query.source)] : []);
     const requestedSearchSources = [...new Set(rawRequestedSearchSources)]
       .filter(source => source === 'uficonnect' || isAggregateFeedSource(source))
@@ -23470,9 +23479,7 @@ async function fetchPlayableVideoPage(params, attempts = 8) {
 async function handleVideoFeedRequest(req, res) {
   try {
     const feedLimit = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
-    const requestedSourcesParam = req.query.sources
-      ? [...new Set(req.query.sources.split(',').map(canonicalFeedSourceId).filter(Boolean))]
-      : [];
+    const requestedSourcesParam = parseFeedSourceList(req.query.sources);
     const requestedSourceFilter = canonicalFeedSourceId(req.query.source) || null;
     const sourcesParam = requestedSourcesParam.filter(isAggregateFeedSource);
     const sourceFilter = (isAggregateFeedSource(requestedSourceFilter) ? requestedSourceFilter : null)
@@ -23561,8 +23568,8 @@ async function handleVideoFeedRequest(req, res) {
     const scopedVideoTopics = topicsFilter.length ? topicsFilter : null;
     const scopedVideoTimeRange = !topicsFilter.length && userTopics.length ? '30d' : videoTimeRange;
     const applyPersonalTopicFilter = (items) => {
-      if (!topicsFilter.length && !hasSavedVideoScope) return [];
-      if (topicsFilter.length) return items;
+      if (topicsFilter.length || !isUnfilteredVideo) return items;
+      if (!hasSavedVideoScope) return [];
       return items.filter(post => feedPostPersonalizationScore(post, videoPreferenceContext) > 0);
     };
     const equalizeVideosForUser = (items) => buildFullMemberFeedEqualizer(
@@ -23761,9 +23768,7 @@ async function handleFollowingVideoFeedRequest(req, res) {
   try {
     const feedLimit = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
     const reqPage = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
-    const sourcesParam = req.query.sources
-      ? [...new Set(req.query.sources.split(',').map(canonicalFeedSourceId).filter(Boolean))]
-      : [];
+    const sourcesParam = parseFeedSourceList(req.query.sources);
     const sourceFilter = sourcesParam.length > 1 ? sourcesParam : (canonicalFeedSourceId(req.query.source) || sourcesParam[0] || null);
     const usesBlendedFollowingVideos = isBlendedFeedSelection(sourceFilter, sourcesParam);
     const followingIds = new Set(follows.filter(f => f.followerId === req.user.id).map(f => f.followingId));
@@ -23779,7 +23784,7 @@ async function handleFollowingVideoFeedRequest(req, res) {
     const prefs = user?.preferences || {};
     const userTopics = userDeclaredFeedTopics(user, prefs);
     const videos = all.filter(isVideoSurfacePost).filter(matchesSearch).filter(matchesTopic);
-    const scopedVideos = topicsFilter.length
+    const scopedVideos = topicsFilter.length || sourceFilter
       ? videos
       : filterFollowingBySavedTopics(videos, userTopics);
     // Same fix as handleFeedRequest's feedMode==='following' branch, applied

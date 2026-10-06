@@ -21,8 +21,8 @@ function validDate(value) {
   return Number.isFinite(date.getTime()) && date.getTime() > 0 ? date : null;
 }
 
-// One timestamp: the time of the latest version the source reports, e.g. "8:11 AM",
-// or "Edited 8:15 AM" when the post was edited after publishing. The full date
+// Show the age of the latest version the source reports, with an Edited label
+// when the post was edited after publishing. The full date
 // stays in the tooltip and the accessible label.
 export function postTimes(post) {
   const created = validDate(post?.createdAt || post?.time);
@@ -38,7 +38,14 @@ export function postTimes(post) {
       : latest.toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(latest.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}) });
   const time = latest.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   const full = latest.toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'long' });
-  return { day, time, edited, iso: latest.toISOString(), full: `${edited ? 'Edited' : 'Posted'} ${full}` };
+  const seconds = Math.max(0, Math.floor((now.getTime() - latest.getTime()) / 1000));
+  const [unit, size] = seconds >= 31_536_000 ? ['year', 31_536_000]
+    : seconds >= 2_592_000 ? ['month', 2_592_000]
+      : seconds >= 86_400 ? ['day', 86_400]
+        : seconds >= 3600 ? ['hour', 3600] : ['minute', 60];
+  const relative = seconds < 60 ? 'Just now'
+    : new Intl.RelativeTimeFormat('en', { numeric: 'always' }).format(-Math.floor(seconds / size), unit);
+  return { day, time, relative, edited, iso: latest.toISOString(), full: `${edited ? 'Edited' : 'Posted'} ${full}` };
 }
 
 const initialsOf = name => String(name || '').trim().split(/\s+/).slice(0, 2).map(part => part[0] || '').join('').toUpperCase() || '·';

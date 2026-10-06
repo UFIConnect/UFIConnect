@@ -2,7 +2,7 @@
 // same names/prices without retyping them somewhere they'd drift out of sync.
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import client from '../api/client';
+import useBillingConfig from '../hooks/useBillingConfig';
 import './PricingModal.css';
 
 export const TIERS = [
@@ -28,17 +28,9 @@ export const TIERS = [
 // backend, so a visible tier cannot be purchased until its Stripe Price is
 // configured in Render.
 export default function PricingModal({ onClose, onSelectTier, loadingTier, error }) {
-  const [billingConfig, setBillingConfig] = useState(null);
+  const { config: billingConfig, error: configError, refresh: refreshBilling } = useBillingConfig();
   const [businessPeople, setBusinessPeople] = useState('1');
   const closeButton = useRef(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    client.get('/billing/config')
-      .then(({ data }) => { if (!cancelled) setBillingConfig(data); })
-      .catch(() => { if (!cancelled) setBillingConfig({}); });
-    return () => { cancelled = true; };
-  }, []);
 
   useEffect(() => {
     const previous = document.activeElement;
@@ -144,13 +136,14 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier, error
         <p className="membership-terms">Card details are entered on Stripe’s secure checkout. By subscribing, you agree to our <Link to="/terms" onClick={onClose}>Terms of Service</Link>. Read our <Link to="/privacy" onClick={onClose}>Privacy Policy</Link>.</p>
         {error && <p role="alert" className="auth-error">{error}</p>}
         {!billingConfig && <p role="status">Loading current membership prices…</p>}
-        {billingConfig && !billingConfig.paymentsReady && <p role="status">Membership checkout is currently unavailable. Please try again later.</p>}
+        {configError ? <p role="status">{configError}</p> : billingConfig && !billingConfig.paymentsReady && <p role="status">Membership checkout is currently unavailable. Please try again later.</p>}
+        {billingConfig && (!billingConfig.paymentsReady || ['pro', 'business', 'business_team'].some(tier => !billingConfig.tiers?.[tier])) && <button type="button" className="btn btn-ghost btn-sm" disabled={!!loadingTier} onClick={refreshBilling}>Check billing availability</button>}
         {TIERS.filter(t => t.note).map(t => (
           <p key={t.tier} style={{ margin: '12px 2px 0', fontSize: '.72rem', color: 'var(--muted)', fontStyle: 'italic' }}>
             {t.name}: {t.note}
           </p>
         ))}
-        {billingConfig && !billingConfig.tiers?.business && (
+        {billingConfig && !configError && !billingConfig.tiers?.business && (
           <p style={{ margin: '8px 2px 0', fontSize: '.72rem', color: 'var(--muted)' }}>
             Business checkout is currently unavailable. Please check again later.
           </p>

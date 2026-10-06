@@ -18,7 +18,7 @@ function postRow(source, index, duration = 1200) {
 
 // Emulate the indexed source/cursor read, leaving authentication, source gates,
 // topic/placement filters, equalization and response pagination in the real app.
-async function feedFixture(t, { duration = 1200, emptyFirstWindow = false } = {}) {
+async function feedFixture(t, { duration = 1200, emptyFirstWindow = false, interests = [] } = {}) {
   const reads = [];
   const inventory = ['youtube', 'reddit', 'github'].flatMap(source =>
     Array.from({ length: 5 }, (_, index) => postRow(source, index + 1, duration)));
@@ -41,12 +41,15 @@ async function feedFixture(t, { duration = 1200, emptyFirstWindow = false } = {}
     const rows = slots.flatMap(slot => {
       const source = params[Number(slot[1]) - 1];
       const before = params[Number(slot[2]) - 1];
-      return inventory.filter(row => row.source === source && (!before || row.post_created_at < before));
+      const topicArg = sql.match(/LOWER\(fp\.topic\) = ANY\(\$(\d+)::text\[\]\)/);
+      const allowedTopics = topicArg ? params[Number(topicArg[1]) - 1] : null;
+      return inventory.filter(row => row.source === source && (!before || row.post_created_at < before)
+        && (!allowedTopics || allowedTopics.includes(row.topic.toLowerCase())));
     });
     return { rows, rowCount: rows.length };
   } });
   t.after(() => app.close());
-  app.seedUser(member('source-reader'));
+  app.seedUser(member('source-reader', { preferences: { interests } }));
   return { app, reads };
 }
 
@@ -73,7 +76,7 @@ for (const route of ['/office/feed?mode=following&passive=1', '/office/feed/vide
     test(`untagged subscribed YouTube videos survive default Following scope: ${route}, interests=${interests.length}`, async t => {
       const { app, viewer } = await subscribedYouTubeFixture(t, interests);
       assert.equal((await app.request(`${route}&source=youtube`)).status, 401);
-      const result = await app.request(`${route}&source=youtube&limit=20`, { userId: viewer.id });
+      const result = await app.request(`${route}&limit=20`, { userId: viewer.id });
       assert.equal(result.status, 200);
       assert.ok(result.data.posts.some(post => post.id.startsWith('subscribed-untagged-')), 'YouTube subscription API posts have no topic label and must not all disappear');
       assert.ok(result.data.posts.every(post => post.source === 'youtube' && post.id.startsWith('subscribed-')));
@@ -217,3 +220,65 @@ test('video search and balanced sorting retain singleton source scope', async t 
     });
   }
 });
+
+for (const { route, duration } of [
+  { route: '/office/feed?mode=feed&sort=newest&passive=1', duration: 1200 },
+  { route: '/office/feed?mode=feed&sort=ranked&passive=1', duration: 1200 },
+  { route: '/office/feed/videos?sort=newest', duration: 120 },
+]) {
+  for (const interests of [[], ['Travel']]) {
+    test(`explicit source selections load available posts without an implicit saved-topic filter: ${route}, interests=${interests.length}`, async t => {
+      const { app, reads } = await feedFixture(t, { duration, interests });
+      for (const selection of ['source=youtube', 'sources=youtube,reddit']) {
+        const result = await app.request(`${route}&limit=4&${selection}`, { userId: 'source-reader' });
+        assert.equal(result.status, 200);
+        assert.ok(result.data.posts.length > 0, selection);
+        assert.deepEqual(new Set(result.data.posts.map(post => post.source)), new Set(selection.startsWith('source=') ? ['youtube'] : ['youtube', 'reddit']));
+      }
+      assert.ok(reads.every(read => !read.sql.includes('LOWER(fp.topic)')), 'source browsing must not constrain SQL to an unrelated saved topic');
+      const explicitTopic = await app.request(`${route}&source=youtube&topics=Travel`, { userId: 'source-reader' });
+      assert.deepEqual(explicitTopic.data.posts, [], 'explicit topic selections still narrow source browsing');
+    });
+  }
+}
+
+for (const route of ['/office/feed?mode=following&passive=1', '/office/feed/videos/following?']) {
+  test(`Following source browsing retains selected account posts across topics: ${route}`, async t => {
+    const { app, viewer } = await subscribedYouTubeFixture(t, ['Travel']);
+    viewer.socialTokens.reddit = 'fixture-only';
+    app.followingSourceCache.set(`${viewer.id}::reddit`, { fetchedAt: Date.now(), posts: [120, 1200].map(duration => app.dbRowToFeedPost(postRow('reddit', duration, duration))) });
+    for (const selection of ['source=youtube', 'sources=youtube,reddit', 'sources=youtube&sources=reddit']) {
+      const result = await app.request(`${route}&${selection}&limit=20`, { userId: viewer.id });
+      assert.equal(result.status, 200);
+      assert.ok(result.data.posts.some(post => post.topic === 'Science'), 'a connected source selection is not silently restricted to saved Travel interests');
+      assert.deepEqual(new Set(result.data.posts.map(post => post.source)), new Set(selection.startsWith('source=') ? ['youtube'] : ['youtube', 'reddit']));
+      assert.ok(result.data.posts.every(post => !post.id.startsWith('other-')), 'source selection never crosses account boundaries');
+    }
+  });
+}
+
+test('default Home and Videos retain saved topic scope after browsing a source', async t => {
+  for (const { route, duration } of [
+    { route: '/office/feed?mode=feed&sort=newest&passive=1', duration: 1200 },
+    { route: '/office/feed/videos?sort=newest', duration: 120 },
+  ]) {
+    const { app } = await feedFixture(t, { duration, interests: ['Travel'] });
+    const selected = await app.request(`${route}&source=youtube`, { userId: 'source-reader' });
+    assert.ok(selected.data.posts.length > 0);
+    const defaultFeed = await app.request(route, { userId: 'source-reader' });
+    assert.deepEqual(defaultFeed.data.posts, [], 'clearing sources restores the member’s saved topic scope');
+  }
+});
+
+for (const { route, duration } of [
+  { route: '/office/feed?mode=feed&sort=newest&passive=1', duration: 1200 },
+  { route: '/office/feed/videos?sort=newest', duration: 120 },
+]) {
+  test(`repeated source query values load both selected sources without an error: ${route}`, async t => {
+    const { app } = await feedFixture(t, { duration });
+    const result = await app.request(`${route}&sources=youtube&sources=reddit&topics=Science&limit=4`, { userId: 'source-reader' });
+    assert.equal(result.status, 200);
+    assert.notEqual(result.data.error, true);
+    assert.deepEqual(new Set(result.data.posts.map(post => post.source)), new Set(['youtube', 'reddit']));
+  });
+}

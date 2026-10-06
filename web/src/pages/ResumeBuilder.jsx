@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import client from '../api/client';
 import { hostedBillingUrl } from '../api/hostedBilling.mjs';
+import useBillingConfig from '../hooks/useBillingConfig';
 import './ResumeBuilderPricing.css';
 import {
   PREPARATION_ASSET_VERSION,
@@ -131,7 +132,7 @@ function resumePlanReady(config, tier) {
     && price?.active === true && price?.matchesRequiredPrice === true && Boolean(price?.display);
 }
 
-function LockedState({ onUnlock, unlocking, billingReady, price, billingConfig, selectedTier, onSelectTier }) {
+function LockedState({ onUnlock, unlocking, billingReady, price, billingConfig, selectedTier, onSelectTier, billingError, onRefreshBilling }) {
   const priceLabel = price?.active && price?.matchesRequiredPrice && price?.display ? price.display + priceCadence(price) : null;
   return (
     <div className="card" style={{ textAlign: 'center', padding: '52px 24px' }}>
@@ -167,6 +168,8 @@ function LockedState({ onUnlock, unlocking, billingReady, price, billingConfig, 
       <button className="btn btn-primary" type="button" onClick={onUnlock} disabled={unlocking || billingReady !== true} style={{ maxWidth: '100%', whiteSpace: 'normal' }}>
         {unlocking ? <span className="spinner" style={{ width: 14, height: 14 }} /> : billingReady === null ? 'Checking billing…' : billingReady !== true ? 'Billing unavailable' : `Unlock for ${priceLabel}`}
       </button>
+      {billingError && <p role="status">{billingError}</p>}
+      {billingConfig && RESUME_PLANS.some(plan => !resumePlanReady(billingConfig, plan.tier)) && <p><button type="button" className="btn btn-ghost btn-sm" disabled={unlocking} onClick={onRefreshBilling}>Check billing availability</button></p>}
       <p style={{ color: 'var(--muted)', fontSize: '.78rem', maxWidth: 440, margin: '18px auto 0', lineHeight: 1.6 }}>
         This add-on renews automatically at the price and interval shown. Review any applicable tax and the total on Stripe before paying.
         {' '}Manage your payment method or cancel in <Link to="/settings">Settings → Manage billing</Link>.
@@ -493,7 +496,7 @@ export default function ResumeBuilder() {
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [loadAttempt, setLoadAttempt] = useState(0);
-  const [billingConfig, setBillingConfig] = useState(null);
+  const { config: billingConfig, error: billingError, refresh: refreshBilling } = useBillingConfig();
   const [resumeTier, setResumeTier] = useState('resume_builder_monthly');
   const [unlocking, setUnlocking] = useState(false);
   const [template, setTemplate] = useState('modern');
@@ -519,18 +522,10 @@ export default function ResumeBuilder() {
   const resumeBuilderPrice = billingConfig?.pricing?.[resumeTier] || null;
 
   useEffect(() => {
-    let cancelled = false;
-    client.get('/billing/config')
-      .then(({ data: config }) => {
-        if (cancelled) return;
-        setBillingConfig(config || {});
-        setResumeTier(RESUME_PLANS.find(plan => resumePlanReady(config, plan.tier))?.tier || 'resume_builder_monthly');
-      })
-      .catch(() => {
-        if (!cancelled) setBillingConfig({});
-      });
-    return () => { cancelled = true; };
-  }, []);
+    if (!billingConfig) return;
+    setResumeTier(current => resumePlanReady(billingConfig, current) ? current
+      : RESUME_PLANS.find(plan => resumePlanReady(billingConfig, plan.tier))?.tier || 'resume_builder_monthly');
+  }, [billingConfig]);
 
   useEffect(() => {
     const upgrade = new URLSearchParams(window.location.search).get('upgrade');
@@ -892,7 +887,8 @@ export default function ResumeBuilder() {
           <div className="empty-state"><span className="spinner spinner-primary" /></div>
         ) : !unlocked ? (
           <LockedState onUnlock={unlockResumeBuilder} unlocking={unlocking} billingReady={billingReady} price={resumeBuilderPrice}
-            billingConfig={billingConfig} selectedTier={resumeTier} onSelectTier={setResumeTier} />
+            billingConfig={billingConfig} selectedTier={resumeTier} onSelectTier={setResumeTier}
+            billingError={billingError} onRefreshBilling={refreshBilling} />
         ) : loadError ? (
           <div className="empty-state" role="alert">
             <p>{loadError}</p>

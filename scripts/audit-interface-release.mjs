@@ -185,7 +185,9 @@ try {
     await page.getByRole('navigation', { name: 'Saved pages' }).getByRole('link', { name: 'Jobs', exact: true }).click();
     await page.getByText('Community engineer', { exact: true }).waitFor();
     await auditNavigate(page, server.resolvedUrls.local[0] + 'profile?tab=more');
-    await page.getByRole('link', { name: /Settings and privacy/ }).waitFor();
+    await page.getByRole('heading', { name: 'More is locked', exact: true }).waitFor();
+    assert.equal(await page.getByRole('navigation', { name: 'Profile sections' }).getByRole('button', { name: 'More · Locked', exact: true }).isDisabled(), true);
+    assert.equal(await page.locator('.profile-more-options').count(), 0, 'a direct More URL cannot open its options');
     assert.equal(await page.getByRole('navigation', { name: 'Profile sections' }).getByRole('button', { name: 'Saved', exact: true }).count(), 0);
     await auditNavigate(page, server.resolvedUrls.local[0] + 'u/public-member');
     await page.getByRole('navigation', { name: 'Public profile sections' }).getByRole('button', { name: 'About', exact: true }).click();

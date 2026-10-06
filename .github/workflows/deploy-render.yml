@@ -1,14 +1,12 @@
 name: Deploy Render Services
 
 on:
-  workflow_run:
-    workflows: [Verify UFIconnect]
-    types: [completed]
+  push:
     branches: [main]
   workflow_dispatch:
     inputs:
       target:
-        description: Verified Render destination to deploy
+        description: Render destination to deploy from current main
         required: true
         default: all
         type: choice
@@ -22,7 +20,6 @@ on:
 
 permissions:
   contents: read
-  actions: read
 
 concurrency:
   group: deploy-render-main
@@ -30,37 +27,25 @@ concurrency:
 
 jobs:
   deploy-render:
-    if: >-
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.head_branch == 'main') ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: main - uficonnect-pipeline-708r
     env:
-      VERIFIED_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+      DEPLOY_SHA: ${{ github.sha }}
       DEPLOY_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.target || 'all' }}
       RENDER_HOOK_API: ${{ secrets.RENDER_HOOK_API }}
       RENDER_HOOK_WEB: ${{ secrets.RENDER_HOOK_WEB }}
       RENDER_HOOK_OFFICE: ${{ secrets.RENDER_HOOK_OFFICE }}
       RENDER_HOOK_PIPELINE: ${{ secrets.RENDER_HOOK_PIPELINE }}
     steps:
-      - name: Require a verified current main commit
+      - name: Require the current main commit
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           latest_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
-          if [[ "$latest_sha" != "$VERIFIED_SHA" ]]; then
-            echo "::error::The requested commit is not the current main commit. Run verification on the latest main commit first."
+          if [[ "$latest_sha" != "$DEPLOY_SHA" ]]; then
+            echo "::error::The requested commit is not the current main commit. Deploy the latest main commit instead."
             exit 1
-          fi
-
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            verified_runs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/verify.yml/runs?branch=main&head_sha=${VERIFIED_SHA}&status=completed&per_page=100" \
-              --jq '[.workflow_runs[] | select(.event == "push" and .head_branch == "main" and .conclusion == "success")] | length')"
-            if [[ "$verified_runs" -lt 1 ]]; then
-              echo "::error::The current main commit has no successful Verify UFIconnect push run. Nothing was deployed."
-              exit 1
-            fi
           fi
 
       - name: Select and require release destinations
@@ -87,18 +72,18 @@ jobs:
           fi
           printf '%s\n' "${hook_names[@]}" > "$RUNNER_TEMP/render-hook-names"
 
-      - name: Deploy the latest verified commit
+      - name: Deploy the latest main commit
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           while IFS= read -r hook_name; do
             latest_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
-            if [[ "$latest_sha" != "$VERIFIED_SHA" ]]; then
+            if [[ "$latest_sha" != "$DEPLOY_SHA" ]]; then
               echo "::error::Main moved after deployment validation. Remaining services were not deployed."
               exit 1
             fi
             url="${!hook_name}"
             sep='?'
             [[ "$url" == *\?* ]] && sep='&'
-            curl --proto '=https' --connect-timeout 10 --max-time 60 -fsS -X POST "${url}${sep}ref=${VERIFIED_SHA}"
+            curl --proto '=https' --connect-timeout 10 --max-time 60 -fsS -X POST "${url}${sep}ref=${DEPLOY_SHA}"
           done < "$RUNNER_TEMP/render-hook-names"

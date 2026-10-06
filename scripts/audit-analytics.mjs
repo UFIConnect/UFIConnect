@@ -141,21 +141,19 @@ try {
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
     await page.waitForURL(url => url.pathname === '/');
     await assertEventually(() => pageViews.at(-1)?.dl === origin + '/');
-    // Analytics tools and their privacy controls live in Profile > More.
-    // Follow the actual desktop/mobile navigation instead of the removed
-    // account-menu shortcut, so this checks that members can still find it.
+    // Analytics privacy remains available through Settings while Profile More
+    // is locked. Follow the actual desktop/mobile navigation.
     if (width <= 768) {
       await page.getByRole('button', { name: 'Open account menu', exact: true }).click();
-      await page.getByRole('dialog', { name: 'Account and shop' }).getByRole('link', { name: 'Profile', exact: true }).click();
+      await page.getByRole('dialog', { name: 'Account and shop' }).getByRole('link', { name: 'Settings', exact: true }).click();
     } else {
-      await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Profile', exact: true }).click();
+      await page.locator('.sidebar-user').getByRole('link', { name: 'Settings', exact: true }).click();
     }
-    await page.waitForURL(url => url.pathname === '/profile');
-    await page.getByRole('navigation', { name: 'Profile sections' }).getByRole('button', { name: 'More', exact: true }).click();
-    await page.locator('.profile-more-options').getByRole('link', { name: /^Analytics privacy\b/ }).click();
+    await page.waitForURL(url => url.pathname === '/settings');
+    await page.getByRole('link', { name: 'Analytics privacy', exact: true }).click();
     await page.waitForURL(url => url.pathname === '/privacy' && url.hash === '#analytics');
     await page.waitForFunction(() => document.activeElement?.id === 'analytics-privacy-title');
-    check(await page.getByRole('button', { name: 'Decline analytics', exact: true }).isVisible(), 'Profile More opens preferences without reaching the feed footer');
+    check(await page.getByRole('button', { name: 'Decline analytics', exact: true }).isVisible(), 'Settings opens preferences without reaching the feed footer');
     await page.keyboard.press('Escape');
     await page.locator('.analytics-privacy-panel').waitFor({ state: 'detached' });
     check(await page.getByRole('heading', { name: 'Privacy Policy', exact: false }).first().isVisible(), 'Closing linked preferences leaves the privacy policy in place');

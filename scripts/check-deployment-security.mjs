@@ -8,7 +8,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const load = file => parse(fs.readFileSync(path.join(root, file), 'utf8'));
 const blueprint = load('render.yaml');
 for (const service of blueprint.services) {
-  assert.equal(service.autoDeployTrigger, 'off', `${service.name}: automatic deploys must be owned by the verified-commit hook workflow`);
+  assert.equal(service.autoDeployTrigger, 'off', `${service.name}: automatic deploys must be owned by the main-commit hook workflow`);
   assert.ok(service.buildCommand.startsWith('npm ci'), `${service.name}: use locked dependencies`);
   const keys = service.envVars.map(variable => variable.key);
   assert.equal(new Set(keys).size, keys.length, `${service.name}: duplicate environment setting`);
@@ -31,7 +31,7 @@ for (const service of blueprint.services) {
     assert.equal(service.envVars.find(variable => variable.key === 'DATABASE_SSL_MODE')?.value, 'verify-full');
   }
 }
-for (const file of ['.github/workflows/deploy-render.yml', '.github/workflows/deploy-pages.yml']) {
+for (const file of ['.github/workflows/deploy-pages.yml']) {
   const workflow = load(file);
   assert.deepEqual(workflow.on.workflow_run.workflows, ['Verify UFIconnect']);
   assert.equal(workflow.on.push, undefined, 'Deployment must not bypass verification');
@@ -45,19 +45,22 @@ for (const file of ['.github/workflows/deploy-render.yml', '.github/workflows/de
   }
 }
 const renderDeployment = load('.github/workflows/deploy-render.yml');
-assert.equal(renderDeployment.permissions.actions, 'read', 'Manual deployment verification needs read-only Actions access');
+assert.deepEqual(renderDeployment.on.push.branches, ['main'], 'Render deploys main independently of CI');
+assert.equal(renderDeployment.on.workflow_run, undefined, 'CI completion must not trigger duplicate Render builds');
+assert.equal(renderDeployment.concurrency?.['cancel-in-progress'], false, 'Serialize production deployments');
 assert.deepEqual(renderDeployment.on.workflow_dispatch.inputs.target.options, [
   'all', 'frontends', 'web', 'office', 'api', 'pipeline',
 ]);
 const renderJob = renderDeployment.jobs['deploy-render'];
-assert.match(renderJob.if, /workflow_dispatch/);
 assert.match(renderJob.if, /refs\/heads\/main/);
+assert.equal(renderJob.env.DEPLOY_SHA, '${{ github.sha }}');
 const renderCommands = renderJob.steps.map(step => step.run || '').join('\n');
-for (const required of ['actions/workflows/verify.yml/runs', 'head_sha=${VERIFIED_SHA}', '.event == "push"', '.conclusion == "success"']) {
-  assert.ok(renderCommands.includes(required), `Manual Render deployment must verify: ${required}`);
+for (const required of ['/git/ref/heads/main', 'latest_sha', 'DEPLOY_SHA', 'ref=${DEPLOY_SHA}']) {
+  assert.ok(renderCommands.includes(required), `Render deployment must pin current main: ${required}`);
 }
+assert.ok(!renderCommands.includes('actions/workflows/verify.yml/runs'), 'Render must not wait for full CI');
 const verification = load('.github/workflows/verify.yml');
-assert.ok(verification.jobs.native, 'Native verification must gate releases alongside the web checks');
+assert.ok(verification.jobs.native, 'Native verification must continue alongside the web checks');
 const nativeSteps = verification.jobs.native.steps.map(step => step.run || '').join('\n');
 for (const required of ['npm ci --prefix mobile', 'npm run test:security', 'npm run audit:security', 'npm run doctor', 'npm run export', 'npm run test:export', 'npm run test:analytics']) {
   assert.ok(nativeSteps.includes(required), `Missing native verification: ${required}`);
@@ -90,4 +93,4 @@ for (const file of ['docker-compose.yml', 'docker-compose.lb.yml']) {
     assert.equal(service.environment.TRUST_PROXY, file.endsWith('.lb.yml') ? '2' : '1');
   }
 }
-console.log('PASS: deployment YAML parses; encrypted credentials, CSP, locked installs and verification gates configured');
+console.log('PASS: deployment YAML parses; encrypted credentials, CSP, locked installs and current-main deployment controls configured');
