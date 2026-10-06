@@ -9,6 +9,8 @@ import axios from 'axios';
 import { useAuth, API_BASE } from '../context/AuthContext';
 import { COLORS } from '../theme';
 import { attachmentDetails } from '../security/attachmentDetails';
+import SafetyButton from '../components/SafetyButton';
+import { useModeration } from '../context/ModerationContext';
 
 function timeStamp(dateStr) {
   return new Date(dateStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -62,20 +64,28 @@ function Bubble({ msg, isMe }) {
 export default function ConversationScreen({ route, navigation }) {
   const { userId, participant } = route.params;
   const { token, profile } = useAuth();
+  const moderation = useModeration();
+  const blocked = moderation.isBlocked(userId);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [pendingAttachment, setPendingAttachment] = useState(null);
+  const [loadError, setLoadError] = useState('');
+  const [sendError, setSendError] = useState('');
+  const sendingRef = useRef(false);
+  const blockedRef = useRef(blocked);
+  blockedRef.current = blocked;
   const listRef = useRef(null);
 
   const fetchMessages = useCallback(async () => {
     try {
       const res = await axios.get(`${API_BASE}/messages/${userId}`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${token}` }, timeout: 15000,
       });
       setMessages(res.data.messages || []);
-    } catch (e) { console.error(e.message); }
+      setLoadError('');
+    } catch { setLoadError('Could not load this conversation. Please retry.'); }
     finally { setLoading(false); }
   }, [token, userId]);
 
@@ -100,48 +110,60 @@ export default function ConversationScreen({ route, navigation }) {
 
   async function send() {
     const content = input.trim();
-    if ((!content && !pendingAttachment) || sending) return;
-    setInput('');
+    if (blocked || !moderation.loaded || (!content && !pendingAttachment) || sendingRef.current) return;
     const att = pendingAttachment;
-    setPendingAttachment(null);
+    sendingRef.current = true;
     setSending(true);
+    setSendError('');
     try {
       const res = await axios.post(
         `${API_BASE}/messages/${userId}`,
         { content, attachment: att },
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }
       );
-      setMessages((prev) => [...prev, res.data.message]);
-    } catch (e) { console.error(e.message); }
-    finally { setSending(false); }
+      if (!res.data?.message?.id) throw new Error('Message was not confirmed');
+      if (!blockedRef.current) {
+        setMessages((prev) => [...prev, res.data.message]);
+        setInput('');
+        setPendingAttachment(null);
+      }
+    } catch { setSendError('Message could not be sent. Your draft is still here.'); }
+    finally { sendingRef.current = false; setSending(false); }
   }
 
-  const canSend = (input.trim() || pendingAttachment) && !sending;
+  const canSend = moderation.loaded && !blocked && (input.trim() || pendingAttachment) && !sending;
 
-  if (loading) {
-    return <View style={s.center}><ActivityIndicator size="large" color={COLORS.primary} /></View>;
-  }
+  useEffect(() => {
+    if (blocked) { setInput(''); setPendingAttachment(null); setMessages([]); setSendError(''); }
+  }, [blocked]);
 
   return (
     <KeyboardAvoidingView style={s.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={90}>
       {participant && (
         <View style={s.infoBar}>
           <Text style={s.infoName}>{participant.title}{participant.organization ? ` · ${participant.organization}` : ''}</Text>
+          {!blocked && <SafetyButton userId={userId} userName={participant.name} />}
         </View>
       )}
 
+      {!blocked && loadError ? <View style={s.infoBar}>
+        <Text accessibilityRole="alert" style={{ color: COLORS.danger }}>{loadError}</Text>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Retry conversation" onPress={fetchMessages}><Text style={{ color: COLORS.primary, paddingVertical: 10 }}>Retry</Text></TouchableOpacity>
+      </View> : null}
+      {loading && <ActivityIndicator accessibilityLabel="Loading conversation" color={COLORS.primary} />}
+
       <FlatList
         ref={listRef}
-        data={messages}
+        data={blocked || !moderation.loaded ? [] : messages}
         keyExtractor={(item) => item.id}
         contentContainerStyle={s.list}
         onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
         renderItem={({ item }) => <Bubble msg={item} isMe={item.senderId === profile?.id} />}
-        ListEmptyComponent={<View style={s.empty}><Text style={s.emptyText}>Say hello!</Text></View>}
+        ListEmptyComponent={<View style={s.empty}><Text style={s.emptyText}>{blocked ? 'You blocked this user. Messages are hidden.' : !moderation.loaded ? 'Loading safety preferences...' : loading || loadError ? '' : 'Say hello!'}</Text></View>}
       />
 
       {/* Pending attachment preview */}
-      {pendingAttachment && (
+      {!blocked && pendingAttachment && (
         <View style={s.attachPreview}>
           <Text style={s.attachIcon}>{fileIcon(pendingAttachment.mimeType)}</Text>
           <View style={{ flex: 1 }}>
@@ -156,8 +178,9 @@ export default function ConversationScreen({ route, navigation }) {
       )}
 
       {/* Input row */}
-      <View style={s.inputRow}>
-        <TouchableOpacity style={s.attachBtn} onPress={pickFile} activeOpacity={0.7} accessibilityLabel="Share file details">
+      {!blocked && sendError ? <Text accessibilityRole="alert" style={{ color: COLORS.danger, paddingHorizontal: 16, paddingVertical: 8 }}>{sendError}</Text> : null}
+      {!blocked && <View style={s.inputRow}>
+        <TouchableOpacity style={s.attachBtn} onPress={pickFile} disabled={sending} activeOpacity={0.7} accessibilityLabel="Share file details">
           <Text style={s.attachBtnIcon}>📎</Text>
         </TouchableOpacity>
         <TextInput
@@ -165,6 +188,7 @@ export default function ConversationScreen({ route, navigation }) {
           placeholder="Message..."
           placeholderTextColor={COLORS.muted}
           value={input}
+          editable={moderation.loaded && !sending}
           onChangeText={setInput}
           multiline
           maxLength={2000}
@@ -175,6 +199,8 @@ export default function ConversationScreen({ route, navigation }) {
           style={[s.sendBtn, !canSend && s.sendBtnDisabled]}
           onPress={send}
           disabled={!canSend}
+          accessibilityRole="button"
+          accessibilityLabel="Send message"
           activeOpacity={0.8}
         >
           {sending
@@ -182,7 +208,7 @@ export default function ConversationScreen({ route, navigation }) {
             : <Text style={s.sendIcon}>↑</Text>
           }
         </TouchableOpacity>
-      </View>
+      </View>}
     </KeyboardAvoidingView>
   );
 }

@@ -245,7 +245,7 @@ const styles = StyleSheet.create({
   groupDesc: { fontSize: 14, color: COLORS.muted, lineHeight: 20, marginBottom: 14 },
   joinBtn: {
     backgroundColor: COLORS.primary, borderRadius: 10,
-    paddingVertical: 10, alignItems: 'center',
+    paddingVertical: 10, paddingHorizontal: 16, alignItems: 'center',
   },
   joinedBtn: { backgroundColor: COLORS.primaryLight, borderWidth: 1.5, borderColor: COLORS.primary },
   joinBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },

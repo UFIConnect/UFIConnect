@@ -33,7 +33,9 @@ export default function SecurityScreen({ navigation }) {
     setBusy(true);
     try {
       const result = await changePassword(currentPassword, newPassword);
-      Alert.alert('Password updated', result.localCleared
+      Alert.alert('Password updated', result.vpnDisconnected === false
+        ? 'Your password was updated and existing sessions were revoked. Disconnect UFIConnect VPN in device VPN settings to finish.'
+        : result.localCleared
         ? 'Your existing sessions have been signed out. Sign in with your new password.'
         : 'Your existing sessions were revoked. This device could not clear its saved sign-in data. Sign in with your new password.');
     } catch (error) {
@@ -51,7 +53,8 @@ export default function SecurityScreen({ navigation }) {
         setBusy(true);
         try {
           const result = await logoutAll();
-          if (!result.localCleared) Alert.alert('Sessions signed out', 'Server access was revoked, but this device could not clear its saved sign-in data.');
+          if (result.vpnDisconnected === false) Alert.alert('Sessions signed out', 'Server access was revoked. Disconnect UFIConnect VPN in device VPN settings to finish.');
+          else if (!result.localCleared) Alert.alert('Sessions signed out', 'Server access was revoked, but this device could not clear its saved sign-in data.');
         } catch {
           Alert.alert('Could not confirm sign-out', 'Please try again when connected.');
         } finally {

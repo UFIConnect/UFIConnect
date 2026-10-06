@@ -11,10 +11,12 @@ const SCREEN_PATHS = Object.freeze({
   MessagesList: '/app/messages',
   Conversation: '/app/conversation',
   ProfileMain: '/app/profile',
-  ConnectedAccounts: '/app/connected-accounts',
   Security: '/app/security',
   Privacy: '/app/privacy',
 });
+// VPN use must not create optional analytics, first-party visit counts, or
+// performance events. Keep exclusions explicit so new screens need a decision.
+const EXCLUDED_SCREENS = Object.freeze(['VPN']);
 
 function screenPath(name) {
   return typeof name === 'string' && Object.hasOwn(SCREEN_PATHS, name) ? SCREEN_PATHS[name] : null;
@@ -29,4 +31,4 @@ function createScreenTracker(controller) {
   };
 }
 
-module.exports = { SCREEN_PATHS, screenPath, createScreenTracker };
+module.exports = { SCREEN_PATHS, EXCLUDED_SCREENS, screenPath, createScreenTracker };

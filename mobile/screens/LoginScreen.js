@@ -36,7 +36,7 @@ export default function LoginScreen({ navigation }) {
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
           <View style={styles.brand}><Image source={require('../assets/icon.png')} style={styles.brandIcon} accessible={false} /><Text style={styles.logo}>UFIconnect</Text></View>
-          <Text style={styles.tagline}>Professional networking, no ads.</Text>
+          <Text style={styles.tagline}>Your communities and conversations.</Text>
         </View>
 
         <View style={styles.card}>

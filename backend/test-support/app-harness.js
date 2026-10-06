@@ -8,7 +8,7 @@ const jwt = require('jsonwebtoken');
 
 // Run the real routes without loading deployment secrets, starting workers,
 // writing local account data, or connecting to production services.
-async function createAppHarness({ env = {}, connected = false, query, modules = {} } = {}) {
+async function createAppHarness({ env = {}, connected = false, query, withClient, modules = {} } = {}) {
   const entry = path.resolve(__dirname, '../index.js');
   const localRequire = createRequire(entry);
   // Cold SDK loading can exceed the route VM's execution limit on Windows.
@@ -28,7 +28,7 @@ async function createAppHarness({ env = {}, connected = false, query, modules = 
       return { rows: [], rowCount: 0 };
     },
   };
-  db.withClient = async fn => fn({ query: db.query });
+  db.withClient = withClient ? fn => withClient(fn, db.query) : async fn => fn({ query: db.query });
   db.readQuery = db.query;
   const expressFactory = Object.assign(() => {
     const app = express();

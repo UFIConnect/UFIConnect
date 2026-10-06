@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'rea
 import axios from 'axios';
 import { API_BASE } from '../context/AuthContext';
 import { COLORS } from '../theme';
+import SafetyButton from './SafetyButton';
 
 function Avatar({ name, size = 44 }) {
   const initials = name
@@ -54,6 +55,7 @@ export default function MemberCard({ member, token }) {
         {member.skills?.length > 0 && (
           <Text style={styles.skills} numberOfLines={1}>{member.skills.slice(0, 3).join(' · ')}</Text>
         )}
+        <SafetyButton userId={member.id} userName={member.name} />
       </View>
       <TouchableOpacity
         style={[styles.btn, { backgroundColor: btn.bg, borderColor: btn.border }]}

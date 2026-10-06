@@ -6,6 +6,8 @@ import axios from 'axios';
 import Constants from 'expo-constants';
 import { resolveApiBase } from '../security/apiConfig';
 import { createSessionStorage } from '../security/sessionStorage';
+import { deleteAccountWithSession } from '../security/accountDeletion';
+import { disconnectVpnSession } from '../native-vpn/client';
 
 export const API_BASE = resolveApiBase(Constants.expoConfig?.extra?.apiUrl, __DEV__);
 const sessionStorage = createSessionStorage({
@@ -22,19 +24,34 @@ export function AuthProvider({ children }) {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const currentToken = useRef(null);
+  const accountDeletionPending = useRef(null);
 
   const clearLocalSession = useCallback(async () => {
+    const session = currentToken.current;
     currentToken.current = null;
     setToken(null);
     setProfile(null);
-    await sessionStorage.clear();
+    const vpnStopped = await disconnectVpnSession(session).then(() => true, () => false);
+    const localCleared = await sessionStorage.clear().then(() => true, () => false);
+    if (!vpnStopped || !localCleared) {
+      const error = new Error('Device sign-out needs attention.');
+      error.localCleared = localCleared; error.vpnDisconnected = vpnStopped; throw error;
+    }
   }, []);
+
+  function cleanupResult() {
+    return clearLocalSession().then(
+      () => ({localCleared: true, vpnDisconnected: true}),
+      error => ({localCleared: error?.localCleared === true, vpnDisconnected: error?.vpnDisconnected === true})
+    );
+  }
 
   useEffect(() => {
     let active = true;
     (async () => {
+      let stored;
       try {
-        const stored = await sessionStorage.read();
+        stored = await sessionStorage.read();
         if (stored) {
           const res = await axios.get(`${API_BASE}/profile`, {
             headers: { Authorization: `Bearer ${stored}` },
@@ -45,8 +62,9 @@ export function AuthProvider({ children }) {
             setToken(stored);
             setProfile(res.data.profile || res.data);
           }
-        }
+        } else await disconnectVpnSession(null);
       } catch (error) {
+        await disconnectVpnSession(stored).catch(() => {});
         if ([401, 403].includes(error?.response?.status)) {
           await sessionStorage.clear().catch(() => {});
         }
@@ -75,6 +93,8 @@ export function AuthProvider({ children }) {
 
   async function acceptSession(data) {
     try {
+      // A newly authenticated account must not inherit an earlier account's VPN.
+      await disconnectVpnSession(currentToken.current);
       await sessionStorage.write(data.token);
     } catch {
       // Do not fall back to insecure persistence if the OS store is unavailable.
@@ -103,7 +123,7 @@ export function AuthProvider({ children }) {
 
   async function logout() {
     const session = currentToken.current;
-    const localCleared = await clearLocalSession().then(() => true, () => false);
+    const { localCleared, vpnDisconnected } = await cleanupResult();
     let serverRevoked = !session;
     if (session) {
       try {
@@ -115,15 +135,15 @@ export function AuthProvider({ children }) {
         serverRevoked = error?.response?.status === 401;
       }
     }
-    return { localCleared, serverRevoked };
+    return { localCleared, serverRevoked, vpnDisconnected };
   }
 
   async function logoutAll() {
+    await disconnectVpnSession(currentToken.current).catch(() => {});
     await axios.post(`${API_BASE}/auth/logout-all`, {}, {
       headers: { Authorization: `Bearer ${currentToken.current}` }, timeout: REQUEST_TIMEOUT,
     });
-    const localCleared = await clearLocalSession().then(() => true, () => false);
-    return { localCleared };
+    return cleanupResult();
   }
 
   async function changePassword(currentPassword, newPassword) {
@@ -131,8 +151,22 @@ export function AuthProvider({ children }) {
       headers: { Authorization: `Bearer ${currentToken.current}` }, timeout: REQUEST_TIMEOUT,
     });
     // Updating the password revokes every existing session on the server.
-    const localCleared = await clearLocalSession().then(() => true, () => false);
-    return { ...res.data, localCleared };
+    return { ...res.data, ...(await cleanupResult()) };
+  }
+
+  function deleteAccount() {
+    if (accountDeletionPending.current) return accountDeletionPending.current;
+    const session = currentToken.current;
+    const operation = deleteAccountWithSession({
+      client: axios, apiBase: API_BASE, token: session,
+      clearLocalSession: async () => {
+        // Do not clear a different account if the user signed in again while
+        // the original account's deletion request was finishing.
+        if (currentToken.current === session) await clearLocalSession();
+      },
+    }).finally(() => { accountDeletionPending.current = null; });
+    accountDeletionPending.current = operation;
+    return operation;
   }
 
   function updateProfileLocally(updated) {
@@ -145,7 +179,7 @@ export function AuthProvider({ children }) {
     <AuthContext.Provider value={{
       token, profile, loading,
       onboardingComplete,
-      login, register, logout, logoutAll, changePassword, updateProfileLocally,
+      login, register, logout, logoutAll, changePassword, deleteAccount, updateProfileLocally,
     }}>
       {children}
     </AuthContext.Provider>

@@ -7,6 +7,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AuthProvider, useAuth } from './context/AuthContext';
+import ModerationProvider from './context/ModerationContext';
 import LoginScreen from './screens/LoginScreen';
 import RegisterScreen from './screens/RegisterScreen';
 import OnboardingScreen from './screens/OnboardingScreen';
@@ -17,9 +18,9 @@ import FeedScreen from './screens/FeedScreen';
 import MessagesScreen from './screens/MessagesScreen';
 import ConversationScreen from './screens/ConversationScreen';
 import ProfileScreen from './screens/ProfileScreen';
-import ConnectedAccountsScreen from './screens/ConnectedAccountsScreen';
 import SecurityScreen from './screens/SecurityScreen';
 import PrivacyScreen from './screens/PrivacyScreen';
+import VpnScreen from './native-vpn/VpnScreen';
 import PreferencesProvider from './context/PreferencesContext';
 import ServiceMetricsProvider, { useServiceMetrics } from './analytics/ServiceMetricsProvider';
 import { COLORS } from './theme';
@@ -52,7 +53,7 @@ function ExploreNavigator() {
 function DiscoverNavigator() {
   return (
     <DiscoverStack.Navigator screenOptions={NAV_OPTS}>
-      <DiscoverStack.Screen name="Groups" component={GroupsScreen} options={{ title: 'UFconnect' }} />
+      <DiscoverStack.Screen name="Groups" component={GroupsScreen} options={{ title: 'UFIConnect' }} />
       <DiscoverStack.Screen
         name="GroupDetail"
         component={GroupDetailScreen}
@@ -77,8 +78,8 @@ function ProfileNavigator() {
   return (
     <ProfileStack.Navigator screenOptions={NAV_OPTS}>
       <ProfileStack.Screen name="ProfileMain" component={ProfileScreen} options={{ title: 'Profile' }} />
-      <ProfileStack.Screen name="ConnectedAccounts" component={ConnectedAccountsScreen} options={{ title: 'Connected Accounts' }} />
       <ProfileStack.Screen name="Security" component={SecurityScreen} options={{ title: 'Security' }} />
+      <ProfileStack.Screen name="VPN" component={VpnScreen} options={{ title: 'VPN' }} />
     </ProfileStack.Navigator>
   );
 }
@@ -134,7 +135,7 @@ function RootNavigator() {
   if (loading) {
     return (
       <View style={styles.splash}>
-        <Text style={styles.splashLogo}>UFconnect</Text>
+        <Text style={styles.splashLogo}>UFIConnect</Text>
         <ActivityIndicator color={COLORS.primary} style={{ marginTop: 20 }} />
       </View>
     );
@@ -181,7 +182,7 @@ export default function App() {
         <ServiceMetricsProvider>
           <AnalyticsProvider>
             <AuthProvider>
-              <TrackedNavigation />
+              <ModerationProvider><TrackedNavigation /></ModerationProvider>
             </AuthProvider>
           </AnalyticsProvider>
         </ServiceMetricsProvider>

@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { PGlite } = require('@electric-sql/pglite');
 const { BUSINESS_TEAM_SCHEMA } = require('./business-teams');
+const { MANAGED_VPN_SCHEMA } = require('./managed-vpn-schema');
 const { createAppHarness, member } = require('./test-support/app-harness');
 const { passwordPolicyError, resolveJwtSecret, publicRoleSettings } = require('./auth-security');
 const { createTokenVault, migrateSocialCredentials } = require('./token-vault');
@@ -257,6 +258,7 @@ test('database password updates reject concurrent changes and never report succe
       organization TEXT, plan TEXT NOT NULL DEFAULT 'free', business_seats INTEGER NOT NULL DEFAULT 0, billing_closed BOOLEAN NOT NULL DEFAULT false);
     CREATE TABLE auth_sessions (id UUID PRIMARY KEY, user_id UUID, expires_at TIMESTAMPTZ);`);
   for (const sql of BUSINESS_TEAM_SCHEMA) await pg.exec(sql);
+  for (const sql of MANAGED_VPN_SCHEMA) await pg.exec(sql);
   const id = crypto.randomUUID();
   const email = 'alice@example.invalid';
   await pg.query('INSERT INTO users(id,name,email,password_hash,auth_version) VALUES ($1,$2,$3,$4,0)', [id, 'Alice', email, await bcrypt.hash(newPassword, 4)]);
@@ -269,7 +271,17 @@ test('database password updates reject concurrent changes and never report succe
     if (failPasswordWrite && sql.startsWith('UPDATE users SET password_hash=')) throw new Error('Account write unavailable');
     return pg.query(sql, params.map(value => Object.prototype.toString.call(value) === '[object Date]' ? value.toISOString() : value));
   };
-  const workers = await Promise.all([createAppHarness({ connected: true, query }), createAppHarness({ connected: true, query })]);
+  // PGlite has one connection. Serialize transaction clients as a real pool
+  // would, while still issuing both password-change requests concurrently.
+  let transactionTail = Promise.resolve();
+  const withClient = (work, clientQuery) => {
+    const pending = transactionTail.then(() => work({ query: clientQuery }));
+    transactionTail = pending.catch(() => {});
+    return pending;
+  };
+  await pg.query(`INSERT INTO managed_vpn_devices(id,user_id,gateway_id,public_key,label,tunnel_address)
+    VALUES($1,$1,'ufi-de-1',$2,'Phone','10.80.0.2')`, [id, Buffer.alloc(32, 7).toString('base64')]);
+  const workers = await Promise.all([createAppHarness({ connected: true, query, withClient }), createAppHarness({ connected: true, query, withClient })]);
   for (const app of workers) t.after(() => app.close());
   const login = (app, password) => app.request('/auth/login', { method: 'POST', body: { email, password } });
   const sessions = await Promise.all(workers.map(app => login(app, newPassword)));
@@ -290,6 +302,7 @@ test('database password updates reject concurrent changes and never report succe
   const currentPassword = proposed[winner];
   const row = (await pg.query('SELECT password_hash,auth_version FROM users WHERE id=$1', [id])).rows[0];
   assert.equal(row.auth_version, 1);
+  assert.ok((await pg.query('SELECT revoked_at FROM managed_vpn_devices WHERE user_id=$1', [id])).rows[0].revoked_at);
   assert.equal(await bcrypt.compare(currentPassword, row.password_hash), true);
   for (let i = 0; i < workers.length; i++) {
     assert.equal((await workers[i].request('/profile', { headers: bearer(sessions[i].data.token) })).status, 401);

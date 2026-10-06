@@ -47,7 +47,7 @@ export default function RegisterScreen({ navigation }) {
 
         <View style={styles.card}>
           <Text style={styles.title}>Create account</Text>
-          <Text style={styles.subtitle}>Free forever. No ads, ever.</Text>
+          <Text style={styles.subtitle}>Connect with your communities.</Text>
 
           <Text style={styles.label}>Full name</Text>
           <TextInput style={styles.input} placeholder="Alex Kim" placeholderTextColor={COLORS.muted}

@@ -7,6 +7,8 @@ import axios from 'axios';
 import { useAuth, API_BASE } from '../context/AuthContext';
 import { COLORS, CATEGORY_COLORS, CATEGORY_ICONS } from '../theme';
 import MemberCard from '../components/MemberCard';
+import { useModeration } from '../context/ModerationContext';
+import { filterBlockedUsers } from '../security/moderationService';
 
 function formatMembers(n) {
   if (n >= 1000) return `${(n / 1000).toFixed(1).replace('.0', '')}k`;
@@ -16,6 +18,7 @@ function formatMembers(n) {
 export default function GroupDetailScreen({ route, navigation }) {
   const { group } = route.params;
   const { token, profile, updateProfileLocally } = useAuth();
+  const moderation = useModeration();
   const [members, setMembers] = useState([]);
   const [totalMembers, setTotalMembers] = useState(group.members);
   const [loading, setLoading] = useState(true);
@@ -68,7 +71,7 @@ export default function GroupDetailScreen({ route, navigation }) {
   return (
     <FlatList
       style={styles.screen}
-      data={members}
+      data={moderation.loaded ? filterBlockedUsers(members, moderation.blockedIds, member => member.id) : []}
       keyExtractor={(item) => item.id}
       contentContainerStyle={styles.list}
       ListHeaderComponent={
@@ -106,7 +109,7 @@ export default function GroupDetailScreen({ route, navigation }) {
           {/* Members header */}
           {!group.isExternal && <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Members</Text>
-            {loading && <ActivityIndicator size="small" color={COLORS.primary} />}
+            {(loading || moderation.loading) && <ActivityIndicator size="small" color={COLORS.primary} />}
           </View>}
         </View>
       }
@@ -114,7 +117,7 @@ export default function GroupDetailScreen({ route, navigation }) {
         <MemberCard member={item} token={token} />
       )}
       ListEmptyComponent={
-        !loading && !group.isExternal ? <Text style={styles.empty}>No members to show yet.</Text> : null
+        !loading && moderation.loaded && !group.isExternal ? <Text style={styles.empty}>No members to show yet.</Text> : null
       }
     />
   );

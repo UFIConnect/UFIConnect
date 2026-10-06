@@ -1,0 +1,19 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+group = 'org.uficonnect.vpn'
+version = '0.1.0'
+android {
+  namespace 'org.uficonnect.vpn'
+  defaultConfig { versionCode 1; versionName '0.1.0'; consumerProguardFiles 'consumer-rules.pro' }
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+    coreLibraryDesugaringEnabled true
+  }
+}
+dependencies {
+  implementation 'com.wireguard.android:tunnel:1.0.20260102'
+  coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
+}

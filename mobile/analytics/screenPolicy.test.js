@@ -3,15 +3,15 @@ const { test } = require('node:test');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { SCREEN_PATHS, screenPath, createScreenTracker } = require('./screenPolicy');
+const { SCREEN_PATHS, EXCLUDED_SCREENS, screenPath, createScreenTracker } = require('./screenPolicy');
 
-test('every rendered mobile screen has a fixed analytics name', () => {
+test('every rendered mobile screen has a fixed analytics name or explicit privacy exclusion', () => {
   const source = fs.readFileSync(path.join(__dirname, '../App.js'), 'utf8');
   const screens = [...source.matchAll(/<\w+\.Screen\s+name="([^"]+)"\s+component=\{(\w+)\}/g)]
     .filter(([, , component]) => component.endsWith('Screen')).map(([, name]) => name);
   assert.equal(screens.length, 13);
-  assert.deepEqual(screens.sort(), Object.keys(SCREEN_PATHS).sort());
-  assert.equal(new Set(Object.values(SCREEN_PATHS)).size, screens.length);
+  assert.deepEqual(screens.sort(), [...Object.keys(SCREEN_PATHS), ...EXCLUDED_SCREENS].sort());
+  assert.equal(new Set(Object.values(SCREEN_PATHS)).size, screens.length - EXCLUDED_SCREENS.length);
 });
 
 test('mobile analytics ignores route parameters, display titles, and unknown screen names', () => {
@@ -19,6 +19,8 @@ test('mobile analytics ignores route parameters, display titles, and unknown scr
   const track = createScreenTracker({ trackPage: value => events.push(value) });
   track('Conversation', { name: 'private person', message: 'private message', token: 'secret' });
   track('GroupDetail', { group: { id: 'private-id', name: 'private group' } });
+  track('VPN', 'private-vpn-session');
+  assert.equal(screenPath('VPN'), null);
   for (const value of ['someone@example.test', 'Login?token=secret', '__proto__', 'constructor', {}, null, undefined]) {
     track(value);
     assert.equal(screenPath(value), null);

@@ -89,10 +89,10 @@ test('aggregate batching retries safely, bounds counts, and expires only new agg
   await assert.rejects(pg.query("INSERT INTO analytics_daily_counts VALUES (CURRENT_DATE,'private-id','page_view','',1)"));
 });
 
-test('service metrics contain bounded status/duration categories and ignore metrics and health traffic', () => {
+test('service metrics contain bounded status/duration categories and ignore metrics, health and VPN traffic', () => {
   let clock = 0;
   const metrics = analytics.createAggregateAnalytics({ db: { isConnected: () => false }, now: () => clock, schedule() {} });
-  for (const path of ['/analytics/pageview', '/analytics/performance', '/office/analytics/pageviews', '/health', '/readyz']) {
+  for (const path of ['/analytics/pageview', '/analytics/performance', '/office/analytics/pageviews', '/health', '/readyz', '/vpn', '/vpn/config', '/vpn/devices', '/vpn/devices/private-device-id', '/vpn/gateways/private-gateway/desired']) {
     const res = new EventEmitter(); res.statusCode = 200;
     metrics.serviceMiddleware({ path }, res, () => {}); res.emit('finish');
   }
@@ -104,6 +104,17 @@ test('service metrics contain bounded status/duration categories and ignore metr
   assert.doesNotMatch(JSON.stringify(result.body), /messages|private/);
   const unavailable = response(); metrics.pageview({ body: { category: 'home' } }, unavailable);
   assert.equal(unavailable.statusCode, 503);
+});
+
+test('authenticated VPN requests do not update shared app activity', async t => {
+  const app = await createAppHarness({ connected: true }); t.after(() => app.close());
+  app.seedUser(require('./test-support/app-harness').member('vpn-metrics-test'));
+  const before = app.queries.length;
+  assert.equal((await app.request('/vpn/config', { userId: 'vpn-metrics-test' })).status, 200);
+  assert.equal(app.queries.slice(before).some(query => query.sql.includes('site_activity_heartbeat')), false);
+  // The exclusion must not disable the existing activity signal elsewhere.
+  await app.request('/profile', { userId: 'vpn-metrics-test' });
+  assert.equal(app.queries.slice(before).some(query => query.sql.includes('site_activity_heartbeat')), true);
 });
 
 test('network abuse limit rejects excess analytics requests without authentication', async t => {

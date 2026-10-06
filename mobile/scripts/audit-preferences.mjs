@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const dist = path.join(root, '.cache/export-sdk57');
+const dist = process.env.EXPO_EXPORT_DIR || path.join(root, '.cache/export-sdk57');
 const server = http.createServer(async (request, response) => {
   try {
     const pathname = new URL(request.url, 'http://localhost').pathname;
@@ -23,7 +23,7 @@ const profile = {id:'private-member',name:'Private Name',email:'private@example.
 let browser, checks = 0;
 const check = (value, message) => {assert.ok(value,message);checks++;};
 try {
-  browser = await chromium.launch({channel:process.platform === 'win32' ? 'msedge' : undefined});
+  browser = await chromium.launch(process.env.CHROME_PATH ? {executablePath:process.env.CHROME_PATH} : {channel:process.platform === 'win32' ? 'msedge' : undefined});
   for (const width of [390,1280]) {
     const context = await browser.newContext({viewport:{width,height:844}});
     const page = await context.newPage(), requests = [], google = [], errors = [];
@@ -38,7 +38,7 @@ try {
       requests.push({path:url.pathname,body:request.postDataJSON(),headers:request.headers()});
       if (url.pathname.startsWith('/analytics/')) return route.fulfill({status:204,headers});
       const data = url.pathname === '/auth/login' ? {token:'private-session',profile} : url.pathname === '/profile' ? {profile}
-        : {posts:[],jobs:[],opportunities:[],groups:[],categories:[],connectedPlatforms:[]};
+        : {users:[],posts:[],jobs:[],opportunities:[],groups:[],categories:[],connectedPlatforms:[]};
       return route.fulfill({headers,json:data});
     });
     const required = () => requests.filter(request => request.path === '/analytics/pageview');
@@ -52,16 +52,14 @@ try {
       page.waitForRequest(request=>request.url().endsWith('/analytics/pageview') && request.postDataJSON()?.category === 'app_privacy'),
       page.getByRole('button',{name:'Data & privacy',exact:true}).click(),
     ]);
-    const dataSaver = page.getByRole('switch',{name:'Data Saver',exact:true});
     const performance = page.getByRole('switch',{name:'Performance insights',exact:true});
-    await dataSaver.waitFor();
-    check(!(await dataSaver.isChecked()) && !(await performance.isChecked()),'Optional settings default off');
+    await performance.waitFor();
+    check(!(await performance.isChecked()),'Optional performance insights default off');
     check(await page.getByText('Required service metrics',{exact:true}).isVisible(),'Required collection disclosed');
-    check(await page.getByRole('switch').count() === 2,'No fake roaming or autoplay controls');
+    check(await page.getByRole('switch').count() === 1,'Only the functional performance setting is offered');
+    check(await page.getByText('Feed data use',{exact:true}).isVisible(),'Group-only feed data use is disclosed');
     check(required().some(request=>request.body.category==='app_login'),'Required screen count sent before Google consent');
     const beforeState = required().length;
-    await dataSaver.check();
-    await page.waitForFunction(storageKey => JSON.parse(localStorage.getItem(storageKey))?.dataSaver === true,key);
     await page.evaluate(()=>window.dispatchEvent(new window.ErrorEvent('error',{message:'private error before opt-in'})));
     check(optional().length === 0,'Performance stays off by default');
     await performance.check();
@@ -91,8 +89,8 @@ try {
     check(google.length === 0,'Google remains off while required and optional first-party counts work');
     await page.reload();
     await page.getByRole('button',{name:'Data & privacy',exact:true}).click();
-    await dataSaver.waitFor();
-    check(await dataSaver.isChecked() && !(await performance.isChecked()),'Saved preferences survive restart');
+    await performance.waitFor();
+    check(!(await performance.isChecked()),'Performance withdrawal survives restart');
     await page.getByRole('link', { name: /Go back|, back/i }).first().click();
     await page.getByPlaceholder('you@example.com').fill(profile.email);
     await page.getByLabel('Password',{exact:true}).fill('Private synthetic password');
@@ -100,17 +98,13 @@ try {
     await page.getByPlaceholder('Search jobs, gigs, grants, events...').waitFor();
     await page.getByRole('tab',{name:'Feed'}).click();
     await page.getByText('No posts yet',{exact:true}).waitFor();
-    check(JSON.stringify(feedRequests().map(request=>request.path)) === JSON.stringify(['/feed']),'Data Saver downloads only the selected section');
-    await Promise.all([page.waitForResponse(response=>response.url().endsWith('/social/jobs')),page.getByText('Jobs',{exact:true}).click()]);
-    check(JSON.stringify(feedRequests().map(request=>request.path)) === JSON.stringify(['/feed','/social/jobs']),'Opening Jobs downloads Jobs without Social');
+    check(JSON.stringify(feedRequests().map(request=>request.path)) === JSON.stringify(['/feed']),'The working group feed is the only feed downloaded');
     await page.getByRole('tab',{name:'Profile'}).click();
     await page.getByRole('button',{name:'Data & privacy',exact:true}).click();
-    await dataSaver.uncheck();
-    await page.waitForFunction(storageKey=>JSON.parse(localStorage.getItem(storageKey))?.dataSaver===false,key);
     const beforeNormal = feedRequests().length;
     await page.getByRole('link', { name: /Go back|, back/i }).first().click();
-    await Promise.all([page.waitForResponse(response=>response.url().endsWith('/social/feed')),page.getByRole('tab',{name:'Feed'}).click()]);
-    check(feedRequests().length === beforeNormal + 3,'Turning Data Saver off restores all three section downloads');
+    await Promise.all([page.waitForResponse(response=>response.url().endsWith('/feed')),page.getByRole('tab',{name:'Feed'}).click()]);
+    check(feedRequests().length === beforeNormal + 1,'Returning to Feed refreshes group posts without demo provider downloads');
     for (const request of [...required(),...optional()]) {
       check(!request.headers.authorization && !request.headers.cookie && !request.headers.referer,'Metrics omit credentials and referrer');
       check(!JSON.stringify(request.body).includes('private') && !JSON.stringify(request.body).includes('secret'),'Metrics exclude content and identifiers');

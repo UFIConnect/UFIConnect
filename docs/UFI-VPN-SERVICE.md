@@ -1,5 +1,7 @@
 # UFI VPN service: deployment proposal
 
+Historical proposal. The approved Hetzner gateway and native client implementation are described in [Managed VPN launch](managed-vpn-launch-plan.md), which supersedes the hosting and launch assumptions below.
+
 Prepared 2026-10-01; membership launch updated 2026-10-03. This is an engineering proposal, not an operating VPN or a claim that gateways or native apps have been deployed. **UFI Vault at $3.94 USD/month** now supports membership checkout for encrypted Passwords, Documents and Keys. UFI-supplied VPN access is included when service setup is complete, with intended automatic selection of a nearby available region and one Connect/Disconnect control after device setup. The owner will set up the hosting account; the website explicitly shows VPN setup pending. Existing owners retain access to read, recover, export and delete their encrypted data. Saved country labels and links to another provider do not fulfill the VPN product.
 
 ## Hosting recommendation and pilot budget

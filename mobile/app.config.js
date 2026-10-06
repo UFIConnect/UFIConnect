@@ -4,7 +4,8 @@ const development = process.env.APP_ENV === 'development' && process.env.EAS_BUI
 export default ({ config }) => ({
   ...config,
   name: 'UFIConnect',
-  slug: 'pro-connect',
+  slug: 'ufic',
+  owner: 'uficonnect',
   version: '1.0.0',
   orientation: 'portrait',
   icon: './assets/icon.png',
@@ -17,12 +18,8 @@ export default ({ config }) => ({
   ios: {
     supportsTablet: true,
     bundleIdentifier: 'org.uficonnect.app',
-    buildNumber: '1',
+    buildNumber: '2',
     infoPlist: {
-      NSPhotoLibraryUsageDescription: 'UFIConnect uses your photo library to share images in messages.',
-      NSCameraUsageDescription: 'UFIConnect uses your camera to capture photos to share.',
-      NSMicrophoneUsageDescription: 'UFIConnect uses your microphone for voice messages.',
-      ITSAppUsesNonExemptEncryption: false,
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: false,
         NSAllowsLocalNetworking: development,
@@ -52,7 +49,7 @@ export default ({ config }) => ({
     // e.g.: eas env:create --environment production --name API_URL --value https://api.uficonnect.org
     apiUrl: resolveApiBase(process.env.API_URL || undefined, development),
     eas: {
-      projectId: 'ee9644f6-0881-49a8-93f5-aa373a67bc92',
+      projectId: '230828f2-53a3-4f87-a262-f2946e821eeb',
     },
   },
   plugins: [
@@ -60,5 +57,6 @@ export default ({ config }) => ({
     ['expo-secure-store', { configureAndroidBackup: false }],
     'expo-system-ui',
     './plugins/withSecurity',
+    './native-vpn/withUfiVpn',
   ],
 });
