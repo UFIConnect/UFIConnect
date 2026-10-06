@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@auth0/auth0-react": "^2.27.0",
+    "@noble/curves": "2.4.0",
     "axios": "^1.6.0",
     "hls.js": "^1.6.17",
     "lucide-react": "^1.48.0",

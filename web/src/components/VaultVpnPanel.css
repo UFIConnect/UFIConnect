@@ -1,17 +1,7 @@
-.vault-vpn-panel .vault-platform-switch { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.vault-vpn-panel .vault-platform-switch button { flex: 1 1 58px; }
 .vault-vpn-panel .vault-text-button { display: flex; align-items: center; gap: 6px; margin-top: 12px; }
-.vault-vpn-panel .vault-field { margin-top: 14px; }
-.vault-vpn-location-form { display: grid; gap: 12px; margin-top: 15px; padding: 14px; border: 1px solid var(--vault-border, var(--border)); border-radius: 10px; }
-.vault-vpn-confirm { display: flex; gap: 8px; align-items: flex-start; font-size: 11px; color: var(--vault-text, var(--text)); line-height: 1.6; }
-.vault-vpn-confirm input { margin-top: 4px; flex: 0 0 auto; }
-.vault-vpn-panel select { max-width: 100%; }
 .vault-vpn-panel button:disabled { cursor: not-allowed; opacity: .6; }
 .vault-vpn-quick-action { margin: 18px 0; }
 .vault-vpn-quick-action > .vault-button { min-height: 48px; text-decoration: none; }
-.vault-vpn-setup { margin-top: 18px; border-top: 1px solid var(--vault-border, var(--border)); padding-top: 14px; }
-.vault-vpn-setup > summary { cursor: pointer; color: var(--vault-text, var(--text)); font-weight: 600; font-size: .85rem; }
-.vault-vpn-setup[open] > summary { margin-bottom: 16px; }
 .vault-subscription-slot { min-width: 0; }
 .vault-subscription-slot .vault-vpn-subscription { margin-top: 22px; border-top: 1px solid var(--vault-border, var(--border)); padding-top: 18px; }
 .vault-subscription-slot .vault-vpn-subscription h3 { font-size: .9rem; line-height: 1.5; scroll-margin-top: 90px; }
@@ -24,3 +14,11 @@
 .vault-managed-vpn .vault-status { white-space: normal; }
 .vault-managed-vpn .vault-footnote a { color: inherit; text-decoration: underline; }
 .vault-managed-vpn .vault-vpn-guide p { overflow-wrap: anywhere; }
+.vault-managed-vpn { scroll-margin-top: 100px; }
+.vault-vpn-consent { display: flex; align-items: flex-start; gap: 10px; font-size: 12px; line-height: 1.6; }
+.vault-vpn-consent input { margin-top: 4px; flex-shrink: 0; }
+.vault-vpn-import { padding-left: 20px; font-size: 12px; line-height: 1.7; }
+.vault-vpn-import li + li { margin-top: 8px; }
+.vault-vpn-profiles { margin-top: 20px; border-top: 1px solid var(--vault-border, var(--border)); padding-top: 16px; }
+.vault-vpn-profiles h3 { font-size: 14px; }
+.vault-vpn-profile { padding: 12px 0; font-size: 12px; border-bottom: 1px solid var(--vault-border, var(--border)); }

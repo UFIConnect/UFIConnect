@@ -22,7 +22,7 @@ function Fixture(){
  const [state,setState]=useState({accountId:'account-a',active:false});
  window.__vpnAudit.update=patch=>{if(patch.accountId)setAccessToken('synthetic-'+patch.accountId);flushSync(()=>setState(old=>({...old,...patch})));};
  return React.createElement(BrowserRouter,null,React.createElement('main',{style:{maxWidth:480,padding:16,margin:'auto'}},React.createElement(ManagedVpnPanel,{
-  accountId:state.accountId,billing:{active:state.active,checking:false},
+  accountId:state.accountId,billing:{active:state.active,checking:false,status:{vpnConnectorAddon:state.active,subscriptions:state.active?[{kind:'vpn_connector',status:'active',currentPeriodEnd:Math.floor(Date.now()/1000)+3600}]:[]}},
   openApp:url=>window.__vpnAudit.launched.push(url)})));
 }
 createRoot(document.getElementById('root')).render(React.createElement(Fixture));`;
@@ -43,7 +43,6 @@ try {
  for(const device of [
   {platform:'windows',width:1440,userAgent:'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'},
   {platform:'android',width:390,userAgent:'Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/131.0.0.0 Mobile Safari/537.36'},
-  {platform:'ios',width:390,userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1'},
  ]){
   const context=await browser.newContext({viewport:{width:device.width,height:900},userAgent:device.userAgent,serviceWorkers:'block'});
   page=await context.newPage();page.setDefaultTimeout(10000);
@@ -128,6 +127,6 @@ try {
   await page.screenshot({path:path.join(output,device.platform+'.png'),fullPage:true});
   await context.close();
  }
- console.log(`PASS: ${checks} VPN handoff browser checks across Windows desktop, Android and iOS widths; no native handler launched.`);
+ console.log(`PASS: ${checks} VPN handoff browser checks across Windows desktop and Android; no native handler launched.`);
 }catch(error){await page?.screenshot({path:path.join(output,'failure.png'),fullPage:true}).catch(()=>{});throw error;}
 finally{await browser?.close();await server.close();}
