@@ -111,7 +111,9 @@ try {
     assert.equal(await redditCard.getByText(/^(Following source|Joined)$/).count(), 0, 'Unjoined sources have no relationship badge');
     assert.equal(await page.getByText('your group', { exact: true }).count(), 0);
     await redditCard.getByRole('button', { name: 'Upvote on Reddit, 31 likes', exact: true }).waitFor();
-    assert.equal(await redditCard.getByRole('button', { name: /^(Like|Unlike)$/ }).count(), 0);
+    assert.equal(await redditCard.locator('.post-chrome-like > .post-chrome-action').count(), 1, 'One source control combines upvote and count');
+    assert.equal(await redditCard.getByRole('button', { name: 'Upvote on Reddit, 31 likes', exact: true }).locator('.post-chrome-like-count').innerText(), '31 likes');
+    assert.deepEqual(interactions, [], 'Viewing a source count does not submit a provider action');
     assert.deepEqual(memberLikes, [], 'Viewing source counts never changes a reaction');
     await auditReload(page);
     await redditCard.getByRole('button', { name: 'Upvote on Reddit, 31 likes', exact: true }).waitFor();

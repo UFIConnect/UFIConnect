@@ -109,10 +109,14 @@ try {
     assert.match(await listing.locator('.shop-post-price').innerText(), /EUR\s*125[.,]50/);
     await listing.getByText('Recently serviced bicycle. Collection near the city library.', { exact: true }).waitFor();
     assert.equal(await listing.locator('img').last().getAttribute('src'), mediaUrl);
-    await listing.getByLabel('0 likes', { exact: true }).waitFor();
-    assert.equal(await listing.getByRole('button', { name: /^(Like|Unlike)$/ }).count(), 0);
+    const likeControl = listing.getByRole('button', { name: 'Like, 0 likes', exact: true });
+    await likeControl.waitFor();
+    assert.equal(await listing.locator('.post-chrome-like > .post-chrome-action').count(), 1, 'One Shop control combines like and count');
+    assert.equal(await likeControl.locator('.post-chrome-like-count').innerText(), '0 likes');
+    assert.deepEqual(likeWrites, [], 'Viewing the Shop count does not submit a like');
     await auditReload(page);
-    await listing.getByLabel('0 likes', { exact: true }).waitFor();
+    await likeControl.waitFor();
+    assert.deepEqual(likeWrites, [], 'Reloading the Shop count does not submit a like');
     assert.match(await listing.locator('.shop-post-price').innerText(), /EUR\s*125[.,]50/, 'Price survives feed reload');
     assert.equal(await listing.getByRole('region', { name: 'Item details' }).count(), 1, 'Shop details render once');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Shop fits the viewport');
