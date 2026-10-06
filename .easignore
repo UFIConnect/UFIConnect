@@ -1,0 +1,36 @@
+# EAS replaces .gitignore rules when this file is present.
+# Keep build inputs, including mobile/native-vpn/{ios,android} templates.
+node_modules
+.expo
+.expo-shared
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+yarn.lock
+.DS_Store
+vite-*.log
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.pem
+*.key
+*.p8
+*.mobileprovision
+*.provisionprofile
+credentials.json
+dist/
+.cache/
+.gradle/
+.cxx/
+build/
+coverage/
+web/dist/
+backend/data/
+mobile/android/
+mobile/ios/
+mobile/analytics/generated/
