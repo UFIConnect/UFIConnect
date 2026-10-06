@@ -254,7 +254,7 @@ export default function Landing() {
 
           <section id="pricing" className="landing-section landing-pricing-section">
             <SectionHeading eyebrow="Plans" title="Start free. Grow from there.">
-              The main feed stays free. Choose a membership, or add Vault and Resume Builder to your account.
+              The main feed stays free. Choose a membership, or add Resume Builder to your account.
             </SectionHeading>
             <div className="landing-plan-grid">
               <div className="landing-plan-card">
@@ -273,18 +273,6 @@ export default function Landing() {
                   tagline={t.tagline}
                 />
               ))}
-              <div className="landing-plan-card">
-                <div className="landing-plan-top">
-                  <h3>Vault</h3>
-                </div>
-                <div className="landing-plan-price">$3.94<small>/mo</small></div>
-                <p>Encrypted storage for your passwords, documents, and keys.</p>
-                <div className="landing-plan-alternative">
-                  <strong>UFI VPN included when ready</strong>
-                  <span>VPN setup is pending.</span>
-                </div>
-                <Link to="/vault" className="landing-plan-link">View Vault membership</Link>
-              </div>
               <div className="landing-plan-card landing-resume-live">
                 <div className="landing-plan-top">
                   <h3>Resume Builder</h3>
