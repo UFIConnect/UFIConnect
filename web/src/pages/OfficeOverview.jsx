@@ -23,7 +23,7 @@ function FeedDiagram() {
       <div className="public-feed-path">
         <div className="public-feed-inputs"><span className="public-overview-eyebrow">Where posts come from</span>{view.sources.map(source => <span className="public-feed-source" key={source}>{source}</span>)}</div>
         <ArrowRight className="public-feed-arrow" aria-hidden="true" />
-        <div className="public-feed-hub"><img src="/uficonnect-mark.svg" alt="" width="48" height="48" /><strong>UFIConnect</strong><span>{view.name}</span></div>
+        <div className="public-feed-hub"><img src="/uficonnect-mark.svg?v=blue-ufi-20261006" alt="" width="48" height="48" /><strong>UFIConnect</strong><span>{view.name}</span></div>
         <ArrowRight className="public-feed-arrow" aria-hidden="true" />
         <ol className="public-feed-examples" aria-label="Example posts">{view.cards.map(card => <li key={card}><span>Source · Original author</span><strong>{card}</strong><small>Original post link stays with the content</small></li>)}</ol>
       </div>

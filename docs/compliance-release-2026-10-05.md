@@ -24,7 +24,7 @@ Public product additions are `/vault-device`, which separates the available brow
 ## Google OAuth Console: owner steps after deployment
 
 1. Open the Google Cloud project containing the OAuth client shown in the rejection. In **Google Auth Platform → Branding** (or the project's **OAuth consent screen** branding settings), set the app name to **UFIConnect**. Select the monitored support email and confirm developer contact addresses.
-2. Download [the UFIConnect OAuth logo](https://uficonnect.org/uficonnect-oauth-logo.png). Upload this **512 × 512 PNG** as the app logo. It replaces the former blue UFI badge; do not upload the page screenshot or a third-party source mark.
+2. Download [the UFIConnect OAuth logo](https://uficonnect.org/uficonnect-oauth-logo.png). Upload this **512 × 512 PNG** as the app logo. The owner selected the original blue UFI artwork on October 6, 2026; the site and downloadable logo now use that artwork consistently. Google still determines whether the branding meets its review requirements.
 3. Enter the public application URLs exactly:
    - Homepage: `https://uficonnect.org`
    - Privacy Policy: `https://uficonnect.org/privacy`
