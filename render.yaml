@@ -583,6 +583,12 @@ services:
         source: /health
         destination: /health.json
       - type: redirect
+        source: /how-office-works
+        destination: /how-it-works
+      - type: redirect
+        source: /how-office-works/
+        destination: /how-it-works
+      - type: redirect
         source: /global-scroll
         destination: /global
       - type: redirect
@@ -619,11 +625,11 @@ services:
         source: /vault-device/
         destination: /vault-device/index.html
       - type: rewrite
-        source: /how-office-works
-        destination: /how-office-works/index.html
+        source: /how-it-works
+        destination: /how-it-works/index.html
       - type: rewrite
-        source: /how-office-works/
-        destination: /how-office-works/index.html
+        source: /how-it-works/
+        destination: /how-it-works/index.html
       - type: rewrite
         source: /global
         destination: /global/index.html

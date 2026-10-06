@@ -36,8 +36,8 @@ try {
       await auditNavigate(page, server.resolvedUrls.local[0]);
       await page.getByRole('heading', { name: 'UFIconnect', exact: true }).waitFor();
       assert.match(await page.locator('.landing-hero-copy > p').first().textContent(), /social and professional workspace/);
-      assert.ok(await page.locator('.landing-purpose-visual').isVisible());
-      assert.equal(await page.locator('.landing-purpose-grid > span').count(), 4);
+      await page.locator('.landing-network-art img').evaluate(image => image.decode());
+      assert.equal(await page.locator('.landing-network-art img').getAttribute('src'), '/homepage-app-network-2026-10.jpg');
       const dimensions = await page.locator('.landing-brand img').evaluate(async image => {
         await image.decode();
         const box = image.getBoundingClientRect();
@@ -46,8 +46,8 @@ try {
       assert.ok(Math.abs(dimensions.rendered - dimensions.original) < 0.01, `Brand image stretched at ${width}px`);
       assert.equal(await page.getByRole('link', { name: 'Explore the feed', exact: true }).first().getAttribute('href'), '/global');
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
-      assert.ok(await page.locator('.landing-feed-preview .landing-preview-label').isVisible());
-      assert.equal(await page.locator('.landing-feed-preview .landing-preview-label').textContent(), 'Illustrative feed layout');
+      await page.locator('.landing-product-shot img').evaluate(image => image.decode());
+      assert.equal(await page.locator('.landing-product-shot img').getAttribute('src'), '/homepage-feed-2026-09.png');
       await page.screenshot({ path: path.join(output, `homepage-copy-${width}.png`), fullPage: true });
       checks += 8;
       await installAuditMember(page, app, 'prep-audit');

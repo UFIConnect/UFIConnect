@@ -14,12 +14,7 @@ export default function GuestShell({ children }) {
     <div className="guest-shell">
       <header className="guest-header">
         <Link to="/" className="guest-brand">
-          {/* Same branded mark as the authenticated sidebar's logo (see
-              Layout.jsx's sidebar-logo-icon) instead of a generic globe
-              emoji placeholder, so a guest sees the same identity a member
-              does. */}
-          <span className="guest-brand-mark">UFI</span>
-          <span className="guest-brand-name">UFIconnect</span>
+          <img src="/uficonnect-wordmark.svg" alt="UFIConnect" width="180" height="36" />
         </Link>
         <div className="guest-actions">
           <Link to="/privacy#analytics" className="btn btn-ghost btn-sm guest-action" aria-label="Analytics privacy" title="Analytics privacy">

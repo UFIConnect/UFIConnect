@@ -1,6 +1,6 @@
 import { Helmet } from 'react-helmet-async';
 import { Link } from 'react-router-dom';
-import { ArrowRight, FileKey2, Fingerprint, HardDriveDownload, KeyRound, LockKeyhole, Power, Smartphone, Wifi } from 'lucide-react';
+import { ArrowRight, FileKey2, ScanFace, HardDriveDownload, KeyRound, LockKeyhole, Power, Wifi } from 'lucide-react';
 import PublicOverviewLayout from './PublicOverviewLayout';
 
 export default function VaultDeviceOverview() {
@@ -19,7 +19,7 @@ export default function VaultDeviceOverview() {
       <div>
         <span className="public-overview-eyebrow">UFI Vault / Device preview</span>
         <h1 id="vault-overview-title">Your Vault.<br /><span>A physical companion.</span></h1>
-        <p className="public-overview-lead">Meet the UFI Vault Card concept: a compact device designed to work with your saved apps and accounts.</p>
+        <p className="public-overview-lead">Import your passwords once. Let the planned UFI Vault Card handle supported sign-ins for you.</p>
         <p>The physical card is in development. Hardware pairing, automatic sign-in, pricing and a release date are still pending.</p>
         <div className="public-overview-actions">
           <a className="public-overview-button" href="#available-now">See what is available <ArrowRight size={17} aria-hidden="true" /></a>
@@ -55,13 +55,16 @@ export default function VaultDeviceOverview() {
 
     <section className="public-overview-section" aria-labelledby="vault-plan-title">
       <span className="public-overview-eyebrow">The planned device experience</span>
-      <h2 id="vault-plan-title">Choose an app. Confirm it is you. Continue.</h2>
-      <p className="public-overview-intro">This describes the proposed experience for supported integrations. It is not active in the browser Vault.</p>
-      <ol className="public-overview-flow public-overview-flow--three" aria-label="Planned Vault Card flow">
-        <li><span className="public-overview-step-number">01</span><Smartphone aria-hidden="true" /><h3>Choose your saved app</h3><p>Select a supported app or website in your Vault.</p></li>
-        <li><span className="public-overview-step-number">02</span><Fingerprint aria-hidden="true" /><h3>Confirm with the device</h3><p>The planned card verifies your approval for that specific action.</p></li>
-        <li><span className="public-overview-step-number">03</span><ArrowRight aria-hidden="true" /><h3>Continue to your app</h3><p>Automatic sign-in will depend on the finished hardware and a supported integration.</p></li>
+      <h2 id="vault-plan-title">Open an app. Authenticate. Let Vault sign you in.</h2>
+      <p className="public-overview-intro">The goal is to stop typing passwords for supported sign-ins. This is the planned hardware experience; it is not active in the browser Vault.</p>
+      <div className="public-overview-note"><HardDriveDownload size={24} aria-hidden="true" /><div><h3>First-time setup: import and delete</h3><p>Turn on the device and authenticate with Face ID on a supported Apple device. Import your passwords, confirm the import succeeded and keep an encrypted recovery backup. Then delete the temporary password export and any source copies you choose to remove.</p><p>Deletion is a separate, explicit choice after verification. The planned device must not delete originals before confirming the import and recovery copy.</p></div></div>
+      <ol className="public-overview-flow public-overview-flow--four" aria-label="Planned Vault Card flow">
+        <li><span className="public-overview-step-number">01</span><ScanFace aria-hidden="true" /><h3>Open an app and authenticate</h3><p>When you open a supported app, the device turns on automatically. Authenticate with Face ID on a supported Apple device before it can use your saved credentials. Authentication is required each time the device turns on.</p></li>
+        <li><span className="public-overview-step-number">02</span><FileKey2 aria-hidden="true" /><h3>Fetch the sign-in request</h3><p>The device retrieves the authentication request from a supported app or website.</p></li>
+        <li><span className="public-overview-step-number">03</span><KeyRound aria-hidden="true" /><h3>Use your imported credentials</h3><p>It matches the request to the saved account and completes the supported sign-in for you.</p></li>
+        <li><span className="public-overview-step-number">04</span><Power aria-hidden="true" /><h3>Shut down automatically</h3><p>After completing the sign-in, the device powers off automatically. Opening another supported app starts the flow again when a login is needed.</p></li>
       </ol>
+      <p className="public-overview-caption">Face ID requires compatible Apple hardware. Authentication on Android, Windows and Linux, device pairing, recovery and automatic sign-in integrations still need to be developed and validated. Password changes and account recovery may still require your attention.</p>
     </section>
 
     <section className="public-overview-section public-overview-faq" aria-labelledby="vault-questions-title">

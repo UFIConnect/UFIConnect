@@ -336,7 +336,8 @@ function AppContent() {
       <Route path="/policies" element={<Policies />} />
       <Route path="/copyright" element={<CopyrightPolicy />} />
       <Route path="/vault-device" element={<VaultDeviceOverview />} />
-      <Route path="/how-office-works" element={<OfficeOverview />} />
+      <Route path="/how-it-works" element={<OfficeOverview />} />
+      <Route path="/how-office-works" element={<Navigate to="/how-it-works" replace />} />
 
       {/* Fallback */}
       <Route path="*" element={<NotFound />} />

@@ -1,34 +1,32 @@
 import { useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { Link } from 'react-router-dom';
-import { ArrowDown, ClipboardCheck, Database, Eye, FileCheck2, LayoutDashboard, ListChecks, Network, Server, UserRound, Wrench } from 'lucide-react';
+import { ArrowDown, ArrowRight, Layers, ListFilter, Users, ExternalLink, Play, Briefcase } from 'lucide-react';
 import PublicOverviewLayout from './PublicOverviewLayout';
 
-const STEPS = [
-  { title: 'Choose a task', icon: UserRound, summary: 'An authorized operator starts with a question or an operational task.', detail: 'For example: investigate a stale feed, review a source worker, or check service health. Access to Office is restricted to authorized operators; a UFIconnect membership does not grant administrative access.' },
-  { title: 'Inspect and plan', icon: Eye, summary: 'Review service observations and decide what needs attention.', detail: 'Office brings together source freshness, queue state, service measurements and recent results. Agent explanations use the available observations. A missing measurement stays unknown, and an agent heartbeat does not prove a job succeeded.' },
-  { title: 'Choose a control', icon: ListChecks, summary: 'Use an available control for the service that owns the work.', detail: 'Controls cover tasks such as refreshing active sources, transferring staged posts and checking delivery. Each control has a defined target and impact. The agent conversation can explain observations; it cannot run commands or change the service.' },
-  { title: 'Confirm and run', icon: Wrench, summary: 'The service checks access and runs the selected operation.', detail: 'Higher-impact controls request explicit confirmation before running. The server accepts only supported controls. Provider configuration and service availability still apply; an unavailable action is not reported as completed.' },
-  { title: 'Review the result', icon: ClipboardCheck, summary: 'Check the recorded outcome and the updated service state.', detail: 'Office records control runs and their results. Operators can review failures and follow up with another check. A submitted request or an animation is not proof of successful delivery; the result and service observations provide that evidence.' },
+const VIEWS = [
+  { name: 'Mixed feed', icon: Layers, title: 'Different sources. One feed.', description: 'Browse posts from several available sources together. Your interests help shape your home feed, and source and topic filters let you adjust what you see.', sources: ['Community posts', 'Videos', 'Articles'], cards: ['A conversation from a community', 'A video from a creator', 'An article from another source'] },
+  { name: 'Source feeds', icon: ListFilter, title: 'Focus on one source.', description: 'Choose a source in the feed filters to see its available posts. Select other sources to change the mix, or clear your selection to return to the broader feed. An optional topic filter narrows your results further.', sources: ['Selected source'], cards: ['A post from your selected source', 'Another post from the same source', 'More from that source'] },
+  { name: 'Following', icon: Users, title: 'Keep up with the accounts you follow.', description: 'Sign in and connect a supported account when required. Following uses the access you authorize and the content that each service makes available. Availability differs by provider.', sources: ['Accounts you follow'], cards: ['An update from a followed account', 'Another available update'] },
 ];
 
-function OfficeWorkflow() {
+function FeedDiagram() {
   const [selected, setSelected] = useState(0);
-  const step = STEPS[selected];
-  return <figure className="public-office-workflow">
-    <figcaption id="office-workflow-caption">An operator-led workflow. Select a step to see what happens.</figcaption>
-    <ol className="public-office-steps" aria-labelledby="office-workflow-caption">
-      {STEPS.map(({ title, icon: Icon }, index) => <li key={title}>
-        <button type="button" aria-pressed={selected === index} aria-controls="office-step-detail" onClick={() => setSelected(index)}>
-          <span className="public-overview-step-number">0{index + 1}</span>
-          <Icon size={23} aria-hidden="true" />
-          <span>{title}</span>
-        </button>
-      </li>)}
-    </ol>
-    <div id="office-step-detail" className="public-office-step-detail" aria-live="polite" aria-atomic="true">
-      <span className="public-overview-eyebrow">Step {selected + 1} of {STEPS.length}</span>
-      <h3>{step.title}</h3><p><strong>{step.summary}</strong></p><p>{step.detail}</p>
+  const view = VIEWS[selected];
+  return <figure className="public-feed-diagram">
+    <figcaption>Try the three views below. This diagram is an example, not a live feed.</figcaption>
+    <div className="public-feed-options" role="group" aria-label="Feed views">
+      {VIEWS.map(({ name, icon: Icon }, index) => <button key={name} type="button" aria-pressed={selected === index} aria-controls="feed-diagram-detail" onClick={() => setSelected(index)}><Icon size={19} aria-hidden="true" />{name}</button>)}
+    </div>
+    <div id="feed-diagram-detail" aria-live="polite" aria-atomic="true">
+      <h3>{view.title}</h3><p>{view.description}</p>
+      <div className="public-feed-path">
+        <div className="public-feed-inputs"><span className="public-overview-eyebrow">Where posts come from</span>{view.sources.map(source => <span className="public-feed-source" key={source}>{source}</span>)}</div>
+        <ArrowRight className="public-feed-arrow" aria-hidden="true" />
+        <div className="public-feed-hub"><img src="/uficonnect-mark.svg" alt="" width="48" height="48" /><strong>UFIConnect</strong><span>{view.name}</span></div>
+        <ArrowRight className="public-feed-arrow" aria-hidden="true" />
+        <ol className="public-feed-examples" aria-label="Example posts">{view.cards.map(card => <li key={card}><span>Source · Original author</span><strong>{card}</strong><small>Original post link stays with the content</small></li>)}</ol>
+      </div>
     </div>
   </figure>;
 }
@@ -36,66 +34,49 @@ function OfficeWorkflow() {
 export default function OfficeOverview() {
   return <PublicOverviewLayout>
     <Helmet>
-      <title>How Office Works | UFIconnect</title>
-      <meta name="description" content="See how UFIconnect Office helps operators inspect service health, review source workers, run authorized controls and check results, with diagrams of the workflow and services." />
-      <link rel="canonical" href="https://uficonnect.org/how-office-works" />
-      <meta property="og:title" content="How Office Works | UFIconnect" />
-      <meta property="og:description" content="An illustrated guide to the operational dashboard behind UFIconnect: people, controls, source workers and service results." />
-      <meta property="og:url" content="https://uficonnect.org/how-office-works" />
+      <title>How UFIConnect works | UFIConnect</title>
+      <meta name="description" content="Understand the mixed feed, individual source feeds and Following. See how to browse, choose sources and explore UFIConnect." />
+      <link rel="canonical" href="https://uficonnect.org/how-it-works" />
+      <meta property="og:title" content="How UFIConnect works" />
+      <meta property="og:description" content="Your guide to mixed feeds, source feeds and the tools around them." />
+      <meta property="og:url" content="https://uficonnect.org/how-it-works" />
       <meta property="og:type" content="website" />
     </Helmet>
-
-    <section className="public-overview-hero" aria-labelledby="office-overview-title">
-      <div>
-        <span className="public-overview-eyebrow">Behind UFIconnect</span>
-        <h1 id="office-overview-title">How Office works.</h1>
-        <p className="public-overview-lead">Office is the operations dashboard for the people who run UFIconnect.</p>
-        <p>It brings service observations, source workers and administrative controls into one place, so operators can understand a problem, choose an action and review the outcome.</p>
-        <div className="public-overview-actions"><a className="public-overview-button" href="#office-workflow">Explore the workflow <ArrowDown size={17} aria-hidden="true" /></a><span className="public-overview-status">Public guide · restricted dashboard</span></div>
-      </div>
+    <section className="public-overview-hero" aria-labelledby="how-it-works-title">
+      <span className="public-overview-eyebrow">Your feeds, explained</span>
+      <h1 id="how-it-works-title">How UFIConnect works.</h1>
+      <p className="public-overview-lead">Explore a mix of posts in one place, or focus on the sources you want to see.</p>
+      <p>UFIConnect brings social content, communities and professional opportunities into a shared workspace. Every source keeps its identity, and you can open the original post when you want to go further.</p>
+      <div className="public-overview-actions"><Link to="/global" className="public-overview-button">Explore the public feed <ArrowRight size={17} aria-hidden="true" /></Link><a href="#your-feeds">See how the feeds connect <ArrowDown size={17} aria-hidden="true" /></a></div>
     </section>
-
-    <section id="office-workflow" className="public-overview-section" aria-labelledby="office-workflow-title">
-      <span className="public-overview-eyebrow">From a question to a checked result</span>
-      <h2 id="office-workflow-title">Observe. Decide. Run. Review.</h2>
-      <OfficeWorkflow />
+    <section id="your-feeds" className="public-overview-section" aria-labelledby="your-feeds-title">
+      <span className="public-overview-eyebrow">Choose your view</span><h2 id="your-feeds-title">A mix, a single source, or your follows.</h2>
+      <FeedDiagram />
+      <div className="public-overview-note"><Users size={24} aria-hidden="true" /><div><h3>Start browsing. Personalize when you sign in.</h3><p>The public Global Feed is a preview anyone can browse. Sign in for source filters, a personalized feed and Following. Connecting an external account is a separate choice, and each service controls the permissions and content it provides.</p></div></div>
     </section>
-
-    <section className="public-overview-section" aria-labelledby="office-services-title">
-      <span className="public-overview-eyebrow">How the services fit together</span>
-      <h2 id="office-services-title">Separate services, one operational view.</h2>
-      <p className="public-overview-intro">The website, Office, API and pipeline have distinct jobs. The diagram below shows the public-source feed path; connected accounts are also handled on demand with the member's authorization.</p>
-      <figure className="public-office-architecture" aria-labelledby="office-architecture-caption">
-        <div className="public-office-dashboard"><LayoutDashboard size={27} aria-hidden="true" /><div><h3>Office dashboard</h3><p>Authorized operators inspect the API and pipeline and send supported controls.</p></div></div>
-        <div className="public-office-connection"><ArrowDown size={20} aria-hidden="true" /><span>Service observations and authorized controls</span><ArrowDown size={20} aria-hidden="true" /></div>
-        <ol className="public-office-data-flow" aria-label="Public-source content flow">
-          <li><Network aria-hidden="true" /><h3>Sources</h3><p>Enabled public sources, subject to each source's rules and availability.</p></li>
-          <li><Wrench aria-hidden="true" /><h3>Pipeline</h3><p>Source workers fetch, screen and organize incoming posts.</p></li>
-          <li><Database aria-hidden="true" /><h3>Database staging</h3><p>Posts wait for transfer into the API's public feed cache.</p></li>
-          <li><Server aria-hidden="true" /><h3>API service</h3><p>Serves feed requests and handles account features.</p></li>
-          <li><UserRound aria-hidden="true" /><h3>UFIconnect website</h3><p>Members and visitors browse the available content.</p></li>
-        </ol>
-        <figcaption id="office-architecture-caption">Read left to right on larger screens, and top to bottom on phones. Office observes and controls the backend services; public visitors use the UFIconnect website.</figcaption>
-      </figure>
+    <section className="public-overview-section" aria-labelledby="start-title">
+      <span className="public-overview-eyebrow">Get started</span><h2 id="start-title">Make the feed yours.</h2>
+      <ol className="public-overview-flow public-overview-flow--three">
+        <li><span className="public-overview-step-number">01</span><Layers aria-hidden="true" /><h3>Explore the mix</h3><p>Open the Global Feed to browse public posts. Create an account to choose interests and use your personal home feed.</p></li>
+        <li><span className="public-overview-step-number">02</span><ListFilter aria-hidden="true" /><h3>Choose your sources</h3><p>In your member feed, use the source filters to focus on a provider or combine several. Add a topic filter when you want something more specific.</p></li>
+        <li><span className="public-overview-step-number">03</span><ExternalLink aria-hidden="true" /><h3>Follow the content</h3><p>Read the post and check its source. Open the original for the full conversation or provider features. Use the report option if something needs attention.</p></li>
+      </ol>
     </section>
-
-    <section className="public-overview-section" aria-labelledby="office-agent-title">
-      <span className="public-overview-eyebrow">What the agents do</span>
-      <h2 id="office-agent-title">Software roles with specific jobs.</h2>
+    <section className="public-overview-section" aria-labelledby="more-title">
+      <span className="public-overview-eyebrow">Around your feed</span><h2 id="more-title">Keep exploring UFIConnect.</h2>
       <div className="public-overview-grid public-overview-grid--three">
-        <article className="public-overview-card"><Network aria-hidden="true" /><h3>Source workers</h3><p>Fetch enabled public sources on the pipeline. Scheduling, retries and source availability determine when new content arrives.</p></article>
-        <article className="public-overview-card"><Eye aria-hidden="true" /><h3>Observations and explanations</h3><p>Report service measurements and explain a selected worker's available observations. Agent chat is read-only and cannot deploy, delete or operate tools.</p></article>
-        <article className="public-overview-card"><FileCheck2 aria-hidden="true" /><h3>Operator controls</h3><p>Offer defined operations with server-side access checks, confirmation where required, and recorded results. Operators review the effect of a change.</p></article>
+        <article className="public-overview-card"><Play aria-hidden="true" /><h3>Videos and Music</h3><p>Use the dedicated views to find available media. Playback and access depend on the original provider and its supported player.</p></article>
+        <article className="public-overview-card"><Users aria-hidden="true" /><h3>People and communities</h3><p>Find people, join groups and continue conversations with your UFIConnect account.</p></article>
+        <article className="public-overview-card"><Briefcase aria-hidden="true" /><h3>Jobs and recruiting</h3><p>Explore opportunities and resume tools. Business memberships provide a workspace focused on recruiting and work.</p></article>
       </div>
-      <p className="public-overview-caption">The city and agent visuals help explain activity. They represent software roles, not employees, independent decision makers or proof that work has completed.</p>
+      <p className="public-overview-caption">Vault is a separate password and document tool. <Link to="/vault-device">See the browser Vault and planned device experience.</Link></p>
     </section>
-
-    <section className="public-overview-section public-overview-faq" aria-labelledby="office-questions-title">
-      <h2 id="office-questions-title">A few useful distinctions</h2>
-      <details><summary>Is Office part of my personal or Business membership?</summary><p>Office is a restricted operational dashboard for running UFIconnect. Your personal account, Command Center and Business recruiting workspace are separate member features.</p></details>
-      <details><summary>Does chatting with an agent perform an action?</summary><p>No. Agent chat explains available observations and suggests checks. Operational actions use separate controls, and higher-impact actions require confirmation.</p></details>
-      <details><summary>Does this page show live internal data?</summary><p>No. These diagrams explain the architecture. They do not load Office status, private records, access credentials or internal action history.</p></details>
-      <details><summary>Where do I go for an account or content issue?</summary><p>Use the reporting options on posts or <a href="mailto:support@uficonnect.org">contact support</a>. Read our <Link to="/privacy">Privacy Policy</Link> for information about account data and privacy requests.</p></details>
+    <section className="public-overview-section public-overview-faq" aria-labelledby="questions-title">
+      <h2 id="questions-title">A few useful answers</h2>
+      <details><summary>Does every source offer the same features?</summary><p>No. Available posts, playback, account connections and interactions depend on each provider. UFIConnect keeps source attribution and links visible. Read the <Link to="/policies#connected-services">connected services disclosure</Link> for details.</p></details>
+      <details><summary>Why does changing a source change my feed?</summary><p>The mixed feed brings together available sources. Choosing a source limits results to that selection; choosing a topic narrows them further. A source can have fewer posts or be temporarily unavailable.</p></details>
+      <details><summary>Does a UFIConnect account sign me into every other service?</summary><p>No. Supported external accounts are connected separately with your permission. You can manage those connections from your account.</p></details>
+      <div className="public-overview-actions"><Link to="/register" className="public-overview-button">Create your account <ArrowRight size={17} aria-hidden="true" /></Link><Link to="/login">Already a member? Sign in</Link></div>
     </section>
   </PublicOverviewLayout>;
 }

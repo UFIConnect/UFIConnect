@@ -6,6 +6,16 @@
   },
   {
     "type": "redirect",
+    "source": "/how-office-works",
+    "destination": "/how-it-works"
+  },
+  {
+    "type": "redirect",
+    "source": "/how-office-works/",
+    "destination": "/how-it-works"
+  },
+  {
+    "type": "redirect",
     "source": "/global-scroll",
     "destination": "/global"
   },
@@ -66,13 +76,13 @@
   },
   {
     "type": "rewrite",
-    "source": "/how-office-works",
-    "destination": "/how-office-works/index.html"
+    "source": "/how-it-works",
+    "destination": "/how-it-works/index.html"
   },
   {
     "type": "rewrite",
-    "source": "/how-office-works/",
-    "destination": "/how-office-works/index.html"
+    "source": "/how-it-works/",
+    "destination": "/how-it-works/index.html"
   },
   {
     "type": "rewrite",

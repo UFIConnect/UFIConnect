@@ -1,0 +1,22 @@
+/* Shared palette for the homepage and its public destinations. */
+:is(.landing-shell, .public-overview, .ufi-policy-page, .guest-shell, .public-auth-page, .public-footer) {
+  --primary: #102a6b;
+  --primary-hover: #0b1e4d;
+  --primary-light: #e8eef9;
+  --bg: #f8fafc;
+  --surface: #f1f5f9;
+  --card: #fff;
+  --text: #0f172a;
+  --muted: #475569;
+  --border: #e2e8f0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color-scheme: light;
+}
+.guest-shell, .public-auth-page { color: var(--text); }
+.public-auth-page { background: #f8fafc; }
+.guest-header { flex-wrap: wrap; }
+:is(.guest-brand, .auth-logo) img { display: block; width: 180px; max-width: 100%; height: auto; }
+.landing-shell .landing-nav-actions a { min-height: 44px; display: inline-flex; align-items: center; }
+@media (max-width: 560px) {
+  .landing-shell .landing-nav-actions a:first-child { display: inline-flex; }
+}
