@@ -9,6 +9,7 @@ using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Microsoft.Win32;
 
 namespace UfiConnect.Vpn {
   internal static class SetupPolicy {
@@ -42,11 +43,11 @@ namespace UfiConnect.Vpn {
     [STAThread] private static int Main(){
       Application.EnableVisualStyles();
       if(!Environment.Is64BitOperatingSystem||!Platform.Administrator){MessageBox.Show("Setup needs Windows x64 and administrator permission.","UFIConnect VPN setup");return 1;}
-      var approved=MessageBox.Show("Install UFIConnect VPN and its official WireGuard prerequisite?\n\nSetup downloads the pinned WireGuard 1.1.1 release, verifies its trusted WireGuard LLC signature and checksum, and creates a Start menu shortcut. No tunnel is started and no account credentials are requested.\n\nThis UFIConnect validation build is unsigned. Continue only if you trust its source.","UFIConnect VPN setup",MessageBoxButtons.YesNo,MessageBoxIcon.Question)==DialogResult.Yes;
+      var approved=MessageBox.Show("Install UFIConnect VPN and its official WireGuard prerequisite?\n\nSetup downloads the pinned WireGuard 1.1.1 release, verifies its trusted WireGuard LLC signature and checksum, creates a Start menu shortcut, and registers UFIConnect connection links. No tunnel is started and no account credentials are requested.\n\nThis UFIConnect validation build is unsigned. Continue only if you trust its source.","UFIConnect VPN setup",MessageBoxButtons.YesNo,MessageBoxIcon.Question)==DialogResult.Yes;
       if(!approved)return 0;
       try{
         var result=Task.Run(()=>Install()).GetAwaiter().GetResult();
-        MessageBox.Show("UFIConnect VPN is installed. Open it from the Start menu and sign in to connect."+(result==3010?"\nWindows requests a restart to finish the WireGuard installation.":""),"UFIConnect VPN setup");return 0;
+        MessageBox.Show("UFIConnect VPN is installed. Click Connect on the UFIConnect website to open it, then sign in with the same account. You can also open it from the Start menu."+(result==3010?"\nWindows requests a restart to finish the WireGuard installation.":""),"UFIConnect VPN setup");return 0;
       }catch(Exception){MessageBox.Show("Installation could not be verified or completed. No VPN tunnel was started. Check your connection and administrator access, then try again. Keep the complete setup folder together.","UFIConnect VPN setup",MessageBoxButtons.OK,MessageBoxIcon.Error);return 1;}
     }
     private static async Task<int> Install(){
@@ -93,6 +94,11 @@ namespace UfiConnect.Vpn {
       var staging=Path.Combine(destination,Guid.NewGuid().ToString("N")+".tmp");
       try{File.WriteAllBytes(staging,bytes);SetupPolicy.PublicFileOwner(staging);if(File.Exists(target))File.Replace(staging,target,null);else File.Move(staging,target);SetupPolicy.PublicFileOwner(target);}
       finally{if(File.Exists(staging))File.Delete(staging);}
+      using(var protocol=Registry.LocalMachine.CreateSubKey(@"Software\Classes\uficonnect-vpn")){
+        protocol.SetValue("","URL:UFIConnect VPN",RegistryValueKind.String);
+        protocol.SetValue("URL Protocol","",RegistryValueKind.String);
+        using(var command=protocol.CreateSubKey(@"shell\open\command"))command.SetValue("",LaunchPolicy.ProtocolCommand(target),RegistryValueKind.String);
+      }
       var shortcuts=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms),"UFIConnect");SetupPolicy.PublicDirectory(shortcuts);
       var shortcut=Path.Combine(shortcuts,"UFIConnect VPN.lnk");if(File.Exists(shortcut)&&(File.GetAttributes(shortcut)&FileAttributes.ReparsePoint)!=0)throw new IOException("Unsafe shortcut path.");
       var shellType=Type.GetTypeFromProgID("WScript.Shell");var shell=Activator.CreateInstance(shellType);

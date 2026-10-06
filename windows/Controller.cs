@@ -13,6 +13,7 @@ namespace UfiConnect.Vpn {
     private readonly Api api=new Api();
     private readonly SemaphoreSlim gate=new SemaphoreSlim(1,1);
     private string token,privateKey,publicKey;
+    internal string AccountId { get; private set; }
     private Lease lease;
     private long deadline;
     private int generation;
@@ -20,18 +21,42 @@ namespace UfiConnect.Vpn {
     private readonly string nonce=Guid.NewGuid().ToString("N");
     private long renewedAt;
     private bool renewing;
+    private bool disposed;
     private Task renewalTask;
     internal bool SignedIn { get { return token!=null; } }
     internal bool Active { get { return lease!=null; } }
     internal string Message="Sign in with your UFIConnect email and password.";
+    internal Controller(){
+      try{var stored=Platform.RestoreSession();if(stored!=null){token=stored.Token;AccountId=stored.AccountId;PreserveSession();Message="Saved sign-in restored. Ready to connect.";}}
+      catch{Platform.ClearSecrets();Message="Saved sign-in is unavailable. Sign in again.";}
+    }
+    private void PreserveSession(){if(token==null)Platform.ClearSecrets();else Platform.StoreSecrets(token,AccountId);}
+    internal void ForgetSession(){token=null;AccountId=null;Platform.ClearSecrets();}
     internal async Task Login(string email,string password) {
       if(Active)throw new InvalidOperationException("Disconnect before changing account.");
+      var requestGeneration=generation;
       var result=await api.Request("POST","/auth/login",null,new{email=email,password=password});
       var value=Json.Text(result,"token");if(value.Length<20||value.Length>16384)throw new InvalidDataException("Invalid sign-in response.");
-      token=value;Platform.StoreSecrets(token,null);Message="Signed in. Connect requires an active paid UFI Vault membership.";
+      var profile=result["profile"] as Dictionary<string,object>;var account=Json.Text(profile,"id");
+      Exception failure=null;
+      try{if(disposed||requestGeneration!=generation)throw new OperationCanceledException();Platform.StoreSecrets(value,account);}catch(Exception error){failure=error;}
+      if(failure!=null){try{await api.Request("POST","/auth/logout",value,null);}catch{}throw failure;}
+      token=value;AccountId=account;Message="Signed in. Connect requires an active paid UFI Vault membership.";
+    }
+    internal async Task ConsumeLaunch(string code){
+      if(token==null)throw new InvalidOperationException("Sign in with the same UFIConnect account first.");
+      LaunchPolicy.Code(LaunchPolicy.Prefix+code);
+      var requestGeneration=generation;var requestToken=token;var requestAccount=AccountId;
+      var result=await api.Request("POST","/vpn/launch/consume",token,new{code=code,platform="windows"});
+      if(disposed||requestGeneration!=generation||requestToken!=token||requestAccount!=AccountId)throw new OperationCanceledException();
+      if(result.Count!=1||Json.Text(result,"action")!="connect")throw new InvalidDataException("This VPN connection request was not accepted.");
+      if(!Active)await Connect();
     }
     internal async Task Connect() {
-      await gate.WaitAsync();var attempt=Interlocked.Increment(ref generation);string enrolled=null;
+      var requestGeneration=generation;var requestToken=token;
+      await gate.WaitAsync();
+      if(disposed||requestGeneration!=generation||requestToken!=token){gate.Release();throw new OperationCanceledException();}
+      var attempt=Interlocked.Increment(ref generation);string enrolled=null;
       Exception failure=null;
       try{try{
         if(token==null)throw new InvalidOperationException("Sign in first.");
@@ -48,7 +73,6 @@ namespace UfiConnect.Vpn {
         if(!Lease.KeyValid(privateKey))throw new InvalidDataException("Could not create a local VPN key.");
         publicKey=await Platform.Run(Platform.Wg,"pubkey",privateKey+"\n");
         if(!Lease.KeyValid(publicKey))throw new InvalidDataException("Could not create a local VPN key.");
-        Platform.StoreSecrets(token,privateKey);
         var response=await api.Request("POST","/vpn/devices",token,new{publicKey=publicKey,label="UFIConnect Windows"});
         if(Json.Text(response,"state")!="enrolled")throw new InvalidDataException("VPN enrollment was not accepted.");
         var data=response["device"] as Dictionary<string,object>;
@@ -68,7 +92,7 @@ namespace UfiConnect.Vpn {
       }catch(Exception error){failure=error;}
       if(failure!=null){
         try{await Task.Run(()=>Platform.StopOwnedTunnel());}catch{Message="Windows could not confirm disconnection. Stop UFIConnectManaged in WireGuard.";}
-        lease=null;deadline=0;privateKey=null;publicKey=null;Platform.ClearSecrets();
+        lease=null;deadline=0;privateKey=null;publicKey=null;PreserveSession();
         if(enrolled!=null)try{await api.Request("DELETE","/vpn/devices/"+enrolled,token,null);}catch{}
         throw failure;
       }}finally{gate.Release();}
@@ -105,7 +129,7 @@ namespace UfiConnect.Vpn {
         if(!current.SameTunnel(next))throw new InvalidDataException("VPN gateway configuration changed. Reconnect.");
         lease=next;deadline=Platform.Monotonic+(long)(next.Expires-DateTime.UtcNow).TotalMilliseconds;renewedAt=Platform.Monotonic;Heartbeat();
       }catch(ApiError error){
-        if(error.Status==401||error.Status==403||error.Status==409)stopMessage="VPN authorization ended. Sign in and reconnect.";
+        if(error.Status==401||error.Status==403||error.Status==409){if(error.Status==401)ForgetSession();stopMessage="VPN authorization ended. Sign in and reconnect.";}
         else{Message="VPN renewal is temporarily unavailable. Authorization remains time limited.";renewedAt=Platform.Monotonic;}
       }
       catch(InvalidDataException){stopMessage="VPN configuration changed. Reconnect.";}
@@ -113,7 +137,7 @@ namespace UfiConnect.Vpn {
       if(stopMessage!=null){Interlocked.Increment(ref generation);await StopLocal();Message=stopMessage;}
       }finally{renewing=false;gate.Release();}
     }
-    private async Task StopLocal(){await Task.Run(()=>Platform.StopOwnedTunnel());lease=null;deadline=0;privateKey=null;publicKey=null;Platform.ClearSecrets();}
+    private async Task StopLocal(){await Task.Run(()=>Platform.StopOwnedTunnel());lease=null;deadline=0;privateKey=null;publicKey=null;PreserveSession();}
     internal async Task Disconnect(){
       Interlocked.Increment(ref generation);var current=lease;
       // Stop the OS tunnel before waiting for an in-flight network request.
@@ -124,8 +148,14 @@ namespace UfiConnect.Vpn {
         Message="Disconnected.";
       }finally{gate.Release();}
     }
-    internal async Task Logout(){await Disconnect();var old=token;token=null;Platform.ClearSecrets();if(old!=null)try{await api.Request("POST","/auth/logout",old,null);}catch{}Message="Signed out.";}
-    public void Dispose(){api.Dispose();gate.Dispose();if(watcher!=null)watcher.Dispose();}
+    internal async Task Logout(){
+      var old=token;Exception failure=null;
+      try{await Disconnect();}catch(Exception error){failure=error;}
+      try{ForgetSession();}catch(Exception error){if(failure==null)failure=error;}
+      bool revoked=true;if(old!=null)try{await api.Request("POST","/auth/logout",old,null);}catch{revoked=false;}
+      if(failure!=null)throw failure;Message=revoked?"Signed out.":"Signed out on this device. Server sign-out could not be confirmed.";
+    }
+    public void Dispose(){disposed=true;Interlocked.Increment(ref generation);api.Dispose();gate.Dispose();if(watcher!=null)watcher.Dispose();}
   }
   internal static class Watchdog {
     internal static int Run(string[] args){

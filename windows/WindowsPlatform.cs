@@ -53,11 +53,19 @@ namespace UfiConnect.Vpn {
       }
       finally { if (File.Exists(temp)) File.Delete(temp); }
     }
-    internal static void StoreSecrets(string token, string privateKey) {
+    internal static void StoreSecrets(string token, string accountId) {
       var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"UFIConnectVPN");
-      var bytes = Encoding.UTF8.GetBytes(Json.Encode(new { token = token, privateKey = privateKey }));
+      var bytes = Encoding.UTF8.GetBytes(SessionPolicy.Encode(token,accountId));
       try { WriteFile(Path.Combine(directory,"session.dpapi"),ProtectedData.Protect(bytes,null,DataProtectionScope.CurrentUser)); }
       finally { Array.Clear(bytes,0,bytes.Length); }
+    }
+    internal static StoredSession RestoreSession() {
+      var directory=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"UFIConnectVPN");
+      var file=Path.Combine(directory,"session.dpapi");if(!File.Exists(file))return null;
+      SafeDirectory(directory);
+      if((File.GetAttributes(file)&FileAttributes.ReparsePoint)!=0||new FileInfo(file).Length>65536)throw new IOException("Invalid protected session file.");
+      var bytes=ProtectedData.Unprotect(File.ReadAllBytes(file),null,DataProtectionScope.CurrentUser);
+      try{return SessionPolicy.Read(Encoding.UTF8.GetString(bytes));}finally{Array.Clear(bytes,0,bytes.Length);}
     }
     internal static void ClearSecrets() {
       var file = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"UFIConnectVPN","session.dpapi");

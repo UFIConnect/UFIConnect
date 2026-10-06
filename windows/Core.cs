@@ -84,7 +84,7 @@ namespace UfiConnect.Vpn {
       client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }) { Timeout = TimeSpan.FromSeconds(15), MaxResponseContentBufferSize = 65536 };
     }
     internal async Task<Dictionary<string, object>> Request(string method, string path, string token, object body) {
-      if (!Regex.IsMatch(path,"^/(?:auth/(?:login|logout)|vpn/(?:config|devices(?:/[A-Za-z0-9_-]+)?))$")) throw new InvalidOperationException("Unknown API operation.");
+      if (!Regex.IsMatch(path,"^/(?:auth/(?:login|logout)|vpn/(?:config|launch/consume|devices(?:/[A-Za-z0-9_-]+)?))$")) throw new InvalidOperationException("Unknown API operation.");
       using (var request = new HttpRequestMessage(new HttpMethod(method),"https://api.uficonnect.org" + path)) {
         if (token != null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer",token);
         if (body != null) request.Content = new StringContent(Json.Encode(body),Encoding.UTF8,"application/json");
