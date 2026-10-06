@@ -55,7 +55,7 @@ const FAQS = [
   },
   {
     q: 'Where does the feed content come from?',
-    a: 'The feed includes UFIConnect member posts and content from available external sources. Source names and original links remain visible. Connections, playback, and actions depend on each providerâ€™s permissions and availability.',
+    a: 'The feed includes UFIConnect member posts and content from available external sources. Source names and original links remain visible. Connections, playback, and actions depend on each provider’s permissions and availability.',
   },
   {
     q: 'Is Resume Builder available?',
@@ -192,7 +192,7 @@ export default function Landing() {
                   <Link to="/register" className="landing-primary-action">Join free</Link>
                   <Link to="/global" className="landing-secondary-action">Explore the feed</Link>
                 </div>
-                <p className="landing-trust-intro">Operated as UFIConnect in California, United States. <Link to="/privacy">Privacy policy</Link> Â· <Link to="/terms">Terms of service</Link> Â· <a href="mailto:support@uficonnect.org">Contact support</a></p>
+                <p className="landing-trust-intro">Operated as UFIConnect in California, United States. <Link to="/privacy">Privacy policy</Link> · <Link to="/terms">Terms of service</Link> · <a href="mailto:support@uficonnect.org">Contact support</a></p>
               </div>
               <div className="landing-network-art">
                 <img src="/homepage-app-network-2026-10.jpg"
@@ -248,7 +248,7 @@ export default function Landing() {
             <div className="landing-trust-grid">
               <article><h3 id="homepage-google-purpose">How Google services are used</h3><p>Google sign-in can identify your account. An optional YouTube connection supports the YouTube features you authorize, such as subscribed content, channel analytics, or supported actions. Requested permissions are shown before access is granted.</p><p>Google account data is used to provide those features. It is not used to train general-purpose AI models or to target advertising. <Link to="/privacy">Read how data is accessed, stored, shared and deleted</Link>.</p></article>
               <article><h3>Safety is part of using UFIConnect</h3><p>Non-consensual intimate imagery, including AI-generated content, is prohibited. UFIConnect does not use Google APIs to create or enable AI-generated non-consensual intimate imagery.</p><p>Report a post through its menu or use our <Link to="/copyright">copyright reporting process</Link>. <Link to="/policies#community">Community guidelines</Link> also cover harassment, exploitation, impersonation and other abuse.</p></article>
-              <article><h3>Your privacy choices</h3><p>Optional analytics and homepage ad measurement have separate consent controls. You can review or withdraw consent, disconnect supported accounts, and request access to or deletion of your information.</p><p><Link to="/#analytics">Cookie and tracking choices</Link> Â· <Link to="/policies#retention">Retention and deletion</Link> Â· <Link to="/policies">All policies</Link></p></article>
+              <article><h3>Your privacy choices</h3><p>Optional analytics and homepage ad measurement have separate consent controls. You can review or withdraw consent, disconnect supported accounts, and request access to or deletion of your information.</p><p><Link to="/#analytics">Cookie and tracking choices</Link> · <Link to="/policies#retention">Retention and deletion</Link> · <Link to="/policies">All policies</Link></p></article>
             </div>
           </section>
 
