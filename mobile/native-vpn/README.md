@@ -46,6 +46,10 @@ Before generating store artifacts, test on both platforms: first-use permission 
 
 App Store guideline 5.4 requires an organization developer account for VPN services and a pre-use data disclosure. The user confirmed Organization enrollment. The screen includes the concrete data-use disclosure; confirm the published privacy policy, permitted territories, any required licenses, and store payment/access rules before submission. Google Play's VPN/foreground-service declarations also need review for this new capability. Keep store descriptions accurate until native validation is complete.
 
+Use the [VPN privacy and store metadata checklist](PRIVACY-REVIEW.md) for the
+actual collection inventory, analytics exclusions, policy publication and App
+Store privacy answers. Native third-party analytics stays disabled in this build.
+
 ## Primary references
 
 - [Official WireGuardKit integration and Go bridge](https://git.zx2c4.com/wireguard-apple/about/)

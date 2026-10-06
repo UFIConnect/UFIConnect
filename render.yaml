@@ -29,6 +29,9 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      # Private approved gateway definition; includes its per-gateway credential.
+      - key: MANAGED_VPN_GATEWAYS
+        sync: false
       # Verified Render private proxy -> Cloudflare edge -> public client.
       # See docs/feed-region-deployment.md before changing this boundary.
       - key: TRUST_PROXY
@@ -895,7 +898,7 @@ services:
       # providers; executable scripts require the app origin or a fixed hash.
       - path: /*
         name: Content-Security-Policy
-        value: "default-src 'self'; script-src 'self' 'sha256-gLGGwnWLYJts3F1piq5Gz2YSkGtXpG27BBVWgtZhjg0=' 'sha256-F0CTsePvbvaJJUS918Ug2pR6wyVTBnyJ9A5RJ6xNZ3Y=' https://www.youtube.com https://s.ytimg.com https://www.googletagmanager.com https://www.googleadservices.com https://www.google.com; script-src-attr 'none'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' https: data: blob:; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' https:; media-src 'self' https: blob:; frame-src 'self' https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self' https://*.auth0.com https://checkout.stripe.com; frame-ancestors 'self'; upgrade-insecure-requests"
+        value: "default-src 'self'; script-src 'self' 'sha256-gLGGwnWLYJts3F1piq5Gz2YSkGtXpG27BBVWgtZhjg0=' 'sha256-GD2VrV/mFZyihLUlyhXJNXiLDLJIMV6DmsAk2ENlvi8=' https://www.youtube.com https://s.ytimg.com https://www.googletagmanager.com https://www.googleadservices.com https://www.google.com; script-src-attr 'none'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' https: data: blob:; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' https:; media-src 'self' https: blob:; frame-src 'self' https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self' https://*.auth0.com https://checkout.stripe.com; frame-ancestors 'self'; upgrade-insecure-requests"
       - path: /*
         name: Strict-Transport-Security
         value: max-age=63072000; includeSubDomains; preload

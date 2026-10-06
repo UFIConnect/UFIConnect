@@ -104,7 +104,7 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
     // Exclude collectors, their reports, and health probes. Otherwise viewing
     // metrics or health polling would manufacture the service activity shown.
     const path = req.path || '';
-    if (path.startsWith('/analytics') || path.startsWith('/office') || ['/health', '/health/details', '/readyz'].includes(path)) return next();
+    if (path.startsWith('/analytics') || path.startsWith('/office') || /^\/vpn(?:\/|$)/.test(path) || ['/health', '/health/details', '/readyz'].includes(path)) return next();
     const started = now();
     res.once('finish', () => {
       const elapsed = Math.max(0, Math.min(300_000, now() - started));

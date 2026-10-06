@@ -35,6 +35,28 @@ test('required usage sends only fixed categories and deduplicates repeated navig
   metrics.dispose();
 });
 
+test('VPN screens and failures never generate service metrics even after performance opt-in', async () => {
+  const requests = [];
+  const metrics = createServiceMetrics({ apiBase: 'https://api.example.test', fetcher: (url, options) => requests.push({ url, body: JSON.parse(options.body) }) });
+  metrics.setPerformanceEnabled(true);
+  metrics.trackScreen('VPN', 'private-device-key');
+  metrics.reportError('script_error');
+  await settle();
+  assert.deepEqual(requests, []);
+  metrics.trackScreen('ProfileMain', 'profile');
+  await settle();
+  metrics.trackScreen('VPN', 'another-private-key');
+  metrics.reportError('request_failed');
+  metrics.reportError('unhandled_rejection');
+  await settle();
+  assert.deepEqual(requests.map(request => request.body), [{ category: 'app_profile' }], 'VPN errors cannot inherit the previous screen category');
+  metrics.trackScreen('Feed', 'feed');
+  metrics.reportError('script_error');
+  await settle();
+  assert.deepEqual(requests.slice(1).map(request => request.body), [{ category: 'app_feed' }, { category: 'app_feed', kind: 'client_error', code: 'script_error' }]);
+  metrics.dispose();
+});
+
 test('performance collection requires opt-in, accepts only fixed codes and rate-limits duplicates', async () => {
   const requests = [];
   let now = 1000;

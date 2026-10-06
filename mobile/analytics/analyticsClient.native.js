@@ -1,7 +1,6 @@
-// A GA4 web measurement ID cannot initialize Firebase Analytics on iOS/Android.
-// Keep collection unavailable until the linked Firebase native apps, platform
-// configuration files, and a native consent-controlled SDK are configured.
-// See ../ANALYTICS.md for the concrete native activation requirements.
+// Native VPN builds do not initialize or send data to third-party analytics.
+// Keep this adapter inactive even if a web measurement ID is configured.
+// VPN screens are also excluded from the separate first-party service metrics.
 export function createMobileAnalytics() {
   return {
     available: false,

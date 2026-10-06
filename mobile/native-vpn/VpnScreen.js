@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ScrollView, Text, Pressable, StyleSheet, ActivityIndicator, AppState } from 'react-native';
+import { ScrollView, Text, Pressable, StyleSheet, ActivityIndicator, AppState, Linking } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { COLORS } from '../theme';
 import { vpn } from './client';
@@ -43,7 +43,11 @@ export default function VpnScreen() {
     <Text style={styles.status} accessibilityLiveRegion="polite">{LABELS[status.state]}</Text>
     <Text style={styles.body}>Connect this device through your UFIConnect VPN gateway. Your device asks for VPN permission the first time.</Text>
     <Text style={styles.body}>The connection routes device traffic and DNS through the tunnel. IPv6 traffic is blocked by this gateway. Disconnecting restores your regular connection.</Text>
-    <Text style={styles.body}>To provide VPN access, UFIConnect stores your account ID, device label, public connection key, assigned IP addresses, gateway, and session expiry. Your private connection key stays on this device. The gateway processes your traffic and DNS requests to forward them. VPN activity is excluded from app analytics.</Text>
+    <Text style={styles.body}>To authorize and secure your connection, UFIConnect stores your account ID, device label, public connection key, assigned tunnel address, gateway, registration time, access expiry and revocation state. Your private connection key stays on this device. Device records remain until account deletion and are included in your account export.</Text>
+    <Text style={styles.body}>We do not sell VPN user data, use it for advertising, profiling or AI training, or disclose it to third parties for their own purposes. VPN screens and connection activity are excluded from app analytics. Our hosting providers process data needed to operate the service. The gateway forwards traffic and DNS requests; its configuration does not log DNS queries or browsing activity. Network operators still process connection information.</Text>
+    <Pressable accessibilityRole="link" onPress={() => Linking.openURL('https://uficonnect.org/privacy').catch(() => setError('Open uficonnect.org/privacy to read the full privacy policy.'))}>
+      <Text style={styles.policy}>Read the privacy policy</Text>
+    </Pressable>
     {status.state === 'unavailable' && <Text style={styles.body}>Install a UFIConnect native build that includes VPN support. VPN does not run in Expo Go or a browser.</Text>}
     {error ? <Text style={styles.error} accessibilityRole="alert">{error}</Text> : null}
     {busy && <ActivityIndicator color={COLORS.primary} />}
@@ -53,4 +57,4 @@ export default function VpnScreen() {
     <Text style={styles.footnote}>Connected appears only when the native tunnel is active and has a recent secure handshake. Signing out disconnects this device.</Text>
   </ScrollView>;
 }
-const styles = StyleSheet.create({page:{flexGrow:1,padding:24,backgroundColor:'#fff',gap:20},title:{fontSize:28,fontWeight:'800',color:COLORS.text},status:{fontSize:20,fontWeight:'700',color:COLORS.primary},body:{fontSize:15,lineHeight:23,color:COLORS.text},button:{padding:17,backgroundColor:COLORS.primary,borderRadius:14,alignItems:'center'},buttonText:{color:'#fff',fontWeight:'800',fontSize:16},disabled:{opacity:0.4},error:{color:COLORS.danger,lineHeight:22},footnote:{fontSize:13,lineHeight:20,color:COLORS.muted}});
+const styles = StyleSheet.create({page:{flexGrow:1,padding:24,backgroundColor:'#fff',gap:20},title:{fontSize:28,fontWeight:'800',color:COLORS.text},status:{fontSize:20,fontWeight:'700',color:COLORS.primary},body:{fontSize:15,lineHeight:23,color:COLORS.text},policy:{fontSize:15,lineHeight:23,color:COLORS.primary,textDecorationLine:'underline'},button:{padding:17,backgroundColor:COLORS.primary,borderRadius:14,alignItems:'center'},buttonText:{color:'#fff',fontWeight:'800',fontSize:16},disabled:{opacity:0.4},error:{color:COLORS.danger,lineHeight:22},footnote:{fontSize:13,lineHeight:20,color:COLORS.muted}});

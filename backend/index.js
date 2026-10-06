@@ -8848,6 +8848,8 @@ function effectiveLastUserActivityAt() {
   return Math.max(lastRealUserActivityAt || 0, lastSharedUserActivityAt || 0);
 }
 function recordRealUserActivity(req = null, source = 'api') {
+  // VPN enrollment and renewal are operational requests, not app activity.
+  if (/^\/vpn(?:\/|$)/.test(req?.path || '')) return;
   lastRealUserActivityAt = Date.now();
   if (req && isLikelyBotRequest(req)) return;
   if (!db.isConnected()) return;
