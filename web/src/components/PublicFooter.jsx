@@ -1,3 +1,4 @@
+import AppearanceControl from './AppearanceControl';
 import { Link } from 'react-router-dom';
 import LegalLinks from './LegalLinks';
 import './PublicFooter.css';
@@ -14,7 +15,7 @@ const links = [
 
 export default function PublicFooter() {
   return (
-    <footer className="public-footer">
+    <footer className="public-footer"><div className="public-theme-control"><AppearanceControl compact /></div>
       <nav aria-label="Public site links">
         {links.map(([to, label]) => <Link key={to} to={to}>{label}</Link>)}
       </nav>
