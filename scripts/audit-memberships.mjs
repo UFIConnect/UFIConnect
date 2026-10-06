@@ -56,10 +56,10 @@ try {
     });
     await installAuditMember(page, app, 'membership-audit');
     await auditNavigate(page, server.origin + '/?audit-public');
-    await page.getByRole('heading', { name: 'Start free. Grow from there.', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Choose your membership.', exact: true }).waitFor();
     const pricing = page.locator('#pricing');
     const plan = name => pricing.locator('.landing-plan-card').filter({ has: page.getByRole('heading', { name, exact: true }) });
-    check(await plan('Free').locator('.landing-plan-price').textContent() === '$0/mo', 'Homepage keeps the free plan visible');
+    check(await plan('Free').count() === 0, 'Homepage membership choices omit the Free plan');
     check((await plan('Pro').locator('.landing-plan-price').textContent()).includes('$19.94/mo'), 'Homepage shows the Pro monthly price');
     check((await plan('Business').locator('.landing-plan-price').textContent()).includes('$199.94/mo'), 'Homepage shows the solo Business price');
     check((await plan('Business').innerText()).includes('Teams: $19.94 per person/month'), 'Homepage explains per-person Business team billing');
@@ -133,8 +133,8 @@ try {
     let releaseConfig;
     configWait = new Promise(resolve => { releaseConfig = resolve; });
     await auditNavigate(page, server.origin + '/resume-builder');
-    await page.getByRole('button', { name: 'Checking billing…', exact: true }).waitFor();
-    check(await page.getByRole('button', { name: 'Checking billing…', exact: true }).isDisabled(), 'Resume Builder cannot be bought before its price is validated');
+    await page.getByRole('button', { name: 'Checking billingâ€¦', exact: true }).waitFor();
+    check(await page.getByRole('button', { name: 'Checking billingâ€¦', exact: true }).isDisabled(), 'Resume Builder cannot be bought before its price is validated');
     configWait = null; releaseConfig();
     const resumePurchase = page.getByRole('button', { name: 'Unlock for $30.00 / month', exact: true });
     await resumePurchase.waitFor();
@@ -142,7 +142,7 @@ try {
     check(await page.getByRole('radio', { name: /Monthly/ }).isChecked(), 'Monthly Resume Builder is selected by default');
     check(await page.getByRole('radio', { name: /6 months/ }).isEnabled(), 'Six-month Resume Builder remains available');
     check(await page.getByText(/This add-on renews automatically/).isVisible(), 'Resume Builder explains renewal before checkout');
-    check(await page.getByRole('link', { name: 'Settings → Manage billing', exact: true }).isVisible(), 'Resume Builder provides billing recovery and cancellation access');
+    check(await page.getByRole('link', { name: 'Settings â†’ Manage billing', exact: true }).isVisible(), 'Resume Builder provides billing recovery and cancellation access');
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Resume Builder checkout fits ${width}px`);
     await resumePurchase.click();
     await page.getByText('Could not start checkout. Please try again.', { exact: true }).waitFor();
