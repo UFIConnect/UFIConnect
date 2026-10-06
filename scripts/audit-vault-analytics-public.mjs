@@ -73,6 +73,7 @@ try {
             json: checkoutFailure ? { message: 'Synthetic checkout failure. Please retry.' } : { url: 'https://checkout.stripe.com/synthetic-vault' } });
         }
         if (endpoint === '/vault/vpn/locations') return route.fulfill({ headers, json: { locations: [] } });
+        if (endpoint === '/vpn/config') return route.fulfill({ headers, json: { available: false, protocol: 'wireguard', gateways: [] } });
         if (endpoint === '/creator-analytics/report') return route.fulfill({ status: outage ? 503 : 200, headers,
           json: outage ? { message: 'Analytics temporarily unavailable.' } : report });
         if (endpoint === '/creator-analytics/refresh') { refreshes++; return route.fulfill({ headers, json: { refreshed: true } }); }
@@ -107,7 +108,8 @@ try {
       const subscribe = page.getByRole('button', { name: 'Subscribe for $3.94 USD / month', exact: true });
       await subscribe.waitFor();
       check(await subscribe.isEnabled(), 'Configured Vault membership opens checkout');
-      check(await page.getByRole('heading', { name: 'UFI VPN · setup pending', exact: true }).count() === 1, 'UFI VPN remains pending until hosting and gateway setup');
+      check(await page.getByRole('heading', { name: 'UFIConnect VPN', exact: true }).count() === 1, 'UFI VPN presents the managed native-app connection');
+      check(await page.getByRole('button', { name: 'Connect VPN', exact: true }).isDisabled(), 'Unconfigured VPN cannot launch a connection');
       await subscribe.click();
       await page.getByText('Synthetic checkout failure. Please retry.', { exact: true }).waitFor();
       check(await subscribe.isEnabled(), 'Checkout failure leaves a usable retry button');
@@ -117,26 +119,21 @@ try {
       await page.goto(origin + '/vault?upgrade=success');
       await page.getByText('Payment is still being confirmed. Check status again shortly before starting another checkout.', { exact: true }).waitFor();
       check(await page.getByRole('button', { name: 'Create vault', exact: true }).isDisabled(), 'A checkout return URL cannot grant membership');
-      check(await page.getByRole('button', { name: 'VPN locked', exact: true }).isDisabled(), 'Unsubscribed public VPN controls are locked');
+      check(await page.getByRole('button', { name: 'Connect VPN', exact: true }).isDisabled(), 'Unsubscribed public VPN controls are locked');
       check(await page.getByRole('button', { name: 'Create vault', exact: true }).isDisabled(), 'New Vault creation requires an active subscription');
       check(await page.locator('.vault-unlock-content .vault-vpn-subscription').count() === 1, 'VPN offer is in A space that’s yours');
       check(await page.locator('.vault-secondary-column .vault-vpn-subscription').count() === 0, 'VPN offer has no duplicate in the right column');
       check(await page.locator('.vault-vpn-quick-action .vault-button').count() === 1, 'VPN has one prominent connection action');
-      check(await page.locator('.vault-vpn-setup').evaluate(element => !element.open), 'VPN setup starts collapsed');
+      check(await page.locator('.vault-vpn-setup').count() === 0, 'Public VPN has no legacy provider/profile setup');
       vpnPaid = true;
       await page.getByRole('button', { name: 'Check subscription status', exact: true }).click();
       await page.getByRole('button', { name: 'Manage or cancel subscription', exact: true }).waitFor();
-      check(await page.getByText('Managed on your device', { exact: true }).count() === 1, 'Confirmed billing never fabricates an active VPN tunnel');
-      await page.getByText('Device, locations and setup', { exact: true }).click();
-      for (const platform of ['Windows', 'Linux', 'iOS', 'Android']) {
-        await page.getByRole('group', { name: 'VPN device' }).getByRole('button', { name: platform, exact: true }).click();
-        check(await page.getByText('Managed on your device', { exact: true }).count() === 1, `${platform} handoff must not fabricate a connection`);
-      }
-      check(await page.getByLabel('Your configured countries', { exact: true }).isDisabled(), 'Country switching requires a configured profile');
+      check(await page.locator('.vault-managed-vpn .vault-status').innerText() === 'Unavailable', 'Confirmed billing never fabricates an available gateway or active VPN tunnel');
+      check(await page.getByLabel('Your configured countries', { exact: true }).count() === 0, 'Managed VPN removes manually configured country labels');
       vpnPaid = false;
       await page.getByRole('button', { name: 'Check subscription status', exact: true }).click();
-      await page.getByRole('button', { name: 'VPN locked', exact: true }).waitFor();
-      check(await page.getByRole('button', { name: 'Connect using device settings', exact: true }).isDisabled(), 'Loss of entitlement locks public connector actions');
+      await page.locator('.vault-managed-vpn .vault-status').filter({ hasText: 'Subscription required' }).waitFor();
+      check(await page.getByRole('button', { name: 'Connect VPN', exact: true }).isDisabled(), 'Loss of entitlement locks native launch actions');
       await page.getByRole('navigation', { name: 'Vault pages' }).getByRole('link', { name: 'Device', exact: true }).click();
       check(await page.getByRole('button', { name: 'Orders are not open yet', exact: true }).isDisabled(), 'Device ordering remains locked');
       check(await page.locator('.vault-device-page input,.vault-device-page form').count() === 0, 'Locked ordering does not collect personal or payment details');

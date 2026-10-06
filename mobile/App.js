@@ -21,6 +21,7 @@ import ProfileScreen from './screens/ProfileScreen';
 import SecurityScreen from './screens/SecurityScreen';
 import PrivacyScreen from './screens/PrivacyScreen';
 import VpnScreen from './native-vpn/VpnScreen';
+import VpnLaunchBridge from './native-vpn/VpnLaunchBridge';
 import PreferencesProvider from './context/PreferencesContext';
 import ServiceMetricsProvider, { useServiceMetrics } from './analytics/ServiceMetricsProvider';
 import { COLORS } from './theme';
@@ -160,6 +161,7 @@ function RootNavigator() {
 
 function TrackedNavigation() {
   const navigationRef = React.useRef(null);
+  const [navigationReady, setNavigationReady] = React.useState(false);
   const { trackScreen } = useAnalytics();
   const metrics = useServiceMetrics();
   const trackCurrentScreen = () => {
@@ -168,8 +170,9 @@ function TrackedNavigation() {
     metrics.trackScreen(route?.name, route?.key);
   };
   return (
-    <NavigationContainer ref={navigationRef} onReady={trackCurrentScreen} onStateChange={trackCurrentScreen}>
+    <NavigationContainer ref={navigationRef} onReady={() => {setNavigationReady(true);trackCurrentScreen();}} onStateChange={trackCurrentScreen}>
       <StatusBar style="dark" />
+      <VpnLaunchBridge navigationRef={navigationRef} navigationReady={navigationReady} />
       <RootNavigator />
     </NavigationContainer>
   );

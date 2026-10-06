@@ -38,6 +38,11 @@ their API requests without a browser challenge. A running timer or a successful
 oneshot exit does not prove polling works: verify fresh desired-state timestamps
 and the agent's `updated` outcome, because safe closure also exits successfully.
 
+After the owner disabled the edge challenge, public API health returned HTTP 200
+from both the operator network and Germany at 08:05 UTC on October 6. Protected
+VPN routes again returned JSON authentication errors rather than challenge HTML.
+The gateway's current authenticated desired state and active timers also passed.
+
 ## Gateway setup and checks
 
 The reviewed cloud-init definition installs WireGuard, a private DNS resolver, a firewall and serialized synchronization/expiry timers. SSH is restricted to the operator's current IPv4 address and an Ed25519 key. Private key files and gateway credentials are readable only by root.

@@ -139,7 +139,9 @@ function createManagedVpn({ db, billing, gateways = [], now = Date.now, leaseSec
       const sessionUntil = await verifyIdentity(client, owner, identity);
       const expiresAt = iso(Math.min(now() + 180000, paidUntil, sessionUntil));
       const code = randomBytes(32).toString('base64url');
-      await client.query('DELETE FROM managed_vpn_launches WHERE expires_at<=$1 OR (user_id=$2 AND platform=$3)', [iso(now()), userId, body.platform]);
+      // Keep cleanup within the locked account; do not take another owner's
+      // ticket locks while holding this account/session lock.
+      await client.query('DELETE FROM managed_vpn_launches WHERE user_id=$1 AND (expires_at<=$2 OR platform=$3)', [userId, iso(now()), body.platform]);
       await client.query(`INSERT INTO managed_vpn_launches
         (token_hash,user_id,platform,auth_version,initiating_session_id,initiating_auth_subject,expires_at)
         VALUES($1,$2,$3,$4,$5,$6,$7)`, [digest(code).toString('hex'), userId, body.platform,
@@ -156,7 +158,7 @@ function createManagedVpn({ db, billing, gateways = [], now = Date.now, leaseSec
       if (!owner || owner.billing_closed || !owner.vpn_connector_addon || paidUntil <= now()) throw fault(403, 'Your paid VPN membership is not active.');
       await verifyIdentity(client, owner, identity);
       const { rows: [ticket] } = await client.query(`SELECT * FROM managed_vpn_launches
-        WHERE token_hash=$1 AND user_id=$2 AND platform=$3 AND expires_at>$4 FOR UPDATE`,
+        WHERE token_hash=$1 AND user_id=$2 AND platform=$3 AND expires_at>$4`,
       [digest(body.code).toString('hex'), userId, body.platform, iso(now())]);
       if (!ticket || Number(ticket.auth_version) !== Number(owner.auth_version)) throw fault(409, 'This connection request expired. Select Connect VPN on the website again.');
       if (ticket.initiating_session_id) {
@@ -167,6 +169,13 @@ function createManagedVpn({ db, billing, gateways = [], now = Date.now, leaseSec
         || ticket.initiating_auth_subject !== owner.auth_subject) {
         throw fault(409, 'The browser account changed. Select Connect VPN on the website again.');
       }
+      // Logout locks its session before cascading to launch rows. Acquire that
+      // session first too, then lock/recheck the ticket; the opposite order can
+      // deadlock a legitimate sign-out against this connection request.
+      const { rows: [current] } = await client.query(`SELECT token_hash FROM managed_vpn_launches
+        WHERE token_hash=$1 AND user_id=$2 AND platform=$3 AND expires_at>$4 FOR UPDATE`,
+      [ticket.token_hash, userId, body.platform, iso(now())]);
+      if (!current) throw fault(409, 'This connection request expired. Select Connect VPN on the website again.');
       await client.query('DELETE FROM managed_vpn_launches WHERE token_hash=$1', [ticket.token_hash]);
       return { action: 'connect' };
     });

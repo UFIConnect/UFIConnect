@@ -20,3 +20,7 @@
 .vault-subscription-slot .vault-vpn-subscription .vault-text-button { display: block; margin-top: 12px; }
 .vault-access-home { margin-bottom: 24px; }
 .vault-access-home .vault-vpn-subscription { margin-top: 8px; border-top: 0; padding-top: 0; }
+.vault-managed-vpn .vault-vpn-heading { flex-wrap: wrap; gap: 10px; }
+.vault-managed-vpn .vault-status { white-space: normal; }
+.vault-managed-vpn .vault-footnote a { color: inherit; text-decoration: underline; }
+.vault-managed-vpn .vault-vpn-guide p { overflow-wrap: anywhere; }
