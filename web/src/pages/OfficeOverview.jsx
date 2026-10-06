@@ -27,17 +27,17 @@ function FeedViews() {
 export default function OfficeOverview() {
   return <PublicOverviewLayout>
     <Helmet>
-      <title>How UFIC works | UFIConnect</title>
+      <title>How UFI works | UFIConnect</title>
       <meta name="description" content="How UFIConnect connects sources, organizes posts and delivers mixed, source and following feeds alongside community, career and account tools." />
       <link rel="canonical" href="https://uficonnect.org/how-it-works" />
-      <meta property="og:title" content="How UFIC works" />
+      <meta property="og:title" content="How UFI works" />
       <meta property="og:description" content="Content flow, feed controls, connected accounts and the tools available in UFIConnect." />
       <meta property="og:url" content="https://uficonnect.org/how-it-works" />
       <meta property="og:type" content="website" />
     </Helmet>
     <section className="public-overview-hero">
       <span className="public-overview-eyebrow">Platform overview</span>
-      <h1>How UFIC works</h1>
+      <h1>How UFI works</h1>
       <p className="public-overview-lead">A shared workspace for content discovery, communities and professional activity.</p>
       <p>UFIConnect organizes available content from multiple sources into mixed, source-specific and following feeds. Source attribution, account permissions and provider playback rules remain attached to the content throughout that process.</p>
       <div className="public-overview-actions"><Link to="/global" className="public-overview-button">View the public feed <ArrowRight size={17} aria-hidden="true" /></Link><a href="#content-flow">Explore the content flow</a></div>
