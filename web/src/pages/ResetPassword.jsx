@@ -60,10 +60,7 @@ export default function ResetPassword() {
       </Helmet>
       <div className="auth-page">
         <div className="auth-card">
-          <div className="auth-logo">
-            <div className="auth-logo-icon">UFI</div>
-            <span className="auth-logo-name">UFIconnect</span>
-          </div>
+          <Link to="/" className="auth-logo" aria-label="UFIConnect home"><img src="/uficonnect-wordmark.svg?v=blue-ufi-20261006" alt="UFIConnect" width="180" height="36" /></Link>
 
           <h1 className="auth-heading">Set a new password</h1>
 

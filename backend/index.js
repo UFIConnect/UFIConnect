@@ -1207,11 +1207,14 @@ function signES256JWT(header, payload) {
 }
 
 function createDPoPProof(method, url, { nonce, accessToken } = {}) {
+  const target = new URL(url);
+  target.search = '';
+  target.hash = '';
   const header = { alg: 'ES256', typ: 'dpop+jwt', jwk: BLUESKY_SIGNING_KEY.publicJwk };
   const payload = {
     jti: crypto.randomUUID(),
     htm: method,
-    htu: url,
+    htu: target.href,
     iat: Math.floor(Date.now() / 1000),
   };
   if (nonce) payload.nonce = nonce;
@@ -6319,7 +6322,7 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false, userId = null
     // against looping if the refresh itself doesn't actually fix it (e.g.
     // the refresh token was itself revoked).
     if (/HTTP 401/.test(e.message) && userId && !_retried) {
-      const newToken = await refreshGoogleAccessToken(userId);
+      const newToken = await refreshGoogleAccessToken(userId, token);
       if (newToken) return fetchYouTubeSubscriptionFeed(newToken, { bust: true, userId, connectedAt, _retried: true });
     }
     if (/HTTP 401/.test(e.message)) {
@@ -11982,17 +11985,6 @@ function filterByUserTopics(posts, userTopics, { fallbackToInput = true } = {}) 
   return posts;
 }
 
-// YouTube subscriptions have no UFIconnect topic label. The member already
-// chose these channels, so an absent label must not erase their Following
-// feed. Call only after account/source scoping and explicit topic filtering.
-function filterFollowingBySavedTopics(posts, userTopics) {
-  const matching = new Set(userTopics.length
-    ? filterByUserTopics(posts, userTopics, { fallbackToInput: false })
-    : []);
-  return posts.filter(post => matching.has(post)
-    || (post?.source === 'youtube' && !String(post.topic || '').trim()));
-}
-
 // The actual shape of the default landing feed (and Videos' first page —
 // see handleVideoFeedRequest): two phases, both built from the same
 // roundRobinMerge primitive the rest of this pipeline already uses.
@@ -15491,7 +15483,7 @@ async function fetchYouTubeOwnUploads(token, { bust = false, userId = null, conn
     return scoped;
   } catch (e) {
     if (/HTTP 401/.test(e.message) && userId && !_retried) {
-      const newToken = await refreshGoogleAccessToken(userId);
+      const newToken = await refreshGoogleAccessToken(userId, token);
       if (newToken) return fetchYouTubeOwnUploads(newToken, { bust: true, userId, connectedAt, _retried: true });
     }
     if (/HTTP 401/.test(e.message)) {
@@ -15842,6 +15834,30 @@ const followingSourceCache = new Map(); // "userId::source" ? { posts, fetchedAt
 const FOLLOWING_SOURCE_REFRESH_MS = 5 * 60 * 1000;
 const FOLLOWING_SOURCE_CACHE_MAX_AGE_MS = FOLLOWING_SOURCE_REFRESH_MS * 2; // stale past 2 missed cycles — getFollowingFeedPosts falls back to a live call rather than serve something this old
 
+async function fetchConnectedFollowingSource(source, userId, { bust = false } = {}) {
+  // Other API workers and OAuth callbacks may have renewed these credentials.
+  const user = isDBId(userId) ? await getAuthUser(userId) : await getUser(userId);
+  const token = user?.socialTokens?.[source];
+  if (!token) return [];
+  const window = connectedSourceWindow(user, source);
+  // Bootstrap new connections with recent followed content. Own-content
+  // history keeps its existing connection-day boundary.
+  const startMs = Math.min(window.startMs, startOfUtcDayMs(Date.now() - FOLLOWING_LOOKBACK_MS));
+  const options = { bust, userId, connectedAt: new Date(startMs).toISOString(), _retried: true };
+  let raw;
+  try {
+    raw = await FOLLOWING_SOURCE_FETCHERS[source](token, options);
+  } catch (error) {
+    if (!isUnauthorizedCrossPostError(error) && !/access expired or was revoked/i.test(error.message)) throw error;
+    const renewed = await refreshConnectedAccessToken(userId, source, token);
+    if (!renewed) throw new Error(`${PLATFORMS[source]?.name || source} access could not be renewed. Reconnect this account in Connected accounts.`);
+    raw = await FOLLOWING_SOURCE_FETCHERS[source](renewed, { ...options, bust: true });
+  }
+  return capFollowingPosts(realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source })), {
+    sinceMs: startMs, untilMs: window.untilMs, limit: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS,
+  });
+}
+
 async function refreshFollowingSourceCaches() {
   if (!Object.keys(FOLLOWING_SOURCE_FETCHERS).length) return;
   for (const user of users) {
@@ -15852,9 +15868,9 @@ async function refreshFollowingSourceCaches() {
       const token = tokens[source];
       if (!token) continue;
       try {
-        const raw = await fetcher(token, { userId: user.id, connectedAt: connectedSourceWindow(user, source).connectedAt });
+        const fresh = await fetchConnectedFollowingSource(source, user.id);
         followingSourceCache.set(`${user.id}::${source}`, {
-          posts: capConnectedSourcePosts(realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source })), user, source),
+          posts: fresh,
           fetchedAt: Date.now(),
         });
       } catch (e) {
@@ -15975,8 +15991,7 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
         continue;
       }
       try {
-        const raw = await fetcher(token, { bust, userId, connectedAt: connectedSourceWindow(user, source).connectedAt });
-        const fresh = capConnectedSourcePosts(realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source })), user, source);
+        const fresh = await fetchConnectedFollowingSource(source, userId, { bust });
         followingSourceCache.set(`${userId}::${source}`, { posts: fresh, fetchedAt: Date.now() });
         externalPosts.push(...fresh);
       } catch (e) {
@@ -20366,8 +20381,14 @@ async function saveSocialToken(userId, platform, token, refreshToken, connectedA
   }
   try {
     if (isDBId(userId)) {
-      await db.query('UPDATE users SET social_tokens=$1, social_refresh_tokens=$2, social_connected_at=$3 WHERE id=$4',
-        [JSON.stringify(tokenVault.encryptMap(user.socialTokens, userId, 'access')), JSON.stringify(tokenVault.encryptMap(user.socialRefreshTokens, userId, 'refresh')), JSON.stringify(user.socialConnectedAt || {}), userId]);
+      // Merge only this provider, so another worker's recent connection or
+      // rotated refresh token cannot be overwritten by our cached user map.
+      await db.query(`UPDATE users SET social_tokens=COALESCE(social_tokens,'{}'::jsonb) || $1::jsonb,
+        social_refresh_tokens=COALESCE(social_refresh_tokens,'{}'::jsonb) || $2::jsonb,
+        social_connected_at=$3::jsonb || COALESCE(social_connected_at,'{}'::jsonb) WHERE id=$4`,
+        [JSON.stringify(tokenVault.encryptMap({ [platform]: token }, userId, 'access')),
+          JSON.stringify(tokenVault.encryptMap(refreshToken ? { [platform]: refreshToken } : {}, userId, 'refresh')),
+          JSON.stringify({ [platform]: user.socialConnectedAt[platform] }), userId]);
     } else {
       filestore.saveUsers(users);
     }
@@ -20375,33 +20396,68 @@ async function saveSocialToken(userId, platform, token, refreshToken, connectedA
     Object.assign(user, prev);
     throw err;
   }
+  followingSourceCache.delete(`${userId}::${platform}`);
 }
+
+const refreshConnectedAccessToken = require('./connected-token-refresh').createConnectedTokenRefresher({
+  async withAccount(userId, work) {
+    if (!isDBId(userId)) return work(await getUser(userId), null);
+    if (!db.isConnected()) throw new Error('Account storage is temporarily unavailable');
+    return db.withClient(async client => {
+      await client.query('BEGIN');
+      try {
+        const { rows } = await client.query('SELECT * FROM users WHERE id=$1 FOR UPDATE', [userId]);
+        const user = rows[0] ? dbRowToMemUser(rows[0]) : null;
+        const token = await work(user, client);
+        await client.query('COMMIT');
+        if (user) syncToMemory(user);
+        return token;
+      } catch (error) { await client.query('ROLLBACK'); throw error; }
+    });
+  },
+  async exchange(platform, current, refreshToken) {
+    let raw;
+    if (platform === 'bluesky') {
+      const session = JSON.parse(current);
+      const result = await atprotoPost(session.tokenEndpoint, {
+        grant_type: 'refresh_token', refresh_token: refreshToken,
+        client_id: blueskyClientId(),
+        client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        client_assertion: createBlueskyClientAssertion(session.issuer),
+      });
+      if (result.status >= 400 || !result.data?.access_token) return null;
+      if (result.data.sub && result.data.sub !== session.did) return null;
+      return { accessToken: JSON.stringify({ ...session, accessToken: result.data.access_token }), refreshToken: result.data.refresh_token };
+    }
+    const cfg = SOCIAL_CFG[platform];
+    if (!cfg || !['youtube', 'github', 'gitlab', 'twitch', 'reddit'].includes(platform)) return null;
+    const params = { grant_type: 'refresh_token', refresh_token: refreshToken };
+    const headers = {};
+    if (platform === 'reddit') headers.Authorization = `Basic ${Buffer.from(`${cfg.clientId()}:${cfg.clientSecret()}`).toString('base64')}`;
+    else Object.assign(params, { client_id: cfg.clientId(), client_secret: cfg.clientSecret() });
+    raw = await postForm(cfg.tokenUrl, params, headers);
+    return raw?.access_token ? { accessToken: raw.access_token, refreshToken: raw.refresh_token } : null;
+  },
+  async persist(user, platform, accessToken, refreshToken, client) {
+    if (client) {
+      await client.query(`UPDATE users SET social_tokens=COALESCE(social_tokens,'{}'::jsonb) || $1::jsonb,
+        social_refresh_tokens=COALESCE(social_refresh_tokens,'{}'::jsonb) || $2::jsonb WHERE id=$3`,
+        [JSON.stringify(tokenVault.encryptMap({ [platform]: accessToken }, user.id, 'access')),
+          JSON.stringify(tokenVault.encryptMap({ [platform]: refreshToken }, user.id, 'refresh')), user.id]);
+      user.socialTokens[platform] = accessToken;
+      user.socialRefreshTokens[platform] = refreshToken;
+      followingSourceCache.delete(`${user.id}::${platform}`);
+    } else await saveSocialToken(user.id, platform, accessToken, refreshToken);
+  },
+});
 
 // Offline consent supplies the refresh token needed for ongoing feed sync.
 // Legacy online-only connections must consent once again to obtain one.
-async function refreshGoogleAccessToken(userId) {
-  const user = await getUser(userId);
-  const refreshToken = user?.socialRefreshTokens?.youtube;
-  if (!refreshToken) return null;
-  const cfg = SOCIAL_CFG.youtube;
+async function refreshGoogleAccessToken(userId, rejectedToken) {
   try {
-    const raw = await postForm(cfg.tokenUrl, {
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-      client_id: cfg.clientId(),
-      client_secret: cfg.clientSecret(),
-    });
-    if (!raw.access_token) {
-      console.warn('[YouTube] refresh token exchange failed.');
-      return null;
-    }
-    // Google only returns a new refresh_token on rare re-consent flows —
-    // the original keeps working indefinitely otherwise, so it's kept
-    // unless a new one actually comes back.
-    await saveSocialToken(userId, 'youtube', raw.access_token, raw.refresh_token || refreshToken);
-    return raw.access_token;
+    return await refreshConnectedAccessToken(userId, 'youtube', rejectedToken);
   } catch (e) {
-    console.warn('[YouTube] refresh token exchange error:', e.message);
+    console.warn('[YouTube] refresh token exchange failed.');
     return null;
   }
 }
@@ -20420,8 +20476,9 @@ async function removeSocialToken(userId, platform) {
   if (user.socialConnectedAt) delete user.socialConnectedAt[platform];
   try {
     if (isDBId(userId)) {
-      await db.query('UPDATE users SET social_tokens=$1, social_refresh_tokens=$2, social_connected_at=$3 WHERE id=$4',
-        [JSON.stringify(tokenVault.encryptMap(user.socialTokens, userId, 'access')), JSON.stringify(tokenVault.encryptMap(user.socialRefreshTokens, userId, 'refresh')), JSON.stringify(user.socialConnectedAt || {}), userId]);
+      await db.query(`UPDATE users SET social_tokens=COALESCE(social_tokens,'{}'::jsonb) - $1::text,
+        social_refresh_tokens=COALESCE(social_refresh_tokens,'{}'::jsonb) - $1::text,
+        social_connected_at=COALESCE(social_connected_at,'{}'::jsonb) - $1::text WHERE id=$2`, [platform, userId]);
     } else {
       filestore.saveUsers(users);
     }
@@ -20655,10 +20712,10 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
     // next Following visit will pick it up regardless).
     const followingFetcher = FOLLOWING_SOURCE_FETCHERS[platform];
     if (followingFetcher) {
-      followingFetcher(accessToken, { userId: entry.userId, connectedAt })
-        .then(raw => {
+      fetchConnectedFollowingSource(platform, entry.userId, { bust: true })
+        .then(fresh => {
           followingSourceCache.set(`${entry.userId}::${platform}`, {
-            posts: capConnectedSourcePosts(realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source: platform })), connectedUser, platform),
+            posts: fresh,
             fetchedAt: Date.now(),
           });
         })
@@ -21826,9 +21883,10 @@ async function handleFeedRequest(req, res) {
     // their own feed, ranked by current region and member-specific history.
     // An explicit source choice is a browsing scope. Saved interests shape
     // the default feed; only an explicit topic choice narrows source browsing.
-    const scoped = topicsFilter.length || isSourceFiltered ? list
-      : isFollowingRequest ? filterFollowingBySavedTopics(list, userTopics)
-        : filterByUserTopics(list, userTopics, { fallbackToInput: false });
+    // Followed accounts are an explicit choice too. Saved interests rank
+    // their posts; only the topic filter above should narrow this pool.
+    const scoped = topicsFilter.length || isSourceFiltered || isFollowingRequest ? list
+      : filterByUserTopics(list, userTopics, { fallbackToInput: false });
     return scoped.filter(matchesMemberJob);
   };
   const personalizeForUser = (items, options = {}) => {
@@ -23768,9 +23826,6 @@ async function handleFollowingVideoFeedRequest(req, res) {
     const prefs = user?.preferences || {};
     const userTopics = userDeclaredFeedTopics(user, prefs);
     const videos = all.filter(isVideoSurfacePost).filter(matchesSearch).filter(matchesTopic);
-    const scopedVideos = topicsFilter.length || sourceFilter
-      ? videos
-      : filterFollowingBySavedTopics(videos, userTopics);
     // Same fix as handleFeedRequest's feedMode==='following' branch, applied
     // after the video-only filter above (equalizing the full mixed pool
     // first would waste round-robin fairness on posts that get dropped
@@ -23780,7 +23835,7 @@ async function handleFollowingVideoFeedRequest(req, res) {
     const userAffinity = await getUserAffinity(req.user.id);
     const locationContext = getFeedLocationContext(req, user);
     const ranked = orderNewestFeedCohorts(personalizeAuthenticatedFeedPosts(
-      buildEqualizedFollowingPool(scopedVideos, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS }),
+      buildEqualizedFollowingPool(videos, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS }),
       user,
       prefs,
       userAffinity,

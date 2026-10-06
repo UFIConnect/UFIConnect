@@ -29,7 +29,7 @@ export default function VaultDeviceOverview() {
       <figure className="public-vault-concept">
         <div className="public-vault-illustration" role="img" aria-label="Design concept of a matte black UFI Vault Card, with a top-edge power button and a contactless symbol.">
           <span className="public-vault-power" aria-hidden="true"><Power size={12} /></span>
-          <div className="public-vault-wordmark" aria-hidden="true"><span>UFI<span>connect</span></span><strong>Vault Card</strong></div>
+          <div className="public-vault-wordmark" aria-hidden="true"><img src="/uficonnect-mark.svg?v=blue-ufi-20261006" width="48" height="48" alt="" /><span>UFI<span>connect</span></span><strong>Vault Card</strong></div>
           <Wifi className="public-vault-contactless" size={36} aria-hidden="true" />
           <span className="public-vault-card-label" aria-hidden="true">DESIGN CONCEPT</span>
         </div>

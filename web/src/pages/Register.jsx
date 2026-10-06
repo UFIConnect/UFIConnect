@@ -578,7 +578,7 @@ export default function Register() {
 
       <div className="auth-page public-auth-page">
         <main className="auth-card" style={{ maxWidth: step === 0 ? 460 : 620 }}>
-          <Link to="/" className="auth-logo" aria-label="UFIConnect home"><img src="/uficonnect-wordmark.svg" alt="UFIConnect" width="180" height="36" /></Link>
+          <Link to="/" className="auth-logo" aria-label="UFIConnect home"><img src="/uficonnect-wordmark.svg?v=blue-ufi-20261006" alt="UFIConnect" width="180" height="36" /></Link>
 
           {/* ── Step indicator ── */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 28 }}>

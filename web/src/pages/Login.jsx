@@ -58,7 +58,7 @@ export default function Login() {
       </Helmet>
       <div className="auth-page public-auth-page">
       <main className="auth-card">
-        <Link to="/" className="auth-logo" aria-label="UFIConnect home"><img src="/uficonnect-wordmark.svg" alt="UFIConnect" width="180" height="36" /></Link>
+        <Link to="/" className="auth-logo" aria-label="UFIConnect home"><img src="/uficonnect-wordmark.svg?v=blue-ufi-20261006" alt="UFIConnect" width="180" height="36" /></Link>
         <p className="auth-tagline">Social connection meets job discovery.</p>
 
         <h1 className="auth-heading">Welcome back</h1>

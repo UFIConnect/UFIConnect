@@ -163,7 +163,7 @@ export default function Landing() {
         <header className="landing-header landing-header-refined">
           <div className="landing-header-inner">
             <Link to="/" className="landing-brand" aria-label="UFIconnect home">
-              <img className="landing-identity" src="/uficonnect-wordmark.svg" width="180" height="36" alt="UFIConnect" />
+              <img className="landing-identity" src="/uficonnect-wordmark.svg?v=blue-ufi-20261006" width="180" height="36" alt="UFIConnect" />
             </Link>
             <nav className="landing-nav-actions" aria-label="Homepage">
               <Link to="/global">Global Feed</Link>

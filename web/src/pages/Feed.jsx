@@ -16,6 +16,7 @@ import {
   FOLLOWING_EXCLUDED_SOURCE_IDS,
 } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
+import FollowingConnectionNotice from '../components/FollowingConnectionNotice';
 import HomeFeedTools from '../components/HomeFeedTools';
 import TopicFilterControl, { TopicChoices } from '../components/TopicFilterControl';
 import TravelDestinationPicker from '../components/TravelDestinationPicker';
@@ -3685,6 +3686,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           </button>
         </div>
       )}
+
+      {viewMode === 'following' && !loading && <FollowingConnectionNotice errors={sourceErrors} />}
 
       {lockedPlatform ? (
         <SocialConnectGate
