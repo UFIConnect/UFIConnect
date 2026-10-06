@@ -110,11 +110,11 @@ try {
     assert.equal(await hnCard.getByText('Joined', { exact: true }).count(), 0, 'A local source association does not claim membership at Hacker News');
     assert.equal(await redditCard.getByText(/^(Following source|Joined)$/).count(), 0, 'Unjoined sources have no relationship badge');
     assert.equal(await page.getByText('your group', { exact: true }).count(), 0);
-    await redditCard.getByLabel('31 likes', { exact: true }).waitFor();
+    await redditCard.getByRole('button', { name: 'Upvote on Reddit, 31 likes', exact: true }).waitFor();
     assert.equal(await redditCard.getByRole('button', { name: /^(Like|Unlike)$/ }).count(), 0);
     assert.deepEqual(memberLikes, [], 'Viewing source counts never changes a reaction');
     await auditReload(page);
-    await redditCard.getByLabel('31 likes', { exact: true }).waitFor();
+    await redditCard.getByRole('button', { name: 'Upvote on Reddit, 31 likes', exact: true }).waitFor();
     assert.equal(await redditCard.getByRole('button', { name: 'Comment on Reddit', exact: true }).count(), 0, 'No duplicate source comment action appears below the post');
     const commentAction = redditCard.locator('.post-chrome-actions').getByRole('button', { name: 'Show Comments', exact: true });
     assert.equal(await commentAction.count(), 1, 'One comments action is in the normal post action row');

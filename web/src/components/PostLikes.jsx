@@ -61,15 +61,12 @@ export default function PostLikes({ post, onPostUpdated }) {
     } finally { if (inFlight.current === request) inFlight.current = null; }
   }
 
+  const countLabel = count === null ? `${label} unavailable` : `${count.toLocaleString()} ${label}`;
+  const contents = <><HeartIcon filled={liked} /><span className="post-chrome-like-count" aria-hidden="true">{count === null ? '—' : count.toLocaleString()} {label}</span></>;
   let control;
-  if (!profile?.id) control = <Link className="post-chrome-action" to="/login" aria-label="Sign in to like" title="Sign in to like" onClick={event => event.stopPropagation()}><HeartIcon /></Link>;
-  else if (external && capability && !capability.like && sourceUrl) control = <a className="post-chrome-action" href={sourceUrl} target="_blank" rel="noopener noreferrer" title={`Open ${provider} to like`} aria-label={`Open ${provider} to like`} onClick={event => event.stopPropagation()}><HeartIcon /></a>;
-  else if (external && capability && !capability.connected) control = <Link className="post-chrome-action" data-locked="true" to="/connected-accounts?interactions=1" aria-label={`Connect ${provider} to like`} title={`Connect ${provider} to like`} onClick={event => event.stopPropagation()}><HeartIcon /></Link>;
-  else control = <button type="button" className="post-chrome-action" disabled={!canLike || Boolean(own?.busy)} aria-pressed={liked} aria-label={external ? `${actionLabel} on ${provider}` : actionLabel} title={external ? `${actionLabel} on ${provider}` : actionLabel} onClick={toggle}><HeartIcon filled={liked} /></button>;
-  return <span className="post-chrome-like post-chrome-like-counted" title={`${provider} ${label}`}>
-    {control}
-    <span className="post-chrome-like-count" aria-label={count === null ? `${label} unavailable` : `${count.toLocaleString()} ${label}`}>
-      {count === null ? '—' : count.toLocaleString()} {label}
-    </span>
-  </span>;
+  if (!profile?.id) control = <Link className="post-chrome-action" to="/login" aria-label={`Sign in to like, ${countLabel}`} title="Sign in to like" onClick={event => event.stopPropagation()}>{contents}</Link>;
+  else if (external && capability && !capability.like && sourceUrl) control = <a className="post-chrome-action" href={sourceUrl} target="_blank" rel="noopener noreferrer" title={`Open ${provider} to like`} aria-label={`Open ${provider} to like, ${countLabel}`} onClick={event => event.stopPropagation()}>{contents}</a>;
+  else if (external && capability && !capability.connected) control = <Link className="post-chrome-action" data-locked="true" to="/connected-accounts?interactions=1" aria-label={`Connect ${provider} to like, ${countLabel}`} title={`Connect ${provider} to like`} onClick={event => event.stopPropagation()}>{contents}</Link>;
+  else control = <button type="button" className="post-chrome-action" disabled={!canLike || Boolean(own?.busy)} aria-pressed={liked} aria-label={`${external ? `${actionLabel} on ${provider}` : actionLabel}, ${countLabel}`} title={external ? `${actionLabel} on ${provider}` : actionLabel} onClick={toggle}>{contents}</button>;
+  return <span className="post-chrome-like post-chrome-like-counted" title={`${provider} ${label}`}>{control}</span>;
 }

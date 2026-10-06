@@ -43,16 +43,14 @@
 .post-chrome-action:hover:not(:disabled) { filter: brightness(.96); }
 .post-chrome-action:disabled { opacity: .6; cursor: default; }
 .post-chrome-action[aria-pressed="true"], .post-chrome-action[aria-expanded="true"] { color: var(--source-color, var(--primary)); background: color-mix(in srgb, var(--source-color, var(--primary)) 12%, var(--card, #fff)); }
-/* Read-only counts use the source metric when one is supplied. */
+/* The heart and source count share one action and one focus target. */
 .post-chrome-like { display: inline-flex; align-items: center; flex-wrap: wrap; }
-.post-chrome-like-counted > svg { width: 18px; height: 18px; flex-shrink: 0; }
+.post-chrome-like-counted .post-chrome-action > svg { width: 18px; height: 18px; flex-shrink: 0; }
 .post-chrome-like a { text-decoration: none; }
 .post-chrome-source-count { margin-left: 8px; font-size: .72rem; color: var(--muted); }
 .post-chrome-like .post-chrome-action[data-locked="true"] { opacity: .55; }
-.post-chrome-like-counted > .post-chrome-action:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; padding-right: 8px; }
-.post-chrome-like-count { min-width: 0; padding: 0 12px 0 6px; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.post-chrome-like-count { min-width: 0; white-space: nowrap; }
 .post-chrome-like .post-chrome-action[aria-pressed="true"] { color: #E0245E; background: color-mix(in srgb, #E0245E 12%, var(--card, #fff)); }
-.post-chrome-like-counted .post-chrome-action[aria-pressed="true"] + .post-chrome-like-count { background: color-mix(in srgb, #E0245E 12%, var(--card, #fff)); color: #E0245E; }
 /* The options menu and then the source link sit together at the end of the row. */
 .post-chrome-actions > .post-chrome-more { margin-left: auto; }
 .post-chrome-source-link { gap: 4px; color: var(--source-color); background: color-mix(in srgb, var(--source-color) 10%, var(--card, #fff)); text-decoration: none; }
@@ -65,6 +63,5 @@
   /* One row on phones: tighter buttons, and the source link keeps just its mark. */
   .post-chrome-actions { gap: 4px; }
   .post-chrome-action { padding: 0 9px; min-width: 38px; }
-  .post-chrome-like-count { padding: 0 10px 0 4px; }
   .post-chrome-source-link > svg { display: none; }
 }
