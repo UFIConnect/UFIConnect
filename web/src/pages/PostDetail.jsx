@@ -5,8 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import GuestShell from '../components/GuestShell';
 import PostLikes from '../components/PostLikes';
-import ReportPostButton from '../components/ReportPostButton';
-import { PostTime } from '../components/PostCardChrome';
+import { PostTime, PostOptionsMenu } from '../components/PostCardChrome';
 import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
@@ -231,13 +230,15 @@ export default function PostDetail() {
         <div className="card post-card">
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
             {!post.isExternal && post.author?.id ? (
-              <Link to={post.author.id === profile?.id ? '/profile' : `/u/${post.author.id}`} style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none', color: 'inherit' }}>
-                <div className="avatar avatar-md">{initials(post.author?.name)}</div>
+              <>
+                <Link to={post.author.id === profile?.id ? '/profile' : `/u/${encodeURIComponent(post.author.id)}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+                  <div className="avatar avatar-md">{initials(post.author?.name)}</div>
+                </Link>
                 <div>
-                  <div style={{ fontWeight: 700, fontSize: '.88rem' }}>{post.author?.name || 'Member'}</div>
+                  <Link to={post.author.id === profile?.id ? '/profile' : `/u/${encodeURIComponent(post.author.id)}`} style={{ fontWeight: 700, fontSize: '.88rem', textDecoration: 'none', color: 'inherit' }}>{post.author?.name || 'Member'}</Link>
                   <PostTime post={post} />
                 </div>
-              </Link>
+              </>
             ) : (
               <>
                 <SourceMark source={post.source} label={src.icon} />
@@ -303,7 +304,7 @@ export default function PostDetail() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
             <PostLikes post={post} onPostUpdated={updated => setPost(current => ({ ...current, ...updated }))} />
             {token && <SavePostButton post={post} className="btn btn-ghost btn-sm save-item-button" />}
-            <ReportPostButton post={post} className="btn btn-ghost btn-sm" showLabel />
+            <PostOptionsMenu post={post} />
             {post.sourceUrl && (
               <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
                 style={{ marginLeft: 'auto', fontSize: '.75rem', fontWeight: 700, color: src.color, textDecoration: 'none' }}>

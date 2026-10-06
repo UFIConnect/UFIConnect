@@ -13,7 +13,7 @@ import { ALL_INTERESTS } from '../pages/Onboarding';
 import ConnectedPostActions from './ConnectedPostActions';
 import { SavePostButton } from './SaveButtons';
 import PostLikes from './PostLikes';
-import ReportPostButton from './ReportPostButton';
+import { PostOptionsMenu } from './PostCardChrome';
 import { ChevronDown, Search, SlidersHorizontal, RotateCw, Play, Pause, MessageCircle, ExternalLink } from 'lucide-react';
 import { videoDurationSeconds, isShortFeedVideo, videoSourceKey, safeMediaUrl, fitVideoFrame } from '../utils/videoFeedPolicy.mjs';
 import './VideoFeedView.css';
@@ -603,7 +603,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           <MessageCircle size={18} aria-hidden="true" />
         </button>
         <SavePostButton post={post} className="video-feed-save-button" showLabel={false} />
-        <ReportPostButton post={post} className="video-feed-report-button" />
+        <PostOptionsMenu post={post} />
         {originalUrl && <a href={originalUrl} target="_blank" rel="noopener noreferrer" aria-label="View original post" title="View original post"
           onClick={() => reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true })}><ExternalLink size={17} aria-hidden="true" /></a>}
       </div>

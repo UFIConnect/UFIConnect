@@ -49,6 +49,7 @@ const { PUBLIC_GROUP_LEGACY_SOURCES, inferPublicGroupId } = require('./group-fee
 const { GENERAL_UFI_GROUP_ID, isGeneralUfiFollowingPost, isFollowingSourceAllowed } = require('./following-scope');
 const { canonicalizePreferenceTopics, matchesPreferenceTopic } = require('./feed-preferences');
 const { trustedFeedNetworkLocation, memberFeedSnapshotKey } = require('./feed-location');
+const { sourceAuthorProfileUrl, safePostLink } = require('./post-links.mjs');
 const {
   VIDEO_FEED_MIN_DURATION_SECONDS,
   VIDEO_FEED_MAX_DURATION_SECONDS,
@@ -3801,6 +3802,8 @@ function parseYouTubeChannelRSS(xml, keyword, channelName) {
     const desc      = decodeHTMLEntities(get(/<media:description>([\s\S]*?)<\/media:description>/)).slice(0, 300);
     const thumb     = (/<media:thumbnail url="([^"]+)"/.exec(s) || [])[1] || null;
     const author    = get(/<name>(.*?)<\/name>/) || channelName;
+    const channelId = get(/<yt:channelId>(.*?)<\/yt:channelId>/) || (/<yt:channelId>(.*?)<\/yt:channelId>/.exec(xml) || [])[1] || '';
+    const profileUrl = sourceAuthorProfileUrl({ source: 'youtube', channelId });
     if (!videoId || !title) continue;
     posts.push({
       id:          `youtube_${videoId}`,
@@ -3813,7 +3816,7 @@ function parseYouTubeChannelRSS(xml, keyword, channelName) {
       sourceUrl:   `https://www.youtube.com/watch?v=${videoId}`,
       embedId:     videoId,
       topic:       keyword,
-      author:      { id: `youtube_ch_${author.replace(/\s+/g, '_')}`, name: author, title: 'YouTube', organization: 'YouTube' },
+      author:      { id: `youtube_ch_${author.replace(/\s+/g, '_')}`, name: author, title: 'YouTube', organization: 'YouTube', ...(profileUrl ? { profileUrl } : {}) },
       likes: [], likesCount: 0, commentsCount: 0,
       createdAt:   normalizeTimestamp(published || updated),
       isExternal:  true,
@@ -4239,7 +4242,7 @@ function mapMastodonPosts(data, tag) {
         sourceLabel: `@${t.account.acct}`,
         sourceUrl:   t.url,
         topic:       tag,
-        author:      { id: `mastodon_${t.account.id}`, name: t.account.display_name || t.account.username, title: 'Mastodon', organization: 'Mastodon', avatarUrl: safeAvatarUrl(t.account.avatar_static || t.account.avatar) },
+        author:      { id: `mastodon_${t.account.id}`, name: t.account.display_name || t.account.username, title: 'Mastodon', organization: 'Mastodon', avatarUrl: safeAvatarUrl(t.account.avatar_static || t.account.avatar), profileUrl: safePostLink(t.account.url) },
         likes: [], likesCount: t.favourites_count || 0, commentsCount: t.replies_count || 0,
         createdAt:   t.created_at,
         isExternal:  true,
@@ -17369,6 +17372,7 @@ async function migrateDB() {
     // playback actually started (see resolveVideoSource client-side).
     await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS media_poster TEXT`);
     await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS author_avatar_url TEXT`);
+    await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS author_profile_url TEXT`);
     await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS video_duration_seconds INTEGER`);
     await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS group_id TEXT`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_source_idx ON feed_posts_cache(source)`);
@@ -17453,6 +17457,7 @@ async function migrateDB() {
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS location TEXT`);
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS media_poster TEXT`);
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS author_avatar_url TEXT`);
+    await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS author_profile_url TEXT`);
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS video_duration_seconds INTEGER`);
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS group_id TEXT`);
     // fetched_at + id matches the transfer job's oldest-first drain order.
@@ -17524,6 +17529,7 @@ async function migrateDB() {
     await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS media_poster TEXT`);
     await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS video_duration_seconds INTEGER`);
     await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS group_id TEXT`);
+    await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS author_profile_url TEXT`);
     await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS archive_reason TEXT`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpa_archived_idx ON feed_posts_archive(archived_at)`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpa_reason_archived_idx ON feed_posts_archive(archive_reason, archived_at DESC)`);
@@ -17796,7 +17802,7 @@ const SOURCE_KEEP_FLOOR = envNumber('SOURCE_KEEP_FLOOR', 150, 20, 2000);
 // (one round trip, no risk of a row falling through a gap between two
 // separate queries). ON CONFLICT DO NOTHING covers a row that somehow
 // already made it to the archive (re-ingested, then trimmed again).
-const ARCHIVE_COLUMNS = 'id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, fetched_at, location, media_poster';
+const ARCHIVE_COLUMNS = 'id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, fetched_at, location, media_poster, author_profile_url';
 const ARCHIVE_RETURNING_COLUMNS = ARCHIVE_COLUMNS.split(', ').map((column) => `fp.${column}`).join(', ');
 // Was 2,000,000 — sized purely as "a number that felt generous," never
 // checked against what that actually costs in real disk space, and never
@@ -18879,8 +18885,8 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
     try {
       await db.query(
         `INSERT INTO ${targetTable}
-           (id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+           (id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url, author_profile_url)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
          ON CONFLICT (id) DO UPDATE SET
            group_id       = COALESCE(EXCLUDED.group_id, ${targetTable}.group_id),
            title          = EXCLUDED.title,
@@ -18897,6 +18903,7 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
            location       = EXCLUDED.location,
            media_poster   = EXCLUDED.media_poster,
            author_avatar_url = COALESCE(EXCLUDED.author_avatar_url, ${targetTable}.author_avatar_url),
+           author_profile_url = COALESCE(EXCLUDED.author_profile_url, ${targetTable}.author_profile_url),
            fetched_at     = NOW()`,
         [
           p.id, p.source,
@@ -18915,6 +18922,7 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
           p.location ? String(p.location).slice(0, 200) : null,
           p.mediaPoster || null,
           safeAvatarUrl(p.author?.avatarUrl),
+          sourceAuthorProfileUrl(p),
         ]
       );
       saved++;
@@ -18960,6 +18968,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
       location: p.location ? clean(p.location, 200) : null,
       media_poster: p.mediaPoster ? clean(p.mediaPoster) : null,
       author_avatar_url: safeAvatarUrl(p.author?.avatarUrl),
+      author_profile_url: sourceAuthorProfileUrl(p),
     });
   }
   if (!rows.length) return 0;
@@ -18983,12 +18992,13 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
          post_created_at TIMESTAMPTZ,
          location TEXT,
          media_poster TEXT,
-         author_avatar_url TEXT
+         author_avatar_url TEXT,
+         author_profile_url TEXT
        )
      )
      INSERT INTO ${targetTable} AS existing
-       (id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url)
-     SELECT id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url
+       (id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url, author_profile_url)
+     SELECT id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url, author_profile_url
      FROM incoming
      ON CONFLICT (id) DO UPDATE SET
        group_id       = COALESCE(EXCLUDED.group_id, existing.group_id),
@@ -19006,6 +19016,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
        location       = EXCLUDED.location,
        media_poster   = EXCLUDED.media_poster,
        author_avatar_url = COALESCE(EXCLUDED.author_avatar_url, existing.author_avatar_url),
+       author_profile_url = COALESCE(EXCLUDED.author_profile_url, existing.author_profile_url),
        fetched_at     = NOW()
      WHERE (EXCLUDED.group_id IS NOT NULL AND existing.group_id IS DISTINCT FROM EXCLUDED.group_id)
         OR existing.title IS DISTINCT FROM EXCLUDED.title
@@ -19021,7 +19032,8 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
         OR existing.post_created_at IS DISTINCT FROM EXCLUDED.post_created_at
         OR existing.location IS DISTINCT FROM EXCLUDED.location
         OR existing.media_poster IS DISTINCT FROM EXCLUDED.media_poster
-        OR (EXCLUDED.author_avatar_url IS NOT NULL AND existing.author_avatar_url IS DISTINCT FROM EXCLUDED.author_avatar_url)`,
+        OR (EXCLUDED.author_avatar_url IS NOT NULL AND existing.author_avatar_url IS DISTINCT FROM EXCLUDED.author_avatar_url)
+        OR (EXCLUDED.author_profile_url IS NOT NULL AND existing.author_profile_url IS DISTINCT FROM EXCLUDED.author_profile_url)`,
     [JSON.stringify(rows).replace(/\\u0000/gi, '')]
   );
   if (!options.skipTrim && targetTable === 'feed_posts_cache') trimFeedPostsCache();
@@ -19121,7 +19133,7 @@ function dbRowToFeedPost(r) {
     createdAt:   JOB_SOURCES.has(r.source)
       ? jobPostedDate(r.post_created_at)
       : normalizeTimestamp(r.post_created_at, r.fetched_at || Date.now()),
-    author:      { name: r.author_name, ...(safeAvatarUrl(r.author_avatar_url) ? { avatarUrl: safeAvatarUrl(r.author_avatar_url) } : {}) },
+    author:      { name: r.author_name, ...(safeAvatarUrl(r.author_avatar_url) ? { avatarUrl: safeAvatarUrl(r.author_avatar_url) } : {}), ...(safePostLink(r.author_profile_url) ? { profileUrl: safePostLink(r.author_profile_url) } : {}) },
     isExternal:  true,
   };
 }
@@ -27608,7 +27620,7 @@ registerCreatorAnalyticsRoutes(app, {service:creatorAnalytics,authenticate,limit
 scheduleRecurring(() => creatorAnalytics.prune().catch(() => {}), 60 * 60 * 1000);
 registerUfiVaultRoutes(app, {vault:ufiVault,authenticate,limiter:contentSubmissionLimiter});
 require('./source-interactions').registerSourceInteractionRoutes(app, {
-  authenticate, limiter: contentSubmissionLimiter, getUser, screenMemberContent,
+  authenticate, limiter: contentSubmissionLimiter, getUser: getPublicTargetUser, screenMemberContent,
   fetchImpl: fetch, atprotoGet, atprotoPostJSON, policyEnv: process.env,
   auditInteraction: creatorAnalytics.auditInteraction, reserveInteraction: creatorAnalytics.reserveInteraction, completeInteraction: creatorAnalytics.completeInteraction,
 });
@@ -28184,6 +28196,15 @@ async function toggleFeedPostLike(req, res) {
     }
     const feedPost = typeof postId === 'string' && postId.length <= 300 ? await findPostByIdWithDbFallback(postId) : null;
     if (!feedPost) return res.status(404).json({ message: 'Post not found.' });
+    // Legacy clients can still record UFI reactions, but cannot bypass the
+    // source connection required by the Home feed. Provider writes use
+    // /social/interactions and preserve their separate public counts.
+    if (!['bars', 'restaurants'].includes(feedPost.source)) {
+      const member = await getPublicTargetUser(req.user.id);
+      if (!member?.socialTokens?.[feedPost.source]) return res.status(403).json({
+        code: 'source_connection_required', message: 'Connect this source account before liking its posts.',
+      });
+    }
     const state = await setTableLike(db, 'external_post_likes', postId, req.user.id, desired);
     return res.json({ ...state, post: { id: postId, ...state, likesScope: 'uficonnect', likesAvailable: true,
       sourceLikesCount: Number(feedPost.sourceLikesCount ?? feedPost.likesCount) || 0 } });
@@ -30097,6 +30118,7 @@ function buildSavedPostSnapshot(rawPost) {
       title: savedPostString(author.title, 320),
       organization: savedPostString(author.organization, 320),
       avatarUrl: savedPostUrl(author.avatarUrl),
+      profileUrl: sourceAuthorProfileUrl(post) || '',
     },
     groupId: savedPostString(post.groupId || group.id, 700),
     group: group.id || group.name ? {

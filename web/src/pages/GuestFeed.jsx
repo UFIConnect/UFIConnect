@@ -5,7 +5,7 @@ import GuestShell from '../components/GuestShell';
 import PublicFooter from '../components/PublicFooter';
 import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
-import { OpenOnSource, PostHeader } from '../components/PostCardChrome';
+import { OpenOnSource, PostHeader, PostOptionsMenu } from '../components/PostCardChrome';
 import PostLikes from '../components/PostLikes';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { orderNewestFeedCohorts } from '../utils/feedOrdering';
@@ -155,6 +155,7 @@ function GuestPostCard({ post, active, muted, registerRef }) {
         <div className="post-chrome-actions">
           <PostLikes post={post} />
           {post.commentsCount > 0 && <span style={{ fontSize: '.8rem', color: 'var(--muted)' }}>{post.commentsCount.toLocaleString()} comments</span>}
+          <PostOptionsMenu post={post} />
           <OpenOnSource post={post} />
         </div>
       </div>

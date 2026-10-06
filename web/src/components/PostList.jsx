@@ -2,7 +2,7 @@
 import { Link } from 'react-router-dom';
 import client from '../api/client';
 import PostLikes from './PostLikes';
-import { PostTime } from './PostCardChrome';
+import { PostTime, PostOptionsMenu } from './PostCardChrome';
 import ImageLightbox from './ImageLightbox';
 import { InlineAutoplayVideo } from './videoMedia';
 import { SavePostButton } from './SaveButtons';
@@ -327,6 +327,7 @@ export default function PostList({
                 className="btn btn-ghost btn-sm save-item-button"
                 style={{ minWidth: 92 }}
               />
+              <PostOptionsMenu post={post} />
 
               {post.group && (
                 <span style={{
