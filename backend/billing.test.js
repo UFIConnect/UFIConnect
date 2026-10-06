@@ -92,6 +92,77 @@ function setup() {
 }
 async function alice() { return (await pg.query('SELECT * FROM users WHERE id=$1', [A])).rows[0]; }
 
+function rejectedCheckout(replayed = true, overrides = {}) {
+  return Object.assign(new Error('Product configuration rejected'), {
+    type: 'StripeInvalidRequestError', statusCode: 400,
+    headers: { 'idempotent-replayed': String(replayed) }, ...overrides,
+  });
+}
+
+for (const [tier, quantity] of [['vpn_connector', 1], ['business', 1], ['business', 3]]) {
+  test(`${tier} quantity ${quantity} recovers a cached rejection after configuration repair without duplicate checkout`, async () => {
+    const f = setup();
+    const create = f.stripe.checkout.sessions.create;
+    const keys = [];
+    f.stripe.checkout.sessions.create = async (data, options) => {
+      keys.push(options.idempotencyKey);
+      if (keys.length === 1) throw rejectedCheckout(false);
+      if (options.idempotencyKey === keys[0]) throw rejectedCheckout();
+      return create(data, options);
+    };
+    await assert.rejects(f.service.createCheckout(A, tier, quantity), /configuration rejected/);
+    const results = await Promise.all([f.service.createCheckout(A, tier, quantity), f.service.createCheckout(A, tier, quantity)]);
+    assert.equal(results[0].url, results[1].url);
+    assert.equal(keys[0], keys[1]);
+    assert.notEqual(keys[1], keys[2]);
+    assert.equal(f.sessions.size, 1);
+    assert.equal(f.creates[0].data.line_items[0].quantity, quantity);
+    assert.equal((await alice()).plan, 'free');
+    assert.equal((await alice()).vpn_connector_addon, false);
+  });
+}
+
+test('uncertain provider errors preserve the durable checkout key', async () => {
+  const f = setup();
+  const keys = [];
+  const errors = [rejectedCheckout(false), rejectedCheckout(true, { statusCode: 500 }),
+    rejectedCheckout(true, { type: 'StripeConnectionError' })];
+  f.stripe.checkout.sessions.create = async (data, options) => {
+    keys.push(options.idempotencyKey);
+    throw errors.shift();
+  };
+  for (let i = 0; i < 3; i++) await assert.rejects(f.service.createCheckout(A, 'business'));
+  assert.equal(new Set(keys).size, 1);
+  assert.equal(f.sessions.size, 0);
+});
+
+test('cached rejection recovery stops when provider history fails or another checkout remains payable', async () => {
+  const f = setup();
+  f.stripe.checkout.sessions.create = async () => { throw rejectedCheckout(false); };
+  await assert.rejects(f.service.createCheckout(A, 'business'));
+  const original = (await pg.query('SELECT attempt_id FROM billing_checkout_attempts WHERE user_id=$1', [A])).rows[0].attempt_id;
+  f.stripe.checkout.sessions.create = async () => { throw rejectedCheckout(); };
+  f.session('cs_other', null, { status: 'open', line_items: [{ price: 'price_business', quantity: 1 }] });
+  await assert.rejects(f.service.createCheckout(A, 'business'), { status: 409 });
+  f.sessions.clear();
+  f.providerOutage();
+  await assert.rejects(f.service.createCheckout(A, 'business'), /provider outage/);
+  assert.equal((await pg.query('SELECT attempt_id FROM billing_checkout_attempts WHERE user_id=$1', [A])).rows[0].attempt_id, original);
+});
+
+test('cached rejection recovery rotates at most once per request', async () => {
+  const f = setup();
+  const keys = [];
+  f.stripe.checkout.sessions.create = async (data, options) => {
+    keys.push(options.idempotencyKey);
+    throw rejectedCheckout();
+  };
+  await assert.rejects(f.service.createCheckout(A, 'business'), /configuration rejected/);
+  assert.equal(keys.length, 2);
+  assert.notEqual(keys[0], keys[1]);
+  assert.equal(f.sessions.size, 0);
+});
+
 test('billing schema reruns preserve valid checkout slots and reject unsupported slots', async () => {
   for (let pass = 0; pass < 2; pass++) for (const statement of BILLING_SCHEMA) await pg.exec(statement);
   const f = setup();
