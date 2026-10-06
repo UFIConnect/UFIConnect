@@ -1,4 +1,4 @@
-import AppearanceControl from '../components/AppearanceControl';
+import PublicBrand from '../components/PublicBrand';
 import { NavLink, Link } from 'react-router-dom';
 import LegalLinks from '../components/LegalLinks';
 import './PublicOverviews.css';
@@ -7,8 +7,8 @@ export default function PublicOverviewLayout({ children }) {
   return <div className="public-overview">
     <a className="public-overview-skip" href="#overview-content">Skip to content</a>
     <header className="public-overview-header">
-      <Link to="/" className="public-overview-brand"><img src="/uficonnect-wordmark.svg?v=blue-ufi-20261006" alt="UFIConnect" width="180" height="36" /></Link>
-      <nav aria-label="Explore UFIconnect"><div className="public-theme-control"><AppearanceControl compact /></div>
+      <Link to="/" className="public-overview-brand"><PublicBrand /></Link>
+      <nav aria-label="Explore UFIconnect">
         <NavLink to="/global">Global Feed</NavLink>
         <NavLink to="/vault-device">Vault device</NavLink>
         <NavLink to="/how-it-works">How UFI works</NavLink>

@@ -77,6 +77,7 @@ async function exportAccountData(db, userId) {
       FROM users WHERE id=$1`);
     const result = { exportedAt: new Date().toISOString(), formatVersion: 2, profile, billing };
     const collections = {
+      inboxReadReceipts: `SELECT item_id AS "itemId",read_at AS "readAt" FROM inbox_read_receipts WHERE user_id=$1 ORDER BY read_at,item_id`,
       businessTeamSeats: `SELECT owner_id AS "ownerId",member_id AS "memberId",joined_at AS "joinedAt"
         FROM business_team_members WHERE owner_id=$1 OR member_id=$1 ORDER BY owner_id,joined_at,member_id`,
       businessTeamInvitations: `SELECT id,owner_id AS "ownerId",invitee_id AS "inviteeId",email,created_at AS "createdAt",expires_at AS "expiresAt"

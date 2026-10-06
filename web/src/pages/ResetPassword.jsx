@@ -1,3 +1,4 @@
+import PublicBrand from '../components/PublicBrand';
 import { PASSWORD_GUIDANCE, validateNewPassword } from '../auth/passwordPolicy';
 import PasswordInput from '../components/PasswordInput';
 import { useEffect, useState } from 'react';
@@ -60,7 +61,7 @@ export default function ResetPassword() {
       </Helmet>
       <div className="auth-page">
         <div className="auth-card">
-          <Link to="/" className="auth-logo" aria-label="UFIConnect home"><img src="/uficonnect-wordmark.svg?v=blue-ufi-20261006" alt="UFIConnect" width="180" height="36" /></Link>
+          <Link to="/" className="auth-logo" aria-label="UFIConnect home"><PublicBrand /></Link>
 
           <h1 className="auth-heading">Set a new password</h1>
 

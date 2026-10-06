@@ -1,7 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
 import client from '../api/client';
+import { ArrowLeft, ExternalLink, RefreshCw } from 'lucide-react';
+import ConnectedInboxSources, { inboxExternalUrl, inboxSourceName } from '../components/ConnectedInboxSources';
+import './Messages.css';
 
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -132,115 +135,129 @@ function NewMessageModal({ onClose, onSelect }) {
 
 export default function Messages() {
   const navigate = useNavigate();
-  const [convs,      setConvs]      = useState([]);
-  const [loading,    setLoading]    = useState(true);
-  const [error,      setError]      = useState(false);
-  const [showModal,  setShowModal]  = useState(false);
+  const [convs, setConvs] = useState([]);
+  const [sources, setSources] = useState([]);
+  const [filter, setFilter] = useState('all');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [sourceError, setSourceError] = useState('');
+  const [showModal, setShowModal] = useState(false);
+  const [selected, setSelected] = useState(null);
+  const [thread, setThread] = useState(null);
+  const [threadLoading, setThreadLoading] = useState(false);
+  const [threadError, setThreadError] = useState('');
+  const [readError, setReadError] = useState('');
+  const request = useRef(0);
+  const threadRequest = useRef(0);
+  const selectedRef = useRef(null);
 
-  function loadMessages() {
-    setError(false);
+  const loadMessages = useCallback(async () => {
+    const id = ++request.current;
+    setError('');
+    setSourceError('');
     setLoading(true);
-    client.get('/messages')
-      .then(({ data }) => setConvs(data.conversations || []))
-      .catch(() => setError(true))
-      .finally(() => setLoading(false));
-  }
+    const loadGroup = async (endpoint, origin) => {
+      try {
+        const { data } = await client.get(endpoint);
+        if (id !== request.current) return;
+        const next = (data.conversations || []).map(conv => ({ ...conv, ...(origin === 'native' ? { source: 'ufi' } : {}), origin }));
+        if (origin === 'connected') {
+          setSources(data.sources || []);
+          setFilter(current => ['all', 'ufi'].includes(current) || next.some(conv => conv.source === current) || (data.sources || []).some(source => source.source === current) ? current : 'all');
+          if (selectedRef.current && !next.some(conv => conv.source === selectedRef.current.source && conv.id === selectedRef.current.id)) {
+            threadRequest.current += 1;
+            selectedRef.current = null;
+            setSelected(null);
+            setThread(null);
+          }
+        }
+        setConvs(current => [...current.filter(conv => conv.origin !== origin), ...next]
+          .sort((a, b) => (Date.parse(b.lastMessage?.createdAt) || 0) - (Date.parse(a.lastMessage?.createdAt) || 0)));
+      } catch {
+        if (id !== request.current) return;
+        if (origin === 'native') setError('Could not load UFIConnect messages. Try refreshing.');
+        else setSourceError('Could not refresh connected sources. Try again.');
+      }
+    };
+    await Promise.allSettled([loadGroup('/messages', 'native'), loadGroup('/connected-inbox/messages', 'connected')]);
+    if (id === request.current) setLoading(false);
+  }, []);
+  useEffect(() => { loadMessages(); return () => { request.current += 1; threadRequest.current += 1; }; }, [loadMessages]);
 
-  useEffect(() => { loadMessages(); }, []);
-
-  // Close modal on Escape
   useEffect(() => {
     if (!showModal) return;
-    const h = e => { if (e.key === 'Escape') setShowModal(false); };
-    document.addEventListener('keydown', h);
-    return () => document.removeEventListener('keydown', h);
+    const close = event => { if (event.key === 'Escape') setShowModal(false); };
+    document.addEventListener('keydown', close);
+    return () => document.removeEventListener('keydown', close);
   }, [showModal]);
 
-  function handleSelectUser(user) {
-    setShowModal(false);
-    navigate(`/messages/${user.id}`);
+  async function markThreadRead(conv, requestId) {
+    try {
+      const { data } = await client.post('/connected-inbox/messages/mark-read', { ids: [conv.id] });
+      if (requestId !== threadRequest.current) return;
+      if (Array.isArray(data.markedIds) && !data.markedIds.includes(conv.id)) throw new Error('Read status was not saved');
+      setConvs(current => current.map(item => item.id === conv.id && item.source === conv.source ? { ...item, unreadCount: 0 } : item));
+      setReadError('');
+      window.dispatchEvent(new Event('ufi-notifications-updated'));
+    } catch {
+      if (requestId === threadRequest.current) setReadError('Could not save read status. Try opening this conversation again.');
+    }
   }
+  async function openConversation(conv) {
+    if (conv.origin !== 'connected') { navigate(`/messages/${encodeURIComponent(conv.participant?.id || conv.id)}`); return; }
+    const id = ++threadRequest.current;
+    selectedRef.current = conv;
+    setSelected(conv);
+    setThread(null);
+    setThreadError('');
+    setReadError('');
+    setThreadLoading(true);
+    try {
+      const { data } = await client.get(`/connected-inbox/messages/${encodeURIComponent(conv.source)}/${encodeURIComponent(conv.id)}`);
+      if (id !== threadRequest.current) return;
+      setThread({ ...conv, ...data.conversation, messages: data.messages || data.conversation?.messages || [] });
+      setThreadLoading(false);
+      await markThreadRead(conv, id);
+    } catch {
+      if (id === threadRequest.current) {
+        setThreadError('Could not load this conversation. Refresh it or open the original source.');
+        setThreadLoading(false);
+      }
+    }
+  }
+  function closeThread() { threadRequest.current += 1; selectedRef.current = null; setSelected(null); setThread(null); }
+  function handleSelectUser(user) { setShowModal(false); navigate(`/messages/${encodeURIComponent(user.id)}`); }
+  const totalUnread = convs.reduce((sum, conv) => sum + Math.max(0, Number(conv.unreadCount) || 0), 0);
+  const visible = convs.filter(conv => filter === 'all' || conv.source === filter);
+  const sourceOptions = [...new Set([...sources.map(source => source.source), ...convs.filter(conv => conv.origin === 'connected').map(conv => conv.source)])];
+  const threadUrl = inboxExternalUrl(thread?.url || selected?.url);
 
-  const totalUnread = convs.reduce((s, c) => s + (c.unreadCount || 0), 0);
-
-  return (
-    <Layout unreadCount={totalUnread}>
-      {showModal && (
-        <NewMessageModal
-          onClose={() => setShowModal(false)}
-          onSelect={handleSelectUser}
-        />
-      )}
-
-      <div className="page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
-        <div>
-          <h1 className="page-title">Messages</h1>
-          <p className="page-subtitle">
-            {totalUnread > 0 ? `${totalUnread} unread message${totalUnread > 1 ? 's' : ''}` : 'All caught up'}
-          </p>
-        </div>
-        <button
-          className="btn btn-primary btn-sm"
-          onClick={() => setShowModal(true)}
-          style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}
-        >
-          New Message
-        </button>
+  return <Layout unreadCount={totalUnread}>
+    {showModal && <NewMessageModal onClose={() => setShowModal(false)} onSelect={handleSelectUser} />}
+    <div className="page-header messages-header">
+      <div><h1 className="page-title">Messages</h1><p className="page-subtitle">{loading ? 'Loading your inboxes' : totalUnread > 0 ? `${totalUnread} unread message${totalUnread > 1 ? 's' : ''}` : 'Your UFIConnect and connected source conversations'}</p></div>
+      <div className="messages-header-actions"><button className="btn btn-ghost btn-sm" aria-label="Refresh messages" disabled={loading} onClick={loadMessages}><RefreshCw size={17} /></button><button className="btn btn-primary btn-sm" onClick={() => setShowModal(true)}>New Message</button></div>
+    </div>
+    <div className="messages-inboxes">
+      <div className={`messages-list-pane${selected ? ' has-selection' : ''}`}>
+        <label className="inbox-source-filter">Source<select aria-label="Message source" value={filter} onChange={event => { setFilter(event.target.value); closeThread(); }}><option value="all">All sources</option><option value="ufi">UFIConnect</option>{sourceOptions.map(source => <option key={source} value={source}>{inboxSourceName(source)}</option>)}</select></label>
+        <ConnectedInboxSources sources={sources} kind="messages" error={sourceError} onRetry={loadMessages} />
+        {error && <div role="alert" className="connected-inbox-error">{error}<button className="btn btn-ghost btn-sm" onClick={loadMessages}>Try again</button></div>}
+        {loading && !convs.length ? <div className="inbox-state" role="status"><span className="spinner spinner-primary" /> Loading conversations</div> : !visible.length ? <div className="empty-state"><div className="empty-title">No conversations in this inbox</div><div className="empty-desc">{filter === 'ufi' ? 'Start a conversation with someone in your UFIConnect network.' : 'Messages from supported connected accounts appear here. Check connected sources for access and availability.'}</div><Link to={filter === 'ufi' ? '/search' : '/connected-accounts'} className="btn btn-ghost btn-sm">{filter === 'ufi' ? 'Find people' : 'Manage connected accounts'}</Link></div> : <div className="conv-list">{visible.map(conv => <button key={`${conv.source}:${conv.id}`} className={`conv-item${conv.unreadCount > 0 ? ' unread' : ''}${selected?.id === conv.id ? ' selected' : ''}`} onClick={() => openConversation(conv)}>
+          <span className="avatar avatar-md">{initials(conv.participant?.name || conv.title || inboxSourceName(conv.source))}</span>
+          <span className="conv-info"><span className="conv-name">{conv.title || conv.participant?.name || 'Conversation'}</span><span className="message-source-label">{inboxSourceName(conv.source)}</span><span className="conv-last">{conv.lastMessage?.isMe && 'You: '}{conv.lastMessage?.text || conv.lastMessage?.content || (conv.lastMessage?.hasAttachment ? 'Attachment' : 'Open conversation')}</span></span>
+          <span className="conv-right"><span className="conv-time">{timeAgo(conv.lastMessage?.createdAt)}</span>{conv.unreadCount > 0 && <span className="conv-unread-badge" aria-label={`${conv.unreadCount} unread`}>{conv.unreadCount}</span>}</span>
+        </button>)}</div>}
       </div>
-
-      {loading ? (
-        <div style={{ textAlign:'center', padding:48 }}>
-          <span className="spinner spinner-primary" />
-        </div>
-      ) : error ? (
-        <div className="empty-state">
-          <div className="empty-icon">!</div>
-          <div className="empty-title">Couldn't load messages</div>
-          <div className="empty-desc">Check your connection and try again.</div>
-          <button className="btn btn-primary btn-sm" style={{ marginTop: 14 }} onClick={loadMessages}>Try again</button>
-        </div>
-      ) : convs.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-icon">MSG</div>
-          <div className="empty-title">No conversations yet</div>
-          <div className="empty-desc">Start a conversation with someone in your network.</div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'center' }}>
-            <button className="btn btn-primary btn-sm" onClick={() => setShowModal(true)}>
-              New Message
-            </button>
-            <Link to="/search" className="btn btn-ghost btn-sm" style={{ textDecoration: 'none' }}>
-              Find people
-            </Link>
-          </div>
-        </div>
-      ) : (
-        <div className="conv-list">
-          {convs.map((conv) => (
-            <div
-              key={conv.id}
-              className={`conv-item${conv.unreadCount > 0 ? ' unread' : ''}`}
-              onClick={() => navigate(`/messages/${conv.participant?.id}`)}
-            >
-              <div className="avatar avatar-md">
-                {initials(conv.participant?.name)}
-              </div>
-              <div className="conv-info">
-                <div className="conv-name">{conv.participant?.name || 'Unknown'}</div>
-                <div className="conv-last">
-                  {conv.lastMessage?.isMe && '↑ '}
-                  {conv.lastMessage?.content || (conv.lastMessage?.hasAttachment ? 'Photo' : 'No messages yet')}
-                </div>
-              </div>
-              <div className="conv-right">
-                <div className="conv-time">{timeAgo(conv.lastMessage?.createdAt)}</div>
-                {conv.unreadCount > 0 && (
-                  <div className="conv-unread-badge">{conv.unreadCount}</div>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </Layout>
-  );
+      {selected && <section className="connected-message-thread" aria-label="Connected source conversation">
+        <div className="connected-message-heading"><button className="btn btn-ghost btn-sm" aria-label="Back to conversations" onClick={closeThread}><ArrowLeft size={18} /></button><div><h2>{selected.title || selected.participant?.name || 'Conversation'}</h2><span>{inboxSourceName(selected.source)}</span></div></div>
+        <p className="connected-message-note">Recent messages synced from {inboxSourceName(selected.source)}. Open the source to reply or view older messages.</p>
+        {threadUrl && <a href={threadUrl} target="_blank" rel="noopener noreferrer" className="btn btn-primary btn-sm connected-message-open">Open {inboxSourceName(selected.source)} <ExternalLink size={14} /></a>}
+        {threadLoading ? <div className="inbox-state" role="status"><span className="spinner spinner-primary" /> Loading conversation</div> : threadError ? <div className="connected-inbox-error" role="alert">{threadError}<button className="btn btn-ghost btn-sm" onClick={() => openConversation(selected)}>Retry conversation</button></div> : <>
+          {readError && <div className="connected-inbox-error" role="alert">{readError}<button className="btn btn-ghost btn-sm" onClick={() => markThreadRead(selected, threadRequest.current)}>Retry read status</button></div>}
+          {thread?.messages?.length ? <ol className="connected-message-list">{thread.messages.map((message, index) => <li key={message.id || index}><div><strong>{message.senderName || selected.participant?.name || inboxSourceName(selected.source)}</strong><time dateTime={message.createdAt || undefined}>{message.createdAt && new Date(message.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time></div><p>{message.text || 'This message contains content available on the original source.'}</p></li>)}</ol> : <div className="inbox-state">No recent messages were returned. Open the source to view the conversation.</div>}
+        </>}
+      </section>}
+    </div>
+  </Layout>;
 }

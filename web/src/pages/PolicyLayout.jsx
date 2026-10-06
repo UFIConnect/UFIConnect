@@ -1,4 +1,4 @@
-import AppearanceControl from '../components/AppearanceControl';
+import PublicBrand from '../components/PublicBrand';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import './Policies.css';
@@ -15,15 +15,15 @@ export default function PolicyLayout({ title, description, path, children }) {
       <meta property="og:url" content={`https://uficonnect.org${path}`} />
     </Helmet>
     <header className="ufi-policy-header">
-      <Link className="ufi-policy-brand" to="/"><img src="/uficonnect-wordmark.svg?v=blue-ufi-20261006" alt="UFIConnect" width="180" height="36" /></Link>
-      <nav aria-label="Public navigation"><div className="public-theme-control"><AppearanceControl compact /></div><Link to="/policies">Policies</Link><Link to="/login">Sign in</Link></nav>
+      <Link className="ufi-policy-brand" to="/"><PublicBrand /></Link>
+      <nav aria-label="Public navigation"><Link to="/policies">Policies</Link><Link to="/login">Sign in</Link></nav>
     </header>
     <main className="ufi-policy-main" id="policy-content">
       <div className="ufi-policy-intro">
         <p className="ufi-policy-eyebrow">Trust and safety</p>
         <h1>{title}</h1>
         <p>{description}</p>
-        <p className="ufi-policy-updated">Updated October 5, 2026 · UFIConnect, California, United States</p>
+        <p className="ufi-policy-updated">Updated October 6, 2026 · UFIConnect, California, United States</p>
       </div>
       {children}
     </main>

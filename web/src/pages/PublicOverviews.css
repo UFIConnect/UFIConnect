@@ -25,7 +25,6 @@
 .public-overview-skip:focus { top: 12px; }
 .public-overview-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; max-width: 1240px; margin: auto; padding: 22px 36px; border-bottom: 1px solid var(--overview-line); }
 .public-overview-brand { font-size: 1.35rem; font-weight: 800; letter-spacing: -.055em; text-decoration: none; white-space: nowrap; }
-.public-overview-brand > span { font-weight: 500; }
 .public-overview-brand img { display:block; max-width:100%; height:auto; }
 .public-overview-header { flex-wrap:wrap; }
 .public-overview-header nav { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: center; }

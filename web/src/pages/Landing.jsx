@@ -1,4 +1,4 @@
-import AppearanceControl from '../components/AppearanceControl';
+import PublicBrand from '../components/PublicBrand';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
@@ -164,9 +164,9 @@ export default function Landing() {
         <header className="landing-header landing-header-refined">
           <div className="landing-header-inner">
             <Link to="/" className="landing-brand" aria-label="UFIconnect home">
-              <img className="landing-identity" src="/uficonnect-wordmark.svg?v=blue-ufi-20261006" width="180" height="36" alt="UFIConnect" />
+              <PublicBrand />
             </Link>
-            <nav className="landing-nav-actions" aria-label="Homepage"><div className="public-theme-control"><AppearanceControl compact /></div>
+            <nav className="landing-nav-actions" aria-label="Homepage">
               <Link to="/global">Global Feed</Link>
               <Link to="/vault-device">Vault device</Link>
               <Link to="/how-it-works">How UFI works</Link>

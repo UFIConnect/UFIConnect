@@ -37,6 +37,8 @@ try {
       { id: 'system-1', type: 'system', user: null, read: true, createdAt: '2025-01-01T00:00:00Z' },
     ] } }));
     await page.route('**/api/notifications/mark-read', route => { if (!failRead) read = true; return route.fulfill({ status: failRead ? 503 : 200, json: { ok: !failRead } }); });
+    await page.route('**/api/connected-inbox/notifications', route => route.fulfill({ json: { notifications: [], sources: [] } }));
+    await page.route('**/api/connected-inbox/messages', route => route.fulfill({ json: { conversations: [], sources: [] } }));
     await page.route('**/api/users/alex/connect', route => { accepted = true; return route.fulfill({ json: { ok: true } }); });
     await page.route('**/api/users/search?*', route => { searches.push(new URL(route.request().url()).searchParams.get('q')); return route.fulfill({ json: { users: [{ id: 'maya', name: 'Maya Chen', title: 'Software engineer', role: 'Developer', skills: [], interests: [] }], totalCount: 1, registeredCount: 1, hasMore: false, countSource: 'database' } }); });
     await page.route('**/api/office/feed?*', route => {
@@ -61,9 +63,8 @@ try {
     await inbox.getByRole('button', { name: 'Unread', exact: true }).click();
     assert.equal(await inbox.locator('.inbox-item').count(), 1);
     await inbox.getByRole('button', { name: 'Mark all as read' }).click();
-    await page.getByText('Could not mark notifications read. Please try again.').waitFor();
+    await inbox.getByText('Could not save read status. Your unread updates are still available.').waitFor();
     assert.equal(await inbox.locator('.inbox-item.unread').count(), 1);
-    await page.getByRole('button', { name: 'Dismiss', exact: true }).click();
     failRead = false;
     await inbox.getByRole('button', { name: 'Mark all as read' }).click();
     await inbox.getByText('You are all caught up').waitFor();

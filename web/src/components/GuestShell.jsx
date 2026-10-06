@@ -1,3 +1,4 @@
+import PublicBrand from './PublicBrand';
 ﻿import { Link } from 'react-router-dom';
 
 import { ShieldCheck } from 'lucide-react';
@@ -14,7 +15,7 @@ export default function GuestShell({ children }) {
     <div className="guest-shell">
       <header className="guest-header">
         <Link to="/" className="guest-brand">
-          <img src="/uficonnect-wordmark.svg?v=blue-ufi-20261006" alt="UFIConnect" width="180" height="36" />
+          <PublicBrand />
         </Link>
         <div className="guest-actions">
           <Link to="/privacy#analytics" className="btn btn-ghost btn-sm guest-action" aria-label="Analytics privacy" title="Analytics privacy">

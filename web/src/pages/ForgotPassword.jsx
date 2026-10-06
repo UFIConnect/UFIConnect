@@ -1,3 +1,4 @@
+import PublicBrand from '../components/PublicBrand';
 ﻿import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
@@ -36,7 +37,7 @@ export default function ForgotPassword() {
       </Helmet>
       <div className="auth-page public-auth-page">
         <main className="auth-card">
-          <Link to="/" className="auth-logo" aria-label="UFIConnect home"><img src="/uficonnect-wordmark.svg?v=blue-ufi-20261006" alt="UFIConnect" width="180" height="36" /></Link>
+          <Link to="/" className="auth-logo" aria-label="UFIConnect home"><PublicBrand /></Link>
 
           <h1 className="auth-heading">Reset your password</h1>
           <p className="auth-sub">

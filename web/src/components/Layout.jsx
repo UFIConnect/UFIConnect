@@ -67,16 +67,11 @@ function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 }
 
-// The Notifications bell had no unread/pending indicator anywhere — a
-// member had no way to know a connection request or new follower was
-// waiting without remembering to open the page themselves. GET /notifications
-// already computed pendingConnections server-side; nothing on the client
-// ever read it. Small enough to just be a number in a dot rather than a
-// full component elsewhere.
+// The bell counts unseen updates. Requests remain actionable after being seen.
 function NavBadge({ count }) {
   if (!count) return null;
   return (
-    <span style={{
+    <span className="notification-nav-badge" aria-label={`${count} unread notifications`} style={{
       position: 'absolute', top: -2, right: -6,
       minWidth: 16, height: 16, padding: '0 4px', borderRadius: 8,
       background: '#EF4444', color: '#fff', fontSize: '.62rem', fontWeight: 700,
@@ -120,10 +115,7 @@ function PersonalLayout({ children, wide = false, feedSearch, discoveryPost, mob
   const navigate = useNavigate();
   const location = useLocation();
   const { canInstall, installed, triggerInstall } = useInstallPrompt();
-  // Pending connection requests + unread persisted notifications
-  // (message/comment/like/follow) combined — one badge for "you have
-  // something new to look at in Notifications," not two separate numbers
-  // competing for the same small dot.
+  // A pending request is not an unread update once the member has viewed it.
   const [notifBadge, setNotifBadge] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mobileAccountOpen, setMobileAccountOpen] = useState(false);
@@ -156,11 +148,14 @@ function PersonalLayout({ children, wide = false, feedSearch, discoveryPost, mob
   useEffect(() => {
     if (!profile) return;
     let cancelled = false;
+    let sequence = 0;
     function load() {
+      const current = ++sequence;
       client.get('/notifications/badge-counts')
         .then(({ data }) => {
-          if (cancelled) return;
-          setNotifBadge((data.pendingConnections || 0) + (data.unreadNotifications || 0));
+          if (cancelled || current !== sequence) return;
+          const count = Number(data.notificationCount ?? data.unreadNotifications ?? 0);
+          setNotifBadge(Number.isFinite(count) ? Math.max(0, count) : 0);
         })
         .catch(() => {});
     }

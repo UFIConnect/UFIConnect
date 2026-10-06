@@ -963,7 +963,7 @@ const SOCIAL_CFG = {
     tokenUrl: 'https://github.com/login/oauth/access_token',
     clientId:     () => process.env.GITHUB_CLIENT_ID,
     clientSecret: () => process.env.GITHUB_CLIENT_SECRET,
-    scope: 'read:user public_repo',
+    scope: 'read:user public_repo notifications',
     pkce: false,
   },
   gitlab: {
@@ -991,7 +991,7 @@ const SOCIAL_CFG = {
     tokenUrl: 'https://www.reddit.com/api/v1/access_token',
     clientId:     () => process.env.REDDIT_CLIENT_ID,
     clientSecret: () => process.env.REDDIT_CLIENT_SECRET,
-    scope: 'identity read submit',
+    scope: 'identity read submit privatemessages',
     pkce: false,
     basicAuth: true,
     extraAuthParams: { duration: 'permanent' },
@@ -1492,7 +1492,7 @@ app.get('/oauth/bluesky/client-metadata.json', (_req, res) => {
     redirect_uris: [oauthCallbackUrl('bluesky')],
     grant_types: ['authorization_code', 'refresh_token'],
     response_types: ['code'],
-    scope: 'atproto transition:generic',
+    scope: 'atproto transition:generic transition:chat.bsky',
     token_endpoint_auth_method: 'private_key_jwt',
     token_endpoint_auth_signing_alg: 'ES256',
     dpop_bound_access_tokens: true,
@@ -1550,7 +1550,7 @@ app.get('/auth/social/bluesky/start', authenticate, async (req, res) => {
       code_challenge_method: 'S256',
       state,
       redirect_uri: redirectUri,
-      scope: 'atproto transition:generic',
+      scope: 'atproto transition:generic transition:chat.bsky',
       login_hint: handle,
       client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
       client_assertion: createBlueskyClientAssertion(authServerMeta.issuer),
@@ -16969,6 +16969,7 @@ async function migrateDB() {
     `);
     await db.query(`CREATE INDEX IF NOT EXISTS notifications_user_idx ON notifications(user_id, created_at DESC)`);
     await db.query(`CREATE INDEX IF NOT EXISTS notifications_user_unread_idx ON notifications(user_id) WHERE read = false`);
+    await db.query(require('./inbox-receipts').INBOX_RECEIPTS_SCHEMA);
 
     // Web Push subscriptions — one row per browser/device a member has
     // enabled notifications on (a member can have several: phone + laptop),
@@ -20297,6 +20298,7 @@ async function saveSocialToken(userId, platform, token, refreshToken, connectedA
     throw err;
   }
   followingSourceCache.delete(`${userId}::${platform}`);
+  connectedInbox.invalidate(userId, platform);
 }
 
 const refreshConnectedAccessToken = require('./connected-token-refresh').createConnectedTokenRefresher({
@@ -20362,6 +20364,24 @@ async function refreshGoogleAccessToken(userId, rejectedToken) {
   }
 }
 
+const inboxReceipts = require('./inbox-receipts').createInboxReceipts({
+  db, isDBId, getUser, saveUsers: () => filestore.saveUsers(users),
+});
+const connectedInbox = require('./connected-inbox').createConnectedInbox({
+  request: require('./connected-inbox').createInboxRequest(https, createDPoPProof),
+  refreshToken: refreshConnectedAccessToken,
+  receipts: inboxReceipts,
+  getAccount: inboxAccount,
+});
+
+async function inboxAccount(userId) {
+  const stored = await getPublicTargetUser(userId);
+  if (!stored) throw Object.assign(new Error('Account not found.'), { status: 404 });
+  const user = await withBusinessMembership(stored);
+  // Recruiting memberships keep their inbox aligned with their work sources.
+  return user.plan === 'business' ? { ...user, socialTokens: Object.fromEntries(Object.entries(user.socialTokens || {}).filter(([source]) => CAREER_ACCOUNT_PLATFORMS.has(source))) } : user;
+}
+
 async function removeSocialToken(userId, platform) {
   const user = await getUser(userId);
   if (!user) return;
@@ -20386,6 +20406,7 @@ async function removeSocialToken(userId, platform) {
     Object.assign(user, prev);
     throw err;
   }
+  connectedInbox.invalidate(userId, platform);
 }
 
 // --- Social OAuth: initiate (returns URL so the SPA can navigate) ------------
@@ -21276,6 +21297,7 @@ async function purgeUser(uid) {
     if (process.env.NODE_ENV === 'production') throw Object.assign(new Error('Account not found.'), { status: 404 });
     filestore.saveUsersNow(users.filter(user => user.id !== uid));
   }
+  connectedInbox.invalidate(uid);
   const departedGroups = new Set(users.find(user => user.id === uid)?.joinedGroups || []);
   const idx = users.findIndex(u => u.id === uid);
   if (idx > -1) users.splice(idx, 1);
@@ -28637,94 +28659,60 @@ async function sendChildSafetyAlertEmail(report) {
   } catch { console.error('[email] Child-safety alert delivery failed; report remains in the Office Reports queue.'); }
 }
 
-// --- Notifications: pending connection requests + new followers ---------------
-app.get('/notifications', authenticate, async (req, res) => {
-  try {
-    const uid = req.user.id;
-
-    const receivedRequests = connections
-      .filter(c => c.toId === uid && c.status === 'pending')
-      .map(c => {
-        const from = users.find(u => u.id === c.fromId);
-        return from ? {
-          id:        `connreq_${c.id}`,
-          type:      'connection_request',
-          createdAt: c.createdAt,
-          user:      sanitizeUser(from),
-          read:      true, // has its own Accept/Decline UI, not a badge-tracked "unread" concept
-        } : null;
-      })
-      .filter(Boolean);
-
-    const newFollowers = follows
-      .filter(f => f.followingId === uid)
-      .map(f => {
-        const follower = users.find(u => u.id === f.followerId);
-        return follower ? {
-          id:        `follow_${f.followerId}`,
-          type:      'new_follower',
-          createdAt: f.createdAt || null,
-          user:      sanitizeUser(follower),
-          read:      true,
-        } : null;
-      })
-      .filter(Boolean);
-
-    // Real persisted types (message/comment/like) — see createNotification's
-    // own comment for why follow/connection_request stay on-the-fly above
-    // instead of also writing a row here.
-    let persisted = [];
-    if (db.isConnected()) {
-      // type != 'message' — a message notification row still exists (see
-      // createNotification's call site in POST /messages/:userId) purely to
-      // trigger a push; the message ITSELF already has a real, richer home
-      // in Messages with its own unread tracking (direct_messages.read).
-      // Surfacing it here too would just be the same event shown twice
-      // with two different, driftable "read" states.
-      const { rows } = await db.query(
-        `SELECT * FROM notifications WHERE user_id=$1 AND type != 'message' ORDER BY created_at DESC LIMIT 100`,
-        [uid]
-      );
-      persisted = (await Promise.all(rows.map(async (r) => {
-        const actor = r.actor_id ? await getUser(r.actor_id) : null;
-        if (r.actor_id && !actor) return null; // actor account gone — nothing sane to show
-        return {
-          id:         r.id,
-          type:       r.type,
-          createdAt:  r.created_at,
-          user:       actor ? sanitizeUser(actor) : null,
-          preview:    r.preview,
-          targetType: r.target_type,
-          targetId:   r.target_id,
-          read:       r.read,
-        };
-      }))).filter(Boolean);
-    }
-
-    const notifications = [...receivedRequests, ...newFollowers, ...persisted]
-      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-
-    res.json({ notifications, pendingConnections: receivedRequests.length });
-  } catch (e) {
-    console.error('GET /notifications:', e);
-    res.status(500).json({ error: 'Internal server error' });
+// --- Notifications and connected source inboxes ------------------------------
+async function nativeNotifications(uid) {
+  const requests = connections.filter(c => c.toId === uid && c.status === 'pending').map(c => {
+    const from = users.find(u => u.id === c.fromId);
+    return from ? { id: 'connreq_' + c.id, type: 'connection_request', createdAt: c.createdAt, user: sanitizeUser(from), read: false } : null;
+  }).filter(Boolean);
+  const followers = follows.filter(f => f.followingId === uid).map(f => {
+    const follower = users.find(u => u.id === f.followerId);
+    return follower ? { id: 'follow_' + f.followerId + (f.createdAt ? '_' + new Date(f.createdAt).getTime() : ''), type: 'new_follower', createdAt: f.createdAt || null, user: sanitizeUser(follower), read: false } : null;
+  }).filter(Boolean);
+  let persisted = [];
+  if (db.isConnected()) {
+    const { rows } = await db.query("SELECT * FROM notifications WHERE user_id=$1 AND type != 'message' ORDER BY created_at DESC LIMIT 100", [uid]);
+    persisted = (await Promise.all(rows.map(async r => {
+      const actor = r.actor_id ? await getUser(r.actor_id) : null;
+      if (r.actor_id && !actor) return null;
+      return { id: r.id, type: r.type, createdAt: r.created_at, user: actor ? sanitizeUser(actor) : null, preview: r.preview, targetType: r.target_type, targetId: r.target_id, read: r.read };
+    }))).filter(Boolean);
   }
+  const rows = [...requests, ...followers, ...persisted];
+  const seen = await inboxReceipts.read(uid, rows.map(row => row.id));
+  return { notifications: rows.map(row => ({ ...row, read: row.read || seen.has(row.id) })).sort((a,b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)), pendingConnections: requests.length };
+}
+function inboxError(res, error) {
+  const status = [400, 404, 409, 502, 503].includes(error.status) ? error.status : 500;
+  res.status(status).json({ error: status === 500 ? 'Inbox is temporarily unavailable. Please try again.' : error.message });
+}
+function inboxPrivate(_req, res, next) { res.set('Cache-Control', 'private, no-store'); next(); }
+app.get('/notifications', authenticate, inboxPrivate, async (req, res) => {
+  try { res.json(await nativeNotifications(req.user.id)); } catch (error) { inboxError(res, error); }
 });
-
-// Called when the Notifications page itself loads — same "viewing the list
-// clears the badge" convention as every mainstream notification UI, rather
-// than requiring a per-item click to individually dismiss each one (message/
-// comment/like notifications have nowhere sensible for that anyway; the
-// notification itself just links to the thing it's about).
-app.post('/notifications/mark-read', authenticate, async (req, res) => {
+app.post('/notifications/mark-read', authenticate, inboxPrivate, async (req, res) => {
   try {
-    if (!db.isConnected()) return res.status(503).json({ message: 'Temporarily unavailable — please try again in a moment.' });
-    await db.query(`UPDATE notifications SET read=true WHERE user_id=$1 AND read=false`, [req.user.id]);
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('POST /notifications/mark-read:', e);
-    res.status(500).json({ error: 'Internal server error' });
-  }
+    const { notifications } = await nativeNotifications(req.user.id);
+    // Older cached clients send no IDs. Acknowledge only this bounded inbox
+    // snapshot; new clients explicitly submit the rows they displayed.
+    const ids = req.body?.ids === undefined ? notifications.map(n => n.id) : req.body.ids;
+    if (!Array.isArray(ids) || ids.length > 500) return res.status(400).json({ error: 'Provide the displayed notification IDs.' });
+    const allowed = new Set(notifications.map(n => n.id));
+    if (ids.some(id => !allowed.has(id))) return res.status(409).json({ error: 'Refresh notifications before marking these items read.' });
+    const markedIds = await inboxReceipts.mark(req.user.id, ids);
+    res.json({ ok: true, markedIds });
+  } catch (error) { inboxError(res, error); }
+});
+for (const kind of ['notifications', 'messages']) {
+  app.get('/connected-inbox/' + kind, authenticate, inboxPrivate, async (req, res) => {
+    try { res.json(await connectedInbox.list(await inboxAccount(req.user.id), kind)); } catch (error) { inboxError(res, error); }
+  });
+  app.post('/connected-inbox/' + kind + '/mark-read', authenticate, inboxPrivate, async (req, res) => {
+    try { res.json({ ok: true, markedIds: await connectedInbox.mark(await inboxAccount(req.user.id), kind, req.body?.ids) }); } catch (error) { inboxError(res, error); }
+  });
+}
+app.get('/connected-inbox/messages/:source/:id', authenticate, inboxPrivate, async (req, res) => {
+  try { res.json(await connectedInbox.detail(await inboxAccount(req.user.id), req.params.source, req.params.id)); } catch (error) { inboxError(res, error); }
 });
 
 // --- Web Push subscriptions -------------------------------------------------
@@ -28776,10 +28764,13 @@ app.post('/push/unsubscribe', authenticate, async (req, res) => {
 // participant, keeping the higher count when both sources know about the
 // same conversation — see that endpoint's own comment for why) without
 // building/shipping the rest of each conversation's payload.
-app.get('/notifications/badge-counts', authenticate, async (req, res) => {
+app.get('/notifications/badge-counts', authenticate, inboxPrivate, async (req, res) => {
   try {
     const uid = req.user.id;
-    const pendingConnections = connections.filter(c => c.toId === uid && c.status === 'pending').length;
+    const native = await nativeNotifications(uid);
+    const pendingConnections = native.pendingConnections;
+    const account = await inboxAccount(uid);
+    const [sourceNotifications, sourceMessages] = await Promise.all([connectedInbox.list(account, 'notifications'), connectedInbox.list(account, 'messages')]);
 
     const unreadByParticipant = new Map();
     conversations
@@ -28795,21 +28786,17 @@ app.get('/notifications/badge-counts', authenticate, async (req, res) => {
       const existing = unreadByParticipant.get(key) || 0;
       unreadByParticipant.set(key, Math.max(existing, s.unreadCount || 0));
     });
-    const unreadMessages = [...unreadByParticipant.values()].reduce((sum, n) => sum + n, 0);
+    const nativeUnreadMessages = [...unreadByParticipant.values()].reduce((sum, n) => sum + n, 0);
+    const connectedUnreadMessages = sourceMessages.conversations.reduce((sum, c) => sum + c.unreadCount, 0);
+    const unreadMessages = nativeUnreadMessages + connectedUnreadMessages;
 
-    // Same type != 'message' exclusion as GET /notifications — those rows
-    // exist only to trigger a push, unreadMessages above already covers
-    // the real unread state for messages.
-    let unreadNotifications = 0;
-    if (db.isConnected()) {
-      const { rows } = await db.query(
-        `SELECT COUNT(*)::int AS n FROM notifications WHERE user_id=$1 AND read=false AND type != 'message'`,
-        [uid]
-      );
-      unreadNotifications = rows[0]?.n || 0;
-    }
-
-    res.json({ pendingConnections, unreadMessages, unreadNotifications });
+    // Match the inbox's available rows, including its bounded history and
+    // removed-actor filtering, so hidden older events cannot strand a badge.
+    const unreadNotifications = native.notifications.filter(n => !n.read).length;
+    const unseenRequests = native.notifications.filter(n => n.type === 'connection_request' && !n.read).length;
+    const connectedUnreadNotifications = sourceNotifications.notifications.filter(n => !n.read).length;
+    const notificationCount = unreadNotifications + connectedUnreadNotifications;
+    res.json({ pendingConnections, unseenRequests, unreadMessages, nativeUnreadMessages, connectedUnreadMessages, unreadNotifications, connectedUnreadNotifications, notificationCount });
   } catch (e) {
     console.error('GET /notifications/badge-counts:', e);
     res.status(500).json({ error: 'Internal server error' });

@@ -13,6 +13,7 @@ const { CREATOR_ANALYTICS_SCHEMA } = require('./creator-analytics');
 const { UFI_VAULT_SCHEMA } = require('./ufi-vault');
 const { REPORT_SCHEMA } = require('./content-reports');
 const { MANAGED_VPN_SCHEMA } = require('./managed-vpn-schema');
+const { INBOX_RECEIPTS_SCHEMA } = require('./inbox-receipts');
 
 const alice = '11111111-1111-4111-8111-111111111111';
 const bob = '22222222-2222-4222-8222-222222222222';
@@ -35,6 +36,7 @@ async function schema(pg) {
     if (tables.has(create?.[1] || alter?.[1])) await pg.exec(sql);
   }
   await pg.exec(HISTORY_SCHEMA);
+  await pg.exec(INBOX_RECEIPTS_SCHEMA);
   for (const sql of BILLING_SCHEMA) await pg.exec(sql);
   for (const sql of MANAGED_VPN_SCHEMA) await pg.exec(sql);
   for (const sql of BUSINESS_TEAM_SCHEMA) await pg.exec(sql);
@@ -75,6 +77,7 @@ async function seed(pg) {
     await insert('restaurant_post_likes', { user_id: uid, post_id: `${prefix}-restaurant` });
     await insert('external_post_likes', { user_id: uid, post_id: `${prefix}-external` });
     await insert('notifications', { id: `${prefix}-notice`, user_id: uid, type: 'follow', actor_id: carol, preview: `${prefix}-preview` });
+    await insert('inbox_read_receipts', { user_id: uid, item_id: `${prefix}-opaque-inbox-item` });
     await insert('push_subscriptions', { id: `${prefix}-push`, user_id: uid, endpoint: `https://secret-push.invalid/${prefix}`, p256dh: 'secret-push-key', auth: 'secret-push-auth' });
     await insert('reports', { id: `${prefix}-report`, reporter_id: uid, target_type: 'user', target_id: carol, reason: 'spam', details: `${prefix}-report-details` });
     await insert('page_views', { user_id: uid, path: '/private?token=secret-url', visitor_id: 'secret-visitor', ip_key: 'secret-ip' });
@@ -112,7 +115,7 @@ function harness(pg, control = {}) {
 
 function purgeContext(db, prepare, extra = {}) {
   const context = {
-    db, billing: { prepareAccountDeletion: prepare }, require: name => { assert.equal(name, './privacy-data'); return { deleteAccountData }; },
+    db, billing: { prepareAccountDeletion: prepare }, connectedInbox: { invalidate() {} }, require: name => { assert.equal(name, './privacy-data'); return { deleteAccountData }; },
     process: { env: { NODE_ENV: 'production' } },
     isDBId: id => /^[0-9a-f-]{36}$/.test(id),
     users: [{ id: alice, joinedGroups: ['shared-group'] }, { id: bob, joinedGroups: ['shared-group'] }],
@@ -156,7 +159,7 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
     assert.equal(exported.businessTeamInvitations[0].inviteeId, carol);
     assert.equal(Object.hasOwn(exported.businessTeamInvitations[0], 'token_hash'), false);
     for (const key of ['posts', 'comments', 'attachments', 'savedPosts', 'trackedJobs', 'generatedContent', 'resumeDrafts',
-      'crossPosts', 'ownedGroups', 'notifications', 'reports', 'seenPosts', 'engagementPreferences', 'restaurantLikes', 'externalPostLikes',
+      'crossPosts', 'ownedGroups', 'notifications', 'inboxReadReceipts', 'reports', 'seenPosts', 'engagementPreferences', 'restaurantLikes', 'externalPostLikes',
       'pushRegistrations', 'signIns', 'legacyPageViews', 'legacyClientErrors', 'legacyServerErrors', 'legacyUsageSignals', 'billingCheckouts', 'vpnLocations', 'vpnDevices']) {
       assert.equal(exported[key].length, 1, key);
     }
@@ -186,7 +189,7 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
       assert.equal((await pg.query(`SELECT COUNT(*)::integer AS count FROM ${table} WHERE user_id=$1`, [alice])).rows[0].count, 0, table);
       assert.equal((await pg.query(`SELECT COUNT(*)::integer AS count FROM ${table} WHERE user_id=$1`, [bob])).rows[0].count, 1, table);
     }
-    for (const table of ['generated_content', 'billing_checkout_attempts', 'vault_vpn_locations', 'managed_vpn_devices', 'managed_vpn_launches']) {
+    for (const table of ['generated_content', 'billing_checkout_attempts', 'vault_vpn_locations', 'managed_vpn_devices', 'managed_vpn_launches', 'inbox_read_receipts']) {
       assert.equal((await pg.query(`SELECT COUNT(*)::integer AS count FROM ${table} WHERE user_id=$1`, [alice])).rows[0].count, 0, table);
     }
     assert.equal((await pg.query('SELECT name FROM vault_vpn_locations WHERE user_id=$1', [bob])).rows[0].name, 'b-vpn-profile');
