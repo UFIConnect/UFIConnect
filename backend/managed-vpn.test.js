@@ -4,7 +4,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { randomBytes } = require('node:crypto');
 const { PGlite } = require('@electric-sql/pglite');
-const { createManagedVpn, registerManagedVpnRoutes, MANAGED_VPN_SCHEMA } = require('./managed-vpn');
+const { createManagedVpn, registerManagedVpnRoutes, MANAGED_VPN_SCHEMA,
+  gatewayRateLimitKey, isAuthenticatedGatewayPoll } = require('./managed-vpn');
 
 const ALICE = 'a0000000-0000-4000-8000-000000000001';
 const BOB = 'a0000000-0000-4000-8000-000000000002';
@@ -306,4 +307,44 @@ test('member routes require authentication and never expose internal provider er
   assert.equal(response.status, 503);
   assert.match(response.headers.get('cache-control'), /no-store/);
   assert.equal((await response.text()).includes('internal diagnostic'), false);
+});
+
+test('shared-IP abuse cannot consume a verified gateway polling allowance or bypass ordinary API limits', async t => {
+  const second = { ...gateway, id: 'test-eu-1', token: randomBytes(32).toString('base64url') };
+  const f = await fixture(t, { gateways: [gateway, second] });
+  await f.enroll();
+  const express = require('express');
+  const http = require('node:http');
+  const { rateLimit } = require('express-rate-limit');
+  const app = express();
+  app.use(rateLimit({ windowMs: 60000, limit: 3,
+    skip: req => isAuthenticatedGatewayPoll(req, f.vpn), standardHeaders: false, legacyHeaders: false }));
+  const gatewayLimiter = rateLimit({ windowMs: 60000, limit: 2,
+    keyGenerator: gatewayRateLimitKey, standardHeaders: false, legacyHeaders: false });
+  registerManagedVpnRoutes(app, { vpn: f.vpn, authenticate: (_req, res) => res.sendStatus(401), gatewayLimiter });
+  app.get('/ordinary', (_req, res) => res.sendStatus(200));
+  const server = http.createServer(app);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const poll = (id = gateway.id, authorization) => fetch(`${base}/vpn/gateways/${id}/desired`, {
+    headers: authorization ? { authorization } : {},
+  });
+  for (const badAuth of [undefined, 'Bearer wrong', 'Bearer ' + second.token]) {
+    const denied = await poll(gateway.id, badAuth);
+    assert.equal(denied.status, 401);
+    assert.match(denied.headers.get('cache-control'), /no-store/);
+  }
+  // All requests use the same local address, modeling the shared VPN NAT.
+  assert.equal((await poll()).status, 429);
+  assert.equal((await fetch(base + '/ordinary', { headers: { authorization: auth } })).status, 429);
+  const first = await poll(gateway.id, auth);
+  assert.equal(first.status, 200);
+  assert.equal((await first.json()).peers.length, 1);
+  assert.equal((await poll(gateway.id, auth)).status, 200);
+  assert.equal((await poll(gateway.id, auth)).status, 429);
+  // An exhausted verified gateway cannot consume another gateway's allowance.
+  assert.equal((await poll(second.id, 'Bearer ' + second.token)).status, 200);
+  assert.equal(isAuthenticatedGatewayPoll({ method: 'POST', path: `/vpn/gateways/${gateway.id}/desired`, get: () => auth }, f.vpn), false);
+  assert.throws(() => gatewayRateLimitKey({}), { status: 401 });
 });

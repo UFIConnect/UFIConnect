@@ -266,24 +266,47 @@ function createManagedVpn({ db, billing, gateways = [], now = Date.now, leaseSec
     });
     return { version: 1, gatewayId: gateway.id, generatedAt: iso(generatedAt), expiresAt: iso(expiresAt), peers };
   }
-  return { config, list, enroll, remove, desired };
+  return { config, list, enroll, remove, desired,
+    authenticateGateway: (gatewayId, authorization) => authorizeGateway(gatewayId, authorization).id };
+}
+
+function gatewayRateLimitKey(req) {
+  if (!ID.test(req.vpnGatewayId || '')) throw fault(401, 'Gateway authentication failed.');
+  return req.vpnGatewayId;
+}
+
+function isAuthenticatedGatewayPoll(req, vpn) {
+  // Subscribers and the polling agent share the gateway's public egress IP.
+  // Only verified polling may bypass an earlier general IP abuse bucket.
+  if (req.method !== 'GET') return false;
+  const match = /^\/vpn\/gateways\/([^/]+)\/desired\/?$/i.exec(req.path || '');
+  if (!match) return false;
+  try { return Boolean(vpn.authenticateGateway(decodeURIComponent(match[1]), req.get('authorization'))); }
+  catch { return false; }
 }
 
 function registerManagedVpnRoutes(app, { vpn, authenticate, limiter, gatewayLimiter }) {
+  const failure = (res, error) => {
+    const expected = [400, 401, 403, 404, 409, 503].includes(error.status);
+    res.status(expected ? error.status : 503).json({ message: expected ? error.message : 'VPN service is temporarily unavailable.' });
+  };
   const respond = work => async (req, res) => {
     res.setHeader('Cache-Control', 'private, no-store');
     try { res.json(await work(req)); }
-    catch (error) {
-      const expected = [400, 401, 403, 404, 409, 503].includes(error.status);
-      res.status(expected ? error.status : 503).json({ message: expected ? error.message : 'VPN service is temporarily unavailable.' });
-    }
+    catch (error) { failure(res, error); }
+  };
+  const authenticateGateway = (req, res, next) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    try { req.vpnGatewayId = vpn.authenticateGateway(req.params.id, req.get('authorization')); next(); }
+    catch (error) { failure(res, error); }
   };
   const member = [authenticate, ...(limiter ? [limiter] : [])];
   app.get('/vpn/config', ...member, respond(() => vpn.config()));
   app.get('/vpn/devices', ...member, respond(req => vpn.list(req.user.id)));
   app.post('/vpn/devices', ...member, respond(req => vpn.enroll(req.user.id, req.body, req.user || null)));
   app.delete('/vpn/devices/:id', ...member, respond(req => vpn.remove(req.user.id, req.params.id)));
-  app.get('/vpn/gateways/:id/desired', ...(gatewayLimiter ? [gatewayLimiter] : []), respond(req => vpn.desired(req.params.id, req.get('authorization'))));
+  app.get('/vpn/gateways/:id/desired', authenticateGateway, ...(gatewayLimiter ? [gatewayLimiter] : []), respond(req => vpn.desired(req.vpnGatewayId, req.get('authorization'))));
 }
 
-module.exports = { createManagedVpn, registerManagedVpnRoutes, MANAGED_VPN_SCHEMA, publicKeyValid };
+module.exports = { createManagedVpn, registerManagedVpnRoutes, MANAGED_VPN_SCHEMA, publicKeyValid,
+  gatewayRateLimitKey, isAuthenticatedGatewayPoll };

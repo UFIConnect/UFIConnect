@@ -17,7 +17,7 @@ const { buildOfficeSetup } = require('./office-setup');
 const { createManagedRecovery } = require('./managed-recovery');
 const { withActiveMembers } = require('./member-write');
 const { BILLING_SCHEMA, validRecurringPrice, quantityOneAmount, createBilling } = require('./billing');
-const { MANAGED_VPN_SCHEMA, createManagedVpn, registerManagedVpnRoutes } = require('./managed-vpn');
+const { MANAGED_VPN_SCHEMA, createManagedVpn, registerManagedVpnRoutes, gatewayRateLimitKey, isAuthenticatedGatewayPoll } = require('./managed-vpn');
 const { mutateAccountAndRevokeVpn } = require('./vpn-auth-revocation');
 const { BUSINESS_TEAM_SCHEMA, createBusinessTeams, registerBusinessTeamRoutes } = require('./business-teams');
 const dotenv = require('dotenv');
@@ -451,6 +451,7 @@ if (Number.isFinite(generalApiRateLimit) && generalApiRateLimit > 0) {
   const generalApiLimiter = rateLimit({
   windowMs: 60 * 1000,
     limit: generalApiRateLimit,
+  skip: req => isAuthenticatedGatewayPoll(req, managedVpn),
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: rateLimitKey,
@@ -21319,7 +21320,7 @@ const vpnMemberLimiter = rateLimit({ windowMs: 60 * 1000, limit: 30,
   keyGenerator: req => String(req.user.id), standardHeaders: 'draft-7', legacyHeaders: false,
   message: { message: 'Please wait before trying VPN again.' } });
 const vpnGatewayLimiter = rateLimit({ windowMs: 60 * 1000, limit: 20,
-  keyGenerator: rateLimitKey, standardHeaders: 'draft-7', legacyHeaders: false,
+  keyGenerator: gatewayRateLimitKey, standardHeaders: 'draft-7', legacyHeaders: false,
   message: { message: 'Gateway polling is too frequent.' } });
 if (!IS_PIPELINE_ROLE) registerManagedVpnRoutes(app, { vpn: managedVpn, authenticate,
   limiter: vpnMemberLimiter, gatewayLimiter: vpnGatewayLimiter });
