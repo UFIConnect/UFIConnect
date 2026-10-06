@@ -7,6 +7,7 @@ export default ({ config }) => ({
   slug: 'ufic',
   owner: 'uficonnect',
   version: '1.0.0',
+  scheme: [...new Set([...(Array.isArray(config.scheme) ? config.scheme : config.scheme ? [config.scheme] : []), 'uficonnect-vpn'])],
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'light',

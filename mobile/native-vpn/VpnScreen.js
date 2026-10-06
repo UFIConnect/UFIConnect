@@ -1,15 +1,49 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ScrollView, Text, Pressable, StyleSheet, ActivityIndicator, AppState, Linking } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { COLORS } from '../theme';
 import { vpn } from './client';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { vpnLaunch } from './launchClient';
+
+const {disclosureKey,connectFromIntent} = require('./launchConnection.cjs');
+const {createVpnActionGate,runVpnAction} = require('./action.cjs');
 
 const LABELS = { unknown: 'VPN status unavailable', unavailable: 'Native VPN unavailable', disconnected: 'Disconnected', starting: 'Starting VPN', connecting: 'Waiting for secure connection', connected: 'Connected', stopping: 'Disconnecting' };
-export default function VpnScreen() {
-  const { token } = useAuth();
+export default function VpnScreen({route}) {
+  const { token, profile } = useAuth();
+  const liveToken = useRef(token); liveToken.current = token;
+  const operationGate = useRef(null);
+  if (!operationGate.current) operationGate.current = createVpnActionGate(() => liveToken.current);
+  const handledLaunch = useRef(null);
+  const consentKey = disclosureKey(profile?.id);
+  const [consent, setConsent] = useState({key:null,accepted:false,loaded:false});
+  const disclosureReady = consent.key === consentKey && consent.loaded;
+  const disclosureAccepted = Boolean(consentKey) && disclosureReady && consent.accepted;
+  const [launchWaiting, setLaunchWaiting] = useState(false);
   const [status, setStatus] = useState({state: vpn.supported() ? 'disconnected' : 'unavailable'});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  useLayoutEffect(() => {
+    liveToken.current=token;setBusy(false);setError('');
+    return () => {liveToken.current=null;operationGate.current.cancel();};
+  },[token]);
+  useEffect(() => {
+    let active = true;
+    setLaunchWaiting(false);
+    const read = consentKey ? AsyncStorage.getItem(consentKey) : Promise.resolve(null);
+    read.then(value => {if (active) setConsent({key:consentKey,accepted:value==='accepted',loaded:true});})
+      .catch(() => {if (active) setConsent({key:consentKey,accepted:false,loaded:true});});
+    return () => {active=false;};
+  }, [consentKey]);
+  useEffect(() => {
+    const id = route?.params?.launchRequestId;
+    if (!id || handledLaunch.current === id || !disclosureReady) return;
+    handledLaunch.current = id;
+    if (!vpnLaunch.claim(id, token)) return;
+    if (disclosureAccepted) void act(false, true);
+    else setLaunchWaiting(true);
+  }, [route?.params?.launchRequestId, token, disclosureReady, disclosureAccepted]);
   useEffect(() => {
     let active = true, polling = false;
     const refresh = async () => {
@@ -23,19 +57,37 @@ export default function VpnScreen() {
     const subscription = AppState.addEventListener('change', state => { if (state === 'active') refresh(); });
     return () => { active = false; clearInterval(timer); subscription.remove(); };
   }, [token]);
-  async function act(disconnect) {
-    setBusy(true); setError('');
-    try {
+  async function act(disconnect, automatic = false) {
+    const session = token;
+    await runVpnAction({gate:operationGate.current,session,
+      onStart:() => {setBusy(true);setError('');},
+      action:async isCurrent => {
+      let warning = '';
       if (disconnect) {
-        const result = await vpn.disconnect(token);
-        if (!result.revoked) setError('VPN stopped on this device. Server removal could not be confirmed. Remove this device from your VPN account when you are online.');
-      } else await vpn.connect(token);
-      setStatus(await vpn.status());
-    } catch (e) {
+        const result = await vpn.disconnect(session);
+        if (!isCurrent()) return null;
+        if (!result.revoked) warning = 'VPN stopped on this device. Server removal could not be confirmed. Remove this device from your VPN account when you are online.';
+      } else {
+        await connectFromIntent({session,automatic,accepted:disclosureAccepted,vpn,
+          isCurrent,
+          acknowledge:async () => {
+            if (consentKey) await AsyncStorage.setItem(consentKey,'accepted');
+            if (isCurrent()) setConsent({key:consentKey,accepted:true,loaded:true});
+          },
+        });
+      }
+      if (!isCurrent()) return null;
+      const value = await vpn.status();
+      return {value,warning};
+      },
+      onSuccess:result => {if (result) {setStatus(result.value);setError(result.warning);setLaunchWaiting(false);}},
+      onError:e => {
       // Do not surface raw native/network objects, request headers, or configurations.
       const code = e?.response?.status;
       setError(code === 403 ? 'VPN requires an active paid membership.' : code === 409 ? 'This device could not be enrolled. Disconnect and try again, or remove an old device.' : code === 503 ? 'VPN service is currently unavailable.' : 'VPN could not complete the request. Check your connection and device VPN permission, then try again.');
-    } finally { setBusy(false); }
+      },
+      onFinish:() => setBusy(false),
+    });
   }
   const active = ['unknown', 'connected', 'connecting', 'starting', 'stopping'].includes(status.state);
   return <ScrollView style={{flex:1,backgroundColor:'#fff'}} contentContainerStyle={styles.page}>
@@ -49,10 +101,11 @@ export default function VpnScreen() {
       <Text style={styles.policy}>Read the privacy policy</Text>
     </Pressable>
     {status.state === 'unavailable' && <Text style={styles.body}>Install a UFIConnect native build that includes VPN support. VPN does not run in Expo Go or a browser.</Text>}
+    {launchWaiting && <Text style={styles.body}>Your connection request is ready. Review the information above, then agree and connect.</Text>}
     {error ? <Text style={styles.error} accessibilityRole="alert">{error}</Text> : null}
     {busy && <ActivityIndicator color={COLORS.primary} />}
-    <Pressable accessibilityRole="button" disabled={busy || status.state === 'unavailable'} onPress={() => act(active)} style={[styles.button, (busy || status.state === 'unavailable') && styles.disabled]}>
-      <Text style={styles.buttonText}>{active ? 'Disconnect' : 'Connect'}</Text>
+    <Pressable accessibilityRole="button" disabled={busy || !disclosureReady || status.state === 'unavailable'} onPress={() => act(active)} style={[styles.button, (busy || !disclosureReady || status.state === 'unavailable') && styles.disabled]}>
+      <Text style={styles.buttonText}>{active ? 'Disconnect' : disclosureAccepted ? 'Connect' : 'Agree and connect'}</Text>
     </Pressable>
     <Text style={styles.footnote}>Connected appears only when the native tunnel is active and has a recent secure handshake. Signing out disconnects this device.</Text>
   </ScrollView>;

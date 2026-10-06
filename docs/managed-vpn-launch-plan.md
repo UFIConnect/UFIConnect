@@ -28,6 +28,21 @@ The API stores device public keys, assigned tunnel addresses and revocation stat
 
 The gateway polls the API using a separate gateway credential. Authorized peers receive short leases. An independent watchdog removes expired peers if the API or billing checks fail. Revoked devices cannot renew themselves. Expiry enforcement is bounded by the polling and watchdog intervals.
 
+Gateway polling uses the authenticated Render API origin
+`https://uficonnect-api-708r.onrender.com`. The public API hostname encountered
+a Cloudflare browser challenge on October 6, including requests from the gateway.
+The direct origin was verified to return current authenticated desired state.
+Gateway credentials and all peer validation remain required; redirects are rejected.
+Native clients use `https://api.uficonnect.org`, whose edge policy must permit
+their API requests without a browser challenge. A running timer or a successful
+oneshot exit does not prove polling works: verify fresh desired-state timestamps
+and the agent's `updated` outcome, because safe closure also exits successfully.
+
+After the owner disabled the edge challenge, public API health returned HTTP 200
+from both the operator network and Germany at 08:05 UTC on October 6. Protected
+VPN routes again returned JSON authentication errors rather than challenge HTML.
+The gateway's current authenticated desired state and active timers also passed.
+
 ## Gateway setup and checks
 
 The reviewed cloud-init definition installs WireGuard, a private DNS resolver, a firewall and serialized synchronization/expiry timers. SSH is restricted to the operator's current IPv4 address and an Ed25519 key. Private key files and gateway credentials are readable only by root.
@@ -48,3 +63,9 @@ The isolated Linux namespace check passed on October 6: a real WireGuard handsha
 - Native App Store screenshots and account-owned submission fields.
 
 No App Store submission, extra paid build plan or additional cloud resource is included in this proposal.
+
+## One-click connection from the website
+
+The production Vault button requests a connection link for the installed UFIConnect app. The native app signs in to the same UFI account, redeems the link, and calls its existing Connect operation. Installation, sign-in and the operating system's VPN permission are initial setup steps. The website does not report Connected; the native app verifies the actual tunnel and handshake.
+
+Connection links contain a random, single-use code valid for at most three minutes. The API stores its hash, account, platform, originating session and expiry. Redemption requires an independently authenticated native session for the same account and platform, current paid access, and an unchanged originating account/session. Replayed, replaced, expired or mismatched links cannot connect. Private VPN keys and login tokens never appear in the link. Explicit sign-out and account-wide revocation clear the relevant authorization; account deletion removes pending links.

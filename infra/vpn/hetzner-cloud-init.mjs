@@ -11,7 +11,9 @@ export function renderGatewayCloudInit({ gatewayId, token, adminPublicKey, admin
   const ipv6Subnet = 'fd80:80:0::/64';
   const files = [];
   const file = (path, content, permissions = '0600') => files.push({ path, owner: 'root:root', permissions, content });
-  file('/etc/ufi-vpn/gateway.json', JSON.stringify({ gatewayId, token, apiOrigin: 'https://api.uficonnect.org', subnet, ipv6Subnet }) + '\n');
+  // Machine polling must not depend on browser challenges at the public edge.
+  // This is the same authenticated Render API used by the public API hostname.
+  file('/etc/ufi-vpn/gateway.json', JSON.stringify({ gatewayId, token, apiOrigin: 'https://uficonnect-api-708r.onrender.com', subnet, ipv6Subnet }) + '\n');
   file('/usr/local/lib/ufi-vpn/gateway-agent.mjs', agentSource, '0644');
   file('/etc/sysctl.d/90-ufi-vpn.conf', 'net.ipv4.ip_forward=1\nnet.ipv4.conf.all.accept_redirects=0\nnet.ipv4.conf.all.send_redirects=0\nnet.ipv6.conf.all.forwarding=0\nnet.ipv6.conf.all.accept_redirects=0\n');
   file('/etc/nftables.conf', `#!/usr/sbin/nft -f

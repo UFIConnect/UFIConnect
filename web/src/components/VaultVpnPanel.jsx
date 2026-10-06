@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { ArrowUpRight, Clock3, Globe2, LockKeyhole, Plus, Power, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import './VaultVpnPanel.css';
 import client from '../api/client';
+import { getAccessToken } from '../auth/session';
 import VaultVpnSubscription from './VaultVpnSubscription';
 
 const LOCAL_PREVIEW = import.meta.env.VITE_VAULT_LOCAL_PREVIEW === 'true' && typeof window !== 'undefined' && ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
@@ -23,7 +24,103 @@ function dateLabel(value) {
   return new Date(value).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
-export default function VaultVpnPanel({ accountId, activityTarget, subscriptionTarget, billing }) {
+function managedPlatform() {
+  if (typeof navigator === 'undefined') return null;
+  if (/Android/i.test(navigator.userAgent)) return 'android';
+  if (/iPad|iPhone|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) return 'ios';
+  return /Win/i.test(navigator.platform || navigator.userAgent) ? 'windows' : null;
+}
+
+function launchUrl(data) {
+  const expires = Date.parse(data?.expiresAt);
+  if (typeof data?.url !== 'string' || !/^uficonnect-vpn:\/\/connect\?code=[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(data.url)
+    || !Number.isFinite(expires) || expires <= Date.now() + 1000 || expires > Date.now() + 185000) {
+    throw new Error('Invalid VPN app handoff.');
+  }
+  return data.url;
+}
+
+// The browser issues a bounded action ticket. Only the signed-in native app
+// can redeem it and start a tunnel; opening its link is never proof of a VPN.
+export function ManagedVpnPanel({ accountId, activityTarget, subscriptionTarget, billing,
+  openApp = url => window.location.assign(url) }) {
+  const [config, setConfig] = useState(null);
+  const [checking, setChecking] = useState(true);
+  const [opening, setOpening] = useState(false);
+  const [opened, setOpened] = useState(false);
+  const [error, setError] = useState('');
+  const [help, setHelp] = useState(false);
+  const generation = useRef(0), sequence = useRef(0), inFlight = useRef(null);
+  const currentAccount = useRef(accountId); currentAccount.current = accountId;
+  const platform = managedPlatform();
+  const refresh = useCallback(async () => {
+    const request = ++sequence.current, account = accountId, revision = generation.current, token = getAccessToken();
+    const current = () => currentAccount.current === account && revision === generation.current && request === sequence.current && token === getAccessToken();
+    setChecking(true);
+    try {
+      const { data } = await client.get('/vpn/config');
+      if (current()) { setConfig(data); setError(''); }
+    } catch { if (current()) { setConfig(null); setError('VPN availability could not be checked. Try again.'); } }
+    finally { if (current()) setChecking(false); }
+  }, [accountId]);
+  useEffect(() => {
+    generation.current++; sequence.current++; inFlight.current = null;
+    setConfig(null); setOpened(false); setOpening(false); setHelp(false); setError('');
+    if (accountId) refresh(); else setChecking(false);
+    const invalidate = () => { generation.current++; inFlight.current = null; setOpening(false); setOpened(false); setConfig(null); };
+    const focus = () => { if (accountId && !inFlight.current) refresh(); };
+    window.addEventListener('ufi-session-cleared', invalidate);
+    window.addEventListener('focus', focus);
+    return () => { generation.current++; sequence.current++; window.removeEventListener('ufi-session-cleared', invalidate); window.removeEventListener('focus', focus); };
+  }, [accountId, refresh]);
+  const available = config?.available === true && config?.protocol === 'wireguard' && Array.isArray(config?.gateways) && config.gateways.length > 0;
+  const canConnect = Boolean(accountId && billing.active && available && platform && !checking && !billing.checking);
+  async function connect() {
+    if (!canConnect || inFlight.current) return;
+    const operation = { account: accountId, revision: generation.current, token: getAccessToken() };
+    const current = () => currentAccount.current === operation.account && generation.current === operation.revision && operation.token === getAccessToken();
+    inFlight.current = operation;
+    setOpening(true); setOpened(false); setError('');
+    try {
+      const { data } = await client.post('/vpn/launch', { platform });
+      if (!current()) return;
+      const url = launchUrl(data);
+      openApp(url);
+      setOpened(true); setHelp(true);
+    } catch (failure) {
+      if (!current()) return;
+      const status = failure?.response?.status;
+      setError(status === 401 ? 'Sign in again before opening VPN.' : status === 403 ? 'An active paid Vault membership is required. Check your subscription status.'
+        : status === 503 ? 'VPN is temporarily unavailable. Try again shortly.' : 'UFIConnect could not be opened. Check that the VPN app is installed, then try again.');
+      setHelp(true);
+    } finally { if (inFlight.current === operation) { inFlight.current = null; setOpening(false); } }
+  }
+  const label = checking || billing.checking ? 'Checking availability' : !billing.active ? 'Subscription required' : !available ? 'Unavailable' : !platform ? 'App required' : opened ? 'Opening UFIConnect' : 'Ready to open app';
+  return <>
+    <section className="vault-panel vault-vpn-panel vault-managed-vpn" aria-labelledby="vault-vpn-title">
+      <div className="vault-panel-heading"><span className="vault-eyebrow"><Globe2 size={15} /> CONNECTION</span><button className="vault-icon-button" type="button" aria-label="Check VPN availability" disabled={checking || opening} onClick={refresh}><RefreshCw size={15} /></button></div>
+      <div className="vault-vpn-heading"><h2 id="vault-vpn-title">UFIConnect VPN</h2><span className="vault-status" role="status"><i />{label}</span></div>
+      <p className="vault-helper">Connect this device with the UFIConnect app for Windows, iOS or Android. Install a version with VPN support and sign in to the same account once.</p>
+      <p className="vault-footnote">UFIConnect uses account and device details to authorize access. Traffic and DNS pass through our gateway; its configuration does not log browsing or DNS queries. Private keys stay on your device. <a href="/privacy">Privacy policy</a></p>
+      <div className="vault-vpn-quick-action">
+        <button className="vault-button vault-button--full" type="button" disabled={!canConnect || opening} onClick={connect}>{!billing.active && !billing.checking ? <LockKeyhole size={19} /> : <Power size={19} />}{opening ? 'Opening UFIConnect…' : 'Connect VPN'}</button>
+        <p className="vault-footnote">{!billing.active && !billing.checking ? 'Your Vault membership includes VPN access when the service is available.' : checking ? 'Checking VPN availability…' : !available ? 'VPN is temporarily unavailable. Check availability again shortly.' : !platform ? 'Use the UFIConnect app on Windows, iOS or Android to connect.' : 'Opens UFIConnect and starts VPN. Your device may ask permission the first time.'}</p>
+      </div>
+      {error && <p className="vault-helper" role="alert">{error}</p>}
+      {opened && <p className="vault-helper" role="status">Opening UFIConnect. Confirm the connection in the app; this page cannot verify the tunnel.</p>}
+      <button className="vault-text-button" type="button" aria-expanded={help} onClick={() => setHelp(value => !value)}>{help ? 'Hide app help' : 'App did not open?'}</button>
+      {help && <div className="vault-vpn-guide"><p>Install the UFIConnect app with VPN support, sign in to this same account, and allow your browser to open it. Then try Connect VPN again. Approve the device’s VPN permission if prompted.</p><p>Use Disconnect in the app to stop VPN. Closing this browser page does not disconnect it.</p></div>}
+    </section>
+    {subscriptionTarget && createPortal(<VaultVpnSubscription billing={billing} />, subscriptionTarget)}
+    {activityTarget && createPortal(<section className="vault-panel vault-activity" aria-labelledby="vault-activity-title"><div className="vault-panel-heading"><h2 id="vault-activity-title">Connection status</h2><ShieldCheck size={16} /></div><p className="vault-helper">UFIConnect confirms Connected in the app after the tunnel has a secure handshake. Manage or disconnect the connection there.</p></section>, activityTarget)}
+  </>;
+}
+
+export default function VaultVpnPanel(props) {
+  return LOCAL_PREVIEW ? <LocalVaultVpnPanel {...props} /> : <ManagedVpnPanel {...props} />;
+}
+
+function LocalVaultVpnPanel({ accountId, activityTarget, subscriptionTarget, billing }) {
   const connectorAccess = LOCAL_PREVIEW || billing.active;
   const [platform, setPlatform] = useState(devicePlatform);
   const [state, setState] = useState(null);

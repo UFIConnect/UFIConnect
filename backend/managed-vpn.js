@@ -1,6 +1,6 @@
 'use strict';
 
-const { createHash, randomUUID, timingSafeEqual } = require('node:crypto');
+const { createHash, randomBytes, randomUUID, timingSafeEqual } = require('node:crypto');
 const { isIP } = require('node:net');
 const { MANAGED_VPN_SCHEMA } = require('./managed-vpn-schema');
 
@@ -106,6 +106,80 @@ function createManagedVpn({ db, billing, gateways = [], now = Date.now, leaseSec
     // Trialing subscriptions intentionally do not activate the paid VPN.
     return Math.min(now() + leaseSeconds * 1000, paidThrough);
   }
+  async function verifyIdentity(client, owner, identity) {
+    if (!identity || identity.id !== owner.id) throw fault(401, 'Sign in again to connect VPN.');
+    if (identity.sid !== undefined) {
+      if (!UUID.test(String(identity.sid || '')) || !Number.isInteger(identity.ver)
+        || identity.ver !== Number(owner.auth_version)) throw fault(401, 'Sign in again to connect VPN.');
+      const { rows: [session] } = await client.query(`SELECT expires_at FROM auth_sessions
+        WHERE id=$1 AND user_id=$2 AND expires_at>$3 FOR KEY SHARE`, [identity.sid, owner.id, iso(now())]);
+      if (!session) throw fault(401, 'Sign in again to connect VPN.');
+      return new Date(session.expires_at).getTime();
+    }
+    if (identity.authProvider !== 'auth0' || owner.auth_provider !== 'auth0'
+      || !identity.sub || identity.sub !== owner.auth_subject) throw fault(401, 'Sign in again to connect VPN.');
+    return Infinity;
+  }
+  const launchBody = (body, consume = false) => {
+    if (!body || typeof body !== 'object' || Array.isArray(body)
+      || !['windows', 'ios', 'android'].includes(body.platform)
+      || Object.keys(body).some(key => !(consume ? ['platform', 'code'] : ['platform']).includes(key))
+      || (consume && (typeof body.code !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(body.code)
+        || Buffer.from(body.code, 'base64url').toString('base64url') !== body.code))) {
+      throw fault(400, 'Choose a supported UFIConnect app and request a new connection.');
+    }
+  };
+  async function launch(userId, body, identity) {
+    account(userId); launchBody(body);
+    if (!configured.length) throw fault(503, 'UFI VPN gateway setup is pending.');
+    const paidUntil = await entitlement(userId);
+    return transaction(async client => {
+      const { rows: [owner] } = await client.query('SELECT id,vpn_connector_addon,billing_closed,auth_version,auth_provider,auth_subject FROM users WHERE id=$1 FOR UPDATE', [userId]);
+      if (!owner || owner.billing_closed || !owner.vpn_connector_addon || paidUntil <= now()) throw fault(403, 'Your paid VPN membership is not active.');
+      const sessionUntil = await verifyIdentity(client, owner, identity);
+      const expiresAt = iso(Math.min(now() + 180000, paidUntil, sessionUntil));
+      const code = randomBytes(32).toString('base64url');
+      // Keep cleanup within the locked account; do not take another owner's
+      // ticket locks while holding this account/session lock.
+      await client.query('DELETE FROM managed_vpn_launches WHERE user_id=$1 AND (expires_at<=$2 OR platform=$3)', [userId, iso(now()), body.platform]);
+      await client.query(`INSERT INTO managed_vpn_launches
+        (token_hash,user_id,platform,auth_version,initiating_session_id,initiating_auth_subject,expires_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7)`, [digest(code).toString('hex'), userId, body.platform,
+        Number(owner.auth_version), identity.sid || null, identity.sid ? null : identity.sub, expiresAt]);
+      return { url: 'uficonnect-vpn://connect?code=' + code, expiresAt };
+    });
+  }
+  async function consumeLaunch(userId, body, identity) {
+    account(userId); launchBody(body, true);
+    if (!configured.length) throw fault(503, 'UFI VPN gateway setup is pending.');
+    const paidUntil = await entitlement(userId);
+    return transaction(async client => {
+      const { rows: [owner] } = await client.query('SELECT id,vpn_connector_addon,billing_closed,auth_version,auth_provider,auth_subject FROM users WHERE id=$1 FOR UPDATE', [userId]);
+      if (!owner || owner.billing_closed || !owner.vpn_connector_addon || paidUntil <= now()) throw fault(403, 'Your paid VPN membership is not active.');
+      await verifyIdentity(client, owner, identity);
+      const { rows: [ticket] } = await client.query(`SELECT * FROM managed_vpn_launches
+        WHERE token_hash=$1 AND user_id=$2 AND platform=$3 AND expires_at>$4`,
+      [digest(body.code).toString('hex'), userId, body.platform, iso(now())]);
+      if (!ticket || Number(ticket.auth_version) !== Number(owner.auth_version)) throw fault(409, 'This connection request expired. Select Connect VPN on the website again.');
+      if (ticket.initiating_session_id) {
+        const { rows: [session] } = await client.query(`SELECT id FROM auth_sessions
+          WHERE id=$1 AND user_id=$2 AND expires_at>$3 FOR KEY SHARE`, [ticket.initiating_session_id, userId, iso(now())]);
+        if (!session) throw fault(409, 'The browser sign-in ended. Select Connect VPN on the website again.');
+      } else if (owner.auth_provider !== 'auth0' || !ticket.initiating_auth_subject
+        || ticket.initiating_auth_subject !== owner.auth_subject) {
+        throw fault(409, 'The browser account changed. Select Connect VPN on the website again.');
+      }
+      // Logout locks its session before cascading to launch rows. Acquire that
+      // session first too, then lock/recheck the ticket; the opposite order can
+      // deadlock a legitimate sign-out against this connection request.
+      const { rows: [current] } = await client.query(`SELECT token_hash FROM managed_vpn_launches
+        WHERE token_hash=$1 AND user_id=$2 AND platform=$3 AND expires_at>$4 FOR UPDATE`,
+      [ticket.token_hash, userId, body.platform, iso(now())]);
+      if (!current) throw fault(409, 'This connection request expired. Select Connect VPN on the website again.');
+      await client.query('DELETE FROM managed_vpn_launches WHERE token_hash=$1', [ticket.token_hash]);
+      return { action: 'connect' };
+    });
+  }
   function gatewayPublic(gateway) {
     return { id: gateway.id, label: gateway.label, country: gateway.country };
   }
@@ -154,18 +228,7 @@ function createManagedVpn({ db, billing, gateways = [], now = Date.now, leaseSec
       // Recheck the verified identity under the same owner lock used by
       // logout-all/password changes, before creating or extending any peer.
       if (verifiedIdentity !== undefined) {
-        if (!verifiedIdentity || verifiedIdentity.id !== userId) throw fault(401, 'Sign in again to connect VPN.');
-        if (verifiedIdentity.sid !== undefined) {
-          if (!UUID.test(String(verifiedIdentity.sid || '')) || !Number.isInteger(verifiedIdentity.ver)
-            || verifiedIdentity.ver !== Number(owner.auth_version)) throw fault(401, 'Sign in again to connect VPN.');
-          const { rows: [session] } = await client.query(`SELECT expires_at FROM auth_sessions
-            WHERE id=$1 AND user_id=$2 AND expires_at>$3 FOR KEY SHARE`, [verifiedIdentity.sid, userId, iso(now())]);
-          if (!session) throw fault(401, 'Sign in again to connect VPN.');
-          expiresAt = Math.min(expiresAt, new Date(session.expires_at).getTime());
-        } else if (verifiedIdentity.authProvider !== 'auth0' || owner.auth_provider !== 'auth0'
-          || !verifiedIdentity.sub || verifiedIdentity.sub !== owner.auth_subject) {
-          throw fault(401, 'Sign in again to connect VPN.');
-        }
+        expiresAt = Math.min(expiresAt, await verifyIdentity(client, owner, verifiedIdentity));
       }
       // Serialize public-key ownership and address allocation across API workers.
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`vpn-key:${body.publicKey}`]);
@@ -266,7 +329,7 @@ function createManagedVpn({ db, billing, gateways = [], now = Date.now, leaseSec
     });
     return { version: 1, gatewayId: gateway.id, generatedAt: iso(generatedAt), expiresAt: iso(expiresAt), peers };
   }
-  return { config, list, enroll, remove, desired,
+  return { config, list, enroll, remove, desired, launch, consumeLaunch,
     authenticateGateway: (gatewayId, authorization) => authorizeGateway(gatewayId, authorization).id };
 }
 
@@ -302,6 +365,8 @@ function registerManagedVpnRoutes(app, { vpn, authenticate, limiter, gatewayLimi
   };
   const member = [authenticate, ...(limiter ? [limiter] : [])];
   app.get('/vpn/config', ...member, respond(() => vpn.config()));
+  app.post('/vpn/launch', ...member, respond(req => vpn.launch(req.user.id, req.body, req.user || null)));
+  app.post('/vpn/launch/consume', ...member, respond(req => vpn.consumeLaunch(req.user.id, req.body, req.user || null)));
   app.get('/vpn/devices', ...member, respond(req => vpn.list(req.user.id)));
   app.post('/vpn/devices', ...member, respond(req => vpn.enroll(req.user.id, req.body, req.user || null)));
   app.delete('/vpn/devices/:id', ...member, respond(req => vpn.remove(req.user.id, req.params.id)));

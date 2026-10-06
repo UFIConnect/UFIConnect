@@ -2,6 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.AccessControl;
+using System.Security.Cryptography;
+using System.Security.Principal;
+using System.Text;
+using System.Threading;
 
 namespace UfiConnect.Vpn {
   internal static class Tests {
@@ -35,6 +40,60 @@ namespace UfiConnect.Vpn {
         Check(Health.Expired(1000,1000,now.AddDays(1),now),"monotonic expiry survives wall-clock rollback");
         Check(Health.Expired(1000,100,now,now),"wall-clock expiry");
         Check(!Health.Expired(1000,100,lease.Expires,now),"live lease");
+        var code=Convert.ToBase64String(Enumerable.Repeat((byte)7,32).ToArray()).TrimEnd('=').Replace('+','-').Replace('/','_');
+        var uri=LaunchPolicy.Prefix+code;
+        Check(LaunchPolicy.Code(uri)==code,"canonical browser link");
+        foreach(var bad in new[]{"https://uficonnect.org/connect?code="+code,uri+"&platform=windows",uri+"#fragment",uri+"/",uri+"\n",uri.Replace("connect?","connect/?"),uri.Replace("uficonnect-vpn:","UFICONNECT-VPN:"),uri.Replace("?code=","?code=%"),uri.Substring(0,uri.Length-1),uri+"\" /anything",LaunchPolicy.Prefix+new string('A',42)+"B"})
+          Reject(()=>LaunchPolicy.Code(bad),"malformed or noncanonical browser link");
+        var account="00000000-0000-4000-8000-000000000001";
+        var other="00000000-0000-4000-8000-000000000002";
+        var inbox=new LaunchInbox();
+        Check(inbox.Receive(uri,null,now)&&inbox.Pending,"signed-out launch stays in memory");
+        Check(inbox.Take(null,now.AddSeconds(10))==null&&inbox.Pending,"no launch consumption while signed out");
+        Check(inbox.Take(account,now.AddSeconds(20))==code&&!inbox.Pending,"login consumes pending link once");
+        Check(inbox.Take(account,now.AddSeconds(21))==null&&!inbox.Receive(uri,account,now.AddSeconds(21)),"replayed browser link rejected");
+        inbox=new LaunchInbox();inbox.Receive(uri,account,now);Check(inbox.Take(account,now.AddSeconds(180))==null&&!inbox.Pending,"expiry at 180 seconds");
+        inbox=new LaunchInbox();inbox.Receive(uri,account,now);Check(inbox.Take(other,now.AddSeconds(1))==null&&!inbox.Pending,"account change discards earlier intent");
+        inbox=new LaunchInbox();inbox.Receive(uri,account,now);inbox.Clear();Check(!inbox.Pending&&inbox.Take(account,now)==null,"sign-out cancels intent");
+        var token=new string('x',40);
+        var session=SessionPolicy.Encode(token,account);
+        var encrypted=ProtectedData.Protect(Encoding.UTF8.GetBytes(session),null,DataProtectionScope.CurrentUser);
+        var restored=SessionPolicy.Read(Encoding.UTF8.GetString(ProtectedData.Unprotect(encrypted,null,DataProtectionScope.CurrentUser)));
+        Check(restored.Token==token&&restored.AccountId==account,"current-user DPAPI sign-in round trip");
+        Check(!session.Contains("privateKey")&&!session.Contains("code"),"saved sign-in excludes tunnel keys and launch codes");
+        var legacy=SessionPolicy.Read(Json.Encode(new{token=token,accountId=account,privateKey="old private key"}));
+        Check(!SessionPolicy.Encode(legacy.Token,legacy.AccountId).Contains("old private key"),"restoring legacy session drops old tunnel key");
+        Reject(()=>SessionPolicy.Read(Json.Encode(new{token=token})),"unbound legacy sign-in requires login");
+        Reject(()=>SessionPolicy.Encode("short",account),"invalid session rejected");
+        Reject(()=>SessionPolicy.Encode(token,"not-an-account"),"invalid account rejected");
+        var sid=WindowsIdentity.GetCurrent().User;
+        var foreign=new SecurityIdentifier(WellKnownSidType.AnonymousSid,null);
+        Check(LaunchPolicy.SameUser(sid,sid)&&!LaunchPolicy.SameUser(sid,foreign)&&!LaunchPolicy.SameUser(sid,null),"IPC identity exact SID match");
+        Check(LaunchPolicy.PipeName(sid)!=LaunchPolicy.PipeName(foreign),"Windows accounts have separate pipe names");
+        var security=LaunchPolicy.Security(sid);var rules=security.GetAccessRules(true,true,typeof(SecurityIdentifier));
+        var rule=rules[0] as System.IO.Pipes.PipeAccessRule;
+        Check(rules.Count==1&&rule.IdentityReference.Equals(sid)&&rule.AccessControlType==AccessControlType.Allow&&security.AreAccessRulesProtected,"pipe ACL admits only the current SID");
+        var label=LaunchPolicy.Descriptor(sid).SystemAcl[0] as CustomAce;
+        var labelBytes=label.GetOpaque();
+        Check((int)label.AceType==17&&BitConverter.ToInt32(labelBytes,0)==1&&new SecurityIdentifier(labelBytes,4).Value=="S-1-16-8192","pipe preserves medium mandatory label as a raw ACE");
+        Check(LaunchPolicy.Arguments(new string[0],sid,false)==""&&LaunchPolicy.Arguments(new[]{uri},sid,false)==uri,"normal start and protocol arguments");
+        Check(LaunchPolicy.Arguments(new[]{"--elevated-owner",sid.Value,uri},sid,true)==uri,"elevation retains exact Windows user");
+        Reject(()=>LaunchPolicy.Arguments(new[]{"--elevated-owner",foreign.Value,uri},sid,true),"different-user elevation rejected");
+        Reject(()=>LaunchPolicy.Arguments(new[]{"--elevated-owner",sid.Value,uri},sid,false),"non-elevated internal launch rejected");
+        Reject(()=>LaunchPolicy.Arguments(new[]{uri,"--extra"},sid,true),"extra process arguments rejected");
+        Check(LaunchPolicy.ProtocolCommand(@"C:\Program Files\UFIConnect VPN\UFIConnectVpn.exe")=="\"C:\\Program Files\\UFIConnect VPN\\UFIConnectVpn.exe\" \"%1\"","protocol invokes fixed quoted GUI executable");
+        Reject(()=>LaunchPolicy.ProtocolCommand("relative.exe"),"relative protocol executable rejected");
+        Reject(()=>LaunchPolicy.ProtocolCommand("C:\\bad\"path.exe"),"protocol command injection rejected");
+        var pipeName=LaunchPolicy.PipeName(sid)+"-test-"+Guid.NewGuid().ToString("N");
+        var received=new List<string>();
+        using(var receiver=new LaunchPipe(item=>{lock(received)received.Add(item);},pipeName)){
+          var listening=receiver.Start();
+          Check(LaunchPipe.Forward(uri,pipeName),"real same-user authenticated pipe handoff");
+          Check(LaunchPipe.Forward(uri,pipeName)&&LaunchPipe.Forward("",pipeName),"existing instance accepts repeated requests and focus");
+          lock(received)Check(received.Count==3&&received[0]==uri&&received[2]=="","pipe preserves exact validated request");
+          Reject(()=>LaunchPipe.Forward(uri+"&extra=1",pipeName),"invalid handoff never enters pipe");
+          receiver.Dispose();Check(listening.Wait(4000),"pipe shuts down without retained listener");
+        }
         SetupPolicy.ValidateUrl(SetupPolicy.Url);checks++;
         Reject(()=>SetupPolicy.ValidateUrl("http://download.wireguard.com/windows-client/wireguard-amd64-1.1.1.msi"),"download HTTPS required");
         Reject(()=>SetupPolicy.ValidateUrl(SetupPolicy.Url+"?mirror=other"),"download exactly pinned");

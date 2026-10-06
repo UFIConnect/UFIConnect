@@ -18,6 +18,17 @@ const MANAGED_VPN_SCHEMA = [
     ON managed_vpn_devices(gateway_id,tunnel_address) WHERE revoked_at IS NULL`,
   `CREATE INDEX IF NOT EXISTS managed_vpn_owner_idx ON managed_vpn_devices(user_id)`,
   `CREATE INDEX IF NOT EXISTS managed_vpn_gateway_idx ON managed_vpn_devices(gateway_id) WHERE revoked_at IS NULL`,
+  `CREATE TABLE IF NOT EXISTS managed_vpn_launches (
+    token_hash TEXT PRIMARY KEY CHECK (length(token_hash)=64),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    platform TEXT NOT NULL CHECK (platform IN ('windows','ios','android')),
+    auth_version INTEGER NOT NULL,
+    initiating_session_id UUID REFERENCES auth_sessions(id) ON DELETE CASCADE,
+    initiating_auth_subject TEXT,
+    expires_at TIMESTAMPTZ NOT NULL,
+    UNIQUE(user_id,platform)
+  )`,
+  `CREATE INDEX IF NOT EXISTS managed_vpn_launch_expiry_idx ON managed_vpn_launches(expires_at)`,
 ];
 
 module.exports = { MANAGED_VPN_SCHEMA };
