@@ -48,6 +48,7 @@ const { createFeedReadAdmission } = require('./feed-read-admission');
 const { PUBLIC_GROUP_LEGACY_SOURCES, inferPublicGroupId } = require('./group-feed');
 const { GENERAL_UFI_GROUP_ID, isGeneralUfiFollowingPost, isFollowingSourceAllowed } = require('./following-scope');
 const { canonicalizePreferenceTopics, matchesPreferenceTopic } = require('./feed-preferences');
+const { trustedFeedNetworkLocation, memberFeedSnapshotKey } = require('./feed-location');
 const {
   VIDEO_FEED_MIN_DURATION_SECONDS,
   VIDEO_FEED_MAX_DURATION_SECONDS,
@@ -7611,12 +7612,26 @@ async function getCachedGuestFeedPage({ cursor, cursorMap, limit }) {
   const pending = guestFeedPageBuilds.get(key);
   if (pending) return pending;
 
-  const build = getCursorFeedPage({
-    sources: AGGREGATE_FEED_SOURCES,
-    cursorMap,
-    limit,
-    maxPostsPerSource: 2,
-  }).then((page) => {
+  const build = (async () => {
+    let currentCursor = cursorMap;
+    // Most placement filtering belongs in SQL. Music and incompletely tagged
+    // videos still need the full classifier; an entirely filtered page must
+    // advance to older candidates instead of presenting an empty Global feed.
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const page = await getCursorFeedPage({
+        sources: AGGREGATE_FEED_SOURCES,
+        cursorMap: currentCursor,
+        limit,
+        excludeVideoDurationAtOrBelow: VIDEO_FEED_MAX_DURATION_SECONDS,
+        maxPostsPerSource: 2,
+      });
+      const eligible = page.posts.filter(isRegularFeedSurfacePost);
+      if (eligible.length || !page.hasMore || attempt === 3 || page.nextCursor === encodeFeedCursor(currentCursor)) {
+        return { ...page, posts: eligible };
+      }
+      currentCursor = decodeFeedCursor(page.nextCursor);
+    }
+  })().then((page) => {
     guestFeedPageCache.set(key, { computedAt: Date.now(), page });
     trimOldestMapEntries(guestFeedPageCache, GUEST_FEED_PAGE_CACHE_MAX);
     return page;
@@ -7636,8 +7651,8 @@ async function getCachedGuestFeedPage({ cursor, cursorMap, limit }) {
 // Keying by userId too means each user's snapshot is genuinely built from
 // their own real interests (see the personalized-pool computation below),
 // not a shared array with a different starting slice.
-function mainFeedSnapshotKey(userId, sortMode, timeRange) {
-  return `${userId}::${sortMode}::${timeRange || 'all'}`;
+function mainFeedSnapshotKey(userId, sortMode, timeRange, locationContext) {
+  return memberFeedSnapshotKey(userId, sortMode, timeRange, locationContext);
 }
 
 function invalidateUserFeedSnapshots(userId) {
@@ -9402,10 +9417,8 @@ function applyResumeMatchedJobs(posts, resumeKeywords, jobPool) {
 const JOB_LISTING_SOURCES = ['indeed', 'remoteok', 'usajobs', 'remotive', 'muse'];
 
 // --- Location-based matching ------------------------------------------------
-// Cloudflare (already in front of this app — see the `Server: cloudflare`
-// header on every response) adds this automatically to every request that
-// reaches the origin. A real, zero-cost, zero-permission-prompt signal —
-// not a browser geolocation prompt or a third-party IP-lookup API call.
+// Cloudflare country is used only after the actual incoming proxy chain has
+// been verified. A response's Server header alone does not establish trust.
 // ISO 3166-1 alpha-2 country code, or absent/'XX' when Cloudflare can't
 // determine one (some bots, some VPNs).
 function getUserCountry(req) {
@@ -9414,27 +9427,8 @@ function getUserCountry(req) {
   // cache doesn't include one at all — confirmed live as an unhandled
   // "Cannot read properties of undefined (reading 'cf-ipcountry')" on every
   // warming cycle.
-  const cc = firstHeaderValue(
-    req.headers?.['cf-ipcountry'] ||
-    req.headers?.['x-vercel-ip-country'] ||
-    req.headers?.['cloudfront-viewer-country'] ||
-    req.headers?.['x-appengine-country'] ||
-    req.headers?.['x-country-code']
-  ).toUpperCase();
+  const cc = trustedFeedNetworkLocation(req).country || '';
   return /^[A-Z]{2}$/.test(cc) && cc !== 'XX' && cc !== 'T1' ? cc : null;
-}
-
-function cleanGeoHeader(req, names) {
-  for (const name of names) {
-    const raw = firstHeaderValue(req.headers?.[name]);
-    if (!raw) continue;
-    try {
-      return decodeURIComponent(raw.replace(/\+/g, ' ')).trim().slice(0, 80) || null;
-    } catch {
-      return raw.trim().slice(0, 80) || null;
-    }
-  }
-  return null;
 }
 
 let countryDisplayNames = null;
@@ -9525,31 +9519,33 @@ function countryName(countryCode) {
   }
 }
 
-// Location is a ranking signal, never an access-control decision. Cloudflare
-// supplies country in production; the additional headers keep local/staging
-// proxy setups compatible and let a future edge rule add city/region without
-// changing the feed API again. Missing or invalid location simply disables
-// this signal and leaves the existing feed order untouched.
+// Location is a ranking signal, never an identity/access-control decision.
+// Regular feeds follow the member's current verified network country. Saved
+// destinations still control Travel/Restaurants; missing network evidence
+// falls back to that member's choices without guessing a country.
 function getFeedLocationContext(req, user = null) {
   const saved = normalizeFeedLocation(user?.roleSettings?.feedLocation);
+  const network = trustedFeedNetworkLocation(req, { visitorLocationHeaders: process.env.CF_VISITOR_LOCATION_HEADERS === 'true' });
+  const destinationFeed = ['local', 'countries', 'restaurants', 'bars'].includes(req.query?.mode);
+  const useNetwork = !!network.country && !destinationFeed;
   const requestedCountry = cleanLocationInput(req.query?.country);
   const requestedCity = cleanLocationInput(req.query?.city);
-  const hasSavedLocation = !!(saved.country || saved.city);
+  const hasSavedLocation = !useNetwork && !!(saved.country || saved.city);
   // Travel and Restaurants belong to the signed-in member. Once a member
   // saves a location, query strings, a stale tab, and proxy geo headers must
   // not silently replace it with somebody else's previous selection.
-  const selectedCountry = hasSavedLocation ? saved.country : requestedCountry;
-  const city = hasSavedLocation
+  const selectedCountry = useNetwork ? network.country : hasSavedLocation ? saved.country : requestedCountry;
+  const city = useNetwork ? network.city : hasSavedLocation
     ? saved.city
-    : requestedCity || cleanGeoHeader(req, ['cf-ipcity', 'x-vercel-ip-city', 'x-appengine-city', 'x-geo-city']);
+    : requestedCity || network.city || null;
   const country = countryCodeFromInput(selectedCountry) || (!selectedCountry && !hasSavedLocation ? getUserCountry(req) : null);
-  const region = cleanGeoHeader(req, ['cf-region', 'x-vercel-ip-country-region', 'x-appengine-region', 'x-geo-region']);
+  const region = hasSavedLocation || requestedCountry || requestedCity ? null : network.region || null;
   const resolvedCountryName = countryName(country) || selectedCountry || null;
   const declared = [
     selectedCountry,
     resolvedCountryName,
     city,
-    ...(hasSavedLocation ? [] : [user?.location, user?.preferences?.location]),
+    ...(hasSavedLocation || useNetwork ? [] : [user?.location, user?.preferences?.location]),
   ]
     .map(cleanLocationInput)
     .filter(Boolean);
@@ -9559,7 +9555,7 @@ function getFeedLocationContext(req, user = null) {
     city,
     region,
     declared,
-    source: hasSavedLocation ? 'member' : (requestedCountry || requestedCity ? 'request' : (country || city || region ? 'network' : 'none')),
+    source: useNetwork ? 'network' : hasSavedLocation ? 'member' : (requestedCountry || requestedCity ? 'request' : (country || city || region ? 'network' : 'none')),
     available: !!(country || city || region || declared.length),
   };
 }
@@ -21766,7 +21762,6 @@ async function handleFeedRequest(req, res) {
   // branch that reads the shared snapshot, not just the one that builds it.
   const userTopics = userDeclaredFeedTopics(user, prefs);
   const userTopicLabels = userDeclaredFeedTopicLabels(user, prefs);
-  const hasSavedFeedScope = userTopics.length > 0;
   // Persisted source choices are member-specific. Apply them at the final
   // personalization stage so every home/following code path, including
   // cached snapshots and cursor pagination, respects the same switches.
@@ -21815,7 +21810,8 @@ async function handleFeedRequest(req, res) {
         })
         .filter(matchesTopic)
       : [];
-    if (!topicsFilter.length && !isSourceFiltered && !hasSavedFeedScope && !isFollowingRequest) return [];
+    // A new member has no saved interests yet. Public candidates still form
+    // their own feed, ranked by current region and member-specific history.
     // An explicit source choice is a browsing scope. Saved interests shape
     // the default feed; only an explicit topic choice narrows source browsing.
     const scoped = topicsFilter.length || isSourceFiltered ? list
@@ -22597,7 +22593,7 @@ async function handleFeedRequest(req, res) {
       // was returning near-duplicate content on page 2+, which the client's
       // dedup then collapsed down to almost nothing, making infinite scroll
       // look like it stopped after page 1.
-      const snap = mainFeedSnapshots.get(mainFeedSnapshotKey(req.user.id, sortMode, timeRange));
+      const snap = mainFeedSnapshots.get(mainFeedSnapshotKey(req.user.id, sortMode, timeRange, locationContext));
       if (snap && (Date.now() - snap.computedAt) < MAIN_FEED_SNAPSHOT_TTL) {
         // Rotate first (per-user starting point into the shared pool — see
         // rotateForUser), then personalize — both are deterministic given
@@ -22757,7 +22753,7 @@ async function handleFeedRequest(req, res) {
   // merged Personal Feed / All Collected view): serve the shared pre-sorted
   // snapshot instead of resorting hundreds of posts on every request.
   if (isDefaultAggregateView) {
-    const snap = mainFeedSnapshots.get(mainFeedSnapshotKey(req.user.id, sortMode, timeRange));
+    const snap = mainFeedSnapshots.get(mainFeedSnapshotKey(req.user.id, sortMode, timeRange, locationContext));
     if (snap && (Date.now() - snap.computedAt) < MAIN_FEED_SNAPSHOT_TTL) {
       // Page 1 only here — reqPage > 1 already returned earlier in this
       // function, and slices from the same snapshot pool there too (see
@@ -23184,7 +23180,7 @@ async function handleFeedRequest(req, res) {
 
   if (isDefaultAggregateView) {
     const memberSnapshotPosts = filterForUser(externalDiversified);
-    mainFeedSnapshots.set(mainFeedSnapshotKey(req.user.id, sortMode, timeRange), {
+    mainFeedSnapshots.set(mainFeedSnapshotKey(req.user.id, sortMode, timeRange, locationContext), {
       computedAt: Date.now(),
       posts: memberSnapshotPosts,
       hasMore: memberSnapshotPosts.length > 0,
@@ -23544,7 +23540,7 @@ async function handleVideoFeedRequest(req, res) {
     const scopedVideoTimeRange = !topicsFilter.length && userTopics.length ? '30d' : videoTimeRange;
     const applyPersonalTopicFilter = (items) => {
       if (topicsFilter.length || !isUnfilteredVideo) return items;
-      if (!hasSavedVideoScope) return [];
+      if (!hasSavedVideoScope) return items;
       return items.filter(post => feedPostPersonalizationScore(post, videoPreferenceContext) > 0);
     };
     const equalizeVideosForUser = (items) => buildFullMemberFeedEqualizer(
@@ -23722,10 +23718,11 @@ app.get('/office/feed/music', authenticate, videoReadAdmission.wrap(async (req, 
       cursorMap: decodeFeedCursor(req.query.cursor), limit: boundedLimit(req.query.limit, 20, 50), mediaType: 'video',
       seenIds: req.query.q ? new Set() : await getUserSeenSet(req.user.id, 'videos'),
     });
-    const posts = filterPostsForMemberLanguages(result.posts, user, req).filter(matchesSearch).filter(matchesTopic).filter(post => !genre ||
+    const selected = filterPostsForMemberLanguages(result.posts, user, req).filter(matchesSearch).filter(matchesTopic).filter(post => !genre ||
       [post.title, post.topic, post.genre, ...asArray(post.tags)].join(' ').toLowerCase().replace(/[-\s]+/g, ' ').includes(genre));
+    const posts = rankFeedPostsForLocation(selected, getFeedLocationContext(req, user));
     markPostsSeen(req.user.id, posts, 'videos');
-    res.json({ posts, cursor: result.nextCursor, ...continuousVideoPageMeta(req.query, result.hasMore) });
+    res.set('Cache-Control', 'private, no-store').json({ posts, cursor: result.nextCursor, ...continuousVideoPageMeta(req.query, result.hasMore) });
   } catch (error) {
     console.error('[music feed]', error.message);
     res.status(503).json({ error: 'Music is temporarily unavailable. Please try again.', posts: [], hasMore: true });

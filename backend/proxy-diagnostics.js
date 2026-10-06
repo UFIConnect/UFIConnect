@@ -20,12 +20,20 @@ function proxyDiagnostics(req) {
   };
   let hops = [];
   try { hops = proxyaddr.all(req).slice(0, 12).map(classify); } catch { hops = [{ invalid: true }]; }
+  let resolvedClientMatchesCloudflare = false;
+  try {
+    const resolved = ipaddr.process(req.ip);
+    const connecting = ipaddr.process(req.headers?.['cf-connecting-ip']);
+    resolvedClientMatchesCloudflare = resolved.kind() === connecting.kind()
+      && resolved.toString() === connecting.toString();
+  } catch { /* Missing or malformed addresses cannot establish a match. */ }
   return {
     hops,
     trustConfigured: Boolean(req.app?.get('trust proxy')),
     countryHeaderPresent: /^[A-Z]{2}$/.test(String(req.headers?.['cf-ipcountry'] || '')),
     cloudflareRayPresent: Boolean(req.headers?.['cf-ray']),
     connectingIpPresent: Boolean(req.headers?.['cf-connecting-ip']),
+    resolvedClientMatchesCloudflare,
   };
 }
 module.exports = { proxyDiagnostics };

@@ -174,9 +174,11 @@ export default function GuestFeed() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
   const [activePostId, setActivePostId] = useState(null);
   const [muted, toggleMuted] = useGlobalMuted();
   const loadingMoreRef = useRef(false);
+  const pendingRequest = useRef(null);
   const knownIds = useRef(new Set());
   const knownIdsQueue = useRef([]);
   const emptyStreakRef = useRef(0);
@@ -196,10 +198,14 @@ export default function GuestFeed() {
     const { merge = false } = options || {};
     if (loadingMoreRef.current) return;
     loadingMoreRef.current = true;
+    const controller = new AbortController();
+    pendingRequest.current = controller;
     try {
       const params = { limit: 20 };
       if (!reset && cursor) params.cursor = cursor;
-      const { data } = await client.get('/feed/guest', { params });
+      const { data } = await client.get('/feed/guest', { params, signal: controller.signal });
+      if (controller.signal.aborted) return;
+      setError('');
       if (reset && !merge) {
         knownIds.current = new Set();
         knownIdsQueue.current = [];
@@ -222,16 +228,28 @@ export default function GuestFeed() {
       }
       setHasMore(data.hasMore !== false && emptyStreakRef.current < GUEST_EMPTY_STREAK_LIMIT);
     } catch {
+      if (controller.signal.aborted) return;
+      setError('Public posts could not load. Refresh to try again.');
       setHasMore(false);
     } finally {
-      setLoading(false);
-      setLoadingMore(false);
-      loadingMoreRef.current = false;
+      if (pendingRequest.current === controller) {
+        setLoading(false);
+        setLoadingMore(false);
+        loadingMoreRef.current = false;
+        pendingRequest.current = null;
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cursor, markKnownId]);
 
-  useEffect(() => { loadPage(true); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    loadPage(true);
+    return () => {
+      pendingRequest.current?.abort();
+      pendingRequest.current = null;
+      loadingMoreRef.current = false;
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Full reset back to the freshest page 1 rather than merging, same as the
   // authenticated Feed's own manual refresh, so it actually reads as "live"
@@ -357,7 +375,8 @@ export default function GuestFeed() {
           />
         ))}
 
-        {!loading && !posts.length && (
+        {error && <p role="alert" style={{ textAlign: 'center', padding: 20 }}>{error}</p>}
+        {!loading && !error && !posts.length && (
           <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)' }}>
             No public posts are available right now. Use Refresh to try again.
           </div>

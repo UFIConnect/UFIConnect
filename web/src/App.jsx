@@ -161,7 +161,14 @@ function HomeRoute() {
     return <Landing />;
   }
   if (profile && !profile.onboardingComplete) return <Navigate to="/onboarding" replace />;
-  return <Feed />;
+  return <Feed key={profile?.id} />;
+}
+
+function GlobalFeedRoute() {
+  const { token, loading, sessionError } = useAuth();
+  if (loading) return <SessionLoading />;
+  if (sessionError) return <SessionRecovery />;
+  return token ? <Navigate to="/?feed=feed" replace /> : <GuestFeed />;
 }
 
 function SearchRoute() {
@@ -237,7 +244,7 @@ function AppContent() {
 
       {/* Home: Landing for public, Feed for authenticated */}
       <Route path="/" element={<HomeRoute />} />
-      <Route path="/global" element={<GuestFeed />} />
+      <Route path="/global" element={<GlobalFeedRoute />} />
       <Route path="/global-scroll" element={<Navigate to="/global" replace />} />
       <Route path="/videos" element={
         <RequireAuth><RequireOnboarding><Videos /></RequireOnboarding></RequireAuth>
