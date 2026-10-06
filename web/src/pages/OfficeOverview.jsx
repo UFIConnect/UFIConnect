@@ -1,82 +1,78 @@
 import { useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { Link } from 'react-router-dom';
-import { ArrowDown, ArrowRight, Layers, ListFilter, Users, ExternalLink, Play, Briefcase } from 'lucide-react';
+import { ArrowRight, Database, Filter, Layers, Link2, ShieldCheck, Users } from 'lucide-react';
 import PublicOverviewLayout from './PublicOverviewLayout';
 
 const VIEWS = [
-  { name: 'Mixed feed', icon: Layers, title: 'Different sources. One feed.', description: 'Browse posts from several available sources together. Your interests help shape your home feed, and source and topic filters let you adjust what you see.', sources: ['Community posts', 'Videos', 'Articles'], cards: ['A conversation from a community', 'A video from a creator', 'An article from another source'] },
-  { name: 'Source feeds', icon: ListFilter, title: 'Focus on one source.', description: 'Choose a source in the feed filters to see its available posts. Select other sources to change the mix, or clear your selection to return to the broader feed. An optional topic filter narrows your results further.', sources: ['Selected source'], cards: ['A post from your selected source', 'Another post from the same source', 'More from that source'] },
-  { name: 'Following', icon: Users, title: 'Keep up with the accounts you follow.', description: 'Sign in and connect a supported account when required. Following uses the access you authorize and the content that each service makes available. Availability differs by provider.', sources: ['Accounts you follow'], cards: ['An update from a followed account', 'Another available update'] },
+  { name: 'Mixed feed', icon: Layers, scope: 'Multiple available sources', selection: 'Your interests, selected sources and topics', result: 'One feed with the original source on every post', detail: 'The mixed feed combines UFIConnect posts and available external content. Your saved interests guide discovery. Explicit source and topic filters let you narrow the results, while the selected sort order controls their presentation.' },
+  { name: 'Source feeds', icon: Filter, scope: 'One provider or a selected group of providers', selection: 'The sources you select in the feed controls', result: 'Only available posts from those sources', detail: 'Source feeds use the same reading interface as the mixed feed. Selecting a provider changes the content scope; it does not merge your accounts or change that provider’s permissions. Add a topic filter to narrow the selection further.' },
+  { name: 'Following', icon: Users, scope: 'Followed accounts, joined communities and supported connections', selection: 'Your UFIConnect follows and authorized external account access', result: 'Updates available within your following scope', detail: 'Following draws on your follows, joined communities and supported account connections. External services determine which followed-account content they expose. A connection does not guarantee access to every post or interaction.' },
 ];
-
-function FeedDiagram() {
-  const [selected, setSelected] = useState(0);
+function FeedViews() {
+  const [selected,setSelected] = useState(0);
   const view = VIEWS[selected];
-  return <figure className="public-feed-diagram">
-    <figcaption>Try the three views below. This diagram is an example, not a live feed.</figcaption>
-    <div className="public-feed-options" role="group" aria-label="Feed views">
-      {VIEWS.map(({ name, icon: Icon }, index) => <button key={name} type="button" aria-pressed={selected === index} aria-controls="feed-diagram-detail" onClick={() => setSelected(index)}><Icon size={19} aria-hidden="true" />{name}</button>)}
+  return <div className="public-feed-diagram">
+    <div className="public-feed-options" role="group" aria-label="Feed views">{VIEWS.map(({name,icon:Icon},index)=><button key={name} type="button" aria-pressed={selected===index} aria-controls="feed-view-detail" onClick={()=>setSelected(index)}><Icon size={19} aria-hidden="true" />{name}</button>)}</div>
+    <div id="feed-view-detail" aria-live="polite">
+      <h3>{view.name}</h3><p>{view.detail}</p>
+      <dl className="public-feed-spec">
+        <div><dt>Content scope</dt><dd>{view.scope}</dd></div>
+        <div><dt>What controls it</dt><dd>{view.selection}</dd></div>
+        <div><dt>What you see</dt><dd>{view.result}</dd></div>
+      </dl>
     </div>
-    <div id="feed-diagram-detail" aria-live="polite" aria-atomic="true">
-      <h3>{view.title}</h3><p>{view.description}</p>
-      <div className="public-feed-path">
-        <div className="public-feed-inputs"><span className="public-overview-eyebrow">Where posts come from</span>{view.sources.map(source => <span className="public-feed-source" key={source}>{source}</span>)}</div>
-        <ArrowRight className="public-feed-arrow" aria-hidden="true" />
-        <div className="public-feed-hub"><img src="/uficonnect-mark.svg?v=blue-ufi-20261006" alt="" width="48" height="48" /><strong>UFIConnect</strong><span>{view.name}</span></div>
-        <ArrowRight className="public-feed-arrow" aria-hidden="true" />
-        <ol className="public-feed-examples" aria-label="Example posts">{view.cards.map(card => <li key={card}><span>Source · Original author</span><strong>{card}</strong><small>Original post link stays with the content</small></li>)}</ol>
-      </div>
-    </div>
-  </figure>;
+  </div>;
 }
-
 export default function OfficeOverview() {
   return <PublicOverviewLayout>
     <Helmet>
       <title>How UFIConnect works | UFIConnect</title>
-      <meta name="description" content="Understand the mixed feed, individual source feeds and Following. See how to browse, choose sources and explore UFIConnect." />
+      <meta name="description" content="How UFIConnect connects sources, organizes posts and delivers mixed, source and following feeds alongside community, career and account tools." />
       <link rel="canonical" href="https://uficonnect.org/how-it-works" />
       <meta property="og:title" content="How UFIConnect works" />
-      <meta property="og:description" content="Your guide to mixed feeds, source feeds and the tools around them." />
+      <meta property="og:description" content="Content flow, feed controls, connected accounts and the tools available in UFIConnect." />
       <meta property="og:url" content="https://uficonnect.org/how-it-works" />
       <meta property="og:type" content="website" />
     </Helmet>
-    <section className="public-overview-hero" aria-labelledby="how-it-works-title">
-      <span className="public-overview-eyebrow">Your feeds, explained</span>
-      <h1 id="how-it-works-title">How UFIConnect works.</h1>
-      <p className="public-overview-lead">Explore a mix of posts in one place, or focus on the sources you want to see.</p>
-      <p>UFIConnect brings social content, communities and professional opportunities into a shared workspace. Every source keeps its identity, and you can open the original post when you want to go further.</p>
-      <div className="public-overview-actions"><Link to="/global" className="public-overview-button">Explore the public feed <ArrowRight size={17} aria-hidden="true" /></Link><a href="#your-feeds">See how the feeds connect <ArrowDown size={17} aria-hidden="true" /></a></div>
+    <section className="public-overview-hero">
+      <span className="public-overview-eyebrow">Platform overview</span>
+      <h1>How UFIConnect works</h1>
+      <p className="public-overview-lead">A shared workspace for content discovery, communities and professional activity.</p>
+      <p>UFIConnect organizes available content from multiple sources into mixed, source-specific and following feeds. Source attribution, account permissions and provider playback rules remain attached to the content throughout that process.</p>
+      <div className="public-overview-actions"><Link to="/global" className="public-overview-button">View the public feed <ArrowRight size={17} aria-hidden="true" /></Link><a href="#content-flow">Explore the content flow</a></div>
     </section>
-    <section id="your-feeds" className="public-overview-section" aria-labelledby="your-feeds-title">
-      <span className="public-overview-eyebrow">Choose your view</span><h2 id="your-feeds-title">A mix, a single source, or your follows.</h2>
-      <FeedDiagram />
-      <div className="public-overview-note"><Users size={24} aria-hidden="true" /><div><h3>Start browsing. Personalize when you sign in.</h3><p>The public Global Feed is a preview anyone can browse. Sign in for source filters, a personalized feed and Following. Connecting an external account is a separate choice, and each service controls the permissions and content it provides.</p></div></div>
-    </section>
-    <section className="public-overview-section" aria-labelledby="start-title">
-      <span className="public-overview-eyebrow">Get started</span><h2 id="start-title">Make the feed yours.</h2>
-      <ol className="public-overview-flow public-overview-flow--three">
-        <li><span className="public-overview-step-number">01</span><Layers aria-hidden="true" /><h3>Explore the mix</h3><p>Open the Global Feed to browse public posts. Create an account to choose interests and use your personal home feed.</p></li>
-        <li><span className="public-overview-step-number">02</span><ListFilter aria-hidden="true" /><h3>Choose your sources</h3><p>In your member feed, use the source filters to focus on a provider or combine several. Add a topic filter when you want something more specific.</p></li>
-        <li><span className="public-overview-step-number">03</span><ExternalLink aria-hidden="true" /><h3>Follow the content</h3><p>Read the post and check its source. Open the original for the full conversation or provider features. Use the report option if something needs attention.</p></li>
+    <section id="content-flow" className="public-overview-section">
+      <span className="public-overview-eyebrow">From the source to your screen</span><h2>How content reaches your feed</h2>
+      <p className="public-overview-intro">Public sources and authorized account connections follow separate access rules. UFIConnect brings the available results into a consistent reading interface.</p>
+      <ol className="public-overview-flow public-overview-flow--four" aria-label="UFIConnect content flow">
+        <li><span className="public-overview-step-number">01</span><Link2 aria-hidden="true" /><h3>Source access</h3><p>Public feeds supply content through available source integrations. Account connections require your authorization and the provider’s supported permissions.</p></li>
+        <li><span className="public-overview-step-number">02</span><Database aria-hidden="true" /><h3>Content organization</h3><p>Posts are checked and organized with their author, source, timestamp, text and available media. Background refreshes update public content; availability and freshness vary by source.</p></li>
+        <li><span className="public-overview-step-number">03</span><Filter aria-hidden="true" /><h3>Feed selection</h3><p>Your chosen view, source filters, topics and account scope determine which posts are eligible. Your preferences and sort controls shape the results you browse.</p></li>
+        <li><span className="public-overview-step-number">04</span><Layers aria-hidden="true" /><h3>Reading and actions</h3><p>Read the available post, play supported media, save content or open the original. Reporting is available on posts; external interactions depend on the provider.</p></li>
       </ol>
     </section>
-    <section className="public-overview-section" aria-labelledby="more-title">
-      <span className="public-overview-eyebrow">Around your feed</span><h2 id="more-title">Keep exploring UFIConnect.</h2>
-      <div className="public-overview-grid public-overview-grid--three">
-        <article className="public-overview-card"><Play aria-hidden="true" /><h3>Videos and Music</h3><p>Use the dedicated views to find available media. Playback and access depend on the original provider and its supported player.</p></article>
-        <article className="public-overview-card"><Users aria-hidden="true" /><h3>People and communities</h3><p>Find people, join groups and continue conversations with your UFIConnect account.</p></article>
-        <article className="public-overview-card"><Briefcase aria-hidden="true" /><h3>Jobs and recruiting</h3><p>Explore opportunities and resume tools. Business memberships provide a workspace focused on recruiting and work.</p></article>
-      </div>
-      <p className="public-overview-caption">Vault is a separate password and document tool. <Link to="/vault-device">See the browser Vault and planned device experience.</Link></p>
+    <section className="public-overview-section">
+      <span className="public-overview-eyebrow">Feed controls</span><h2>Mixed feeds, source feeds and Following</h2>
+      <FeedViews />
+      <p className="public-overview-caption">Visitors can browse the public Global Feed. Sign in to personalize your home feed, use source filters and access Following. Clearing an explicit source selection returns to the broader feed allowed by that view.</p>
     </section>
-    <section className="public-overview-section public-overview-faq" aria-labelledby="questions-title">
-      <h2 id="questions-title">A few useful answers</h2>
-      <details><summary>Does every source offer the same features?</summary><p>No. Available posts, playback, account connections and interactions depend on each provider. UFIConnect keeps source attribution and links visible. Read the <Link to="/policies#connected-services">connected services disclosure</Link> for details.</p></details>
-      <details><summary>Why does changing a source change my feed?</summary><p>The mixed feed brings together available sources. Choosing a source limits results to that selection; choosing a topic narrows them further. A source can have fewer posts or be temporarily unavailable.</p></details>
-      <details><summary>Does a UFIConnect account sign me into every other service?</summary><p>No. Supported external accounts are connected separately with your permission. You can manage those connections from your account.</p></details>
-      <div className="public-overview-actions"><Link to="/register" className="public-overview-button">Create your account <ArrowRight size={17} aria-hidden="true" /></Link><Link to="/login">Already a member? Sign in</Link></div>
+    <section className="public-overview-section">
+      <span className="public-overview-eyebrow">Connected features</span><h2>How the workspace fits together</h2>
+      <div className="public-overview-grid public-overview-grid--three">
+        <article className="public-overview-card"><h3>Feed, Videos and Music</h3><p>Different views of available content. Media uses supported playback routes, with links to the original source when playback belongs on the provider’s service.</p></article>
+        <article className="public-overview-card"><h3>People, groups and messages</h3><p>Your UFIConnect identity connects your profile, community participation and conversations. Following helps you return to relevant accounts and communities.</p></article>
+        <article className="public-overview-card"><h3>Opportunities and resume tools</h3><p>Career listings connect discovery with role information and the original application page. Resume tools support preparation and applications.</p></article>
+        <article className="public-overview-card"><h3>Business recruiting</h3><p>A Business membership provides a workspace focused on work and recruiting. Membership and team settings manage access to those tools.</p></article>
+        <article className="public-overview-card"><h3>Vault and the planned device</h3><p>The browser Vault stores encrypted personal items locally. The <Link to="/vault-device">planned device</Link> extends the concept to authenticated, automated sign-ins.</p></article>
+        <article className="public-overview-card"><h3>Account and privacy controls</h3><p>Settings brings together account security, appearance, connected services and membership management. You control which supported accounts to connect.</p></article>
+      </div>
+    </section>
+    <section className="public-overview-section">
+      <span className="public-overview-eyebrow">Permissions and availability</span><h2>What stays with the source</h2>
+      <div className="public-overview-note"><ShieldCheck size={24} aria-hidden="true" /><div><h3>One interface, separate service permissions</h3><p>Connecting a service authorizes only the supported access you grant. It does not sign you into every provider, transfer ownership of their content or make every external action available inside UFIConnect.</p><p>Deleted content, access changes, rate limits and unavailable media can affect what appears. Original links and source identity remain visible so you can inspect the context at the source.</p></div></div>
+      <p>Review <Link to="/policies#connected-services">connected service disclosures</Link>, <Link to="/privacy">privacy controls</Link> and <Link to="/policies#reporting">reporting procedures</Link>.</p>
+      <div className="public-overview-actions"><Link to="/register" className="public-overview-button">Create an account</Link><Link to="/login">Sign in</Link></div>
     </section>
   </PublicOverviewLayout>;
 }

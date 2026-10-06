@@ -20,3 +20,21 @@
 @media (max-width: 560px) {
   .landing-shell .landing-nav-actions a:first-child { display: inline-flex; }
 }
+
+.public-theme-control { display:inline-block; min-width:135px; text-align:left; }
+.public-theme-control .appearance-control { grid-template-columns:auto minmax(110px,1fr); align-items:center; gap:8px; }
+.public-theme-control .appearance-control label { font-size:.78rem; }
+.public-theme-control .appearance-control select { min-height:40px; font-size:.78rem; }
+.public-footer > .public-theme-control { margin-bottom:16px; }
+html[data-theme="dark"] :is(.landing-shell,.public-overview,.ufi-policy-page,.guest-shell,.public-auth-page,.public-footer) {
+  --primary:#86b4ff; --primary-hover:#a7c9ff; --primary-light:#203655;
+  --bg:#0d1422; --surface:#162236; --card:#111d30; --text:#e6edf7; --muted:#a2b2c9; --border:#2a3a52;
+  color-scheme:dark;
+}
+html[data-theme="dark"] :is(.ufi-policy-page,.public-auth-page) { background:var(--bg); color:var(--text); }
+html[data-theme="dark"] :is(.public-overview-card,.public-feed-diagram,.public-overview-flow li,.public-overview-note,.public-feed-options button,.ufi-policy-index,.ufi-policy-section,.ufi-policy-header,.landing-explainers article,.landing-trust-grid article,.landing-proof-inner) { background:var(--surface); color:var(--text); border-color:var(--border); }
+html[data-theme="dark"] :is(.landing-trust-grid h3,.landing-explainers h2,.landing-feature-row h3,.landing-proof-inner strong,.ufi-policy-intro h1,.ufi-policy-section h2,.ufi-policy-section h3,.landing-plan-price,.landing-plan-alternative strong,.landing-faq-item h3,.landing-nav-actions a) { color:var(--text); }
+html[data-theme="dark"] :is(.landing-trust-intro,.landing-source-disclosure,.landing-explainers p,.landing-trust-grid p,.ufi-policy-intro p,.ufi-policy-section p,.ufi-policy-page a,.ufi-policy-updated,.landing-plan-alternative,.landing-pricing-terms) { color:var(--muted); }
+html[data-theme="dark"] .public-feed-options button[aria-pressed="true"] { background:var(--primary-light); color:var(--primary); border-color:var(--primary); }
+html[data-theme="dark"] :is(.public-overview-button,.landing-nav-primary,.landing-primary-action) { background:#2856a6; color:#fff; }
+html[data-theme="dark"] img[src*="uficonnect-wordmark.svg"] { background:#fff; border-radius:7px; padding:4px; }

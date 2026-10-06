@@ -55,16 +55,28 @@ export default function VaultDeviceOverview() {
 
     <section className="public-overview-section" aria-labelledby="vault-plan-title">
       <span className="public-overview-eyebrow">The planned device experience</span>
-      <h2 id="vault-plan-title">Open an app. Authenticate. Let Vault sign you in.</h2>
-      <p className="public-overview-intro">The goal is to stop typing passwords for supported sign-ins. This is the planned hardware experience; it is not active in the browser Vault.</p>
+      <h2 id="vault-plan-title">Turn on. Authenticate. Automate your logins.</h2>
+      <p className="public-overview-intro">After setup, the device is intended to handle sign-ins across your imported accounts. You authenticate when it turns on; supported apps then request the credentials they need. This hardware workflow is planned and is not active in the browser Vault.</p>
       <div className="public-overview-note"><HardDriveDownload size={24} aria-hidden="true" /><div><h3>First-time setup: import and delete</h3><p>Turn on the device and authenticate with Face ID on a supported Apple device. Import your passwords, confirm the import succeeded and keep an encrypted recovery backup. Then delete the temporary password export and any source copies you choose to remove.</p><p>Deletion is a separate, explicit choice after verification. The planned device must not delete originals before confirming the import and recovery copy.</p></div></div>
       <ol className="public-overview-flow public-overview-flow--four" aria-label="Planned Vault Card flow">
-        <li><span className="public-overview-step-number">01</span><ScanFace aria-hidden="true" /><h3>Open an app and authenticate</h3><p>When you open a supported app, the device turns on automatically. Authenticate with Face ID on a supported Apple device before it can use your saved credentials. Authentication is required each time the device turns on.</p></li>
-        <li><span className="public-overview-step-number">02</span><FileKey2 aria-hidden="true" /><h3>Fetch the sign-in request</h3><p>The device retrieves the authentication request from a supported app or website.</p></li>
-        <li><span className="public-overview-step-number">03</span><KeyRound aria-hidden="true" /><h3>Use your imported credentials</h3><p>It matches the request to the saved account and completes the supported sign-in for you.</p></li>
+        <li><span className="public-overview-step-number">01</span><Power aria-hidden="true" /><h3>Turn on the device</h3><p>Power on manually, or open a supported app to trigger the planned automatic wake-up. Saved credentials remain locked until you authenticate.</p></li>
+        <li><span className="public-overview-step-number">02</span><ScanFace aria-hidden="true" /><h3>Authenticate with Face ID</h3><p>Use Face ID on compatible Apple hardware to authorize access when the device turns on. This approval unlocks the planned login workflow.</p></li>
+        <li><span className="public-overview-step-number">03</span><KeyRound aria-hidden="true" /><h3>Automate imported logins</h3><p>Vault fetches each supported app’s authentication request, matches it to the imported account and completes the sign-in. The workflow is intended to work across all imported accounts with supported integrations, without retyping their passwords.</p></li>
         <li><span className="public-overview-step-number">04</span><Power aria-hidden="true" /><h3>Shut down automatically</h3><p>After completing the sign-in, the device powers off automatically. Opening another supported app starts the flow again when a login is needed.</p></li>
       </ol>
       <p className="public-overview-caption">Face ID requires compatible Apple hardware. Authentication on Android, Windows and Linux, device pairing, recovery and automatic sign-in integrations still need to be developed and validated. Password changes and account recovery may still require your attention.</p>
+    </section>
+
+    <section className="public-overview-section" aria-labelledby="vault-security-title">
+      <span className="public-overview-eyebrow">Security design</span>
+      <h2 id="vault-security-title">Why the workflow requires authentication</h2>
+      <p className="public-overview-intro">Face ID verifies your approval to use Vault. The destination service still verifies its own account credentials and may request another factor. Importing a password does not bypass that service’s security checks.</p>
+      <div className="public-overview-grid public-overview-grid--three">
+        <article className="public-overview-card"><LockKeyhole aria-hidden="true" /><h3>Protect stored credentials</h3><p>The device design calls for encrypted credential storage and access gated by authentication. Encryption keys, pairing and recovery must be implemented and independently tested before hardware protection can be claimed.</p></article>
+        <article className="public-overview-card"><ScanFace aria-hidden="true" /><h3>Keep biometric verification local</h3><p>On supported Apple hardware, Face ID matches your face within the device’s security system. Apps receive the authentication result, not the stored facial template. <a href="https://support.apple.com/guide/security/facial-matching-security-sece151358d1/web" target="_blank" rel="noopener noreferrer">Apple’s Face ID security explanation</a>.</p></article>
+        <article className="public-overview-card"><FileKey2 aria-hidden="true" /><h3>Match each request to its account</h3><p>The planned integration must verify the requesting app or website before using its matching credential. It should release only what that sign-in needs, clear temporary access and shut down after completing the operation.</p></article>
+      </div>
+      <p className="public-overview-caption">Automatic shutdown reduces the time the device is active; it does not replace encryption, trusted pairing or recovery safeguards. Multi-factor prompts, expired passwords and unsupported login flows can still require action. These are design requirements for the planned device, not completed hardware certifications.</p>
     </section>
 
     <section className="public-overview-section public-overview-faq" aria-labelledby="vault-questions-title">

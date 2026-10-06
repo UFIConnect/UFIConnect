@@ -222,7 +222,7 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
       throw fault(409, 'A subscription already exists. Use Manage billing to update it or recover a failed payment.');
     }
   }
-  async function recoverAgedCheckout(client, row, pending, catalog) {
+  async function recoverUnresolvedCheckout(client, row, pending, catalog) {
     let recovered = null;
     let inspected = 0;
     // Use the complete customer list, not eventually consistent metadata
@@ -319,6 +319,7 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
       [row.id, slot, randomUUID(), tier, priceId, customer, frontendBase, quantity]);
       if (legacySession) await client.query('UPDATE billing_checkout_attempts SET session_id=$1 WHERE user_id=$2 AND slot=$3 AND session_id IS NULL', [legacySession, row.id, slot]);
     });
+    let recoveredRejectedAttempt = false;
     for (let attempt = 0; attempt < 4; attempt++) {
       let renewed = false;
       let changed;
@@ -328,7 +329,7 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
         const { rows: [pending] } = await client.query('SELECT * FROM billing_checkout_attempts WHERE user_id=$1 AND slot=$2 FOR UPDATE', [userId, slot]);
         if (!pending || pending.customer_id !== row.stripe_customer_id) throw fault(409, 'Billing account changed. Please contact support.');
         if (!pending.session_id && Date.now() - new Date(pending.created_at).getTime() >= 23 * 3600000) {
-          await recoverAgedCheckout(client, row, pending, catalog);
+          await recoverUnresolvedCheckout(client, row, pending, catalog);
           if (!pending.session_id) {
             await client.query(`UPDATE billing_checkout_attempts SET attempt_id=$1,tier=$2,price_id=$3,
               session_id=NULL,return_base=$4,created_at=NOW(),quantity=$7 WHERE user_id=$5 AND slot=$6`,
@@ -362,15 +363,34 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
         }
         const changedSelection = pending.tier !== tier || pending.price_id !== priceId || pending.quantity !== quantity;
         const path = slot === 'vpn_connector' ? '/vault' : slot === 'resume_builder' ? '/resume-builder' : '/settings';
-        const created = await stripe.checkout.sessions.create({
-          mode: 'subscription', customer: pending.customer_id,
-          line_items: [{ price: pending.price_id, quantity: pending.quantity }],
-          metadata: { tier: pending.tier, quantity: String(pending.quantity), uficonnect_user_id: userId, uficonnect_attempt_id: pending.attempt_id },
-          subscription_data: { metadata: { tier: pending.tier, quantity: String(pending.quantity), uficonnect_user_id: userId } },
-          phone_number_collection: { enabled: false }, client_reference_id: userId,
-          success_url: `${pending.return_base}${path}?upgrade=success`,
-          cancel_url: `${pending.return_base}${path}?upgrade=cancelled`,
-        }, { idempotencyKey: `ufi-checkout:${pending.attempt_id}` });
+        let created;
+        try {
+          created = await stripe.checkout.sessions.create({
+            mode: 'subscription', customer: pending.customer_id,
+            line_items: [{ price: pending.price_id, quantity: pending.quantity }],
+            metadata: { tier: pending.tier, quantity: String(pending.quantity), uficonnect_user_id: userId, uficonnect_attempt_id: pending.attempt_id },
+            subscription_data: { metadata: { tier: pending.tier, quantity: String(pending.quantity), uficonnect_user_id: userId } },
+            phone_number_collection: { enabled: false }, client_reference_id: userId,
+            success_url: `${pending.return_base}${path}?upgrade=success`,
+            cancel_url: `${pending.return_base}${path}?upgrade=cancelled`,
+          }, { idempotencyKey: `ufi-checkout:${pending.attempt_id}` });
+        } catch (error) {
+          // Stripe also caches rejected requests. After a product configuration
+          // repair, retrying that key still returns the original rejection.
+          // Recover only a confirmed replayed validation error, once per call;
+          // network failures and uncertain outcomes must retain their key.
+          if (recoveredRejectedAttempt || error.type !== 'StripeInvalidRequestError'
+            || error.statusCode !== 400 || error.headers?.['idempotent-replayed'] !== 'true') throw error;
+          recoveredRejectedAttempt = true;
+          await recoverUnresolvedCheckout(client, row, pending, catalog);
+          if (!pending.session_id) {
+            await client.query(`UPDATE billing_checkout_attempts SET attempt_id=$1,tier=$2,price_id=$3,
+              session_id=NULL,return_base=$4,created_at=NOW(),quantity=$7 WHERE user_id=$5 AND slot=$6`,
+            [randomUUID(), tier, priceId, frontendBase, userId, slot, quantity]);
+          }
+          renewed = true;
+          return null;
+        }
         await client.query('UPDATE billing_checkout_attempts SET session_id=$1 WHERE user_id=$2 AND slot=$3', [created.id, userId, slot]);
         // Recover the original idempotent request first, including after a
         // crash, then let the next locked iteration close it safely.

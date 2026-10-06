@@ -1,11 +1,11 @@
 @import '../PublicTheme.css';
 .public-overview {
-  --overview-ink: #102a6b;
-  --overview-muted: #475569;
-  --overview-blue: #102a6b;
-  --overview-line: #e2e8f0;
-  --overview-paper: #f8fafc;
-  background: #fff;
+  --overview-ink: var(--text);
+  --overview-muted: var(--muted);
+  --overview-blue: var(--primary);
+  --overview-line: var(--border);
+  --overview-paper: var(--surface);
+  background: var(--card);
   color: var(--overview-ink);
   min-height: 100vh;
   line-height: 1.65;
@@ -78,6 +78,10 @@
 .public-overview-flow--four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .public-feed-diagram { margin: 28px 0 0; padding: 28px; border: 1px solid var(--overview-line); border-radius: 16px; background: var(--overview-paper); }
 .public-feed-diagram figcaption { font-size: .875rem; color: var(--overview-muted); }
+.public-feed-spec { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; margin:24px 0 0; }
+.public-feed-spec > div { padding:20px; background:var(--card); border:1px solid var(--border); border-radius:10px; }
+.public-feed-spec dt { color:var(--primary); font-size:.78rem; font-weight:700; margin-bottom:9px; }
+.public-feed-spec dd { margin:0; color:var(--text); font-size:.92rem; line-height:1.6; }
 .public-feed-options { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0 26px; }
 .public-feed-options button { display: inline-flex; align-items: center; gap: 8px; min-height: 46px; padding: 10px 16px; border: 1px solid var(--overview-line); border-radius: 8px; background: #fff; color: var(--overview-ink); font-size: .9rem; font-weight: 650; }
 .public-feed-options button[aria-pressed="true"] { background: var(--overview-blue); color: #fff; border-color: var(--overview-blue); }
@@ -139,6 +143,7 @@
   .public-office-steps button { padding: 14px 11px; font-size: .85rem; }
 }
 @media (max-width: 700px) {
+  .public-feed-spec { grid-template-columns:1fr; }
   .public-feed-diagram { padding: 20px; }
   .public-feed-path { grid-template-columns: 1fr; gap: 18px; }
   .public-feed-arrow { transform: rotate(90deg); justify-self: center; }
