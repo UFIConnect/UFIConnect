@@ -8,7 +8,7 @@ const links = [
   ['/global', 'Global feed'],
   ['/search', 'Search'],
   ['/vault-device', 'Vault device'],
-  ['/how-it-works', 'How it works'],
+  ['/how-it-works', 'How UFI works'],
   ['/login', 'Sign in'],
   ['/register', 'Create account'],
 ];

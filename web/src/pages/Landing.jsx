@@ -169,7 +169,7 @@ export default function Landing() {
             <nav className="landing-nav-actions" aria-label="Homepage"><div className="public-theme-control"><AppearanceControl compact /></div>
               <Link to="/global">Global Feed</Link>
               <Link to="/vault-device">Vault device</Link>
-              <Link to="/how-it-works">How it works</Link>
+              <Link to="/how-it-works">How UFI works</Link>
               <Link to="/login">Sign in</Link>
               <Link to="/register" className="landing-nav-primary">Join free</Link>
             </nav>
@@ -254,7 +254,7 @@ export default function Landing() {
 
           <section className="landing-section landing-explainers" aria-label="Explore UFIConnect products">
             <article><span className="landing-eyebrow">Vault device</span><h2>A closer look at the device concept</h2><p>See how the proposed hardware relates to the available browser Vault, and which features are still in development.</p><Link to="/vault-device" className="landing-secondary-action">Explore the Vault device</Link></article>
-            <article><span className="landing-eyebrow">Your feeds, explained</span><h2>See how UFIConnect works</h2><p>Explore the mixed feed, focus on individual sources and keep up with the accounts you follow. See how it all connects.</p><Link to="/how-it-works" className="landing-secondary-action">Explore the feed diagram</Link></article>
+            <article><span className="landing-eyebrow">Your feeds, explained</span><h2>How UFI works</h2><p>Explore the mixed feed, focus on individual sources and keep up with the accounts you follow. See how it all connects.</p><Link to="/how-it-works" className="landing-secondary-action">Explore the feed diagram</Link></article>
           </section>
 
           <section className="landing-section landing-start-section">
