@@ -273,18 +273,10 @@ export default function Landing() {
           </section>
 
           <section id="pricing" className="landing-section landing-pricing-section">
-            <SectionHeading eyebrow="Plans" title="Start free. Grow from there.">
-              The main feed stays free. Choose a membership, or add Resume Builder to your account.
+            <SectionHeading eyebrow="Plans" title="Choose your membership.">
+              Explore Pro and Business, or add Resume Builder to your account.
             </SectionHeading>
             <div className="landing-plan-grid">
-              <div className="landing-plan-card">
-                <div className="landing-plan-top">
-                  <h3>Free</h3>
-                </div>
-                <div className="landing-plan-price">$0<small>/mo</small></div>
-                <p>Feed, communities, messaging, posting, and opportunities.</p>
-                <Link to="/register" className="landing-plan-link">Join free</Link>
-              </div>
               {TIERS.map(t => (
                 <PlanCard
                   key={t.tier}
