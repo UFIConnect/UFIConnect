@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 
 const mobileRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const exportRoot = process.env.EXPO_AUDIT_EXPORT_DIR ? path.resolve(process.env.EXPO_AUDIT_EXPORT_DIR) : path.join(mobileRoot, '.cache/export-sdk57');
+const exportRoot = process.env.EXPO_EXPORT_DIR || (process.env.EXPO_AUDIT_EXPORT_DIR ? path.resolve(process.env.EXPO_AUDIT_EXPORT_DIR) : path.join(mobileRoot, '.cache/export-sdk57'));
 const server = http.createServer(async (request, response) => {
   try {
     const pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
@@ -86,13 +86,13 @@ async function installRoutes(page, googleRequests, onboardingComplete = true) {
         : pathname === '/groups' ? { groups: [group] }
           : pathname === '/messages' ? { conversations: [{ id: 'private-conversation-id', participant, lastMessage: { content: 'Private Message Contents' }, unreadCount: 0 }] }
             : pathname.startsWith('/groups/') && pathname.endsWith('/members') ? { members: [], total: 10 }
-              : { opportunities: [], groups: [], categories: [], posts: [], jobs: [], messages: [], platforms: [], conversations: [] };
+              : { users: [], opportunities: [], groups: [], categories: [], posts: [], jobs: [], messages: [], platforms: [], conversations: [] };
     return route.fulfill({ status: 200, headers, contentType: 'application/json', body: JSON.stringify(data) });
   });
 }
 
 try {
-  browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined, headless: true });
+  browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH, headless: true } : { channel: process.platform === 'win32' ? 'msedge' : undefined, headless: true });
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const page = await context.newPage();
   const errors = [];
@@ -138,10 +138,6 @@ try {
   await expectScreen(page, '/app/conversation');
   await page.getByRole('tab', { name: 'Profile' }).click();
   await expectScreen(page, '/app/profile');
-  await page.getByText('Connected accounts', { exact: true }).click();
-  await expectScreen(page, '/app/connected-accounts');
-  // Pressing the active tab returns its nested navigator to its first screen.
-  await page.getByRole('tab', { name: 'Profile' }).click();
   await page.getByText('Security', { exact: true }).click();
   await page.getByLabel('Current password', { exact: true }).fill(password);
   await expectScreen(page, '/app/security');
@@ -179,7 +175,7 @@ try {
   await onboardingPage.getByText('Sign in', { exact: true }).click();
   await expectScreen(onboardingPage, '/app/onboarding');
   await closeAuditContext(onboardingContext);
-  check(allScreens.size === 13, 'All thirteen rendered screens are counted with fixed names');
+  check(allScreens.size === 12, 'All twelve rendered screens are counted with fixed names');
 
   const blockedContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const blockedPage = await blockedContext.newPage();
@@ -219,7 +215,7 @@ try {
     const data = await fs.readFile(path.join(directory, bundle));
     check(!data.includes(Buffer.from('G-F68DRQ6CC5')) && !data.includes(Buffer.from('googletagmanager.com')), `${platform} excludes the web collector and web measurement ID`);
   }
-  console.log(`Expo analytics export audit: ${checks} checks passed, all 13 screens covered.`);
+  console.log(`Expo analytics export audit: ${checks} checks passed, all 12 screens covered.`);
 } finally {
   if (browser) await Promise.all(browser.contexts().map(closeAuditContext));
   await browser?.close();

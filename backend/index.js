@@ -17,6 +17,8 @@ const { buildOfficeSetup } = require('./office-setup');
 const { createManagedRecovery } = require('./managed-recovery');
 const { withActiveMembers } = require('./member-write');
 const { BILLING_SCHEMA, validRecurringPrice, quantityOneAmount, createBilling } = require('./billing');
+const { MANAGED_VPN_SCHEMA, createManagedVpn, registerManagedVpnRoutes } = require('./managed-vpn');
+const { mutateAccountAndRevokeVpn } = require('./vpn-auth-revocation');
 const { BUSINESS_TEAM_SCHEMA, createBusinessTeams, registerBusinessTeamRoutes } = require('./business-teams');
 const dotenv = require('dotenv');
 const http   = require('http');
@@ -16735,11 +16737,14 @@ async function updatePasswordAndRevoke(user, hash, previousVersion, expectedHash
   }
   if (isDBId(user.id)) {
     if (!db.isConnected()) throw Object.assign(new Error('Account storage unavailable.'), { status: 503 });
-    const result = await db.query(
-      'UPDATE users SET password_hash=$1,auth_version=auth_version+1 WHERE id=$2 AND auth_version=$3 AND password_hash=$4 RETURNING auth_version',
-      [hash, user.id, previousVersion, expectedHash]
-    );
-    if (!result.rows[0]) throw Object.assign(new Error('Password changed already. Request a new reset link or sign in again.'), { status: 409 });
+    const result = await mutateAccountAndRevokeVpn(db, user.id, async client => {
+      const updated = await client.query(
+        'UPDATE users SET password_hash=$1,auth_version=auth_version+1 WHERE id=$2 AND auth_version=$3 AND password_hash=$4 RETURNING auth_version',
+        [hash, user.id, previousVersion, expectedHash]
+      );
+      if (!updated.rows[0]) throw Object.assign(new Error('Password changed already. Request a new reset link or sign in again.'), { status: 409 });
+      return updated;
+    });
     user.authVersion = Number(result.rows[0].auth_version);
   } else {
     // Update before persistence, with rollback if the durable write fails.
@@ -16900,6 +16905,7 @@ async function migrateDB() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS resume_builder_subscription_id TEXT`);
     await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_resume_builder_sub_idx ON users(resume_builder_subscription_id) WHERE resume_builder_subscription_id IS NOT NULL`);
     for (const statement of BILLING_SCHEMA) await db.query(statement);
+    for (const statement of MANAGED_VPN_SCHEMA) await db.query(statement);
     for (const statement of BUSINESS_TEAM_SCHEMA) await db.query(statement);
 
     // Groups table — persists across deploys
@@ -20276,7 +20282,8 @@ app.post('/auth/logout-all', authenticate, authLimiter, async (req, res) => {
   try {
     const user = await getAuthUser(req.user.id);
     if (isDBId(user.id)) {
-      const { rows } = await db.query('UPDATE users SET auth_version=auth_version+1 WHERE id=$1 RETURNING auth_version', [user.id]);
+      const { rows } = await mutateAccountAndRevokeVpn(db, user.id, client =>
+        client.query('UPDATE users SET auth_version=auth_version+1 WHERE id=$1 RETURNING auth_version', [user.id]));
       if (!rows[0]) throw new Error('Account unavailable.');
       user.authVersion = Number(rows[0].auth_version);
     } else {
@@ -21235,6 +21242,20 @@ async function getBillingCatalog() {
 const billing = createBilling({ db, stripe, getCatalog: getBillingCatalog, frontendBase: FRONTEND_BASE,
   onUserUpdated: row => syncToMemory(dbRowToMemUser(row)),
 });
+// Server credentials are supplied only through the API's private environment.
+// No gateway configuration means the service remains unavailable to clients.
+let managedVpnGateways = [];
+try { managedVpnGateways = JSON.parse(process.env.MANAGED_VPN_GATEWAYS || '[]'); }
+catch { throw new Error('MANAGED_VPN_GATEWAYS must contain a valid gateway configuration.'); }
+const managedVpn = createManagedVpn({ db, billing, gateways: managedVpnGateways });
+const vpnMemberLimiter = rateLimit({ windowMs: 60 * 1000, limit: 30,
+  keyGenerator: req => String(req.user.id), standardHeaders: 'draft-7', legacyHeaders: false,
+  message: { message: 'Please wait before trying VPN again.' } });
+const vpnGatewayLimiter = rateLimit({ windowMs: 60 * 1000, limit: 20,
+  keyGenerator: rateLimitKey, standardHeaders: 'draft-7', legacyHeaders: false,
+  message: { message: 'Gateway polling is too frequent.' } });
+if (!IS_PIPELINE_ROLE) registerManagedVpnRoutes(app, { vpn: managedVpn, authenticate,
+  limiter: vpnMemberLimiter, gatewayLimiter: vpnGatewayLimiter });
 const businessTeams = createBusinessTeams({ db, billing });
 const billingLimiter = rateLimit({ windowMs: 60 * 1000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false,
   message: { message: 'Please wait a moment before trying billing again.' } });

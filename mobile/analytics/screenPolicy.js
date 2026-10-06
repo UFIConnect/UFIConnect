@@ -11,8 +11,8 @@ const SCREEN_PATHS = Object.freeze({
   MessagesList: '/app/messages',
   Conversation: '/app/conversation',
   ProfileMain: '/app/profile',
-  ConnectedAccounts: '/app/connected-accounts',
   Security: '/app/security',
+  VPN: '/app/vpn',
   Privacy: '/app/privacy',
 });
 

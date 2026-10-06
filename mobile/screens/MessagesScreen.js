@@ -6,6 +6,9 @@ import {
 import axios from 'axios';
 import { useAuth, API_BASE } from '../context/AuthContext';
 import { COLORS } from '../theme';
+import { useModeration } from '../context/ModerationContext';
+import { filterBlockedUsers } from '../security/moderationService';
+import { useIsFocused } from '@react-navigation/native';
 
 function timeAgo(dateStr) {
   if (!dateStr) return '';
@@ -58,6 +61,8 @@ function ConversationRow({ item, onPress }) {
 
 export default function MessagesScreen({ navigation }) {
   const { token } = useAuth();
+  const moderation = useModeration();
+  const isFocused = useIsFocused();
   const [conversations, setConversations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -72,18 +77,19 @@ export default function MessagesScreen({ navigation }) {
     finally { setLoading(false); setRefreshing(false); }
   }, [token]);
 
-  useEffect(() => { fetchConvs(); }, [fetchConvs]);
+  useEffect(() => { if (isFocused) fetchConvs(); }, [fetchConvs, isFocused]);
 
-  const totalUnread = conversations.reduce((n, c) => n + c.unreadCount, 0);
+  const visibleConversations = moderation.loaded ? filterBlockedUsers(conversations, moderation.blockedIds, conversation => conversation.participant?.id) : [];
+  const totalUnread = visibleConversations.reduce((n, c) => n + c.unreadCount, 0);
 
-  if (loading) {
+  if (loading || (!moderation.loaded && !moderation.error)) {
     return <View style={s.center}><ActivityIndicator size="large" color={COLORS.primary} /></View>;
   }
 
   return (
     <FlatList
       style={s.screen}
-      data={conversations}
+      data={visibleConversations}
       keyExtractor={(item) => item.id}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={fetchConvs} tintColor={COLORS.primary} />}
       renderItem={({ item }) => (

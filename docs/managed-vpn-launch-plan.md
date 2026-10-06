@@ -1,0 +1,50 @@
+# UFIConnect managed VPN launch
+
+Updated October 6, 2026. The approved single Germany gateway has been created and its Linux tunnel checks passed. Native client validation remains in progress.
+
+## Approved first gateway
+
+| Setting | Value |
+| --- | --- |
+| Provider | Existing Hetzner Cloud project |
+| Server | One CX23: 2 x86 CPU cores, 4 GB RAM |
+| Region | Falkenstein, Germany (`fsn1`) |
+| Operating system | Ubuntu 24.04 |
+| Network | Public IPv4, WireGuard UDP 51820 |
+| Base monthly cost | $6.49 server + $0.60 IPv4 = **$7.09 USD** |
+| Included traffic | 20 TiB per month, per the account API |
+| Excess traffic | $1.20 per TB, per the account API |
+| Scaling | No automatic server creation, upgrades or paid backups |
+
+The owner approved the $7.09 monthly gateway. Prices were rechecked against the authenticated account API before creation; the account VAT rate was zero. The recurring charge has started. No extra server, upgrade or paid backup was created.
+
+One gateway is shared by subscribers. Each account may enroll up to three devices; the first gateway will permit at most 100 enrolled devices. This is an enrollment limit, not a tested throughput claim. More regions require a separate capacity and cost decision.
+
+## Subscriber experience
+
+The iOS, Android and Windows clients generate their own private keys and request enrollment after the server verifies an active paid VPN entitlement. The user approves the operating system VPN permission once, then uses Connect and Disconnect inside the app. A browser tab cannot start a device VPN.
+
+The API stores device public keys, assigned tunnel addresses and revocation state. Device private keys stay in platform-protected local storage. The cloud API token remains with the operator; clients and the gateway never receive it.
+
+The gateway polls the API using a separate gateway credential. Authorized peers receive short leases. An independent watchdog removes expired peers if the API or billing checks fail. Revoked devices cannot renew themselves. Expiry enforcement is bounded by the polling and watchdog intervals.
+
+## Gateway setup and checks
+
+The reviewed cloud-init definition installs WireGuard, a private DNS resolver, a firewall and serialized synchronization/expiry timers. SSH is restricted to the operator's current IPv4 address and an Ed25519 key. Private key files and gateway credentials are readable only by root.
+
+The firewall blocks peer-to-peer traffic, private/metadata destination networks, outbound SMTP port 25 and IPv6 forwarding. Clients route IPv4 and IPv6 into the tunnel; public IPv4 exits through the gateway. DNS queries and browsing activity are not logged by the supplied configuration.
+
+Before enabling subscriber enrollment, verify the live Linux firewall and services, enrollment/renewal/revocation, lease expiry during an API outage, DNS, IPv6 behavior, real WireGuard handshakes and the health endpoint reachable only inside the tunnel. Validate each native client on its supported operating system. Source-level tests do not establish that a real device tunnel works.
+
+The isolated Linux namespace check passed on October 6: a real WireGuard handshake, internal health, gateway DNS, public IPv4 egress, blocked metadata access and IPv6, and removal of an expired peer by the deployed watchdog. The test peer and namespace were removed and synchronization timers restored. No subscriber was enrolled for this test. Windows installer/device and iOS/Android device checks remain separate.
+
+## Release dependencies
+
+- Completed: cloud cost approval, bootstrap repair and Linux gateway validation.
+- Backend routes, schema, privacy export and production gateway configuration.
+- iOS Network Extension signing and a new signed build; the existing delivered IPA does not include VPN.
+- Android native build and device validation.
+- Windows client packaging, WireGuard integration and device validation.
+- Native App Store screenshots and account-owned submission fields.
+
+No App Store submission, extra paid build plan or additional cloud resource is included in this proposal.

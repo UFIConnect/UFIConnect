@@ -17,13 +17,9 @@ export default function PrivacyScreen() {
       <Text style={styles.body}>The service receives connection information when you make a request. Aggregate usage counts do not store your IP address or identify individual visitors.</Text>
     </View>
     <View style={styles.card}>
-      <View style={styles.row}>
-        <Text style={styles.title}>Data Saver</Text>
-        <Switch accessibilityLabel="Data Saver" value={preferences.dataSaver} disabled={!ready}
-          onValueChange={value => updatePreference('dataSaver', value)} />
-      </View>
-      <Text style={styles.body}>Load only the Feed section you open instead of downloading Groups, Social, and Jobs together. Applies on every connection.</Text>
-      <Text style={styles.body}>This app displays text feeds and does not autoplay media. Roaming is controlled in your device's cellular settings; Data Saver does not change it.</Text>
+      <Text style={styles.title}>Feed data use</Text>
+      <Text style={styles.body}>Your feed loads group posts when you open it or refresh. It does not download connected-provider feeds or autoplay media.</Text>
+      <Text style={styles.body}>Roaming is controlled in your device's cellular settings.</Text>
     </View>
     <View style={styles.card}>
       <View style={styles.row}>

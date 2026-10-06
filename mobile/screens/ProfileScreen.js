@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import axios from 'axios';
 import { useAuth, API_BASE } from '../context/AuthContext';
+import AccountDeletionCard from '../components/AccountDeletionCard';
 import { COLORS, CATEGORY_COLORS, CATEGORY_ICONS } from '../theme';
 
 const SUGGESTED_SKILLS = [
@@ -47,29 +48,17 @@ function TabBar({ active, onChange }) {
 function OverviewTab({ profile, navigation, onLogout, loggingOut }) {
   return (
     <View>
-      <TouchableOpacity
-        style={s.section}
-        onPress={() => navigation.navigate('ConnectedAccounts')}
-        activeOpacity={0.85}
-      >
-        <View style={s.sectionRowHeader}>
-          <Text style={s.sectionTitle}>Connected accounts</Text>
-          <Text style={s.arrow}>→</Text>
-        </View>
-        <Text style={s.sub}>
-          {profile.connectedPlatforms?.length > 0
-            ? `${profile.connectedPlatforms.length} platform${profile.connectedPlatforms.length !== 1 ? 's' : ''} connected`
-            : 'Connect Facebook, Instagram, LinkedIn, X, Reddit, Indeed'}
-        </Text>
-      </TouchableOpacity>
-
       <TouchableOpacity style={s.section} onPress={() => navigation.navigate('Security')} activeOpacity={0.85}>
         <Text style={s.sectionTitle}>Security</Text>
         <Text style={s.sub}>Change your password and manage account sessions</Text>
       </TouchableOpacity>
+      <TouchableOpacity style={s.section} onPress={() => navigation.navigate('VPN')} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="VPN">
+        <Text style={s.sectionTitle}>VPN</Text>
+        <Text style={s.sub}>Connect or disconnect this device</Text>
+      </TouchableOpacity>
       <TouchableOpacity style={s.section} onPress={() => navigation.navigate('Privacy')} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Data & privacy">
         <Text style={s.sectionTitle}>Data & privacy</Text>
-        <Text style={s.sub}>Data Saver, service metrics, and optional analytics</Text>
+        <Text style={s.sub}>Service metrics and optional performance insights</Text>
       </TouchableOpacity>
 
       <View style={s.section}>
@@ -100,6 +89,7 @@ function OverviewTab({ profile, navigation, onLogout, loggingOut }) {
           : <Text style={s.logoutText}>Sign out</Text>
         }
       </TouchableOpacity>
+      <AccountDeletionCard navigation={navigation} />
     </View>
   );
 }
@@ -269,8 +259,10 @@ export default function ProfileScreen({ navigation }) {
       { text: 'Sign out', style: 'destructive', onPress: async () => {
         setLoggingOut(true);
         const result = await logout();
-        if (!result.localCleared || !result.serverRevoked) {
-          Alert.alert('Sign-out needs attention', !result.serverRevoked
+        if (!result.localCleared || !result.serverRevoked || result.vpnDisconnected === false) {
+          Alert.alert('Sign-out needs attention', result.vpnDisconnected === false
+            ? 'Disconnect UFIConnect VPN in device VPN settings to finish signing out.'
+            : !result.serverRevoked
             ? 'The server could not confirm sign-out. When connected, sign in and use Security > Sign out all devices.'
             : 'Server access was revoked, but this device could not clear its saved sign-in data.');
         }
@@ -282,7 +274,6 @@ export default function ProfileScreen({ navigation }) {
 
   const joinedCount = profile.joinedGroups?.length || 0;
   const skillCount = profile.skills?.length || 0;
-  const connCount = profile.connectedPlatforms?.length || 0;
 
   return (
     <ScrollView style={s.screen} contentContainerStyle={s.container}>
@@ -298,7 +289,6 @@ export default function ProfileScreen({ navigation }) {
           {[
             { value: joinedCount, label: 'Groups' },
             { value: skillCount,  label: 'Skills' },
-            { value: connCount,   label: 'Connected' },
           ].map((stat, i) => (
             <React.Fragment key={stat.label}>
               {i > 0 && <View style={s.statDiv} />}

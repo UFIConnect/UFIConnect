@@ -1,0 +1,12 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+  <uses-permission android:name="android.permission.INTERNET" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
+  <application>
+    <service android:name="com.wireguard.android.backend.GoBackend$VpnService" tools:node="remove" />
+    <service android:name="org.uficonnect.vpn.UfiVpnService" android:permission="android.permission.BIND_VPN_SERVICE" android:exported="false" android:foregroundServiceType="systemExempted">
+      <intent-filter><action android:name="android.net.VpnService" /></intent-filter>
+      <meta-data android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON" android:value="false" />
+    </service>
+  </application>
+</manifest>

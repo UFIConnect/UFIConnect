@@ -1,5 +1,7 @@
 # Your Vault VPN connector
 
+This document describes the existing browser/local companion flow. The direct iOS, Android and Windows client implementation and approved Hetzner gateway are tracked in [Managed VPN launch](managed-vpn-launch-plan.md). Native device validation remains required before distribution.
+
 Your Vault uses a VPN app or profile you already configured. The VPN settings built into an operating system are clients: they need a trusted provider or organization’s server, profile, and credentials. They do not provide country endpoints by themselves.
 
 ## Public website

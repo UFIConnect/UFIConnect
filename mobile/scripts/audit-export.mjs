@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const exportRoot = path.join(projectRoot, '.cache/export-sdk57');
+const exportRoot = process.env.EXPO_EXPORT_DIR || path.join(projectRoot, '.cache/export-sdk57');
 const server = http.createServer(async (request, response) => {
   try {
     const pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
@@ -51,7 +51,7 @@ async function verifyReveal(page, field, name) {
 }
 
 try {
-  browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined, headless: true });
+  browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH, headless: true } : { channel: process.platform === 'win32' ? 'msedge' : undefined, headless: true });
   for (const width of [390, 1280]) {
     const context = await browser.newContext({ viewport: { width, height: 844 }, permissions: ['clipboard-read', 'clipboard-write'] });
     const page = await context.newPage();
@@ -68,7 +68,7 @@ try {
       const data = pathname === '/auth/login' ? { token: 'synthetic-live-session', profile }
         : pathname === '/profile' ? { profile }
           : pathname === '/profile/password' ? { ok: true, requiresSignIn: true }
-            : { opportunities: [], groups: [], categories: [], posts: [], jobs: [], messages: [], platforms: [] };
+            : { users: [], opportunities: [], groups: [], categories: [], posts: [], jobs: [], messages: [], platforms: [] };
       return route.fulfill({ status: 200, headers, contentType: 'application/json', body: JSON.stringify(data) });
     });
     await page.goto(base);

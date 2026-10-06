@@ -12,6 +12,7 @@ const { BUSINESS_TEAM_SCHEMA } = require('./business-teams');
 const { CREATOR_ANALYTICS_SCHEMA } = require('./creator-analytics');
 const { UFI_VAULT_SCHEMA } = require('./ufi-vault');
 const { REPORT_SCHEMA } = require('./content-reports');
+const { MANAGED_VPN_SCHEMA } = require('./managed-vpn-schema');
 
 const alice = '11111111-1111-4111-8111-111111111111';
 const bob = '22222222-2222-4222-8222-222222222222';
@@ -35,6 +36,7 @@ async function schema(pg) {
   }
   await pg.exec(HISTORY_SCHEMA);
   for (const sql of BILLING_SCHEMA) await pg.exec(sql);
+  for (const sql of MANAGED_VPN_SCHEMA) await pg.exec(sql);
   for (const sql of BUSINESS_TEAM_SCHEMA) await pg.exec(sql);
   for (const sql of [...CREATOR_ANALYTICS_SCHEMA, ...UFI_VAULT_SCHEMA, ...REPORT_SCHEMA]) await pg.exec(sql);
 }
@@ -58,6 +60,8 @@ async function seed(pg) {
   await insert('community_groups', { id: 'shared-group', name: 'Shared group', category: 'Test', created_by: alice, member_count: 3 });
   for (const [uid, prefix] of [[alice, 'a'], [bob, 'b']]) {
     await insert('vault_vpn_locations', { id: uid, user_id: uid, platform: 'ios', name: `${prefix}-vpn-profile`, country: 'Canada' });
+    await insert('managed_vpn_devices', { id: uid, user_id: uid, gateway_id: 'ufi-de-1', label: `${prefix}-vpn-device`,
+      public_key: Buffer.alloc(32, prefix === 'a' ? 1 : 2).toString('base64'), tunnel_address: prefix === 'a' ? '10.80.0.2' : '10.80.0.3' });
     await insert('community_posts', { id: `${prefix}-post`, group_id: 'shared-group', author_id: uid, content: `${prefix}-post-content`, likes: [alice, bob], comments_count: 1 });
     await insert('post_comments', { id: `${prefix}-comment`, post_id: 'b-post', author_id: uid, content: `${prefix}-comment-content` });
     await insert('attachments', { id: `${prefix}-file`, user_id: uid, filename: `${prefix}.txt`, file_size: 9, file_data: Buffer.from(`${prefix}-contents`), extracted_text: `${prefix}-resume-text` });
@@ -145,16 +149,17 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
     assert.equal(exported.social.connections[0].status, 'pending');
     assert.equal(exported.social.blocks[0].blockedId, carol);
     assert.equal(exported.vpnLocations[0].name, 'a-vpn-profile');
+    assert.equal(exported.vpnDevices[0].label, 'a-vpn-device');
     assert.equal(exported.businessTeamSeats[0].memberId, bob);
     assert.equal(exported.businessTeamInvitations[0].inviteeId, carol);
     assert.equal(Object.hasOwn(exported.businessTeamInvitations[0], 'token_hash'), false);
     for (const key of ['posts', 'comments', 'attachments', 'savedPosts', 'trackedJobs', 'generatedContent', 'resumeDrafts',
       'crossPosts', 'ownedGroups', 'notifications', 'reports', 'seenPosts', 'engagementPreferences', 'restaurantLikes', 'externalPostLikes',
-      'pushRegistrations', 'signIns', 'legacyPageViews', 'legacyClientErrors', 'legacyServerErrors', 'legacyUsageSignals', 'billingCheckouts', 'vpnLocations']) {
+      'pushRegistrations', 'signIns', 'legacyPageViews', 'legacyClientErrors', 'legacyServerErrors', 'legacyUsageSignals', 'billingCheckouts', 'vpnLocations', 'vpnDevices']) {
       assert.equal(exported[key].length, 1, key);
     }
     const serialized = JSON.stringify(exported);
-    for (const forbidden of ['secret-', 'other-private-conversation', 'b-summary', 'b-report-details', 'b-resume-text', 'b-prompt', 'b-vpn-profile']) {
+    for (const forbidden of ['secret-', 'other-private-conversation', 'b-summary', 'b-report-details', 'b-resume-text', 'b-prompt', 'b-vpn-profile', 'b-vpn-device']) {
       assert.equal(serialized.includes(forbidden), false, forbidden);
     }
   });
@@ -179,10 +184,11 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
       assert.equal((await pg.query(`SELECT COUNT(*)::integer AS count FROM ${table} WHERE user_id=$1`, [alice])).rows[0].count, 0, table);
       assert.equal((await pg.query(`SELECT COUNT(*)::integer AS count FROM ${table} WHERE user_id=$1`, [bob])).rows[0].count, 1, table);
     }
-    for (const table of ['generated_content', 'billing_checkout_attempts', 'vault_vpn_locations']) {
+    for (const table of ['generated_content', 'billing_checkout_attempts', 'vault_vpn_locations', 'managed_vpn_devices']) {
       assert.equal((await pg.query(`SELECT COUNT(*)::integer AS count FROM ${table} WHERE user_id=$1`, [alice])).rows[0].count, 0, table);
     }
     assert.equal((await pg.query('SELECT name FROM vault_vpn_locations WHERE user_id=$1', [bob])).rows[0].name, 'b-vpn-profile');
+    assert.equal((await pg.query('SELECT label FROM managed_vpn_devices WHERE user_id=$1', [bob])).rows[0].label, 'b-vpn-device');
     assert.equal((await pg.query('SELECT * FROM business_team_members')).rows.length, 0);
     assert.equal((await pg.query('SELECT * FROM business_team_invitations')).rows.length, 0);
     assert.deepEqual((await pg.query('SELECT created_by,member_count FROM community_groups')).rows[0], { created_by: null, member_count: 2 });

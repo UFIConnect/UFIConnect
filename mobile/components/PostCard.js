@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { COLORS, CATEGORY_COLORS, CATEGORY_ICONS } from '../theme';
+import SafetyButton from './SafetyButton';
 
 function timeAgo(dateStr) {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -24,16 +25,22 @@ function Avatar({ name, size = 40 }) {
 }
 
 export default function PostCard({ post, onLike }) {
-  const [liked, setLiked] = useState(post.likedByMe);
-  const [count, setCount] = useState(post.likesCount);
+  const liked = Boolean(post.likedByMe);
+  const count = post.likesCount || 0;
+  const [liking, setLiking] = useState(false);
+  const [likeError, setLikeError] = useState('');
+  const likingRef = React.useRef(false);
   const cc = post.group ? (CATEGORY_COLORS[post.group.category] || { bg: COLORS.surface, text: COLORS.muted }) : { bg: COLORS.surface, text: COLORS.muted };
   const icon = post.group ? (CATEGORY_ICONS[post.group.category] || '📌') : '';
 
-  function handleLike() {
-    const next = !liked;
-    setLiked(next);
-    setCount((c) => c + (next ? 1 : -1));
-    onLike && onLike(post.id);
+  async function handleLike() {
+    if (likingRef.current || !onLike) return;
+    likingRef.current = true;
+    setLiking(true);
+    setLikeError('');
+    try { await onLike(post.id); }
+    catch { setLikeError('Could not update your like. Please retry.'); }
+    finally { likingRef.current = false; setLiking(false); }
   }
 
   return (
@@ -64,7 +71,7 @@ export default function PostCard({ post, onLike }) {
 
       {/* Actions */}
       <View style={styles.actions}>
-        <TouchableOpacity style={styles.action} onPress={handleLike} activeOpacity={0.7}>
+        <TouchableOpacity style={styles.action} onPress={handleLike} disabled={liking || !onLike} accessibilityRole="button" accessibilityLabel={`${liked ? 'Unlike' : 'Like'} post by ${post.author?.name || 'this user'}`} activeOpacity={0.7}>
           <Text style={[styles.actionIcon, liked && styles.actionIconLiked]}>
             {liked ? '❤️' : '🤍'}
           </Text>
@@ -72,13 +79,11 @@ export default function PostCard({ post, onLike }) {
         </TouchableOpacity>
         <View style={styles.action}>
           <Text style={styles.actionIcon}>💬</Text>
-          <Text style={styles.actionCount}>{post.commentsCount}</Text>
+          <Text style={styles.actionCount}>{post.commentsCount || 0} comments</Text>
         </View>
-        <TouchableOpacity style={styles.action} activeOpacity={0.7}>
-          <Text style={styles.actionIcon}>↗️</Text>
-          <Text style={styles.actionCount}>Share</Text>
-        </TouchableOpacity>
       </View>
+      {likeError ? <Text accessibilityRole="alert" style={{ color: COLORS.danger, fontSize: 12, marginTop: 8 }}>{likeError}</Text> : null}
+      <SafetyButton postId={post.id} userId={post.author?.id} userName={post.author?.name} />
     </View>
   );
 }
