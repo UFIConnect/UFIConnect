@@ -1,3 +1,5 @@
+import JobPostContent from '../components/JobPostContent';
+import { summarizeJob } from '../utils/jobSummary.mjs';
 import { privateSessionStorage } from '../auth/session';
 ﻿import { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
@@ -81,7 +83,7 @@ function JobTab({ job, index, onSelect }) {
           <span>{timeAgo(job.posted)}</span>
         </span>
         <span className="job-result-tab-source">{job.source}</span>
-        {(job.description || job.content) && <span className="job-feed-description">{job.description || job.content}</span>}
+        {(job.description || job.content) && <span className="job-feed-description">{summarizeJob(job).intro}</span>}
       </button>
       <SaveJobButton job={job} className="job-result-save-button" showLabel={false} />
     </div>
@@ -91,8 +93,6 @@ function JobTab({ job, index, onSelect }) {
 export function JobDetail({ job }) {
   if (!job) return null;
   const about = job.about || `${job.org} is hiring for ${job.title}${job.location ? ` in ${job.location}` : ''}. This is a current listing from ${job.source}.`;
-  const description = job.description || job.content
-    || `Open the listing on ${job.source} for the full position description and requirements.`;
   return (
     <article
       className="card job-detail-panel"
@@ -144,8 +144,7 @@ export function JobDetail({ job }) {
       </section>
 
       <section className="job-detail-description">
-        <h3>Description</h3>
-        <p>{description}</p>
+        <JobPostContent post={job} />
       </section>
 
       <div className="job-detail-actions">

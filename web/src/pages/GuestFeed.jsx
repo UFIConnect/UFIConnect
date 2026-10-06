@@ -1,3 +1,10 @@
+import JobPostContent from '../components/JobPostContent';
+import { isCareerPost } from '../utils/jobSummary.mjs';
+import ArticleIllustration from '../components/ArticleIllustration';
+import PostImage from '../components/PostImage';
+import SourceMediaFallback from '../components/SourceMediaFallback';
+import VimeoPreview from '../components/VimeoPreview';
+import { extractVimeoId } from '../components/videoMedia';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
@@ -102,7 +109,9 @@ function GuestVideoPlayer({ post, active, muted }) {
       />
     );
   }
-  return null;
+  const vimeoId = extractVimeoId(videoUrl);
+  if (vimeoId) return <VimeoPreview id={vimeoId} title={post.title} active={active} />;
+  return <SourceMediaFallback post={post} />;
 }
 
 // Deliberately simpler than Feed.jsx's own PostCard — no comments or
@@ -132,7 +141,7 @@ function GuestPostCard({ post, active, muted, registerRef }) {
         style={{ display: 'block', padding: '0 14px', textDecoration: 'none', color: 'inherit' }}
       >
         {post.title && <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 6px', lineHeight: 1.4 }}>{post.title}</p>}
-        {post.content && (
+        {isCareerPost(post) ? <JobPostContent post={post} compact /> : post.content && (
           <p style={{
             fontSize: '.85rem', color: 'var(--muted)', lineHeight: 1.6, margin: '0 0 4px',
             display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden',
@@ -141,9 +150,10 @@ function GuestPostCard({ post, active, muted, registerRef }) {
           </p>
         )}
       </Link>
+      <ArticleIllustration post={post} />
       {isImage && post.mediaUrl && (
         <Link to={`/p/${encodeURIComponent(post.id)}`} style={{ display: 'block', marginTop: 8 }}>
-          <img src={post.mediaUrl} alt="" style={{ width: '100%', display: 'block', maxHeight: 320, objectFit: 'cover', background: 'var(--border)' }} />
+          <PostImage post={post} style={{ width: '100%', display: 'block', maxHeight: 320, objectFit: 'contain', background: 'var(--border)' }} />
         </Link>
       )}
       {isVideo && (

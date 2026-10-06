@@ -70,7 +70,7 @@ async function createAppHarness({ env = {}, connected = false, query, withClient
       app, users, groups, posts, connections, blocks, follows, conversations,
       pickOnboardingGroups, fullProfile, provisionAuth0User, issueSession, createPasswordResetToken, localSessions,
       createOAuthState, verifyOAuthState, dbRowToMemUser, saveSocialToken,
-      normalizeFeedPost, dbRowToFeedPost, mapSharedJobPost,
+      normalizeFeedPost, dbRowToFeedPost, mapSharedJobPost, parseRSSItems, trimPostContent, savePostsToDBFast,
       savePostsToDB, savePostsToDBFast, parseYouTubeChannelRSS, buildSavedPostSnapshot, ARCHIVE_COLUMNS,
       getFeedLocationContext, mainFeedSnapshotKey, mainFeedSnapshots,
       getFollowingFeedPosts, getCommunityPosts, followingSourceCache,
