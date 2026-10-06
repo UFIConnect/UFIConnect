@@ -4,13 +4,13 @@ const path = require('node:path');
 const vm = require('node:vm');
 const file = path.join(__dirname,'../context/AuthContext.js');
 const code = require('@babel/core').transformFileSync(file,{babelrc:false,configFile:false,plugins:[require.resolve('@babel/plugin-transform-react-jsx'),require.resolve('@babel/plugin-transform-modules-commonjs')]}).code;
-function fixture({stopFails=false,stored=null}={}) {
+function fixture({stopFails=false,stored=null,platform='android'}={}) {
   const calls=[], effects=[];let onResponseError;
   const react={createContext:()=>({Provider:'Provider'}),useRef:value=>({current:value}),useState:value=>[value,()=>{}],useEffect:fn=>effects.push(fn),useCallback:fn=>fn,createElement:(type,props)=>({type,props})};
   const axios={get:async()=>({data:{id:'fictional-account'}}),delete:async()=>{calls.push('server-delete-account');return{data:{deleted:true}};},post:async(url)=>{calls.push(url.endsWith('/auth/login')?'login':'server-logout');return{data:{token:'fictional-session',profile:{id:'fictional-account'}}};},interceptors:{response:{use:(_success,error)=>{onResponseError=error;return 1;},eject:()=>{}}}};
   const storage={read:async()=>stored,write:async()=>{calls.push('save-session');},clear:async()=>{calls.push('clear-session');}};
   const sandbox={exports:{},__DEV__:false,require(name){
-    if(name==='react')return react;if(name==='react-native')return{Platform:{OS:'ios'}};
+    if(name==='react')return react;if(name==='react-native')return{Platform:{OS:platform}};
     if(name==='axios')return axios;if(name==='expo-constants')return{expoConfig:{extra:{apiUrl:'https://api.uficonnect.org'}}};
     if(name.includes('async-storage')||name==='expo-secure-store')return{};
     if(name==='../security/apiConfig')return{resolveApiBase:()=> 'https://api.uficonnect.org'};
@@ -57,4 +57,17 @@ test('confirmed account deletion stops native VPN and clears the same account se
   const result=await f.value.deleteAccount();
   assert.equal(result.deleted,true);assert.equal(result.localCleared,true);
   assert.deepEqual(f.calls,['server-delete-account','vpn-stop-signed-in','clear-session']);
+});
+
+test('iOS sign-in and sign-out never claim control of the external WireGuard tunnel',async()=>{
+  const f=fixture({platform:'ios',stopFails:true});
+  await f.value.login('fixture@example.test','fixture password');
+  assert.deepEqual(f.calls,['login','save-session']); f.calls.length=0;
+  const result=await f.value.logout();
+  assert.deepEqual(f.calls,['clear-session','server-logout']);
+  assert.equal(result.vpnDisconnected,null); assert.equal(result.localCleared,true);
+});
+test('iOS logout-all still invalidates server access without a native disconnect call',async()=>{
+  const f=fixture({platform:'ios'});await f.value.login('fixture@example.test','fixture password');f.calls.length=0;
+  const result=await f.value.logoutAll();assert.deepEqual(f.calls,['server-logout','clear-session']);assert.equal(result.vpnDisconnected,null);
 });

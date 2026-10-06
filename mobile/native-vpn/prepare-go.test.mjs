@@ -3,7 +3,16 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { GO_ARCHIVES, verifyArchive } from './prepare-go.mjs';
+import { GO_ARCHIVES, verifyArchive, prepareGo } from './prepare-go.mjs';
+
+test('official WireGuard iOS mode skips the Go hook before requiring a macOS host or network',async()=>{
+  const previous=process.env.EAS_BUILD_PLATFORM;
+  process.env.EAS_BUILD_PLATFORM='ios';
+  try {await prepareGo();} finally {
+    if(previous===undefined) delete process.env.EAS_BUILD_PLATFORM;
+    else process.env.EAS_BUILD_PLATFORM=previous;
+  }
+});
 
 test('toolchain verification rejects a modified archive before extraction', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ufi-go-verify-'));

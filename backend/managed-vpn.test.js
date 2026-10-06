@@ -13,6 +13,8 @@ const key = () => randomBytes(32).toString('base64');
 const gateway = { id: 'test-us-1', label: 'Test US', country: 'US', endpoint: 'gateway.example.invalid:51820',
   publicKey: key(), subnet: '10.80.0.0/24', ipv6Subnet: 'fd80:80:0::/64', dns: ['10.80.0.1'], token: randomBytes(32).toString('base64url') };
 const auth = 'Bearer ' + gateway.token;
+const germany = { ...gateway, id: 'test-de-1', label: 'Test Germany', country: 'DE', token: randomBytes(32).toString('base64url') };
+const germanyAuth = 'Bearer ' + germany.token;
 
 async function fixture(t, options = {}) {
   const pg = new PGlite();
@@ -424,4 +426,216 @@ test('launch intent expires with its browser session and cannot survive account 
   await assert.rejects(f.vpn.consumeLaunch(ALICE, { platform: 'android', code: launchCode(oauthLaunch) }, native), { status: 409 });
   await f.pg.query('DELETE FROM users WHERE id=$1', [ALICE]);
   assert.equal((await f.pg.query('SELECT * FROM managed_vpn_launches')).rows.length, 0);
+});
+
+test('imported profile selects Germany, stores only a public identity and survives browser expiry without client renewal', async t => {
+  const f = await fixture(t, { gateways: [gateway, germany] });
+  const identity = await sessionIdentity(f, ALICE, 30);
+  const body = { publicKey: key(), label: 'UFIConnect iOS' };
+  const first = await f.vpn.enrollProfile(ALICE, body, identity);
+  assert.equal(first.state, 'registered');
+  assert.equal(first.profile.gatewayId, germany.id);
+  assert.equal(first.profile.enrollmentMode, 'profile');
+  assert.equal(Object.hasOwn(first.profile, 'leaseExpiresAt'), false);
+  assert.deepEqual(first.profile.allowedIPs, ['0.0.0.0/0', '::/0']);
+  assert.deepEqual(first.profile.dns, germany.dns);
+  assert.equal(first.profile.publicKey, body.publicKey);
+  assert.equal((await f.vpn.enrollProfile(ALICE, body, identity)).profile.id, first.profile.id);
+  assert.equal(f.vpn.config().profileImportAvailable, true);
+  const stored = (await f.pg.query('SELECT * FROM managed_vpn_devices')).rows[0];
+  assert.equal(stored.enrollment_mode, 'profile');
+  assert.equal(stored.registration_auth_version, 0);
+  assert.equal(stored.lease_expires_at, null);
+  for (const secret of ['privateKey', germany.token, identity.sid]) assert.equal(JSON.stringify(stored).includes(secret), false);
+  await f.pg.query('DELETE FROM auth_sessions WHERE id=$1', [identity.sid]);
+  f.control.now += 20 * 60000;
+  const desired = await f.vpn.desired(germany.id, germanyAuth);
+  assert.equal(desired.peers.length, 1);
+  assert.equal(desired.peers[0].deviceId, first.profile.id);
+  assert.equal(Date.parse(desired.peers[0].expiresAt) - f.control.now, 300000);
+  assert.equal((await f.vpn.list(ALICE)).devices.length, 0);
+  assert.equal((await f.vpn.listProfiles(ALICE)).profiles[0].enrollmentMode, 'profile');
+  assert.equal((await f.vpn.listProfiles(BOB)).profiles.length, 0);
+  assert.equal((await f.vpn.desired(gateway.id, auth)).peers.length, 0);
+});
+
+test('profile inputs reject private keys, gateway overrides and unverified identities', async t => {
+  const f = await fixture(t, { gateways: [germany] });
+  const identity = await sessionIdentity(f);
+  const body = { publicKey: key(), label: 'UFIConnect iOS' };
+  for (const invalid of [null, [], { ...body, privateKey: 'secret' }, { ...body, gatewayId: germany.id },
+    { ...body, endpoint: 'other.invalid:51820' }, { ...body, enrollmentMode: 'profile' },
+    { ...body, publicKey: Buffer.alloc(32).toString('base64') }, { ...body, label: 'Phone\nPostUp=anything' }]) {
+    await assert.rejects(f.vpn.enrollProfile(ALICE, invalid, identity), { status: 400 });
+  }
+  assert.equal(f.control.billingReads, 0);
+  for (const invalid of [undefined, null, { id: ALICE }, { ...identity, id: BOB }, { ...identity, ver: 1 }]) {
+    await assert.rejects(f.vpn.enrollProfile(ALICE, body, invalid), { status: 401 });
+  }
+  assert.equal((await f.vpn.listProfiles(ALICE)).profiles.length, 0);
+  const unavailable = createManagedVpn({ db: f.db, billing: f.billing, gateways: [gateway], now: () => f.control.now });
+  assert.equal(unavailable.config().profileImportAvailable, false);
+  await assert.rejects(unavailable.enrollProfile(ALICE, body, identity), { status: 503 });
+});
+
+test('profile registration requires fresh paid access and checks identity again after billing', async t => {
+  const f = await fixture(t, { gateways: [germany] }), identity = await sessionIdentity(f);
+  const body = { publicKey: key(), label: 'UFIConnect iOS' };
+  f.control.status[ALICE] = { vpnConnectorAddon: false, subscriptions: [] };
+  await assert.rejects(f.vpn.enrollProfile(ALICE, body, identity), { status: 403 });
+  f.control.status[ALICE] = { vpnConnectorAddon: true, subscriptions: [{ ...f.paid().subscriptions[0], status: 'trialing' }] };
+  await assert.rejects(f.vpn.enrollProfile(ALICE, body, identity), { status: 403 });
+  f.control.status[ALICE] = f.paid();f.control.failBilling = true;
+  await assert.rejects(f.vpn.enrollProfile(ALICE, body, identity), { status: 503 });
+  f.control.failBilling = false;
+  f.control.onStatus = () => f.pg.query('DELETE FROM auth_sessions WHERE id=$1', [identity.sid]);
+  await assert.rejects(f.vpn.enrollProfile(ALICE, body, identity), { status: 401 });
+  assert.equal((await f.vpn.listProfiles(ALICE)).profiles.length, 0);
+});
+
+test('imported profile fails closed for outages and canceled payment, then recovers without reimport or address changes', async t => {
+  const f = await fixture(t, { gateways: [germany] }), identity = await sessionIdentity(f);
+  const { profile } = await f.vpn.enrollProfile(ALICE, { publicKey: key(), label: 'UFIConnect iOS' }, identity);
+  const first = await f.vpn.desired(germany.id, germanyAuth);
+  f.control.now += 360000;f.control.failBilling = true;
+  assert.equal((await f.vpn.desired(germany.id, germanyAuth)).peers.length, 0);
+  assert.equal((await f.vpn.listProfiles(ALICE)).profiles.length, 1);
+  f.control.now += 360000;f.control.failBilling = false;
+  const restored = await f.vpn.desired(germany.id, germanyAuth);
+  assert.equal(restored.peers[0].deviceId, profile.id);
+  assert.deepEqual(restored.peers[0].allowedIPs, first.peers[0].allowedIPs);
+  assert.equal(Date.parse(restored.peers[0].expiresAt) - f.control.now, 300000);
+  f.control.status[ALICE] = { vpnConnectorAddon: false, subscriptions: [] };
+  assert.equal((await f.vpn.desired(germany.id, germanyAuth)).peers.length, 0);
+  f.control.status[ALICE] = f.paid();
+  f.control.status[ALICE].subscriptions[0].currentPeriodEnd = Math.floor(f.control.now / 1000) + 42;
+  const paidEnd = await f.vpn.desired(germany.id, germanyAuth);
+  assert.equal(Date.parse(paidEnd.peers[0].expiresAt), f.control.status[ALICE].subscriptions[0].currentPeriodEnd * 1000);
+  const stored = (await f.pg.query('SELECT revoked_at,lease_expires_at FROM managed_vpn_devices')).rows[0];
+  assert.equal(stored.revoked_at, null);assert.equal(stored.lease_expires_at, null);
+  const reads = f.control.billingReads;
+  await f.pg.query('UPDATE users SET vpn_connector_addon=false WHERE id=$1', [ALICE]);
+  assert.equal((await f.vpn.desired(germany.id, germanyAuth)).peers.length, 0);
+  assert.equal(f.control.billingReads, reads + 1, 'An inactive profile still gets fresh provider verification');
+});
+
+test('native keys cannot upgrade into persistent profiles and profile keys cannot enter native renewal', async t => {
+  const f = await fixture(t, { gateways: [germany] }), identity = await sessionIdentity(f);
+  const native = await f.enroll();
+  await assert.rejects(f.vpn.enrollProfile(ALICE, { publicKey: native.device.publicKey, label: 'iOS' }, identity), { status: 409 });
+  const { profile } = await f.vpn.enrollProfile(ALICE, { publicKey: key(), label: 'iOS' }, identity);
+  await assert.rejects(f.enroll(ALICE, { publicKey: profile.publicKey }), { status: 409 });
+  f.control.now += 300000;
+  assert.deepEqual((await f.vpn.desired(germany.id, germanyAuth)).peers.map(peer => peer.deviceId), [profile.id]);
+  assert.equal((await f.vpn.list(ALICE)).devices.length, 0);
+  assert.equal((await f.vpn.listProfiles(ALICE)).profiles.length, 1);
+});
+
+test('native and imported profiles share member capacity, and inactive profiles reserve their gateway address until owner removal', async t => {
+  const f = await fixture(t, { maxDevices: 2, gateways: [{ ...germany, maxPeers: 2 }] });
+  const identity = await sessionIdentity(f);
+  await f.enroll();
+  const { profile } = await f.vpn.enrollProfile(ALICE, { publicKey: key(), label: 'iOS' }, identity);
+  await assert.rejects(f.enroll(), { status: 409 });
+  await assert.rejects(f.vpn.enrollProfile(ALICE, { publicKey: key(), label: 'iPad' }, identity), { status: 409 });
+  await assert.rejects(f.enroll(BOB), { status: 503 });
+  f.control.now += 86400000;
+  f.control.status[ALICE] = { vpnConnectorAddon: false, subscriptions: [] };
+  const bob = await f.enroll(BOB); // Expired native address is reclaimable; imported one is not.
+  assert.notDeepEqual(bob.device.addresses, profile.addresses);
+  await assert.rejects(f.enroll(BOB), { status: 503 });
+  await assert.rejects(f.vpn.removeProfile(BOB, profile.id), { status: 404 });
+  await assert.rejects(f.vpn.remove(ALICE, profile.id), { status: 404 });
+  await assert.rejects(f.vpn.removeProfile(BOB, bob.device.deviceId), { status: 404 });
+  f.control.failBilling = true;
+  assert.deepEqual(await f.vpn.removeProfile(ALICE, profile.id), { removed: true });
+  assert.equal((await f.vpn.listProfiles(ALICE)).profiles.length, 0);
+  f.control.failBilling = false;
+  const replacement = await f.enroll(BOB);
+  assert.deepEqual(replacement.device.addresses, profile.addresses);
+});
+
+test('profile enrollment concurrency respects three combined slots and cannot claim another owner key', async t => {
+  const f = await fixture(t, { gateways: [germany] }), identity = await sessionIdentity(f), bob = await sessionIdentity(f, BOB);
+  const outcomes = await Promise.allSettled(Array.from({ length: 4 }, () => f.vpn.enrollProfile(ALICE, { publicKey: key(), label: 'iOS' }, identity)));
+  assert.equal(outcomes.filter(item => item.status === 'fulfilled').length, 3);
+  assert.equal(outcomes.find(item => item.status === 'rejected').reason.status, 409);
+  const publicKey = outcomes.find(item => item.status === 'fulfilled').value.profile.publicKey;
+  await assert.rejects(f.vpn.enrollProfile(BOB, { publicKey, label: 'iOS' }, bob), { status: 409 });
+  const rows = (await f.pg.query('SELECT tunnel_address FROM managed_vpn_devices')).rows;
+  assert.equal(new Set(rows.map(row => row.tunnel_address)).size, 3);
+});
+
+test('profile account revocation, owner removal and deletion during billing cannot resurrect a peer', async t => {
+  for (const action of ['version', 'remove', 'delete']) {
+    await t.test(action, async t => {
+      const f = await fixture(t, { gateways: [germany] }), identity = await sessionIdentity(f);
+      const { profile } = await f.vpn.enrollProfile(ALICE, { publicKey: key(), label: 'iOS' }, identity);
+      f.control.onStatus = () => action === 'version'
+        ? f.pg.query('UPDATE users SET auth_version=auth_version+1 WHERE id=$1', [ALICE])
+        : action === 'remove' ? f.vpn.removeProfile(ALICE, profile.id)
+          : f.pg.query('DELETE FROM users WHERE id=$1', [ALICE]);
+      assert.equal((await f.vpn.desired(germany.id, germanyAuth)).peers.length, 0);
+    });
+  }
+});
+
+test('profile HTTP endpoints require a verified member, isolate modes and return no-store public configuration', async t => {
+  const f = await fixture(t, { gateways: [germany] }), identity = await sessionIdentity(f);
+  const express = require('express'), http = require('node:http');
+  const app = express();app.use(express.json());
+  registerManagedVpnRoutes(app, { vpn: f.vpn, authenticate: (req, res, next) => {
+    if (req.get('x-test-account') !== ALICE) return res.sendStatus(401);
+    req.user = identity;next();
+  } });
+  const server = http.createServer(app);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.closeAllConnections();return new Promise(resolve => server.close(resolve)); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  for (const method of ['GET', 'POST', 'DELETE']) {
+    const url = '/vpn/profiles' + (method === 'DELETE' ? '/' + ALICE : '');
+    assert.equal((await fetch(base + url, { method })).status, 401);
+  }
+  const headers = { 'x-test-account': ALICE, 'content-type': 'application/json' };
+  const response = await fetch(base + '/vpn/profiles', { method: 'POST', headers, body: JSON.stringify({ publicKey: key(), label: 'UFIConnect iOS' }) });
+  assert.equal(response.status, 200);assert.match(response.headers.get('cache-control'), /private, no-store/);
+  const { profile } = await response.json();
+  assert.equal((await fetch(base + '/vpn/devices/' + profile.id, { method: 'DELETE', headers })).status, 404);
+  const listed = await fetch(base + '/vpn/profiles', { headers });
+  assert.match(listed.headers.get('cache-control'), /no-store/);
+  assert.equal((await listed.json()).profiles[0].id, profile.id);
+  assert.equal((await fetch(base + '/vpn/profiles/' + profile.id, { method: 'DELETE', headers })).status, 200);
+});
+
+test('gateway poll locks device rows only for owners whose payment was verified and whose account lock was taken', async t => {
+  const f = await fixture(t, { gateways: [germany] }), identity = await sessionIdentity(f);
+  await f.vpn.enrollProfile(ALICE, { publicKey: key(), label: 'iOS' }, identity);
+  await f.enroll(BOB);
+  f.control.onStatus = userId => { if (userId === BOB) throw new Error('Unverifiable'); };
+  const queries = [];
+  const db = { ...f.db, withClient: work => f.db.withClient(client => work({ query: (sql, args) => {
+    queries.push({ sql, args });return client.query(sql, args);
+  } })) };
+  const vpn = createManagedVpn({ db, billing: f.billing, gateways: [germany], now: () => f.control.now });
+  assert.equal((await vpn.desired(germany.id, germanyAuth)).peers.length, 1);
+  const ownerLock = queries.find(query => /FROM users.*FOR UPDATE/.test(query.sql));
+  const deviceLock = queries.find(query => /FOR UPDATE OF d/.test(query.sql));
+  assert.deepEqual(ownerLock.args[0], [ALICE]);
+  assert.match(deviceLock.sql, /d\.user_id=ANY\(\$4::uuid\[\]\)/);
+  assert.deepEqual(deviceLock.args[3], ownerLock.args[0]);
+  assert.ok(queries.indexOf(ownerLock) < queries.indexOf(deviceLock));
+});
+
+test('a profile recovers after a provider read stalls forever without reusing an earlier verification', async t => {
+  const f = await fixture(t, { gateways: [germany], billingTimeoutMs: 10, reconcileBudgetMs: 20 });
+  const identity = await sessionIdentity(f);
+  const { profile } = await f.vpn.enrollProfile(ALICE, { publicKey: key(), label: 'iOS' }, identity);
+  f.control.onStatus = () => new Promise(() => {});
+  assert.equal((await f.vpn.desired(germany.id, germanyAuth)).peers.length, 0);
+  const reads = f.control.billingReads;
+  f.control.onStatus = null;
+  await new Promise(resolve => setTimeout(resolve, 12));
+  const recovered = await f.vpn.desired(germany.id, germanyAuth);
+  assert.equal(f.control.billingReads, reads + 1);
+  assert.equal(recovered.peers[0].deviceId, profile.id);
 });

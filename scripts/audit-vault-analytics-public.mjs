@@ -65,7 +65,7 @@ try {
         if (endpoint === '/auth/session') return route.fulfill({ headers, json: { token: app.token(memberId), profile: (await app.request('/profile', { userId: memberId })).data } });
         if (endpoint === '/security/vault/status') return route.fulfill({ headers, json: vaultStatus });
         if (endpoint === '/billing/config') return route.fulfill({ headers, json: { paymentsReady: vaultCheckoutReady, tiers: { vpn_connector: vaultCheckoutReady }, pricing: { vpn_connector: { active: true, unitAmount: 394, currency: 'USD', interval: 'month', intervalCount: 1 } } } });
-        if (endpoint === '/billing/status') return route.fulfill({ headers, json: { plan: 'free', vpnConnectorAddon: vpnPaid, hasBillingAccount: vpnPaid, subscriptions: vpnPaid ? [{ kind: 'vpn_connector', status: 'active' }] : [] } });
+        if (endpoint === '/billing/status') return route.fulfill({ headers, json: { plan: 'free', vpnConnectorAddon: vpnPaid, hasBillingAccount: vpnPaid, subscriptions: vpnPaid ? [{ kind: 'vpn_connector', status: 'active', currentPeriodEnd: Math.floor(Date.now() / 1000) + 3600 }] : [] } });
         if (endpoint === '/billing/create-checkout-session') {
           checkoutRequests++;
           check(JSON.stringify(request.postDataJSON()) === JSON.stringify({ tier: 'vpn_connector' }), 'Vault checkout sends only the existing tier');
@@ -277,3 +277,7 @@ try {
   }
   console.log(`PASS: ${checks} production-bundle Vault and analytics checks`);
 } finally { await browser.close(); await app.close(); }
+
+// Keep native handoff and private profile checks on this existing CI entry.
+await import('./audit-vpn-one-click.mjs');
+await import('./audit-vpn-profiles.mjs');

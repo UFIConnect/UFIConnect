@@ -6,11 +6,12 @@ import { vpnLaunch } from './launchClient';
 export default function VpnLaunchBridge({navigationRef, navigationReady}) {
   const {token,loading,onboardingComplete} = useAuth();
   useLayoutEffect(() => {
+    if (Platform.OS !== 'android') return;
     vpnLaunch.bindSession(token, !loading && onboardingComplete && navigationReady);
     void vpnLaunch.flush();
   }, [token,loading,onboardingComplete,navigationReady]);
   useEffect(() => {
-    if (!['ios','android'].includes(Platform.OS)) return undefined;
+    if (Platform.OS !== 'android') return undefined;
     const unsubscribe = vpnLaunch.subscribe(event => {
       if (event.type === 'request') {
         navigationRef.current?.navigate('Main', {screen:'Profile',params:{screen:'VPN',params:{launchRequestId:event.id}}});

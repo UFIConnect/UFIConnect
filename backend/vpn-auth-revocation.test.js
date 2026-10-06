@@ -17,6 +17,10 @@ test('account revocation commits with VPN revocation and rolls back on failure',
       VALUES($1,$2,'windows',0,NOW()+interval '3 minutes')`, ['a'.repeat(64), userId]);
     await pg.query(`INSERT INTO managed_vpn_devices(id,user_id,gateway_id,public_key,label,tunnel_address,lease_expires_at)
       VALUES($1,$1,'gateway',$2,'Phone','10.80.0.2',NOW()+interval '5 minutes')`, [userId, Buffer.alloc(32, 1).toString('base64')]);
+    await pg.query("UPDATE managed_vpn_devices SET enrollment_mode='profile',registration_auth_version=0,lease_expires_at=NULL");
+    await pg.query(`INSERT INTO managed_vpn_devices(id,user_id,gateway_id,public_key,label,tunnel_address,lease_expires_at)
+      VALUES('22222222-2222-4222-8222-222222222222',$1,'gateway',$2,'Native','10.80.0.3',NOW()+interval '5 minutes')`,
+    [userId, Buffer.alloc(32, 2).toString('base64')]);
     const db = { withClient: fn => fn(pg) };
     const change = async client => {
       await client.query('UPDATE users SET auth_version=auth_version+1 WHERE id=$1', [userId]);
@@ -28,7 +32,9 @@ test('account revocation commits with VPN revocation and rolls back on failure',
     assert.equal((await pg.query('SELECT * FROM managed_vpn_launches')).rows.length, 1);
     assert.equal(await mutateAccountAndRevokeVpn(db, userId, change), 'changed');
     assert.equal((await pg.query('SELECT auth_version FROM users')).rows[0].auth_version, 1);
-    assert.ok((await pg.query('SELECT revoked_at FROM managed_vpn_devices')).rows[0].revoked_at);
+    const revoked = (await pg.query('SELECT enrollment_mode,revoked_at FROM managed_vpn_devices')).rows;
+    assert.deepEqual(revoked.map(row => row.enrollment_mode).sort(), ['native', 'profile']);
+    assert.ok(revoked.every(row => row.revoked_at));
     assert.equal((await pg.query('SELECT * FROM managed_vpn_launches')).rows.length, 0);
   } finally { await pg.close(); }
 });

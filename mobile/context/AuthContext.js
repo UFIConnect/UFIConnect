@@ -16,6 +16,10 @@ const sessionStorage = createSessionStorage({
   legacyStorage: AsyncStorage,
 });
 const REQUEST_TIMEOUT = 15000;
+// Official WireGuard on iOS has its own OS tunnel and lifecycle. App sign-out
+// must not claim it stopped an external application's connection.
+const disconnectManagedVpnSession = token => Platform.OS === 'ios'
+  ? Promise.resolve({externalManaged:true}) : disconnectVpnSession(token);
 
 const AuthContext = createContext(null);
 
@@ -31,7 +35,7 @@ export function AuthProvider({ children }) {
     currentToken.current = null;
     setToken(null);
     setProfile(null);
-    const vpnStopped = await disconnectVpnSession(session).then(() => true, () => false);
+    const vpnStopped = await disconnectManagedVpnSession(session).then(() => true, () => false);
     const localCleared = await sessionStorage.clear().then(() => true, () => false);
     if (!vpnStopped || !localCleared) {
       const error = new Error('Device sign-out needs attention.');
@@ -41,8 +45,8 @@ export function AuthProvider({ children }) {
 
   function cleanupResult() {
     return clearLocalSession().then(
-      () => ({localCleared: true, vpnDisconnected: true}),
-      error => ({localCleared: error?.localCleared === true, vpnDisconnected: error?.vpnDisconnected === true})
+      () => ({localCleared: true, vpnDisconnected: Platform.OS === 'ios' ? null : true}),
+      error => ({localCleared: error?.localCleared === true, vpnDisconnected: Platform.OS === 'ios' ? null : error?.vpnDisconnected === true})
     );
   }
 
@@ -62,9 +66,9 @@ export function AuthProvider({ children }) {
             setToken(stored);
             setProfile(res.data.profile || res.data);
           }
-        } else await disconnectVpnSession(null);
+        } else await disconnectManagedVpnSession(null);
       } catch (error) {
-        await disconnectVpnSession(stored).catch(() => {});
+        await disconnectManagedVpnSession(stored).catch(() => {});
         if ([401, 403].includes(error?.response?.status)) {
           await sessionStorage.clear().catch(() => {});
         }
@@ -93,8 +97,8 @@ export function AuthProvider({ children }) {
 
   async function acceptSession(data) {
     try {
-      // A newly authenticated account must not inherit an earlier account's VPN.
-      await disconnectVpnSession(currentToken.current);
+      // The managed Android tunnel must not carry over between app accounts.
+      await disconnectManagedVpnSession(currentToken.current);
       await sessionStorage.write(data.token);
     } catch {
       // Do not fall back to insecure persistence if the OS store is unavailable.
@@ -139,7 +143,7 @@ export function AuthProvider({ children }) {
   }
 
   async function logoutAll() {
-    await disconnectVpnSession(currentToken.current).catch(() => {});
+    await disconnectManagedVpnSession(currentToken.current).catch(() => {});
     await axios.post(`${API_BASE}/auth/logout-all`, {}, {
       headers: { Authorization: `Bearer ${currentToken.current}` }, timeout: REQUEST_TIMEOUT,
     });

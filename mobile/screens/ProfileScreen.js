@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  Alert, ActivityIndicator, TextInput,
+  Alert, ActivityIndicator, TextInput, Platform,
 } from 'react-native';
 import axios from 'axios';
 import { useAuth, API_BASE } from '../context/AuthContext';
@@ -54,7 +54,7 @@ function OverviewTab({ profile, navigation, onLogout, loggingOut }) {
       </TouchableOpacity>
       <TouchableOpacity style={s.section} onPress={() => navigation.navigate('VPN')} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="VPN">
         <Text style={s.sectionTitle}>VPN</Text>
-        <Text style={s.sub}>Connect or disconnect this device</Text>
+        <Text style={s.sub}>{Platform.OS === 'ios' ? 'Set up your profile in official WireGuard' : 'Connect or disconnect this device'}</Text>
       </TouchableOpacity>
       <TouchableOpacity style={s.section} onPress={() => navigation.navigate('Privacy')} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Data & privacy">
         <Text style={s.sectionTitle}>Data & privacy</Text>
@@ -254,7 +254,7 @@ export default function ProfileScreen({ navigation }) {
   const [loggingOut, setLoggingOut] = useState(false);
 
   function handleLogout() {
-    Alert.alert('Sign out', 'Are you sure you want to sign out?', [
+    Alert.alert('Sign out', Platform.OS === 'ios' ? 'Sign out of UFIConnect? A connection in WireGuard keeps running. Disconnect it in WireGuard when needed.' : 'Are you sure you want to sign out?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Sign out', style: 'destructive', onPress: async () => {
         setLoggingOut(true);
