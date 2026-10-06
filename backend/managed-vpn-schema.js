@@ -14,6 +14,13 @@ const MANAGED_VPN_SCHEMA = [
     CHECK (length(public_key) = 44),
     CHECK (length(label) BETWEEN 1 AND 80)
   )`,
+  // Existing native clients retain their explicit, expiring client lease.
+  // Imported profiles are a separate, owner-revocable registration; only the
+  // gateway's independently verified short lease grants network access.
+  `ALTER TABLE managed_vpn_devices ADD COLUMN IF NOT EXISTS enrollment_mode TEXT NOT NULL DEFAULT 'native'
+    CHECK (enrollment_mode IN ('native','profile'))`,
+  `ALTER TABLE managed_vpn_devices ADD COLUMN IF NOT EXISTS registration_auth_version INTEGER
+    CHECK (registration_auth_version >= 0)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS managed_vpn_active_address_idx
     ON managed_vpn_devices(gateway_id,tunnel_address) WHERE revoked_at IS NULL`,
   `CREATE INDEX IF NOT EXISTS managed_vpn_owner_idx ON managed_vpn_devices(user_id)`,

@@ -1,69 +1,43 @@
-# Your Vault VPN connector
+# UFIConnect VPN
 
-This document describes the existing browser/local companion flow. The direct iOS, Android and Windows client implementation and approved Hetzner gateway are tracked in [Managed VPN launch](managed-vpn-launch-plan.md). Native device validation remains required before distribution.
+Updated October 6, 2026.
 
-Your Vault uses a VPN app or profile you already configured. The VPN settings built into an operating system are clients: they need a trusted provider or organization’s server, profile, and credentials. They do not provide country endpoints by themselves.
+## iPhone and iPad
 
-## Public website
+1. Install the official [WireGuard app](https://www.wireguard.com/install/).
+2. Sign in to UFIConnect and open **Vault > VPN**.
+3. Choose **Get VPN profile**. UFIConnect selects its Germany gateway automatically.
+4. In WireGuard, import the downloaded configuration file once and approve the normal iOS VPN permission.
+5. Use WireGuard's Connect/Disconnect switch.
 
-Open **Your Vault → Your VPN** and use its top connection button. On Windows it opens system VPN controls; on other public-web platforms it reveals the connection steps for your existing app. The local companion can connect or disconnect an existing profile with the top button. **Device, locations and setup** holds the platform selector, optional profile labels and provider guidance. No unsupported private settings URL schemes or invented connected states are used.
+There is no device-name form, location selector, terminal command, or custom Apple extension setup for subscribers. The downloaded file contains its private key: keep it private and delete the downloaded copy after import. Create a separate profile for another device.
 
-The public website does not claim to create a tunnel or detect VPN status. It does not probe localhost or expose the local companion to public origins. Country selection is based only on existing profile locations confirmed by the user. Choosing a country prepares the matching profile instructions; switch the actual connection in the VPN app/settings.
+The browser creates the key pair locally and sends only the public key to UFIConnect. It builds the downloaded file from the verified public gateway configuration. Private keys and files do not enter API storage, analytics, browser local storage, or connection links.
 
-### Device imports and local Vault storage
+Imported profiles work independently of the UFIConnect app and browser. Signing out of the website does not stop WireGuard. Use WireGuard to disconnect, or revoke the profile in UFIConnect to remove its access.
 
-Vault Home includes Passwords, Documents and Keys. **Import from this device** opens the current phone or computer's native picker for documents and key files. Browsers cannot bulk-read the operating system's password store; passwords can be added manually. Nothing in this import flow reads another device or the pending UFI hardware.
+## Subscription and revocation
 
-Files are limited to 512 KiB each and share the existing 2 MiB encoded Vault payload limit with passwords. Filenames and file bytes stay inside the authenticated encrypted record in browser storage. Locking hides all collections. Downloads require a user action, and encrypted backup/restore includes all three collections. Storage-quota or validation errors preserve the previous record. Imported files are not rendered or executed, and are never uploaded to the API.
+An active paid UFI Vault membership is required to create a profile and carry traffic. Trial access does not qualify. The gateway rechecks current membership and receives short authorizations lasting at most five minutes. Failed payment verification removes access; the same imported profile can recover after a temporary verification outage.
 
-The Device page presents the planned one-step experience: choose your app and continue while the device handles authentication for supported integrations. Hardware pairing, automatic sign-in and ordering remain unavailable until the hardware integration is ready.
+Profile registration is persistent. It reserves a member slot and gateway address until explicitly revoked, invalidated by account security changes, or removed with the account. Password changes/reset and signing out all sessions revoke registrations. Temporary billing outages and ordinary website logout do not erase them. Members can list and remove their own registrations without an active subscription.
 
-### UFI Vault membership and pending VPN setup
+Each account may have three registered VPN devices/profiles. The approved gateway allows 100 registrations. No additional server, upgrade, or automatic capacity purchase occurs.
 
-The **UFI Vault membership at $3.94 USD per month** enables encrypted passwords, documents and keys now. **Subscribe for $3.94 USD / month** opens the existing Stripe checkout from **A space that’s yours**, including after the local Vault is unlocked. UFI VPN is included when service setup is complete; its panel shows **UFI VPN · setup pending** until hosting, gateways and supported client connections are available. No IP-address detection or provider provisioning has been implemented. Existing Proton/other-provider apps use their own accounts and do not activate UFI VPN.
+## Windows and Android
 
-Public creation, additions, content edits and file imports require the confirmed shared entitlement. A single billing state drives both Vault and VPN controls and is refreshed on focus and while visible. Existing owners can always unlock, read, copy, launch, export, download, restore and delete their encrypted items without an active subscription. These recovery rights are never paywalled. Passwords/files/keys remain encrypted locally and are not sent to the billing service. The synthetic local review keeps all sample controls usable and shows the disabled Subscribe button; it never grants a paid entitlement.
+The prepared UFIConnect native clients support app Connect/Disconnect. The website opens them with a short-lived, single-use link tied to the signed-in account. Initial app installation, same-account sign-in, disclosure, and operating-system permission are required. The browser cannot confirm a tunnel; connection status belongs to the native app.
 
-Billing uses the existing Stripe integration with the independent `vpn_connector` subscription slot. `STRIPE_VPN_CONNECTOR_PRICE_ID` must identify an active licensed flat USD 394-cent monthly price. Checkout also requires Stripe, webhook configuration and database availability; missing or mismatched configuration leaves checkout unavailable. Only reconciled Stripe state grants entitlement, and a success return URL does not activate membership. Reconciliation, cancellation, saved-label ownership checks and account deletion remain enabled. No existing users are automatically enrolled. Subscription management remains available in Settings. Profile labels are separate account metadata and do not establish VPN connectivity.
+Native clients must keep renewing their short authorization. A gateway poll cannot renew an abandoned native client. This differs from the explicit imported-profile registration above.
 
-The owner will set up the VPN hosting account. The remaining service work is a running gateway with DNS and secured management, authenticated device enrollment and paid access provisioning, supported client setup, and verification of actual connections, cancellation/expiry and leak protection. No hosting purchase or VPN deployment is performed by this membership change. See [UFI VPN service](UFI-VPN-SERVICE.md) for the implementation proposal.
+The Windows package is an unsigned validation build; actual installer/UAC/tunnel testing remains required. Android needs the existing signing credential before a compatible signed update can be produced.
 
-`GET /vault/vpn/locations`, `POST /vault/vpn/locations` and `DELETE /vault/vpn/locations/:id` require the signed-in account. Creating labels additionally requires the active subscription and enforces the per-user limit in a transaction. Neither API accepts VPN credentials, traffic, IP addresses or native profile IDs. Labels never enter the timestamp-only connection activity log. Production websites still do not access the synthetic local companion or claim it has a verified paid account.
+## Privacy and network behavior
 
-### Use an existing Proton VPN subscription
+The managed Germany gateway forwards public IPv4 traffic and resolves DNS. Both IP families are routed into the tunnel; IPv6 egress is blocked. Private networks, metadata addresses, peer-to-peer access and outbound SMTP port 25 are blocked by the gateway. The deployed configuration does not log browsing or DNS queries.
 
-Install the [official Proton VPN app](https://protonvpn.com/download) for Windows, Linux, iOS, or Android and sign in directly with Proton using your existing subscription. Choose the desired country in Proton's app and connect there. Following these links and instructions does not need a UFI subscription. Your Vault does not receive your Proton credentials or keys and cannot verify your Proton plan or connection. The official app manages Proton's country selection; the separate paid UFI Connector saves optional labels for profiles you already configured.
+The service stores account-linked public keys, generic device labels, assigned addresses, gateway, registration mode/time, authorization and revocation state. These records support access management and account export/deletion. See the [privacy policy](https://uficonnect.org/privacy).
 
-Enable Proton's [kill switch](https://protonvpn.com/support/what-is-kill-switch) using its platform-specific instructions. Windows and Linux GUI apps support Advanced mode for blocking traffic even after a deliberate disconnect. Android uses its Always-on VPN and Block connections without VPN settings. iOS offers a kill switch, but some Apple DNS traffic can bypass the VPN; follow Proton's documented limits. Do not assume every platform or mode behaves identically.
+The separate local OS-profile adapter remains developer tooling. The product interface no longer exposes its device/location setup controls.
 
-Proton's apps include [DNS leak protection](https://protonvpn.com/support/dns-leaks-privacy). Custom DNS settings may interfere with it. Manage protection and verify connection status in Proton's official app; UFIconnect cannot enforce or audit these settings. No unsupported Proton URL schemes or unofficial control APIs are used, and the Windows built-in IKEv2/SSTP adapter is not presented as a Proton app controller.
-
-## Local desktop companion
-
-This repository's local review launcher provides actual existing-profile controls. It uses a synthetic review account, not your public UFIconnect account. Your public encrypted Vault is not copied into it. Keep the companion bound to loopback; never forward its port or expose it to a LAN or the internet.
-
-From a trusted clone of this repository with Node.js and the repository's web and backend dependencies installed:
-
-```sh
-node scripts/start-vault-review.mjs
-```
-
-Open the exact localhost URL printed by the launcher, then `/vault`. This opens a separate local review. Choose a configured profile under **Device, locations and setup**, then press the top **Connect VPN** button. No VPN is connected automatically.
-
-- Windows: controls existing IKEv2/SSTP profiles using Windows' saved credentials and scope-specific phonebooks. Automatic, PPTP, and L2TP profiles cannot be activated here.
-- Linux: requires NetworkManager and `/usr/bin/nmcli`. Controls existing WireGuard and OpenVPN profiles using UUIDs. Required VPN plugins and credentials must already be configured through the operating system. Other types remain visible but unavailable for activation.
-- iOS/Android: use the installed app or operating-system profile. No native tunnel entitlement or device-management profile is supplied by this website.
-
-Country labels map only to profiles returned by the local operating system. No country is inferred from a profile name, and no IP/geolocation lookup is performed. To change countries, disconnect the current profile, select the configured target, and connect it. The connector refuses to activate a second profile while another enumerated VPN is active or transitioning. Enable the VPN provider's kill switch before switching; this application cannot enforce it or audit routing/DNS rules.
-
-## Request protection and privacy
-
-The companion validates loopback Host, same-origin requests, Fetch Metadata, and a random CSRF token. Each action additionally needs a 256-bit random nonce bound to the origin, profile ID, and connect/disconnect action. Nonces expire after 30 seconds and are consumed on first use, including mismatched attempts. Pending nonces are bounded. A timestamp alone is not an anti-cloning credential.
-
-The adapter executes fixed OS binaries without a shell, resolves each profile from a fresh OS snapshot, and confirms the resulting state from the OS. It does not accept commands, passwords, endpoints, or file paths from the browser. Linux enumeration is bounded and incomplete reads fail closed.
-
-Connection activity is an in-memory list of at most 50 connect/disconnect request timestamps. It contains no account, country, profile name, IP address, destination, browsing data, password, or command diagnostics. It is cleared when the companion stops. This policy describes UFIconnect's connector, not logging performed by the operating system or VPN provider. Reported connection status is not an anonymity guarantee.
-
-Hardware cloning resistance requires secure device keys and verified challenge responses; the VPN helper cannot provide it. No real VPN was activated during automated tests: OS commands were injected test doubles.
-
-Official references: [Windows VPN](https://support.microsoft.com/windows/connect-to-a-vpn-in-windows-3d29aeb1-f497-f6b7-7633-115722c1009c), [NetworkManager nmcli](https://networkmanager.pages.freedesktop.org/NetworkManager/NetworkManager/nmcli.html), [Apple VPN configuration](https://developer.apple.com/documentation/networkextension/nevpnmanager), [Android VPN](https://developer.android.com/develop/connectivity/vpn), [Android existing VPN settings](https://support.google.com/android/answer/9089766).
+Implementation and deployment validation are documented in [Managed VPN launch](managed-vpn-launch-plan.md).

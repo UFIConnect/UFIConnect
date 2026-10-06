@@ -84,6 +84,12 @@ function createManagedVpn({ db, billing, gateways = [], now = Date.now, leaseSec
     // Share only in-flight reads. Every later poll must verify current Stripe
     // state; neither a previous success nor a stored paid flag renews a lease.
     let pending = billingPending.get(userId);
+    if (pending && Date.now() - pending.startedAt >= billingTimeoutMs) {
+      // A provider call that never settles must not permanently strand a saved
+      // profile. A later poll may attempt fresh verification; its predecessor
+      // cannot clear this replacement or contribute a stale authorization.
+      billingPending.delete(userId);pending = null;
+    }
     if (!pending) {
       pending = { startedAt: Date.now(), promise: Promise.resolve().then(() => billing.status(userId)) };
       billingPending.set(userId, pending);
@@ -197,26 +203,45 @@ function createManagedVpn({ db, billing, gateways = [], now = Date.now, leaseSec
   function config() {
     return { available: configured.length > 0 && !!db?.isConnected?.(), protocol: 'wireguard',
       clientRequired: true, maxDevices, leaseSeconds, trialAccess: false,
+      profileImportAvailable: configured.some(gateway => gateway.country === 'DE') && !!db?.isConnected?.(),
       gateways: configured.map(gatewayPublic) };
+  }
+  function profileConfiguration(row, gateway) {
+    const value = configuration(row, gateway);
+    if (!value) throw fault(503, 'VPN profile configuration needs review.');
+    const { deviceId, leaseExpiresAt, ...fields } = value;
+    return { id: deviceId, ...fields, enrollmentMode: 'profile', createdAt: iso(row.created_at) };
   }
   async function list(userId) {
     account(userId);
     const { rows } = await db.query(`SELECT id,gateway_id,label,public_key,tunnel_address,created_at,lease_expires_at
-      FROM managed_vpn_devices WHERE user_id=$1 AND revoked_at IS NULL AND lease_expires_at>$2
+      FROM managed_vpn_devices WHERE user_id=$1 AND enrollment_mode='native' AND revoked_at IS NULL AND lease_expires_at>$2
       ORDER BY created_at,id`, [userId, iso(now())]);
-    return { devices: rows.map(row => ({ id: row.id, gatewayId: row.gateway_id, label: row.label,
+    return { devices: rows.map(row => ({ id: row.id, gatewayId: row.gateway_id, label: row.label, enrollmentMode: 'native',
       publicKey: row.public_key, createdAt: iso(row.created_at),
       leaseExpiresAt: row.lease_expires_at ? iso(row.lease_expires_at) : null })) };
   }
-  async function enroll(userId, body, verifiedIdentity) {
+  async function listProfiles(userId) {
+    account(userId);
+    const { rows } = await db.query(`SELECT id,gateway_id,label,public_key,created_at
+      FROM managed_vpn_devices WHERE user_id=$1 AND enrollment_mode='profile' AND revoked_at IS NULL
+      ORDER BY created_at,id`, [userId]);
+    // A registration is not evidence of a current connection or paid access.
+    // Listing/removal remains available during billing outages and cancellation.
+    return { profiles: rows.map(row => ({ id: row.id, gatewayId: row.gateway_id, label: row.label, enrollmentMode: 'profile',
+      publicKey: row.public_key, createdAt: iso(row.created_at) })) };
+  }
+  async function enrollWithMode(userId, body, verifiedIdentity, mode) {
     account(userId);
     if (!configured.length) throw fault(503, 'UFI VPN gateway setup is pending.');
     if (!body || typeof body !== 'object' || Array.isArray(body)
-      || Object.keys(body).some(key => !['publicKey', 'label', 'gatewayId'].includes(key))
+      || Object.keys(body).some(key => !(mode === 'profile' ? ['publicKey', 'label'] : ['publicKey', 'label', 'gatewayId']).includes(key))
       || !publicKeyValid(body.publicKey) || !cleanLabel(body.label)) {
       throw fault(400, 'Provide a device label and a valid WireGuard public key only.');
     }
-    const gateway = body.gatewayId === undefined ? configured[0] : byId.get(body.gatewayId);
+    const gateway = mode === 'profile' ? configured.find(item => item.country === 'DE')
+      : body.gatewayId === undefined ? configured[0] : byId.get(body.gatewayId);
+    if (!gateway && mode === 'profile') throw fault(503, 'WireGuard profile setup is temporarily unavailable.');
     if (!gateway) throw fault(400, 'Choose an available VPN gateway.');
     let expiresAt = await entitlement(userId);
     return transaction(async client => {
@@ -227,8 +252,11 @@ function createManagedVpn({ db, billing, gateways = [], now = Date.now, leaseSec
       // Middleware authentication precedes asynchronous billing verification.
       // Recheck the verified identity under the same owner lock used by
       // logout-all/password changes, before creating or extending any peer.
-      if (verifiedIdentity !== undefined) {
-        expiresAt = Math.min(expiresAt, await verifyIdentity(client, owner, verifiedIdentity));
+      if (mode === 'profile' || verifiedIdentity !== undefined) {
+        const sessionUntil = await verifyIdentity(client, owner, verifiedIdentity);
+        // Imported profiles explicitly outlive this browser session. Their
+        // registration remains tied to the account's revocation version.
+        if (mode === 'native') expiresAt = Math.min(expiresAt, sessionUntil);
       }
       // Serialize public-key ownership and address allocation across API workers.
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`vpn-key:${body.publicKey}`]);
@@ -236,13 +264,17 @@ function createManagedVpn({ db, billing, gateways = [], now = Date.now, leaseSec
       // release slots/addresses without racing another owner's renewal.
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`vpn-gateway:${gateway.id}`]);
       await client.query(`UPDATE managed_vpn_devices SET revoked_at=$2
-        WHERE gateway_id=$1 AND revoked_at IS NULL
+        WHERE gateway_id=$1 AND enrollment_mode='native' AND revoked_at IS NULL
         AND (lease_expires_at IS NULL OR lease_expires_at<=$2)`, [gateway.id, iso(now())]);
       const { rows: [existing] } = await client.query('SELECT * FROM managed_vpn_devices WHERE public_key=$1 FOR UPDATE', [body.publicKey]);
-      if (existing && (existing.user_id !== userId || existing.revoked_at || existing.gateway_id !== gateway.id)) {
+      if (existing && (existing.user_id !== userId || existing.revoked_at || existing.gateway_id !== gateway.id
+        || existing.enrollment_mode !== mode
+        || (mode === 'profile' && (existing.registration_auth_version === null
+          || Number(existing.registration_auth_version) !== Number(owner.auth_version))))) {
         throw fault(409, 'This device key cannot be enrolled. Generate a new key on your device.');
       }
       if (existing) {
+        if (mode === 'profile') return { profile: profileConfiguration(existing, gateway), state: 'registered' };
         existing.lease_expires_at = iso(expiresAt);
         await client.query('UPDATE managed_vpn_devices SET lease_expires_at=$2 WHERE id=$1', [existing.id, existing.lease_expires_at]);
         const value = configuration(existing, gateway);
@@ -250,7 +282,7 @@ function createManagedVpn({ db, billing, gateways = [], now = Date.now, leaseSec
         return { device: value, state: 'enrolled' };
       }
       const { rows: [count] } = await client.query(`SELECT COUNT(*)::int AS total FROM managed_vpn_devices
-        WHERE user_id=$1 AND revoked_at IS NULL AND lease_expires_at>$2`, [userId, iso(now())]);
+        WHERE user_id=$1 AND revoked_at IS NULL AND (enrollment_mode='profile' OR lease_expires_at>$2)`, [userId, iso(now())]);
       if (count.total >= maxDevices) throw fault(409, 'Your VPN device limit is reached. Remove a device before adding another.');
       const { rows: used } = await client.query('SELECT tunnel_address FROM managed_vpn_devices WHERE gateway_id=$1 AND revoked_at IS NULL', [gateway.id]);
       if (used.length >= gateway.maxPeers) throw fault(503, 'This VPN gateway is at capacity. Try another available gateway.');
@@ -261,20 +293,26 @@ function createManagedVpn({ db, billing, gateways = [], now = Date.now, leaseSec
       }
       if (!address) throw fault(503, 'This VPN gateway is at capacity.');
       const { rows: [row] } = await client.query(`INSERT INTO managed_vpn_devices
-        (id,user_id,gateway_id,public_key,label,tunnel_address,created_at,lease_expires_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [randomUUID(), userId, gateway.id, body.publicKey, body.label.trim(), address, iso(now()), iso(expiresAt)]);
+        (id,user_id,gateway_id,public_key,label,tunnel_address,created_at,lease_expires_at,enrollment_mode,registration_auth_version)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [randomUUID(), userId, gateway.id, body.publicKey, body.label.trim(), address, iso(now()),
+        mode === 'profile' ? null : iso(expiresAt), mode, mode === 'profile' ? Number(owner.auth_version) : null]);
+      if (mode === 'profile') return { profile: profileConfiguration(row, gateway), state: 'registered' };
       return { device: configuration(row, gateway), state: 'enrolled' };
     });
   }
-  async function remove(userId, deviceId) {
+  const enroll = (userId, body, identity) => enrollWithMode(userId, body, identity, 'native');
+  const enrollProfile = (userId, body, identity) => enrollWithMode(userId, body, identity, 'profile');
+  async function removeWithMode(userId, deviceId, mode) {
     account(userId);
     if (!UUID.test(String(deviceId || ''))) throw fault(400, 'Choose an enrolled VPN device.');
     const result = await db.query(`UPDATE managed_vpn_devices SET revoked_at=COALESCE(revoked_at,$3),lease_expires_at=$3
-      WHERE id=$1 AND user_id=$2 RETURNING id`, [deviceId, userId, iso(now())]);
+      WHERE id=$1 AND user_id=$2 AND enrollment_mode=$4 RETURNING id`, [deviceId, userId, iso(now()), mode]);
     if (!result.rows.length) throw fault(404, 'VPN device not found.');
     return { removed: true };
   }
+  const remove = (userId, deviceId) => removeWithMode(userId, deviceId, 'native');
+  const removeProfile = (userId, deviceId) => removeWithMode(userId, deviceId, 'profile');
   function authorizeGateway(gatewayId, authorization) {
     const gateway = byId.get(gatewayId);
     const value = typeof authorization === 'string' && authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
@@ -288,10 +326,11 @@ function createManagedVpn({ db, billing, gateways = [], now = Date.now, leaseSec
     storageReady();
     const generatedAt = now();
     const deadline = Date.now() + reconcileBudgetMs;
-    const { rows } = await db.query(`SELECT d.id,d.user_id,d.public_key,d.label,d.tunnel_address,d.lease_expires_at
+    const { rows } = await db.query(`SELECT d.id,d.user_id,d.public_key,d.label,d.tunnel_address,d.lease_expires_at,d.enrollment_mode
       FROM managed_vpn_devices d JOIN users u ON u.id=d.user_id
-      WHERE d.gateway_id=$1 AND d.revoked_at IS NULL AND d.lease_expires_at>$3
-        AND u.vpn_connector_addon=true AND u.billing_closed=false
+      WHERE d.gateway_id=$1 AND d.revoked_at IS NULL AND u.billing_closed=false
+        AND ((d.enrollment_mode='native' AND d.lease_expires_at>$3 AND u.vpn_connector_addon=true)
+          OR (d.enrollment_mode='profile' AND d.registration_auth_version=u.auth_version))
       ORDER BY d.created_at,d.id LIMIT $2`, [gateway.id, gateway.maxPeers, iso(now())]);
     const users = [...new Set(rows.map(row => row.user_id))];
     const verified = new Map();
@@ -309,18 +348,22 @@ function createManagedVpn({ db, billing, gateways = [], now = Date.now, leaseSec
       // Deletion/cancellation cannot be resurrected by an older device snapshot.
       // Lock owners before devices, matching enrollment/account deletion, so
       // a concurrent poll cannot deadlock an enrollment of the same device.
-      await client.query('SELECT id FROM users WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE', [[...verified.keys()].sort()]);
-      const { rows: current } = await client.query(`SELECT d.id,d.user_id,d.public_key,d.label,d.tunnel_address,d.lease_expires_at
+      const verifiedOwners = [...verified.keys()].sort();
+      await client.query('SELECT id FROM users WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE', [verifiedOwners]);
+      const { rows: current } = await client.query(`SELECT d.id,d.user_id,d.public_key,d.label,d.tunnel_address,d.lease_expires_at,d.enrollment_mode
         FROM managed_vpn_devices d JOIN users u ON u.id=d.user_id
-        WHERE d.gateway_id=$1 AND d.revoked_at IS NULL AND d.lease_expires_at>$3
+        WHERE d.gateway_id=$1 AND d.revoked_at IS NULL AND d.user_id=ANY($4::uuid[])
+          AND ((d.enrollment_mode='native' AND d.lease_expires_at>$3)
+            OR (d.enrollment_mode='profile' AND d.registration_auth_version=u.auth_version))
           AND u.vpn_connector_addon=true AND u.billing_closed=false
-        ORDER BY d.created_at,d.id LIMIT $2 FOR UPDATE OF d`, [gateway.id, gateway.maxPeers, iso(now())]);
+        ORDER BY d.created_at,d.id LIMIT $2 FOR UPDATE OF d`, [gateway.id, gateway.maxPeers, iso(now()), verifiedOwners]);
       const result = [];
       for (const row of current) {
-        // Only an authenticated client enrollment/renewal extends its lease.
-        // Gateway polls independently recheck payment, but cannot keep an
-        // abandoned or signed-out client authorized indefinitely.
-        const leaseEnd = Math.min(verified.get(row.user_id) || 0, expiresAt, new Date(row.lease_expires_at).getTime());
+        // Native leases still require the authenticated client to renew.
+        // A saved profile is an explicit durable registration, but it grants
+        // no traffic access without fresh payment and account verification.
+        const clientEnd = row.enrollment_mode === 'profile' ? Infinity : new Date(row.lease_expires_at).getTime();
+        const leaseEnd = Math.min(verified.get(row.user_id) || 0, expiresAt, clientEnd);
         const value = configuration(row, gateway);
         if (leaseEnd <= now() || !value) continue;
         result.push({ deviceId: row.id, publicKey: row.public_key, allowedIPs: value.addresses, expiresAt: iso(leaseEnd) });
@@ -329,7 +372,7 @@ function createManagedVpn({ db, billing, gateways = [], now = Date.now, leaseSec
     });
     return { version: 1, gatewayId: gateway.id, generatedAt: iso(generatedAt), expiresAt: iso(expiresAt), peers };
   }
-  return { config, list, enroll, remove, desired, launch, consumeLaunch,
+  return { config, list, enroll, remove, listProfiles, enrollProfile, removeProfile, desired, launch, consumeLaunch,
     authenticateGateway: (gatewayId, authorization) => authorizeGateway(gatewayId, authorization).id };
 }
 
@@ -370,6 +413,9 @@ function registerManagedVpnRoutes(app, { vpn, authenticate, limiter, gatewayLimi
   app.get('/vpn/devices', ...member, respond(req => vpn.list(req.user.id)));
   app.post('/vpn/devices', ...member, respond(req => vpn.enroll(req.user.id, req.body, req.user || null)));
   app.delete('/vpn/devices/:id', ...member, respond(req => vpn.remove(req.user.id, req.params.id)));
+  app.get('/vpn/profiles', ...member, respond(req => vpn.listProfiles(req.user.id)));
+  app.post('/vpn/profiles', ...member, respond(req => vpn.enrollProfile(req.user.id, req.body, req.user || null)));
+  app.delete('/vpn/profiles/:id', ...member, respond(req => vpn.removeProfile(req.user.id, req.params.id)));
   app.get('/vpn/gateways/:id/desired', authenticateGateway, ...(gatewayLimiter ? [gatewayLimiter] : []), respond(req => vpn.desired(req.vpnGatewayId, req.get('authorization'))));
 }
 

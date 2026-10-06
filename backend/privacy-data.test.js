@@ -63,6 +63,7 @@ async function seed(pg) {
   for (const [uid, prefix] of [[alice, 'a'], [bob, 'b']]) {
     await insert('vault_vpn_locations', { id: uid, user_id: uid, platform: 'ios', name: `${prefix}-vpn-profile`, country: 'Canada' });
     await insert('managed_vpn_devices', { id: uid, user_id: uid, gateway_id: 'ufi-de-1', label: `${prefix}-vpn-device`,
+      enrollment_mode: prefix === 'a' ? 'profile' : 'native', registration_auth_version: prefix === 'a' ? 0 : null,
       public_key: Buffer.alloc(32, prefix === 'a' ? 1 : 2).toString('base64'), tunnel_address: prefix === 'a' ? '10.80.0.2' : '10.80.0.3' });
     await insert('community_posts', { id: `${prefix}-post`, group_id: 'shared-group', author_id: uid, content: `${prefix}-post-content`, likes: [alice, bob], comments_count: 1 });
     await insert('post_comments', { id: `${prefix}-comment`, post_id: 'b-post', author_id: uid, content: `${prefix}-comment-content` });
@@ -155,6 +156,7 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
     assert.equal(exported.social.blocks[0].blockedId, carol);
     assert.equal(exported.vpnLocations[0].name, 'a-vpn-profile');
     assert.equal(exported.vpnDevices[0].label, 'a-vpn-device');
+    assert.equal(exported.vpnDevices[0].enrollmentMode, 'profile');
     assert.equal(exported.businessTeamSeats[0].memberId, bob);
     assert.equal(exported.businessTeamInvitations[0].inviteeId, carol);
     assert.equal(Object.hasOwn(exported.businessTeamInvitations[0], 'token_hash'), false);
