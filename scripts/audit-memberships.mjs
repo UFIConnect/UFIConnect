@@ -133,8 +133,8 @@ try {
     let releaseConfig;
     configWait = new Promise(resolve => { releaseConfig = resolve; });
     await auditNavigate(page, server.origin + '/resume-builder');
-    await page.getByRole('button', { name: 'Checking billingâ€¦', exact: true }).waitFor();
-    check(await page.getByRole('button', { name: 'Checking billingâ€¦', exact: true }).isDisabled(), 'Resume Builder cannot be bought before its price is validated');
+    await page.getByRole('button', { name: 'Checking billing…', exact: true }).waitFor();
+    check(await page.getByRole('button', { name: 'Checking billing…', exact: true }).isDisabled(), 'Resume Builder cannot be bought before its price is validated');
     configWait = null; releaseConfig();
     const resumePurchase = page.getByRole('button', { name: 'Unlock for $30.00 / month', exact: true });
     await resumePurchase.waitFor();
@@ -142,7 +142,7 @@ try {
     check(await page.getByRole('radio', { name: /Monthly/ }).isChecked(), 'Monthly Resume Builder is selected by default');
     check(await page.getByRole('radio', { name: /6 months/ }).isEnabled(), 'Six-month Resume Builder remains available');
     check(await page.getByText(/This add-on renews automatically/).isVisible(), 'Resume Builder explains renewal before checkout');
-    check(await page.getByRole('link', { name: 'Settings â†’ Manage billing', exact: true }).isVisible(), 'Resume Builder provides billing recovery and cancellation access');
+    check(await page.getByRole('link', { name: 'Settings → Manage billing', exact: true }).isVisible(), 'Resume Builder provides billing recovery and cancellation access');
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Resume Builder checkout fits ${width}px`);
     await resumePurchase.click();
     await page.getByText('Could not start checkout. Please try again.', { exact: true }).waitFor();
