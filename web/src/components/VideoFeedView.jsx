@@ -4,6 +4,7 @@ import { directMediaPlaybackAllowed } from '../utils/sourceMediaPolicy.mjs';
 import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, isYouTubeShortsUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, useGlobalMuted, fetchVimeoMetadata, youTubePosterUrl, SoundIcon, createYouTubePlayerFrame, youTubeEmbedUrl } from './videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
+import FollowingConnectionNotice from './FollowingConnectionNotice';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { reportConsumed, reportEngaged, reportEngagementSignal } from '../api/engagement';
@@ -12,7 +13,7 @@ import { ALL_INTERESTS } from '../pages/Onboarding';
 import ConnectedPostActions from './ConnectedPostActions';
 import { SavePostButton } from './SaveButtons';
 import PostLikes from './PostLikes';
-import ReportPostButton from './ReportPostButton';
+import { PostOptionsMenu } from './PostCardChrome';
 import { ChevronDown, Search, SlidersHorizontal, RotateCw, Play, Pause, MessageCircle, ExternalLink } from 'lucide-react';
 import { videoDurationSeconds, isShortFeedVideo, videoSourceKey, safeMediaUrl, fitVideoFrame } from '../utils/videoFeedPolicy.mjs';
 import './VideoFeedView.css';
@@ -602,7 +603,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           <MessageCircle size={18} aria-hidden="true" />
         </button>
         <SavePostButton post={post} className="video-feed-save-button" showLabel={false} />
-        <ReportPostButton post={post} className="video-feed-report-button" />
+        <PostOptionsMenu post={post} />
         {originalUrl && <a href={originalUrl} target="_blank" rel="noopener noreferrer" aria-label="View original post" title="View original post"
           onClick={() => reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true })}><ExternalLink size={17} aria-hidden="true" /></a>}
       </div>
@@ -876,6 +877,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   const [tailWaiting, setTailWaiting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [sourceErrors, setSourceErrors] = useState({});
   const [refreshing, setRefreshing] = useState(false);
   // Same Feed/Following split as the main feed (see pages/Feed.jsx) — the
   // aggregate true mix here and the Following pool never share sources
@@ -1031,6 +1033,7 @@ export default function VideoFeedView({ onExit, music = false }) {
       });
       if (requestId !== loadRequestRef.current) return;
       lastFeedReadRef.current = Date.now();
+      setSourceErrors(mode === 'following' ? data.sourceErrors || {} : {});
       pendingRequestIntentRef.current = null;
       retryStateRef.current = { failures: 0, until: 0 };
       setRetryAt(0);
@@ -2310,6 +2313,7 @@ export default function VideoFeedView({ onExit, music = false }) {
         <div ref={containerRef} data-video-feed-scroll className="video-feed-scroll" tabIndex={0} aria-label={music ? 'Music videos' : 'Videos'}>
         {videoPosts.length === 0 && <div className="video-feed-empty" role="status">
           {loading ? 'Loading videos…' : error ? 'Could not load videos. Try refreshing.' : 'No playable videos of at least 5 seconds found. Try another source or filter.'}
+          {viewMode === 'following' && !loading && <FollowingConnectionNotice errors={sourceErrors} />}
         </div>}
             {videoPosts.map((post, idx) => <div key={post.id || idx} ref={element => { slideRefs.current[idx] = element; }}
               data-idx={idx} data-post-id={post.id || ''} data-source={post.source || ''} className="video-feed-snap-item">

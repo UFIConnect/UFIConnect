@@ -14,7 +14,7 @@ export default function PolicyLayout({ title, description, path, children }) {
       <meta property="og:url" content={`https://uficonnect.org${path}`} />
     </Helmet>
     <header className="ufi-policy-header">
-      <Link className="ufi-policy-brand" to="/">UFIConnect</Link>
+      <Link className="ufi-policy-brand" to="/"><img src="/uficonnect-wordmark.svg?v=blue-ufi-20261006" alt="UFIConnect" width="180" height="36" /></Link>
       <nav aria-label="Public navigation"><Link to="/policies">Policies</Link><Link to="/login">Sign in</Link></nav>
     </header>
     <main className="ufi-policy-main" id="policy-content">

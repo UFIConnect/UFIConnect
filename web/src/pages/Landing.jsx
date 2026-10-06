@@ -163,12 +163,12 @@ export default function Landing() {
         <header className="landing-header landing-header-refined">
           <div className="landing-header-inner">
             <Link to="/" className="landing-brand" aria-label="UFIconnect home">
-              <img className="landing-identity" src="/uficonnect-wordmark.svg" width="180" height="36" alt="UFIConnect" />
+              <img className="landing-identity" src="/uficonnect-wordmark.svg?v=blue-ufi-20261006" width="180" height="36" alt="UFIConnect" />
             </Link>
             <nav className="landing-nav-actions" aria-label="Homepage">
               <Link to="/global">Global Feed</Link>
               <Link to="/vault-device">Vault device</Link>
-              <Link to="/how-office-works">How Office works</Link>
+              <Link to="/how-it-works">How it works</Link>
               <Link to="/login">Sign in</Link>
               <Link to="/register" className="landing-nav-primary">Join free</Link>
             </nav>
@@ -193,11 +193,10 @@ export default function Landing() {
                 </div>
                 <p className="landing-trust-intro">Operated as UFIConnect in California, United States. <Link to="/privacy">Privacy policy</Link> · <Link to="/terms">Terms of service</Link> · <a href="mailto:support@uficonnect.org">Contact support</a></p>
               </div>
-              <div className="landing-purpose-visual" aria-label="UFIConnect brings community, career, and personal tools together">
-                <img src="/uficonnect-mark.svg" alt="" width="72" height="72" />
-                <h2>Your connections.<br />A clearer view.</h2>
-                <div className="landing-purpose-grid"><span>Public posts<small>Keep the original source in view</small></span><span>Communities<small>Share ideas and meet people</small></span><span>Career tools<small>Jobs, resumes and recruiting</small></span><span>Personal Vault<small>Encrypted browser storage</small></span></div>
-                <p>You choose which accounts to connect.</p>
+              <div className="landing-network-art">
+                <img src="/homepage-app-network-2026-10.jpg"
+                  alt="UFIconnect at the center of a connected network of social, community, and creative apps"
+                  width="1206" height="669" fetchPriority="high" />
               </div>
             </div>
           </section>
@@ -216,11 +215,8 @@ export default function Landing() {
               Stay curious, meet people, and make your next move. There is more than one reason to connect.
             </SectionHeading>
             <div className="landing-product-grid">
-              <div className="landing-feed-preview" aria-label="Illustrative feed layout">
-                <span className="landing-preview-label">Illustrative feed layout</span><h3>A source you can recognize.</h3>
-                <article><span>UFIConnect · Community post</span><h4>What are you building?</h4><p>Share an update, ask a question, or find people with a common interest.</p><small>Source · Time · Report</small></article>
-                <article><span>External source · Original link</span><h4>Explore a useful perspective</h4><p>Open the original post or use an available authorized interaction.</p><small>Source attribution stays visible</small></article>
-                <p className="landing-preview-note">External services control their content, permissions and availability.</p>
+              <div className="landing-product-shot">
+                <img src="/homepage-feed-2026-09.png" alt="UFIconnect home feed with favorite sources and account tools" width="1440" height="1000" loading="lazy" />
               </div>
               <div className="landing-product-copy">
                 {FEATURES.map(({ label, title, desc }) => (
@@ -257,7 +253,7 @@ export default function Landing() {
 
           <section className="landing-section landing-explainers" aria-label="Explore UFIConnect products">
             <article><span className="landing-eyebrow">Vault device</span><h2>A closer look at the device concept</h2><p>See how the proposed hardware relates to the available browser Vault, and which features are still in development.</p><Link to="/vault-device" className="landing-secondary-action">Explore the Vault device</Link></article>
-            <article><span className="landing-eyebrow">Office</span><h2>See how Office works</h2><p>Follow the diagram from an operator’s request through inspection, planning, authorized controls and results.</p><Link to="/how-office-works" className="landing-secondary-action">View the Office diagram</Link></article>
+            <article><span className="landing-eyebrow">Your feeds, explained</span><h2>See how UFIConnect works</h2><p>Explore the mixed feed, focus on individual sources and keep up with the accounts you follow. See how it all connects.</p><Link to="/how-it-works" className="landing-secondary-action">Explore the feed diagram</Link></article>
           </section>
 
           <section className="landing-section landing-start-section">

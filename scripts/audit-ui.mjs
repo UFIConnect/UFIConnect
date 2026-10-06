@@ -295,18 +295,18 @@ try {
     await page.getByRole('heading', { name: 'Who are you professionally?' }).waitFor();
     checks++;
     await auditNavigate(page, base + '?audit-public=1');
-    await page.locator('.landing-purpose-visual').waitFor();
+    await page.locator('.landing-network-art img').waitFor();
     assert.match(await page.locator('.landing-hero-copy > p').first().textContent(), /social and professional workspace/);
-    assert.equal(await page.locator('.landing-purpose-grid > span').count(), 4);
+    assert.equal(await page.locator('.landing-network-art img').getAttribute('src'), '/homepage-app-network-2026-10.jpg');
     const dimensions = await page.locator('.landing-brand img').evaluate(async image => {
       await image.decode();
       const box = image.getBoundingClientRect();
       return { rendered: box.width / box.height, original: image.naturalWidth / image.naturalHeight };
     });
     assert.ok(Math.abs(dimensions.rendered - dimensions.original) < 0.01, `Homepage brand image stretched at ${viewport.width}`);
-    await page.locator('.landing-feed-preview').scrollIntoViewIfNeeded();
-    assert.ok(await page.locator('.landing-feed-preview .landing-preview-label').isVisible());
-    assert.equal(await page.locator('.landing-feed-preview .landing-preview-label').textContent(), 'Illustrative feed layout');
+    await page.locator('.landing-product-shot').scrollIntoViewIfNeeded();
+    await page.locator('.landing-product-shot img').evaluate(image => image.decode());
+    assert.equal(await page.locator('.landing-product-shot img').getAttribute('src'), '/homepage-feed-2026-09.png');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
     await page.screenshot({ path: path.join(output, `landing-${viewport.width}.png`) });
     checks += 6;

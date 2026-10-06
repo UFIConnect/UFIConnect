@@ -1,3 +1,4 @@
+@import '../PublicTheme.css';
 .public-auth-page {
   flex-direction: column;
   gap: 24px;

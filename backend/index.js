@@ -50,6 +50,8 @@ const { createFeedReadAdmission } = require('./feed-read-admission');
 const { PUBLIC_GROUP_LEGACY_SOURCES, inferPublicGroupId } = require('./group-feed');
 const { GENERAL_UFI_GROUP_ID, isGeneralUfiFollowingPost, isFollowingSourceAllowed } = require('./following-scope');
 const { canonicalizePreferenceTopics, matchesPreferenceTopic } = require('./feed-preferences');
+const { trustedFeedNetworkLocation, memberFeedSnapshotKey } = require('./feed-location');
+const { sourceAuthorProfileUrl, safePostLink } = require('./post-links.mjs');
 const {
   VIDEO_FEED_MIN_DURATION_SECONDS,
   VIDEO_FEED_MAX_DURATION_SECONDS,
@@ -1207,11 +1209,14 @@ function signES256JWT(header, payload) {
 }
 
 function createDPoPProof(method, url, { nonce, accessToken } = {}) {
+  const target = new URL(url);
+  target.search = '';
+  target.hash = '';
   const header = { alg: 'ES256', typ: 'dpop+jwt', jwk: BLUESKY_SIGNING_KEY.publicJwk };
   const payload = {
     jti: crypto.randomUUID(),
     htm: method,
-    htu: url,
+    htu: target.href,
     iat: Math.floor(Date.now() / 1000),
   };
   if (nonce) payload.nonce = nonce;
@@ -3799,6 +3804,8 @@ function parseYouTubeChannelRSS(xml, keyword, channelName) {
     const desc      = decodeHTMLEntities(get(/<media:description>([\s\S]*?)<\/media:description>/)).slice(0, 300);
     const thumb     = (/<media:thumbnail url="([^"]+)"/.exec(s) || [])[1] || null;
     const author    = get(/<name>(.*?)<\/name>/) || channelName;
+    const channelId = get(/<yt:channelId>(.*?)<\/yt:channelId>/) || (/<yt:channelId>(.*?)<\/yt:channelId>/.exec(xml) || [])[1] || '';
+    const profileUrl = sourceAuthorProfileUrl({ source: 'youtube', channelId });
     if (!videoId || !title) continue;
     posts.push({
       id:          `youtube_${videoId}`,
@@ -3811,7 +3818,7 @@ function parseYouTubeChannelRSS(xml, keyword, channelName) {
       sourceUrl:   `https://www.youtube.com/watch?v=${videoId}`,
       embedId:     videoId,
       topic:       keyword,
-      author:      { id: `youtube_ch_${author.replace(/\s+/g, '_')}`, name: author, title: 'YouTube', organization: 'YouTube' },
+      author:      { id: `youtube_ch_${author.replace(/\s+/g, '_')}`, name: author, title: 'YouTube', organization: 'YouTube', ...(profileUrl ? { profileUrl } : {}) },
       likes: [], likesCount: 0, commentsCount: 0,
       createdAt:   normalizeTimestamp(published || updated),
       isExternal:  true,
@@ -4237,7 +4244,7 @@ function mapMastodonPosts(data, tag) {
         sourceLabel: `@${t.account.acct}`,
         sourceUrl:   t.url,
         topic:       tag,
-        author:      { id: `mastodon_${t.account.id}`, name: t.account.display_name || t.account.username, title: 'Mastodon', organization: 'Mastodon', avatarUrl: safeAvatarUrl(t.account.avatar_static || t.account.avatar) },
+        author:      { id: `mastodon_${t.account.id}`, name: t.account.display_name || t.account.username, title: 'Mastodon', organization: 'Mastodon', avatarUrl: safeAvatarUrl(t.account.avatar_static || t.account.avatar), profileUrl: safePostLink(t.account.url) },
         likes: [], likesCount: t.favourites_count || 0, commentsCount: t.replies_count || 0,
         createdAt:   t.created_at,
         isExternal:  true,
@@ -6317,7 +6324,7 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false, userId = null
     // against looping if the refresh itself doesn't actually fix it (e.g.
     // the refresh token was itself revoked).
     if (/HTTP 401/.test(e.message) && userId && !_retried) {
-      const newToken = await refreshGoogleAccessToken(userId);
+      const newToken = await refreshGoogleAccessToken(userId, token);
       if (newToken) return fetchYouTubeSubscriptionFeed(newToken, { bust: true, userId, connectedAt, _retried: true });
     }
     if (/HTTP 401/.test(e.message)) {
@@ -7613,12 +7620,26 @@ async function getCachedGuestFeedPage({ cursor, cursorMap, limit }) {
   const pending = guestFeedPageBuilds.get(key);
   if (pending) return pending;
 
-  const build = getCursorFeedPage({
-    sources: AGGREGATE_FEED_SOURCES,
-    cursorMap,
-    limit,
-    maxPostsPerSource: 2,
-  }).then((page) => {
+  const build = (async () => {
+    let currentCursor = cursorMap;
+    // Most placement filtering belongs in SQL. Music and incompletely tagged
+    // videos still need the full classifier; an entirely filtered page must
+    // advance to older candidates instead of presenting an empty Global feed.
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const page = await getCursorFeedPage({
+        sources: AGGREGATE_FEED_SOURCES,
+        cursorMap: currentCursor,
+        limit,
+        excludeVideoDurationAtOrBelow: VIDEO_FEED_MAX_DURATION_SECONDS,
+        maxPostsPerSource: 2,
+      });
+      const eligible = page.posts.filter(isRegularFeedSurfacePost);
+      if (eligible.length || !page.hasMore || attempt === 3 || page.nextCursor === encodeFeedCursor(currentCursor)) {
+        return { ...page, posts: eligible };
+      }
+      currentCursor = decodeFeedCursor(page.nextCursor);
+    }
+  })().then((page) => {
     guestFeedPageCache.set(key, { computedAt: Date.now(), page });
     trimOldestMapEntries(guestFeedPageCache, GUEST_FEED_PAGE_CACHE_MAX);
     return page;
@@ -7638,8 +7659,8 @@ async function getCachedGuestFeedPage({ cursor, cursorMap, limit }) {
 // Keying by userId too means each user's snapshot is genuinely built from
 // their own real interests (see the personalized-pool computation below),
 // not a shared array with a different starting slice.
-function mainFeedSnapshotKey(userId, sortMode, timeRange) {
-  return `${userId}::${sortMode}::${timeRange || 'all'}`;
+function mainFeedSnapshotKey(userId, sortMode, timeRange, locationContext) {
+  return memberFeedSnapshotKey(userId, sortMode, timeRange, locationContext);
 }
 
 function invalidateUserFeedSnapshots(userId) {
@@ -9404,10 +9425,8 @@ function applyResumeMatchedJobs(posts, resumeKeywords, jobPool) {
 const JOB_LISTING_SOURCES = ['indeed', 'remoteok', 'usajobs', 'remotive', 'muse'];
 
 // --- Location-based matching ------------------------------------------------
-// Cloudflare (already in front of this app — see the `Server: cloudflare`
-// header on every response) adds this automatically to every request that
-// reaches the origin. A real, zero-cost, zero-permission-prompt signal —
-// not a browser geolocation prompt or a third-party IP-lookup API call.
+// Cloudflare country is used only after the actual incoming proxy chain has
+// been verified. A response's Server header alone does not establish trust.
 // ISO 3166-1 alpha-2 country code, or absent/'XX' when Cloudflare can't
 // determine one (some bots, some VPNs).
 function getUserCountry(req) {
@@ -9416,27 +9435,8 @@ function getUserCountry(req) {
   // cache doesn't include one at all — confirmed live as an unhandled
   // "Cannot read properties of undefined (reading 'cf-ipcountry')" on every
   // warming cycle.
-  const cc = firstHeaderValue(
-    req.headers?.['cf-ipcountry'] ||
-    req.headers?.['x-vercel-ip-country'] ||
-    req.headers?.['cloudfront-viewer-country'] ||
-    req.headers?.['x-appengine-country'] ||
-    req.headers?.['x-country-code']
-  ).toUpperCase();
+  const cc = trustedFeedNetworkLocation(req).country || '';
   return /^[A-Z]{2}$/.test(cc) && cc !== 'XX' && cc !== 'T1' ? cc : null;
-}
-
-function cleanGeoHeader(req, names) {
-  for (const name of names) {
-    const raw = firstHeaderValue(req.headers?.[name]);
-    if (!raw) continue;
-    try {
-      return decodeURIComponent(raw.replace(/\+/g, ' ')).trim().slice(0, 80) || null;
-    } catch {
-      return raw.trim().slice(0, 80) || null;
-    }
-  }
-  return null;
 }
 
 let countryDisplayNames = null;
@@ -9527,31 +9527,33 @@ function countryName(countryCode) {
   }
 }
 
-// Location is a ranking signal, never an access-control decision. Cloudflare
-// supplies country in production; the additional headers keep local/staging
-// proxy setups compatible and let a future edge rule add city/region without
-// changing the feed API again. Missing or invalid location simply disables
-// this signal and leaves the existing feed order untouched.
+// Location is a ranking signal, never an identity/access-control decision.
+// Regular feeds follow the member's current verified network country. Saved
+// destinations still control Travel/Restaurants; missing network evidence
+// falls back to that member's choices without guessing a country.
 function getFeedLocationContext(req, user = null) {
   const saved = normalizeFeedLocation(user?.roleSettings?.feedLocation);
+  const network = trustedFeedNetworkLocation(req, { visitorLocationHeaders: process.env.CF_VISITOR_LOCATION_HEADERS === 'true' });
+  const destinationFeed = ['local', 'countries', 'restaurants', 'bars'].includes(req.query?.mode);
+  const useNetwork = !!network.country && !destinationFeed;
   const requestedCountry = cleanLocationInput(req.query?.country);
   const requestedCity = cleanLocationInput(req.query?.city);
-  const hasSavedLocation = !!(saved.country || saved.city);
+  const hasSavedLocation = !useNetwork && !!(saved.country || saved.city);
   // Travel and Restaurants belong to the signed-in member. Once a member
   // saves a location, query strings, a stale tab, and proxy geo headers must
   // not silently replace it with somebody else's previous selection.
-  const selectedCountry = hasSavedLocation ? saved.country : requestedCountry;
-  const city = hasSavedLocation
+  const selectedCountry = useNetwork ? network.country : hasSavedLocation ? saved.country : requestedCountry;
+  const city = useNetwork ? network.city : hasSavedLocation
     ? saved.city
-    : requestedCity || cleanGeoHeader(req, ['cf-ipcity', 'x-vercel-ip-city', 'x-appengine-city', 'x-geo-city']);
+    : requestedCity || network.city || null;
   const country = countryCodeFromInput(selectedCountry) || (!selectedCountry && !hasSavedLocation ? getUserCountry(req) : null);
-  const region = cleanGeoHeader(req, ['cf-region', 'x-vercel-ip-country-region', 'x-appengine-region', 'x-geo-region']);
+  const region = hasSavedLocation || requestedCountry || requestedCity ? null : network.region || null;
   const resolvedCountryName = countryName(country) || selectedCountry || null;
   const declared = [
     selectedCountry,
     resolvedCountryName,
     city,
-    ...(hasSavedLocation ? [] : [user?.location, user?.preferences?.location]),
+    ...(hasSavedLocation || useNetwork ? [] : [user?.location, user?.preferences?.location]),
   ]
     .map(cleanLocationInput)
     .filter(Boolean);
@@ -9561,7 +9563,7 @@ function getFeedLocationContext(req, user = null) {
     city,
     region,
     declared,
-    source: hasSavedLocation ? 'member' : (requestedCountry || requestedCity ? 'request' : (country || city || region ? 'network' : 'none')),
+    source: useNetwork ? 'network' : hasSavedLocation ? 'member' : (requestedCountry || requestedCity ? 'request' : (country || city || region ? 'network' : 'none')),
     available: !!(country || city || region || declared.length),
   };
 }
@@ -11983,17 +11985,6 @@ function filterByUserTopics(posts, userTopics, { fallbackToInput = true } = {}) 
 
   if (kept.length || !fallbackToInput) return kept;
   return posts;
-}
-
-// YouTube subscriptions have no UFIconnect topic label. The member already
-// chose these channels, so an absent label must not erase their Following
-// feed. Call only after account/source scoping and explicit topic filtering.
-function filterFollowingBySavedTopics(posts, userTopics) {
-  const matching = new Set(userTopics.length
-    ? filterByUserTopics(posts, userTopics, { fallbackToInput: false })
-    : []);
-  return posts.filter(post => matching.has(post)
-    || (post?.source === 'youtube' && !String(post.topic || '').trim()));
 }
 
 // The actual shape of the default landing feed (and Videos' first page —
@@ -15494,7 +15485,7 @@ async function fetchYouTubeOwnUploads(token, { bust = false, userId = null, conn
     return scoped;
   } catch (e) {
     if (/HTTP 401/.test(e.message) && userId && !_retried) {
-      const newToken = await refreshGoogleAccessToken(userId);
+      const newToken = await refreshGoogleAccessToken(userId, token);
       if (newToken) return fetchYouTubeOwnUploads(newToken, { bust: true, userId, connectedAt, _retried: true });
     }
     if (/HTTP 401/.test(e.message)) {
@@ -15845,6 +15836,30 @@ const followingSourceCache = new Map(); // "userId::source" ? { posts, fetchedAt
 const FOLLOWING_SOURCE_REFRESH_MS = 5 * 60 * 1000;
 const FOLLOWING_SOURCE_CACHE_MAX_AGE_MS = FOLLOWING_SOURCE_REFRESH_MS * 2; // stale past 2 missed cycles — getFollowingFeedPosts falls back to a live call rather than serve something this old
 
+async function fetchConnectedFollowingSource(source, userId, { bust = false } = {}) {
+  // Other API workers and OAuth callbacks may have renewed these credentials.
+  const user = isDBId(userId) ? await getAuthUser(userId) : await getUser(userId);
+  const token = user?.socialTokens?.[source];
+  if (!token) return [];
+  const window = connectedSourceWindow(user, source);
+  // Bootstrap new connections with recent followed content. Own-content
+  // history keeps its existing connection-day boundary.
+  const startMs = Math.min(window.startMs, startOfUtcDayMs(Date.now() - FOLLOWING_LOOKBACK_MS));
+  const options = { bust, userId, connectedAt: new Date(startMs).toISOString(), _retried: true };
+  let raw;
+  try {
+    raw = await FOLLOWING_SOURCE_FETCHERS[source](token, options);
+  } catch (error) {
+    if (!isUnauthorizedCrossPostError(error) && !/access expired or was revoked/i.test(error.message)) throw error;
+    const renewed = await refreshConnectedAccessToken(userId, source, token);
+    if (!renewed) throw new Error(`${PLATFORMS[source]?.name || source} access could not be renewed. Reconnect this account in Connected accounts.`);
+    raw = await FOLLOWING_SOURCE_FETCHERS[source](renewed, { ...options, bust: true });
+  }
+  return capFollowingPosts(realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source })), {
+    sinceMs: startMs, untilMs: window.untilMs, limit: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS,
+  });
+}
+
 async function refreshFollowingSourceCaches() {
   if (!Object.keys(FOLLOWING_SOURCE_FETCHERS).length) return;
   for (const user of users) {
@@ -15855,9 +15870,9 @@ async function refreshFollowingSourceCaches() {
       const token = tokens[source];
       if (!token) continue;
       try {
-        const raw = await fetcher(token, { userId: user.id, connectedAt: connectedSourceWindow(user, source).connectedAt });
+        const fresh = await fetchConnectedFollowingSource(source, user.id);
         followingSourceCache.set(`${user.id}::${source}`, {
-          posts: capConnectedSourcePosts(realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source })), user, source),
+          posts: fresh,
           fetchedAt: Date.now(),
         });
       } catch (e) {
@@ -15978,8 +15993,7 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
         continue;
       }
       try {
-        const raw = await fetcher(token, { bust, userId, connectedAt: connectedSourceWindow(user, source).connectedAt });
-        const fresh = capConnectedSourcePosts(realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source })), user, source);
+        const fresh = await fetchConnectedFollowingSource(source, userId, { bust });
         followingSourceCache.set(`${userId}::${source}`, { posts: fresh, fetchedAt: Date.now() });
         externalPosts.push(...fresh);
       } catch (e) {
@@ -17364,6 +17378,7 @@ async function migrateDB() {
     // playback actually started (see resolveVideoSource client-side).
     await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS media_poster TEXT`);
     await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS author_avatar_url TEXT`);
+    await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS author_profile_url TEXT`);
     await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS video_duration_seconds INTEGER`);
     await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS group_id TEXT`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_source_idx ON feed_posts_cache(source)`);
@@ -17448,6 +17463,7 @@ async function migrateDB() {
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS location TEXT`);
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS media_poster TEXT`);
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS author_avatar_url TEXT`);
+    await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS author_profile_url TEXT`);
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS video_duration_seconds INTEGER`);
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS group_id TEXT`);
     // fetched_at + id matches the transfer job's oldest-first drain order.
@@ -17519,6 +17535,7 @@ async function migrateDB() {
     await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS media_poster TEXT`);
     await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS video_duration_seconds INTEGER`);
     await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS group_id TEXT`);
+    await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS author_profile_url TEXT`);
     await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS archive_reason TEXT`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpa_archived_idx ON feed_posts_archive(archived_at)`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpa_reason_archived_idx ON feed_posts_archive(archive_reason, archived_at DESC)`);
@@ -17791,7 +17808,7 @@ const SOURCE_KEEP_FLOOR = envNumber('SOURCE_KEEP_FLOOR', 150, 20, 2000);
 // (one round trip, no risk of a row falling through a gap between two
 // separate queries). ON CONFLICT DO NOTHING covers a row that somehow
 // already made it to the archive (re-ingested, then trimmed again).
-const ARCHIVE_COLUMNS = 'id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, fetched_at, location, media_poster';
+const ARCHIVE_COLUMNS = 'id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, fetched_at, location, media_poster, author_profile_url';
 const ARCHIVE_RETURNING_COLUMNS = ARCHIVE_COLUMNS.split(', ').map((column) => `fp.${column}`).join(', ');
 // Was 2,000,000 — sized purely as "a number that felt generous," never
 // checked against what that actually costs in real disk space, and never
@@ -18874,8 +18891,8 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
     try {
       await db.query(
         `INSERT INTO ${targetTable}
-           (id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+           (id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url, author_profile_url)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
          ON CONFLICT (id) DO UPDATE SET
            group_id       = COALESCE(EXCLUDED.group_id, ${targetTable}.group_id),
            title          = EXCLUDED.title,
@@ -18892,6 +18909,7 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
            location       = EXCLUDED.location,
            media_poster   = EXCLUDED.media_poster,
            author_avatar_url = COALESCE(EXCLUDED.author_avatar_url, ${targetTable}.author_avatar_url),
+           author_profile_url = COALESCE(EXCLUDED.author_profile_url, ${targetTable}.author_profile_url),
            fetched_at     = NOW()`,
         [
           p.id, p.source,
@@ -18910,6 +18928,7 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
           p.location ? String(p.location).slice(0, 200) : null,
           p.mediaPoster || null,
           safeAvatarUrl(p.author?.avatarUrl),
+          sourceAuthorProfileUrl(p),
         ]
       );
       saved++;
@@ -18955,6 +18974,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
       location: p.location ? clean(p.location, 200) : null,
       media_poster: p.mediaPoster ? clean(p.mediaPoster) : null,
       author_avatar_url: safeAvatarUrl(p.author?.avatarUrl),
+      author_profile_url: sourceAuthorProfileUrl(p),
     });
   }
   if (!rows.length) return 0;
@@ -18978,12 +18998,13 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
          post_created_at TIMESTAMPTZ,
          location TEXT,
          media_poster TEXT,
-         author_avatar_url TEXT
+         author_avatar_url TEXT,
+         author_profile_url TEXT
        )
      )
      INSERT INTO ${targetTable} AS existing
-       (id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url)
-     SELECT id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url
+       (id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url, author_profile_url)
+     SELECT id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url, author_profile_url
      FROM incoming
      ON CONFLICT (id) DO UPDATE SET
        group_id       = COALESCE(EXCLUDED.group_id, existing.group_id),
@@ -19001,6 +19022,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
        location       = EXCLUDED.location,
        media_poster   = EXCLUDED.media_poster,
        author_avatar_url = COALESCE(EXCLUDED.author_avatar_url, existing.author_avatar_url),
+       author_profile_url = COALESCE(EXCLUDED.author_profile_url, existing.author_profile_url),
        fetched_at     = NOW()
      WHERE (EXCLUDED.group_id IS NOT NULL AND existing.group_id IS DISTINCT FROM EXCLUDED.group_id)
         OR existing.title IS DISTINCT FROM EXCLUDED.title
@@ -19016,7 +19038,8 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
         OR existing.post_created_at IS DISTINCT FROM EXCLUDED.post_created_at
         OR existing.location IS DISTINCT FROM EXCLUDED.location
         OR existing.media_poster IS DISTINCT FROM EXCLUDED.media_poster
-        OR (EXCLUDED.author_avatar_url IS NOT NULL AND existing.author_avatar_url IS DISTINCT FROM EXCLUDED.author_avatar_url)`,
+        OR (EXCLUDED.author_avatar_url IS NOT NULL AND existing.author_avatar_url IS DISTINCT FROM EXCLUDED.author_avatar_url)
+        OR (EXCLUDED.author_profile_url IS NOT NULL AND existing.author_profile_url IS DISTINCT FROM EXCLUDED.author_profile_url)`,
     [JSON.stringify(rows).replace(/\\u0000/gi, '')]
   );
   if (!options.skipTrim && targetTable === 'feed_posts_cache') trimFeedPostsCache();
@@ -19116,7 +19139,7 @@ function dbRowToFeedPost(r) {
     createdAt:   JOB_SOURCES.has(r.source)
       ? jobPostedDate(r.post_created_at)
       : normalizeTimestamp(r.post_created_at, r.fetched_at || Date.now()),
-    author:      { name: r.author_name, ...(safeAvatarUrl(r.author_avatar_url) ? { avatarUrl: safeAvatarUrl(r.author_avatar_url) } : {}) },
+    author:      { name: r.author_name, ...(safeAvatarUrl(r.author_avatar_url) ? { avatarUrl: safeAvatarUrl(r.author_avatar_url) } : {}), ...(safePostLink(r.author_profile_url) ? { profileUrl: safePostLink(r.author_profile_url) } : {}) },
     isExternal:  true,
   };
 }
@@ -20365,8 +20388,14 @@ async function saveSocialToken(userId, platform, token, refreshToken, connectedA
   }
   try {
     if (isDBId(userId)) {
-      await db.query('UPDATE users SET social_tokens=$1, social_refresh_tokens=$2, social_connected_at=$3 WHERE id=$4',
-        [JSON.stringify(tokenVault.encryptMap(user.socialTokens, userId, 'access')), JSON.stringify(tokenVault.encryptMap(user.socialRefreshTokens, userId, 'refresh')), JSON.stringify(user.socialConnectedAt || {}), userId]);
+      // Merge only this provider, so another worker's recent connection or
+      // rotated refresh token cannot be overwritten by our cached user map.
+      await db.query(`UPDATE users SET social_tokens=COALESCE(social_tokens,'{}'::jsonb) || $1::jsonb,
+        social_refresh_tokens=COALESCE(social_refresh_tokens,'{}'::jsonb) || $2::jsonb,
+        social_connected_at=$3::jsonb || COALESCE(social_connected_at,'{}'::jsonb) WHERE id=$4`,
+        [JSON.stringify(tokenVault.encryptMap({ [platform]: token }, userId, 'access')),
+          JSON.stringify(tokenVault.encryptMap(refreshToken ? { [platform]: refreshToken } : {}, userId, 'refresh')),
+          JSON.stringify({ [platform]: user.socialConnectedAt[platform] }), userId]);
     } else {
       filestore.saveUsers(users);
     }
@@ -20374,33 +20403,68 @@ async function saveSocialToken(userId, platform, token, refreshToken, connectedA
     Object.assign(user, prev);
     throw err;
   }
+  followingSourceCache.delete(`${userId}::${platform}`);
 }
+
+const refreshConnectedAccessToken = require('./connected-token-refresh').createConnectedTokenRefresher({
+  async withAccount(userId, work) {
+    if (!isDBId(userId)) return work(await getUser(userId), null);
+    if (!db.isConnected()) throw new Error('Account storage is temporarily unavailable');
+    return db.withClient(async client => {
+      await client.query('BEGIN');
+      try {
+        const { rows } = await client.query('SELECT * FROM users WHERE id=$1 FOR UPDATE', [userId]);
+        const user = rows[0] ? dbRowToMemUser(rows[0]) : null;
+        const token = await work(user, client);
+        await client.query('COMMIT');
+        if (user) syncToMemory(user);
+        return token;
+      } catch (error) { await client.query('ROLLBACK'); throw error; }
+    });
+  },
+  async exchange(platform, current, refreshToken) {
+    let raw;
+    if (platform === 'bluesky') {
+      const session = JSON.parse(current);
+      const result = await atprotoPost(session.tokenEndpoint, {
+        grant_type: 'refresh_token', refresh_token: refreshToken,
+        client_id: blueskyClientId(),
+        client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        client_assertion: createBlueskyClientAssertion(session.issuer),
+      });
+      if (result.status >= 400 || !result.data?.access_token) return null;
+      if (result.data.sub && result.data.sub !== session.did) return null;
+      return { accessToken: JSON.stringify({ ...session, accessToken: result.data.access_token }), refreshToken: result.data.refresh_token };
+    }
+    const cfg = SOCIAL_CFG[platform];
+    if (!cfg || !['youtube', 'github', 'gitlab', 'twitch', 'reddit'].includes(platform)) return null;
+    const params = { grant_type: 'refresh_token', refresh_token: refreshToken };
+    const headers = {};
+    if (platform === 'reddit') headers.Authorization = `Basic ${Buffer.from(`${cfg.clientId()}:${cfg.clientSecret()}`).toString('base64')}`;
+    else Object.assign(params, { client_id: cfg.clientId(), client_secret: cfg.clientSecret() });
+    raw = await postForm(cfg.tokenUrl, params, headers);
+    return raw?.access_token ? { accessToken: raw.access_token, refreshToken: raw.refresh_token } : null;
+  },
+  async persist(user, platform, accessToken, refreshToken, client) {
+    if (client) {
+      await client.query(`UPDATE users SET social_tokens=COALESCE(social_tokens,'{}'::jsonb) || $1::jsonb,
+        social_refresh_tokens=COALESCE(social_refresh_tokens,'{}'::jsonb) || $2::jsonb WHERE id=$3`,
+        [JSON.stringify(tokenVault.encryptMap({ [platform]: accessToken }, user.id, 'access')),
+          JSON.stringify(tokenVault.encryptMap({ [platform]: refreshToken }, user.id, 'refresh')), user.id]);
+      user.socialTokens[platform] = accessToken;
+      user.socialRefreshTokens[platform] = refreshToken;
+      followingSourceCache.delete(`${user.id}::${platform}`);
+    } else await saveSocialToken(user.id, platform, accessToken, refreshToken);
+  },
+});
 
 // Offline consent supplies the refresh token needed for ongoing feed sync.
 // Legacy online-only connections must consent once again to obtain one.
-async function refreshGoogleAccessToken(userId) {
-  const user = await getUser(userId);
-  const refreshToken = user?.socialRefreshTokens?.youtube;
-  if (!refreshToken) return null;
-  const cfg = SOCIAL_CFG.youtube;
+async function refreshGoogleAccessToken(userId, rejectedToken) {
   try {
-    const raw = await postForm(cfg.tokenUrl, {
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-      client_id: cfg.clientId(),
-      client_secret: cfg.clientSecret(),
-    });
-    if (!raw.access_token) {
-      console.warn('[YouTube] refresh token exchange failed.');
-      return null;
-    }
-    // Google only returns a new refresh_token on rare re-consent flows —
-    // the original keeps working indefinitely otherwise, so it's kept
-    // unless a new one actually comes back.
-    await saveSocialToken(userId, 'youtube', raw.access_token, raw.refresh_token || refreshToken);
-    return raw.access_token;
+    return await refreshConnectedAccessToken(userId, 'youtube', rejectedToken);
   } catch (e) {
-    console.warn('[YouTube] refresh token exchange error:', e.message);
+    console.warn('[YouTube] refresh token exchange failed.');
     return null;
   }
 }
@@ -20419,8 +20483,9 @@ async function removeSocialToken(userId, platform) {
   if (user.socialConnectedAt) delete user.socialConnectedAt[platform];
   try {
     if (isDBId(userId)) {
-      await db.query('UPDATE users SET social_tokens=$1, social_refresh_tokens=$2, social_connected_at=$3 WHERE id=$4',
-        [JSON.stringify(tokenVault.encryptMap(user.socialTokens, userId, 'access')), JSON.stringify(tokenVault.encryptMap(user.socialRefreshTokens, userId, 'refresh')), JSON.stringify(user.socialConnectedAt || {}), userId]);
+      await db.query(`UPDATE users SET social_tokens=COALESCE(social_tokens,'{}'::jsonb) - $1::text,
+        social_refresh_tokens=COALESCE(social_refresh_tokens,'{}'::jsonb) - $1::text,
+        social_connected_at=COALESCE(social_connected_at,'{}'::jsonb) - $1::text WHERE id=$2`, [platform, userId]);
     } else {
       filestore.saveUsers(users);
     }
@@ -20654,10 +20719,10 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
     // next Following visit will pick it up regardless).
     const followingFetcher = FOLLOWING_SOURCE_FETCHERS[platform];
     if (followingFetcher) {
-      followingFetcher(accessToken, { userId: entry.userId, connectedAt })
-        .then(raw => {
+      fetchConnectedFollowingSource(platform, entry.userId, { bust: true })
+        .then(fresh => {
           followingSourceCache.set(`${entry.userId}::${platform}`, {
-            posts: capConnectedSourcePosts(realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source: platform })), connectedUser, platform),
+            posts: fresh,
             fetchedAt: Date.now(),
           });
         })
@@ -21787,7 +21852,6 @@ async function handleFeedRequest(req, res) {
   // branch that reads the shared snapshot, not just the one that builds it.
   const userTopics = userDeclaredFeedTopics(user, prefs);
   const userTopicLabels = userDeclaredFeedTopicLabels(user, prefs);
-  const hasSavedFeedScope = userTopics.length > 0;
   // Persisted source choices are member-specific. Apply them at the final
   // personalization stage so every home/following code path, including
   // cached snapshots and cursor pagination, respects the same switches.
@@ -21836,12 +21900,14 @@ async function handleFeedRequest(req, res) {
         })
         .filter(matchesTopic)
       : [];
-    if (!topicsFilter.length && !isSourceFiltered && !hasSavedFeedScope && !isFollowingRequest) return [];
+    // A new member has no saved interests yet. Public candidates still form
+    // their own feed, ranked by current region and member-specific history.
     // An explicit source choice is a browsing scope. Saved interests shape
     // the default feed; only an explicit topic choice narrows source browsing.
-    const scoped = topicsFilter.length || isSourceFiltered ? list
-      : isFollowingRequest ? filterFollowingBySavedTopics(list, userTopics)
-        : filterByUserTopics(list, userTopics, { fallbackToInput: false });
+    // Followed accounts are an explicit choice too. Saved interests rank
+    // their posts; only the topic filter above should narrow this pool.
+    const scoped = topicsFilter.length || isSourceFiltered || isFollowingRequest ? list
+      : filterByUserTopics(list, userTopics, { fallbackToInput: false });
     return scoped.filter(matchesMemberJob);
   };
   const personalizeForUser = (items, options = {}) => {
@@ -22618,7 +22684,7 @@ async function handleFeedRequest(req, res) {
       // was returning near-duplicate content on page 2+, which the client's
       // dedup then collapsed down to almost nothing, making infinite scroll
       // look like it stopped after page 1.
-      const snap = mainFeedSnapshots.get(mainFeedSnapshotKey(req.user.id, sortMode, timeRange));
+      const snap = mainFeedSnapshots.get(mainFeedSnapshotKey(req.user.id, sortMode, timeRange, locationContext));
       if (snap && (Date.now() - snap.computedAt) < MAIN_FEED_SNAPSHOT_TTL) {
         // Rotate first (per-user starting point into the shared pool — see
         // rotateForUser), then personalize — both are deterministic given
@@ -22778,7 +22844,7 @@ async function handleFeedRequest(req, res) {
   // merged Personal Feed / All Collected view): serve the shared pre-sorted
   // snapshot instead of resorting hundreds of posts on every request.
   if (isDefaultAggregateView) {
-    const snap = mainFeedSnapshots.get(mainFeedSnapshotKey(req.user.id, sortMode, timeRange));
+    const snap = mainFeedSnapshots.get(mainFeedSnapshotKey(req.user.id, sortMode, timeRange, locationContext));
     if (snap && (Date.now() - snap.computedAt) < MAIN_FEED_SNAPSHOT_TTL) {
       // Page 1 only here — reqPage > 1 already returned earlier in this
       // function, and slices from the same snapshot pool there too (see
@@ -23205,7 +23271,7 @@ async function handleFeedRequest(req, res) {
 
   if (isDefaultAggregateView) {
     const memberSnapshotPosts = filterForUser(externalDiversified);
-    mainFeedSnapshots.set(mainFeedSnapshotKey(req.user.id, sortMode, timeRange), {
+    mainFeedSnapshots.set(mainFeedSnapshotKey(req.user.id, sortMode, timeRange, locationContext), {
       computedAt: Date.now(),
       posts: memberSnapshotPosts,
       hasMore: memberSnapshotPosts.length > 0,
@@ -23565,7 +23631,7 @@ async function handleVideoFeedRequest(req, res) {
     const scopedVideoTimeRange = !topicsFilter.length && userTopics.length ? '30d' : videoTimeRange;
     const applyPersonalTopicFilter = (items) => {
       if (topicsFilter.length || !isUnfilteredVideo) return items;
-      if (!hasSavedVideoScope) return [];
+      if (!hasSavedVideoScope) return items;
       return items.filter(post => feedPostPersonalizationScore(post, videoPreferenceContext) > 0);
     };
     const equalizeVideosForUser = (items) => buildFullMemberFeedEqualizer(
@@ -23743,10 +23809,11 @@ app.get('/office/feed/music', authenticate, videoReadAdmission.wrap(async (req, 
       cursorMap: decodeFeedCursor(req.query.cursor), limit: boundedLimit(req.query.limit, 20, 50), mediaType: 'video',
       seenIds: req.query.q ? new Set() : await getUserSeenSet(req.user.id, 'videos'),
     });
-    const posts = filterPostsForMemberLanguages(result.posts, user, req).filter(matchesSearch).filter(matchesTopic).filter(post => !genre ||
+    const selected = filterPostsForMemberLanguages(result.posts, user, req).filter(matchesSearch).filter(matchesTopic).filter(post => !genre ||
       [post.title, post.topic, post.genre, ...asArray(post.tags)].join(' ').toLowerCase().replace(/[-\s]+/g, ' ').includes(genre));
+    const posts = rankFeedPostsForLocation(selected, getFeedLocationContext(req, user));
     markPostsSeen(req.user.id, posts, 'videos');
-    res.json({ posts, cursor: result.nextCursor, ...continuousVideoPageMeta(req.query, result.hasMore) });
+    res.set('Cache-Control', 'private, no-store').json({ posts, cursor: result.nextCursor, ...continuousVideoPageMeta(req.query, result.hasMore) });
   } catch (error) {
     console.error('[music feed]', error.message);
     res.status(503).json({ error: 'Music is temporarily unavailable. Please try again.', posts: [], hasMore: true });
@@ -23780,9 +23847,6 @@ async function handleFollowingVideoFeedRequest(req, res) {
     const prefs = user?.preferences || {};
     const userTopics = userDeclaredFeedTopics(user, prefs);
     const videos = all.filter(isVideoSurfacePost).filter(matchesSearch).filter(matchesTopic);
-    const scopedVideos = topicsFilter.length || sourceFilter
-      ? videos
-      : filterFollowingBySavedTopics(videos, userTopics);
     // Same fix as handleFeedRequest's feedMode==='following' branch, applied
     // after the video-only filter above (equalizing the full mixed pool
     // first would waste round-robin fairness on posts that get dropped
@@ -23792,7 +23856,7 @@ async function handleFollowingVideoFeedRequest(req, res) {
     const userAffinity = await getUserAffinity(req.user.id);
     const locationContext = getFeedLocationContext(req, user);
     const ranked = orderNewestFeedCohorts(personalizeAuthenticatedFeedPosts(
-      buildEqualizedFollowingPool(scopedVideos, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS }),
+      buildEqualizedFollowingPool(videos, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS }),
       user,
       prefs,
       userAffinity,
@@ -27577,7 +27641,7 @@ registerCreatorAnalyticsRoutes(app, {service:creatorAnalytics,authenticate,limit
 scheduleRecurring(() => creatorAnalytics.prune().catch(() => {}), 60 * 60 * 1000);
 registerUfiVaultRoutes(app, {vault:ufiVault,authenticate,limiter:contentSubmissionLimiter});
 require('./source-interactions').registerSourceInteractionRoutes(app, {
-  authenticate, limiter: contentSubmissionLimiter, getUser, screenMemberContent,
+  authenticate, limiter: contentSubmissionLimiter, getUser: getPublicTargetUser, screenMemberContent,
   fetchImpl: fetch, atprotoGet, atprotoPostJSON, policyEnv: process.env,
   auditInteraction: creatorAnalytics.auditInteraction, reserveInteraction: creatorAnalytics.reserveInteraction, completeInteraction: creatorAnalytics.completeInteraction,
 });
@@ -28153,6 +28217,15 @@ async function toggleFeedPostLike(req, res) {
     }
     const feedPost = typeof postId === 'string' && postId.length <= 300 ? await findPostByIdWithDbFallback(postId) : null;
     if (!feedPost) return res.status(404).json({ message: 'Post not found.' });
+    // Legacy clients can still record UFI reactions, but cannot bypass the
+    // source connection required by the Home feed. Provider writes use
+    // /social/interactions and preserve their separate public counts.
+    if (!['bars', 'restaurants'].includes(feedPost.source)) {
+      const member = await getPublicTargetUser(req.user.id);
+      if (!member?.socialTokens?.[feedPost.source]) return res.status(403).json({
+        code: 'source_connection_required', message: 'Connect this source account before liking its posts.',
+      });
+    }
     const state = await setTableLike(db, 'external_post_likes', postId, req.user.id, desired);
     return res.json({ ...state, post: { id: postId, ...state, likesScope: 'uficonnect', likesAvailable: true,
       sourceLikesCount: Number(feedPost.sourceLikesCount ?? feedPost.likesCount) || 0 } });
@@ -30066,6 +30139,7 @@ function buildSavedPostSnapshot(rawPost) {
       title: savedPostString(author.title, 320),
       organization: savedPostString(author.organization, 320),
       avatarUrl: savedPostUrl(author.avatarUrl),
+      profileUrl: sourceAuthorProfileUrl(post) || '',
     },
     groupId: savedPostString(post.groupId || group.id, 700),
     group: group.id || group.name ? {

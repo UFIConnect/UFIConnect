@@ -91,7 +91,13 @@ const vector = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink=
   <image width="512" height="512" xlink:href="data:image/webp;base64,${(await raster(512, 1, 'image/webp')).toString('base64')}"/>
 </svg>
 `);
-for (const file of ['web/public/icon.svg', 'web/public/favicon.svg', 'web/public/uficonnect-google-verification-icon.svg', 'office/public/icon.svg']) outputs.set(file, vector);
+for (const file of ['web/public/icon.svg', 'web/public/favicon.svg', 'web/public/uficonnect-google-verification-icon.svg', 'web/public/uficonnect-mark.svg', 'web/public/uficonnect-oauth-logo.svg', 'office/public/icon.svg']) outputs.set(file, vector);
+// Keep the existing wordmark layout while using the same approved artwork.
+outputs.set('web/public/uficonnect-wordmark.svg', Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 320 64" role="img" aria-label="UFIConnect">
+  <image width="64" height="64" xlink:href="data:image/webp;base64,${(await raster(512, 1, 'image/webp')).toString('base64')}"/>
+  <text x="81" y="43" font-family="Arial,Helvetica,sans-serif" font-size="37" font-weight="700" fill="#102a6b">UFIConnect</text>
+</svg>
+`));
 for (const [file, size, scale] of [
   ['web/public/uficonnect-google-verification-icon.png', 512, 1],
   ['web/public/icon-192.png', 192, 1], ['web/public/icon-512.png', 512, 1],
@@ -99,6 +105,12 @@ for (const [file, size, scale] of [
   ['mobile/assets/icon.png', 1024, 1], ['mobile/assets/adaptive-icon.png', 1024, .62],
   ['mobile/assets/splash.png', 1024, 1], ['mobile/assets/favicon.png', 48, 1],
 ]) outputs.set(file, await raster(size, scale));
+for (const [alias, source] of [
+  ['uficonnect-oauth-logo.png', 'uficonnect-google-verification-icon.png'],
+  ['uficonnect-icon-192.png', 'icon-192.png'],
+  ['uficonnect-icon-512.png', 'icon-512.png'],
+  ['uficonnect-icon-maskable-512.png', 'icon-maskable-512.png'],
+]) outputs.set('web/public/' + alias, outputs.get('web/public/' + source));
 outputs.set('web/public/favicon.ico', await ico([16, 32, 48, 256]));
 
 // Preserve each existing native resource's density/dimensions. Adaptive artwork

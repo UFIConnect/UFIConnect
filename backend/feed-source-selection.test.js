@@ -80,7 +80,7 @@ for (const route of ['/office/feed?mode=following&passive=1', '/office/feed/vide
       assert.equal(result.status, 200);
       assert.ok(result.data.posts.some(post => post.id.startsWith('subscribed-untagged-')), 'YouTube subscription API posts have no topic label and must not all disappear');
       assert.ok(result.data.posts.every(post => post.source === 'youtube' && post.id.startsWith('subscribed-')));
-      assert.ok(result.data.posts.every(post => post.topic == null || interests.includes(post.topic)), 'Tagged posts still obey the saved topic scope');
+      assert.equal(result.data.totalAvailable, 3, 'All followed topics remain available across pages');
       assert.ok(result.data.posts.filter(post => post.id.startsWith('subscribed-untagged-')).every(post => post.topic == null), 'Do not invent a topic for a subscribed video');
     });
   }

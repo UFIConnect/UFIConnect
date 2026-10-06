@@ -61,6 +61,7 @@ jobs:
       - run: node scripts/audit-homepage-preparation.mjs
       - run: node scripts/audit-jobs-feed.mjs
       - run: node scripts/audit-music-feed.mjs
+      - run: node scripts/audit-global-member-feed.mjs
       - run: node scripts/audit-video-layout.mjs
       - run: node scripts/audit-video-performance.mjs
       - run: node scripts/audit-travel.mjs
@@ -75,6 +76,7 @@ jobs:
       - run: node scripts/audit-interface-release.mjs
       - run: node scripts/audit-shop-posts.mjs
       - run: node scripts/audit-feed-equalizer.mjs
+      - run: node scripts/audit-following-connections.mjs
       - run: node scripts/audit-post-context.mjs
       - run: node scripts/audit-content-history.mjs
       - run: node scripts/audit-video-duration.mjs
