@@ -1,4 +1,5 @@
 'use strict';
+const { importedContentLimit } = require('./job-content');
 
 // This module intentionally contains only deterministic, cheap checks. It is
 // used on every external-feed item, so it must stay safe to call in a hot path.
@@ -84,7 +85,8 @@ function screenImportedFeedPost(rawPost) {
   // ceiling instead of discarding an otherwise valid article just for being
   // long; user-authored content is rejected over its explicit write limit.
   const title = localTextScreen(cleanScreeningText(rawPost.title, 500), { maxLength: 500, allowEmpty: true });
-  const content = localTextScreen(cleanScreeningText(rawPost.content, 2000), { maxLength: 2000, allowEmpty: true });
+  const contentLimit = importedContentLimit(rawPost);
+  const content = localTextScreen(cleanScreeningText(rawPost.content, contentLimit), { maxLength: contentLimit, allowEmpty: true });
   if (!title.allowed) return { allowed: false, reason: title.reason, post: rawPost };
   if (!content.allowed) return { allowed: false, reason: content.reason, post: rawPost };
   if (!title.text && !content.text) return { allowed: false, reason: 'empty_content', post: rawPost };

@@ -1,3 +1,8 @@
+import JobPostContent from '../components/JobPostContent';
+import { isCareerPost } from '../utils/jobSummary.mjs';
+import ArticleIllustration from '../components/ArticleIllustration';
+import PostImage from '../components/PostImage';
+import SourceMediaFallback from '../components/SourceMediaFallback';
 import { getAccessToken, privateSessionStorage } from '../auth/session';
 import { createAuthenticatedStream } from '../api/authenticatedStream';
 ﻿import { useState, useEffect, useCallback, useRef, useMemo, Component, memo } from 'react';
@@ -1378,7 +1383,7 @@ const ARTICLE_SOURCES = new Set([
 ]);
 // Job-listing sources — sourceUrl is the specific posting, so the card gets
 // an explicit "Job" badge + "Apply" CTA instead of blending in as an article.
-const JOB_SOURCES = new Set(['indeed', 'remoteok']);
+const JOB_SOURCES = new Set(['indeed', 'remoteok', 'remotive', 'muse', 'themuse', 'usajobs']);
 const COMMENTS_LIVE_REFRESH_MS = 15 * 1000;
 const COMMENTS_PASSIVE_REFRESH_MS = 30 * 1000;
 
@@ -1725,17 +1730,15 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
         )
       )}
 
-      <PostText text={post.content} accent={isExternal ? src.color : undefined} />
+      <>{isCareerPost(post) ? <JobPostContent post={post} /> : <PostText text={post.content} accent={isExternal ? src.color : undefined} />}<ArticleIllustration post={post} /></>
 
-      {post.mediaUrl && post.mediaType === 'image' && !imageFailed && (
+      {post.mediaUrl && post.mediaType === 'image' && (
         <button
           onClick={() => onMediaOpen?.(post)}
           style={{ all: 'unset', display: 'block', width: '100%', cursor: 'pointer', marginTop: 12 }}
         >
           <div style={{ borderRadius: 14, overflow: 'hidden', background: 'var(--border)' }}>
-            <img src={post.mediaUrl} alt={post.title || 'Post image'}
-              style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 400 }}
-              onError={() => setImageFailed(true)} />
+            <PostImage post={post} style={{ width: '100%', display: 'block', objectFit: 'contain', maxHeight: 400 }} />
           </div>
         </button>
       )}
@@ -1803,6 +1806,8 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
           </div>
         </button>
         ) : null}
+
+      {hasVideo && !videoIsPlayable && <SourceMediaFallback post={post} />}
 
       {/* Actions: likes, comments, save, share, the options menu, then the source link. */}
       <div className="post-chrome-actions">

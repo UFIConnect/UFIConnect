@@ -1,3 +1,10 @@
+import JobPostContent from '../components/JobPostContent';
+import { isCareerPost } from '../utils/jobSummary.mjs';
+import ArticleIllustration from '../components/ArticleIllustration';
+import PostImage from '../components/PostImage';
+import SourceMediaFallback from '../components/SourceMediaFallback';
+import VimeoPreview from '../components/VimeoPreview';
+import { extractVimeoId } from '../components/videoMedia';
 ﻿import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
@@ -72,7 +79,7 @@ export default function PostDetail() {
   // below, same reason youtubeId is computed with optional chaining next:
   // React's hook order can't change between renders.
   const [muted, toggleMuted] = useGlobalMuted();
-  const youtubeId = post?.source === 'youtube' ? (post.embedId || extractYouTubeId(post.sourceUrl)) : null;
+  const youtubeId = post?.source === 'youtube' ? (post.embedId || extractYouTubeId(post.sourceUrl)) : post?.mediaType === 'video' ? extractYouTubeId(post.mediaUrl) : null;
   const ytMountRef = useRef(null);
   const ytPlayerRef = useRef(null);
   const fileVideoRef = useRef(null);
@@ -213,6 +220,7 @@ export default function PostDetail() {
   const src = SOURCE_META[post.source] || SOURCE_META.uficonnect || { icon: 'UFI', label: 'UFIconnect', color: 'var(--primary)' };
   const isVideo = post.mediaType === 'video';
   const isImage = post.mediaType === 'image';
+  const vimeoId = isVideo ? extractVimeoId(post.mediaUrl || post.sourceUrl) : null;
   const playlistUrl = isVideo && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(post.mediaUrl) : null;
   const directVideoUrl = isVideo && !playlistUrl && !youtubeId && post.mediaUrl && isDirectVideoUrl(post.mediaUrl, post) ? post.mediaUrl : null;
   const canComment = !post.isExternal && !!token;
@@ -253,12 +261,15 @@ export default function PostDetail() {
           </div>
 
           {post.title && <h1 style={{ fontSize: '1.15rem', fontWeight: 700, margin: '0 0 10px', lineHeight: 1.4, overflowWrap: 'break-word', wordBreak: 'break-word' }}>{post.title}</h1>}
-          {post.content && (
+          {isCareerPost(post) ? <JobPostContent post={post} /> : post.content && (
             <p style={{ fontSize: '.92rem', lineHeight: 1.65, whiteSpace: 'pre-wrap', margin: '0 0 12px', color: 'var(--text)', overflowWrap: 'break-word', wordBreak: 'break-word' }}>
               {post.content}
             </p>
           )}
 
+          <ArticleIllustration post={post} />
+          {vimeoId && <VimeoPreview id={vimeoId} title={post.title} />}
+          {isVideo && !youtubeId && !vimeoId && !playlistUrl && !directVideoUrl && <SourceMediaFallback post={post} />}
           {youtubeId && (
             // Real IFrame Player API (see the effects above), not a raw
             // <iframe src="...">, so this button can actually mute/unmute
@@ -282,10 +293,10 @@ export default function PostDetail() {
             // unmute elsewhere and broadcasts its own.
             <div style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', marginBottom: 12, background: '#000' }}>
               {playlistUrl ? (
-                <HlsVideoPlayer src={playlistUrl} poster={post.mediaUrl} autoPlay muted={muted}
+                <HlsVideoPlayer src={playlistUrl} poster={post.mediaPoster} autoPlay muted={muted}
                   style={{ width: '100%', display: 'block', maxHeight: 480 }} />
               ) : (
-                <video ref={fileVideoRef} src={directVideoUrl} poster={post.mediaUrl} controls autoPlay playsInline
+                <video ref={fileVideoRef} src={directVideoUrl} poster={post.mediaPoster} controls autoPlay playsInline
                   muted={muted} style={{ width: '100%', display: 'block', maxHeight: 480, background: '#000' }} />
               )}
               <button
@@ -297,7 +308,7 @@ export default function PostDetail() {
           )}
           {!youtubeId && !playlistUrl && !directVideoUrl && isImage && post.mediaUrl && (
             <div style={{ borderRadius: 14, overflow: 'hidden', marginBottom: 12 }}>
-              <img src={post.mediaUrl} alt="" style={{ width: '100%', display: 'block', maxHeight: 480, objectFit: 'contain', background: '#000' }} />
+              <PostImage post={post} style={{ width: '100%', display: 'block', maxHeight: 480, objectFit: 'contain', background: 'var(--surface)' }} />
             </div>
           )}
 

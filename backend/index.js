@@ -1,4 +1,7 @@
 const express = require('express');
+const { importedContentLimit, jobDescriptionText, JOB_CONTENT_MAX_CHARS } = require('./job-content');
+const { extractFeedMedia } = require('./rss-media');
+const { normalizePostMedia } = require('./post-media');
 const cors = require('cors');
 const helmet = require('helmet');
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
@@ -3261,20 +3264,9 @@ function truncateWithEllipsis(text, maxLen) {
   return text.length > maxLen ? text.slice(0, maxLen).trim() + '…' : text;
 }
 
-// The DB's own content column caps at 2000 chars per post (see
-// savePostsToDB/savePostsToDBFast's own .slice(0, 2000)/clean(p.content,
-// 2000)) — but most source fetchers below were independently truncating to
-// 400-500 chars well before that, discarding the back half of a real post's
-// text long before it ever reached the database. The frontend's own
-// "Show more" expand only ever reveals whatever content actually made it
-// this far, so a post genuinely longer than ~400 chars looked cut off
-// mid-sentence no matter how far a reader expanded it — confirmed live as
-// "shows half the writing instead of the full post," across Reddit, HN,
-// Mastodon, Stack Overflow, and both job description sources. Matches the
-// DB's own ceiling so nothing gets double-truncated inconsistently between
-// here and there. Comment bodies (a different UI surface — a scrollable
-// list of many short replies, not one focused post) intentionally keep
-// their own shorter, unrelated caps.
+// Ordinary feed excerpts are bounded at 2,000 characters. Job listings use
+// the larger shared limit in job-content so their responsibilities survive
+// parsing, screening, caching and database persistence.
 const POST_CONTENT_MAX_CHARS = 2000;
 
 // --- Medium: fetch articles by tag via RSS feed -------------------------------
@@ -4517,107 +4509,15 @@ function parseRSSItems(xml) {
     const link = field('link') || (blk.match(/<link[^>]+href="([^"]+)"/) || [])[1] || '';
     const title = field('title');
     if (!title || !link) continue;
-    // Many RSS/Atom feeds carry an image via <media:thumbnail>, <media:content
-    // medium="image">, or <enclosure type="image/...">. Attribute order isn't
-    // guaranteed, so grab the whole tag first, then pull attrs out of it.
-    // Quotes aren't guaranteed to be double either — Crunchbase's feed uses
-    // <enclosure url='...' type='image/jpeg' />, which a double-quote-only
-    // version of this silently never matched at all.
-    const attr = (tag, name) => tag?.match(new RegExp(`${name}=["']([^"']+)["']`, 'i'))?.[1] || null;
-    const thumbTag = blk.match(/<media:thumbnail\s+[^>]*>/i)?.[0];
-    const mediaContentTag = blk.match(/<media:content\s+[^>]*>/i)?.[0];
-    const enclosureTag = blk.match(/<enclosure\s+[^>]*>/i)?.[0];
-    let image = thumbTag ? attr(thumbTag, 'url') : null;
-    if (!image && mediaContentTag && /medium=["']image["']|type=["']image\//i.test(mediaContentTag)) {
-      image = attr(mediaContentTag, 'url');
-    }
-    if (!image && enclosureTag && /type=["']image\//i.test(enclosureTag)) {
-      image = attr(enclosureTag, 'url');
-    }
-    // Some feeds carry a real, directly-playable video file the same way
-    // they'd carry an image — <media:content medium="video"> or <enclosure
-    // type="video/...">. CSS-Tricks confirmed live: <enclosure url="....mp4"
-    // type="video/mp4" />, a genuine self-hosted file, no embed/player work
-    // needed beyond what Reddit/Mastodon's direct-file video posts already do.
-    let video = null;
-    if (mediaContentTag && /medium=["']video["']/i.test(mediaContentTag)) {
-      video = attr(mediaContentTag, 'url');
-    }
-    if (!video && enclosureTag && /type=["']video\//i.test(enclosureTag)) {
-      video = attr(enclosureTag, 'url');
-    }
-    // Lazily decoded raw body, shared by the image-in-content and
-    // video-in-content fallbacks below — some feeds (InfoQ confirmed live)
-    // don't use CDATA at all, they put HTML-entity-escaped markup directly
-    // as XML text content, so tags only exist as literal "&lt;img..." /
-    // "&lt;iframe..." text until decoded.
-    let _rawBody;
-    const rawBody = () => _rawBody ?? (_rawBody = decodeHTMLEntities(
-      rawField('content:encoded') || rawField('content') || rawField('description') || rawField('summary')
-    ));
-    // Falls back to the first embedded YouTube iframe in the article body —
-    // The Verge, freeCodeCamp, TheNewStack, and the YC blog all embed real
-    // YouTube videos this way with no dedicated media tag at all (yc
-    // confirmed live: <iframe src="https://www.youtube.com/embed/ID?...">).
-    // Normalized to a plain watch URL so it's recoverable the same way every
-    // other YouTube post's embedId already is client-side (extractYouTubeId
-    // matches watch/embed/youtu.be forms interchangeably).
-    //
-    // Was matching a bare youtube.com/watch or youtu.be URL *anywhere* in
-    // the article body, not just inside an <iframe> — Smashing Magazine
-    // confirmed live: a plain inline promo link ("Jump to a free preview"
-    // for a paid course) pointed at a YouTube watch URL, and every article
-    // carrying that same boilerplate promo (5 of 40 in one fetch, all
-    // unrelated topics) got tagged as if it had its own unique embedded
-    // video — same repeated, irrelevant video landing in the Videos tab for
-    // several completely different articles. Requiring an actual <iframe
-    // src="..."> wrapper is what the confirmed-working sources (YC etc.)
-    // already use, so this only narrows out the false-positive case.
-    if (!video) {
-      const iframeSrc = rawBody().match(/<iframe[^>]+src=["']([^"']*(?:youtube(?:-nocookie)?\.com|youtu\.be)[^"']*)["']/i)?.[1];
-      const yt = iframeSrc?.match(/(?:youtube(?:-nocookie)?\.com\/embed\/|youtube\.com\/watch\?v=|youtu\.be\/)([A-Za-z0-9_-]{11})/i);
-      if (yt) video = `https://www.youtube.com/watch?v=${yt[1]}`;
-    }
-    // Same idea, for a Vimeo player embed instead — design/creative-focused
-    // feeds (Behance-adjacent sources in particular) reach for Vimeo far
-    // more than YouTube. Vimeo now has its own dedicated frontend player
-    // (VimeoEmbedBlock/resolveVideoSource's 'vimeo' kind, same simple
-    // plain-iframe pattern TikTok already uses — no DOM-hijack risk, so no
-    // player-lifecycle dance needed), which is what makes this safe to
-    // detect at all: tagging a post 'video' with nothing able to actually
-    // play it is exactly the dead-tile "false promise" the enclosure/
-    // iframe checks in this function already exist to avoid. Normalized to
-    // a plain vimeo.com/{id} watch URL, same convention as the YouTube
-    // case above, recoverable via extractVimeoId client-side.
-    if (!video) {
-      const vimeoSrc = rawBody().match(/<iframe[^>]+src=["']([^"']*player\.vimeo\.com\/video\/[^"']*)["']/i)?.[1];
-      const vid = vimeoSrc?.match(/player\.vimeo\.com\/video\/(\d+)/i);
-      if (vid) video = `https://vimeo.com/${vid[1]}`;
-    }
-    // Falls back to a native <video> embedded directly in the article body
-    // (either a src="..." attribute on <video> itself, or a nested
-    // <source src="...">, which is the more common HTML5 pattern) — same
-    // idea as the YouTube/Vimeo iframe fallbacks above, for a site that
-    // self-hosts its own file instead of embedding a player. A <video>/
-    // <source> src is already a direct file — the exact same
-    // isDirectVideoUrl path Reddit/Mastodon's own direct-file posts already
-    // play through, so this needed no new frontend work either.
-    if (!video) {
-      const directSrc = rawBody().match(/<(?:video|source)[^>]+src=["']([^"']+\.(?:mp4|webm|mov|m4v)[^"']*)["']/i)?.[1];
-      if (directSrc) video = directSrc;
-    }
-    // Falls back to the first <img> actually embedded in the article body —
-    // plenty of feeds (The Verge, Medium, MIT Tech Review confirmed live)
-    // never use a dedicated media tag at all, they just put a real <img> in
-    // the content/description HTML, which every path above ignores since
-    // field() already strips all tags before this point.
-    if (!image) {
-      image = rawBody().match(/<img[^>]+src=["']([^"']+)["']/i)?.[1] || null;
-    }
+    // Inspect every enclosure and the full body, including lazy-loaded media.
+    const bodies = ['content:encoded','content','description','summary'].map(rawField);
+    const rawBody = decodeHTMLEntities(bodies.join('\n'));
+    const { image, video } = extractFeedMedia(blk, rawBody, link);
+    const description = bodies.map(body => jobDescriptionText(body, decodeHTMLEntities)).sort((a,b) => b.length-a.length)[0] || '';
     items.push({
       title,
       link:    link.replace(/^<!\[CDATA\[|\]\]>$/g, '').trim(),
-      desc:    (field('description') || field('summary') || field('content')).slice(0, POST_CONTENT_MAX_CHARS),
+      desc:    description,
       pubDate: field('pubDate') || field('published') || field('updated') || '',
       author:  field('author') || field('dc:creator') || field('name') || '',
       source:  field('source'),
@@ -4642,7 +4542,7 @@ function rssPost(item, sourceId, sourceLabel, groupId, groupName, category, topi
     id:          `${sourceId}_${linkHash}`,
     authorId:    `${sourceId}_author`,
     groupId,
-    content:     item.desc || item.title,
+    content:     truncateWithEllipsis(item.desc || item.title, importedContentLimit({ source: sourceId })),
     title:       item.title,
     source:      sourceId,
     sourceLabel,
@@ -4699,7 +4599,7 @@ async function fetchIndeedJobs(keyword) {
       id:          `indeed_${crypto.createHash('md5').update(String(j.id || j.url || Date.now())).digest('hex').slice(0, 20)}`,
       authorId:    'indeed_jobs',
       groupId:     'ext_indeed',
-      content:     truncateWithEllipsis(stripAndDecodeHTML(j.description || j.company_name || ''), POST_CONTENT_MAX_CHARS),
+      content:     jobDescriptionText(j.description || j.company_name || '', decodeHTMLEntities),
       title:       j.title,
       source:      'indeed', sourceLabel: 'Indeed',
       sourceUrl:   j.url,
@@ -5454,7 +5354,7 @@ async function fetchRemoteOKJobs(keyword) {
         id:          `remoteok_${j.id}`,
         authorId:    'remoteok_jobs',
         groupId:     'ext_remoteok',
-        content:     truncateWithEllipsis(stripAndDecodeHTML(j.description || ''), POST_CONTENT_MAX_CHARS),
+        content:     jobDescriptionText(j.description || '', decodeHTMLEntities),
         title:       j.position,
         source:      'remoteok', sourceLabel: 'Remote OK',
         sourceUrl:   j.url || j.apply_url,
@@ -5525,8 +5425,7 @@ async function fetchUSAJobsByKeyword(keyword) {
           id:          `usajobs_${it.MatchedObjectId}`,
           authorId:    'usajobs_jobs',
           groupId:     'ext_usajobs',
-          content:     truncateWithEllipsis((d.UserArea?.Details?.JobSummary || d.QualificationSummary || d.PositionTitle || '')
-                         .replace(/\s+/g, ' ').trim(), POST_CONTENT_MAX_CHARS),
+          content:     jobDescriptionText([d.UserArea?.Details?.JobSummary, ...[].concat(d.UserArea?.Details?.MajorDuties || []), d.QualificationSummary].filter(Boolean).join('\n\n') || d.PositionTitle, decodeHTMLEntities),
           title:       d.PositionTitle,
           source:      'usajobs', sourceLabel: 'USAJobs',
           sourceUrl:   d.PositionURI || 'https://www.usajobs.gov',
@@ -6649,22 +6548,12 @@ function addSeenId(id) {
   }
 }
 
-// Truncate long content strings before storing to cap per-post memory. Was
-// 600, then 1500 — both still tighter than what individual source parsers
-// themselves were allowed to return (see POST_CONTENT_MAX_CHARS, 2000 —
-// matching the DB content column's own real ceiling), so this later,
-// general safety-net pass was silently re-clamping content a source fetcher
-// had *already* been fixed to hand back in full — confirmed live as posts
-// still reading cut off after raising the per-source limits, since this was
-// the actual binding constraint the whole time. Matched to
-// POST_CONTENT_MAX_CHARS so the two layers agree instead of one quietly
-// undoing the other; per-post memory across up to MAX_CACHED_DB_POSTS rows
-// is still bounded, just no longer the tighter of the two ceilings.
-const MAX_CONTENT_LEN = POST_CONTENT_MAX_CHARS;
+// Apply the same source-specific content limit as screening and storage.
 function trimPostContent(p) {
   if (!p) return p;
-  if (p.content && p.content.length > MAX_CONTENT_LEN) {
-    return { ...p, content: p.content.slice(0, MAX_CONTENT_LEN) + '…' };
+  const limit = importedContentLimit(p);
+  if (p.content && p.content.length > limit) {
+    return { ...p, content: p.content.slice(0, limit - 1) + '…' };
   }
   return p;
 }
@@ -6676,6 +6565,7 @@ function normalizeCount(value) {
 
 function normalizeFeedPost(p, fallback = Date.now()) {
   if (!p) return p;
+  p = normalizePostMedia(p);
   return {
     ...p,
     createdAt:     JOB_SOURCES.has(p.source)
@@ -18918,7 +18808,7 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
           p.id, p.source,
           p.groupId || p.group?.id || null,
           (p.title || '').slice(0, 500),
-          (p.content || '').slice(0, 2000),
+          (p.content || '').slice(0, importedContentLimit(p)),
           p.author?.name || null,
           p.sourceUrl || null,
           p.mediaUrl || null,
@@ -18964,7 +18854,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
       source: clean(p.source || 'unknown'),
       group_id: p.groupId || p.group?.id ? clean(p.groupId || p.group.id) : null,
       title: clean(p.title, 500),
-      content: clean(p.content, 2000),
+      content: clean(p.content, importedContentLimit(p)),
       author_name: p.author?.name ? clean(p.author.name) : null,
       source_url: p.sourceUrl ? clean(p.sourceUrl) : null,
       media_url: p.mediaUrl ? clean(p.mediaUrl) : null,
@@ -29204,7 +29094,7 @@ async function fetchRemotiveByCategory(category) {
         sourceUrl:   j.url,
         topic:       category,
         title:       j.title,
-        content:     truncateWithEllipsis(stripAndDecodeHTML(j.description || ''), POST_CONTENT_MAX_CHARS),
+        content:     jobDescriptionText(j.description || '', decodeHTMLEntities),
         author:      { name: j.company_name || 'Company' },
         likesCount: 0, commentsCount: 0,
         createdAt:   jobPostedDate(j.publication_date),
@@ -29260,7 +29150,7 @@ async function fetchMuseByCategoryLevel(category, level) {
         sourceUrl:   j.refs.landing_page,
         topic:       category,
         title:       j.name || 'Open Role',
-        content:     truncateWithEllipsis(stripAndDecodeHTML(j.contents || ''), POST_CONTENT_MAX_CHARS),
+        content:     jobDescriptionText(j.contents || '', decodeHTMLEntities),
         author:      { name: j.company?.name || 'Company' },
         likesCount: 0, commentsCount: 0,
         createdAt:   jobPostedDate(j.publication_date),
@@ -29384,7 +29274,7 @@ function mapSharedJobPost(p, label) {
     // interest matching instead of tags alone. Truncated — this is only
     // ever read for keyword matching server-side, not rendered, so there's
     // no reason to ship a full job description in the response payload.
-    content:   truncateWithEllipsis(p.content || '', POST_CONTENT_MAX_CHARS),
+    content:   String(p.content || '').slice(0, JOB_CONTENT_MAX_CHARS),
     org:       p.author?.name || p.author?.organization || 'Company',
     location:  p.location || (label === 'USAJobs' ? 'United States' : 'Remote'),
     pay:       '',
