@@ -1243,7 +1243,8 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen, onPostUpdated })
           <LocationMatchBadge post={post} />
         </div>
       )}
-      <p style={{ fontWeight: 700, fontSize: '1.08rem', margin: '0 0 10px', lineHeight: 1.35 }}>{post.title}</p>
+      <p style={{ fontWeight: 700, fontSize: '1.08rem', margin: '0 0 10px', lineHeight: 1.35 }}><PostInlineText text={post.title} /></p>
+      {post.content && <PostText text={post.content} accent={src.color} />}
       {embedId ? (
         <div style={{ marginBottom: 10, position: 'relative' }}>
           <YouTubeEmbedBlock embedId={embedId} videoKey={post.id} poster={post.mediaUrl} title={post.title} maxHeight={280} forcePause={isMediaOpen} />
@@ -1255,7 +1256,6 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen, onPostUpdated })
             onError={() => setImageFailed(true)} />
         </div>
       ) : null}
-      {post.content && <PostText text={post.content} accent={src.color} />}
       <PostLinkPreviews post={post} />
       <div className="post-chrome-actions">
         <PostLikes post={post} onPostUpdated={onPostUpdated} />
@@ -1655,15 +1655,15 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
         isExternal && post.sourceUrl ? (
           <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', color: 'inherit' }}>
             <p style={{ fontWeight: 700, fontSize: '1.08rem', margin: '0 0 6px', lineHeight: 1.35 }}>
-              {post.title}<span style={{ marginLeft: 5, fontSize: '.8rem', color: src.color }}>↗</span>
+              <PostInlineText text={post.title} /><span style={{ marginLeft: 5, fontSize: '.8rem', color: src.color }}>↗</span>
             </p>
           </a>
         ) : (
-          <p style={{ fontWeight: 700, fontSize: '1.08rem', margin: '0 0 6px', lineHeight: 1.35 }}>{post.title}</p>
+          <p style={{ fontWeight: 700, fontSize: '1.08rem', margin: '0 0 6px', lineHeight: 1.35 }}><PostInlineText text={post.title} /></p>
         )
       )}
 
-      <>{isCareerPost(post) ? <JobPostContent post={post} /> : <PostText text={post.content} accent={isExternal ? src.color : undefined} />}<PostLinkPreviews post={post} /><ArticleIllustration post={post} /></>
+      <>{isCareerPost(post) ? <JobPostContent post={post} /> : <PostText text={post.content} accent={isExternal ? src.color : undefined} />}<ArticleIllustration post={post} /></>
 
       {post.mediaUrl && post.mediaType === 'image' && (
         <button
@@ -1741,6 +1741,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
         ) : null}
 
       {hasVideo && !videoIsPlayable && <SourceMediaFallback post={post} />}
+      <PostLinkPreviews post={post} />
 
       {/* Actions: likes, comments, save, share, the options menu, then the source link. */}
       <div className="post-chrome-actions">

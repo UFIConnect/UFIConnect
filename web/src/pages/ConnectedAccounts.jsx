@@ -106,6 +106,8 @@ export default function ConnectedAccounts() {
       const msg = errPlatform === 'mastodon' && MASTODON_CONNECTION_ERRORS[reasonBase]
         ? MASTODON_CONNECTION_ERRORS[reasonBase]
         : reasonBase === 'invalid_state' ? 'Connection expired — please try again.'
+        : reasonBase === 'browser_mismatch' ? 'Allow cookies for UFIConnect and start the connection again in this browser.'
+        : reasonBase === 'account_unavailable' ? 'This connection is not available for your current account membership.'
         : reasonBase === 'access_denied' && errPlatform === 'youtube'
           ? 'YouTube did not grant access. In Google Cloud, publish the OAuth app or add this Google account as a test user, then try again.'
         : reasonBase === 'access_denied'          ? 'The provider did not grant access. Please try again.'

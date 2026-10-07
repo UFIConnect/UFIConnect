@@ -73,7 +73,7 @@ try{
   await page.getByText(post.title,{exact:false}).waitFor();
   assert.equal(await sources.getByRole('button',{name:'Mastodon',exact:true}).getAttribute('aria-pressed'),'true');
   const card=page.locator('.post-card').filter({hasText:post.title}).first();
-  assert.equal(await card.locator('.post-content a[href="https://example.com/notes?one=1&two=2"]').count(),1);
+  assert.equal(await card.locator('.post-content a[href="https://example.com/notes?one=1&two=2"]').count(),0);
   assert.equal(await card.locator('.post-link-preview[href="https://example.com/notes?one=1&two=2"]').count(),1);
   assert.equal(await card.locator('a.post-chrome-time').getAttribute('href'),post.sourceUrl);
   assert.equal(await card.getByRole('link',{name:'Open on Mastodon',exact:true}).getAttribute('href'),post.sourceUrl);

@@ -56,7 +56,7 @@ export const ACCOUNT_CATEGORIES = [
 function accountCategory(key, platform) {
   if (platform.category === 'career' || CAREER_ACCOUNT_PLATFORMS.includes(key)) return 'career';
   if (['youtube', 'twitch', 'tiktok'].includes(key)) return 'video';
-  if (['github', 'gitlab', 'linkedin', 'dribbble', 'behance', 'stackoverflow', 'producthunt'].includes(key)) return 'work';
+  if (['github', 'gitlab', 'linkedin', 'dribbble', 'behance', 'figma', 'stackoverflow', 'producthunt'].includes(key)) return 'work';
   if (platform.category === 'publication' || ['medium', 'wordpress', 'tumblr', 'devto', 'hashnode', 'freecodecamp'].includes(key)) return 'publishing';
   return 'social';
 }
@@ -77,6 +77,7 @@ export function accountSections(entries, connected, status = 'all') {
 
 // Public destinations only. Authorization always uses the existing OAuth start route.
 export const ACCOUNT_SITE_URLS = {
+  discord: 'https://discord.com/channels/@me', figma: 'https://www.figma.com/files',
   linkedin: 'https://www.linkedin.com/', twitter: 'https://x.com/', facebook: 'https://www.facebook.com/',
   instagram: 'https://www.instagram.com/', tiktok: 'https://www.tiktok.com/', threads: 'https://www.threads.com/',
   github: 'https://github.com/', gitlab: 'https://gitlab.com/', youtube: 'https://www.youtube.com/',

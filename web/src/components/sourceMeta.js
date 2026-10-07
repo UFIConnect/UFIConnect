@@ -1,4 +1,6 @@
 export const SOURCE_META = {
+  discord:       { label: 'Discord',       color: '#5865F2', icon: 'DS' },
+  figma:         { label: 'Figma',         color: '#A259FF', icon: 'FG' },
   reddit:        { label: 'Reddit',        color: '#FF4500', icon: 'RD' },
   hackernews:    { label: 'Hacker News',   color: '#FF6600', icon: 'HN' },
   devto:         { label: 'DEV Community', color: '#3B49DF', icon: 'DEV' },
@@ -63,6 +65,7 @@ export const SOURCE_META = {
 // Account-owned integrations are managed in Command Center. They only use
 // content from the member who authorizes them and never enter shared feeds.
 export const COMMAND_CENTER_ACCOUNT_PLATFORMS = [
+  'discord', 'figma',
   'linkedin', 'instagram', 'tiktok', 'threads',
   'pinterest', 'tumblr', 'wordpress',
 ];
@@ -119,13 +122,14 @@ export const CROSS_POST_PLATFORM_IDS = [
 // "following timeline" fetcher wired up yet; platforms without one simply
 // show the existing empty/coming-soon states.
 export const CONNECTED_SOCIAL_PLATFORMS = [
+  'discord', 'figma',
   'linkedin', 'twitter', 'instagram', 'tiktok', 'facebook',
   'github', 'gitlab', 'youtube', 'reddit',
   'medium', 'dribbble', 'twitch', 'threads', 'bluesky', 'mastodon',
 ];
 
 // Keep discovery content and own-post-only integrations out of Following.
-export const FOLLOWING_EXCLUDED_SOURCE_IDS = ['instagram', 'tiktok'];
+export const FOLLOWING_EXCLUDED_SOURCE_IDS = ['instagram', 'tiktok', 'discord', 'figma'];
 
 // Shared by the desktop feed rail and the mobile app menu. Keeping this
 // vocabulary here prevents the two controls from quietly drifting apart.

@@ -185,4 +185,10 @@
 .vault-password-tools .vault-text-button{min-height:36px}
 .vault-dialog>p{margin:16px 24px;line-height:1.6}
 .vault-dialog>button{margin:0 24px 24px}
+.vault-recovery-link { margin-top: 16px; min-height: 36px; }
+.vault-recovery-options > p { margin: 0; font-size: 13px; line-height: 1.65; color: var(--muted); }
+.vault-recovery-options > section { border: 1px solid var(--border); border-radius: 10px; padding: 15px; }
+.vault-recovery-options h3 { margin: 0 0 8px; font-size: 15px; color: var(--text); }
+.vault-recovery-options section p { margin: 0 0 12px; color: var(--muted); font-size: 12px; line-height: 1.65; }
+.vault-recovery-options .vault-text-button { white-space: normal; text-align: left; min-height: 36px; }
 @media(max-width:600px){.vault-command-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.vault-launch-actions{gap:8px}.vault-everyday-apps>div{flex:1;min-width:100px}}

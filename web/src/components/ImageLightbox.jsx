@@ -696,7 +696,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
         )}
         </div>
         <div className="media-lightbox-info" style={{ color: '#fff', marginTop: 14, textAlign: 'center', maxWidth: 560, padding: '0 12px' }}>
-          {post.title && <div style={{ fontWeight: 700, fontSize: '.92rem', marginBottom: 4 }}>{post.title}</div>}
+          {post.title && <div style={{ fontWeight: 700, fontSize: '.92rem', marginBottom: 4 }}><PostInlineText text={post.title} /></div>}
           {post.content && (
             <div style={{ fontSize: '.82rem', opacity: 0.8, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
               <PostInlineText text={post.content} />

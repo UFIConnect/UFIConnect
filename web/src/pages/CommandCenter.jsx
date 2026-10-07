@@ -22,6 +22,8 @@ import { DirectoryControls, AccountSiteLink } from '../components/DirectoryContr
 import { ACCOUNT_STATUSES, accountSections, filterAccounts } from '../components/sourceDirectory';
 import { DISCOVERY_CATEGORIES, discoveryPostContext } from '../components/discoveryCategories';
 import '../components/DiscoveryCategoryBar.css';
+import './CommandCenterPlatforms.css';
+import CONTENT_PLATFORMS from '../../../backend/content-platforms.json';
 
 // Platforms with a real, working "my own posts" fetcher server-side (see
 // OWN_CONTENT_FETCHERS in backend/index.js) — the rest of
@@ -115,14 +117,23 @@ function SectionError({ message, onRetry }) {
   );
 }
 
-const DRAFT_PLATFORMS = [
-  { value: 'tiktok',    label: 'TikTok',      icon: 'TT' },
-  { value: 'instagram', label: 'Instagram',   icon: 'IG' },
-  { value: 'linkedin',  label: 'LinkedIn',    icon: 'in' },
-  { value: 'twitter',   label: 'X / Twitter', icon: 'X' },
-  { value: 'threads',   label: 'Threads',     icon: 'TH' },
-  { value: 'general',   label: 'General',     icon: 'GEN' },
-];
+function DraftPlatformSelect({ value, onChange, label }) {
+  const groups = [['social', 'Social'], ['video', 'Video & Streaming'], ['work', 'Work & Development'], ['publishing', 'Publishing']].map(([id, label]) => ({ id, label, items: CONTENT_PLATFORMS.filter(platform => platform.category === id) }));
+  return (
+    <label className="cc-draft-platform">
+      <span>{label}</span>
+      <div className="cc-draft-platform-control">
+        {value === 'general' || value === 'hashnode' ? <PencilLine size={20} aria-hidden="true" /> : <SourceMark source={value} />}
+        <select className="form-select" aria-label={label} value={value} onChange={event => onChange(event.target.value)}>
+          {groups.map(group => <optgroup key={group.id} label={group.label}>
+            {group.items.map(platform => <option key={platform.id} value={platform.id}>{platform.label}</option>)}
+          </optgroup>)}
+          <option value="general">General</option>
+        </select>
+      </div>
+    </label>
+  );
+}
 
 function ContentDraftResults({ drafts, hashtagGroups, onCopy }) {
   if (!drafts?.length && !hashtagGroups?.length) return null;
@@ -154,10 +165,8 @@ function ContentDraftResults({ drafts, hashtagGroups, onCopy }) {
   );
 }
 
-// AI drafting only — the member still posts it themselves on the platform's
-// own app. There's no real publish-on-their-behalf API this app can reach
-// for TikTok or Instagram (business/creator app review neither has been
-// through), so this deliberately doesn't pretend to auto-post.
+// Drafting targets do not imply publishing access. Cross-Post separately checks
+// the member's connections and the server's current publishing capabilities.
 function ContentHubSection({ readOnly = false }) {
   const { showToast } = useToast();
   const [platform, setPlatform] = useState('tiktok');
@@ -235,23 +244,10 @@ function ContentHubSection({ readOnly = false }) {
       <div className="card">
         <h3 style={{ margin: '0 0 4px', fontSize: '.95rem', display: 'flex', alignItems: 'center', gap: 8 }}><Sparkles size={19} aria-hidden="true" /> Draft new content</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0 }}>
-          AI-drafted captions for the platform you post to — copy, tweak, and post it yourself.
+          Create platform-specific posts, captions, and article drafts. Review the result, then copy it to your platform or use an available Cross-Post connection.
         </p>
         <form onSubmit={handleDraft} style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 16 }}>
-          <div>
-            <div style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 6 }}>Platform</div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {DRAFT_PLATFORMS.map(p => (
-                <button
-                  key={p.value} type="button" onClick={() => setPlatform(p.value)}
-                  className="btn btn-sm"
-                  style={{ background: platform === p.value ? 'var(--primary)' : 'var(--bg-secondary)', color: platform === p.value ? '#fff' : 'var(--text)', border: 'none' }}
-                >
-                  {p.value === 'general' ? <PencilLine size={18} aria-hidden="true" /> : <SourceMark source={p.value} active={platform === p.value} />} {p.label}
-                </button>
-              ))}
-            </div>
-          </div>
+          <DraftPlatformSelect value={platform} onChange={setPlatform} label="Content platform" />
           <div>
             <label style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--muted)', display: 'block', marginBottom: 6 }}>What's the post about?</label>
             <textarea
@@ -281,20 +277,7 @@ function ContentHubSection({ readOnly = false }) {
           Draft focused hashtag sets for the post and audience you have in mind.
         </p>
         <form onSubmit={handleHashtagDraft} style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 16 }}>
-          <div>
-            <div style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 6 }}>Platform</div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {DRAFT_PLATFORMS.map(p => (
-                <button
-                  key={p.value} type="button" onClick={() => setHashtagPlatform(p.value)}
-                  className="btn btn-sm"
-                  style={{ background: hashtagPlatform === p.value ? 'var(--primary)' : 'var(--bg-secondary)', color: hashtagPlatform === p.value ? '#fff' : 'var(--text)', border: 'none' }}
-                >
-                  {p.value === 'general' ? <PencilLine size={18} aria-hidden="true" /> : <SourceMark source={p.value} active={hashtagPlatform === p.value} />} {p.label}
-                </button>
-              ))}
-            </div>
-          </div>
+          <DraftPlatformSelect value={hashtagPlatform} onChange={setHashtagPlatform} label="Hashtag platform" />
           <div>
             <label style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--muted)', display: 'block', marginBottom: 6 }}>What's the post about?</label>
             <textarea
@@ -684,14 +667,14 @@ function YourFeedSection() {
       {activePlatform && !loadingPosts && posts && posts.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {posts.map(post => (
-            <div key={post.id} className="card command-center-content-row">
+            <div key={post.id} className="card">
+              <div className="command-center-content-row">
               {post.mediaType === 'image' && post.mediaUrl && (
                 <img src={post.mediaUrl} alt="" style={{ width: 52, height: 52, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} />
               )}
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 700, fontSize: '.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{post.title}</div>
+                <div style={{ fontWeight: 700, fontSize: '.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><PostInlineText text={post.title} /></div>
                 <div style={{ fontSize: '.72rem', color: 'var(--muted)', marginTop: 4 }}>{timeAgo(post.createdAt)}</div>
-                <PostLinkPreviews post={post} />
               </div>
               <div className="command-center-row-actions">
                 <button type="button" className="btn btn-ghost btn-sm" onClick={() => downloadText(post)}>Text</button>
@@ -705,6 +688,8 @@ function YourFeedSection() {
                   <a href={safePostLink(post.sourceUrl)} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">View</a>
                 )}
               </div>
+              </div>
+              <PostLinkPreviews post={post} text={`${post.title || ''}\n${post.content || ''}`} />
             </div>
           ))}
         </div>
@@ -1371,7 +1356,7 @@ function CrossPostSection() {
   }
 
   if (connected === null) return <div className="empty-state"><span className="spinner spinner-primary" /></div>;
-  const publishingPlatforms = CROSS_POST_PLATFORM_IDS.filter(platform => platforms[platform]);
+  const publishingPlatforms = [...new Set([...CROSS_POST_PLATFORM_IDS, ...Object.keys(platforms).filter(key => platforms[key].crossPost?.supported)])].filter(platform => platforms[platform]);
   const shownPlatforms = new Set(categoryContext?.sources.map(source => source.platform) || []);
   const orderedPublishingPlatforms = [...publishingPlatforms].sort((left, right) => Number(shownPlatforms.has(right)) - Number(shownPlatforms.has(left)));
   const destinationGroups = accountSections([
@@ -1386,7 +1371,7 @@ function CrossPostSection() {
     ? `/connected-accounts?connect=${platform}&returnTo=command-center`
     : '/command-center?tab=accounts';
   const platformTargetButton = (p) => {
-    const meta = SOURCE_META[p] || SOURCE_META.uficonnect;
+    const meta = SOURCE_META[p] || { label: platforms[p]?.name || p, icon: p };
     const capability = platforms[p]?.crossPost;
     if (!capability?.supported) return null;
     const active = selected.has(p);
@@ -1404,7 +1389,7 @@ function CrossPostSection() {
     );
   };
   const publishingDestination = (p) => {
-    const meta = SOURCE_META[p] || SOURCE_META.uficonnect;
+    const meta = SOURCE_META[p] || { label: platforms[p]?.name || p, icon: p };
     const platform = platforms[p];
     const capability = platform?.crossPost;
     if (platform?.forceComingSoon || !platform?.configured) {

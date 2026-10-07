@@ -6,7 +6,7 @@ import './PostLinkPreviews.css';
 export default function PostLinkPreviews({ post, text, excludeUrl, maxVisible = 2, variant }) {
   const [expanded, setExpanded] = useState(false);
   const listId = useId();
-  const links = postLinkPreviews(text ?? post?.content, excludeUrl ?? post?.sourceUrl);
+  const links = postLinkPreviews(text ?? [post?.title, post?.content].filter(Boolean).join('\n'), excludeUrl ?? post?.sourceUrl);
   if (!links.length) return null;
   const limit = Number.isFinite(maxVisible) ? Math.max(1, Math.floor(maxVisible)) : 2;
   const visible = expanded ? links : links.slice(0, limit);

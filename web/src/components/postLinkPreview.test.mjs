@@ -1,7 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { postLinkDestination, postLinkPreviews } from './postLinkPreview.mjs';
+import { postLinkDestination, postLinkPreviews, postBodyWithoutLinks } from './postLinkPreview.mjs';
 import { postTextPreview } from '../../../backend/post-text.mjs';
+
+test('post body hides preview URLs while preserving prose, paragraphs and hashtags', () => {
+  const content = 'Read this (https://example.com/story).\n\nA useful #Research update.\nhttps://example.org/reference';
+  assert.equal(postBodyWithoutLinks(content), 'Read this.\n\nA useful #Research update.');
+  assert.equal(postLinkPreviews(content).length, 2);
+  assert.equal(postBodyWithoutLinks('https://example.org'), '');
+  assert.equal(postBodyWithoutLinks('A <script> tag stays text'), 'A <script> tag stays text');
+  assert.equal(postBodyWithoutLinks('Source https://example.org/incomplete…'), 'Source https://example.org/incomplete…');
+});
 
 test('readable destination keeps meaningful parameters and preserves the exact link', () => {
   const href = 'https://example.com/reports/annual%20review?q=climate&edition=2026&utm_source=feed#findings';

@@ -18,7 +18,8 @@ const server = await createServer({
 });
 const platform = (name, extra = {}) => ({ name, configured: true, description: `${name} account`, ...extra });
 const catalog = {
-  github: platform('GitHub'), youtube: platform('YouTube'),
+  // Synthetic capability proves the picker includes future server-supported destinations.
+  github: platform('GitHub', { crossPost: { supported: true, media: 'link' } }), youtube: platform('YouTube'),
   mastodon: platform('Mastodon', { needsServer: true, reconnectRequired: true, reconnectMessage: 'Reconnect Mastodon to grant posts, likes, and replies.', siteUrl: 'https://social.example' }),
   bluesky: platform('Bluesky', { needsHandle: true, crossPost: { supported: true, media: 'link' } }),
   instagram: platform('Instagram', { commandCenterOnly: true, crossPost: { supported: true, requiresPhoto: true } }),
@@ -35,7 +36,7 @@ try {
     const context = await browser.newContext({ viewport: { width, height: 900 } });
     const page = await context.newPage();
     page.setDefaultTimeout(15000);
-    const errors = [], oauth = [], writes = [], followingRequests = [];
+    const errors = [], oauth = [], writes = [], followingRequests = [], generations = [];
     let plan = 'pro';
     const connected = { github: true, mastodon: true, instagram: true, twitter: true };
     page.on('pageerror', error => errors.push(error.message));
@@ -64,8 +65,16 @@ try {
         return route.fulfill({ json: { post: { id: 'ufi-audit-post' } } });
       }
       if (endpoint === '/command-center/history') return route.fulfill({ json: { items: [], hasMore: false } });
+      if (endpoint === '/command-center/content-draft' && request.method() === 'POST') {
+        generations.push({ endpoint, body: request.postDataJSON() });
+        return route.fulfill({ json: { drafts: ['An audit draft for the selected platform.'] } });
+      }
+      if (endpoint === '/command-center/hashtag-draft' && request.method() === 'POST') {
+        generations.push({ endpoint, body: request.postDataJSON() });
+        return route.fulfill({ json: { groups: [{ label: 'Audit set', hashtags: ['#Audit'] }] } });
+      }
       if (endpoint === '/command-center/your-content/feed') return route.fulfill({ json: { posts: [], totalAvailable: 0 } });
-      if (endpoint === '/command-center/your-content') return route.fulfill({ json: { posts: [{ id: 'own-audit', title: 'Own post with documentation', content: 'Read https://example.com/docs/project', sourceUrl: 'https://github.com/audit/project', createdAt: new Date().toISOString() }] } });
+      if (endpoint === '/command-center/your-content') return route.fulfill({ json: { posts: [{ id: 'own-audit', title: 'Own post with documentation https://example.com/docs/project', content: 'Read https://example.com/docs/project', mediaType: 'image', mediaUrl: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', sourceUrl: 'https://github.com/audit/project', createdAt: new Date().toISOString() }] } });
       if (endpoint === '/command-center/media-options') return route.fulfill({ json: { video: { shortClipSeconds: [], longFormConfigured: false } } });
       if (endpoint === '/office/feed' && new URL(page.url()).pathname === '/command-center') followingRequests.push(url.search);
       if (/events|stream/.test(endpoint)) return route.abort();
@@ -109,6 +118,7 @@ try {
     const crossPost = page.getByRole('tabpanel', { name: 'Cross-Post', exact: true });
     await crossPost.getByRole('heading', { name: 'Social', exact: true }).waitFor();
     await crossPost.getByText('Earlier queued audit draft', { exact: true }).waitFor();
+    await crossPost.getByRole('link', { name: 'Connect GitHub', exact: true }).waitFor();
     assert.ok(await crossPost.getByRole('button', { name: /Instagram.*photo/ }).isDisabled(), 'Photo-required gate remains');
     await crossPost.getByRole('button', { name: 'X (Twitter)', exact: true }).click();
     await crossPost.getByRole('button', { name: 'UFIConnect', exact: true }).click();
@@ -129,7 +139,30 @@ try {
     const content = page.getByRole('tabpanel', { name: 'AI Content Hub', exact: true });
     await content.getByRole('heading', { name: 'Draft new content', exact: true }).waitFor();
     assert.equal(await page.getByRole('tab', { name: 'AI Content Hub', exact: true }).locator('svg').count(), 1);
-    assert.ok(await content.getByRole('button', { name: 'Instagram', exact: true }).first().locator('svg').count());
+    const contentPlatform = content.getByRole('combobox', { name: 'Content platform', exact: true });
+    assert.equal(await contentPlatform.locator('option').count(), 23, 'All 23 content targets are available');
+    for (const platform of ['uficonnect', 'bluesky', 'mastodon', 'facebook', 'reddit', 'youtube', 'pinterest', 'medium', 'wordpress', 'discord', 'figma', 'github', 'gitlab', 'twitch']) {
+      assert.equal(await contentPlatform.locator(`option[value="${platform}"]`).count(), 1, `AI Content includes ${platform}`);
+    }
+    await contentPlatform.selectOption('mastodon');
+    assert.ok(await content.locator('.cc-draft-platform-control').first().locator('svg, img').count(), 'Selected platform keeps its icon');
+    await content.getByPlaceholder('e.g. Launching my new side project, a productivity app for freelancers').fill('A local meetup announcement');
+    await content.getByRole('button', { name: 'Draft with AI', exact: true }).click();
+    await content.getByText('An audit draft for the selected platform.', { exact: true }).waitFor();
+    assert.equal(generations[0].body.platform, 'mastodon');
+    await content.getByRole('combobox', { name: 'Hashtag platform', exact: true }).selectOption('bluesky');
+    await content.getByRole('button', { name: 'Draft hashtags', exact: true }).click();
+    await content.getByText('#Audit', { exact: true }).waitFor();
+    assert.equal(generations[1].body.platform, 'bluesky');
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'AI platform selects fit mobile');
+    await page.getByRole('tab', { name: 'Your Feed', exact: true }).click();
+    const ownPosts = page.getByRole('tabpanel', { name: 'Your Feed', exact: true });
+    const ownCard = ownPosts.locator('.card').filter({ has: page.getByText('Own post with documentation', { exact: true }) });
+    await ownCard.waitFor();
+    assert.equal(await ownCard.locator('.command-center-content-row').innerText().then(text => text.includes('https://example.com')), false, 'Own post text omits the URL duplicated by its preview');
+    const photoBox = await ownCard.locator('img').first().boundingBox();
+    const previewBox = await ownCard.locator('.post-link-previews').boundingBox();
+    assert.ok(previewBox.y >= photoBox.y + photoBox.height, 'Own post preview is below its photo');
     await page.getByRole('tab', { name: 'Media Studio', exact: true }).click();
     const media = page.getByRole('tabpanel', { name: 'Media Studio', exact: true });
     await media.getByRole('heading', { name: 'Create media', exact: true }).waitFor();
