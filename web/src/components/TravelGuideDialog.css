@@ -1,0 +1,19 @@
+.travel-guide-dialog { width: min(860px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 0; border: 1px solid var(--border); border-radius: 18px; background: var(--card); color: var(--text); box-shadow: 0 24px 80px #0005; }
+.travel-guide-dialog::backdrop { background: #071324b3; }
+.travel-guide-dialog header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--card); z-index: 1; }
+.travel-guide-dialog header span { display: flex; align-items: center; gap: 6px; font-size: .78rem; color: var(--muted); }
+.travel-guide-body { padding: clamp(18px, 4vw, 32px); overflow-wrap: anywhere; }
+.travel-guide-country { margin: 0; color: var(--muted); font-size: .85rem; }
+.travel-guide-body h2 { margin: 8px 0 18px; }
+.travel-guide-overview { font-size: 1.05rem; line-height: 1.7; }
+.travel-guide-body nav { display: flex; flex-wrap: wrap; gap: 7px; margin: 24px 0; }
+.travel-guide-body nav button { border: 1px solid var(--border); color: var(--text); background: var(--bg); border-radius: 20px; padding: 9px 12px; cursor: pointer; font: inherit; font-size: .8rem; }
+.travel-guide-body section { scroll-margin-top: 80px; }
+.travel-guide-body section p { white-space: pre-line; line-height: 1.8; font-size: .95rem; }
+.travel-guide-body footer { border-top: 1px solid var(--border); padding-top: 20px; margin-top: 28px; font-size: .78rem; color: var(--muted); line-height: 1.8; }
+.travel-guide-body footer a { color: inherit; text-decoration: underline; }
+.travel-viewer-dialog { width: min(1200px, calc(100vw - 20px)); max-height: calc(100dvh - 20px); padding: 0; border: 1px solid var(--border); border-radius: 18px; background: var(--card); color: var(--text); }
+.travel-viewer-dialog::backdrop { background: #071324d9; }
+.travel-viewer-dialog > header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px; position: sticky; top: 0; background: var(--card); z-index: 2; border-bottom: 1px solid var(--border); }
+.travel-viewer-dialog > header h2 { margin: 0; font-size: 1rem; }
+.travel-viewer-dialog .travel-live-loop { border: 0; margin: 0; border-radius: 0; }

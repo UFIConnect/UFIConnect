@@ -9730,6 +9730,14 @@ app.get('/travel/destinations', (_req, res) => {
   })).sort((a, b) => a.city.localeCompare(b.city) || a.country.localeCompare(b.country)) });
 });
 
+const readTravelGuide = require('./travel-guides').createTravelGuides(COUNTRIES_DESTINATION_GUIDES, fetchTravelResource);
+app.get('/travel/guides/:id', async (req, res) => {
+  const guide = await readTravelGuide(req.params.id);
+  if (!guide) return res.status(404).json({ message: 'City guide not found.' });
+  res.set('Cache-Control', guide.available && !guide.stale ? 'public, max-age=300' : 'no-store');
+  res.json(guide);
+});
+
 const LIVE_CAMERA_SOURCE = 'livecamera';
 // Discovery-only cities do not carry a guessed video URL. They become visible
 // only after YouTube returns a current, embeddable stream for the city.
@@ -10755,6 +10763,7 @@ function countryDestinationGuidePost(destination, summary = null) {
   return {
     id: `wikivoyage_${id}`,
     source: 'wikivoyage',
+    travelDestinationId: destination.searchOnly ? null : `${destination.countryCode}:${destination.slug}`,
     sourceLabel: 'Wikivoyage',
     sourceUrl: countryGuideUrl(summary?.type === 'standard' ? { ...destination, searchOnly: false } : destination),
     title: `${destinationName}, ${destination.country}`,

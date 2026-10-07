@@ -1,0 +1,15 @@
+{
+  "name": "UFIConnect VPN for Windows",
+  "channel": "unsigned-preview",
+  "date": "2026-10-06",
+  "file": "UFIConnect-VPN-Windows-x64-preview.zip",
+  "bytes": 57376,
+  "sha256": "db4ce1cb34cd5f7e672775ede8622311b0516c114ddf8030a902afec602ec872",
+  "minimumSystem": "Windows 10/11 x64, .NET Framework 4.8",
+  "subscription": "Existing active paid UFIConnect Vault membership",
+  "limitations": [
+    "Unsigned UFIConnect executables",
+    "Installer and real Windows tunnel still require device validation",
+    "UFIConnect email/password sign-in required"
+  ]
+}

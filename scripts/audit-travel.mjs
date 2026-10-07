@@ -15,6 +15,7 @@ let app;
 app = await createAppHarness({ env: { YOUTUBE_API_KEY: 'travel-ui-test' }, modules: { './travel-providers': {
   ...providers,
   fetchTravelResource: async (url, options) => {
+    if (url.includes('/w/api.php?')) return {query:{pages:[{ns:0,title:new URL(url).searchParams.get('titles'),extract:'A city introduction.\n\n== Get around ==\nUse local transit and walking routes.\n\n== See ==\nExplore the waterfront. <script>window.__guideInjected=true</script>'}]}};
     if (url.includes('/videos?')) {
       app.setYouTubeCallReady();
       return { items: ['rnXIjl_Rzy4', 'j9Sa4uBGGQ0', 'r74OyneNmg8'].map(id => ({
@@ -71,10 +72,13 @@ try {
     let failPagination = false;
     let hideCameras = false;
     let failDestinations = width === 1440;
+    let failGuide = width === 1440;
     let profileWrites = 0;
     let feedRequests = 0;
     const feedPages = [];
     page.on('pageerror', error => errors.push(error.message));
+    await page.route('**/api/travel/guides/*', route => failGuide
+      ? route.fulfill({status:503,json:{message:'Guide fixture outage'}}) : route.continue());
     await page.route('**/api/travel/destinations', route => failDestinations
       ? route.fulfill({ status: 503, json: { error: 'Test catalog failure' } }) : route.continue());
     await page.route('**/api/profile', async route => {
@@ -143,6 +147,37 @@ try {
     const frameBox = await rail.locator('iframe').boundingBox();
     const copyBox = await rail.locator('.travel-live-loop-overlay').boundingBox();
     assert.ok(copyBox.y >= frameBox.y + frameBox.height - 2, 'camera controls and description stay below the picture');
+    const travelUrl = page.url();
+    const pageCount = context.pages().length;
+    await rail.getByRole('button', { name: 'Watch live', exact: true }).click();
+    const player = page.getByRole('dialog', {name:'Live Travel',exact:true});
+    await player.waitFor();
+    await player.locator('iframe').waitFor();
+    assert.equal(page.url(), travelUrl, 'Watch live keeps the member on UFIConnect');
+    assert.equal(context.pages().length, pageCount, 'Watch live does not open another site or tab');
+    assert.equal(await rail.getByRole('link', { name: 'Watch live', exact: true }).count(), 0);
+    await page.waitForFunction(() => {
+      const players = window.__travelPlayers.filter(item => item.frame.isConnected);
+      return players.length === 1 && players[0].frame.closest('.travel-viewer-dialog') && players[0].playing;
+    });
+    assert.equal(await player.getByRole('group',{name:'Travel cities',exact:true}).getByRole('button').count(),91,'Expanded Live Travel retains all 91 cities');
+    assert.ok(await player.evaluate(element=>element.scrollWidth<=element.clientWidth+2),'Expanded viewer fits the viewport');
+    await player.getByRole('button',{name:'Next city',exact:true}).click();
+    await waitForCitySave();
+    assert.equal(await player.locator('iframe').count(),0,'A guide city in the expanded viewer stops the earlier camera');
+    await player.getByRole('button',{name:'Open city guide',exact:true}).click();
+    const nestedGuide=page.locator('.travel-guide-dialog');
+    await nestedGuide.waitFor();
+    await nestedGuide.getByRole('button',{name:'Back to Travel',exact:true}).click();
+    await nestedGuide.waitFor({state:'detached'});
+    assert.ok(await player.isVisible(),'Closing a guide returns to the expanded viewer');
+    await player.getByRole('button',{name:'Previous city',exact:true}).click();
+    await waitForCitySave();
+    await player.locator('iframe').waitFor();
+    await player.screenshot({ path: path.join(root, `.cache/audit-ui/travel-in-app-${width}.png`) });
+    await player.getByRole('button', { name: 'Back to Travel feed', exact: true }).click();
+    await player.waitFor({ state: 'detached' });
+    await page.waitForFunction(() => window.__travelPlayers.filter(item => item.frame.isConnected).length === 1);
     for (const city of ['New York', 'Tokyo', 'London']) {
       await cityChoice(({ 'New York': 'US:New_York_City', Tokyo: 'JP:Tokyo', London: 'GB:London' })[city]).click();
       await waitForCitySave();
@@ -150,14 +185,36 @@ try {
       assert.equal(await page.getByRole('searchbox', { name: 'Travel city', exact: true }).inputValue(), city);
       assert.match(await rail.locator('.travel-live-loop-choice.active').textContent(), new RegExp(city));
     }
-    assert.equal(profileWrites - beforeCameraChoices, 4, 'one save per camera selection');
+    assert.equal(profileWrites - beforeCameraChoices, 6, 'one save per city selection in the inline and expanded viewers');
     await cityChoice('US:Seattle').click();
     await waitForCitySave();
     await rail.getByRole('heading', { name: 'Explore Seattle', exact: true }).waitFor();
     assert.equal(await rail.locator('iframe').count(), 0, 'A city without a camera stops the previous city stream');
-    assert.match(await rail.getByRole('link', { name: 'Open city guide', exact: true }).getAttribute('href'), /\/Seattle$/);
+    await rail.getByRole('button', { name: 'Open city guide', exact: true }).click();
+    const guide = page.getByRole('dialog', { name: 'Seattle city guide', exact: true });
+    await guide.waitFor();
+    if (failGuide) {
+      await guide.getByText('The detailed guide is temporarily unavailable.').waitFor();
+      failGuide = false;
+      await guide.getByRole('button', { name: 'Retry city guide', exact: true }).click();
+    }
+    await guide.getByRole('heading', { name: 'Get around', exact: true }).waitFor();
+    assert.equal(await guide.getByText('Use local transit and walking routes.').count(),1);
+    assert.match(await guide.getByRole('link', {name:'Original article',exact:true}).getAttribute('href'),/\/Seattle$/);
+    assert.equal(await page.evaluate(() => window.__guideInjected),undefined,'Guide text cannot execute provider markup');
+    assert.equal(await guide.locator('iframe,script').count(),0,'Guide content is rendered inside UFIConnect without embedding another website');
+    assert.equal(context.pages().length,pageCount);
+    assert.equal(new URL(page.url()).origin,new URL(travelUrl).origin);
+    assert.ok(await guide.evaluate(element => element.scrollWidth <= element.clientWidth+2),'Guide fits the viewport');
+    await guide.screenshot({ path: path.join(root, `.cache/audit-ui/travel-in-app-guide-${width}.png`) });
+    await guide.getByRole('button', {name:'Back to Travel',exact:true}).click();
+    await guide.waitFor({state:'detached'});
+    assert.equal(await rail.getByRole('button', {name:'Open city guide',exact:true}).evaluate(element => element===document.activeElement),true);
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/travel-guide-${width}.png`) });
-    assert.match(await page.getByRole('link', { name: 'City guide', exact: true }).getAttribute('href'), /\/Seattle$/);
+    await rail.getByRole('button', { name: 'City guide', exact: true }).click();
+    await guide.waitFor();
+    await page.keyboard.press('Escape');
+    await guide.waitFor({state:'detached'});
     const heading = page.locator('.travel-content-heading');
     await page.getByRole('searchbox', { name: 'Travel city', exact: true }).fill('Not saved yet');
     await rail.getByRole('heading', { name: 'Explore Seattle', exact: true }).waitFor();
