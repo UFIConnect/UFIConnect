@@ -1,6 +1,7 @@
 import JobPostContent from '../components/JobPostContent';
 import { isCareerPost } from '../utils/jobSummary.mjs';
 import ArticleIllustration from '../components/ArticleIllustration';
+import PostInlineText from '../components/PostInlineText';
 import PostImage from '../components/PostImage';
 import SourceMediaFallback from '../components/SourceMediaFallback';
 import VimeoPreview from '../components/VimeoPreview';
@@ -12,6 +13,7 @@ import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import GuestShell from '../components/GuestShell';
 import PostLikes from '../components/PostLikes';
+import ConnectedPostActions from '../components/ConnectedPostActions';
 import { PostTime, PostOptionsMenu } from '../components/PostCardChrome';
 import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
@@ -263,7 +265,7 @@ export default function PostDetail() {
           {post.title && <h1 style={{ fontSize: '1.15rem', fontWeight: 700, margin: '0 0 10px', lineHeight: 1.4, overflowWrap: 'break-word', wordBreak: 'break-word' }}>{post.title}</h1>}
           {isCareerPost(post) ? <JobPostContent post={post} /> : post.content && (
             <p style={{ fontSize: '.92rem', lineHeight: 1.65, whiteSpace: 'pre-wrap', margin: '0 0 12px', color: 'var(--text)', overflowWrap: 'break-word', wordBreak: 'break-word' }}>
-              {post.content}
+              <PostInlineText text={post.content} />
             </p>
           )}
 
@@ -315,7 +317,7 @@ export default function PostDetail() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
             <PostLikes post={post} onPostUpdated={updated => setPost(current => ({ ...current, ...updated }))} />
             {token && <SavePostButton post={post} className="btn btn-ghost btn-sm save-item-button" />}
-            <PostOptionsMenu post={post} />
+            <PostOptionsMenu post={post} onPostUpdated={updated => setPost(previous => ({ ...previous, ...updated }))} onRemoved={() => navigate('/')} />
             {post.sourceUrl && (
               <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
                 style={{ marginLeft: 'auto', fontSize: '.75rem', fontWeight: 700, color: src.color, textDecoration: 'none' }}>
@@ -329,6 +331,7 @@ export default function PostDetail() {
           <div style={{ fontSize: '.82rem', fontWeight: 700, marginBottom: 12 }}>
             Comments {comments?.length > 0 ? `(${comments.length})` : ''}
           </div>
+          {post.isExternal && <ConnectedPostActions post={post} />}
 
           {!post.isExternal && !token && (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 16, padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: 10 }}>
@@ -344,6 +347,8 @@ export default function PostDetail() {
                 onChange={e => setCommentDraft(e.target.value)}
                 placeholder="Add a comment…"
                 className="input"
+                maxLength={1000}
+                aria-label="Add a comment"
                 style={{ flex: 1 }}
               />
               <button type="submit" className="btn btn-primary btn-sm" disabled={!commentDraft.trim() || commentSending} style={{ minWidth: 56 }}>

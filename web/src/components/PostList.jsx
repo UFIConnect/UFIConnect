@@ -7,6 +7,8 @@ import ImageLightbox from './ImageLightbox';
 import { InlineAutoplayVideo } from './videoMedia';
 import { SavePostButton } from './SaveButtons';
 import ShopPostDetails from './ShopPostDetails';
+import PostInlineText from './PostInlineText';
+import { postTextPreview } from '../../../backend/post-text.mjs';
 
 function timeAgo(iso) {
   const diff = (Date.now() - new Date(iso)) / 1000;
@@ -28,7 +30,7 @@ function initials(name = '') {
 const CONTENT_PREVIEW_LEN = 260;
 function truncateAtWord(text, limit) {
   if (text.length <= limit) return text;
-  const cut = text.slice(0, limit);
+  const cut = postTextPreview(text, limit);
   const lastSpace = cut.lastIndexOf(' ');
   return (lastSpace > limit * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd();
 }
@@ -60,7 +62,6 @@ export default function PostList({
   const [commentsLoadingMore, setCommentsLoadingMore] = useState({});
   const [commentDrafts, setCommentDrafts] = useState({});
   const [commentBusy, setCommentBusy] = useState({});
-  const [deleteBusy, setDeleteBusy] = useState({});
   const [mediaLightboxPostId, setMediaLightboxPostId] = useState(null);
   const [expandedPosts, setExpandedPosts] = useState({});
   const sentinelRef = useRef(null);
@@ -163,21 +164,6 @@ export default function PostList({
     }
   }
 
-  async function handleDelete(post) {
-    if (deleteBusy[post.id]) return;
-    if (!window.confirm('Delete this post? This cannot be undone.')) return;
-    setDeleteBusy(prev => ({ ...prev, [post.id]: true }));
-    try {
-      await client.delete(`/posts/${encodeURIComponent(post.id)}`);
-      setLocalPosts(prev => prev.filter(p => p.id !== post.id));
-      onPostDeleted?.(post.id);
-    } catch {
-      // Leave the post in place if deletion failed.
-    } finally {
-      setDeleteBusy(prev => ({ ...prev, [post.id]: false }));
-    }
-  }
-
   if (loading) {
     return (
       <div style={{ maxWidth, textAlign: 'center', padding: 40, color: 'var(--muted)' }}>
@@ -229,17 +215,6 @@ export default function PostList({
                 </Link>
                 <span style={{ fontSize: '.7rem', color: 'var(--muted)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
                   <PostTime post={post} />
-                  {currentUserId && post.authorId === currentUserId && (
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(post)}
-                      disabled={deleteBusy[post.id]}
-                      title="Delete post"
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: '.85rem', padding: 0, lineHeight: 1 }}
-                    >
-                      {deleteBusy[post.id] ? <span className="spinner" style={{ width: 10, height: 10 }} /> : 'Delete'}
-                    </button>
-                  )}
                 </span>
               </div>
             ) : (
@@ -249,26 +224,15 @@ export default function PostList({
                 </span>
                 <span style={{ fontSize: '.7rem', color: 'var(--muted)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
                   <PostTime post={post} />
-                  {currentUserId && post.authorId === currentUserId && (
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(post)}
-                      disabled={deleteBusy[post.id]}
-                      title="Delete post"
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: '.85rem', padding: 0, lineHeight: 1 }}
-                    >
-                      {deleteBusy[post.id] ? <span className="spinner" style={{ width: 10, height: 10 }} /> : 'Delete'}
-                    </button>
-                  )}
                 </span>
               </div>
             )}
 
             {post.content && !isShopPost && (
               <p style={{ margin: '0 0 10px', fontSize: '.9rem', lineHeight: 1.6, color: 'var(--text)', whiteSpace: 'pre-wrap', overflowWrap: 'break-word', wordBreak: 'break-word' }}>
-                {isLongPost && !isExpanded
+                <PostInlineText text={isLongPost && !isExpanded
                   ? `${truncateAtWord(post.content, CONTENT_PREVIEW_LEN)}… `
-                  : post.content}
+                  : post.content} />
                 {isLongPost && (
                   <button
                     type="button"
@@ -327,7 +291,10 @@ export default function PostList({
                 className="btn btn-ghost btn-sm save-item-button"
                 style={{ minWidth: 92 }}
               />
-              <PostOptionsMenu post={post} />
+              <PostOptionsMenu post={post} onPostUpdated={updatePost} onRemoved={removed => {
+                setLocalPosts(previous => previous.filter(item => item.id !== removed.id));
+                onPostDeleted?.(removed.id);
+              }} />
 
               {post.group && (
                 <span style={{

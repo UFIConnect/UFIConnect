@@ -12,9 +12,12 @@ import PhotoPickerButton from '../components/PhotoPickerButton';
 import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
 import { useSavedItems } from '../contexts/SavedItemsContext';
 import GeneratedContentHistory from '../components/GeneratedContentHistory';
+import PostInlineText from '../components/PostInlineText';
+import { safePostLink } from '../../../backend/post-links.mjs';
+import { postTextPreview } from '../../../backend/post-text.mjs';
 import VideoDurationControl, { VIDEO_DURATION_LIMIT } from '../components/VideoDurationControl';
 import { DirectoryControls, AccountSiteLink } from '../components/DirectoryControls';
-import { ACCOUNT_STATUSES, filterAccounts } from '../components/sourceDirectory';
+import { ACCOUNT_STATUSES, accountSections, filterAccounts } from '../components/sourceDirectory';
 import { DISCOVERY_CATEGORIES, discoveryPostContext } from '../components/discoveryCategories';
 import '../components/DiscoveryCategoryBar.css';
 
@@ -137,7 +140,7 @@ function PostRow({ post, onOpen }) {
           fontWeight: 700, fontSize: '.85rem', overflow: 'hidden', textOverflow: 'ellipsis',
           display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
         }}>
-          {post.title || post.content?.slice(0, 80) || 'Untitled post'}
+          {post.title || postTextPreview(post.content, 80) || 'Untitled post'}
         </div>
         <div style={{ fontSize: '.72rem', color: 'var(--muted)', marginTop: 4 }}>
           {post.author?.name || post.sourceLabel} · {timeAgo(post.createdAt)}
@@ -153,6 +156,7 @@ function PostRow({ post, onOpen }) {
 }
 
 function PostDetailModal({ post, onClose }) {
+  const originalUrl = safePostLink(post.sourceUrl);
   return (
     <div
       onClick={onClose}
@@ -175,9 +179,9 @@ function PostDetailModal({ post, onClose }) {
         {post.mediaUrl && post.mediaType === 'image' && (
           <img src={post.mediaUrl} alt="" style={{ width: '100%', borderRadius: 10, marginBottom: 12, maxHeight: 280, objectFit: 'cover' }} />
         )}
-        <h3 style={{ margin: '0 0 8px', fontSize: '1.05rem', lineHeight: 1.4 }}>{post.title}</h3>
+        <h3 style={{ margin: '0 0 8px', fontSize: '1.05rem', lineHeight: 1.4 }}>{post.title === post.content ? <PostInlineText text={post.title} /> : post.title}</h3>
         {post.content && post.content !== post.title && (
-          <p style={{ fontSize: '.85rem', lineHeight: 1.6, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>{post.content}</p>
+          <p style={{ fontSize: '.85rem', lineHeight: 1.6, color: 'var(--text)', whiteSpace: 'pre-wrap' }}><PostInlineText text={post.content} /></p>
         )}
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: '.78rem', color: 'var(--muted)', margin: '12px 0' }}>
           {post.author?.name && <span>{post.author.name}</span>}
@@ -185,8 +189,8 @@ function PostDetailModal({ post, onClose }) {
           {post.likesCount > 0 && <span>{post.likesCount} likes</span>}
           {post.commentsCount > 0 && <span>{post.commentsCount} comments</span>}
         </div>
-        {post.sourceUrl && (
-          <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" className="btn btn-primary btn-sm" style={{ marginTop: 8 }}>
+        {originalUrl && (
+          <a href={originalUrl} target="_blank" rel="noopener noreferrer" className="btn btn-primary btn-sm" style={{ marginTop: 8 }}>
             View original post
           </a>
         )}
@@ -1004,6 +1008,7 @@ function MemberAccountsSection() {
       platform.commandCenterOnly || COMMAND_CENTER_ACCOUNT_PLATFORMS.includes(key)
     ));
   const displayedAccounts = filterAccounts(memberPlatforms, connected, accountFilter);
+  const accountGroups = accountSections(memberPlatforms, connected, accountFilter);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -1024,7 +1029,14 @@ function MemberAccountsSection() {
       {!memberPlatforms.length && !error && (
         <div className="card" style={{ textAlign: 'center', padding: 28, color: 'var(--muted)', fontSize: '.85rem' }}>{isBusinessMembership ? 'No career account connections are available yet.' : 'No member-only account connections are available yet.'}</div>
       )}
-      {displayedAccounts.map(([key, platform]) => {
+      {accountGroups.map(section => (
+        <section key={section.id} className="account-category-section" aria-labelledby={`member-accounts-${section.id}`}>
+          <div className="account-category-heading">
+            <h3 id={`member-accounts-${section.id}`}>{section.label}</h3>
+            <span>{section.connectedCount} of {section.total} connected</span>
+          </div>
+          <div className="account-category-items">
+      {section.items.map(([key, platform]) => {
         const isConnected = !!connected[key];
         const unavailable = !platform.configured || platform.forceComingSoon;
         const accountOnly = ['instagram', 'tiktok', 'threads'].includes(key);
@@ -1058,6 +1070,9 @@ function MemberAccountsSection() {
           </div>
         );
       })}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }

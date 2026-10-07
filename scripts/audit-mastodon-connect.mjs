@@ -18,14 +18,20 @@ let browser;
 try{
  await server.listen();browser=await chromium.launch({channel:'msedge'});
  for(const width of [1440,390]){
-  const context=await browser.newContext({viewport:{width,height:900}});const page=await context.newPage();const starts=[],errors=[];let connected=false,reconnectRequired=false,commandCenterOnly=false;
+  const context=await browser.newContext({viewport:{width,height:900}});const page=await context.newPage();const starts=[],errors=[],interactions=[];let connected=false,reconnectRequired=false,commandCenterOnly=false;
   page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));
   const reconnectMessage='Reconnect Mastodon to read public posts from your home timeline and your own account.';
-  const post={id:'mastodon-audit-public',source:'mastodon',title:'Public Mastodon audit post',content:'A public post from the connected Mastodon account.',sourceUrl:'https://social.example/@alice/123',createdAt:new Date().toISOString(),author:{id:'mastodon-audit-alice',name:'Alice'}};
+  const post={id:'mastodon_audit_public',source:'mastodon',title:'Public Mastodon audit post',content:'A public post from the connected Mastodon account. Read the project notes: https://example.com/notes?one=1&two=2',sourceUrl:'https://social.example/@alice/123',createdAt:new Date().toISOString(),likesCount:4,sourceLikedByMe:true,commentsCount:1,isExternal:true,author:{id:'mastodon-audit-alice',name:'Alice'}};
   await context.route('**/api/**',async route=>{
    const url=new URL(route.request().url());const endpoint=url.pathname.replace(/^\/api/,'');
    if(endpoint==='/social/platforms')return route.fulfill({json:{platforms:{mastodon:{name:'Mastodon',color:'#6364FF',configured:true,needsServer:true,commandCenterOnly,reconnectRequired,reconnectMessage,siteUrl:connected?'https://social.example':undefined}},connected:{mastodon:connected}}});
    if(endpoint==='/profile/social')return route.fulfill({json:{connected:{mastodon:connected}}});
+   if(endpoint==='/social/interaction-capabilities')return route.fulfill({json:{sources:{mastodon:{label:'Mastodon',connected,like:!reconnectRequired,comment:!reconnectRequired,reconnectRequired,maxLength:500}}}});
+   if(endpoint==='/social/interactions'){
+    const body=route.request().postDataJSON();interactions.push(body);assert.equal(body.sourceUrl,post.sourceUrl);assert.equal(body.source,'mastodon');assert.ok(body.requestId);
+    return route.fulfill({json:{published:true,...(body.action==='like'?{liked:body.liked,likesCount:body.liked?4:3}:{commentId:'456'})}});
+   }
+   if(endpoint===`/feed/${post.id}/comments`)return route.fulfill({json:{comments:[],hasMore:false,source:'mastodon',live:true}});
    if(endpoint==='/command-center/your-content'){assert.equal(url.searchParams.get('platform'),'mastodon');return route.fulfill({json:{posts:[post]}});}
    if(endpoint==='/office/feed')return route.fulfill({json:{nativeUficonnectIncluded:true,...(connected?{posts:[post],hasMore:false}:{posts:[],hasMore:false,...((url.searchParams.get('source')||url.searchParams.get('sources'))==='mastodon'?{locked:true,source:'mastodon',reason:'connect'}:{})})}});
    if(endpoint==='/auth/social/mastodon/start'){starts.push(url.searchParams.get('server'));return route.fulfill({status:400,json:{error:'Synthetic server response'}});}
@@ -36,6 +42,7 @@ try{
   await page.getByRole('button',{name:'Connect',exact:true}).click();
   const dialog=page.getByRole('dialog',{name:'Connect Mastodon'});await dialog.waitFor();
   await dialog.getByText(/imports public posts from your Mastodon home timeline and your own account/).waitFor();
+  await dialog.getByText(/like or unlike them, and publish replies when you choose/).waitFor();
   await dialog.getByLabel('Server or full handle').fill('@alice@social.example');
   await dialog.getByRole('button',{name:'Continue to Mastodon'}).click();
   await page.getByText('Synthetic server response',{exact:true}).waitFor();
@@ -63,8 +70,29 @@ try{
   await auditNavigate(page,server.resolvedUrls.local[0]+'?feed=following');
   const sources=page.getByRole('group',{name:'Following sources',exact:true});
   await sources.getByRole('button',{name:'Mastodon',exact:true}).click();
-  await page.getByText(post.title,{exact:true}).waitFor();
+  await page.getByText(post.title,{exact:false}).waitFor();
   assert.equal(await sources.getByRole('button',{name:'Mastodon',exact:true}).getAttribute('aria-pressed'),'true');
+  const card=page.locator('.post-card').filter({hasText:post.title}).first();
+  assert.equal(await card.locator('a[href="https://example.com/notes?one=1&two=2"]').count(),1);
+  assert.equal(await card.locator('a.post-chrome-time').getAttribute('href'),post.sourceUrl);
+  assert.equal(await card.getByRole('link',{name:'Open on Mastodon',exact:true}).getAttribute('href'),post.sourceUrl);
+  await card.getByRole('button',{name:'Unlike on Mastodon, 4 likes',exact:true}).click();
+  await card.getByRole('button',{name:'Like on Mastodon, 3 likes',exact:true}).waitFor();
+  await card.getByRole('button',{name:'Like on Mastodon, 3 likes',exact:true}).click();
+  await card.getByRole('button',{name:'Unlike on Mastodon, 4 likes',exact:true}).waitFor();
+  await card.getByRole('button',{name:/Show Replies/}).click();
+  const composer=card.getByRole('textbox',{name:/Write a comment/});await composer.waitFor();
+  assert.ok((await composer.boundingBox()).height<=100,'Comments start compact');
+  await composer.fill('Thanks for the project update.');
+  await card.getByRole('button',{name:'Publish on Mastodon',exact:true}).click();
+  await page.getByText(/Comment published on Mastodon/).waitFor();
+  assert.deepEqual(interactions.map(action=>action.action),['like','like','comment']);
+  assert.equal(interactions[2].content,'Thanks for the project update.');
+  assert.equal(await composer.inputValue(),'');
+  reconnectRequired=true;await auditReload(page);await card.getByRole('link',{name:/Reconnect Mastodon to like/}).waitFor();
+  await card.getByRole('button',{name:/Show Replies/}).click();
+  assert.equal(await card.getByRole('link',{name:'Reconnect Mastodon to reply',exact:true}).getAttribute('href'),'/connected-accounts?connect=mastodon');
+  reconnectRequired=false;
   connected=false;await auditReload(page);
   await sources.waitFor();
   if(await sources.getByRole('button',{name:'Mastodon',exact:true}).getAttribute('aria-pressed')!=='true')await sources.getByRole('button',{name:'Mastodon',exact:true}).click();
@@ -80,6 +108,6 @@ try{
   await page.goto(server.resolvedUrls.local[0]+'connected-accounts?social_error=mastodon&reason=browser_mismatch');
   await page.getByText(/Mastodon could not verify this browser session/).waitFor();
   assert.deepEqual(errors,[]);
-  console.log('PASS Mastodon server selection, reconnect, source links, Following and Your Feed '+width);await context.close();
+  console.log('PASS Mastodon connection, permissions, canonical and inline links, like counts, compact replies, Following and Your Feed '+width);await context.close();
  }
 }finally{await browser?.close();await server.close();await app.close();}

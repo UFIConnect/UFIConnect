@@ -8,6 +8,9 @@ import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { SavePostButton } from '../components/SaveButtons';
+import PostInlineText from '../components/PostInlineText';
+import { safePostLink } from '../../../backend/post-links.mjs';
+import { postTextPreview } from '../../../backend/post-text.mjs';
 
 const PAGE_SIZE = 40;
 const AUTO_REFRESH_MS = 45 * 1000;
@@ -57,7 +60,8 @@ function SourceBadge({ source }) {
 }
 
 function OwnPostCard({ post }) {
-  const title = post.title || post.content?.slice(0, 120) || 'Untitled post';
+  const originalUrl = safePostLink(post.sourceUrl);
+  const title = post.title || postTextPreview(post.content, 120) || 'Untitled post';
   const hasImage = post.mediaType === 'image' && post.mediaUrl;
   const hasVideoPoster = post.mediaType === 'video_thumbnail_only' && post.mediaUrl;
   return (
@@ -74,10 +78,10 @@ function OwnPostCard({ post }) {
         </div>
       </div>
 
-      <h2 style={{ margin: '0 0 8px', fontSize: '.98rem', lineHeight: 1.35 }}>{title}</h2>
+      <h2 style={{ margin: '0 0 8px', fontSize: '.98rem', lineHeight: 1.35 }}>{title === post.content ? <PostInlineText text={title} /> : title}</h2>
       {post.content && post.content !== title && (
         <p style={{ margin: '0 0 12px', color: 'var(--text)', fontSize: '.9rem', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
-          {post.content}
+          <PostInlineText text={post.content} />
         </p>
       )}
 
@@ -93,8 +97,8 @@ function OwnPostCard({ post }) {
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <SavePostButton post={post} className="btn btn-ghost btn-sm save-item-button" />
-          {post.sourceUrl && (
-            <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">
+          {originalUrl && (
+            <a href={originalUrl} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">
               View original
             </a>
           )}

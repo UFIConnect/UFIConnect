@@ -1,9 +1,12 @@
 import { Link } from 'react-router-dom';
 import { SaveJobButton, SavePostButton } from './SaveButtons';
+import PostInlineText from './PostInlineText';
+import { safePostLink } from '../../../backend/post-links.mjs';
 
 export function SavedPostCard({ post, onRemoved }) {
   const sourceLabel = post.sourceLabel || (post.source === 'uficonnect' ? 'UFI' : post.source) || 'Post';
-  const hasUfiDetail = post.source === 'uficonnect' || post.ufiInteractive;
+  const hasUfiDetail = post.source !== 'mastodon' && (post.source === 'uficonnect' || post.ufiInteractive);
+  const originalUrl = safePostLink(post.sourceUrl);
   return (
     <article className="card profile-saved-post">
       <div className="profile-saved-item-heading">
@@ -11,13 +14,13 @@ export function SavedPostCard({ post, onRemoved }) {
         <time>{post.savedAt ? `Saved ${new Date(post.savedAt).toLocaleDateString()}` : 'Saved post'}</time>
       </div>
       {post.title && <h3>{post.title}</h3>}
-      {post.content && <p>{post.content}</p>}
+      {post.content && <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}><PostInlineText text={post.content} /></p>}
       {post.mediaType === 'image' && post.mediaUrl && (
         <img src={post.mediaUrl} alt="" className="profile-saved-post-image" />
       )}
       <div className="profile-saved-item-actions">
         {hasUfiDetail && <Link className="btn btn-ghost btn-sm" to={`/p/${encodeURIComponent(post.id)}`}>View post</Link>}
-        {post.sourceUrl && <a className="btn btn-ghost btn-sm" href={post.sourceUrl} target="_blank" rel="noopener noreferrer">View original</a>}
+        {originalUrl && <a className="btn btn-ghost btn-sm" href={originalUrl} target="_blank" rel="noopener noreferrer">View original</a>}
         <SavePostButton
           post={post}
           className="btn btn-primary btn-sm save-item-button"

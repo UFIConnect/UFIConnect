@@ -1,0 +1,8 @@
+.native-post-editor { width: min(520px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); box-sizing: border-box; overflow-y: auto; border: 1px solid var(--border); border-radius: 16px; padding: 20px; background: var(--surface, var(--bg, #fff)); color: var(--text); box-shadow: 0 18px 60px #0004; }
+.native-post-editor::backdrop { background: #0008; }
+.native-post-editor h2 { margin: 0 0 16px; font-size: 1.15rem; }
+.native-post-editor label { display: block; font-weight: 650; font-size: .85rem; margin-bottom: 6px; }
+.native-post-editor textarea { width: 100%; box-sizing: border-box; max-height: 45dvh; }
+.native-post-editor-note { color: var(--muted); font-size: .75rem; margin-top: 6px; }
+.native-post-editor-error { color: var(--danger, #b91c1c); font-size: .85rem; }
+.native-post-editor-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }

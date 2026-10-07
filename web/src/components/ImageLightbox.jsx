@@ -2,6 +2,8 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { deriveBlueskyPlaylistUrl, isDirectVideoUrl, extractYouTubeId, loadYouTubeIframeApi, createYouTubePlayerFrame, youTubeEmbedUrl, HlsVideoPlayer, userWantsSound, useGlobalMuted } from './videoMedia';
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll';
+import PostInlineText from './PostInlineText';
+import { safePostLink } from '../../../backend/post-links.mjs';
 
 // Same floating-control look as VideoFeedView's overlay buttons (back/
 // refresh/mute) — kept as one consistent control language for every video
@@ -239,6 +241,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
   // this either way.
   const item = mediaItems[index];
   const post = item?.post || {};
+  const mastodonPostUrl = post.source === 'mastodon' ? safePostLink(post.sourceUrl) : null;
   const isVideo = item?.type === 'video';
   // Same precedence as VideoFeedView's resolveVideoSource — a dedicated
   // YouTube post carries embedId (or a recoverable sourceUrl); any other
@@ -695,7 +698,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
           {post.title && <div style={{ fontWeight: 700, fontSize: '.92rem', marginBottom: 4 }}>{post.title}</div>}
           {post.content && (
             <div style={{ fontSize: '.82rem', opacity: 0.8, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-              {post.content}
+              <PostInlineText text={post.content} />
             </div>
           )}
           <div style={{ fontSize: '.72rem', opacity: 0.55, marginTop: 8 }}>
@@ -705,7 +708,12 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
             {/* Stays inside the app — the full post, with comments, instead
                 of sending the viewer off-site. The external link below is
                 still there for anyone who specifically wants the original. */}
-            {post.id && (
+            {mastodonPostUrl ? (
+              <a href={mastodonPostUrl} target="_blank" rel="noopener noreferrer" onClick={event => event.stopPropagation()}
+                style={{ display: 'inline-flex', alignItems: 'center', fontSize: '.78rem', color: '#93c5fd', fontWeight: 600 }}>
+                View post on Mastodon
+              </a>
+            ) : post.id && (
               <button
                 onClick={e => { e.stopPropagation(); onClose(); navigate(`/p/${encodeURIComponent(post.id)}`); }}
                 style={{
@@ -720,7 +728,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
             {/* Video items previously had a "watch on source" link in the
                 single-post VideoModal this replaced — preserved here so
                 merging video into the shared viewer didn't quietly drop it. */}
-            {isVideo && post.sourceUrl && (
+            {isVideo && post.sourceUrl && !mastodonPostUrl && (
               <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
                 onClick={e => e.stopPropagation()}
                 style={{ display: 'inline-flex', alignItems: 'center', fontSize: '.78rem', color: '#93c5fd', textDecoration: 'none', fontWeight: 600 }}>

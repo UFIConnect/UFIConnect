@@ -1,7 +1,8 @@
 // Source permissions are engineering controls, not a grant of platform access.
 // An available API still requires the member's OAuth scopes and provider approval.
 // Keep analytics permission separate from a deployed collector's availability.
-const POLICY_VERSION = '2026-10-05';
+const { mastodonPostUrl, mastodonCanInteract } = require('./mastodon-oauth');
+const POLICY_VERSION = '2026-10-06';
 const METRICS_NOTICE = 'Engagement metrics are provided by the original source. The source determines whether playback qualifies as a view.';
 const NEVER = Object.freeze({ directRehosting: false, cacheVideo: false, scrapingFallback: false, mediaExtraction: false, syntheticMetrics: false });
 const SOURCES = {
@@ -12,7 +13,7 @@ const SOURCES = {
   threads: { label: 'Threads', hosts: ['threads.net', 'www.threads.net', 'threads.com', 'www.threads.com'], metrics: true, docs: 'https://developers.facebook.com/docs/threads/', note: 'Enable only reviewed Threads API products and account scopes. No interaction adapter is installed.' },
   twitter: { label: 'X', hosts: ['x.com', 'www.x.com', 'twitter.com', 'www.twitter.com'], actions: true, metrics: true, maxLength: 280, docs: 'https://docs.x.com/x-api/posts/likes/introduction', note: 'API access tier and user authorization determine available metrics and writes.' },
   bluesky: { label: 'Bluesky', hosts: ['bsky.app'], actions: true, metrics: true, maxLength: 300, docs: 'https://docs.bsky.app/docs/advanced-guides/posts', note: 'Writes use the connected member session and the AT Protocol record APIs.' },
-  mastodon: { label: 'Mastodon', hosts: ['mastodon.social', 'mastodon.online'], metrics: true, docs: 'https://docs.joinmastodon.org/methods/statuses/', note: 'Instance rules and OAuth scopes apply. Additional original-link origins require operator configuration.' },
+  mastodon: { label: 'Mastodon', hosts: ['mastodon.social', 'mastodon.online'], actions: true, maxLength: 500, metrics: true, docs: 'https://docs.joinmastodon.org/methods/statuses/', note: 'Instance rules and OAuth scopes apply. Federated post URLs are resolved on the connected member server before interactions.' },
   reddit: { label: 'Reddit', hosts: ['reddit.com', 'www.reddit.com', 'old.reddit.com', 'oauth.reddit.com'], actions: true, metrics: true, likeLabel: 'Upvote', docs: 'https://www.reddit.com/dev/api/', note: 'Approved API access and member scopes are required. Votes are source actions, not local counts.' },
   linkedin: { label: 'LinkedIn', hosts: ['linkedin.com', 'www.linkedin.com'], metrics: true, docs: 'https://learn.microsoft.com/en-us/linkedin/marketing/community-management/', note: 'Community Management access, organization roles and app approval apply.' },
   pinterest: { label: 'Pinterest', hosts: ['pinterest.com', 'www.pinterest.com'], metrics: true, docs: 'https://developers.pinterest.com/docs/api/v5/', note: 'Account and business analytics require approved access and the relevant scopes.' },
@@ -34,7 +35,7 @@ function freezeDeep(value) {
 // controls in this application; they do not assert that a provider approved it.
 function adapterRules(source, info) {
   const authentication = source === 'bluesky' ? 'Connected AT Protocol session; validated PDS origin'
-    : source === 'mastodon' ? 'Instance-specific authorization and configured original-link origins'
+    : source === 'mastodon' ? 'Instance-specific authorization; canonical status URLs resolved by the connected server'
       : ['github', 'gitlab'].includes(source) ? 'Connected member token with repository or project permissions'
         : 'Provider authorization and product-specific scopes; API approval where required';
   return {
@@ -102,7 +103,9 @@ function getInteractionCapabilities(user, options) {
   return Object.fromEntries(listSourcePolicies(options).map(policy => [policy.source, {
     label: policy.label, likeLabel: policy.likeLabel, maxLength: policy.maxLength,
     connected: Boolean(user?.socialTokens?.[policy.source]),
-    like: policy.features.like, comment: policy.features.comment,
+    like: policy.features.like && (policy.source !== 'mastodon' || mastodonCanInteract(user?.socialTokens?.mastodon, 'like')),
+    comment: policy.features.comment && (policy.source !== 'mastodon' || mastodonCanInteract(user?.socialTokens?.mastodon, 'comment')),
+    ...(policy.source === 'mastodon' ? { reconnectRequired: Boolean(user?.socialTokens?.mastodon) && !mastodonCanInteract(user.socialTokens.mastodon) } : {}),
     fallback: { like: `${policy.likeLabel} on ${policy.label}`, comment: `Comment on ${policy.label}` },
     metricsNotice: METRICS_NOTICE,
   }]));
@@ -116,10 +119,10 @@ function validateOriginalUrl(source, value, { env = process.env } = {}) {
   // URL normalizes :443 away, so reject explicit ports in the original authority.
   const authority = value.slice(8).split(/[/?#]/, 1)[0];
   if (url.protocol !== 'https:' || url.username || url.password || url.port || authority.includes(':') || url.hostname.endsWith('.')) return null;
+  // A Mastodon original may live on any federated server. Only status URLs
+  // qualify; provider writes always go to the member's authorized server.
+  if (policy.source === 'mastodon') return mastodonPostUrl(value);
   let permitted = policy.hosts.includes(url.hostname.toLowerCase());
-  if (!permitted && policy.source === 'mastodon') {
-    permitted = String(env.SOURCE_MASTODON_ORIGINS || '').split(',').map(origin => origin.trim()).includes(url.origin);
-  }
   if (!permitted && policy.source === 'tumblr') permitted = /^[a-z0-9][a-z0-9-]*\.tumblr\.com$/.test(url.hostname);
   if (!permitted) return null;
   return url.href;
