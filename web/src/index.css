@@ -1239,6 +1239,15 @@ input, textarea, select { font-family: inherit; }
   scrollbar-width: thin;
   touch-action: pan-x;
 }
+.travel-city-guide { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 28px 16px; text-align: center; background: var(--primary-light); color: var(--text); }
+.travel-city-guide h3 { margin: 0; font-size: 1.2rem; overflow-wrap: anywhere; }
+.travel-city-guide p { margin: 0; color: var(--muted); font-size: .8rem; }
+.travel-city-guide-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.travel-city-guide-actions .btn { min-height: 44px; }
+.travel-city-guide-label { color: var(--muted); font-size: .75rem; white-space: nowrap; }
+.travel-city-navigation { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px; border-bottom: 1px solid var(--border); }
+.travel-city-navigation .btn { min-height: 44px; gap: 5px; }
+.travel-city-navigation > span { text-align: center; color: var(--muted); font-size: .75rem; }
 .travel-live-loop-choice {
   display: flex;
   flex: 0 0 144px;

@@ -45,6 +45,7 @@ try {
   {platform:'android',width:390,userAgent:'Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/131.0.0.0 Mobile Safari/537.36'},
  ]){
   const context=await browser.newContext({viewport:{width:device.width,height:900},userAgent:device.userAgent,serviceWorkers:'block'});
+  await context.addInitScript(platform => Object.defineProperty(navigator, 'platform', { get: () => platform }), device.platform === 'windows' ? 'Win32' : 'Linux armv8l');
   page=await context.newPage();page.setDefaultTimeout(10000);
   const errors=[],requests=[];
   let available=true,configFailure=false,launchFailure=false,badUrl=false,badNonce=false,expired=false,held=null,launches=0;
