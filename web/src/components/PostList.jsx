@@ -246,7 +246,6 @@ export default function PostList({
               </p>
             )}
 
-            {!isShopPost && <PostLinkPreviews post={post} />}
             {post.mediaUrl && (
               <div style={{ borderRadius: 'var(--radius)', overflow: 'hidden', marginBottom: 10, background: '#000' }}>
                 {post.mediaType === 'video' ? (
@@ -274,6 +273,7 @@ export default function PostList({
               </div>
             )}
 
+            {!isShopPost && <PostLinkPreviews post={post} />}
             {isShopPost && <ShopPostDetails post={post} />}
             <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap', alignItems: 'center', borderTop: '1px solid var(--border)', paddingTop: 10 }}>
               <PostLikes post={post} onPostUpdated={updatePost} />

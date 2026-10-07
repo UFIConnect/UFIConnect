@@ -14,12 +14,12 @@ export function SavedPostCard({ post, onRemoved }) {
         <span>{sourceLabel}</span>
         <time>{post.savedAt ? `Saved ${new Date(post.savedAt).toLocaleDateString()}` : 'Saved post'}</time>
       </div>
-      {post.title && <h3>{post.title}</h3>}
+      {post.title && <h3><PostInlineText text={post.title} /></h3>}
       {post.content && <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}><PostInlineText text={post.content} /></p>}
-      <PostLinkPreviews post={post} />
       {post.mediaType === 'image' && post.mediaUrl && (
         <img src={post.mediaUrl} alt="" className="profile-saved-post-image" />
       )}
+      <PostLinkPreviews post={post} />
       <div className="profile-saved-item-actions">
         {hasUfiDetail && <Link className="btn btn-ghost btn-sm" to={`/p/${encodeURIComponent(post.id)}`}>View post</Link>}
         {originalUrl && <a className="btn btn-ghost btn-sm" href={originalUrl} target="_blank" rel="noopener noreferrer">View original</a>}

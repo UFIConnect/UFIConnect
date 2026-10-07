@@ -153,13 +153,41 @@ export async function saveEntries(session, entries, storage = storageDefault()) 
   writeRecord(storage, latest);
   return { key: session.key, entries: normalized, preferences, revision: content.data };
 }
+// An authenticated, unlocked session can replace its passphrase without the
+// old phrase. Rotate the content key because session keys are non-exportable.
+// Read verified stored content, not caller-supplied entries, and commit once.
+export async function changePassphrase(session, passphrase, storage = storageDefault(), { signal } = {}) {
+  if (!session?.key) throw new Error('Unlock your vault first.');
+  if (typeof passphrase !== 'string' || passphrase.length < 12 || passphrase.length > 1024) throw new Error('Use a passphrase between 12 and 1,024 characters.');
+  signal?.throwIfAborted();
+  const previous = storage.getItem(VAULT_STORAGE_KEY);
+  const record = parseRecord(previous);
+  if (session.revision !== record.content.data) throw new Error('This vault changed in another window. Lock and unlock it before changing its passphrase.');
+  const plaintext = await open(session.key, record.content);
+  let value;
+  try { value = JSON.parse(decoder.decode(plaintext)); } finally { plaintext.fill(0); }
+  const entries = cleanEntries(value.entries), preferences = cleanVaultPreferences(value.preferences);
+  const raw = bytes(32), salt = b64(bytes(16));
+  try {
+    const key = await importKey(raw);
+    const next = { version: 1, kdf: { salt, iterations: ITERATIONS },
+      wrappedKey: await seal(await wrappingKey(passphrase, salt), raw), content: await contentBox(key, entries, preferences) };
+    signal?.throwIfAborted();
+    if (storage.getItem(VAULT_STORAGE_KEY) !== previous) throw new Error('This vault changed in another window. Lock and unlock it before changing its passphrase.');
+    // Device wraps belong to the previous key. Set up device unlock again.
+    writeRecord(storage, next);
+    return { key, entries, preferences, revision: next.content.data };
+  } finally { raw.fill(0); }
+}
 export function exportEncryptedVault(storage = storageDefault()) { return JSON.stringify(readRecord(storage), null, 2); }
-export async function restoreEncryptedVault(text, passphrase, storage = storageDefault()) {
+export async function restoreEncryptedVault(text, passphrase, storage = storageDefault(), { signal } = {}) {
+  signal?.throwIfAborted();
   const previousRecord = storage.getItem(VAULT_STORAGE_KEY);
   const record = parseRecord(text);
   let session;
   try { session = await sessionFromRaw(await open(await wrappingKey(String(passphrase), record.kdf.salt), record.wrappedKey), record); }
   catch { throw new Error('The backup passphrase is incorrect or the backup could not be verified. Your current vault has not changed.'); }
+  signal?.throwIfAborted();
   if (storage.getItem(VAULT_STORAGE_KEY) !== previousRecord) throw new Error('The current vault changed while verifying the backup. Review it before restoring.');
   writeRecord(storage, record);
   return session;

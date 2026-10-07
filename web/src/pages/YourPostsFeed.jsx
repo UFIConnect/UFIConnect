@@ -79,20 +79,20 @@ function OwnPostCard({ post }) {
         </div>
       </div>
 
-      <h2 style={{ margin: '0 0 8px', fontSize: '.98rem', lineHeight: 1.35 }}>{title === post.content ? <PostInlineText text={title} /> : title}</h2>
+      <h2 style={{ margin: '0 0 8px', fontSize: '.98rem', lineHeight: 1.35 }}><PostInlineText text={title} /></h2>
       {post.content && post.content !== title && (
         <p style={{ margin: '0 0 12px', color: 'var(--text)', fontSize: '.9rem', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
           <PostInlineText text={post.content} />
         </p>
       )}
 
-      <PostLinkPreviews post={post} />
       {(hasImage || hasVideoPoster) && (
         <div style={{ borderRadius: 8, overflow: 'hidden', marginBottom: 12, background: '#0f172a' }}>
           <img src={post.mediaUrl} alt="" style={{ width: '100%', maxHeight: 440, objectFit: 'contain', display: 'block' }} />
         </div>
       )}
 
+      <PostLinkPreviews post={post} />
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', borderTop: '1px solid var(--border)', paddingTop: 10 }}>
         <div style={{ color: 'var(--muted)', fontSize: '.78rem' }}>
           {[post.likesCount ? `${post.likesCount} likes` : null, post.commentsCount ? `${post.commentsCount} comments` : null].filter(Boolean).join(' · ') || 'Synced from your connected account'}

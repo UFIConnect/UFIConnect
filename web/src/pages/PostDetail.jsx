@@ -263,14 +263,13 @@ export default function PostDetail() {
             )}
           </div>
 
-          {post.title && <h1 style={{ fontSize: '1.15rem', fontWeight: 700, margin: '0 0 10px', lineHeight: 1.4, overflowWrap: 'break-word', wordBreak: 'break-word' }}>{post.title}</h1>}
+          {post.title && <h1 style={{ fontSize: '1.15rem', fontWeight: 700, margin: '0 0 10px', lineHeight: 1.4, overflowWrap: 'break-word', wordBreak: 'break-word' }}><PostInlineText text={post.title} /></h1>}
           {isCareerPost(post) ? <JobPostContent post={post} /> : post.content && (
             <p style={{ fontSize: '.92rem', lineHeight: 1.65, whiteSpace: 'pre-wrap', margin: '0 0 12px', color: 'var(--text)', overflowWrap: 'break-word', wordBreak: 'break-word' }}>
               <PostInlineText text={post.content} />
             </p>
           )}
 
-          <PostLinkPreviews post={post} />
           <ArticleIllustration post={post} />
           {vimeoId && <VimeoPreview id={vimeoId} title={post.title} />}
           {isVideo && !youtubeId && !vimeoId && !playlistUrl && !directVideoUrl && <SourceMediaFallback post={post} />}
@@ -316,6 +315,7 @@ export default function PostDetail() {
             </div>
           )}
 
+          <PostLinkPreviews post={post} />
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
             <PostLikes post={post} onPostUpdated={updated => setPost(current => ({ ...current, ...updated }))} />
             {token && <SavePostButton post={post} className="btn btn-ghost btn-sm save-item-button" />}

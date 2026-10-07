@@ -25,6 +25,8 @@ const BRAND_ICONS = {
 // has no published Simple Icons mark. Keeping the map here makes every feed
 // surface render the same source icon instead of drifting into letter badges.
 const EXTERNAL_BRAND_ICON_URLS = {
+  discord:       'https://cdn.simpleicons.org/discord/5865F2',
+  figma:         'https://cdn.simpleicons.org/figma/A259FF',
   linkedin:      'https://www.linkedin.com/favicon.ico',
   tiktok:        'https://cdn.simpleicons.org/tiktok/111111',
   hackernews:    'https://news.ycombinator.com/favicon.ico',
@@ -72,6 +74,7 @@ const EXTERNAL_BRAND_ICON_URLS = {
 // Retry a blocked publisher favicon through Google's cache for the same
 // official domain. A final compact label keeps the slot visible offline.
 const OFFICIAL_SOURCE_DOMAINS = {
+  discord: 'discord.com', figma: 'figma.com',
   linkedin: 'linkedin.com',
   tiktok: 'tiktok.com',
   hackernews: 'news.ycombinator.com',

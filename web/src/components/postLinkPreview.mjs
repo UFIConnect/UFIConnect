@@ -49,3 +49,15 @@ export function postLinkPreviews(text, excludeUrl) {
   }
   return links;
 }
+
+// Keep URLs in the dedicated preview area while retaining the surrounding
+// words, hashtags and paragraph breaks. Do not change the stored post.
+export function postBodyWithoutLinks(value) {
+  return postTextParts(value).map(part => part.href && postLinkDestination(part.href) ? '' : part.text).join('')
+    .replace(/\([ \t]*\)|\[[ \t]*\]/g, '')
+    .replace(/[ \t]+([,.;!?])/g, '$1')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/^[ \t]+|[ \t]+$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}

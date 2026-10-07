@@ -920,6 +920,7 @@ const META_GRAPH_BASE = `https://graph.facebook.com/${META_GRAPH_API_VERSION}`;
 const META_LOGIN_BASE = `https://www.facebook.com/${META_GRAPH_API_VERSION}`;
 
 const SOCIAL_CFG = {
+  ...require('./command-center-platforms').profileOAuthConfig(process.env),
   linkedin: {
     authUrl:  'https://www.linkedin.com/oauth/v2/authorization',
     tokenUrl: 'https://www.linkedin.com/oauth/v2/accessToken',
@@ -1015,15 +1016,7 @@ const SOCIAL_CFG = {
     scope: 'public',
     pkce: false,
   },
-  // Behance and Figma both removed — Adobe shut down the entire Behance
-  // developer portal (both behance.net/dev and /dev/register 404, and
-  // Behance isn't listed as a product in Adobe's current unified developer
-  // console either), no working registration path left. Figma briefly
-  // replaced it for the same "showcase your design work" audience, but
-  // Figma's REST API has no "list my files" endpoint without already
-  // knowing a team_id (verified against its OpenAPI spec — every file/
-  // project/folder endpoint requires one), so it could never have a real
-  // content fetcher either — removed for the same reason.
+  // Figma profile authorization is defined in command-center-platforms.js.
   // Twitch and Threads add streaming and conversation connections. Instagram
   // and TikTok are configured below for their official publishing flows.
   twitch: {
@@ -1050,7 +1043,7 @@ const SOCIAL_CFG = {
     clientId:     () => process.env.TIKTOK_CLIENT_KEY,
     clientSecret: () => process.env.TIKTOK_CLIENT_SECRET,
     clientIdParam: 'client_key',
-    scope: 'user.info.basic,video.list,video.publish,video.upload',
+    scope: 'user.info.basic,video.list,video.upload',
     pkce: false,
   },
   // pinterest removed — trial access got denied and the app got locked
@@ -1062,6 +1055,8 @@ const SOCIAL_CFG = {
 };
 
 const SOCIAL_ENV_KEYS = {
+  discord:   ['DISCORD_CLIENT_ID', 'DISCORD_CLIENT_SECRET'],
+  figma:     ['FIGMA_CLIENT_ID', 'FIGMA_CLIENT_SECRET'],
   linkedin:  ['LINKEDIN_CLIENT_ID', 'LINKEDIN_CLIENT_SECRET'],
   twitter:   ['TWITTER_CLIENT_ID', 'TWITTER_CLIENT_SECRET'],
   facebook:  ['FACEBOOK_APP_ID', 'FACEBOOK_APP_SECRET'],
@@ -14261,6 +14256,7 @@ setTimeout(runDataCheck,  12000);
 
 // --- Platform config (OAuth metadata) ----------------------------------------
 const PLATFORMS = {
+  ...require('./command-center-platforms').PROFILE_PLATFORMS,
   linkedin: {
     name: 'LinkedIn', color: '#0A66C2', icon: 'linkedin',
     description: 'Connect your professional profile and publish updates from Cross-Post.',
@@ -14269,7 +14265,7 @@ const PLATFORMS = {
     loginUrl: 'https://www.linkedin.com/login',
     setupUrl: 'https://www.linkedin.com/developers/apps',
     reviewRequired: true,
-    note: 'LinkedIn connection will open after UFIconnect receives LinkedIn app access approval.',
+    note: 'Connect your profile and authorize sharing to publish from Cross-Post. LinkedIn must grant this app OpenID Connect and Share on LinkedIn access. Personal feed import is not supported.',
   },
   github: {
     name: 'GitHub', color: '#24292F', icon: 'github',
@@ -14384,12 +14380,12 @@ const PLATFORMS = {
   tiktok: {
     name: 'TikTok', color: '#111111', icon: 'tiktok',
     description: 'Send photo posts to TikTok through its official content-posting flow.',
-    scopes: ['user.info.basic', 'video.list', 'video.publish', 'video.upload'],
+    scopes: ['user.info.basic', 'video.list', 'video.upload'],
     authUrl: 'https://www.tiktok.com/v2/auth/authorize/',
     loginUrl: 'https://www.tiktok.com/login',
     setupUrl: 'https://developers.tiktok.com/',
     reviewRequired: true,
-    note: 'Requires a TikTok Content Posting API app, verified media domain, and TikTok review before direct publishing is public.',
+    note: 'Authorize your profile, public videos, and upload access. Photo posts are sent to your TikTok inbox for you to finish; TikTok controls app approval and media-domain access.',
   },
   mastodon: {
     name: 'Mastodon', color: '#6364FF', icon: 'mastodon',
@@ -14587,19 +14583,9 @@ const PLATFORMS = {
 
 // Display/connect order for Connected Accounts — Set iteration order
 // follows insertion order, so this list's order IS the UI order.
-// discord and figma removed entirely — SOCIAL_CFG, PLATFORMS, and this
-// list all dropped both, and neither ever had a following-feed fetcher.
-// Discord's API has no generic "personal feed" concept at all, and Figma's
-// REST API has no "list my files" endpoint without already knowing a
-// team_id — neither could ever pull real content no matter how the OAuth
-// side was wired up. bluesky has a real following-feed fetcher
-// (fetchBlueskyFollowingTimeline, wired into FOLLOWING_SOURCE_FETCHERS
-// below); dribbble stays listed for identity/profile purposes only.
-// Threads is an account-owned Command Center integration with its own-post
-// fetcher, while neither platform has a real following-feed API. Medium
-// still feeds the app-level aggregate feed via its
-// own tag-based fetcher, just not Following specifically, same reason.
+// Profile-only connections remain in Command Center and do not create personal feeds.
 const CONNECTED_SOCIAL_PLATFORMS = new Set([
+  'discord', 'figma',
   'linkedin', 'twitter', 'facebook', 'instagram', 'tiktok',
   'github', 'gitlab', 'youtube', 'reddit',
   'medium', 'dribbble', 'twitch', 'threads', 'bluesky', 'mastodon',
@@ -14634,10 +14620,8 @@ const ACCOUNT_PLATFORM_CATALOG = new Set([
 // even when their credentials are present. Keep it separate from
 // `configured` so the connection status itself remains truthful.
 const FORCE_COMING_SOON_PLATFORMS = new Set([
-  // LinkedIn's member-feed and publishing access remain gated behind its
-  // partner approval. Keep it visible in Command Center, but do not offer a
-  // connection that cannot deliver the promised account functionality.
-  'linkedin', 'tiktok',
+  // These entries still lack a complete account authorization adapter.
+  // Implemented OAuth providers use credential presence and provider consent.
   'pinterest', 'tumblr', 'wordpress',
   ...PUBLICATION_ACCOUNT_PLATFORMS,
   ...CAREER_ACCOUNT_PLATFORMS,
@@ -14652,6 +14636,7 @@ const FORCE_COMING_SOON_PLATFORMS = new Set([
 // member who explicitly connected the account, never in the shared pool.
 const MEMBER_ONLY_CONNECTED_FEED_SOURCES = new Set(['instagram', 'tiktok', 'threads', 'linkedin']);
 const COMMAND_CENTER_SOCIAL_PLATFORMS = new Set([
+  'discord', 'figma',
   ...MEMBER_ONLY_CONNECTED_FEED_SOURCES,
   ...PUBLISHING_ONLY_SOCIAL_PLATFORMS,
 ]);
@@ -19975,7 +19960,7 @@ function requireOfficeToken(req, res, next) {
 app.get('/office/oauth-status', requireOfficeToken, (_req, res) => {
   const platforms = Object.fromEntries([...ACCOUNT_PLATFORM_CATALOG].map(platform => {
     const status = socialCredentialStatus(platform);
-    const hasOAuthFlow = Boolean(SOCIAL_CFG[platform]) || platform === 'bluesky';
+    const hasOAuthFlow = Boolean(SOCIAL_CFG[platform]) || platform === 'bluesky' || platform === 'mastodon';
     const forceComingSoon = FORCE_COMING_SOON_PLATFORMS.has(platform);
     const commandCenterOnly = COMMAND_CENTER_SOCIAL_PLATFORMS.has(platform);
     return [platform, {
@@ -20487,6 +20472,7 @@ app.get('/auth/social/config', authenticate, async (req, res) => {
 });
 
 app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   const { platform } = req.params;
   if (!PLATFORMS[platform]) return res.status(404).json({ error: 'Unknown platform' });
   const user = await getEffectiveUser(req.user.id);
@@ -20557,11 +20543,16 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
   // State is a signed JWT — survives server restarts, expires in 10 min
   const returnToCommandCenter = req.query.returnTo === 'command-center'
     && ACCOUNT_PLATFORM_CATALOG.has(platform);
+  const browserNonce = crypto.randomBytes(32).toString('base64url');
+  res.cookie(`ufi_oauth_${platform}`, browserNonce, {
+    httpOnly: true, secure: new URL(redirectUri).protocol === 'https:',
+    sameSite: 'lax', path: `/auth/social/${platform}`, maxAge: 600000,
+  });
   params.set('state', createOAuthState(
     req.user.id,
     platform,
     codeVerifier,
-    returnToCommandCenter ? { returnTo: 'command-center' } : undefined,
+    { browserHash: pkceChallenge(browserNonce), ...(returnToCommandCenter ? { returnTo: 'command-center' } : {}) },
   ));
 
   res.json({ url: `${cfg.authUrl}?${params.toString()}` });
@@ -20569,6 +20560,8 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
 
 // --- Social OAuth: callback ---------------------------------------------------
 app.get('/auth/social/:platform/callback', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.set('Referrer-Policy', 'no-referrer');
   const { platform } = req.params;
   const { code, state, error: oauthError } = req.query;
   const entry = verifyOAuthState(state, platform);
@@ -20578,13 +20571,26 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
     : `${FRONTEND_BASE}/connected-accounts`;
   const resultSeparator = frontendProfile.includes('?') ? '&' : '?';
 
-  if (oauthError) return res.redirect(`${frontendProfile}${resultSeparator}social_error=${platform}&reason=${oauthError}`);
-
   if (!entry) {
     return res.redirect(`${frontendProfile}${resultSeparator}social_error=${platform}&reason=invalid_state`);
   }
 
   const cfg         = SOCIAL_CFG[platform];
+  if (!cfg) return res.redirect(`${frontendProfile}${resultSeparator}social_error=${encodeURIComponent(platform)}&reason=invalid_callback`);
+  const cookieName = `ufi_oauth_${platform}`;
+  const browserNonce = String(req.headers.cookie || '').split(';').map(part => part.trim()).find(part => part.startsWith(cookieName + '='))?.slice(cookieName.length + 1);
+  res.clearCookie(cookieName, { httpOnly: true, secure: new URL(oauthCallbackUrl(platform)).protocol === 'https:', sameSite: 'lax', path: `/auth/social/${platform}` });
+  if (!browserNonce || !entry.extra?.browserHash || pkceChallenge(browserNonce) !== entry.extra.browserHash) {
+    return res.redirect(`${frontendProfile}${resultSeparator}social_error=${encodeURIComponent(platform)}&reason=browser_mismatch`);
+  }
+  if (oauthError) return res.redirect(`${frontendProfile}${resultSeparator}social_error=${encodeURIComponent(platform)}&reason=${encodeURIComponent(String(oauthError).slice(0, 120))}`);
+  const currentMember = await getEffectiveUser(entry.userId);
+  if (!currentMember || (currentMember.plan === 'business' && !CAREER_ACCOUNT_PLATFORMS.has(platform))) {
+    return res.redirect(`${frontendProfile}${resultSeparator}social_error=${encodeURIComponent(platform)}&reason=account_unavailable`);
+  }
+  if (typeof code !== 'string' || !code) {
+    return res.redirect(`${frontendProfile}${resultSeparator}social_error=${encodeURIComponent(platform)}&reason=invalid_callback`);
+  }
   const clientId    = cfg.clientId();
   const clientSecret= cfg.clientSecret();
   const redirectUri = oauthCallbackUrl(platform);
@@ -20648,6 +20654,13 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
       // rides in a redirect query param, visible in browser history.
       const providerErrorCode = raw?.error?.code || raw?.error || raw?.message || 'unknown';
       throw Object.assign(new Error(`No access_token in response — provider said: ${providerErrorCode}`), { providerErrorCode });
+    }
+
+    if (cfg.profileUrl) {
+      const profile = await fetchJSON(cfg.profileUrl, { Authorization: `Bearer ${accessToken}` });
+      if (!profile?.id || profile.err || profile.error) {
+        throw Object.assign(new Error('Provider could not verify the connected profile.'), { providerErrorCode: 'profile_unavailable' });
+      }
     }
 
     // Facebook's own initial exchange only ever hands back a short-lived
@@ -30453,10 +30466,8 @@ function configuredOpenAITextProvider() {
   } : null;
 }
 
-const CONTENT_DRAFT_PLATFORM_LABELS = {
-  tiktok: 'TikTok', instagram: 'Instagram', linkedin: 'LinkedIn',
-  twitter: 'X/Twitter', threads: 'Threads', general: 'social media',
-};
+const CONTENT_DRAFT_PLATFORMS = require('./content-platforms.json');
+const CONTENT_DRAFT_PLATFORM_LABELS = Object.fromEntries(CONTENT_DRAFT_PLATFORMS.map(platform => [platform.id, platform.label]));
 
 function fallbackContentDrafts(topic, platformLabel, tone) {
   const subject = resumeDraftInput(topic, 300) || 'this idea';
@@ -30549,12 +30560,13 @@ app.post('/command-center/content-draft', authenticate, aiContentDraftLimiter, a
   if (!topic || typeof topic !== 'string' || !topic.trim()) {
     return res.status(400).json({ message: 'topic is required.' });
   }
-  const platformLabel = CONTENT_DRAFT_PLATFORM_LABELS[platform] || 'social media';
+  const platformLabel = Object.hasOwn(CONTENT_DRAFT_PLATFORM_LABELS, platform) ? CONTENT_DRAFT_PLATFORM_LABELS[platform] : 'social media';
   const toneLabel = (tone && typeof tone === 'string' && tone.trim()) ? tone.trim().slice(0, 40) : 'engaging and authentic';
   const fallbackDrafts = fallbackContentDrafts(topic, platformLabel, toneLabel);
   const prompt = [
     `Write three distinct, ready-to-post ${platformLabel} captions about: "${topic.trim().slice(0, 300)}".`,
     `Tone: ${toneLabel}.`,
+    CONTENT_DRAFT_PLATFORMS.find(target => target.id === platform)?.guidance || CONTENT_DRAFT_PLATFORMS[0].guidance,
     'Make each caption specific, natural, and original. Include a hook, a useful or personal takeaway that does not invent facts, and a simple conversation prompt where appropriate. Keep TikTok and Instagram punchy, LinkedIn thoughtful and professional, and other platforms concise.',
     'Return exactly three numbered captions, each as its own paragraph. No preamble or explanation.',
   ].join('\n\n');
@@ -30646,7 +30658,7 @@ app.post('/command-center/hashtag-draft', authenticate, aiContentDraftLimiter, a
   const location = typeof req.body?.location === 'string' ? req.body.location.trim().slice(0, 120) : '';
   if (!topic) return res.status(400).json({ message: 'topic is required.' });
 
-  const platformLabel = CONTENT_DRAFT_PLATFORM_LABELS[req.body?.platform] || 'social media';
+  const platformLabel = Object.hasOwn(CONTENT_DRAFT_PLATFORM_LABELS, req.body?.platform) ? CONTENT_DRAFT_PLATFORM_LABELS[req.body.platform] : 'social media';
   const fallbackGroups = fallbackHashtagGroups({ topic, audience, location, platformLabel });
   const prompt = [
     `Create three distinct, relevant hashtag sets for a ${platformLabel} post about: "${topic}".`,
@@ -31851,7 +31863,9 @@ const CROSS_POST_CAPABILITIES = Object.freeze({
   reddit:    { supported: true, delivery: 'direct', media: 'link', requiresPhoto: false },
   twitter:   { supported: true, delivery: 'direct', media: 'link', requiresPhoto: false },
   facebook:  { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: false, note: 'Facebook Page publishing needs Meta Page permissions and a Page selector.' },
-  linkedin:  { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: false, note: 'LinkedIn publishing will open after UFIconnect receives LinkedIn app access approval.' },
+  linkedin:  { supported: true, delivery: 'direct', media: 'native-image', requiresPhoto: false, note: 'Requires LinkedIn permission to share posts. Reconnect if your account was linked before publishing access was granted.' },
+  discord:   { supported: false, delivery: 'unsupported', media: 'none', requiresPhoto: false, note: 'Profile connection only. Copy your AI Content draft into your Discord channel.' },
+  figma:     { supported: false, delivery: 'unsupported', media: 'none', requiresPhoto: false, note: 'Profile connection only. Copy your AI Content draft into your Figma workspace.' },
   threads:   { supported: true, delivery: 'direct', media: 'native-image', requiresPhoto: false },
   instagram: { supported: true, delivery: 'direct', media: 'native-image', requiresPhoto: true },
   tiktok:    { supported: true, delivery: 'handoff', media: 'native-image', requiresPhoto: true },
@@ -32144,8 +32158,11 @@ async function publishToLinkedIn(token, { text, mediaUrl }) {
   if (result.status < 200 || result.status >= 300) {
     throw new Error(`LinkedIn HTTP ${result.status}: ${JSON.stringify(result.data || {}).slice(0, 180)}`);
   }
-  const postId = result.headers['x-restli-id'];
-  return postId ? `https://www.linkedin.com/feed/update/${encodeURIComponent(postId)}` : null;
+  const postId = result.headers?.['x-restli-id'];
+  if (result.status !== 201 || typeof postId !== 'string' || !postId.trim()) {
+    throw new Error('LinkedIn did not confirm a created post. Check LinkedIn before retrying.');
+  }
+  return `https://www.linkedin.com/feed/update/${encodeURIComponent(postId)}`;
 }
 
 async function publishToThreads(token, { text, mediaUrl }) {
@@ -32306,6 +32323,7 @@ async function refreshCrossPostAccessToken(userId, platform) {
 }
 
 async function publishCrossPostTarget(user, platform, { content, mediaUrl, mediaType = null }) {
+  if (user.plan === 'business') return { platform, status: 'unsupported', error: 'Business memberships use recruiting tools.' };
   const capability = getCrossPostCapability(platform);
   if (!capability.supported) {
     return { platform, status: 'unsupported', error: 'UFIconnect cannot publish to this connected account yet.' };
@@ -32410,6 +32428,7 @@ async function synchronizeTikTokCrossPosts(user, rows) {
 
 app.post('/command-center/cross-post', authenticate, contentSubmissionLimiter, async (req, res) => {
   const user = await getUser(req.user.id);
+  if (user?.plan === 'business') return res.status(403).json({ message: 'Business memberships use recruiting tools.', code: 'business_career_only' });
   if (!user || user.plan === 'free') {
     return res.status(403).json({ message: 'Cross-post is a Pro feature — upgrade to use it.' });
   }
