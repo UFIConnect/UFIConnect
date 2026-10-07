@@ -8,9 +8,10 @@ test('Following accepts only general UFI posts from the native post pool', () =>
   assert.equal(isGeneralUfiFollowingPost({ source: 'reddit', groupId: GENERAL_UFI_GROUP_ID }), false);
 });
 
-test('Following excludes own-post-only Instagram and TikTok sources', () => {
+test('Following excludes Instagram, TikTok and Mastodon discovery content', () => {
   assert.equal(isFollowingSourceAllowed('instagram'), false);
   assert.equal(isFollowingSourceAllowed('TikTok'), false);
+  assert.equal(isFollowingSourceAllowed('mastodon'), false);
   assert.equal(isFollowingSourceAllowed('youtube'), true);
   assert.equal(isFollowingSourceAllowed('uficonnect'), true);
 });

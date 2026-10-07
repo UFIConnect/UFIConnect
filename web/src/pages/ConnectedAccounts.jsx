@@ -23,7 +23,7 @@ const PLATFORM_BENEFITS = {
   twitch:    ['Surface streams from channels you follow', 'Share live content with your network', 'Connect with fellow streamers'],
   threads:   ['Import your Threads posts', 'Surface conversations in your feed', 'Cross-post to your network'],
   bluesky:   ['Follow decentralised conversations', 'Surface posts matching your interests', 'Connect with the open social web'],
-  mastodon:  ['Read public posts from accounts you follow', 'Find your own public posts in Your Feed', 'Authorize access on your own Mastodon server'],
+  mastodon:  ['Connect your Mastodon account', 'Open your account on its original server', 'Manage authorization on your own Mastodon server'],
 };
 
 const PUBLICATION_BENEFITS = [
@@ -382,7 +382,7 @@ export default function ConnectedAccounts() {
             <p>Your account belongs to a Mastodon server. Enter its address or your full handle, then approve UFIConnect on that server.</p>
             <label htmlFor="mastodon-server">Server or full handle</label>
             <input id="mastodon-server" className="form-input" autoFocus autoComplete="off" value={mastodonServer} onChange={event => setMastodonServer(event.target.value)} placeholder="mastodon.social or @you@your.server" />
-            <p style={{ color: 'var(--muted)', fontSize: '.8rem' }}>Your password stays on your server. UFIConnect requests read access to your account and posts.</p>
+            <p style={{ color: 'var(--muted)', fontSize: '.8rem' }}>Your password stays on your server. UFIConnect requests access to read your account profile.</p>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => setMastodonServer(null)}>Cancel</button>
               <button type="submit" className="btn btn-primary btn-sm" disabled={!mastodonServer.trim()}>Continue to Mastodon</button>

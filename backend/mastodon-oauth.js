@@ -1,7 +1,7 @@
 const https = require('node:https');
 const net = require('node:net');
 const crypto = require('node:crypto');
-const MASTODON_SCOPES = 'read:accounts read:statuses';
+const MASTODON_SCOPES = 'read:accounts';
 
 function mastodonOrigin(input) {
   let value = String(input || '').trim();

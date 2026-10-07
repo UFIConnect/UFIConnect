@@ -16,7 +16,7 @@ test('Mastodon requests reject blocked DNS before sending credentials', async ()
   assert.equal(sent, false);
 });
 
-test('Mastodon OAuth binds the selected server, encrypted state, PKCE and callback, and enables public feeds', async () => {
+test('Mastodon OAuth connects the account without adding posts to Following or Your Feed', async () => {
   const calls = [];
   const publicPost = { id:'123',content:'<p>Public update</p>',visibility:'public',created_at:new Date().toISOString(),url:'https://social.example/@alice/123',account:{id:'42',username:'alice',acct:'alice',url:'https://social.example/@alice'},media_attachments:[] };
   const service = {
@@ -72,10 +72,16 @@ test('Mastodon OAuth binds the selected server, encrypted state, PKCE and callba
     assert.equal(connected.data.platforms.mastodon.siteUrl,'https://social.example');
     assert.equal(JSON.stringify(connected.data).includes('test-access'),false);
     const feed = await app.getFollowingFeedPosts(user.id, 'mastodon', {bust:true,surface:'feed'});
-    assert.equal(feed.posts.length,1);
-    assert.equal(feed.posts[0].sourceUrl,publicPost.url);
-    assert.equal(feed.posts[0].group.externalUrl,'https://social.example');
-    assert.equal(feed.posts[0].author.profileUrl,'https://social.example/@alice');
+    assert.equal(feed.posts.length,0);
+    assert.equal(calls.some(call => call.path?.startsWith('/api/v1/timelines/')),false);
+    assert.equal(catalog.data.platforms.mastodon.scopes.join(' '),'read:accounts');
+    user.plan = 'pro';
+    const own = await app.request('/command-center/your-content?platform=mastodon',{userId:user.id});
+    assert.equal(own.status,400);
+    const combined = await app.request('/command-center/your-content/feed',{userId:user.id});
+    assert.equal(combined.status,200);
+    assert.equal(combined.data.posts.length,0);
+    assert.equal(calls.some(call => call.path?.includes('/statuses')),false);
     assert.deepEqual(app.errors,[]);
   } finally {await app.close();}
 });
