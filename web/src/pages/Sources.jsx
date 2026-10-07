@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
+import { safePostLink } from '../../../backend/post-links.mjs';
 import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
 import client from '../api/client';
@@ -185,7 +186,7 @@ function SourceRow({ sourceId, health, enabled, onToggle, expanded, onExpand, sa
           {samplePosts.slice(0, 3).map((p, i) => (
             <a
               key={p.id || i}
-              href={p.sourceUrl || '#'}
+              href={safePostLink(p.sourceUrl) || undefined}
               target="_blank"
               rel="noopener noreferrer"
               style={{
@@ -206,8 +207,7 @@ function SourceRow({ sourceId, health, enabled, onToggle, expanded, onExpand, sa
           ))}
           <div style={{ padding: '8px 14px' }}>
             <Link
-              to="/"
-              onClick={() => window.dispatchEvent(new CustomEvent('feed:setSource', { detail: sourceId }))}
+              to={`/?feed=feed&source=${encodeURIComponent(sourceId)}`}
               style={{ fontSize: '.73rem', fontWeight: 600, color: meta.color, textDecoration: 'none' }}
             >
               See all {meta.label} posts in feed →
