@@ -14,6 +14,7 @@ import ConnectedPostActions from './ConnectedPostActions';
 import { SavePostButton } from './SaveButtons';
 import PostLikes from './PostLikes';
 import PostInlineText from './PostInlineText';
+import PostLinkPreviews from './PostLinkPreviews';
 import { PostOptionsMenu } from './PostCardChrome';
 import { ChevronDown, Search, SlidersHorizontal, RotateCw, Play, Pause, MessageCircle, ExternalLink } from 'lucide-react';
 import { videoDurationSeconds, isShortFeedVideo, videoSourceKey, safeMediaUrl, fitVideoFrame } from '../utils/videoFeedPolicy.mjs';
@@ -622,6 +623,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
             {post.matchedByLocation && <span>{post.locationMatchLabel || 'Near you'}</span>}
             {post.title && <p className="video-feed-expanded-title">{post.title}</p>}
             {captionBody && <p><PostInlineText text={captionBody} /></p>}
+            <PostLinkPreviews post={post} variant="dark" />
           </div>}
         </div>
       </div>

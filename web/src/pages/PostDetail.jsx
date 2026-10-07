@@ -2,6 +2,7 @@ import JobPostContent from '../components/JobPostContent';
 import { isCareerPost } from '../utils/jobSummary.mjs';
 import ArticleIllustration from '../components/ArticleIllustration';
 import PostInlineText from '../components/PostInlineText';
+import PostLinkPreviews from '../components/PostLinkPreviews';
 import PostImage from '../components/PostImage';
 import SourceMediaFallback from '../components/SourceMediaFallback';
 import VimeoPreview from '../components/VimeoPreview';
@@ -269,6 +270,7 @@ export default function PostDetail() {
             </p>
           )}
 
+          <PostLinkPreviews post={post} />
           <ArticleIllustration post={post} />
           {vimeoId && <VimeoPreview id={vimeoId} title={post.title} />}
           {isVideo && !youtubeId && !vimeoId && !playlistUrl && !directVideoUrl && <SourceMediaFallback post={post} />}

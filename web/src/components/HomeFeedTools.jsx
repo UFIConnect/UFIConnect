@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '../contexts/ToastContext';
@@ -7,7 +7,7 @@ import { CONNECTED_SOCIAL_PLATFORMS, SOURCE_META, withCareerAccountFallback } fr
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { normalizeSourceFavorites } from './sourceFavorites';
 import { DirectoryControls, AccountSiteLink } from './DirectoryControls';
-import { SOURCE_CATEGORIES, ACCOUNT_STATUSES, sourceSections, filterAccounts, accountStatus } from './sourceDirectory';
+import { SOURCE_CATEGORIES, ACCOUNT_STATUSES, sourceSections, accountSections } from './sourceDirectory';
 
 const LINK_FIELDS = [
   { key: 'linkedin', label: 'LinkedIn', placeholder: 'https://linkedin.com/in/yourname' },
@@ -149,7 +149,7 @@ export default function HomeFeedTools({
   const sourceGroups = sourceSections(availableSources, normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites)[favoriteMode], sourceCategory, disabledSources);
   const visibleSources = sourceGroups.flatMap(section => section.items);
   const visibleEnabledCount = visibleSources.filter(source => !disabledSources.has(source)).length;
-  const filteredAccounts = filterAccounts(visibleAccountPlatforms, accountConnected, accountFilter);
+  const accountGroups = accountSections(visibleAccountPlatforms, accountConnected, accountFilter);
 
   async function persistDisabledSources(next, previous, pendingKey, successMessage) {
     setDisabledSources(next);
@@ -405,44 +405,46 @@ export default function HomeFeedTools({
               <button type="button" className="btn btn-ghost btn-sm" onClick={reloadAccounts}>Retry</button>
             </div>
           )}
-          {accountPlatforms !== null && filteredAccounts.map(([key, platform], index) => {
-            const isConnected = Boolean(accountConnected[key]);
-            const isConnecting = accountAction === `connect:${key}`;
-            const isDisconnecting = accountAction === `disconnect:${key}`;
-            const comingSoon = !isConnected && (platform.forceComingSoon || !platform.configured);
-            const status = accountStatus(platform, isConnected);
-            const previous = filteredAccounts[index - 1];
-            const sectionStart = !previous || accountStatus(previous[1], accountConnected[previous[0]]) !== status;
-            return (
-              <Fragment key={key}>
-                {sectionStart && <h4 className="source-directory-heading">{ACCOUNT_STATUSES.find(([id]) => id === status)?.[1]}</h4>}
-              <div className="home-connected-account-row">
-                <SourceMark source={key} />
-                <span className="home-connected-account-name">
-                  {platform.name || SOURCE_META[key]?.label || key}
-                  {isConnected && <span className="home-connected-account-status">Connected</span>}
-                </span>
-                <div className="source-directory-account-actions">
-                {isConnected ? (
-                  <button type="button" className="btn btn-danger btn-sm" onClick={() => disconnectAccount(key)} disabled={accountAction !== null}>
-                    {isDisconnecting ? 'Wait...' : 'Disconnect'}
-                  </button>
-                ) : comingSoon ? (
-                  <button type="button" className="btn btn-ghost btn-sm" disabled>Coming soon</button>
-                ) : platform.locked ? (
-                  <button type="button" className="btn btn-ghost btn-sm" disabled>Membership</button>
-                ) : (
-                  <button type="button" className="btn btn-primary btn-sm" onClick={() => connectAccount(key)} disabled={accountAction !== null}>
-                    {isConnecting ? 'Opening...' : 'Connect'}
-                  </button>
-                )}
-                <AccountSiteLink platform={key} name={platform.name} />
-                </div>
+          {accountPlatforms !== null && accountGroups.map(section => (
+            <section className="home-account-category" key={section.id} aria-label={`${section.label} accounts`}>
+              <div className="home-account-category-heading">
+                <h4>{section.label}</h4>
+                <span>{section.connectedCount} of {section.total} connected</span>
               </div>
-              </Fragment>
-            );
-          })}
-          {accountPlatforms !== null && !accountError && filteredAccounts.length === 0 && (
+              {section.items.map(([key, platform]) => {
+                const isConnected = Boolean(accountConnected[key]);
+                const isConnecting = accountAction === `connect:${key}`;
+                const isDisconnecting = accountAction === `disconnect:${key}`;
+                const comingSoon = !isConnected && (platform.forceComingSoon || !platform.configured);
+                return (
+                  <div className="home-connected-account-row" key={key}>
+                    <SourceMark source={key} />
+                    <span className="home-connected-account-name">
+                      {platform.name || SOURCE_META[key]?.label || key}
+                      {isConnected && <span className="home-connected-account-status">Connected</span>}
+                    </span>
+                    <div className="source-directory-account-actions">
+                      {isConnected ? (
+                        <button type="button" className="btn btn-danger btn-sm" onClick={() => disconnectAccount(key)} disabled={accountAction !== null}>
+                          {isDisconnecting ? 'Wait...' : 'Disconnect'}
+                        </button>
+                      ) : comingSoon ? (
+                        <button type="button" className="btn btn-ghost btn-sm" disabled>Coming soon</button>
+                      ) : platform.locked ? (
+                        <button type="button" className="btn btn-ghost btn-sm" disabled>Membership</button>
+                      ) : (
+                        <button type="button" className="btn btn-primary btn-sm" onClick={() => connectAccount(key)} disabled={accountAction !== null}>
+                          {isConnecting ? 'Opening...' : 'Connect'}
+                        </button>
+                      )}
+                      <AccountSiteLink platform={key} name={platform.name} siteUrl={platform.siteUrl} />
+                    </div>
+                  </div>
+                );
+              })}
+            </section>
+          ))}
+          {accountPlatforms !== null && !accountError && accountGroups.length === 0 && (
             <div className="home-connected-account-empty" role="status">{visibleAccountPlatforms.length ? 'No matching accounts' : 'No account connections are available yet.'}</div>
           )}
           {blueskyHandle !== null && (

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { deriveBlueskyPlaylistUrl, isDirectVideoUrl, extractYouTubeId, loadYouTubeIframeApi, createYouTubePlayerFrame, youTubeEmbedUrl, HlsVideoPlayer, userWantsSound, useGlobalMuted } from './videoMedia';
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll';
 import PostInlineText from './PostInlineText';
+import PostLinkPreviews from './PostLinkPreviews';
 import { safePostLink } from '../../../backend/post-links.mjs';
 
 // Same floating-control look as VideoFeedView's overlay buttons (back/
@@ -701,6 +702,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
               <PostInlineText text={post.content} />
             </div>
           )}
+          <PostLinkPreviews key={post.id} post={post} variant="dark" maxVisible={1} />
           <div style={{ fontSize: '.72rem', opacity: 0.55, marginTop: 8 }}>
             {post.author?.name ? `${post.author.name} · ` : ''}{index + 1} / {mediaItems.length}
           </div>

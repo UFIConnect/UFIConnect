@@ -3,6 +3,7 @@ import JobPostContent from '../components/JobPostContent';
 import { isCareerPost } from '../utils/jobSummary.mjs';
 import ArticleIllustration from '../components/ArticleIllustration';
 import PostInlineText from '../components/PostInlineText';
+import PostLinkPreviews from '../components/PostLinkPreviews';
 import { postTextPreview } from '../../../backend/post-text.mjs';
 import PostImage from '../components/PostImage';
 import SourceMediaFallback from '../components/SourceMediaFallback';
@@ -1244,6 +1245,7 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen, onPostUpdated })
         </div>
       ) : null}
       {post.content && <PostText text={post.content} accent={src.color} />}
+      <PostLinkPreviews post={post} />
       <div className="post-chrome-actions">
         <PostLikes post={post} onPostUpdated={onPostUpdated} />
         {originalSourceUrl(post) && <button type="button" className="post-chrome-action" aria-expanded={showComments}
@@ -1650,7 +1652,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
         )
       )}
 
-      <>{isCareerPost(post) ? <JobPostContent post={post} /> : <PostText text={post.content} accent={isExternal ? src.color : undefined} />}<ArticleIllustration post={post} /></>
+      <>{isCareerPost(post) ? <JobPostContent post={post} /> : <PostText text={post.content} accent={isExternal ? src.color : undefined} />}<PostLinkPreviews post={post} /><ArticleIllustration post={post} /></>
 
       {post.mediaUrl && post.mediaType === 'image' && (
         <button

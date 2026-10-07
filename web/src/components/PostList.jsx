@@ -8,6 +8,7 @@ import { InlineAutoplayVideo } from './videoMedia';
 import { SavePostButton } from './SaveButtons';
 import ShopPostDetails from './ShopPostDetails';
 import PostInlineText from './PostInlineText';
+import PostLinkPreviews from './PostLinkPreviews';
 import { postTextPreview } from '../../../backend/post-text.mjs';
 
 function timeAgo(iso) {
@@ -245,6 +246,7 @@ export default function PostList({
               </p>
             )}
 
+            {!isShopPost && <PostLinkPreviews post={post} />}
             {post.mediaUrl && (
               <div style={{ borderRadius: 'var(--radius)', overflow: 'hidden', marginBottom: 10, background: '#000' }}>
                 {post.mediaType === 'video' ? (

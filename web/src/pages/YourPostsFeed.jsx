@@ -9,6 +9,7 @@ import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { SavePostButton } from '../components/SaveButtons';
 import PostInlineText from '../components/PostInlineText';
+import PostLinkPreviews from '../components/PostLinkPreviews';
 import { safePostLink } from '../../../backend/post-links.mjs';
 import { postTextPreview } from '../../../backend/post-text.mjs';
 
@@ -85,6 +86,7 @@ function OwnPostCard({ post }) {
         </p>
       )}
 
+      <PostLinkPreviews post={post} />
       {(hasImage || hasVideoPoster) && (
         <div style={{ borderRadius: 8, overflow: 'hidden', marginBottom: 12, background: '#0f172a' }}>
           <img src={post.mediaUrl} alt="" style={{ width: '100%', maxHeight: 440, objectFit: 'contain', display: 'block' }} />
