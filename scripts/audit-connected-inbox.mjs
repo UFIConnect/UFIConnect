@@ -130,6 +130,7 @@ try {
     }
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/connected-notifications-${width}.png`) });
     await page.locator('.global-messages-link').click();
+    await page.getByRole('dialog', { name: 'Messages', exact: true }).getByRole('link', { name: 'Open inbox', exact: true }).click();
     await page.getByLabel('Message source', { exact: true }).waitFor();
     await page.getByLabel('Message source', { exact: true }).selectOption('reddit');
     assert.equal(await page.locator('.conv-item').count(), 1);

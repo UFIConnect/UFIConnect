@@ -41,7 +41,6 @@ try {
         writes.push(request.postDataJSON());
         return route.continue();
       }
-      if (endpoint === '/travel/destinations') return route.fulfill({ json: { destinations: [] } });
       if (endpoint === '/social/platforms') return route.fulfill({ json: { platforms: {}, connected: {} } });
       if (endpoint === '/profile/social') return route.fulfill({ json: { connected: {} } });
       if (endpoint === '/billing/status') return route.fulfill({ json: {} });
@@ -86,10 +85,8 @@ try {
     assert.equal(await page.getByText(/^Area Toronto/).count(), 0, 'Late regional response cannot replace newer feed');
     assert.deepEqual(Object.keys(writes[0].roleSettings), ['feedRegionalLocation'], 'Regional update contains no stale unrelated preferences');
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=countries');
-    await page.getByRole('searchbox', { name: 'Travel city', exact: true }).waitFor();
-    assert.equal(await page.getByRole('searchbox', { name: 'Travel city', exact: true }).inputValue(), 'Tokyo');
-    await page.getByRole('searchbox', { name: 'Travel city', exact: true }).fill('Osaka');
-    await page.locator('.feed-location-form').getByRole('button', { name: 'Search', exact: true }).click();
+    await page.locator('[data-destination-id="JP:Tokyo"][aria-pressed="true"]').waitFor();
+    await page.locator('[data-destination-id="JP:Osaka"]').click();
     await page.getByText(/^Area Osaka/).waitFor();
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=restaurants');
     await page.getByRole('searchbox', { name: 'Restaurant city', exact: true }).waitFor();
@@ -122,9 +119,11 @@ try {
     await page.getByRole('combobox', { name: 'Feed location preference' }).selectOption('manual');
     await page.getByRole('textbox', { name: 'Feed country', exact: true }).fill('US');
     await page.getByRole('textbox', { name: 'Feed city', exact: true }).fill('Austin');
+    const mapsRefreshed = page.waitForResponse(async response => response.url().includes('/api/office/feed')
+      && response.request().method() === 'GET' && (await response.json()).locationContext?.city === 'Austin');
     await page.getByRole('button', { name: 'Save feed location', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('.feed-region-control summary')?.textContent.includes('Austin'));
-    await page.waitForTimeout(300);
+    await mapsRefreshed;
     assert.ok(reads.some(read => read.city === 'Austin' && read.userId === firstId), 'Maps refreshes for changed regional preferences');
     userId = secondId;
     await installAuditMember(page, app, userId);
@@ -132,8 +131,7 @@ try {
     await page.getByText(/^Area Sydney/).waitFor();
     assert.equal(await page.getByText(/^Area Paris/).count(), 0, 'Another member cannot inherit regional posts');
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=countries');
-    await page.getByRole('searchbox', { name: 'Travel city', exact: true }).waitFor();
-    assert.equal(await page.getByRole('searchbox', { name: 'Travel city', exact: true }).inputValue(), 'Rome');
+    await page.locator('[data-destination-id="IT:Rome"][aria-pressed="true"]').waitFor();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Location controls fit the viewport');
     await auditNavigate(page, server.resolvedUrls.local[0] + 'global?audit-public=1');
     await page.getByText('Approximate area: New York, United States. Public recommendations may use this area.', { exact: true }).waitFor();

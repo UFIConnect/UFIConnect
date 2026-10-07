@@ -8,6 +8,7 @@ import HomeFeedTools from './HomeFeedTools';
 import BusinessLayout from './BusinessLayout';
 import JobsSidebarControls from './JobsSidebarControls';
 import NotificationInbox from './NotificationInbox';
+import MessagesPopup from './MessagesPopup';
 import './social-surfaces.css';
 import './navigation.css';
 import { HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS } from './sourceMeta';
@@ -68,10 +69,10 @@ function initials(name = '') {
 }
 
 // The bell counts unseen updates. Requests remain actionable after being seen.
-function NavBadge({ count }) {
+function NavBadge({ count, kind = 'notifications' }) {
   if (!count) return null;
   return (
-    <span className="notification-nav-badge" aria-label={`${count} unread notifications`} style={{
+    <span className="notification-nav-badge" aria-label={`${count} unread ${kind}`} style={{
       position: 'absolute', top: -2, right: -6,
       minWidth: 16, height: 16, padding: '0 4px', borderRadius: 8,
       background: '#EF4444', color: '#fff', fontSize: '.62rem', fontWeight: 700,
@@ -117,6 +118,7 @@ function PersonalLayout({ children, wide = false, feedSearch, discoveryPost, mob
   const { canInstall, installed, triggerInstall } = useInstallPrompt();
   // A pending request is not an unread update once the member has viewed it.
   const [notifBadge, setNotifBadge] = useState(0);
+  const [messageBadge, setMessageBadge] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mobileAccountOpen, setMobileAccountOpen] = useState(false);
   const [failedAvatarUrl, setFailedAvatarUrl] = useState(null);
@@ -156,6 +158,8 @@ function PersonalLayout({ children, wide = false, feedSearch, discoveryPost, mob
           if (cancelled || current !== sequence) return;
           const count = Number(data.notificationCount ?? data.unreadNotifications ?? 0);
           setNotifBadge(Number.isFinite(count) ? Math.max(0, count) : 0);
+          const messages = Number(data.unreadMessages ?? 0);
+          setMessageBadge(Number.isFinite(messages) ? Math.max(0, messages) : 0);
         })
         .catch(() => {});
     }
@@ -218,7 +222,7 @@ function PersonalLayout({ children, wide = false, feedSearch, discoveryPost, mob
 
   useEffect(() => {
     function closeOnEscape(event) {
-      if (event.key !== 'Escape') return;
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
       setMobileMenuOpen(false);
       setMobileAccountOpen(false);
       setMobileHeaderPopup(null);
@@ -332,6 +336,7 @@ function PersonalLayout({ children, wide = false, feedSearch, discoveryPost, mob
     const opening = mobileHeaderPopup !== name;
     setMobileMenuOpen(false);
     setMobileAccountOpen(false);
+    setSearchPopupOpen(false);
     setMobileHeaderPopup(opening ? name : null);
   }
 
@@ -559,9 +564,10 @@ function PersonalLayout({ children, wide = false, feedSearch, discoveryPost, mob
           <NavLink to="/notifications" className="global-desktop-alerts" aria-label="Alerts" title="Alerts">
             <ShellIcon name="notifications" size={19} /><NavBadge count={notifBadge} />
           </NavLink>
-            <NavLink to="/messages" className={({ isActive }) => `global-messages-link${isActive ? ' active' : ''}`} aria-label="Messages" title="Messages" onClick={closeMobileOverlays}>
+            <button type="button" className={`global-messages-link${mobileHeaderPopup === 'messages' || location.pathname.startsWith('/messages') ? ' active' : ''}`} aria-label="Messages" title="Messages" aria-haspopup="dialog" aria-expanded={mobileHeaderPopup === 'messages'} aria-controls="messages-popup" onClick={() => toggleMobileHeaderPopup('messages')}>
               <ShellIcon name="messages" size={20} />
-            </NavLink>
+              <NavBadge count={messageBadge} kind="messages" />
+            </button>
           </div>
           <div className="mobile-command-menu">
             <button
@@ -614,6 +620,8 @@ function PersonalLayout({ children, wide = false, feedSearch, discoveryPost, mob
           </div>
         </section>
       </div>}
+
+      {profile && mobileHeaderPopup === 'messages' && <MessagesPopup key={profile.id} onClose={() => setMobileHeaderPopup(null)} />}
 
       {profile && mobileHeaderPopup === 'notifications' && (
         <section id="mobile-alerts-popup" className="mobile-header-popup mobile-alerts-popup" role="dialog" aria-label="Alerts">
