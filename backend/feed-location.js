@@ -2,6 +2,20 @@
 const proxyaddr = require('proxy-addr');
 const { createHash } = require('node:crypto');
 
+const ISO_COUNTRY_CODES = `
+  AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ
+  BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR
+  CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR
+  GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU
+  ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ
+  LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ
+  MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF
+  PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI
+  SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR
+  TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW
+`.trim().split(/\s+/);
+const validCountries = new Set(ISO_COUNTRY_CODES);
+
 // Cloudflare's published origin-facing ranges, reviewed 2026-10-05:
 // https://www.cloudflare.com/ips/ . Never trust a client-supplied CF header
 // unless a Cloudflare hop is reached through configured trusted proxies.
@@ -25,7 +39,7 @@ function trustedFeedNetworkLocation(req, { visitorLocationHeaders = false } = {}
     }
     if (!verifiedEdge) return {};
     const country = String(req.headers?.['cf-ipcountry'] || '').trim().toUpperCase();
-    if (!/^[A-Z]{2}$/.test(country) || ['XX', 'T1'].includes(country)) return {};
+    if (!validCountries.has(country)) return {};
     const clean = value => {
       if (typeof value !== 'string') return null;
       try { return decodeURIComponent(value.replace(/\+/g, ' ')).replace(/[<>]/g, '').trim().slice(0, 80) || null; }
@@ -44,9 +58,9 @@ function memberFeedSnapshotKey(userId, sortMode, timeRange, location = {}) {
   // No IP address is retained in the key or serialized in a response.
   const context = createHash('sha256').update(JSON.stringify([
     location.country || '', location.city || '', location.region || '',
-    location.source || '', location.declared || [],
+    location.source || '', location.declared || [], location.mode || '', location.feedMode || '',
   ])).digest('hex').slice(0, 20);
   return `${userId}::${sortMode}::${timeRange || 'all'}::${context}`;
 }
 
-module.exports = { trustedFeedNetworkLocation, memberFeedSnapshotKey };
+module.exports = { ISO_COUNTRY_CODES, trustedFeedNetworkLocation, memberFeedSnapshotKey };

@@ -180,6 +180,7 @@ function GuestPostCard({ post, active, muted, registerRef }) {
 // source filters, Following, or write actions — sign-up prompts instead.
 export default function GuestFeed() {
   const [posts, setPosts] = useState([]);
+  const [locationContext, setLocationContext] = useState(null);
   const [cursor, setCursor] = useState(null);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -216,6 +217,7 @@ export default function GuestFeed() {
       if (!reset && cursor) params.cursor = cursor;
       const { data } = await client.get('/feed/guest', { params, signal: controller.signal });
       if (controller.signal.aborted) return;
+      setLocationContext(data.locationContext || null);
       setError('');
       if (reset && !merge) {
         knownIds.current = new Set();
@@ -344,6 +346,7 @@ export default function GuestFeed() {
         <section className="public-feed-intro" aria-labelledby="global-feed-title">
           <h1 id="global-feed-title">Explore the global feed</h1>
           <p>Browse public posts and videos from across UFIconnect's supported sources, without creating an account. Open a post to read more and see where it came from.</p>
+          <p>{locationContext?.available ? `Approximate area: ${[locationContext.city, locationContext.countryName || locationContext.country].filter(Boolean).join(', ')}. Public recommendations may use this area.` : 'Showing global public posts.'}</p>
           <p><Link to="/register">Create an account</Link> to personalize your feed, follow communities, and join conversations. Already a member? <Link to="/login">Sign in</Link>.</p>
         </section>
         <div className="guest-feed-banner">

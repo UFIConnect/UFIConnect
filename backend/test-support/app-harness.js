@@ -72,7 +72,7 @@ async function createAppHarness({ env = {}, connected = false, query, withClient
       createOAuthState, verifyOAuthState, dbRowToMemUser, saveSocialToken,
       normalizeFeedPost, dbRowToFeedPost, mapSharedJobPost, parseRSSItems, trimPostContent, savePostsToDBFast,
       savePostsToDB, savePostsToDBFast, parseYouTubeChannelRSS, buildSavedPostSnapshot, ARCHIVE_COLUMNS,
-      getFeedLocationContext, mainFeedSnapshotKey, mainFeedSnapshots,
+      getFeedLocationContext, feedPostLocationMatch, rankFeedPostsForLocation, jobMatchesUserLocation, mainFeedSnapshotKey, mainFeedSnapshots,
       getFollowingFeedPosts, getCommunityPosts, followingSourceCache,
       refreshConnectedAccessToken,
       createDPoPProof,

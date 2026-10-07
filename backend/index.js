@@ -56,7 +56,7 @@ const { createFeedReadAdmission } = require('./feed-read-admission');
 const { PUBLIC_GROUP_LEGACY_SOURCES, inferPublicGroupId } = require('./group-feed');
 const { GENERAL_UFI_GROUP_ID, isGeneralUfiFollowingPost, isFollowingSourceAllowed } = require('./following-scope');
 const { canonicalizePreferenceTopics, matchesPreferenceTopic } = require('./feed-preferences');
-const { trustedFeedNetworkLocation, memberFeedSnapshotKey } = require('./feed-location');
+const { ISO_COUNTRY_CODES, trustedFeedNetworkLocation, memberFeedSnapshotKey } = require('./feed-location');
 const { sourceAuthorProfileUrl, safePostLink } = require('./post-links.mjs');
 const {
   VIDEO_FEED_MIN_DURATION_SECONDS,
@@ -9370,18 +9370,7 @@ const COUNTRY_INPUT_CODES = {
 // DisplayNames can resolve the rest of ISO 3166-1 without maintaining a
 // partial hand-written country list. Keep aliases above for the common names
 // people actually type, then lazily build the wider lookup once per process.
-const ISO_COUNTRY_CODES = `
-  AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ
-  BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR
-  CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR
-  GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU
-  ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ
-  LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ
-  MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF
-  PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI
-  SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR
-  TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW
-`.trim().split(/\s+/);
+
 let countryInputCodesByName = null;
 
 function normalizedCountryInput(value) {
@@ -9396,7 +9385,7 @@ function normalizedCountryInput(value) {
 function countryCodeFromInput(value) {
   const input = String(value || '').trim();
   if (!input) return null;
-  if (/^[a-z]{2}$/i.test(input)) return input.toUpperCase();
+  if (/^[a-z]{2}$/i.test(input)) return ISO_COUNTRY_CODES.includes(input.toUpperCase()) ? input.toUpperCase() : null;
   const normalized = normalizedCountryInput(input);
   if (COUNTRY_INPUT_CODES[normalized]) return COUNTRY_INPUT_CODES[normalized];
   if (!countryInputCodesByName) {
@@ -9439,45 +9428,55 @@ function countryName(countryCode) {
   }
 }
 
-// Location is a ranking signal, never an identity/access-control decision.
-// Regular feeds follow the member's current verified network country. Saved
-// destinations still control Travel/Restaurants; missing network evidence
-// falls back to that member's choices without guessing a country.
+// Location is a coarse recommendation signal, never an access-control rule.
+const DESTINATION_FEED_MODES = new Set(['local', 'countries', 'restaurants', 'bars']);
+function feedLocationMode(req) {
+  return String(req.query?.mode || (req.path?.includes('/music') ? 'music' : req.path?.includes('/videos') ? 'videos' : 'feed'));
+}
+function normalizeRegionalFeedLocation(value) {
+  const mode = ['auto', 'manual', 'off'].includes(value?.mode) ? value.mode : 'auto';
+  const location = normalizeFeedLocation(value);
+  return { mode, country: mode === 'manual' ? countryCodeFromInput(location.country) || '' : '', city: mode === 'manual' ? location.city : '' };
+}
 function getFeedLocationContext(req, user = null) {
-  const saved = normalizeFeedLocation(user?.roleSettings?.feedLocation);
+  const settings = user?.roleSettings || {};
+  const feedMode = feedLocationMode(req);
+  const destination = DESTINATION_FEED_MODES.has(feedMode);
+  const preference = normalizeRegionalFeedLocation(settings.feedRegionalLocation);
   const network = trustedFeedNetworkLocation(req, { visitorLocationHeaders: process.env.CF_VISITOR_LOCATION_HEADERS === 'true' });
-  const destinationFeed = ['local', 'countries', 'restaurants', 'bars'].includes(req.query?.mode);
-  const useNetwork = !!network.country && !destinationFeed;
-  const requestedCountry = cleanLocationInput(req.query?.country);
-  const requestedCity = cleanLocationInput(req.query?.city);
-  const hasSavedLocation = !useNetwork && !!(saved.country || saved.city);
-  // Travel and Restaurants belong to the signed-in member. Once a member
-  // saves a location, query strings, a stale tab, and proxy geo headers must
-  // not silently replace it with somebody else's previous selection.
-  const selectedCountry = useNetwork ? network.country : hasSavedLocation ? saved.country : requestedCountry;
-  const city = useNetwork ? network.city : hasSavedLocation
-    ? saved.city
-    : requestedCity || network.city || null;
-  const country = countryCodeFromInput(selectedCountry) || (!selectedCountry && !hasSavedLocation ? getUserCountry(req) : null);
-  const region = hasSavedLocation || requestedCountry || requestedCity ? null : network.region || null;
-  const resolvedCountryName = countryName(country) || selectedCountry || null;
-  const declared = [
-    selectedCountry,
-    resolvedCountryName,
-    city,
-    ...(hasSavedLocation || useNetwork ? [] : [user?.location, user?.preferences?.location]),
-  ]
-    .map(cleanLocationInput)
-    .filter(Boolean);
-  return {
-    country,
-    countryName: resolvedCountryName,
-    city,
-    region,
-    declared,
-    source: useNetwork ? 'network' : hasSavedLocation ? 'member' : (requestedCountry || requestedCity ? 'request' : (country || city || region ? 'network' : 'none')),
-    available: !!(country || city || region || declared.length),
-  };
+  let selected = {}, source = 'none', mode = destination ? 'auto' : preference.mode;
+  if (destination) {
+    const hasScope = Object.prototype.hasOwnProperty.call(settings.feedLocations || {}, feedMode);
+    const saved = normalizeFeedLocation(hasScope ? settings.feedLocations[feedMode] : settings.feedLocation);
+    const requested = normalizeFeedLocation(req.query);
+    if (saved.country || saved.city) { selected = saved; source = 'member'; mode = 'manual'; }
+    else if (!hasScope && (requested.country || requested.city)) { selected = requested; source = 'request'; mode = 'manual'; }
+    else if (network.country) { selected = network; source = 'network'; }
+  } else if (mode === 'manual' && preference.country) {
+    selected = preference; source = 'member';
+  } else if (mode !== 'off') {
+    if (network.country) { selected = network; source = 'network'; }
+    else {
+      // A profile country is a fallback only when it is recognizable. Never
+      // infer a city from arbitrary profile text or borrow a travel destination.
+      const profileLocation = cleanLocationInput(user?.location || user?.preferences?.location);
+      const country = countryCodeFromInput(profileLocation);
+      if (country) { selected = { country }; source = 'member'; }
+    }
+  }
+  const country = countryCodeFromInput(selected.country);
+  const city = cleanLocationInput(selected.city) || null;
+  const region = cleanLocationInput(selected.region) || null;
+  const resolvedName = countryName(country);
+  const context = { country, countryName: resolvedName, city, region,
+    declared: [resolvedName, city, region].filter(Boolean), source,
+    available: Boolean(country || city || region), mode, feedMode };
+  req.feedLocationContext = context;
+  return context;
+}
+function publicFeedLocationContext(context) {
+  const { country, countryName, city, region, source, available, mode, feedMode } = context;
+  return { country, countryName, city, region, source, available, mode, feedMode };
 }
 
 // Job location strings are free text from each platform's own API
@@ -9522,78 +9521,100 @@ const COUNTRY_LOCATION_KEYWORDS = {
   KR: ['south korea', 'korea', 'seoul', 'busan'],
   HK: ['hong kong'],
 };
-// Present in the vast majority of real listings that aren't restricted to a
-// specific country — always counts as a match regardless of the user's
-// detected country, since "remote, anywhere" genuinely is a match for them.
-const GLOBAL_LOCATION_KEYWORDS = ['worldwide', 'anywhere', 'global', 'international', 'remote'];
-
+// "Remote" describes work arrangements, not eligibility in every country.
+const GLOBAL_LOCATION_KEYWORDS = ['worldwide', 'anywhere', 'all countries'];
+function locationText(value) {
+  return String(value || '').normalize('NFKD').replace(/\p{M}/gu, '')
+    .toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+function mentionsLocation(text, term) {
+  const normalized = locationText(term);
+  return Boolean(normalized && (' ' + locationText(text) + ' ').includes(' ' + normalized + ' '));
+}
+let locationCountryTerms = null;
+const explicitLocationCountryCache = new Map();
+function explicitLocationCountries(text) {
+  const key = String(text || '').slice(0, 1000);
+  if (explicitLocationCountryCache.has(key)) return explicitLocationCountryCache.get(key);
+  if (!locationCountryTerms) locationCountryTerms = [
+    ...ISO_COUNTRY_CODES.map(code => [locationText(countryName(code)), code]),
+    ...Object.entries(COUNTRY_INPUT_CODES).filter(([alias]) => alias.length > 2),
+  ];
+  const normalized = ' ' + locationText(key) + ' ';
+  const result = new Set();
+  for (const [term, code] of locationCountryTerms) {
+    if (normalized.includes(' ' + term + ' ')) result.add(code);
+  }
+  // "CA" in "San Diego, CA" is a state, not Canada. Only interpret
+  // unstructured codes as standalone countries or remote eligibility.
+  const codeTokens = key.match(/\b[A-Z]{2}\b/g) || [];
+  const eligibility = /^(?:[A-Z]{2}|(?:remote\b.*)|[A-Z]{2}\s+only)$/i.test(key.trim());
+  if (eligibility) for (const token of codeTokens) {
+    if (token === 'UK') result.add('GB');
+    else if (ISO_COUNTRY_CODES.includes(token)) result.add(token);
+  }
+  if (mentionsLocation(text, 'us only') || mentionsLocation(text, 'u.s.')) result.add('US');
+  if (mentionsLocation(text, 'uk')) result.add('GB');
+  if (explicitLocationCountryCache.size >= 2000) explicitLocationCountryCache.delete(explicitLocationCountryCache.keys().next().value);
+  explicitLocationCountryCache.set(key, result);
+  return result;
+}
+function isWorldwideLocation(text) {
+  return GLOBAL_LOCATION_KEYWORDS.some(term => mentionsLocation(text, term))
+    && explicitLocationCountries(text).size === 0
+    && !/\b(except|excluding|only|restricted|must|residen|citizen|eligible)\w*/i.test(String(text || ''));
+}
+function hasLocationExclusions(text) {
+  return /\b(except|excluding|excluded|not available|not eligible|ineligible|outside|other than)\b/i.test(String(text || ''));
+}
 function jobMatchesUserLocation(locationStr, countryCode) {
-  if (!locationStr) return false; // no real location data — never claim a match we can't back up
-  const loc = String(locationStr).toLowerCase();
-  if (GLOBAL_LOCATION_KEYWORDS.some(k => loc.includes(k))) return true;
+  if (!locationStr || hasLocationExclusions(locationStr)) return false;
+  if (isWorldwideLocation(locationStr)) return true;
   if (!countryCode) return false;
-  const keywords = COUNTRY_LOCATION_KEYWORDS[countryCode];
-  return !!keywords && keywords.some(k => loc.includes(k));
+  const explicit = explicitLocationCountries(locationStr);
+  if (explicit.size) return explicit.has(countryCode);
+  return (COUNTRY_LOCATION_KEYWORDS[countryCode] || []).some(term => mentionsLocation(locationStr, term));
 }
-
-function feedPostLocationMatch(post, locationContext) {
-  if (!post || !locationContext?.available) return { score: 0, type: null, label: null };
-
-  const explicitText = normalizePersonalizationTerm([
-    post.location,
-    post.city,
-    post.region,
-    post.country,
-  ].filter(Boolean).join(' '));
-  const contentText = feedPostPersonalizationText(post);
-  const preciseTerms = uniquePersonalizationTerms([
-    locationContext.city,
-    locationContext.region,
-    ...(locationContext.declared || []),
-  ], 8);
-  const countryTerms = uniquePersonalizationTerms([
-    ...(COUNTRY_LOCATION_KEYWORDS[locationContext.country] || []),
-    locationContext.countryName,
-  ], 8);
-  const matchesAny = (text, terms) => !!text && terms.some(term => textMentionsKeyword(text, term));
-
-  if (matchesAny(explicitText, preciseTerms)) {
-    return { score: 24, type: 'local', label: 'Near you' };
+function feedPostLocationMatch(post, context) {
+  const none = { score: 0, type: null, label: null };
+  if (!post || !context?.available || context.mode === 'off') return none;
+  const explicitText = [post.location, post.city, post.region, post.country, post.countryCode].filter(Boolean).join(' ');
+  if (hasLocationExclusions(explicitText)) return none;
+  const postCountry = countryCodeFromInput(post.countryCode || post.country);
+  const explicitCountries = postCountry ? new Set([postCountry]) : explicitLocationCountries(explicitText);
+  const countryConflict = context.country && explicitCountries.size && !explicitCountries.has(context.country);
+  if (countryConflict) return none;
+  if (isWorldwideLocation(explicitText)) return { score: 3, type: 'global', label: 'Available worldwide' };
+  const precise = [context.city, context.region].filter(Boolean);
+  const localTerm = precise.find(term => mentionsLocation(explicitText, term));
+  if (localTerm) return { score: 24, type: 'local', label: 'In ' + localTerm };
+  if (context.country && (explicitCountries.has(context.country) || jobMatchesUserLocation(explicitText, context.country))) {
+    return { score: 18, type: 'country', label: 'In ' + (context.countryName || context.country) };
   }
-  if (matchesAny(explicitText, countryTerms)) {
-    return { score: 18, type: 'country', label: 'Near you' };
-  }
-  if (locationContext.country === 'US' && post.source === 'usajobs') {
-    return { score: 12, type: 'country', label: 'Near you' };
-  }
-  if (matchesAny(explicitText, GLOBAL_LOCATION_KEYWORDS) || matchesAny(explicitText, ['online', 'virtual'])) {
-    return { score: 3, type: 'global', label: 'Available anywhere' };
-  }
-  if (matchesAny(contentText, preciseTerms)) {
-    return { score: 9, type: 'local', label: 'Near you' };
-  }
-  if (matchesAny(contentText, countryTerms)) {
-    return { score: 5, type: 'country', label: 'Near you' };
-  }
-  return { score: 0, type: null, label: null };
+  // A headline mentioning a place is relevant to it; it is not evidence
+  // that the author, event, or job is physically nearby.
+  const content = [post.title, post.content].filter(Boolean).join(' ');
+  const mentioned = precise.find(term => mentionsLocation(content, term));
+  if (mentioned) return { score: 9, type: 'topic', label: 'About ' + mentioned };
+  if (context.countryName && mentionsLocation(content, context.countryName)) return { score: 5, type: 'topic', label: 'About ' + context.countryName };
+  return none;
 }
-
+function withoutFeedLocationMatch(post) {
+  if (!post || (!('matchedByLocation' in post) && !('locationMatch' in post) && !('locationMatchLabel' in post))) return post;
+  const { matchedByLocation, locationMatch, locationMatchLabel, ...raw } = post;
+  return raw;
+}
 function withFeedLocationMatch(post, match) {
-  if (!match?.score) return post;
-  return {
-    ...post,
-    matchedByLocation: true,
-    locationMatch: match.type,
-    locationMatchLabel: match.label,
-  };
+  const raw = withoutFeedLocationMatch(post);
+  return !match?.score ? raw : { ...raw, matchedByLocation: true, locationMatch: match.type, locationMatchLabel: match.label };
 }
 
 // Reorders only within short chunks. Local posts can rise into view without
 // destroying source equalization, chronological pagination, or the user's
 // topic/role ranking. No post is removed because geo headers are approximate.
 function rankFeedPostsForLocation(posts, locationContext, options = {}) {
-  const list = Array.isArray(posts) ? posts.filter(Boolean) : [];
-  if (!list.length || !locationContext?.available) return list;
+  const list = Array.isArray(posts) ? posts.filter(Boolean).map(withoutFeedLocationMatch) : [];
+  if (!list.length || !locationContext?.available || locationContext.mode === 'off') return list;
 
   const preserveFirst = Math.max(0, Math.min(Number(options.preserveFirst) || 0, list.length));
   const chunkSize = Math.max(4, Math.min(Number(options.chunkSize) || PERSONALIZED_FEED_CHUNK_SIZE, 30));
@@ -12009,9 +12030,7 @@ function locationFeedUsageScore(post, userAffinity) {
 }
 
 function locationFeedRelevanceScore(post, locationContext, userAffinity) {
-  const locationScore = post?.matchedByLocation
-    ? (post.locationMatch === 'local' ? 24 : 18)
-    : feedPostLocationMatch(post, locationContext).score;
+  const locationScore = feedPostLocationMatch(post, locationContext).score;
   return locationScore + locationFeedUsageScore(post, userAffinity);
 }
 
@@ -20835,6 +20854,13 @@ app.get('/profile', authenticate, async (req, res) => {
   res.json(await effectiveProfile(user));
 });
 
+app.get('/feed/location', authenticate, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  const user = await getUser(req.user.id);
+  if (!user) return res.status(404).json({ message: 'Not found.' });
+  return res.json({ locationContext: publicFeedLocationContext(getFeedLocationContext(req, user)) });
+});
+
 app.patch('/profile', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
@@ -20862,6 +20888,29 @@ app.patch('/profile', authenticate, async (req, res) => {
   if (hasCoverUpdate && normalizedCoverUrl === null) {
     return res.status(400).json({ message: 'Cover photos must use a valid HTTPS image URL.' });
   }
+  const roleSettingsPatch = roleSettings && typeof roleSettings === 'object' && !Array.isArray(roleSettings) ? { ...roleSettings } : {};
+  if (Object.prototype.hasOwnProperty.call(roleSettingsPatch, 'feedRegionalLocation')) {
+    const value = roleSettingsPatch.feedRegionalLocation;
+    if (!value || !['auto', 'manual', 'off'].includes(value.mode) || (value.mode === 'manual' && !countryCodeFromInput(value.country))) {
+      return res.status(400).json({ message: 'Choose Auto, Off, or a valid country for your saved region.' });
+    }
+    roleSettingsPatch.feedRegionalLocation = normalizeRegionalFeedLocation(value);
+  }
+  if (Object.prototype.hasOwnProperty.call(roleSettingsPatch, 'feedLocations')) {
+    const value = roleSettingsPatch.feedLocations;
+    if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !DESTINATION_FEED_MODES.has(key))) {
+      return res.status(400).json({ message: 'Choose a supported feed for this location.' });
+    }
+    const normalized = {};
+    for (const [key, item] of Object.entries(value)) {
+      const location = normalizeFeedLocation(item);
+      if ((location.country && !countryCodeFromInput(location.country)) || (location.city && !location.country)) {
+        return res.status(400).json({ message: 'Choose a valid country along with your city.' });
+      }
+      normalized[key] = { country: countryCodeFromInput(location.country) || '', city: location.city };
+    }
+    roleSettingsPatch.feedLocations = normalized;
+  }
   // Snapshot in case the DB write fails and in-memory needs to roll back to
   // what's actually durable — an "ok" response should mean it's really saved.
   const prev = { name: user.name, title: user.title, bio: user.bio, skills: user.skills,
@@ -20874,9 +20923,7 @@ app.patch('/profile', authenticate, async (req, res) => {
   if (organization !== undefined) user.organization = organization;
   if (links !== undefined) user.links = links;
   if (roleSettings !== undefined) {
-    const nextRoleSettings = roleSettings && typeof roleSettings === 'object' && !Array.isArray(roleSettings)
-      ? { ...roleSettings }
-      : {};
+    const nextRoleSettings = roleSettingsPatch;
     if (Object.prototype.hasOwnProperty.call(nextRoleSettings, 'feedLocation')) {
       nextRoleSettings.feedLocation = normalizeFeedLocation(nextRoleSettings.feedLocation);
     }
@@ -20889,7 +20936,8 @@ app.patch('/profile', authenticate, async (req, res) => {
     if (Object.prototype.hasOwnProperty.call(nextRoleSettings, 'blockedFeedAccounts')) {
       nextRoleSettings.blockedFeedAccounts = normalizeBlockedFeedAccounts(nextRoleSettings.blockedFeedAccounts);
     }
-    user.roleSettings = { ...(user.roleSettings || {}), ...nextRoleSettings };
+    user.roleSettings = { ...(user.roleSettings || {}), ...nextRoleSettings,
+      ...(nextRoleSettings.feedLocations ? { feedLocations: { ...(user.roleSettings?.feedLocations || {}), ...nextRoleSettings.feedLocations } } : {}) };
   }
   // Trusts the URL as given rather than re-validating it points at our own
   // Cloudinary account — same trust boundary as mediaUrl on regular posts
@@ -20909,9 +20957,11 @@ app.patch('/profile', authenticate, async (req, res) => {
   try {
     if (isDBId(user.id)) {
       const { rows } = await db.query(
-        `UPDATE users SET name=$1,title=$2,bio=$3,skills=$4,organization=$5,links=$6,role_settings=$7,profile_hidden=$8,avatar_url=$9,cover_url=$10,phone=$11 WHERE id=$12 RETURNING *`,
+        `UPDATE users SET name=$1,title=$2,bio=$3,skills=$4,organization=$5,links=$6,role_settings=(COALESCE(role_settings, '{}'::jsonb)::jsonb || ($7::jsonb - 'feedLocations')) ||
+          CASE WHEN $7::jsonb ? 'feedLocations' THEN jsonb_build_object('feedLocations',
+            COALESCE(role_settings->'feedLocations', '{}'::jsonb)::jsonb || ($7::jsonb->'feedLocations')) ELSE '{}'::jsonb END,profile_hidden=$8,avatar_url=$9,cover_url=$10,phone=$11 WHERE id=$12 RETURNING *`,
         [user.name, user.title, user.bio, user.skills, user.organization,
-         JSON.stringify(user.links || {}), JSON.stringify(user.roleSettings || {}), user.profileHidden || false,
+         JSON.stringify(user.links || {}), JSON.stringify(roleSettingsPatch), user.profileHidden || false,
          user.avatarUrl || '', user.coverUrl || '', user.phone || '', user.id]
       );
       if (!rows[0]) throw new Error('Profile record was not found after save');
@@ -22031,12 +22081,13 @@ async function handleFeedRequest(req, res) {
     // source cap afterwards; Restaurants has one synthetic source, so it
     // returned two rows and silently skipped the other 48 on every page.
     const available = orderNewestFeedCohorts(buildLocationAwareMemberEqualizer(
-      eligiblePosts,
+      eligiblePosts.map(post => withFeedLocationMatch(post, feedPostLocationMatch(post, locationContext))),
       userAffinity,
       locationContext,
     ));
     const locationPage = paginateEqualizedPool(available, {
       mode: feedMode,
+      scope: memberFeedSnapshotKey(req.user.id, 'location', '', locationContext),
       cursorMap: decodeFeedCursor(req.query.cursor),
       page: reqPage,
       limit: feedLimit,
@@ -23802,7 +23853,7 @@ app.get('/office/feed/music', authenticate, videoReadAdmission.wrap(async (req, 
       [post.title, post.topic, post.genre, ...asArray(post.tags)].join(' ').toLowerCase().replace(/[-\s]+/g, ' ').includes(genre));
     const posts = rankFeedPostsForLocation(selected, getFeedLocationContext(req, user));
     markPostsSeen(req.user.id, posts, 'videos');
-    res.set('Cache-Control', 'private, no-store').json({ posts, cursor: result.nextCursor, ...continuousVideoPageMeta(req.query, result.hasMore) });
+    await sendFeedResponse(req, res, { posts, cursor: result.nextCursor, ...continuousVideoPageMeta(req.query, result.hasMore) });
   } catch (error) {
     console.error('[music feed]', error.message);
     res.status(503).json({ error: 'Music is temporarily unavailable. Please try again.', posts: [], hasMore: true });
@@ -27496,6 +27547,7 @@ async function sendFeedResponse(req, res, payload) {
   const viewerId = req.user?.id || null;
   res.set?.('Cache-Control', viewerId ? 'private, no-store' : 'no-cache');
   const result = { ...payload };
+  if (req.feedLocationContext) result.locationContext = publicFeedLocationContext(req.feedLocationContext);
   if (Array.isArray(payload.posts)) result.posts = await hydratePostLikes(db, payload.posts, viewerId);
   if (Array.isArray(payload.liveFeeds)) result.liveFeeds = await hydratePostLikes(db, payload.liveFeeds, viewerId);
   if (payload.post) [result.post] = await hydratePostLikes(db, [payload.post], viewerId);
@@ -29644,12 +29696,13 @@ app.get('/opportunities', authenticate, async (req, res) => {
   // to pick from for the current type, not last request's selection.
   const sourcesParam = (req.query.sources || '').split(',').map(s => s.trim()).filter(Boolean);
   const sourceSet = sourcesParam.length ? new Set(sourcesParam) : null;
-  const userCountry = getUserCountry(req);
+  res.set('Cache-Control', 'private, no-store');
   const [user, resumeContext, userAffinity] = await Promise.all([
     getUser(req.user.id),
     getUserResumeContext(req.user.id),
     getUserAffinity(req.user.id),
   ]);
+  const locationContext = getFeedLocationContext(req, user);
   const role       = user?.preferences?.role || '';
   const userTitle  = user?.title || '';           // e.g. "Senior Frontend Engineer"
   const experience = user?.preferences?.experience || 'mid';
@@ -29848,7 +29901,8 @@ app.get('/opportunities', authenticate, async (req, res) => {
     // / locations[].name from Remotive/Muse/Remote OK) matched against the
     // user's Cloudflare-detected country. Never claims a match when a
     // listing has no location info at all.
-    if (jobMatchesUserLocation(o.location, userCountry)) { score += 2; reasons.push('Near you'); }
+    const locationMatch = feedPostLocationMatch(o, locationContext);
+    if (locationMatch.score) { score += locationMatch.type === 'global' ? 1 : 2; reasons.push(locationMatch.label); }
 
     // 8. Platform legitimacy — every live listing already cleared the hard
     // bar above (real title, real employer, a genuine per-posting URL), but
@@ -29955,6 +30009,7 @@ app.get('/opportunities', authenticate, async (req, res) => {
 
   res.json({
     opportunities: page,
+    locationContext: publicFeedLocationContext(locationContext),
     totalCount,
     hasMore: limit > 0 ? (offset + limit) < totalCount : false,
     meta: OP_TYPE_META,
@@ -31757,7 +31812,7 @@ app.get('/command-center/your-content', authenticate, async (req, res) => {
       author: post.author || { name: post.sourceLabel || user.name || 'Your account' },
     })), user, platform);
     const locationRanked = rankFeedPostsForLocation(posts, getFeedLocationContext(req, user));
-    res.json({ posts: locationRanked, connectedAt: window.connectedAt, syncStartAt: window.startAt, totalAvailable: locationRanked.length });
+    await sendFeedResponse(req, res, { posts: locationRanked, connectedAt: window.connectedAt, syncStartAt: window.startAt, totalAvailable: locationRanked.length });
   } catch (e) {
     console.error(`[/command-center/your-content] ${platform}:`, e.message);
     if (platform === 'youtube' && e.message.startsWith('YouTube access expired or was revoked.')) {
@@ -31816,7 +31871,7 @@ app.get('/command-center/your-content/feed', authenticate, async (req, res) => {
     rankFeedPostsForLocation(equalized, getFeedLocationContext(req, user))
   );
   const pageRows = locationRanked.slice(offset, offset + limit);
-  res.json({
+  await sendFeedResponse(req, res, {
     posts: pageRows,
     page,
     limit,
