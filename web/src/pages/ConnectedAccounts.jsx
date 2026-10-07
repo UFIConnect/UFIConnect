@@ -59,6 +59,7 @@ export default function ConnectedAccounts() {
   const [connecting, setConnecting]     = useState(null);
   const [disconnecting, setDisconnecting] = useState(null);
   const [accountFilter, setAccountFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
   // null = modal closed; '' or partial text = open, mid-typing. Bluesky is
   // the one platform with no fixed authorization URL (AT Protocol is
   // federated — the handle is how we find which server to route to), so it
@@ -184,12 +185,22 @@ export default function ConnectedAccounts() {
   // then wondering why it only appears in their private workspace.
   const careerPlatforms = platforms.filter(([, p]) => p.category === 'career');
   const generalPlatforms = platforms.filter(([, p]) => p.category !== 'career' && !p.commandCenterOnly);
-  const displayedGeneral = filterAccounts(generalPlatforms, connected, accountFilter);
-  const displayedCareer = filterAccounts(careerPlatforms, connected, accountFilter);
+  const accountCategories = accountSections(isBusinessMembership ? careerPlatforms : generalPlatforms, connected);
+  const activeCategory = accountCategories.some(section => section.id === categoryFilter) ? categoryFilter : 'all';
+  const selectedCategory = accountCategories.find(section => section.id === activeCategory);
+  const selectedKeys = selectedCategory && new Set(selectedCategory.items.map(([key]) => key));
+  const inSelectedCategory = ([key]) => !selectedKeys || selectedKeys.has(key);
+  const displayedGeneral = filterAccounts(generalPlatforms.filter(inSelectedCategory), connected, accountFilter);
+  const displayedCareer = filterAccounts(careerPlatforms.filter(inSelectedCategory), connected, accountFilter);
   const connectedCareerCount = careerPlatforms.filter(([key]) => connected[key]).length;
   const connectedList   = displayedGeneral.filter(([k]) => connected[k]);
-  const generalSections = accountSections(generalPlatforms, connected, accountFilter);
+  const generalSections = accountSections(generalPlatforms, connected, accountFilter)
+    .filter(section => activeCategory === 'all' || section.id === activeCategory);
   const totalConnected = generalPlatforms.filter(([key]) => connected[key]).length;
+  const categoryOptions = [
+    { id: 'all', label: 'All', count: filterAccounts(isBusinessMembership ? careerPlatforms : generalPlatforms, connected, accountFilter).length },
+    ...accountCategories.map(section => ({ id: section.id, label: section.label, count: filterAccounts(section.items, connected, accountFilter).length })),
+  ];
 
   return (
     <Layout>
@@ -296,10 +307,23 @@ export default function ConnectedAccounts() {
             </div>
           </section>}
           <div className="account-directory-page">
+            <fieldset className="account-category-filter" aria-label="Account categories">
+              <legend>Categories</legend>
+              <ul>
+                {categoryOptions.map(category => <li key={category.id}>
+                  <button type="button" aria-pressed={activeCategory === category.id} onClick={() => setCategoryFilter(category.id)}>
+                    {category.label} <span>{category.count}</span>
+                  </button>
+                </li>)}
+              </ul>
+            </fieldset>
             <DirectoryControls label="accounts" filter={accountFilter} onFilterChange={setAccountFilter}
               options={[["all", "All statuses"], ...ACCOUNT_STATUSES]} />
           </div>
-          {!(isBusinessMembership ? displayedCareer : displayedGeneral).length && <p className="source-directory-empty" role="status">No matching accounts</p>}
+          {!(isBusinessMembership ? displayedCareer : displayedGeneral).length && <div className="source-directory-empty account-directory-empty" role="status">
+            <p>No matching accounts</p>
+            {(activeCategory !== 'all' || accountFilter !== 'all') && <button type="button" className="btn btn-outline btn-sm" onClick={() => { setCategoryFilter('all'); setAccountFilter('all'); }}>Clear filters</button>}
+          </div>}
           {isBusinessMembership && displayedCareer.length > 0 && <section style={{ marginBottom: 28 }} aria-labelledby="career-sites-heading">
             <div id="career-sites-heading" style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 6 }}>
               Career accounts

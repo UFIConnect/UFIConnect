@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BookOpen, RotateCw, Search, X } from 'lucide-react';
+import { RotateCw, Search, X } from 'lucide-react';
 import client from '../api/client';
 
 export function useTravelDestinations() {
@@ -29,14 +29,13 @@ export const travelCityMatches = (destination, place) => Boolean(destination?.ci
   && [destination.country, destination.countryCode].filter(Boolean).some(value =>
     [place.country, place.countryCode].filter(Boolean).some(country => normalizeCountry(value) === normalizeCountry(country)));
 
-export default function TravelDestinationPicker({ destinations, selected, disabled, onSelect, onGuideOpen, query, onQueryChange, feeds = [], activeCameraId, error, retry }) {
+export default function TravelDestinationPicker({ destinations, selected, disabled, onSelect, query, onQueryChange, feeds = [], activeCameraId, error, retry }) {
   const terms = normalize(query).split(/\s+/).filter(Boolean);
   const matches = destinations.filter(city => terms.every(term => normalize([city.city, city.country, city.countryCode].join(' ')).includes(term)));
   return (
     <div className="travel-destination-picker">
       <div className="travel-city-rail-heading">
         <strong aria-live="polite">Cities{destinations.length ? ` (${terms.length ? matches.length + ' of ' : ''}${destinations.length})` : ''}</strong>
-        {selected && onGuideOpen && <button type="button" className="btn btn-ghost btn-sm" onClick={() => onGuideOpen(selected)}><BookOpen size={14} aria-hidden="true" />City guide</button>}
       </div>
       <div className="travel-city-search">
         <Search size={17} aria-hidden="true" />
