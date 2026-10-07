@@ -12,7 +12,7 @@ import { createAuthenticatedStream } from '../api/authenticatedStream';
 ﻿import { useState, useEffect, useCallback, useRef, useMemo, Component, memo } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
-import { ArrowLeft, ArrowRight, Martini, Plane, RotateCw, Utensils } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BookOpen, Martini, Plane, RotateCw, Utensils } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
@@ -1181,7 +1181,10 @@ function TravelLiveLoop({ feeds = [], mediaOpenId, location, onLocationSelect, o
           <div className="travel-live-loop-title">Live travel</div>
           <div className="travel-live-loop-subtitle">{selected ? [selected.city, selected.country].filter(Boolean).join(', ') : 'Browse cities and live cameras'}</div>
         </div>
-        {active && <span className="travel-live-loop-status"><span aria-hidden="true" />Live now</span>}
+        <div className="travel-live-header-actions">
+          {selected && onGuideOpen && <button type="button" className="btn btn-ghost btn-sm" onClick={() => onGuideOpen(selected)}><BookOpen size={14} aria-hidden="true" />City guide</button>}
+          {active && <span className="travel-live-loop-status"><span aria-hidden="true" />Live now</span>}
+        </div>
       </div>
       {active && embedId ? <div className="travel-live-loop-stage">
         <YouTubeEmbedBlock
@@ -1219,7 +1222,7 @@ function TravelLiveLoop({ feeds = [], mediaOpenId, location, onLocationSelect, o
         <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => moveCity(1)} aria-label="Next city">Next<ArrowRight size={17} /></button>
       </div>}
       <TravelDestinationPicker destinations={destinations} selected={selected} disabled={busy}
-        onSelect={selectCity} onGuideOpen={onGuideOpen} query={cityQuery} onQueryChange={setCityQuery} feeds={availableFeeds} activeCameraId={active?.id} error={error} retry={retry} />
+        onSelect={selectCity} query={cityQuery} onQueryChange={setCityQuery} feeds={availableFeeds} activeCameraId={active?.id} error={error} retry={retry} />
     </section>
   );
   return expanded ? <TravelViewerDialog onClose={() => { setExpanded(false); requestAnimationFrame(() => watchRef.current?.focus({preventScroll:true})); }}>{content}</TravelViewerDialog> : content;
@@ -1896,7 +1899,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
             </div>
           )}
 
-          {commUrl && (
+          {commUrl && sectionLabel !== 'Replies' && (
             <a
               href={commUrl}
               target="_blank"

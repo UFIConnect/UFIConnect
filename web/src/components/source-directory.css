@@ -16,6 +16,15 @@
 .home-account-category-heading h4 { margin: 0; color: var(--text); font-size: .78rem; font-weight: 700; }
 .home-account-category-heading span { color: var(--muted); font-size: .68rem; font-variant-numeric: tabular-nums; }
 .account-directory-page .source-directory-controls { max-width: 320px; }
+.account-category-filter { min-width: 0; margin: 0 0 14px; padding: 0; border: 0; }
+.account-category-filter legend { margin-bottom: 8px; padding: 0; color: var(--muted); font-size: .78rem; font-weight: 600; }
+.account-category-filter ul { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.account-category-filter li { min-width: 0; max-width: 100%; }
+.account-category-filter button { display: flex; align-items: center; justify-content: space-between; gap: 8px; max-width: 100%; min-height: 40px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--bg-secondary); color: var(--text); font-family: inherit; font-size: .8rem; text-align: left; cursor: pointer; }
+.account-category-filter button[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); color: #fff; }
+.account-category-filter button:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.account-category-filter button span { font-variant-numeric: tabular-nums; font-size: .72rem; opacity: .85; }
+.account-directory-empty p { margin: 0 0 10px; }
 .account-category-section { min-width: 0; margin-bottom: 24px; }
 .account-category-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 10px; padding-bottom: 9px; border-bottom: 1px solid var(--border); }
 .account-category-heading h2, .account-category-heading h3 { margin: 0; color: var(--text); font-size: .95rem; font-weight: 700; }
