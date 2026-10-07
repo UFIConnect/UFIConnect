@@ -10276,6 +10276,10 @@ const LIVE_CAMERA_CATALOG = Object.freeze([
   })),
 ]);
 const LIVE_CAMERA_BY_ID = new Map(LIVE_CAMERA_CATALOG.map(camera => [camera.id, camera]));
+// Operator-published streams avoid spending a search request to rediscover
+// known cameras. These are candidates only: every playback still requires
+// fresh YouTube confirmation that the stream is live, public and embeddable.
+const OPERATOR_CAMERA_STREAMS = require('./travel-camera-streams.json');
 let liveCameraPostsSeeded = false;
 let liveCameraPostsSeedPromise = null;
 const LIVE_CAMERA_VERIFICATION_CACHE_MS = 3 * MIN;
@@ -10356,8 +10360,8 @@ function liveCameraPost(camera) {
     id: camera.id,
     authorId: null,
     groupId: null,
-    title: camera.title,
-    content: camera.content,
+    title: candidate?.title || camera.title,
+    content: candidate?.title ? `Live camera in ${camera.city}, ${camera.country}.${candidate.channelTitle ? ' Stream by ' + candidate.channelTitle + '.' : ''}` : camera.content,
     likes: [],
     commentsCount: 0,
     createdAt: camera.createdAt,
@@ -10584,6 +10588,8 @@ async function discoverLiveCameraReplacement(camera) {
 function withVerifiedLiveCameraStream(post, stream) {
   return {
     ...post,
+    title: stream.title || post.title,
+    content: stream.title ? `Live camera in ${post.city}, ${post.country}.${stream.channelTitle ? ' Stream by ' + stream.channelTitle + '.' : ''}` : post.content,
     sourceUrl: stream.sourceUrl,
     mediaUrl: stream.sourceUrl,
     mediaType: 'video',
@@ -10644,7 +10650,8 @@ function scheduleLiveCameraDiscovery(cameraPosts, requested = false) {
 async function refreshVerifiedLiveCameraPosts(location = null) {
   const started = Date.now();
   const candidates = currentLiveCameraPosts();
-  const primaryIds = candidates.map(post => liveCameraYouTubeId(post.sourceUrl)).filter(Boolean);
+  const primaryIds = [...candidates.map(post => liveCameraYouTubeId(post.sourceUrl)),
+    ...OPERATOR_CAMERA_STREAMS.map(stream => stream.videoId)].filter(Boolean);
   const states = primaryIds.length ? await fetchYouTubeLiveStates(primaryIds) : new Map();
   if (primaryIds.length && !states) {
     liveCameraVerificationState.status = 'degraded';
@@ -10661,16 +10668,24 @@ async function refreshVerifiedLiveCameraPosts(location = null) {
   const unresolved = [];
 
   for (const post of candidates) {
-    const videoId = liveCameraYouTubeId(post.sourceUrl);
-    const state = videoId ? states?.get(videoId) : null;
+    let videoId = liveCameraYouTubeId(post.sourceUrl);
+    let state = videoId ? states?.get(videoId) : null;
+    const operatorStream = !(state?.live && state.embeddable) && OPERATOR_CAMERA_STREAMS.find(stream => {
+      const verified = states?.get(stream.videoId);
+      return travelCityMatches(post, stream) && verified?.live && verified.embeddable;
+    });
+    if (operatorStream) {
+      videoId = operatorStream.videoId;
+      state = states.get(videoId);
+    }
     if (state?.live && state.embeddable) {
       const existing = getResolvedLiveCameraStream(post.id) || liveCameraDiscoveryCache.get(post.id)?.stream;
       const stream = {
-        sourceUrl: post.sourceUrl,
+        sourceUrl: operatorStream ? liveCameraYouTubeUrl(videoId) : post.sourceUrl,
         videoId,
-        replacement: Boolean(existing?.replacement),
-        title: existing?.title || null,
-        channelTitle: existing?.channelTitle || null,
+        replacement: operatorStream ? false : Boolean(existing?.replacement),
+        title: operatorStream?.title || existing?.title || null,
+        channelTitle: operatorStream?.channelTitle || existing?.channelTitle || null,
       };
       rememberResolvedLiveCameraStream(post.id, stream);
       verified.push(withVerifiedLiveCameraStream(post, stream));

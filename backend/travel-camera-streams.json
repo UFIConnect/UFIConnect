@@ -1,0 +1,224 @@
+[
+  {
+    "destinationId": "NL:Amsterdam",
+    "city": "Amsterdam",
+    "country": "Netherlands",
+    "countryCode": "NL",
+    "videoId": "2tgHBRFHMm8",
+    "operator": "ProRail",
+    "channelId": "UCn4oQ60oxfvq7aesEPYqpKw",
+    "sourceUrl": "https://www.youtube.com/watch?v=2tgHBRFHMm8",
+    "operatorUrl": "https://www.prorail.nl/bouwen-op-een-eiland/livestreams",
+    "title": "Amsterdam De Vijf Bruggen camera 1",
+    "checkedAt": "2026-10-07T06:14:56.852Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "ProRail"
+  },
+  {
+    "destinationId": "US:Chicago",
+    "city": "Chicago",
+    "country": "United States",
+    "countryCode": "US",
+    "videoId": "O0UGT7AT3aw",
+    "operator": "EarthCam",
+    "channelId": "UC6qrG3W8SMK0jior2olka3g",
+    "sourceUrl": "https://www.youtube.com/watch?v=O0UGT7AT3aw",
+    "operatorUrl": "https://www.earthcam.com/",
+    "title": "EarthCam Live:  Chicago Skydeck Cam (Chicago, IL)",
+    "checkedAt": "2026-10-07T06:14:56.852Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "EarthCam"
+  },
+  {
+    "destinationId": "IE:Dublin",
+    "city": "Dublin",
+    "country": "Ireland",
+    "countryCode": "IE",
+    "videoId": "3nyPER2kzqk",
+    "operator": "EarthCam",
+    "channelId": "UC6qrG3W8SMK0jior2olka3g",
+    "sourceUrl": "https://www.youtube.com/watch?v=3nyPER2kzqk",
+    "operatorUrl": "https://www.earthcam.com/",
+    "title": "EarthCam Live: Dublin, Ireland",
+    "checkedAt": "2026-10-07T06:14:56.852Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "EarthCam"
+  },
+  {
+    "destinationId": "US:Las_Vegas",
+    "city": "Las Vegas",
+    "country": "United States",
+    "countryCode": "US",
+    "videoId": "_rmUXOHSf0w",
+    "operator": "EarthCam",
+    "channelId": "UC6qrG3W8SMK0jior2olka3g",
+    "sourceUrl": "https://www.youtube.com/watch?v=_rmUXOHSf0w",
+    "operatorUrl": "https://www.earthcam.com/",
+    "title": "EarthCam Live:  Allegiant Stadium (Las Vegas, NV)",
+    "checkedAt": "2026-10-07T06:14:56.852Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "EarthCam"
+  },
+  {
+    "destinationId": "GB:London",
+    "city": "London",
+    "country": "United Kingdom",
+    "countryCode": "GB",
+    "videoId": "zMCea32gpmg",
+    "operator": "EarthCam",
+    "channelId": "UC6qrG3W8SMK0jior2olka3g",
+    "sourceUrl": "https://www.youtube.com/watch?v=zMCea32gpmg",
+    "operatorUrl": "https://www.earthcam.com/uk/england/london/abbeyroad/",
+    "title": "EarthCam Live:  Abbey Road Crossing (London, England)",
+    "checkedAt": "2026-10-07T06:14:25.189Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "EarthCam"
+  },
+  {
+    "destinationId": "US:New_Orleans",
+    "city": "New Orleans",
+    "country": "United States",
+    "countryCode": "US",
+    "videoId": "xqdukYhcGEU",
+    "operator": "EarthCam",
+    "channelId": "UC6qrG3W8SMK0jior2olka3g",
+    "sourceUrl": "https://www.youtube.com/watch?v=xqdukYhcGEU",
+    "operatorUrl": "https://www.earthcam.com/",
+    "title": "EarthCam Live: New Orleans Street View",
+    "checkedAt": "2026-10-07T06:14:25.189Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "EarthCam"
+  },
+  {
+    "destinationId": "US:New_York_City",
+    "city": "New York",
+    "country": "United States",
+    "countryCode": "US",
+    "videoId": "JQ_jwk_7OVE",
+    "operator": "EarthCam",
+    "channelId": "UC6qrG3W8SMK0jior2olka3g",
+    "sourceUrl": "https://www.youtube.com/watch?v=JQ_jwk_7OVE",
+    "operatorUrl": "https://www.earthcam.com/usa/newyork/timessquare/",
+    "title": "EarthCam Live:  Times Square North 4K",
+    "checkedAt": "2026-10-07T06:14:56.852Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "EarthCam"
+  },
+  {
+    "destinationId": "NO:Oslo",
+    "city": "Oslo",
+    "country": "Norway",
+    "countryCode": "NO",
+    "videoId": "qyeyVNulaiU",
+    "operator": "Norway Live",
+    "channelId": "UCgAmmVZsZ4vfDH-vtWawaOg",
+    "sourceUrl": "https://www.youtube.com/watch?v=qyeyVNulaiU",
+    "operatorUrl": "https://www.norwaylive.tv/",
+    "title": "Oslo Skimore LIVE",
+    "checkedAt": "2026-10-07T06:15:52.425Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "note": "Skimore Oslo ski slopes at Tryvann, within Oslo; label the resort view explicitly.",
+    "channelTitle": "Norway Live"
+  },
+  {
+    "destinationId": "FR:Paris",
+    "city": "Paris",
+    "country": "France",
+    "countryCode": "FR",
+    "videoId": "-xzg3wujOVM",
+    "operator": "PARIS TV",
+    "channelId": "UCjgiKi29C--6aW3pgn0l5JA",
+    "sourceUrl": "https://www.youtube.com/watch?v=-xzg3wujOVM",
+    "operatorUrl": "https://www.paris-tv.com/",
+    "title": "Sacré-Cœur de Montmartre - Live Webcam 24/7 | PARIS TV",
+    "checkedAt": "2026-10-07T06:14:25.189Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "PARIS TV"
+  },
+  {
+    "destinationId": "CZ:Prague",
+    "city": "Prague",
+    "country": "Czech Republic",
+    "countryCode": "CZ",
+    "videoId": "kvYMIaXclIE",
+    "operator": "CamStreamer",
+    "channelId": "UCs8QCDKYww0gFmZkJ3JHiBQ",
+    "sourceUrl": "https://www.youtube.com/watch?v=kvYMIaXclIE",
+    "operatorUrl": "https://camstreamer.com/live/stream/836155166-creative-live-streaming-from-prague",
+    "title": "Creative Live streaming from Prague (Czech Republic) by CamStreamer",
+    "checkedAt": "2026-10-07T06:15:52.425Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "note": "Operator camera moves between Prague views and includes graphic overlays; avoid naming one fixed landmark.",
+    "channelTitle": "CamStreamer"
+  },
+  {
+    "destinationId": "JP:Tokyo",
+    "city": "Tokyo",
+    "country": "Japan",
+    "countryCode": "JP",
+    "videoId": "8H3nRCFVR6Y",
+    "operator": "ANNnewsCH",
+    "channelId": "UCGCZAYq5Xxojl_tSXcVJhiQ",
+    "sourceUrl": "https://www.youtube.com/watch?v=8H3nRCFVR6Y",
+    "operatorUrl": "https://news.tv-asahi.co.jp/",
+    "title": "【ライブ】渋谷スクランブル交差点 / Shibuya Scramble Crossing Live Camera【LIVE】ANN/テレ朝",
+    "checkedAt": "2026-10-07T06:14:25.189Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "ANNnewsCH"
+  }
+]

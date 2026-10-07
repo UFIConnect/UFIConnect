@@ -22,6 +22,13 @@ test('Travel adds 50 unique guide cities and exposes all 91 destinations', async
   assert.ok(list.every(d => d.guideUrl.startsWith('https://en.wikivoyage.org/wiki/')));
   assert.match(list.find(d => d.city === 'Queenstown').guideUrl, /Queenstown_\(New_Zealand\)/);
   assert.match(list.find(d => d.city === 'Oaxaca').guideUrl, /Oaxaca_\(city\)/);
+  for (const stream of require('./travel-camera-streams.json')) {
+    const destination=list.find(city=>city.id===stream.destinationId);
+    assert.ok(destination,'operator cameras must belong to the published city catalog');
+    assert.equal(destination.city,stream.city);
+    assert.equal(destination.countryCode,stream.countryCode);
+    assert.equal(stream.sourceUrl,'https://www.youtube.com/watch?v='+stream.videoId);
+  }
 });
 
 test('city matching is exact, accent-insensitive, and country-aware', async t => {
@@ -174,6 +181,41 @@ test('replacement discovery rejects unrelated streams before verifying candidate
   } } } });
   const stream = await app.discoverLiveCameraReplacement(app.LIVE_CAMERA_CATALOG.find(camera => camera.city === 'London'));
   assert.equal(stream.videoId, 'j9Sa4uBGGQ0');
+});
+
+test('operator cameras stay available without search quota and still require live embedding permission', async t => {
+  const candidates = [
+    {city:'Paris',country:'France',countryCode:'FR',videoId:'parisLive01',title:'Paris river camera',channelTitle:'Camera operator'},
+    {city:'London',country:'United Kingdom',countryCode:'GB',videoId:'londonPriv1'},
+    {city:'Tokyo',country:'Japan',countryCode:'JP',videoId:'tkyEnded001'},
+    {city:'Sydney',country:'Australia',countryCode:'AU',videoId:'sydneyNoEmb'},
+  ];
+  const checked = new Set();
+  let app;
+  app = await harness(t, {env:{YOUTUBE_API_KEY:'test-key'},modules:{
+    './travel-camera-streams.json':candidates,
+    './travel-providers':{...providers,fetchTravelResource:async url => {
+      assert.ok(url.includes('/videos?'),'known operator streams need no search calls');
+      app.setYouTubeCallReady();
+      const ids = new URL(url).searchParams.get('id').split(',');
+      ids.forEach(id=>checked.add(id));
+      return {items:ids.filter(id=>candidates.some(stream=>stream.videoId===id)).map(id=>({id,
+        liveStreamingDetails:{actualStartTime:'2026-09-01',...(id==='tkyEnded001'?{actualEndTime:'2026-09-02'}:{})},
+        status:{privacyStatus:id==='londonPriv1'?'private':'public',embeddable:id!=='sydneyNoEmb'},
+      }))};
+    }},
+  }});
+  app.exhaustCameraDiscoveryBudget();
+  const result = await app.getCountriesCameraFeed(null);
+  assert.ok(candidates.every(stream=>checked.has(stream.videoId)));
+  assert.equal(result.liveFeeds.length,1);
+  const camera = result.liveFeeds[0];
+  assert.equal(camera.city,'Paris');
+  assert.equal(camera.title,'Paris river camera');
+  assert.equal(camera.liveStreamChannel,'Camera operator');
+  assert.equal(camera.sourceUrl,'https://www.youtube.com/watch?v=parisLive01');
+  assert.match(camera.content,/Paris, France/);
+  assert.equal(camera.liveVerified,true);
 });
 
 test('cached discovered streams survive short verification expiry and exhausted search budget', async t => {

@@ -6,8 +6,10 @@
 .travel-guide-country { margin: 0; color: var(--muted); font-size: .85rem; }
 .travel-guide-body h2 { margin: 8px 0 18px; }
 .travel-guide-overview { font-size: 1.05rem; line-height: 1.7; }
-.travel-guide-body nav { display: flex; flex-wrap: wrap; gap: 7px; margin: 24px 0; }
-.travel-guide-body nav button { border: 1px solid var(--border); color: var(--text); background: var(--bg); border-radius: 20px; padding: 9px 12px; cursor: pointer; font: inherit; font-size: .8rem; }
+.travel-guide-topics { display: flex; flex-wrap: nowrap; gap: 7px; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; margin: 24px 0; padding: 3px 3px 10px; }
+.travel-guide-topics button { flex: 0 0 auto; white-space: nowrap; border: 1px solid var(--border); color: var(--text); background: var(--bg); border-radius: 20px; padding: 9px 12px; cursor: pointer; font: inherit; font-size: .8rem; }
+.travel-guide-topics button[aria-selected="true"] { border-color: var(--primary); background: var(--primary-light); color: var(--primary); font-weight: 600; }
+.travel-guide-topics button:focus-visible, .travel-guide-body [role="tabpanel"]:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .travel-guide-body section { scroll-margin-top: 80px; }
 .travel-guide-body section p { white-space: pre-line; line-height: 1.8; font-size: .95rem; }
 .travel-guide-body footer { border-top: 1px solid var(--border); padding-top: 20px; margin-top: 28px; font-size: .78rem; color: var(--muted); line-height: 1.8; }

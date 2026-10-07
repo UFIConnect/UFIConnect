@@ -14,7 +14,7 @@ async function fixture(t) {
   await pg.exec(`CREATE TABLE users(id UUID PRIMARY KEY,name TEXT,email TEXT,plan TEXT DEFAULT 'free',auth_version INTEGER DEFAULT 0,billing_closed BOOLEAN DEFAULT false,social_tokens JSONB DEFAULT '{}');
     CREATE TABLE external_post_likes(post_id TEXT NOT NULL,user_id TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),PRIMARY KEY(post_id,user_id));
     CREATE TABLE restaurant_post_likes(LIKE external_post_likes INCLUDING ALL);
-    CREATE TABLE community_posts(id TEXT PRIMARY KEY,content TEXT,source TEXT,likes TEXT[] DEFAULT '{}')`);
+    CREATE TABLE community_posts(id TEXT PRIMARY KEY,group_id TEXT,content TEXT,source TEXT,likes TEXT[] DEFAULT '{}')`);
   await pg.query("INSERT INTO users(id,name,email) VALUES($1,'Alice','alice@example.invalid'),($2,'Bob','bob@example.invalid')", [A, B]);
   const feedRow = { id: POST, source: 'reddit', title: 'A post in the feed', content: 'A useful discussion of software.',
     source_url: 'https://www.reddit.com/r/test/comments/abc/a_post/', topic: 'Technology', likes_count: 40,
@@ -24,7 +24,6 @@ async function fixture(t) {
     const app = await createAppHarness({ connected: true, query: async (sql, params) => {
       if (sql.startsWith('SELECT id FROM auth_sessions')) return { rows: [{ id: params[0] }] };
       if (sql.includes('FROM feed_posts_cache WHERE id')) return { rows: params[0] === POST ? [feedRow] : [] };
-      if (sql.includes('FROM community_posts') && sql.includes('COALESCE(source')) return { rows: [] };
       if (failWrite && /^(INSERT INTO (external|restaurant)_post_likes|UPDATE community_posts)/.test(sql)) throw new Error('Simulated write failure');
       if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql) || /external_post_likes|restaurant_post_likes|community_posts|FROM users WHERE id/.test(sql)) return pg.query(sql, params);
       return { rows: [], rowCount: 0 };
@@ -83,7 +82,9 @@ test('native likes preserve another worker\'s changes and roll back failures wit
   const first = await start(); const second = await start();
   for (const app of [first, second]) app.posts.push({ id: 'native', source: 'uficonnect', content: 'A community update', likes: [], createdAt: new Date().toISOString() });
   const like = (app, userId, liked) => app.request('/feed/native/like', { userId, method: 'POST', body: { liked } });
-  assert.equal((await like(first, A, true)).data.likesCount, 1);
+  const initial = await like(first, A, true);
+  assert.equal(initial.status, 200, JSON.stringify(initial.data));
+  assert.equal(initial.data.likesCount, 1);
   assert.equal((await like(second, B, true)).data.likesCount, 2);
   assert.equal((await like(first, A, true)).data.likesCount, 2);
   assert.equal((await first.request('/feed/native')).data.post.likesCount, 2);
@@ -95,7 +96,7 @@ test('native likes preserve another worker\'s changes and roll back failures wit
   assert.equal((await like(first, A, false)).data.likesCount, 1);
   assert.equal((await first.request('/feed/native/like', { userId: A, method: 'POST' })).data.likesCount, 2);
   first.groups.push({ id: 'private-likes', isPrivate: true, createdBy: B });
-  first.posts.find(post => post.id === 'native').groupId = 'private-likes';
+  await pg.query("UPDATE community_posts SET group_id='private-likes' WHERE id='native'");
   for (const path of ['/feed/native', '/feed/native/likes', '/posts/native/likes']) assert.equal((await first.request(path, { userId: A })).status, 404);
   assert.equal((await like(first, A, false)).status, 404);
 });
