@@ -14376,7 +14376,7 @@ const PLATFORMS = {
   },
   dribbble: {
     name: 'Dribbble', color: '#EA4C89', icon: 'dribbble',
-    description: 'Showcase your design work and follow top creatives.',
+    description: 'Review your own published design shots in Command Center.',
     scopes: ['public'],
     authUrl: 'https://dribbble.com/oauth/authorize',
     loginUrl: 'https://dribbble.com/session/new',
@@ -15266,14 +15266,71 @@ const FOLLOWING_SOURCE_FETCHERS = {
 };
 
 // --- Own-content fetchers (Command Center "Your Feed") ---------------------
-// Deliberately the mirror image of FOLLOWING_SOURCE_FETCHERS above: this
-// member's OWN posts/activity, not who they follow. Scoped to the same six
-// platforms that already have a real per-user OAuth token AND a documented
-// own-content endpoint this app can call today — Dribbble/Threads/Medium's
-// own-content APIs exist too (see the comment block above) but aren't wired
-// up yet, pending verifying their exact response shapes against a real
-// connected account; they render "Coming soon" in Your Feed for now rather
-// than shipping an unverified integration.
+// Each adapter reads the authenticated member's own published content.
+// These results stay outside public ingestion and Following timelines.
+async function fetchDribbbleOwnShots(token, { bust = false, connectedAt = null, userId = '' } = {}) {
+  if (!token) return [];
+  const key = connectedSourceCacheKey(`dribbble_own_${userId}`, token, connectedAt);
+  const cached = !bust && getCached(key);
+  if (cached) return cached;
+  try {
+    // https://developer.dribbble.com/v2/shots/ — public scope allows reading
+    // /user/shots; v2 deliberately has no aggregated or Following endpoint.
+    const auth = { Authorization: `Bearer ${token}` };
+    const window = connectedSourceWindow(connectedAt);
+    const posts = new Map();
+    const visited = new Set();
+    let next = 'https://api.dribbble.com/v2/user/shots?per_page=100&page=1';
+    for (let page = 0; page < CONNECTED_ACCOUNT_HISTORY_MAX_PAGES && next; page++) {
+      const target = new URL(next);
+      // Pagination links may be supplied by the provider, but credentials
+      // are sent only to this exact API endpoint, never another host/path.
+      if (target.origin !== 'https://api.dribbble.com' || target.pathname !== '/v2/user/shots'
+        || target.username || target.password || visited.has(target.href)) break;
+      visited.add(target.href);
+      const { data, headers } = await fetchJSONWithHeaders(target.href, auth);
+      if (!Array.isArray(data)) throw new Error('Invalid Dribbble shots response.');
+      if (!data.length) break;
+      const pagePosts = data.filter(shot => /^\d+$/.test(String(shot?.id || ''))
+        && parseTimestampMs(shot.published_at) > 0 && parseTimestampMs(shot.published_at) <= Date.now()).map(shot => {
+        // The HTML descriptions contain portfolio links. Preserve their
+        // destinations while producing plain text for all existing renderers.
+        const image = safePostLink(shot.images?.hidpi || shot.images?.normal || shot.images?.teaser);
+        const permalink = safePostLink(shot.html_url);
+        const sourceUrl = permalink && new URL(permalink).origin === 'https://dribbble.com'
+          && new URL(permalink).pathname.startsWith(`/shots/${shot.id}`)
+          ? permalink : `https://dribbble.com/shots/${shot.id}`;
+        return {
+          id: `dribbble_own_${shot.id}`, source: 'dribbble', sourceLabel: 'Dribbble',
+          title: stripAndDecodeHTML(String(shot.title || 'Dribbble shot')),
+          content: mastodonContentText(shot.description, POST_CONTENT_MAX_CHARS),
+          sourceUrl, mediaUrl: image,
+          mediaType: shot.video ? 'video_thumbnail_only' : (image ? 'image' : null),
+          createdAt: normalizeTimestamp(shot.published_at),
+        };
+      });
+      for (const post of pagePosts) if (!posts.has(post.id)) posts.set(post.id, post);
+      if (posts.size >= CONNECTED_ACCOUNT_HISTORY_MAX_POSTS
+        || (pagePosts.length && pageReachedConnectedStart(pagePosts, connectedAt))) break;
+      // Respect the documented Link header even when an API page contains
+      // fewer than per_page rows. The visited set also stops repeated links.
+      next = String(headers?.link || '').match(/<([^>]+)>\s*;\s*rel\s*=\s*["']?next["']?/i)?.[1] || '';
+    }
+    const scoped = capFollowingPosts([...posts.values()], { sinceMs: window.startMs, untilMs: window.untilMs, limit: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
+    setCached(key, scoped, CONNECTED_ACCOUNT_CACHE_TTL_MS);
+    return scoped;
+  } catch (error) {
+    // A revoked grant must not be concealed by previously cached content.
+    if (/HTTP (401|403)\b/.test(error.message)) {
+      postCache.delete(key);
+      throw new Error('Dribbble access expired or was revoked. Reconnect Dribbble in Connected accounts.');
+    }
+    const stale = getCached(key);
+    if (stale) return stale;
+    throw error;
+  }
+}
+
 async function fetchGitHubOwnActivity(token, { bust = false, connectedAt = null } = {}) {
   if (!token) return [];
   const key = connectedSourceCacheKey('github_own', token, connectedAt);
@@ -15740,6 +15797,7 @@ async function fetchBlueskyOwnPosts(token, { bust = false, connectedAt = null } 
 }
 
 const OWN_CONTENT_FETCHERS = {
+  dribbble: fetchDribbbleOwnShots,
   mastodon: fetchMastodonOwnPosts,
   github: fetchGitHubOwnActivity,
   gitlab: fetchGitLabOwnActivity,
@@ -15750,9 +15808,7 @@ const OWN_CONTENT_FETCHERS = {
   tiktok: fetchTikTokOwnVideos,
   threads: fetchThreadsOwnPosts,
   bluesky: fetchBlueskyOwnPosts,
-  // dribbble/medium: real own-content APIs exist (see the comment
-  // above FOLLOWING_SOURCE_FETCHERS) but aren't wired up yet — "Coming
-  // soon" in Your Feed rather than an unverified integration.
+  // Medium's archived API has no installed own-content reader.
 };
 
 // Media URLs this app will actually proxy-download through
@@ -15768,8 +15824,16 @@ const CONTENT_DOWNLOAD_HOST_ALLOWLIST = [
 ];
 function isAllowedDownloadUrl(url) {
   try {
-    const { protocol, hostname } = new URL(url);
-    return protocol === 'https:' && CONTENT_DOWNLOAD_HOST_ALLOWLIST.includes(hostname);
+    const { protocol, hostname, pathname, port, username, password } = new URL(url);
+    if (protocol !== 'https:' || port || username || password) return false;
+    // Dribbble's documented image CDN shares infrastructure with videos.
+    // Allow only shot image paths, not the CDN's video paths or arbitrary
+    // CloudFront tenants. See https://developer.dribbble.com/v2/shots/.
+    if (['d13yacurqjgara.cloudfront.net', 'cdn.dribbble.com'].includes(hostname)) {
+      return /^\/(?:users\/\d+\/screenshots\/\d+|userupload\/\d+)\//.test(pathname)
+        && /\.(?:png|jpe?g|gif|webp|avif)$/i.test(pathname);
+    }
+    return CONTENT_DOWNLOAD_HOST_ALLOWLIST.includes(hostname);
   } catch { return false; }
 }
 
@@ -19998,6 +20062,7 @@ app.get('/office/oauth-status', requireOfficeToken, (_req, res) => {
       forceComingSoon,
       commandCenterOnly,
       canStartAuthorization: hasOAuthFlow && status.configured && !forceComingSoon,
+      ownContent: { supported: Boolean(OWN_CONTENT_FETCHERS[platform]) },
     }];
   }));
   res.json({
@@ -20785,6 +20850,7 @@ app.get('/social/platforms', authenticate, async (req, res) => {
       requiresMembership: CAREER_ACCOUNT_PLATFORMS.has(key) ? 'business' : false,
       locked: false,
       crossPost: getCrossPostCapability(key),
+      ownContent: { supported: Boolean(OWN_CONTENT_FETCHERS[key]) },
     }];
   }));
   res.json({
@@ -31825,7 +31891,8 @@ app.get('/command-center/your-content', authenticate, async (req, res) => {
     await sendFeedResponse(req, res, { posts: locationRanked, connectedAt: window.connectedAt, syncStartAt: window.startAt, totalAvailable: locationRanked.length });
   } catch (e) {
     console.error(`[/command-center/your-content] ${platform}:`, e.message);
-    if (platform === 'youtube' && e.message.startsWith('YouTube access expired or was revoked.')) {
+    if ((platform === 'youtube' && e.message.startsWith('YouTube access expired or was revoked.'))
+      || (platform === 'dribbble' && e.message.startsWith('Dribbble access expired or was revoked.'))) {
       return res.status(502).json({ message: e.message, reconnectRequired: true });
     }
     res.status(502).json({ message: `Could not load your ${platform} content right now.` });

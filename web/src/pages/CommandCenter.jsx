@@ -25,12 +25,15 @@ import '../components/DiscoveryCategoryBar.css';
 import './CommandCenterPlatforms.css';
 import CONTENT_PLATFORMS from '../../../backend/content-platforms.json';
 
-// Platforms with a real, working "my own posts" fetcher server-side (see
-// OWN_CONTENT_FETCHERS in backend/index.js) — the rest of
-// CONNECTED_SOCIAL_PLATFORMS render as "Coming soon" in Your Feed instead,
-// same honesty convention the rest of this app already uses for platforms
-// pending API/app-review access.
+// Compatibility with an older API during a rolling deployment. New own-post
+// integrations activate only when the server advertises their capability.
+// A working account connection alone does not imply own-post access.
 const OWN_CONTENT_PLATFORMS = ['github', 'gitlab', 'youtube', 'reddit', 'twitch', 'instagram', 'tiktok', 'threads', 'bluesky', 'mastodon'];
+
+function supportsOwnContent(platform, catalog = {}) {
+  const supported = catalog[platform]?.ownContent?.supported;
+  return typeof supported === 'boolean' ? supported : OWN_CONTENT_PLATFORMS.includes(platform);
+}
 
 function SourceMark({ source, label, active = false }) {
   const meta = SOURCE_META[source] || {};
@@ -90,14 +93,13 @@ function LockedState({ onUpgrade }) {
       <p style={{ color: 'var(--muted)', fontSize: '.88rem', maxWidth: 440, margin: '0 auto 22px', lineHeight: 1.6 }}>
         See everything from your connected accounts in one place, draft social
         content with AI, and track your job search with Pro. Business membership
-        is coming soon.
+        provides a workspace for recruiting companies.
       </p>
       <div className="command-center-pricing" aria-label="Command Center plans">
         {TIERS.map((tier) => (
           <div className="command-center-price" key={tier.tier}>
             <span className="command-center-price-name">
               {tier.name}
-              {tier.locked && <small>Coming soon</small>}
             </span>
             <strong>${tier.price}<small>/mo</small></strong>
           </div>
@@ -527,6 +529,8 @@ function MediaStudioSection({ onOpenCrossPost, readOnly = false }) {
 function YourFeedSection() {
   const { showToast } = useToast();
   const [connected, setConnected] = useState(null);
+  const [catalog, setCatalog] = useState({});
+  const connectionState = useRef({ connected: {}, catalog: {} });
   const [connectedError, setConnectedError] = useState('');
   const [activePlatform, setActivePlatform] = useState(null);
   const [posts, setPosts] = useState(null);
@@ -535,6 +539,7 @@ function YourFeedSection() {
   const platformRequest = useRef(0);
 
   const openPlatform = useCallback(async (platform) => {
+    if (!connectionState.current.connected[platform] || !supportsOwnContent(platform, connectionState.current.catalog)) return;
     const requestId = ++platformRequest.current;
     setActivePlatform(platform);
     setPosts(null);
@@ -557,11 +562,17 @@ function YourFeedSection() {
     try {
       const { data } = await client.get('/social/platforms');
       const nextConnected = data.connected || {};
+      const nextCatalog = data.platforms || {};
+      connectionState.current = { connected: nextConnected, catalog: nextCatalog };
       setConnected(nextConnected);
-      const firstSupported = CONNECTED_SOCIAL_PLATFORMS.find(platform => nextConnected[platform] && OWN_CONTENT_PLATFORMS.includes(platform));
+      setCatalog(nextCatalog);
+      const firstSupported = [...new Set([...CONNECTED_SOCIAL_PLATFORMS, ...Object.keys(nextCatalog)])]
+        .find(platform => nextConnected[platform] && supportsOwnContent(platform, nextCatalog));
       if (firstSupported) openPlatform(firstSupported);
     } catch (err) {
+      connectionState.current = { connected: {}, catalog: {} };
       setConnected({});
+      setCatalog({});
       setConnectedError(err?.response?.data?.message || "Couldn't load your connected accounts.");
     }
   }, [openPlatform]);
@@ -597,7 +608,7 @@ function YourFeedSection() {
 
   if (connected === null) return <div className="empty-state"><span className="spinner spinner-primary" /></div>;
 
-  const connectedPlatforms = CONNECTED_SOCIAL_PLATFORMS.filter(p => connected[p]);
+  const connectedPlatforms = [...new Set([...CONNECTED_SOCIAL_PLATFORMS, ...Object.keys(catalog)])].filter(p => connected[p]);
   const liveFeedButton = (
     <div className="card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' }}>
       <div style={{ flex: 1, minWidth: 220 }}>
@@ -630,8 +641,8 @@ function YourFeedSection() {
       {connectedError && <SectionError message={connectedError} onRetry={loadConnections} />}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {connectedPlatforms.map(p => {
-          const meta = SOURCE_META[p] || SOURCE_META.uficonnect;
-          const supported = OWN_CONTENT_PLATFORMS.includes(p);
+          const meta = SOURCE_META[p] || { label: catalog[p]?.name || p, icon: p };
+          const supported = supportsOwnContent(p, catalog);
           const active = activePlatform === p;
           return (
             <button
@@ -643,9 +654,9 @@ function YourFeedSection() {
                 color: active ? '#fff' : (supported ? 'var(--text)' : 'var(--muted)'),
                 border: 'none', opacity: supported ? 1 : 0.6,
               }}
-              title={supported ? undefined : 'Coming soon - pending platform API approval'}
+              title={supported ? undefined : catalog[p]?.ownContent?.note || 'This connection does not provide access to your own posts here.'}
             >
-              <SourceMark source={p} label={meta.icon} active={active} /> {meta.label}{!supported && ' · Coming soon'}
+              <SourceMark source={p} label={meta.icon} active={active} /> {meta.label}{!supported && ' · Own posts unavailable'}
             </button>
           );
         })}
@@ -1411,7 +1422,7 @@ function CrossPostSection() {
           title={detail}
           style={{ opacity: .62, cursor: 'not-allowed' }}
         >
-          <SourceMark source={p} label={meta.icon} /> {meta.label} - Coming soon
+          <SourceMark source={p} label={meta.icon} /> {meta.label} - Publishing unavailable
         </button>
       );
     }
@@ -1602,6 +1613,7 @@ function AutomationToolCard({ icon, title, description, status, actionLabel, to,
 }
 
 function AutomationSection({ onSelectSection }) {
+  const { profile } = useAuth();
   const [snapshot, setSnapshot] = useState({ loading: true });
   const [refreshKey, setRefreshKey] = useState(0);
   const [checking, setChecking] = useState(false);
@@ -1689,7 +1701,7 @@ function AutomationSection({ onSelectSection }) {
         />
         <AutomationToolCard
           title="Cross-Post Queue"
-          description="Post to supported platforms and keep pending-platform posts saved in history."
+          description="Publish to supported connected accounts and review delivery results."
           status={crossPostStatus}
           actionLabel="Open Cross-Post"
           onClick={() => onSelectSection('crosspost')}
@@ -1711,7 +1723,7 @@ function AutomationSection({ onSelectSection }) {
         <AutomationToolCard
           title="Resume Builder"
           description="Maintain your resume draft and feed it into the ATS/job matching workflow."
-          status="Coming soon"
+          status={profile?.resumeBuilderAddon ? 'Active' : 'Paid add-on'}
           actionLabel="Open Resume Builder"
           to="/resume-builder"
         />
