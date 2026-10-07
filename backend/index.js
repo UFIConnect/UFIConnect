@@ -4231,15 +4231,6 @@ const MASTODON_INSTANCES = [
   'https://hachyderm.io',
 ];
 
-async function fetchMastodonAccountPosts(token, own = false) {
-  const credentials = JSON.parse(token);
-  const endpoint = own ? '/api/v1/accounts/' + encodeURIComponent(credentials.accountId) + '/statuses?limit=40&exclude_reblogs=true' : '/api/v1/timelines/home?limit=40';
-  const data = await mastodonService.json(credentials.origin, endpoint, { token: credentials.accessToken });
-  return mapMastodonPosts((Array.isArray(data) ? data : []).map(item => item.reblog || item), own ? 'Your Mastodon posts' : 'Following');
-}
-async function fetchMastodonHomeTimeline(token) { return fetchMastodonAccountPosts(token); }
-async function fetchMastodonOwnPosts(token) { return fetchMastodonAccountPosts(token, true); }
-
 function mapMastodonPosts(data, tag) {
   return (data || [])
     .filter(t => t.content && t.account && !t.sensitive && t.visibility === 'public' && safePostLink(t.url))
@@ -14363,13 +14354,13 @@ const PLATFORMS = {
   },
   mastodon: {
     name: 'Mastodon', color: '#6364FF', icon: 'mastodon',
-    description: 'Connect your Mastodon server to read public posts from accounts you follow and your own public posts.',
+    description: 'Connect your Mastodon account and open its original server.',
     scopes: MASTODON_SCOPES.split(' '),
     needsServer: true,
     loginUrl: 'https://joinmastodon.org/servers',
     setupUrl: 'https://docs.joinmastodon.org/client/token/',
     reviewRequired: false,
-    note: 'Enter your server or full Mastodon handle, then approve read access on your own server.',
+    note: 'Enter your server or full Mastodon handle, then approve account access on your own server.',
   },
   pinterest: {
     name: 'Pinterest', color: '#E60023', icon: 'pinterest',
@@ -14665,7 +14656,7 @@ const AGGREGATE_FEED_SOURCE_SET = new Set(AGGREGATE_FEED_SOURCES);
 const isAggregateFeedSource = (source) => AGGREGATE_FEED_SOURCE_SET.has(canonicalFeedSourceId(source));
 const FOLLOWING_FAVORITE_FEED_SOURCE_SET = new Set([
   'uficonnect',
-  ...[...CONNECTED_SOCIAL_PLATFORMS].filter(source => !['instagram', 'tiktok'].includes(source)),
+  ...[...CONNECTED_SOCIAL_PLATFORMS].filter(isFollowingSourceAllowed),
 ]);
 
 // External feed accounts a member blocked from their feeds, as "source:account"
@@ -15195,7 +15186,6 @@ function serializeCommunityPost(post, viewerId = null) {
 // available — deliberately never backed by keyword search, which would
 // mislabel unrelated public posts as "from people you follow."
 const FOLLOWING_SOURCE_FETCHERS = {
-  mastodon: fetchMastodonHomeTimeline,
   youtube:  fetchYouTubeSubscriptionFeed,     // recent uploads from channels the member subscribes to — see its own comment
   github:   fetchGitHubFollowingActivity,     // received_events — activity from people the member follows, see its own comment
   gitlab:   fetchGitLabFollowingActivity,     // /users/:id/following + per-followed-user /events — see its own comment
@@ -15698,7 +15688,6 @@ async function fetchBlueskyOwnPosts(token, { bust = false, connectedAt = null } 
 }
 
 const OWN_CONTENT_FETCHERS = {
-  mastodon: fetchMastodonOwnPosts,
   github: fetchGitHubOwnActivity,
   gitlab: fetchGitLabOwnActivity,
   youtube: fetchYouTubeOwnUploads,
@@ -31826,7 +31815,7 @@ const CROSS_POST_CAPABILITIES = Object.freeze({
   threads:   { supported: true, delivery: 'direct', media: 'native-image', requiresPhoto: false },
   instagram: { supported: true, delivery: 'direct', media: 'native-image', requiresPhoto: true },
   tiktok:    { supported: true, delivery: 'handoff', media: 'native-image', requiresPhoto: true },
-  mastodon:  { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: false, note: 'Mastodon connections currently provide read access to public posts. Publishing is not enabled.' },
+  mastodon:  { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: false, note: 'Mastodon account connection is available. Publishing is not enabled.' },
   pinterest: { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: true, note: 'Pinterest publishing needs approved API access and a board selector.' },
   tumblr:    { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: false, note: 'Tumblr needs an OAuth consumer and a blog selector.' },
   wordpress: { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: false, note: 'WordPress.com needs an OAuth app and site selector.' },
