@@ -12,6 +12,12 @@
 .home-connected-account-row .source-directory-account-actions { grid-column: 2; }
 .home-connected-account-name { white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
 .account-directory-page .source-directory-controls { max-width: 320px; }
+.account-category-section { min-width: 0; margin-bottom: 24px; }
+.account-category-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 10px; padding-bottom: 9px; border-bottom: 1px solid var(--border); }
+.account-category-heading h2, .account-category-heading h3 { margin: 0; color: var(--text); font-size: .95rem; font-weight: 700; }
+.account-category-heading span { color: var(--muted); font-size: .76rem; font-variant-numeric: tabular-nums; }
+.account-category-items { display: flex; flex-direction: column; gap: 10px; }
+.account-category-items .account-platform-card { margin-bottom: 0; }
 .account-platform-card { margin-bottom: 10px; padding: 14px 16px; }
 .account-platform-card-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .account-platform-card-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; margin-left: auto; }

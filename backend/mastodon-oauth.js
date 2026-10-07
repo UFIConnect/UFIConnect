@@ -1,7 +1,18 @@
 const https = require('node:https');
 const net = require('node:net');
 const crypto = require('node:crypto');
-const MASTODON_SCOPES = 'read:accounts read:statuses';
+const MASTODON_SCOPES = 'read:accounts read:statuses read:search write:favourites write:statuses';
+
+function mastodonCanInteract(token, action) {
+  try {
+    const scopes = new Set(String(JSON.parse(token).scope || '').split(/\s+/));
+    const has = scope => scopes.has(scope) || scopes.has(scope.split(':')[0]);
+    if (!has('read:search')) return false;
+    if (action === 'like') return has('write:favourites');
+    if (action === 'comment') return has('write:statuses');
+    return !action && has('write:favourites') && has('write:statuses');
+  } catch { return false; }
+}
 
 function mastodonCanReadStatuses(token) {
   try {
@@ -24,19 +35,37 @@ function mastodonOrigin(input) {
   return url.origin;
 }
 
+// Federated status IDs are local to each server. Keep the source URL as the
+// identity, and resolve it on the connected server before using a local ID.
+function mastodonPostUrl(value) {
+  if (typeof value !== 'string' || value.length > 2048 || !value.startsWith('https://') || /[\s\\]/.test(value)) return null;
+  try {
+    const url = new URL(value);
+    const authority = value.slice(8).split(/[/?#]/, 1)[0];
+    if (url.username || url.password || authority.includes(':')) return null;
+    mastodonOrigin(url.origin);
+    const match = /^\/@([a-zA-Z0-9_.-]+)\/(\d+)\/?$/.exec(url.pathname)
+      || /^\/users\/([a-zA-Z0-9_.-]+)\/statuses\/(\d+)\/?$/.exec(url.pathname);
+    if (!match) return null;
+    return `${url.origin}/@${match[1]}/${match[2]}`;
+  } catch { return null; }
+}
+
 function createMastodonService({ resolveAddress, pinnedLookup, request = https.request }) {
   const apps = new Map();
-  async function json(origin, path, { form, token } = {}) {
+  async function json(origin, path, { form, token, idempotencyKey } = {}) {
     origin = mastodonOrigin(origin);
-    if (!path.startsWith('/') || path.startsWith('//')) throw new Error('Invalid Mastodon API path');
+    if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//') || /[\\\r\n]/.test(path) || new URL(path, origin).origin !== origin) throw new Error('Invalid Mastodon API path');
+    if (idempotencyKey !== undefined && (typeof idempotencyKey !== 'string' || !/^[a-zA-Z0-9-]{16,128}$/.test(idempotencyKey))) throw new Error('Invalid Mastodon request identity');
     const address = await resolveAddress(new URL(origin).hostname);
-    const body = form ? new URLSearchParams(form).toString() : null;
+    const body = form != null ? new URLSearchParams(form).toString() : null;
     return new Promise((resolve, reject) => {
       const req = request(new URL(path, origin), {
-        method: body ? 'POST' : 'GET', lookup: pinnedLookup(address), agent: false,
+        method: body !== null ? 'POST' : 'GET', lookup: pinnedLookup(address), agent: false,
         headers: { Accept: 'application/json', 'User-Agent': 'UFIConnect/1.0',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          ...(body ? { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) } : {}) },
+          ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+          ...(body !== null ? { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) } : {}) },
       }, res => {
         let bytes = 0; const chunks = [];
         res.on('data', chunk => {
@@ -59,7 +88,7 @@ function createMastodonService({ resolveAddress, pinnedLookup, request = https.r
     });
   }
   async function application(origin, redirectUri) {
-    const key = `${origin}|${redirectUri}`;
+    const key = `${origin}|${redirectUri}|${MASTODON_SCOPES}`;
     const cached = apps.get(key);
     if (cached && cached.expires > Date.now()) return cached.value;
     const value = await json(origin, '/api/v1/apps', { form: {
@@ -126,4 +155,4 @@ function registerMastodonRoutes(app, { authenticate, limit, getUser, callbackUrl
   });
 }
 
-module.exports = { mastodonOrigin, mastodonCanReadStatuses, MASTODON_SCOPES, createMastodonService, registerMastodonRoutes };
+module.exports = { mastodonOrigin, mastodonPostUrl, mastodonCanReadStatuses, mastodonCanInteract, MASTODON_SCOPES, createMastodonService, registerMastodonRoutes };

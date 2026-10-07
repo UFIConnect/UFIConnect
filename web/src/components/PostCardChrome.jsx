@@ -5,6 +5,8 @@ import { SOURCE_META } from './sourceMeta';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
 import ReportModal from './ReportModal';
+import NativePostEditor from './NativePostEditor';
+import client from '../api/client';
 import { isMemberPost, postProfileLink, safePostLink } from '../../../backend/post-links.mjs';
 import './PostCardChrome.css';
 
@@ -139,6 +141,12 @@ export function PostTime({ post, live = false }) {
   if (live) return <span className="post-chrome-time"><span className="post-chrome-live">Live feed</span></span>;
   const times = postTimes(post);
   if (!times) return null;
+  const original = post?.source === 'mastodon' && safePostLink(post?.sourceUrl);
+  if (original) return (
+    <a href={original} target="_blank" rel="noopener noreferrer" className="post-chrome-time" title={times.full} aria-label={`${times.full}. Open post on Mastodon`}>
+      <time dateTime={times.iso}><span className="post-chrome-day">{times.edited ? 'Edited · ' : ''}{times.relative}</span></time>
+    </a>
+  );
   return (
     <Link to={`/p/${encodeURIComponent(post.id)}`} className="post-chrome-time" title={times.full} aria-label={times.full}>
       <time dateTime={times.iso}><span className="post-chrome-day">{times.edited ? 'Edited ? ' : ''}{times.relative}</span></time>
@@ -190,10 +198,13 @@ function ShareIcon() {
 
 // The "more" button opens the post's options. Each item is
 // { label, detail?, danger?, busy?, ariaLabel?, onSelect }; hidden items are left out.
-export function PostOptionsMenu({ post, items = [] }) {
+export function PostOptionsMenu({ post, items = [], onPostUpdated, onRemoved }) {
   const { profile, token } = useAuth();
+  const { showToast } = useToast();
   const [open, setOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const wrapper = useRef(null), button = useRef(null);
   useEffect(() => {
     if (!open) return undefined;
@@ -206,12 +217,26 @@ export function PostOptionsMenu({ post, items = [] }) {
   const native = isMemberPost(post);
   const original = safePostLink(post?.sourceUrl);
   const ownPost = native && profile?.id && (post?.authorId || post?.author?.id) === profile.id;
+  async function deletePost() {
+    if (!ownPost || deleteBusy || !window.confirm('Delete this post and its comments? This cannot be undone.')) return;
+    setDeleteBusy(true);
+    try {
+      const { data } = await client.delete(`/posts/${encodeURIComponent(post.id)}`);
+      if (data?.deleted !== true) throw new Error('Deletion was not confirmed');
+      onRemoved?.(post);
+      showToast('Post deleted.', 'success');
+    } catch (error) {
+      showToast(error.response?.data?.message || 'Could not delete this post. Please try again.', 'error');
+    } finally { setDeleteBusy(false); }
+  }
   const visible = [
     post?.id && (native ? { label: 'Likes on UFIconnect', to: `/p/${encodeURIComponent(post.id)}`, detail: 'View likes on the post.' }
       : original && { label: `Likes on ${postSource(post).label}`, href: original, detail: 'View likes on the original post.' }),
     post?.id && { label: 'Go to profile', ...destination, disabled: !destination,
       detail: destination?.fallback ? 'Profile link unavailable; opens the original post.' : destination ? post.author?.name : 'Author profile unavailable.' },
     ...items,
+    ownPost && { label: 'Edit post', busy: deleteBusy, onSelect: () => setEditOpen(true) },
+    ownPost && !items.some(item => item?.label === 'Delete post') && { label: 'Delete post', danger: true, busy: deleteBusy, onSelect: deletePost },
     post?.id && !ownPost && !items.some(item => item?.label === 'Report post') && { label: 'Report post', onSelect: () => setReportOpen(true) },
   ].filter(Boolean);
   if (!visible.length) return null;
@@ -234,6 +259,8 @@ export function PostOptionsMenu({ post, items = [] }) {
       )}
       {reportOpen && <ReportModal targetType="post" targetId={String(post.id)} targetLabel="post" source={post.source}
         sourceUrl={original || undefined} signInRequired={!token} onClose={() => setReportOpen(false)} />}
+      {editOpen && ownPost && <NativePostEditor post={post} onClose={() => { setEditOpen(false); button.current?.focus(); }}
+        onSaved={updated => { onPostUpdated?.(updated); showToast('Post updated.', 'success'); }} />}
     </div>
   );
 }

@@ -91,6 +91,12 @@ export default function ConnectedPostActions({ post, active = true, showFallback
   const error = own?.error || '';
   const lastRequest = own?.lastRequest;
   const inFlight = useRef(null);
+  const input = useRef(null);
+  useEffect(() => {
+    if (!input.current) return;
+    input.current.style.height = 'auto';
+    input.current.style.height = `${Math.max(40, Math.min(112, input.current.scrollHeight))}px`;
+  }, [draft, identity]);
   const sourceUrl = originalSourceUrl(post);
   const label = capability?.label || post?.sourceLabel || post?.source;
   const supportedPost = !['github', 'gitlab'].includes(post?.source) || /\/(?:issues|pull|merge_requests)\/\d+(?:[/?#]|$)/.test(sourceUrl || '');
@@ -118,10 +124,12 @@ export default function ConnectedPostActions({ post, active = true, showFallback
   return <div className="connected-post-actions" hidden={!active} onClick={event => event.stopPropagation()}>
     {error && <div role="alert" className="connected-post-action-error">{error} <Link to="/connected-accounts?interactions=1">Manage connection</Link></div>}
     {canComment && <form onSubmit={event => { event.preventDefault(); send(); }}>
-      <label className="form-label" htmlFor={inputId}>Write a comment</label>
-      <textarea id={inputId} className="form-textarea" rows={3} value={draft} onChange={event => setState({ ...own, identity, draft: event.target.value })} maxLength={capability.maxLength || 1000} disabled={busy} required />
+      <label className="connected-comment-label" htmlFor={inputId}>Write a comment on {label}</label>
+      <textarea ref={input} id={inputId} className="form-textarea" rows={1} placeholder="Write a comment…" value={draft}
+        onChange={event => setState({ ...own, identity, draft: event.target.value })} maxLength={capability.maxLength || 1000} disabled={busy} required />
       <button className="btn btn-primary btn-sm" type="submit" disabled={busy || !draft.trim()}>{busy ? 'Publishing…' : 'Publish on ' + label}</button>
     </form>}
+    {!canComment && capability?.reconnectRequired && post.source === 'mastodon' && <Link className="post-chrome-action" to="/connected-accounts?connect=mastodon">Reconnect Mastodon to reply</Link>}
     {!canComment && showFallback && <a className="post-chrome-action" href={sourceUrl} target="_blank" rel="noopener noreferrer">Open original to reply ↗</a>}
   </div>;
 }

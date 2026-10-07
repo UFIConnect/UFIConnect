@@ -13,6 +13,7 @@ import { ALL_INTERESTS } from '../pages/Onboarding';
 import ConnectedPostActions from './ConnectedPostActions';
 import { SavePostButton } from './SaveButtons';
 import PostLikes from './PostLikes';
+import PostInlineText from './PostInlineText';
 import { PostOptionsMenu } from './PostCardChrome';
 import { ChevronDown, Search, SlidersHorizontal, RotateCw, Play, Pause, MessageCircle, ExternalLink } from 'lucide-react';
 import { videoDurationSeconds, isShortFeedVideo, videoSourceKey, safeMediaUrl, fitVideoFrame } from '../utils/videoFeedPolicy.mjs';
@@ -208,7 +209,7 @@ function formatTime(sec) {
 // its own top comment) instead of each slide owning/destroying its own.
 // Only meaningful when src.kind === 'youtube'; file/hls/vimeo keep their
 // existing fully-local state below, untouched.
-function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComments, sharedYt, onDurationResolved, controlsVisible, onPostUpdated }) {
+function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComments, sharedYt, onDurationResolved, controlsVisible, onPostUpdated, onRemoved }) {
   const src = resolveVideoSource(post);
   const meta = SOURCE_META[post.source] || SOURCE_META.uficonnect;
   const fileVideoRef = useRef(null);
@@ -603,7 +604,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           <MessageCircle size={18} aria-hidden="true" />
         </button>
         <SavePostButton post={post} className="video-feed-save-button" showLabel={false} />
-        <PostOptionsMenu post={post} />
+        <PostOptionsMenu post={post} onPostUpdated={onPostUpdated} onRemoved={onRemoved} />
         {originalUrl && <a href={originalUrl} target="_blank" rel="noopener noreferrer" aria-label="View original post" title="View original post"
           onClick={() => reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true })}><ExternalLink size={17} aria-hidden="true" /></a>}
       </div>
@@ -620,7 +621,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
             {post.author?.name && <span>{post.author.name}</span>}
             {post.matchedByLocation && <span>{post.locationMatchLabel || 'Near you'}</span>}
             {post.title && <p className="video-feed-expanded-title">{post.title}</p>}
-            {captionBody && <p>{captionBody}</p>}
+            {captionBody && <p><PostInlineText text={captionBody} /></p>}
           </div>}
         </div>
       </div>
@@ -2317,7 +2318,7 @@ export default function VideoFeedView({ onExit, music = false }) {
         </div>}
             {videoPosts.map((post, idx) => <div key={post.id || idx} ref={element => { slideRefs.current[idx] = element; }}
               data-idx={idx} data-post-id={post.id || ''} data-source={post.source || ''} className="video-feed-snap-item">
-              {Math.abs(idx - activeIndex) <= VIDEO_MOUNT_RADIUS ? <VideoSlide post={post} onPostUpdated={updatePost} active={idx === activeIndex}
+              {Math.abs(idx - activeIndex) <= VIDEO_MOUNT_RADIUS ? <VideoSlide post={post} onPostUpdated={updatePost} onRemoved={removed => setVideoPosts(previous => previous.filter(item => item.id !== removed.id))} active={idx === activeIndex}
                 controlsVisible={controlsVisible}
                 muted={muted} onToggleMute={toggleMuted} isScrolling={isScrolling} onOpenComments={setCommentsPost}
                 onDurationResolved={onDurationResolved}

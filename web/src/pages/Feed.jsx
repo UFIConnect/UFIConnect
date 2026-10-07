@@ -2,6 +2,8 @@ import { postDiscussionUrl } from '../../../backend/post-links.mjs';
 import JobPostContent from '../components/JobPostContent';
 import { isCareerPost } from '../utils/jobSummary.mjs';
 import ArticleIllustration from '../components/ArticleIllustration';
+import PostInlineText from '../components/PostInlineText';
+import { postTextPreview } from '../../../backend/post-text.mjs';
 import PostImage from '../components/PostImage';
 import SourceMediaFallback from '../components/SourceMediaFallback';
 import { getAccessToken, privateSessionStorage } from '../auth/session';
@@ -564,22 +566,14 @@ function catStyle(cat) {
 // content, so that link only ever pointed at the *original* source, never
 // showed anything this card couldn't already show itself).
 const POST_TEXT_COLLAPSE_LENGTH = 320;
-// Hashtags take the source's brand colour, as they do on the source itself.
-function withTags(text, accent) {
-  if (!accent) return text;
-  return text.split(/(#[\p{L}\p{N}_]+)/u).map((part, index) => (
-    index % 2 ? <span key={index} className="post-chrome-tag" style={{ '--source-color': accent }}>{part}</span> : part
-  ));
-}
-
 function PostText({ text, accent }) {
   const [expanded, setExpanded] = useState(false);
   if (!text) return null;
   const needsCollapse = text.length > POST_TEXT_COLLAPSE_LENGTH;
-  const shown = needsCollapse && !expanded ? text.slice(0, POST_TEXT_COLLAPSE_LENGTH).trimEnd() : text;
+  const shown = needsCollapse && !expanded ? postTextPreview(text, POST_TEXT_COLLAPSE_LENGTH) : text;
   return (
     <p className="post-content" style={{ margin: '0 0 4px', whiteSpace: 'pre-wrap', lineHeight: 1.65 }}>
-      {withTags(shown, accent)}{needsCollapse && !expanded ? '… ' : ''}
+      <PostInlineText text={shown} accent={accent} />{needsCollapse && !expanded ? '… ' : ''}
       {needsCollapse && (
         <button
           onClick={e => { e.stopPropagation(); e.preventDefault(); setExpanded(x => !x); }}
@@ -1401,7 +1395,6 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
   const { profile, token, updateProfileLocally } = useAuth();
   const navigate = useNavigate();
   const [blockBusy, setBlockBusy] = useState(false);
-  const [deleteBusy, setDeleteBusy] = useState(false);
   const { showToast } = useToast();
   const [reportOpen, setReportOpen] = useState(false);
   const [showComments,    setShowComments]    = useState(false);
@@ -1611,18 +1604,6 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
     try { await navigator.clipboard.writeText(url); showToast('Link copied.', 'success'); }
     catch { showToast('Could not copy the link. Open the post to share it.', 'error'); }
   }
-  async function deletePost() {
-    if (deleteBusy || !window.confirm('Delete this post? Its comments are deleted too. This cannot be undone.')) return;
-    setDeleteBusy(true);
-    try {
-      await client.delete(`/posts/${encodeURIComponent(post.id)}`);
-      onRemoved?.(post);
-      showToast('Post deleted.', 'success');
-    } catch (error) {
-      showToast(error?.response?.data?.message || 'Could not delete this post. Please try again.', 'error');
-      setDeleteBusy(false);
-    }
-  }
   // UFIconnect posts: copy the post link, open it, report or block its author,
   // and delete your own. External posts: copy the original link, report or block the account.
   const optionItems = [
@@ -1630,7 +1611,6 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
     !isExternal && { label: 'Open post', onSelect: () => navigate(`/p/${encodeURIComponent(post.id)}`) },
     !ownPost && { label: 'Report post', onSelect: () => (token ? setReportOpen(true) : showToast('Sign in to report a post.', 'info')) },
     blockTarget && { label: isExternal ? 'Block account' : 'Block member', detail: blockTarget.label, danger: true, busy: blockBusy, ariaLabel: `Block ${blockTarget.label}`, onSelect: blockAuthor },
-    ownPost && { label: 'Delete post', danger: true, busy: deleteBusy, onSelect: deletePost },
   ];
 
   return (
@@ -1766,7 +1746,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
         )}
         <SavePostButton post={post} className="post-chrome-action feed-save-post-button" showLabel={false} />
         <SharePostButton post={post} />
-        <PostOptionsMenu post={post} items={optionItems} />
+        <PostOptionsMenu post={post} items={optionItems} onPostUpdated={onPostUpdated} onRemoved={onRemoved} />
         {post.source === 'wikivoyage' && post.travelDestinationId && onGuideOpen ? <button type="button" className="post-chrome-action" onClick={() => onGuideOpen({id:post.travelDestinationId,city:post.city,country:post.country})}>Open city guide</button> : <OpenOnSource
           post={post}
           label={`${isJob ? 'Apply' : post.isLiveCamera ? 'Watch live' : hasVideo ? 'Watch' : 'Open'}${post.isLiveCamera ? '' : ` on ${src.label}`}`}

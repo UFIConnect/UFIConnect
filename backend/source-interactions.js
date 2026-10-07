@@ -3,10 +3,12 @@
 // to a URL supplied by a post. Never log tokens or provider response bodies.
 const { normalizeSource, getSourcePolicy, isSourceActionAllowed, getInteractionCapabilities, validateOriginalUrl } = require('./source-policy');
 const { createHash } = require('node:crypto');
+const { mastodonOrigin, mastodonPostUrl, mastodonCanInteract } = require('./mastodon-oauth');
 const SUPPORTED = Object.freeze({
   reddit: { label: 'Reddit', likeLabel: 'Upvote', maxLength: 1000 },
   twitter: { label: 'X', likeLabel: 'Like', maxLength: 280 },
   bluesky: { label: 'Bluesky', likeLabel: 'Like', maxLength: 300 },
+  mastodon: { label: 'Mastodon', likeLabel: 'Like', maxLength: 500 },
   youtube: { label: 'YouTube', likeLabel: 'Like', maxLength: 1000 },
   github: { label: 'GitHub', likeLabel: 'Star repository', maxLength: 1000 },
   gitlab: { label: 'GitLab', likeLabel: 'Star project', maxLength: 1000 },
@@ -19,6 +21,7 @@ function parseTarget(source, sourceUrl) {
   if (!original) throw failure('This post has no valid original link.');
   const url = new URL(original);
   const host = url.hostname.toLowerCase(), parts = url.pathname.split('/').filter(Boolean);
+  if (source === 'mastodon') return { id: original, url: original, comment: true };
   if (source === 'reddit' && ['reddit.com', 'www.reddit.com', 'old.reddit.com', 'oauth.reddit.com'].includes(host)) {
     const index = parts.indexOf('comments'), id = index >= 0 ? parts[index + 1] : null;
     if ((index === 0 || (index === 2 && parts[0] === 'r')) && /^[a-z0-9]+$/i.test(id || '')) return { id: `t3_${id}`, comment: true };
@@ -47,7 +50,7 @@ function parseTarget(source, sourceUrl) {
   throw failure('This source does not support actions for that original link.');
 }
 
-function createSourceInteractions({ fetchImpl = fetch, atprotoGet, atprotoPostJSON, policyEnv = process.env } = {}) {
+function createSourceInteractions({ fetchImpl = fetch, atprotoGet, atprotoPostJSON, mastodonService, policyEnv = process.env } = {}) {
   async function request(url, token, method = 'GET', body, form = false) {
     let response;
     try {
@@ -97,7 +100,51 @@ function createSourceInteractions({ fetchImpl = fetch, atprotoGet, atprotoPostJS
     if (!data?.uri) throw failure('Bluesky did not confirm the reply. Check the original post.', 502);
     return { commentId: data.uri };
   }
-  async function perform({ user, source, sourceUrl, action, content, liked }) {
+  async function mastodon(user, token, target, action, content, liked, requestId) {
+    if (!mastodonCanInteract(token, action)) throw failure('Reconnect Mastodon to allow likes and replies.', 403);
+    let session, origin;
+    try {
+      session = JSON.parse(token);
+      origin = mastodonOrigin(session.origin);
+      if (typeof session.accessToken !== 'string' || !session.accessToken || !/^\d+$/.test(session.accountId || '')) throw new Error('Invalid account');
+    } catch { throw failure('Reconnect your Mastodon account.', 403); }
+    if (!mastodonService?.json) throw failure('Mastodon actions are temporarily unavailable.', 503);
+    const call = async (path, options = {}) => {
+      try { return await mastodonService.json(origin, path, { ...options, token: session.accessToken }); }
+      catch (error) {
+        if ([401, 403].includes(error.status)) throw failure('Mastodon denied this action. Reconnect with interaction permissions, or open the original post.', 403);
+        if (error.status === 429) throw failure('Mastodon is temporarily rate limited. Try again later.', 429);
+        if (error.status === 404) throw failure('This Mastodon post is no longer available to your account.', 404);
+        throw failure('Mastodon did not confirm this action. Check the original post before retrying.', 502);
+      }
+    };
+    // A remote status has a different numeric ID on every federated server.
+    // Resolve its canonical URL on this account's server, never on its author host.
+    const resolved = await call(`/api/v2/search?${new URLSearchParams({ q: target.url, type: 'statuses', resolve: 'true', limit: '5' })}`);
+    const status = (Array.isArray(resolved?.statuses) ? resolved.statuses : []).find(item => !item.reblog
+      && /^\d+$/.test(item.id || '')
+      && [item.url, item.uri].some(value => mastodonPostUrl(value) === target.url));
+    if (!status) throw failure('Your Mastodon server could not find this exact post. Open the original post to continue.', 404);
+    if (action === 'like') {
+      const result = await call(`/api/v1/statuses/${status.id}/${liked ? 'favourite' : 'unfavourite'}`, { form: {} });
+      if (String(result?.id) !== String(status.id) || result.favourited !== liked
+          || ![result.url, result.uri].some(value => mastodonPostUrl(value) === target.url)) throw failure('Mastodon did not confirm this like. Check the original post.', 502);
+      return { liked, ...(Number.isSafeInteger(result.favourites_count) && result.favourites_count >= 0 ? { likesCount: result.favourites_count } : {}) };
+    }
+    if (!/^[a-zA-Z0-9-]{16,80}$/.test(requestId || '')) throw failure('A reply request identity is required. Please try again.', 400);
+    if (!['public', 'unlisted', 'private', 'direct'].includes(status.visibility)) throw failure('Mastodon could not confirm this post visibility. Open the original post to reply.', 502);
+    const idempotencyKey = createHash('sha256').update(JSON.stringify(['uficonnect-mastodon-reply', user.id, session.accountId, requestId])).digest('hex');
+    const result = await call('/api/v1/statuses', {
+      form: { status: content, in_reply_to_id: status.id, visibility: status.visibility,
+        ...(status.sensitive ? { sensitive: 'true' } : {}), ...(status.spoiler_text ? { spoiler_text: status.spoiler_text } : {}) },
+      idempotencyKey,
+    });
+    if (!/^\d+$/.test(result?.id || '') || String(result.in_reply_to_id) !== String(status.id)
+        || String(result.account?.id) !== String(session.accountId)) throw failure('Mastodon did not confirm the reply. Check the original post before retrying.', 502);
+    const commentUrl = mastodonPostUrl(result.url) || mastodonPostUrl(result.uri);
+    return { commentId: String(result.id), ...(commentUrl ? { commentUrl } : {}) };
+  }
+  async function perform({ user, source, sourceUrl, action, content, liked, requestId }) {
     source = normalizeSource(source);
     if (!['like', 'comment'].includes(action)) throw failure('Unsupported action.');
     if (!isSourceActionAllowed(source, action, { env: policyEnv })) throw failure('This action is unavailable here. Open the original source to continue.', 422);
@@ -113,6 +160,7 @@ function createSourceInteractions({ fetchImpl = fetch, atprotoGet, atprotoPostJS
       content = content.trim();
     }
     if (source === 'bluesky') return bluesky(token, target, action, content, liked);
+    if (source === 'mastodon') return mastodon(user, token, target, action, content, liked, requestId);
     if (source === 'reddit') {
       const data = action === 'like'
         ? await request('https://oauth.reddit.com/api/vote', token, 'POST', { id: target.id, dir: liked ? '1' : '0', api_type: 'json' }, true)
@@ -201,7 +249,7 @@ function registerSourceInteractionRoutes(app, { authenticate, limiter, getUser, 
           if (!screened.allowed) throw failure(screened.reason === 'screening_unavailable' ? 'Comment screening is temporarily unavailable.' : 'This comment cannot be published.', screened.reason === 'screening_unavailable' ? 503 : 422);
           text = screened.content;
         }
-        result = { status: 200, body: { source, action, published: true, ...await perform({ user, source, sourceUrl, action, content: text, liked }) } };
+        result = { status: 200, body: { source, action, published: true, ...await perform({ user, source, sourceUrl, action, content: text, liked, requestId }) } };
       } catch (error) {
         const originalUrl = validateOriginalUrl(source, sourceUrl, { env: policyEnv });
         const policy = getSourcePolicy(source, { env: policyEnv });

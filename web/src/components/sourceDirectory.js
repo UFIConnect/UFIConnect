@@ -49,6 +49,32 @@ export function filterAccounts(entries, connected, status) {
       || (pa.name || a).localeCompare(pb.name || b));
 }
 
+export const ACCOUNT_CATEGORIES = [
+  ['social', 'Social'], ['video', 'Video & Streaming'],
+  ['work', 'Work & Development'], ['publishing', 'Publishing'], ['career', 'Career sites'],
+];
+function accountCategory(key, platform) {
+  if (platform.category === 'career' || CAREER_ACCOUNT_PLATFORMS.includes(key)) return 'career';
+  if (['youtube', 'twitch', 'tiktok'].includes(key)) return 'video';
+  if (['github', 'gitlab', 'linkedin', 'dribbble', 'behance', 'stackoverflow', 'producthunt'].includes(key)) return 'work';
+  if (platform.category === 'publication' || ['medium', 'wordpress', 'tumblr', 'devto', 'hashnode', 'freecodecamp'].includes(key)) return 'publishing';
+  return 'social';
+}
+
+// Account categories describe what members connect, while the status filter
+// preserves each provider's existing authorization and availability state.
+export function accountSections(entries, connected, status = 'all') {
+  return ACCOUNT_CATEGORIES.map(([id, label]) => {
+    const categoryEntries = entries.filter(([key, platform]) => accountCategory(key, platform) === id);
+    return {
+      id, label,
+      total: categoryEntries.length,
+      connectedCount: categoryEntries.filter(([key]) => connected[key]).length,
+      items: filterAccounts(categoryEntries, connected, status),
+    };
+  }).filter(section => section.items.length);
+}
+
 // Public destinations only. Authorization always uses the existing OAuth start route.
 export const ACCOUNT_SITE_URLS = {
   linkedin: 'https://www.linkedin.com/', twitter: 'https://x.com/', facebook: 'https://www.facebook.com/',

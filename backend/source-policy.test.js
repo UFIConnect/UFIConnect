@@ -68,6 +68,25 @@ test('original source links reject host confusion, credentials, ports and unsupp
   assert.equal(validateOriginalUrl('youtube', 'https://youtu.be/abcdefghijk'), 'https://youtu.be/abcdefghijk');
   for (const value of ['https://youtube.com.evil.test/watch?v=abcdefghijk', 'https://youtube.com@evil.test/watch', 'https://user:pass@youtube.com/watch', 'https://youtube.com:443/watch', 'https://youtube.com./watch', 'http://youtube.com/watch', 'javascript:alert(1)', '//youtube.com/watch', 'https://youtube.com\\@evil.test/watch', 'https://you\ntube.com/watch']) assert.equal(validateOriginalUrl('youtube', value), null, value);
   assert.equal(validateOriginalUrl('github', 'https://gitlab.com/org/repo'), null);
-  assert.equal(validateOriginalUrl('mastodon', 'https://community.example/@user/123', { env: {} }), null);
+  assert.equal(validateOriginalUrl('mastodon', 'https://community.example/@user/123', { env: {} }), 'https://community.example/@user/123');
   assert.equal(validateOriginalUrl('mastodon', 'https://community.example/@user/123', { env: { SOURCE_MASTODON_ORIGINS: 'https://community.example' } }), 'https://community.example/@user/123');
+  for (const value of ['https://community.example/', 'https://community.example/@user', 'https://private.internal/@user/123', 'https://127.0.0.1/@user/123', 'https://community.example/@user/123/extra']) assert.equal(validateOriginalUrl('mastodon', value), null);
+});
+
+test('Mastodon capabilities require each granted interaction scope and retain policy switches', () => {
+  const user = scope => ({ socialTokens: { mastodon: JSON.stringify({ scope }) } });
+  const readOnly = getInteractionCapabilities(user('read:accounts read:statuses'), { env: {} }).mastodon;
+  assert.equal(readOnly.connected, true);
+  assert.equal(readOnly.like, false);
+  assert.equal(readOnly.comment, false);
+  assert.equal(readOnly.reconnectRequired, true);
+  const likesOnly = getInteractionCapabilities(user('read:search write:favourites'), { env: {} }).mastodon;
+  assert.equal(likesOnly.like, true);
+  assert.equal(likesOnly.comment, false);
+  const full = getInteractionCapabilities(user('read write'), { env: {} }).mastodon;
+  assert.equal(full.like, true);
+  assert.equal(full.comment, true);
+  assert.equal(full.reconnectRequired, false);
+  assert.equal(full.maxLength, 500);
+  assert.equal(getInteractionCapabilities(user('read write'), { env: { SOURCE_MASTODON_COMMENT_ENABLED: 'false' } }).mastodon.comment, false);
 });

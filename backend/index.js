@@ -1,5 +1,6 @@
 const express = require('express');
-const { mastodonOrigin, mastodonCanReadStatuses, MASTODON_SCOPES, createMastodonService, registerMastodonRoutes } = require('./mastodon-oauth');
+const { mastodonOrigin, mastodonPostUrl, mastodonCanReadStatuses, mastodonCanInteract, MASTODON_SCOPES, createMastodonService, registerMastodonRoutes } = require('./mastodon-oauth');
+const { mastodonContentText } = require('./mastodon-content');
 const { BLUESKY_OAUTH_SCOPE, pushBlueskyAuthorization } = require('./bluesky-oauth');
 const { importedContentLimit, jobDescriptionText, JOB_CONTENT_MAX_CHARS } = require('./job-content');
 const { extractFeedMedia } = require('./rss-media');
@@ -4237,32 +4238,34 @@ async function fetchMastodonAccountPosts(token, own = false) {
   const endpoint = own ? '/api/v1/accounts/' + encodeURIComponent(credentials.accountId) + '/statuses?limit=40&exclude_reblogs=true' : '/api/v1/timelines/home?limit=40';
   const data = await mastodonService.json(credentials.origin, endpoint, { token: credentials.accessToken });
   const statuses = (Array.isArray(data) ? data : []).filter(item => !own || (!item.reblog && String(item.account?.id) === credentials.accountId));
-  return mapMastodonPosts(statuses.map(item => item.reblog || item), own ? 'Your Mastodon posts' : 'Following');
+  return mapMastodonPosts(statuses.map(item => item.reblog || item), own ? 'Your Mastodon posts' : 'Following', true);
 }
 async function fetchMastodonHomeTimeline(token) { return fetchMastodonAccountPosts(token); }
 async function fetchMastodonOwnPosts(token) { return fetchMastodonAccountPosts(token, true); }
 
-function mapMastodonPosts(data, tag) {
+function mapMastodonPosts(data, tag, connected = false) {
   return (data || [])
-    .filter(t => t.content && t.account && !t.sensitive && t.visibility === 'public' && safePostLink(t.url))
+    .filter(t => (t.content || t.media_attachments?.length) && t.account && !t.sensitive && t.visibility === 'public' && mastodonPostUrl(t.url || t.uri))
     .map(t => {
-      const text = truncateWithEllipsis(stripAndDecodeHTML(t.content), POST_CONTENT_MAX_CHARS);
+      const sourceUrl = mastodonPostUrl(t.url || t.uri);
+      const text = mastodonContentText(t.content, POST_CONTENT_MAX_CHARS);
       return {
-        id:          `mastodon_${crypto.createHash('sha256').update(new URL(t.url).origin).digest('hex').slice(0, 12)}_${t.id}`,
-        authorId:    `mastodon_${t.account.url || new URL(t.url).origin + '/' + t.account.id}`,
+        id:          `mastodon_${crypto.createHash('sha256').update(new URL(sourceUrl).origin).digest('hex').slice(0, 12)}_${t.id}`,
+        authorId:    `mastodon_${t.account.url || new URL(sourceUrl).origin + '/' + t.account.id}`,
         groupId:     'ext_mastodon',
         content:     text,
         title:       text.slice(0, 100),
         source:      'mastodon',
         sourceLabel: `@${t.account.acct}`,
-        sourceUrl:   t.url,
+        sourceUrl,
         topic:       tag,
-        author:      { id: `mastodon_${t.account.url || new URL(t.url).origin + '/' + t.account.id}`, name: t.account.display_name || t.account.username, title: 'Mastodon', organization: 'Mastodon', avatarUrl: safeAvatarUrl(t.account.avatar_static || t.account.avatar), profileUrl: safePostLink(t.account.url) },
+        author:      { id: `mastodon_${t.account.url || new URL(sourceUrl).origin + '/' + t.account.id}`, name: t.account.display_name || t.account.username, title: 'Mastodon', organization: 'Mastodon', avatarUrl: safeAvatarUrl(t.account.avatar_static || t.account.avatar), profileUrl: safePostLink(t.account.url) },
         likes: [], likesCount: t.favourites_count || 0, commentsCount: t.replies_count || 0,
+        ...(connected && typeof t.favourited === 'boolean' ? { sourceLikedByMe: t.favourited } : {}),
         createdAt:   t.created_at,
         isExternal:  true,
         ...mastodonMedia(t.media_attachments?.[0]),
-        group:       { id: 'ext_mastodon', name: 'Mastodon', category: 'Social', externalUrl: new URL(t.url).origin },
+        group:       { id: 'ext_mastodon', name: 'Mastodon', category: 'Social', externalUrl: new URL(sourceUrl).origin },
       };
     });
 }
@@ -14374,7 +14377,7 @@ const PLATFORMS = {
   },
   mastodon: {
     name: 'Mastodon', color: '#6364FF', icon: 'mastodon',
-    description: 'Read public posts from your Mastodon home timeline and your own account.',
+    description: 'Read posts from your Mastodon home timeline and your own account, and like or reply using your connected account.',
     scopes: MASTODON_SCOPES.split(' '),
     needsServer: true,
     loginUrl: 'https://joinmastodon.org/servers',
@@ -16072,11 +16075,6 @@ function boundedLimit(raw, fallback = 50, max = 100) {
 
 async function getCommunityPostById(postId) {
   let post = posts.find((p) => p.id === postId && isInteractiveCommunitySource(p.source));
-  if (post) {
-    const screened = screenStoredCommunityPost(post);
-    return screened.allowed ? screened.post : null;
-  }
-
   if (db.isConnected()) {
     try {
       const { rows } = await db.query(
@@ -16090,15 +16088,25 @@ async function getCommunityPostById(postId) {
         const screened = screenStoredCommunityPost(post);
         if (!screened.allowed) return null;
         post = screened.post;
-        posts.unshift(post);
+        const index = posts.findIndex(existing => existing.id === postId);
+        if (index > -1) posts[index] = post;
+        else posts.unshift(post);
         return post;
+      }
+      // A successful lookup is authoritative across API workers. Remove a
+      // deleted native post from this worker before other feed caches inspect it.
+      if (post?.source !== LIVE_CAMERA_SOURCE) {
+        const index = posts.findIndex(existing => existing.id === postId);
+        if (index > -1) posts.splice(index, 1);
+        return null;
       }
     } catch (e) {
       console.error('community post lookup DB:', e.message);
     }
   }
 
-  return null;
+  const screened = post ? screenStoredCommunityPost(post) : null;
+  return screened?.allowed ? screened.post : null;
 }
 
 function serializePostComment(comment) {
@@ -16294,7 +16302,8 @@ async function getCommunityPosts({
          LIMIT $${params.length}`,
         params
       );
-      result = [...result, ...rows.map(dbCommunityPostToMemPost)];
+      // Persisted rows include edits/removals made on any API worker.
+      result = rows.map(dbCommunityPostToMemPost);
     } catch (e) {
       console.error('community posts DB:', e.message);
     }
@@ -16364,7 +16373,7 @@ async function searchCommunityPosts({ viewerId, q, limit = 300, before = null, b
          LIMIT $${params.length}`,
         params
       );
-      matches = [...matches, ...rows.map(dbCommunityPostToMemPost)];
+      matches = rows.map(dbCommunityPostToMemPost);
     } catch (error) {
       console.warn('community post search DB:', error.message);
     }
@@ -20705,8 +20714,8 @@ app.get('/social/platforms', authenticate, async (req, res) => {
       ...PLATFORMS[key],
       ...(key === 'mastodon' && token ? mastodonAccountLinks(token) : {}),
       connected: connected[key],
-      reconnectRequired: key === 'youtube' ? Boolean(token) && !user?.socialRefreshTokens?.youtube : key === 'mastodon' && Boolean(token) && !mastodonCanReadStatuses(token),
-      ...(key === 'mastodon' && token && !mastodonCanReadStatuses(token) ? { reconnectMessage: 'Reconnect Mastodon once to allow access to posts in Following and Your Feed.' } : {}),
+      reconnectRequired: key === 'youtube' ? Boolean(token) && !user?.socialRefreshTokens?.youtube : key === 'mastodon' && Boolean(token) && (!mastodonCanReadStatuses(token) || !mastodonCanInteract(token)),
+      ...(key === 'mastodon' && token && (!mastodonCanReadStatuses(token) || !mastodonCanInteract(token)) ? { reconnectMessage: 'Reconnect Mastodon to grant access to posts, likes, and replies from your account.' } : {}),
       connectedAt: token ? connectedSourceWindow(user, key).connectedAt : null,
       syncStartAt: token ? connectedSourceWindow(user, key).startAt : null,
       configured: status.configured,
@@ -24674,19 +24683,18 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
     try {
       const { comments, hasMore, total } = await paginateComments(`comments_mastodon_${postId}`, async () => {
         const post = await findPostByIdWithDbFallback(postId);
-        const sourceUrl = post?.sourceUrl || '';
-        // sourceUrl: https://{instance}/@{user}/{status_id}
-        const m = sourceUrl.match(/^https?:\/\/([^/]+)\/@[^/]+\/(\d+)/);
-        if (!m) return [];
-        const [, instance, statusId] = m;
-        const data = await fetchJSON(`https://${instance}/api/v1/statuses/${statusId}/context`);
-        return (data?.descendants || []).map(s => ({
+        const sourceUrl = mastodonPostUrl(post?.sourceUrl);
+        if (!sourceUrl) return [];
+        const original = new URL(sourceUrl);
+        const statusId = original.pathname.split('/').filter(Boolean).at(-1);
+        const data = await mastodonService.json(original.origin, `/api/v1/statuses/${statusId}/context`);
+        return (data?.descendants || []).filter(s => s.visibility === 'public' && !s.sensitive).map(s => ({
           id:      s.id,
           author:  `@${s.account?.acct || 'unknown'}`,
-          body:    truncateWithEllipsis(stripAndDecodeHTML(s.content || ''), 400),
+          body:    mastodonContentText(s.content, 1000),
           score:   s.favourites_count || 0,
           created: s.created_at,
-          url:     s.url,
+          url:     mastodonPostUrl(s.url || s.uri),
         }));
       }, offset, limit);
       if (!total && !comments.length) return res.json({ comments: [], hasMore: false, source: 'mastodon', live: false });
@@ -27593,7 +27601,7 @@ scheduleRecurring(() => creatorAnalytics.prune().catch(() => {}), 60 * 60 * 1000
 registerUfiVaultRoutes(app, {vault:ufiVault,authenticate,limiter:contentSubmissionLimiter});
 require('./source-interactions').registerSourceInteractionRoutes(app, {
   authenticate, limiter: contentSubmissionLimiter, getUser: getPublicTargetUser, screenMemberContent,
-  fetchImpl: fetch, atprotoGet, atprotoPostJSON, policyEnv: process.env,
+  fetchImpl: fetch, atprotoGet, atprotoPostJSON, mastodonService, policyEnv: process.env,
   auditInteraction: creatorAnalytics.auditInteraction, reserveInteraction: creatorAnalytics.reserveInteraction, completeInteraction: creatorAnalytics.completeInteraction,
 });
 
@@ -27716,28 +27724,21 @@ app.post('/posts/:postId/comments', authenticate, contentSubmissionLimiter, asyn
   } catch (e) { console.error('POST /posts/:postId/comments:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
-// Author-only. Only ever applies to UFIconnect-native posts (community_posts) —
-// external aggregated content has no delete concept here.
-app.delete('/posts/:postId', authenticate, async (req, res) => {
-  try {
-    const post = await getCommunityPostById(req.params.postId);
-    if (!post) return res.status(404).json({ message: 'Post not found.' });
-    if (post.authorId !== req.user.id) {
-      return res.status(403).json({ message: 'You can only delete your own posts.' });
-    }
-    if (!db.isConnected()) {
-      return res.status(503).json({ message: 'Deleting is temporarily unavailable — please try again in a moment.' });
-    }
-    await db.query('DELETE FROM post_comments WHERE post_id=$1', [post.id]);
-    await db.query('DELETE FROM community_posts WHERE id=$1', [post.id]);
-    const idx = posts.findIndex((p) => p.id === post.id);
-    if (idx > -1) posts.splice(idx, 1);
-    postComments = postComments.filter((c) => c.postId !== post.id);
-    res.json({ deleted: true });
-  } catch (e) {
-    console.error('DELETE /posts/:postId:', e.message);
-    res.status(500).json({ message: 'Failed to delete the post. Please try again.' });
-  }
+// Native post text and removal remain author-only, with durable writes first.
+require('./native-post-management').registerNativePostManagement(app, {
+  authenticate, limiter: contentSubmissionLimiter, db, screenMemberContent,
+  fromRow: dbCommunityPostToMemPost, serialize: serializeCommunityPost,
+  onUpdated(post) {
+    const index = posts.findIndex(existing => existing.id === post.id);
+    if (index > -1) posts[index] = post;
+    invalidateDeletedFeedPosts([post.id]);
+  },
+  onDeleted(postId) {
+    const index = posts.findIndex(post => post.id === postId);
+    if (index > -1) posts.splice(index, 1);
+    postComments = postComments.filter(comment => comment.postId !== postId);
+    invalidateDeletedFeedPosts([postId]);
+  },
 });
 
 // --- Profile attachments (resume upload + ATS scoring) ---------------------

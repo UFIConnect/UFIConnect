@@ -6,7 +6,7 @@ import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { withCareerAccountFallback } from '../components/sourceMeta';
 import { useAuth } from '../contexts/AuthContext';
 import { DirectoryControls, AccountSiteLink } from '../components/DirectoryControls';
-import { ACCOUNT_STATUSES, filterAccounts } from '../components/sourceDirectory';
+import { ACCOUNT_STATUSES, accountSections, filterAccounts } from '../components/sourceDirectory';
 
 const PLATFORM_BENEFITS = {
   linkedin:  ['Import your work history & headline', 'Show LinkedIn posts in your feed', 'Get matched with relevant jobs'],
@@ -183,8 +183,7 @@ export default function ConnectedAccounts() {
   const displayedCareer = filterAccounts(careerPlatforms, connected, accountFilter);
   const connectedCareerCount = careerPlatforms.filter(([key]) => connected[key]).length;
   const connectedList   = displayedGeneral.filter(([k]) => connected[k]);
-  const availableList   = displayedGeneral.filter(([k, p]) => !connected[k] && p.configured && !p.forceComingSoon);
-  const comingSoonList  = displayedGeneral.filter(([k, p]) => !connected[k] && (p.forceComingSoon || !p.configured));
+  const generalSections = accountSections(generalPlatforms, connected, accountFilter);
   const totalConnected = generalPlatforms.filter(([key]) => connected[key]).length;
 
   return (
@@ -280,7 +279,7 @@ export default function ConnectedAccounts() {
             <h2>Likes and comments</h2>
             <p>Authorize publishing actions on a connected source. Your comments will be published on that platform.</p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              {['reddit', 'twitter', 'youtube', 'github', 'gitlab', 'bluesky'].filter(key => connected[key]).map(key => <button key={key} className="btn btn-outline btn-sm" disabled={!!connecting} onClick={() => handleConnect(key)}>Enable actions on {key === 'twitter' ? 'X' : key}</button>)}
+              {['reddit', 'twitter', 'youtube', 'github', 'gitlab', 'bluesky', 'mastodon'].filter(key => connected[key]).map(key => <button key={key} className="btn btn-outline btn-sm" disabled={!!connecting} onClick={() => handleConnect(key)}>Enable actions on {key === 'twitter' ? 'X' : key === 'mastodon' ? 'Mastodon' : key}</button>)}
             </div>
           </section>}
           {(searchParams.get('analytics') === '1' || searchParams.get('monetization') === '1') && <section className="card" aria-labelledby="source-analytics-permissions" style={{ marginBottom: 20, padding: 20 }}>
@@ -324,71 +323,32 @@ export default function ConnectedAccounts() {
             })}
           </section>}
 
-          {/* Connected section */}
-          {!isBusinessMembership && connectedList.length > 0 && (
-            <div style={{ marginBottom: 28 }}>
-              <div style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 10 }}>
-                Connected
+          {!isBusinessMembership && generalSections.map(section => (
+            <section key={section.id} className="account-category-section" aria-labelledby={`accounts-${section.id}-heading`}>
+              <div className="account-category-heading">
+                <h2 id={`accounts-${section.id}-heading`}>{section.label}</h2>
+                <span>{section.connectedCount} of {section.total} connected</span>
               </div>
-              {connectedList.map(([key, p]) => (
+              <div className="account-category-items">
+              {section.items.map(([key, p]) => (
                 <PlatformCard
                   key={key}
                   platformKey={key}
                   p={p}
-                  isConnected
+                  isConnected={Boolean(connected[key])}
+                  comingSoon={!connected[key] && (p.forceComingSoon || !p.configured)}
                   expanded={expanded === key}
                   onToggle={() => setExpanded(expanded === key ? null : key)}
-                  onDisconnect={() => handleDisconnect(key)}
                   onConnect={() => handleConnect(key)}
+                  onDisconnect={() => handleDisconnect(key)}
                   connecting={connecting === key}
                   disconnecting={disconnecting === key}
                   locked={Boolean(p.locked)}
                 />
               ))}
-            </div>
-          )}
-
-          {/* Coming Soon — all platforms pending OAuth integration */}
-          {!isBusinessMembership && availableList.length > 0 && (
-            <div style={{ marginBottom: 28 }}>
-              <div style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 10 }}>
-                Available
               </div>
-              {availableList.map(([key, p]) => (
-                <PlatformCard
-                  key={key}
-                  platformKey={key}
-                  p={p}
-                  isConnected={false}
-                  expanded={expanded === key}
-                  onToggle={() => setExpanded(expanded === key ? null : key)}
-                  onConnect={() => handleConnect(key)}
-                  connecting={connecting === key}
-                  locked={Boolean(p.locked)}
-                />
-              ))}
-            </div>
-          )}
-
-          {!isBusinessMembership && comingSoonList.length > 0 && (
-            <div style={{ marginBottom: 28 }}>
-              <div style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 10 }}>
-                Coming Soon
-              </div>
-              {comingSoonList.map(([key, p]) => (
-                <PlatformCard
-                  key={key}
-                  platformKey={key}
-                  p={p}
-                  isConnected={false}
-                  comingSoon
-                  expanded={expanded === key}
-                  onToggle={() => setExpanded(expanded === key ? null : key)}
-                  locked={Boolean(p.locked)}
-                />
-              ))}
-            </div>
-          )}
+            </section>
+          ))}
 
         </>
       )}
@@ -402,7 +362,7 @@ export default function ConnectedAccounts() {
             <p>Your account belongs to a Mastodon server. Enter its address or your full handle, then approve UFIConnect on that server.</p>
             <label htmlFor="mastodon-server">Server or full handle</label>
             <input id="mastodon-server" className="form-input" autoFocus autoComplete="off" value={mastodonServer} onChange={event => setMastodonServer(event.target.value)} placeholder="mastodon.social or @you@your.server" />
-            <p style={{ color: 'var(--muted)', fontSize: '.8rem' }}>Your password stays on your server. UFIConnect requests permission to read your profile and posts, and imports public posts from your Mastodon home timeline and your own account.</p>
+            <p style={{ color: 'var(--muted)', fontSize: '.8rem' }}>Your password stays on your server. UFIConnect imports public posts from your Mastodon home timeline and your own account. You will also grant permission to find original posts, like or unlike them, and publish replies when you choose.</p>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => setMastodonServer(null)}>Cancel</button>
               <button type="submit" className="btn btn-primary btn-sm" disabled={!mastodonServer.trim()}>Continue to Mastodon</button>

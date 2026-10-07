@@ -18,7 +18,7 @@ test('Mastodon requests reject blocked DNS before sending credentials', async ()
 
 test('Mastodon OAuth enables authorized home and own feeds with public visibility and account ownership', async () => {
   const calls = [];
-  const publicPost = { id:'123',content:'<p>Public update</p>',visibility:'public',created_at:new Date().toISOString(),url:'https://social.example/@alice/123',account:{id:'42',username:'alice',acct:'alice',url:'https://social.example/@alice'},media_attachments:[] };
+  const publicPost = { id:'123',content:'<p>Public update <a href="https://example.org/story?one=1&amp;two=2">full story</a></p>',favourites_count:4,favourited:true,visibility:'public',created_at:new Date().toISOString(),url:'https://social.example/@alice/123',account:{id:'42',username:'alice',acct:'alice',url:'https://social.example/@alice'},media_attachments:[] };
   const service = {
     application: async (origin, redirect) => {calls.push({origin,redirect});return {client_id:'test-client',client_secret:'test-secret'};},
     json: async (origin, path, options) => {
@@ -75,10 +75,16 @@ test('Mastodon OAuth enables authorized home and own feeds with public visibilit
     const feed = await app.getFollowingFeedPosts(user.id, 'mastodon', {bust:true,surface:'feed'});
     assert.equal(feed.posts.length,1);
     assert.equal(feed.posts[0].sourceUrl,publicPost.url);
+    assert.match(feed.posts[0].content,/full story \(https:\/\/example.org\/story\?one=1&two=2\)/);
+    assert.equal(feed.posts[0].sourceLikedByMe,true);
+    assert.equal(feed.posts[0].likesCount,4);
     assert.equal(feed.posts[0].group.externalUrl,'https://social.example');
     assert.equal(calls.some(call => call.path?.startsWith('/api/v1/timelines/home')),true);
-    assert.equal(catalog.data.platforms.mastodon.scopes.join(' '),'read:accounts read:statuses');
+    assert.equal(catalog.data.platforms.mastodon.scopes.join(' '),implementation.MASTODON_SCOPES);
     assert.equal(connected.data.platforms.mastodon.reconnectRequired,false);
+    const grantedActions = await app.request('/social/interaction-capabilities',{userId:user.id});
+    assert.equal(grantedActions.data.sources.mastodon.like,true);
+    assert.equal(grantedActions.data.sources.mastodon.comment,true);
     user.plan = 'pro';
     const own = await app.request('/command-center/your-content?platform=mastodon',{userId:user.id});
     assert.equal(own.status,200);
@@ -88,6 +94,14 @@ test('Mastodon OAuth enables authorized home and own feeds with public visibilit
     assert.equal(combined.status,200);
     assert.equal(combined.data.posts.length,1);
     assert.equal(calls.some(call => call.path?.includes('/statuses')),true);
+    await app.saveSocialToken(user.id,'mastodon',JSON.stringify({origin:'https://social.example',accessToken:'read-only',accountId:'42',scope:'read:accounts read:statuses'}));
+    const readOnlyCatalog = await app.request('/social/platforms',{userId:user.id});
+    assert.equal(readOnlyCatalog.data.platforms.mastodon.reconnectRequired,true);
+    const readOnlyFeed = await app.getFollowingFeedPosts(user.id, 'mastodon', {bust:true,surface:'feed'});
+    assert.equal(readOnlyFeed.posts.length,1,'Existing read grants retain the connected feed while requesting write permission');
+    const readOnlyActions = await app.request('/social/interaction-capabilities',{userId:user.id});
+    assert.equal(readOnlyActions.data.sources.mastodon.like,false);
+    assert.equal(readOnlyActions.data.sources.mastodon.comment,false);
     const oldToken = JSON.stringify({origin:'https://social.example',accessToken:'profile-only',accountId:'42',scope:'read:accounts'});
     await app.saveSocialToken(user.id,'mastodon',oldToken);
     const oldCatalog = await app.request('/social/platforms',{userId:user.id});
