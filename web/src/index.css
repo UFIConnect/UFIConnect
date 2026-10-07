@@ -1239,12 +1239,15 @@ input, textarea, select { font-family: inherit; }
   scrollbar-width: thin;
   touch-action: pan-x;
 }
-.travel-city-guide { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 28px 16px; text-align: center; background: var(--primary-light); color: var(--text); }
-.travel-city-guide h3 { margin: 0; font-size: 1.2rem; overflow-wrap: anywhere; }
-.travel-city-guide p { margin: 0; color: var(--muted); font-size: .8rem; }
-.travel-city-guide-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
-.travel-city-guide-actions .btn { min-height: 44px; }
-.travel-city-guide-label { color: var(--muted); font-size: .75rem; white-space: nowrap; }
+.travel-camera-unavailable { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 28px 16px; text-align: center; background: var(--primary-light); color: var(--text); }
+.travel-camera-unavailable h3 { margin: 0; font-size: 1.2rem; overflow-wrap: anywhere; }
+.travel-camera-unavailable p { margin: 0; color: var(--muted); font-size: .8rem; }
+.travel-camera-unavailable .btn { min-height: 44px; }
+.travel-city-search { display: flex; align-items: center; gap: 8px; margin: 0 12px 8px; padding: 0 10px; border: 1px solid var(--border); border-radius: 10px; color: var(--muted); background: var(--bg); }
+.travel-city-search:focus-within { outline: 2px solid var(--primary); outline-offset: 2px; }
+.travel-city-search input { flex: 1; min-width: 0; width: 100%; border: 0; outline: 0; background: transparent; color: var(--text); padding: 12px 0; font: inherit; font-size: 16px; }
+.travel-city-search > svg { flex-shrink: 0; }
+.travel-city-search .btn { min-width: 44px; min-height: 44px; }
 .travel-city-navigation { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px; border-bottom: 1px solid var(--border); }
 .travel-city-navigation .btn { min-height: 44px; gap: 5px; }
 .travel-city-navigation > span { text-align: center; color: var(--muted); font-size: .75rem; }

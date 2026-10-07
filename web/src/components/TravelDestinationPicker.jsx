@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BookOpen, RotateCw } from 'lucide-react';
+import { BookOpen, RotateCw, Search, X } from 'lucide-react';
 import client from '../api/client';
 
 export function useTravelDestinations() {
@@ -29,17 +29,23 @@ export const travelCityMatches = (destination, place) => Boolean(destination?.ci
   && [destination.country, destination.countryCode].filter(Boolean).some(value =>
     [place.country, place.countryCode].filter(Boolean).some(country => normalizeCountry(value) === normalizeCountry(country)));
 
-export default function TravelDestinationPicker({ destinations, selected, disabled, onSelect, onGuideOpen, feeds = [], activeCameraId, error, retry }) {
+export default function TravelDestinationPicker({ destinations, selected, disabled, onSelect, onGuideOpen, query, onQueryChange, feeds = [], activeCameraId, error, retry }) {
+  const terms = normalize(query).split(/\s+/).filter(Boolean);
+  const matches = destinations.filter(city => terms.every(term => normalize([city.city, city.country, city.countryCode].join(' ')).includes(term)));
   return (
     <div className="travel-destination-picker">
       <div className="travel-city-rail-heading">
-        <strong>Cities{destinations.length ? ` (${destinations.length})` : ''}</strong>
-        {selected && onGuideOpen && <button type="button" className="btn btn-ghost btn-sm" onClick={() => onGuideOpen(selected)}>
-        <BookOpen size={14} aria-hidden="true" />City guide
-        </button>}
+        <strong aria-live="polite">Cities{destinations.length ? ` (${terms.length ? matches.length + ' of ' : ''}${destinations.length})` : ''}</strong>
+        {selected && onGuideOpen && <button type="button" className="btn btn-ghost btn-sm" onClick={() => onGuideOpen(selected)}><BookOpen size={14} aria-hidden="true" />City guide</button>}
+      </div>
+      <div className="travel-city-search">
+        <Search size={17} aria-hidden="true" />
+        <input type="search" aria-label="Search cities" placeholder={`Search ${destinations.length || ''} cities or countries`.replace('  ', ' ')}
+          value={query} onChange={event => onQueryChange(event.target.value)} autoComplete="off" />
+        {query && <button type="button" className="btn btn-ghost btn-sm" aria-label="Clear city search" onClick={() => onQueryChange('')}><X size={17} /></button>}
       </div>
       <div className="travel-live-loop-choices" role="group" aria-label="Travel cities">
-        {destinations.map(destination => {
+        {matches.map(destination => {
           const active = selected?.id === destination.id;
           const camera = feeds.find(feed => travelCityMatches(destination, feed));
           return <button key={destination.id} type="button" disabled={disabled}
@@ -51,6 +57,7 @@ export default function TravelDestinationPicker({ destinations, selected, disabl
             {camera?.liveVerified && <small className="travel-city-live-badge">{activeCameraId === camera.id ? 'Playing live' : 'Live camera'}</small>}
           </button>;
         })}
+        {destinations.length > 0 && matches.length === 0 && <span role="status">No cities match your search.</span>}
         {!destinations.length && <span role="status">{error ? 'Cities are temporarily unavailable.' : 'Loading cities...'}</span>}
       </div>
       {error && <button type="button" className="btn btn-ghost btn-sm" onClick={retry}
