@@ -1218,7 +1218,6 @@ function TravelLiveLoop({ feeds = [], mediaOpenId, location, onLocationSelect, o
       </div>}
       {destinations.length > 0 && <div className="travel-city-navigation" role="group" aria-label="City navigation">
         <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => moveCity(-1)} aria-label="Previous city"><ArrowLeft size={17} />Previous</button>
-        <span role="status" aria-live="polite">{selectedIndex >= 0 ? 'City ' + (selectedIndex + 1) + ' of ' + destinations.length : destinations.length + ' cities'}</span>
         <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => moveCity(1)} aria-label="Next city">Next<ArrowRight size={17} /></button>
       </div>}
       <TravelDestinationPicker destinations={destinations} selected={selected} disabled={busy}

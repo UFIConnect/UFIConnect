@@ -21,7 +21,6 @@
 .feed-specialized-toolbar--location .feed-specialized-actions .feed-topic-filter { position: static; }
 .feed-category-post { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; }
 .travel-live-loop .travel-destination-picker { display: block; min-width: 0; margin: 0; padding: 10px 12px 12px; }
-.travel-city-rail-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 38px; font-size: .8rem; }
 .travel-destination-picker .travel-live-loop-choices { padding: 6px 0; }
 .travel-destination-picker .travel-live-loop-choice { flex: 0 0 132px; }
 .travel-city-live-badge { color: #047857; font-weight: 700; }

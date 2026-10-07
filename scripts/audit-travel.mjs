@@ -137,10 +137,9 @@ try {
     const cityIds = await cities.getByRole('button').evaluateAll(buttons => buttons.map(button => button.dataset.destinationId));
     assert.equal(new Set(cityIds).size, 91);
     const navigation = rail.getByRole('group', { name: 'City navigation', exact: true });
-    await navigation.getByText('City 1 of 91', { exact: true }).waitFor();
+    assert.equal(await cityChoice(cityIds[0]).getAttribute('aria-pressed'), 'true');
     await navigation.getByRole('button', { name: 'Previous city', exact: true }).click();
     await waitForCitySave();
-    await navigation.getByText('City 91 of 91', { exact: true }).waitFor();
     assert.equal(await cityChoice(cityIds[90]).getAttribute('aria-pressed'), 'true', 'Previous wraps to the final catalog city');
     await navigation.getByRole('button', { name: 'Next city', exact: true }).click();
     await waitForCitySave();
@@ -150,7 +149,6 @@ try {
       await waitForCitySave();
       const index = step % 91;
       assert.equal(await cityChoice(cityIds[index]).getAttribute('aria-pressed'), 'true', 'Next follows the complete catalog, including cities without cameras');
-      await navigation.getByText(`City ${index + 1} of 91`, { exact: true }).waitFor();
       assert.ok(await rail.locator('iframe').count() <= 1, 'Only the current city can mount a player');
     }
     const beforeCameraChoices = profileWrites;
