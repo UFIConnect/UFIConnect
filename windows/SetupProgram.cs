@@ -47,7 +47,7 @@ namespace UfiConnect.Vpn {
       if(!approved)return 0;
       try{
         var result=Task.Run(()=>Install()).GetAwaiter().GetResult();
-        MessageBox.Show("UFIConnect VPN is installed. Click Connect on the UFIConnect website to open it, then sign in with the same account. You can also open it from the Start menu."+(result==3010?"\nWindows requests a restart to finish the WireGuard installation.":""),"UFIConnect VPN setup");return 0;
+        MessageBox.Show("UFIConnect VPN is installed. Click Enable VPN on the UFIConnect website to open it, then sign in with the same account. You can also open it from the Start menu and press Enable. Use Disable to stop the connection."+(result==3010?"\nWindows requests a restart to finish the WireGuard installation.":""),"UFIConnect VPN setup");return 0;
       }catch(Exception){MessageBox.Show("Installation could not be verified or completed. No VPN tunnel was started. Check your connection and administrator access, then try again. Keep the complete setup folder together.","UFIConnect VPN setup",MessageBoxButtons.OK,MessageBoxIcon.Error);return 1;}
     }
     private static async Task<int> Install(){

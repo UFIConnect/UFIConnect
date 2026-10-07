@@ -4,8 +4,8 @@ Native Windows Forms client for the UFIConnect managed VPN API. This is an initi
 
 ## What is included
 
-- Direct sign-in, Connect, Disconnect, and Sign out in UFIConnect VPN.
-- Website Connect opens the installed app with a single-use connection link. The app consumes it through its own authenticated UFIConnect session before connecting. An already open app receives it through a local pipe restricted to the same Windows user.
+- Direct sign-in, one Enable/Disable control, and Sign out in UFIConnect VPN.
+- Website Enable VPN opens the installed app with a single-use connection link. The app consumes it through its own authenticated UFIConnect session before connecting. An already open app receives it through a local pipe restricted to the same Windows user.
 - Local WireGuard key creation. The API receives only the public key.
 - Current-user DPAPI encryption for the saved sign-in, plus an encrypted WireGuard configuration with administrator/System-only storage. Tunnel keys are excluded from the saved sign-in. The tunnel configuration uses DPAPI machine scope so the WireGuard LocalSystem service can read it.
 - Five-minute maximum server authorization, renewed every 30 seconds. Native service state plus a recent server handshake is required to show Connected.
@@ -18,8 +18,8 @@ Closing the app or expiry stops the VPN and restores ordinary Windows networking
 ## Connect from the website
 
 1. Install the complete validation package once, accepting the Windows installation prompts.
-2. On the UFIConnect VPN page, click Connect and allow the browser to open UFIConnect VPN.
-3. On first use, allow UAC and sign in with the same UFIConnect account. The pending request connects automatically after sign-in. Subsequent requests reuse the open app and its saved sign-in.
+2. On the UFIConnect VPN page, click Enable VPN and allow the browser to open UFIConnect VPN.
+3. On first use, allow UAC and sign in with the same UFIConnect account. The pending request connects automatically after sign-in. Subsequent requests reuse the open app and its saved sign-in. In the app, Enable starts the connection and changes to Disable so the same button can stop it.
 
 Connection links expire after 180 seconds and are retained only in memory. Expired, replayed, malformed, wrong-account, or wrong-platform requests cannot start a tunnel. Codes are never saved to disk, copied to the clipboard, or logged. Signing out discards pending requests; closing or disconnecting invalidates in-flight connection attempts. Ordinary app startup does not reconnect automatically.
 
@@ -43,7 +43,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File windows\build.ps1
 
 The process-local execution policy option does not change the machine's policy. The script compiles `dist/UFIConnectVpn.exe` and `dist/UFIConnectVpnSetup.exe` with warnings as errors, runs 76 policy, DPAPI, real local pipe, and signature-rejection checks, and packages `dist/UFIConnect-VPN-Windows-x64-validation.zip`. Tests use an isolated pipe name and do not touch drivers, services, registry protocol settings, installed VPNs, or live accounts. Neither client nor installer is launched by the build script. The GUI starts as its caller so it can forward first; the installer retains its separate administrator manifest.
 
-## Before distributing
+## Before a production release
 
 1. Sign both executables with UFIConnect's Windows code-signing identity. Sign the client **before** generating the bootstrap's embedded client checksum, then compile and sign the bootstrap. The present binaries have no publisher signature.
 2. Test on an isolated Windows 10 and Windows 11 VM with the official WireGuard installation: paid enrollment, actual handshake, DNS/IPv4 routing and IPv6 blocking, renewal, cancellation, network timeout, service failure, UI crash, watchdog termination, clock change, logout, and reboot. Confirm no unrelated tunnel is changed.

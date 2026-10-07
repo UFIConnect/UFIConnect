@@ -46,7 +46,7 @@ namespace UfiConnect.Vpn {
     private readonly LaunchInbox inbox=new LaunchInbox();
     private readonly TextBox email=new TextBox(),password=new TextBox();
     private readonly Label status=new Label();
-    private readonly Button login=new Button(),connect=new Button(),disconnect=new Button(),logout=new Button();
+    private readonly Button login=new Button(),connect=new Button(),logout=new Button();
     private readonly System.Windows.Forms.Timer timer=new System.Windows.Forms.Timer{Interval=1000};
     private LaunchPipe pipe;
     private Task listener;
@@ -59,12 +59,14 @@ namespace UfiConnect.Vpn {
       Controls.Add(new Label{Text="Your private tunnel key stays on this device. UFIConnect uses your account, public key, device label, and short-lived authorization to run the VPN. Hosting providers process traffic to deliver it. VPN activity is not sold, used for advertising or AI training, or collected by app analytics.",Location=new Point(30,112),Size=new Size(480,112),ForeColor=Color.LightGray});
       Controls.Add(new Label{Text="Email",AutoSize=true,Location=new Point(30,237)});email.SetBounds(30,264,480,30);email.AccessibleName="UFIConnect email";Controls.Add(email);
       Controls.Add(new Label{Text="Password",AutoSize=true,Location=new Point(30,304)});password.SetBounds(30,331,480,30);password.UseSystemPasswordChar=true;password.AccessibleName="UFIConnect password";Controls.Add(password);
-      Configure(login,"Sign in",30,380,110);Configure(connect,"Connect",150,380,110);Configure(disconnect,"Disconnect",270,380,110);Configure(logout,"Sign out",390,380,120);
+      Configure(login,"Sign in",30,380,140);Configure(connect,"Enable",190,380,140);Configure(logout,"Sign out",350,380,160);
       status.SetBounds(30,439,480,78);status.Text=controller.Message;status.AccessibleName="VPN connection status";Controls.Add(status);
-      Controls.Add(new Label{Text="Closing stops VPN and keeps your encrypted sign-in.\nSign out removes this device's saved sign-in.\nKeep this window open while connected. IPv6 is blocked.\nRequires official WireGuard and administrator access.",Location=new Point(30,536),Size=new Size(480,96),ForeColor=Color.LightGray});
+      Controls.Add(new Label{Text="Closing stops VPN and keeps your encrypted sign-in.\nSign out removes this device's saved sign-in.\nKeep this window open while connected. IPv6 is blocked.\nUFIConnect Setup installs the required VPN components.",Location=new Point(30,536),Size=new Size(480,96),ForeColor=Color.LightGray});
       login.Click+=async(sender,args)=>await Action(async()=>{var secret=password.Text;password.Clear();await controller.Login(email.Text.Trim(),secret);});
-      connect.Click+=async(sender,args)=>await Action(()=>controller.Connect());
-      disconnect.Click+=async(sender,args)=>{inbox.Clear();await Action(()=>controller.Disconnect());};
+      connect.Click+=async(sender,args)=>{
+        if(controller.Active){inbox.Clear();await Action(()=>controller.Disconnect());}
+        else await Action(()=>controller.Connect());
+      };
       logout.Click+=async(sender,args)=>{inbox.Clear();await Action(()=>controller.Logout());};
       Shown+=(sender,args)=>{
         pipe=new LaunchPipe(value=>{
@@ -101,7 +103,7 @@ namespace UfiConnect.Vpn {
     private async Task ProcessPending(){
       var code=inbox.Take(controller.AccountId,DateTime.UtcNow);
       if(code!=null)await controller.ConsumeLaunch(code);
-      else controller.Message="The connection link expired or belongs to an earlier sign-in. Click Connect in UFIConnect again.";
+      else controller.Message="The connection link expired or belongs to an earlier sign-in. Click Enable VPN in UFIConnect again.";
     }
     private void Configure(Button button,string text,int x,int y,int width){button.Text=text;button.SetBounds(x,y,width,36);button.BackColor=Color.FromArgb(33,110,211);button.ForeColor=Color.White;button.FlatStyle=FlatStyle.Flat;Controls.Add(button);}
     private async Task Action(Func<Task> action){
@@ -123,6 +125,6 @@ namespace UfiConnect.Vpn {
         if(inbox.Pending&&controller.SignedIn&&!closing&&!closed)BeginInvoke(new System.Action(async()=>await Action(ProcessPending)));
       }
     }
-    private void RefreshState(){status.Text=controller.Message;login.Enabled=!busy&&!controller.SignedIn;email.Enabled=login.Enabled;password.Enabled=login.Enabled;connect.Enabled=!busy&&controller.SignedIn&&!controller.Active;disconnect.Enabled=!busy&&controller.Active;logout.Enabled=!busy&&controller.SignedIn;}
+    private void RefreshState(){status.Text=controller.Message;login.Enabled=!busy&&!controller.SignedIn;email.Enabled=login.Enabled;password.Enabled=login.Enabled;connect.Text=controller.Active?"Disable":"Enable";connect.Enabled=!busy&&(controller.SignedIn||controller.Active);logout.Enabled=!busy&&controller.SignedIn;}
   }
 }

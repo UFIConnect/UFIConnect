@@ -1,6 +1,7 @@
 // Synthetic browser audit: native launching is injected so this never opens
 // a protocol handler, installs software, signs in, or changes a host VPN.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +16,7 @@ import {flushSync} from 'react-dom';
 import {BrowserRouter} from 'react-router-dom';
 import {ManagedVpnPanel} from '/src/components/VaultVpnPanel.jsx';
 import {setAccessToken, clearSession} from '/src/auth/session.js';
+import '/src/index.css';
 import '/src/pages/Vault.css';
 setAccessToken('synthetic-account-a');
 window.__vpnAudit = {launched:[], clearSession};
@@ -26,7 +28,7 @@ function Fixture(){
   openApp:url=>window.__vpnAudit.launched.push(url)})));
 }
 createRoot(document.getElementById('root')).render(React.createElement(Fixture));`;
-const server = await createServer({root:path.join(root,'web'), configFile:path.join(root,'web/vite.config.js'), envFile:false,
+const server = await createServer({root:path.join(root,'web'), configFile:path.join(root,'web/vite.config.js'), envDir:false,
  define:{'import.meta.env.VITE_API_URL':JSON.stringify('/api'),'import.meta.env.VITE_API_FALLBACK_URL':JSON.stringify('/api')},
  plugins:[{name:'vpn-browser-fixture',
   resolveId(id){if(id==='virtual:vpn-audit.jsx')return '\0virtual:vpn-audit.jsx';},
@@ -62,7 +64,18 @@ try {
    return route.fulfill({status:200,json:{status:'ok'}});
   });
   await page.goto(base+'__vpn-audit');
-  const button=page.getByRole('button',{name:'Connect VPN',exact:true});
+  const button=page.getByRole('button',{name:device.platform==='windows'?'Enable VPN':'Connect VPN',exact:true});
+  const download=page.getByRole('link',{name:'Download Windows preview',exact:true});
+  if(device.platform==='windows') {
+   check(await download.getAttribute('href')==='/downloads/UFIConnect-VPN-Windows-x64-preview.zip','Windows download points to the packaged app');
+   check(await download.getAttribute('download')!==null,'Windows package is offered as a download');
+   const packageResponse=await context.request.get(base+'downloads/UFIConnect-VPN-Windows-x64-preview.zip');
+   const packageBytes=await packageResponse.body();
+   const manifest=JSON.parse(await fs.readFile(path.join(root,'web/public/downloads/windows-vpn-preview.json'),'utf8'));
+   check(packageResponse.ok()&&packageBytes.subarray(0,2).toString()==='PK','Windows download serves a real ZIP, not the SPA fallback');
+   check(packageBytes.length===manifest.bytes&&createHash('sha256').update(packageBytes).digest('hex')===manifest.sha256,'Windows package matches the published checksum and size');
+   check(await page.getByText('This preview is unsigned',{exact:false}).isVisible(),'Windows preview limitations are visible before downloading');
+  } else check(await download.count()===0,'Android does not receive a Windows installer');
   await page.getByRole('status').filter({hasText:'Subscription required'}).waitFor();
   check(await button.isDisabled(),'Unpaid member cannot launch');
   check(launches===0,'Locked state makes no launch request');
@@ -110,7 +123,7 @@ try {
   check((await page.evaluate(()=>window.__vpnAudit.launched.length))===1,'Successful ticket opens native app once');
   check((await page.locator('.vault-status').innerText())==='Opening UFIConnect','Browser reports opening instead of a connected tunnel');
   check(await page.locator('.vault-status.is-connected').count()===0,'Browser never asserts a connection from enrollment or launch');
-  check(await page.getByText('Use Disconnect in the app to stop VPN.',{exact:false}).count()===1,'App owns real disconnection');
+  check(await page.getByText(`Use ${device.platform==='windows'?'Disable':'Disconnect'} in the app to stop VPN.`,{exact:false}).count()===1,'App owns real disconnection');
   let releaseOld;held=new Promise(resolve=>{releaseOld=resolve;});
   await button.click();
   await page.waitForFunction(()=>document.querySelector('.vault-vpn-quick-action button').disabled);

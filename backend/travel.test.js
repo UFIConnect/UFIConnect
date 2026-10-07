@@ -34,6 +34,24 @@ test('city matching is exact, accent-insensitive, and country-aware', async t =>
   assert.equal(app.selectedTravelGuideDestinations({ city: 'London', country: 'CA', countryName: 'Canada' })[0].searchOnly, true);
 });
 
+test('every catalog city has an in-app guide endpoint; unknown IDs cannot fetch a URL', async t => {
+  let requests=0;
+  const app = await harness(t,{modules:{'./travel-providers':{...providers,fetchTravelResource:async url=>{
+    requests++;
+    const title=new URL(url).searchParams.get('titles');
+    return {query:{pages:[{ns:0,title,extract:'A city overview.\n\n== See ==\nExplore the city.'}]}};
+  }}}});
+  const list=(await app.request('/travel/destinations')).data.destinations;
+  for(const city of list) {
+    const guide=await app.request('/travel/guides/'+encodeURIComponent(city.id));
+    assert.equal(guide.status,200); assert.equal(guide.data.id,city.id);
+    assert.equal(guide.data.available,true); assert.equal(guide.data.sections.length,2);
+  }
+  assert.equal(requests,91);
+  assert.equal((await app.request('/travel/guides/'+encodeURIComponent('https://example.invalid/'))).status,404);
+  assert.equal(requests,91);
+});
+
 test('unknown cities use a country-qualified guide search without guessing a page', async t => {
   let calls = 0;
   const app = await harness(t, { modules: { './travel-providers': { ...providers, fetchTravelResource: async () => { calls++; throw new Error('unexpected request'); } } } });
@@ -56,6 +74,7 @@ test('a provider outage still returns paginated guides for every catalog city wi
     assert.equal(result.data.liveFeeds.length, 0);
     for (const post of result.data.posts) {
       assert.equal(ids.has(post.id), false, 'a guide must not repeat across pages');
+      assert.match(post.travelDestinationId, /^[A-Z]{2}:/, 'feed guide cards keep their in-app destination');
       ids.add(post.id);
     }
     if (!result.data.hasMore) break;

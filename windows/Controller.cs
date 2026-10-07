@@ -41,7 +41,7 @@ namespace UfiConnect.Vpn {
       Exception failure=null;
       try{if(disposed||requestGeneration!=generation)throw new OperationCanceledException();Platform.StoreSecrets(value,account);}catch(Exception error){failure=error;}
       if(failure!=null){try{await api.Request("POST","/auth/logout",value,null);}catch{}throw failure;}
-      token=value;AccountId=account;Message="Signed in. Connect requires an active paid UFI Vault membership.";
+      token=value;AccountId=account;Message="Signed in. Press Enable to use your active paid UFI Vault membership.";
     }
     internal async Task ConsumeLaunch(string code){
       if(token==null)throw new InvalidOperationException("Sign in with the same UFIConnect account first.");

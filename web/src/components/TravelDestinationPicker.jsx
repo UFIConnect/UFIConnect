@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ExternalLink, RotateCw } from 'lucide-react';
+import { BookOpen, RotateCw } from 'lucide-react';
 import client from '../api/client';
 
 export function useTravelDestinations() {
@@ -29,14 +29,14 @@ export const travelCityMatches = (destination, place) => Boolean(destination?.ci
   && [destination.country, destination.countryCode].filter(Boolean).some(value =>
     [place.country, place.countryCode].filter(Boolean).some(country => normalizeCountry(value) === normalizeCountry(country)));
 
-export default function TravelDestinationPicker({ destinations, selected, disabled, onSelect, feeds = [], activeCameraId, error, retry }) {
+export default function TravelDestinationPicker({ destinations, selected, disabled, onSelect, onGuideOpen, feeds = [], activeCameraId, error, retry }) {
   return (
     <div className="travel-destination-picker">
       <div className="travel-city-rail-heading">
         <strong>Cities{destinations.length ? ` (${destinations.length})` : ''}</strong>
-        {selected?.guideUrl && <a className="btn btn-ghost btn-sm" href={selected.guideUrl} target="_blank" rel="noopener noreferrer">
-        <ExternalLink size={14} aria-hidden="true" />City guide
-        </a>}
+        {selected && onGuideOpen && <button type="button" className="btn btn-ghost btn-sm" onClick={() => onGuideOpen(selected)}>
+        <BookOpen size={14} aria-hidden="true" />City guide
+        </button>}
       </div>
       <div className="travel-live-loop-choices" role="group" aria-label="Travel cities">
         {destinations.map(destination => {
