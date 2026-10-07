@@ -16,7 +16,7 @@ test('Mastodon requests reject blocked DNS before sending credentials', async ()
   assert.equal(sent, false);
 });
 
-test('Mastodon OAuth connects the account without adding posts to Following or Your Feed', async () => {
+test('Mastodon OAuth enables authorized home and own feeds with public visibility and account ownership', async () => {
   const calls = [];
   const publicPost = { id:'123',content:'<p>Public update</p>',visibility:'public',created_at:new Date().toISOString(),url:'https://social.example/@alice/123',account:{id:'42',username:'alice',acct:'alice',url:'https://social.example/@alice'},media_attachments:[] };
   const service = {
@@ -26,6 +26,7 @@ test('Mastodon OAuth connects the account without adding posts to Following or Y
       if (path === '/oauth/token') return {access_token:'test-access'};
       if (path === '/api/v1/accounts/verify_credentials') return {id:'42'};
       if (path.startsWith('/api/v1/timelines/home')) return [publicPost,{...publicPost,id:'124',visibility:'private'}];
+      if (path.startsWith('/api/v1/accounts/42/statuses')) return [publicPost,{...publicPost,id:'124',visibility:'private'},{...publicPost,id:'125',account:{...publicPost.account,id:'another-account'}},{...publicPost,id:'126',reblog:publicPost}];
       return [];
     },
   };
@@ -72,16 +73,31 @@ test('Mastodon OAuth connects the account without adding posts to Following or Y
     assert.equal(connected.data.platforms.mastodon.siteUrl,'https://social.example');
     assert.equal(JSON.stringify(connected.data).includes('test-access'),false);
     const feed = await app.getFollowingFeedPosts(user.id, 'mastodon', {bust:true,surface:'feed'});
-    assert.equal(feed.posts.length,0);
-    assert.equal(calls.some(call => call.path?.startsWith('/api/v1/timelines/')),false);
-    assert.equal(catalog.data.platforms.mastodon.scopes.join(' '),'read:accounts');
+    assert.equal(feed.posts.length,1);
+    assert.equal(feed.posts[0].sourceUrl,publicPost.url);
+    assert.equal(feed.posts[0].group.externalUrl,'https://social.example');
+    assert.equal(calls.some(call => call.path?.startsWith('/api/v1/timelines/home')),true);
+    assert.equal(catalog.data.platforms.mastodon.scopes.join(' '),'read:accounts read:statuses');
+    assert.equal(connected.data.platforms.mastodon.reconnectRequired,false);
     user.plan = 'pro';
     const own = await app.request('/command-center/your-content?platform=mastodon',{userId:user.id});
-    assert.equal(own.status,400);
+    assert.equal(own.status,200);
+    assert.equal(own.data.posts.length,1);
+    assert.equal(own.data.posts[0].sourceUrl,publicPost.url);
     const combined = await app.request('/command-center/your-content/feed',{userId:user.id});
     assert.equal(combined.status,200);
-    assert.equal(combined.data.posts.length,0);
-    assert.equal(calls.some(call => call.path?.includes('/statuses')),false);
+    assert.equal(combined.data.posts.length,1);
+    assert.equal(calls.some(call => call.path?.includes('/statuses')),true);
+    const oldToken = JSON.stringify({origin:'https://social.example',accessToken:'profile-only',accountId:'42',scope:'read:accounts'});
+    await app.saveSocialToken(user.id,'mastodon',oldToken);
+    const oldCatalog = await app.request('/social/platforms',{userId:user.id});
+    assert.equal(oldCatalog.data.platforms.mastodon.reconnectRequired,true);
+    assert.match(oldCatalog.data.platforms.mastodon.reconnectMessage,/Reconnect Mastodon/);
+    const before = calls.length;
+    const oldFeed = await app.getFollowingFeedPosts(user.id, 'mastodon', {bust:true,surface:'feed'});
+    assert.equal(oldFeed.posts.length,0);
+    assert.match(oldFeed.sourceErrors.mastodon,/Reconnect Mastodon/);
+    assert.equal(calls.length,before,'Profile-only grants do not make unauthorized API requests');
     assert.deepEqual(app.errors,[]);
   } finally {await app.close();}
 });

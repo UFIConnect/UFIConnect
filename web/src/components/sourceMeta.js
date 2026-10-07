@@ -64,7 +64,7 @@ export const SOURCE_META = {
 // content from the member who authorizes them and never enter shared feeds.
 export const COMMAND_CENTER_ACCOUNT_PLATFORMS = [
   'linkedin', 'instagram', 'tiktok', 'threads',
-  'mastodon', 'pinterest', 'tumblr', 'wordpress',
+  'pinterest', 'tumblr', 'wordpress',
 ];
 
 // Career providers use the same connection lifecycle as social accounts.
@@ -121,11 +121,11 @@ export const CROSS_POST_PLATFORM_IDS = [
 export const CONNECTED_SOCIAL_PLATFORMS = [
   'linkedin', 'twitter', 'instagram', 'tiktok', 'facebook',
   'github', 'gitlab', 'youtube', 'reddit',
-  'medium', 'dribbble', 'twitch', 'threads', 'bluesky',
+  'medium', 'dribbble', 'twitch', 'threads', 'bluesky', 'mastodon',
 ];
 
 // Keep discovery content and own-post-only integrations out of Following.
-export const FOLLOWING_EXCLUDED_SOURCE_IDS = ['instagram', 'tiktok', 'mastodon'];
+export const FOLLOWING_EXCLUDED_SOURCE_IDS = ['instagram', 'tiktok'];
 
 // Shared by the desktop feed rail and the mobile app menu. Keeping this
 // vocabulary here prevents the two controls from quietly drifting apart.

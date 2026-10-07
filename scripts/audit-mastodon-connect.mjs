@@ -5,19 +5,29 @@ import {fileURLToPath} from 'node:url';
 import {chromium} from 'playwright';
 import {createServer} from '../web/node_modules/vite/dist/node/index.js';
 import {installAuditMember,auditNavigate,auditReload} from './audit-session.mjs';
+import {CONNECTED_SOCIAL_PLATFORMS,FOLLOWING_FEED_SOURCE_IDS,COMMAND_CENTER_ACCOUNT_PLATFORMS} from '../web/src/components/sourceMeta.js';
 const require=createRequire(import.meta.url);
 const {createAppHarness,member}=require('../backend/test-support/app-harness');
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const app=await createAppHarness();app.seedUser(member('masto-ui'));
+assert.ok(CONNECTED_SOCIAL_PLATFORMS.includes('mastodon'));
+assert.ok(FOLLOWING_FEED_SOURCE_IDS.includes('mastodon'));
+assert.ok(!COMMAND_CENTER_ACCOUNT_PLATFORMS.includes('mastodon'));
+const app=await createAppHarness();app.seedUser(member('masto-ui',{plan:'pro'}));
 const server=await createServer({root:path.join(root,'web'),configFile:path.join(root,'web/vite.config.js'),envDir:false,define:{'import.meta.env.VITE_API_URL':JSON.stringify('/api')},server:{host:'127.0.0.1',port:5243,strictPort:false,proxy:{'/api':{target:app.base,rewrite:p=>p.replace(/^\/api/,'')}}}});
 let browser;
 try{
  await server.listen();browser=await chromium.launch({channel:'msedge'});
  for(const width of [1440,390]){
-  const context=await browser.newContext({viewport:{width,height:900}});const page=await context.newPage();const starts=[];let connected=false;
+  const context=await browser.newContext({viewport:{width,height:900}});const page=await context.newPage();const starts=[],errors=[];let connected=false,reconnectRequired=false,commandCenterOnly=false;
+  page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));
+  const reconnectMessage='Reconnect Mastodon to read public posts from your home timeline and your own account.';
+  const post={id:'mastodon-audit-public',source:'mastodon',title:'Public Mastodon audit post',content:'A public post from the connected Mastodon account.',sourceUrl:'https://social.example/@alice/123',createdAt:new Date().toISOString(),author:{id:'mastodon-audit-alice',name:'Alice'}};
   await context.route('**/api/**',async route=>{
    const url=new URL(route.request().url());const endpoint=url.pathname.replace(/^\/api/,'');
-   if(endpoint==='/social/platforms')return route.fulfill({json:{platforms:{mastodon:{name:'Mastodon',color:'#6364FF',configured:true,needsServer:true,siteUrl:connected?'https://social.example':undefined}},connected:{mastodon:connected}}});
+   if(endpoint==='/social/platforms')return route.fulfill({json:{platforms:{mastodon:{name:'Mastodon',color:'#6364FF',configured:true,needsServer:true,commandCenterOnly,reconnectRequired,reconnectMessage,siteUrl:connected?'https://social.example':undefined}},connected:{mastodon:connected}}});
+   if(endpoint==='/profile/social')return route.fulfill({json:{connected:{mastodon:connected}}});
+   if(endpoint==='/command-center/your-content'){assert.equal(url.searchParams.get('platform'),'mastodon');return route.fulfill({json:{posts:[post]}});}
+   if(endpoint==='/office/feed')return route.fulfill({json:{nativeUficonnectIncluded:true,...(connected?{posts:[post],hasMore:false}:{posts:[],hasMore:false,...((url.searchParams.get('source')||url.searchParams.get('sources'))==='mastodon'?{locked:true,source:'mastodon',reason:'connect'}:{})})}});
    if(endpoint==='/auth/social/mastodon/start'){starts.push(url.searchParams.get('server'));return route.fulfill({status:400,json:{error:'Synthetic server response'}});}
    if(/events|stream/.test(endpoint))return route.abort();
    return route.continue();
@@ -25,15 +35,51 @@ try{
   await installAuditMember(page,app,'masto-ui');await auditNavigate(page,server.resolvedUrls.local[0]+'connected-accounts');
   await page.getByRole('button',{name:'Connect',exact:true}).click();
   const dialog=page.getByRole('dialog',{name:'Connect Mastodon'});await dialog.waitFor();
+  await dialog.getByText(/imports public posts from your Mastodon home timeline and your own account/).waitFor();
   await dialog.getByLabel('Server or full handle').fill('@alice@social.example');
   await dialog.getByRole('button',{name:'Continue to Mastodon'}).click();
   await page.getByText('Synthetic server response',{exact:true}).waitFor();
   assert.deepEqual(starts,['@alice@social.example']);
   assert.equal(await page.getByRole('link',{name:'Open Mastodon website'}).getAttribute('href'),'https://joinmastodon.org/servers');
-  connected=true;await auditReload(page);
+  connected=true;reconnectRequired=true;await auditReload(page);
   await page.getByRole('button',{name:'Disconnect',exact:true}).waitFor();
+  await page.getByText('Reconnect needed',{exact:true}).waitFor();
+  await page.getByText(reconnectMessage,{exact:true}).waitFor();
   assert.equal(await page.getByRole('link',{name:'Open Mastodon website'}).getAttribute('href'),'https://social.example');
+  await page.getByRole('button',{name:'Reconnect Mastodon',exact:true}).click();await dialog.waitFor();
+  await dialog.getByLabel('Server or full handle').fill('mastodon.social');
+  await dialog.getByRole('button',{name:'Continue to Mastodon'}).click();
+  await page.getByText('Synthetic server response',{exact:true}).waitFor();
+  assert.deepEqual(starts,['@alice@social.example','mastodon.social']);
+  reconnectRequired=false;await auditReload(page);await page.getByRole('button',{name:'Disconnect',exact:true}).waitFor();
+  assert.equal(await page.getByText('Reconnect needed',{exact:true}).count(),0);
+  assert.equal(await page.getByText(reconnectMessage,{exact:true}).count(),0);
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
-  console.log('PASS Mastodon server selection and links '+width);await context.close();
+  await auditNavigate(page,server.resolvedUrls.local[0]+'command-center?tab=yourfeed');
+  const ownFeed=page.getByRole('tabpanel',{name:'Your Feed',exact:true});
+  await ownFeed.getByRole('button',{name:'Mastodon',exact:true}).waitFor();
+  assert.ok(await ownFeed.getByRole('button',{name:'Mastodon',exact:true}).isEnabled());
+  await ownFeed.getByText(post.title,{exact:true}).waitFor();
+  await auditNavigate(page,server.resolvedUrls.local[0]+'?feed=following');
+  const sources=page.getByRole('group',{name:'Following sources',exact:true});
+  await sources.getByRole('button',{name:'Mastodon',exact:true}).click();
+  await page.getByText(post.title,{exact:true}).waitFor();
+  assert.equal(await sources.getByRole('button',{name:'Mastodon',exact:true}).getAttribute('aria-pressed'),'true');
+  connected=false;await auditReload(page);
+  await sources.waitFor();
+  if(await sources.getByRole('button',{name:'Mastodon',exact:true}).getAttribute('aria-pressed')!=='true')await sources.getByRole('button',{name:'Mastodon',exact:true}).click();
+  await page.getByRole('button',{name:'Connect Mastodon',exact:true}).click();await dialog.waitFor();
+  assert.equal(starts.length,2,'Feed connection opens server selection without a premature OAuth request');
+  await dialog.getByRole('button',{name:'Cancel',exact:true}).click();
+  commandCenterOnly=true;
+  await auditNavigate(page,server.resolvedUrls.local[0]+'command-center?tab=accounts');
+  await page.getByRole('tabpanel',{name:'Connected Accounts',exact:true}).getByRole('button',{name:'Connect',exact:true}).click();await dialog.waitFor();
+  assert.equal(starts.length,2,'Command Center connection opens server selection without a premature OAuth request');
+  await dialog.getByRole('button',{name:'Cancel',exact:true}).click();
+  commandCenterOnly=false;
+  await page.goto(server.resolvedUrls.local[0]+'connected-accounts?social_error=mastodon&reason=browser_mismatch');
+  await page.getByText(/Mastodon could not verify this browser session/).waitFor();
+  assert.deepEqual(errors,[]);
+  console.log('PASS Mastodon server selection, reconnect, source links, Following and Your Feed '+width);await context.close();
  }
 }finally{await browser?.close();await server.close();await app.close();}

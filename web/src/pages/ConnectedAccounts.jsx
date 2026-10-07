@@ -23,7 +23,7 @@ const PLATFORM_BENEFITS = {
   twitch:    ['Surface streams from channels you follow', 'Share live content with your network', 'Connect with fellow streamers'],
   threads:   ['Import your Threads posts', 'Surface conversations in your feed', 'Cross-post to your network'],
   bluesky:   ['Follow decentralised conversations', 'Surface posts matching your interests', 'Connect with the open social web'],
-  mastodon:  ['Connect your Mastodon account', 'Open your account on its original server', 'Manage authorization on your own Mastodon server'],
+  mastodon:  ['See public posts from your Mastodon home timeline', 'Review your own public posts in Your Feed', 'Manage authorization on your own Mastodon server'],
 };
 
 const PUBLICATION_BENEFITS = [
@@ -37,6 +37,16 @@ const CAREER_BENEFITS = [
   'Keep account access revocable from UFIconnect',
   'Use connected career tools as provider access becomes available',
 ];
+
+const MASTODON_CONNECTION_ERRORS = {
+  browser_mismatch: 'Mastodon could not verify this browser session. Start the connection again in this browser and allow cookies for UFIconnect.',
+  authorization_declined: 'Mastodon access was declined. Connect again and approve the requested read permissions on your server.',
+  missing_code: 'Mastodon did not return an authorization code. Start the connection again.',
+  account_unavailable: 'This UFIconnect account cannot connect Mastodon. Sign in with your personal account and try again.',
+  token_exchange_failed: 'Mastodon could not complete authorization. Start the connection again on your server.',
+  account_verification_failed: 'Mastodon authorized access, but your account could not be verified. Try connecting again.',
+  connection_failed: 'The Mastodon connection could not be completed. Check that your server is available, then try again.',
+};
 
 export default function ConnectedAccounts() {
   const { profile } = useAuth();
@@ -57,6 +67,14 @@ export default function ConnectedAccounts() {
   const [blueskyHandle, setBlueskyHandle] = useState(null);
   const [mastodonServer, setMastodonServer] = useState(null);
   const isBusinessMembership = profile?.plan === 'business';
+
+  useEffect(() => {
+    if (searchParams.get('connect') !== 'mastodon') return;
+    setMastodonServer('');
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('connect');
+    setSearchParams(nextParams, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     client.get('/social/platforms').then((pRes) => {
@@ -83,7 +101,9 @@ export default function ConnectedAccounts() {
       // so a failure can actually be diagnosed from what's on screen
       // instead of needing server log access.
       const [reasonBase, providerCode] = (errReason || '').split(':');
-      const msg = reasonBase === 'invalid_state' ? 'Connection expired — please try again.'
+      const msg = errPlatform === 'mastodon' && MASTODON_CONNECTION_ERRORS[reasonBase]
+        ? MASTODON_CONNECTION_ERRORS[reasonBase]
+        : reasonBase === 'invalid_state' ? 'Connection expired — please try again.'
         : reasonBase === 'access_denied' && errPlatform === 'youtube'
           ? 'YouTube did not grant access. In Google Cloud, publish the OAuth app or add this Google account as a test user, then try again.'
         : reasonBase === 'access_denied'          ? 'The provider did not grant access. Please try again.'
@@ -382,7 +402,7 @@ export default function ConnectedAccounts() {
             <p>Your account belongs to a Mastodon server. Enter its address or your full handle, then approve UFIConnect on that server.</p>
             <label htmlFor="mastodon-server">Server or full handle</label>
             <input id="mastodon-server" className="form-input" autoFocus autoComplete="off" value={mastodonServer} onChange={event => setMastodonServer(event.target.value)} placeholder="mastodon.social or @you@your.server" />
-            <p style={{ color: 'var(--muted)', fontSize: '.8rem' }}>Your password stays on your server. UFIConnect requests access to read your account profile.</p>
+            <p style={{ color: 'var(--muted)', fontSize: '.8rem' }}>Your password stays on your server. UFIConnect requests permission to read your profile and posts, and imports public posts from your Mastodon home timeline and your own account.</p>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => setMastodonServer(null)}>Cancel</button>
               <button type="submit" className="btn btn-primary btn-sm" disabled={!mastodonServer.trim()}>Continue to Mastodon</button>
@@ -443,6 +463,9 @@ function PlatformCard({
 }) {
   const benefits = PLATFORM_BENEFITS[platformKey]
     || (p.category === 'publication' ? PUBLICATION_BENEFITS : p.category === 'career' ? CAREER_BENEFITS : []);
+  const reconnectMessage = p.reconnectMessage || (platformKey === 'youtube'
+    ? 'Reconnect YouTube once to keep your videos syncing when access expires.'
+    : `Reconnect ${p.name} to update your account permissions.`);
 
   return (
     <div className="card account-platform-card">
@@ -496,13 +519,13 @@ function PlatformCard({
           </div>
           <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 1 }}>
             {p.description}
-            {isConnected && p.reconnectRequired && <p role="status" style={{ margin: '6px 0 0' }}>Reconnect YouTube once to keep your videos syncing when access expires.</p>}
+            {isConnected && p.reconnectRequired && <p role="status" style={{ margin: '6px 0 0' }}>{reconnectMessage}</p>}
           </div>
         </div>
 
         {/* Action buttons */}
         <div className="account-platform-card-actions">
-          {isConnected && platformKey === 'youtube' && <button type="button" className="btn btn-outline btn-sm" onClick={onConnect} disabled={connecting || disconnecting || !p.configured}>{connecting ? 'Opening Google…' : 'Reconnect YouTube'}</button>}
+          {isConnected && (['youtube', 'mastodon'].includes(platformKey) || p.reconnectRequired) && <button type="button" className="btn btn-outline btn-sm" onClick={onConnect} disabled={connecting || disconnecting || !p.configured}>{connecting ? `Opening ${platformKey === 'youtube' ? 'Google' : p.name}…` : `Reconnect ${p.name}`}</button>}
           <button onClick={onToggle} className="btn btn-ghost btn-sm" style={{ fontSize: '.72rem', padding: '4px 8px' }}>
             {expanded ? '▲' : '▼'} Details
           </button>

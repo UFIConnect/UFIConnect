@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
 import { useToast } from '../contexts/ToastContext';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import { CONNECTED_SOCIAL_PLATFORMS, SOURCE_META, withCareerAccountFallback } from './sourceMeta';
@@ -64,6 +65,7 @@ export default function HomeFeedTools({
   onActivePanelChange,
 }) {
   const { profile, updateProfileLocally } = useAuth();
+  const navigate = useNavigate();
   const { showToast } = useToast();
   const [uncontrolledOpenPanel, setUncontrolledOpenPanel] = useState(null);
   const [disabledSources, setDisabledSources] = useState(new Set());
@@ -222,6 +224,10 @@ export default function HomeFeedTools({
   }
 
   function connectAccount(platform) {
+    if (platform === 'mastodon') {
+      navigate('/connected-accounts?connect=mastodon');
+      return;
+    }
     if (platform === 'bluesky') {
       setBlueskyHandle('');
       return;

@@ -23,7 +23,7 @@ import '../components/DiscoveryCategoryBar.css';
 // CONNECTED_SOCIAL_PLATFORMS render as "Coming soon" in Your Feed instead,
 // same honesty convention the rest of this app already uses for platforms
 // pending API/app-review access.
-const OWN_CONTENT_PLATFORMS = ['github', 'gitlab', 'youtube', 'reddit', 'twitch', 'instagram', 'tiktok', 'threads', 'bluesky'];
+const OWN_CONTENT_PLATFORMS = ['github', 'gitlab', 'youtube', 'reddit', 'twitch', 'instagram', 'tiktok', 'threads', 'bluesky', 'mastodon'];
 
 function SourceMark({ source, label, active = false }) {
   const meta = SOURCE_META[source] || {};
@@ -968,6 +968,7 @@ function MemberAccountsSection() {
   }, [location.pathname, location.search, navigate, showToast]);
 
   async function connectAccount(platform) {
+    if (platform === 'mastodon') { navigate('/connected-accounts?connect=mastodon'); return; }
     setConnecting(platform);
     try {
       const { data } = await client.get(
@@ -1543,9 +1544,9 @@ function CrossPostSection() {
   const publishingPlatforms = CROSS_POST_PLATFORM_IDS.filter(platform => platforms[platform]);
   const shownPlatforms = new Set(categoryContext?.sources.map(source => source.platform) || []);
   const orderedPublishingPlatforms = [...publishingPlatforms].sort((left, right) => Number(shownPlatforms.has(right)) - Number(shownPlatforms.has(left)));
-  const connectionPath = (platform) => platforms[platform]?.commandCenterOnly
-    ? '/command-center?tab=accounts'
-    : '/connected-accounts';
+  const connectionPath = (platform) => platform === 'mastodon'
+    ? '/connected-accounts?connect=mastodon'
+    : platforms[platform]?.commandCenterOnly ? '/command-center?tab=accounts' : '/connected-accounts';
   const platformTargetButton = (p) => {
     const meta = SOURCE_META[p] || SOURCE_META.uficonnect;
     const capability = platforms[p]?.crossPost;

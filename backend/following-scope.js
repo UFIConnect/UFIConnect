@@ -1,7 +1,7 @@
 'use strict';
 
 const GENERAL_UFI_GROUP_ID = 'ufi-general';
-const FOLLOWING_EXCLUDED_SOURCES = new Set(['instagram', 'tiktok', 'mastodon']);
+const FOLLOWING_EXCLUDED_SOURCES = new Set(['instagram', 'tiktok']);
 
 function isGeneralUfiFollowingPost(post) {
   return Boolean(

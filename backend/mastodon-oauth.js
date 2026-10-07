@@ -1,7 +1,14 @@
 const https = require('node:https');
 const net = require('node:net');
 const crypto = require('node:crypto');
-const MASTODON_SCOPES = 'read:accounts';
+const MASTODON_SCOPES = 'read:accounts read:statuses';
+
+function mastodonCanReadStatuses(token) {
+  try {
+    const scopes = String(JSON.parse(token).scope || '').split(/\s+/);
+    return scopes.includes('read') || scopes.includes('read:statuses');
+  } catch { return false; }
+}
 
 function mastodonOrigin(input) {
   let value = String(input || '').trim();
@@ -40,7 +47,7 @@ function createMastodonService({ resolveAddress, pinnedLookup, request = https.r
         res.on('error', reject);
         res.on('end', () => {
           // Never follow redirects with an OAuth secret or bearer token.
-          if (res.statusCode < 200 || res.statusCode >= 300) return reject(new Error(`Mastodon server returned ${res.statusCode}. Check your server address and try connecting again.`));
+          if (res.statusCode < 200 || res.statusCode >= 300) return reject(Object.assign(new Error(`Mastodon server returned ${res.statusCode}. Check your server address and try connecting again.`), { status: res.statusCode }));
           try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
           catch { reject(new Error('This server did not return a Mastodon API response.')); }
         });
@@ -113,10 +120,10 @@ function registerMastodonRoutes(app, { authenticate, limit, getUser, callbackUrl
       if (!result?.access_token) return fail('token_exchange_failed');
       const account = await service.json(origin, '/api/v1/accounts/verify_credentials', { token: result.access_token });
       if (!account?.id) return fail('account_verification_failed');
-      await saveToken(entry.userId, 'mastodon', JSON.stringify({ origin, accessToken: result.access_token, accountId: String(account.id) }));
+      await saveToken(entry.userId, 'mastodon', JSON.stringify({ origin, accessToken: result.access_token, accountId: String(account.id), scope: result.scope || MASTODON_SCOPES }));
       res.redirect(`${frontendUrl}/connected-accounts?social_connected=mastodon`);
     } catch { return fail('connection_failed'); }
   });
 }
 
-module.exports = { mastodonOrigin, MASTODON_SCOPES, createMastodonService, registerMastodonRoutes };
+module.exports = { mastodonOrigin, mastodonCanReadStatuses, MASTODON_SCOPES, createMastodonService, registerMastodonRoutes };

@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Layout from '../components/Layout';
+import { useNavigate } from 'react-router-dom';
 import client from '../api/client';
 
 /* ─── Agent Definitions ──────────────────────────────────────────────────────── */
@@ -1018,6 +1019,7 @@ function OverviewTab({ agentStates, eventsCount, sourceAgents, sessionTime, agen
 
 /* ─── Main Page ──────────────────────────────────────────────────────────────── */
 export default function AgentDashboard() {
+  const navigate = useNavigate();
   const [agentStates, setAgentStates] = useState(
     () => Object.fromEntries(
       AGENT_DEFS.map(a => [a.id, { x: a.homeX, y: a.homeY, status: 'idle', taskIdx: 0 }])
@@ -1037,6 +1039,14 @@ export default function AgentDashboard() {
 
   const timeoutsRef  = useRef([]);
   const activeAgents = useRef(new Set());
+
+  async function connectSource(platform) {
+    if (platform === 'mastodon') { navigate('/connected-accounts?connect=mastodon'); return; }
+    try {
+      const { data } = await client.get(`/auth/social/${platform}/start`);
+      window.location.href = data.url;
+    } catch {}
+  }
 
   const addTimeout = useCallback((fn, delay) => {
     const t = setTimeout(fn, delay);
@@ -1460,7 +1470,7 @@ export default function AgentDashboard() {
                   phaseData={workerPhases[agent.id]} stats={stats}
                   connected={connectedSocial[agent.id]}
                   onTrigger={() => client.post(`/office/agents/${agent.id}/trigger`).catch(() => {})}
-                  onConnect={async () => { try { const { data } = await client.get(`/auth/social/${agent.id}/start`); window.location.href = data.url; } catch {} }}
+                  onConnect={() => connectSource(agent.id)}
                 />
               );
             })}
@@ -1477,7 +1487,7 @@ export default function AgentDashboard() {
                   phaseData={workerPhases[agent.id]} stats={stats}
                   connected={connectedSocial[agent.id]}
                   onTrigger={() => client.post(`/office/agents/${agent.id}/trigger`).catch(() => {})}
-                  onConnect={async () => { try { const { data } = await client.get(`/auth/social/${agent.id}/start`); window.location.href = data.url; } catch {} }}
+                  onConnect={() => connectSource(agent.id)}
                 />
               );
             })}

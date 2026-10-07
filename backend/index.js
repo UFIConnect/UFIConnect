@@ -1,5 +1,5 @@
 const express = require('express');
-const { mastodonOrigin, MASTODON_SCOPES, createMastodonService, registerMastodonRoutes } = require('./mastodon-oauth');
+const { mastodonOrigin, mastodonCanReadStatuses, MASTODON_SCOPES, createMastodonService, registerMastodonRoutes } = require('./mastodon-oauth');
 const { BLUESKY_OAUTH_SCOPE, pushBlueskyAuthorization } = require('./bluesky-oauth');
 const { importedContentLimit, jobDescriptionText, JOB_CONTENT_MAX_CHARS } = require('./job-content');
 const { extractFeedMedia } = require('./rss-media');
@@ -4230,6 +4230,17 @@ const MASTODON_INSTANCES = [
   'https://fosstodon.org',
   'https://hachyderm.io',
 ];
+
+async function fetchMastodonAccountPosts(token, own = false) {
+  if (!mastodonCanReadStatuses(token)) throw new Error('Reconnect Mastodon in Connected Accounts to grant access to posts.');
+  const credentials = JSON.parse(token);
+  const endpoint = own ? '/api/v1/accounts/' + encodeURIComponent(credentials.accountId) + '/statuses?limit=40&exclude_reblogs=true' : '/api/v1/timelines/home?limit=40';
+  const data = await mastodonService.json(credentials.origin, endpoint, { token: credentials.accessToken });
+  const statuses = (Array.isArray(data) ? data : []).filter(item => !own || (!item.reblog && String(item.account?.id) === credentials.accountId));
+  return mapMastodonPosts(statuses.map(item => item.reblog || item), own ? 'Your Mastodon posts' : 'Following');
+}
+async function fetchMastodonHomeTimeline(token) { return fetchMastodonAccountPosts(token); }
+async function fetchMastodonOwnPosts(token) { return fetchMastodonAccountPosts(token, true); }
 
 function mapMastodonPosts(data, tag) {
   return (data || [])
@@ -14354,13 +14365,13 @@ const PLATFORMS = {
   },
   mastodon: {
     name: 'Mastodon', color: '#6364FF', icon: 'mastodon',
-    description: 'Connect your Mastodon account and open its original server.',
+    description: 'Read public posts from your Mastodon home timeline and your own account.',
     scopes: MASTODON_SCOPES.split(' '),
     needsServer: true,
     loginUrl: 'https://joinmastodon.org/servers',
     setupUrl: 'https://docs.joinmastodon.org/client/token/',
     reviewRequired: false,
-    note: 'Enter your server or full Mastodon handle, then approve account access on your own server.',
+    note: 'Enter your server or full Mastodon handle, then approve account and post access on your own server.',
   },
   pinterest: {
     name: 'Pinterest', color: '#E60023', icon: 'pinterest',
@@ -15186,6 +15197,7 @@ function serializeCommunityPost(post, viewerId = null) {
 // available — deliberately never backed by keyword search, which would
 // mislabel unrelated public posts as "from people you follow."
 const FOLLOWING_SOURCE_FETCHERS = {
+  mastodon: fetchMastodonHomeTimeline,
   youtube:  fetchYouTubeSubscriptionFeed,     // recent uploads from channels the member subscribes to — see its own comment
   github:   fetchGitHubFollowingActivity,     // received_events — activity from people the member follows, see its own comment
   gitlab:   fetchGitLabFollowingActivity,     // /users/:id/following + per-followed-user /events — see its own comment
@@ -15688,6 +15700,7 @@ async function fetchBlueskyOwnPosts(token, { bust = false, connectedAt = null } 
 }
 
 const OWN_CONTENT_FETCHERS = {
+  mastodon: fetchMastodonOwnPosts,
   github: fetchGitHubOwnActivity,
   gitlab: fetchGitLabOwnActivity,
   youtube: fetchYouTubeOwnUploads,
@@ -20683,7 +20696,8 @@ app.get('/social/platforms', authenticate, async (req, res) => {
       ...PLATFORMS[key],
       ...(key === 'mastodon' && token ? mastodonAccountLinks(token) : {}),
       connected: connected[key],
-      reconnectRequired: key === 'youtube' && Boolean(token) && !user?.socialRefreshTokens?.youtube,
+      reconnectRequired: key === 'youtube' ? Boolean(token) && !user?.socialRefreshTokens?.youtube : key === 'mastodon' && Boolean(token) && !mastodonCanReadStatuses(token),
+      ...(key === 'mastodon' && token && !mastodonCanReadStatuses(token) ? { reconnectMessage: 'Reconnect Mastodon once to allow access to posts in Following and Your Feed.' } : {}),
       connectedAt: token ? connectedSourceWindow(user, key).connectedAt : null,
       syncStartAt: token ? connectedSourceWindow(user, key).startAt : null,
       configured: status.configured,
