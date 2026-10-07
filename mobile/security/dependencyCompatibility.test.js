@@ -5,6 +5,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
 
+test('React DevTools shell quoting preserves arguments and rejects newlines after comments', () => {
+  const fromDevTools = createRequire(require.resolve('react-devtools-core/package.json'));
+  const { parse, quote } = fromDevTools('shell-quote');
+  const argumentsToQuote = ['code', 'a file.js', "a'b.js", 'literal$variable'];
+  assert.deepEqual(parse(quote(argumentsToQuote)), argumentsToQuote);
+  for (const terminator of ['\n', '\r', '\u2028', '\u2029']) {
+    assert.throws(() => quote(['code', { comment: 'end' }, `file${terminator}name`]), TypeError);
+  }
+});
+
 test('Expo XML dependencies preserve Android manifest round trips', async () => {
   const { XML: xml } = require('expo/config-plugins');
   const input = fs.readFileSync(path.resolve(__dirname, '../../android-twa/app/src/main/AndroidManifest.xml'), 'utf8');
