@@ -20854,8 +20854,10 @@ app.get('/profile', authenticate, async (req, res) => {
   res.json(await effectiveProfile(user));
 });
 
-app.get('/feed/location', authenticate, async (req, res) => {
+app.get('/feed/location', (_req, res, next) => {
   res.set('Cache-Control', 'private, no-store');
+  next();
+}, authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
   return res.json({ locationContext: publicFeedLocationContext(getFeedLocationContext(req, user)) });
@@ -27545,7 +27547,7 @@ const { desiredLike, readTableLikes, setTableLike, setCommunityLike, hydratePost
 
 async function sendFeedResponse(req, res, payload) {
   const viewerId = req.user?.id || null;
-  res.set?.('Cache-Control', viewerId ? 'private, no-store' : 'no-cache');
+  res.set?.('Cache-Control', viewerId || req.feedLocationContext ? 'private, no-store' : 'no-cache');
   const result = { ...payload };
   if (req.feedLocationContext) result.locationContext = publicFeedLocationContext(req.feedLocationContext);
   if (Array.isArray(payload.posts)) result.posts = await hydratePostLikes(db, payload.posts, viewerId);

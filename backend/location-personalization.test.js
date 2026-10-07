@@ -134,6 +134,12 @@ test('real Postgres JSONB update preserves a concurrent change to another destin
 
 test('location endpoint returns current member preferences with no cacheable or identifying network data', async t => {
   const app = await fixture(t);
+  const anonymous = await app.request('/feed/location?mode=feed');
+  assert.equal(anonymous.status, 401);
+  assert.match(anonymous.headers.get('cache-control'), /private.*no-store/);
+  const guest = await app.request('/feed/guest?limit=4');
+  assert.equal(guest.status, 200);
+  assert.match(guest.headers.get('cache-control'), /private.*no-store/);
   app.users.find(user => user.id === 'alice').roleSettings = { feedRegionalLocation: { mode: 'manual', country: 'Japan', city: 'Tokyo' } };
   const alice = await app.request('/feed/location?mode=feed', { userId: 'alice', headers: edgeHeaders('CA') });
   const bob = await app.request('/feed/location?mode=feed', { userId: 'bob', headers: edgeHeaders('CA') });
