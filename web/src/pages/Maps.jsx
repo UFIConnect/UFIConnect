@@ -14,6 +14,8 @@ import { CITY_SOURCE_PRESETS, CITY_SOURCE_IDS, CITY_ALL_TOPICS, houseTopics } fr
 import client from '../api/client';
 import { topicCount } from '../local/cityTopicTargets.mjs';
 import { useAuth } from '../contexts/AuthContext';
+import FeedLocationControl from '../components/FeedLocationControl';
+import { feedLocationKey } from '../utils/feedLocation.mjs';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { CITY_CATEGORIES, useLocalWorkspace, safeLink } from '../local/localWorkspace';
 import '../components/local-workspaces.css';
@@ -52,6 +54,7 @@ export default function Maps() {
   const [activeSource, setActiveSource] = useState('');
   const [loadedPosts, setPosts] = useState([]);
   const [loadedScope, setLoadedScope] = useState('');
+  const [locationContext, setLocationContext] = useState(null);
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
   const [moreAvailable, setHasMore] = useState(false);
@@ -126,7 +129,10 @@ export default function Maps() {
   const requestedTopics = appliedTopics.join(',');
   // Hide results from the previous selection immediately, including during debounce.
   // Only a completed request for this exact scope may supply posts or pagination.
-  const feedScope = JSON.stringify([profile.id, active, sourceKey, requestedTopics, query.trim(), enabled.includes(active)]);
+  const locationKey = feedLocationKey(profile.roleSettings, category.mode || 'feed');
+  const feedScope = JSON.stringify([profile.id, active, sourceKey, requestedTopics, query.trim(), enabled.includes(active), locationKey]);
+  const scopeRef = useRef(feedScope);
+  scopeRef.current = feedScope;
   const hasCurrentResults = loadedScope === feedScope;
   const posts = hasCurrentResults ? loadedPosts : [];
   const hasMore = hasCurrentResults && moreAvailable;
@@ -172,7 +178,8 @@ export default function Maps() {
       if (requestedTopics) params.topics = requestedTopics;
       if (paging.current.cursor) params.cursor = paging.current.cursor;
       const { data } = await client.get('/office/feed', { params, signal: controller.signal });
-      if (id !== sequence.current) return 0;
+      if (id !== sequence.current || feedScope !== scopeRef.current) return 0;
+      setLocationContext(data.locationContext || null);
       const incoming = Array.isArray(data.posts) ? data.posts.filter(post => post?.id != null && requestedSources.includes(String(post.source || 'uficonnect').toLowerCase())).map(post => snapshot(post, active)) : [];
       setLoadedScope(feedScope);
       setPosts(current => {
@@ -189,10 +196,11 @@ export default function Maps() {
     } finally { if (id === sequence.current) setLoading(false); }
   }
   useEffect(() => {
+    setLocationContext(null);
     if (!enabled.includes(active) || !sourceKey) { setPosts([]); setHasMore(false); setPage(1); setError(''); return; }
     const timer = setTimeout(() => load(true), 200);
     return () => { clearTimeout(timer); sequence.current++; request.current?.abort(); setLoading(false); };
-  }, [profile.id, active, query, enabled.includes(active), sourceKey, requestedTopics]);
+  }, [profile.id, active, query, enabled.includes(active), sourceKey, requestedTopics, locationKey]);
   useScrollToRefresh(() => load(true), { enabled: enabled.includes(active) && Boolean(sourceKey) && !loading });
   function chooseCategory(id) { setActive(id); setActiveSource(''); setQuery(''); setPage(1); }
   function openHouse(source) { setActiveSource(source); setQuery(''); setPage(1); setRevealPanel('topics'); if (mobileTools) setMobileToolsOpen(true); }
@@ -291,6 +299,9 @@ export default function Maps() {
     <Helmet><title>Maps · Your city | UFIconnect</title><meta name="robots" content="noindex" /></Helmet>
     <div className="local-workspace city-workspace">
       <header className="local-workspace-heading"><div><span className="local-eyebrow">YOUR WORLD, CONNECTED</span><h1>Maps</h1><p>Choose a city, open its source houses, and explore posts about the topics you enjoy.</p></div></header>
+      {['countries', 'restaurants', 'bars'].includes(category.mode)
+        ? <p className="muted">{category.label} destination: {[locationContext?.city, locationContext?.countryName || locationContext?.country].filter(Boolean).join(', ') || 'Automatic area'}. <Link to={category.route}>Change this destination</Link></p>
+        : <FeedLocationControl context={locationContext} />}
       <div className="map-explorer-layout">
         <div className="map-explorer-main">
       <CategoryCity cities={allCities} onCivicSelect={showBuilding} houseSummaries={houseSummaries} actions={mapActions} enabled={enabled} active={active} onSelect={chooseCategory} counts={counts} sources={enabled.includes(active) ? sources : []} activeSource={currentSource} onSourceSelect={openHouse} />

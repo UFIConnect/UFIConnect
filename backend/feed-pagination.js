@@ -24,6 +24,7 @@ function uniquePosts(posts, keyForPost) {
 // walking the exact same cursor state forward internally.
 function paginateEqualizedPool(posts, {
   mode,
+  scope = null,
   cursorMap = {},
   page = 1,
   limit = 20,
@@ -42,16 +43,18 @@ function paginateEqualizedPool(posts, {
   }
 
   const hasCursor = cursorMap?.__poolMode === mode
+    && (scope === null || cursorMap?.__poolScope === scope)
     && cursorMap?.__laneCursors
     && typeof cursorMap.__laneCursors === 'object';
   let state = hasCursor
     ? {
-      __poolMode: mode,
+      __poolMode: mode, ...(scope === null ? {} : { __poolScope: scope }),
       __poolPage: Math.max(0, Number(cursorMap.__poolPage) || 0),
       __laneCursors: { ...cursorMap.__laneCursors },
     }
-    : { __poolMode: mode, __poolPage: 0, __laneCursors: {} };
-  const iterations = hasCursor ? 1 : Math.max(1, Math.min(Number(page) || 1, 1000));
+    : { __poolMode: mode, ...(scope === null ? {} : { __poolScope: scope }), __poolPage: 0, __laneCursors: {} };
+  const changedScope = scope !== null && cursorMap?.__poolMode === mode && cursorMap.__poolScope !== scope;
+  const iterations = hasCursor || changedScope ? 1 : Math.max(1, Math.min(Number(page) || 1, 1000));
   const laneCap = Number.isFinite(maxPerLane) ? Math.max(1, Math.floor(maxPerLane)) : Infinity;
   let pageRows = [];
   let hasMore = false;
@@ -99,7 +102,7 @@ function paginateEqualizedPool(posts, {
       if (queue.slice(index).some(post => !post?.id || !seenIds?.has(post.id))) hasMore = true;
     }
     state = {
-      __poolMode: mode,
+      __poolMode: mode, ...(scope === null ? {} : { __poolScope: scope }),
       __poolPage: state.__poolPage + 1,
       __laneCursors: nextLaneCursors,
     };

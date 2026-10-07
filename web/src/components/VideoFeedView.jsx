@@ -1,5 +1,8 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import client from '../api/client';
+import { useAuth } from '../contexts/AuthContext';
+import FeedLocationControl from './FeedLocationControl';
+import { feedLocationKey } from '../utils/feedLocation.mjs';
 import { directMediaPlaybackAllowed } from '../utils/sourceMediaPolicy.mjs';
 import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, isYouTubeShortsUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, useGlobalMuted, fetchVimeoMetadata, youTubePosterUrl, SoundIcon, createYouTubePlayerFrame, youTubeEmbedUrl } from './videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
@@ -827,6 +830,14 @@ function CommentsSheet({ post, onClose }) {
 }
 
 export default function VideoFeedView({ onExit, music = false }) {
+  const { profile } = useAuth();
+  const memberRef = useRef(profile?.id);
+  memberRef.current = profile?.id;
+  const [locationContext, setLocationContext] = useState(null);
+  const regionalKey = `${profile?.id || ''}:${feedLocationKey(profile?.roleSettings)}`;
+  const contextKeyRef = useRef(regionalKey);
+  contextKeyRef.current = regionalKey;
+  const lastMemberRef = useRef(profile?.id);
   const [videoPosts, setVideoPosts] = useState([]);
   const updatePost = useCallback(updated => setVideoPosts(posts => posts.map(post => post.id === updated.id ? { ...post, ...updated } : post)), []);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -987,6 +998,7 @@ export default function VideoFeedView({ onExit, music = false }) {
     const controller = new AbortController();
     requestControllerRef.current = controller;
     const requestId = ++loadRequestRef.current;
+    const requestContext = contextKeyRef.current;
     try {
       // A genuinely new search/topic/filter/mode shouldn't inherit a
       // streak left over from whatever was applied before it — otherwise
@@ -1034,7 +1046,8 @@ export default function VideoFeedView({ onExit, music = false }) {
       const { data } = await client.get(`${endpoint}?${params}`, {
         signal: controller.signal, _ufiManagedRetry: true,
       });
-      if (requestId !== loadRequestRef.current) return;
+      if (requestId !== loadRequestRef.current || requestContext !== contextKeyRef.current) return;
+      setLocationContext(data.locationContext || null);
       lastFeedReadRef.current = Date.now();
       setSourceErrors(mode === 'following' ? data.sourceErrors || {} : {});
       pendingRequestIntentRef.current = null;
@@ -1161,7 +1174,7 @@ export default function VideoFeedView({ onExit, music = false }) {
         });
       }
     } catch (failure) {
-      if (requestId !== loadRequestRef.current || controller.signal.aborted) return;
+      if (requestId !== loadRequestRef.current || controller.signal.aborted || requestContext !== contextKeyRef.current) return;
       const status = failure?.response?.status;
       if (!status || status === 429 || status >= 500) {
         pendingRequestIntentRef.current = intent;
@@ -1187,7 +1200,30 @@ export default function VideoFeedView({ onExit, music = false }) {
   }, [markKnownId, music]);
 
   useEffect(() => () => { loadRequestRef.current += 1; requestControllerRef.current?.abort(); }, []);
-  useEffect(() => { loadPage({ reset: true }); }, [loadPage]);
+  useEffect(() => {
+    requestControllerRef.current?.abort();
+    loadRequestRef.current += 1;
+    retryStateRef.current = { failures: 0, until: 0 };
+    pendingRequestIntentRef.current = null;
+    knownIds.current = new Set();
+    consumedVideoIds.current = new Set();
+    queueRef.current = [];
+    setVideoPosts([]);
+    setActiveIndex(0);
+    setCommentsPost(null);
+    setLocationContext(null);
+    setLoading(true);
+    setError(false);
+    setSourceErrors({});
+    if (lastMemberRef.current !== profile?.id) {
+      lastMemberRef.current = profile?.id;
+      sourceFilterRef.current = []; topicFiltersRef.current = []; searchQueryRef.current = ''; genreRef.current = '';
+      setSourceFilter([]); setTopicFilters([]); setSearchQuery(''); setSearchInput(''); setGenre('');
+      viewModeRef.current = 'feed'; setViewMode('feed');
+    }
+    if (profile?.id) loadPage({ reset: true });
+    return () => { loadRequestRef.current += 1; requestControllerRef.current?.abort(); };
+  }, [loadPage, regionalKey]);
 
   useEffect(() => {
     if (!retryAt) return;
@@ -2084,7 +2120,7 @@ export default function VideoFeedView({ onExit, music = false }) {
           {searchQuery && <span className="video-feed-filter-dot" aria-hidden="true" />}
         </button>
         <button type="button" className="video-feed-header-button" onClick={() => setFilterOpen(true)}
-          aria-label="Filter videos" title="Sources, genres and topics" aria-expanded={filterOpen} data-active={Boolean(sourceFilter.length || topicFilters.length || genre)}>
+          aria-label="Filter videos" title="Sources, location, genres and topics" aria-expanded={filterOpen} data-active={Boolean(sourceFilter.length || topicFilters.length || genre)}>
           <SlidersHorizontal size={18} aria-hidden="true" />
           {Boolean(sourceFilter.length || topicFilters.length || genre) && <span className="video-feed-filter-dot" aria-hidden="true" />}
         </button>
@@ -2207,6 +2243,7 @@ export default function VideoFeedView({ onExit, music = false }) {
               </div>
             </div>
             <div style={{ overflowY: 'auto', padding: '0 20px 16px', flex: 1 }}>
+              <FeedLocationControl context={locationContext} compact />
               {/* Platform before Topic (was the reverse) — Topic's ~230
                   chips are by far the longest list in this sheet, so with
                   it first, Platform ended up buried below a whole

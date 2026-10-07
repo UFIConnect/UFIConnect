@@ -50,6 +50,8 @@ import ConnectedPostActions, { originalSourceUrl, useSourceCapability } from '..
 import { SavePostButton } from '../components/SaveButtons';
 import { CommentIcon, OpenOnSource, PostHeader, PostOptionsMenu, SharePostButton, feedAccountKey } from '../components/PostCardChrome';
 import PostLikes from '../components/PostLikes';
+import FeedLocationControl from '../components/FeedLocationControl';
+import { normalizeFeedLocation, savedFeedLocation, regionalFeedLocation, feedLocationKey } from '../utils/feedLocation.mjs';
 
 const COMMAND_CENTER_PRO_TIER = TIERS.find((tier) => tier.tier === 'pro');
 const HOME_VIEW_MODES = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants', 'bars']);
@@ -394,7 +396,7 @@ async function loadGroupsFeedCompatibility(params) {
   };
 }
 
-async function requestFeedPage(params, viewer) {
+async function requestFeedPage(params, viewer, signal) {
   const mode = params.get('mode');
   const requestParams = new URLSearchParams(params);
   // The previous API paginates discovery feeds by page number and applies a
@@ -404,7 +406,7 @@ async function requestFeedPage(params, viewer) {
   if (['countries', 'restaurants', 'bars'].includes(mode) && locationFeedCursorSupport.get(mode) !== true) {
     requestParams.set('limit', '2');
   }
-  const { data } = await client.get(`/office/feed?${requestParams.toString()}`);
+  const { data } = await client.get(`/office/feed?${requestParams.toString()}`, { signal });
   if (['countries', 'restaurants', 'bars'].includes(mode)) {
     locationFeedCursorSupport.set(mode, typeof data?.cursor === 'string' && data.cursor.length > 0);
   }
@@ -455,12 +457,7 @@ function memberStorageKey(baseKey, userId) {
   return userId ? `${baseKey}:${userId}` : null;
 }
 
-function normalizeLocationFilters(value = {}) {
-  return {
-    country: String(value?.country || '').replace(/[<>]/g, '').trim().slice(0, 80),
-    city: String(value?.city || '').replace(/[<>]/g, '').trim().slice(0, 80),
-  };
-}
+const normalizeLocationFilters = normalizeFeedLocation;
 
 function normalizeSourceSelection(value, allowedSourceIds = []) {
   if (!Array.isArray(value)) return [];
@@ -1599,7 +1596,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
       if (isExternal) {
         const current = Array.isArray(profile?.roleSettings?.blockedFeedAccounts) ? profile.roleSettings.blockedFeedAccounts : [];
         const { data } = await client.patch('/profile', {
-          roleSettings: { ...(profile?.roleSettings || {}), blockedFeedAccounts: [...new Set([...current, accountKey])] },
+          roleSettings: { blockedFeedAccounts: [...new Set([...current, accountKey])] },
         });
         updateProfileLocally(data.profile || data);
       } else {
@@ -1957,13 +1954,15 @@ const FEED_CACHE_KEY       = 'ufi_feed_v1';
 const FEED_CACHE_SILENT_MS = 10 * 60 * 1000; // silent bg refresh within 10 min
 const FEED_CACHE_SHOW_MS   = 60 * 60 * 1000; // show stale posts up to 1 hr
 
-function readFeedCache(userId) {
+function readFeedCache(userId, settings) {
+  if (regionalFeedLocation(settings).mode === 'auto') return null;
   try {
     const key = memberStorageKey(FEED_CACHE_KEY, userId);
     if (!key) return null;
     const raw = privateSessionStorage.getItem(key);
     if (!raw) return null;
-    const { posts, ts } = JSON.parse(raw);
+    const { posts, ts, locationKey } = JSON.parse(raw);
+    if (locationKey !== feedLocationKey(settings)) return null;
     if (!Array.isArray(posts)) return null;
     const age = Date.now() - ts;
     if (age > FEED_CACHE_SHOW_MS) return null;
@@ -1971,11 +1970,11 @@ function readFeedCache(userId) {
   } catch { return null; }
 }
 
-function writeFeedCache(userId, posts) {
+function writeFeedCache(userId, posts, settings) {
   try {
     const key = memberStorageKey(FEED_CACHE_KEY, userId);
     if (!key) return;
-    privateSessionStorage.setItem(key, JSON.stringify({ posts: posts.slice(0, 100), ts: Date.now() }));
+    privateSessionStorage.setItem(key, JSON.stringify({ posts: posts.slice(0, 100), ts: Date.now(), locationKey: feedLocationKey(settings) }));
   } catch {}
 }
 
@@ -1985,6 +1984,11 @@ function writeFeedCache(userId, posts) {
 // joined communities; group detail pages remain separate destinations.
 export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const { profile, updateProfileLocally } = useAuth();
+  const profileRef = useRef(profile);
+  profileRef.current = profile;
+  const [locationContext, setLocationContext] = useState(null);
+  const feedControllerRef = useRef(null);
+  const pageControllerRef = useRef(null);
   const routeLocation = useLocation();
   const navigate = useNavigate();
   const routeFeedParams = new URLSearchParams(routeLocation.search);
@@ -1999,7 +2003,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const _saved = routeRequestsAllHome ? null : loadFeedState(profile?.id);
   const routeInitialMode = routeRequestedFeed === 'local' ? 'countries' : routeRequestedFeed;
   const initialViewMode = forcedMode || (HOME_VIEW_MODES.has(routeInitialMode) ? routeInitialMode : _saved?.viewMode || 'feed');
-  const _cache = !forcedMode && initialViewMode === 'feed' ? readFeedCache(profile?.id) : null;
+  const _cache = !forcedMode && initialViewMode === 'feed' ? readFeedCache(profile?.id, profile?.roleSettings) : null;
   const [posts,         setPosts]        = useState(_cache?.posts || []);
   const [travelLiveFeeds, setTravelLiveFeeds] = useState([]);
   const [travelStatus, setTravelStatus] = useState(null);
@@ -2049,7 +2053,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const [filters, setFilters] = useState(initialFilters);
   const [activeTabs,    setActiveTabs]    = useState(initialViewMode === 'countries' ? [] : _saved?.activeTabs || []); // [] = All
   const [viewMode,      setViewMode]      = useState(initialViewMode);
-  const [locationFilters, setLocationFilters] = useState(() => normalizeLocationFilters(profile?.roleSettings?.feedLocation));
+  const [locationFilters, setLocationFilters] = useState(() => savedFeedLocation(profile?.roleSettings, initialViewMode));
   const [locationSaving, setLocationSaving] = useState(false);
   const locationSavingRef = useRef(false);
   const [locationMessage, setLocationMessage] = useState('');
@@ -2088,7 +2092,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const activeTabsRef = useRef(_saved?.activeTabs || []);
   const filtersRef    = useRef(initialFilters);
   const viewModeRef   = useRef(initialViewMode);
-  const locationFiltersRef = useRef(normalizeLocationFilters(profile?.roleSettings?.feedLocation));
+  const locationFiltersRef = useRef(savedFeedLocation(profile?.roleSettings, initialViewMode));
   const searchRef     = useRef(_saved?.search || '');
   const postsRef      = useRef([]);
   const loadStateRef  = useRef({ loading: false, refreshing: false, loadingMore: false });
@@ -2096,7 +2100,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   // Following finishing just after Home is selected). Only the most recently
   // started request is allowed to update the visible feed state.
   const feedRequestIdRef = useRef(0);
-  const feedContextRef = useRef(`${profile?.id}:${initialViewMode}:${initialViewMode === 'groups' && publicGroupsFeed}`);
+  const feedContextRef = useRef(`${profile?.id}:${initialViewMode}:${initialViewMode === 'groups' && publicGroupsFeed}:${feedLocationKey(profile?.roleSettings, initialViewMode)}`);
   const allHomeRouteKeyRef = useRef(routeRequestsAllHome ? routeLocation.key : null);
   const liveRefreshTimeoutRef = useRef(null);
   const sourcePreferenceKeyRef = useRef(disabledSourceKey);
@@ -2139,9 +2143,12 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     if (manual) refreshSeedRef.current = Math.random().toString(36).slice(2);
     const activeFilters = { ...DEFAULT_FILTERS, ...(requestedFilters || filtersRef.current) };
     const activeMode = requestedMode || viewModeRef.current;
-    const feedContext = `${profile?.id}:${activeMode}:${activeMode === 'groups' && publicGroupsFeed}`;
+    const currentProfile = profileRef.current;
+    const feedContext = `${currentProfile?.id}:${activeMode}:${activeMode === 'groups' && publicGroupsFeed}:${feedLocationKey(currentProfile?.roleSettings, activeMode)}`;
     if (feedContextRef.current !== feedContext) {
       feedContextRef.current = feedContext;
+      setLocationContext(null);
+      pageControllerRef.current?.abort();
       postsRef.current = [];
       knownIds.current = new Set();
       remoteCursorRef.current = null;
@@ -2162,6 +2169,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       // lives inside Home. Invalidate any older feed request
       // so it cannot overwrite the selected in-place view when it finishes.
       feedRequestIdRef.current += 1;
+      feedControllerRef.current?.abort();
+      pageControllerRef.current?.abort();
       setLoading(false);
       setRefreshing(false);
       setLoadingMore(false);
@@ -2174,8 +2183,12 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       ? (activeFilters.sources?.length ? activeFilters.sources : activeSourceTabs)
 
       : [];
+    feedControllerRef.current?.abort();
+    if (replace) { pageControllerRef.current?.abort(); paginationRequestIdRef.current += 1; loadingMoreRef.current = false; setLoadingMore(false); }
+    const controller = new AbortController();
+    feedControllerRef.current = controller;
     const requestId = ++feedRequestIdRef.current;
-    const isCurrentRequest = () => requestId === feedRequestIdRef.current;
+    const isCurrentRequest = () => requestId === feedRequestIdRef.current && !controller.signal.aborted && profileRef.current?.id === currentProfile?.id && feedLocationKey(profileRef.current?.roleSettings, activeMode) === feedLocationKey(currentProfile?.roleSettings, activeMode);
     if (!silent) {
       if (manual) setRefreshing(true);
       else setLoading(true);
@@ -2196,10 +2209,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       if (bust) {
         params.set('bust', '1');
       }
-      const data = await requestFeedPage(params, profile);
+      const data = await requestFeedPage(params, currentProfile, controller.signal);
       // A response from the view the member just left must never replace the
       // newer Home/Following/Travel response that is already on screen.
       if (!isCurrentRequest()) return;
+      setLocationContext(data.locationContext || null);
       if (data.locked) {
         setFeedError(null);
         // Single gated-source tab, not connected — show the connect wall
@@ -2277,7 +2291,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       knownIds.current = new Set(nextPosts.map(p => p.id).filter(Boolean));
       postsRef.current = nextPosts;
       setPosts(nextPosts);
-      if (activeMode === 'feed' && !activeSearch) writeFeedCache(profile?.id, nextPosts);
+      if (activeMode === 'feed' && !activeSearch) writeFeedCache(profileRef.current?.id, nextPosts, profileRef.current?.roleSettings);
       // Only reset pagination state (page counter AND cursor) on a genuine
       // context reset, same condition as the existing remotePage reset —
       // a merge (silent background top-up) must NOT rewind the cursor,
@@ -2316,7 +2330,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         setRefreshing(false);
       }
     }
-  }, [profile, publicGroupsFeed]);
+  }, [profile?.id, publicGroupsFeed]);
 
   useEffect(() => {
     if (viewMode !== 'countries' || locationSaving || !(travelStatus?.camerasChecking || travelStatus?.storiesUpdating)) return undefined;
@@ -2368,11 +2382,14 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
 
   // Persist filter state so the page reopens with the same settings
   useEffect(() => {
-    saveFeedState(profile?.id, filters, activeTabs, search, viewMode, locationFilters);
+    if (activeMemberIdRef.current === profile?.id) saveFeedState(profile?.id, filters, activeTabs, search, viewMode, locationFilters);
   }, [profile?.id, filters, activeTabs, search, viewMode, locationFilters]);
   useEffect(() => {
     if (!profile?.id || activeMemberIdRef.current === profile.id) return;
     activeMemberIdRef.current = profile.id;
+    locationSavingRef.current = false;
+    setLocationSaving(false);
+    setLocationContext(null);
     const saved = loadFeedState(profile.id);
     const nextMode = forcedMode || (HOME_VIEW_MODES.has(routeInitialMode) ? routeInitialMode : saved?.viewMode || 'feed');
     const savedTopics = Array.isArray(saved?.filters?.topics) ? saved.filters.topics : [];
@@ -2381,7 +2398,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       : { ...DEFAULT_FILTERS, ...(nextMode === 'countries' && saved?.viewMode !== 'countries' ? {} : saved?.filters || {}), ...(nextMode === 'countries' ? { sources: [] } : {}), sort: 'newest' };
     const nextTabs = nextMode === 'countries' ? [] : saved?.activeTabs || [];
     const nextSearch = nextMode === 'countries' ? '' : saved?.search || '';
-    const nextLocation = normalizeLocationFilters(profile.roleSettings?.feedLocation);
+    const nextLocation = savedFeedLocation(profile.roleSettings, nextMode);
     filtersRef.current = nextFilters;
     activeTabsRef.current = nextTabs;
     searchRef.current = nextSearch;
@@ -2395,21 +2412,23 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     setRemotePage(2);
     setRemoteHasMore(true);
     remoteCursorRef.current = null;
-  }, [forcedMode, profile?.id, profile?.roleSettings?.feedLocation, routeInitialMode]);
+  }, [forcedMode, profile?.id, routeInitialMode]);
   useEffect(() => {
     loadStateRef.current = { loading, refreshing, loadingMore };
   }, [loading, refreshing, loadingMore]);
 
-  const profileLocationKey = `${profile?.id || ''}:${profile?.roleSettings?.feedLocation?.country || ''}:${profile?.roleSettings?.feedLocation?.city || ''}`;
+  const profileLocationKey = `${profile?.id || ''}:${viewMode}:${feedLocationKey(profile?.roleSettings, viewMode)}`;
+  const previousLocationKey = useRef(profileLocationKey);
   useEffect(() => {
-    if (!profile?.id) return;
-    const saved = normalizeLocationFilters(profile.roleSettings?.feedLocation);
-    const current = locationFiltersRef.current;
-    if (saved.country === current.country && saved.city === current.city) return;
+    const saved = savedFeedLocation(profile?.roleSettings, viewMode);
     locationFiltersRef.current = saved;
     setLocationFilters(saved);
-    loadFeed(false, activeTabsRef.current, { replace: true });
-  }, [profileLocationKey, profile?.id, profile?.roleSettings?.feedLocation, loadFeed]);
+    setLocationMessage('');
+    if (previousLocationKey.current === profileLocationKey) return;
+    previousLocationKey.current = profileLocationKey;
+    setLocationContext(null);
+    if (profile?.id && !locationSavingRef.current) loadFeed(false, activeTabsRef.current, { replace: true });
+  }, [profileLocationKey, profile?.id, loadFeed]);
 
   // This is now the app's one real "refresh" action — clicking Feed (while
   // already on Feed) re-pulls the current view exactly as filtered, rather
@@ -2441,6 +2460,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       searchRef.current = '';
       setSearch('');
     }
+    const nextLocation = savedFeedLocation(profileRef.current?.roleSettings, nextMode);
+    previousLocationKey.current = `${profileRef.current?.id || ''}:${nextMode}:${feedLocationKey(profileRef.current?.roleSettings, nextMode)}`;
+    locationFiltersRef.current = nextLocation;
+    setLocationFilters(nextLocation);
+    setLocationMessage('');
     setViewMode(nextMode);
     setActiveTabs(nextTabs);
     setFilters(nextFilters);
@@ -2589,35 +2613,47 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
 
   const applyLocationFilters = useCallback(async (event, selection = null) => {
     event?.preventDefault();
-    if (locationSavingRef.current) return false;
+    if (locationSavingRef.current || !profileRef.current?.id) return false;
+    const memberId = profileRef.current.id;
+    const scope = viewModeRef.current;
     locationSavingRef.current = true;
     const next = normalizeLocationFilters(selection || locationFiltersRef.current);
     locationFiltersRef.current = next;
     setLocationFilters(next);
     setLocationSaving(true);
     setLocationMessage('');
-    let saveError = '';
+    let saved = false;
     try {
-      const { data } = await client.patch('/profile', {
-        roleSettings: { ...(profile?.roleSettings || {}), feedLocation: next },
-      });
-      updateProfileLocally(data.profile || data);
-      setLocationMessage(next.country || next.city ? 'Location saved for your feeds.' : 'Location filter cleared.');
+      const { data } = await client.patch('/profile', { roleSettings: { feedLocations: { [scope]: next } } });
+      if (profileRef.current?.id !== memberId) return false;
+      const persisted = (data.profile || data)?.roleSettings?.feedLocations?.[scope] || next;
+      const settings = { ...profileRef.current.roleSettings, feedLocations: { ...profileRef.current.roleSettings?.feedLocations, [scope]: persisted } };
+      profileRef.current = { ...profileRef.current, roleSettings: settings };
+      if (viewModeRef.current === scope) previousLocationKey.current = `${memberId}:${scope}:${feedLocationKey(settings, scope)}`;
+      updateProfileLocally({ roleSettings: settings });
+      saved = true;
+      if (viewModeRef.current === scope) setLocationMessage(next.country || next.city ? 'Destination saved for this feed.' : 'This feed will use your automatic area.');
     } catch {
-      const stored = normalizeLocationFilters(profile?.roleSettings?.feedLocation);
-      locationFiltersRef.current = stored;
-      setLocationFilters(stored);
-      saveError = 'Could not save this location. Your previous feed location is still active.';
+      if (profileRef.current?.id !== memberId) return false;
+      if (viewModeRef.current === scope) {
+        const stored = savedFeedLocation(profileRef.current?.roleSettings, scope);
+        locationFiltersRef.current = stored;
+        setLocationFilters(stored);
+        setLocationMessage('Could not save this destination. Your previous location is still active.');
+      }
     } finally {
-      setRemotePage(2);
-      setRemoteHasMore(true);
-      await loadFeed(true, activeTabsRef.current, { replace: true, preserveScroll: true, bust: false });
-      if (saveError) setLocationMessage(saveError);
-      locationSavingRef.current = false;
-      setLocationSaving(false);
+      if (profileRef.current?.id === memberId) {
+        locationSavingRef.current = false;
+        setLocationSaving(false);
+        if (saved && viewModeRef.current === scope) {
+          setRemotePage(2);
+          setRemoteHasMore(true);
+          await loadFeed(false, activeTabsRef.current, { replace: true, preserveScroll: true, bust: false });
+        }
+      }
     }
-    return !saveError;
-  }, [loadFeed, profile?.roleSettings, updateProfileLocally]);
+    return saved;
+  }, [loadFeed, updateProfileLocally]);
 
   const clearLocationFilters = useCallback(() => {
     applyLocationFilters(null, { country: '', city: '' });
@@ -2626,9 +2662,10 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const selectTravelLiveLocation = useCallback((camera) => {
     const next = normalizeLocationFilters({ country: camera?.country, city: camera?.city });
     if (!next.country && !next.city) return;
-    if (next.city === profile?.roleSettings?.feedLocation?.city && next.country === profile?.roleSettings?.feedLocation?.country) return;
+    const saved = savedFeedLocation(profileRef.current?.roleSettings, 'countries');
+    if (next.city === saved.city && next.country === saved.country) return;
     return applyLocationFilters(null, next);
-  }, [applyLocationFilters, profile?.roleSettings?.feedLocation]);
+  }, [applyLocationFilters]);
 
   const toggleTab = useCallback((key) => {
     // Source tabs just change which filter is active now — they no longer
@@ -2696,7 +2733,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     try {
       const { data } = await client.patch('/profile', {
         roleSettings: {
-          ...(profile.roleSettings || {}),
           feedSourceFavorites: nextFavorites,
         },
       });
@@ -2730,6 +2766,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     loadingMoreRef.current = true;
     setLoadingMore(true);
     const requestIdAtStart = feedRequestIdRef.current;
+    const memberAtStart = profileRef.current?.id;
+    const locationAtStart = feedLocationKey(profileRef.current?.roleSettings, viewModeRef.current);
+    const controller = new AbortController();
+    pageControllerRef.current?.abort();
+    pageControllerRef.current = controller;
     try {
       const tabs = activeTabsRef.current;
       const activeFilters = { ...DEFAULT_FILTERS, ...filtersRef.current };
@@ -2773,8 +2814,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       if (requestedSources.length === 1) params.set('source', requestedSources[0]);
       else if (requestedSources.length > 1) params.set('sources', requestedSources.join(','));
       if (viewModeRef.current === 'groups' && publicGroupsFeed) params.set('groupScope', 'public');
-      const data = await requestFeedPage(params, profile);
-      if (requestIdAtStart !== feedRequestIdRef.current) return;
+      const data = await requestFeedPage(params, profileRef.current, controller.signal);
+      if (requestIdAtStart !== feedRequestIdRef.current || controller.signal.aborted || memberAtStart !== profileRef.current?.id || locationAtStart !== feedLocationKey(profileRef.current?.roleSettings, viewModeRef.current)) return;
       if (viewModeRef.current === 'countries' && Array.isArray(data.liveFeeds)) {
         setTravelLiveFeeds(data.liveFeeds);
         setTravelStatus(data.travel || null);
@@ -2818,6 +2859,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       else setRemotePage(p => p + 1);
       setRemoteHasMore(CONTINUOUS_FEED_MODES.has(viewModeRef.current) || data.hasMore !== false);
     } catch (error) {
+      if (controller.signal.aborted || memberAtStart !== profileRef.current?.id) return;
       console.error('[feed] position cursor request failed', error);
       if (viewModeRef.current === 'countries' && requestIdAtStart === feedRequestIdRef.current) {
         setTravelPaginationError('More destinations could not load.');
@@ -2830,7 +2872,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         setLoadingMore(false);
       }
     }
-  }, [profile, publicGroupsFeed, remotePage]);
+  }, [profile?.id, publicGroupsFeed, remotePage]);
 
   const updateFeedPost = useCallback((updatedPost) => {
     if (!updatedPost?.id) return;
@@ -2841,11 +2883,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
 
   // Saving a Travel city updates the profile; the selection handler already
   // reloads that feed. Do not also reset its player and cursor here.
-  const feedBootstrapDependency = viewMode === 'countries' ? profile?.id : loadFeed;
+  const feedBootstrapDependency = loadFeed;
   // Only Home owns this cache. Group scopes must start with their own response.
   useEffect(() => {
     if (!profile?.id) return;
-    const c = !forcedMode && viewModeRef.current === 'feed' ? readFeedCache(profile.id) : null;
+    const c = !forcedMode && viewModeRef.current === 'feed' ? readFeedCache(profile.id, profileRef.current?.roleSettings) : null;
     postsRef.current = c?.posts || [];
     knownIds.current = new Set(postsRef.current.map(post => post.id).filter(Boolean));
     remoteCursorRef.current = null;
@@ -2859,6 +2901,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     return () => {
       feedRequestIdRef.current += 1;
       paginationRequestIdRef.current += 1;
+      feedControllerRef.current?.abort();
+      pageControllerRef.current?.abort();
     };
   }, [forcedMode, feedBootstrapDependency, profile?.id, JSON.stringify(profile?.roleSettings?.feedLanguages || [])]);
 
@@ -3243,7 +3287,9 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const showsAdvancedFilters = !usesSourceControls && viewMode !== 'groups';
   const isLocationFeed = ['countries', 'restaurants', 'bars'].includes(viewMode);
   const postContext = isLocationFeed ? discoveryPostContext(viewMode, [...contentPosts, ...travelLiveFeeds]) : null;
-  const travelLocationLabel = locationScopeLabel(normalizeLocationFilters(profile?.roleSettings?.feedLocation));
+  const savedDestination = savedFeedLocation(profile?.roleSettings, viewMode);
+  const effectiveDestination = savedDestination.country || savedDestination.city ? savedDestination : normalizeLocationFilters({ country: locationContext?.countryName || locationContext?.country, city: locationContext?.city });
+  const travelLocationLabel = locationScopeLabel(effectiveDestination);
   const activeFilterCount = (usesSourceControls ? filters.sources.length : 0) + (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
   const visibleFilterCount = (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
   const advancedFilterCount = (usesSourceControls ? filters.sources.length : 0)
@@ -3324,6 +3370,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         <UfiFeedContent embedded initialShop={routeFeedParams.get('channel') === 'shop'} />
       ) : (
       <>
+      {!isLocationFeed && <FeedLocationControl context={locationContext} />}
       {/* Specialized feeds keep location and filter controls together. */}
       {showsAdvancedFilters && <section className={`feed-specialized-toolbar${isLocationFeed ? ' feed-specialized-toolbar--location' : ''}`}>
         {isLocationFeed && (
@@ -3575,7 +3622,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         <TravelLiveLoop
           feeds={travelLiveFeeds}
           mediaOpenId={mediaLightboxPostId}
-          location={normalizeLocationFilters(profile?.roleSettings?.feedLocation)}
+          location={effectiveDestination}
           onLocationSelect={selectTravelLiveLocation}
           onGuideOpen={setGuideDestination}
           guideOpen={Boolean(guideDestination)}
