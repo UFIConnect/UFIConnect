@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { SaveJobButton, SavePostButton } from './SaveButtons';
 import PostInlineText from './PostInlineText';
+import PostLinkPreviews from './PostLinkPreviews';
 import { safePostLink } from '../../../backend/post-links.mjs';
 
 export function SavedPostCard({ post, onRemoved }) {
@@ -15,6 +16,7 @@ export function SavedPostCard({ post, onRemoved }) {
       </div>
       {post.title && <h3>{post.title}</h3>}
       {post.content && <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}><PostInlineText text={post.content} /></p>}
+      <PostLinkPreviews post={post} />
       {post.mediaType === 'image' && post.mediaUrl && (
         <img src={post.mediaUrl} alt="" className="profile-saved-post-image" />
       )}

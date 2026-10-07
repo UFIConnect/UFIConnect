@@ -40,7 +40,7 @@ const CAREER_BENEFITS = [
 
 const MASTODON_CONNECTION_ERRORS = {
   browser_mismatch: 'Mastodon could not verify this browser session. Start the connection again in this browser and allow cookies for UFIconnect.',
-  authorization_declined: 'Mastodon access was declined. Connect again and approve the requested read permissions on your server.',
+  authorization_declined: 'Mastodon access was declined. Connect again and review the requested permissions on your server.',
   missing_code: 'Mastodon did not return an authorization code. Start the connection again.',
   account_unavailable: 'This UFIconnect account cannot connect Mastodon. Sign in with your personal account and try again.',
   token_exchange_failed: 'Mastodon could not complete authorization. Start the connection again on your server.',
@@ -69,12 +69,14 @@ export default function ConnectedAccounts() {
   const isBusinessMembership = profile?.plan === 'business';
 
   useEffect(() => {
-    if (searchParams.get('connect') !== 'mastodon') return;
-    setMastodonServer('');
+    const requested = searchParams.get('connect');
+    if (!['mastodon', 'bluesky'].includes(requested) || isBusinessMembership) return;
+    if (requested === 'mastodon') setMastodonServer('');
+    else setBlueskyHandle('');
     const nextParams = new URLSearchParams(searchParams);
     nextParams.delete('connect');
     setSearchParams(nextParams, { replace: true });
-  }, [searchParams, setSearchParams]);
+  }, [searchParams, setSearchParams, isBusinessMembership]);
 
   useEffect(() => {
     client.get('/social/platforms').then((pRes) => {
@@ -132,6 +134,7 @@ export default function ConnectedAccounts() {
 
   async function startConnect(platform, handle) {
     const connectParams = new URLSearchParams();
+    if (searchParams.get('returnTo') === 'command-center') connectParams.set('returnTo', 'command-center');
     if (handle) connectParams.set(platform === 'mastodon' ? 'server' : 'handle', handle.trim());
     if (searchParams.get('interactions') === '1') connectParams.set('interactions', '1');
     if (platform === 'youtube' && searchParams.get('analytics') === '1') connectParams.set('analytics', '1');
@@ -382,7 +385,9 @@ export default function ConnectedAccounts() {
         >
           <form
             className="card"
+            role="dialog" aria-modal="true" aria-label="Connect Bluesky"
             onClick={e => e.stopPropagation()}
+            onKeyDown={event => { if (event.key === 'Escape') setBlueskyHandle(null); }}
             onSubmit={handleBlueskySubmit}
             style={{ width: '100%', maxWidth: 360, padding: 20 }}
           >
@@ -396,6 +401,7 @@ export default function ConnectedAccounts() {
             </p>
             <input
               className="form-input"
+              aria-label="Bluesky handle"
               autoFocus
               value={blueskyHandle}
               onChange={e => setBlueskyHandle(e.target.value)}

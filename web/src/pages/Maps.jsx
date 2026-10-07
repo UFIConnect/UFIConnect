@@ -7,6 +7,8 @@ import CategoryCity from '../components/SourceCity';
 import CityAppGuide from '../components/CityAppGuide';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import PostInlineText from '../components/PostInlineText';
+import PostLinkPreviews from '../components/PostLinkPreviews';
+import { postTextPreview } from '../../../backend/post-text.mjs';
 import { SOURCE_META } from '../components/sourceMeta';
 import { CITY_SOURCE_PRESETS, CITY_SOURCE_IDS, CITY_ALL_TOPICS, houseTopics } from '../local/citySources';
 import client from '../api/client';
@@ -24,7 +26,7 @@ const sourceLabel = source => SOURCE_META[source]?.label || source;
 const snapshot = (post, category) => ({
   key: postKey(post), id: String(post.id), source: String(post.source || 'uficonnect'),
   title: String(post.title || post.content || 'Community post').slice(0, 220),
-  content: String(post.content || '').slice(0, 1800),
+  content: postTextPreview(post.content, 1800),
   topics: (Array.isArray(post.topics) ? post.topics : [post.topic]).filter(topic => typeof topic === 'string').slice(0, 30),
   sourceUrl: safeLink(post.sourceUrl), category,
 });
@@ -300,7 +302,7 @@ export default function Maps() {
       {(error || city.error) && <p className="local-error" role="alert">{error || city.error}{error && <button type="button" disabled={loading} onClick={() => load(true)}>Retry</button>}</p>}
       <div className="city-post-grid" aria-busy={loading}>{enabled.includes(active) && visible.map(post => <article className="card city-post" key={post.key}>
         <span className="local-eyebrow">{sourceLabel(post.source)}</span>
-        <h3>{post.title}</h3><p><PostInlineText text={post.content} /></p>{safeLink(post.sourceUrl) && <a href={safeLink(post.sourceUrl)} target="_blank" rel="noopener noreferrer">Open post</a>}
+        <h3>{post.title}</h3><p><PostInlineText text={post.content} /></p><PostLinkPreviews post={post} />{safeLink(post.sourceUrl) && <a href={safeLink(post.sourceUrl)} target="_blank" rel="noopener noreferrer">Open post</a>}
       </article>)}</div>
       {loading && <p role="status">Loading posts…</p>}
       {!loading && (!currentPosts.length || !enabled.includes(active)) && <p className="card">{!enabled.includes(active) ? 'Enable this city in Customize your app, then apply changes.' : !sourceKey ? 'Choose a source in the map menu, then apply changes to explore its posts.' : 'No posts match these sources and topics yet. Try another house or update your topics.'}</p>}

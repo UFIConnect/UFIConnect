@@ -1,0 +1,64 @@
+.post-link-previews {
+  --link-preview-text: var(--text);
+  --link-preview-muted: var(--muted);
+  --link-preview-border: var(--border);
+  --link-preview-accent: var(--primary);
+  margin: 12px 0;
+  min-width: 0;
+  max-width: 100%;
+  text-align: left;
+  color: var(--link-preview-text);
+}
+.post-link-previews--dark {
+  --link-preview-text: #f1f5f9;
+  --link-preview-muted: #cbd5e1;
+  --link-preview-border: rgba(255, 255, 255, .23);
+  --link-preview-accent: #93c5fd;
+}
+.post-link-previews-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 7px;
+  font-size: .72rem;
+  font-weight: 600;
+  color: var(--link-preview-muted);
+}
+.post-link-previews-list { display: grid; gap: 6px; list-style: none; margin: 0; padding: 0; }
+.post-link-previews-list li { min-width: 0; }
+.post-link-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--link-preview-border);
+  border-radius: 10px;
+  color: inherit;
+  text-decoration: none;
+  background: transparent;
+}
+.post-link-preview:hover { border-color: var(--link-preview-accent); color: inherit; text-decoration: none; }
+.post-link-preview:focus-visible, .post-link-previews-toggle:focus-visible { outline: 2px solid var(--link-preview-accent); outline-offset: 3px; }
+.post-link-preview > svg { flex-shrink: 0; color: var(--link-preview-accent); }
+.post-link-preview-copy { display: grid; gap: 3px; flex: 1; min-width: 0; }
+.post-link-preview-domain { font-size: .82rem; font-weight: 650; overflow-wrap: anywhere; unicode-bidi: isolate; }
+.post-link-preview-path { font-size: .74rem; line-height: 1.45; color: var(--link-preview-muted); overflow-wrap: anywhere; unicode-bidi: isolate; }
+.post-link-previews-toggle {
+  display: block;
+  margin-top: 7px;
+  padding: 5px 0;
+  border: 0;
+  background: none;
+  color: var(--link-preview-accent);
+  font: inherit;
+  font-size: .76rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.media-lightbox-info .post-link-previews {
+  max-height: min(28dvh, 220px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 3px;
+}

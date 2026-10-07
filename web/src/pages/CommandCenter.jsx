@@ -1,20 +1,22 @@
 import { privateSessionStorage } from '../auth/session';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Workflow, Link2, BriefcaseBusiness, Sparkles, Clapperboard, Send, Newspaper, Image, Video, Hash, PencilLine } from 'lucide-react';
 import Layout from '../components/Layout';
 import PricingModal, { TIERS } from '../components/PricingModal';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import client, { publicOAuthRequestConfig } from '../api/client';
-import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS, COMMAND_CENTER_ACCOUNT_PLATFORMS, CAREER_ACCOUNT_PLATFORMS, CROSS_POST_PLATFORM_IDS, withCareerAccountFallback } from '../components/sourceMeta';
+import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS, CAREER_ACCOUNT_PLATFORMS, CROSS_POST_PLATFORM_IDS, withCareerAccountFallback } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import PhotoPickerButton from '../components/PhotoPickerButton';
 import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
 import { useSavedItems } from '../contexts/SavedItemsContext';
 import GeneratedContentHistory from '../components/GeneratedContentHistory';
 import PostInlineText from '../components/PostInlineText';
+import PostLinkPreviews from '../components/PostLinkPreviews';
 import { safePostLink } from '../../../backend/post-links.mjs';
-import { postTextPreview } from '../../../backend/post-text.mjs';
+
 import VideoDurationControl, { VIDEO_DURATION_LIMIT } from '../components/VideoDurationControl';
 import { DirectoryControls, AccountSiteLink } from '../components/DirectoryControls';
 import { ACCOUNT_STATUSES, accountSections, filterAccounts } from '../components/sourceDirectory';
@@ -32,27 +34,26 @@ function SourceMark({ source, label, active = false }) {
   const meta = SOURCE_META[source] || {};
   if (hasBrandIcon(source)) {
     return (
-      <span style={{ width: 22, height: 22, borderRadius: '50%', background: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border)', flexShrink: 0 }}>
+      <span aria-hidden="true" style={{ width: 22, height: 22, borderRadius: '50%', background: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border)', flexShrink: 0 }}>
         <BrandIcon platform={source} size={14} />
       </span>
     );
   }
   return (
-    <span style={{ width: 22, height: 22, borderRadius: '50%', background: active ? 'rgba(255,255,255,.22)' : `${meta.color || 'var(--primary)'}18`, color: active ? '#fff' : meta.color || 'var(--primary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 900, flexShrink: 0 }}>
+    <span aria-hidden="true" style={{ width: 22, height: 22, borderRadius: '50%', background: active ? 'rgba(255,255,255,.22)' : `${meta.color || 'var(--primary)'}18`, color: active ? '#fff' : meta.color || 'var(--primary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 900, flexShrink: 0 }}>
       {String(label || meta.icon || source || 'UFI').slice(0, 3).toUpperCase()}
     </span>
   );
 }
 
 const SECTIONS = [
-  { key: 'automation', label: 'Automation' },
-  { key: 'accounts',   label: 'Connected Accounts' },
-  { key: 'jobs',       label: 'Job Tracker' },
-  { key: 'content',    label: 'AI Content Hub' },
-  { key: 'media',      label: 'Media Studio' },
-  { key: 'crosspost',  label: 'Cross-Post' },
-  { key: 'yourfeed',   label: 'Your Feed' },
-  { key: 'feed',       label: 'Following Feed' },
+  { key: 'automation', label: 'Automation', icon: Workflow },
+  { key: 'accounts',   label: 'Connected Accounts', icon: Link2 },
+  { key: 'jobs',       label: 'Job Tracker', icon: BriefcaseBusiness },
+  { key: 'content',    label: 'AI Content Hub', icon: Sparkles },
+  { key: 'media',      label: 'Media Studio', icon: Clapperboard },
+  { key: 'crosspost',  label: 'Cross-Post', icon: Send },
+  { key: 'yourfeed',   label: 'Your Feed', icon: Newspaper },
 ];
 const SECTION_KEYS = new Set(SECTIONS.map(section => section.key));
 
@@ -110,212 +111,6 @@ function SectionError({ message, onRetry }) {
     <div className="card command-center-error" role="alert">
       <span>{message}</span>
       {onRetry && <button type="button" className="btn btn-ghost btn-sm" onClick={onRetry}>Try again</button>}
-    </div>
-  );
-}
-
-function PostRow({ post, onOpen }) {
-  return (
-    <button
-      onClick={onOpen}
-      className="card"
-      type="button"
-      style={{
-        display: 'flex', gap: 12, alignItems: 'center', textAlign: 'left', width: '100%',
-        cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--card)', padding: 14,
-      }}
-    >
-      {post.mediaUrl && post.mediaType === 'image' ? (
-        <img src={post.mediaUrl} alt="" style={{ width: 52, height: 52, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} />
-      ) : (
-        <div style={{
-          width: 52, height: 52, borderRadius: 8, flexShrink: 0, background: 'var(--bg-secondary)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.3rem',
-        }}>
-          {post.mediaType === 'video' ? 'Video' : 'Post'}
-        </div>
-      )}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{
-          fontWeight: 700, fontSize: '.85rem', overflow: 'hidden', textOverflow: 'ellipsis',
-          display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
-        }}>
-          {post.title || postTextPreview(post.content, 80) || 'Untitled post'}
-        </div>
-        <div style={{ fontSize: '.72rem', color: 'var(--muted)', marginTop: 4 }}>
-          {post.author?.name || post.sourceLabel} · {timeAgo(post.createdAt)}
-          {post.matchedByLocation && (
-            <span style={{ marginLeft: 8, color: '#047857', fontWeight: 700 }}>
-              {post.locationMatchLabel || 'Near you'}
-            </span>
-          )}
-        </div>
-      </div>
-    </button>
-  );
-}
-
-function PostDetailModal({ post, onClose }) {
-  const originalUrl = safePostLink(post.sourceUrl);
-  return (
-    <div
-      onClick={onClose}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 2000, background: 'rgba(0,0,0,.5)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="card"
-        style={{ maxWidth: 480, width: '100%', maxHeight: '80vh', overflowY: 'auto' }}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
-          <div style={{ fontWeight: 700, fontSize: '.75rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.4px' }}>
-            {post.sourceLabel || post.source}
-          </div>
-          <button onClick={onClose} aria-label="Close" style={{ all: 'unset', cursor: 'pointer', fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)' }}>Close</button>
-        </div>
-        {post.mediaUrl && post.mediaType === 'image' && (
-          <img src={post.mediaUrl} alt="" style={{ width: '100%', borderRadius: 10, marginBottom: 12, maxHeight: 280, objectFit: 'cover' }} />
-        )}
-        <h3 style={{ margin: '0 0 8px', fontSize: '1.05rem', lineHeight: 1.4 }}>{post.title === post.content ? <PostInlineText text={post.title} /> : post.title}</h3>
-        {post.content && post.content !== post.title && (
-          <p style={{ fontSize: '.85rem', lineHeight: 1.6, color: 'var(--text)', whiteSpace: 'pre-wrap' }}><PostInlineText text={post.content} /></p>
-        )}
-        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: '.78rem', color: 'var(--muted)', margin: '12px 0' }}>
-          {post.author?.name && <span>{post.author.name}</span>}
-          <span>{timeAgo(post.createdAt)}</span>
-          {post.likesCount > 0 && <span>{post.likesCount} likes</span>}
-          {post.commentsCount > 0 && <span>{post.commentsCount} comments</span>}
-        </div>
-        {originalUrl && (
-          <a href={originalUrl} target="_blank" rel="noopener noreferrer" className="btn btn-primary btn-sm" style={{ marginTop: 8 }}>
-            View original post
-          </a>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// Reuses /office/feed?mode=following directly (the same Following pool the
-// Feed page's own Following tab reads) rather than a new endpoint — the
-// only thing this section adds is grouping the response by source and a
-// detail view, no new server-side data shape needed.
-function ConnectedFeedSection() {
-  const [posts, setPosts] = useState(null);
-  const [error, setError] = useState('');
-  const [activePost, setActivePost] = useState(null);
-  const [sourceFilter, setSourceFilter] = useState(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const requestInFlight = useRef(false);
-
-  const loadPosts = useCallback(async ({ manual = false } = {}) => {
-    if (requestInFlight.current) return;
-    requestInFlight.current = true;
-    if (manual) setRefreshing(true);
-    try {
-      const { data } = await client.get('/office/feed', {
-        params: {
-          mode: 'following', limit: 60, sort: 'newest', seed: 'command-center',
-          passive: 1,
-        },
-      });
-      setError('');
-      setPosts((data.posts || []).filter(post => post?.id));
-    } catch (err) {
-      setError(err?.response?.data?.message || "Couldn't load your connected feed.");
-    } finally {
-      requestInFlight.current = false;
-      setRefreshing(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadPosts();
-    const id = setInterval(() => loadPosts(), 60000);
-    return () => clearInterval(id);
-  }, [loadPosts]);
-
-  useEffect(() => {
-    if (sourceFilter && posts && !posts.some(post => (post.source || 'uficonnect') === sourceFilter)) {
-      setSourceFilter(null);
-    }
-  }, [posts, sourceFilter]);
-
-  if (posts === null && !error) return <div className="empty-state"><span className="spinner spinner-primary" /></div>;
-  if (posts === null && error) return <SectionError message={error} onRetry={() => loadPosts({ manual: true })} />;
-  if (!posts.length) {
-    return (
-      <div className="card" style={{ textAlign: 'center', padding: 32 }}>
-        <div style={{ fontWeight: 700, marginBottom: 4 }}>Your following feed is ready for connections</div>
-        <div style={{ color: 'var(--muted)', fontSize: '.85rem', marginBottom: 16 }}>Connect an account to bring its subscriptions and followed accounts into this feed.</div>
-        <Link to="/connected-accounts" className="btn btn-primary btn-sm">Manage accounts</Link>
-      </div>
-    );
-  }
-
-  const bySource = new Map();
-  for (const p of posts) {
-    const src = p.source || 'uficonnect';
-    if (!bySource.has(src)) bySource.set(src, []);
-    bySource.get(src).push(p);
-  }
-  const sources = [...bySource.keys()].sort((a, b) => bySource.get(b).length - bySource.get(a).length);
-  const visibleSources = sourceFilter ? [sourceFilter] : sources;
-
-  return (
-    <div>
-      {error && <SectionError message={error} onRetry={() => loadPosts({ manual: true })} />}
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 18 }}>
-        <StatChip label="Posts" value={posts.length} />
-        <StatChip label="Sources" value={sources.length} />
-        <button type="button" className="btn btn-ghost btn-sm" disabled={refreshing} onClick={() => loadPosts({ manual: true })} style={{ marginLeft: 'auto' }}>
-          {refreshing ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Refresh'}
-        </button>
-      </div>
-
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
-        <button
-          type="button" onClick={() => setSourceFilter(null)}
-          className="btn btn-sm"
-          style={{ background: !sourceFilter ? 'var(--primary)' : 'var(--bg-secondary)', color: !sourceFilter ? '#fff' : 'var(--text)', border: 'none' }}
-        >
-          All
-        </button>
-        {sources.map(src => {
-          const meta = SOURCE_META[src] || SOURCE_META.uficonnect;
-          const active = sourceFilter === src;
-          return (
-            <button
-              key={src} type="button" onClick={() => setSourceFilter(active ? null : src)}
-              className="btn btn-sm"
-              style={{ background: active ? 'var(--border)' : 'var(--bg-secondary)', color: 'var(--text)', border: 'none' }}
-            >
-              <SourceMark source={src} label={meta.icon} active={active} /> {meta.label} · {bySource.get(src).length}
-            </button>
-          );
-        })}
-      </div>
-
-      {visibleSources.map(src => {
-        const meta = SOURCE_META[src] || SOURCE_META.uficonnect;
-        return (
-          <div key={src} style={{ marginBottom: 26 }}>
-            <h3 style={{ fontSize: '.85rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 10 }}>
-              <SourceMark source={src} label={meta.icon} /> {meta.label} <span style={{ fontWeight: 500 }}>· {bySource.get(src).length}</span>
-            </h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {bySource.get(src).map((p, i) => (
-                <PostRow key={`${p.id}-${i}`} post={p} onOpen={() => setActivePost(p)} />
-              ))}
-            </div>
-          </div>
-        );
-      })}
-
-      {activePost && <PostDetailModal post={activePost} onClose={() => setActivePost(null)} />}
     </div>
   );
 }
@@ -438,7 +233,7 @@ function ContentHubSection({ readOnly = false }) {
       {draftError && <div role="alert"><SectionError message={draftError} /></div>}
       {!readOnly && <>
       <div className="card">
-        <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>Draft new content</h3>
+        <h3 style={{ margin: '0 0 4px', fontSize: '.95rem', display: 'flex', alignItems: 'center', gap: 8 }}><Sparkles size={19} aria-hidden="true" /> Draft new content</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0 }}>
           AI-drafted captions for the platform you post to — copy, tweak, and post it yourself.
         </p>
@@ -452,7 +247,7 @@ function ContentHubSection({ readOnly = false }) {
                   className="btn btn-sm"
                   style={{ background: platform === p.value ? 'var(--primary)' : 'var(--bg-secondary)', color: platform === p.value ? '#fff' : 'var(--text)', border: 'none' }}
                 >
-                  {p.icon} {p.label}
+                  {p.value === 'general' ? <PencilLine size={18} aria-hidden="true" /> : <SourceMark source={p.value} active={platform === p.value} />} {p.label}
                 </button>
               ))}
             </div>
@@ -481,7 +276,7 @@ function ContentHubSection({ readOnly = false }) {
       <ContentDraftResults drafts={drafts} onCopy={copyDraft} />
 
       <div className="card">
-        <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>Hashtag creator</h3>
+        <h3 style={{ margin: '0 0 4px', fontSize: '.95rem', display: 'flex', alignItems: 'center', gap: 8 }}><Hash size={19} aria-hidden="true" /> Hashtag creator</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0 }}>
           Draft focused hashtag sets for the post and audience you have in mind.
         </p>
@@ -495,7 +290,7 @@ function ContentHubSection({ readOnly = false }) {
                   className="btn btn-sm"
                   style={{ background: hashtagPlatform === p.value ? 'var(--primary)' : 'var(--bg-secondary)', color: hashtagPlatform === p.value ? '#fff' : 'var(--text)', border: 'none' }}
                 >
-                  {p.icon} {p.label}
+                  {p.value === 'general' ? <PencilLine size={18} aria-hidden="true" /> : <SourceMark source={p.value} active={hashtagPlatform === p.value} />} {p.label}
                 </button>
               ))}
             </div>
@@ -542,11 +337,6 @@ function ContentHubSection({ readOnly = false }) {
   );
 }
 
-// Content review/download, sectioned by platform — distinct from Connected
-// Feed above (which shows the Following pool, i.e. OTHER people's posts).
-// This is the member's OWN posts on each connected platform, for reviewing
-// or pulling a copy of their own content. Only ever lists platforms the
-// member has actually connected (see ConnectedAccounts.jsx for that flow).
 function dataUrlToFile(dataUrl, name) {
   const [header, encoded] = String(dataUrl || '').split(',');
   const mime = header.match(/data:([^;]+)/)?.[1] || 'image/png';
@@ -685,7 +475,7 @@ function MediaStudioSection({ onOpenCrossPost, readOnly = false }) {
     <div ref={formTop} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       {!readOnly && <>
       <div className="card">
-        <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>Create media</h3>
+        <h3 style={{ margin: '0 0 4px', fontSize: '.95rem', display: 'flex', alignItems: 'center', gap: 8 }}><Clapperboard size={19} aria-hidden="true" /> Create media</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0, lineHeight: 1.55 }}>
           Create an image or video for your next post. Choose a video length up to 5 minutes when a compatible video service is connected.
         </p>
@@ -697,7 +487,7 @@ function MediaStudioSection({ onOpenCrossPost, readOnly = false }) {
                 onClick={() => { setType(option); setError(''); setGenerationStatus(''); }}
                 style={{ border: 'none', textTransform: 'capitalize', background: type === option ? 'var(--primary)' : 'var(--bg-secondary)', color: type === option ? '#fff' : 'var(--text)' }}
               >
-                {option}
+                {option === 'image' ? <Image size={18} aria-hidden="true" /> : <Video size={18} aria-hidden="true" />} {option}
               </button>
             ))}
           </div>
@@ -901,17 +691,18 @@ function YourFeedSection() {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 700, fontSize: '.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{post.title}</div>
                 <div style={{ fontSize: '.72rem', color: 'var(--muted)', marginTop: 4 }}>{timeAgo(post.createdAt)}</div>
+                <PostLinkPreviews post={post} />
               </div>
               <div className="command-center-row-actions">
                 <button type="button" className="btn btn-ghost btn-sm" onClick={() => downloadText(post)}>Text</button>
                 {post.mediaType === 'image' && post.mediaUrl && (
                   <button type="button" className="btn btn-ghost btn-sm" onClick={() => downloadImage(post)}>Image</button>
                 )}
-                {post.mediaType === 'video_thumbnail_only' && post.sourceUrl && (
-                  <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">View original</a>
+                {post.mediaType === 'video_thumbnail_only' && safePostLink(post.sourceUrl) && (
+                  <a href={safePostLink(post.sourceUrl)} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">View original</a>
                 )}
-                {!post.mediaType && post.sourceUrl && (
-                  <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">View</a>
+                {!post.mediaType && safePostLink(post.sourceUrl) && (
+                  <a href={safePostLink(post.sourceUrl)} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">View</a>
                 )}
               </div>
             </div>
@@ -958,21 +749,35 @@ function MemberAccountsSection() {
     const failedPlatform = params.get('social_error');
     const reason = params.get('reason');
     const target = connectedPlatform || failedPlatform;
-    if (!target || ![...COMMAND_CENTER_ACCOUNT_PLATFORMS, ...CAREER_ACCOUNT_PLATFORMS].includes(target)) return;
+    if (!target || !platforms?.some(([key]) => key === target)) return;
 
     if (connectedPlatform) {
       setConnected(current => ({ ...current, [connectedPlatform]: true }));
-      showToast(`${connectedPlatform} connected successfully.`, 'success');
+      window.dispatchEvent(new Event('ufi-connections-changed'));
+      showToast(`${platforms.find(([key]) => key === connectedPlatform)?.[1]?.name || connectedPlatform} connected successfully.`, 'success');
     } else {
-      showToast(reason
-        ? `Could not connect ${failedPlatform}: ${String(reason).split(':').pop()}.`
-        : `Could not connect ${failedPlatform}.`, 'error');
+      const name = platforms.find(([key]) => key === failedPlatform)?.[1]?.name || failedPlatform;
+      const code = String(reason || '').split(':')[0];
+      const explanation = {
+        invalid_state: 'The connection expired. Start again from this browser.',
+        browser_mismatch: 'The browser session could not be verified. Allow cookies for UFIConnect and start again in this browser.',
+        access_denied: 'Access was declined. Connect again and review the requested permissions.',
+        authorization_declined: 'Access was declined. Connect again and review the requested permissions.',
+        missing_code: 'The provider did not return an authorization code. Start the connection again.',
+        account_unavailable: 'This account cannot connect this provider. Check your account membership.',
+        account_verification_failed: 'Your account could not be verified after authorization. Try connecting again.',
+        token_exchange_failed: 'Authorization could not be completed. Start the connection again.',
+      }[code] || 'Check that the provider is available, then try connecting again.';
+      showToast(`Could not connect ${name}. ${explanation}`, 'error');
     }
     navigate({ pathname: location.pathname, search: '?tab=accounts' }, { replace: true });
-  }, [location.pathname, location.search, navigate, showToast]);
+  }, [location.pathname, location.search, navigate, showToast, platforms]);
 
   async function connectAccount(platform) {
-    if (platform === 'mastodon') { navigate('/connected-accounts?connect=mastodon'); return; }
+    if (platform === 'mastodon' || platform === 'bluesky') {
+      navigate(`/connected-accounts?connect=${platform}&returnTo=command-center`);
+      return;
+    }
     setConnecting(platform);
     try {
       const { data } = await client.get(
@@ -992,6 +797,7 @@ function MemberAccountsSection() {
     try {
       await client.delete(`/social/connect/${platform}`);
       setConnected(current => ({ ...current, [platform]: false }));
+      window.dispatchEvent(new Event('ufi-connections-changed'));
       showToast('Account disconnected.', 'success');
     } catch (requestError) {
       showToast(requestError?.response?.data?.error || 'Could not disconnect this account.', 'error');
@@ -1003,22 +809,22 @@ function MemberAccountsSection() {
   if (platforms === null) return <div className="empty-state"><span className="spinner spinner-primary" /></div>;
 
   const memberPlatforms = isBusinessMembership
-    ? platforms.filter(([, platform]) => platform.category === 'career')
-    : platforms.filter(([key, platform]) => (
-      platform.commandCenterOnly || COMMAND_CENTER_ACCOUNT_PLATFORMS.includes(key)
-    ));
+    ? platforms.filter(([key, platform]) => platform.category === 'career' || CAREER_ACCOUNT_PLATFORMS.includes(key))
+    : platforms;
   const displayedAccounts = filterAccounts(memberPlatforms, connected, accountFilter);
   const accountGroups = accountSections(memberPlatforms, connected, accountFilter);
+  const connectedCount = memberPlatforms.filter(([key]) => connected[key]).length;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div className="card" style={{ padding: '18px 20px' }}>
-        <h3 style={{ margin: '0 0 4px', fontSize: '.98rem' }}>{isBusinessMembership ? 'Business career connections' : 'Member account connections'}</h3>
+        <h3 style={{ margin: '0 0 4px', fontSize: '.98rem' }}>{isBusinessMembership ? 'Business career connections' : 'All account connections'}</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.82rem', lineHeight: 1.55, margin: 0 }}>
           {isBusinessMembership
             ? 'Career providers use the same secure Connect, Connected, and Disconnect flow as other accounts. Job browsing remains in Opportunities.'
-            : 'Account-only sources import or publish only from the account you explicitly authorize. Publisher integrations stay here until their provider setup is ready.'}
+            : 'Connect accounts for feeds, replies, and publishing. Each provider shows the tools it supports and whether its connection is ready.'}
         </p>
+        <p style={{ margin: '10px 0 0', fontSize: '.8rem', fontWeight: 700 }}>{connectedCount} of {memberPlatforms.length} accounts connected</p>
       </div>
       {error && <SectionError message={error} onRetry={loadAccounts} />}
       <div className="account-directory-page">
@@ -1027,7 +833,7 @@ function MemberAccountsSection() {
       </div>
       {memberPlatforms.length > 0 && !displayedAccounts.length && <div className="source-directory-empty" role="status">No matching accounts</div>}
       {!memberPlatforms.length && !error && (
-        <div className="card" style={{ textAlign: 'center', padding: 28, color: 'var(--muted)', fontSize: '.85rem' }}>{isBusinessMembership ? 'No career account connections are available yet.' : 'No member-only account connections are available yet.'}</div>
+        <div className="card" style={{ textAlign: 'center', padding: 28, color: 'var(--muted)', fontSize: '.85rem' }}>{isBusinessMembership ? 'No career account connections are available yet.' : 'No account connections are available yet.'}</div>
       )}
       {accountGroups.map(section => (
         <section key={section.id} className="account-category-section" aria-labelledby={`member-accounts-${section.id}`}>
@@ -1040,7 +846,7 @@ function MemberAccountsSection() {
         const isConnected = !!connected[key];
         const unavailable = !platform.configured || platform.forceComingSoon;
         const accountOnly = ['instagram', 'tiktok', 'threads'].includes(key);
-        const accountType = isBusinessMembership ? 'Career account' : accountOnly ? 'Own posts only' : 'Publisher setup';
+        const accountType = platform.category === 'career' ? 'Career account' : accountOnly ? 'Own posts only' : platform.category === 'publication' ? 'Publishing' : null;
         return (
           <div key={key} className="card member-account-card" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <span style={{ width: 42, height: 42, borderRadius: 8, background: '#fff', border: '1px solid var(--border)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -1049,13 +855,16 @@ function MemberAccountsSection() {
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
                 <strong style={{ fontSize: '.92rem' }}>{platform.name}</strong>
-                <span style={{ fontSize: '.64rem', fontWeight: 750, color: 'var(--primary)', background: 'var(--primary-light)', padding: '2px 6px', borderRadius: 4 }}>{accountType}</span>
+                {accountType && <span style={{ fontSize: '.64rem', fontWeight: 750, color: 'var(--primary)', background: 'var(--primary-light)', padding: '2px 6px', borderRadius: 4 }}>{accountType}</span>}
                 {isConnected && <span style={{ fontSize: '.64rem', fontWeight: 750, color: '#059669', background: '#ECFDF5', padding: '2px 6px', borderRadius: 4 }}>Connected</span>}
+                {isConnected && platform.reconnectRequired && <span style={{ fontSize: '.7rem', color: 'var(--muted)' }}>Reconnect needed</span>}
                 {!isConnected && unavailable && <span style={{ fontSize: '.64rem', fontWeight: 750, color: '#92400E', background: '#FEF3C7', padding: '2px 6px', borderRadius: 4 }}>Coming soon</span>}
               </div>
               <p style={{ color: 'var(--muted)', fontSize: '.78rem', margin: '4px 0 0', lineHeight: 1.45 }}>{platform.description}</p>
+              {isConnected && platform.reconnectRequired && <p style={{ color: 'var(--muted)', fontSize: '.78rem', margin: '4px 0 0', lineHeight: 1.45 }}>{platform.reconnectMessage || `Reconnect ${platform.name} to renew account permissions.`}</p>}
             </div>
             <div className="source-directory-account-actions">
+            {isConnected && (platform.reconnectRequired || key === 'mastodon' || key === 'bluesky') && <button type="button" className="btn btn-ghost btn-sm" disabled={unavailable || platform.locked || connecting === key} onClick={() => connectAccount(key)}>Reconnect {platform.name}</button>}
             {isConnected ? (
               <button type="button" className="btn btn-danger btn-sm" onClick={() => disconnectAccount(key)} disabled={disconnecting === key}>
                 {disconnecting === key ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Disconnect'}
@@ -1065,7 +874,7 @@ function MemberAccountsSection() {
                 {connecting === key ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : unavailable ? 'Coming soon' : platform.locked ? 'Membership' : 'Connect'}
               </button>
             )}
-            <AccountSiteLink platform={key} name={platform.name} />
+            <AccountSiteLink platform={key} name={platform.name} siteUrl={platform.siteUrl} />
             </div>
           </div>
         );
@@ -1441,6 +1250,7 @@ function CrossPostSection() {
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [mediaError, setMediaError] = useState('');
   const [syncing, setSyncing] = useState(false);
+  const [destinationCategory, setDestinationCategory] = useState('all');
 
   const loadCrossPostData = useCallback(async () => {
     setLoadError('');
@@ -1474,6 +1284,11 @@ function CrossPostSection() {
   function toggle(platform) {
     if (platform === 'uficonnect') { setSelected(prev => { const next = new Set(prev); if (next.has(platform)) next.delete(platform); else next.add(platform); return next; }); return; }
     const capability = platforms[platform]?.crossPost;
+    if (selected.has(platform)) {
+      setSelected(previous => { const next = new Set(previous); next.delete(platform); return next; });
+      return;
+    }
+    if (!connected?.[platform] || !capability?.supported || !platforms[platform]?.configured || platforms[platform]?.forceComingSoon || platforms[platform]?.locked || profile?.plan === 'free') return;
     if (media?.type === 'video' && capability?.media !== 'link') {
       showToast(`${SOURCE_META[platform]?.label || platform} needs a native video publishing connection.`, 'error');
       return;
@@ -1559,9 +1374,17 @@ function CrossPostSection() {
   const publishingPlatforms = CROSS_POST_PLATFORM_IDS.filter(platform => platforms[platform]);
   const shownPlatforms = new Set(categoryContext?.sources.map(source => source.platform) || []);
   const orderedPublishingPlatforms = [...publishingPlatforms].sort((left, right) => Number(shownPlatforms.has(right)) - Number(shownPlatforms.has(left)));
-  const connectionPath = (platform) => platform === 'mastodon'
-    ? '/connected-accounts?connect=mastodon'
-    : platforms[platform]?.commandCenterOnly ? '/command-center?tab=accounts' : '/connected-accounts';
+  const destinationGroups = accountSections([
+    ['uficonnect', { name: 'UFIConnect', configured: true }],
+    ...orderedPublishingPlatforms.map(platform => [platform, platforms[platform]]),
+  ], { ...connected, uficonnect: true }).map(group => ({
+    ...group,
+    items: group.items.sort(([left], [right]) => Number(shownPlatforms.has(right)) - Number(shownPlatforms.has(left))),
+  }));
+  const visibleDestinationGroups = destinationGroups.filter(group => destinationCategory === 'all' || group.id === destinationCategory);
+  const connectionPath = (platform) => platform === 'mastodon' || platform === 'bluesky'
+    ? `/connected-accounts?connect=${platform}&returnTo=command-center`
+    : '/command-center?tab=accounts';
   const platformTargetButton = (p) => {
     const meta = SOURCE_META[p] || SOURCE_META.uficonnect;
     const capability = platforms[p]?.crossPost;
@@ -1584,7 +1407,7 @@ function CrossPostSection() {
     const meta = SOURCE_META[p] || SOURCE_META.uficonnect;
     const platform = platforms[p];
     const capability = platform?.crossPost;
-    if (platform?.forceComingSoon && !connected[p]) {
+    if (platform?.forceComingSoon || !platform?.configured) {
       return (
         <button
           key={p} type="button" disabled className="btn btn-ghost btn-sm"
@@ -1607,6 +1430,7 @@ function CrossPostSection() {
         </button>
       );
     }
+    if (platform.locked) return <button key={p} type="button" disabled className="btn btn-ghost btn-sm"><SourceMark source={p} /> {meta.label} - Membership</button>;
     if (connected[p]) return platformTargetButton(p);
     return (
       <Link key={p} to={connectionPath(p)} className="btn btn-ghost btn-sm" style={{ textDecoration: 'none' }}>
@@ -1632,11 +1456,29 @@ function CrossPostSection() {
           </div>
         </div>}
         <div style={{ marginTop: 16, padding: 12, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
-          <div style={{ fontSize: '.75rem', fontWeight: 800, color: 'var(--muted)', marginBottom: 8 }}>Publishing destinations</div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button type="button" className="btn btn-ghost btn-sm" aria-pressed={selected.has('uficonnect')} onClick={() => toggle('uficonnect')} style={{ background: selected.has('uficonnect') ? 'var(--border)' : undefined }}>UFIconnect</button>
-            {orderedPublishingPlatforms.map(publishingDestination)}
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <strong style={{ fontSize: '.8rem' }}>Publishing destinations</strong>
+            <label style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, fontSize: '.75rem', minWidth: 0 }}>
+              Category
+              <select className="form-select" aria-label="Publishing category" value={destinationCategory} onChange={event => setDestinationCategory(event.target.value)} style={{ width: 'auto', maxWidth: '100%' }}>
+                <option value="all">All categories</option>
+                {destinationGroups.map(group => <option key={group.id} value={group.id}>{group.label}</option>)}
+              </select>
+            </label>
           </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {visibleDestinationGroups.map(group => <section key={group.id} aria-labelledby={`crosspost-category-${group.id}`}>
+              <h4 id={`crosspost-category-${group.id}`} style={{ margin: '0 0 8px', fontSize: '.78rem', color: 'var(--muted)' }}>{group.label}</h4>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {group.items.map(([platform]) => platform === 'uficonnect'
+                  ? <button key={platform} type="button" className="btn btn-sm" aria-pressed={selected.has(platform)} onClick={() => toggle(platform)} style={{ background: selected.has(platform) ? 'var(--primary)' : 'var(--card)', color: selected.has(platform) ? '#fff' : 'var(--text)' }}><SourceMark source={platform} active={selected.has(platform)} /> UFIConnect</button>
+                  : publishingDestination(platform))}
+              </div>
+            </section>)}
+          </div>
+          <p role="status" style={{ fontSize: '.78rem', margin: '14px 0 0', lineHeight: 1.5 }}>{selected.size
+            ? `Selected (${selected.size}): ${[...selected].map(platform => SOURCE_META[platform]?.label || platform).join(', ')}`
+            : 'Choose the accounts to publish to.'}</p>
         </div>
         {profile?.plan === 'free' && <p style={{ fontSize: '.8rem' }}>UFIconnect posting is available to everyone. Publishing to connected accounts requires Pro.</p>}
         {
@@ -1705,7 +1547,8 @@ function CrossPostSection() {
                 {h.mediaUrl && (h.mediaUrl.includes('/video/upload/')
                   ? <video src={h.mediaUrl} controls playsInline style={{ width: '100%', maxHeight: 280, borderRadius: 6, marginBottom: 10, background: '#111' }} />
                   : <img src={h.mediaUrl} alt="Cross-posted" style={{ width: '100%', maxHeight: 280, objectFit: 'contain', borderRadius: 6, marginBottom: 10, background: 'var(--bg-secondary)' }} />)}
-                <p style={{ margin: '0 0 8px', fontSize: '.85rem', whiteSpace: 'pre-wrap' }}>{h.content}</p>
+                <p style={{ margin: '0 0 8px', fontSize: '.85rem', whiteSpace: 'pre-wrap' }}><PostInlineText text={h.content} /></p>
+                <PostLinkPreviews text={h.content} />
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: '.72rem', color: 'var(--muted)' }}>
                   {(h.targets || []).map(t => {
                     const resultMeta = PLATFORM_RESULT_META[t.status] || PLATFORM_RESULT_META.failed;
@@ -1755,7 +1598,7 @@ function AutomationToolCard({ icon, title, description, status, actionLabel, to,
     <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: 164 }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <h3 style={{ margin: 0, fontSize: '.95rem', lineHeight: 1.25 }}>{icon ? `${icon} ` : ''}{title}</h3>
+          <h3 style={{ margin: 0, fontSize: '.95rem', lineHeight: 1.25, display: 'flex', alignItems: 'center', gap: 8 }}>{icon}{title}</h3>
           <p style={{ margin: '6px 0 0', color: 'var(--muted)', fontSize: '.8rem', lineHeight: 1.5 }}>
             {description}
           </p>
@@ -1802,8 +1645,7 @@ function AutomationSection({ onSelectSection }) {
       setSnapshot({
         loading: false,
         error: allFailed ? 'Command Center status could not be loaded.' : '',
-        connectedPlatforms: Object.values(connected).filter(Boolean).length,
-        memberOnlyConnectedPlatforms: COMMAND_CENTER_ACCOUNT_PLATFORMS.filter(platform => connected[platform]).length,
+        connectedPlatforms: Object.keys(social.platforms || {}).filter(platform => connected[platform]).length,
         feedPosts: Number.isFinite(feedData.totalAvailable) ? feedData.totalAvailable : feedPosts.length,
         newestFeedAt: feedPosts[0]?.createdAt || null,
         crossPostRuns: history.length,
@@ -1845,14 +1687,8 @@ function AutomationSection({ onSelectSection }) {
 
       <div className="command-center-tools-grid">
         <AutomationToolCard
-          title="Following Feed"
-          description="Review the live following pool grouped by source and refresh status."
-          status={feedStatus}
-          actionLabel="Open Following Feed"
-          onClick={() => onSelectSection('feed')}
-        />
-        <AutomationToolCard
           title="AI Drafts"
+          icon={<Sparkles size={19} aria-hidden="true" />}
           description="Generate captions and post drafts for the platform you plan to publish on."
           status="Ready"
           actionLabel="Open AI Hub"
@@ -1860,6 +1696,7 @@ function AutomationSection({ onSelectSection }) {
         />
         <AutomationToolCard
           title="Media Studio"
+          icon={<Clapperboard size={19} aria-hidden="true" />}
           description="Generate a photo or send a video prompt to the configured media provider."
           status="Ready"
           actionLabel="Open Media Studio"
@@ -1881,8 +1718,8 @@ function AutomationSection({ onSelectSection }) {
         />
         <AutomationToolCard
           title="Connected Accounts"
-          description="Manage Instagram, TikTok, and Threads connections that only use your authorized account posts."
-          status={`${metricValue(snapshot.memberOnlyConnectedPlatforms)} connected`}
+          description="Manage all your account connections by category, permissions, and availability."
+          status={`${metricValue(snapshot.connectedPlatforms)} connected`}
           actionLabel="Open Accounts"
           onClick={() => onSelectSection('accounts')}
         />
@@ -2056,7 +1893,7 @@ export default function CommandCenter() {
                 onKeyDown={event => handleTabKeyDown(event, index)}
                 className={`command-center-tab${section === s.key ? ' active' : ''}`}
               >
-                {s.icon ? `${s.icon} ` : ''}{s.label}
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}><s.icon size={17} aria-hidden="true" />{s.label}</span>
               </button>
             ))}
           </div>
@@ -2067,7 +1904,6 @@ export default function CommandCenter() {
             aria-labelledby={`command-center-tab-${section}`}
             className="command-center-panel"
           >
-            {section === 'feed' && <ConnectedFeedSection />}
             {!hasPaidMembership && ['content', 'media'].includes(section) && <button type="button" className="btn btn-primary btn-sm" onClick={() => setPricingOpen(true)}>Upgrade to create new content</button>}
             {section === 'content' && <ContentHubSection key={profile.id} readOnly={!hasPaidMembership} />}
             {section === 'media' && <MediaStudioSection key={profile.id} readOnly={!hasPaidMembership} onOpenCrossPost={() => selectSection('crosspost')} />}

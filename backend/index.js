@@ -1551,6 +1551,7 @@ app.get('/auth/social/bluesky/start', authenticate, async (req, res) => {
       tokenEndpoint: authServerMeta.token_endpoint,
       issuer: authServerMeta.issuer,
       did, pdsUrl,
+      ...(req.query.returnTo === 'command-center' ? { returnTo: 'command-center' } : {}),
     });
 
     const parResult = await pushBlueskyAuthorization(scope => atprotoPost(authServerMeta.pushed_authorization_request_endpoint, {
@@ -1585,18 +1586,18 @@ app.get('/auth/social/bluesky/start', authenticate, async (req, res) => {
 // 'bluesky' path.
 app.get('/auth/social/bluesky/callback', async (req, res) => {
   const { code, state, error: oauthError, iss } = req.query;
-  const frontendProfile = `${FRONTEND_BASE}/connected-accounts`;
-  if (oauthError) return res.redirect(`${frontendProfile}?social_error=bluesky&reason=${oauthError}`);
-
   const entry = verifyOAuthState(state, 'bluesky');
-  if (!entry || !entry.extra) return res.redirect(`${frontendProfile}?social_error=bluesky&reason=invalid_state`);
+  const destination = entry?.extra?.returnTo === 'command-center'
+    ? `${FRONTEND_BASE}/command-center?tab=accounts&` : `${FRONTEND_BASE}/connected-accounts?`;
+  if (oauthError) return res.redirect(`${destination}social_error=bluesky&reason=${encodeURIComponent(String(oauthError))}`);
+  if (!entry || !entry.extra) return res.redirect(`${destination}social_error=bluesky&reason=invalid_state`);
   const { tokenEndpoint, issuer, did, pdsUrl } = entry.extra;
 
   // A real AT Proto security requirement (see the spec), not just a nice-
   // to-have: the callback's own iss param must match the authorization
   // server this exact flow actually started with.
   if (iss && issuer && iss !== issuer) {
-    return res.redirect(`${frontendProfile}?social_error=bluesky&reason=issuer_mismatch`);
+    return res.redirect(`${destination}social_error=bluesky&reason=issuer_mismatch`);
   }
 
   try {
@@ -1636,10 +1637,10 @@ app.get('/auth/social/bluesky/callback', async (req, res) => {
     );
 
     logAgentAction('cache_helper', '??', 'User connected bluesky - social feed now active', '#6366F1');
-    res.redirect(`${frontendProfile}?social_connected=bluesky`);
+    res.redirect(`${destination}social_connected=bluesky`);
   } catch (e) {
     console.error('[Bluesky] callback error:', e.message);
-    res.redirect(`${frontendProfile}?social_error=bluesky&reason=token_exchange_failed`);
+    res.redirect(`${destination}social_error=bluesky&reason=token_exchange_failed`);
   }
 });
 

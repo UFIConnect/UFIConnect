@@ -1,5 +1,6 @@
 import { Fragment } from 'react';
 import { postTextParts } from '../../../backend/post-text.mjs';
+import { postLinkDestination } from './postLinkPreview.mjs';
 
 function hashtags(text, accent) {
   if (!accent) return text;
@@ -10,7 +11,8 @@ function hashtags(text, accent) {
 export default function PostInlineText({ text, accent }) {
   return postTextParts(text).map(part => part.href
     ? <a key={part.start} href={part.href} target="_blank" rel="noopener noreferrer nofollow ugc"
+        title={part.href} aria-label={`Open ${part.href} (opens in a new tab)`} dir="ltr"
         style={{ color: 'inherit', textDecoration: 'underline', textUnderlineOffset: '2px', overflowWrap: 'anywhere' }}
-        onClick={event => event.stopPropagation()}>{part.text}</a>
+        onClick={event => event.stopPropagation()}>{postLinkDestination(part.href)?.label || part.text}</a>
     : <Fragment key={part.start}>{hashtags(part.text, accent)}</Fragment>);
 }

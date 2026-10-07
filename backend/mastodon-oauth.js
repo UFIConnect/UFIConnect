@@ -118,7 +118,8 @@ function registerMastodonRoutes(app, { authenticate, limit, getUser, callbackUrl
       const verifier = crypto.randomBytes(32).toString('base64url');
       const browserNonce = crypto.randomBytes(32).toString('base64url');
       const browserHash = crypto.createHash('sha256').update(browserNonce).digest('hex');
-      const state = createState(user.id, 'mastodon', verifier, { origin, clientId: credentials.client_id, clientSecret: credentials.client_secret, browserHash });
+      const state = createState(user.id, 'mastodon', verifier, { origin, clientId: credentials.client_id, clientSecret: credentials.client_secret, browserHash,
+        ...(req.query.returnTo === 'command-center' ? { returnTo: 'command-center' } : {}) });
       res.cookie(cookieName, browserNonce, { ...cookieOptions, maxAge: 600000 });
       res.json({ url: `${origin}/oauth/authorize?${new URLSearchParams({
         response_type: 'code', client_id: credentials.client_id, redirect_uri: callbackUrl, scope: MASTODON_SCOPES, state,
@@ -129,8 +130,10 @@ function registerMastodonRoutes(app, { authenticate, limit, getUser, callbackUrl
   app.get('/auth/social/mastodon/callback', async (req, res) => {
     res.set('Cache-Control', 'no-store');
     res.set('Referrer-Policy', 'no-referrer');
-    const fail = reason => res.redirect(`${frontendUrl}/connected-accounts?social_error=mastodon&reason=${reason}`);
     const entry = verifyState(req.query.state, 'mastodon');
+    const destination = entry?.extra?.returnTo === 'command-center'
+      ? `${frontendUrl}/command-center?tab=accounts&` : `${frontendUrl}/connected-accounts?`;
+    const fail = reason => res.redirect(`${destination}social_error=mastodon&reason=${reason}`);
     if (!entry?.extra) return fail('invalid_state');
     const browserNonce = String(req.headers.cookie || '').split(';').map(part => part.trim()).find(part => part.startsWith(cookieName + '='))?.slice(cookieName.length + 1);
     if (!browserNonce || !/^[a-f0-9]{64}$/.test(entry.extra.browserHash || '')
@@ -150,7 +153,7 @@ function registerMastodonRoutes(app, { authenticate, limit, getUser, callbackUrl
       const account = await service.json(origin, '/api/v1/accounts/verify_credentials', { token: result.access_token });
       if (!account?.id) return fail('account_verification_failed');
       await saveToken(entry.userId, 'mastodon', JSON.stringify({ origin, accessToken: result.access_token, accountId: String(account.id), scope: result.scope || MASTODON_SCOPES }));
-      res.redirect(`${frontendUrl}/connected-accounts?social_connected=mastodon`);
+      res.redirect(`${destination}social_connected=mastodon`);
     } catch { return fail('connection_failed'); }
   });
 }

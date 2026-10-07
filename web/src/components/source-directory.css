@@ -11,6 +11,10 @@
 .home-connected-account-row { grid-template-columns: 22px minmax(0, 1fr); border: 0; border-bottom: 1px solid var(--border); border-radius: 0; padding: 9px 0; }
 .home-connected-account-row .source-directory-account-actions { grid-column: 2; }
 .home-connected-account-name { white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
+.home-account-category { min-width: 0; }
+.home-account-category-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 8px; padding: 10px 0 7px; border-bottom: 1px solid var(--border); }
+.home-account-category-heading h4 { margin: 0; color: var(--text); font-size: .78rem; font-weight: 700; }
+.home-account-category-heading span { color: var(--muted); font-size: .68rem; font-variant-numeric: tabular-nums; }
 .account-directory-page .source-directory-controls { max-width: 320px; }
 .account-category-section { min-width: 0; margin-bottom: 24px; }
 .account-category-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 10px; padding-bottom: 9px; border-bottom: 1px solid var(--border); }
