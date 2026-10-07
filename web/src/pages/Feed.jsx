@@ -1,3 +1,4 @@
+import { postDiscussionUrl } from '../../../backend/post-links.mjs';
 import JobPostContent from '../components/JobPostContent';
 import { isCareerPost } from '../utils/jobSummary.mjs';
 import ArticleIllustration from '../components/ArticleIllustration';
@@ -1390,40 +1391,7 @@ function mergeCommentLists(primary = [], secondary = []) {
 }
 
 /** Unified post card */
-function commentUrl(post) {
-  const u = post.sourceUrl || '';
-  if (!u) return null; // No valid URL to link to
-  switch (post.source) {
-    case 'hackernews':   return u;
-    case 'reddit':       return u;
-    case 'devto':        return u.includes('#') ? u : `${u}#comments`;
-    case 'github':       return u;
-    case 'youtube':      return u;
-    case 'stackoverflow':return u.includes('#') ? u : `${u}#answers`;
-    case 'lobsters':     return u;
-    case 'mastodon':     return u;
-    case 'bluesky':      return u;
-    case 'twitter':      return u;
-    case 'linkedin':     return u;
-    case 'instagram':    return u;
-    case 'facebook':     return u;
-    case 'producthunt':  return u;
-    case 'indiehackers': return u;
-    case 'medium':       return u;
-    case 'techcrunch':   return `${u}#comments`;
-    case 'theverge':     return `${u}#comments`;
-    case 'arstechnica':  return `${u}?comments=1`;
-    case 'theregister':  return `${u}#comments`;
-    case 'venturebeat':  return `${u}#comments`;
-    case 'smashing':     return `${u}#comments`;
-    case 'infoq':        return `${u}#community`;
-    case 'hashnode':     return u.includes('#') ? u : `${u}#comments`;
-    case 'phoronix':     return u;
-    case 'mittr':        return u;
-    case 'wired':        return u;
-    default:             return u;
-  }
-}
+const commentUrl = postDiscussionUrl;
 
 export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMediaOpen, onBlocked, onRemoved }) {
   const { profile, token, updateProfileLocally } = useAuth();

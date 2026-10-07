@@ -55,7 +55,7 @@ export const ACCOUNT_SITE_URLS = {
   instagram: 'https://www.instagram.com/', tiktok: 'https://www.tiktok.com/', threads: 'https://www.threads.com/',
   github: 'https://github.com/', gitlab: 'https://gitlab.com/', youtube: 'https://www.youtube.com/',
   reddit: 'https://www.reddit.com/', medium: 'https://medium.com/', dribbble: 'https://dribbble.com/',
-  twitch: 'https://www.twitch.tv/', bluesky: 'https://bsky.app/', mastodon: 'https://joinmastodon.org/',
+  twitch: 'https://www.twitch.tv/', bluesky: 'https://bsky.app/', mastodon: 'https://joinmastodon.org/servers',
   pinterest: 'https://www.pinterest.com/', tumblr: 'https://www.tumblr.com/', wordpress: 'https://wordpress.com/',
   indeed: 'https://www.indeed.com/', usajobs: 'https://www.usajobs.gov/', remoteok: 'https://remoteok.com/',
   remotive: 'https://remotive.com/', muse: 'https://www.themuse.com/', glassdoor: 'https://www.glassdoor.com/',

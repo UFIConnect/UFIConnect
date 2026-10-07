@@ -23,6 +23,7 @@ const PLATFORM_BENEFITS = {
   twitch:    ['Surface streams from channels you follow', 'Share live content with your network', 'Connect with fellow streamers'],
   threads:   ['Import your Threads posts', 'Surface conversations in your feed', 'Cross-post to your network'],
   bluesky:   ['Follow decentralised conversations', 'Surface posts matching your interests', 'Connect with the open social web'],
+  mastodon:  ['Read public posts from accounts you follow', 'Find your own public posts in Your Feed', 'Authorize access on your own Mastodon server'],
 };
 
 const PUBLICATION_BENEFITS = [
@@ -54,6 +55,7 @@ export default function ConnectedAccounts() {
   // gets its own in-app prompt instead of the plain click-to-connect every
   // other platform uses.
   const [blueskyHandle, setBlueskyHandle] = useState(null);
+  const [mastodonServer, setMastodonServer] = useState(null);
   const isBusinessMembership = profile?.plan === 'business';
 
   useEffect(() => {
@@ -104,12 +106,13 @@ export default function ConnectedAccounts() {
     // /auth/social/bluesky/start server-side). Every other platform here
     // needs nothing beyond the click itself.
     if (platform === 'bluesky') { setBlueskyHandle(''); return; }
+    if (platform === 'mastodon') { setMastodonServer(''); return; }
     startConnect(platform);
   }
 
   async function startConnect(platform, handle) {
     const connectParams = new URLSearchParams();
-    if (handle) connectParams.set('handle', handle.trim());
+    if (handle) connectParams.set(platform === 'mastodon' ? 'server' : 'handle', handle.trim());
     if (searchParams.get('interactions') === '1') connectParams.set('interactions', '1');
     if (platform === 'youtube' && searchParams.get('analytics') === '1') connectParams.set('analytics', '1');
     if (platform === 'youtube' && searchParams.get('monetization') === '1') connectParams.set('monetization', '1');
@@ -370,6 +373,24 @@ export default function ConnectedAccounts() {
         </>
       )}
 
+      {mastodonServer !== null && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setMastodonServer(null)}>
+          <form className="card" role="dialog" aria-modal="true" aria-labelledby="mastodon-connect-title" style={{ width: '100%', maxWidth: 420, padding: 20 }}
+            onClick={event => event.stopPropagation()} onKeyDown={event => { if (event.key === 'Escape') setMastodonServer(null); }}
+            onSubmit={event => { event.preventDefault(); const server = mastodonServer.trim(); if (server) { setMastodonServer(null); startConnect('mastodon', server); } }}>
+            <h2 id="mastodon-connect-title">Connect Mastodon</h2>
+            <p>Your account belongs to a Mastodon server. Enter its address or your full handle, then approve UFIConnect on that server.</p>
+            <label htmlFor="mastodon-server">Server or full handle</label>
+            <input id="mastodon-server" className="form-input" autoFocus autoComplete="off" value={mastodonServer} onChange={event => setMastodonServer(event.target.value)} placeholder="mastodon.social or @you@your.server" />
+            <p style={{ color: 'var(--muted)', fontSize: '.8rem' }}>Your password stays on your server. UFIConnect requests read access to your account and posts.</p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setMastodonServer(null)}>Cancel</button>
+              <button type="submit" className="btn btn-primary btn-sm" disabled={!mastodonServer.trim()}>Continue to Mastodon</button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {blueskyHandle !== null && (
         <div
           style={{
@@ -502,7 +523,7 @@ function PlatformCard({
               {connecting ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Connect'}
             </button>
           )}
-          <AccountSiteLink platform={platformKey} name={p.name} />
+          <AccountSiteLink platform={platformKey} name={p.name} siteUrl={p.siteUrl} />
         </div>
       </div>
 

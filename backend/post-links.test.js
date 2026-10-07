@@ -1,6 +1,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { safePostLink, sourceAuthorProfileUrl, postProfileLink } = require('./post-links.mjs');
+const { postDiscussionUrl } = require('./post-links.mjs');
+
+test('discussion links preserve existing parameters and fragments across sources', () => {
+  assert.equal(postDiscussionUrl({source:'arstechnica',sourceUrl:'https://arstechnica.com/story?ref=feed#section'}), 'https://arstechnica.com/story?ref=feed&comments=1#section');
+  assert.equal(postDiscussionUrl({source:'techcrunch',sourceUrl:'https://techcrunch.com/story#discussion'}), 'https://techcrunch.com/story#discussion');
+  assert.equal(postDiscussionUrl({source:'mastodon',sourceUrl:'https://social.example/@alice/123'}), 'https://social.example/@alice/123');
+  assert.equal(postDiscussionUrl({source:'reddit',sourceUrl:'javascript:alert(1)'}), null);
+});
 
 test('post links reject script schemes, credentials, controls, and ambiguous relative URLs', () => {
   for (const value of ['javascript:alert(1)', 'data:text/html,hi', '//example.com', '/u/alice', 'https://user:password@example.com', 'https://example.com/\nprofile']) assert.equal(safePostLink(value), null);

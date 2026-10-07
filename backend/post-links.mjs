@@ -8,6 +8,19 @@ export function safePostLink(value) {
 
 export const isMemberPost = post => post?.source === 'uficonnect' || (!post?.source && post?.isExternal !== true);
 
+export function postDiscussionUrl(post) {
+  const original = safePostLink(post?.sourceUrl);
+  if (!original) return null;
+  const url = new URL(original);
+  if (post.source === 'arstechnica') url.searchParams.set('comments', '1');
+  else if (!url.hash) {
+    if (post.source === 'stackoverflow') url.hash = 'answers';
+    else if (post.source === 'infoq') url.hash = 'community';
+    else if (['devto', 'techcrunch', 'theverge', 'theregister', 'venturebeat', 'smashing', 'hashnode'].includes(post.source)) url.hash = 'comments';
+  }
+  return url.href;
+}
+
 // Only identifiers supplied by a source or encoded in its canonical post URL
 // identify an author. A display name is not a YouTube handle or channel ID.
 export function sourceAuthorProfileUrl(post) {

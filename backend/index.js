@@ -1,4 +1,5 @@
 const express = require('express');
+const { mastodonOrigin, MASTODON_SCOPES, createMastodonService, registerMastodonRoutes } = require('./mastodon-oauth');
 const { BLUESKY_OAUTH_SCOPE, pushBlueskyAuthorization } = require('./bluesky-oauth');
 const { importedContentLimit, jobDescriptionText, JOB_CONTENT_MAX_CHARS } = require('./job-content');
 const { extractFeedMedia } = require('./rss-media');
@@ -1077,6 +1078,7 @@ const SOCIAL_ENV_KEYS = {
 };
 
 function socialCredentialStatus(platform, req) {
+  if (platform === 'mastodon') return { configured: true, requiredEnv: [], missingEnv: [], callbackUrl: oauthCallbackUrl(platform) };
   // Bluesky's whole credential shape is one ES256 signing key (see the
   // dedicated Bluesky OAuth section below), not a client_id/secret pair —
   // doesn't fit the generic index-0/1 special-casing below at all.
@@ -1153,6 +1155,11 @@ function verifyOAuthState(state, platform) {
   }
 }
 function pkceChallenge(v) { return crypto.createHash('sha256').update(v).digest('base64url'); }
+
+const mastodonService = createMastodonService({ resolveAddress: resolvePublicSourceCheckAddress, pinnedLookup: pinnedPublicLookup });
+registerMastodonRoutes(app, { authenticate, limit: rateLimit({ windowMs: 3600000, limit: 20 }),
+  getUser: getEffectiveUser, callbackUrl: oauthCallbackUrl('mastodon'), frontendUrl: FRONTEND_BASE,
+  createState: createOAuthState, verifyState: verifyOAuthState, saveToken: saveSocialToken, service: mastodonService });
 
 // --- Bluesky (AT Protocol) OAuth -----------------------------------------------
 // AT Protocol OAuth doesn't fit the client_id/secret shape every other
@@ -4224,14 +4231,23 @@ const MASTODON_INSTANCES = [
   'https://hachyderm.io',
 ];
 
+async function fetchMastodonAccountPosts(token, own = false) {
+  const credentials = JSON.parse(token);
+  const endpoint = own ? '/api/v1/accounts/' + encodeURIComponent(credentials.accountId) + '/statuses?limit=40&exclude_reblogs=true' : '/api/v1/timelines/home?limit=40';
+  const data = await mastodonService.json(credentials.origin, endpoint, { token: credentials.accessToken });
+  return mapMastodonPosts((Array.isArray(data) ? data : []).map(item => item.reblog || item), own ? 'Your Mastodon posts' : 'Following');
+}
+async function fetchMastodonHomeTimeline(token) { return fetchMastodonAccountPosts(token); }
+async function fetchMastodonOwnPosts(token) { return fetchMastodonAccountPosts(token, true); }
+
 function mapMastodonPosts(data, tag) {
   return (data || [])
-    .filter(t => t.content && t.account && !t.sensitive && t.visibility === 'public')
+    .filter(t => t.content && t.account && !t.sensitive && t.visibility === 'public' && safePostLink(t.url))
     .map(t => {
       const text = truncateWithEllipsis(stripAndDecodeHTML(t.content), POST_CONTENT_MAX_CHARS);
       return {
-        id:          `mastodon_${t.id}`,
-        authorId:    `mastodon_${t.account.id}`,
+        id:          `mastodon_${crypto.createHash('sha256').update(new URL(t.url).origin).digest('hex').slice(0, 12)}_${t.id}`,
+        authorId:    `mastodon_${t.account.url || new URL(t.url).origin + '/' + t.account.id}`,
         groupId:     'ext_mastodon',
         content:     text,
         title:       text.slice(0, 100),
@@ -4239,12 +4255,12 @@ function mapMastodonPosts(data, tag) {
         sourceLabel: `@${t.account.acct}`,
         sourceUrl:   t.url,
         topic:       tag,
-        author:      { id: `mastodon_${t.account.id}`, name: t.account.display_name || t.account.username, title: 'Mastodon', organization: 'Mastodon', avatarUrl: safeAvatarUrl(t.account.avatar_static || t.account.avatar), profileUrl: safePostLink(t.account.url) },
+        author:      { id: `mastodon_${t.account.url || new URL(t.url).origin + '/' + t.account.id}`, name: t.account.display_name || t.account.username, title: 'Mastodon', organization: 'Mastodon', avatarUrl: safeAvatarUrl(t.account.avatar_static || t.account.avatar), profileUrl: safePostLink(t.account.url) },
         likes: [], likesCount: t.favourites_count || 0, commentsCount: t.replies_count || 0,
         createdAt:   t.created_at,
         isExternal:  true,
         ...mastodonMedia(t.media_attachments?.[0]),
-        group:       { id: 'ext_mastodon', name: 'Mastodon', category: 'Social', externalUrl: 'https://mastodon.social' },
+        group:       { id: 'ext_mastodon', name: 'Mastodon', category: 'Social', externalUrl: new URL(t.url).origin },
       };
     });
 }
@@ -14347,13 +14363,13 @@ const PLATFORMS = {
   },
   mastodon: {
     name: 'Mastodon', color: '#6364FF', icon: 'mastodon',
-    description: 'Publish to the Mastodon account and server you authorize from Cross-Post.',
-    scopes: ['write:statuses'],
+    description: 'Connect your Mastodon server to read public posts from accounts you follow and your own public posts.',
+    scopes: MASTODON_SCOPES.split(' '),
+    needsServer: true,
     loginUrl: 'https://joinmastodon.org/servers',
     setupUrl: 'https://docs.joinmastodon.org/client/token/',
     reviewRequired: false,
-    comingSoon: true,
-    note: 'Mastodon needs a per-server OAuth app and account-server selection before it can be connected safely.',
+    note: 'Enter your server or full Mastodon handle, then approve read access on your own server.',
   },
   pinterest: {
     name: 'Pinterest', color: '#E60023', icon: 'pinterest',
@@ -14556,7 +14572,7 @@ const PLATFORMS = {
 const CONNECTED_SOCIAL_PLATFORMS = new Set([
   'linkedin', 'twitter', 'facebook', 'instagram', 'tiktok',
   'github', 'gitlab', 'youtube', 'reddit',
-  'medium', 'dribbble', 'twitch', 'threads', 'bluesky',
+  'medium', 'dribbble', 'twitch', 'threads', 'bluesky', 'mastodon',
 ]);
 
 // These providers publish through official third-party APIs, but each still
@@ -14564,7 +14580,7 @@ const CONNECTED_SOCIAL_PLATFORMS = new Set([
 // Command Center catalog without accidentally treating them as live feed
 // connections or accepting mock tokens.
 const PUBLISHING_ONLY_SOCIAL_PLATFORMS = new Set([
-  'mastodon', 'pinterest', 'tumblr', 'wordpress',
+  'pinterest', 'tumblr', 'wordpress',
 ]);
 const PUBLICATION_ACCOUNT_PLATFORMS = new Set([
   'wired', 'mittr', 'smashing', 'infoq', 'theregister',
@@ -14592,7 +14608,7 @@ const FORCE_COMING_SOON_PLATFORMS = new Set([
   // partner approval. Keep it visible in Command Center, but do not offer a
   // connection that cannot deliver the promised account functionality.
   'linkedin', 'tiktok',
-  'mastodon', 'pinterest', 'tumblr', 'wordpress',
+  'pinterest', 'tumblr', 'wordpress',
   ...PUBLICATION_ACCOUNT_PLATFORMS,
   ...CAREER_ACCOUNT_PLATFORMS,
 ]);
@@ -15179,7 +15195,7 @@ function serializeCommunityPost(post, viewerId = null) {
 // available — deliberately never backed by keyword search, which would
 // mislabel unrelated public posts as "from people you follow."
 const FOLLOWING_SOURCE_FETCHERS = {
-  // mastodon: fetchMastodonHomeTimeline,      // TODO: once Mastodon OAuth connect is live
+  mastodon: fetchMastodonHomeTimeline,
   youtube:  fetchYouTubeSubscriptionFeed,     // recent uploads from channels the member subscribes to — see its own comment
   github:   fetchGitHubFollowingActivity,     // received_events — activity from people the member follows, see its own comment
   gitlab:   fetchGitLabFollowingActivity,     // /users/:id/following + per-followed-user /events — see its own comment
@@ -15682,6 +15698,7 @@ async function fetchBlueskyOwnPosts(token, { bust = false, connectedAt = null } 
 }
 
 const OWN_CONTENT_FETCHERS = {
+  mastodon: fetchMastodonOwnPosts,
   github: fetchGitHubOwnActivity,
   gitlab: fetchGitLabOwnActivity,
   youtube: fetchYouTubeOwnUploads,
@@ -20655,6 +20672,10 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
 });
 
 // --- Profile: social connection status + disconnect ---------------------------
+function mastodonAccountLinks(token) {
+  try { const origin = mastodonOrigin(JSON.parse(token).origin); return { siteUrl: origin, loginUrl: origin + '/auth/sign_in' }; }
+  catch { return {}; }
+}
 app.get('/social/platforms', authenticate, async (req, res) => {
   const user = await getEffectiveUser(req.user.id);
   const careerOnly = user?.plan === 'business';
@@ -20671,6 +20692,7 @@ app.get('/social/platforms', authenticate, async (req, res) => {
     const commandCenterOnly = COMMAND_CENTER_SOCIAL_PLATFORMS.has(key);
     return [key, {
       ...PLATFORMS[key],
+      ...(key === 'mastodon' && token ? mastodonAccountLinks(token) : {}),
       connected: connected[key],
       reconnectRequired: key === 'youtube' && Boolean(token) && !user?.socialRefreshTokens?.youtube,
       connectedAt: token ? connectedSourceWindow(user, key).connectedAt : null,
@@ -31804,7 +31826,7 @@ const CROSS_POST_CAPABILITIES = Object.freeze({
   threads:   { supported: true, delivery: 'direct', media: 'native-image', requiresPhoto: false },
   instagram: { supported: true, delivery: 'direct', media: 'native-image', requiresPhoto: true },
   tiktok:    { supported: true, delivery: 'handoff', media: 'native-image', requiresPhoto: true },
-  mastodon:  { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: false, note: 'Mastodon needs a per-server OAuth app and account-server selection.' },
+  mastodon:  { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: false, note: 'Mastodon connections currently provide read access to public posts. Publishing is not enabled.' },
   pinterest: { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: true, note: 'Pinterest publishing needs approved API access and a board selector.' },
   tumblr:    { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: false, note: 'Tumblr needs an OAuth consumer and a blog selector.' },
   wordpress: { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: false, note: 'WordPress.com needs an OAuth app and site selector.' },

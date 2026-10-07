@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { mastodonOrigin } = require('./mastodon-oauth');
 const hash = value => crypto.createHash('sha256').update(String(value)).digest('hex').slice(0, 32);
 const text = (value, max = 6000) => String(value || '').replace(/<[^>]*>/g, '').slice(0, max);
 const stamp = value => { const n = Date.parse(value); return Number.isFinite(n) ? new Date(n).toISOString() : null; };
@@ -18,6 +19,8 @@ const SOURCE_INFO = {
   tiktok: ['TikTok', 'https://www.tiktok.com/', 'https://www.tiktok.com/messages'],
   gitlab: ['GitLab', 'https://gitlab.com/dashboard/todos', 'https://gitlab.com/'],
   twitch: ['Twitch', 'https://www.twitch.tv/', 'https://www.twitch.tv/'],
+  medium: ['Medium', 'https://medium.com/', 'https://medium.com/'],
+  dribbble: ['Dribbble', 'https://dribbble.com/', 'https://dribbble.com/'],
 };
 function publicUrl(value, fallback, hosts) {
   try { const u = new URL(value); return u.protocol === 'https:' && !u.username && !u.password && (!hosts || hosts.includes(u.hostname)) ? u.href : fallback; }
@@ -175,7 +178,11 @@ function createConnectedInbox({ request, refreshToken, receipts, getAccount, now
   async function list(user, kind) {
     const sources = []; const items = [];
     await Promise.all(Object.keys(user.socialTokens || {}).filter(source => user.socialTokens[source]).map(async source => {
-      const info = SOURCE_INFO[source] || [source, 'https://uficonnect.org/connected-accounts', 'https://uficonnect.org/connected-accounts'];
+      let info = SOURCE_INFO[source] || [source, 'https://uficonnect.org/connected-accounts', 'https://uficonnect.org/connected-accounts'];
+      if (source === 'mastodon') {
+        try { const origin = mastodonOrigin(JSON.parse(user.socialTokens[source]).origin); info = ['Mastodon', origin + '/notifications', origin + '/conversations']; }
+        catch { info = ['Mastodon', 'https://joinmastodon.org/servers', 'https://joinmastodon.org/servers']; }
+      }
       const supported = ['reddit', 'bluesky'].includes(source) || source === 'github' && kind === 'notifications';
       const rows = supported ? await fetchSource(user, source, kind) : null;
       const fresh = getAccount ? await getAccount(user.id) : user;
