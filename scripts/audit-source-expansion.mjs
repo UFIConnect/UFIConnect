@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {chromium} from 'playwright';
 import {createServer} from '../web/node_modules/vite/dist/node/index.js';
 import {installAuditMember,auditNavigate} from './audit-session.mjs';
+import accountDirectory from '../backend/account-directory.json' with {type:'json'};
 const require=createRequire(import.meta.url);
 const {createAppHarness,member}=require('../backend/test-support/app-harness');
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -24,12 +25,22 @@ try {
   app.seedUser(member(`expanded-${width}`,{plan:'pro'}));
   await installAuditMember(page,app,`expanded-${width}`);
   await auditNavigate(page,server.resolvedUrls.local[0]+'connected-accounts');
+  const accountCategories=page.getByRole('group',{name:'Account categories'});
+  const selectAccountCategory=async name=>{
+    await accountCategories.getByRole('button',{name:new RegExp('^'+name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+' \\d+$')}).click();
+    await page.getByRole('heading',{name,exact:true}).waitFor();
+  };
+  assert.equal(await accountCategories.getByRole('button',{name:/^All(?: |$)/}).count(),0);
+  await selectAccountCategory('Travel');
   await page.getByRole('link',{name:'Visit Airbnb website',exact:true}).waitFor();
+  await selectAccountCategory('Career sites');
   await page.getByRole('link',{name:'Visit Indeed website',exact:true}).waitFor();
+  await selectAccountCategory('News & Publishing');
   await page.getByRole('link',{name:'Visit Reuters website',exact:true}).waitFor();
   await page.getByRole('link',{name:'Visit BBC News website',exact:true}).waitFor();
   await page.getByRole('link',{name:'Visit AP News website',exact:true}).waitFor();
-  for(const name of ['Career sites','Travel','Music & Audio'])await page.getByRole('heading',{name,exact:true}).waitFor();
+  for(const name of ['Career sites','Travel','Music & Audio'])await selectAccountCategory(name);
+  await selectAccountCategory('Travel');
   assert.equal(await page.getByRole('link',{name:'Visit Airbnb website',exact:true}).getAttribute('href'),'https://www.airbnb.com/');
   assert.equal(await page.getByRole('link',{name:'Visit Airbnb website',exact:true}).getAttribute('rel'),'noopener noreferrer');
   assert.equal(await page.getByRole('combobox',{name:'Filter accounts'}).count(),0,'Account status filters are removed');
@@ -38,6 +49,31 @@ try {
   await airbnb.getByRole('button',{name:/Details/}).click();
   await airbnb.getByText(/Automatic account sync and publishing are unavailable/).waitFor();
   assert.equal(await airbnb.getByRole('button',{name:/Disconnect/}).count(),0,'A website visit does not link an account');
+  const expandedCategories=[
+    ['Social',['whatsapp','snapchat','nextdoor','quora','signal'],'Facebook'],
+    ['Video & Streaming',['kick','dailymotion','netflix','disneyplus','primevideo','crunchyroll'],'YouTube'],
+    ['Design',['canva','adobeexpress','artstation','deviantart','sketch','webflow'],'Canva'],
+    ['Music & Audio',['applemusic','amazonmusic','youtubemusic','tidal','deezer','bandcamp'],'Spotify'],
+  ];
+  for(const [category,keys,firstName] of expandedCategories){
+    await selectAccountCategory(category);
+    assert.deepEqual(await page.locator('section.account-category-section h2').allTextContents(),[category],'Only the selected category is rendered');
+    await page.locator('.account-platform-card').first().getByText(firstName,{exact:true}).waitFor();
+    for(const key of keys){
+      const provider=accountDirectory[key];
+      const card=page.locator('.account-platform-card').filter({has:page.getByText(provider.name,{exact:true})});
+      const website=card.getByRole('link',{name:`Visit ${provider.name} website`,exact:true});
+      await website.waitFor();
+      assert.equal(await website.getAttribute('href'),provider.siteUrl);
+      assert.equal(await website.getAttribute('target'),'_blank');
+      assert.equal(await website.getAttribute('rel'),'noopener noreferrer');
+      assert.equal(await card.locator('.account-site-link').count(),1,'Each new card retains one official website action');
+      assert.ok(await card.getByRole('button',{name:`Sign in and connect ${provider.name}`,exact:true}).isDisabled(),'Website visits do not grant account authorization');
+      assert.equal(await card.locator('.account-platform-card-header > div').first().locator('img, svg').count(),1,'New providers use the existing brand icon presentation');
+    }
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));
+    await page.screenshot({path:path.join(root,`.cache/audit-ui/expanded-accounts-${category.split(' ')[0].toLowerCase()}-${width}.png`)});
+  }
   await auditNavigate(page,server.resolvedUrls.local[0]+'command-center?tab=crosspost');
   const category=page.getByRole('combobox',{name:'Publishing category'});
   await category.waitFor();

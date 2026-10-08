@@ -450,5 +450,212 @@
     "description": "News, analysis, and reader services on the official publisher website.",
     "siteUrl": "https://www.npr.org/",
     "loginUrl": null
+  },
+  "kick": {
+    "name": "KICK",
+    "color": "#53FC18",
+    "icon": "KI",
+    "category": "video",
+    "description": "Live streams, creator channels, and community chat on KICK.",
+    "siteUrl": "https://kick.com/",
+    "loginUrl": "https://kick.com/"
+  },
+  "dailymotion": {
+    "name": "Dailymotion",
+    "color": "#0A0A0A",
+    "icon": "DM",
+    "category": "video",
+    "description": "Video discovery, creator channels, and saved videos.",
+    "siteUrl": "https://www.dailymotion.com/",
+    "loginUrl": "https://www.dailymotion.com/signin"
+  },
+  "netflix": {
+    "name": "Netflix",
+    "color": "#E50914",
+    "icon": "NF",
+    "category": "video",
+    "description": "Movies, series, and account profiles on Netflix.",
+    "siteUrl": "https://www.netflix.com/",
+    "loginUrl": "https://www.netflix.com/login"
+  },
+  "disneyplus": {
+    "name": "Disney+",
+    "color": "#0072D2",
+    "icon": "D+",
+    "category": "video",
+    "description": "Movies, series, and watchlists on Disney+.",
+    "siteUrl": "https://www.disneyplus.com/",
+    "loginUrl": "https://www.disneyplus.com/"
+  },
+  "primevideo": {
+    "name": "Prime Video",
+    "color": "#00A8E1",
+    "icon": "PV",
+    "category": "video",
+    "description": "Movies, series, live sports, and watchlists on Prime Video.",
+    "siteUrl": "https://www.primevideo.com/",
+    "loginUrl": "https://www.primevideo.com/"
+  },
+  "crunchyroll": {
+    "name": "Crunchyroll",
+    "color": "#F47521",
+    "icon": "CR",
+    "category": "video",
+    "description": "Anime series, films, and saved watchlists.",
+    "siteUrl": "https://www.crunchyroll.com/",
+    "loginUrl": "https://www.crunchyroll.com/login"
+  },
+  "whatsapp": {
+    "name": "WhatsApp",
+    "color": "#25D366",
+    "icon": "WA",
+    "category": "social",
+    "description": "Private conversations, groups, and calls in WhatsApp.",
+    "siteUrl": "https://www.whatsapp.com/",
+    "loginUrl": "https://web.whatsapp.com/"
+  },
+  "snapchat": {
+    "name": "Snapchat",
+    "color": "#FFFC00",
+    "icon": "SN",
+    "category": "social",
+    "description": "Snaps, stories, and conversations on Snapchat.",
+    "siteUrl": "https://www.snapchat.com/",
+    "loginUrl": "https://www.snapchat.com/web/"
+  },
+  "nextdoor": {
+    "name": "Nextdoor",
+    "color": "#008B3E",
+    "icon": "ND",
+    "category": "social",
+    "description": "Neighborhood conversations, recommendations, and local updates.",
+    "siteUrl": "https://nextdoor.com/",
+    "loginUrl": "https://nextdoor.com/login/"
+  },
+  "quora": {
+    "name": "Quora",
+    "color": "#B92B23",
+    "icon": "QU",
+    "category": "social",
+    "description": "Questions, answers, and discussions around your interests.",
+    "siteUrl": "https://www.quora.com/",
+    "loginUrl": "https://www.quora.com/"
+  },
+  "signal": {
+    "name": "Signal",
+    "color": "#3A76F0",
+    "icon": "SI",
+    "category": "social",
+    "description": "Download the Signal app for private messages, group chats, and calls.",
+    "siteUrl": "https://signal.org/",
+    "loginUrl": null
+  },
+  "canva": {
+    "name": "Canva",
+    "color": "#00C4CC",
+    "icon": "CA",
+    "category": "design",
+    "description": "Designs, presentations, videos, and shared brand projects.",
+    "siteUrl": "https://www.canva.com/",
+    "loginUrl": "https://www.canva.com/login/"
+  },
+  "adobeexpress": {
+    "name": "Adobe Express",
+    "color": "#FF0000",
+    "icon": "AE",
+    "category": "design",
+    "description": "Create graphics, edit photos and videos, and manage design projects.",
+    "siteUrl": "https://www.adobe.com/express/",
+    "loginUrl": "https://express.adobe.com/"
+  },
+  "artstation": {
+    "name": "ArtStation",
+    "color": "#13AFF0",
+    "icon": "AS",
+    "category": "design",
+    "description": "Artist portfolios, creative projects, and digital art discovery.",
+    "siteUrl": "https://www.artstation.com/",
+    "loginUrl": "https://www.artstation.com/"
+  },
+  "deviantart": {
+    "name": "DeviantArt",
+    "color": "#05CC47",
+    "icon": "DA",
+    "category": "design",
+    "description": "Art portfolios, favorites, and creative community discussions.",
+    "siteUrl": "https://www.deviantart.com/",
+    "loginUrl": "https://www.deviantart.com/users/login"
+  },
+  "sketch": {
+    "name": "Sketch",
+    "color": "#F7B500",
+    "icon": "SK",
+    "category": "design",
+    "description": "Interface design, prototypes, and shared design workspaces.",
+    "siteUrl": "https://www.sketch.com/",
+    "loginUrl": "https://www.sketch.com/signin/"
+  },
+  "webflow": {
+    "name": "Webflow",
+    "color": "#146EF5",
+    "icon": "WF",
+    "category": "design",
+    "description": "Visual website design, content management, and team projects.",
+    "siteUrl": "https://webflow.com/",
+    "loginUrl": "https://webflow.com/login"
+  },
+  "applemusic": {
+    "name": "Apple Music",
+    "color": "#FA243C",
+    "icon": "AM",
+    "category": "audio",
+    "description": "Music, radio, playlists, and your Apple Music library.",
+    "siteUrl": "https://music.apple.com/",
+    "loginUrl": "https://music.apple.com/"
+  },
+  "amazonmusic": {
+    "name": "Amazon Music",
+    "color": "#25D1DA",
+    "icon": "AM",
+    "category": "audio",
+    "description": "Music, podcasts, playlists, and saved listening on Amazon Music.",
+    "siteUrl": "https://music.amazon.com/",
+    "loginUrl": "https://music.amazon.com/"
+  },
+  "youtubemusic": {
+    "name": "YouTube Music",
+    "color": "#FF0000",
+    "icon": "YM",
+    "category": "audio",
+    "description": "Songs, music videos, playlists, and your listening library.",
+    "siteUrl": "https://music.youtube.com/",
+    "loginUrl": "https://music.youtube.com/"
+  },
+  "tidal": {
+    "name": "TIDAL",
+    "color": "#000000",
+    "icon": "TI",
+    "category": "audio",
+    "description": "Music streaming, artist discovery, playlists, and account settings.",
+    "siteUrl": "https://tidal.com/",
+    "loginUrl": "https://account.tidal.com/"
+  },
+  "deezer": {
+    "name": "Deezer",
+    "color": "#A238FF",
+    "icon": "DE",
+    "category": "audio",
+    "description": "Music discovery, playlists, podcasts, and favorites.",
+    "siteUrl": "https://www.deezer.com/",
+    "loginUrl": "https://www.deezer.com/"
+  },
+  "bandcamp": {
+    "name": "Bandcamp",
+    "color": "#629AA9",
+    "icon": "BC",
+    "category": "audio",
+    "description": "Independent music, artist pages, purchases, and your collection.",
+    "siteUrl": "https://bandcamp.com/",
+    "loginUrl": "https://bandcamp.com/login"
   }
 }

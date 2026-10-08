@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { createServer } from '../web/node_modules/vite/dist/node/index.js';
 import { installAuditMember, auditNavigate } from './audit-session.mjs';
+import { ACCOUNT_CATEGORIES, accountCategory, accountSections } from '../shared/accountCategories.js';
 
 const require = createRequire(import.meta.url);
 const { createAppHarness, member } = require('../backend/test-support/app-harness');
@@ -28,6 +29,12 @@ const catalog = {
   wired: platform('WIRED', { category: 'publication', configured: false, forceComingSoon: true, crossPost: { supported: false } }),
   gitlab: platform('GitLab', { locked: true }),
 };
+const accountGroups = accountSections(Object.entries(catalog));
+async function selectAccountCategory(scope, key) {
+  const id = accountCategory(key, catalog[key]);
+  const label = ACCOUNT_CATEGORIES.find(([category]) => category === id)[1];
+  await scope.getByRole('group', { name: 'Account categories' }).getByRole('button', { name: new RegExp(`^${label} \\d+$`) }).click();
+}
 let browser;
 try {
   await server.listen();
@@ -83,38 +90,59 @@ try {
     await installAuditMember(page, app, 'directory-pro');
     await auditNavigate(page, server.resolvedUrls.local[0] + 'command-center?tab=accounts');
     const accounts = page.getByRole('tabpanel', { name: 'Connected Accounts', exact: true });
-    await accounts.getByRole('heading', { name: 'All account connections', exact: true }).waitFor();
-    assert.equal(await accounts.locator('.member-account-card').count(), 9, 'Command Center includes every catalog account');
-    for (const category of ['Social', 'Video & Streaming', 'Work & Development', 'News & Publishing']) await accounts.getByRole('heading', { name: category, exact: true }).waitFor();
+    await accounts.getByRole('heading', { name: 'Account connections', exact: true }).waitFor();
+    const accountCategories = accounts.getByRole('group', { name: 'Account categories' });
+    await accountCategories.getByRole('button', { name: /^Social \d+$/ }).waitFor();
+    assert.equal(await accountCategories.getByRole('button', { name: /^All\b/ }).count(), 0);
+    assert.deepEqual(await accounts.locator('.account-category-heading h3').allTextContents(), ['Social']);
+    assert.equal(await accountCategories.getByRole('button', { name: /^Social \d+$/ }).getAttribute('aria-pressed'), 'true');
+    let visitedAccounts = 0;
+    for (const category of accountGroups) {
+      await accountCategories.getByRole('button', { name: `${category.label} ${category.total}`, exact: true }).click();
+      assert.deepEqual(await accounts.locator('.account-category-heading h3').allTextContents(), [category.label]);
+      assert.equal(await accounts.locator('.member-account-card').count(), category.total);
+      for (const [, platform] of category.items) assert.equal(await accounts.getByText(platform.name, { exact: true }).count(), 1);
+      assert.equal(await accounts.locator('.member-account-card .account-site-link').count(), category.total);
+      visitedAccounts += category.total;
+    }
+    assert.equal(visitedAccounts, Object.keys(catalog).length, 'Every catalog account remains available exactly once across categories');
     const card = name => accounts.locator('.member-account-card').filter({ has: page.getByText(name, { exact: true }) });
     assert.equal(await accounts.getByRole('combobox', { name: 'Filter accounts' }).count(), 0);
     assert.equal(await accounts.getByText(/^(Connected|Coming soon|Membership|Reconnect needed)$/).count(), 0);
+    await selectAccountCategory(accounts, 'linkedin');
     assert.ok(await card('LinkedIn').getByRole('button', { name: 'Sign in and connect LinkedIn', exact: true }).isDisabled());
-    assert.ok(await card('WIRED').getByRole('button', { name: 'Sign in and connect WIRED', exact: true }).isDisabled());
     assert.ok(await card('GitLab').getByRole('button', { name: 'Sign in and connect GitLab', exact: true }).isDisabled());
+    await selectAccountCategory(accounts, 'wired');
+    assert.ok(await card('WIRED').getByRole('button', { name: 'Sign in and connect WIRED', exact: true }).isDisabled());
+    await selectAccountCategory(accounts, 'mastodon');
     await card('Mastodon').locator('summary').click();
     await card('Mastodon').getByText(catalog.mastodon.reconnectMessage, { exact: true }).waitFor();
     assert.equal(await card('Mastodon').getByRole('link', { name: 'Open Mastodon website' }).getAttribute('href'), 'https://social.example/');
+    await selectAccountCategory(accounts, 'youtube');
     await card('YouTube').getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).click();
     await page.getByText('Synthetic provider response', { exact: true }).waitFor();
     assert.deepEqual(oauth[0], { endpoint: '/auth/social/youtube/start', params: { returnTo: 'command-center' } });
+    await selectAccountCategory(accounts, 'mastodon');
     await card('Mastodon').getByRole('button', { name: 'Sign in and connect Mastodon', exact: true }).click();
     await page.getByRole('dialog', { name: 'Connect Mastodon', exact: true }).waitFor();
     assert.equal(new URL(page.url()).searchParams.get('returnTo'), 'command-center');
     assert.equal(oauth.length, 1, 'Mastodon waits for the server choice');
     await page.getByRole('button', { name: 'Cancel', exact: true }).click();
     await auditNavigate(page, server.resolvedUrls.local[0] + 'command-center?tab=accounts');
+    await selectAccountCategory(accounts, 'bluesky');
     await card('Bluesky').getByRole('button', { name: 'Sign in and connect Bluesky', exact: true }).click();
     await page.getByRole('dialog', { name: 'Connect Bluesky', exact: true }).waitFor();
     assert.equal(new URL(page.url()).searchParams.get('returnTo'), 'command-center');
     assert.equal(oauth.length, 1, 'Bluesky waits for the handle');
     await page.getByRole('button', { name: 'Cancel', exact: true }).click();
     await auditNavigate(page, server.resolvedUrls.local[0] + 'command-center?tab=accounts');
+    await selectAccountCategory(accounts, 'github');
     await card('GitHub').locator('summary').click();
     await card('GitHub').getByRole('button', { name: 'Disconnect GitHub', exact: true }).click();
     await page.getByText('Account disconnected.', { exact: true }).waitFor();
     assert.equal(await card('GitHub').getByRole('button', { name: 'Disconnect GitHub', exact: true }).count(), 0);
-    assert.equal(await accounts.locator('.member-account-card').count(), 9, 'Disconnect keeps the provider available for sign-in');
+    assert.equal(await accounts.locator('.member-account-card').count(), accountGroups.find(group => group.id === 'work').total, 'Disconnect retains every provider in its selected category');
+    assert.equal(await card('GitHub').getByRole('button', { name: 'Sign in and connect GitHub', exact: true }).count(), 1);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Accounts fit the viewport');
 
     await page.getByRole('tab', { name: 'Cross-Post', exact: true }).click();

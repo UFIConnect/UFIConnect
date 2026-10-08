@@ -6,11 +6,13 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { chromium } from 'playwright';
 import { createServer } from '../web/node_modules/vite/dist/node/index.js';
+import { ACCOUNT_CATEGORIES, accountCategory, accountSections } from '../shared/accountCategories.js';
 const require = createRequire(import.meta.url);
 require('../backend/generated-media');
 const { createAppHarness, member } = require('../backend/test-support/app-harness');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const app = await createAppHarness({ connected: true });
+const accountDirectory = require('../backend/account-directory.json');
 const platforms = {
   reddit: { name: 'Reddit', configured: true }, youtube: { name: 'YouTube', configured: true },
   wired: { name: 'WIRED', configured: false, category: 'publication' },
@@ -19,6 +21,14 @@ const platforms = {
   linkedin: { name: 'LinkedIn', configured: true, forceComingSoon: true, commandCenterOnly: true },
   indeed: { name: 'Indeed', category: 'career', configured: false },
 };
+const personalAccountSections = accountSections(Object.entries(platforms).filter(([, platform]) => !platform.commandCenterOnly));
+const commandAccountSections = accountSections(Object.entries(platforms));
+async function selectAccountCategory(scope, key, compact = false) {
+  const category = accountCategory(key, platforms[key]);
+  if (compact) return scope.getByRole('combobox', { name: 'Account category', exact: true }).selectOption(category);
+  const label = ACCOUNT_CATEGORIES.find(([id]) => id === category)[1];
+  await scope.getByRole('group', { name: 'Account categories' }).getByRole('button', { name: new RegExp(`^${label} \\d+$`) }).click();
+}
 const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api') },
   server: { host: '127.0.0.1', port: 5210, strictPort: false, proxy: { '/api': { target: app.base, rewrite: p => p.replace(/^\/api/, '') } } },
@@ -93,20 +103,36 @@ try {
     assert.deepEqual(await tools.locator('.home-feed-source-name').allTextContents(), ['Reddit', 'YouTube']);
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/source-directory-${width}.png`) });
     await tools.getByRole('button', { name: /Connected accounts/ }).click();
-    await tools.getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).waitFor();
+    const accountCategorySelect = tools.getByRole('combobox', { name: 'Account category', exact: true });
+    await accountCategorySelect.waitFor();
+    assert.equal(await accountCategorySelect.inputValue(), 'social');
+    assert.equal(await accountCategorySelect.locator('option[value="all"]').count(), 0);
+    assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), ['Social']);
+    let homeAccountCount = 0;
+    for (const section of personalAccountSections) {
+      await accountCategorySelect.selectOption(section.id);
+      assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), [section.label]);
+      assert.equal(await tools.locator('.home-connected-account-row').count(), section.total);
+      assert.equal(await tools.locator('.account-site-link').count(), section.total, 'Every visible account has a separate source link');
+      for (const [, platform] of section.items) assert.equal(await tools.getByText(platform.name, { exact: true }).count(), 1);
+      homeAccountCount += section.total;
+    }
+    assert.equal(homeAccountCount, 5, 'Every declared personal source remains accessible across categories');
     assert.equal(await tools.getByRole('searchbox').count(), 0, 'Connected accounts has no search bar');
     assert.equal(await tools.getByRole('link', { name: 'Open Instagram website' }).count(), 0);
+    await selectAccountCategory(tools, 'indeed', true);
     assert.equal(await tools.getByRole('link', { name: 'Visit Indeed website' }).count(), 1);
     assert.equal(await tools.getByRole('combobox', { name: 'Filter accounts' }).count(), 0);
     assert.equal(await tools.locator('.home-connected-account-status').count(), 0);
-    assert.equal(await tools.locator('.account-site-link').count(), 5, 'Every account, including connected accounts, has a separate website link');
+    await selectAccountCategory(tools, 'youtube', true);
     const homeYouTubeSite = tools.getByRole('link', { name: 'Open YouTube website', exact: true });
     assert.equal(await homeYouTubeSite.getAttribute('href'), 'https://www.youtube.com/');
     assert.equal(await homeYouTubeSite.getAttribute('target'), '_blank');
     assert.equal(await homeYouTubeSite.getAttribute('rel'), 'noopener noreferrer');
+    await selectAccountCategory(tools, 'wired', true);
     assert.equal(await tools.getByRole('button', { name: 'Sign in and connect WIRED', exact: true }).isDisabled(), true,
       'The website link does not unlock an unconfigured connection');
-    assert.equal(await tools.locator('.home-connected-account-row').count(), 5);
+    await selectAccountCategory(tools, 'indeed', true);
     const popupPromise = context.waitForEvent('page');
     await tools.getByRole('link', { name: 'Visit Indeed website' }).click();
     const popup = await popupPromise;
@@ -115,6 +141,7 @@ try {
     assert.equal(await popup.evaluate(() => window.opener), null);
     await popup.close();
     assert.equal(authorizationRequests, 0, 'Opening a website must not start account authorization');
+    await selectAccountCategory(tools, 'youtube', true);
     await tools.getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).click();
     await tools.getByRole('alert').getByText('Test provider unavailable').waitFor();
     assert.ok(authorizationRequests >= 1, 'Connect uses OAuth, including the API retry on a temporary outage');
@@ -174,7 +201,9 @@ try {
     await auditNavigate(page, server.resolvedUrls.local[0] + 'connected-accounts');
     assert.equal(await page.getByRole('combobox', { name: 'Filter accounts' }).count(), 0);
     assert.equal(await page.getByRole('searchbox', { name: 'Search accounts', exact: true }).count(), 0);
+    await selectAccountCategory(page, 'youtube');
     await page.getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).waitFor();
+    await selectAccountCategory(page, 'reddit');
     const redditSite = page.getByRole('link', { name: 'Open Reddit website', exact: true });
     assert.equal(await redditSite.count(), 1, 'Connected accounts retain a single website action');
     assert.equal(await redditSite.getAttribute('href'), 'https://www.reddit.com/');
@@ -184,15 +213,27 @@ try {
     assert.equal(await page.getByRole('searchbox', { name: 'Search accounts', exact: true }).count(), 0);
     await page.getByRole('button', { name: 'Sign in and connect Instagram', exact: true }).waitFor();
     const memberAccounts = page.locator('.member-account-card');
+    const commandCategories = page.getByRole('tabpanel', { name: 'Connected Accounts', exact: true }).getByRole('group', { name: 'Account categories' });
+    assert.equal(await commandCategories.getByRole('button', { name: /^All\b/ }).count(), 0);
+    let commandAccountCount = 0;
+    for (const section of commandAccountSections) {
+      await commandCategories.getByRole('button', { name: `${section.label} ${section.total}`, exact: true }).click();
+      assert.deepEqual(await page.locator('.account-category-heading h3').allTextContents(), [section.label]);
+      assert.equal(await memberAccounts.count(), section.total);
+      assert.equal(await memberAccounts.locator('.account-site-link:visible').count(), section.total, 'Command Center keeps one source link beside each connection');
+      assert.ok((await memberAccounts.evaluateAll(cards => cards.map(card => card.querySelectorAll('.account-site-link').length))).every(count => count === 1), 'Expanded details do not duplicate source links');
+      for (const [, platform] of section.items) assert.equal(await memberAccounts.getByText(platform.name, { exact: true }).count(), 1);
+      commandAccountCount += section.total;
+    }
+    assert.equal(commandAccountCount, Object.keys(platforms).length, 'Every declared Command Center provider remains available');
+    await selectAccountCategory(page, 'youtube');
     const youtubeAccount = memberAccounts.getByRole('button', { name: 'Sign in and connect YouTube', exact: true });
     assert.equal(await youtubeAccount.count(), 1, 'Command Center includes configured general account connections');
-    assert.equal(await memberAccounts.locator('.account-site-link:visible').count(), await memberAccounts.count(),
-      'Command Center shows one website link beside each account connection');
-    assert.ok((await memberAccounts.evaluateAll(cards => cards.map(card => card.querySelectorAll('.account-site-link').length)))
-      .every(count => count === 1), 'Account details do not duplicate website links');
     assert.equal(await youtubeAccount.isEnabled(), true, 'Configured providers remain connectable');
+    await selectAccountCategory(page, 'linkedin');
     assert.equal(await memberAccounts.getByRole('button', { name: 'Sign in and connect LinkedIn', exact: true }).isDisabled(), true,
       'Forced provider restrictions remain locked');
+    await selectAccountCategory(page, 'wired');
     assert.equal(await memberAccounts.getByRole('button', { name: 'Sign in and connect WIRED', exact: true }).isDisabled(), true,
       'Unconfigured providers remain locked');
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/member-accounts-${width}.png`) });
@@ -202,7 +243,11 @@ try {
       await installAuditMember(page, app, 'business-directory');
       await auditNavigate(page, server.resolvedUrls.local[0] + 'connected-accounts');
       await page.getByRole('link', { name: 'Visit Indeed website' }).waitFor();
-      assert.equal(await page.getByRole('link', { name: /^Visit .* website$/ }).count(), 21, 'Business includes all career website destinations');
+      const careerWebsiteCount = Object.values(accountDirectory).filter(platform => platform.category === 'career').length;
+      assert.equal(await page.getByRole('link', { name: /^Visit .* website$/ }).count(), careerWebsiteCount, 'Business includes every declared external career destination');
+      const businessCategories = page.getByRole('group', { name: 'Account categories' });
+      assert.equal(await businessCategories.getByRole('button').count(), 1);
+      assert.equal(await businessCategories.getByRole('button', { name: /^Career sites \d+$/ }).getAttribute('aria-pressed'), 'true');
       assert.equal(await page.getByRole('link', { name: 'Open Reddit website' }).count(), 0);
       assert.equal(await page.getByRole('combobox', { name: 'Filter accounts' }).count(), 0);
     }

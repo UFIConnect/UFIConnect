@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { createServer } from '../web/node_modules/vite/dist/node/index.js';
 import { installAuditMember, auditNavigate } from './audit-session.mjs';
+import { accountSections } from '../shared/accountCategories.js';
 
 const require = createRequire(import.meta.url);
 const { createAppHarness, member } = require('../backend/test-support/app-harness');
@@ -24,7 +25,7 @@ const platforms = {
   booking: { name: 'Booking.com', category: 'travel', configured: false, siteUrl: 'https://www.booking.com/' },
   spotify: { name: 'Spotify', category: 'audio', configured: false, siteUrl: 'https://open.spotify.com/' },
 };
-const categories = ['Social', 'Video & Streaming', 'Work & Development', 'Design', 'News & Publishing', 'Career sites', 'Travel', 'Music & Audio'];
+const sections = accountSections(Object.entries(platforms).filter(([, platform]) => !platform.commandCenterOnly));
 const server = await createServer({
   root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api') },
@@ -69,35 +70,45 @@ try {
     const tools = page.locator(width <= 768 ? '#mobile-feed-drawer .home-feed-side-tools' : '.home-feed-right-tabs .home-feed-side-tools');
     await tools.getByRole('button', { name: /Connected accounts/ }).click();
     await tools.getByRole('heading', { name: 'Social', exact: true }).waitFor();
-    assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), categories);
-    assert.equal(await tools.locator('.home-connected-account-row').count(), 11);
-    for (const [category, providers] of [
-      ['Social', ['Mastodon', 'Bluesky']], ['Video & Streaming', ['YouTube', 'Twitch']],
-      ['Work & Development', ['GitHub']], ['Design', ['Dribbble']], ['News & Publishing', ['Medium', 'WIRED']],
-      ['Travel', ['Booking.com']], ['Music & Audio', ['Spotify']],
-    ]) {
-      const section = tools.getByRole('region', { name: `${category} accounts`, exact: true });
-      for (const provider of providers) assert.ok((await section.innerText()).includes(provider));
+    assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), ['Social']);
+    assert.equal(await tools.locator('.home-connected-account-row').count(), 2);
+    const categorySelect = tools.getByRole('combobox', { name: 'Account category', exact: true });
+    assert.equal(await categorySelect.inputValue(), 'social');
+    assert.deepEqual(await categorySelect.locator('option').allTextContents(), sections.map(section => `${section.label} (${section.total})`));
+    assert.equal(await categorySelect.locator('option[value="all"]').count(), 0, 'All is absent from Home account navigation');
+    let visited = 0;
+    for (const expected of sections) {
+      await categorySelect.selectOption(expected.id);
+      assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), [expected.label], 'Only the selected account group is shown');
+      const section = tools.getByRole('region', { name: `${expected.label} accounts`, exact: true });
+      assert.equal(await section.locator('.home-connected-account-row').count(), expected.total);
+      assert.equal(await section.locator('.account-site-link').count(), expected.total, 'Connected and locked sources each keep one website action');
+      for (const [, platform] of expected.items) assert.equal(await section.getByText(platform.name, { exact: true }).count(), 1);
+      for (const [, platform] of expected.items.filter(([, platform]) => ['Medium', 'WIRED', 'YouTube'].includes(platform.name))) {
+        assert.ok(await section.getByRole('button', { name: `Sign in and connect ${platform.name}`, exact: true }).isDisabled());
+      }
+      for (const row of await section.locator('.home-connected-account-row').all()) {
+        const rowBox = await row.boundingBox();
+        const actionsBox = await row.locator('.source-directory-account-actions').boundingBox();
+        assert.ok(actionsBox.x + actionsBox.width <= rowBox.x + rowBox.width + 1, 'Actions stay inside every account row');
+      }
+      visited += expected.total;
     }
+    assert.equal(visited, 11, 'Every personal account is reachable exactly once across categories');
     assert.equal(await tools.getByRole('link', { name: 'Open Instagram website' }).count(), 0);
+    await categorySelect.selectOption('career');
     assert.equal(await tools.getByRole('link', { name: 'Visit Indeed website' }).count(), 1);
-    assert.equal(await tools.locator('.account-site-link').count(), 11, 'Every account, including connected and locked accounts, has one source website action');
     assert.equal(await tools.locator('.home-connected-account-status').count(), 0);
     assert.equal(await tools.getByRole('button', { name: 'Coming soon', exact: true }).count(), 0);
-    for (const provider of ['Medium', 'WIRED', 'YouTube']) {
-      assert.equal(await tools.getByRole('button', { name: `Sign in and connect ${provider}`, exact: true }).isDisabled(), true);
-    }
     assert.equal(authorizationRequests, 0, 'Displaying grouped accounts must not start authorization');
-    const categorySelect = tools.getByRole('combobox', { name: 'Account category', exact: true });
-    assert.deepEqual(await categorySelect.locator('option').allTextContents(), ['All (11)', 'Social (2)', 'Video & Streaming (2)', 'Work & Development (1)', 'Design (1)', 'News & Publishing (2)', 'Career sites (1)', 'Travel (1)', 'Music & Audio (1)']);
     await categorySelect.selectOption('design');
     assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), ['Design']);
     assert.equal(await tools.getByRole('button', { name: 'Sign in and connect Dribbble', exact: true }).isDisabled(), false);
     await categorySelect.selectOption('publishing');
     assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), ['News & Publishing']);
     assert.ok(await tools.getByRole('button', { name: 'Sign in and connect Medium', exact: true }).isDisabled());
-    await categorySelect.selectOption('all');
-    assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), categories);
+    await categorySelect.selectOption('social');
+    assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), ['Social']);
     assert.equal(authorizationRequests, 0, 'Category selection must not authorize any source');
     assert.equal(await tools.getByRole('combobox', { name: 'Filter accounts', exact: true }).count(), 0);
     const social = tools.getByRole('region', { name: 'Social accounts', exact: true });
@@ -107,10 +118,12 @@ try {
     await disconnectRequest;
     assert.equal(disconnectStarted, true);
     assert.equal(await tools.getByRole('button', { name: 'Wait...', exact: true }).isDisabled(), true);
-    assert.equal(await tools.getByRole('button', { name: 'Disconnect', exact: true }).isDisabled(), true);
+    await categorySelect.selectOption('work');
+    assert.equal(await tools.getByRole('button', { name: 'Disconnect', exact: true }).isDisabled(), true, 'A pending disconnect locks actions in other categories too');
+    await categorySelect.selectOption('social');
     completeDisconnect();
     await social.getByRole('button', { name: 'Sign in and connect Mastodon', exact: true }).waitFor();
-    assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), categories);
+    assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), ['Social']);
     const bluesky = tools.locator('.home-connected-account-row').filter({ hasText: 'Bluesky' });
     await bluesky.getByRole('button', { name: 'Sign in and connect Bluesky', exact: true }).click();
     await tools.getByPlaceholder('name.bsky.social').waitFor();
@@ -118,11 +131,6 @@ try {
     assert.equal(await handleForm.getByRole('button', { name: 'Sign in & connect', exact: true }).isDisabled(), true);
     await handleForm.getByRole('button', { name: 'Cancel', exact: true }).click();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
-    for (const row of await tools.locator('.home-connected-account-row').all()) {
-      const rowBox = await row.boundingBox();
-      const actionsBox = await row.locator('.source-directory-account-actions').boundingBox();
-      assert.ok(actionsBox.x + actionsBox.width <= rowBox.x + rowBox.width + 1, 'Actions stay inside each account row');
-    }
     const mastodon = tools.locator('.home-connected-account-row').filter({ hasText: 'Mastodon' });
     await mastodon.getByRole('button', { name: 'Sign in and connect Mastodon', exact: true }).click();
     await page.getByRole('heading', { name: 'Connect Mastodon', exact: true }).waitFor();

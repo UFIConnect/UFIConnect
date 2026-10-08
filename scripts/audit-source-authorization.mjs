@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { createServer } from '../web/node_modules/vite/dist/node/index.js';
 import { SOURCE_META } from '../web/src/components/sourceMeta.js';
+import { ACCOUNT_CATEGORIES, accountCategory } from '../shared/accountCategories.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const output = path.join(root, '.cache/audit-source-authorization');
@@ -57,6 +58,12 @@ const catalog = {
   gitlab: { name: 'GitLab', configured: true, locked: true },
   discord: { name: 'Discord', configured: true, authorizationSupported: false },
 };
+async function selectAccountCategory(scope, key, compact = false) {
+  const category = accountCategory(key, catalog[key]);
+  if (compact) return scope.getByRole('combobox', { name: 'Account category', exact: true }).selectOption(category);
+  const label = ACCOUNT_CATEGORIES.find(([id]) => id === category)[1];
+  await scope.getByRole('group', { name: 'Account categories' }).getByRole('button', { name: new RegExp(`^${label} \\d+$`) }).click();
+}
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 let browser, checks = 0;
 const check = (value, message) => { assert.ok(value, message); checks++; };
@@ -107,20 +114,27 @@ try {
     await page.locator('.spinner-primary').first().waitFor();
     check(await page.getByRole('dialog').count() === 0, 'Pending catalog cannot open a connection modal');
     hold.resolve(); hold = null;
-    await page.getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).waitFor();
+    const initialCategories = page.getByRole('group', { name: 'Account categories' });
+    await initialCategories.getByRole('button', { name: /^Social \d+$/ }).waitFor();
+    check(await initialCategories.getByRole('button', { name: /^All\b/ }).count() === 0, 'Source account navigation has no All category');
+    check((await page.locator('.account-category-heading h2').allTextContents()).join() === 'Social', 'Only Social is initially shown');
     check(await page.getByRole('dialog').count() === 0, 'Unconfigured deep link stays locked after readiness arrives');
     for (const name of ['Indeed', 'Spotify', 'Medium', 'Mastodon', 'GitLab', 'Discord', 'X (Twitter)']) {
+      const key = Object.keys(catalog).find(key => catalog[key].name === name);
+      await selectAccountCategory(page, key);
       const button = page.getByRole('button', { name: `Sign in and connect ${name}`, exact: true });
       check(await button.isDisabled(), `${name} authorization is inert`);
       check(await button.locator('.account-action-lock').count() === 1 && (await button.getAttribute('title')).includes('Locked'), `${name} lock badge is visible`);
       await button.evaluate(element => element.click());
     }
     check(oauth.length === 0, 'Locked source controls make no authorization requests');
+    await selectAccountCategory(page, 'indeed');
     const website = page.getByRole('link', { name: 'Visit Indeed website', exact: true });
     check(await website.getAttribute('href') === 'https://www.indeed.com/', 'Website visits open the official home page');
     check(await page.getByRole('link', { name: /Sign in/ }).count() === 0, 'Website links do not pretend to authorize accounts');
     check(await website.locator('svg').count() === 1 && await website.locator('.account-action-icon').count() === 0 && !/Sign in|Visit/.test(await website.innerText()), 'Website uses a separate link icon and accessible name without a duplicate provider icon');
     for (const [key, platform] of Object.entries(catalog).filter(([, value]) => !value.commandCenterOnly)) {
+      await selectAccountCategory(page, key);
       const card = page.locator('.account-platform-card').filter({ has: page.getByText(platform.name, { exact: true }) });
       const actions = card.locator('.account-platform-card-actions');
       const sourceLink = actions.getByRole('link', { name: `${platform.connectionMode === 'external' ? 'Visit' : 'Open'} ${platform.name} website`, exact: true });
@@ -130,10 +144,12 @@ try {
       check(await card.getByRole('link', { name: /website$/ }).count() === 1, `${key} expanded details do not duplicate the website link`);
       await actions.getByRole('button', { name: /Details/ }).click();
     }
+    await selectAccountCategory(page, 'youtube');
     check(await page.getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).locator('.account-action-icon').count() === 1, 'Configured authorization preserves its account icon');
     await page.getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).click();
     await page.getByText('Synthetic provider response', { exact: true }).waitFor();
     check(oauth.length === 1 && oauth[0].endpoint === '/auth/social/youtube/start', 'Configured authorization remains active');
+    await selectAccountCategory(page, 'bluesky');
     await page.getByRole('button', { name: 'Sign in and connect Bluesky', exact: true }).click();
     await page.getByRole('dialog', { name: 'Connect Bluesky', exact: true }).waitFor();
     check(oauth.length === 1, 'Configured federated authorization waits for the handle');
@@ -154,6 +170,7 @@ try {
     check(await page.getByText(/connected successfully\./).count() === 0 && await page.evaluate(() => window.__connectionEvents) === 0, 'Callback waits for authoritative catalog metadata');
     hold.resolve(); hold = null;
     await page.getByText('Could not confirm the source connection. Refresh and connect again.', { exact: true }).waitFor();
+    await selectAccountCategory(page, 'youtube');
     const youtubeCard = page.locator('.account-platform-card').filter({ has: page.getByText('YouTube', { exact: true }) });
     await youtubeCard.getByRole('button', { name: /Details/ }).click();
     check(await youtubeCard.getByRole('button', { name: 'Disconnect YouTube', exact: true }).count() === 0, 'Spoofed callback cannot create connected account state');
@@ -177,18 +194,25 @@ try {
     reportedConnected = { mastodon: true, youtube: true };
     await page.goto(base + 'connected-accounts?social_connected=youtube');
     await page.getByText('YouTube connected successfully.', { exact: true }).waitFor();
+    await selectAccountCategory(page, 'youtube');
     await page.locator('.account-platform-card').filter({ has: page.getByText('YouTube', { exact: true }) }).getByRole('button', { name: /Details/ }).click();
     check(await page.getByRole('button', { name: 'Disconnect YouTube', exact: true }).count() === 1 && await page.evaluate(() => window.__connectionEvents) === 1, 'Server-confirmed configured connection displays success and updates account views');
     reportedConnected = { mastodon: true };
 
     await page.goto(base + 'command-center?tab=accounts');
     const accounts = page.getByRole('tabpanel', { name: 'Connected Accounts', exact: true });
+    await accounts.getByRole('group', { name: 'Account categories' }).getByRole('button', { name: /^Social \d+$/ }).waitFor();
+    check(await accounts.getByRole('group', { name: 'Account categories' }).getByRole('button', { name: /^All\b/ }).count() === 0, 'Command Center has no All category');
+    await selectAccountCategory(accounts, 'linkedin');
     await accounts.getByRole('button', { name: 'Sign in and connect LinkedIn', exact: true }).waitFor();
     check(await accounts.getByRole('button', { name: 'Sign in and connect LinkedIn', exact: true }).isDisabled(), 'Command Center preserves force-coming-soon lock');
+    await selectAccountCategory(accounts, 'indeed');
     check(await accounts.getByRole('button', { name: 'Sign in and connect Indeed', exact: true }).isDisabled(), 'Command Center external accounts remain locked');
+    await selectAccountCategory(accounts, 'youtube');
     check(await accounts.getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).isEnabled(), 'Command Center configured provider remains active');
     check(await accounts.getByRole('link', { name: /Sign in/ }).count() === 0, 'Command Center has no external sign-in bypass');
     for (const [key, platform] of Object.entries(catalog)) {
+      await selectAccountCategory(accounts, key);
       const card = accounts.locator('.member-account-card').filter({ has: page.getByText(platform.name, { exact: true }) });
       const actions = card.locator('.source-directory-account-actions');
       const sourceLink = actions.getByRole('link', { name: `${platform.connectionMode === 'external' ? 'Visit' : 'Open'} ${platform.name} website`, exact: true });
@@ -205,6 +229,7 @@ try {
     check(await page.getByText(/connected successfully\./).count() === 0 && await page.evaluate(() => window.__connectionEvents) === 0, 'Command Center callback waits for the account catalog');
     hold.resolve(); hold = null;
     await page.getByText('Connection could not be confirmed. Refresh your accounts and try again.', { exact: true }).waitFor();
+    await selectAccountCategory(accounts, 'youtube');
     const commandYoutube = page.locator('.member-account-card').filter({ has: page.getByText('YouTube', { exact: true }) });
     await commandYoutube.locator('summary').click();
     check(await commandYoutube.getByRole('button', { name: 'Disconnect YouTube', exact: true }).count() === 0 && await page.evaluate(() => window.__connectionEvents) === 0, 'Command Center spoofed callback cannot change connection status or dispatch success');
@@ -224,6 +249,7 @@ try {
     reportedConnected = { mastodon: true, youtube: true };
     await page.goto(base + 'command-center?tab=accounts&social_connected=youtube');
     await page.getByText('YouTube connected successfully.', { exact: true }).waitFor();
+    await selectAccountCategory(accounts, 'youtube');
     await page.locator('.member-account-card').filter({ has: page.getByText('YouTube', { exact: true }) }).locator('summary').click();
     check(await page.getByRole('button', { name: 'Disconnect YouTube', exact: true }).count() === 1 && await page.evaluate(() => window.__connectionEvents) === 1, 'Command Center accepts the server-confirmed configured connection');
     reportedConnected = { mastodon: true };
@@ -244,8 +270,10 @@ try {
     if (width <= 768) await page.getByRole('button', { name: 'Open menu', exact: true }).click();
     const tools = page.locator(width <= 768 ? '#mobile-feed-drawer .home-feed-side-tools' : '.home-feed-right-tabs .home-feed-side-tools');
     await tools.getByRole('button', { name: /Connected accounts/ }).click();
+    await selectAccountCategory(tools, 'indeed', true);
     await tools.getByRole('button', { name: 'Sign in and connect Indeed', exact: true }).waitFor();
     check(await tools.getByRole('button', { name: 'Sign in and connect Indeed', exact: true }).isDisabled(), 'Home account tools preserve the external lock');
+    await selectAccountCategory(tools, 'youtube', true);
     check(await tools.getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).isEnabled(), 'Home tools keep configured authorization');
     check(await tools.getByRole('link', { name: /Sign in/ }).count() === 0, 'Home tools have no external sign-in bypass');
     const priorFeedCount = feeds.length;

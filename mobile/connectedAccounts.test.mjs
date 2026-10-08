@@ -22,9 +22,12 @@ test('the full public directory is categorized once, with distinct design, news,
   assert.equal(accountCategory('dribbble', { category: 'work' }), 'design');
   assert.equal(accountCategory('figma', { category: 'work' }), 'design');
   assert.equal(accountCategory('medium', { category: 'publication' }), 'publishing');
-  assert.equal(selectedAccountSections(sections, 'design')[0].items[0][0], 'dribbble');
-  assert.equal(selectedAccountSections(sections, 'removed-category'), sections);
-  assert.equal(selectedAccountSections(sections, 'all'), sections);
+  const design = selectedAccountSections(sections, 'design')[0];
+  assert.equal(design.items[0][0], 'canva', 'The shared curated order is preserved on native');
+  assert.ok(design.items.some(([id]) => id === 'dribbble'));
+  assert.deepEqual(selectedAccountSections(sections, 'removed-category'), [sections[0]]);
+  assert.deepEqual(selectedAccountSections(sections, 'all'), [sections[0]], 'Legacy All selections open a single category');
+  assert.deepEqual(selectedAccountSections([], 'all'), []);
 });
 
 test('current object catalog and legacy arrays both keep every provider, without guessing connected state', () => {
@@ -55,6 +58,7 @@ test('Business accounts include LinkedIn under Careers and exclude general socia
   const entries = normalizeConnectedAccounts({ platforms }, { business: true, directory });
   assert.deepEqual(entries.map(([id]) => id), ['linkedin', 'indeed']);
   assert.deepEqual(accountSections(entries, { business: true }).map(section => [section.id, section.total]), [['career', 2]]);
+  assert.deepEqual(selectedAccountSections(accountSections(entries, { business: true }), 'social').map(section => section.id), ['career']);
   assert.equal(accountCategory('linkedin', {}, { business: false }), 'work');
   assert.equal(normalizeConnectedAccounts({ platforms }, { directory }).some(([id]) => id === 'linkedin'), false);
 });

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import ACCOUNT_DIRECTORY from '../../../backend/account-directory.json';
 import { HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS } from './sourceMeta';
-import { ACCOUNT_CATEGORIES, accountCategory } from './sourceDirectory';
+import { ACCOUNT_CATEGORIES, accountCategory, accountSections } from './sourceDirectory';
 import ExternalAccountLogin from './ExternalAccountLogin';
 import { DirectoryControls } from './DirectoryControls';
 
@@ -15,8 +15,7 @@ export default function SourceWebsiteDirectory({ plan, mode = 'feed' }) {
   const reason = mode === 'following' ? 'Following unavailable' : 'Public feed unavailable';
   const categories = ACCOUNT_CATEGORIES.filter(([id]) => entries.some(([key, entry]) => accountCategory(key, entry) === id));
   const selected = categories.some(([id]) => id === category) ? category : categories[0]?.[0];
-  const visible = entries.filter(([key, entry]) => accountCategory(key, entry) === selected)
-    .sort(([, a], [, b]) => a.name.localeCompare(b.name));
+  const visible = accountSections(entries).find(section => section.id === selected)?.items || [];
   if (!entries.length) return null;
   return <section className="feed-source-websites" aria-label="Source websites" style={{ gridColumn: '1 / -1', minWidth: 0, borderTop: '1px solid var(--border)', marginTop: 12, paddingTop: 12 }}>
     <h4 style={{ margin: '0 0 6px' }}>Source websites</h4>
