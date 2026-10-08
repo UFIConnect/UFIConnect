@@ -32,6 +32,9 @@ entries('command_center_accounts_status', 'Command Center accounts status', stat
 const categories = [['all', 'All categories'], ['social', 'Social'], ['video', 'Video and streaming'], ['work', 'Work and development'], ['publishing', 'Publishing'], ['career', 'Career sites'], ['travel', 'Travel'], ['audio', 'Music and audio']];
 entries('connected_accounts_category', 'Connected accounts category', categories);
 entries('crosspost_category', 'Cross-post category', categories);
+entries('business_posts', 'Business posts', [['list', 'Your posts'], ['compare', 'Similar role comparison']]);
+catalog.career_posts = { category: 'career_posts', path: '/career-posts', title: 'Business Cross Post', label: 'Business Cross Post', platform: 'web', group: 'Business', viewType: 'page' };
+catalog.business_posts = { category: 'business_posts', path: '/business-posts', title: 'Posts & comparisons', label: 'Posts & comparisons', platform: 'web', group: 'Business', viewType: 'page' };
 entries('home_panel', 'Home panel', [['sources', 'Sources'], ['accounts', 'Connected accounts'], ['skills', 'Skills'], ['files', 'Attachments']]);
 entries('home_directory', 'Home source directory', [['all', 'All sources'], ['favorites', 'Favorites'], ['social', 'Social and community'], ['developer', 'Development and research'], ['news', 'News and articles'], ['creative', 'Design and video'], ['business', 'Startups and business'], ['career', 'Career sites'], ['local', 'Travel and local']]);
 for (const center of CENTERS.filter(center => !center.route)) {

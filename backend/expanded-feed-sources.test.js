@@ -19,8 +19,9 @@ test('external account directory is available without inventing connections, wit
  }
  const business=await app.request('/social/platforms',{userId:'catalog-business'});
  assert.equal(business.data.careerOnly,true);
- assert.equal(Object.keys(business.data.platforms).length,21);
- assert.ok(Object.values(business.data.platforms).every(entry=>entry.category==='career'));
+ assert.equal(Object.keys(business.data.platforms).length,22);
+ assert.ok(Object.entries(business.data.platforms).every(([key,entry])=>key==='linkedin'||entry.category==='career'));
+ assert.equal(business.data.platforms.linkedin.crossPost.supported,true);
  assert.equal(business.data.platforms.airbnb,undefined);
  const connect=await app.request('/social/connect/weworkremotely',{userId:'catalog-reader',method:'POST',body:{}});
  assert.notEqual(connect.status,200,'Website sign-in cannot create a mock account authorization');

@@ -30,6 +30,7 @@ const { BILLING_SCHEMA, validRecurringPrice, quantityOneAmount, createBilling } 
 const { MANAGED_VPN_SCHEMA, createManagedVpn, registerManagedVpnRoutes, gatewayRateLimitKey, isAuthenticatedGatewayPoll } = require('./managed-vpn');
 const { mutateAccountAndRevokeVpn } = require('./vpn-auth-revocation');
 const { BUSINESS_TEAM_SCHEMA, createBusinessTeams, registerBusinessTeamRoutes } = require('./business-teams');
+const { BUSINESS_POST_SCHEMA, createBusinessPosts, registerBusinessPostRoutes } = require('./business-posts');
 const dotenv = require('dotenv');
 const http   = require('http');
 const https  = require('https');
@@ -14695,6 +14696,7 @@ const PUBLICATION_ACCOUNT_PLATFORMS = new Set([
   'arstechnica', 'phoronix', 'devto', 'freecodecamp',
 ]);
 const CAREER_ACCOUNT_PLATFORMS = new Set(Object.keys(ACCOUNT_DIRECTORY).filter(key => ACCOUNT_DIRECTORY[key].category === 'career'));
+const BUSINESS_WORK_ACCOUNT_PLATFORMS = new Set([...CAREER_ACCOUNT_PLATFORMS, 'linkedin']);
 const NON_BUSINESS_ACCOUNT_PLATFORMS = new Set([
   ...Object.keys(ACCOUNT_DIRECTORY),
   ...CONNECTED_SOCIAL_PLATFORMS,
@@ -16582,7 +16584,7 @@ function fullProfile(user) {
   // connections are exposed while the Business plan is active.
   const connectedPlatforms = Object.keys(user.socialTokens || {}).filter(platform => (
     !!user.socialTokens[platform]
-      && (user.plan !== 'business' || CAREER_ACCOUNT_PLATFORMS.has(platform))
+      && (user.plan !== 'business' || BUSINESS_WORK_ACCOUNT_PLATFORMS.has(platform))
   ));
 
   return {
@@ -17281,6 +17283,7 @@ async function migrateDB() {
       )
     `);
     await db.query(`CREATE INDEX IF NOT EXISTS cross_posts_user_idx ON cross_posts(user_id, created_at DESC)`);
+    for (const statement of BUSINESS_POST_SCHEMA) await db.query(statement);
     await db.query(HISTORY_SCHEMA);
     for (const statement of GENERATION_USAGE_SCHEMA) await db.query(statement);
 
@@ -20585,7 +20588,7 @@ async function inboxAccount(userId) {
   if (!stored) throw Object.assign(new Error('Account not found.'), { status: 404 });
   const user = await withBusinessMembership(stored);
   // Recruiting memberships keep their inbox aligned with their work sources.
-  return user.plan === 'business' ? { ...user, socialTokens: Object.fromEntries(Object.entries(user.socialTokens || {}).filter(([source]) => CAREER_ACCOUNT_PLATFORMS.has(source))) } : user;
+  return user.plan === 'business' ? { ...user, socialTokens: Object.fromEntries(Object.entries(user.socialTokens || {}).filter(([source]) => BUSINESS_WORK_ACCOUNT_PLATFORMS.has(source))) } : user;
 }
 
 async function removeSocialToken(userId, platform) {
@@ -20650,7 +20653,7 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
       code: 'business_required',
     });
   }
-  if (user.plan === 'business' && !CAREER_ACCOUNT_PLATFORMS.has(platform)) {
+  if (user.plan === 'business' && !BUSINESS_WORK_ACCOUNT_PLATFORMS.has(platform)) {
     return res.status(403).json({
       error: 'Business memberships use Career Sites instead of social account connections.',
       detail: 'Open Connected Accounts to connect an available career provider.',
@@ -20751,7 +20754,7 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
   }
   if (oauthError) return res.redirect(`${frontendProfile}${resultSeparator}social_error=${encodeURIComponent(platform)}&reason=${encodeURIComponent(String(oauthError).slice(0, 120))}`);
   const currentMember = await getEffectiveUser(entry.userId);
-  if (!currentMember || (currentMember.plan === 'business' && !CAREER_ACCOUNT_PLATFORMS.has(platform))) {
+  if (!currentMember || (currentMember.plan === 'business' && !BUSINESS_WORK_ACCOUNT_PLATFORMS.has(platform))) {
     return res.redirect(`${frontendProfile}${resultSeparator}social_error=${encodeURIComponent(platform)}&reason=account_unavailable`);
   }
   if (typeof code !== 'string' || !code) {
@@ -20895,7 +20898,7 @@ app.get('/social/platforms', authenticate, async (req, res) => {
   const user = await getEffectiveUser(req.user.id);
   const careerOnly = user?.plan === 'business';
   const visiblePlatforms = careerOnly
-    ? [...CAREER_ACCOUNT_PLATFORMS]
+    ? [...BUSINESS_WORK_ACCOUNT_PLATFORMS]
     : [...NON_BUSINESS_ACCOUNT_PLATFORMS];
   const connected = Object.fromEntries(visiblePlatforms.map(p => {
     const token = user?.socialTokens?.[p];
@@ -32747,7 +32750,7 @@ async function refreshCrossPostAccessToken(userId, platform) {
 }
 
 async function publishCrossPostTarget(user, platform, { content, mediaUrl, mediaType = null, crossPostId = null }) {
-  if (user.plan === 'business') return { platform, status: 'unsupported', error: 'Business memberships use recruiting tools.' };
+  if (user.plan === 'business' && platform !== 'linkedin') return { platform, status: 'unsupported', error: 'Business publishing supports professional hiring posts on LinkedIn.' };
   const capability = getCrossPostCapability(platform);
   if (!capability.supported) {
     return { platform, status: 'unsupported', error: 'UFIconnect cannot publish to this connected account yet.' };
@@ -32916,6 +32919,36 @@ app.post('/command-center/cross-post', authenticate, contentSubmissionLimiter, a
   }
   res.status(historySaved ? 200 : 202).json({ id, targets, mediaUrl, historySaved });
 });
+
+const businessPosts = createBusinessPosts({
+  db, getUser: getEffectiveUser,
+  screenContent: options => screenMemberContent(options),
+  publishLinkedIn: (user, options) => publishCrossPostTarget(user, 'linkedin', options),
+  async publishNative(user, { id, title, content }) {
+    const createdAt = new Date().toISOString();
+    await db.query(`INSERT INTO community_posts(id,group_id,author_id,author_name,title,content,source,source_label,created_at)
+      VALUES($1,'ufi-general',$2,$3,$4,$5,'uficonnect','Hiring',$6) ON CONFLICT(id) DO NOTHING`,
+    [id, user.id, user.name, title, content, createdAt]);
+    const post = { id, groupId: 'ufi-general', authorId: user.id, title, content, createdAt,
+      source: 'uficonnect', sourceLabel: 'Hiring', likes: [], commentsCount: 0 };
+    if (!posts.some(existing => existing.id === id)) posts.unshift(post);
+    broadcastSSE([serializeCommunityPost(post, user.id)]);
+    return { status: 'posted', postedUrl: `https://uficonnect.org/p/${encodeURIComponent(id)}` };
+  },
+  loadJobs: () => getLiveJobs(),
+  async loadHiringPosts(viewerId) {
+    const { rows } = await db.query(`SELECT p.*, b.details AS hiring_details, (SELECT COUNT(*)::int FROM post_comments c WHERE c.post_id=p.id) AS comments_count
+      FROM community_posts p JOIN users u ON u.id::text=p.author_id
+      LEFT JOIN business_posts b ON b.native_post_id=p.id AND b.user_id=u.id
+      WHERE p.source='uficonnect' AND p.source_label='Hiring' AND p.author_id<>$1
+      AND ${reportSuppressionPredicate('p')} AND ${nativeGroupVisibilityPredicate('p', '$1')}
+      ORDER BY p.created_at DESC LIMIT 200`, [viewerId]);
+    return rows.map(row => ({ ...serializeCommunityPost(dbCommunityPostToMemPost(row), viewerId),
+      org: row.hiring_details?.company || row.author_name, location: row.hiring_details?.location, pay: row.hiring_details?.pay,
+      sourceUrl: `https://uficonnect.org/p/${encodeURIComponent(row.id)}` }));
+  },
+});
+registerBusinessPostRoutes(app, { service: businessPosts, authenticate, limiter: contentSubmissionLimiter });
 
 app.get('/command-center/cross-post/history', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);

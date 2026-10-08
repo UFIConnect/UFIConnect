@@ -100,7 +100,7 @@ export function withCareerAccountFallback(platforms = {}, careerOnly = false) {
       ? provider : fallback ? {...provider, ...fallback} : provider;
     return [key, entry];
   }));
-  return careerOnly ? Object.fromEntries(Object.entries(merged).filter(([, entry]) => entry.category === 'career')) : merged;
+  return careerOnly ? Object.fromEntries(Object.entries(merged).filter(([key, entry]) => key === 'linkedin' || entry?.category === 'career')) : merged;
 }
 
 // Cross-Post shows supported providers and planned publishing destinations.

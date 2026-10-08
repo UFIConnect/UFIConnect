@@ -9,6 +9,7 @@ const { deleteAccountData, exportAccountData } = require('./privacy-data');
 const { HISTORY_SCHEMA } = require('./generated-content');
 const { BILLING_SCHEMA } = require('./billing');
 const { BUSINESS_TEAM_SCHEMA } = require('./business-teams');
+const { BUSINESS_POST_SCHEMA } = require('./business-posts');
 const { CREATOR_ANALYTICS_SCHEMA } = require('./creator-analytics');
 const { UFI_VAULT_SCHEMA } = require('./ufi-vault');
 const { REPORT_SCHEMA } = require('./content-reports');
@@ -42,6 +43,7 @@ async function schema(pg) {
   for (const sql of BILLING_SCHEMA) await pg.exec(sql);
   for (const sql of MANAGED_VPN_SCHEMA) await pg.exec(sql);
   for (const sql of BUSINESS_TEAM_SCHEMA) await pg.exec(sql);
+  for (const sql of BUSINESS_POST_SCHEMA) await pg.exec(sql);
   for (const sql of [...CREATOR_ANALYTICS_SCHEMA, ...UFI_VAULT_SCHEMA, ...REPORT_SCHEMA]) await pg.exec(sql);
 }
 
@@ -77,6 +79,7 @@ async function seed(pg) {
     await insert('generation_usage_reservations', { id: uid, user_id: uid, kind: 'image', period_start: '2026-10-01', state: 'completed' });
     await insert('resume_drafts', { id: `${prefix}-resume`, user_id: uid, data: JSON.stringify({ summary: `${prefix}-summary` }) });
     await insert('cross_posts', { id: `${prefix}-cross`, user_id: uid, content: `${prefix}-cross-content` });
+    await insert('business_posts', { id: `${prefix}-hiring`, user_id: uid, request_id: uid, fingerprint: 'internal-fingerprint', details: JSON.stringify({ title: `${prefix}-hiring-title` }), content: `${prefix}-hiring-content`, status: 'draft' });
     await insert('seen_posts', { user_id: uid, post_id: `${prefix}-seen` });
     await insert('user_engagement_affinity', { user_id: uid, affinity_key: `topic:${prefix}` });
     await insert('restaurant_post_likes', { user_id: uid, post_id: `${prefix}-restaurant` });
@@ -168,7 +171,7 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
     assert.equal(exported.generationRequests[0].state, 'completed');
     assert.equal(Object.hasOwn(exported.generationRequests[0], 'id'), false);
     for (const key of ['posts', 'comments', 'attachments', 'savedPosts', 'trackedJobs', 'generatedContent', 'resumeDrafts',
-      'crossPosts', 'ownedGroups', 'notifications', 'inboxReadReceipts', 'reports', 'seenPosts', 'engagementPreferences', 'restaurantLikes', 'externalPostLikes',
+      'crossPosts', 'businessPosts', 'ownedGroups', 'notifications', 'inboxReadReceipts', 'reports', 'seenPosts', 'engagementPreferences', 'restaurantLikes', 'externalPostLikes',
       'pushRegistrations', 'signIns', 'legacyPageViews', 'legacyClientErrors', 'legacyServerErrors', 'legacyUsageSignals', 'billingCheckouts', 'vpnLocations', 'vpnDevices', 'generationUsage', 'generationRequests']) {
       assert.equal(exported[key].length, 1, key);
     }

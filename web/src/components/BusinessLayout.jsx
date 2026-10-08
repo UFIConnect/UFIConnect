@@ -1,5 +1,5 @@
 import { Link, NavLink, useNavigate } from 'react-router-dom';
-import { BriefcaseBusiness, UsersRound, Link2, MessagesSquare, Settings, FileText, LockKeyhole } from 'lucide-react';
+import { BriefcaseBusiness, UsersRound, Link2, MessagesSquare, Settings, FileText, LockKeyhole, Send, ChartNoAxesCombined } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import './business.css';
 
@@ -7,7 +7,8 @@ const destinations = [
   { to: '/recruiting', label: 'Workspace', Icon: BriefcaseBusiness },
   { to: '/people', label: 'Candidates', Icon: UsersRound },
   { to: '/connected-accounts', label: 'Career sources', Icon: Link2 },
-  { to: '/career-posts', label: 'Career posting', Icon: FileText },
+  { to: '/career-posts', label: 'Cross Post', Icon: Send },
+  { to: '/business-posts', label: 'Posts & comparisons', Icon: ChartNoAxesCombined },
   { to: '/messages', label: 'Messages', Icon: MessagesSquare },
   { to: '/settings', label: 'Settings & billing', Icon: Settings },
 ];

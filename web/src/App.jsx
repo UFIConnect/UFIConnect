@@ -68,6 +68,7 @@ const PostDetail     = lazy(() => import('./pages/PostDetail'));
 const Search         = lazy(() => import('./pages/SearchExperience'));
 const People         = lazy(() => import('./pages/People'));
 const Recruiting     = lazy(() => import('./pages/Recruiting'));
+const BusinessPosts  = lazy(() => import('./pages/BusinessPosts'));
 const Candidates     = lazy(() => import('./pages/Candidates'));
 const Opportunities  = lazy(() => import('./pages/Opportunities'));
 const PublicProfile  = lazy(() => import('./pages/PublicProfile'));
@@ -308,6 +309,7 @@ function AppContent() {
       <Route path="/search" element={<SearchRoute />}/>
       <Route path="/people" element={<RequireAuth><RequireOnboarding><PeopleRoute /></RequireOnboarding></RequireAuth>} />
       <Route path="/recruiting" element={<RequireAuth><RequireOnboarding><Recruiting /></RequireOnboarding></RequireAuth>} />
+      <Route path="/business-posts" element={<RequireAuth><RequireOnboarding><BusinessPosts /></RequireOnboarding></RequireAuth>} />
       <Route path="/career-posts" element={<RequireAuth><RequireOnboarding><CareerPublishing /></RequireOnboarding></RequireAuth>} />
       <Route path="/u/:id" element={
         <RequireAuth><RequireOnboarding><PublicProfile /></RequireOnboarding></RequireAuth>

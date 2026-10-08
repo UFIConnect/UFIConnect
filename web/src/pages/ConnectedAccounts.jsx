@@ -187,7 +187,7 @@ export default function ConnectedAccounts() {
   // Account-owned integrations live in Command Center. Keeping them out of
   // this general page prevents a member from connecting a source here and
   // then wondering why it only appears in their private workspace.
-  const careerPlatforms = platforms.filter(([, p]) => p.category === 'career');
+  const careerPlatforms = platforms.filter(([key, p]) => p.category === 'career' || (isBusinessMembership && key === 'linkedin'));
   const generalPlatforms = platforms.filter(([, p]) => !p.commandCenterOnly);
   const accountCategories = accountSections(isBusinessMembership ? careerPlatforms : generalPlatforms, connected);
   const activeCategory = accountCategories.some(section => section.id === categoryFilter) ? categoryFilter : 'all';
@@ -218,7 +218,7 @@ export default function ConnectedAccounts() {
         <h1 className="page-title">{isBusinessMembership ? 'Business Career Connections' : 'Connected Accounts'}</h1>
         <p className="page-subtitle">
           {isBusinessMembership
-            ? 'Your Business membership keeps account connections focused on career providers.'
+            ? 'Connect LinkedIn for hiring posts, or sign in on a career provider’s website.'
             : 'Connect supported accounts or sign in on career, travel, music, and workspace websites.'}
         </p>
       </div>
@@ -248,7 +248,7 @@ export default function ConnectedAccounts() {
             }}>
               <div style={{ fontSize: '.8rem', fontWeight: 800, color: 'var(--primary)' }}>BIZ</div>
               <div>
-                <div style={{ fontWeight: 700, fontSize: '.95rem' }}>{connectedCareerCount} of {careerPlatforms.length} career accounts connected</div>
+                <div style={{ fontWeight: 700, fontSize: '.95rem' }}>{connectedCareerCount} of {careerPlatforms.length} recruiting accounts connected</div>
                 <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>Career sign-in opens the official provider website. Available integrations show a separate Connect action.</div>
               </div>
             </div>
@@ -330,10 +330,10 @@ export default function ConnectedAccounts() {
           </div>}
           {isBusinessMembership && displayedCareer.length > 0 && <section style={{ marginBottom: 28 }} aria-labelledby="career-sites-heading">
             <div id="career-sites-heading" style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 6 }}>
-              Career accounts
+              Recruiting accounts
             </div>
             <p style={{ fontSize: '.8rem', color: 'var(--muted)', lineHeight: 1.5, margin: '0 0 10px' }}>
-              Connect through each provider's authorization flow. Job browsing remains in Opportunities.
+              LinkedIn authorization enables hiring posts in Cross Post. Career site sign-in opens the provider’s website; compare available job listings in Posts & comparisons.
             </p>
             {displayedCareer.map(([key, p]) => {
               const unavailable = p.forceComingSoon || !p.configured;

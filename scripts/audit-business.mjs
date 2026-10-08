@@ -58,7 +58,7 @@ try {
     await page.goto(server.origin + '/settings?upgrade=success');
     await page.waitForURL('**/recruiting');
     await page.getByRole('heading', { name: 'Talent Company recruiting', exact: true }).waitFor();
-    check(await page.getByRole('navigation', { name: 'Recruiting workspace' }).getByRole('link').count() === 5, 'Business shell has five work destinations');
+    check(await page.getByRole('navigation', { name: 'Recruiting workspace' }).getByRole('link').count() === 7, 'Business shell includes Cross Post and Posts & comparisons');
     check(await page.getByRole('link', { name: 'Videos', exact: true }).count() === 0, 'Business has no video navigation');
     check(await page.getByRole('link', { name: 'Find candidates', exact: false }).isVisible(), 'Recruiting actions are visible after verified activation');
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Recruiting workspace fits ${width}px`);

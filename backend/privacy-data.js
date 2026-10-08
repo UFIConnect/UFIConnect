@@ -112,6 +112,7 @@ async function exportAccountData(db, userId) {
         FROM generation_usage_reservations WHERE user_id=$1 ORDER BY created_at,id`,
       resumeDrafts: `SELECT id,template,data,updated_at AS "updatedAt" FROM resume_drafts WHERE user_id=$1 ORDER BY id`,
       crossPosts: `SELECT id,content,media_url AS "mediaUrl",targets,created_at AS "createdAt" FROM cross_posts WHERE user_id=$1 ORDER BY created_at,id`,
+      businessPosts: `SELECT id,details,content,targets,status,native_post_id AS "nativePostId",created_at AS "createdAt" FROM business_posts WHERE user_id=$1 ORDER BY created_at,id`,
       ownedGroups: `SELECT id,name,category,description,is_private AS "isPrivate",created_at AS "createdAt"
         FROM community_groups WHERE created_by=$1 ORDER BY created_at,id`,
       notifications: `SELECT id,type,actor_id AS "actorId",target_type AS "targetType",target_id AS "targetId",

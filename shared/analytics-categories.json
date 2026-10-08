@@ -3881,8 +3881,8 @@
   "career_posts": {
     "category": "career_posts",
     "path": "/career-posts",
-    "title": "Career posting",
-    "label": "Career posting",
+    "title": "Business Cross Post",
+    "label": "Business Cross Post",
     "platform": "web",
     "group": "Business",
     "viewType": "page"
@@ -3922,5 +3922,32 @@
     "platform": "web",
     "group": "City source",
     "viewType": "tab"
+  },
+  "business_posts_list": {
+    "category": "business_posts_list",
+    "path": "/analytics-tabs/business-posts/list",
+    "title": "Business posts: Your posts",
+    "label": "Business posts: Your posts",
+    "platform": "web",
+    "group": "Business posts",
+    "viewType": "tab"
+  },
+  "business_posts_compare": {
+    "category": "business_posts_compare",
+    "path": "/analytics-tabs/business-posts/compare",
+    "title": "Business posts: Similar role comparison",
+    "label": "Business posts: Similar role comparison",
+    "platform": "web",
+    "group": "Business posts",
+    "viewType": "tab"
+  },
+  "business_posts": {
+    "category": "business_posts",
+    "path": "/business-posts",
+    "title": "Posts & comparisons",
+    "label": "Posts & comparisons",
+    "platform": "web",
+    "group": "Business",
+    "viewType": "page"
   }
 }

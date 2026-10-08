@@ -92,7 +92,8 @@ try {
   app.seedUser(member(`business-${width}`,{plan:'business'}));
   await installAuditMember(page,app,`business-${width}`);
   await auditNavigate(page,server.resolvedUrls.local[0]+'career-posts');
-  await category.waitFor();assert.deepEqual(await category.locator('option').allTextContents(),['Career sites']);
+  await page.getByRole('heading',{name:'Cross Post',exact:true}).waitFor();
+  await page.getByRole('checkbox',{name:/UFIConnect/}).waitFor();
   assert.equal(await page.getByRole('link',{name:'Sign in on Reuters',exact:true}).count(),0);
   assert.equal(await page.getByRole('button',{name:'Send',exact:true}).count(),0,'Manual career publishing has no automatic Send action');
   assert.equal(await page.getByRole('link',{name:'Sign in on Airbnb',exact:true}).count(),0);

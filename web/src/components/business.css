@@ -30,5 +30,52 @@
 .recruiting-candidate p { color: var(--muted); font-size: 13px; line-height: 1.7; }
 .recruiting-candidate .tag { margin-right: 7px; margin-bottom: 10px; }
 .recruiting-pagination { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-top: 20px; }
+.business-compose-grid, .business-comparison-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; }
+.business-post-panel { min-width: 0; padding: clamp(16px, 3vw, 26px); border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
+.business-post-panel h2 { font-size: 19px; margin: 0 0 16px; }
+.business-post-panel h3 { font-size: 22px; line-height: 1.35; margin: 12px 0; overflow-wrap: anywhere; }
+.business-post-panel h4 { font-size: 14px; margin: 22px 0 9px; }
+.business-post-panel p, .business-post-panel li { font-size: 13px; line-height: 1.75; overflow-wrap: anywhere; }
+.business-post-panel ul { padding-left: 20px; }
+.business-post-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.business-post-field { min-width: 0; display: flex; flex-direction: column; gap: 8px; font-size: 13px; font-weight: 600; margin-bottom: 16px; }
+.business-post-field input, .business-post-field textarea, .business-post-field select { box-sizing: border-box; width: 100%; min-width: 0; padding: 11px; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 7px; font: inherit; font-weight: 400; }
+.business-post-field textarea { resize: vertical; line-height: 1.65; }
+.business-post-muted { color: var(--muted); font-size: 12px !important; line-height: 1.7; }
+.business-post-alert { padding: 12px; margin: 12px 0; border: 1px solid var(--border); border-left: 3px solid #dc2626; border-radius: 6px; font-size: 13px; overflow-wrap: anywhere; }
+.business-post-notice { padding: 12px; background: var(--primary-light); border-radius: 6px; color: var(--text); font-size: 13px; }
+.business-post-buttons { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.business-post-buttons .btn { white-space: normal; }
+.business-post-targets { padding: 16px; border: 1px solid var(--border); border-radius: 8px; margin: 18px 0; }
+.business-post-targets legend { font-size: 13px; font-weight: 650; padding: 0 7px; }
+.business-post-targets label { display: flex; align-items: center; gap: 9px; font-size: 13px; padding: 8px 0; }
+.business-post-targets small { display: block; color: var(--muted); line-height: 1.6; margin-top: 3px; }
+.business-post-targets a { font-size: 12px; }
+.business-post-preview pre, .business-post-full pre { font: inherit; font-size: 13px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; margin: 16px 0; }
+.business-post-preview { position: sticky; top: 20px; }
+.business-post-outcomes { font-size: 12px; margin-top: 18px; border-top: 1px solid var(--border); padding-top: 12px; }
+.business-post-outcomes span, .business-post-outcomes a { display: block; margin-top: 5px; overflow-wrap: anywhere; }
+.business-career-handoff { margin-top: 24px; }
+.business-career-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; max-height: 340px; overflow: auto; }
+.business-career-list > div { display: flex; align-items: center; gap: 8px; padding: 11px; border: 1px solid var(--border); border-radius: 7px; font-size: 12px; min-width: 0; }
+.business-career-list strong { flex: 1; overflow-wrap: anywhere; }
+.business-career-list .btn { flex-shrink: 0; }
+.business-post-list { display: grid; gap: 18px; }
+.business-post-card-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; margin-bottom: 15px; color: var(--muted); }
+.business-post-status { border: 1px solid var(--border); border-radius: 30px; padding: 4px 10px; text-transform: capitalize; color: var(--primary); }
+.business-post-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.business-post-metrics > div { padding: 12px 8px; border: 1px solid var(--border); border-radius: 7px; min-width: 0; }
+.business-post-metrics dt { color: var(--muted); font-size: 11px; text-transform: capitalize; }
+.business-post-metrics dd { margin: 5px 0 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.business-post-facts { display: grid; gap: 10px; font-size: 13px; }
+.business-post-facts > div { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 10px; }
+.business-post-facts dt { color: var(--muted); }
+.business-post-facts dd { margin: 0; overflow-wrap: anywhere; }
+.business-post-full { padding: 14px 0; margin-top: 16px; border-top: 1px solid var(--border); font-size: 13px; }
+.business-post-full summary { cursor: pointer; color: var(--primary); }
+.business-similar-picker { margin: 20px 0; }
+@media (max-width: 1100px) { .business-career-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 800px) { .business-compose-grid, .business-comparison-grid { grid-template-columns: minmax(0, 1fr); } .business-post-preview { position: static; } }
+@media (max-width: 500px) { .business-post-fields, .business-career-list { grid-template-columns: minmax(0, 1fr); } .business-post-metrics dd { font-size: 12px; } .business-post-panel .recruiting-pagination { flex-wrap: wrap; } }
 @media (max-width: 850px) { .business-body { grid-template-columns: minmax(0, 1fr); } .business-nav { flex-direction: row; overflow-x: auto; padding: 12px; border-bottom: 1px solid var(--border); } .business-nav a { white-space: nowrap; } .business-nav p { display: none; } .business-main { padding: 26px 18px; } }
 @media (max-width: 600px) { .business-header { padding: 18px; } .business-header > div > span { display: none; } .recruiting-actions, .recruiting-stats { grid-template-columns: minmax(0, 1fr); } .recruiting-stats > div { display: flex; align-items: center; gap: 13px; padding: 16px; } .recruiting-stats strong { margin: 0; } }

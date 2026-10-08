@@ -697,6 +697,12 @@ services:
         source: /career-posts/
         destination: /career-posts/index.html
       - type: rewrite
+        source: /business-posts
+        destination: /business-posts/index.html
+      - type: rewrite
+        source: /business-posts/
+        destination: /business-posts/index.html
+      - type: rewrite
         source: /analytics
         destination: /analytics/index.html
       - type: rewrite
