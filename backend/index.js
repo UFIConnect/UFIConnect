@@ -62,6 +62,7 @@ const { PUBLIC_GROUP_LEGACY_SOURCES, inferPublicGroupId } = require('./group-fee
 const { GENERAL_UFI_GROUP_ID, isGeneralUfiFollowingPost, isFollowingSourceAllowed } = require('./following-scope');
 const { canonicalizePreferenceTopics, matchesPreferenceTopic } = require('./feed-preferences');
 const { ISO_COUNTRY_CODES, trustedFeedNetworkLocation, memberFeedSnapshotKey } = require('./feed-location');
+const { RADIUS_MILES, RADIUS_KM, distanceKm, nearestFeedCity, feedCityByName, deviceFeedPoint } = require('./feed-city-location');
 const { sourceAuthorProfileUrl, safePostLink } = require('./post-links.mjs');
 const {
   VIDEO_FEED_MIN_DURATION_SECONDS,
@@ -9454,9 +9455,7 @@ function feedLocationMode(req) {
   return String(req.query?.mode || (req.path?.includes('/music') ? 'music' : req.path?.includes('/videos') ? 'videos' : 'feed'));
 }
 function normalizeRegionalFeedLocation(value) {
-  const mode = ['auto', 'manual', 'off'].includes(value?.mode) ? value.mode : 'auto';
-  const location = normalizeFeedLocation(value);
-  return { mode, country: mode === 'manual' ? countryCodeFromInput(location.country) || '' : '', city: mode === 'manual' ? location.city : '' };
+  return { mode: 'auto', country: '', city: '' };
 }
 function getFeedLocationContext(req, user = null) {
   const settings = user?.roleSettings || {};
@@ -9464,6 +9463,9 @@ function getFeedLocationContext(req, user = null) {
   const destination = DESTINATION_FEED_MODES.has(feedMode);
   const preference = normalizeRegionalFeedLocation(settings.feedRegionalLocation);
   const network = trustedFeedNetworkLocation(req, { visitorLocationHeaders: process.env.CF_VISITOR_LOCATION_HEADERS === 'true' });
+  const devicePoint = user ? deviceFeedPoint(req) : null;
+  const automatic = devicePoint ? { ...(nearestFeedCity(devicePoint) || {}), point: devicePoint } : network;
+  const automaticSource = devicePoint ? 'device' : 'network';
   let selected = {}, source = 'none', mode = destination ? 'auto' : preference.mode;
   if (destination) {
     const hasScope = Object.prototype.hasOwnProperty.call(settings.feedLocations || {}, feedMode);
@@ -9471,11 +9473,9 @@ function getFeedLocationContext(req, user = null) {
     const requested = normalizeFeedLocation(req.query);
     if (saved.country || saved.city) { selected = saved; source = 'member'; mode = 'manual'; }
     else if (!hasScope && (requested.country || requested.city)) { selected = requested; source = 'request'; mode = 'manual'; }
-    else if (network.country) { selected = network; source = 'network'; }
-  } else if (mode === 'manual' && preference.country) {
-    selected = preference; source = 'member';
-  } else if (mode !== 'off') {
-    if (network.country) { selected = network; source = 'network'; }
+    else if (automatic.country || automatic.point) { selected = automatic; source = automaticSource; }
+  } else {
+    if (automatic.country || automatic.point) { selected = automatic; source = automaticSource; }
     else {
       // A profile country is a fallback only when it is recognizable. Never
       // infer a city from arbitrary profile text or borrow a travel destination.
@@ -9484,19 +9484,22 @@ function getFeedLocationContext(req, user = null) {
       if (country) { selected = { country }; source = 'member'; }
     }
   }
-  const country = countryCodeFromInput(selected.country);
+  const country = countryCodeFromInput(selected.country) || (source === 'device' && /^[A-Z]{2}$/.test(selected.country || '') ? selected.country : null);
   const city = cleanLocationInput(selected.city) || null;
   const region = cleanLocationInput(selected.region) || null;
   const resolvedName = countryName(country);
-  const context = { country, countryName: resolvedName, city, region,
+  const point = selected.point || null;
+  const context = { country, countryName: resolvedName, city, region, point,
     declared: [resolvedName, city, region].filter(Boolean), source,
-    available: Boolean(country || city || region), mode, feedMode };
+    available: Boolean(point || country || city || region), mode, feedMode,
+    radiusMiles: point ? RADIUS_MILES : null, approximate: source !== 'device' };
   req.feedLocationContext = context;
   return context;
 }
 function publicFeedLocationContext(context) {
-  const { country, countryName, city, region, source, available, mode, feedMode } = context;
-  return { country, countryName, city, region, source, available, mode, feedMode };
+  const { country, countryName, city, region, source, available, mode, feedMode, radiusMiles, approximate } = context;
+  // Coordinates never belong in feed responses or public post metadata.
+  return { country, countryName, city, region, source, available, mode, feedMode, radiusMiles, approximate };
 }
 
 // Job location strings are free text from each platform's own API
@@ -9602,14 +9605,33 @@ function feedPostLocationMatch(post, context) {
   if (hasLocationExclusions(explicitText)) return none;
   const postCountry = countryCodeFromInput(post.countryCode || post.country);
   const explicitCountries = postCountry ? new Set([postCountry]) : explicitLocationCountries(explicitText);
+  if (context.point && !isWorldwideLocation(explicitText)) {
+    const parts = String(post.location || '').split(',').map(part => part.trim());
+    const cityName = post.city || (parts.length > 1 ? parts[0] : '');
+    const sourceCountry = postCountry || (explicitCountries.size === 1 ? [...explicitCountries][0] : null);
+    const rawLat = post.latitude ?? post.lat, rawLon = post.longitude ?? post.lon;
+    const suppliedPoint = typeof rawLat === 'number' && typeof rawLon === 'number' && Number.isFinite(rawLat) && Number.isFinite(rawLon)
+      && Math.abs(rawLat) <= 90 && Math.abs(rawLon) <= 180 ? { lat: rawLat, lon: rawLon } : null;
+    const namedPoint = cityName ? feedCityByName(cityName, sourceCountry, post.region || (parts.length > 2 ? parts[1] : null)) : null;
+    const point = suppliedPoint || namedPoint;
+    if (point) {
+      const distance = distanceKm(context.point, point);
+      // Be conservative at the boundary when the device reports uncertainty.
+      if (distance + (context.point.accuracy || 0) / 1000 <= RADIUS_KM) {
+        return { score: 36 + 6 * (1 - distance / RADIUS_KM), type: 'nearby', label: `Near ${namedPoint?.city || context.city || 'you'}` };
+      }
+      return none;
+    }
+  }
   const countryConflict = context.country && explicitCountries.size && !explicitCountries.has(context.country);
   if (countryConflict) return none;
   if (isWorldwideLocation(explicitText)) return { score: 3, type: 'global', label: 'Available worldwide' };
   const precise = [context.city, context.region].filter(Boolean);
-  const localTerm = precise.find(term => mentionsLocation(explicitText, term));
+  const localTerm = !context.point && context.city && mentionsLocation(explicitText, context.city) ? context.city : null;
   if (localTerm) return { score: 24, type: 'local', label: 'In ' + localTerm };
+  if (context.region && mentionsLocation(explicitText, context.region)) return { score: 12, type: 'region', label: 'In ' + context.region };
   if (context.country && (explicitCountries.has(context.country) || jobMatchesUserLocation(explicitText, context.country))) {
-    return { score: 18, type: 'country', label: 'In ' + (context.countryName || context.country) };
+    return { score: context.point ? 8 : 18, type: 'country', label: 'In ' + (context.countryName || context.country) };
   }
   // A headline mentioning a place is relevant to it; it is not evidence
   // that the author, event, or job is physically nearby.
@@ -21005,7 +21027,7 @@ app.patch('/profile', authenticate, async (req, res) => {
   if (Object.prototype.hasOwnProperty.call(roleSettingsPatch, 'feedRegionalLocation')) {
     const value = roleSettingsPatch.feedRegionalLocation;
     if (!value || !['auto', 'manual', 'off'].includes(value.mode) || (value.mode === 'manual' && !countryCodeFromInput(value.country))) {
-      return res.status(400).json({ message: 'Choose Auto, Off, or a valid country for your saved region.' });
+      return res.status(400).json({ message: 'Location settings are invalid. Choose travel destinations in Travel, Restaurants, or Bars.' });
     }
     roleSettingsPatch.feedRegionalLocation = normalizeRegionalFeedLocation(value);
   }

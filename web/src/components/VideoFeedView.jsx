@@ -2,7 +2,6 @@ import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react
 import client from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import FeedLocationControl from './FeedLocationControl';
 import { feedLocationKey } from '../utils/feedLocation.mjs';
 import { directMediaPlaybackAllowed } from '../utils/sourceMediaPolicy.mjs';
 import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, isYouTubeShortsUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, useGlobalMuted, fetchVimeoMetadata, youTubePosterUrl, SoundIcon, createYouTubePlayerFrame, youTubeEmbedUrl } from './videoMedia';
@@ -853,7 +852,6 @@ export default function VideoFeedView({ onExit, music = false }) {
   }, [onExit]);
   const memberRef = useRef(profile?.id);
   memberRef.current = profile?.id;
-  const [locationContext, setLocationContext] = useState(null);
   const regionalKey = `${profile?.id || ''}:${feedLocationKey(profile?.roleSettings)}`;
   const contextKeyRef = useRef(regionalKey);
   contextKeyRef.current = regionalKey;
@@ -1068,7 +1066,6 @@ export default function VideoFeedView({ onExit, music = false }) {
         signal: controller.signal, _ufiManagedRetry: true,
       });
       if (requestId !== loadRequestRef.current || requestContext !== contextKeyRef.current) return;
-      setLocationContext(data.locationContext || null);
       lastFeedReadRef.current = Date.now();
       setSourceErrors(mode === 'following' ? data.sourceErrors || {} : {});
       pendingRequestIntentRef.current = null;
@@ -1232,7 +1229,6 @@ export default function VideoFeedView({ onExit, music = false }) {
     setVideoPosts([]);
     setActiveIndex(0);
     setCommentsPost(null);
-    setLocationContext(null);
     setLoading(true);
     setError(false);
     setSourceErrors({});
@@ -2178,7 +2174,7 @@ export default function VideoFeedView({ onExit, music = false }) {
           {searchQuery && <span className="video-feed-filter-dot" aria-hidden="true" />}
         </button>
         <button type="button" className="video-feed-header-button" onClick={() => setFilterOpen(true)}
-          aria-label="Filter videos" title="Sources, location, genres and topics" aria-expanded={filterOpen} data-active={Boolean(sourceFilter.length || topicFilters.length || genre)}>
+          aria-label="Filter videos" title="Sources, genres and topics" aria-expanded={filterOpen} data-active={Boolean(sourceFilter.length || topicFilters.length || genre)}>
           <SlidersHorizontal size={18} aria-hidden="true" />
           {Boolean(sourceFilter.length || topicFilters.length || genre) && <span className="video-feed-filter-dot" aria-hidden="true" />}
         </button>
@@ -2301,7 +2297,6 @@ export default function VideoFeedView({ onExit, music = false }) {
               </div>
             </div>
             <div style={{ overflowY: 'auto', padding: '0 20px 16px', flex: 1 }}>
-              <FeedLocationControl context={locationContext} compact />
               {/* Platform before Topic (was the reverse) — Topic's ~230
                   chips are by far the longest list in this sheet, so with
                   it first, Platform ended up buried below a whole

@@ -15,7 +15,6 @@ import { CITY_SOURCE_PRESETS, CITY_SOURCE_IDS, CITY_ALL_TOPICS, houseTopics } fr
 import client from '../api/client';
 import { topicCount } from '../local/cityTopicTargets.mjs';
 import { useAuth } from '../contexts/AuthContext';
-import FeedLocationControl from '../components/FeedLocationControl';
 import { feedLocationKey } from '../utils/feedLocation.mjs';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { CITY_CATEGORIES, useLocalWorkspace, safeLink } from '../local/localWorkspace';
@@ -304,7 +303,7 @@ export default function Maps() {
       <header className="local-workspace-heading"><div><span className="local-eyebrow">YOUR WORLD, CONNECTED</span><h1>Maps</h1><p>Choose a city, open its source houses, and explore posts about the topics you enjoy.</p></div></header>
       {['countries', 'restaurants', 'bars'].includes(category.mode)
         ? <p className="muted">{category.label} destination: {[locationContext?.city, locationContext?.countryName || locationContext?.country].filter(Boolean).join(', ') || 'Automatic area'}. <Link to={category.route}>Change this destination</Link></p>
-        : <FeedLocationControl context={locationContext} />}
+        : null}
       <div className="map-explorer-layout">
         <div className="map-explorer-main">
       <CategoryCity cities={allCities} onCivicSelect={showBuilding} houseSummaries={houseSummaries} actions={mapActions} enabled={enabled} active={active} onSelect={chooseCategory} counts={counts} sources={enabled.includes(active) ? sources : []} activeSource={currentSource} onSourceSelect={openHouse} />

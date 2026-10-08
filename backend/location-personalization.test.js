@@ -21,7 +21,7 @@ const location = (country, city = null) => ({ available: true, country, city, re
   countryName: ({ CA: 'Canada', FR: 'France', US: 'United States', JP: 'Japan' })[country],
   declared: [country, ({ CA: 'Canada', FR: 'France', US: 'United States', JP: 'Japan' })[country], city].filter(Boolean) });
 
-test('regional preferences override network only for their member and never inherit travel destinations', async t => {
+test('member feeds use automatic location despite legacy preferences and never inherit travel destinations', async t => {
   const app = await fixture(t);
   const alice = app.users.find(user => user.id === 'alice');
   alice.roleSettings = {
@@ -32,8 +32,9 @@ test('regional preferences override network only for their member and never inhe
   for (const mode of ['feed', 'following', 'videos', 'music']) {
     const req = locationRequest(mode, edgeHeaders('CA'), { country: 'US', city: 'Chicago' });
     const result = app.getFeedLocationContext(req, alice);
-    assert.equal(result.country, 'FR', `manual preference wins in ${mode}`);
-    assert.equal(result.city, 'Paris');
+    assert.equal(result.country, 'CA', `automatic location wins in ${mode}`);
+    assert.equal(result.city, null);
+    assert.equal(result.mode, 'auto');
     assert.equal(app.getFeedLocationContext(req, bob).country, 'CA', 'one member never inherits another member’s preference');
   }
   alice.roleSettings.feedRegionalLocation = { mode: 'auto' };
@@ -42,7 +43,7 @@ test('regional preferences override network only for their member and never inhe
   assert.notEqual(noNetwork.country, 'JP', 'legacy travel is never a regional fallback');
   assert.notEqual(noNetwork.city, 'Tokyo');
   alice.roleSettings.feedRegionalLocation = { mode: 'off', country: 'France', city: 'Paris' };
-  assert.equal(app.getFeedLocationContext(locationRequest('feed', edgeHeaders('CA')), alice).available, false);
+  assert.equal(app.getFeedLocationContext(locationRequest('feed', edgeHeaders('CA')), alice).available, true);
   assert.equal(app.getFeedLocationContext(locationRequest('countries', edgeHeaders('CA')), alice).country, 'JP', 'turning regional ranking off does not erase travel settings');
 });
 
@@ -61,6 +62,7 @@ test('profile PATCH merges destination scopes, explicit empty scope resets only 
   assert.equal(profile.roleSettings.feedLocations.restaurants.city, 'San Diego');
   assert.equal(profile.roleSettings.feedLocations.bars.city, 'Vancouver');
   assert.deepEqual(profile.roleSettings.feedLanguages, ['en']);
+  assert.deepEqual(profile.roleSettings.feedRegionalLocation, { mode: 'auto', country: '', city: '' });
   const saved = app.users.find(user => user.id === 'alice');
   for (const [mode, country, city] of [['countries', 'FR', 'Paris'], ['restaurants', 'US', 'San Diego'], ['bars', 'CA', 'Vancouver'], ['local', 'JP', 'Tokyo']]) {
     const result = app.getFeedLocationContext(locationRequest(mode, edgeHeaders('GB')), saved);
@@ -149,7 +151,7 @@ test('location endpoint returns current member preferences with no cacheable or 
     assert.ok(response.data.locationContext);
     assert.ok(!JSON.stringify(response.data).includes('203.0.113.45'), 'IP address is not serialized');
   }
-  assert.equal(alice.data.locationContext.country, 'JP');
+  assert.equal(alice.data.locationContext.country, 'CA');
   assert.equal(bob.data.locationContext.country, 'CA');
   const forged = await app.request('/feed/location?mode=feed', { userId: 'bob', headers: { 'cf-ipcountry': 'JP', 'cf-ipcity': 'Tokyo' } });
   assert.equal(forged.status, 200);
@@ -157,7 +159,7 @@ test('location endpoint returns current member preferences with no cacheable or 
   assert.notEqual(forged.data.locationContext.city, 'Tokyo');
 });
 
-test('feed, source, video and music responses explain the same regional preference even when no posts are available', async t => {
+test('feed, source, video and music responses use automatic location even with legacy manual preferences', async t => {
   const app = await fixture(t, { connected: true });
   app.users.find(user => user.id === 'alice').roleSettings = {
     feedRegionalLocation: { mode: 'manual', country: 'France', city: 'Paris' },
@@ -167,8 +169,8 @@ test('feed, source, video and music responses explain the same regional preferen
     '/office/feed?mode=following&passive=1', '/office/feed/videos?sort=balanced', '/office/feed/music']) {
     const response = await app.request(route, { userId: 'alice', headers: edgeHeaders('CA') });
     assert.equal(response.status, 200, route);
-    assert.equal(response.data.locationContext?.country, 'FR', `${route} uses the member’s regional choice`);
-    assert.equal(response.data.locationContext?.city, 'Paris', route);
+    assert.equal(response.data.locationContext?.country, 'CA', `${route} uses current automatic location`);
+    assert.equal(response.data.locationContext?.city, null, route);
     assert.match(response.headers.get('cache-control'), /private.*no-store/, route);
   }
   const guest = await app.request('/feed/guest', { headers: edgeHeaders('CA') });
@@ -245,17 +247,18 @@ test('ranked source feed can favor a nearby older post while explicit newest kee
   assert.equal(app.addAndBroadcast(inventory.map(app.dbRowToFeedPost)), inventory.length);
   app.users.find(user => user.id === 'alice').roleSettings = { feedRegionalLocation: { mode: 'manual', country: 'Canada', city: '' } };
   const base = '/office/feed?mode=feed&source=github&passive=1&limit=10';
-  const ranked = await app.request(base + '&sort=ranked', { userId: 'alice' });
+  const ranked = await app.request(base + '&sort=ranked', { userId: 'alice', headers: edgeHeaders('CA') });
   assert.equal(ranked.status, 200);
   assert.equal(ranked.data.posts.length, 2, 'both distinct-timestamp candidates are visible');
   assert.equal(ranked.data.posts[0].id, 'github_regional_ca-older', 'regional ranking survives final source/topic equalization');
-  const newest = await app.request(base + '&sort=newest', { userId: 'alice' });
+  const newest = await app.request(base + '&sort=newest', { userId: 'alice', headers: edgeHeaders('CA') });
   assert.equal(newest.status, 200);
   assert.equal(newest.data.posts[0].id, 'github_regional_us-newer', 'explicit newest still respects publication time');
   app.users.find(user => user.id === 'alice').roleSettings.feedRegionalLocation = { mode: 'off' };
-  const off = await app.request(base + '&sort=ranked', { userId: 'alice' });
+  const off = await app.request(base + '&sort=ranked', { userId: 'alice', headers: edgeHeaders('US') });
   assert.equal(off.status, 200);
-  assert.ok(off.data.posts.every(post => !post.matchedByLocation), 'switching off removes old regional badges');
+  assert.equal(off.data.posts[0].id, 'github_regional_us-newer', 'legacy off still follows current automatic location');
+  assert.ok(off.data.posts.filter(post => post.matchedByLocation).every(post => post.location === 'United States'), 'network changes remove previous country badges');
 });
 
 test('destination cursors continue within their member/location scope and restart when that scope changes', () => {

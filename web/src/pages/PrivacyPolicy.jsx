@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 
-const EFFECTIVE_DATE = 'October 6, 2026';
+const EFFECTIVE_DATE = 'October 8, 2026';
 const CONTACT_EMAIL  = 'privacy@uficonnect.org';
 const APP_NAME       = 'UFIConnect';
 const APP_URL        = 'https://uficonnect.org';
@@ -95,6 +95,8 @@ export default function PrivacyPolicy() {
         </Section>
 
         <Section title="2. Data we collect">
+          <P><strong>Nearby recommendations</strong> use device location after you allow the browser's location permission. Coordinates are rounded to about 100 metres and used to prioritize posts within 100 miles. They stay in the current signed-in session and feed request; we do not save them to your profile or send them to advertising or analytics providers. If location access is denied or unavailable, we use approximate city or country information from your network. You can revoke device access in your browser's site permissions.</P>
+          <P>City lookup runs on UFIConnect using adapted <a href="https://www.geonames.org/" target="_blank" rel="noopener noreferrer">GeoNames</a> data under <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a>. City labels and IP location are approximate. Source posts without reliable location information can still appear in your personalized feed.</P>
           <P><strong>Account data</strong> — when you register:</P>
           <UL items={[
             'Name, email address, phone number, and password (stored as a bcrypt hash — we never store plaintext passwords)',
