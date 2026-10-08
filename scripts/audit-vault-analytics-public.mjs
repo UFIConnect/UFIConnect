@@ -64,8 +64,10 @@ try {
         if (endpoint === '/readyz' || endpoint === '/health') return route.fulfill({ headers, json: { status: 'ok' } });
         if (endpoint === '/auth/session') return route.fulfill({ headers, json: { token: app.token(memberId), profile: (await app.request('/profile', { userId: memberId })).data } });
         if (endpoint === '/security/vault/status') return route.fulfill({ headers, json: vaultStatus });
-        if (endpoint === '/security/web-connection') {
+        if (endpoint === '/security/web-connection' || endpoint === '/security/vault-connection') {
           check(/^Bearer .+$/.test(request.headers().authorization || ''), 'Web protection requests an authenticated server report');
+          if (endpoint === '/security/vault-connection' && !vpnPaid) return route.fulfill({ status: 403, headers,
+            json: { message: 'An active paid Vault membership is required for connection monitoring.' } });
           return route.fulfill({ headers, json: { scope: 'uficonnect-web', transport: { encrypted: true, protocol: 'https' }, session: { verified: true },
             protections: { revocableSession: true, privateResponses: true, privateMessages: true, validatedImports: true }, checkedAt: new Date().toISOString() } });
         }
@@ -118,6 +120,7 @@ try {
       await protectionStatus.filter({ hasText: 'Subscription required' }).waitFor();
       check(await webProtection.getByRole('heading', { name: 'Web protection', exact: true }).count() === 1, 'Ordinary browser Vault presents subscription-gated connection monitoring');
       check(await webProtection.getByRole('switch', { name: 'Vault connection monitoring', exact: true }).getAttribute('aria-checked') === 'false', 'Unpaid Vault connection monitoring starts disabled');
+      check(!requests.some(request => new URL(request.url).pathname.replace(/^\/api(?=\/)/, '') === '/security/vault-connection'), 'Unpaid Vault never requests the paid connection report');
       check(await page.getByRole('button', { name: /^(Connect|Enable) VPN$/ }).count() === 0, 'Ordinary browser Vault has no native VPN launch action');
       await subscribe.click();
       await page.getByText('Synthetic checkout failure. Please retry.', { exact: true }).waitFor();
@@ -139,6 +142,7 @@ try {
       await page.getByRole('button', { name: 'Check subscription status', exact: true }).click();
       await page.getByRole('button', { name: 'Manage or cancel subscription', exact: true }).waitFor();
       await protectionStatus.filter({ hasText: 'Protected' }).waitFor();
+      check(requests.some(request => new URL(request.url).pathname.replace(/^\/api(?=\/)/, '') === '/security/vault-connection'), 'Paid Vault monitoring uses the membership-enforced connection endpoint');
       check(await page.locator('.vault-managed-vpn').count() === 0, 'Confirmed billing keeps ordinary browser protection separate from native VPN status');
       check(await page.getByLabel('Your configured countries', { exact: true }).count() === 0, 'Managed VPN removes manually configured country labels');
       vpnPaid = false;

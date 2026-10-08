@@ -41,7 +41,9 @@ try {
   await server.listen();
   browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
   const origin = server.resolvedUrls.local[0];
-  for (const width of [1440, 390, 320]) {
+  const widths = [1440, 390, 320].filter(width => !process.env.SNAP_AUDIT_WIDTH || width === Number(process.env.SNAP_AUDIT_WIDTH));
+  assert.ok(widths.length, 'SNAP_AUDIT_WIDTH must be 1440, 390 or 320');
+  for (const width of widths) {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, hasTouch: width < 600, isMobile: width < 600, serviceWorkers: 'block' });
     const page = await context.newPage(); page.setDefaultTimeout(16000);
     const errors = [], writes = [], reads = [], imageRequests = [];
@@ -79,7 +81,7 @@ try {
         uploadCount++; uploadedForm = request.postData() || '';
         return route.fulfill({ headers, json: { secure_url: photoUrl, resource_type: 'image', public_id: proof.publicId, version: proof.version, signature: proof.signature } });
       }
-      if (['www.youtube.com', 'mastodon.social', 'embed.bsky.app', 'www.redditmedia.com'].includes(url.hostname) && request.resourceType() === 'document') {
+      if (['www.youtube.com', 'mastodon.social', 'embed.bsky.app', 'www.redditmedia.com', 'clips.twitch.tv'].includes(url.hostname) && request.resourceType() === 'document') {
         return route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Official source player fixture</title><button>Play source clip</button>' });
       }
       if (url.hostname === 'media.snaps.invalid') return;
@@ -124,6 +126,7 @@ try {
       assert.match(id, /^[a-z0-9-]+$/);
       return rail.locator(`.snap-profile-button[data-snap-ids*='"${id}"']`);
     };
+    const settleCube = () => page.waitForFunction(() => !document.querySelector('.snap-viewer-cube-outgoing'));
     const closeViewer = async () => { await page.locator('dialog.snap-viewer').getByRole('button', { name: 'Close snap', exact: true }).click(); };
     const openSnap = async (id, caption = rows.find(item => item.id === id)?.caption) => {
       const profileButton = profileForSnap(id);
@@ -134,10 +137,12 @@ try {
       const viewer = page.locator('dialog.snap-viewer'); await viewer.waitFor();
       for (let position = 0; position < ids.indexOf(id); position++) {
         const counter = await viewer.locator('.snap-viewer-navigation > span').innerText();
-        await viewer.getByRole('button', { name: 'Next snap', exact: true }).click();
+        await viewer.getByRole('region', { name: 'Snap media', exact: true }).focus();
+        await page.keyboard.press('ArrowDown');
         await page.waitForFunction(previous => document.querySelector('.snap-viewer-navigation > span')?.textContent !== previous, counter);
       }
       await page.waitForFunction(expected => document.querySelector('.snap-viewer-caption')?.textContent === expected, caption);
+      await settleCube();
       return viewer;
     };
     const themedCards = async locator => locator.evaluateAll(elements => elements.every(element => {
@@ -151,6 +156,7 @@ try {
     check(await profileForSnap('facebook-fixture').locator('img').getAttribute('src') === avatarUrl, 'Snap profile circles use the author photo instead of the snap image');
     check(!imageRequests.includes(photoUrl), 'The rail does not request snap media or thumbnails before a viewer opens');
     check(await rail.locator('.snap-thumbnail').count() === 0, 'Rectangular snap thumbnails are removed');
+    await profileForSnap('twitter-fixture').scrollIntoViewIfNeeded();
     await profileForSnap('twitter-fixture').locator('.snap-profile-avatar b').waitFor();
     check(await profileForSnap('twitter-fixture').locator('img').count() === 0 && await profileForSnap('twitter-fixture').locator('b').innerText() === 'XF', 'Broken author photos fall back to profile initials');
     check(await profileForSnap('facebook-profile-8').locator('b').innerText() === 'CP', 'An author without a photo has initials instead of media artwork');
@@ -177,8 +183,8 @@ try {
     check(await rail.getByRole('button', { name: /previous|next|scroll|earlier|later/i }).count() === 0, 'The source row has no navigation arrows');
     check(await profileForSnap('expired-fixture').count() === 0, 'Expired snaps are removed before rendering');
     const cardBoxes = await rail.locator('.snap-source-box').evaluateAll(elements => elements.map(element => ({ x: element.getBoundingClientRect().x, y: element.getBoundingClientRect().y, background: getComputedStyle(element).backgroundColor })));
-    check(await themedCards(rail.locator('.snap-source-box')), 'Source cards match the social feed card theme');
-    check(cardBoxes[1].x > cardBoxes[0].x || cardBoxes[1].y > cardBoxes[0].y, 'Source cards flow across columns or wrap below at narrow widths');
+    check(cardBoxes.every(box => box.background === 'rgb(8, 8, 8)'), 'Profile rows remain inside black source boxes');
+    check(cardBoxes[1].x > cardBoxes[0].x && Math.abs(cardBoxes[1].y - cardBoxes[0].y) < 2, 'Black source boxes stay next to each other horizontally at every width');
     const sources = page.getByRole('group', { name: 'Home sources', exact: true }); await sources.waitFor();
     check((await rail.boundingBox()).y + (await rail.boundingBox()).height <= (await sources.boundingBox()).y + 2, 'Snaps appear above Home source selection');
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Home has no page overflow');
@@ -250,7 +256,7 @@ try {
     check(await rail.locator('[data-snap-source="twitch"]').count() === 0, 'Source failures leave other clips visible');
     check(await rail.getByText(/last 24 hours/i).count() === 0, 'Public source clips are not described as expiring stories');
     const expandedBoxes = await rail.locator('.snap-source-box').evaluateAll(elements => elements.map(element => ({ y: element.getBoundingClientRect().y })));
-    check(await themedCards(rail.locator('.snap-source-box')) && expandedBoxes.some(box => box.y > expandedBoxes[0].y + 10), 'Additional source cards keep the feed theme and wrap into multiple rows');
+    check(expandedBoxes.every(box => Math.abs(box.y - expandedBoxes[0].y) < 2), 'Additional black source boxes stay on the horizontal rail');
 
     const beforeScopedRows = [...rows];
     rows = rows.map(item => item.id === 'twitter-fixture' ? { ...item, caption: 'Updated X snap' }
@@ -310,12 +316,52 @@ try {
     await openSnap('other-native');
     let viewer = page.locator('dialog.snap-viewer'); await viewer.waitFor();
     check(await viewer.getByRole('button', { name: 'Previous snap', exact: true }).count() === 1
-      && await viewer.getByRole('button', { name: 'Next snap', exact: true }).count() === 1, 'Viewer navigation arrows remain available independently of the source row');
+      && await viewer.getByRole('button', { name: 'Next snap', exact: true }).count() === 0, 'The Next button is removed while previous navigation remains available');
     await page.waitForFunction(() => { const image = document.querySelector('.snap-viewer-media img'); return image?.complete && image.naturalWidth > 0; });
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/snaps-viewer-${width}.png`) });
     check(await viewer.getByRole('link', { name: 'Snap author', exact: true }).getAttribute('href') === `/u/${author}`, 'Snap author routes to the posting profile');
-    check(await themedCards(viewer) && await viewer.locator('.post-chrome-avatar img').getAttribute('src') === avatarUrl
-      && await viewer.locator('.snap-social-meta[datetime]').count() === 1, 'Viewing uses the social card theme, author avatar and original post time');
+    const viewerBounds = await viewer.boundingBox();
+    check(Math.abs(viewerBounds.width - width) < 2 && Math.abs(viewerBounds.height - 1000) < 2
+      && await viewer.locator('.post-chrome-avatar img').getAttribute('src') === avatarUrl
+      && await viewer.locator('.snap-social-meta[datetime]').count() === 1, 'Viewing fills the screen like Videos and Music, with the author profile and original time');
+    const mediaStage = viewer.getByRole('region', { name: 'Snap media', exact: true });
+    await mediaStage.focus();
+    await page.keyboard.press('ArrowDown');
+    check(await viewer.locator('.snap-viewer-caption').innerText() !== 'other-native', 'ArrowDown advances from the full-screen media stage');
+    check(await viewer.locator('.snap-viewer-cube').getAttribute('data-cube-direction') === 'forward'
+      && await viewer.locator('.snap-viewer-cube-outgoing[aria-hidden="true"][inert]').count() === 1
+      && await viewer.locator('.snap-viewer-cube-outgoing video, .snap-viewer-cube-outgoing iframe').count() === 0
+      && await mediaStage.evaluate(element => getComputedStyle(element).perspective !== 'none')
+      && await viewer.locator('.snap-viewer-cube').evaluate(element => getComputedStyle(element).transformStyle === 'preserve-3d' && element.getAnimations().length > 0), 'Snap navigation turns two cube faces in perspective without a second live player');
+    await page.waitForTimeout(120);
+    await page.screenshot({ path: path.join(root, `.cache/audit-ui/snaps-cube-${width}.png`) });
+    await settleCube();
+    await page.keyboard.press('ArrowUp');
+    check(await viewer.locator('.snap-viewer-caption').innerText() === 'other-native', 'ArrowUp restores the previous snap');
+    await settleCube();
+    await mediaStage.dispatchEvent('wheel', { deltaY: 120, deltaX: 0, bubbles: true });
+    check(await viewer.locator('.snap-viewer-caption').innerText() !== 'other-native', 'Scrolling the media stage advances one snap');
+    await viewer.getByRole('button', { name: 'Previous snap', exact: true }).click();
+    await settleCube();
+    await viewer.locator('.snap-viewer-details').dispatchEvent('wheel', { deltaY: 120, bubbles: true });
+    check(await viewer.locator('.snap-viewer-caption').innerText() === 'other-native', 'Scrolling profile details does not change the snap');
+    if (width < 600) {
+      await page.waitForTimeout(550);
+      await mediaStage.evaluate(element => {
+        const bounds = element.getBoundingClientRect(), x = bounds.x + bounds.width / 2, y = bounds.y + bounds.height / 2;
+        const touch = clientY => new Touch({ identifier: 1, target: element, clientX: x, clientY });
+        element.dispatchEvent(new TouchEvent('touchstart', { touches: [touch(y + 60)], bubbles: true }));
+        element.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: [touch(y - 60)], bubbles: true }));
+      });
+      check(await viewer.locator('.snap-viewer-caption').innerText() !== 'other-native', 'A vertical swipe advances the full-screen snap on phones');
+      await viewer.getByRole('button', { name: 'Previous snap', exact: true }).click();
+      await settleCube();
+    }
+    const position = viewer.getByRole('slider', { name: 'Snap position', exact: true });
+    const beforePosition = await position.inputValue();
+    await position.focus(); await page.keyboard.press('ArrowRight');
+    check(Number(await position.inputValue()) === Number(beforePosition) + 1, 'The position control supports accessible forward navigation without Next');
+    await page.keyboard.press('ArrowLeft'); await settleCube();
     await viewer.getByRole('button', { name: 'Report this snap', exact: true }).click();
     const report = page.getByRole('dialog', { name: 'Report snap', exact: true }); await report.waitFor();
     check(await page.locator('dialog.snap-viewer').count() === 0, 'Native viewer closes before the report dialog');
@@ -404,12 +450,37 @@ try {
     await openSnap('facebook-fixture');
     viewer = page.locator('dialog.snap-viewer'); await viewer.waitFor();
     check(await viewer.getByRole('button', { name: 'Delete this snap', exact: true }).count() === 0 && await viewer.getByRole('button', { name: 'Report this snap', exact: true }).count() === 0, 'Guest viewer exposes no authenticated content mutations');
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await viewer.getByRole('region', { name: 'Snap media', exact: true }).focus();
+    await page.keyboard.press('ArrowDown');
+    check(await viewer.locator('.snap-viewer-cube-outgoing').count() === 0
+      && await viewer.locator('.snap-viewer-cube').evaluate(element => getComputedStyle(element).animationName === 'none'), 'Reduced-motion users change snaps immediately without a cube animation');
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
     await page.keyboard.press('Escape');
     await page.locator('dialog.snap-viewer').waitFor({ state: 'detached' });
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/snaps-global-${width}.png`) });
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'No page overflow after dialogs, routes or account switching');
+    if (width === 1440) {
+      rows.push(snap('twitch-landscape-fixture', 'twitch', { mediaType: 'video', mediaKind: 'source', mediaUrl: 'https://clips.twitch.tv/AwkwardHelplessSalamanderSwiftRage', thumbnailUrl: photoUrl, sourceUrl: 'https://clips.twitch.tv/AwkwardHelplessSalamanderSwiftRage', author: { id: 'twitch-landscape-author', name: 'Twitch landscape', avatarUrl } }));
+      await page.setViewportSize({ width: 844, height: 390 });
+      await auditNavigate(page, origin + 'global?audit-public=landscape');
+      await openSnap('twitch-landscape-fixture');
+      const landscape = page.locator('dialog.snap-viewer');
+      await landscape.getByRole('button', { name: /play.*twitch/i }).click();
+      const frame = landscape.locator('iframe'); await frame.waitFor();
+      const stage = landscape.locator('.snap-viewer-media');
+      check((await frame.boundingBox()).height >= 300 && await stage.evaluate(element => element.scrollHeight > element.clientHeight), 'The Twitch landscape player keeps its required height and scrolls instead of clipping');
+      await stage.evaluate(element => { element.scrollTop = element.scrollHeight; });
+      const controls = await landscape.locator('.twitch-clip-source').boundingBox(), stageBounds = await stage.boundingBox();
+      check(controls.y + controls.height <= stageBounds.y + stageBounds.height + 2, `Twitch source controls are reachable at the bottom of the short landscape stage: ${JSON.stringify({ controls, stage: stageBounds, scroll: await stage.evaluate(element => ({ top: element.scrollTop, height: element.scrollHeight, client: element.clientHeight })) })}`);
+      const selected = await landscape.locator('.snap-viewer-caption').innerText();
+      await page.waitForTimeout(550);
+      await landscape.locator('.snap-viewer-topbar').dispatchEvent('wheel', { deltaY: 120, deltaX: 0, bubbles: true });
+      check(await landscape.locator('.snap-viewer-caption').innerText() !== selected && await landscape.locator('iframe').count() <= 1, 'The topbar advances an embedded snap while retaining only one live player');
+      await closeViewer();
+    }
     assert.deepEqual(errors, []); checks++;
-    console.log(`PASS: grouped profile circles, wrapping social cards, external-only Home Snaps, UFI/Following posting, scoped refresh/error isolation, source favorites, signed upload, audience, profile/report/delete, expiry and session isolation at ${width}px`);
+    console.log(`PASS: grouped profile circles, horizontal black source boxes, full-screen cube navigation, external-only Home Snaps, UFI/Following posting, scoped refresh/error isolation, source favorites, signed upload, audience, profile/report/delete, expiry and session isolation at ${width}px`);
     await context.close();
   }
   console.log(`PASS: ${checks} Snap browser checks.`);
