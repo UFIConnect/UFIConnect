@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { cloneElement, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import client from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
@@ -6,7 +6,7 @@ import { useToast } from '../contexts/ToastContext';
 import { HeartIcon, postSource } from './PostCardChrome';
 import { originalSourceUrl, sendSourceInteraction, useSourceCapability, useSourceInteractionIdentity } from './ConnectedPostActions';
 
-export default function PostLikes({ post, onPostUpdated }) {
+export default function PostLikes({ post, onPostUpdated, menuItem = false }) {
   const { profile } = useAuth();
   const { showToast } = useToast();
   const discovery = ['restaurants', 'bars'].includes(post.source) || /^osm:(node|way|relation):\d+$/.test(post.id || '');
@@ -64,12 +64,13 @@ export default function PostLikes({ post, onPostUpdated }) {
   }
 
   const countLabel = count === null ? `${label} unavailable` : `${count.toLocaleString()} ${label}`;
-  const contents = <><HeartIcon filled={liked} /><span className="post-chrome-like-count" aria-hidden="true">{count === null ? '—' : count.toLocaleString()} {label}</span></>;
+  const contents = <><HeartIcon filled={liked} /><span className="post-chrome-like-count" aria-hidden="true">{menuItem && `${actionLabel} · `}{count === null ? '—' : count.toLocaleString()} {label}</span></>;
   let control;
   if (!profile?.id) control = <Link className="post-chrome-action" to="/login" aria-label={`Sign in to like, ${countLabel}`} title="Sign in to like" onClick={event => event.stopPropagation()}>{contents}</Link>;
   else if (external && capability?.reconnectRequired) control = <Link className="post-chrome-action" to={`/connected-accounts?connect=${encodeURIComponent(post.source)}`} aria-label={`Reconnect ${provider} to like, ${countLabel}`} title={`Reconnect ${provider} to allow likes and replies`} onClick={event => event.stopPropagation()}>{contents}</Link>;
   else if (external && capability && !capability.like && sourceUrl) control = <a className="post-chrome-action" href={sourceUrl} target="_blank" rel="noopener noreferrer" title={`Open ${provider} to like`} aria-label={`Open ${provider} to like, ${countLabel}`} onClick={event => event.stopPropagation()}>{contents}</a>;
   else if (external && capability && !capability.connected) control = <Link className="post-chrome-action" data-locked="true" to="/connected-accounts?interactions=1" aria-label={`Connect ${provider} to like, ${countLabel}`} title={`Connect ${provider} to like`} onClick={event => event.stopPropagation()}>{contents}</Link>;
   else control = <button type="button" className="post-chrome-action" disabled={!canLike || Boolean(own?.busy)} aria-pressed={liked} aria-label={`${external ? `${actionLabel} on ${provider}` : actionLabel}, ${countLabel}`} title={external ? `${actionLabel} on ${provider}` : actionLabel} onClick={toggle}>{contents}</button>;
+  if (menuItem) return cloneElement(control, { role: 'menuitem', className: `${control.props.className} video-feed-menu-action` });
   return <span className="post-chrome-like post-chrome-like-counted" title={`${provider} ${label}`}>{control}</span>;
 }

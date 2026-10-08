@@ -246,8 +246,8 @@ let youtubeApiPromise = null;
 export function youTubeEmbedUrl(videoId, playerVars = {}) {
   if (!/^[\w-]{11}$/.test(String(videoId || ''))) return '';
   const params = new URLSearchParams({
-    playsinline: '1', rel: '0', ...playerVars,
-    enablejsapi: '1', controls: '1', origin: window.location.origin,
+    playsinline: '1', rel: '0', controls: '1', ...playerVars,
+    enablejsapi: '1', origin: window.location.origin,
   });
   return `https://www.youtube.com/embed/${videoId}?${params}`;
 }
@@ -286,7 +286,7 @@ export function loadYouTubeIframeApi() {
 // browser already supports it (Safari/iOS). Used for Bluesky video — a
 // simple <video src="...m3u8"> only works in Safari; everywhere else needs
 // hls.js to actually decode the stream.
-export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, loop = false, onClick, videoRef: externalRef, onTimeUpdate, onLoadedMetadata, onPlay, onPause, onVolumeChange, onError, style }) {
+export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, loop = false, controls, onClick, videoRef: externalRef, onTimeUpdate, onLoadedMetadata, onPlay, onPause, onVolumeChange, onError, style }) {
   const videoRef = useRef(null);
   // Callback ref so the caller (VideoFeedView's custom pause/seek controls)
   // can drive the underlying <video> element directly — hls.js attaches to
@@ -374,7 +374,7 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
     );
   }
   return (
-    <video ref={setRef} controls={!onClick} autoPlay={autoPlay} muted={muted} loop={loop}
+    <video ref={setRef} controls={controls ?? !onClick} autoPlay={autoPlay} muted={muted} loop={loop}
       playsInline draggable={false} poster={poster} onClick={onClick}
       onTimeUpdate={onTimeUpdate} onLoadedMetadata={onLoadedMetadata} onPlay={onPlay} onPause={onPause} onVolumeChange={onVolumeChange}
       // Catches the Safari-native path (no hls.js involved at all — see the

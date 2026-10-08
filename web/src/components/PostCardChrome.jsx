@@ -299,10 +299,11 @@ export function PostOptionsMenu({ post, items = [], sourceItems, onOpenComments,
         onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); initialFocus.current = event.key === 'ArrowUp' ? 'last' : 'first'; setOpen(true); } }}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" /></svg>
       </button>
-      {open && createPortal(
+      {(open || visible.some(item => item.element)) && createPortal(
         <div ref={menu} id={menuId} className="post-chrome-menu" role="menu" aria-label={`Post options on ${native ? 'UFIConnect' : postSource(post).label}`}
-          style={{ ...position, visibility: position ? undefined : 'hidden' }} onKeyDown={handleMenuKey} onClick={event => event.stopPropagation()}>
+          hidden={!open} style={{ ...position, visibility: position ? undefined : 'hidden' }} onKeyDown={handleMenuKey} onClick={event => event.stopPropagation()}>
           {visible.map(item => {
+            if (item.element) return <span key={item.label} role="none">{item.element}</span>;
             const content = <>{item.busy ? `${item.label}…` : item.label}{item.detail && <small>{item.detail}</small>}</>;
             const props = { role: 'menuitem', className: item.danger ? 'post-chrome-menu-danger' : undefined,
               'aria-label': item.ariaLabel, onClick: event => { event.stopPropagation(); closeMenu(); item.onSelect?.(); } };
