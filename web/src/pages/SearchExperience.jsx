@@ -1,4 +1,5 @@
 import { privateSessionStorage } from '../auth/session';
+import useTabMetrics from '../analytics/useTabMetrics';
 import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
@@ -224,6 +225,7 @@ export default function SearchExperience({ initialTab = null, initialQuery = nul
     query: initialQuery === null ? initialSearchQuery() : String(initialQuery).slice(0, 200),
   }));
   const [activeTab, setActiveTab] = useState(routeSeed.tab);
+  useTabMetrics('search', activeTab);
   const [queries, setQueries] = useState(() => ({
     posts: '', following: '', people: '', groups: '', jobs: '',
     [routeSeed.tab]: routeSeed.query,

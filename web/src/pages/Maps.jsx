@@ -8,6 +8,7 @@ import CityAppGuide from '../components/CityAppGuide';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import PostInlineText from '../components/PostInlineText';
 import PostLinkPreviews from '../components/PostLinkPreviews';
+import useTabMetrics from '../analytics/useTabMetrics';
 import { postTextPreview } from '../../../backend/post-text.mjs';
 import { SOURCE_META } from '../components/sourceMeta';
 import { CITY_SOURCE_PRESETS, CITY_SOURCE_IDS, CITY_ALL_TOPICS, houseTopics } from '../local/citySources';
@@ -52,6 +53,8 @@ export default function Maps() {
   const hasChanges = JSON.stringify(editing) !== JSON.stringify(applied);
   const [active, setActive] = useState(enabled[0] || 'community');
   const [activeSource, setActiveSource] = useState('');
+  useTabMetrics('maps_category', active);
+  useTabMetrics('maps_source', activeSource || 'all');
   const [loadedPosts, setPosts] = useState([]);
   const [loadedScope, setLoadedScope] = useState('');
   const [locationContext, setLocationContext] = useState(null);

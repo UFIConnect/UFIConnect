@@ -1,44 +1,29 @@
 // This module never loads a Google script in the application document. Only
 // fixed page categories cross into a sandbox on a different origin.
 import { isPrivateTelemetryPath, setTelemetryRoute } from './telemetryPrivacy.mjs';
+import categoryCatalog from '../../../shared/analytics-categories.json' with { type: 'json' };
 export const GA_MEASUREMENT_ID = 'G-F68DRQ6CC5';
 export const ANALYTICS_CONSENT_KEY = 'uficonnect.analytics.consent.v1';
 export const ANALYTICS_CLIENT_KEY = 'uficonnect.analytics.client.v1';
 export const ANALYTICS_CLIENT_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
 
-export const PAGE_CATEGORIES = Object.freeze(Object.fromEntries(Object.entries({
-  home: ['/', 'Home'], login: ['/login', 'Sign in'], register: ['/register', 'Create account'],
-  forgot_password: ['/forgot-password', 'Forgot password'], reset_password: ['/reset-password', 'Reset password'],
-  onboarding: ['/onboarding', 'Getting started'], global: ['/global', 'Public feed'], videos: ['/videos', 'Videos'],
-  you: ['/you', 'Your feed'], music: ['/music', 'Music'], groups: ['/groups', 'Groups'], group: ['/groups/details', 'Group'],
-  opportunities: ['/opportunities', 'Opportunities'], opportunity: ['/opportunities/details', 'Opportunity'],
-  resume: ['/resume-builder', 'Resume builder'], cover_letter: ['/resume-builder/cover-letter/preview', 'Cover letter preview'],
-  messages: ['/messages', 'Messages'], conversation: ['/messages/conversation', 'Conversation'],
-  notifications: ['/notifications', 'Notifications'], profile: ['/profile', 'Your profile'],
-  command_center: ['/command-center', 'Command center'], connected_accounts: ['/connected-accounts', 'Connected accounts'],
-  compose: ['/post', 'Create post'], post: ['/p/details', 'Post'], search: ['/search', 'Search'],
-  member: ['/u/member', 'Member profile'], settings: ['/settings', 'Settings'], sources: ['/sources', 'Sources'],
-  privacy: ['/privacy', 'Privacy policy'], terms: ['/terms', 'Terms of service'], child_safety: ['/child-safety', 'Child safety'],
-  app_login: ['/app/login', 'App sign in'], app_register: ['/app/register', 'App create account'],
-  app_onboarding: ['/app/onboarding', 'App getting started'], app_opportunities: ['/app/opportunities', 'App opportunities'],
-  app_groups: ['/app/groups', 'App groups'], app_group: ['/app/group', 'App group'], app_feed: ['/app/feed', 'App feed'],
-  app_messages: ['/app/messages', 'App messages'], app_conversation: ['/app/conversation', 'App conversation'],
-  app_profile: ['/app/profile', 'App profile'], app_connected_accounts: ['/app/connected-accounts', 'App connected accounts'],
-  app_security: ['/app/security', 'App security'], app_privacy: ['/app/privacy', 'App data and privacy'], other: ['/other', 'Other page'],
-}).map(([category, [path, title]]) => [category, Object.freeze({ category, path, title })])));
+export const PAGE_CATEGORIES = Object.freeze(Object.fromEntries(Object.entries(categoryCatalog).map(([category, page]) => [category, Object.freeze(page)])));
 
 const exactPages = new Map(Object.values(PAGE_CATEGORIES).map(page => [page.path, page]));
 const dynamicPages = [
   [/^\/groups\/[^/]+\/?$/, 'group'], [/^\/opportunities\/[^/]+\/?$/, 'opportunity'],
   [/^\/messages\/[^/]+\/?$/, 'conversation'], [/^\/p\/[^/]+\/?$/, 'post'], [/^\/u\/[^/]+\/?$/, 'member'],
+  [/^\/centers\/[^/]+\/?$/, 'workspace_center'],
 ];
 
 export function canonicalPage(value) {
   // Input is only used to select a constant. It is never returned or forwarded.
-  const path = typeof value === 'string' ? value.split(/[?#]/, 1)[0] : '';
+  const rawPath = typeof value === 'string' ? value.split(/[?#]/, 1)[0] : '';
+  const path = rawPath === '/' ? '/' : rawPath.replace(/\/$/, '');
   if (exactPages.has(path)) return exactPages.get(path);
   if (path === '/global-scroll') return PAGE_CATEGORIES.global;
   if (path === '/hq' || path === '/agents') return PAGE_CATEGORIES.command_center;
+  if (path === '/how-office-works') return PAGE_CATEGORIES.how_it_works;
   return PAGE_CATEGORIES[dynamicPages.find(([pattern]) => pattern.test(path))?.[1] || 'other'];
 }
 

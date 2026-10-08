@@ -5,6 +5,7 @@ import client from '../api/client';
 import { useToast } from '../contexts/ToastContext';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import ConnectedInboxSources, { inboxExternalUrl, inboxSourceName } from './ConnectedInboxSources';
+import useTabMetrics from '../analytics/useTabMetrics';
 
 const actions = { like: 'liked your post', comment: 'commented on your post', new_follower: 'started following you', connection_request: 'wants to connect' };
 const readFailureMessage = 'Could not save read status. Your unread updates are still available.';
@@ -19,6 +20,8 @@ export default function NotificationInbox({ compact = false, onNavigate }) {
   const [sources, setSources] = useState([]);
   const [filter, setFilter] = useState('All');
   const [sourceFilter, setSourceFilter] = useState('all');
+  useTabMetrics('notification_filter', filter);
+  useTabMetrics('notification_source', sourceFilter);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [sourceError, setSourceError] = useState('');

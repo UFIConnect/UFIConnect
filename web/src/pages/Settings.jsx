@@ -1,5 +1,6 @@
 import { PASSWORD_GUIDANCE, validateNewPassword } from '../auth/passwordPolicy';
 import PasswordInput from '../components/PasswordInput';
+import useTabMetrics from '../analytics/useTabMetrics';
 import { privateSessionStorage } from '../auth/session';
 ﻿import { useState, useEffect, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -201,7 +202,12 @@ export default function Settings() {
   const { showToast } = useToast();
   const role = profile?.preferences?.role || '';
   const meta = ROLE_META[role] || DEFAULT_META;
-  const [activeTab, setActiveTab] = useState('account');
+  const [activeTab, setActiveTab] = useState(() => {
+    const requested = new URLSearchParams(window.location.search).get('tab');
+    return ['account', 'security', 'privacy', 'notifications', 'preferences', 'data'].includes(requested)
+      && !(profile?.plan === 'business' && requested === 'preferences') ? requested : 'account';
+  });
+  useTabMetrics('settings', activeTab);
   const [deleteModal, setDeleteModal] = useState(false);
   const [exporting, setExporting] = useState(false);
 

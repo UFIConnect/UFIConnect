@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import useTabMetrics from '../analytics/useTabMetrics';
 import { Helmet } from 'react-helmet-async';
 import { Link, useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
@@ -607,6 +608,7 @@ export default function ResumeBuilder() {
     return ['preparation', 'resume', 'cover-letter', 'outreach', 'jobs'].includes(requested) ? requested : 'preparation';
   });
   const [writingPreviewType, setWritingPreviewType] = useState(null);
+  useTabMetrics('resume', activeBuilderTab);
   const [writingExporting, setWritingExporting] = useState(null);
   const [trackedJobs, setTrackedJobs] = useState([]);
   const [liveJobs, setLiveJobs] = useState([]);

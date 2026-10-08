@@ -8,6 +8,7 @@ import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { normalizeSourceFavorites } from './sourceFavorites';
 import { DirectoryControls, AccountSiteLink } from './DirectoryControls';
 import { SOURCE_CATEGORIES, ACCOUNT_STATUSES, sourceSections, accountSections } from './sourceDirectory';
+import useTabMetrics from '../analytics/useTabMetrics';
 
 const LINK_FIELDS = [
   { key: 'linkedin', label: 'LinkedIn', placeholder: 'https://linkedin.com/in/yourname' },
@@ -98,6 +99,9 @@ export default function HomeFeedTools({
   }, [profile?.roleSettings?.disabledSources]);
 
   const openPanel = activePanel === undefined ? uncontrolledOpenPanel : activePanel;
+  useTabMetrics('home_panel', openPanel);
+  useTabMetrics('home_directory', sourceCategory, openPanel === 'sources');
+  useTabMetrics('home_accounts_status', accountFilter, openPanel === 'accounts');
 
   useEffect(() => {
     if (openPanel !== 'files' || attachmentsLoading || attachments.length) return;

@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import useTabMetrics from '../analytics/useTabMetrics';
 import Layout from '../components/Layout';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
@@ -60,6 +61,8 @@ export default function ConnectedAccounts() {
   const [disconnecting, setDisconnecting] = useState(null);
   const [accountFilter, setAccountFilter] = useState('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
+  useTabMetrics('connected_accounts_category', categoryFilter);
+  useTabMetrics('connected_accounts_status', accountFilter);
   // null = modal closed; '' or partial text = open, mid-typing. Bluesky is
   // the one platform with no fixed authorization URL (AT Protocol is
   // federated — the handle is how we find which server to route to), so it

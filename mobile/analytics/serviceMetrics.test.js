@@ -4,6 +4,21 @@ const { createServiceMetrics, supportsErrorCollection, installErrorCollection } 
 const { parsePreferences, feedSections, DEFAULT_PREFERENCES } = require('../context/dataPreferences');
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
+test('profile tabs count actual changes once and never leak names or collect in VPN', async () => {
+  const requests = [];
+  const metrics = createServiceMetrics({ apiBase: 'https://api.example.test', fetcher: (_, options) => requests.push(JSON.parse(options.body)) });
+  metrics.trackScreen('ProfileMain', 'private-profile-key');
+  metrics.trackTab('ProfileOverview'); metrics.trackTab('ProfileOverview');
+  metrics.trackTab('ProfileSkills'); metrics.trackTab('private-tab'); metrics.trackTab('ProfileGroups');
+  await settle();
+  assert.deepEqual(requests, [{ category: 'app_profile' }, { category: 'app_profile_overview' }, { category: 'app_profile_skills' }, { category: 'app_profile_groups' }]);
+  metrics.trackScreen('VPN', 'private-key'); metrics.trackTab('ProfileOverview');
+  await settle(); assert.equal(requests.length, 4);
+  metrics.trackScreen('ProfileMain', 'private-profile-key'); metrics.trackTab('ProfileGroups');
+  await settle(); assert.deepEqual(requests.slice(-2), [{ category: 'app_profile' }, { category: 'app_profile_groups' }]);
+  metrics.dispose();
+});
+
 test('preferences default safely and ignore invalid or unrelated stored fields', () => {
   for (const raw of [null, 'null', '[]', '{', '42', '{"dataSaver":"true","performanceInsights":1}']) {
     assert.deepEqual(parsePreferences(raw), DEFAULT_PREFERENCES);

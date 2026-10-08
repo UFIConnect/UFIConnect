@@ -18,6 +18,7 @@ import { SavePostButton } from './SaveButtons';
 import PostLikes from './PostLikes';
 import PostInlineText from './PostInlineText';
 import PostLinkPreviews from './PostLinkPreviews';
+import useTabMetrics, { useSelectedTabMetrics } from '../analytics/useTabMetrics';
 import { PostOptionsMenu } from './PostCardChrome';
 import { ChevronDown, Search, SlidersHorizontal, RotateCw, Play, Pause, MessageCircle, ExternalLink } from 'lucide-react';
 import { videoDurationSeconds, isShortFeedVideo, videoSourceKey, safeMediaUrl, fitVideoFrame } from '../utils/videoFeedPolicy.mjs';
@@ -898,6 +899,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   // (gated platforms only ever appear in Following, see FEED_SOCIAL_TABS
   // backend-side), so switching mode also resets the source filter.
   const [viewMode, setViewMode] = useState('feed');
+  useTabMetrics(music ? 'music_mode' : 'video_mode', viewMode);
   // Array, not a single value — selecting more than one platform at once is
   // exactly what makes the server's true-mix rebalancing (see the
   // maxSharePct comment in handleVideoFeedRequest) actually apply here; a
@@ -929,6 +931,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   // instead of a single sheet trying to do three different jobs at once.
   const [searchOpen, setSearchOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
+  useSelectedTabMetrics(music ? 'music_source' : 'video_source', sourceFilter, filterOpen || sourceFilter.length > 0);
   const controlsVisible = true;
   // Mirrors state into refs so loadPage (called from effects/callbacks that
   // don't want to be redeclared on every mode/filter change) always reads

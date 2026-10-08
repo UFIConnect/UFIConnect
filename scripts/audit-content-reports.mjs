@@ -11,14 +11,16 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
 const { PGlite } = require('../backend/node_modules/@electric-sql/pglite');
 const reportsModule = require('../backend/content-reports');
+const { REPORT_TARGET_TEST_SCHEMA } = require('../backend/test-support/report-db');
 const { createAppHarness, member } = require('../backend/test-support/app-harness');
 const pg = new PGlite();
 await pg.exec(`CREATE TABLE reports(id TEXT PRIMARY KEY,reporter_id TEXT NOT NULL,target_type TEXT NOT NULL,target_id TEXT NOT NULL,
   reason TEXT NOT NULL,details TEXT,status TEXT NOT NULL DEFAULT 'open',created_at TIMESTAMPTZ DEFAULT NOW(),resolved_at TIMESTAMPTZ,resolved_by TEXT);
   CREATE TABLE creator_copyright_reports(id UUID PRIMARY KEY,status TEXT NOT NULL);`);
+await pg.exec(REPORT_TARGET_TEST_SCHEMA);
 for (const sql of reportsModule.REPORT_SCHEMA) await pg.exec(sql);
 let unavailable = false;
-const reportDb = { isConnected: () => !unavailable, query: (...args) => pg.query(...args) };
+const reportDb = { isConnected: () => !unavailable, query: (...args) => pg.query(...args), withClient: fn => fn(pg) };
 const token = 'synthetic-office-reports-test';
 const app = await createAppHarness({ env: { OFFICE_TOKEN: token }, modules: {
   './content-reports': { ...reportsModule, registerContentReportRoutes: (app, options) => reportsModule.registerContentReportRoutes(app, { ...options, db: reportDb, notifyChildSafety: async () => {} }) },
@@ -37,7 +39,7 @@ try {
   const web = servers[0].resolvedUrls.local[0], office = servers[1].resolvedUrls.local[0];
   browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined, headless: true });
   for (const width of [1440, 390]) {
-    await pg.exec('TRUNCATE reports CASCADE');
+    await pg.exec('TRUNCATE reports CASCADE; TRUNCATE report_content_suppressions,feed_posts_cache,feed_posts_staging,feed_posts_archive');
     const context = await browser.newContext({ viewport: { width, height: 950 } });
     const page = await context.newPage();
     currentPage = page;
@@ -46,6 +48,7 @@ try {
     page.setDefaultTimeout(15000);
     const post = { id: 'report-example', source: 'github', isExternal: true, title: 'A public post', content: 'A reportable post.',
       author: { name: 'Source author' }, sourceUrl: 'https://github.com/example/project', createdAt: new Date().toISOString(), likesCount: 4, commentsCount: 0 };
+    await pg.query('INSERT INTO feed_posts_cache(id,source,source_url,title,content,post_created_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(id) DO NOTHING',[post.id,post.source,post.sourceUrl,post.title,post.content,post.createdAt]);
     await context.route('**/*', route => {
       const url = new URL(route.request().url());
       if (!['127.0.0.1', 'localhost'].includes(url.hostname)) return route.abort();
@@ -105,10 +108,44 @@ try {
     await page.getByRole('button', { name: /Copyright \/ intellectual property/ }).click();
     await page.getByText('open → resolved', { exact: true }).waitFor();
     assert.equal((await pg.query('SELECT * FROM report_review_events')).rows.length, 1);
+    for (const [title,linkName] of [['Report on source','Open GitHub to report'],['Contact support','Open support email draft']]) {
+      await page.getByRole('button',{name:title,exact:true}).click();
+      const confirm=page.getByRole('dialog',{name:title,exact:true});
+      await confirm.getByLabel('Action note',{exact:true}).fill(`Verified target and prepared ${title.toLowerCase()} handoff.`);
+      await confirm.getByRole('button',{name:'Prepare handoff',exact:true}).click();
+      await page.getByRole('link',{name:linkName,exact:true}).waitFor();
+      assert.equal((await pg.query('SELECT * FROM feed_posts_cache')).rows.length,1,'Preparing a handoff does not remove content');
+    }
+    await page.getByRole('button',{name:'Remove from UFIConnect',exact:true}).click();
+    const removal=page.getByRole('dialog',{name:'Remove from UFIConnect',exact:true});
+    await removal.getByLabel('Action note',{exact:true}).fill('Verified stored target and authorized removal from UFIConnect.');
+    await removal.getByRole('button',{name:'Confirm removal',exact:true}).click();
+    await page.getByText('Content removed from UFIConnect.',{exact:true}).waitFor();
+    await page.getByRole('button',{name:/Copyright \/ intellectual property/}).click();
+    await page.getByText('This content has already been removed from UFIConnect.',{exact:true}).waitFor();
+    assert.equal((await pg.query('SELECT * FROM feed_posts_cache')).rows.length,0);
+    assert.equal((await pg.query('SELECT * FROM report_content_suppressions')).rows.length,1);
+    assert.equal((await pg.query('SELECT * FROM report_review_events')).rows.length,4);
+    assert.equal(await page.getByRole('button',{name:'Remove from UFIConnect',exact:true}).isDisabled(),true);
+    const accountId='a0000000-0000-4000-8000-000000000001';
+    await pg.query("INSERT INTO users(id,name,email) VALUES($1,'Reported fixture account','reported@example.invalid') ON CONFLICT(id) DO NOTHING",[accountId]);
+    const reportService=reportsModule.createContentReports({db:reportDb});
+    await reportService.submit('reports-member',{targetType:'user',targetId:accountId,reason:'harassment'});
+    await reportService.submit('reports-member',{targetType:'user',targetId:'missing-account',reason:'harassment'});
+    await page.getByLabel('Queue',{exact:true}).selectOption('open');
+    await page.locator('.office-report-list button').filter({hasText:`user: ${accountId}`}).click();
+    await page.getByRole('link',{name:'Manage reported account',exact:true}).waitFor();
+    assert.equal(await page.getByRole('link',{name:'Manage reported account',exact:true}).getAttribute('href'),`?account=${accountId}#analytics`);
+    await page.locator('.office-report-list button').filter({hasText:'user: missing-account'}).click();
+    await page.getByText('The reported account could not be verified in stored accounts.',{exact:true}).waitFor();
+    assert.equal(await page.getByRole('link',{name:'Manage reported account',exact:true}).count(),0);
+    await page.getByLabel('Queue',{exact:true}).selectOption('resolved');
+    await page.getByRole('button',{name:/Copyright \/ intellectual property/}).click();
+    await page.getByText('This content has already been removed from UFIConnect.',{exact:true}).waitFor();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false);
     await page.screenshot({ path: path.join(output, `office-reports-${width}.png`), fullPage: true });
     assert.deepEqual(errors, []);
-    console.log(`PASS ${width}px: guest report links, member receipt, storage outage, feed/video controls, protected Office review and durable history`);
+    console.log(`PASS ${width}px: guest report links, member receipt, storage outage, feed/video controls, protected Office review, audited removal and manual source/support handoffs`);
     await context.close();
   }
 } catch (error) {

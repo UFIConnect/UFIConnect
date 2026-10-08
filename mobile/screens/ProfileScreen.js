@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { useIsFocused } from '@react-navigation/native';
+import { useServiceMetrics } from '../analytics/ServiceMetricsProvider';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
   Alert, ActivityIndicator, TextInput, Platform,
@@ -251,6 +253,9 @@ function GroupsTab({ profile }) {
 export default function ProfileScreen({ navigation }) {
   const { token, profile, logout, updateProfileLocally } = useAuth();
   const [activeTab, setActiveTab] = useState('Overview');
+  const metrics = useServiceMetrics();
+  const focused = useIsFocused();
+  useEffect(() => { if (focused) metrics?.trackTab(`Profile${activeTab}`); }, [activeTab, focused]);
   const [loggingOut, setLoggingOut] = useState(false);
 
   function handleLogout() {

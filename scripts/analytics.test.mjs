@@ -7,20 +7,50 @@ import { canonicalPage, createAnalyticsController, PAGE_CATEGORIES, ANALYTICS_CO
   ANALYTICS_CLIENT_KEY, ANALYTICS_CLIENT_LIFETIME_MS } from '../web/src/analytics/googleAnalytics.mjs';
 import { analyticsBridgeHtml } from '../web/analyticsBridge.mjs';
 import { isPrivateTelemetryPath, setTelemetryRoute, subscribeTelemetryPrivacy, telemetrySuppressed } from '../web/src/analytics/telemetryPrivacy.mjs';
+import { HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS, CONNECTED_SOCIAL_PLATFORMS } from '../web/src/components/sourceMeta.js';
 
 const require = createRequire(import.meta.url);
 const { PAGE_CATEGORIES: BACKEND_CATEGORIES, createAggregateAnalytics } = require('../backend/aggregate-analytics');
 const { SCREEN_PATHS } = require('../mobile/analytics/screenPolicy');
 const { createServiceMetrics } = require('../mobile/analytics/serviceMetrics');
 
+test('every source selector uses registered fixed categories and private data cannot become a category', () => {
+  for (const value of ['github', 'gitlab', 'youtube', 'reddit', 'twitch', 'instagram', 'tiktok', 'threads', 'bluesky', 'mastodon']) {
+    assert.equal(PAGE_CATEGORIES[`command_center_yourfeed_source_${value}`]?.viewType, 'tab');
+  }
+  const selections = { home_source: HOME_FEED_SOURCE_IDS, following_source: FOLLOWING_FEED_SOURCE_IDS,
+    video_source: [...HOME_FEED_SOURCE_IDS, 'uficonnect', ...CONNECTED_SOCIAL_PLATFORMS],
+    music_source: [...HOME_FEED_SOURCE_IDS, 'uficonnect', ...CONNECTED_SOCIAL_PLATFORMS],
+    notification_source: ['ufi', ...CONNECTED_SOCIAL_PLATFORMS], message_source: ['ufi', ...CONNECTED_SOCIAL_PLATFORMS] };
+  for (const [group, values] of Object.entries(selections)) {
+    for (const value of ['all', ...values]) assert.equal(PAGE_CATEGORIES[`${group}_${value}`]?.viewType, 'tab', `${group}_${value}`);
+    for (const value of ['private@example.invalid', 'https://private.mastodon.invalid', 'private-account-id']) assert.equal(PAGE_CATEGORIES[`${group}_${value}`], undefined);
+  }
+  for (const category of ['video_mode_following', 'music_mode_feed', 'notification_filter_unread', 'notification_filter_requests', 'connected_accounts_category_social', 'home_panel_accounts', 'workspace_writing']) assert.ok(PAGE_CATEGORIES[category], category);
+});
+
+test('all rendered web routes resolve to a fixed category or an explicit private exclusion', async () => {
+  const app = await fs.readFile(new URL('../web/src/App.jsx', import.meta.url), 'utf8');
+  for (const [, route] of app.matchAll(/<Route\s+path="([^"]+)"/g)) {
+    if (route === '*') continue;
+    const example = route.replace(':kind', route.startsWith('/saved/') ? 'posts' : 'writing').replace(/:\w+/g, 'SYNTHETIC_PRIVATE_ID');
+    if (isPrivateTelemetryPath(example)) continue;
+    const result = canonicalPage(`${example}?secret=SYNTHETIC_PRIVATE_VALUE#SYNTHETIC_PRIVATE_HASH`);
+    assert.notEqual(result.category, 'other', route);
+    assert.ok(!JSON.stringify(result).includes('SYNTHETIC_PRIVATE'));
+    assert.equal(canonicalPage(example.endsWith('/') ? example : `${example}/`).category, result.category);
+  }
+  for (const path of ['/auth/social/mastodon/callback?code=private', '/oauth/callback', '/vault/device']) assert.equal(isPrivateTelemetryPath(path), true);
+});
+
 test('every web and native screen category is accepted by the required aggregate endpoint contract', async () => {
   assert.deepEqual([...BACKEND_CATEGORIES].sort(), Object.keys(PAGE_CATEGORIES).sort());
-  const backend = createAggregateAnalytics({ db: { isConnected: () => true }, schedule() {} });
+  const backend = createAggregateAnalytics({ db: { isConnected: () => true, query: async () => ({ rows: [] }) }, schedule() {} });
   const categories = [];
   for (const category of Object.keys(PAGE_CATEGORIES)) {
     const response = { statusCode: 200, set() { return this; }, status(code) { this.statusCode = code; return this; },
       json() { return this; }, end() { return this; } };
-    backend.pageview({ body: { category }, originalUrl: '/analytics/pageview' }, response);
+    await backend.pageview({ body: { category }, originalUrl: '/analytics/pageview' }, response);
     assert.equal(response.statusCode, 204, `Backend must accept the fixed category ${category}`);
   }
   const mobile = createServiceMetrics({ apiBase: 'https://api.example.invalid', fetcher(url, options) {

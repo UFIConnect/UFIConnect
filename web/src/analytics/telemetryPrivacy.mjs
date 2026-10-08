@@ -7,7 +7,7 @@ export function isPrivateTelemetryPath(value) {
   if (typeof value !== 'string') return false;
   let path = value.split(/[?#]/, 1)[0];
   try { path = decodeURIComponent(path); } catch { /* Keep malformed input literal. */ }
-  return /^(?:\/UFIConnect)?\/vault(?:\/|$)/i.test(path);
+  return /^(?:\/UFIConnect)?\/(?:vault|auth|oauth)(?:\/|$)/i.test(path);
 }
 
 export function telemetrySuppressed(path) {

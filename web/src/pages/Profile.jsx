@@ -1,4 +1,5 @@
 import ProfilePhoto from '../components/ProfilePhoto';
+import useTabMetrics from '../analytics/useTabMetrics';
 ﻿import { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -78,6 +79,7 @@ export default function Profile() {
     return ['posts', 'about', 'more'].includes(requested) ? requested : 'posts';
   });
   // Follow stats
+  useTabMetrics('profile', activeProfileTab);
   const [followStats, setFollowStats] = useState({ followersCount: 0, followingCount: 0 });
   const [followModal, setFollowModal] = useState(null); // 'followers' | 'following' | null
   // Avatar / cover photo upload

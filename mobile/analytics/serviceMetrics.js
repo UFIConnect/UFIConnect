@@ -1,8 +1,8 @@
-const { screenPath } = require('./screenPolicy');
+const { screenPath, TAB_CATEGORIES, EXCLUDED_SCREENS } = require('./screenPolicy');
 const ERROR_CODES = new Set(['script_error', 'unhandled_rejection', 'render_error', 'request_failed']);
 
 function createServiceMetrics({ apiBase, fetcher, now = Date.now }) {
-  let currentCategory = null, lastVisit = null, enabled = false, disposed = false;
+  let currentCategory = null, lastVisit = null, lastTab = null, enabled = false, disposed = false;
   const inFlight = new Map(), lastErrors = new Map();
   function send(path, payload, optional = false) {
     if (disposed) return;
@@ -19,12 +19,24 @@ function createServiceMetrics({ apiBase, fetcher, now = Date.now }) {
   return {
     trackScreen(name, navigationKey) {
       const pathname = screenPath(name);
-      if (!pathname) { currentCategory = null; return; }
+      if (!pathname) {
+        currentCategory = null; lastVisit = null; lastTab = null;
+        if (EXCLUDED_SCREENS.includes(name)) for (const controller of inFlight.keys()) controller.abort();
+        return;
+      }
       currentCategory = 'app_' + pathname.slice('/app/'.length).replaceAll('-', '_');
       const visit = `${currentCategory}:${typeof navigationKey === 'string' ? navigationKey : ''}`;
       if (visit === lastVisit) return;
       lastVisit = visit;
+      lastTab = null;
       send('/analytics/pageview', { category: currentCategory });
+    },
+    trackTab(name) {
+      if (currentCategory !== 'app_profile' || !Object.hasOwn(TAB_CATEGORIES, name)) return;
+      const category = TAB_CATEGORIES[name];
+      if (lastTab === category) return;
+      lastTab = category;
+      send('/analytics/pageview', { category });
     },
     setPerformanceEnabled(value) {
       enabled = value === true;

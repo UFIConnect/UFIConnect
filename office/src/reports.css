@@ -19,4 +19,12 @@
 .office-report-text { white-space: pre-wrap; }
 .office-report-detail textarea { display: block; width: 100%; box-sizing: border-box; color: inherit; background: #101a2c; border: 1px solid #475569; border-radius: 8px; padding: 10px; margin-top: 10px; font: inherit; resize: vertical; }
 .office-report-error { color: #fda4af; }
+.office-report-notice { color: #a7f3d0; }
+.office-report-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
+.office-report-account { display: inline-block; border: 1px solid #334155; border-radius: 8px; padding: 10px 14px; background: #172033; font: inherit; }
+.office-reports .office-report-remove { border-color: #b65b6a; color: #fecdd3; }
+.office-report-handoff { padding: 14px; margin: 16px 0; border: 1px solid #375a7f; border-radius: 8px; background: #15263d; }
+.office-report-dialog-backdrop { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(0, 0, 0, .75); }
+.office-report-dialog { box-sizing: border-box; width: min(100%, 600px); max-height: 90dvh; overflow: auto; padding: 24px; border: 1px solid #475569; border-radius: 12px; background: #0d1320; }
+.office-report-dialog textarea { display: block; box-sizing: border-box; width: 100%; padding: 12px; margin-top: 10px; border: 1px solid #475569; border-radius: 8px; background: #101a2c; color: inherit; font: inherit; resize: vertical; }
 @media (max-width: 800px) { .office-report-layout { grid-template-columns: 1fr; } .office-report-detail { padding: 16px; } }

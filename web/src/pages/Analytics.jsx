@@ -6,6 +6,7 @@ import Layout from '../components/Layout';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import client from '../api/client';
 import './Analytics.css';
+import useTabMetrics from '../analytics/useTabMetrics';
 
 const number = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
 const metric = value => typeof value === 'number' && Number.isFinite(value) ? number.format(value) : 'Unavailable';
@@ -72,6 +73,7 @@ function SourceCard({ source }) {
 
 export default function Analytics() {
   const [section, setSection] = useState('overview');
+  useTabMetrics('analytics', section);
   const tabs = useRef(null);
   const [days, setDays] = useState(30);
   const [sourceFilter, setSourceFilter] = useState('all');

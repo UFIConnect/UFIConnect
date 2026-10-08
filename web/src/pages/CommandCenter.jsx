@@ -15,6 +15,7 @@ import { useSavedItems } from '../contexts/SavedItemsContext';
 import GeneratedContentHistory from '../components/GeneratedContentHistory';
 import PostInlineText from '../components/PostInlineText';
 import PostLinkPreviews from '../components/PostLinkPreviews';
+import useTabMetrics from '../analytics/useTabMetrics';
 import { safePostLink } from '../../../backend/post-links.mjs';
 
 import VideoDurationControl, { VIDEO_DURATION_LIMIT } from '../components/VideoDurationControl';
@@ -630,6 +631,7 @@ function YourFeedSection() {
   const connectionState = useRef({ connected: {}, catalog: {} });
   const [connectedError, setConnectedError] = useState('');
   const [activePlatform, setActivePlatform] = useState(null);
+  useTabMetrics('command_center_yourfeed_source', activePlatform);
   const [posts, setPosts] = useState(null);
   const [loadingPosts, setLoadingPosts] = useState(false);
   const [postsError, setPostsError] = useState('');
@@ -817,6 +819,7 @@ function MemberAccountsSection() {
   const [connecting, setConnecting] = useState(null);
   const [disconnecting, setDisconnecting] = useState(null);
   const [accountFilter, setAccountFilter] = useState('all');
+  useTabMetrics('command_center_accounts_status', accountFilter);
   const isBusinessMembership = profile?.plan === 'business';
 
   const loadAccounts = useCallback(async () => {
@@ -998,6 +1001,7 @@ function JobTrackerSection() {
   const [savingId, setSavingId] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [view, setView] = useState('live');
+  useTabMetrics('command_center_jobs', view);
   const [recommendationBasis, setRecommendationBasis] = useState('recent listings');
 
   // bust=1 mirrors Opportunities.jsx's own manual-refresh param — without
@@ -1355,6 +1359,7 @@ function CrossPostSection() {
   const [mediaError, setMediaError] = useState('');
   const [syncing, setSyncing] = useState(false);
   const [destinationCategory, setDestinationCategory] = useState('all');
+  useTabMetrics('crosspost_category', destinationCategory);
   const [checkingConnections, setCheckingConnections] = useState(false);
   const catalogRequest = useRef(0);
   const catalogController = useRef(null);
@@ -1900,6 +1905,7 @@ export default function CommandCenter() {
   const location = useLocation();
   const navigate = useNavigate();
   const section = commandCenterSection(location.search);
+  useTabMetrics('command_center', section);
   const [pricingOpen, setPricingOpen] = useState(false);
   const [upgrading, setUpgrading] = useState(null);
   const [membershipChecking, setMembershipChecking] = useState(true);

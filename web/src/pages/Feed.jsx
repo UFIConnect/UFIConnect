@@ -4,6 +4,7 @@ import { isCareerPost } from '../utils/jobSummary.mjs';
 import ArticleIllustration from '../components/ArticleIllustration';
 import PostInlineText from '../components/PostInlineText';
 import PostLinkPreviews from '../components/PostLinkPreviews';
+import useTabMetrics, { useSelectedTabMetrics } from '../analytics/useTabMetrics';
 import { postTextPreview } from '../../../backend/post-text.mjs';
 import PostImage from '../components/PostImage';
 import SourceMediaFallback from '../components/SourceMediaFallback';
@@ -2059,6 +2060,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const [filters, setFilters] = useState(initialFilters);
   const [activeTabs,    setActiveTabs]    = useState(initialViewMode === 'countries' ? [] : _saved?.activeTabs || []); // [] = All
   const [viewMode,      setViewMode]      = useState(initialViewMode);
+  useTabMetrics('home', viewMode);
+  useSelectedTabMetrics(viewMode === 'following' ? 'following_source' : 'home_source', activeTabs, ['feed', 'following'].includes(viewMode));
   const [locationFilters, setLocationFilters] = useState(() => savedFeedLocation(profile?.roleSettings, initialViewMode));
   const [locationSaving, setLocationSaving] = useState(false);
   const locationSavingRef = useRef(false);

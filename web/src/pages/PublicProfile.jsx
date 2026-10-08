@@ -1,4 +1,5 @@
 import ProfilePhoto from '../components/ProfilePhoto';
+import useTabMetrics from '../analytics/useTabMetrics';
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -90,6 +91,7 @@ export default function PublicProfile() {
   const [postsLoadingMore, setPostsLoadingMore] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('posts');
+  useTabMetrics('member', activeTab);
   const [reportOpen, setReportOpen] = useState(false);
   const moreBtnRef  = useRef(null);
   const moreMenuRef = useRef(null);

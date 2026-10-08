@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import useTabMetrics from '../analytics/useTabMetrics';
 import Layout from '../components/Layout';
 import client from '../api/client';
 import { ArrowLeft, ExternalLink, RefreshCw } from 'lucide-react';
@@ -146,6 +147,7 @@ export default function Messages({ embedded = false }) {
   const [convs, setConvs] = useState([]);
   const [sources, setSources] = useState([]);
   const [filter, setFilter] = useState('all');
+  useTabMetrics('message_source', filter);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [sourceError, setSourceError] = useState('');

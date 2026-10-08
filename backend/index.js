@@ -13,9 +13,10 @@ const bcrypt = require('bcryptjs');
 const { SESSION_TTL_SECONDS, resolveJwtSecret, passwordPolicyError, signSecurityToken, verifySecurityToken, publicRoleSettings } = require('./auth-security');
 const { createTokenVault, migrateSocialCredentials } = require('./token-vault');
 const { isSourceDisplayAllowed } = require('./source-policy');
-const { REPORT_SCHEMA, COPYRIGHT_REPORT_BRIDGE_SCHEMA, registerContentReportRoutes } = require('./content-reports');
+const { REPORT_SCHEMA, COPYRIGHT_REPORT_BRIDGE_SCHEMA, registerContentReportRoutes, reportSuppressionPredicate, createReportVisibilityFilter } = require('./content-reports');
 const { createAnalyticsBridgeHandler } = require('./analytics-bridge');
-const { ANALYTICS_SCHEMA, createAggregateAnalytics } = require('./aggregate-analytics');
+const { ANALYTICS_SCHEMA, ANALYTICS_MIGRATIONS, createAggregateAnalytics } = require('./aggregate-analytics');
+const { OFFICE_MEMBERS_SCHEMA, registerOfficeMemberRoutes } = require('./office-members');
 const { CREATOR_ANALYTICS_SCHEMA, createCreatorAnalytics, registerCreatorAnalyticsRoutes } = require('./creator-analytics');
 const { createUfiVault, registerUfiVaultRoutes, UFI_VAULT_SCHEMA } = require('./ufi-vault');
 const { createOfficeAgentChat, sanitizeSnapshot: sanitizeAgentSnapshot } = require('./office-agent-chat');
@@ -1670,6 +1671,7 @@ function getMailTransport() {
       host: process.env.SMTP_HOST,
       port,
       secure: port === 465,
+      connectionTimeout: 10000, greetingTimeout: 10000, socketTimeout: 15000,
       auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
     });
   }
@@ -6720,12 +6722,15 @@ const SSE_BROADCAST_POST_MAX_PER_CALL = 100;
 let sseBatchBuffer = [];
 let sseBatchTimer  = null;
 
-function flushSSEBatch() {
+async function flushSSEBatch() {
   sseBatchTimer = null;
   if (!sseBatchBuffer.length || !sseClients.size) { sseBatchBuffer = []; return; }
   // Send in chunks of SSE_BATCH_MAX so no single message is too large
   while (sseBatchBuffer.length > 0) {
-    const posts = sseBatchBuffer.splice(0, SSE_BATCH_MAX);
+    let posts;
+    try { posts = await visibleReportContent(sseBatchBuffer.splice(0, SSE_BATCH_MAX)); }
+    catch { continue; } // Moderation storage failures never publish unchecked content.
+    if (!posts.length) continue;
     const msg = `data: ${JSON.stringify({ posts })}\n\n`;
     for (const [id, res] of sseClients) {
       try { res.write(msg); }
@@ -8365,6 +8370,12 @@ function findPostById(postId) {
 // fallback GET /feed/:postId already has, for callers that specifically
 // need sourceUrl and can afford the extra round trip.
 async function findPostByIdWithDbFallback(postId) {
+  const post = await findStoredPostByIdWithDbFallback(postId);
+  if (!post) return null;
+  return (await visibleReportContent([post]))[0] || null;
+}
+
+async function findStoredPostByIdWithDbFallback(postId) {
   const memPost = findPostById(postId);
   if (memPost?.sourceUrl && memPost.title) return memPost;
   if (db.isConnected()) {
@@ -16169,6 +16180,14 @@ function boundedLimit(raw, fallback = 50, max = 100) {
 }
 
 async function getCommunityPostById(postId) {
+  const post = await getStoredCommunityPostById(postId);
+  if (!post) return null;
+  const visible = (await visibleReportContent([post]))[0] || null;
+  if (visible) await hydrateCachedMemberAuthors([visible.authorId]);
+  return visible;
+}
+
+async function getStoredCommunityPostById(postId) {
   let post = posts.find((p) => p.id === postId && isInteractiveCommunitySource(p.source));
   if (db.isConnected()) {
     try {
@@ -16256,10 +16275,12 @@ async function getCommentsForPost(postId, limit = 50, offset = 0) {
       const screened = screenStoredPostComment(comment);
       return screened.allowed ? [screened.comment] : [];
     });
+  const visible = await visibleReportContent(all, 'comment');
+  await hydrateCachedMemberAuthors(visible.slice(offset, offset + limit).map(comment => comment.authorId));
   return {
-    comments: all.slice(offset, offset + limit).map(serializePostComment),
-    hasMore: offset + limit < all.length,
-    total: all.length,
+    comments: visible.slice(offset, offset + limit).map(serializePostComment),
+    hasMore: offset + limit < visible.length,
+    total: visible.length,
   };
 }
 
@@ -17588,6 +17609,8 @@ async function migrateDB() {
     await db.query(`CREATE INDEX IF NOT EXISTS wor_created_idx ON website_optimization_runs(created_at DESC)`);
 
     await db.query(ANALYTICS_SCHEMA);
+    for (const statement of ANALYTICS_MIGRATIONS) await db.query(statement);
+    for (const statement of OFFICE_MEMBERS_SCHEMA) await db.query(statement);
     for (const statement of CREATOR_ANALYTICS_SCHEMA) await db.query(statement);
     await db.query(COPYRIGHT_REPORT_BRIDGE_SCHEMA);
     for (const statement of UFI_VAULT_SCHEMA) await db.query(statement);
@@ -18918,10 +18941,12 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
   for (const rawPost of realPosts) {
     const p = normalizeFeedPost(rawPost);
     try {
-      await db.query(
+      const result = await db.query(
         `INSERT INTO ${targetTable}
            (id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url, author_profile_url)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18
+         WHERE NOT EXISTS (SELECT 1 FROM report_content_suppressions rcs WHERE rcs.target_type='post'
+           AND (rcs.target_id=$1 OR (rcs.source=$2 AND rcs.source_url=$7)))
          ON CONFLICT (id) DO UPDATE SET
            group_id       = COALESCE(EXCLUDED.group_id, ${targetTable}.group_id),
            title          = EXCLUDED.title,
@@ -18960,7 +18985,7 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
           sourceAuthorProfileUrl(p),
         ]
       );
-      saved++;
+      if (result.rowCount !== 0) saved++;
     } catch (e) { lastRowError = e.message; /* keep going — one bad row shouldn't drop the rest of the batch */ }
   }
   recordFeedWriteOutcome(targetTable, realPosts.length, saved, lastRowError);
@@ -19034,7 +19059,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
      INSERT INTO ${targetTable} AS existing
        (id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url, author_profile_url)
      SELECT id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url, author_profile_url
-     FROM incoming
+     FROM incoming WHERE ${reportSuppressionPredicate('incoming')}
      ON CONFLICT (id) DO UPDATE SET
        group_id       = COALESCE(EXCLUDED.group_id, existing.group_id),
        title          = EXCLUDED.title,
@@ -19072,7 +19097,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
     [JSON.stringify(rows).replace(/\\u0000/gi, '')]
   );
   if (!options.skipTrim && targetTable === 'feed_posts_cache') trimFeedPostsCache();
-  return result.rowCount || rows.length;
+  return Number.isInteger(result.rowCount) ? result.rowCount : rows.length;
 }
 
 // --- Save public website optimizer snapshots ---------------------------------
@@ -20101,7 +20126,36 @@ function isLikelyBotRequest(req) {
 // in-app" a real, working claim rather than a form that submits into a
 // black hole — status defaults to 'open' at creation (see POST /reports);
 // this is where a human actually sees and closes them out.
-registerContentReportRoutes(app, { db, authenticate, requireOfficeToken, notifyChildSafety: sendChildSafetyAlertEmail });
+const filterReportedContent = createReportVisibilityFilter({ db });
+async function visibleReportContent(content, targetType = 'post') {
+  // Local fixtures use memory-only content. Production always checks durable
+  // removals, including when feed data came from another worker or backup.
+  if (!db.isConnected() && process.env.NODE_ENV !== 'production') return content;
+  return filterReportedContent(content, targetType);
+}
+async function hydrateCachedMemberAuthors(ids) {
+  if (!db.isConnected()) return;
+  const missing = [...new Set(ids.filter(id => isDBId(id) && !users.some(user => user.id === id)))].slice(0, 1000);
+  if (!missing.length) return;
+  try {
+    const { rows } = await db.query('SELECT * FROM users WHERE id = ANY($1::uuid[])', [missing]);
+    for (const row of rows) syncToMemory(dbRowToMemUser(row));
+  } catch { /* A missing author is displayed generically until storage recovers. */ }
+}
+registerContentReportRoutes(app, { db, authenticate, requireOfficeToken, notifyChildSafety: sendChildSafetyAlertEmail,
+  onRemoved: async target => {
+    const matches = post => post.id === target.targetId || (target.sourceUrl && post.source === target.source && post.sourceUrl === target.sourceUrl);
+    if (target.targetType === 'post') {
+      for (let i = posts.length - 1; i >= 0; i--) if (matches(posts[i])) posts.splice(i, 1);
+      globalFeedCache.posts = globalFeedCache.posts.filter(post => !matches(post));
+      sseBatchBuffer = sseBatchBuffer.filter(post => !matches(post));
+    }
+    for (let i = postComments.length - 1; i >= 0; i--) {
+      if (postComments[i].id === target.targetId || (target.targetType === 'post' && postComments[i].postId === target.targetId)) postComments.splice(i, 1);
+    }
+    postCache.clear(); followingSourceCache.clear(); mainFeedSnapshots.clear(); filteredFeedSnapshots.clear();
+  },
+});
 
 app.get('/office/analytics/pageviews', requireOfficeToken, aggregateAnalytics.report);
 
@@ -20149,69 +20203,13 @@ app.get('/office/topics', requireOfficeToken, async (req, res) => {
   }
 });
 
-// --- Registered-user visibility --------------------------------------------
-// The office dashboard had pageview traffic (anonymous, no-login-required —
-// see /analytics/pageview above) but nothing at all showing how many of
-// those visitors actually registered: no endpoint queried the users table,
-// so "500 visitors, 0 visible profiles" was never actually a signal that
-// signups were broken — there was just no way to see the real number either
-// way. /auth/register and /profile/onboarding both already write through to
-// the DB correctly (confirmed live: a test account survived multiple
-// redeploys and still logs in); this only adds the missing visibility.
-app.get('/office/users', requireOfficeToken, async (req, res) => {
-  try {
-    if (!db.isConnected()) return res.json({ available: false });
-    const [total, hidden, onboarded, today, last7, last30, recent] = await Promise.all([
-      db.query(`SELECT COUNT(*) FROM users`),
-      db.query(`SELECT COUNT(*) FROM users WHERE profile_hidden IS TRUE OR COALESCE(role_settings ->> 'privacy_publicProfile', 'true') = 'false'`),
-      db.query(`SELECT COUNT(*) FROM users WHERE onboarding_complete = true`),
-      db.query(`SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '1 day'`),
-      db.query(`SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '7 days'`),
-      db.query(`SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '30 days'`),
-      // Office is the protected account-management surface. Return the full
-      // registered-user list here so its view and the database total cannot
-      // silently disagree after the first twenty accounts.
-      db.query(`SELECT id, name, email, created_at, onboarding_complete,
-        (profile_hidden IS TRUE OR COALESCE(role_settings ->> 'privacy_publicProfile', 'true') = 'false') AS profile_hidden
-        FROM users ORDER BY created_at DESC, id`),
-    ]);
-    // Aggregate usage intentionally cannot identify active or signed-in people.
-    // Historical identifiable analytics remain untouched and are not queried.
-    const signIns = null;
-    const activeMembers = null;
-    const totalCount = Number(total.rows[0].count);
-    res.json({
-      available: true,
-      total: totalCount,
-      active: activeMembers,
-      activeWindowMinutes: null,
-      activeAvailable: false,
-      discoverable: totalCount - Number(hidden.rows[0].count),
-      hidden: Number(hidden.rows[0].count),
-      countSource: 'database',
-      onboarded: Number(onboarded.rows[0].count),
-      today:  Number(today.rows[0].count),
-      last7:  Number(last7.rows[0].count),
-      last30: Number(last30.rows[0].count),
-      signInsAvailable: signIns !== null,
-      signIns: signIns ? {
-        allTime: Number(signIns.rows[0].all_time),
-        uniqueMembers: Number(signIns.rows[0].all_time_users),
-        today: Number(signIns.rows[0].today),
-        last7: Number(signIns.rows[0].last7),
-        last30: Number(signIns.rows[0].last30),
-      } : null,
-      recent: recent.rows.map(r => ({
-        id: r.id, name: r.name, email: r.email,
-        createdAt: r.created_at,
-        onboarded: r.onboarding_complete,
-        hidden: r.profile_hidden,
-      })),
-    });
-  } catch (e) {
-    console.error('GET /office/users:', e.message);
-    res.status(500).json({ error: 'Internal server error' });
-  }
+// Office account records always come from the primary database.
+const officeMembers = registerOfficeMemberRoutes(app, {
+  db, requireOfficeToken, schedule: setInterval,
+  getCachedUserIds: () => users.map(user => user.id),
+  clearUserCache: () => { const cleared = users.length; users = []; return cleared; },
+  mailAvailable: emailConfigured,
+  sendMail: message => getMailTransport().sendMail({ from: process.env.EMAIL_FROM || process.env.SMTP_USER, ...message }),
 });
 
 // --- Auth ---------------------------------------------------------------------
@@ -20242,7 +20240,7 @@ app.get('/auth/session', authenticate, async (req, res) => {
   res.json({ token: req.authToken, profile: await effectiveProfile(user) });
 });
 
-app.post('/auth/register', registerLimiter, async (req, res) => {
+app.post('/auth/register', officeMembers.signupMiddleware, registerLimiter, async (req, res) => {
   const { name, email, password, title, phone: phoneInput } = req.body || {};
   const passwordError = passwordPolicyError(password);
   if (typeof name !== 'string' || !name.trim() || typeof email !== 'string' ||
@@ -24054,7 +24052,7 @@ setInterval(() => {
 
 async function getInitialSSEPosts(limit = 200) {
   const cached = realFeedPosts(globalFeedCache.posts).slice(0, limit);
-  if (cached.length || !db.isConnected()) return cached;
+  if (cached.length || !db.isConnected()) return visibleReportContent(cached);
   try {
     const { rows } = await db.readQuery(
       `SELECT * FROM feed_posts_cache
@@ -24063,7 +24061,7 @@ async function getInitialSSEPosts(limit = 200) {
        LIMIT $1`,
       [limit]
     );
-    return realFeedPosts(rows.map(dbRowToFeedPost));
+    return await visibleReportContent(realFeedPosts(rows.map(dbRowToFeedPost)));
   } catch {
     return [];
   }
@@ -24565,6 +24563,11 @@ async function paginateComments(cacheKey, fetchFullList, offset, limit) {
 // authenticateOptional — same reasoning as GET /feed/:postId above, comments
 // are read-only viewing and shouldn't require an account either.
 app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
+  try {
+    const stored = await findStoredPostByIdWithDbFallback(req.params.postId);
+    if (!(await visibleReportContent([stored || { id: req.params.postId }])).length) return res.status(404).json({ message: 'Post not found.' });
+  } catch { return res.status(503).json({ message: 'Content moderation checks are temporarily unavailable.' }); }
+
   const { postId } = req.params;
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
   const limit  = boundedLimit(req.query.limit, 20, 50);
@@ -27635,9 +27638,24 @@ async function sendFeedResponse(req, res, payload) {
   res.set?.('Cache-Control', viewerId || req.feedLocationContext ? 'private, no-store' : 'no-cache');
   const result = { ...payload };
   if (req.feedLocationContext) result.locationContext = publicFeedLocationContext(req.feedLocationContext);
-  if (Array.isArray(payload.posts)) result.posts = await hydratePostLikes(db, payload.posts, viewerId);
-  if (Array.isArray(payload.liveFeeds)) result.liveFeeds = await hydratePostLikes(db, payload.liveFeeds, viewerId);
-  if (payload.post) [result.post] = await hydratePostLikes(db, [payload.post], viewerId);
+  if (Array.isArray(payload.posts)) result.posts = await hydratePostLikes(db, await visibleReportContent(payload.posts), viewerId);
+  if (Array.isArray(payload.liveFeeds)) result.liveFeeds = await hydratePostLikes(db, await visibleReportContent(payload.liveFeeds), viewerId);
+  if (payload.post) {
+    const visible = await visibleReportContent([payload.post]);
+    if (!visible.length) return res.status(404).json({ message: 'Post not found.' });
+    [result.post] = await hydratePostLikes(db, visible, viewerId);
+  }
+  const nativePosts = [...(result.posts || []), ...(result.liveFeeds || []), ...(result.post ? [result.post] : [])]
+    .filter(post => post.source === 'uficonnect');
+  await hydrateCachedMemberAuthors(nativePosts.map(post => post.authorId || post.author?.id));
+  const authorFor = post => {
+    if (post.source !== 'uficonnect') return post;
+    const author = users.find(user => user.id === (post.authorId || post.author?.id));
+    return author ? { ...post, author: sanitizeUser(author) } : post;
+  };
+  if (result.posts) result.posts = result.posts.map(authorFor);
+  if (result.liveFeeds) result.liveFeeds = result.liveFeeds.map(authorFor);
+  if (result.post) result.post = authorFor(result.post);
   return res.json(result);
 }
 
@@ -33253,3 +33271,4 @@ db.initDB().then(async () => {
       .catch(e => console.warn('seen_posts trim:', e.message));
   }, 24 * 60 * 60 * 1000);
 });
+
