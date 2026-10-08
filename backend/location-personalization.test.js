@@ -105,22 +105,25 @@ test('real Postgres JSONB update preserves a concurrent change to another destin
   const id = 'a0000000-0000-4000-8000-000000000091';
   await pg.exec(`CREATE TABLE users (id UUID PRIMARY KEY, name TEXT, email TEXT, phone TEXT,
     title TEXT, bio TEXT, skills TEXT[], organization TEXT, links JSONB, role_settings JSONB,
-    profile_hidden BOOLEAN, avatar_url TEXT, cover_url TEXT, auth_version INTEGER DEFAULT 0)`);
+    profile_hidden BOOLEAN, avatar_url TEXT, cover_url TEXT, auth_version INTEGER DEFAULT 0, auth_provider TEXT DEFAULT 'local')`);
   await pg.query('INSERT INTO users(id,name,email,role_settings) VALUES($1,$2,$3,$4)', [id, 'Database member', 'database@example.invalid', JSON.stringify({
     feedLanguages: ['en'], feedLocations: { countries: { country: 'JP', city: 'Tokyo' }, restaurants: { country: 'US', city: 'San Diego' } },
   })]);
   let concurrentSave = false;
   const app = await fixture(t, { connected: true, query: async (sql, params) => {
     if (sql.startsWith('SELECT id FROM auth_sessions')) return { rows: [{ id: 'synthetic-active-session' }] };
-    if (sql.startsWith('UPDATE users SET name=')) {
-      assert.deepEqual(JSON.parse(params[6]), { feedLocations: { bars: { country: 'CA', city: 'Vancouver' } } }, 'only submitted scopes belong in the SQL patch');
-      // Another server saves Travel after this request reads its member but
-      // before its own UPDATE executes. Run the production SQL against PG.
+    if (sql.startsWith('SELECT id,phone,auth_provider FROM users WHERE id=')) {
+      // Another server saves Travel after the cached member is read and
+      // before this transaction acquires the row lock for its own save.
       await pg.query("UPDATE users SET role_settings=jsonb_set(role_settings, '{feedLocations,countries}', $1::jsonb) WHERE id=$2", [JSON.stringify({ country: 'FR', city: 'Paris' }), id]);
       concurrentSave = true;
       return pg.query(sql, params);
     }
-    if (sql.startsWith('SELECT * FROM users WHERE id')) return pg.query(sql, params);
+    if (sql.startsWith('UPDATE users SET name=')) {
+      assert.deepEqual(JSON.parse(params[6]), { feedLocations: { bars: { country: 'CA', city: 'Vancouver' } } }, 'only submitted scopes belong in the SQL patch');
+      return pg.query(sql, params);
+    }
+    if (sql.startsWith('SELECT * FROM users WHERE id') || /^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)) return pg.query(sql, params);
     return { rows: [], rowCount: 0 };
   } });
   app.seedUser(member(id));
