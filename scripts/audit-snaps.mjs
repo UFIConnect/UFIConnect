@@ -39,11 +39,11 @@ try {
   await server.listen();
   browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
   const origin = server.resolvedUrls.local[0];
-  for (const width of [1440, 390]) {
+  for (const width of [1440, 390, 320]) {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, hasTouch: width < 600, isMobile: width < 600, serviceWorkers: 'block' });
     const page = await context.newPage(); page.setDefaultTimeout(16000);
     const errors = [], writes = [], reads = [];
-    let viewerId = owner, uploadCount = 0, uploadedForm = '', held = null, holdMode = null;
+    let viewerId = owner, uploadCount = 0, uploadedForm = '', held = null, holdMode = null, sourceFailures = {};
     let heldRequestResolve;
     let heldRequest = new Promise(resolve => { heldRequestResolve = resolve; });
     // Three source rows exercise grouping/ranking only. The audit does not
@@ -68,13 +68,17 @@ try {
         uploadCount++; uploadedForm = request.postData() || '';
         return route.fulfill({ headers, json: { secure_url: photoUrl, resource_type: 'image', public_id: proof.publicId, version: proof.version, signature: proof.signature } });
       }
+      if (['www.youtube.com', 'mastodon.social', 'embed.bsky.app', 'www.redditmedia.com'].includes(url.hostname) && request.resourceType() === 'document') {
+        return route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Official source player fixture</title><button>Play source clip</button>' });
+      }
+      if (url.hostname === 'media.snaps.invalid') return;
       if (url.origin !== new URL(origin).origin) return route.abort();
       if (!url.pathname.startsWith('/api/')) return route.continue();
       const endpoint = url.pathname.replace(/^\/api/, ''), method = request.method();
       const fulfill = json => route.fulfill({ json });
       if (endpoint === '/snaps' && method === 'GET') {
         const mode = url.searchParams.get('mode') || 'home'; reads.push({ endpoint, mode });
-        const body = { snaps: visibleRows(mode), sourceErrors: {} };
+        const body = { snaps: visibleRows(mode), sourceErrors: sourceFailures };
         if (holdMode === mode) {
           holdMode = null; held = { route, body }; heldRequestResolve(); return;
         }
@@ -123,6 +127,67 @@ try {
     await rail.getByRole('button', { name: 'Refresh snaps', exact: true }).waitFor({ state: 'visible' });
     await page.waitForFunction(() => !document.querySelector('.snap-refresh-button')?.disabled);
     check(reads.filter(read => read.endpoint === '/snaps').length === beforeSnaps + 1 && feedReadCount() === beforeFeed, 'Snap refresh does not consume or reload post feeds');
+
+    const originalRows = [...rows];
+    const publicClip = (id, source, sourceUrl, extra = {}) => snap(id, source, {
+      isExternal: true, mediaType: 'video', mediaKind: 'source', mediaUrl: sourceUrl, sourceUrl, videoDurationSeconds: 42,
+      createdAt: new Date(Date.now() - 3 * 86400_000).toISOString(), expiresAt: new Date(Date.now() + 4 * 86400_000).toISOString(), ...extra,
+    });
+    rows.push(
+      publicClip('youtube-short-fixture', 'youtube', 'https://www.youtube.com/shorts/abcdefghijk', { mediaKind: 'youtube', embedId: 'abcdefghijk' }),
+      publicClip('mastodon-clip-fixture', 'mastodon', 'https://mastodon.social/@clipper/98765'),
+      publicClip('bluesky-clip-fixture', 'bluesky', 'https://bsky.app/profile/clipper.bsky.social/post/abc123'),
+      publicClip('reddit-clip-fixture', 'reddit', 'https://www.reddit.com/r/videos/comments/abc123/source_clip/'),
+      publicClip('x-clip-fixture', 'twitter', 'https://x.com/clipper/status/98765'),
+      publicClip('authorized-file-fixture', 'mastodon', 'https://mastodon.social/@clipper/98766', { mediaKind: 'file', mediaUrl: 'https://media.snaps.invalid/clip.mp4', directPlaybackAuthorized: true }),
+      publicClip('authorized-hls-fixture', 'mastodon', 'https://mastodon.social/@clipper/98767', { mediaKind: 'hls', mediaUrl: 'https://media.snaps.invalid/clip.m3u8', directPlaybackAuthorized: true }),
+    );
+    sourceFailures = { twitch: 'Clip refresh is temporarily unavailable.' };
+    await rail.getByRole('button', { name: 'Refresh snaps', exact: true }).click();
+    await rail.getByRole('button', { name: /youtube-short-fixture/ }).waitFor();
+    await rail.getByRole('status', { name: 'Snap source availability', exact: true }).getByText('Twitch', { exact: true }).waitFor();
+    check(await rail.locator('.snap-source-box').count() === 7, 'Each populated source has its own box while an unavailable source has no fabricated box');
+    check(await rail.locator('[data-snap-source="twitch"]').count() === 0, 'Source failures leave other clips visible');
+    check(!(await rail.locator('.snap-rail-heading p').innerText()).includes('last 24 hours'), 'Public source clips are not described as expiring stories');
+    const expandedBoxes = await rail.locator('.snap-source-box').evaluateAll(elements => elements.map(element => ({ y: element.getBoundingClientRect().y, background: getComputedStyle(element).backgroundColor })));
+    check(expandedBoxes.every(box => box.background === 'rgb(8, 8, 8)' && Math.abs(box.y - expandedBoxes[0].y) < 2), 'All populated source boxes remain black and on one horizontal row');
+
+    for (const [id, expectedHost, expectedPath] of [
+      ['youtube-short-fixture', 'www.youtube.com', '/embed/abcdefghijk'],
+      ['mastodon-clip-fixture', 'mastodon.social', '/@clipper/98765/embed'],
+      ['bluesky-clip-fixture', 'embed.bsky.app', '/embed/clipper.bsky.social/app.bsky.feed.post/abc123'],
+      ['reddit-clip-fixture', 'www.redditmedia.com', '/r/videos/comments/abc123/source_clip/'],
+    ]) {
+      await rail.getByRole('button', { name: new RegExp(id) }).click();
+      const sourceViewer = page.locator('dialog.snap-viewer'); await sourceViewer.waitFor();
+      const frameUrl = new URL(await sourceViewer.locator('iframe').getAttribute('src'));
+      check(frameUrl.hostname === expectedHost && frameUrl.pathname === expectedPath, `${id} opens its fixed official player URL`);
+      check(await sourceViewer.locator('video').count() === 0, 'Unapproved external files are not played directly');
+      const sourceLabel = await sourceViewer.locator('.snap-viewer-source-details').innerText();
+      check(sourceLabel.includes('Recent source clip') && sourceLabel.includes('42s') && !/left|Expired|24 hours/i.test(sourceLabel), 'Source viewer labels show source/date/duration without native expiry claims');
+      check(await sourceViewer.locator('.snap-source-mark').count() === 1, 'Source identity is present in the viewer watermark');
+      check(await sourceViewer.getByRole('link', { name: /^Open on / }).count() === 1, 'Every source player keeps its original post link');
+      await sourceViewer.getByRole('button', { name: 'Close snap', exact: true }).click();
+    }
+    await rail.getByRole('button', { name: /x-clip-fixture/ }).click();
+    const fallbackViewer = page.locator('dialog.snap-viewer'); await fallbackViewer.waitFor();
+    check(await fallbackViewer.locator('iframe, video').count() === 0, 'X retains source playback instead of inventing a direct video player');
+    check(await fallbackViewer.getByRole('link', { name: /^Watch on / }).getAttribute('href') === 'https://x.com/clipper/status/98765', 'Unsupported inline playback has its exact Watch on source route');
+    await fallbackViewer.getByRole('button', { name: 'Close snap', exact: true }).click();
+    for (const id of ['authorized-file-fixture', 'authorized-hls-fixture']) {
+      await rail.getByRole('button', { name: new RegExp(id) }).click();
+      const videoViewer = page.locator('dialog.snap-viewer'); await videoViewer.locator('video').waitFor();
+      check(await videoViewer.locator('iframe').count() === 0 && await videoViewer.locator('video').getAttribute('loop') === null, 'Recorded authorization enables non-looping native or HLS playback');
+      const selection = await videoViewer.locator('.snap-viewer-caption').innerText();
+      await videoViewer.locator('video').evaluate(element => { element.dispatchEvent(new Event('ended')); element.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); });
+      check(await videoViewer.locator('.snap-viewer-caption').innerText() === selection, 'Finishing playback or seeking with arrow keys never changes the selected clip');
+      await videoViewer.getByRole('button', { name: 'Close snap', exact: true }).click();
+    }
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Public source clips and availability notices keep the page within the viewport');
+    rows = originalRows; sourceFailures = {};
+    await rail.getByRole('button', { name: 'Refresh snaps', exact: true }).click();
+    await page.waitForFunction(() => !document.querySelector('.snap-source-notices'));
+    check(await rail.locator('.snap-source-box').count() === 3, 'Refreshing clears recovered provider notices and restores current source groups');
 
     await rail.getByRole('button', { name: /View Snap author's snap: other-native/ }).click();
     let viewer = page.locator('dialog.snap-viewer'); await viewer.waitFor();

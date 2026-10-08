@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import client from '../api/client';
+import { normalizeSnapSourceErrors } from '../components/snapRanking.mjs';
 
 // Snap reads have their own request lifecycle and never consume the post feed.
 export default function useSnaps(mode, viewerId) {
@@ -8,22 +9,22 @@ export default function useSnaps(mode, viewerId) {
   currentIdentity.current = identity;
   const controller = useRef(null);
   const requestGeneration = useRef(0);
-  const [snapshot, setSnapshot] = useState({ identity: '', snaps: [], loading: false, error: '' });
+  const [snapshot, setSnapshot] = useState({ identity: '', snaps: [], loading: false, error: '', sourceErrors: {} });
   const refresh = useCallback(async (bust = false) => {
     controller.current?.abort();
     const request = new AbortController();
     controller.current = request;
     const generation = ++requestGeneration.current;
     if (mode === 'following' && !viewerId) {
-      setSnapshot({ identity, snaps: [], loading: false, error: '' });
+      setSnapshot({ identity, snaps: [], loading: false, error: '', sourceErrors: {} });
       return;
     }
-    setSnapshot(previous => ({ identity, snaps: previous.identity === identity ? previous.snaps : [], loading: true, error: '' }));
+    setSnapshot(previous => ({ identity, snaps: previous.identity === identity ? previous.snaps : [], loading: true, error: '', sourceErrors: previous.identity === identity ? previous.sourceErrors : {} }));
     try {
       const { data } = await client.get('/snaps', { params: { mode, ...(bust ? { bust: '1' } : {}) }, signal: request.signal });
       if (!Array.isArray(data?.snaps)) throw new Error('Snaps could not be loaded.');
       if (generation === requestGeneration.current && identity === currentIdentity.current && !request.signal.aborted) {
-        setSnapshot({ identity, snaps: data.snaps, loading: false, error: '' });
+        setSnapshot({ identity, snaps: data.snaps, loading: false, error: '', sourceErrors: normalizeSnapSourceErrors(data.sourceErrors) });
       }
     } catch (error) {
       if (request.signal.aborted || generation !== requestGeneration.current || identity !== currentIdentity.current) return;
@@ -36,7 +37,7 @@ export default function useSnaps(mode, viewerId) {
     const clear = () => {
       controller.current?.abort();
       requestGeneration.current++;
-      setSnapshot({ identity: '', snaps: [], loading: false, error: '' });
+      setSnapshot({ identity: '', snaps: [], loading: false, error: '', sourceErrors: {} });
     };
     window.addEventListener('ufi-connections-changed', reload);
     window.addEventListener('ufi-session-cleared', clear);
@@ -62,6 +63,6 @@ export default function useSnaps(mode, viewerId) {
       setSnapshot(previous => previous.identity === identity ? { ...previous, snaps: previous.snaps.filter(snap => snap.id !== snapId) } : previous);
     }
   }, [identity, viewerId]);
-  const visible = snapshot.identity === identity ? snapshot : { snaps: [], loading: true, error: '' };
-  return { items: visible.snaps, loading: visible.loading, error: visible.error, refresh: () => refresh(true), publish, remove };
+  const visible = snapshot.identity === identity ? snapshot : { snaps: [], loading: true, error: '', sourceErrors: {} };
+  return { items: visible.snaps, loading: visible.loading, error: visible.error, sourceErrors: visible.sourceErrors, refresh: () => refresh(true), publish, remove };
 }

@@ -23,7 +23,7 @@ import CommandCenter from '/src/pages/CommandCenter.jsx';
 import Feed from '/src/pages/Feed.jsx';
 import '/src/index.css';
 setAccessToken('synthetic-source-a');
-if(new URL(location.href).searchParams.has('audit-stale')) privateSessionStorage.setItem('ufi_feed_state:source-a',JSON.stringify({viewMode:'following',activeTabs:['twitter','facebook','spotify'],filters:{sources:['twitter','facebook'],sort:'newest',topics:[],timeRange:'all'}}));
+if(new URL(location.href).searchParams.has('audit-stale')) privateSessionStorage.setItem('ufi_feed_state:source-a',JSON.stringify({viewMode:'following',activeTabs:['facebook','spotify','hackernews'],filters:{sources:['facebook','hackernews'],sort:'newest',topics:[],timeRange:'all'}}));
 function Fixture() {
   const {pathname}=useLocation();
   return React.createElement(pathname==='/connected-accounts' ? ConnectedAccounts : pathname==='/command-center' ? CommandCenter : Feed);
@@ -45,6 +45,7 @@ const server = await createServer({ root: path.join(root, 'web'), configFile: pa
   }], server: { host: '127.0.0.1', port: 5273, strictPort: false } });
 const catalog = {
   youtube: { name: 'YouTube', configured: true },
+  twitter: { name: 'X (Twitter)', configured: false },
   linkedin: { name: 'LinkedIn', configured: true, forceComingSoon: true, commandCenterOnly: true },
   indeed: { name: 'Indeed', category: 'career', configured: false, connectionMode: 'external' },
   spotify: { name: 'Spotify', category: 'audio', configured: true, connectionMode: 'external' },
@@ -76,7 +77,7 @@ try {
       const endpoint = url.pathname.slice(4);
       if (endpoint === '/profile') return reply({ id: 'source-a', name: 'Source audit', email: 'audit@example.invalid', plan: 'pro',
         onboardingComplete: false, role: 'developer', interests: ['Science'], preferences: {},
-        roleSettings: { feedSourceFavorites: { feed: [], following: ['twitter', 'facebook', 'future-unsupported', 'youtube'] } }, connectedPlatforms: ['mastodon'] });
+        roleSettings: { feedSourceFavorites: { feed: [], following: ['twitter', 'facebook', 'hackernews', 'future-unsupported', 'youtube'] } }, connectedPlatforms: ['mastodon'] });
       if (endpoint === '/social/platforms') {
         if (hold) await hold.promise;
         return failed ? reply({ error: 'Synthetic catalog unavailable' }, 400) : reply({ platforms: catalog, connected: { mastodon: true } });
@@ -86,8 +87,11 @@ try {
         feeds.push(Object.fromEntries(url.searchParams));
         const posts = url.searchParams.get('mode') === 'following' ? [
           { id: 'followed-youtube', source: 'youtube', title: 'Followed channel update', content: 'A channel you follow has a new update.', authorName: 'Followed publisher', createdAt: new Date().toISOString() },
+          { id: 'followed-twitter', source: 'twitter', title: 'Followed X account update', content: 'An account you follow has a new update.', authorName: 'Followed publisher', createdAt: new Date().toISOString() },
           { id: 'stale-directory', source: 'spotify', title: 'Stale website source must stay hidden', createdAt: new Date().toISOString() },
-          { id: 'stale-interests', source: 'twitter', title: 'Interest search must stay hidden', createdAt: new Date().toISOString() },
+          { id: 'stale-interests', source: 'facebook', title: 'Interest search must stay hidden', createdAt: new Date().toISOString() },
+          { id: 'stale-twitter-interests', source: 'twitter', matchedByInterest: true, title: 'Legacy X interest search must stay hidden', createdAt: new Date().toISOString() },
+          { id: 'public-hackernews', source: 'hackernews', title: 'Public Hacker News row must stay outside Following', content: 'A public Hacker News story about developer tools.', authorName: 'HN author', sourceUrl: 'https://news.ycombinator.com/item?id=123', createdAt: new Date().toISOString() },
           { id: 'unknown-adapter', source: 'future-unsupported', title: 'Unknown adapter must stay hidden', createdAt: new Date().toISOString() },
         ] : [];
         return reply({ posts, hasMore: false, nativeUficonnectIncluded: true, totalAvailable: posts.length });
@@ -103,16 +107,18 @@ try {
     hold.resolve(); hold = null;
     await page.getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).waitFor();
     check(await page.getByRole('dialog').count() === 0, 'Unconfigured deep link stays locked after readiness arrives');
-    for (const name of ['Indeed', 'Spotify', 'Medium', 'Mastodon', 'GitLab', 'Discord']) {
+    for (const name of ['Indeed', 'Spotify', 'Medium', 'Mastodon', 'GitLab', 'Discord', 'X (Twitter)']) {
       const button = page.getByRole('button', { name: `Sign in and connect ${name}`, exact: true });
       check(await button.isDisabled(), `${name} authorization is inert`);
-      check((await button.innerText()).includes('Locked'), `${name} lock is visible`);
+      check(await button.locator('.account-action-lock').count() === 1 && (await button.getAttribute('title')).includes('Locked'), `${name} lock badge is visible`);
       await button.evaluate(element => element.click());
     }
     check(oauth.length === 0, 'Locked source controls make no authorization requests');
     const website = page.getByRole('link', { name: 'Visit Indeed website', exact: true });
     check(await website.getAttribute('href') === 'https://www.indeed.com/', 'Website visits open the official home page');
     check(await page.getByRole('link', { name: /Sign in/ }).count() === 0, 'Website links do not pretend to authorize accounts');
+    check(await website.locator('.account-action-icon').count() === 1 && !/Sign in|Visit/.test(await website.innerText()), 'Website action preserves the icon appearance with an accessible name');
+    check(await page.getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).locator('.account-action-icon').count() === 1, 'Configured authorization preserves its account icon');
     await page.getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).click();
     await page.getByText('Synthetic provider response', { exact: true }).waitFor();
     check(oauth.length === 1 && oauth[0].endpoint === '/auth/social/youtube/start', 'Configured authorization remains active');
@@ -141,7 +147,7 @@ try {
 
     await page.goto(base + '?feed=feed&all=1');
     const home = page.getByRole('group', { name: 'Home sources', exact: true });
-    for (const key of ['weworkremotely', 'cntraveler']) {
+    for (const key of ['weworkremotely', 'cntraveler', 'hackernews']) {
       const button = home.getByRole('button', { name: SOURCE_META[key].label, exact: true });
       await button.waitFor();
       const response = page.waitForResponse(response => {
@@ -164,13 +170,14 @@ try {
     const following = page.getByRole('group', { name: 'Following sources', exact: true });
     await following.getByRole('button', { name: 'YouTube', exact: true }).waitFor();
     await page.getByText('Followed channel update', { exact: true }).waitFor();
-    for (const title of ['Stale website source must stay hidden', 'Interest search must stay hidden', 'Unknown adapter must stay hidden']) check(await page.getByText(title, { exact: true }).count() === 0, `${title}: response rows are gated by the follow adapter allowlist`);
-    for (const key of ['uficonnect', 'youtube', 'github', 'gitlab', 'reddit', 'twitch', 'bluesky', 'mastodon']) check(await following.getByRole('button', { name: SOURCE_META[key].label, exact: true }).count() === 1, `${key} has a Following selector`);
-    for (const key of ['twitter', 'facebook', 'indeed', 'spotify', 'linkedin', 'instagram']) check(await following.getByRole('button', { name: SOURCE_META[key].label, exact: true }).count() === 0, `${key} cannot advertise an unsupported follow feed`);
-    check(feeds.slice(priorFeedCount).every(value => !value.source && !value.sources), 'Removed saved Following selections reset to the full followed feed');
+    await page.getByText('Followed X account update', { exact: true }).waitFor();
+    for (const title of ['Stale website source must stay hidden', 'Interest search must stay hidden', 'Legacy X interest search must stay hidden', 'Public Hacker News row must stay outside Following', 'Unknown adapter must stay hidden']) check(await page.getByText(title, { exact: true }).count() === 0, `${title}: response rows are gated by the follow adapter allowlist`);
+    for (const key of ['uficonnect', 'youtube', 'github', 'gitlab', 'reddit', 'twitch', 'bluesky', 'mastodon', 'twitter']) check(await following.getByRole('button', { name: SOURCE_META[key].label, exact: true }).count() === 1, `${key} has a Following selector`);
+    for (const key of ['facebook', 'hackernews', 'indeed', 'spotify', 'linkedin', 'instagram']) check(await following.getByRole('button', { name: SOURCE_META[key].label, exact: true }).count() === 0, `${key} cannot advertise an unsupported follow feed`);
+    check(feeds.slice(priorFeedCount).every(value => value.mode === 'following' && !value.source && !value.sources), 'Removed saved selections reset to the full Following feed');
     await page.getByRole('button', { name: 'View all feed sources', exact: true }).click();
-    await page.getByText('1 selected', { exact: true }).waitFor();
-    check(await page.getByText('1 selected', { exact: true }).count() === 1, 'Stale interest and unsupported favorites are removed');
+    await page.getByText('2 selected', { exact: true }).waitFor();
+    check(await page.getByText('2 selected', { exact: true }).count() === 1, 'Valid X and YouTube favorites survive while unsupported favorites are removed');
     await page.getByRole('button', { name: 'View all feed sources', exact: true }).click();
     const response = page.waitForResponse(response => response.url().includes('/office/feed?') && new URL(response.url()).searchParams.get('mode') === 'following' && new URL(response.url()).searchParams.get('source') === 'youtube');
     await following.getByRole('button', { name: 'YouTube', exact: true }).click(); await response;

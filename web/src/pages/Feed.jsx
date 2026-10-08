@@ -26,6 +26,7 @@ import {
   isFollowingFeedSource,
 } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
+import AccountActionIcon from '../components/AccountActionIcon';
 import FollowingConnectionNotice from '../components/FollowingConnectionNotice';
 import HomeFeedTools from '../components/HomeFeedTools';
 import SourceWebsiteDirectory from '../components/SourceWebsiteDirectory';
@@ -734,13 +735,13 @@ function FilterPanel({ filters, onChange, sources, onClose, panelRef, includeTop
 }
 
 /** Gate shown when user clicks a social tab but hasn't connected that account */
-function SocialConnectGate({ platform, onConnect, connecting }) {
+function SocialConnectGate({ platform, onConnect }) {
   const meta = SOURCE_META[platform] || {};
   const descriptions = {
-    twitter:   'See posts, threads, and trending topics from the people you follow on X (Twitter).',
-    linkedin:  'Bring your LinkedIn feed into UFIconnect — professional updates, articles, and job posts.',
-    instagram: 'View posts and reels from the creators and brands you follow on Instagram.',
-    facebook:  'See updates from your Facebook friends and the pages you follow.',
+    twitter:   'See recent posts from your X home timeline when your account access supports it.',
+    linkedin:  'Connect LinkedIn for the profile and publishing features you authorize. LinkedIn does not provide a home timeline here.',
+    instagram: 'Connect Instagram for supported account media and publishing features. It does not provide the accounts-you-follow timeline here.',
+    facebook:  'Connect Facebook for supported account features. Facebook does not provide a friends or followed-pages timeline here.',
   };
   return (
     <div style={{
@@ -762,17 +763,19 @@ function SocialConnectGate({ platform, onConnect, connecting }) {
         {descriptions[platform] || `Connect your ${meta.label} account to see your personalised feed here.`}
       </p>
       <button
+        type="button"
+        className="account-icon-action"
         onClick={onConnect}
-        disabled={connecting}
+        aria-label={`Connection options for ${meta.label}`}
+        title={`Connection options for ${meta.label}`}
         style={{
-          padding: '12px 32px', borderRadius: 24, fontWeight: 700, fontSize: '.95rem',
-          background: meta.color, color: '#fff', border: 'none', cursor: connecting ? 'default' : 'pointer',
-          opacity: connecting ? 0.7 : 1, display: 'flex', alignItems: 'center', gap: 8,
+          width: 44, height: 44, padding: 0, borderRadius: 12, fontWeight: 700, fontSize: '.95rem',
+          background: meta.color, color: '#fff', border: 'none', cursor: 'pointer',
+          display: 'flex', alignItems: 'center', gap: 8,
           transition: 'opacity .15s',
         }}
       >
-        {connecting ? <span className="spinner" style={{ borderTopColor: '#fff', width: 16, height: 16 }} /> : <SourceMark source={platform} label={meta.icon} size={13} active />}
-        {connecting ? 'Redirecting…' : `Connect ${meta.label}`}
+        <AccountActionIcon platform={platform} />
       </button>
       <p style={{ marginTop: 16, fontSize: '.78rem', color: 'var(--muted)' }}>
         You can disconnect at any time from Settings → Connected Accounts
@@ -1993,7 +1996,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const routeFeedParams = new URLSearchParams(routeLocation.search);
   const routeRequestedFeed = routeFeedParams.get('feed');
   const routeRequestsAllHome = !forcedMode && routeRequestedFeed === 'feed' && routeFeedParams.get('all') === '1';
-  const [connecting,    setConnecting]   = useState(false);
   // Set from a single-source-tab response's `locked:true` (see FEED_SOCIAL_TABS
   // server-side) — a gated platform tab clicked without that account connected.
   // null whenever the current view isn't a locked single-gated-source tab.
@@ -2232,7 +2234,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       setLockedPlatform(null);
       setFeedError(null);
       const incoming = (data.posts || []).filter(post => (
-        activeMode !== 'following' || isFollowingFeedSource(post?.source)
+        activeMode !== 'following' || (isFollowingFeedSource(post?.source) && post?.matchedByInterest !== true)
       ));
       if (activeMode === 'countries' && viewModeRef.current === 'countries') {
         setTravelLiveFeeds(Array.isArray(data.liveFeeds) ? data.liveFeeds : []);
@@ -2851,7 +2853,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       const incoming = (data.posts || []).filter(p => (
         p?.id
         && !knownIds.current.has(p.id)
-        && (viewModeRef.current !== 'following' || isFollowingFeedSource(p.source))
+        && (viewModeRef.current !== 'following' || (isFollowingFeedSource(p.source) && p.matchedByInterest !== true))
       ));
       incoming.forEach(p => markKnownId(p.id));
       if (incoming.length > 0) {
@@ -3083,7 +3085,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       : []);
     if (disabled.size > 0) result = result.filter(p => !disabled.has(p.source));
     if (viewMode === 'following') {
-      result = result.filter(p => isFollowingFeedSource(p?.source));
+      result = result.filter(p => isFollowingFeedSource(p?.source) && p?.matchedByInterest !== true);
     }
 
     // Search
@@ -3684,16 +3686,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       {lockedPlatform ? (
         <SocialConnectGate
           platform={lockedPlatform}
-          connecting={connecting}
-          onConnect={async () => {
-            if (lockedPlatform === 'mastodon') { navigate('/connected-accounts?connect=mastodon'); return; }
-            setConnecting(true);
-            try {
-              const { data } = await client.get(`/auth/social/${lockedPlatform}/start`);
-              if (data?.url) { window.location.href = data.url; return; }
-            } catch {}
-            setConnecting(false);
-          }}
+          onConnect={() => navigate(`/connected-accounts?connect=${encodeURIComponent(lockedPlatform)}`)}
         />
       ) : loading ? (
         <div>

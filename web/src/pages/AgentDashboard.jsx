@@ -2,6 +2,7 @@
 import Layout from '../components/Layout';
 import { useNavigate } from 'react-router-dom';
 import client from '../api/client';
+import AccountActionIcon from '../components/AccountActionIcon';
 
 /* ─── Agent Definitions ──────────────────────────────────────────────────────── */
 const AGENT_DEFS = [
@@ -406,11 +407,11 @@ function LiveDataCard({ agent, phaseData, stats, onTrigger, onConnect, connected
           {isAuthNeeded && <span style={{ color: '#94A3B8' }}>connect to activate</span>}
         </div>
         {isAuthNeeded ? (
-          <button onClick={onConnect} style={{
-            padding: '2px 8px', border: 'none', borderRadius: 5, cursor: 'pointer',
+          <button type="button" className="account-icon-action" onClick={onConnect} aria-label={`Connect ${agent.name}`} title={`Connect ${agent.name}`} style={{
+            width: 44, height: 44, padding: 0, border: 'none', borderRadius: 8, cursor: 'pointer',
             background: `${agent.color}18`, color: agent.color,
             fontSize: '.6rem', fontWeight: 700,
-          }}>+ Connect</button>
+          }}><AccountActionIcon platform={agent.id} /></button>
         ) : (
           <button onClick={onTrigger} style={{
             padding: '2px 8px', border: 'none', borderRadius: 5,

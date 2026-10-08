@@ -22,7 +22,7 @@ test('concurrent requests share renewal and reuse a token renewed by another wor
   assert.equal(await refresh('member','github','fresh'),null);
 });
 
-for (const source of ['youtube', 'github', 'twitch', 'bluesky']) {
+for (const source of ['youtube', 'github', 'twitch', 'bluesky', 'twitter']) {
   test(`${source}: renew expired access, load recent followed posts, keep accounts isolated`, async t => {
     const app = await createAppHarness({ env: { BLUESKY_SIGNING_KEY:signingKey, [`${source.toUpperCase()}_CLIENT_ID`]:'client', [`${source.toUpperCase()}_CLIENT_SECRET`]:'secret' } });
     t.after(()=>app.close());
@@ -30,9 +30,14 @@ for (const source of ['youtube', 'github', 'twitch', 'bluesky']) {
     const viewer = member('connected-reader', { preferences:{interests:['Science']}, socialTokens:{[source]:old}, socialRefreshTokens:{[source]:'refresh'}, socialConnectedAt:{[source]:new Date().toISOString()} });
     app.seedUser(viewer); app.seedUser(member('unconnected-reader'));
     let renewals=0;
-    app.setTokenExchange(async (url,params)=>{
+    app.setTokenExchange(async (url,params,headers)=>{
       renewals++; assert.equal(params.grant_type,'refresh_token'); assert.equal(params.refresh_token,'refresh');
-      assert.equal(params.client_id,'client'); assert.equal(params.client_secret,'secret');
+      if (source === 'twitter') {
+        assert.equal(headers.Authorization, `Basic ${Buffer.from('client:secret').toString('base64')}`);
+        assert.equal(params.client_secret, undefined);
+      } else {
+        assert.equal(params.client_id,'client'); assert.equal(params.client_secret,'secret');
+      }
       return {access_token:'fresh',refresh_token:'rotated'};
     });
     app.setAtprotoTokenExchange(async (url,params)=>{

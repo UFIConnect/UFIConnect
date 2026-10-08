@@ -15,8 +15,8 @@ test('missing, partial and unavailable source authorization stays locked', () =>
 });
 
 test('removed interest and unsupported Following favorites do not remain selected', () => {
-  assert.deepEqual(normalizeSourceFavorites({ feed: ['twitter', 'facebook', 'weworkremotely'], following: ['twitter', 'facebook', 'spotify', 'future-unsupported', 'youtube', 'youtube'] }), {
-    feed: ['twitter', 'facebook', 'weworkremotely'], following: ['youtube'],
+  assert.deepEqual(normalizeSourceFavorites({ feed: ['twitter', 'facebook', 'weworkremotely', 'hackernews'], following: ['twitter', 'facebook', 'spotify', 'hackernews', 'future-unsupported', 'youtube', 'youtube'] }), {
+    feed: ['twitter', 'facebook', 'weworkremotely', 'hackernews'], following: ['twitter', 'youtube'],
   });
 });
 
@@ -47,11 +47,11 @@ test('directory fallback cannot replace explicit catalog readiness or permission
 
 test('feed choices use real public collectors and followed-content adapters', () => {
   assert.deepEqual(HOME_FEED_SOURCE_IDS, [...new Set(feedCatalog.home)]);
-  for (const key of ['weworkremotely', 'cntraveler']) assert.ok(HOME_FEED_SOURCE_IDS.includes(key));
+  for (const key of ['weworkremotely', 'cntraveler', 'hackernews']) assert.ok(HOME_FEED_SOURCE_IDS.includes(key));
   assert.deepEqual(FOLLOWING_FEED_SOURCE_IDS, ['uficonnect', ...Object.keys(feedCatalog.following)]);
-  for (const key of ['youtube', 'github', 'gitlab', 'reddit', 'twitch', 'bluesky', 'mastodon']) assert.ok(FOLLOWING_FEED_SOURCE_IDS.includes(key));
-  for (const key of ['spotify', 'airbnb', 'indeed', 'twitter', 'facebook', 'discord', 'figma', 'linkedin', 'instagram', 'tiktok']) assert.equal(FOLLOWING_FEED_SOURCE_IDS.includes(key), false);
+  for (const key of ['youtube', 'github', 'gitlab', 'reddit', 'twitch', 'bluesky', 'mastodon', 'twitter']) assert.ok(FOLLOWING_FEED_SOURCE_IDS.includes(key));
+  for (const key of ['spotify', 'airbnb', 'indeed', 'facebook', 'hackernews', 'discord', 'figma', 'linkedin', 'instagram', 'tiktok']) assert.equal(FOLLOWING_FEED_SOURCE_IDS.includes(key), false);
   for (const kind of Object.values(feedCatalog.following)) assert.equal(kind, 'following');
-  for (const source of ['uficonnect', 'youtube', ' mastodon ']) assert.equal(isFollowingFeedSource(source), true);
-  for (const source of [undefined, 'unknown-provider', 'spotify', 'cntraveler', 'twitter', 'facebook', 'indeed']) assert.equal(isFollowingFeedSource(source), false);
+  for (const source of ['uficonnect', 'youtube', ' mastodon ', 'twitter']) assert.equal(isFollowingFeedSource(source), true);
+  for (const source of [undefined, 'unknown-provider', 'spotify', 'cntraveler', 'facebook', 'hackernews', 'indeed']) assert.equal(isFollowingFeedSource(source), false);
 });

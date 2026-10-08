@@ -8,6 +8,7 @@ import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { normalizeSourceFavorites } from './sourceFavorites';
 import AccountConnectionAction from './AccountConnectionAction';
 import { sourceAuthorizationState } from './sourceAuthorization.mjs';
+import AccountActionIcon from './AccountActionIcon';
 import { DirectoryControls } from './DirectoryControls';
 import { SOURCE_CATEGORIES, sourceSections, accountSections } from './sourceDirectory';
 import useTabMetrics from '../analytics/useTabMetrics';
@@ -454,7 +455,7 @@ export default function HomeFeedTools({
               startAccountConnection('bluesky', handle);
             }}>
               <input className="form-input" autoFocus value={blueskyHandle} onChange={event => setBlueskyHandle(event.target.value)} placeholder="name.bsky.social" />
-              <button type="submit" className="btn btn-primary btn-sm" disabled={!blueskyHandle.trim()}>Sign in &amp; connect</button>
+              <button type="submit" className="btn btn-primary btn-sm account-icon-action" disabled={!blueskyHandle.trim()} aria-label="Sign in & connect" title="Sign in and connect Bluesky"><AccountActionIcon platform="bluesky" /></button>
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => setBlueskyHandle(null)}>Cancel</button>
             </form>
           )}
