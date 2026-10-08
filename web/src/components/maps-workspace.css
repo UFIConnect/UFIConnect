@@ -30,6 +30,8 @@
 .map-scene-toolbar button { cursor: pointer; }
 .map-scene-toolbar .map-back-to-all { font-weight: 600; border-color: #8196ac; }
 .map-scene-toolbar label { display: flex; align-items: center; gap: 6px; font-size: .7rem; color: var(--muted); }
+.map-scene-toolbar input[type=range] { width: 110px; min-height: 32px; accent-color: #547c6d; cursor: pointer; }
+.map-scene-toolbar output { min-width: 35px; font-variant-numeric: tabular-nums; }
 .map-motion-status { display: inline-flex; align-items: center; gap: 7px; margin-right: auto; font-size: .72rem; color: var(--muted); }
 .map-motion-status i { width: 7px; height: 7px; border-radius: 50%; background: #8c969c; }
 .map-motion-status i.is-moving { background: #49a887; box-shadow: 0 0 0 4px #49a88718; }
@@ -102,7 +104,8 @@
 .map-feed-actions { gap: 8px; }
 .map-feed-actions button[aria-controls="map-desktop-settings"] { font-weight: 600; gap: 7px; }
 .map-scene-toolbar { border-bottom: 1px solid var(--border); padding-bottom: 12px; }
-.map-explorer-main .map-city-scene--all { height: clamp(400px, 55vh, 600px); }
+.map-scene-toolbar button[aria-pressed=true] { border-color: #547c6d; background: color-mix(in srgb, #94b7a7 14%, var(--card)); }
+.map-explorer-main .map-city-scene--all { height: clamp(500px, 70vh, 800px); }
 .map-city-picker { background: var(--surface); scrollbar-width: thin; }
 .map-city-picker button { min-height: 48px; }
 @media (max-width: 768px) { .map-explorer-main .map-city-scene--all { height: 400px; } .map-scene-toolbar button, .map-scene-toolbar select { min-height: 44px; } }

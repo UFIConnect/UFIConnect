@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { appendMapPosts, mapSourceTopicScope, mapTopicMatches, mapPostTarget, parseMapSourceTopics } from '../shared/map-feed-topics.mjs';
-import { CITY_SITES, CITY_RAMPS, CITY_TOP_EXITS, CITY_SIDE_EXITS, CITY_LOCAL_LINKS, CITY_END_ROADS, CITY_END_JUNCTIONS, CITY_HIGHWAY_LINKS, CITY_HIGHWAY_KINDS, CITY_LANDMARKS, CITY_HIGHWAY_PIERS, CITY_GROUND_ROADS, cityCollectorPoints, citySegmentDistance, cityHighwayJourney, cityRoadPoint, cityRoadPoints, cityDriveOrigin, cityDriveWaypoints } from '../web/src/local/cityEngineering.mjs';
+import { CITY_SITES, CITY_RAMPS, CITY_TOP_EXITS, CITY_SIDE_EXITS, CITY_LOCAL_LINKS, CITY_END_ROADS, CITY_END_JUNCTIONS, CITY_HIGHWAY_LINKS, CITY_HIGHWAY_KINDS, CITY_LANDMARKS, CITY_HIGHWAY_PIERS, CITY_GROUND_ROADS, cityCollectorPoints, citySegmentDistance, cityHighwayJourney, cityRoadPoint, cityRoadPoints, cityRoadPosition, cityDriveOrigin, cityDriveWaypoints } from '../web/src/local/cityEngineering.mjs';
 
 const post = (id, source, topic) => ({ key: source + ':' + id, id, source, topic, category: 'technology' });
 test('map filtering expands supported labels without unrelated text matches', () => {
@@ -100,7 +100,7 @@ test('district setbacks, expressway clearance and ramp grades support the curved
   }
   for (const [index, link] of CITY_HIGHWAY_LINKS.entries()) {
     for (const [point, kind] of [[link[0], 'highway'], [link.at(-1), 'highway-return']]) {
-      const road = cityRoadPoint(kind, .5 + point[0] / 260);
+      const road = cityRoadPoint(kind, cityRoadPosition(kind, point[0]));
       assert.ok(Math.hypot(point[0] - road[0], point[2] - road[1]) < .001, 'Elevated connectors must join both highway centerlines');
       assert.equal(point[1], 2.9, 'Connections meet the deck at the same elevation');
     }
@@ -121,8 +121,18 @@ test('district setbacks, expressway clearance and ramp grades support the curved
     assert.deepEqual(junction.points[0], [end[0], 2.9, end[1]]);
     const to = junction.points.at(-1), distance = Math.min(...road.points.slice(1).map((point, i) => citySegmentDistance([to[0], to[2]], [road.points[i][0], road.points[i][2]], [point[0], point[2]])));
     assert.ok(distance < .01, 'Highway ends join the curved side road at deck height');
+    for (const [x, z] of junction.island) {
+      const clearance = Math.min(...junction.points.slice(1).map((point, i) => citySegmentDistance([x, z], [junction.points[i][0], junction.points[i][2]], [point[0], point[2]])));
+      assert.ok(clearance > 1.8, 'Corner traffic islands leave both lanes clear');
+    }
   }
-  assert.equal(CITY_LOCAL_LINKS.length, 7);
+  assert.equal(CITY_LOCAL_LINKS.length, 14);
+  for (const landmark of CITY_LANDMARKS) {
+    const road = cityCollectorPoints(landmark);
+    for (const site of CITY_SITES) for (let i = 1; i < road.length; i++) {
+      assert.ok(citySegmentDistance([site.x, site.z], [road[i - 1][0], road[i - 1][2]], [road[i][0], road[i][2]]) > 13, 'Airport and shopping access roads pass between district blocks');
+    }
+  }
   for (const exit of CITY_SIDE_EXITS) {
     const to = exit.points.at(-1), entrance = CITY_SITES[exit.index].entrance;
     assert.ok(Math.hypot(to[0] - entrance[0], to[2] - entrance[1]) < .001, 'Side exits reach the city boulevard');
@@ -137,5 +147,5 @@ test('district setbacks, expressway clearance and ramp grades support the curved
     for (const point of [road.points[0], road.points.at(-1)]) assert.ok(joins.some(join => Math.hypot(...point.map((value, i) => value - join[i])) < .001), 'Side roads end at a highway or city exit, without unused extensions');
   }
   const cityRoad = cityRoadPoints('arterial');
-  for (const point of [cityRoad[0], cityRoad.at(-1)]) assert.ok(CITY_SITES.some(site => Math.hypot(point[0] - site.junction[0], point[2] - site.junction[1]) < .001), 'The main city road ends at an outer city junction');
+  for (const point of [cityRoad[0], cityRoad.at(-1)]) assert.ok([...CITY_SITES, ...CITY_LANDMARKS].some(site => Math.hypot(point[0] - site.junction[0], point[2] - site.junction[1]) < .001), 'The main city road ends at an outer district or landmark junction');
 });

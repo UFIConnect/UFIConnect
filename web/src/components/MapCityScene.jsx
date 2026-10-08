@@ -10,15 +10,16 @@ import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { CITY_NATURE } from '../local/cityNature';
 import { CITY_DOWNTOWN } from '../local/cityDowntown';
-import { CITY_SITES, CITY_ARCHITECTURE, CITY_RAMPS, CITY_TOP_EXITS, CITY_SIDE_EXITS, CITY_LOCAL_LINKS, CITY_END_ROADS, CITY_END_JUNCTIONS, CITY_HIGHWAY_LINKS, CITY_HIGHWAY_KINDS, CITY_AIRPORT, CITY_SHOPPING, CITY_LANDMARKS, CITY_HIGHWAY_PIERS, CITY_GROUND_ROADS, cityCollectorPoints, citySegmentDistance, cityHighwayJourney, cityRoadPoint, cityRoadPoints, cityDriveOrigin, cityDriveWaypoints } from '../local/cityEngineering.mjs';
+import { CITY_SITES, CITY_DISTRICT_SCALE, CITY_ARCHITECTURE, CITY_RAMPS, CITY_TOP_EXITS, CITY_SIDE_EXITS, CITY_LOCAL_LINKS, CITY_END_ROADS, CITY_END_JUNCTIONS, CITY_HIGHWAY_LINKS, CITY_HIGHWAY_KINDS, CITY_AIRPORT, CITY_SHOPPING, CITY_LANDMARKS, CITY_HIGHWAY_PIERS, CITY_GROUND_ROADS, cityCollectorPoints, citySegmentDistance, cityHighwayJourney, cityRoadPoint, cityRoadPoints, cityRoadPosition, cityDriveOrigin, cityDriveWaypoints } from '../local/cityEngineering.mjs';
 
 // Decorative city simulation. It never represents measured traffic or member activity.
-export default function MapCityScene({ homes, cities, overview, focusLandmark = '', motion, quality = 'auto', theme, title, cityId, selected, onSelect, onCitySelect, onCivicSelect, resetKey, onFallback, driving = false, drivePaused = false, driveDestination = '', onDriveArrival }) {
+export default function MapCityScene({ homes, cities, overview, viewMode = 'plan', timeOfDay = 'day', altitude = 100, focusLandmark = '', motion, quality = 'auto', theme, title, cityId, selected, onSelect, onCitySelect, onCivicSelect, resetKey, onFallback, driving = false, drivePaused = false, driveDestination = '', onDriveArrival }) {
   const host = useRef(null), current = useRef(null), wake = useRef(null), renderBudget = useRef({ lightweight: false, illustrated: false });
-  current.current = { motion, onSelect, onCitySelect, onCivicSelect, onFallback, driving, drivePaused, driveDestination, onDriveArrival };
+  current.current = { motion, altitude, onSelect, onCitySelect, onCivicSelect, onFallback, driving, drivePaused, driveDestination, onDriveArrival };
   const shape = JSON.stringify(overview ? cities.map(city => [city.id, city.label, city.sources]) : homes);
   useEffect(() => {
     const element = host.current;
+    const night = timeOfDay === 'night';
     let renderer;
     try { renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' }); }
     catch { current.current.onFallback(); return; }
@@ -29,22 +30,24 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
     renderer.setPixelRatio(pixelRatio);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = .78;
+    renderer.toneMappingExposure = night ? 1.05 : .78;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.shadowMap.autoUpdate = false;
     renderer.shadowMap.needsUpdate = true;
     renderer.domElement.setAttribute('aria-label', overview ? 'All 16 nature cities connected to UFI downtown. Drag to explore or select a city or building.' : title + '. Select a source house for topics.');
+    renderer.domElement.dataset.timeOfDay = timeOfDay;
     element.appendChild(renderer.domElement);
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color('#d9e7ed');
-    scene.fog = new THREE.Fog('#d9e7ed', overview ? 600 : 160, overview ? 1000 : 290);
+    const skyColor = night ? '#0d1728' : '#d9e7ed';
+    scene.background = new THREE.Color(skyColor);
+    scene.fog = new THREE.Fog(skyColor, overview ? 2200 : 160, overview ? 3000 : 290);
     const sky = new Sky(); sky.scale.setScalar(300);
     Object.assign(sky.material.uniforms.turbidity, { value: 3 });
     sky.material.uniforms.rayleigh.value = 1.5;
     sky.material.uniforms.mieCoefficient.value = .004;
     sky.material.uniforms.mieDirectionalG.value = .82;
-    sky.material.uniforms.sunPosition.value.set(-60, 110, 60);
+    sky.material.uniforms.sunPosition.value.set(-60, night ? -30 : 110, 60);
     sky.material.uniforms.showSunDisc.value = false;
     let environmentTarget = null;
     if (quality === 'maximum' || !renderBudget.current.lightweight) {
@@ -59,25 +62,27 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
       environmentGenerator.dispose();
     }
     scene.environment = environmentTarget?.texture || null;
-    scene.environmentIntensity = quality === 'maximum' ? .08 : .4;
+    scene.environmentIntensity = night ? .18 : quality === 'maximum' ? .08 : .4;
     const world = new THREE.Group();
-    const camera = new THREE.PerspectiveCamera(42, 1, .1, 800);
+    const camera = new THREE.PerspectiveCamera(42, 1, overview ? 1 : .1, overview ? 4000 : 800);
     const rows = Math.max(2, Math.ceil(homes.length / 3));
     const length = 9 + rows * 6, middle = length / 2 - 4;
     const focused = overview && CITY_LANDMARKS.find(item => item.id === focusLandmark);
-    const target = focused ? new THREE.Vector3(focused.focus[0], 0, focused.focus[1]) : new THREE.Vector3(0, overview ? -3 : 0, overview ? 15 : middle);
+    const target = focused ? new THREE.Vector3(focused.focus[0], 0, focused.focus[1]) : new THREE.Vector3(0, overview ? -3 : 0, overview ? 31 : middle);
+    const planView = overview && !focused && viewMode === 'plan';
+    renderer.domElement.dataset.viewMode = planView ? 'plan' : 'perspective';
     renderer.domElement.dataset.focusLandmark = focused?.id || '';
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.target.copy(target); controls.maxPolarAngle = Math.PI * .46;
     controls.minDistance = overview ? 20 : 8; controls.maxDistance = overview ? 300 : 65;
     controls.enableDamping = true; controls.dampingFactor = .08;
-    scene.add(new THREE.HemisphereLight('#eaf6ff', '#8b9d77', .35));
-    const sun = new THREE.DirectionalLight('#fff1d5', 2.8);
+    scene.add(new THREE.HemisphereLight(night ? '#a9c4ee' : '#eaf6ff', night ? '#253541' : '#8b9d77', night ? .7 : .35));
+    const sun = new THREE.DirectionalLight(night ? '#b8d5ff' : '#fff1d5', night ? .85 : 2.8);
     sun.position.set(-60, 110, 60); sun.castShadow = true;
-    const shadowExtent = overview ? 150 : 40;
+    const shadowExtent = overview ? 200 : 40;
     const shadowSize = Math.min(renderer.capabilities.maxTextureSize, 4096);
     sun.shadow.mapSize.set(shadowSize, shadowSize);
-    Object.assign(sun.shadow.camera, { left: -shadowExtent, right: shadowExtent, top: shadowExtent, bottom: -shadowExtent, near: 1, far: 300 });
+    Object.assign(sun.shadow.camera, { left: -shadowExtent, right: shadowExtent, top: shadowExtent, bottom: -shadowExtent, near: 1, far: 400 });
     sun.shadow.normalBias = .06; sun.shadow.bias = -.00015; sun.shadow.radius = 3;
     sun.target.position.set(0, 0, overview ? 0 : middle);
     scene.add(sun, sun.target);
@@ -104,6 +109,7 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
         : kind === 'cone' ? new THREE.ConeGeometry(1, 1, overview ? 6 : 10)
         : kind === 'roof' ? new THREE.ConeGeometry(1, 1, 4)
         : kind === 'ring' ? new THREE.RingGeometry(.83, 1, overview ? 16 : 28)
+        : kind === 'lightpool' ? new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2)
         : new THREE.IcosahedronGeometry(1, 2));
       return geometries.get(kind);
     }
@@ -112,18 +118,30 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
       // paint color. Only genuinely different surface types need a material.
       const asphalt = ['#68777c', '#59666c', '#76888e', '#78868a'].includes(color);
       const steel = ['#637887', '#88999d', '#a2adb0', '#77888a'].includes(color);
-      const key = color === 'contact' ? 'contact' : color === '#6dbece' ? 'lake' : glow ? 'glow' : glassColors.has(color) ? 'glass' : waterColors.has(color) ? 'water' : asphalt ? 'asphalt' : steel ? 'steel' : 'matte';
+      const key = color === 'contact' ? 'contact' : color === 'terrain' ? 'terrain' : color === '#ffe3a3' ? 'lightpool' : color === '#6dbece' ? 'lake' : glow ? 'glow' : glassColors.has(color) ? 'glass' : waterColors.has(color) ? 'water' : asphalt ? 'asphalt' : steel ? 'steel' : 'matte';
       if (!materials.has(key)) {
         if (key === 'contact') {
           materials.set(key, new THREE.MeshBasicMaterial({ color: '#2c4850', transparent: true, opacity: .15, depthWrite: false }));
+          return materials.get(key);
+        }
+        if (key === 'lightpool') {
+          const canvas = document.createElement('canvas'); canvas.width = canvas.height = 64;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+            gradient.addColorStop(0, '#ffffffc0'); gradient.addColorStop(.4, '#ffffff60'); gradient.addColorStop(1, '#ffffff00');
+            ctx.fillStyle = gradient; ctx.fillRect(0, 0, 64, 64);
+          }
+          const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace; textures.push(texture);
+          materials.set(key, new THREE.MeshBasicMaterial({ color: '#ffffff', map: texture, transparent: true, opacity: .38, depthWrite: false, toneMapped: false }));
           return materials.get(key);
         }
         const glass = key === 'glass', water = key === 'water' || key === 'lake';
         const surface = new THREE.MeshPhysicalMaterial({ color: '#ffffff', roughness: glass ? .09 : water ? .14 : steel ? .32 : asphalt ? .95 : .72,
           metalness: glass ? .12 : water ? .03 : steel ? .75 : .015,
           clearcoat: glass || water ? 1 : 0, clearcoatRoughness: .12,
-          ...(glow ? { emissive: '#fff1cf', emissiveIntensity: .12 } : {}) });
-        if (key === 'lake') surface.vertexColors = true;
+          ...(glow || night && glass ? { emissive: glass ? '#b7d7ee' : '#fff1cf', emissiveIntensity: night ? glass ? .4 : 1.8 : .12 } : {}) });
+        if (key === 'lake' || key === 'terrain') surface.vertexColors = true;
         if (asphalt) {
           const canvas = document.createElement('canvas'); canvas.width = canvas.height = 128;
           const ctx = canvas.getContext('2d');
@@ -149,9 +167,9 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
     }
     function form(parent, kind, color, x, y, z, w, h, d, pick = null, moving = false, glow = false) {
       const node = new THREE.Object3D(); node.position.set(x, y, z); node.scale.set(w, h, d); parent.add(node);
-      if (!colors.has(color)) colors.set(color, new THREE.Color(color === 'contact' ? '#ffffff' : color));
+      if (!colors.has(color)) colors.set(color, new THREE.Color(color === 'contact' || color === 'terrain' ? '#ffffff' : color));
       records.push({ node, geometry: geometry(kind), material: material(color, glow), color: colors.get(color), pick,
-        moving: moving || parent.userData.moving, shadow: h > .16 && kind !== 'ring' && !glow });
+        moving: moving || parent.userData.moving, shadow: h > .16 && kind !== 'ring' && kind !== 'lightpool' && !glow });
       return node;
     }
     const box = (parent, color, x, y, z, w, h, d, pick) => form(parent, 'box', color, x, y, z, w, h, d, pick);
@@ -211,6 +229,41 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
       }
       if (span.length > 1) roadRibbon(parent, span, width, color, thickness);
     }
+    function highwayCorner(parent, junction) {
+      const { points, side, turn, island } = junction;
+      const outer = offsetAlignment(points, side * turn * 2.1);
+      // The swept corner deck supports the raised island and both lane edges.
+      const boundary = [...outer.map(([x, , z]) => [x, z]), [island[2][0] - side * 2, island[2][1] + turn * 2], [island[0][0] - side * 1.5, island[0][1] + turn * 1.5]];
+      const outline = new THREE.CatmullRomCurve3(boundary.map(([x, z]) => new THREE.Vector3(x, 0, z)), true, 'centripetal').getPoints(128).slice(0, -1).map(point => [point.x, point.z]);
+      const polygon = (boundary, depth, color, height, bevel = false) => {
+        const shape = new THREE.Shape();
+        boundary.forEach(([x, z], i) => { if (i) shape.lineTo(x, -z); else shape.moveTo(x, -z); }); shape.closePath();
+        const surface = new THREE.ExtrudeGeometry(shape, { depth, steps: 1, bevelEnabled: bevel, bevelSize: .09, bevelThickness: .025, bevelSegments: 2 });
+        surface.rotateX(-Math.PI / 2);
+        const key = 'corner:' + geometries.size; geometries.set(key, surface);
+        form(parent, key, color, 0, height, 0, 1, 1, 1);
+      };
+      polygon(outline, .3, '#59666c', 2.6);
+      polygon(island, .22, '#dedccf', 2.94, true);
+      const center = island.reduce((sum, point) => [sum[0] + point[0] / 3, sum[1] + point[1] / 3], [0, 0]);
+      polygon(island.map(([x, z]) => [center[0] + (x - center[0]) * .71, center[1] + (z - center[1]) * .71]), .025, '#8daa89', 3.17);
+      for (const offset of [-.55, .55]) {
+        const shrub = ball(parent, '#7b8b50', center[0] + side * offset, 3.42, center[1] + turn * offset, .38); shrub.scale.y = .42;
+      }
+      const nose = island[0];
+      cylinder(parent, '#e4e3d8', nose[0] + side * .6, 3.42, nose[1] + turn * .4, .075, .55);
+      box(parent, '#416d62', nose[0] + side * .6, 3.66, nose[1] + turn * .4, .3, .26, .08);
+      roadRibbon(parent, points, 3.4, '#59666c', .3);
+      for (const offset of [-1.5, 1.5]) roadRibbon(parent, offsetAlignment(points, offset, .17), .075, '#e4e3d8', .015);
+      for (let i = 4; i + 1 < points.length - 4; i += 8) roadPiece(parent, points[i].map((value, axis) => axis === 1 ? value + .17 : value), points[i + 2].map((value, axis) => axis === 1 ? value + .17 : value), .075, '#e4e3d8', .015);
+      const barrier = offsetAlignment(points, side * turn * 1.95, .6);
+      roadRibbon(parent, barrier, .12, '#a2adb0', .14);
+      for (let i = 3; i < barrier.length; i += 8) box(parent, '#88999d', barrier[i][0], 3.2, barrier[i][2], .06, .6, .06);
+      // A pier beneath the expanded corner carries the deck and island.
+      box(parent, '#aeb8b8', center[0], 1.17, center[1], .85, 2.65, .85);
+      box(parent, '#bfc4bf', center[0], 2.52, center[1], 4.2, .35, .95);
+      box(parent, '#c5c9bd', center[0], -.12, center[1], 1.8, .3, 1.8);
+    }
     function landscapeLake(parent) {
       const center = new THREE.Vector3(-23, .035, 90);
       const boundary = [[-62, 90], [-55, 79], [-39, 76], [-24, 80], [-12, 76], [5, 83], [18, 89], [12, 100], [-5, 105], [-19, 100], [-34, 106], [-51, 103]];
@@ -220,6 +273,11 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
         const x = center.x + (point.x - center.x) * 1.09, z = center.z + (point.z - center.z) * 1.09;
         if (i) shore.lineTo(x, -z); else shore.moveTo(x, -z);
       }); shore.closePath();
+      // The bank surrounds the water; a filled plate underneath would compete
+      // for depth at the high-altitude camera and produce flickering stripes.
+      const waterCutout = new THREE.Path();
+      shoreline.forEach((point, i) => { if (i) waterCutout.lineTo(point.x, -point.z); else waterCutout.moveTo(point.x, -point.z); });
+      waterCutout.closePath(); shore.holes.push(waterCutout);
       const beach = new THREE.ShapeGeometry(shore); beach.rotateX(-Math.PI / 2);
       geometries.set('lakeShore', beach); form(parent, 'lakeShore', '#c9c3a7', 0, .018, 0, 1, 1, 1);
       const vertices = [center.x, center.y, center.z], indices = [], shades = [];
@@ -243,7 +301,7 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
       }
       bench(parent, -37, 68.3); bench(parent, -12, 70.5);
     }
-    function airport(parent) {
+    function airport(parent, origin = [0, 0]) {
       const travel = { civic: 'airport' };
       // Parallel taxiway, threshold markings, terminal apron and service access.
       roadRibbon(parent, [[-133, .07, 87], [-65, .07, 87]], 4.7, '#c9c9bb');
@@ -283,13 +341,13 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
         }
         for (let z = -.95; z <= .8; z += .35) for (const side of [-1, 1]) box(plane, '#709da8', side * .266, .65, z, .025, .09, .14);
       }
-      const road = [[CITY_AIRPORT.junction[0], .12, CITY_AIRPORT.junction[1]], [-90, .12, 60]];
+      const road = cityCollectorPoints(CITY_AIRPORT).map(([x, y, z]) => [x - origin[0], y, z - origin[1]]);
       roadRibbon(parent, road, 1.8, '#68777c');
       roadRibbon(parent, offsetAlignment(road, 1.2, .01), .5, '#dedccf');
       for (let z = 59; z < 65; z += 1.1) box(parent, '#dedccf', -101, .1, z, 3.4, .1, .7);
       label(parent, 'Airport', -91, 4.5, 64, 12, '#294c4b', 2, travel);
     }
-    function shoppingCenter(parent) {
+    function shoppingCenter(parent, origin = [0, 0]) {
       const shop = { civic: 'shopping' };
       // Low retail wings flank a glazed atrium. Parking and deliveries face the
       // arterial approach, keeping the building and access clear of the lake.
@@ -323,7 +381,7 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
         box(parent, '#93bac5', x, .91, 83.2, 1.08, .36, 1.05);
       }
       for (const x of [27, 60]) { tree(parent, CITY_NATURE.design, x, 89, 1); bench(parent, x, 91); }
-      const access = [[CITY_SHOPPING.junction[0], .12, CITY_SHOPPING.junction[1]], [64, .12, 83]];
+      const access = cityCollectorPoints(CITY_SHOPPING).map(([x, y, z]) => [x - origin[0], y, z - origin[1]]);
       roadRibbon(parent, access, 1.85, '#68777c');
       roadRibbon(parent, offsetAlignment(access, 1.2, .025), .5, '#dedccf');
       roadRibbon(parent, [[64, .12, 83], [64, .12, 85], [59, .12, 85]], 1.85, '#68777c');
@@ -333,6 +391,7 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
       cylinder(parent, '#637887', x, 1.45, z, .055, 2.9);
       box(parent, '#637887', x + .28, 2.88, z, .65, .08, .1);
       form(parent, 'roundbox', '#fff0ba', x + .54, 2.82, z, .32, .08, .22, null, false, true);
+      if (night) form(parent, 'lightpool', '#ffe3a3', x + .54, .18, z, 3.2, 1, 3.2);
       const signal = form(parent, 'ball', '#90ddb9', x, 1.2, z + .075, .07, .1, .03, null, true, true);
       animations.push(time => { signal.scale.y = .075 + .025 * Math.sin(time * 1.1 + phase); });
     }
@@ -346,7 +405,7 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
       const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 96;
       const ctx = canvas.getContext('2d'); if (!ctx) return;
       ctx.fillStyle = '#fffffff5'; ctx.beginPath(); ctx.roundRect(1, 1, 510, 94, 18); ctx.fill();
-      ctx.fillStyle = color; ctx.font = '600 48px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(text, 256, 48, 472);
+      ctx.fillStyle = color; ctx.font = '600 ' + (overview ? 64 : 48) + 'px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(text, 256, 48, 472);
       const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace; textures.push(texture);
       const mat = new THREE.SpriteMaterial({ map: texture, depthTest: false }); materials.set('label:' + textures.length, mat);
       const sprite = new THREE.Sprite(mat); parent.updateWorldMatrix(true, false);
@@ -412,7 +471,8 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
       }
     }
     function neighborhood(parent, cityHomes, landscape, name, compact = false, cityId = '') {
-      const countRows = Math.max(2, Math.ceil(cityHomes.length / 3)), depth = 9 + countRows * 6, mid = depth / 2 - 4;
+      const countRows = compact ? 3 : Math.max(2, Math.ceil(cityHomes.length / 3)), depth = compact ? 21 : 9 + countRows * 6, mid = depth / 2 - 4;
+      const parcels = compact ? Array.from({ length: 9 }, (_, i) => cityHomes[i] || { decoration: true }) : cityHomes;
       const cityPick = compact ? { city: cityId } : null;
       if (!compact) {
         box(parent, landscape.ground, 0, -.3, mid, 44, .6, depth + 24);
@@ -439,13 +499,13 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
           label(parent, name, x, 3.15, -3, 3.5);
         });
       }
-      cityHomes.forEach((home, index) => {
+      parcels.forEach((home, index) => {
         const x = [-10, -4.5, 7.7][index % 3], z = 2.5 + Math.floor(index / 3) * 6;
         const architecture = CITY_ARCHITECTURE[cityId] || CITY_ARCHITECTURE.community;
         const office = architecture.typology === 'office', campus = architecture.typology === 'campus';
         const floors = Math.max(1, architecture.floors + (office ? [-1, 0, -2, 1][index % 4] : index % 2 - 1)), height = floors * .9 + .5;
         const frontage = office || campus ? 1.31 : .94;
-        const pick = { source: home.id, ...(compact ? { city: cityId } : {}) };
+        const pick = home.decoration ? null : { source: home.id, ...(compact ? { city: cityId } : {}) };
         roundedBox(parent, '#e8e3d7', x, .13, z, 3.1, .18, 2.8, pick);
         roundedBox(parent, home.id === selected && !compact ? '#c0ded1' : architecture.facade, x, .25 + height / 2, z, 2.15, height, 1.85, pick);
         // A wider street-level plinth supports the narrower office volume.
@@ -512,11 +572,11 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
         for (const side of [-1, 1]) for (let stripe = -2; stripe <= 2; stripe++) box(parent, '#ececde', side * 2.2, .105, z + stripe * .2, .65, .02, .09);
       }
       for (let i = 0; i < (compact ? 8 : 16); i++) tree(parent, landscape, i % 2 ? 14.2 : -14.2, -4 + i * (depth + 2) / (compact ? 8 : 16), i);
-      if (['pond', 'coast', 'creek'].includes(landscape.feature)) {
+      if (!compact && ['pond', 'coast', 'creek'].includes(landscape.feature)) {
         if (landscape.feature === 'pond') pond(parent, landscape, 7, depth - 2, 2.1);
         else for (let i = 0; i < 7; i++) pond(parent, landscape, 9.5 + Math.sin(i) * .55, -5 + i * (depth + 5) / 6, landscape.feature === 'coast' ? 2.5 : 1.2);
       }
-      if (['pond', 'creek', 'coast'].includes(landscape.feature)) {
+      if (!compact && ['pond', 'creek', 'coast'].includes(landscape.feature)) {
         const z = landscape.feature === 'pond' ? depth - 2 : depth / 2;
         // A supported boardwalk bridges the water instead of floating paving.
         box(parent, '#c5b99e', 9.2, .62, z, 4.3, .16, .85);
@@ -529,7 +589,7 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
           beam(parent, '#637887', [7.3, .46, z + side * .3], [11.1, .46, z + side * .3], .1);
         }
       }
-      if (['hills', 'alpine', 'rocks'].includes(landscape.feature)) for (let i = 0; i < 3; i++) {
+      if (!compact && ['hills', 'alpine', 'rocks'].includes(landscape.feature)) for (let i = 0; i < 3; i++) {
         form(parent, landscape.feature === 'rocks' ? 'ball' : 'hill', landscape.feature === 'rocks' ? '#91a198' : landscape.ground, -5 + i * 5, landscape.feature === 'rocks' ? .7 : -.03, depth + (compact ? 0 : 4), landscape.feature === 'rocks' ? 2 : 7, 2.5 + i % 2, landscape.feature === 'rocks' ? 2 : 5.5);
       }
       if (['flowers', 'beds', 'grove'].includes(landscape.feature)) for (let i = 0; i < 12; i++) {
@@ -547,18 +607,23 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
     const central = group(), cityPortals = [];
     if (overview) {
       // Valley survey: varied boundaries and a graded corridor for roads and plots.
-      const vertices = [], indices = [], columns = 96, terrainRows = 48;
+      const vertices = [], indices = [], shades = [], columns = 96, terrainRows = 48;
+      const grass = new THREE.Color('#829c75'), rock = new THREE.Color('#908e7a');
       for (let col = 0; col <= columns; col++) {
-        const x = -147 + col * 294 / columns, north = -60 + 5 * Math.sin(x * .035), south = 103 + 5 * Math.cos(x * .027);
+        const x = -195 + col * 390 / columns, north = -85 + 4 * Math.sin(x * .035), south = 147 + 4 * Math.cos(x * .027);
         for (let row = 0; row <= terrainRows; row++) {
-          const z = north + (south - north) * row / terrainRows, fringe = Math.max(0, Math.abs(row / terrainRows - .5) * 2 - .82) / .18;
-          vertices.push(x, -.17 + fringe * Math.max(0, Math.sin(x / 12) * Math.cos(z / 13)) * 2, z);
+          const z = north + (south - north) * row / terrainRows;
+          const fringe = Math.max(Math.max(0, Math.min(1, (-70 - z) / 15)), Math.max(0, Math.min(1, (z - 136) / 14)));
+          const relief = fringe ** 2 * Math.max(0, Math.sin(x / 24) * Math.cos(z / 29)) * 8;
+          const shade = grass.clone().lerp(rock, relief / 9).multiplyScalar(.96 + .04 * Math.sin(x / 9) * Math.cos(z / 11));
+          vertices.push(x, -.17 + relief, z); shades.push(shade.r, shade.g, shade.b);
           if (col && row) { const a = (col - 1) * (terrainRows + 1) + row - 1, b = col * (terrainRows + 1) + row - 1; indices.push(a, a + 1, b, a + 1, b + 1, b); }
         }
       }
       const terrain = new THREE.BufferGeometry(); terrain.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+      terrain.setAttribute('color', new THREE.Float32BufferAttribute(shades, 3));
       terrain.setIndex(indices); terrain.computeVertexNormals(); geometries.set('terrain', terrain);
-      form(central, 'terrain', '#829c75', 0, 0, 0, 1, 1, 1);
+      form(central, 'terrain', 'terrain', 0, 0, 0, 1, 1, 1);
       const arterial = cityRoadPoints('arterial');
       roadRibbon(central, arterial, 4.3, '#c5c7b9', .12);
       roadRibbon(central, arterial.map(([x, y, z]) => [x, y + .03, z]), 3.6, '#68777c', .1);
@@ -568,7 +633,7 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
       for (let i = 0; i < 384; i += 5) roadPiece(central, [arterial[i][0], .13, arterial[i][2]], [arterial[i + 1][0], .13, arterial[i + 1][2]], .1, '#f7efd3', .018);
       // Downtown lanes pass between civic blocks and join the main road.
       for (const side of [-1, 1]) {
-        const position = .5 + side * 3.6 / 232, outer = cityRoadPoint('arterial', position);
+        const position = cityRoadPosition('arterial', side * 3.6), outer = cityRoadPoint('arterial', position);
         const street = [[side * 3.6, .1, -17.4], [outer[0], .1, outer[1]]];
         roadRibbon(central, street, 1.56, '#76888e');
         for (const edge of [-1, 1]) roadRibbon(central, offsetAlignment(street, edge * .96, .02), .3, '#dedccf');
@@ -576,8 +641,9 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
       roadRibbon(central, [[-16.2, .1, -9], [16.2, .1, -9]], 1.56, '#76888e');
       for (const side of [-1, 1]) roadRibbon(central, [[-16.2, .12, -9 + side * .96], [16.2, .12, -9 + side * .96]], .3, '#dedccf');
       cities.forEach((city, i) => {
-        const site = CITY_SITES[i], { x, z, rotation, entrance, junction } = site;
-        const parent = group(x - Math.sin(rotation) * 6.5 * .58, z - Math.cos(rotation) * 6.5 * .58, .58);
+        const site = CITY_SITES.find(item => item.id === city.id); if (!site) return;
+        const { x, z, rotation, entrance, junction } = site;
+        const parent = group(x - Math.sin(rotation) * 6.5 * CITY_DISTRICT_SCALE, z - Math.cos(rotation) * 6.5 * CITY_DISTRICT_SCALE, CITY_DISTRICT_SCALE);
         parent.rotation.y = rotation;
         neighborhood(parent, city.sources.slice(0, 6).map(id => ({ id })), CITY_NATURE[city.id], city.label, true, city.id);
         const collector = cityCollectorPoints(site);
@@ -595,15 +661,27 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
       });
       // Green corridors between neighborhood branches retain walking paths and ponds.
       for (let i = 0; i < 7; i++) for (const side of [-1, 1]) {
-        const position = .5 + [-92, -64, -36, 0, 36, 64, 92][i] / 232, [x, z] = cityRoadPoint('arterial', position, side < 0 ? 39 : -29);
+        if (i === 3 && side < 0) continue; // Civic center reserves the middle parcel.
+        const position = cityRoadPosition('arterial', [-122.5, -87.5, -52.5, 0, 52.5, 87.5, 122.5][i]), [x, z] = cityRoadPoint('arterial', position, side < 0 ? 57 : -31);
         const park = group(x, z);
         pond(park, CITY_NATURE.science, 0, 0, 1.8);
         for (let treeIndex = 0; treeIndex < 4; treeIndex++) tree(park, CITY_NATURE.technology, -3 + treeIndex * 2, treeIndex % 2 ? 3 : -3, treeIndex);
         box(park, '#d5cfbc', 0, .05, -4.1, 8, .08, .8); bench(park, -2, -3.7); bench(park, 2, -3.7);
       }
-      landscapeLake(group(0, -10));
-      airport(central);
-      shoppingCenter(central);
+      // The central park links the civic boulevard to the lake promenade.
+      roadRibbon(central, [[4.8, .13, -17.4], [4.8, .13, 42], [0, .13, 42], [0, .13, 72], [9, .13, 89]], 1.3, '#d5cfbc');
+      roadRibbon(central, [[-16, .1, 89], [9, .1, 89], [31, .1, 101]], 1.2, '#d5cfbc');
+      for (let crossing = 40.5; crossing <= 43.5; crossing += .45) box(central, '#f2eee1', 0, .17, crossing, 1.65, .02, .16);
+      fountain(central, -8, 78, 2.4);
+      landscapeLake(group(23, 23));
+      airport(group(-18, 32), [-18, 32]);
+      shoppingCenter(group(85, 23), [85, 23]);
+      if (night) {
+        for (const [x, z] of [[0, -6], [-109, 96], [128, 117]]) {
+          const light = new THREE.PointLight('#ffd69c', 55, 40, 2); light.position.set(x, 8, z); scene.add(light);
+        }
+        for (const [x, z] of [[-116, 92], [-103, 92], [110, 108], [144, 108]]) streetLight(central, x, z);
+      }
       // Divided expressway: continuous swept deck, shoulders, barriers and pier spans.
       for (const kind of CITY_HIGHWAY_KINDS) {
         const highway = cityRoadPoints(kind, 0, 2.9);
@@ -619,7 +697,7 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
           for (let i = 0; i < 384; i += 4) roadPiece(central, markings[i], markings[i + 1], .08, '#e4e3d8', .015);
         }
         for (const [x, , z] of CITY_HIGHWAY_PIERS[kind]) {
-          const support = group(x, z), a = cityRoadPoint(kind, .5 + x / 260), b = cityRoadPoint(kind, .5 + x / 260 + .001); support.rotation.y = Math.atan2(b[0] - a[0], b[1] - a[1]);
+          const support = group(x, z), a = cityRoadPoint(kind, cityRoadPosition(kind, x)), b = cityRoadPoint(kind, cityRoadPosition(kind, x) + .001); support.rotation.y = Math.atan2(b[0] - a[0], b[1] - a[1]);
           box(support, '#aeb8b8', 0, 1.17, 0, .85, 2.65, .85);
           box(support, '#bfc4bf', 0, 2.52, 0, 6.8, .35, .95);
           box(support, '#c5c9bd', 0, -.12, 0, 1.8, .3, 1.8);
@@ -643,16 +721,13 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
         }
       }
       for (const junction of CITY_END_JUNCTIONS) {
-        roadRibbon(central, junction.points, 3.4, '#59666c', .3);
-        const [x, y, z] = junction.points.at(-1);
-        cylinder(central, '#59666c', x, y - .15, z, 2.1, .3);
-        const stop = junction.points[0], direction = junction.side;
-        for (const side of [-1, 1]) box(central, '#e4e3d8', stop[0] + direction * 4, 3.07, stop[2] + side * .7, .12, .015, 1.2);
+        highwayCorner(central, junction);
       }
       for (const road of CITY_LOCAL_LINKS) {
         roadRibbon(central, road, 1.85, '#68777c');
         for (const side of [-1, 1]) roadRibbon(central, offsetAlignment(road, side * 1.2, .025), .38, '#dad9cb', .1);
         for (let i = 0; i + 1 < road.length; i += 8) roadPiece(central, road[i].map((value, axis) => axis === 1 ? value + .05 : value), road[i + 1].map((value, axis) => axis === 1 ? value + .05 : value), .065, '#eeeade', .015);
+        roadRibbon(central, offsetAlignment(road, 2.1, .04), .8, '#d5cfbc');
       }
       [...CITY_HIGHWAY_LINKS, ...CITY_RAMPS, ...CITY_TOP_EXITS.map(exit => exit.points), ...CITY_SIDE_EXITS.map(exit => exit.points)].forEach(ramp => {
         roadRibbon(central, ramp, 2.45, '#59666c', .22);
@@ -718,7 +793,7 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
       box(civic, '#086ef9', -1.2, 11.5, 0, .75, 3, .75);
       box(civic, '#178cff', 1.2, 11.5, 0, .75, 3, .75);
       box(civic, '#086ef9', 0, 10.1, 0, 3.1, .75, .75);
-      label(civic, 'UFIConnect', 0, 14.1, 0, 11, '#165986', 3, { civic: 'feed' });
+      label(civic, 'UFIConnect', 0, 14.1, planView ? -18 : 0, 11, '#165986', 3, { civic: 'feed' });
       for (let i = 0; i < 32; i++) {
         const position = i / 31, [x, z] = cityRoadPoint('promenade', position, 3.7);
         tree(civic, CITY_NATURE.people, x, z, i);
@@ -903,7 +978,7 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
         const point = sprite.position.clone().project(camera), depth = -sprite.position.clone().applyMatrix4(camera.matrixWorldInverse).z;
         const worldPerPixel = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * depth / height;
         const priority = sprite.userData.priority, naturalWidth = sprite.userData.labelWidth / worldPerPixel;
-        const pixelWidth = priority >= 2 ? (width < 500 ? 100 : 126) : 138, pixelHeight = pixelWidth * 96 / 512;
+        const pixelWidth = priority >= 2 ? (planView && priority === 2 ? 84 : width < 500 ? 100 : 126) : 138, pixelHeight = pixelWidth * 96 / 512;
         sprite.visible = depth > 0 && point.z >= -1 && point.z <= 1 && (priority >= 2 || naturalWidth >= (priority ? 48 : 100));
         sprite.scale.set(pixelWidth * worldPerPixel, pixelHeight * worldPerPixel, 1);
         const x = (point.x + 1) / 2 * width, y = (1 - point.y) / 2 * height;
@@ -929,8 +1004,7 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
       if (!orbitCamera) orbitCamera = { position: camera.position.clone(), target: controls.target.clone() };
       controls.enabled = false;
       if (lastDriveDestination !== state.driveDestination) {
-        const index = cities.findIndex(city => city.id === state.driveDestination);
-        const destination = CITY_LANDMARKS.find(item => item.id === state.driveDestination) || CITY_SITES[index]; if (!destination) return;
+        const destination = CITY_LANDMARKS.find(item => item.id === state.driveDestination) || CITY_SITES.find(item => item.id === state.driveDestination); if (!destination) return;
         if (drivePath && driveProgress < 1) {
           const point = drivePath.getPointAt(driveProgress);
           originSite = cityDriveOrigin([point.x, point.z]);
@@ -992,8 +1066,8 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
         if (!surface) continue;
         const key = 'responsive:' + surface;
         if (!materials.has(key)) {
-          const surfaceMaterial = new THREE.MeshLambertMaterial({ color: '#ffffff',
-            ...(surface === 'glow' ? { emissive: '#fff1cf', emissiveIntensity: .12 } : {}) });
+          const surfaceMaterial = new THREE.MeshLambertMaterial({ color: '#ffffff', vertexColors: surface === 'lake' || surface === 'terrain',
+            ...(surface === 'glow' || night && surface === 'glass' ? { emissive: '#fff1cf', emissiveIntensity: night ? .8 : .12 } : {}) });
           surfaceMaterial.userData.citySurface = surface; materials.set(key, surfaceMaterial);
         }
         instanced.material = materials.get(key); instanced.receiveShadow = false; instanced.castShadow = false;
@@ -1006,11 +1080,13 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
       // retains dimensional surfaces without lighting every vertex every frame.
       for (const item of geometries.values()) {
         const normals = item.getAttribute('normal'); if (!normals) continue;
+        if (!Object.hasOwn(item.userData, 'physicalVertexColors')) item.userData.physicalVertexColors = item.getAttribute('color') || null;
+        const baseColors = item.userData.physicalVertexColors;
         const shades = new Float32Array(normals.count * 3);
         for (let i = 0; i < normals.count; i++) {
           const x = normals.getX(i), y = normals.getY(i), z = normals.getZ(i);
-          const shade = .53 + .26 * Math.max(y, 0) + .2 * Math.max(-.45 * x + .78 * y + .42 * z, 0);
-          shades.fill(shade, i * 3, i * 3 + 3);
+          const shade = (.53 + .26 * Math.max(y, 0) + .2 * Math.max(-.45 * x + .78 * y + .42 * z, 0)) * (night ? .4 : 1);
+          shades.set([shade * (baseColors?.getX(i) ?? 1), shade * (baseColors?.getY(i) ?? 1), shade * (baseColors?.getZ(i) ?? 1)], i * 3);
         }
         item.setAttribute('color', new THREE.Float32BufferAttribute(shades, 3));
       }
@@ -1022,6 +1098,10 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
       }
     }
     function restorePhysicalMaterials() {
+      for (const item of geometries.values()) if (Object.hasOwn(item.userData, 'physicalVertexColors')) {
+        if (item.userData.physicalVertexColors) item.setAttribute('color', item.userData.physicalVertexColors);
+        else item.deleteAttribute('color');
+      }
       for (const batch of batches) {
         batch.instanced.material = batch.originalMaterial; batch.instanced.geometry = batch.originalGeometry;
         batch.instanced.castShadow = batch.originalShadow; batch.instanced.receiveShadow = batch.originalMaterial.type !== 'MeshBasicMaterial';
@@ -1099,17 +1179,31 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
         }
       }
       if (!current.current.driving) controls.update();
+      updateAltitude();
       updateLabels();
       if (composer) composer.render(delta); else renderer.render(scene, camera);
       adaptResolution(Math.max(performance.now() - renderStarted, playing ? Math.min(elapsed, current.current.motion === 'calm' ? 22 : 100) : 0));
       if (playing) requestFrame();
     }
+    const fitFraming = (w, h) => planView ? Math.max(238, 390 * h / w) * 1.1 / (2 * Math.tan(THREE.MathUtils.degToRad(21))) / 330 : Math.max(1, h / w) * (w < 500 ? 1.35 : 1);
     let framing = 1;
+    let altitudeBase = 0, lastAltitude = Number(altitude) || 100;
+    function updateAltitude() {
+      const next = Math.max(35, Math.min(180, Number(current.current.altitude) || 100));
+      if (next !== lastAltitude && !current.current.driving) {
+        camera.position.y = controls.target.y + altitudeBase * next / 100;
+        controls.maxDistance = Math.max(controls.maxDistance, camera.position.distanceTo(controls.target) * 1.3);
+        controls.update(); lastAltitude = next;
+      }
+      renderer.domElement.dataset.viewAltitude = String(lastAltitude);
+      renderer.domElement.dataset.cameraAltitude = (camera.position.y - controls.target.y).toFixed(2);
+    }
     function resize() {
       const w = element.clientWidth || 680, h = element.clientHeight || 580;
-      const nextFraming = Math.max(1, h / w) * (w < 500 ? 1.12 : 1);
+      const nextFraming = fitFraming(w, h);
       if (nextFraming !== framing) {
         camera.position.sub(controls.target).multiplyScalar(nextFraming / framing).add(controls.target);
+        altitudeBase *= nextFraming / framing;
         framing = nextFraming;
         controls.maxDistance = Math.max(controls.maxDistance, camera.position.distanceTo(controls.target) * 1.3);
       }
@@ -1117,9 +1211,11 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
     }
     // Match framing to the canvas aspect, including narrow phone screens.
     const width = element.clientWidth || 680, height = element.clientHeight || 580;
-    framing = Math.max(1, height / width) * (width < 500 ? 1.12 : 1);
-    camera.position.copy(focused ? target.clone().add(new THREE.Vector3(...focused.camera).multiplyScalar(framing)) : overview ? new THREE.Vector3(38, 170, 186).multiplyScalar(framing)
+    framing = fitFraming(width, height);
+    camera.position.copy(focused ? target.clone().add(new THREE.Vector3(...focused.camera).multiplyScalar(framing)) : planView ? target.clone().add(new THREE.Vector3(0, 330, .01).multiplyScalar(framing)) : overview ? new THREE.Vector3(44, 210, 240).multiplyScalar(framing)
       : new THREE.Vector3(20 * framing, 25 * framing, middle + 28 * framing));
+    altitudeBase = camera.position.y - controls.target.y;
+    camera.position.y = controls.target.y + altitudeBase * lastAltitude / 100;
     controls.maxDistance = Math.max(controls.maxDistance, camera.position.distanceTo(target) * 1.3);
     controls.update();
     const resizeObserver = new ResizeObserver(resize); resizeObserver.observe(element); resize();
@@ -1166,7 +1262,7 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
       aoPass?.ssaoMaterial.dispose(); aoPass?.noiseTexture.dispose(); aoPass?.dispose(); outputPass?.dispose(); composer?.dispose(); sky.geometry.dispose(); sky.material.dispose();
       scene.clear(); world.clear(); renderer.dispose(); renderer.domElement.remove();
     };
-  }, [shape, overview, focusLandmark, theme, title, cityId, selected, resetKey, quality]);
-  useEffect(() => { wake.current?.(); }, [motion, driving, drivePaused, driveDestination]);
+  }, [shape, overview, viewMode, timeOfDay, focusLandmark, theme, title, cityId, selected, resetKey, quality]);
+  useEffect(() => { wake.current?.(); }, [motion, altitude, driving, drivePaused, driveDestination]);
   return <div ref={host} className={'map-city-scene' + (overview ? ' map-city-scene--all' : '')} />;
 }

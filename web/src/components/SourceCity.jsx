@@ -10,6 +10,8 @@ const Scene = lazy(() => import('./MapCityScene'));
 export default function SourceCity({ cities, enabled, active, onSelect, onCivicSelect, counts, houseSummaries = {}, actions, sources, activeSource, onSourceSelect, requestedLandmark = '' }) {
   const [fallback, setFallback] = useState(false), [reset, setReset] = useState(0), [page, setPage] = useState(0);
   const [overview, setOverview] = useState(true);
+  const [viewMode, setViewMode] = useState('plan');
+  const [timeOfDay, setTimeOfDay] = useState('day'), [altitude, setAltitude] = useState(100);
   const [focusLandmark, setFocusLandmark] = useState(requestedLandmark);
   const cityHeading = useRef(null), returnFocus = useRef(false);
   const [motion, setMotion] = useState(() => globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'paused' : 'full');
@@ -18,6 +20,7 @@ export default function SourceCity({ cities, enabled, active, onSelect, onCivicS
   const [driveMode, setDriveMode] = useState(false), [drivePaused, setDrivePaused] = useState(false);
   const [driveDestination, setDriveDestination] = useState(active), [driveArrival, setDriveArrival] = useState('');
   const destinations = [...cities, ...CITY_LANDMARKS];
+  const birdViewActive = overview && viewMode === 'plan' && !focusLandmark && !driveMode;
   const destinationLabel = id => destinations.find(item => item.id === id)?.label || id;
   const arrivedLandmark = CITY_LANDMARKS.find(item => item.id === driveArrival);
   const category = CITY_CATEGORIES.find(item => item.id === active) || CITY_CATEGORIES[0];
@@ -43,8 +46,8 @@ export default function SourceCity({ cities, enabled, active, onSelect, onCivicS
   }, []);
   const currentPage = Math.min(page, pages - 1);
   const visible = sources.slice(currentPage * 12, (currentPage + 1) * 12);
-  function openCity(id, source) { setFocusLandmark(''); setDriveMode(false); setOverview(false); onSelect(id); if (source) onSourceSelect(source); }
-  function focusBuilding(id) { setFocusLandmark(id); setOverview(true); setDriveMode(false); setDriveDestination(id); }
+  function openCity(id, source) { setAltitude(100); setFocusLandmark(''); setDriveMode(false); setOverview(false); onSelect(id); if (source) onSourceSelect(source); }
+  function focusBuilding(id) { setAltitude(100); setFocusLandmark(id); setOverview(true); setDriveMode(false); setDriveDestination(id); }
   function showAllCities() {
     setFocusLandmark('');
     if (overview) { cityHeading.current?.focus({ preventScroll: true }); return; }
@@ -60,7 +63,10 @@ export default function SourceCity({ cities, enabled, active, onSelect, onCivicS
       <label>Motion<select aria-label="Animation intensity" value={intensity} onChange={event => { setIntensity(event.target.value); setMotion(event.target.value); }}><option value="full">Full</option><option value="calm">Calm</option></select></label>
       <label>Rendering<select aria-label="Rendering quality" value={quality} onChange={event => { setQuality(event.target.value); setDriveMode(false); }}><option value="maximum">Maximum detail</option><option value="auto">Automatic</option></select></label>
       <button type="button" onClick={() => setMotion(motion === 'paused' ? intensity : 'paused')}>{motion === 'paused' ? 'Play animation' : 'Pause animation'}</button>
-      <button type="button" onClick={() => setReset(value => value + 1)}>Reset view</button>
+      <button type="button" onClick={() => { setAltitude(100); setReset(value => value + 1); }}>Reset view</button>
+      {overview && <button type="button" aria-pressed={birdViewActive} onClick={() => { setViewMode(birdViewActive ? 'perspective' : 'plan'); setFocusLandmark(''); setDriveMode(false); }}>Bird’s-eye view</button>}
+      <button type="button" aria-pressed={timeOfDay === 'night'} onClick={() => { setTimeOfDay(timeOfDay === 'night' ? 'day' : 'night'); setDriveMode(false); }}>Night view</button>
+      <label>Altitude<input type="range" aria-label="View altitude" min="35" max="180" step="5" value={altitude} disabled={driveMode} onChange={event => setAltitude(Number(event.target.value))} /><output aria-live="off">{altitude}%</output></label>
       <button type="button" aria-pressed={driveMode} onClick={() => { setOverview(true); setDriveMode(value => !value); setDrivePaused(false); setDriveArrival(''); }}>{driveMode ? 'Exit drive mode' : 'Drive mode'}</button>
     </div>
     {driveMode && <div className="map-drive-controls" role="group" aria-label="Drive between cities">
@@ -72,7 +78,7 @@ export default function SourceCity({ cities, enabled, active, onSelect, onCivicS
         : <button type="button" className="btn btn-primary btn-sm" onClick={() => openCity(driveArrival)}>Enter city</button>)}
     </div>}
     {fallback ? <p className="card">3D is unavailable on this device. Use the city, building, and source buttons below to explore.</p> : <Suspense fallback={<div className="map-city-scene">Opening your city…</div>}>
-      <Scene overview={overview} focusLandmark={focusLandmark} cities={cities} motion={motion} quality={quality}
+      <Scene overview={overview} viewMode={viewMode} timeOfDay={timeOfDay} altitude={altitude} focusLandmark={focusLandmark} cities={cities} motion={motion} quality={quality}
         homes={visible.map(id => ({ id, label: SOURCE_META[id]?.label || id, summary: (houseSummaries[id] || []).map(item => item.topic).slice(0, 2).join(' · ') }))}
         theme={theme} cityId={active} title={category.label} selected={activeSource} onSelect={onSourceSelect}
         driving={driveMode} drivePaused={drivePaused} driveDestination={driveDestination} onDriveArrival={id => { setDriveArrival(id); setDrivePaused(true); }}

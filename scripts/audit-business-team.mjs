@@ -132,7 +132,7 @@ try {
       await page.getByRole('button', { name: /^Software Engineer / }).click();
       await page.getByRole('button', { name: 'Continue', exact: true }).click();
       await page.getByRole('heading', { name: 'What topics interest you?', exact: true }).waitFor();
-      await page.getByRole('button', { name: 'Selected: Career Growth', exact: true }).waitFor();
+      await page.getByRole('region', { name: 'Choose topics', exact: true }).getByRole('button', { name: 'Remove Career Growth', exact: true }).waitFor();
       await page.getByRole('button', { name: 'Continue', exact: true }).click();
       await page.getByRole('button', { name: /^Mid-level / }).click();
       await page.getByRole('button', { name: 'Finish setup', exact: true }).click();
