@@ -74,7 +74,7 @@ try {
       if (!url.pathname.startsWith('/api/')) return route.continue();
       requests.push({ path: url.pathname, method: request.method() });
       const owner = String(request.headers().authorization || '').replace('Bearer synthetic-', '') || 'account-a';
-      if (url.pathname === '/api/security/web-connection') {
+      if (['/api/security/web-connection', '/api/security/vault-connection'].includes(url.pathname)) {
         calls++;
         const captured = mode;
         if (held) await held;
@@ -142,7 +142,7 @@ try {
     check(await panel.getByText('HTTPS, Vault encryption and account security stay active.', { exact: false }).isVisible(), `${device.name}: pausing monitoring preserves security`);
     held = new Promise(resolve => { release = resolve; });
     const [pendingMonitoringRequest] = await Promise.all([
-      page.waitForRequest(request => new URL(request.url()).pathname === '/api/security/web-connection'), refresh.click(),
+      page.waitForRequest(request => new URL(request.url()).pathname === '/api/security/vault-connection'), refresh.click(),
     ]);
     await status.filter({ hasText: 'Checking protection' }).waitFor();
     check(await monitoring.isEnabled(), `${device.name}: monitoring can be stopped during a pending check`);
@@ -221,7 +221,8 @@ try {
     const [pendingBilling] = await Promise.all([
       page.waitForRequest(request => new URL(request.url()).pathname === '/api/billing/status'), subscriptionRefresh.click(),
     ]);
-    await status.filter({ hasText: 'Checking subscription' }).waitFor();
+    await status.filter({ hasText: 'Protected' }).waitFor();
+    check(await monitoring.isEnabled() && await subscriptionRefresh.isDisabled(), `${device.name}: a routine billing recheck retains bounded verified monitoring`);
     const cancelledBilling = page.waitForEvent('requestfailed', { predicate: request => request === pendingBilling });
     await page.evaluate(() => window.__webProtectionAudit.update('account-b'));
     await status.filter({ hasText: 'Subscription required' }).waitFor();

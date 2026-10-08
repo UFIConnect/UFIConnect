@@ -1,9 +1,10 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId } from 'react';
 import { Link } from 'react-router-dom';
 import { Check, Power, RefreshCw, ShieldCheck, ShieldAlert } from 'lucide-react';
 import useWebConnection from '../security/useWebConnection';
 import { webConnectionProtected } from '../security/webConnection.mjs';
-import { paidVpnAccess } from '../lib/vpnAccess';
+import { useVaultConnection } from '../contexts/VaultConnectionContext';
+import useVaultConnectionMonitor from '../security/useVaultConnectionMonitor';
 import './WebProtectionPanel.css';
 
 const SAFEGUARDS = [
@@ -13,45 +14,39 @@ const SAFEGUARDS = [
   ['validatedImports', 'Vault imports are checked before use'],
 ];
 
-function monitoringPreference(key) {
-  if (!key) return true;
-  try { return window.localStorage.getItem(key) !== 'off'; } catch { return true; }
+export default function WebProtectionPanel({ accountId, billing, variant = 'vault' }) {
+  const shared = useVaultConnection();
+  if (variant === 'vault' && shared) {
+    const matching = shared.accountId === accountId;
+    const service = matching ? shared : { ...shared, paid: false, enabled: false, status: null, error: '', checking: true };
+    return <WebProtectionContent accountId={matching ? accountId : null} billing={shared.billing} variant={variant} service={service} />;
+  }
+  return variant === 'vault' ? <StandaloneVaultProtection accountId={accountId} billing={billing} /> : <BaselineWebProtection accountId={accountId} />;
 }
 
-export default function WebProtectionPanel({ accountId, billing, variant = 'vault' }) {
+function StandaloneVaultProtection({ accountId, billing }) {
+  const service = useVaultConnectionMonitor(accountId, billing);
+  return <WebProtectionContent accountId={accountId} billing={billing} variant="vault" service={service} />;
+}
+
+function BaselineWebProtection({ accountId }) {
+  const connection = useWebConnection(accountId);
+  return <WebProtectionContent accountId={accountId} variant="settings" service={{ ...connection, paid: true, enabled: true }} />;
+}
+
+function WebProtectionContent({ accountId, billing, variant, service }) {
   const vault = variant === 'vault';
-  const paid = !vault || paidVpnAccess(billing);
-  const preferenceKey = variant === 'vault' && accountId ? `ufi:vault-monitoring:${encodeURIComponent(accountId)}` : null;
-  const currentPreference = useRef(preferenceKey); currentPreference.current = preferenceKey;
-  const savedMonitoring = useMemo(() => monitoringPreference(preferenceKey), [preferenceKey]);
-  const [monitoring, setMonitoring] = useState(null);
-  const enabled = paid && (!vault || (monitoring?.key === preferenceKey ? monitoring.enabled : savedMonitoring));
-  const { status, checking, error, refresh, authenticated } = useWebConnection(accountId, enabled);
+  const { paid, enabled, status, checking, error, refresh, authenticated } = service;
   const heading = useId();
   const monitoringLabel = useId();
   const protectedConnection = enabled && webConnectionProtected(status);
-  const label = !accountId || !authenticated ? 'Sign in to check' : vault && billing?.checking ? 'Checking subscription'
+  const label = !accountId || !authenticated ? 'Sign in to check' : vault && billing?.checking && !paid ? 'Checking subscription'
     : !paid ? 'Subscription required' : !enabled ? 'Monitoring paused'
     : checking ? 'Checking protection' : protectedConnection ? 'Protected' : 'Needs attention';
   const toggleMonitoring = () => {
     if (!paid || !accountId || !authenticated) return;
-    const next = !enabled;
-    setMonitoring({ key: preferenceKey, enabled: next });
-    try { if (preferenceKey) window.localStorage.setItem(preferenceKey, next ? 'on' : 'off'); } catch { /* Keep the control usable without browser storage. */ }
+    service.setMonitoring(!enabled);
   };
-  useEffect(() => {
-    if (!preferenceKey) return undefined;
-    const sync = event => {
-      if (currentPreference.current !== preferenceKey) return;
-      let storage;
-      try { storage = window.localStorage; } catch { return; }
-      if (event.storageArea === storage && (event.key === preferenceKey || event.key === null)) {
-        setMonitoring({ key: preferenceKey, enabled: monitoringPreference(preferenceKey) });
-      }
-    };
-    window.addEventListener('storage', sync);
-    return () => window.removeEventListener('storage', sync);
-  }, [preferenceKey]);
   useEffect(() => {
     if (variant !== 'vault') return undefined;
     const scroll = () => {
@@ -72,7 +67,7 @@ export default function WebProtectionPanel({ accountId, billing, variant = 'vaul
         {protectedConnection ? <ShieldCheck size={14} aria-hidden="true" /> : !enabled ? <Power size={14} aria-hidden="true" /> : <ShieldAlert size={14} aria-hidden="true" />}{label}
       </span>
     </div>
-    <p>{vault ? 'Your paid Vault membership includes automatic connection monitoring inside UFIConnect. No app, profile or download is needed.' : 'Protection runs automatically across UFIConnect in this browser. No app, profile or download is needed.'}</p>
+    <p>{vault ? 'Your paid Vault membership includes automatic connection monitoring across UFIConnect pages in this browser. No app, profile or download is needed.' : 'HTTPS and account security protect your UFIConnect connection in this browser. These checks verify the current connection.'}</p>
     {variant === 'vault' && <>
       <div className="web-protection-monitoring">
         <h3 id={monitoringLabel}>Vault connection monitoring</h3>

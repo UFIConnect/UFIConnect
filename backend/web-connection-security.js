@@ -51,5 +51,37 @@ function webConnectionStatus(req, now = Date.now()) {
     checkedAt: new Date(now).toISOString() };
 }
 
+function hasPaidVaultSubscription(status, now = Date.now()) {
+  if (status?.vpnConnectorAddon !== true) return false;
+  const active = Array.isArray(status.subscriptions)
+    ? status.subscriptions.filter(subscription => subscription?.kind === 'vpn_connector' && subscription?.status === 'active') : [];
+  const paidUntil = active.length === 1 ? Number(active[0].currentPeriodEnd) * 1000 : 0;
+  return Number.isFinite(paidUntil) && paidUntil > now;
+}
+
+function createVaultConnectionHandler({ readBillingStatus, authenticate, now = Date.now }) {
+  return async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    const accountId = req.user?.id;
+    if (!accountId) return res.status(401).json({ message: 'Sign in to check Vault connection monitoring.' });
+    const denied = () => res.status(403).json({ message: 'An active, paid UFI Vault membership is required for connection monitoring.' });
+    try {
+      // The authenticated owner is the only billing lookup key. No previous
+      // success, profile flag or caller-supplied account can grant access.
+      const billing = await readBillingStatus(accountId);
+      if (!hasPaidVaultSubscription(billing, now())) return denied();
+      // Billing involves external I/O. Resolve the current session again so
+      // a sign-out or account change during verification cannot return success.
+      return await authenticate(req, res, () => {
+        if (req.user?.id !== accountId) return res.status(401).json({ message: 'Sign in again to check Vault connection monitoring.' });
+        if (!hasPaidVaultSubscription(billing, now())) return denied();
+        return res.json(webConnectionStatus(req, now()));
+      });
+    } catch {
+      if (!res.headersSent) return res.status(503).json({ message: 'Vault connection monitoring is temporarily unavailable. Please try again.' });
+    }
+  };
+}
+
 module.exports = { sessionCookieName, createSessionCookie, readSessionCookie, isPrivateRequest,
-  privateConnectionResponse, webConnectionStatus };
+  privateConnectionResponse, webConnectionStatus, hasPaidVaultSubscription, createVaultConnectionHandler };

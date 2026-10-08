@@ -7,6 +7,7 @@ import App from './App';
 import { AuthProvider } from './contexts/AuthContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { SavedItemsProvider } from './contexts/SavedItemsContext';
+import { VaultConnectionProvider } from './contexts/VaultConnectionContext';
 import { auth0AuthorizationParams, auth0Config, isAuth0Configured } from './auth/auth0Config';
 import './index.css';
 import { reportClientError } from './api/errorReporting';
@@ -72,11 +73,13 @@ ReactDOM.createRoot(document.getElementById('root')).render(
       <OptionalAuth0Provider>
         <BrowserRouter basename={import.meta.env.BASE_URL}>
           <AuthProvider>
+            <VaultConnectionProvider>
             <SavedItemsProvider>
               <ToastProvider>
                 <App />
               </ToastProvider>
             </SavedItemsProvider>
+            </VaultConnectionProvider>
           </AuthProvider>
         </BrowserRouter>
       </OptionalAuth0Provider>

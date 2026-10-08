@@ -25,7 +25,7 @@ const { SNAP_SCHEMA, createSnaps, registerSnapRoutes } = require('./snaps');
 const { createExternalSnapLoader, PUBLIC_CLIP_QUERY } = require('./external-snaps');
 const { createSnapMedia } = require('./snap-media');
 const { createSessionCookie, readSessionCookie, isPrivateRequest,
-  privateConnectionResponse, webConnectionStatus } = require('./web-connection-security');
+  privateConnectionResponse, webConnectionStatus, createVaultConnectionHandler } = require('./web-connection-security');
 const { validateResumeUpload, extractResumeText: extractValidatedResumeText, MAX_RESUME_BYTES } = require('./resume-import');
 const { createMessageMedia, publicMessage, registerMessageAttachmentRoutes, MESSAGE_MEDIA_SCHEMA } = require('./messaging-security');
 const { createMessageAccess } = require('./message-access');
@@ -20275,6 +20275,12 @@ app.get('/auth/config', (_req, res) => {
 app.get('/security/web-connection', authenticate, (req, res) => {
   res.set('Cache-Control', 'private, no-store').json(webConnectionStatus(req));
 });
+app.get('/security/vault-connection', authenticate, rateLimit({ windowMs: 60 * 1000, limit: 30,
+  keyGenerator: req => String(req.user.id), standardHeaders: 'draft-7', legacyHeaders: false,
+  message: { message: 'Please wait before checking Vault connection monitoring again.' },
+}), createVaultConnectionHandler({
+  readBillingStatus: userId => billing.status(userId), authenticate,
+}));
 
 app.get('/auth/me', authenticate, async (req, res) => {
   const user = (isDBId(req.user.id) && db.isConnected())

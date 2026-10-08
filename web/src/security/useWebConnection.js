@@ -3,7 +3,7 @@ import client from '../api/client';
 import { getAccessToken, subscribeToSession } from '../auth/session';
 import { verifiedWebConnection } from './webConnection.mjs';
 
-export default function useWebConnection(accountId, enabled = true) {
+export default function useWebConnection(accountId, enabled = true, { endpoint = '/security/web-connection', onDenied, canCheck } = {}) {
   const [token, setToken] = useState(getAccessToken);
   const [status, setStatus] = useState(null);
   const [checking, setChecking] = useState(Boolean(enabled && accountId && token));
@@ -12,6 +12,8 @@ export default function useWebConnection(accountId, enabled = true) {
   const request = useRef(null);
   const account = useRef(accountId); account.current = accountId;
   const active = useRef(enabled); active.current = enabled;
+  const denied = useRef(onDenied); denied.current = onDenied;
+  const permitted = useRef(canCheck); permitted.current = canCheck;
 
   useEffect(() => subscribeToSession(value => {
     sequence.current++;
@@ -25,26 +27,31 @@ export default function useWebConnection(accountId, enabled = true) {
     request.current?.abort();
     request.current = null;
     setStatus(null); setError(null);
-    if (!enabled || !active.current || !accountId || !token) { setChecking(false); return; }
+    if (!enabled || !active.current || !accountId || !token || (permitted.current && !permitted.current())) { setChecking(false); return; }
     const controller = new AbortController();
     request.current = controller;
     const current = () => enabled && active.current && !controller.signal.aborted && revision === sequence.current
-      && account.current === accountId && token === getAccessToken();
+      && account.current === accountId && token === getAccessToken() && (!permitted.current || permitted.current());
     setChecking(true);
     try {
-      const { data } = await client.get('/security/web-connection', {
+      const { data } = await client.get(endpoint, {
         headers: { Authorization: `Bearer ${token}` }, signal: controller.signal,
       });
       const verified = verifiedWebConnection(data);
       if (current()) setStatus({ data: verified, accountId, token });
     } catch (failure) {
-      if (current()) setError({ accountId, token, message: failure?.response?.status === 401
-        ? 'Sign in again to check web protection.' : 'Web protection could not be verified. Check your connection and try again.' });
+      if (current()) {
+        const status = failure?.response?.status;
+        setError({ accountId, token, message: status === 401 ? 'Sign in again to check web protection.'
+          : status === 403 ? 'An active paid Vault membership is required for connection monitoring.'
+          : 'Web protection could not be verified. Check your connection and try again.' });
+        if (status === 401 || status === 403) denied.current?.(status);
+      }
     } finally {
       if (current()) setChecking(false);
       if (request.current === controller) request.current = null;
     }
-  }, [accountId, token, enabled]);
+  }, [accountId, token, enabled, endpoint]);
 
   useEffect(() => {
     void refresh();
@@ -76,7 +83,7 @@ export default function useWebConnection(accountId, enabled = true) {
   // A new account can render before the cleanup effect runs. Never carry the
   // previous account's verified status into that render.
   const authenticated = Boolean(token && token === getAccessToken());
-  const currentStatus = enabled && status?.accountId === accountId && status?.token === token
+  const currentStatus = enabled && (!permitted.current || permitted.current()) && status?.accountId === accountId && status?.token === token
     && token === getAccessToken() ? status.data : null;
   const currentError = enabled && authenticated && error?.accountId === accountId && error?.token === token ? error.message : '';
   return { status: currentStatus, checking: Boolean(enabled && accountId && authenticated && checking), error: currentError, refresh, authenticated };
