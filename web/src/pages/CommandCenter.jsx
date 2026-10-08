@@ -7,7 +7,7 @@ import PricingModal, { TIERS } from '../components/PricingModal';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import client, { publicOAuthRequestConfig } from '../api/client';
-import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS, CAREER_ACCOUNT_PLATFORMS, CROSS_POST_PLATFORM_IDS, withCareerAccountFallback } from '../components/sourceMeta';
+import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS, CAREER_ACCOUNT_PLATFORMS, withCareerAccountFallback } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import PhotoPickerButton from '../components/PhotoPickerButton';
 import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
@@ -1224,6 +1224,17 @@ const PLATFORM_RESULT_META = {
 
 // Server-provided platform capabilities are the source of truth here. That
 // keeps the composer from offering a connection that cannot actually publish.
+function crossPostReady(key, platforms, connected, plan, media) {
+  if (key === 'uficonnect') return true;
+  const platform = platforms[key];
+  const capability = platform?.crossPost;
+  return Boolean(connected?.[key] && platform?.configured && !platform.forceComingSoon && !platform.locked
+    && capability?.supported && !platform.reconnectRequired && !capability.reconnectRequired
+    && plan === 'pro'
+    && (!capability.requiresPhoto || media?.type === 'image')
+    && (media?.type !== 'video' || capability.media === 'link'));
+}
+
 function CrossPostSection() {
   const { profile } = useAuth();
   const { showToast } = useToast();
@@ -1247,13 +1258,22 @@ function CrossPostSection() {
   const [mediaError, setMediaError] = useState('');
   const [syncing, setSyncing] = useState(false);
   const [destinationCategory, setDestinationCategory] = useState('all');
+  const [checkingConnections, setCheckingConnections] = useState(false);
+  const catalogRequest = useRef(0);
+  const catalogController = useRef(null);
 
   const loadCrossPostData = useCallback(async () => {
+    const requestId = ++catalogRequest.current;
+    catalogController.current?.abort();
+    const controller = new AbortController();
+    catalogController.current = controller;
+    setCheckingConnections(true);
     setLoadError('');
     const [socialResult, historyResult] = await Promise.allSettled([
-      client.get('/social/platforms'),
-      client.get('/command-center/cross-post/history'),
+      client.get('/social/platforms', { signal: controller.signal }),
+      client.get('/command-center/cross-post/history', { signal: controller.signal }),
     ]);
+    if (controller.signal.aborted || requestId !== catalogRequest.current) return;
     if (socialResult.status === 'fulfilled') {
       setConnected(socialResult.value.data.connected || {});
       setPlatforms(socialResult.value.data.platforms || {});
@@ -1266,6 +1286,7 @@ function CrossPostSection() {
     if (socialResult.status === 'rejected' || historyResult.status === 'rejected') {
       setLoadError('Some Cross-Post data could not be loaded.');
     }
+    setCheckingConnections(false);
   }, []);
 
   useEffect(() => {
@@ -1275,7 +1296,22 @@ function CrossPostSection() {
       if (stored?.url && (stored?.type === 'image' || stored?.type === 'video')) setMedia(stored);
       privateSessionStorage.removeItem('ufi_crosspost_media');
     } catch {}
+    window.addEventListener('ufi-connections-changed', loadCrossPostData);
+    window.addEventListener('focus', loadCrossPostData);
+    return () => {
+      catalogRequest.current += 1;
+      catalogController.current?.abort();
+      window.removeEventListener('ufi-connections-changed', loadCrossPostData);
+      window.removeEventListener('focus', loadCrossPostData);
+    };
   }, [loadCrossPostData]);
+
+  useEffect(() => {
+    setSelected(previous => {
+      const next = new Set([...previous].filter(key => crossPostReady(key, platforms, connected, profile?.plan, media)));
+      return next.size === previous.size ? previous : next;
+    });
+  }, [platforms, connected, profile?.plan, media]);
 
   function toggle(platform) {
     if (platform === 'uficonnect') { setSelected(prev => { const next = new Set(prev); if (next.has(platform)) next.delete(platform); else next.add(platform); return next; }); return; }
@@ -1284,13 +1320,18 @@ function CrossPostSection() {
       setSelected(previous => { const next = new Set(previous); next.delete(platform); return next; });
       return;
     }
-    if (!connected?.[platform] || !capability?.supported || !platforms[platform]?.configured || platforms[platform]?.forceComingSoon || platforms[platform]?.locked || profile?.plan === 'free') return;
+    if (checkingConnections) return;
     if (media?.type === 'video' && capability?.media !== 'link') {
       showToast(`${SOURCE_META[platform]?.label || platform} needs a native video publishing connection.`, 'error');
       return;
     }
-    if (capability?.requiresPhoto && !media) {
+    if (capability?.requiresPhoto && media?.type !== 'image') {
       showToast(`Add a photo before selecting ${SOURCE_META[platform]?.label || platform}.`, 'error');
+      return;
+    }
+    if (!crossPostReady(platform, platforms, connected, profile?.plan, media)) return;
+    if ([...selected].filter(key => key !== 'uficonnect').length >= 7) {
+      showToast('Choose up to seven connected accounts for each post.', 'error');
       return;
     }
     setSelected(prev => {
@@ -1335,7 +1376,13 @@ function CrossPostSection() {
 
   async function handlePost(e) {
     e.preventDefault();
-    if ((!content.trim() && !media) || !selected.size || posting || uploadingMedia) return;
+    if ((!content.trim() && !media) || !selected.size || posting || uploadingMedia || checkingConnections) return;
+    const ready = new Set([...selected].filter(key => crossPostReady(key, platforms, connected, profile?.plan, media)));
+    if (ready.size !== selected.size) {
+      setSelected(ready);
+      showToast('Some accounts are no longer ready to publish. Review the remaining selection before sending.', 'error');
+      return;
+    }
     setPosting(true);
     setLastResult(null);
     const nativeTargets = [];
@@ -1353,6 +1400,15 @@ function CrossPostSection() {
         platforms: external,
       }) : { data: { targets: [], historySaved: true } };
       setLastResult([...nativeTargets, ...(data.targets || [])]);
+      const reconnectTargets = (data.targets || []).filter(target => target.reconnectRequired);
+      if (reconnectTargets.length) setPlatforms(previous => {
+        const next = { ...previous };
+        for (const target of reconnectTargets) next[target.platform] = {
+          ...next[target.platform],
+          crossPost: { ...next[target.platform]?.crossPost, reconnectRequired: true, reconnectMessage: target.error },
+        };
+        return next;
+      });
       if (data.id) setHistory(prev => [{ id: data.id, content: content.trim(), mediaUrl: data.mediaUrl, targets: data.targets, createdAt: new Date().toISOString() }, ...(prev || [])]);
       if (!data.historySaved) showToast('Your post was sent, but its history will finish syncing shortly.', 'error');
       setContent('');
@@ -1367,7 +1423,7 @@ function CrossPostSection() {
   }
 
   if (connected === null) return <div className="empty-state"><span className="spinner spinner-primary" /></div>;
-  const publishingPlatforms = [...new Set([...CROSS_POST_PLATFORM_IDS, ...Object.keys(platforms).filter(key => platforms[key].crossPost?.supported)])].filter(platform => platforms[platform]);
+  const publishingPlatforms = Object.keys(platforms).filter(key => key !== 'uficonnect');
   const shownPlatforms = new Set(categoryContext?.sources.map(source => source.platform) || []);
   const orderedPublishingPlatforms = [...publishingPlatforms].sort((left, right) => Number(shownPlatforms.has(right)) - Number(shownPlatforms.has(left)));
   const destinationGroups = accountSections([
@@ -1386,13 +1442,14 @@ function CrossPostSection() {
     const capability = platforms[p]?.crossPost;
     if (!capability?.supported) return null;
     const active = selected.has(p);
-    const needsPhoto = capability.requiresPhoto && !media;
+    const needsPhoto = capability.requiresPhoto && media?.type !== 'image';
+    const incompatibleVideo = media?.type === 'video' && capability.media !== 'link';
     const deliveryHint = capability.delivery === 'handoff' ? ' · TikTok inbox' : capability.requiresPhoto ? ' · photo' : '';
     return (
       <button
-        key={p} type="button" onClick={() => toggle(p)} disabled={needsPhoto || profile?.plan === 'free'} aria-pressed={active}
+        type="button" onClick={() => toggle(p)} disabled={checkingConnections || !crossPostReady(p, platforms, connected, profile?.plan, media)} aria-pressed={active}
         className="btn btn-sm"
-        title={needsPhoto ? 'Add a photo to publish to this account.' : undefined}
+        title={needsPhoto ? 'Add a photo to publish to this account.' : incompatibleVideo ? 'This account does not support this video attachment.' : capability.note}
         style={{ background: active ? 'var(--primary)' : 'var(--bg-secondary)', color: active ? '#fff' : 'var(--text)', border: 'none', opacity: needsPhoto ? .55 : 1 }}
       >
         <SourceMark source={p} label={meta.icon} active={active} /> {meta.label}{deliveryHint}
@@ -1403,35 +1460,27 @@ function CrossPostSection() {
     const meta = SOURCE_META[p] || { label: platforms[p]?.name || p, icon: p };
     const platform = platforms[p];
     const capability = platform?.crossPost;
-    if (platform?.forceComingSoon || !platform?.configured) {
-      return (
-        <button
-          key={p} type="button" disabled className="btn btn-ghost btn-sm"
-          title={platform?.note || `${meta.label} is coming soon.`}
-          style={{ opacity: .62, cursor: 'not-allowed' }}
-        >
-          <SourceMark source={p} label={meta.icon} /> {meta.label} - Coming soon
-        </button>
-      );
-    }
-    if (!capability?.supported) {
-      const detail = capability?.note || platform?.note || `${meta.label} publishing is not available yet.`;
-      return (
-        <button
-          key={p} type="button" disabled className="btn btn-ghost btn-sm"
-          title={detail}
-          style={{ opacity: .62, cursor: 'not-allowed' }}
-        >
-          <SourceMark source={p} label={meta.icon} /> {meta.label} - Publishing unavailable
-        </button>
-      );
-    }
-    if (platform.locked) return <button key={p} type="button" disabled className="btn btn-ghost btn-sm"><SourceMark source={p} /> {meta.label} - Membership</button>;
-    if (connected[p]) return platformTargetButton(p);
+    const available = platform?.configured && !platform.forceComingSoon;
+    const reconnect = connected[p] && (platform?.reconnectRequired || capability?.reconnectRequired);
+    const status = !available ? 'Coming soon' : reconnect ? 'Reconnect required' : connected[p] ? 'Connected' : 'Not connected';
+    const detail = !available ? platform?.note || 'Account connection setup is pending.'
+      : reconnect ? capability?.reconnectMessage || platform?.reconnectMessage || 'Reconnect to restore publishing permission.'
+      : !capability?.supported ? capability?.note || 'This connection does not provide a publishing route.'
+      : platform.locked ? 'Membership required.'
+      : profile?.plan !== 'pro' ? 'Publishing to connected accounts requires Pro.'
+      : capability?.note;
     return (
-      <Link key={p} to={connectionPath(p)} className="btn btn-ghost btn-sm" style={{ textDecoration: 'none' }}>
-        <SourceMark source={p} label={meta.icon} /> {platform?.configured ? `Connect ${meta.label}` : `${meta.label} setup needed`}
-      </Link>
+      <div key={p} aria-label={`${meta.label} destination`} style={{ display: 'flex', flexDirection: 'column', gap: 8, border: '1px solid var(--border)', borderRadius: 8, padding: 10, minWidth: 0 }}>
+        <strong style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '.8rem' }}><SourceMark source={p} label={meta.icon} /> {meta.label}</strong>
+        <span style={{ fontSize: '.73rem', color: 'var(--muted)' }}>{status}{available && !capability?.supported ? ' · Publishing unavailable' : ''}</span>
+        {detail && <p style={{ fontSize: '.73rem', color: 'var(--muted)', lineHeight: 1.5, margin: 0, overflowWrap: 'anywhere' }}>{detail}</p>}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 'auto' }}>
+          {available && capability?.supported && connected[p] && !reconnect && platformTargetButton(p)}
+          {available && <Link to={connectionPath(p)} className="btn btn-ghost btn-sm" style={{ textDecoration: 'none' }}>
+            {reconnect ? `Reconnect ${meta.label}` : connected[p] ? `Manage ${meta.label}` : `Connect ${meta.label}`}
+          </Link>}
+        </div>
+      </div>
     );
   };
 
@@ -1465,7 +1514,7 @@ function CrossPostSection() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {visibleDestinationGroups.map(group => <section key={group.id} aria-labelledby={`crosspost-category-${group.id}`}>
               <h4 id={`crosspost-category-${group.id}`} style={{ margin: '0 0 8px', fontSize: '.78rem', color: 'var(--muted)' }}>{group.label}</h4>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 8 }}>
                 {group.items.map(([platform]) => platform === 'uficonnect'
                   ? <button key={platform} type="button" className="btn btn-sm" aria-pressed={selected.has(platform)} onClick={() => toggle(platform)} style={{ background: selected.has(platform) ? 'var(--primary)' : 'var(--card)', color: selected.has(platform) ? '#fff' : 'var(--text)' }}><SourceMark source={platform} active={selected.has(platform)} /> UFIConnect</button>
                   : publishingDestination(platform))}
@@ -1501,7 +1550,7 @@ function CrossPostSection() {
               )}
               {mediaError && <span style={{ color: 'var(--danger)', fontSize: '.76rem' }}>{mediaError}</span>}
             </div>
-            <button className="btn btn-primary ufi-post-action" type="submit" disabled={posting || uploadingMedia || (!content.trim() && !media) || !selected.size} style={{ alignSelf: 'flex-start' }}>
+            <button className="btn btn-primary ufi-post-action" type="submit" disabled={posting || uploadingMedia || checkingConnections || (!content.trim() && !media) || !selected.size} style={{ alignSelf: 'flex-start' }}>
               {posting ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Send'}
             </button>
           </form>
@@ -1516,12 +1565,13 @@ function CrossPostSection() {
               const meta = SOURCE_META[t.platform] || SOURCE_META.uficonnect;
               const resultMeta = PLATFORM_RESULT_META[t.status] || PLATFORM_RESULT_META.failed;
               return (
-                <div key={t.platform} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '.85rem' }}>
+                <div key={t.platform} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, fontSize: '.85rem', overflowWrap: 'anywhere' }}>
                   <span>{resultMeta.icon}</span>
                   <span style={{ fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}><SourceMark source={t.platform} label={meta.icon} /> {meta.label}</span>
                   <span style={{ color: 'var(--muted)' }}>
                     {t.status === 'posted' && t.postedUrl ? <a href={t.postedUrl} target="_blank" rel="noopener noreferrer">View post</a> : (t.error || resultMeta.label)}
                   </span>
+                  {t.reconnectRequired && <Link to={connectionPath(t.platform)}>Reconnect {meta.label}</Link>}
                 </div>
               );
             })}

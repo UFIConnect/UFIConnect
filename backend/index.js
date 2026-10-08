@@ -20064,6 +20064,7 @@ app.get('/office/oauth-status', requireOfficeToken, (_req, res) => {
       commandCenterOnly,
       canStartAuthorization: hasOAuthFlow && status.configured && !forceComingSoon,
       ownContent: { supported: Boolean(OWN_CONTENT_FETCHERS[platform]) },
+      crossPost: getCrossPostCapability(platform),
     }];
   }));
   res.json({
@@ -20850,7 +20851,13 @@ app.get('/social/platforms', authenticate, async (req, res) => {
       // available without using this metadata as a UI-only security check.
       requiresMembership: CAREER_ACCOUNT_PLATFORMS.has(key) ? 'business' : false,
       locked: false,
-      crossPost: getCrossPostCapability(key),
+      crossPost: {
+        ...getCrossPostCapability(key),
+        ...(key === 'mastodon' && token && !mastodonCanPublish(token) ? {
+          reconnectRequired: true,
+          reconnectMessage: 'Reconnect Mastodon to grant permission to publish posts.',
+        } : {}),
+      },
       ownContent: { supported: Boolean(OWN_CONTENT_FETCHERS[key]) },
     }];
   }));
@@ -32002,7 +32009,7 @@ const CROSS_POST_CAPABILITIES = Object.freeze({
   threads:   { supported: true, delivery: 'direct', media: 'native-image', requiresPhoto: false },
   instagram: { supported: true, delivery: 'direct', media: 'native-image', requiresPhoto: true },
   tiktok:    { supported: true, delivery: 'handoff', media: 'native-image', requiresPhoto: true },
-  mastodon:  { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: false, note: 'Mastodon account connection is available. Publishing is not enabled.' },
+  mastodon:  { supported: true, delivery: 'direct', media: 'link', requiresPhoto: false, note: 'Publishes text and a link to uploaded media. Your server character limit applies. Reconnect if publishing permission is missing.' },
   pinterest: { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: true, note: 'Pinterest publishing needs approved API access and a board selector.' },
   tumblr:    { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: false, note: 'Tumblr needs an OAuth consumer and a blog selector.' },
   wordpress: { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: false, note: 'WordPress.com needs an OAuth app and site selector.' },
@@ -32154,6 +32161,79 @@ async function downloadLinkedInImage(mediaUrl) {
   const image = await downloadCrossPostImage(mediaUrl);
   if (['image/jpeg', 'image/png'].includes(image.contentType)) return image;
   return downloadCrossPostImage(cloudinaryJpegVariant(mediaUrl));
+}
+
+function mastodonCanPublish(token) {
+  try {
+    const session = JSON.parse(token);
+    const scopes = String(session.scope || '').split(/\s+/);
+    return Boolean(session.accessToken && session.accountId)
+      && (scopes.includes('write:statuses') || scopes.includes('write'))
+      && (scopes.includes('read:accounts') || scopes.includes('read'));
+  } catch { return false; }
+}
+
+async function publishToMastodon(token, { text, mediaUrl, idempotencyKey }) {
+  if (!mastodonCanPublish(token)) {
+    throw Object.assign(new Error('Reconnect Mastodon to grant permission to publish posts.'), { reconnectRequired: true });
+  }
+  const session = JSON.parse(token);
+  // Reuse the same origin validation and DNS-pinned service as account
+  // connections. Arbitrary URLs and redirects never receive this token.
+  const origin = mastodonOrigin(session.origin);
+  const status = [String(text || '').trim(), mediaUrl || ''].filter(Boolean).join('\n\n');
+  if (!status) throw new Error('Write a Mastodon post or add uploaded media.');
+  const limitKey = `mastodon_status_limit_${origin}`;
+  let maxCharacters = getCached(limitKey);
+  if (!maxCharacters) {
+    maxCharacters = 500;
+    try {
+      const instance = await mastodonService.json(origin, '/api/v2/instance');
+      const advertised = Number(instance?.configuration?.statuses?.max_characters);
+      if (Number.isInteger(advertised) && advertised > 0 && advertised <= 100000) maxCharacters = advertised;
+    } catch { /* Older or temporarily unavailable metadata uses the default. */ }
+    setCached(limitKey, maxCharacters, 5 * 60 * 1000);
+  }
+  // Count the complete submitted text, including its media link. This is
+  // conservative for servers that shorten URLs for character accounting;
+  // content is never silently truncated to fit a target.
+  if (Array.from(status).length > maxCharacters) {
+    throw new Error(`Keep the Mastodon post, including its media link, within ${maxCharacters.toLocaleString('en-US')} characters. Nothing was sent to Mastodon.`);
+  }
+  let created;
+  let visibility;
+  try {
+    // CredentialAccount.source.privacy is the member's default for new
+    // statuses. Read it for each delivery so a changed preference applies.
+    // https://docs.joinmastodon.org/entities/Account/#sourceprivacy
+    const account = await mastodonService.json(origin, '/api/v1/accounts/verify_credentials', { token: session.accessToken });
+    if (String(account?.id || '') !== String(session.accountId)) {
+      throw Object.assign(new Error('Reconnect Mastodon to verify the account used for publishing.'), { reconnectRequired: true });
+    }
+    visibility = account?.source?.privacy;
+    if (!['public', 'unlisted', 'private', 'direct'].includes(visibility)) {
+      throw new Error('Mastodon could not confirm your default post privacy. Nothing was sent; try again shortly.');
+    }
+    created = await mastodonService.json(origin, '/api/v1/statuses', {
+      token: session.accessToken, form: { status, visibility,
+        ...(account.source.sensitive === true ? { sensitive: 'true' } : {}),
+      }, idempotencyKey,
+    });
+  } catch (error) {
+    if (error.status === 401 || error.status === 403) {
+      throw Object.assign(new Error('Reconnect Mastodon to restore permission to publish posts.'), { reconnectRequired: true });
+    }
+    if (error.status === 422) throw new Error('Mastodon rejected this post. Check its text length and your server rules before retrying.');
+    throw error;
+  }
+  const id = String(created?.id || '');
+  const postedUrl = mastodonPostUrl(created?.url);
+  if (!/^\d+$/.test(id) || !postedUrl || new URL(postedUrl).origin !== origin
+    || !new URL(postedUrl).pathname.endsWith(`/${id}`) || created?.error || created?.scheduled_at || created?.reblog
+    || String(created?.account?.id || '') !== String(session.accountId) || created?.visibility !== visibility) {
+    throw new Error('Mastodon did not confirm a created post. Check Mastodon before retrying.');
+  }
+  return postedUrl;
 }
 
 async function publishToBluesky(token, { text, mediaUrl }) {
@@ -32455,7 +32535,7 @@ async function refreshCrossPostAccessToken(userId, platform) {
   }
 }
 
-async function publishCrossPostTarget(user, platform, { content, mediaUrl, mediaType = null }) {
+async function publishCrossPostTarget(user, platform, { content, mediaUrl, mediaType = null, crossPostId = null }) {
   if (user.plan === 'business') return { platform, status: 'unsupported', error: 'Business memberships use recruiting tools.' };
   const capability = getCrossPostCapability(platform);
   if (!capability.supported) {
@@ -32463,6 +32543,9 @@ async function publishCrossPostTarget(user, platform, { content, mediaUrl, media
   }
   const token = user.socialTokens?.[platform];
   if (!token) return { platform, status: 'failed', error: 'Not connected.' };
+  if (platform === 'mastodon' && (typeof crossPostId !== 'string' || !crossPostId.trim())) {
+    return { platform, status: 'failed', error: 'Cross-post history must be prepared before publishing to Mastodon. Nothing was sent.' };
+  }
   if (mediaType === 'video' && capability.media !== 'link') {
     return { platform, status: 'failed', error: 'This platform needs a native video publishing connection.' };
   }
@@ -32472,7 +32555,11 @@ async function publishCrossPostTarget(user, platform, { content, mediaUrl, media
   }
   const deliver = async (accessToken) => {
     let postedUrl = null;
-    if (platform === 'bluesky') postedUrl = await publishToBluesky(accessToken, { text: content, mediaUrl });
+    if (platform === 'mastodon') postedUrl = await publishToMastodon(accessToken, {
+      text: content, mediaUrl,
+      idempotencyKey: crypto.createHash('sha256').update(`${user.id}:mastodon:${crossPostId}`).digest('hex'),
+    });
+    else if (platform === 'bluesky') postedUrl = await publishToBluesky(accessToken, { text: content, mediaUrl });
     else if (platform === 'reddit') postedUrl = await publishToReddit(accessToken, { text: content, mediaUrl });
     else if (platform === 'twitter') postedUrl = await publishToTwitter(accessToken, { text: content, mediaUrl });
     else if (platform === 'linkedin') postedUrl = await publishToLinkedIn(accessToken, { text: content, mediaUrl });
@@ -32500,7 +32587,9 @@ async function publishCrossPostTarget(user, platform, { content, mediaUrl, media
       }
     }
     console.error(`[/command-center/cross-post] ${platform}:`, finalError.message);
-    return { platform, status: 'failed', error: shortCrossPostError(finalError) };
+    return { platform, status: 'failed', error: shortCrossPostError(finalError),
+      ...(finalError.reconnectRequired ? { reconnectRequired: true } : {}),
+    };
   }
 }
 
@@ -32602,6 +32691,7 @@ app.post('/command-center/cross-post', authenticate, contentSubmissionLimiter, a
   }
 
   const targets = await Promise.all(platforms.map(platform => publishCrossPostTarget(user, platform, {
+    crossPostId: id,
     content: screenedContent,
     mediaUrl,
     mediaType: mediaUrl ? mediaType : null,
