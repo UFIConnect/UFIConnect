@@ -109,7 +109,13 @@ test('LinkedIn reports a post only when the provider confirms its creation', asy
     reply = { status, headers: {}, data: {} };
     assert.equal((await app.publishCrossPostTarget(owner, 'linkedin', { content: 'Test' })).status, 'failed');
   }
-  assert.equal((await app.publishCrossPostTarget({ ...owner, plan: 'business' }, 'linkedin', { content: 'Test' })).status, 'unsupported');
+  const business = { ...owner, plan: 'business' };
+  assert.equal((await app.publishCrossPostTarget(business, 'linkedin', { content: 'Test' })).status, 'failed');
+  reply = { status: 201, headers: { 'x-restli-id': 'urn:li:share:67890' }, data: {} };
+  const businessResult = await app.publishCrossPostTarget(business, 'linkedin', { content: 'A hiring update' });
+  assert.equal(businessResult.status, 'posted');
+  assert.match(businessResult.postedUrl, /urn%3Ali%3Ashare%3A67890$/);
+  assert.equal((await app.publishCrossPostTarget(business, 'twitter', { content: 'Test' })).status, 'unsupported');
 });
 
 test('AI Content uses all shared target labels and guidance without paid generation', async t => {

@@ -1,34 +1,35 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
 import CategoryCity from '../components/SourceCity';
 import CityAppGuide from '../components/CityAppGuide';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
-import PostInlineText from '../components/PostInlineText';
-import PostLinkPreviews from '../components/PostLinkPreviews';
+import { PostCard } from './Feed';
+import ImageLightbox from '../components/ImageLightbox';
+import TravelGuideDialog from '../components/TravelGuideDialog';
 import useTabMetrics from '../analytics/useTabMetrics';
-import { postTextPreview } from '../../../backend/post-text.mjs';
 import { SOURCE_META } from '../components/sourceMeta';
 import { CITY_SOURCE_PRESETS, CITY_SOURCE_IDS, CITY_ALL_TOPICS, houseTopics } from '../local/citySources';
 import client from '../api/client';
-import { topicCount } from '../local/cityTopicTargets.mjs';
+import { appendMapPosts, mapSourceTopicScope, mapTopicCounts, mapPostTarget, mapWildcardTarget } from '../../../shared/map-feed-topics.mjs';
 import { useAuth } from '../contexts/AuthContext';
 import { feedLocationKey } from '../utils/feedLocation.mjs';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { CITY_CATEGORIES, useLocalWorkspace, safeLink } from '../local/localWorkspace';
+import { CITY_LANDMARKS } from '../local/cityEngineering.mjs';
 import '../components/local-workspaces.css';
 import '../components/maps-workspace.css';
 
-const DEFAULT_CITY = { enabled: CITY_CATEGORIES.map(category => category.id), sourceSelections: {}, topicSelections: {} };
+const DEFAULT_CITY = { enabled: CITY_CATEGORIES.map(category => category.id), sourceSelections: {}, topicSelections: {}, topicTargets: {} };
 const PAGE_SIZE = 20;
 const postKey = post => String(post.source || 'uficonnect') + ':' + String(post.id);
 const sourceLabel = source => SOURCE_META[source]?.label || source;
 const snapshot = (post, category) => ({
+  ...post,
   key: postKey(post), id: String(post.id), source: String(post.source || 'uficonnect'),
   title: String(post.title || post.content || 'Community post').slice(0, 220),
-  content: postTextPreview(post.content, 1800),
   topics: (Array.isArray(post.topics) ? post.topics : [post.topic]).filter(topic => typeof topic === 'string').slice(0, 30),
   sourceUrl: safeLink(post.sourceUrl), category,
 });
@@ -36,12 +37,15 @@ const settingsFor = value => ({
   enabled: Array.isArray(value.enabled) ? value.enabled.filter(id => CITY_CATEGORIES.some(category => category.id === id)) : DEFAULT_CITY.enabled,
   sourceSelections: value.sourceSelections && typeof value.sourceSelections === 'object' && !Array.isArray(value.sourceSelections) ? value.sourceSelections : {},
   topicSelections: value.topicSelections && typeof value.topicSelections === 'object' && !Array.isArray(value.topicSelections) ? value.topicSelections : {},
+  topicTargets: value.topicTargets && typeof value.topicTargets === 'object' && !Array.isArray(value.topicTargets) ? value.topicTargets : {},
 });
 const sourcesFor = (settings, category) => Array.isArray(settings.sourceSelections[category])
   ? [...new Set(settings.sourceSelections[category].filter(source => CITY_SOURCE_IDS.includes(source)))]
   : CITY_SOURCE_PRESETS[category] || ['uficonnect'];
 
 export default function Maps() {
+  const navigate = useNavigate(), [routeParams] = useSearchParams();
+  const requestedLandmark = CITY_LANDMARKS.find(item => item.id === routeParams.get('landmark'))?.id || '';
   const { profile } = useAuth();
   const city = useLocalWorkspace(profile.id, 'city', DEFAULT_CITY);
   const applied = settingsFor(city.value);
@@ -58,13 +62,20 @@ export default function Maps() {
   const [loadedScope, setLoadedScope] = useState('');
   const [locationContext, setLocationContext] = useState(null);
   const [query, setQuery] = useState('');
-  const [page, setPage] = useState(1);
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [moreAvailable, setHasMore] = useState(false);
   const [fetching, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [sample, setSample] = useState(false);
   const [topicSearch, setTopicSearch] = useState('');
+  const [toolsPage, setToolsPage] = useState('sources');
+  const [desktopToolsOpen, setDesktopToolsOpen] = useState(false);
+  const [sourcePage, setSourcePage] = useState(1);
+  const [topicPage, setTopicPage] = useState(1);
+  const [selectedPage, setSelectedPage] = useState(1);
+  const [mediaPostId, setMediaPostId] = useState(null);
+  const [guideDestination, setGuideDestination] = useState(null);
   const [activeBuilding, setActiveBuilding] = useState('feed');
   const [revealPanel, setRevealPanel] = useState('');
   const [mobileTools, setMobileTools] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches);
@@ -77,6 +88,7 @@ export default function Maps() {
     return () => media.removeEventListener('change', update);
   }, []);
   const paging = useRef({ page: 1, cursor: '' });
+  const results = useRef({ scope: '', posts: [] });
   const request = useRef(null);
   const sequence = useRef(0);
   const heading = useRef(null);
@@ -124,11 +136,9 @@ export default function Maps() {
   const availableTopics = [...new Set([...houseTopics(active, draftSource), ...CITY_ALL_TOPICS])];
   const topics = Array.isArray(editing.topicSelections[topicKey])
     ? editing.topicSelections[topicKey].filter(topic => availableTopics.includes(topic)) : [];
-  const appliedTopicKey = active + ':' + (currentSource || 'city');
-  const appliedTopics = Array.isArray(topicSelections[appliedTopicKey]) ? topicSelections[appliedTopicKey] : [];
   const requestedSources = currentSource ? [currentSource] : sources;
   const sourceKey = requestedSources.join(',');
-  const requestedTopics = appliedTopics.join(',');
+  const requestedTopics = JSON.stringify([applied.topicSelections, applied.topicTargets]);
   // Hide results from the previous selection immediately, including during debounce.
   // Only a completed request for this exact scope may supply posts or pagination.
   const locationKey = feedLocationKey(profile.roleSettings, category.mode || 'feed');
@@ -146,8 +156,15 @@ export default function Maps() {
     return result;
   }, {}), [posts, active]);
   const currentPosts = posts;
-  const pages = Math.max(1, Math.ceil(currentPosts.length / PAGE_SIZE));
-  const visible = currentPosts.slice((Math.min(page, pages) - 1) * PAGE_SIZE, Math.min(page, pages) * PAGE_SIZE);
+  const visible = currentPosts.slice(0, visibleCount);
+  const countTopic = useMemo(() => mapTopicCounts(posts, active), [posts, active]);
+  const sourceChoices = [...primarySources, ...otherSources];
+  const sourcePages = Math.max(1, Math.ceil(sourceChoices.length / 12));
+  const availableChoices = availableTopics.filter(topic => !topics.includes(topic) && topic.toLowerCase().includes(topicSearch.trim().toLowerCase()));
+  const topicPages = Math.max(1, Math.ceil(availableChoices.length / 12));
+  const selectedPages = Math.max(1, Math.ceil(topics.length / 6));
+  const mediaPosts = visible.filter(post => post.mediaUrl && ['image', 'video'].includes(post.mediaType));
+  const mediaIndex = mediaPosts.findIndex(post => post.id === mediaPostId);
   function editCity(changes) {
     setDraft({ accountId: profile.id, settings: { ...editing, ...changes } });
     setNotice('');
@@ -160,7 +177,7 @@ export default function Maps() {
     } else if (!draftSources.includes(activeSource)) setActiveSource('');
     setDraft(null);
     setError('');
-    setPage(1);
+    setVisibleCount(PAGE_SIZE);
     setNotice('Map changes applied.');
   }
   function discardChanges() {
@@ -173,25 +190,29 @@ export default function Maps() {
     const id = ++sequence.current;
     request.current?.abort();
     const controller = new AbortController(); request.current = controller;
-    if (reset) { paging.current = { page: 1, cursor: '' }; setPosts([]); setPage(1); }
+    const previous = !reset && results.current.scope === feedScope ? results.current.posts : [];
+    if (reset) { paging.current = { page: 1, cursor: '' }; results.current = { scope: feedScope, posts: [] }; setPosts([]); setVisibleCount(PAGE_SIZE); }
+    const mapTopics = mapSourceTopicScope(applied, active, requestedSources, previous);
+    const constrained = Object.values(mapTopics).some(value => value !== null);
+    const remaining = constrained ? 40 : mapPostTarget(applied.topicTargets[active + ':city']?.['*']) - previous.length;
+    if (remaining <= 0 || !Object.values(mapTopics).some(value => value === null || value.length)) { setHasMore(false); setLoadedScope(feedScope); return 0; }
     setLoading(true); setError('');
     try {
-      const params = { mode: category.mode || 'feed', sources: sourceKey, q: query.trim(), limit: 40, sort: 'newest', page: paging.current.page };
-      if (requestedTopics) params.topics = requestedTopics;
+      const params = { mode: category.mode || 'feed', sources: sourceKey, q: query.trim(), limit: Math.min(40, remaining), sort: 'newest', page: paging.current.page, surface: 'maps', passive: '1', mapTopics: JSON.stringify(mapTopics) };
       if (paging.current.cursor) params.cursor = paging.current.cursor;
       const { data } = await client.get('/office/feed', { params, signal: controller.signal });
       if (id !== sequence.current || feedScope !== scopeRef.current) return 0;
       setLocationContext(data.locationContext || null);
       const incoming = Array.isArray(data.posts) ? data.posts.filter(post => post?.id != null && requestedSources.includes(String(post.source || 'uficonnect').toLowerCase())).map(post => snapshot(post, active)) : [];
       setLoadedScope(feedScope);
-      setPosts(current => {
-        const seen = new Set(reset ? [] : current.map(post => post.key));
-        return [...(reset ? [] : current), ...incoming.filter(post => { if (seen.has(post.key)) return false; seen.add(post.key); return true; })].slice(0, 500);
-      });
+      const merged = appendMapPosts(previous, incoming, applied, active, requestedSources);
+      results.current = { scope: feedScope, posts: merged };
+      setPosts(merged);
       paging.current = { page: paging.current.page + 1, cursor: data.cursor || '' };
-      setHasMore(data.hasMore === true && (reset ? incoming.length : posts.length + incoming.length) < 500);
+      const nextTopics = mapSourceTopicScope(applied, active, requestedSources, merged);
+      setHasMore(data.hasMore === true && (constrained || merged.length < mapPostTarget(applied.topicTargets[active + ':city']?.['*'])) && Object.values(nextTopics).some(value => value === null || value.length));
       setSample(data.sampleContent === true);
-      return incoming.length;
+      return merged.length - previous.length;
     } catch (failure) {
       if (id === sequence.current && !controller.signal.aborted) setError('This category could not load. Retry to keep exploring.');
       return 0;
@@ -199,13 +220,14 @@ export default function Maps() {
   }
   useEffect(() => {
     setLocationContext(null);
-    if (!enabled.includes(active) || !sourceKey) { setPosts([]); setHasMore(false); setPage(1); setError(''); return; }
+    setMediaPostId(null); setGuideDestination(null);
+    if (!enabled.includes(active) || !sourceKey) { setPosts([]); setHasMore(false); setVisibleCount(PAGE_SIZE); setError(''); return; }
     const timer = setTimeout(() => load(true), 200);
     return () => { clearTimeout(timer); sequence.current++; request.current?.abort(); setLoading(false); };
   }, [profile.id, active, query, enabled.includes(active), sourceKey, requestedTopics, locationKey]);
   useScrollToRefresh(() => load(true), { enabled: enabled.includes(active) && Boolean(sourceKey) && !loading });
-  function chooseCategory(id) { setActive(id); setActiveSource(''); setQuery(''); setPage(1); }
-  function openHouse(source) { setActiveSource(source); setQuery(''); setPage(1); setRevealPanel('topics'); if (mobileTools) setMobileToolsOpen(true); }
+  function chooseCategory(id) { setActive(id); setActiveSource(''); setQuery(''); setVisibleCount(PAGE_SIZE); setSourcePage(1); setTopicPage(1); setSelectedPage(1); }
+  function openHouse(source) { setActiveSource(source); setQuery(''); setVisibleCount(PAGE_SIZE); setToolsPage('topics'); setTopicPage(1); setSelectedPage(1); setRevealPanel('topics'); if (mobileTools) setMobileToolsOpen(true); else setDesktopToolsOpen(true); }
   useEffect(() => {
     if (!revealPanel) return;
     const target = revealPanel === 'topics' ? houseHeading.current : revealPanel === 'guide' ? guideHeading.current : heading.current;
@@ -215,13 +237,17 @@ export default function Maps() {
       setRevealPanel('');
     }
   }, [revealPanel, active, currentSource, enabled.includes(active), mobileTools]);
-  function showBuilding(id) { setActiveBuilding(id); setRevealPanel('guide'); if (mobileTools) setMobileToolsOpen(true); }
+  function showBuilding(id) {
+    const landmark = CITY_LANDMARKS.find(item => item.id === id);
+    if (landmark) { navigate(landmark.to); return; }
+    setActiveBuilding(id); setToolsPage('guide'); setRevealPanel('guide'); if (mobileTools) setMobileToolsOpen(true); else setDesktopToolsOpen(true);
+  }
   function exploreBuilding() {
     if (!editing.enabled.includes(active)) {
       setNotice('Enable ' + category.label + ' in Customize your app to choose its topics.');
       return;
     }
-    setPage(1);
+    setToolsPage('topics');
     setRevealPanel('topics');
   }
   function setSources(next) {
@@ -234,6 +260,9 @@ export default function Maps() {
     const next = topics.includes(topic) ? topics.filter(item => item !== topic) : [...topics, topic];
     editCity({ topicSelections: { ...editing.topicSelections, [topicKey]: next } });
   }
+  function setTopicTarget(topic, value) {
+    editCity({ topicTargets: { ...editing.topicTargets, [topicKey]: { ...editing.topicTargets[topicKey], [topic]: mapPostTarget(value) } } });
+  }
   function sourceButton(source) {
     return <button key={source} type="button" className={'search-filter-chip city-source-chip' + (draftSources.includes(source) ? ' active' : '')} aria-pressed={draftSources.includes(source)} onClick={() => toggleSource(source)}>
       <span className="city-source-mark">{hasBrandIcon(source) ? <BrandIcon platform={source} size={17} /> : String(SOURCE_META[source]?.icon || source).slice(0, 3)}</span>{sourceLabel(source)}
@@ -243,27 +272,31 @@ export default function Maps() {
     const next = editing.enabled.includes(id) ? editing.enabled.filter(item => item !== id) : [...editing.enabled, id];
     editCity({ enabled: next });
   }
-  const houseSummaries = Object.fromEntries(sources.map(source => [source, (Array.isArray(topicSelections[active + ':' + source]) ? topicSelections[active + ':' + source] : []).map(topic => ({ topic, loaded: topicCount(posts, topic, active, source) }))]));
-  async function nextPage() {
-    if (page < pages) setPage(page + 1);
-    else if (hasMore && await load()) setPage(page + 1);
-    heading.current?.focus();
+  const houseSummaries = Object.fromEntries(sources.map(source => [source, (Array.isArray(topicSelections[active + ':' + source]) ? topicSelections[active + ':' + source] : []).map(topic => ({ topic, loaded: countTopic(topic, source), target: mapPostTarget(applied.topicTargets[active + ':' + source]?.[topic]) }))]));
+  async function loadMore() {
+    if (loading || request.current && fetching) return;
+    if (visibleCount >= posts.length && hasMore) await load();
+    setVisibleCount(value => value + PAGE_SIZE);
+  }
+  function menuPagination(label, current, total, change) {
+    return total > 1 && <nav className="map-options-pagination" aria-label={label}><button type="button" className="btn btn-ghost btn-sm" disabled={current <= 1} onClick={() => change(current - 1)}>Previous</button><span role="status">{current} / {total}</span><button type="button" className="btn btn-ghost btn-sm" disabled={current >= total} onClick={() => change(current + 1)}>Next</button></nav>;
   }
   const cityControls = <aside className="map-customization-rail" aria-label="Customize your city">
-      <CityAppGuide selected={activeBuilding} onSelect={setActiveBuilding} onAction={exploreBuilding} headingRef={guideHeading} />
-      <details className="card city-customize"><summary>Customize your app</summary>
+      <nav className="map-menu-pages" aria-label="Map settings pages">{[['guide', 'Guide'], ['cities', 'Cities'], ['sources', 'Sources'], ['topics', 'Topics']].map(([id, label]) => <button type="button" key={id} aria-pressed={toolsPage === id} onClick={() => setToolsPage(id)}>{label}</button>)}</nav>
+      {toolsPage === 'guide' && <CityAppGuide selected={activeBuilding} onSelect={setActiveBuilding} onAction={exploreBuilding} headingRef={guideHeading} />}
+      {toolsPage === 'cities' && <section className="card city-customize"><h2>Customize your app</h2>
         <p>Choose your cities, source houses, and topics. Use Apply changes to update your map and save these settings for your account in this browser.</p>
         <div className="local-chip-row">{CITY_CATEGORIES.map(item => <label key={item.id} className="local-check-chip"><input type="checkbox" checked={editing.enabled.includes(item.id)} onChange={() => toggleCategory(item.id)} />{item.label}</label>)}</div>
         <button className="btn btn-ghost btn-sm" type="button" onClick={() => editCity({ enabled: DEFAULT_CITY.enabled })}>Restore all categories</button>
-      </details>
-      {editing.enabled.includes(active) && <section className="card city-source-picker" aria-labelledby="city-sources-heading">
+      </section>}
+      {toolsPage === 'sources' && editing.enabled.includes(active) && <section className="card city-source-picker" aria-labelledby="city-sources-heading">
         <div className="local-workspace-heading"><div><h2 id="city-sources-heading">Sources</h2><p>Each source gets a house in {category.label}. Open its house to choose the topics inside.</p></div>
           <button type="button" className="ufi-clear-control" disabled={!draftSources.length} onClick={() => setSources([])}>Clear</button>
         </div>
-        <div className="local-chip-row" role="group" aria-label={category.label + ' sources'}>{primarySources.map(sourceButton)}</div>
-        {otherSources.length > 0 && <details className="city-more-sources"><summary>More sources ({otherSources.length})</summary><div className="local-chip-row">{otherSources.map(sourceButton)}</div></details>}
+        <div className="local-chip-row" role="group" aria-label={category.label + ' sources'}>{sourceChoices.slice((Math.min(sourcePage, sourcePages) - 1) * 12, Math.min(sourcePage, sourcePages) * 12).map(sourceButton)}</div>
+        {menuPagination('Source option pages', Math.min(sourcePage, sourcePages), sourcePages, setSourcePage)}
       </section>}
-      {editing.enabled.includes(active) && <section id="city-source-house" className="card city-house-topics" aria-labelledby="house-topics-heading">
+      {toolsPage === 'topics' && editing.enabled.includes(active) && <section id="city-source-house" className="card city-house-topics" aria-labelledby="house-topics-heading">
         <div className="local-workspace-heading"><div><span className="local-eyebrow">{draftSource ? 'INSIDE THE HOUSE' : 'CITY TOPICS'}</span><h2 ref={houseHeading} tabIndex={-1} id="house-topics-heading">{draftSource ? sourceLabel(draftSource) : category.label} · Topics</h2></div>
           {draftSource && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setActiveSource('')}>Back to city topics</button>}
         </div>
@@ -271,13 +304,17 @@ export default function Maps() {
         <div className="map-selected-topics" aria-label="Selected topics">
           <div className="local-workspace-heading"><h3>Selected topics ({topics.length})</h3><button type="button" className="ufi-clear-control" disabled={!topics.length} onClick={() => editCity({ topicSelections: { ...editing.topicSelections, [topicKey]: [] } })}>Clear topics</button></div>
           {!topics.length && <p className="local-muted">Any topic. Add topics below to narrow the source posts.</p>}
-          {topics.map(topic => <div key={topic} className="map-topic-row">
-            <div><strong>{topic}</strong></div>
+          {!topics.length && <label className="map-topic-slider">Posts to load <output>{mapWildcardTarget(editing, active, draftSource || 'city')}</output><input type="range" aria-label="Posts to load" min="20" max="500" step="1" value={mapWildcardTarget(editing, active, draftSource || 'city')} onChange={event => setTopicTarget('*', event.target.value)} /><span>20–500 posts</span></label>}
+          {topics.slice((Math.min(selectedPage, selectedPages) - 1) * 6, Math.min(selectedPage, selectedPages) * 6).map(topic => <div key={topic} className="map-topic-row">
+            <div><strong>{topic}</strong><span>{countTopic(topic, draftSource || 'city')} posts loaded</span></div>
+            <label className="map-topic-slider">Post count <output>{mapPostTarget(editing.topicTargets[topicKey]?.[topic])}</output><input type="range" aria-label={topic + ' post count'} min="20" max="500" step="1" value={mapPostTarget(editing.topicTargets[topicKey]?.[topic])} onChange={event => setTopicTarget(topic, event.target.value)} /><span>20–500 per topic</span></label>
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => toggleTopic(topic)}>Remove</button>
           </div>)}
+          {menuPagination('Selected topic pages', Math.min(selectedPage, selectedPages), selectedPages, setSelectedPage)}
         </div>
-        <details className="map-more-topics" open={!topics.length || undefined}><summary>Add more topics</summary><label className="local-field">Find a topic<input type="search" value={topicSearch} onChange={event => setTopicSearch(event.target.value)} placeholder="Search topics across categories" /></label><div className="local-chip-row" role="group" aria-label="Available house topics">
-          {availableTopics.filter(topic => !topics.includes(topic) && topic.toLowerCase().includes(topicSearch.toLowerCase())).map(topic => <button type="button" key={topic} className="search-filter-chip" onClick={() => toggleTopic(topic)}>+ {topic}</button>)}
+        <details className="map-more-topics" open={!topics.length || undefined}><summary>Add more topics</summary><label className="local-field">Find a topic<input type="search" value={topicSearch} onChange={event => { setTopicSearch(event.target.value); setTopicPage(1); }} placeholder="Search topics across categories" /></label><div className="local-chip-row" role="group" aria-label="Available house topics">
+          {availableChoices.slice((Math.min(topicPage, topicPages) - 1) * 12, Math.min(topicPage, topicPages) * 12).map(topic => <button type="button" key={topic} className="search-filter-chip" onClick={() => toggleTopic(topic)}>+ {topic}</button>)}
+          {menuPagination('Available topic pages', Math.min(topicPage, topicPages), topicPages, setTopicPage)}
         </div></details>
 
       </section>}
@@ -287,6 +324,7 @@ export default function Maps() {
     {hasChanges && <button type="button" className="btn btn-ghost btn-sm" onClick={discardChanges}>Discard changes</button>}
   </>;
   const mapActions = <div className="map-feed-actions" role="group" aria-label="Map actions">
+    {!mobileTools && <button type="button" className="btn btn-ghost btn-sm" aria-label={desktopToolsOpen ? 'Close map menu' : 'Open map menu'} aria-expanded={desktopToolsOpen} aria-controls="map-desktop-settings" onClick={() => setDesktopToolsOpen(value => !value)}><span aria-hidden="true">☰</span> Map menu</button>}
     {applyActions}
     {enabled.includes(active) && sourceKey
       ? <Link className="btn btn-ghost btn-sm" to={'/?feed=' + (category.mode || 'feed') + '&sources=' + encodeURIComponent(sourceKey)}>Source feed</Link>
@@ -297,30 +335,30 @@ export default function Maps() {
   return <Layout wide mobileRightMenu={mobileTools ? {
     label: 'map menu', controls: 'map-mobile-menu', triggerRef: mobileMenuButton,
     open: mobileToolsOpen, onOpenChange: setMobileToolsOpen,
-  } : undefined} feedSearch={{ query, label: 'Search city posts', onSubmit: value => { setQuery(value); setPage(1); } }}>
+  } : undefined} feedSearch={{ query, label: 'Search city posts', onSubmit: value => { setQuery(value); setVisibleCount(PAGE_SIZE); } }}>
     <Helmet><title>Maps · Your city | UFIconnect</title><meta name="robots" content="noindex" /></Helmet>
     <div className="local-workspace city-workspace">
       <header className="local-workspace-heading"><div><span className="local-eyebrow">YOUR WORLD, CONNECTED</span><h1>Maps</h1><p>Choose a city, open its source houses, and explore posts about the topics you enjoy.</p></div></header>
       {['countries', 'restaurants', 'bars'].includes(category.mode)
         ? <p className="muted">{category.label} destination: {[locationContext?.city, locationContext?.countryName || locationContext?.country].filter(Boolean).join(', ') || 'Automatic area'}. <Link to={category.route}>Change this destination</Link></p>
         : null}
-      <div className="map-explorer-layout">
+      <div className={'map-explorer-layout' + (!desktopToolsOpen ? ' map-explorer-layout--full' : '')}>
         <div className="map-explorer-main">
-      <CategoryCity cities={allCities} onCivicSelect={showBuilding} houseSummaries={houseSummaries} actions={mapActions} enabled={enabled} active={active} onSelect={chooseCategory} counts={counts} sources={enabled.includes(active) ? sources : []} activeSource={currentSource} onSourceSelect={openHouse} />
+      <CategoryCity cities={allCities} requestedLandmark={requestedLandmark} onCivicSelect={showBuilding} houseSummaries={houseSummaries} actions={mapActions} enabled={enabled} active={active} onSelect={chooseCategory} counts={counts} sources={enabled.includes(active) ? sources : []} activeSource={currentSource} onSourceSelect={openHouse} />
         </div>
-        {!mobileTools && cityControls}
+        {!mobileTools && desktopToolsOpen && <div id="map-desktop-settings">{cityControls}</div>}
       </div>
-      <div className="local-workspace-heading"><h2 ref={heading} tabIndex={-1}>{currentSource ? sourceLabel(currentSource) + ' posts' : category.label + ' · Source posts'}</h2></div>
+      <div className="local-workspace-heading"><h2 ref={heading} tabIndex={-1}>{currentSource ? sourceLabel(currentSource) + ' posts' : category.label + ' · Source posts'}</h2><span role="status">{posts.length} posts loaded{visible.length < posts.length ? ' · ' + visible.length + ' shown' : ''}</span></div>
       {sample && <p className="local-muted">Sample posts for local review. The public website is unchanged.</p>}
       {(error || city.error) && <p className="local-error" role="alert">{error || city.error}{error && <button type="button" disabled={loading} onClick={() => load(true)}>Retry</button>}</p>}
-      <div className="city-post-grid" aria-busy={loading}>{enabled.includes(active) && visible.map(post => <article className="card city-post" key={post.key}>
-        <span className="local-eyebrow">{sourceLabel(post.source)}</span>
-        <h3>{post.title}</h3><p><PostInlineText text={post.content} /></p><PostLinkPreviews post={post} />{safeLink(post.sourceUrl) && <a href={safeLink(post.sourceUrl)} target="_blank" rel="noopener noreferrer">Open post</a>}
-      </article>)}</div>
+      <div className="city-post-grid map-post-feed" aria-label="Map post feed" aria-busy={loading}>{enabled.includes(active) && visible.map(post => <PostCard key={post.key} post={post} onMediaOpen={item => setMediaPostId(item.id)} isMediaOpen={post.id === mediaPostId} onGuideOpen={setGuideDestination} onPostUpdated={updated => { const next = results.current.posts.map(item => item.id === updated.id ? { ...item, ...updated } : item); results.current.posts = next; setPosts(next); }} onRemoved={removed => { const next = results.current.posts.filter(item => item.id !== removed.id); results.current.posts = next; setPosts(next); }} />)}</div>
       {loading && <p role="status">Loading posts…</p>}
       {!loading && (!currentPosts.length || !enabled.includes(active)) && <p className="card">{!enabled.includes(active) ? 'Enable this city in Customize your app, then apply changes.' : !sourceKey ? 'Choose a source in the map menu, then apply changes to explore its posts.' : 'No posts match these sources and topics yet. Try another house or update your topics.'}</p>}
-      <nav className="local-pagination" aria-label="City post pages"><button type="button" className="btn btn-ghost btn-sm" disabled={loading || page <= 1} onClick={() => setPage(page - 1)}>Previous</button><span>Page {Math.min(page, pages)}</span><button type="button" className="btn btn-ghost btn-sm" disabled={loading || (page >= pages && !hasMore)} onClick={nextPage}>Next</button></nav>
+      {(visible.length < posts.length || hasMore) && <div className="local-pagination"><button type="button" className="btn btn-ghost" disabled={loading} onClick={loadMore}>Load more posts</button></div>}
+      {!loading && posts.length > 0 && !hasMore && <p className="local-muted" role="status">{Object.values(mapSourceTopicScope(applied, active, requestedSources, posts)).some(value => value === null || value.length) ? 'All available matching posts are loaded.' : 'Configured post counts reached. Increase your post count or change topics to explore more.'}</p>}
     </div>
+    {mediaIndex >= 0 && <ImageLightbox items={mediaPosts.map(post => ({ url: post.mediaUrl, type: post.mediaType, post }))} startIndex={mediaIndex} onClose={() => setMediaPostId(null)} onNearEnd={loadMore} />}
+    {guideDestination && <TravelGuideDialog destination={guideDestination} onClose={() => setGuideDestination(null)} />}
     {mobileTools && mobileToolsOpen && createPortal(<div className="map-mobile-menu-backdrop" onClick={event => { if (event.target === event.currentTarget) setMobileToolsOpen(false); }}>
       <section id="map-mobile-menu" ref={mobileMenu} className="map-mobile-menu" role="dialog" aria-modal="true" aria-labelledby="map-mobile-menu-title">
         <header className="map-mobile-menu-heading"><h2 id="map-mobile-menu-title">Map menu</h2><button type="button" className="btn btn-ghost btn-sm" aria-label="Close map menu" onClick={() => setMobileToolsOpen(false)}>Close</button></header>

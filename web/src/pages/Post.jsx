@@ -1,7 +1,7 @@
 import PublishingTargets, { usePublishingTargets } from '../components/PublishingTargets';
 ﻿import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import PostList from '../components/PostList';
 import client from '../api/client';
@@ -284,6 +284,7 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
       {!embedded && <h1 className="page-title" style={{ marginBottom: 20 }}>UFI</h1>}
 
       {!composeOnly && <div className="ufi-feed-toolbar" style={{ maxWidth: embedded ? 'none' : 640 }}>
+        {initialShop && <Link to="/maps?landmark=shopping" className="btn btn-ghost btn-sm feed-toolbar-control">Shopping center map</Link>}
         <button type="button" className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action ufi-compose-button ufi-post-action" onClick={openCompose}>
           Post
         </button>

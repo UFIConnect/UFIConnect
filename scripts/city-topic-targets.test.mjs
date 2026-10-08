@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fitsTopicTargets, topicCount } from '../web/src/local/cityTopicTargets.mjs';
+// Include map quotas and road routing in the existing city verification suite.
+import './map-feed-topics.test.mjs';
 const post = (id, source, topics) => ({ id, source, category: 'technology', topics });
 test('house limits apply independently and a post matching multiple topics respects both limits', () => {
   const selections = { 'technology:github': ['Open Source', 'Web Development'], 'technology:reddit': ['Open Source'] };

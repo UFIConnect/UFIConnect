@@ -74,25 +74,36 @@ try {
     await auditNavigate(page, server.resolvedUrls.local[0] + 'maps');
     const actions = page.getByRole('group', { name: 'Map actions', exact: true });
     const state = () => page.evaluate(key => JSON.parse(localStorage.getItem(key)), workspaceKey);
-    const openTools = async () => {
+    const openTools = async (section) => {
       if (width < 600 && !await page.locator('#map-mobile-menu').count()) await page.getByRole('button', { name: 'Open map menu', exact: true }).click();
-      return width < 600 ? page.locator('#map-mobile-menu') : page.locator('.map-customization-rail');
+      if (width >= 600 && !await page.locator('.map-customization-rail').count()) await actions.getByRole('button', { name: 'Open map menu', exact: true }).click();
+      const tools = width < 600 ? page.locator('#map-mobile-menu') : page.locator('.map-customization-rail');
+      if (section) await tools.getByRole('navigation', { name: 'Map settings pages' }).getByRole('button', { name: section, exact: true }).click();
+      return tools;
     };
     const closeTools = async () => {
       if (width < 600 && await page.locator('#map-mobile-menu').count()) await page.getByRole('button', { name: 'Close map menu', exact: true }).click();
+      if (width >= 600 && await page.locator('.map-customization-rail').count()) await actions.getByRole('button', { name: 'Close map menu', exact: true }).click();
     };
     const apply = async tools => {
       await (width < 600 ? tools : actions).getByRole('button', { name: 'Apply changes', exact: true }).click();
     };
     try {
       // Initial navigation also initializes the scene on software-rendered CI.
-      await page.getByRole('heading', { name: 'reddit map post', exact: true }).waitFor({ timeout: 30000 });
+      await page.getByText('reddit map post', { exact: true }).waitFor({ timeout: 30000 });
       assert.equal(await actions.locator('xpath=ancestor::*[contains(@class,"map-city-card")]').count(), 1, 'Apply, Source feed and Refresh belong inside the map');
       assert.equal(await page.getByRole('button', { name: /^Your selection/ }).count(), 0);
       assert.equal(await page.locator('.city-post input[type="checkbox"]').count(), 0);
       assert.equal(await actions.getByRole('button', { name: 'Apply changes', exact: true }).isDisabled(), true);
+      assert.equal(await page.getByText('All 16 nature cities', { exact: true }).count(), 0);
+      assert.equal(await page.locator('.map-city-footer').count(), 0);
+      assert.ok(await page.locator('.map-post-feed > article, .map-post-feed > .card').count() > 0, 'Map posts use the full feed card');
 
       let tools = await openTools();
+      const sourcePages = tools.getByRole('navigation', { name: 'Source option pages' });
+      await sourcePages.getByRole('button', { name: 'Next', exact: true }).click();
+      assert.equal(await tools.getByRole('button', { name: 'Reddit', exact: true }).count(), 0, 'Source options are paginated');
+      await sourcePages.getByRole('button', { name: 'Previous', exact: true }).click();
       const redditSource = tools.getByRole('group', { name: 'Community sources', exact: true }).getByRole('button', { name: 'Reddit', exact: true });
       // Read geometry without changing scroll position, focus, or click behavior.
       const readClickDiagnostics = () => redditSource.evaluate(button => {
@@ -175,17 +186,21 @@ try {
       assert.deepEqual((await state()).selected, baseline.selected, 'Removing collection UI must preserve existing stored posts');
       assert.equal(requests.at(-1).sources, 'uficonnect');
 
-      tools = await openTools();
+      tools = await openTools('Topics');
       await tools.getByRole('button', { name: '+ Community', exact: true }).click();
       await page.waitForTimeout(300);
       assert.equal(requests.at(-1).topics, undefined, 'Draft topic edits must not filter applied posts');
-      const topicResponse = page.waitForResponse(response => response.url().includes('/office/feed?') && new URL(response.url()).searchParams.get('topics') === 'Community');
+      const topicResponse = page.waitForResponse(response => response.url().includes('/office/feed?') && JSON.parse(new URL(response.url()).searchParams.get('mapTopics')).uficonnect?.includes('community'));
+      const slider = tools.getByRole('slider', { name: 'Community post count', exact: true });
+      assert.equal(await slider.getAttribute('min'), '20'); assert.equal(await slider.getAttribute('max'), '500');
+      await slider.press('End');
       await apply(tools);
       await topicResponse;
       await closeTools();
       assert.deepEqual((await state()).topicSelections['community:city'], ['Community']);
+      assert.equal((await state()).topicTargets['community:city'].Community, 500);
 
-      tools = await openTools();
+      tools = await openTools('Topics');
       await tools.getByRole('button', { name: 'Clear topics', exact: true }).click();
       await (width < 600 ? tools : actions).getByRole('button', { name: 'Discard changes', exact: true }).click();
       assert.equal(await tools.getByRole('heading', { name: 'Selected topics (1)', exact: true }).count(), 1);
@@ -209,11 +224,11 @@ try {
       // A full reload restores auth and initializes the 3D scene again. The CI
       // trace shows software rendering can take about 20 seconds here; keep
       // the normal 15-second action limit and allow 30 seconds for this startup.
-      await page.getByRole('heading', { name: 'uficonnect map post', exact: true }).waitFor({ timeout: 30000 });
+      await page.getByText('uficonnect map post', { exact: true }).waitFor({ timeout: 30000 });
       assert.deepEqual((await state()).sourceSelections.community, ['uficonnect']);
       assert.deepEqual((await state()).topicSelections['community:city'], ['Community']);
 
-      tools = await openTools();
+      tools = await openTools('Topics');
       await tools.getByRole('button', { name: 'Clear topics', exact: true }).click();
       await closeTools();
       holdNext = true;
@@ -230,18 +245,45 @@ try {
         localStorage.setItem(key, JSON.stringify(settings));
         window.__mapAuditUpdateProfile({ id: 'maps-second-account' });
       }, { key: secondKey, settings: sameSettings });
-      await page.getByRole('heading', { name: 'uficonnect map post', exact: true }).waitFor({ state: 'hidden' });
-      await page.getByRole('heading', { name: 'Second account uficonnect map post', exact: true }).waitFor();
+      await page.getByText('uficonnect map post', { exact: true }).waitFor({ state: 'hidden' });
+      await page.getByText('Second account uficonnect map post', { exact: true }).waitFor();
       releaseHeld();
       releaseHeld = null;
       await page.waitForTimeout(250);
-      assert.equal(await page.getByRole('heading', { name: 'uficonnect map post', exact: true }).count(), 0, 'Old account requests cannot replace new account posts');
+      assert.equal(await page.getByText('uficonnect map post', { exact: true }).count(), 0, 'Old account requests cannot replace new account posts');
       assert.equal(await actions.getByRole('button', { name: 'Apply changes', exact: true }).isDisabled(), true, 'Account changes discard the previous account draft');
-      assert.equal(requests.at(-1).topics, 'Community', 'Matching account filters still load a fresh account scope');
+      assert.ok(JSON.parse(requests.at(-1).mapTopics).uficonnect.includes('community'), 'Matching account filters still load a fresh account scope');
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Map controls must fit the viewport');
       await page.screenshot({ path: path.join(output, `map-settings-${width}.png`), fullPage: true });
+      if (width === 1440) {
+        assert.equal(await page.getByRole('combobox', { name: 'Rendering quality', exact: true }).inputValue(), 'maximum');
+        await page.getByRole('button', { name: 'Drive mode', exact: true }).click();
+        await page.waitForFunction(() => Number(document.querySelector('.map-city-scene canvas')?.dataset.driveProgress) > .005, { timeout: 30000 });
+        const drive = page.getByRole('group', { name: 'Drive between cities', exact: true });
+        assert.equal(await drive.getByRole('combobox').locator('option').count(), 18);
+        await drive.getByRole('button', { name: 'Pause drive', exact: true }).click();
+        const paused = await page.locator('.map-city-scene canvas').getAttribute('data-drive-progress');
+        await page.waitForTimeout(200);
+        assert.equal(await page.locator('.map-city-scene canvas').getAttribute('data-drive-progress'), paused, 'Pause stops the vehicle');
+        const rendering = await page.locator('.map-city-scene canvas').evaluate(canvas => ({ ...canvas.dataset }));
+        assert.equal(rendering.renderQuality, 'physical');
+        assert.ok(Number(rendering.instances) > 3000 && Number(rendering.drawCalls) < 80, 'Detailed city geometry remains instanced');
+        await page.screenshot({ path: path.join(output, 'map-drive-desktop.png') });
+        console.log('MAP_RENDERING ' + JSON.stringify(rendering));
+        for (const id of ['airport', 'shopping']) {
+          await drive.getByRole('combobox').selectOption(id);
+          await page.waitForFunction(destination => {
+            const data = document.querySelector('.map-city-scene canvas')?.dataset;
+            return data?.driveDestination === destination && Number(data.driveProgress) > .001;
+          }, id);
+        }
+        await page.getByRole('button', { name: 'Exit drive mode', exact: true }).click();
+        const landmarks = page.getByRole('group', { name: 'Travel and Shop landmarks', exact: true });
+        assert.equal(await landmarks.getByRole('link', { name: 'Open Travel' }).getAttribute('href'), '/?feed=countries');
+        assert.equal(await landmarks.getByRole('link', { name: 'Open Shop' }).getAttribute('href'), '/?feed=ufi&channel=shop');
+      }
       if (width < 600) {
-        tools = await openTools();
+        tools = await openTools('Topics');
         await tools.getByRole('button', { name: 'Clear topics', exact: true }).click();
         const applyBox = await tools.getByRole('button', { name: 'Apply changes', exact: true }).boundingBox();
         assert.ok(applyBox.height >= 44 && applyBox.y + applyBox.height <= 1000, 'Mobile Apply remains visible and has a usable touch target');
