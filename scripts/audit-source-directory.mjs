@@ -162,7 +162,10 @@ try {
     await page.getByRole('combobox', { name: 'Filter accounts' }).selectOption('available');
     assert.equal(await page.getByRole('searchbox', { name: 'Search accounts', exact: true }).count(), 0);
     await page.getByRole('link', { name: 'Open Instagram website' }).waitFor();
-    assert.equal(await page.getByRole('link', { name: 'Open YouTube website' }).count(), 0);
+    const memberAccounts = page.locator('.member-account-card');
+    const youtubeAccount = memberAccounts.getByRole('link', { name: 'Open YouTube website' });
+    assert.equal(await youtubeAccount.count(), 1, 'Command Center includes configured general account connections');
+    assert.equal(await youtubeAccount.getAttribute('href'), 'https://www.youtube.com/');
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/member-accounts-${width}.png`) });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
     if (width === 390) {

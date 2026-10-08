@@ -8,11 +8,28 @@ import { chromium } from 'playwright';
 import { createServer } from '../web/node_modules/vite/dist/node/index.js';
 const require = createRequire(import.meta.url);
 require('../backend/generated-media');
+const { PGlite } = require('../backend/node_modules/@electric-sql/pglite');
 const { createAppHarness, member } = require('../backend/test-support/app-harness');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const app = await createAppHarness({ connected: true });
+// Connected community reads use persisted rows as their source of truth.
+// Keep this audit's seeded and newly published posts in a real local database.
+const pg = new PGlite();
+await pg.exec(`CREATE TABLE community_posts (
+  id TEXT PRIMARY KEY, group_id TEXT, author_id TEXT, author_name TEXT,
+  author_title TEXT, title TEXT, content TEXT NOT NULL, url TEXT,
+  source TEXT DEFAULT 'uficonnect', source_label TEXT, media_url TEXT, media_type TEXT,
+  likes TEXT[] DEFAULT '{}', comments_count INTEGER DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+)`);
+const app = await createAppHarness({ connected: true,
+  query: (sql, params) => /\bcommunity_posts\b/.test(sql) ? pg.query(sql, params) : { rows: [], rowCount: 0 },
+});
 app.seedUser(member('post-context', { joinedGroups: ['ufi-general', 'ufi-tech'] }));
-app.posts.push({ id: 'joined-tech-post', groupId: 'ufi-tech', authorId: 'post-context', source: 'uficonnect', content: 'A useful technology update from our joined community.', createdAt: new Date().toISOString(), likes: [], commentsCount: 0 });
+await app.db.query(`INSERT INTO community_posts (id, group_id, author_id, content)
+  VALUES ($1, $2, $3, $4)`, ['joined-tech-post', 'ufi-tech', 'post-context', 'A useful technology update from our joined community.']);
+const seededFeed = await app.request('/posts?scope=ufi', { userId: 'post-context' });
+assert.equal(seededFeed.status, 200);
+assert.deepEqual(seededFeed.data.posts.map(post => post.id), ['joined-tech-post'], 'UFI includes persisted posts from joined communities');
 const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api') },
   server: { host: '127.0.0.1', port: 5209, strictPort: false, proxy: { '/api': { target: app.base, rewrite: p => p.replace(/^\/api/, '') } } },
@@ -58,6 +75,8 @@ try {
       await form.getByRole('button', { name: 'Publish', exact: true }).click();
       assert.equal((await response).status(), 201);
       assert.ok(app.queries.some(q => q.sql.includes('INSERT INTO community_posts') && q.params[1] === groupId && q.params[4] === publishedContent));
+      const persisted = await pg.query('SELECT group_id, content FROM community_posts WHERE author_id=$1 AND content=$2', ['post-context', publishedContent]);
+      assert.deepEqual(persisted.rows, [{ group_id: groupId, content: publishedContent }]);
       await page.getByText(content, { exact: true }).waitFor();
       if (area === 'Shop') {
         assert.equal(await page.getByText('A useful technology update from our joined community.', { exact: true }).count(), 0);
@@ -94,4 +113,4 @@ try {
     console.log(`PASS: UFI, Shop and group posting contexts at ${width}px`);
     await context.close();
   }
-} finally { await browser?.close(); await server.close(); await app.close(); }
+} finally { await browser?.close(); await server.close(); await app.close(); await pg.close(); }
