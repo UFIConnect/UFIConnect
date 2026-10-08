@@ -110,7 +110,7 @@ export default function Layout(props) {
   return profile?.plan === 'business' ? <BusinessLayout>{props.children}</BusinessLayout> : <PersonalLayout {...props} />;
 }
 
-function PersonalLayout({ children, wide = false, feedSearch, discoveryPost, mobileRightMenu }) {
+function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false, discoveryPost, mobileRightMenu }) {
   const { profile, logout, updateProfileLocally } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
@@ -126,6 +126,7 @@ function PersonalLayout({ children, wide = false, feedSearch, discoveryPost, mob
   const [mobileSearchQuery, setMobileSearchQuery] = useState('');
   const [mobileSearchTarget, setMobileSearchTarget] = useState('posts');
   const [searchPopupOpen, setSearchPopupOpen] = useState(false);
+  useEffect(() => { if (hideSearch) setSearchPopupOpen(false); }, [hideSearch]);
   const [searchPopupSeed, setSearchPopupSeed] = useState('');
   const [searchPopupQuery, setSearchPopupQuery] = useState('');
   const searchPopupRef = useRef(null);
@@ -554,13 +555,13 @@ function PersonalLayout({ children, wide = false, feedSearch, discoveryPost, mob
                 <ShellIcon name={icon} size={18} />
               </NavLink>)}
             </nav>
-            <form className="global-search-bar" role="search" aria-label="Search UFIconnect" onSubmit={submitMobileSearch}>
+            {!hideSearch && <form className="global-search-bar" role="search" aria-label="Search UFIconnect" onSubmit={submitMobileSearch}>
               <button type="submit" className="global-search-submit" aria-label={isJobsRoute ? 'Search jobs' : feedSearch ? 'Search current feed' : 'Search'} title={isJobsRoute ? 'Search jobs' : 'Search'}><ShellIcon name="search" size={17} /></button>
               <input type="search" value={mobileSearchQuery} aria-label="Search UFIconnect" placeholder={feedSearch?.label || 'Search'} title={feedSearch?.label || 'Search UFIconnect'} enterKeyHint="search"
                 onFocus={closeMobileOverlays} onChange={event => setMobileSearchQuery(event.target.value)} />
               {mobileSearchQuery && <button type="button" className="global-search-clear" aria-label="Clear feed search" title="Clear search" onClick={() => { setMobileSearchQuery(''); feedSearch?.onSubmit(''); }}><ShellIcon name="close" size={14} /></button>}
               <button type="button" className="global-search-open" aria-label="Open search" title="Search posts, people, groups and jobs" aria-haspopup="dialog" aria-expanded={searchPopupOpen} onClick={openSearchPopup}><ChevronDown size={16} aria-hidden="true" /></button>
-            </form>
+            </form>}
           <NavLink to="/notifications" className="global-desktop-alerts" aria-label="Alerts" title="Alerts">
             <ShellIcon name="notifications" size={19} /><NavBadge count={notifBadge} />
           </NavLink>

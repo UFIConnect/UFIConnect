@@ -162,7 +162,11 @@ try {
       await navigation.getByRole('button', { name: 'Next city', exact: true }).click();
       await waitForCitySave();
       const index = step % 91;
-      assert.equal(await cityChoice(cityIds[index]).getAttribute('aria-pressed'), 'true', 'Next follows the complete catalog, including cities without cameras');
+      assert.equal(await cityChoice(cityIds[index]).getAttribute('aria-pressed'), 'true',
+        `Next follows the complete catalog at step ${step}: ${JSON.stringify({ expected: cityIds[index],
+          active: await cities.locator('[aria-pressed="true"]').getAttribute('data-destination-id'),
+          saved: app.users.find(user => user.id === id)?.roleSettings?.feedLocations?.countries,
+          profileWrites, errors })}`);
       assert.ok(await rail.locator('iframe').count() <= 1, 'Only the current city can mount a player');
     }
     const beforeCameraChoices = profileWrites;

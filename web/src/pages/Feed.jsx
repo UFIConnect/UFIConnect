@@ -2666,7 +2666,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   }, [applyLocationFilters]);
 
   const selectTravelLiveLocation = useCallback((camera) => {
-    const next = normalizeLocationFilters({ country: camera?.country, city: camera?.city });
+    const next = normalizeLocationFilters({ country: camera?.countryCode || camera?.country, city: camera?.city });
     if (!next.country && !next.city) return;
     const saved = savedFeedLocation(profileRef.current?.roleSettings, 'countries');
     if (next.city === saved.city && next.country === saved.country) return;
@@ -3349,7 +3349,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   </>;
 
   return (
-    <Layout wide={!forcedMode} discoveryPost={postContext} feedSearch={EMBEDDED_HOME_MODES.has(viewMode) ? undefined : {
+    <Layout wide={!forcedMode} hideSearch={viewMode === 'countries'} discoveryPost={postContext} feedSearch={EMBEDDED_HOME_MODES.has(viewMode) ? undefined : {
       query: search,
       onSubmit: submitFeedSearch,
       label: 'Search this feed',

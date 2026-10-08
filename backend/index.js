@@ -9365,6 +9365,7 @@ const COUNTRY_INPUT_CODES = {
   netherlands: 'NL', ireland: 'IE', india: 'IN',
   'new zealand': 'NZ', brazil: 'BR', mexico: 'MX',
   singapore: 'SG', poland: 'PL', portugal: 'PT', sweden: 'SE',
+  turkey: 'TR', turkiye: 'TR', 'czech republic': 'CZ',
 };
 
 // DisplayNames can resolve the rest of ISO 3166-1 without maintaining a
