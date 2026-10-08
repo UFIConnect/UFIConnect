@@ -128,9 +128,8 @@ try {
     };
     const nativePlayback = async paused => {
       const video = page.locator('[data-post-id="native-0"] video');
-      assert.equal(await video.evaluate(element => element.controls), true, 'Native playback controls remain available');
-      await video.focus();
-      await page.keyboard.press('Space');
+      assert.equal(await video.evaluate(element => element.controls), false, 'Native toolbar stays hidden while scrolling');
+      await page.locator('[data-post-id="native-0"]').getByRole('button', { name: paused ? 'Pause video' : 'Play video', exact: true }).click();
       await page.waitForFunction(expected => document.querySelector('[data-post-id="native-0"] video')?.paused === expected, paused);
     };
     const providerPlayback = async paused => {

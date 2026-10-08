@@ -10,7 +10,7 @@ function BookmarkIcon({ filled = false, size = 16 }) {
   );
 }
 
-export function SavePostButton({ post, className = 'btn btn-ghost btn-sm', style, showLabel = true, onChange }) {
+export function SavePostButton({ post, className = 'btn btn-ghost btn-sm', style, showLabel = true, onChange, menuItem = false }) {
   const { isPostSaved, postBusyIds, togglePost } = useSavedItems();
   const { showToast } = useToast();
   const [error, setError] = useState(false);
@@ -36,6 +36,7 @@ export function SavePostButton({ post, className = 'btn btn-ghost btn-sm', style
   return (
     <button
       type="button"
+      role={menuItem ? 'menuitem' : undefined}
       className={`${className}${saved ? ' saved' : ''}${error ? ' error' : ''}`}
       style={style}
       onClick={handleClick}
