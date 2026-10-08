@@ -21,11 +21,12 @@ try {
   await server.listen();
   browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
   await fs.mkdir(path.join(root, '.cache/audit-ui'), { recursive: true });
-  for (const width of [1440, 768, 390]) {
+  for (const width of [1440, 768, 390, 320]) {
     const context = await browser.newContext({ viewport: { width, height: 850 }, timezoneId: 'America/Los_Angeles', hasTouch: width < 1000, isMobile: width < 600 });
     const page = await context.newPage();
     const requests = [];
-    const jobs = Array.from({ length: 65 }, (_, i) => ({ id: `job-${i}`, title: `Engineer ${i}`, org: 'Example', source: 'Remotive', sourceUrl: `https://example.com/jobs/${i}`, content: 'Build and maintain products with an experienced team. Review the role and requirements.', remote: i % 2 === 1, location: i % 2 ? 'Remote' : 'San Diego', posted: i === 0 ? null : '2025-02-03T00:00:00Z', isLive: true, tags: [] }));
+    const jobs = Array.from({ length: 65 }, (_, i) => ({ id: `job-${i}`, title: `Engineer ${i}`, org: 'Example', source: 'Remotive', sourceUrl: `https://example.com/jobs/${i}`, content: 'Build and maintain products with an experienced team. Review the role and requirements.', fullDescription: '<p>Join our engineering team to build reliable products.</p><h2>Main responsibilities</h2><p>Build and maintain products with an experienced team.</p><h2>Required qualifications</h2><p>Experience delivering accessible web applications.</p><h2>Benefits</h2><p>Paid leave as described by the employer.</p><script>window.untrustedListing = true</script>', remote: i % 2 === 1, location: i % 2 ? 'Remote' : 'San Diego', posted: i === 0 ? null : '2025-02-03T00:00:00Z', isLive: true, tags: [] }));
+    jobs[2].sourceUrl = 'javascript:window.untrustedJobLink=true';
     await page.route('**/api/opportunities?*', async route => {
       const p = new URL(route.request().url()).searchParams;
       const offset = Number(p.get('offset') || 0);
@@ -68,6 +69,56 @@ try {
     await page.getByRole('button', { name: 'Open Engineer 1 refreshed at Example', exact: true }).click();
     await page.getByRole('heading', { name: 'Engineer 1 refreshed', exact: true }).waitFor();
     assert.match(await page.locator('.job-detail-facts').textContent(), /Feb 3, 2025/);
+    const listingOpener = page.getByRole('button', { name: 'Read the full supplied listing', exact: true });
+    await listingOpener.click();
+    const listing = page.getByRole('dialog', { name: 'Engineer 1 refreshed', exact: true });
+    await listing.waitFor();
+    await page.waitForFunction(() => document.activeElement?.textContent.includes('Close listing'));
+    const panel = listing.getByRole('tabpanel');
+    assert.match(await panel.textContent(), /Join our engineering team to build reliable products\./);
+    assert.match(await panel.textContent(), /Experience delivering accessible web applications\./);
+    assert.match(await panel.textContent(), /Paid leave as described by the employer\./);
+    assert.equal(await listing.locator('script').count(), 0);
+    assert.equal(await page.evaluate(() => window.untrustedListing), undefined);
+    assert.match(await listing.locator('footer').textContent(), /Listing supplied by Remotive/);
+    assert.equal(await listing.getByRole('link', { name: 'Open the original job listing' }).getAttribute('href'), 'https://example.com/jobs/1');
+    await page.screenshot({ path: path.join(root, `.cache/audit-ui/career-listing-full-${width}.png`) });
+    await listing.getByRole('tab', { name: 'Main responsibilities', exact: true }).click();
+    assert.match(await panel.textContent(), /Build and maintain products with an experienced team\./);
+    assert.doesNotMatch(await panel.textContent(), /Experience delivering accessible web applications/);
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await listing.getByRole('tab', { name: 'Required qualifications', exact: true }).getAttribute('aria-selected'), 'true');
+    assert.match(await panel.textContent(), /Experience delivering accessible web applications\./);
+    await page.keyboard.press('End');
+    assert.equal(await listing.getByRole('tab', { name: 'Benefits', exact: true }).getAttribute('aria-selected'), 'true');
+    assert.match(await panel.textContent(), /Paid leave as described by the employer\./);
+    assert.ok(await listing.evaluate(element => {
+      const box = element.getBoundingClientRect();
+      return box.left > 0 && box.right < innerWidth && box.top >= 0 && box.bottom <= innerHeight;
+    }));
+    assert.ok(await listing.getByRole('tablist').evaluate(element => {
+      const buttons = [...element.querySelectorAll('[role="tab"]')];
+      return buttons.every(button => Math.abs(button.getBoundingClientRect().top - buttons[0].getBoundingClientRect().top) < 2);
+    }));
+    await page.screenshot({ path: path.join(root, `.cache/audit-ui/career-listing-${width}.png`) });
+    await page.keyboard.press('Escape');
+    await listing.waitFor({ state: 'detached' });
+    assert.equal(await listingOpener.evaluate(element => document.activeElement === element), true);
+    await listingOpener.click();
+    await listing.getByRole('button', { name: 'Close listing', exact: true }).click();
+    await listing.waitFor({ state: 'detached' });
+    assert.equal(await listingOpener.evaluate(element => document.activeElement === element), true);
+    await page.getByRole('link', { name: /Back to jobs/ }).click();
+    await page.getByRole('button', { name: 'Open Engineer 2 at Example', exact: true }).click();
+    await listingOpener.click();
+    const unsafeSourceListing = page.getByRole('dialog', { name: 'Engineer 2', exact: true });
+    await unsafeSourceListing.waitFor();
+    assert.equal(await unsafeSourceListing.getByRole('link', { name: 'Open the original job listing' }).count(), 0);
+    assert.match(await unsafeSourceListing.getByRole('tabpanel').textContent(), /Join our engineering team to build reliable products\./);
+    assert.match(await unsafeSourceListing.locator('footer').textContent(), /Listing supplied by Remotive/);
+    assert.equal(await page.evaluate(() => window.untrustedJobLink), undefined);
+    await page.keyboard.press('Escape');
+    await unsafeSourceListing.waitFor({ state: 'detached' });
     await auditNavigate(page, server.resolvedUrls.local[0] + 'opportunities?postedWithin=7');
     await page.locator('.job-result-tab').first().waitFor().catch(async error => {
       console.error(page.url(), await page.locator('body').innerText(), requests.slice(-5));
@@ -87,7 +138,7 @@ try {
       await response;
       assert.equal(await page.locator('.jobs-page-rail a').filter({ hasText: /^Saved$/ }).count(), 0);
     }
-    console.log(`PASS: jobs feed, pagination, refresh and dates at ${width}px`);
+    console.log(`PASS: jobs feed, listing dialog, pagination, refresh and dates at ${width}px`);
     await context.close();
   }
 } finally { await browser?.close(); await server.close(); await app.close(); }
