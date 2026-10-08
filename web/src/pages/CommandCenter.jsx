@@ -9,6 +9,7 @@ import { useToast } from '../contexts/ToastContext';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS, CAREER_ACCOUNT_PLATFORMS, withCareerAccountFallback } from '../components/sourceMeta';
 import ExternalAccountLogin from '../components/ExternalAccountLogin';
+import AccountConnectionAction from '../components/AccountConnectionAction';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { WritingArea, PhotoAttachment, PostPreview, downloadPostText, POST_TEMPLATES } from '../components/PublishingComposer';
 import { composerTextLimit, readSessionDraft } from '../utils/publishingDraft.mjs';
@@ -21,8 +22,8 @@ import useTabMetrics from '../analytics/useTabMetrics';
 import { safePostLink } from '../../../backend/post-links.mjs';
 
 import VideoDurationControl, { VIDEO_DURATION_LIMIT } from '../components/VideoDurationControl';
-import { DirectoryControls, AccountSiteLink } from '../components/DirectoryControls';
-import { ACCOUNT_STATUSES, accountSections, filterAccounts } from '../components/sourceDirectory';
+import { AccountSiteLink } from '../components/DirectoryControls';
+import { accountSections } from '../components/sourceDirectory';
 import { DISCOVERY_CATEGORIES, discoveryPostContext } from '../components/discoveryCategories';
 import '../components/DiscoveryCategoryBar.css';
 import './CommandCenterPlatforms.css';
@@ -820,8 +821,6 @@ function MemberAccountsSection() {
   const [error, setError] = useState('');
   const [connecting, setConnecting] = useState(null);
   const [disconnecting, setDisconnecting] = useState(null);
-  const [accountFilter, setAccountFilter] = useState('all');
-  useTabMetrics('command_center_accounts_status', accountFilter);
   const isBusinessMembership = profile?.plan === 'business';
 
   const loadAccounts = useCallback(async () => {
@@ -909,9 +908,7 @@ function MemberAccountsSection() {
   const memberPlatforms = isBusinessMembership
     ? platforms.filter(([key, platform]) => platform.category === 'career' || CAREER_ACCOUNT_PLATFORMS.includes(key))
     : platforms;
-  const displayedAccounts = filterAccounts(memberPlatforms, connected, accountFilter);
-  const accountGroups = accountSections(memberPlatforms, connected, accountFilter);
-  const connectedCount = memberPlatforms.filter(([key]) => connected[key]).length;
+  const accountGroups = accountSections(memberPlatforms, connected);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -920,16 +917,10 @@ function MemberAccountsSection() {
         <p style={{ color: 'var(--muted)', fontSize: '.82rem', lineHeight: 1.55, margin: 0 }}>
           {isBusinessMembership
             ? 'Sign in at career providers or manage supported account integrations. Job browsing remains in Opportunities.'
-            : 'Connect accounts for feeds, replies, and publishing. Each provider shows the tools it supports and whether its connection is ready.'}
+            : 'Sign in and authorize your accounts for supported feeds, replies, and publishing.'}
         </p>
-        <p style={{ margin: '10px 0 0', fontSize: '.8rem', fontWeight: 700 }}>{connectedCount} of {memberPlatforms.length} accounts connected</p>
       </div>
       {error && <SectionError message={error} onRetry={loadAccounts} />}
-      <div className="account-directory-page">
-        <DirectoryControls label="accounts" filter={accountFilter} onFilterChange={setAccountFilter}
-          options={[["all", "All statuses"], ...ACCOUNT_STATUSES]} />
-      </div>
-      {memberPlatforms.length > 0 && !displayedAccounts.length && <div className="source-directory-empty" role="status">No matching accounts</div>}
       {!memberPlatforms.length && !error && (
         <div className="card" style={{ textAlign: 'center', padding: 28, color: 'var(--muted)', fontSize: '.85rem' }}>{isBusinessMembership ? 'No career account connections are available yet.' : 'No account connections are available yet.'}</div>
       )}
@@ -937,14 +928,12 @@ function MemberAccountsSection() {
         <section key={section.id} className="account-category-section" aria-labelledby={`member-accounts-${section.id}`}>
           <div className="account-category-heading">
             <h3 id={`member-accounts-${section.id}`}>{section.label}</h3>
-            <span>{section.connectedCount} of {section.total} connected</span>
           </div>
           <div className="account-category-items">
       {section.items.map(([key, platform]) => {
         const isConnected = !!connected[key];
         const unavailable = !platform.configured || platform.forceComingSoon;
-        const accountOnly = ['instagram', 'tiktok', 'threads'].includes(key);
-        const accountType = platform.category === 'career' ? 'Career account' : accountOnly ? 'Own posts only' : platform.category === 'publication' ? 'Publishing' : null;
+        const external = platform.connectionMode === 'external';
         return (
           <div key={key} className="card member-account-card" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <span style={{ width: 42, height: 42, borderRadius: 8, background: '#fff', border: '1px solid var(--border)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -953,27 +942,27 @@ function MemberAccountsSection() {
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
                 <strong style={{ fontSize: '.92rem' }}>{platform.name}</strong>
-                {accountType && <span style={{ fontSize: '.64rem', fontWeight: 750, color: 'var(--primary)', background: 'var(--primary-light)', padding: '2px 6px', borderRadius: 4 }}>{accountType}</span>}
-                {isConnected && <span style={{ fontSize: '.64rem', fontWeight: 750, color: '#059669', background: '#ECFDF5', padding: '2px 6px', borderRadius: 4 }}>Connected</span>}
-                {isConnected && platform.reconnectRequired && <span style={{ fontSize: '.7rem', color: 'var(--muted)' }}>Reconnect needed</span>}
-                {!isConnected && unavailable && platform.connectionMode !== 'external' && <span style={{ fontSize: '.64rem', fontWeight: 750, color: '#92400E', background: '#FEF3C7', padding: '2px 6px', borderRadius: 4 }}>Coming soon</span>}
               </div>
               <p style={{ color: 'var(--muted)', fontSize: '.78rem', margin: '4px 0 0', lineHeight: 1.45 }}>{platform.description}</p>
-              {isConnected && platform.reconnectRequired && <p style={{ color: 'var(--muted)', fontSize: '.78rem', margin: '4px 0 0', lineHeight: 1.45 }}>{platform.reconnectMessage || `Reconnect ${platform.name} to renew account permissions.`}</p>}
             </div>
             <div className="source-directory-account-actions">
-            {isConnected && (platform.reconnectRequired || key === 'mastodon' || key === 'bluesky') && <button type="button" className="btn btn-ghost btn-sm" disabled={unavailable || platform.locked || connecting === key} onClick={() => connectAccount(key)}>Reconnect {platform.name}</button>}
-            {platform.connectionMode === 'external' ? <ExternalAccountLogin platform={key} /> : isConnected ? (
-              <button type="button" className="btn btn-danger btn-sm" onClick={() => disconnectAccount(key)} disabled={disconnecting === key}>
-                {disconnecting === key ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Disconnect'}
-              </button>
-            ) : (
-              <button type="button" className="btn btn-primary btn-sm" onClick={() => connectAccount(key)} disabled={unavailable || platform.locked || connecting === key}>
-                {connecting === key ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : unavailable ? 'Coming soon' : platform.locked ? 'Membership' : 'Connect'}
-              </button>
-            )}
-            <AccountSiteLink platform={key} name={platform.name} siteUrl={platform.siteUrl} />
+            <AccountConnectionAction platformKey={key} platform={platform} isConnected={isConnected}
+              onConnect={() => connectAccount(key)} connecting={connecting === key} disabled={disconnecting === key} compact />
             </div>
+            <details className="account-platform-details">
+              <summary>Account details</summary>
+              <p>{external ? platform.note
+                : platform.locked && !isConnected ? 'An active membership is required to authorize this account.'
+                : unavailable ? platform.note || 'Authorization is unavailable for this provider. Open its official website to use your account.'
+                : `Sign in & connect opens ${platform.name}'s authorization page. Sign in there and approve UFIConnect access.`}</p>
+              {isConnected && platform.reconnectRequired && <p role="alert">{platform.reconnectMessage || `Sign in again to renew ${platform.name} permissions.`}</p>}
+              {!external && <div className="account-platform-detail-actions">
+                {isConnected && <button type="button" className="btn btn-danger btn-sm" onClick={() => disconnectAccount(key)} disabled={disconnecting === key || connecting === key}>
+                  {disconnecting === key ? 'Disconnecting…' : `Disconnect ${platform.name}`}
+                </button>}
+                <AccountSiteLink platform={key} name={platform.name} siteUrl={platform.siteUrl} />
+              </div>}
+            </details>
           </div>
         );
       })}

@@ -61,6 +61,7 @@ const { paginateEqualizedPool: paginateEqualizedPoolCore } = require('./feed-pag
 const { createFeedReadAdmission } = require('./feed-read-admission');
 const { PUBLIC_GROUP_LEGACY_SOURCES, inferPublicGroupId } = require('./group-feed');
 const { GENERAL_UFI_GROUP_ID, isGeneralUfiFollowingPost, isFollowingSourceAllowed } = require('./following-scope');
+const FEED_SOURCE_CATALOG = require('../shared/feed-source-catalog.json');
 const { canonicalizePreferenceTopics, matchesPreferenceTopic } = require('./feed-preferences');
 const { parseMapSourceTopics, normalizeMapTopic } = require('../shared/map-feed-topics.mjs');
 const { ISO_COUNTRY_CODES, trustedFeedNetworkLocation, memberFeedSnapshotKey } = require('./feed-location');
@@ -20944,6 +20945,10 @@ app.get('/social/platforms', authenticate, async (req, res) => {
         } : {}),
       },
       ownContent: { supported: Boolean(OWN_CONTENT_FETCHERS[key]) },
+      feed: {
+        home: FEED_SOURCE_CATALOG.home.includes(key) || Boolean(ACCOUNT_DIRECTORY[key]?.feedSupported),
+        following: FEED_SOURCE_CATALOG.following[key] || null,
+      },
     }];
   }));
   res.json({
@@ -22105,6 +22110,9 @@ async function handleFeedRequest(req, res) {
   ], 16);
   const matchesMemberJob = (post) => {
     if (!JOB_LISTING_SOURCES.includes(post?.source)) return true;
+    // Choosing a source is an explicit browsing request. A missing saved
+    // job role must not empty that source after its cursor has advanced.
+    if (isSourceFiltered) return true;
     if (!jobRoleTerms.length) return false;
     const text = feedPostPersonalizationText(post);
     return jobRoleTerms.some(term => textMatchesPersonalizationTerm(text, term));

@@ -1,4 +1,5 @@
 import ACCOUNT_DIRECTORY from '../../../backend/account-directory.json' with { type: 'json' };
+import FEED_SOURCE_CATALOG from '../../../shared/feed-source-catalog.json' with { type: 'json' };
 
 export const SOURCE_META = {
   discord:       { label: 'Discord',       color: '#5865F2', icon: 'DS' },
@@ -114,10 +115,8 @@ export const CROSS_POST_PLATFORM_IDS = [
   ...Object.keys(ACCOUNT_DIRECTORY),
 ];
 
-// Every platform a user can link via Connected Accounts (mirrors
-// CONNECTED_SOCIAL_PLATFORMS server-side). Not every entry has a live
-// "following timeline" fetcher wired up yet; platforms without one simply
-// show the existing empty/coming-soon states.
+// Account authorization and feed support are separate capabilities. Identity
+// and own-content integrations remain available in Connected Accounts.
 export const CONNECTED_SOCIAL_PLATFORMS = [
   'discord', 'figma',
   'linkedin', 'twitter', 'instagram', 'tiktok', 'facebook',
@@ -125,23 +124,24 @@ export const CONNECTED_SOCIAL_PLATFORMS = [
   'medium', 'dribbble', 'twitch', 'threads', 'bluesky', 'mastodon',
 ];
 
-// Keep discovery content and own-post-only integrations out of Following.
-export const FOLLOWING_EXCLUDED_SOURCE_IDS = ['instagram', 'tiktok', 'discord', 'figma'];
+// Include only installed personalized-feed adapters in Following. The shared
+// catalog also distinguishes genuine timelines from connected interest feeds.
+export const FOLLOWING_EXCLUDED_SOURCE_IDS = CONNECTED_SOCIAL_PLATFORMS.filter(
+  source => !Object.hasOwn(FEED_SOURCE_CATALOG.following, source),
+);
 
 // Shared by the desktop feed rail and the mobile app menu. Keeping this
 // vocabulary here prevents the two controls from quietly drifting apart.
-export const HOME_FEED_SOURCE_IDS = [
-  'reddit', 'github', 'youtube', 'hackernews',
-  'twitter', 'facebook',
-  'indeed', 'remoteok', 'remotive', 'muse', 'usajobs',
-  'bluesky', 'gitlab', 'devto', 'medium', 'stackoverflow', 'lobsters', 'arxiv',
-  'producthunt', 'techcrunch', 'theverge', 'indiehackers', 'hashnode',
-  'arstechnica', 'wired', 'theregister', 'venturebeat', 'smashing', 'phoronix', 'infoq', 'mittr',
-  'yc', 'crunchbase', 'behance', 'designweb', 'mastodon',
-  'weworkremotely', 'cntraveler',
-];
+export const HOME_FEED_SOURCE_IDS = [...new Set([
+  ...FEED_SOURCE_CATALOG.home,
+  ...Object.keys(ACCOUNT_DIRECTORY).filter(source => ACCOUNT_DIRECTORY[source].feedSupported === true),
+])];
 
 export const FOLLOWING_FEED_SOURCE_IDS = [
   'uficonnect',
-  ...CONNECTED_SOCIAL_PLATFORMS.filter(source => !FOLLOWING_EXCLUDED_SOURCE_IDS.includes(source)),
+  ...Object.keys(FEED_SOURCE_CATALOG.following),
 ];
+
+export const SOURCE_WEBSITE_IDS = Object.keys(ACCOUNT_DIRECTORY).filter(
+  source => !HOME_FEED_SOURCE_IDS.includes(source) && !FOLLOWING_FEED_SOURCE_IDS.includes(source),
+);

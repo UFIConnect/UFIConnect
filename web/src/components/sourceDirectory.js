@@ -37,18 +37,8 @@ export function sourceSections(sources, favorites, category, disabledSources) {
   })).filter(section => section.items.length);
   return enabledFirstSourceSections(sections, disabledSources);
 }
-export const ACCOUNT_STATUSES = [['connected', 'Connected'], ['available', 'Available'], ['membership', 'Membership'], ['soon', 'Coming soon']];
-export function accountStatus(platform, connected) {
-  if (connected && platform.connectionMode !== 'external') return 'connected';
-  if (platform.connectionMode === 'external') return 'available';
-  if (platform.forceComingSoon || !platform.configured) return 'soon';
-  return platform.locked ? 'membership' : 'available';
-}
-export function filterAccounts(entries, connected, status) {
-  return entries.filter(([key, platform]) => status === 'all' || accountStatus(platform, connected[key]) === status)
-    .sort(([a, pa], [b, pb]) => ACCOUNT_STATUSES.findIndex(([s]) => s === accountStatus(pa, connected[a]))
-      - ACCOUNT_STATUSES.findIndex(([s]) => s === accountStatus(pb, connected[b]))
-      || (pa.name || a).localeCompare(pb.name || b));
+export function filterAccounts(entries) {
+  return [...entries].sort(([a, pa], [b, pb]) => (pa.name || a).localeCompare(pb.name || b));
 }
 
 export const ACCOUNT_CATEGORIES = [
@@ -56,7 +46,7 @@ export const ACCOUNT_CATEGORIES = [
   ['work', 'Work & Development'], ['publishing', 'Publishing'], ['career', 'Career sites'],
   ['travel', 'Travel'], ['audio', 'Music & Audio'],
 ];
-function accountCategory(key, platform) {
+export function accountCategory(key, platform) {
   if (['travel', 'audio', 'work', 'video'].includes(platform.category)) return platform.category;
   if (platform.category === 'career' || CAREER_ACCOUNT_PLATFORMS.includes(key)) return 'career';
   if (['youtube', 'twitch', 'tiktok'].includes(key)) return 'video';
@@ -65,16 +55,14 @@ function accountCategory(key, platform) {
   return 'social';
 }
 
-// Account categories describe what members connect, while the status filter
-// preserves each provider's existing authorization and availability state.
-export function accountSections(entries, connected, status = 'all') {
+// Categories describe the providers without status-based ordering or filters.
+export function accountSections(entries) {
   return ACCOUNT_CATEGORIES.map(([id, label]) => {
     const categoryEntries = entries.filter(([key, platform]) => accountCategory(key, platform) === id);
     return {
       id, label,
       total: categoryEntries.length,
-      connectedCount: categoryEntries.filter(([key]) => connected[key]).length,
-      items: filterAccounts(categoryEntries, connected, status),
+      items: filterAccounts(categoryEntries),
     };
   }).filter(section => section.items.length);
 }

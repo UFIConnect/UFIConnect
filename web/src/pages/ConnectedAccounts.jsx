@@ -2,13 +2,13 @@
 import { Link, useSearchParams } from 'react-router-dom';
 import useTabMetrics from '../analytics/useTabMetrics';
 import Layout from '../components/Layout';
-import ExternalAccountLogin from '../components/ExternalAccountLogin';
+import AccountConnectionAction from '../components/AccountConnectionAction';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { withCareerAccountFallback } from '../components/sourceMeta';
 import { useAuth } from '../contexts/AuthContext';
-import { DirectoryControls, AccountSiteLink } from '../components/DirectoryControls';
-import { ACCOUNT_STATUSES, accountSections, filterAccounts } from '../components/sourceDirectory';
+import { AccountSiteLink } from '../components/DirectoryControls';
+import { accountSections, filterAccounts } from '../components/sourceDirectory';
 
 const PLATFORM_BENEFITS = {
   linkedin:  ['Import your work history & headline', 'Show LinkedIn posts in your feed', 'Get matched with relevant jobs'],
@@ -60,10 +60,8 @@ export default function ConnectedAccounts() {
   const [flash,     setFlash]           = useState(null);
   const [connecting, setConnecting]     = useState(null);
   const [disconnecting, setDisconnecting] = useState(null);
-  const [accountFilter, setAccountFilter] = useState('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
   useTabMetrics('connected_accounts_category', categoryFilter);
-  useTabMetrics('connected_accounts_status', accountFilter);
   // null = modal closed; '' or partial text = open, mid-typing. Bluesky is
   // the one platform with no fixed authorization URL (AT Protocol is
   // federated — the handle is how we find which server to route to), so it
@@ -194,16 +192,13 @@ export default function ConnectedAccounts() {
   const selectedCategory = accountCategories.find(section => section.id === activeCategory);
   const selectedKeys = selectedCategory && new Set(selectedCategory.items.map(([key]) => key));
   const inSelectedCategory = ([key]) => !selectedKeys || selectedKeys.has(key);
-  const displayedGeneral = filterAccounts(generalPlatforms.filter(inSelectedCategory), connected, accountFilter);
-  const displayedCareer = filterAccounts(careerPlatforms.filter(inSelectedCategory), connected, accountFilter);
-  const connectedCareerCount = careerPlatforms.filter(([key]) => connected[key]).length;
-  const connectedList   = displayedGeneral.filter(([k]) => connected[k]);
-  const generalSections = accountSections(generalPlatforms, connected, accountFilter)
+  const displayedGeneral = filterAccounts(generalPlatforms.filter(inSelectedCategory), connected, 'all');
+  const displayedCareer = filterAccounts(careerPlatforms.filter(inSelectedCategory), connected, 'all');
+  const generalSections = accountSections(generalPlatforms, connected)
     .filter(section => activeCategory === 'all' || section.id === activeCategory);
-  const totalConnected = generalPlatforms.filter(([key]) => connected[key]).length;
   const categoryOptions = [
-    { id: 'all', label: 'All', count: filterAccounts(isBusinessMembership ? careerPlatforms : generalPlatforms, connected, accountFilter).length },
-    ...accountCategories.map(section => ({ id: section.id, label: section.label, count: filterAccounts(section.items, connected, accountFilter).length })),
+    { id: 'all', label: 'All', count: (isBusinessMembership ? careerPlatforms : generalPlatforms).length },
+    ...accountCategories.map(section => ({ id: section.id, label: section.label, count: section.total })),
   ];
 
   return (
@@ -218,8 +213,8 @@ export default function ConnectedAccounts() {
         <h1 className="page-title">{isBusinessMembership ? 'Business Career Connections' : 'Connected Accounts'}</h1>
         <p className="page-subtitle">
           {isBusinessMembership
-            ? 'Connect LinkedIn for hiring posts, or sign in on a career provider’s website.'
-            : 'Connect supported accounts or sign in on career, travel, music, and workspace websites.'}
+            ? 'Sign in to LinkedIn to authorize hiring posts, or open your career provider’s account.'
+            : 'Sign in to your sources and authorize supported accounts in one step.'}
         </p>
       </div>
 
@@ -240,59 +235,10 @@ export default function ConnectedAccounts() {
             </div>
           )}
 
-          {/* Summary bar */}
-          {isBusinessMembership && (
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24,
-              background: 'var(--bg-secondary)', borderRadius: 10, padding: '12px 16px',
-            }}>
-              <div style={{ fontSize: '.8rem', fontWeight: 800, color: 'var(--primary)' }}>BIZ</div>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: '.95rem' }}>{connectedCareerCount} of {careerPlatforms.length} recruiting accounts connected</div>
-                <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>Career sign-in opens the official provider website. Available integrations show a separate Connect action.</div>
-              </div>
-            </div>
-          )}
-          {!isBusinessMembership && (
-            <>
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24,
-            background: 'var(--bg-secondary)', borderRadius: 10, padding: '12px 16px',
-          }}>
-            <div style={{ fontSize: '.8rem', fontWeight: 800, color: 'var(--primary)' }}>LINK</div>
-            <div>
-              <div style={{ fontWeight: 700, fontSize: '.95rem' }}>
-                {totalConnected} of {generalPlatforms.length} accounts connected
-              </div>
-              <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>
-                {totalConnected === 0
-                  ? 'Connect an account to personalise your feed.'
-                  : `Connected: ${generalPlatforms.filter(([key]) => connected[key]).map(([, p]) => p.name).join(', ')}`}
-              </div>
-            </div>
-            {connectedList.length > 0 && (
-              <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-                {connectedList.slice(0, 5).map(([k, p]) => (
-                  <div key={k} style={{
-                    width: 28, height: 28, borderRadius: '50%',
-                    background: hasBrandIcon(k) ? '#fff' : p.color,
-                    border: hasBrandIcon(k) ? '1px solid var(--border)' : 'none',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: '.7rem', color: '#fff', fontWeight: 700,
-                  }}>
-                    {hasBrandIcon(k) ? <BrandIcon platform={k} size={15} /> : p.name[0]}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {platforms.some(([, p]) => p.commandCenterOnly) && (
-            <div style={{ margin: '-10px 0 24px', fontSize: '.78rem', color: 'var(--muted)' }}>
+          {!isBusinessMembership && platforms.some(([, p]) => p.commandCenterOnly) && (
+            <div style={{ margin: '0 0 24px', fontSize: '.78rem', color: 'var(--muted)' }}>
               Account-only publishing and personal-post connections are managed in the <Link to="/command-center?tab=accounts" style={{ color: 'var(--primary)', fontWeight: 700 }}>Command Center</Link>.
             </div>
-          )}
-            </>
           )}
 
           {searchParams.get('interactions') === '1' && <section className="card" aria-label="Source interaction permissions" style={{ marginBottom: 20 }}>
@@ -321,12 +267,10 @@ export default function ConnectedAccounts() {
                 </li>)}
               </ul>
             </fieldset>
-            <DirectoryControls label="accounts" filter={accountFilter} onFilterChange={setAccountFilter}
-              options={[["all", "All statuses"], ...ACCOUNT_STATUSES]} />
           </div>
           {!(isBusinessMembership ? displayedCareer : displayedGeneral).length && <div className="source-directory-empty account-directory-empty" role="status">
             <p>No matching accounts</p>
-            {(activeCategory !== 'all' || accountFilter !== 'all') && <button type="button" className="btn btn-outline btn-sm" onClick={() => { setCategoryFilter('all'); setAccountFilter('all'); }}>Clear filters</button>}
+            {activeCategory !== 'all' && <button type="button" className="btn btn-outline btn-sm" onClick={() => setCategoryFilter('all')}>Clear category</button>}
           </div>}
           {isBusinessMembership && displayedCareer.length > 0 && <section style={{ marginBottom: 28 }} aria-labelledby="career-sites-heading">
             <div id="career-sites-heading" style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 6 }}>
@@ -360,7 +304,6 @@ export default function ConnectedAccounts() {
             <section key={section.id} className="account-category-section" aria-labelledby={`accounts-${section.id}-heading`}>
               <div className="account-category-heading">
                 <h2 id={`accounts-${section.id}-heading`}>{section.label}</h2>
-                <span>{section.connectedCount} of {section.total} connected</span>
               </div>
               <div className="account-category-items">
               {section.items.map(([key, p]) => (
@@ -463,6 +406,8 @@ function PlatformCard({
   const reconnectMessage = p.reconnectMessage || (platformKey === 'youtube'
     ? 'Reconnect YouTube once to keep your videos syncing when access expires.'
     : `Reconnect ${p.name} to update your account permissions.`);
+  const detailsId = `account-${platformKey}-details`;
+  const authorizationUnavailable = comingSoon || !p.configured;
 
   return (
     <div className="card account-platform-card">
@@ -489,76 +434,32 @@ function PlatformCard({
         <div style={{ flex: '1 1 180px', minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             <span style={{ fontWeight: 700, fontSize: '.92rem' }}>{p.name}</span>
-            {external && <span style={{fontSize:'.7rem',color:'var(--muted)'}}>{p.loginUrl ? 'Website sign-in' : 'Publisher website'}</span>}
-            {isConnected && (
-              <span style={{
-                fontSize: '.65rem', fontWeight: 700, color: p.reconnectRequired ? '#92400E' : '#059669',
-                background: p.reconnectRequired ? '#FEF3C7' : '#ECFDF5', padding: '1px 6px', borderRadius: 4,
-              }}>
-                {p.reconnectRequired ? 'Reconnect needed' : 'Connected'}
-              </span>
-            )}
-            {comingSoon && !external && (
-              <span style={{
-                fontSize: '.65rem', fontWeight: 700, color: '#92400E',
-                background: '#FEF3C7', padding: '1px 6px', borderRadius: 4,
-              }}>
-                Coming Soon
-              </span>
-            )}
-            {!isConnected && locked && !comingSoon && (
-              <span style={{
-                fontSize: '.65rem', fontWeight: 700, color: '#5B21B6',
-                background: '#F3E8FF', padding: '1px 6px', borderRadius: 4,
-              }}>
-                Membership
-              </span>
-            )}
           </div>
           <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 1 }}>
             {p.description}
-            {isConnected && p.reconnectRequired && <p role="status" style={{ margin: '6px 0 0' }}>{reconnectMessage}</p>}
           </div>
         </div>
 
         {/* Action buttons */}
         <div className="account-platform-card-actions">
-          {isConnected && (['youtube', 'mastodon'].includes(platformKey) || p.reconnectRequired) && <button type="button" className="btn btn-outline btn-sm" onClick={onConnect} disabled={connecting || disconnecting || !p.configured}>{connecting ? `Opening ${platformKey === 'youtube' ? 'Google' : p.name}…` : `Reconnect ${p.name}`}</button>}
-          <button onClick={onToggle} className="btn btn-ghost btn-sm" style={{ fontSize: '.72rem', padding: '4px 8px' }}>
+          <button type="button" onClick={onToggle} className="btn btn-ghost btn-sm" aria-expanded={expanded} aria-controls={detailsId} style={{ fontSize: '.72rem', padding: '4px 8px' }}>
             {expanded ? '▲' : '▼'} Details
           </button>
-          {external ? <ExternalAccountLogin platform={platformKey} /> : isConnected ? (
-            <button className="btn btn-danger btn-sm" onClick={onDisconnect} disabled={disconnecting}>
-              {disconnecting ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Disconnect'}
-            </button>
-          ) : comingSoon ? (
-            <button className="btn btn-sm btn-outline" disabled>
-              Coming Soon
-            </button>
-          ) : locked ? (
-            <button className="btn btn-sm btn-outline" disabled title="An active membership is required to connect accounts.">
-              Membership required
-            </button>
-          ) : (
-            <button className="btn btn-sm btn-outline" onClick={onConnect} disabled={connecting} style={{ borderColor: p.color, color: p.color }}>
-              {connecting ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Connect'}
-            </button>
-          )}
-          <AccountSiteLink platform={platformKey} name={p.name} siteUrl={p.siteUrl} />
+          <AccountConnectionAction platformKey={platformKey} platform={p} isConnected={isConnected}
+            onConnect={onConnect} connecting={connecting} disabled={disconnecting} compact />
         </div>
       </div>
 
       {/* Expanded details */}
       {expanded && (
-        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+        <div id={detailsId} style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
           <div style={{ fontSize: '.8rem', color: 'var(--muted)', marginBottom: benefits.length ? 12 : 0, lineHeight: 1.5 }}>
             {external ? p.note : locked && !isConnected
               ? 'An active membership is required before an account can be connected.'
-              : comingSoon
-              // A platform note explains any provider-specific gate rather
-              // than incorrectly blaming missing server credentials.
-              ? (p.note || `Waiting on server credentials: ${(p.missingEnv || []).join(', ') || 'OAuth client ID/secret'}.`)
-              : `Connect opens ${p.name}'s authorization page so you can approve UFIconnect access at the original source.`}
+              : authorizationUnavailable
+              ? (p.note || 'Authorization is unavailable for this provider. Open its official website to use your account.')
+              : `Sign in & connect opens ${p.name}'s authorization page. Sign in there and approve UFIConnect access.`}
+            {isConnected && p.reconnectRequired && <p role="alert" style={{ margin: '6px 0 0' }}>{reconnectMessage}</p>}
           </div>
 
           {/* Benefits */}
@@ -576,6 +477,12 @@ function PlatformCard({
               </ul>
             </>
           )}
+          {!external && <div className="account-platform-detail-actions">
+            {isConnected && <button type="button" className="btn btn-danger btn-sm" onClick={onDisconnect} disabled={disconnecting || connecting}>
+              {disconnecting ? <><span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> Disconnecting…</> : `Disconnect ${p.name}`}
+            </button>}
+            <AccountSiteLink platform={platformKey} name={p.name} siteUrl={p.siteUrl} />
+          </div>}
         </div>
       )}
     </div>

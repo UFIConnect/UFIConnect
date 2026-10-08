@@ -24,14 +24,26 @@ const ANALYTICS_SCHEMA = `CREATE TABLE IF NOT EXISTS analytics_daily_counts (
     (kind = 'client_error' AND code IN (${sqlList(CLIENT_ERROR_CODES)}))),
   event_count BIGINT NOT NULL CHECK (event_count > 0),
   PRIMARY KEY (day, category, kind, code)
+);
+CREATE TABLE IF NOT EXISTS analytics_history_daily_counts (
+  source TEXT NOT NULL CHECK (source IN ('legacy_page_views_primary', 'legacy_page_views_backup')),
+  day DATE NOT NULL CHECK (day >= DATE '2026-05-01'),
+  category TEXT NOT NULL CONSTRAINT analytics_history_daily_counts_category_check ${categoryConstraint},
+  event_count BIGINT NOT NULL CHECK (event_count > 0),
+  restored_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (source, day, category)
 )`;
 // CREATE TABLE IF NOT EXISTS cannot expand an existing CHECK. Replace the old
 // constraint in one atomic ALTER so every previous category/count survives and
 // there is no window that permits arbitrary paths or identifiers.
 const ANALYTICS_MIGRATIONS = Object.freeze([`ALTER TABLE analytics_daily_counts
   DROP CONSTRAINT IF EXISTS analytics_daily_counts_category_check,
-  ADD CONSTRAINT analytics_daily_counts_category_check ${categoryConstraint}`]);
+  ADD CONSTRAINT analytics_daily_counts_category_check ${categoryConstraint}`,
+`ALTER TABLE analytics_history_daily_counts
+  DROP CONSTRAINT IF EXISTS analytics_history_daily_counts_category_check,
+  ADD CONSTRAINT analytics_history_daily_counts_category_check ${categoryConstraint}`]);
 const cappedAdd = (value, addition) => Math.min(Number.MAX_SAFE_INTEGER, value + addition);
+const ANALYTICS_HISTORY_START = '2026-05-01';
 
 function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, schedule = setInterval }) {
   let windowStart = now();
@@ -91,7 +103,9 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
         const day = new Date(now()).toISOString().slice(0, 10);
         if (prunedDay !== day) {
           try {
-            await db.query("DELETE FROM analytics_daily_counts WHERE day < $1::date - INTERVAL '29 days'", [day]);
+            // Anonymous daily totals are the history, rather than a rolling
+            // cache. Keep every recorded day from the requested May launch.
+            await db.query('DELETE FROM analytics_daily_counts WHERE day < $1::date', [ANALYTICS_HISTORY_START]);
             prunedDay = day; lastRetentionAt = new Date(now()).toISOString();
           } catch { /* The durable increments committed; retry retention later. */ }
         }
@@ -172,17 +186,28 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
       if (!await flush()) return res.status(503).json(unavailable());
       const today = new Date(now()).toISOString().slice(0, 10);
       const dayAt = offset => new Date(now() - offset * 86400_000).toISOString().slice(0, 10);
-      const { rows } = await db.query(`SELECT day::text, category, kind, code, event_count
-        FROM analytics_daily_counts WHERE day >= $1 AND day <= $2 ORDER BY day ASC`, [dayAt(29), today]);
+      const from = today >= ANALYTICS_HISTORY_START ? ANALYTICS_HISTORY_START : dayAt(29);
+      const { rows } = await db.query(`SELECT day::text, category, kind, code, event_count, source FROM (
+        SELECT day, category, kind, code, event_count, 'anonymous-daily-counts'::text AS source
+        FROM analytics_daily_counts WHERE day >= $1 AND day <= $2
+        UNION ALL
+        SELECT day, category, 'page_view'::text AS kind, ''::text AS code, event_count, source
+        FROM analytics_history_daily_counts WHERE day >= $1 AND day <= $2
+      ) counts ORDER BY day ASC, source ASC`, [from, today]);
       const emptyCounts = () => ({ today: 0, last7: 0, last30: 0 });
-      const days = Array.from({ length: 30 }, (_, index) => dayAt(29 - index));
+      const dayCount = Math.round((Date.parse(today) - Date.parse(from)) / 86400_000) + 1;
+      const days = Array.from({ length: dayCount }, (_, index) => new Date(Date.parse(from) + index * 86400_000).toISOString().slice(0, 10));
+      const dayIndexes = new Map(days.map((day, index) => [day, index]));
       const daily = new Map(days.map(day => [day, { day, views: 0, errors: 0, web: 0, mobile: 0 }]));
       const categories = new Map(Object.values(CATEGORY_CATALOG).map(page => [page.category,
         { ...page, ...emptyCounts(), errors: emptyCounts(), firstRecordedDay: null, lastRecordedDay: null,
           daily: days.map(day => ({ day, views: 0, errors: 0 })) }]));
       const errorCodes = new Map(CLIENT_ERROR_CODES.map(code => [code, { code, count: 0, ...emptyCounts() }]));
-      const result = { available: true, mode: 'aggregate', window: 'utc-calendar-days', retentionDays: 30,
-        range: { from: dayAt(29), to: today }, generatedAt: new Date(now()).toISOString(),
+      const result = { available: true, mode: 'aggregate', window: 'utc-calendar-days', retentionDays: dayCount,
+        range: { from, to: today }, generatedAt: new Date(now()).toISOString(),
+        history: { requestedFrom: ANALYTICS_HISTORY_START, firstRecordedDay: null, lastRecordedDay: null,
+          source: 'anonymous-daily-counts', sources: [], restoredViews: 0,
+          missingHistory: 'Only retained events can be reported; unrecorded or previously expired events are unavailable.' },
         definition: 'A view is a page or screen navigation or a tab selection. Repeat views count; these totals do not measure unique people.',
         today: 0, last7: 0, last30: 0, topPaths: [], daily: [], categories: [],
         platforms: { web: emptyCounts(), mobile: emptyCounts() },
@@ -190,15 +215,16 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
         performance: { ...emptyCounts(), byCode: [], byCategory: [] },
         excludedCategories: EXCLUDED_CATEGORIES, storage: storageSnapshot(), service: serviceSnapshot() };
       const increment = (target, day, count) => {
-        target.last30 = cappedAdd(target.last30, count);
+        if (day >= dayAt(29)) target.last30 = cappedAdd(target.last30, count);
         if (day >= dayAt(6)) target.last7 = cappedAdd(target.last7, count);
         if (day === today) target.today = cappedAdd(target.today, count);
       };
+      const sources = new Map();
       for (const row of rows) {
         const category = categories.get(row.category);
         const count = Number(row.event_count);
         if (!category || !daily.has(row.day) || !Number.isSafeInteger(count) || count <= 0) continue;
-        const categoryDay = category.daily[days.indexOf(row.day)];
+        const categoryDay = category.daily[dayIndexes.get(row.day)];
         if (row.kind === 'page_view' && row.code === '') {
           increment(result, row.day, count);
           increment(category, row.day, count);
@@ -217,7 +243,18 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
         } else continue;
         category.firstRecordedDay ||= row.day;
         category.lastRecordedDay = row.day;
+        result.history.firstRecordedDay ||= row.day;
+        result.history.lastRecordedDay = row.day;
+        const source = row.source || 'anonymous-daily-counts';
+        if (!sources.has(source)) sources.set(source, { source, firstRecordedDay: row.day, lastRecordedDay: row.day, views: 0 });
+        const sourceCoverage = sources.get(source);
+        sourceCoverage.lastRecordedDay = row.day;
+        if (row.kind === 'page_view') {
+          sourceCoverage.views = cappedAdd(sourceCoverage.views, count);
+          if (source !== 'anonymous-daily-counts') result.history.restoredViews = cappedAdd(result.history.restoredViews, count);
+        }
       }
+      result.history.sources = [...sources.values()];
       result.categories = [...categories.values()];
       result.topPaths = result.categories.filter(row => row.last30).map(row => ({ category: row.category, path: row.label, views: row.last30 }))
         .sort((a, b) => b.views - a.views).slice(0, 15);
@@ -231,4 +268,4 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
   return { pageview: handler('page_view'), performance: handler('client_error'), serviceMiddleware, report, flush };
 }
 
-module.exports = { PAGE_CATEGORIES, CATEGORY_CATALOG, EXCLUDED_CATEGORIES, CLIENT_ERROR_CODES, ANALYTICS_SCHEMA, ANALYTICS_MIGRATIONS, createAggregateAnalytics };
+module.exports = { PAGE_CATEGORIES, CATEGORY_CATALOG, EXCLUDED_CATEGORIES, CLIENT_ERROR_CODES, ANALYTICS_SCHEMA, ANALYTICS_MIGRATIONS, ANALYTICS_HISTORY_START, createAggregateAnalytics };

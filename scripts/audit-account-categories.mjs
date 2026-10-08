@@ -47,9 +47,9 @@ try {
     for (const [name, provider] of [['Social', 'Mastodon'], ['Video & Streaming', 'YouTube'], ['Work & Development', 'GitHub'], ['Publishing', 'Medium']]) {
       const section = page.locator('section.account-category-section').filter({ has: page.getByRole('heading', { name, exact: true }) });
       assert.ok((await section.innerText()).includes(provider));
-      assert.ok((await section.innerText()).includes(['Social', 'Work & Development'].includes(name) ? '1 of 1 connected' : '0 of 1 connected'));
+      assert.equal(await section.getByText(/^(Connected|Coming Soon|Membership|Reconnect needed)$/).count(), 0);
     }
-    const status = page.getByRole('combobox', { name: /Filter accounts/ });
+    assert.equal(await page.getByRole('combobox', { name: /Filter accounts/ }).count(), 0, 'Account status filters are removed');
     const categoryList = page.getByRole('group', { name: 'Account categories' });
     assert.equal(await page.locator('.account-platform-card').count(), 5, 'Career accounts appear in the general directory; member-only social connections stay in Command Center');
     await categoryList.getByRole('button', { name: 'All 5', exact: true }).waitFor();
@@ -59,24 +59,22 @@ try {
     assert.deepEqual(await page.locator('section.account-category-section h2').allTextContents(), ['Video & Streaming']);
     assert.equal(await page.locator('.account-platform-card').count(), 1);
     assert.ok((await page.locator('.account-platform-card').innerText()).includes('YouTube'));
-    await status.selectOption('connected');
-    await page.getByText('No matching accounts', { exact: true }).waitFor();
-    assert.equal(await page.locator('.account-platform-card').count(), 0);
-    assert.equal(await categoryList.getByRole('button', { name: 'Video & Streaming 0', exact: true }).getAttribute('aria-pressed'), 'true');
-    await categoryList.getByRole('button', { name: 'All 3', exact: true }).waitFor();
-    await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
-    assert.equal(await status.inputValue(), 'all');
+    assert.equal(await page.getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).count(), 1, 'OAuth sign-in and connection share one action');
+    assert.equal(await page.locator('.account-platform-card-header').getByRole('link').count(), 0, 'OAuth cards do not duplicate the provider website action');
+    await categoryList.getByRole('button', { name: 'All 5', exact: true }).click();
     assert.equal(await categoryList.getByRole('button', { name: 'All 5', exact: true }).getAttribute('aria-pressed'), 'true');
     assert.equal(await page.locator('.account-platform-card').count(), 5);
-    await status.selectOption('connected');
-    assert.deepEqual(await page.locator('section.account-category-section h2').allTextContents(), ['Social', 'Work & Development', 'Career sites']);
     await categoryList.getByRole('button', { name: 'Work & Development 1', exact: true }).click();
     assert.deepEqual(await page.locator('section.account-category-section h2').allTextContents(), ['Work & Development']);
-    await categoryList.getByRole('button', { name: 'All 3', exact: true }).click();
-    await status.selectOption('soon');
+    const github = page.locator('.account-platform-card');
+    await github.getByRole('button', { name: /Details/ }).click();
+    await github.getByRole('button', { name: 'Disconnect GitHub', exact: true }).waitFor();
+    await github.getByRole('link', { name: 'Open GitHub website', exact: true }).waitFor();
+    await categoryList.getByRole('button', { name: 'Publishing 1', exact: true }).click();
     await page.getByRole('heading', { name: 'Publishing', exact: true }).waitFor();
     assert.deepEqual(await page.locator('section.account-category-section h2').allTextContents(), ['Publishing']);
-    await status.selectOption('all');
+    assert.ok(await page.getByRole('button', { name: 'Sign in and connect Medium', exact: true }).isDisabled(), 'Unavailable OAuth providers cannot start authorization');
+    await categoryList.getByRole('button', { name: 'All 5', exact: true }).click();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     assert.ok(await categoryList.locator('button').evaluateAll(buttons => buttons.every(button => {
       const box = button.getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth;
@@ -85,34 +83,31 @@ try {
     await auditNavigate(page, server.resolvedUrls.local[0] + 'command-center?tab=accounts');
     const panel = page.getByRole('tabpanel', { name: 'Connected Accounts', exact: true });
     for (const name of categories) await panel.getByRole('heading', { name, exact: true }).waitFor();
+    assert.equal(await panel.getByRole('combobox', { name: /Filter accounts/ }).count(), 0);
+    assert.equal(await panel.getByText(/^(Connected|Coming soon|Membership|Reconnect needed)$/).count(), 0);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     accountOnly = false;
     {
     const page = await context.newPage();
     page.on('pageerror', error => errors.push(error.message));
     const categoryList = page.getByRole('group', { name: 'Account categories' });
-    const status = page.getByRole('combobox', { name: /Filter accounts/ });
     await installAuditMember(page, app, 'business-account-categories');
     await auditNavigate(page, server.resolvedUrls.local[0] + 'connected-accounts');
     await page.getByRole('heading', { name: 'Business Career Connections', exact: true }).waitFor();
     await categoryList.getByRole('button', { name: /^Career sites \d+$/ }).waitFor();
     assert.equal(await categoryList.getByRole('button').count(), 2, 'Business membership exposes All and Career sites only');
-    await status.selectOption('connected');
-    await categoryList.getByRole('button', { name: 'Career sites 1', exact: true }).click();
-    assert.equal(await page.locator('.account-platform-card').count(), 1);
-    assert.ok((await page.locator('.account-platform-card').innerText()).includes('Indeed'));
-    await status.selectOption('available');
-    await categoryList.getByRole('button', { name: 'Career sites 20', exact: true }).waitFor();
-    assert.equal(await page.locator('.account-platform-card').count(), 20);
-    assert.equal(await page.getByRole('link', { name: /^Sign in on / }).count(), 20);
-    await status.selectOption('all');
-    await categoryList.getByRole('button', { name: 'All 21', exact: true }).click();
-    assert.equal(await status.inputValue(), 'all');
+    await categoryList.getByRole('button', { name: /^Career sites \d+$/ }).click();
+    const careerCount = await page.locator('.account-platform-card').count();
+    assert.ok(careerCount > 1);
+    assert.equal(await page.getByRole('button', { name: 'Sign in and connect Indeed', exact: true }).count(), 1);
+    assert.equal(await page.getByRole('link', { name: /^Sign in on / }).count(), careerCount - 1, 'Website-only career sources keep their official sign-in action');
+    assert.equal(await page.getByRole('combobox', { name: /Filter accounts/ }).count(), 0);
+    await categoryList.getByRole('button', { name: /^All \d+$/ }).click();
     assert.equal(await categoryList.getByRole('button', { name: /^All \d+$/ }).getAttribute('aria-pressed'), 'true');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     }
     assert.deepEqual(errors, []);
-    console.log(`PASS category list, counts, combined filters, empty-state reset, membership boundaries and Command Center ${width}`);
+    console.log(`PASS account categories, unified sign-in, hidden statuses, authorization gates, management and membership boundaries ${width}`);
     await context.close();
   }
 } finally { await browser?.close(); await server.close(); await app.close(); }

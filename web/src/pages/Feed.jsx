@@ -28,6 +28,7 @@ import {
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import FollowingConnectionNotice from '../components/FollowingConnectionNotice';
 import HomeFeedTools from '../components/HomeFeedTools';
+import SourceWebsiteDirectory from '../components/SourceWebsiteDirectory';
 import TopicFilterControl, { TopicChoices } from '../components/TopicFilterControl';
 import TravelDestinationPicker, { useTravelDestinations, travelCityMatches } from '../components/TravelDestinationPicker';
 import TravelGuideDialog from '../components/TravelGuideDialog';
@@ -432,14 +433,9 @@ const SOURCE_TABS = HOME_FEED_SOURCE_IDS.map(key => ({
   key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || 'SRC',
 }));
 
-// Following's own quick-filter row — the mirror image of SOURCE_TABS above:
-// this is exactly the content SOURCE_TABS deliberately excludes (native
-// UFIconnect posts from people you follow, plus whichever connected social
-// accounts you've linked), so it gets its own tab vocabulary rather than
-// reusing the aggregate Feed's. Covers every platform Connected Accounts
-// offers when it exposes a usable following timeline. Instagram and TikTok
-// remain available for own-post tools in Command Center, but cannot appear
-// here because neither connection supplies an accounts-you-follow timeline.
+// Following contains native followed people and implemented account-owned
+// feeds. It shares some platform names with Home, but its posts always use
+// the member's authorized account rather than the public discovery pool.
 const FOLLOWING_SOURCE_TABS = [
   { key: 'all', label: 'Following', icon: '' },
   { key: 'uficonnect', label: 'UFIconnect', icon: 'UFI' },
@@ -531,13 +527,8 @@ function saveFeedState(userId, filters, activeTabs, _search, viewMode, location)
 // Account-owned networks appear only in Following after connection.
 const ALL_FILTER_SOURCES = HOME_FEED_SOURCE_IDS;
 
-// Following's filter-panel options — native UFIconnect posts from people you
-// follow, plus every platform Connected Accounts offers (see
-// FOLLOWING_SOURCE_TABS above for why this now matches that full list
-// instead of just the 4 with a live keyword-search fallback). Deliberately
-// excludes everything in ALL_FILTER_SOURCES above — that content
-// structurally cannot appear in Following, so offering it as a filter here
-// would just be a no-op that always returns nothing.
+// Identity-only and external website accounts do not advertise empty Following
+// filters. Unsupported website destinations are listed separately as links.
 const FOLLOWING_FILTER_SOURCES = FOLLOWING_FEED_SOURCE_IDS;
 
 const CATEGORY_COLORS = {
@@ -3481,9 +3472,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         )}
       </section>}
 
-      {/* Source tabs — Feed and Following each filter over their own
-          vocabulary (SOURCE_TABS vs FOLLOWING_SOURCE_TABS), since neither
-          list of sources can appear in the other view. */}
+      {/* Home uses public discovery; Following uses authorized personal feeds. */}
       {usesSourceControls && (
         <div className="feed-source-filter-row feed-unified-control-bar">
           <div className="feed-source-picker">
@@ -3576,6 +3565,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                     {sourceFavoriteSaving ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Save favorites'}
                   </button>
                 </div>
+                <SourceWebsiteDirectory plan={profile?.plan} />
               </div>
             )}
           </div>

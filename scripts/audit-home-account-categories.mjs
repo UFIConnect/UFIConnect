@@ -76,17 +76,16 @@ try {
       for (const provider of providers) assert.ok((await section.innerText()).includes(provider));
     }
     assert.equal(await tools.getByRole('link', { name: 'Open Instagram website' }).count(), 0);
-    assert.equal(await tools.getByRole('link', { name: 'Open Indeed website' }).count(), 1);
-    assert.equal(await tools.getByRole('link', { name: 'Open Mastodon website' }).getAttribute('href'), 'https://fosstodon.org');
-    assert.equal(await tools.getByRole('button', { name: 'Coming soon', exact: true }).count(), 2);
-    for (const button of await tools.getByRole('button', { name: 'Coming soon', exact: true }).all()) assert.equal(await button.isDisabled(), true);
-    assert.equal(await tools.getByRole('button', { name: 'Membership', exact: true }).isDisabled(), true);
+    assert.equal(await tools.getByRole('link', { name: 'Sign in on Indeed' }).count(), 1);
+    assert.equal(await tools.locator('.account-site-link, .home-connected-account-status').count(), 0);
+    assert.equal(await tools.getByRole('button', { name: 'Coming soon', exact: true }).count(), 0);
+    for (const provider of ['Medium', 'WIRED', 'YouTube']) {
+      assert.equal(await tools.getByRole('button', { name: `Sign in and connect ${provider}`, exact: true }).isDisabled(), true);
+    }
     assert.equal(authorizationRequests, 0, 'Displaying grouped accounts must not start authorization');
-    const filter = tools.getByRole('combobox', { name: 'Filter accounts', exact: true });
-    await filter.selectOption('connected');
-    assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), ['Social', 'Work & Development']);
+    assert.equal(await tools.getByRole('combobox', { name: 'Filter accounts', exact: true }).count(), 0);
     const social = tools.getByRole('region', { name: 'Social accounts', exact: true });
-    assert.ok((await social.innerText()).includes('1 of 2 connected'));
+    assert.equal(await tools.locator('.home-account-category-heading span').count(), 0);
     const disconnectRequest = page.waitForRequest(request => request.url().endsWith('/social/connect/mastodon') && request.method() === 'DELETE');
     await social.getByRole('button', { name: 'Disconnect', exact: true }).click();
     await disconnectRequest;
@@ -94,18 +93,13 @@ try {
     assert.equal(await tools.getByRole('button', { name: 'Wait...', exact: true }).isDisabled(), true);
     assert.equal(await tools.getByRole('button', { name: 'Disconnect', exact: true }).isDisabled(), true);
     completeDisconnect();
-    await social.waitFor({ state: 'detached' });
-    assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), ['Work & Development']);
-    await filter.selectOption('all');
-    assert.ok((await social.innerText()).includes('0 of 2 connected'));
-    await filter.selectOption('soon');
-    assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), ['Publishing']);
-    await filter.selectOption('all');
-    const bluesky = tools.locator('.home-connected-account-row').filter({ has: page.getByRole('link', { name: 'Open Bluesky website' }) });
-    await bluesky.getByRole('button', { name: 'Connect', exact: true }).click();
+    await social.getByRole('button', { name: 'Sign in and connect Mastodon', exact: true }).waitFor();
+    assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), categories);
+    const bluesky = tools.locator('.home-connected-account-row').filter({ hasText: 'Bluesky' });
+    await bluesky.getByRole('button', { name: 'Sign in and connect Bluesky', exact: true }).click();
     await tools.getByPlaceholder('name.bsky.social').waitFor();
     const handleForm = tools.locator('.home-connected-account-handle');
-    assert.equal(await handleForm.getByRole('button', { name: 'Connect', exact: true }).isDisabled(), true);
+    assert.equal(await handleForm.getByRole('button', { name: 'Sign in & connect', exact: true }).isDisabled(), true);
     await handleForm.getByRole('button', { name: 'Cancel', exact: true }).click();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     for (const row of await tools.locator('.home-connected-account-row').all()) {
@@ -113,12 +107,12 @@ try {
       const actionsBox = await row.locator('.source-directory-account-actions').boundingBox();
       assert.ok(actionsBox.x + actionsBox.width <= rowBox.x + rowBox.width + 1, 'Actions stay inside each account row');
     }
-    const mastodon = tools.locator('.home-connected-account-row').filter({ has: page.getByRole('link', { name: 'Open Mastodon website' }) });
-    await mastodon.getByRole('button', { name: 'Connect', exact: true }).click();
+    const mastodon = tools.locator('.home-connected-account-row').filter({ hasText: 'Mastodon' });
+    await mastodon.getByRole('button', { name: 'Sign in and connect Mastodon', exact: true }).click();
     await page.getByRole('heading', { name: 'Connect Mastodon', exact: true }).waitFor();
     assert.equal(authorizationRequests, 0, 'Mastodon server selection occurs before authorization');
     assert.deepEqual(errors, []);
-    console.log(`PASS Home account categories, counts, filtering, connection gates, disconnect, Bluesky form, Mastodon server routing and layout ${width}px`);
+    console.log(`PASS Home account categories, unified sign-in, status removal, connection gates, disconnect, Bluesky form, Mastodon routing and layout ${width}px`);
     await context.close();
   }
 } finally {
