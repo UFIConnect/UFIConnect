@@ -906,6 +906,20 @@ services:
       - path: /index.html
         name: Cache-Control
         value: public, max-age=0, s-maxage=30, must-revalidate
+      # Billing returns must load the current application shell. Include the
+      # route's trailing slash and rewritten index.html destination.
+      - path: /settings*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /command-center*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /vault*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /resume-builder*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
       - path: /assets/*
         name: Cache-Control
         value: public, max-age=31536000, immutable

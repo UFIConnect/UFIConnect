@@ -21,6 +21,9 @@ test('only the public homepage receives a bounded shared cache while browser and
   }
   assert.deepEqual(cacheRules.filter(header => /s-maxage/.test(header.value)).map(header => header.path), ['/', '/index.html'], 'Private routes and wildcard paths do not inherit the new shared cache');
   for (const route of ['/health*', '/sw.js']) assert.equal(cacheRules.find(header => header.path === route)?.value, 'no-cache, no-store, must-revalidate');
+  for (const route of ['/settings*', '/command-center*', '/vault*', '/resume-builder*']) {
+    assert.equal(cacheRules.find(header => header.path === route)?.value, 'no-cache, no-store, must-revalidate', 'Billing return HTML must load the current application instead of a cached older release');
+  }
   assert.equal(cacheRules.find(header => header.path === '/assets/*')?.value, 'public, max-age=31536000, immutable');
   const office = blueprint.services.find(service => service.name === 'uficonnect-office');
   assert.equal(office.headers.find(header => header.name === 'Cache-Control' && header.path === '/index.html')?.value, 'no-cache, no-store, must-revalidate');
