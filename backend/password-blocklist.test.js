@@ -10,6 +10,10 @@ test('new-password screening uses an attributed local corpus, with no user-passw
   assert.match(corpus.sourceSha256, /^[a-f0-9]{64}$/);
   assert.equal(new Set(corpus.hashes).size, corpus.hashes.length);
   assert.ok(corpus.hashes.length >= 100);
+  assert.equal(corpus.minimumCodePoints, 12);
+  const shorterKnown = 'password1234';
+  assert.ok(corpus.hashes.includes(crypto.createHash('sha256').update(shorterKnown).digest('hex')));
+  assert.ok(passwordBlocklistError(shorterKnown));
   assert.ok(corpus.hashes.every(value => /^[a-f0-9]{64}$/.test(value)));
   // This public, compromised example must be represented in the source corpus.
   const known = '123456789012345';

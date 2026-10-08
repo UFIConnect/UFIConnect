@@ -1,6 +1,6 @@
 # Local new-password screening
 
-`common-passwords.json` contains 329 SHA-256 fingerprints derived from the public NCSC common-password list in SecLists. The pinned source contains 99,839 entries. Entries outside the application's 15-character / 72-UTF-8-byte policy are excluded because the length check already rejects them. Source URL, commit and download checksum are recorded in the JSON. SecLists' MIT notice is preserved in `LICENSE-SecLists.txt`.
+`common-passwords.json` contains 1,197 SHA-256 fingerprints derived from the public NCSC common-password list in SecLists. The pinned source contains 99,839 entries. Entries outside the application's 12-character / 72-UTF-8-byte policy are excluded because the length check already rejects them. Source URL, commit and download checksum are recorded in the JSON. SecLists' MIT notice is preserved in `LICENSE-SecLists.txt`.
 
 The server compares the whole proposed password, using NFKC normalization and lowercase for blocklist matching only. It also rejects whole-value repeated strings, well-known sequences and simple service-name guesses. It does not reject a passphrase merely because it contains a dictionary word or the service name. The exact entered credential, including case and spaces, still goes to bcrypt; login behavior is unchanged.
 

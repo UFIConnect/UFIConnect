@@ -86,7 +86,7 @@ export default function ResetPassword() {
                     id="reset-password"
                     name="password"
                     aria-describedby="reset-password-help"
-                    placeholder="At least 15 characters"
+                    placeholder="At least 12 characters"
                     value={password}
                     onChange={(e) => { setPassword(e.target.value); setError(''); }}
                     autoComplete="new-password"

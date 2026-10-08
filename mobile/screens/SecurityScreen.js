@@ -72,7 +72,7 @@ export default function SecurityScreen({ navigation }) {
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         <View style={styles.card}>
           <Text style={styles.heading}>Change password</Text>
-          <Text style={styles.description}>Choose a unique passphrase with at least 15 characters and no more than 72 UTF-8 bytes. Changing it signs out your existing sessions.</Text>
+          <Text style={styles.description}>Choose a unique passphrase with at least 12 characters and no more than 72 UTF-8 bytes. Changing it signs out your existing sessions.</Text>
           <Text style={styles.label}>Current password</Text>
           <PasswordInput style={styles.input} value={currentPassword} onChangeText={value => { setCurrentPassword(value); setPasswordError(''); }}
             accessibilityLabel="Current password" editable={!busy} concealKey={concealKey} />

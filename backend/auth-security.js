@@ -21,7 +21,7 @@ function resolveJwtSecret(env = process.env) {
 
 function passwordPolicyError(value) {
   if (typeof value !== 'string') return 'Enter a password.';
-  if ([...value].length < 15) return 'Use at least 15 characters for your password.';
+  if ([...value].length < 12) return 'Use at least 12 characters for your password.';
   if (Buffer.byteLength(value, 'utf8') > 72) return 'Password must be at most 72 UTF-8 bytes. Use fewer characters.';
   return passwordBlocklistError(value);
 }

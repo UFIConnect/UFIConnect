@@ -653,7 +653,7 @@ export default function Register() {
                 <div className="form-group">
                   <label className="form-label" htmlFor="register-password">Password</label>
                   <PasswordInput id="register-password" aria-describedby="register-password-help" className="form-input" name="password"
-                    placeholder="At least 15 characters" value={form.password} onChange={handleChange} autoComplete="new-password" />
+                    placeholder="At least 12 characters" value={form.password} onChange={handleChange} autoComplete="new-password" />
                   <p id="register-password-help" style={{ fontSize: '.75rem', color: 'var(--muted)', margin: '6px 0 0' }}>{PASSWORD_GUIDANCE}</p>
                 </div>
                 <div className="form-group">
