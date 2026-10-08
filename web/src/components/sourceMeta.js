@@ -149,3 +149,13 @@ export function isFollowingFeedSource(source) {
 export const SOURCE_WEBSITE_IDS = Object.keys(ACCOUNT_DIRECTORY).filter(
   source => !HOME_FEED_SOURCE_IDS.includes(source) && !FOLLOWING_FEED_SOURCE_IDS.includes(source),
 );
+
+// Keep account and website additions visible without advertising a feed that
+// cannot be loaded. These IDs are display-only and never enter request/favorite
+// allowlists or the shared public inventory.
+export function unavailableFeedSourceIds(mode = 'feed', { includeWebsites = true, careerOnly = false } = {}) {
+  const supported = new Set(mode === 'following' ? FOLLOWING_FEED_SOURCE_IDS : HOME_FEED_SOURCE_IDS);
+  const directory = includeWebsites ? Object.keys(ACCOUNT_DIRECTORY) : [];
+  return [...new Set([...CONNECTED_SOCIAL_PLATFORMS, ...COMMAND_CENTER_ACCOUNT_PLATFORMS, ...directory])]
+    .filter(source => !supported.has(source) && (!careerOnly || ACCOUNT_DIRECTORY[source]?.category === 'career'));
+}

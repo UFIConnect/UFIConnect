@@ -11,9 +11,9 @@ export const SOURCE_CATEGORIES = [
 ];
 const CATEGORY_SOURCES = {
   social: ['uficonnect', 'reddit', 'twitter', 'facebook', 'bluesky', 'mastodon', 'linkedin', 'threads', 'tumblr'],
-  developer: ['github', 'gitlab', 'devto', 'stackoverflow', 'hackernews', 'lobsters', 'arxiv', 'phoronix', 'infoq', 'hashnode', 'freecodecamp'],
+  developer: ['github', 'gitlab', 'devto', 'stackoverflow', 'hackernews', 'lobsters', 'arxiv', 'phoronix', 'infoq', 'hashnode', 'freecodecamp', 'discord', 'figma', 'slack', 'notion'],
   news: ['medium', 'techcrunch', 'theverge', 'arstechnica', 'wired', 'theregister', 'venturebeat', 'mittr', 'wordpress', ...Object.keys(ACCOUNT_DIRECTORY).filter(key => ACCOUNT_DIRECTORY[key].category === 'publication')],
-  creative: ['youtube', 'twitch', 'instagram', 'tiktok', 'pinterest', 'behance', 'dribbble', 'designweb', 'smashing'],
+  creative: ['youtube', 'twitch', 'instagram', 'tiktok', 'pinterest', 'behance', 'dribbble', 'designweb', 'smashing', ...Object.keys(ACCOUNT_DIRECTORY).filter(key => ['video', 'audio'].includes(ACCOUNT_DIRECTORY[key].category))],
   business: ['producthunt', 'yc', 'crunchbase', 'indiehackers'],
   career: CAREER_ACCOUNT_PLATFORMS,
   local: ['livecamera', 'wikivoyage', 'travelnews', 'travelevents', 'localpulse', 'restaurants', ...Object.keys(ACCOUNT_DIRECTORY).filter(key => ACCOUNT_DIRECTORY[key].category === 'travel')],

@@ -115,7 +115,7 @@ function createTwitchFeed({ fetcher = fetch, now = Date.now, getConfig = () => (
     }));
     return [...new Map(results.flat().map(post => [post.id, post])).values()];
   }
-  async function publicClips() {
+  async function publicPosts() {
     const config = settings();
     // Public ingestion uses only this app's client-credentials token. It never
     // borrows a connected member's token, follow graph, or private inventory.
@@ -125,13 +125,20 @@ function createTwitchFeed({ fetcher = fetch, now = Date.now, getConfig = () => (
       const token = await appAccess(config);
       try {
         const streams = await helix('streams', { first: 6 }, config, token);
-        const channels = (Array.isArray(streams?.data) ? streams.data : []).slice(0, 6)
-          .filter(stream => stream.is_mature !== true && CHANNEL_ID.test(stream.user_id || '') && CHANNEL_LOGIN.test(stream.user_login || ''))
-          .map(stream => ({ id: stream.user_id, login: stream.user_login, name: stream.user_name, category: stream.game_name }));
-        return await clips(channels, config, token, false, 8);
+        const live = (Array.isArray(streams?.data) ? streams.data : []).slice(0, 6)
+          .filter(stream => stream.is_mature !== true && CHANNEL_ID.test(stream.user_id || '') && CHANNEL_LOGIN.test(stream.user_login || ''));
+        const channels = live.map(stream => ({ id: stream.user_id, login: stream.user_login, name: stream.user_name, category: stream.game_name }));
+        const recent = await clips(channels, config, token, false, 8);
+        // Home can display genuine public stream cards. Short clips keep their
+        // Videos/Snaps placement; neither path borrows a member's follow graph.
+        // Reuse this existing stream response rather than adding provider reads.
+        return [...live.map(streamPost).filter(Boolean), ...recent];
       }
       catch (error) { if (error.status === 401) appToken = null; throw error; }
     });
+  }
+  async function publicClips() {
+    return (await publicPosts()).filter(post => post.mediaType === 'video');
   }
   async function following(token, { userId = '', connectedAt = null, bust = false } = {}) {
     const config = settings();
@@ -155,7 +162,7 @@ function createTwitchFeed({ fetcher = fetch, now = Date.now, getConfig = () => (
       return [...streams, ...recent];
     });
   }
-  return { publicClips, following };
+  return { publicPosts, publicClips, following };
 }
 
 module.exports = { createTwitchFeed, clipPost, streamPost, LOOKBACK_MS };
