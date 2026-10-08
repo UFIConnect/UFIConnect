@@ -44,6 +44,10 @@ try {
       const url = new URL(route.request().url());
       const endpoint = url.pathname.replace(/^\/api/, '');
       if (/events|stream/.test(endpoint)) return route.abort();
+      if (endpoint === '/generation/usage') return route.fulfill({ json: {
+        period: { startsAt: '2026-10-01T00:00:00.000Z', resetsAt: '2099-11-01T00:00:00.000Z' },
+        limits: { video: { limit: 20, used: 0, remaining: 20 }, image: { limit: 50, used: 0, remaining: 50 }, resume: { limit: 30, used: 0, remaining: 30 } },
+      } });
       if (endpoint === '/social/platforms') return route.fulfill({ json: {
         connected: { bluesky: 'preview.bsky.social' },
         platforms: { bluesky: { configured: true, crossPost: { supported: true, media: 'native-image' } } },

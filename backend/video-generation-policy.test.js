@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { Readable } = require('node:stream');
 const { PGlite } = require('@electric-sql/pglite');
-const { createAppHarness, member } = require('./test-support/app-harness');
+const { createAppHarness, member, generationUsageStub } = require('./test-support/app-harness');
 const { HISTORY_SCHEMA } = require('./generated-content');
 const { videoDurationSeconds } = require('./video-generation-policy');
 
@@ -45,7 +45,7 @@ test('unsupported duration is rejected before history, storage, or provider work
 test('configured long-form provider receives 300 seconds unchanged and saves the result', async t => {
   const pg = new PGlite(); await pg.exec(HISTORY_SCHEMA);
   const calls = [];
-  const app = await createAppHarness({ connected: true, query: (sql, params) => pg.query(sql, params),
+  const app = await createAppHarness({ connected: true, generationUsage: generationUsageStub(), query: (sql, params) => pg.query(sql, params),
     env: { VIDEO_GENERATION_API_URL: 'https://video.example/render', VIDEO_GENERATION_API_KEY: 'test-token', OPENAI_API_KEY: 'test-openai-token' },
     modules: {
       https: { ...require('node:https'), request(target, config, onResponse) {
@@ -86,7 +86,7 @@ test('narrated render persists its job, isolates owners, and saves completion wi
   const calls = [];
   const jobId = '2abd5c11-0f3d-4c6d-ba20-235fc9b8e8b7';
   let finished = false;
-  const app = await createAppHarness({ connected: true, query: (sql, params) => pg.query(sql, params),
+  const app = await createAppHarness({ connected: true, generationUsage: generationUsageStub(), query: (sql, params) => pg.query(sql, params),
     modules: {
       './narrated-video': { createNarratedVideoProvider: () => ({
         configured: () => true,

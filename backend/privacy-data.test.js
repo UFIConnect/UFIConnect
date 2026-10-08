@@ -14,6 +14,7 @@ const { UFI_VAULT_SCHEMA } = require('./ufi-vault');
 const { REPORT_SCHEMA } = require('./content-reports');
 const { MANAGED_VPN_SCHEMA } = require('./managed-vpn-schema');
 const { INBOX_RECEIPTS_SCHEMA } = require('./inbox-receipts');
+const { schemaStatements: GENERATION_USAGE_SCHEMA } = require('./generation-usage');
 
 const alice = '11111111-1111-4111-8111-111111111111';
 const bob = '22222222-2222-4222-8222-222222222222';
@@ -37,6 +38,7 @@ async function schema(pg) {
   }
   await pg.exec(HISTORY_SCHEMA);
   await pg.exec(INBOX_RECEIPTS_SCHEMA);
+  for (const sql of GENERATION_USAGE_SCHEMA) await pg.exec(sql);
   for (const sql of BILLING_SCHEMA) await pg.exec(sql);
   for (const sql of MANAGED_VPN_SCHEMA) await pg.exec(sql);
   for (const sql of BUSINESS_TEAM_SCHEMA) await pg.exec(sql);
@@ -71,6 +73,8 @@ async function seed(pg) {
     await insert('saved_posts', { user_id: uid, post_id: `${prefix}-saved`, post_snapshot: JSON.stringify({ title: `${prefix}-saved-title` }) });
     await insert('job_tracking', { id: `${prefix}-job`, user_id: uid, job_id: `${prefix}-job-id`, title: `${prefix}-job-title` });
     await insert('generated_content', { id: `${prefix}-generated`, user_id: uid, kind: 'draft', prompt: `${prefix}-prompt`, provider_job_id: 'secret-provider-job', output: JSON.stringify({ text: `${prefix}-draft` }) });
+    await insert('generation_usage', { user_id: uid, kind: 'image', period_start: '2026-10-01', used: prefix === 'a' ? 1 : 5 });
+    await insert('generation_usage_reservations', { id: uid, user_id: uid, kind: 'image', period_start: '2026-10-01', state: 'completed' });
     await insert('resume_drafts', { id: `${prefix}-resume`, user_id: uid, data: JSON.stringify({ summary: `${prefix}-summary` }) });
     await insert('cross_posts', { id: `${prefix}-cross`, user_id: uid, content: `${prefix}-cross-content` });
     await insert('seen_posts', { user_id: uid, post_id: `${prefix}-seen` });
@@ -160,9 +164,12 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
     assert.equal(exported.businessTeamSeats[0].memberId, bob);
     assert.equal(exported.businessTeamInvitations[0].inviteeId, carol);
     assert.equal(Object.hasOwn(exported.businessTeamInvitations[0], 'token_hash'), false);
+    assert.equal(exported.generationUsage[0].used, 1);
+    assert.equal(exported.generationRequests[0].state, 'completed');
+    assert.equal(Object.hasOwn(exported.generationRequests[0], 'id'), false);
     for (const key of ['posts', 'comments', 'attachments', 'savedPosts', 'trackedJobs', 'generatedContent', 'resumeDrafts',
       'crossPosts', 'ownedGroups', 'notifications', 'inboxReadReceipts', 'reports', 'seenPosts', 'engagementPreferences', 'restaurantLikes', 'externalPostLikes',
-      'pushRegistrations', 'signIns', 'legacyPageViews', 'legacyClientErrors', 'legacyServerErrors', 'legacyUsageSignals', 'billingCheckouts', 'vpnLocations', 'vpnDevices']) {
+      'pushRegistrations', 'signIns', 'legacyPageViews', 'legacyClientErrors', 'legacyServerErrors', 'legacyUsageSignals', 'billingCheckouts', 'vpnLocations', 'vpnDevices', 'generationUsage', 'generationRequests']) {
       assert.equal(exported[key].length, 1, key);
     }
     const serialized = JSON.stringify(exported);
@@ -191,9 +198,11 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
       assert.equal((await pg.query(`SELECT COUNT(*)::integer AS count FROM ${table} WHERE user_id=$1`, [alice])).rows[0].count, 0, table);
       assert.equal((await pg.query(`SELECT COUNT(*)::integer AS count FROM ${table} WHERE user_id=$1`, [bob])).rows[0].count, 1, table);
     }
-    for (const table of ['generated_content', 'billing_checkout_attempts', 'vault_vpn_locations', 'managed_vpn_devices', 'managed_vpn_launches', 'inbox_read_receipts']) {
+    for (const table of ['generated_content', 'billing_checkout_attempts', 'vault_vpn_locations', 'managed_vpn_devices', 'managed_vpn_launches', 'inbox_read_receipts', 'generation_usage', 'generation_usage_reservations']) {
       assert.equal((await pg.query(`SELECT COUNT(*)::integer AS count FROM ${table} WHERE user_id=$1`, [alice])).rows[0].count, 0, table);
     }
+    assert.equal((await pg.query('SELECT used FROM generation_usage WHERE user_id=$1', [bob])).rows[0].used, 5);
+    assert.equal((await pg.query('SELECT state FROM generation_usage_reservations WHERE user_id=$1', [bob])).rows[0].state, 'completed');
     assert.equal((await pg.query('SELECT name FROM vault_vpn_locations WHERE user_id=$1', [bob])).rows[0].name, 'b-vpn-profile');
     assert.equal((await pg.query('SELECT label FROM managed_vpn_devices WHERE user_id=$1', [bob])).rows[0].label, 'b-vpn-device');
     assert.equal((await pg.query('SELECT * FROM business_team_members')).rows.length, 0);

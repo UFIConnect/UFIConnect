@@ -106,6 +106,10 @@ async function exportAccountData(db, userId) {
         FROM job_tracking WHERE user_id=$1 ORDER BY created_at,id`,
       generatedContent: `SELECT id,kind,prompt,input,output,status,created_at AS "createdAt",updated_at AS "updatedAt"
         FROM generated_content WHERE user_id=$1 ORDER BY created_at,id`,
+      generationUsage: `SELECT kind,period_start AS "periodStart",used FROM generation_usage
+        WHERE user_id=$1 ORDER BY period_start,kind`,
+      generationRequests: `SELECT kind,period_start AS "periodStart",state,created_at AS "createdAt"
+        FROM generation_usage_reservations WHERE user_id=$1 ORDER BY created_at,id`,
       resumeDrafts: `SELECT id,template,data,updated_at AS "updatedAt" FROM resume_drafts WHERE user_id=$1 ORDER BY id`,
       crossPosts: `SELECT id,content,media_url AS "mediaUrl",targets,created_at AS "createdAt" FROM cross_posts WHERE user_id=$1 ORDER BY created_at,id`,
       ownedGroups: `SELECT id,name,category,description,is_private AS "isPrivate",created_at AS "createdAt"

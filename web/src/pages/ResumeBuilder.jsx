@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { Link, useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
@@ -179,25 +179,120 @@ function LockedState({ onUnlock, unlocking, billingReady, price, billingConfig, 
   );
 }
 
-function AIAssistButton({ onResult, field, context, label = 'AI Assist' }) {
+function validGenerationUsage(usage) {
+  const startsAt = new Date(usage?.period?.startsAt).getTime();
+  const resetsAt = new Date(usage?.period?.resetsAt).getTime();
+  return Number.isFinite(startsAt) && Number.isFinite(resetsAt) && resetsAt > startsAt
+    && ['image', 'video', 'resume'].every(kind => {
+      const allowance = usage?.limits?.[kind];
+      return allowance && [allowance.limit, allowance.used, allowance.remaining].every(Number.isInteger)
+        && allowance.limit >= 0 && allowance.used >= 0 && allowance.remaining >= 0
+        && allowance.used + allowance.remaining === allowance.limit;
+    });
+}
+
+function generationResetLabel(usage) {
+  if (!validGenerationUsage(usage)) return '';
+  return new Date(usage.period.resetsAt).toLocaleString(undefined, {
+    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+    timeZone: 'UTC', timeZoneName: 'short',
+  });
+}
+
+function resumeGenerationError(error) {
+  const response = error?.response?.data;
+  if (error?.response?.status === 429 && validGenerationUsage(response?.usage)) {
+    return `Your monthly AI assistance limit has been reached. Resets ${generationResetLabel(response.usage)}.`;
+  }
+  if (response?.code === 'GENERATION_USAGE_UNAVAILABLE') {
+    return 'Your monthly allowance could not be checked. Please try again shortly.';
+  }
+  if (error?.response?.status >= 500 || (!error?.response && error?.isAxiosError)) {
+    return 'AI writing is temporarily unavailable. Please try again shortly.';
+  }
+  return response?.message || error?.message || 'Could not generate a suggestion. Please try again.';
+}
+
+function useResumeGenerationUsage(userId, enabled) {
+  const [result, setResult] = useState({ userId: null, usage: null, loading: true, error: '' });
+  const request = useRef({ sequence: 0, controller: null });
+  const owner = useRef(userId);
+  const active = useRef(false);
+  owner.current = userId;
+
+  const acceptUsage = useCallback(usage => {
+    if (!active.current || owner.current !== userId || !validGenerationUsage(usage)) return false;
+    request.current.sequence += 1;
+    request.current.controller?.abort();
+    setResult({ userId, usage, loading: false, error: '' });
+    return true;
+  }, [userId]);
+
+  const refreshUsage = useCallback(async () => {
+    if (!active.current || !enabled || !userId || owner.current !== userId) return;
+    request.current.controller?.abort();
+    const controller = new AbortController();
+    const sequence = ++request.current.sequence;
+    request.current.controller = controller;
+    setResult(current => ({ ...current, userId, loading: true, error: '', usage: current.userId === userId ? current.usage : null }));
+    try {
+      const { data } = await client.get('/generation/usage', { signal: controller.signal });
+      if (sequence !== request.current.sequence || owner.current !== userId) return;
+      if (!validGenerationUsage(data)) throw new Error('Invalid generation allowance');
+      setResult({ userId, usage: data, loading: false, error: '' });
+    } catch {
+      if (sequence !== request.current.sequence || owner.current !== userId) return;
+      setResult({ userId, usage: null, loading: false, error: 'Unable to read your monthly allowance.' });
+    }
+  }, [userId, enabled]);
+
+  useEffect(() => {
+    active.current = true;
+    void refreshUsage();
+    window.addEventListener('focus', refreshUsage);
+    return () => {
+      active.current = false;
+      request.current.sequence += 1;
+      request.current.controller?.abort();
+      window.removeEventListener('focus', refreshUsage);
+    };
+  }, [refreshUsage]);
+
+  useEffect(() => {
+    if (!enabled || result.userId !== userId || !result.usage) return undefined;
+    const delay = Math.max(1000, Math.min(new Date(result.usage.period.resetsAt).getTime() - Date.now(), 2147483647));
+    const timer = window.setTimeout(refreshUsage, delay);
+    return () => window.clearTimeout(timer);
+  }, [enabled, userId, result.userId, result.usage, refreshUsage]);
+
+  const current = result.userId === userId ? result : { usage: null, loading: true, error: '' };
+  const usage = current.usage && new Date(current.usage.period.resetsAt).getTime() > Date.now() ? current.usage : null;
+  return { ...current, usage, acceptUsage, refreshUsage };
+}
+
+function AIAssistButton({ onResult, field, context, label = 'AI Assist', disabled = false, onUsage, onComplete }) {
   const { showToast } = useToast();
   const [loading, setLoading] = useState(false);
 
   async function run() {
-    if (!context?.trim() || loading) return;
+    if (!context?.trim() || loading || disabled) return;
     setLoading(true);
+    let receivedLimitUsage = false;
     try {
       const { data } = await client.post('/resume-builder/ai-assist', { field, context });
+      if (data.usage) onUsage?.(data.usage);
       onResult(data.suggestion || '');
     } catch (err) {
-      showToast(err?.response?.data?.message || 'Could not generate a suggestion.', 'error');
+      receivedLimitUsage = err?.response?.status === 429 && onUsage?.(err?.response?.data?.usage);
+      showToast(resumeGenerationError(err), 'error');
     } finally {
       setLoading(false);
+      if (!receivedLimitUsage) onComplete?.();
     }
   }
 
   return (
-    <button type="button" className="btn btn-ghost btn-sm" onClick={run} disabled={loading || !context?.trim()}>
+    <button type="button" className="btn btn-ghost btn-sm" onClick={run} disabled={loading || disabled || !context?.trim()}>
       {loading ? <span className="spinner" style={{ width: 12, height: 12 }} /> : label}
     </button>
   );
@@ -518,6 +613,9 @@ export default function ResumeBuilder() {
   const [trackedJobsLoading, setTrackedJobsLoading] = useState(false);
 
   const unlocked = !!profile?.resumeBuilderAddon;
+  const { usage, loading: usageLoading, error: usageError, acceptUsage, refreshUsage } = useResumeGenerationUsage(profile?.id, unlocked);
+  const allowance = usage?.limits?.resume;
+  const monthlyLimitReached = allowance?.remaining === 0;
   const billingReady = billingConfig === null ? null : resumePlanReady(billingConfig, resumeTier);
   const resumeBuilderPrice = billingConfig?.pricing?.[resumeTier] || null;
 
@@ -796,10 +894,11 @@ export default function ResumeBuilder() {
   }
 
   async function generateApplicationDraft(type) {
-    if (drafting) return;
+    if (drafting || monthlyLimitReached) return;
     const section = type === 'cover_letter' ? 'coverLetter' : 'outreach';
     const writing = data[section];
     setDrafting(type);
+    let receivedLimitUsage = false;
     try {
       const payload = type === 'cover_letter'
         ? {
@@ -822,6 +921,7 @@ export default function ResumeBuilder() {
           format: writing.format,
         };
       const { data: response } = await client.post('/resume-builder/application-draft', payload);
+      if (response.usage) acceptUsage(response.usage);
       const body = String(response?.draft || '').trim();
       if (!body) throw new Error('No draft was returned.');
       const nextData = { ...data, [section]: { ...writing, body } };
@@ -830,9 +930,11 @@ export default function ResumeBuilder() {
       const saved = await saveDraft(nextData, `${label} drafted and saved.`);
       if (!saved) showToast(`${label} is ready here. Save it once storage is available.`, 'info');
     } catch (err) {
-      showToast(err?.response?.data?.message || err.message || 'Could not generate a draft.', 'error');
+      receivedLimitUsage = err?.response?.status === 429 && acceptUsage(err?.response?.data?.usage);
+      showToast(resumeGenerationError(err), 'error');
     } finally {
       setDrafting(null);
+      if (!receivedLimitUsage) void refreshUsage();
     }
   }
 
@@ -920,6 +1022,15 @@ export default function ResumeBuilder() {
               ))}
             </div>
 
+            {['resume', 'cover-letter', 'outreach'].includes(activeBuilderTab) && (
+              <div className="card" role={usageError ? 'alert' : 'status'} style={{ fontSize: '.8rem', color: 'var(--muted)', lineHeight: 1.55 }}>
+                {usageError ? <>{usageError} <button type="button" className="btn btn-ghost btn-sm" onClick={refreshUsage} disabled={usageLoading}>Retry allowance</button></>
+                  : allowance ? <>{monthlyLimitReached && 'Monthly AI assistance limit reached. '}{allowance.remaining} of {allowance.limit} AI assistance requests remaining this month. Resets {generationResetLabel(usage)}.{usageLoading && ' Updating allowance...'}</>
+                    : 'Checking monthly AI assistance allowance...'}
+                <p style={{ margin: '4px 0 0' }}>Summary, bullet, cover letter, and message requests share one monthly allowance. Manual editing and exports do not use it.</p>
+              </div>
+            )}
+
             {activeBuilderTab === 'preparation' && (
               <PreparationLibrary
                 watchedIds={data.preparation?.watchedVideoIds || []}
@@ -988,6 +1099,9 @@ export default function ResumeBuilder() {
                 <h3 style={{ margin: 0, fontSize: '.9rem' }}>Summary</h3>
                 <AIAssistButton
                   field="summary"
+                  disabled={monthlyLimitReached}
+                  onUsage={acceptUsage}
+                  onComplete={refreshUsage}
                   context={data.summary || `${data.contact.title || 'professional'} with experience in ${(data.skills || []).slice(0, 5).join(', ') || 'their field'}`}
                   onResult={s => setData(prev => ({ ...prev, summary: s }))}
                 />
@@ -1027,7 +1141,7 @@ export default function ResumeBuilder() {
                         value={b} onChange={e => updateBullet(i, bi, e.target.value)}
                         placeholder="e.g. led a redesign that increased signups 18%"
                       />
-                      <AIAssistButton field="bullets" context={b} label="AI" onResult={s => updateBullet(i, bi, s)} />
+                      <AIAssistButton field="bullets" context={b} label="AI" onResult={s => updateBullet(i, bi, s)} disabled={monthlyLimitReached} onUsage={acceptUsage} onComplete={refreshUsage} />
                       <button type="button" className="btn btn-ghost btn-sm" onClick={() => removeBullet(i, bi)}>Remove</button>
                     </div>
                   ))}
@@ -1184,7 +1298,7 @@ export default function ResumeBuilder() {
                     />
                   </div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
-                    <button className="btn btn-primary btn-sm" type="button" onClick={() => generateApplicationDraft('cover_letter')} disabled={!!drafting}>
+                    <button className="btn btn-primary btn-sm" type="button" onClick={() => generateApplicationDraft('cover_letter')} disabled={!!drafting || monthlyLimitReached}>
                       {drafting === 'cover_letter' ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Draft cover letter'}
                     </button>
                     <button className="btn btn-ghost btn-sm" type="button" onClick={openCoverLetterPreview} disabled={!data.coverLetter.body || saving}>Preview page</button>
@@ -1239,7 +1353,7 @@ export default function ResumeBuilder() {
                     />
                   </div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
-                    <button className="btn btn-primary btn-sm" type="button" onClick={() => generateApplicationDraft('outreach')} disabled={!!drafting}>
+                    <button className="btn btn-primary btn-sm" type="button" onClick={() => generateApplicationDraft('outreach')} disabled={!!drafting || monthlyLimitReached}>
                       {drafting === 'outreach' ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Draft message'}
                     </button>
                     <button className="btn btn-ghost btn-sm" type="button" onClick={() => previewWriting('outreach')} disabled={!data.outreach.body}>Preview</button>

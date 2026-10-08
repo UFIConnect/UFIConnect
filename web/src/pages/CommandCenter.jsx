@@ -331,6 +331,83 @@ function dataUrlToFile(dataUrl, name) {
   return new File([bytes], name, { type: mime });
 }
 
+function validGenerationUsage(usage) {
+  const startsAt = new Date(usage?.period?.startsAt).getTime();
+  const resetsAt = new Date(usage?.period?.resetsAt).getTime();
+  return Number.isFinite(startsAt) && Number.isFinite(resetsAt) && resetsAt > startsAt
+    && ['image', 'video', 'resume'].every(kind => {
+      const allowance = usage?.limits?.[kind];
+      return allowance && [allowance.limit, allowance.used, allowance.remaining].every(Number.isInteger)
+        && allowance.limit >= 0 && allowance.used >= 0 && allowance.remaining >= 0
+        && allowance.used + allowance.remaining === allowance.limit;
+    });
+}
+
+function generationResetLabel(usage) {
+  if (!validGenerationUsage(usage)) return '';
+  return new Date(usage.period.resetsAt).toLocaleString(undefined, {
+    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+    timeZone: 'UTC', timeZoneName: 'short',
+  });
+}
+
+function useMediaGenerationUsage(userId, enabled) {
+  const [result, setResult] = useState({ userId: null, usage: null, loading: true, error: '' });
+  const request = useRef({ sequence: 0, controller: null });
+  const owner = useRef(userId);
+  const active = useRef(false);
+  owner.current = userId;
+
+  const acceptUsage = useCallback(usage => {
+    if (!active.current || owner.current !== userId || !validGenerationUsage(usage)) return false;
+    request.current.sequence += 1;
+    request.current.controller?.abort();
+    setResult({ userId, usage, loading: false, error: '' });
+    return true;
+  }, [userId]);
+
+  const refreshUsage = useCallback(async () => {
+    if (!active.current || !enabled || !userId || owner.current !== userId) return;
+    request.current.controller?.abort();
+    const controller = new AbortController();
+    const sequence = ++request.current.sequence;
+    request.current.controller = controller;
+    setResult(current => ({ ...current, userId, loading: true, error: '', usage: current.userId === userId ? current.usage : null }));
+    try {
+      const { data } = await client.get('/generation/usage', { signal: controller.signal });
+      if (sequence !== request.current.sequence || owner.current !== userId) return;
+      if (!validGenerationUsage(data)) throw new Error('Invalid generation allowance');
+      setResult({ userId, usage: data, loading: false, error: '' });
+    } catch {
+      if (sequence !== request.current.sequence || owner.current !== userId) return;
+      setResult({ userId, usage: null, loading: false, error: 'Unable to read your monthly allowance.' });
+    }
+  }, [userId, enabled]);
+
+  useEffect(() => {
+    active.current = true;
+    void refreshUsage();
+    window.addEventListener('focus', refreshUsage);
+    return () => {
+      active.current = false;
+      request.current.sequence += 1;
+      request.current.controller?.abort();
+      window.removeEventListener('focus', refreshUsage);
+    };
+  }, [refreshUsage]);
+
+  useEffect(() => {
+    if (!enabled || result.userId !== userId || !result.usage) return undefined;
+    const delay = Math.max(1000, Math.min(new Date(result.usage.period.resetsAt).getTime() - Date.now(), 2147483647));
+    const timer = window.setTimeout(refreshUsage, delay);
+    return () => window.clearTimeout(timer);
+  }, [enabled, userId, result.userId, result.usage, refreshUsage]);
+
+  const current = result.userId === userId ? result : { usage: null, loading: true, error: '' };
+  const usage = current.usage && new Date(current.usage.period.resetsAt).getTime() > Date.now() ? current.usage : null;
+  return { ...current, usage, acceptUsage, refreshUsage };
+}
+
 function MediaStudioSection({ onOpenCrossPost, readOnly = false }) {
   const [type, setType] = useState('image');
   const [prompt, setPrompt] = useState('');
@@ -339,6 +416,9 @@ function MediaStudioSection({ onOpenCrossPost, readOnly = false }) {
   const [videoOptionsError, setVideoOptionsError] = useState('');
   const [optionsRevision, setOptionsRevision] = useState(0);
   const { profile: studioProfile } = useAuth();
+  const { usage, loading: usageLoading, error: usageError, acceptUsage, refreshUsage } = useMediaGenerationUsage(studioProfile?.id, !readOnly);
+  const allowance = usage?.limits?.[type];
+  const monthlyLimitReached = allowance?.remaining === 0;
   const [generating, setGenerating] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [asset, setAsset] = useState(null);
@@ -413,10 +493,11 @@ function MediaStudioSection({ onOpenCrossPost, readOnly = false }) {
 
   async function generate(e) {
     e.preventDefault();
-    if (!prompt.trim() || generating || (type === 'video' && !videoAvailable)) return;
+    if (!prompt.trim() || generating || monthlyLimitReached || (type === 'video' && !videoAvailable)) return;
     const requestId = generationRequest.current + 1;
     generationRequest.current = requestId;
     setGenerating(true); setUploading(false); setError(''); setAsset(null); setGenerationStatus('Preparing your request...');
+    let receivedLimitUsage = false;
     try {
       const { data } = await client.post('/command-center/media-generate', {
         type,
@@ -424,6 +505,8 @@ function MediaStudioSection({ onOpenCrossPost, readOnly = false }) {
         ...(type === 'video' ? { durationSeconds } : {}),
       }, { timeout: 240000 });
       if (requestId !== generationRequest.current) return;
+      if (data.usage) acceptUsage(data.usage);
+      void refreshUsage();
       setHistoryRevision(value => value + 1);
       if ((data.job?.id && data.job?.ticket) || data.historyItem?.status === 'processing') {
         const video = await waitForVideo(data.job, requestId, data.provider === 'shotstack' ? data.historyItem.id : null);
@@ -441,11 +524,20 @@ function MediaStudioSection({ onOpenCrossPost, readOnly = false }) {
       if (requestId === generationRequest.current) setAsset({ url, type: data.mediaType || type });
     } catch (err) {
       if (requestId === generationRequest.current) {
-        setError(err?.response?.data?.message || err?.message || 'Could not create media right now.');
+        const response = err?.response?.data;
+        receivedLimitUsage = err?.response?.status === 429 && acceptUsage(response?.usage);
+        setError(receivedLimitUsage
+          ? `Your monthly ${type} limit has been reached. Resets ${generationResetLabel(response.usage)}.`
+          : response?.code === 'GENERATION_USAGE_UNAVAILABLE'
+            ? 'Your monthly allowance could not be checked. Please try again shortly.'
+            : err?.response?.status >= 500 || (!err?.response && err?.isAxiosError)
+              ? `${type === 'video' ? 'Video' : 'Image'} generation is temporarily unavailable. Please try again shortly.`
+              : response?.message || err?.message || 'Could not create media right now.');
       }
     } finally {
       if (requestId === generationRequest.current) {
         setGenerating(false); setUploading(false); setGenerationStatus('');
+        if (!receivedLimitUsage) void refreshUsage();
       }
     }
   }
@@ -476,6 +568,11 @@ function MediaStudioSection({ onOpenCrossPost, readOnly = false }) {
               </button>
             ))}
           </div>
+          <div role={usageError ? 'alert' : 'status'} style={{ color: 'var(--muted)', fontSize: '.8rem', lineHeight: 1.5 }}>
+            {usageError ? <>{usageError} <button type="button" className="btn btn-ghost btn-sm" onClick={refreshUsage} disabled={usageLoading}>Retry allowance</button></>
+              : allowance ? <>{monthlyLimitReached && `Monthly ${type} limit reached. `}{allowance.remaining} of {allowance.limit} {type === 'image' ? 'images' : 'videos'} remaining this month. Resets {generationResetLabel(usage)}.{usageLoading && ' Updating allowance...'}</>
+                : 'Checking monthly allowance...'}
+          </div>
           <textarea
             value={prompt} onChange={e => setPrompt(e.target.value)} rows={4}
             placeholder={type === 'image' ? 'Describe the photo or graphic you want to create' : 'Describe the video you want to create'}
@@ -494,7 +591,7 @@ function MediaStudioSection({ onOpenCrossPost, readOnly = false }) {
               </div>
             </>
           )}
-          <button className="btn btn-primary" type="submit" disabled={generating || uploading || !prompt.trim() || (type === 'video' && !videoAvailable)} style={{ alignSelf: 'flex-start' }}>
+          <button className="btn btn-primary" type="submit" disabled={generating || uploading || monthlyLimitReached || !prompt.trim() || (type === 'video' && !videoAvailable)} style={{ alignSelf: 'flex-start' }}>
             {generating || uploading ? <span className="spinner" style={{ width: 14, height: 14 }} /> : `Generate ${type}`}
           </button>
           {generationStatus && <div role="status" style={{ color: 'var(--muted)', fontSize: '.8rem' }}>{generationStatus}</div>}

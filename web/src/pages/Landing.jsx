@@ -298,6 +298,7 @@ export default function Landing() {
                 <Link to="/resume-builder" className="landing-plan-link">Open Resume Builder</Link>
               </div>
             </div>
+            <p className="landing-pricing-terms">Monthly generation allowances per person: Media Studio supports 50 images and 20 videos. Resume Builder supports 30 AI writing requests. Allowances reset on the first day of each month at 00:00 UTC.</p>
             <p className="landing-pricing-terms">Prices are in USD. Paid memberships and add-ons renew automatically. Review any applicable tax and your total at checkout. Manage or cancel in Settings.</p>
           </section>
 

@@ -26,6 +26,10 @@ try {
     await context.route('**/api/**', async route => {
       const endpoint = new URL(route.request().url()).pathname.replace(/^\/api/, '');
       if (/events|stream/.test(endpoint)) return route.abort();
+      if (endpoint === '/generation/usage') return route.fulfill({ json: {
+        period: { startsAt: '2026-10-01T00:00:00.000Z', resetsAt: '2099-11-01T00:00:00.000Z' },
+        limits: { video: { limit: 20, used: 0, remaining: 20 }, image: { limit: 50, used: 0, remaining: 50 }, resume: { limit: 30, used: 0, remaining: 30 } },
+      } });
       if (endpoint === '/command-center/media-options') return route.fulfill({ status: failOptions ? 503 : 200,
         json: failOptions ? { message: 'Temporarily unavailable' } : { video: { minSeconds: 4, maxSeconds: 300, plannedMaxSeconds: 1800, shortClipSeconds: [4, 8, 12], longFormConfigured } } });
       if (endpoint === '/command-center/history') return route.fulfill({ json: { items: [], hasMore: false } });

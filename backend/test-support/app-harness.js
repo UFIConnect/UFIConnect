@@ -8,7 +8,7 @@ const jwt = require('jsonwebtoken');
 
 // Run the real routes without loading deployment secrets, starting workers,
 // writing local account data, or connecting to production services.
-async function createAppHarness({ env = {}, connected = false, query, withClient, modules = {} } = {}) {
+async function createAppHarness({ env = {}, connected = false, query, withClient, generationUsage, modules = {} } = {}) {
   const entry = path.resolve(__dirname, '../index.js');
   const localRequire = createRequire(entry);
   // Cold SDK loading can exceed the route VM's execution limit on Windows.
@@ -43,6 +43,9 @@ async function createAppHarness({ env = {}, connected = false, query, withClient
       if (name === 'express') return expressFactory;
       if (name === 'dotenv') return { config() {} };
       if (name === './db') return db;
+      if (name === './generation-usage' && generationUsage) return {
+        ...localRequire(name), createGenerationUsage: () => generationUsage,
+      };
       if (name === './filestore') return { loadUsers: () => [], saveUsers() {}, saveUsersNow() {} };
       if (name === './travel-providers') return {
         ...localRequire(name), fetchTravelResource: async () => { throw new Error('Travel provider unavailable in route tests'); },
@@ -80,6 +83,10 @@ async function createAppHarness({ env = {}, connected = false, query, withClient
       setTokenExchange(handler) { postForm = handler; },
       setPostJSONWithMeta(handler) { postJSONWithMeta = handler; },
       setAIText(handler) { callOpenAIText = handler; },
+      setAIImage(handler) { callOpenAIImage = handler; },
+      setConfiguredVideoGenerator(handler) { callConfiguredVideoGenerator = handler; },
+      setAIVideoCreate(handler) { createOpenAIVideoJob = handler; },
+      setAIVideoStatus(handler) { getOpenAIVideoJob = handler; },
       publishCrossPostTarget,
       setAtprotoTokenExchange(handler) { atprotoPost = handler; },
       getVideoCapableSources, videoReadAdmission,
@@ -140,4 +147,19 @@ function member(id, overrides = {}) {
   };
 }
 
-module.exports = { createAppHarness, member };
+// Explicit fixture for tests focused on media history or duration. Quota route
+// tests use the real PostgreSQL store and its UUID account foreign keys.
+function generationUsageStub() {
+  const { GENERATION_LIMITS } = require('../generation-usage');
+  const startsAt = new Date(); startsAt.setUTCDate(1); startsAt.setUTCHours(0, 0, 0, 0);
+  const resetsAt = new Date(startsAt); resetsAt.setUTCMonth(resetsAt.getUTCMonth() + 1);
+  const usage = { period: { startsAt: startsAt.toISOString(), resetsAt: resetsAt.toISOString() },
+    limits: Object.fromEntries(Object.entries(GENERATION_LIMITS).map(([kind, limit]) => [kind, { limit, used: 0, remaining: limit }])) };
+  return {
+    async usage() { return usage; },
+    async reserve(userId, kind) { return { id: require('node:crypto').randomUUID(), userId, kind, periodStart: usage.period.startsAt, usage }; },
+    async complete() { return true; }, async release() { return true; },
+  };
+}
+
+module.exports = { createAppHarness, member, generationUsageStub };

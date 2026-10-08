@@ -45,6 +45,7 @@ const db        = require('./db');
 const { initializePostPipeline, createPostPipelineTracker, createPostPipelineReader, pipelineFilters } = require('./post-pipeline');
 const filestore  = require('./filestore');
 const { HISTORY_SCHEMA, createGeneratedContentStore, publicHistoryItem } = require('./generated-content');
+const { createGenerationUsage, schemaStatements: GENERATION_USAGE_SCHEMA } = require('./generation-usage');
 const { createGeneratedMediaStorage } = require('./generated-media');
 const {
   localTextScreen,
@@ -86,6 +87,7 @@ const tokenVault = createTokenVault(process.env);
 let securityStorageReady = process.env.NODE_ENV !== 'production';
 const generatedContent = createGeneratedContentStore(db);
 const generatedMedia = createGeneratedMediaStorage({ env: process.env });
+const generationUsage = createGenerationUsage({ query: db.query, connected: db.isConnected });
 
 // --- Pipeline/api role split ------------------------------------------------
 // Same codebase runs as two separate Render services now: 'pipeline' does
@@ -17205,6 +17207,7 @@ async function migrateDB() {
     `);
     await db.query(`CREATE INDEX IF NOT EXISTS cross_posts_user_idx ON cross_posts(user_id, created_at DESC)`);
     await db.query(HISTORY_SCHEMA);
+    for (const statement of GENERATION_USAGE_SCHEMA) await db.query(statement);
 
     // Per-user "already shown" post tracking — see getUserSeenSet/markPostsSeen.
     // Persisted (not just in-memory) so a user doesn't see repeats after a
@@ -30646,6 +30649,45 @@ function historyError(res, error) {
   return res.status(error.status || 503).json({ message: error.status ? error.message : 'Your content could not be saved. Please retry.' });
 }
 
+function generationError(res, error, message, output = {}) {
+  const quotaError = ['MONTHLY_GENERATION_LIMIT', 'GENERATION_USAGE_UNAVAILABLE'].includes(error?.code);
+  return res.status(error.status || 502).json({
+    ...output,
+    message: quotaError ? error.message : message,
+    ...(quotaError ? { code: error.code } : {}),
+    ...(error.usage ? { kind: error.kind, usage: error.usage, resetsAt: error.resetsAt } : {}),
+  });
+}
+
+function generationReservationReference(reservation) {
+  const { id, userId, kind, periodStart } = reservation;
+  return { id, userId, kind, periodStart };
+}
+
+function savedGenerationReservation(entry) {
+  const reservation = entry.input?.generationReservation;
+  return reservation?.userId === entry.user_id && reservation.kind === entry.kind
+    && typeof reservation.id === 'string' && typeof reservation.periodStart === 'string' ? reservation : null;
+}
+
+function providerGenerationRejection(status, label) {
+  return Object.assign(new Error(`${label} HTTP ${status}`), {
+    generationRejected: true, providerStatus: status,
+  });
+}
+
+function confirmedGenerationFailure(error) {
+  return error.generationRejected === true
+    || /(?:Image provider|Video provider|OpenAI video|OpenAI).*HTTP \d{3}/i.test(String(error.message))
+    || /video storyboard|invalid scene count|fit the selected duration/i.test(String(error.message));
+}
+
+app.get('/generation/usage', authenticate, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  try { return res.json(await generationUsage.usage(req.user.id)); }
+  catch (error) { return generationError(res, error, 'Generation limits are temporarily unavailable. Please try again.'); }
+});
+
 async function beginGeneratedContent(req, res, entry) {
   try { return await generatedContent.create(req.user.id, { ...entry, status: 'processing' }); }
   catch (error) { historyError(res, error); return null; }
@@ -30841,7 +30883,7 @@ function callOpenAIImage(apiKey, prompt) {
       response.on('data', chunk => { data += chunk; });
       response.on('end', () => {
         if (response.statusCode < 200 || response.statusCode >= 300) {
-          return reject(new Error(`Image provider HTTP ${response.statusCode}: ${data.slice(0, 300)}`));
+          return reject(providerGenerationRejection(response.statusCode, 'Image provider'));
         }
         try {
           const parsed = JSON.parse(data);
@@ -30879,7 +30921,7 @@ function callConfiguredVideoGenerator(endpoint, apiKey, prompt, durationSeconds)
       response.on('data', chunk => { data += chunk; });
       response.on('end', () => {
         if (response.statusCode < 200 || response.statusCode >= 300) {
-          return reject(new Error(`Video provider HTTP ${response.statusCode}: ${data.slice(0, 300)}`));
+          return reject(providerGenerationRejection(response.statusCode, 'Video provider'));
         }
         try {
           const parsed = JSON.parse(data);
@@ -30968,7 +31010,7 @@ function requestOpenAIVideoJson(apiKey, method, requestPath, { body = null, head
       response.on('error', reject);
       response.on('end', () => {
         if (response.statusCode < 200 || response.statusCode >= 300) {
-          return reject(new Error(`OpenAI video HTTP ${response.statusCode}: ${data.slice(0, 300)}`));
+          return reject(providerGenerationRejection(response.statusCode, 'OpenAI video'));
         }
         try {
           resolve(JSON.parse(data));
@@ -31027,11 +31069,7 @@ function hasOpenAIVideoTicket(ticket, userId, videoId) {
 }
 
 function openAIVideoFailureMessage(video) {
-  const error = video?.error;
-  const message = typeof error === 'string' ? error : error?.message;
-  return typeof message === 'string' && message.trim()
-    ? message.trim().slice(0, 240)
-    : 'OpenAI could not generate this video.';
+  return 'The video service could not finish this video. Please try again.';
 }
 
 function publicOpenAIVideoJob(video) {
@@ -31143,19 +31181,31 @@ function streamOpenAIVideoContent(provider, videoId, res) {
 }
 
 function mediaGenerationMessage(error) {
-  const message = String(error?.message || '').trim();
-  return message ? message.slice(0, 240) : 'Could not generate media right now.';
+  if (error.providerStatus === 402 || error.providerStatus === 429) {
+    return 'The media service is temporarily at capacity. Please try again later.';
+  }
+  if (error.providerStatus === 401 || error.providerStatus === 403) {
+    return 'The media service is temporarily unavailable. Please try again later.';
+  }
+  if (/timed?\s*out|timeout|ECONNRESET|ETIMEDOUT/i.test(String(error.message))) {
+    return 'The media service did not confirm this request. Check your history before trying again.';
+  }
+  if (error.status === 503) return 'Media creation or storage is temporarily unavailable. Please try again later.';
+  return 'Could not generate or save this media right now. Please try again.';
 }
 
 async function refreshSavedVideo(entry) {
   if (entry.kind !== 'video' || entry.status !== 'processing' || !entry.provider_job_id) return entry;
   const claimed = await generatedContent.claim(entry.user_id, entry.id);
   if (!claimed) return (await generatedContent.get(entry.user_id, entry.id)) || entry;
+  const reservation = savedGenerationReservation(entry);
   try {
     if (entry.output?.provider === 'shotstack') {
       const job = await narratedVideo.status(entry.provider_job_id, entry.output.stage);
-      const output = { ...entry.output, error: job.error || null };
+      const output = { ...entry.output, error: job.status === 'failed' ? 'The narrated video could not be rendered. Please try again.' : null };
+      if (reservation && job.status === 'failed') await generationUsage.release(reservation);
       if (job.status === 'completed') {
+        if (reservation) await generationUsage.complete(reservation);
         Object.assign(output, await generatedMedia.save(entry.user_id, entry.id, 'video', job.mediaUrl),
           { durationSeconds: job.durationSeconds });
       }
@@ -31168,7 +31218,9 @@ async function refreshSavedVideo(entry) {
     const job = publicOpenAIVideoJob(video);
     let output = { provider: 'openai', progress: job.progress, error: job.error };
     let status = job.status === 'failed' ? 'failed' : 'processing';
+    if (reservation && job.status === 'failed') await generationUsage.release(reservation);
     if (job.status === 'completed') {
+      if (reservation) await generationUsage.complete(reservation);
       output = { ...output, ...(await generatedMedia.saveOpenAIVideo(entry.user_id, entry.id, entry.provider_job_id, provider.apiKey)) };
       status = 'completed';
     }
@@ -31228,6 +31280,10 @@ app.post('/command-center/media-generate', authenticate, mediaGenerationLimiter,
     }
   }
   let entry = null;
+  let reservation = null;
+  let submitted = false;
+  let providerSucceeded = false;
+  let acceptedJob = null;
   try {
     generatedMedia.assertConfigured();
     if (!db.isConnected()) return res.status(503).json({ message: 'Content history is temporarily unavailable. Please retry before generating media.' });
@@ -31240,69 +31296,91 @@ app.post('/command-center/media-generate', authenticate, mediaGenerationLimiter,
           : 'That media prompt cannot be used.',
       });
     }
-    if (type === 'image') {
-      if (!process.env.OPENAI_API_KEY) return res.status(503).json({ message: 'Image generation needs OPENAI_API_KEY in Render.' });
-      entry = await beginGeneratedContent(req, res, { kind: 'image', prompt, input: {} });
-      if (!entry) return;
-      const source = await callOpenAIImage(process.env.OPENAI_API_KEY, screening.content);
-      const output = { ...(await generatedMedia.save(req.user.id, entry.id, 'image', source)), provider: 'openai' };
-      const saved = await generatedContent.update(req.user.id, entry.id, { output, status: 'completed' });
-      return res.json({ ...output, historyItem: publicHistoryItem(saved) });
-    }
-
     const openAIProvider = configuredOpenAIVideoProvider();
     const customProviderUrl = String(process.env.VIDEO_GENERATION_API_URL || '').trim();
-    if (narratedVideo.configured()) {
-      entry = await beginGeneratedContent(req, res, { kind: 'video', prompt, input: { durationSeconds: requestedDurationSeconds } });
-      if (!entry) return;
-      const job = await narratedVideo.create(screening.content, requestedDurationSeconds);
-      const saved = await generatedContent.update(req.user.id, entry.id, {
-        output: { provider: 'shotstack', stage: job.stage, durationSeconds: job.durationSeconds },
-        status: 'processing', jobId: job.id,
-      });
-      return res.status(202).json({ mediaType: 'video', provider: 'shotstack', historyItem: publicHistoryItem(saved) });
+    const useNarrated = type === 'video' && narratedVideo.configured();
+    const useOpenAIVideo = type === 'video' && !useNarrated && openAIProvider && OPENAI_VIDEO_SECONDS.has(String(requestedDurationSeconds));
+    if (type === 'image' && !String(process.env.OPENAI_API_KEY || '').trim()) {
+      return res.status(503).json({ message: 'Image creation is not connected yet. Please try again later.' });
     }
-    if (openAIProvider && OPENAI_VIDEO_SECONDS.has(String(requestedDurationSeconds))) {
+    if (type === 'video' && !useNarrated && !useOpenAIVideo) {
+      let endpoint;
+      try { endpoint = new URL(customProviderUrl); } catch {}
+      if (!endpoint || endpoint.protocol !== 'https:' || endpoint.username || endpoint.password) {
+        return res.status(customProviderUrl ? 503 : 422).json({ message: 'This video length needs a connected long-form video service.' });
+      }
+    }
+
+    reservation = await generationUsage.reserve(req.user.id, type);
+    entry = await generatedContent.create(req.user.id, {
+      kind: type, prompt, status: 'processing', input: {
+        ...(type === 'video' ? { durationSeconds: requestedDurationSeconds } : {}),
+        generationReservation: generationReservationReference(reservation),
+      },
+    });
+    submitted = true;
+    if (type === 'image') {
+      const source = await callOpenAIImage(process.env.OPENAI_API_KEY, screening.content);
+      providerSucceeded = true;
+      await generationUsage.complete(reservation);
+      const output = { ...(await generatedMedia.save(req.user.id, entry.id, 'image', source)), provider: 'openai' };
+      const saved = await generatedContent.update(req.user.id, entry.id, { output, status: 'completed' });
+      return res.json({ ...output, historyItem: publicHistoryItem(saved), usage: reservation.usage });
+    }
+
+    if (useNarrated) {
+      const job = await narratedVideo.create(screening.content, requestedDurationSeconds);
+      providerSucceeded = true;
+      acceptedJob = { output: { provider: 'shotstack', stage: job.stage, durationSeconds: job.durationSeconds },
+        status: 'processing', jobId: job.id };
+      const saved = await generatedContent.update(req.user.id, entry.id, acceptedJob);
+      return res.status(202).json({ mediaType: 'video', provider: 'shotstack', historyItem: publicHistoryItem(saved), usage: reservation.usage });
+    }
+    if (useOpenAIVideo) {
       openAIProvider.seconds = String(requestedDurationSeconds);
-      entry = await beginGeneratedContent(req, res, { kind: 'video', prompt, input: { durationSeconds: requestedDurationSeconds } });
-      if (!entry) return;
       const video = await createOpenAIVideoJob(openAIProvider, screening.content);
       if (!isOpenAIVideoJobId(video?.id)) throw new Error('OpenAI did not return a valid video job.');
-      const saved = await generatedContent.update(req.user.id, entry.id, {
-        output: { provider: 'openai', progress: Number(video.progress) || 0 }, status: 'processing', jobId: video.id,
-      });
+      providerSucceeded = true;
+      const failed = video.status === 'failed';
+      if (failed) await generationUsage.release(reservation);
+      if (video.status === 'completed') await generationUsage.complete(reservation);
+      acceptedJob = { output: { provider: 'openai', progress: Number(video.progress) || 0,
+        ...(failed ? { error: openAIVideoFailureMessage(video) } : {}) }, status: failed ? 'failed' : 'processing', jobId: video.id };
+      const saved = await generatedContent.update(req.user.id, entry.id, acceptedJob);
       const ticket = createOpenAIVideoTicket(req.user.id, video.id);
-      return res.status(202).json({
+      return res.status(failed ? 422 : 202).json({
         mediaType: 'video',
         provider: 'openai',
         historyItem: publicHistoryItem(saved),
         job: { ...publicOpenAIVideoJob(video), ticket },
+        usage: failed ? await generationUsage.usage(req.user.id) : reservation.usage,
       });
     }
-
-    if (!customProviderUrl) {
-      if (openAIProvider) {
-        return res.status(422).json({ message: 'This video length needs a connected long-form video service.' });
-      }
-      return res.status(503).json({ message: 'Video generation needs OPENAI_API_KEY or VIDEO_GENERATION_API_URL in Render.' });
-    }
-    entry = await beginGeneratedContent(req, res, { kind: 'video', prompt, input: { durationSeconds: requestedDurationSeconds } });
-    if (!entry) return;
     const source = await callConfiguredVideoGenerator(
       customProviderUrl,
       process.env.VIDEO_GENERATION_API_KEY,
       screening.content,
       requestedDurationSeconds,
     );
+    providerSucceeded = true;
+    await generationUsage.complete(reservation);
     const output = { ...(await generatedMedia.save(req.user.id, entry.id, 'video', source)), provider: 'custom', durationSeconds: requestedDurationSeconds };
     const saved = await generatedContent.update(req.user.id, entry.id, { output, status: 'completed' });
-    return res.json({ ...output, historyItem: publicHistoryItem(saved) });
+    return res.json({ ...output, historyItem: publicHistoryItem(saved), usage: reservation.usage });
   } catch (error) {
     console.error('[/command-center/media-generate] error:', error.message);
-    if (entry) await generatedContent.update(req.user.id, entry.id, {
+    let reportedError = error;
+    if (reservation && !providerSucceeded && (!submitted || confirmedGenerationFailure(error))) {
+      await generationUsage.release(reservation).catch(releaseError => { reportedError = releaseError; });
+    }
+    // Preserve accepted job IDs for retries; provider success is counted even
+    // when history or asset storage is temporarily unavailable.
+    if (entry) await generatedContent.update(req.user.id, entry.id, acceptedJob || {
       output: { error: 'This generation could not be completed or saved.' }, status: 'failed',
     }).catch(() => {});
-    return res.status(error.status || 502).json({ message: mediaGenerationMessage(error) });
+    return generationError(res, reportedError, acceptedJob
+      ? 'The video request was accepted, but its status could not be saved. Check your history shortly.'
+      : mediaGenerationMessage(error));
   }
 });
 
@@ -31355,8 +31433,17 @@ app.get('/command-center/media-generate/:jobId/content', authenticate, async (re
   if (!provider) return res.status(503).json({ message: 'OpenAI video generation is not configured in Render.' });
   try {
     const video = await getOpenAIVideoJob(provider, videoId);
-    if (video?.status === 'failed') return res.status(422).json({ message: openAIVideoFailureMessage(video) });
+    const entry = await generatedContent.byJob(req.user.id, videoId);
+    const reservation = entry ? savedGenerationReservation(entry) : null;
+    if (video?.status === 'failed') {
+      if (reservation) await generationUsage.release(reservation);
+      if (entry?.status === 'processing') await generatedContent.update(req.user.id, entry.id, {
+        output: { ...entry.output, error: openAIVideoFailureMessage(video) }, status: 'failed',
+      });
+      return res.status(422).json({ message: openAIVideoFailureMessage(video) });
+    }
     if (video?.status !== 'completed') return res.status(409).json({ message: 'This video is still being prepared.' });
+    if (reservation) await generationUsage.complete(reservation);
     await streamOpenAIVideoContent(provider, videoId, res);
   } catch (error) {
     console.error('[/command-center/media-generate/:jobId/content] error:', error.message);
@@ -31682,12 +31769,26 @@ app.post('/resume-builder/ai-assist', authenticate, resumeAIDraftLimiter, async 
   const prompt = field === 'summary'
     ? `Write one concise, original, ATS-friendly professional resume summary (2-3 sentences, no fabricated facts beyond what's given) based on this background: "${context.trim().slice(0, 600)}". Return only the summary text, no preamble or quotes.`
     : `Rewrite this resume bullet point to be a single concise, original, ATS-friendly achievement statement starting with a strong action verb, quantified if the input implies a number — do not invent facts or numbers that aren't implied: "${context.trim().slice(0, 400)}". Return only the rewritten bullet, no preamble, no leading bullet character or quotes.`;
+  let reservation;
+  let submitted = false;
+  let succeeded = false;
   try {
+    reservation = await generationUsage.reserve(req.user.id, 'resume');
+    submitted = true;
     const text = await callOpenAIText(provider.apiKey, prompt, provider.model);
-    res.json({ suggestion: text.trim() });
+    if (!text.trim()) throw Object.assign(new Error('The provider did not return a suggestion.'), { generationRejected: true });
+    succeeded = true;
+    await generationUsage.complete(reservation).catch(error => {
+      console.warn('[resume-generation] Usage completion unavailable; reservation remains counted.', error.code);
+    });
+    res.json({ suggestion: text.trim(), usage: reservation.usage });
   } catch (e) {
     console.error('[/resume-builder/ai-assist] error:', e.message);
-    res.status(502).json({ message: 'Could not generate a suggestion right now. Please try again.' });
+    let reportedError = e;
+    if (reservation && !succeeded && (!submitted || confirmedGenerationFailure(e))) {
+      await generationUsage.release(reservation).catch(error => { reportedError = error; });
+    }
+    generationError(res, reportedError, 'Could not generate a suggestion right now. Please try again.');
   }
 });
 
@@ -31792,19 +31893,27 @@ app.post('/resume-builder/application-draft', authenticate, resumeAIDraftLimiter
     jobDescription,
   });
 
-  if (!provider) {
-    return res.json({ draft: fallback(), type, provider: 'template', fallback: true });
-  }
-
+  let reservation;
   try {
-    const text = await callOpenAIText(provider.apiKey, prompt, provider.model);
-    const draft = text.trim().slice(0, 5000);
-    if (!draft) throw new Error('OpenAI returned an empty draft.');
-    res.json({ draft, type, provider: 'openai' });
+    reservation = await generationUsage.reserve(req.user.id, 'resume');
   } catch (error) {
-    console.error('[/resume-builder/application-draft] OpenAI unavailable; using template:', error.message);
-    res.json({ draft: fallback(), type, provider: 'template', fallback: true });
+    return generationError(res, error, 'Could not start this writing request. Please try again.');
   }
+  let output = { draft: fallback(), type, provider: 'template', fallback: true };
+  if (provider) {
+    try {
+      const text = await callOpenAIText(provider.apiKey, prompt, provider.model);
+      const draft = text.trim().slice(0, 5000);
+      if (!draft) throw new Error('OpenAI returned an empty draft.');
+      output = { draft, type, provider: 'openai' };
+    } catch (error) {
+      console.error('[/resume-builder/application-draft] OpenAI unavailable; using template:', error.message);
+    }
+  }
+  await generationUsage.complete(reservation).catch(error => {
+    console.warn('[resume-generation] Usage completion unavailable; reservation remains counted.', error.code);
+  });
+  return res.json({ ...output, usage: reservation.usage });
 });
 
 app.post('/resume-builder/application-export', authenticate, async (req, res) => {

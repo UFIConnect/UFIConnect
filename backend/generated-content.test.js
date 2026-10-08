@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { Readable, Writable } = require('node:stream');
 const { PGlite } = require('@electric-sql/pglite');
-const { createAppHarness, member } = require('./test-support/app-harness');
+const { createAppHarness, member, generationUsageStub } = require('./test-support/app-harness');
 const { HISTORY_SCHEMA, createGeneratedContentStore, parseHistoryCursor } = require('./generated-content');
 const { createGeneratedMediaStorage } = require('./generated-media');
 
@@ -124,7 +124,7 @@ function providerStub() {
 test('Studio saves images server-side and resumes member-owned video jobs', async t => {
   const pg = new PGlite(); await pg.exec(HISTORY_SCHEMA);
   const provider = providerStub(); let stored = 0;
-  const app = await createAppHarness({ connected: true, query: (sql, params) => pg.query(sql, params),
+  const app = await createAppHarness({ connected: true, generationUsage: generationUsageStub(), query: (sql, params) => pg.query(sql, params),
     env: { OPENAI_API_KEY: 'test-only' }, modules: {
       https: { ...require('node:https'), ...provider, get() { throw new Error('Network disabled'); } },
       './generated-media': { createGeneratedMediaStorage: () => ({
