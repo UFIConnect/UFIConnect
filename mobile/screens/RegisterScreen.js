@@ -66,7 +66,7 @@ export default function RegisterScreen({ navigation }) {
             value={phone} onChangeText={setPhone} keyboardType="phone-pad" autoComplete="tel" textContentType="telephoneNumber" />
 
           <Text style={styles.label}>Password</Text>
-          <PasswordInput style={styles.input} placeholder="At least 15 characters" placeholderTextColor={COLORS.muted}
+          <PasswordInput style={styles.input} placeholder="At least 12 characters" placeholderTextColor={COLORS.muted}
             value={password} onChangeText={setPassword} newPassword accessibilityLabel="New password" editable={!loading} concealKey={concealKey} />
 
           <TouchableOpacity style={styles.button} onPress={handleRegister} disabled={loading}>

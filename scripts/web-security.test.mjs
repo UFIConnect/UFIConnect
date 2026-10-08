@@ -38,13 +38,14 @@ test('production API destinations require HTTPS and reject ambiguous credential 
 });
 
 test('new passwords enforce Unicode character and bcrypt byte boundaries', () => {
-  assert.ok(validateNewPassword('a'.repeat(14)));
-  assert.equal(validateNewPassword('a'.repeat(15)), '');
+  assert.ok(validateNewPassword('a'.repeat(11)));
+  assert.equal(validateNewPassword('a'.repeat(12)), '');
   assert.equal(validateNewPassword('a'.repeat(72)), '');
   assert.ok(validateNewPassword('a'.repeat(73)));
   assert.equal(validateNewPassword('😀'.repeat(18)), '');
   assert.ok(validateNewPassword('😀'.repeat(19)));
-  assert.ok(validateNewPassword('😀'.repeat(14)));
+  assert.ok(validateNewPassword('😀'.repeat(11)));
+  assert.equal(validateNewPassword('😀'.repeat(12)), '');
 });
 
 test('telemetry excludes reset routes and redacts complete quoted passphrases', () => {

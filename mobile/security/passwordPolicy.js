@@ -1,4 +1,4 @@
-const MIN_PASSWORD_CHARACTERS = 15;
+const MIN_PASSWORD_CHARACTERS = 12;
 const MAX_PASSWORD_BYTES = 72;
 
 function utf8ByteLength(value) {
@@ -12,7 +12,7 @@ function utf8ByteLength(value) {
 
 function validateNewPassword(password) {
   if (typeof password !== 'string' || [...password].length < MIN_PASSWORD_CHARACTERS) {
-    return 'Use at least 15 characters. A unique passphrase works well.';
+    return 'Use at least 12 characters. A unique passphrase works well.';
   }
   if (utf8ByteLength(password) > MAX_PASSWORD_BYTES) {
     return 'Use no more than 72 UTF-8 bytes. Some symbols count as more than one byte.';

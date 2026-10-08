@@ -14,16 +14,19 @@ const { createProviderJsonClient } = require('./provider-json');
 const { EventEmitter } = require('node:events');
 
 const oldPassword = 'legacy';
-const newPassword = 'a longer unique passphrase';
+const newPassword = 'cobalt-rain7';
 const bearer = token => ({ authorization: `Bearer ${token}` });
 
 test('new passwords count Unicode characters and reject bcrypt truncation; production keys fail closed', () => {
+  assert.ok(passwordPolicyError('cobalt-rain'));
+  assert.equal(passwordPolicyError(newPassword), null);
   assert.ok(passwordPolicyError('a'.repeat(14)));
   assert.equal(passwordPolicyError('orbit maps glow'), null);
   assert.equal(passwordPolicyError('Cloud lantern maps open blue doors to the quiet winter horizon.'.padEnd(72, '!')), null);
   assert.ok(passwordPolicyError('a'.repeat(73)));
   assert.ok(passwordPolicyError('😀'.repeat(14)));
-  assert.equal(passwordPolicyError(Array.from({ length: 15 }, (_, i) => String.fromCodePoint(0x1F600 + i)).join('')), null);
+  assert.ok(passwordPolicyError(Array.from({ length: 11 }, (_, i) => String.fromCodePoint(0x1F600 + i)).join('')));
+  assert.equal(passwordPolicyError(Array.from({ length: 12 }, (_, i) => String.fromCodePoint(0x1F600 + i)).join('')), null);
   assert.ok(passwordPolicyError('😀'.repeat(19)));
   assert.ok(passwordPolicyError({ length: 99 }));
   for (const JWT_SECRET of ['', 'dev-secret-key', 'replace-with-a-long-random-secret']) {

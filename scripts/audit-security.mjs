@@ -20,9 +20,9 @@ const server = await createServer({
 });
 let browser;
 let checks = 0;
-const fixturePassword = 'A synthetic audit passphrase';
-const resetPassword = 'A freshly reset synthetic passphrase';
-const nextPassword = 'A different synthetic passphrase';
+const fixturePassword = 'cobalt-rain7';
+const resetPassword = 'harbor-mist7';
+const nextPassword = 'violet-wave7';
 const check = (condition, message) => { assert.ok(condition, message); checks += 1; };
 
 async function checkProtectedField(page, selector, autoComplete) {
@@ -216,10 +216,10 @@ try {
       check(await page.locator('#register-password').getAttribute('type') === 'password' && await page.locator('#register-confirm-password').getAttribute('type') === 'text', 'Showing another password field must hide the previously revealed field');
       await page.locator('input[name="name"]').fill('Synthetic Audit Member');
       await page.locator('input[name="email"]').fill(`synthetic-registration-${width}@example.invalid`);
-      await page.locator('#register-password').fill('short');
-      await page.locator('#register-confirm-password').fill('short');
+      await page.locator('#register-password').fill('cobalt-rain');
+      await page.locator('#register-confirm-password').fill('cobalt-rain');
       await page.getByRole('button', { name: /^Continue/ }).click();
-      await page.getByText('Use at least 15 characters for your new password.', { exact: true }).waitFor();
+      await page.getByText('Use at least 12 characters for your new password.', { exact: true }).waitFor();
       check(!requests.some(request => new URL(request.url).pathname === '/api/auth/register'), 'Short passwords must be rejected before submission');
       await page.locator('#register-password').fill('😀'.repeat(19));
       await page.locator('#register-confirm-password').fill('😀'.repeat(19));

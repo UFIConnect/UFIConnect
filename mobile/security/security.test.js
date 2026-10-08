@@ -83,15 +83,19 @@ test('file details never include local paths, browser data URLs, or file content
   assert.equal(attachmentDetails({ name: 'empty.txt', size: 0 }).size, 0);
 });
 
-test('new passwords enforce 15 code points and a 72-byte UTF-8 ceiling without trimming', () => {
-  assert.notEqual(validateNewPassword('a'.repeat(14)), '');
-  assert.equal(validateNewPassword('a'.repeat(15)), '');
+test('new passwords enforce 12 code points and a 72-byte UTF-8 ceiling without trimming', () => {
+  assert.notEqual(validateNewPassword('a'.repeat(11)), '');
+  assert.equal(validateNewPassword('a'.repeat(12)), '');
   assert.equal(validateNewPassword('a'.repeat(72)), '');
   assert.notEqual(validateNewPassword('a'.repeat(73)), '');
   assert.equal(validateNewPassword(' a long passphrase '), '');
-  assert.notEqual(validateNewPassword('😀'.repeat(14)), '');
+  assert.equal(validateNewPassword(` ${'a'.repeat(10)} `), '');
+  assert.notEqual(validateNewPassword('😀'.repeat(11)), '');
+  assert.equal(validateNewPassword('😀'.repeat(12)), '');
   assert.equal(validateNewPassword('😀'.repeat(18)), '');
   assert.notEqual(validateNewPassword('😀'.repeat(19)), '');
+  assert.equal(validateNewPassword('é'.repeat(36)), '');
+  assert.notEqual(validateNewPassword('é'.repeat(37)), '');
   assert.notEqual(validateNewPassword(null), '');
 });
 

@@ -11,7 +11,7 @@ if (!/^[a-f0-9]{40}$/.test(sourceCommit)) throw new Error('A pinned source commi
 const source = fs.readFileSync(sourceFile);
 const entries = source.toString('utf8').split(/\r?\n/).filter(Boolean);
 const hashes = [...new Set(entries
-  .filter(value => [...value].length >= 15 && Buffer.byteLength(value, 'utf8') <= 72)
+  .filter(value => [...value].length >= 12 && Buffer.byteLength(value, 'utf8') <= 72)
   .map(value => crypto.createHash('sha256').update(value.normalize('NFKC').toLowerCase(), 'utf8').digest('hex')))].sort();
 if (entries.length < 90000 || hashes.length < 100) throw new Error('Source corpus is unexpectedly small');
 const target = path.join(root, 'backend/security-data');
@@ -21,7 +21,7 @@ fs.writeFileSync(path.join(target, 'common-passwords.json'), JSON.stringify({
   sourceCommit,
   sourceSha256: crypto.createHash('sha256').update(source).digest('hex'),
   sourceEntryCount: entries.length,
-  minimumCodePoints: 15,
+  minimumCodePoints: 12,
   maximumUtf8Bytes: 72,
   normalization: 'NFKC then lowercase, for blocklist matching only',
   hashes,
