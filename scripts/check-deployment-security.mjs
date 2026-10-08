@@ -19,6 +19,7 @@ for (const service of blueprint.services) {
     assert.doesNotMatch(header('Content-Security-Policy'), /google-analytics|analytics\.google/, 'Analytics collection remains in the separate API bridge');
     if (service.name === 'uficonnect-web') {
       assert.match(header('Content-Security-Policy'), /https:\/\/www\.googletagmanager\.com/, 'The web app loads the site-wide Google Ads tag');
+      assert.equal(header('Permissions-Policy'), 'camera=(), microphone=(), geolocation=(self)', 'Only the app itself may request member device location');
     } else assert.doesNotMatch(header('Content-Security-Policy'), /googletagmanager|googleadservices/, 'Office does not load advertising');
     assert.match(header('Content-Security-Policy'), /(?:^|;\s*)script-src-attr 'none'(?:;|$)/, 'Inline event handlers must remain blocked');
     assert.equal(header('X-XSS-Protection'), '0', 'Use CSP and explicitly disable the obsolete, unsafe browser XSS filter');

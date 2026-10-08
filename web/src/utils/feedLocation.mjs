@@ -1,3 +1,5 @@
+import { deviceFeedLocationKey } from './deviceFeedLocation.mjs';
+
 export function normalizeFeedLocation(value = {}) {
   return {
     country: String(value?.country || '').replace(/[<>]/g, '').trim().slice(0, 80),
@@ -11,13 +13,11 @@ export function savedFeedLocation(settings = {}, mode) {
 }
 
 export function regionalFeedLocation(settings = {}) {
-  const saved = settings?.feedRegionalLocation || {};
-  const mode = ['auto', 'manual', 'off'].includes(saved.mode) ? saved.mode : 'auto';
-  return { mode, ...normalizeFeedLocation(mode === 'manual' ? saved : {}) };
+  return { mode: 'auto', country: '', city: '' };
 }
 
 export function feedLocationKey(settings = {}, mode = 'feed') {
   return JSON.stringify(['countries', 'restaurants', 'bars', 'local'].includes(mode)
-    ? { regional: regionalFeedLocation(settings), destination: savedFeedLocation(settings, mode) }
-    : regionalFeedLocation(settings));
+    ? { regional: regionalFeedLocation(settings), destination: savedFeedLocation(settings, mode), device: deviceFeedLocationKey() }
+    : { regional: regionalFeedLocation(settings), device: deviceFeedLocationKey() });
 }

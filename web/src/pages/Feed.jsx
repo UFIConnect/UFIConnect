@@ -51,7 +51,6 @@ import ConnectedPostActions, { originalSourceUrl, useSourceCapability } from '..
 import { SavePostButton } from '../components/SaveButtons';
 import { CommentIcon, OpenOnSource, PostHeader, PostOptionsMenu, SharePostButton, feedAccountKey } from '../components/PostCardChrome';
 import PostLikes from '../components/PostLikes';
-import FeedLocationControl from '../components/FeedLocationControl';
 import { normalizeFeedLocation, savedFeedLocation, regionalFeedLocation, feedLocationKey } from '../utils/feedLocation.mjs';
 
 const COMMAND_CENTER_PRO_TIER = TIERS.find((tier) => tier.tier === 'pro');
@@ -1978,6 +1977,7 @@ function readFeedCache(userId, settings) {
 }
 
 function writeFeedCache(userId, posts, settings) {
+  if (regionalFeedLocation(settings).mode === 'auto') return;
   try {
     const key = memberStorageKey(FEED_CACHE_KEY, userId);
     if (!key) return;
@@ -2153,7 +2153,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     const activeFilters = { ...DEFAULT_FILTERS, ...(requestedFilters || filtersRef.current) };
     const activeMode = requestedMode || viewModeRef.current;
     const currentProfile = profileRef.current;
-    const feedContext = `${currentProfile?.id}:${activeMode}:${activeMode === 'groups' && publicGroupsFeed}:${feedLocationKey(currentProfile?.roleSettings, activeMode)}`;
+    const requestLocationKey = feedLocationKey(currentProfile?.roleSettings, activeMode);
+    const feedContext = `${currentProfile?.id}:${activeMode}:${activeMode === 'groups' && publicGroupsFeed}:${requestLocationKey}`;
     if (feedContextRef.current !== feedContext) {
       feedContextRef.current = feedContext;
       setLocationContext(null);
@@ -2197,7 +2198,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     const controller = new AbortController();
     feedControllerRef.current = controller;
     const requestId = ++feedRequestIdRef.current;
-    const isCurrentRequest = () => requestId === feedRequestIdRef.current && !controller.signal.aborted && profileRef.current?.id === currentProfile?.id && feedLocationKey(profileRef.current?.roleSettings, activeMode) === feedLocationKey(currentProfile?.roleSettings, activeMode);
+    const isCurrentRequest = () => requestId === feedRequestIdRef.current && !controller.signal.aborted && profileRef.current?.id === currentProfile?.id && feedLocationKey(profileRef.current?.roleSettings, activeMode) === requestLocationKey;
     if (!silent) {
       if (manual) setRefreshing(true);
       else setLoading(true);
@@ -3379,7 +3380,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         <UfiFeedContent embedded initialShop={routeFeedParams.get('channel') === 'shop'} />
       ) : (
       <>
-      {!isLocationFeed && <FeedLocationControl context={locationContext} />}
       {/* Specialized feeds keep location and filter controls together. */}
       {showsAdvancedFilters && viewMode !== 'countries' && <section className={`feed-specialized-toolbar${isLocationFeed ? ' feed-specialized-toolbar--location' : ''}`}>
         {isLocationFeed && (

@@ -88,3 +88,5 @@ try {
     await context.close();
   }
 } finally { await browser?.close(); await server.close(); await app.close(); }
+
+await import('./audit-feed-location.mjs');

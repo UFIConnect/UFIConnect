@@ -47,9 +47,13 @@ function trustedFeedNetworkLocation(req, { visitorLocationHeaders = false } = {}
     };
     // Country is set by Cloudflare geolocation. City/region are accepted only
     // when the account's visitor-location transform is explicitly enabled.
+    const coordinate = (value, bound) => typeof value === 'string' && /^-?\d+(?:\.\d+)?$/.test(value.trim()) && Math.abs(Number(value)) <= bound ? Number(value) : null;
+    const lat = visitorLocationHeaders ? coordinate(req.headers?.['cf-iplatitude'], 90) : null;
+    const lon = visitorLocationHeaders ? coordinate(req.headers?.['cf-iplongitude'], 180) : null;
     return { country,
       city: visitorLocationHeaders ? clean(req.headers?.['cf-ipcity']) : null,
-      region: visitorLocationHeaders ? clean(req.headers?.['cf-region']) : null };
+      region: visitorLocationHeaders ? clean(req.headers?.['cf-region']) : null,
+      ...(lat !== null && lon !== null ? { point: { lat, lon, accuracy: 0 } } : {}) };
   } catch { return {}; }
 }
 
@@ -59,6 +63,9 @@ function memberFeedSnapshotKey(userId, sortMode, timeRange, location = {}) {
   const context = createHash('sha256').update(JSON.stringify([
     location.country || '', location.city || '', location.region || '',
     location.source || '', location.declared || [], location.mode || '', location.feedMode || '',
+    // A coarse cell changes recommendation snapshots after movement without
+    // retaining a coordinate in the cache key.
+    location.point ? [Math.round(location.point.lat * 100), Math.round(location.point.lon * 100)] : null,
   ])).digest('hex').slice(0, 20);
   return `${userId}::${sortMode}::${timeRange || 'all'}::${context}`;
 }
