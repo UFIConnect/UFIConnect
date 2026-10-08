@@ -33,6 +33,9 @@ const BILLING_SCHEMA = [
     DROP CONSTRAINT IF EXISTS billing_checkout_attempts_slot_check,
     ADD CONSTRAINT billing_checkout_attempts_slot_check CHECK (slot IN ('plan', 'resume_builder', 'vpn_connector'))`,
   `ALTER TABLE billing_checkout_attempts ADD COLUMN IF NOT EXISTS quantity INTEGER NOT NULL DEFAULT 1 CHECK (quantity BETWEEN 1 AND 100)`,
+  // Null keeps the original URLs for in-flight attempts created before return
+  // routing existed, including Stripe idempotency replay after a failed write.
+  `ALTER TABLE billing_checkout_attempts ADD COLUMN IF NOT EXISTS return_path TEXT`,
 ];
 const EVENT_TYPES = new Set([
   'checkout.session.completed', 'checkout.session.async_payment_succeeded',
@@ -50,6 +53,42 @@ const ENDED = new Set(['canceled', 'incomplete_expired']);
 const RENEWALS = new Set(['subscription_cycle', 'subscription_update', 'subscription_threshold']);
 const idOf = value => typeof value === 'string' ? value : value?.id;
 const fault = (status, message) => Object.assign(new Error(message), { status });
+
+function normalizeBillingReturnPath(value, frontendBase) {
+  if (value === undefined) return null;
+  const invalid = () => fault(400, 'Choose a valid return page on UFIConnect.');
+  if (typeof value !== 'string' || !value.startsWith('/') || value.length > 2048) throw invalid();
+  // Check encoded variants too: a router or proxy must not turn a return path
+  // into a protocol-relative URL, backslash redirect, or control character.
+  let decoded = value;
+  for (;;) {
+    if (decoded.startsWith('//') || /[\\\u0000-\u001f\u007f-\u009f]/u.test(decoded)) throw invalid();
+    let next;
+    try { next = decodeURIComponent(decoded); } catch { break; }
+    if (next === decoded) break;
+    decoded = next;
+  }
+  const origin = new URL(frontendBase).origin;
+  let target;
+  try { target = new URL(value, origin); } catch { throw invalid(); }
+  if (target.origin !== origin || target.username || target.password || target.pathname.startsWith('//')) throw invalid();
+  return target.pathname + target.search + target.hash;
+}
+
+function checkoutReturnUrls(base, slot, returnPath) {
+  if (returnPath == null) {
+    // Preserve byte-for-byte parameters for legacy durable attempts.
+    const path = slot === 'vpn_connector' ? '/vault' : slot === 'resume_builder' ? '/resume-builder' : '/settings';
+    return { success_url: `${base}${path}?upgrade=success`, cancel_url: `${base}${path}?upgrade=cancelled` };
+  }
+  const target = new URL(returnPath, new URL(base).origin);
+  const result = {};
+  for (const [key, value] of [['success_url', 'success'], ['cancel_url', 'cancelled']]) {
+    target.searchParams.set('upgrade', value);
+    result[key] = target.href;
+  }
+  return result;
+}
 
 function validRecurringPrice(price) {
   return !!price && typeof price.id === 'string' && price.type === 'recurring'
@@ -269,17 +308,19 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
     // Exhaustive successful provider reads prove no accepted/payable checkout
     // remains. Keep the caller's transaction/row lock while replacing the key.
   }
-  async function createCheckout(userId, tier, quantity = 1) {
+  async function createCheckout(userId, tier, quantity = 1, requestedReturnPath) {
     if (!TIERS.includes(tier)) throw fault(400, 'Choose a valid subscription tier.');
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100 || (tier !== 'business' && quantity !== 1)) {
       throw fault(400, 'Business supports 1 to 100 people. Other memberships are for one person.');
     }
+    const returnPath = normalizeBillingReturnPath(requestedReturnPath, frontendBase);
     available();
     const catalog = await getCatalog();
     const priceTier = tier === 'business' && quantity >= 2 ? 'business_team' : tier;
     const priceId = catalog.tiers[priceTier]?.available && catalog.tiers[priceTier].priceId;
     if (!priceId) throw fault(503, catalog.tiers[priceTier]?.unavailableMessage || 'This subscription is not available yet.');
     const slot = slotFor(tier);
+    const requestedUrls = checkoutReturnUrls(frontendBase, slot, returnPath);
     // Persist the attempt BEFORE the remote API call. A crash after Stripe
     // accepts a request reuses this key, including on a different API worker.
     await transaction(async client => {
@@ -315,9 +356,9 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
           }
         }
       }
-      await client.query(`INSERT INTO billing_checkout_attempts(user_id,slot,attempt_id,tier,price_id,customer_id,return_base,quantity)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (user_id,slot) DO NOTHING`,
-      [row.id, slot, randomUUID(), tier, priceId, customer, frontendBase, quantity]);
+      await client.query(`INSERT INTO billing_checkout_attempts(user_id,slot,attempt_id,tier,price_id,customer_id,return_base,quantity,return_path)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (user_id,slot) DO NOTHING`,
+      [row.id, slot, randomUUID(), tier, priceId, customer, frontendBase, quantity, returnPath]);
       if (legacySession) await client.query('UPDATE billing_checkout_attempts SET session_id=$1 WHERE user_id=$2 AND slot=$3 AND session_id IS NULL', [legacySession, row.id, slot]);
     });
     let recoveredRejectedAttempt = false;
@@ -333,8 +374,8 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
           await recoverUnresolvedCheckout(client, row, pending, catalog);
           if (!pending.session_id) {
             await client.query(`UPDATE billing_checkout_attempts SET attempt_id=$1,tier=$2,price_id=$3,
-              session_id=NULL,return_base=$4,created_at=NOW(),quantity=$7 WHERE user_id=$5 AND slot=$6`,
-            [randomUUID(), tier, priceId, frontendBase, userId, slot, quantity]);
+              session_id=NULL,return_base=$4,created_at=NOW(),quantity=$7,return_path=$8 WHERE user_id=$5 AND slot=$6`,
+            [randomUUID(), tier, priceId, frontendBase, userId, slot, quantity, returnPath]);
             renewed = true;
             return null;
           }
@@ -348,8 +389,10 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
             return { complete: true };
           }
           if (existing.status === 'open') {
-            if (pending.tier === tier && pending.price_id === priceId && pending.quantity === quantity) return existing;
-            // Close the unpaid checkout before creating a different option.
+            if (pending.tier === tier && pending.price_id === priceId && pending.quantity === quantity
+              && existing.success_url === requestedUrls.success_url && existing.cancel_url === requestedUrls.cancel_url) return existing;
+            // Hosted Checkout cannot update success/cancel URLs. Close the
+            // unpaid checkout before changing its option or return page.
             // A completion race or provider failure stops here, so two links
             // can never remain payable for the same membership slot.
             await stripe.checkout.sessions.expire(existing.id);
@@ -357,13 +400,14 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
           }
           if (existing.status !== 'expired') throw fault(409, 'Checkout status needs review.');
           await client.query(`UPDATE billing_checkout_attempts SET attempt_id=$1,tier=$2,price_id=$3,
-            session_id=NULL,return_base=$4,created_at=NOW(),quantity=$7 WHERE user_id=$5 AND slot=$6`,
-          [randomUUID(), tier, priceId, frontendBase, userId, slot, quantity]);
+            session_id=NULL,return_base=$4,created_at=NOW(),quantity=$7,return_path=$8 WHERE user_id=$5 AND slot=$6`,
+          [randomUUID(), tier, priceId, frontendBase, userId, slot, quantity, returnPath]);
           renewed = true;
           return null;
         }
-        const changedSelection = pending.tier !== tier || pending.price_id !== priceId || pending.quantity !== quantity;
-        const path = slot === 'vpn_connector' ? '/vault' : slot === 'resume_builder' ? '/resume-builder' : '/settings';
+        const pendingUrls = checkoutReturnUrls(pending.return_base, slot, pending.return_path);
+        const changedSelection = pending.tier !== tier || pending.price_id !== priceId || pending.quantity !== quantity
+          || pendingUrls.success_url !== requestedUrls.success_url || pendingUrls.cancel_url !== requestedUrls.cancel_url;
         let created;
         try {
           created = await stripe.checkout.sessions.create({
@@ -372,8 +416,7 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
             metadata: { tier: pending.tier, quantity: String(pending.quantity), uficonnect_user_id: userId, uficonnect_attempt_id: pending.attempt_id },
             subscription_data: { metadata: { tier: pending.tier, quantity: String(pending.quantity), uficonnect_user_id: userId } },
             phone_number_collection: { enabled: false }, client_reference_id: userId,
-            success_url: `${pending.return_base}${path}?upgrade=success`,
-            cancel_url: `${pending.return_base}${path}?upgrade=cancelled`,
+            ...pendingUrls,
           }, { idempotencyKey: `ufi-checkout:${pending.attempt_id}` });
         } catch (error) {
           // Stripe also caches rejected requests. After a product configuration
@@ -386,8 +429,8 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
           await recoverUnresolvedCheckout(client, row, pending, catalog);
           if (!pending.session_id) {
             await client.query(`UPDATE billing_checkout_attempts SET attempt_id=$1,tier=$2,price_id=$3,
-              session_id=NULL,return_base=$4,created_at=NOW(),quantity=$7 WHERE user_id=$5 AND slot=$6`,
-            [randomUUID(), tier, priceId, frontendBase, userId, slot, quantity]);
+              session_id=NULL,return_base=$4,created_at=NOW(),quantity=$7,return_path=$8 WHERE user_id=$5 AND slot=$6`,
+            [randomUUID(), tier, priceId, frontendBase, userId, slot, quantity, returnPath]);
           }
           renewed = true;
           return null;
@@ -478,13 +521,15 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
     onUserUpdated(updated);
     return result;
   }
-  async function portal(userId) {
+  async function portal(userId, requestedReturnPath) {
+    const returnPath = normalizeBillingReturnPath(requestedReturnPath, frontendBase);
     available();
     const { rows: [row] } = await db.query('SELECT * FROM users WHERE id=$1', [userId]);
     if (!row?.stripe_customer_id) throw fault(400, 'No billing account found.');
     const customer = await stripe.customers.retrieve(row.stripe_customer_id);
     if (customer.deleted || (customer.metadata?.uficonnect_user_id && customer.metadata.uficonnect_user_id !== row.id)) throw fault(409, 'Billing account ownership needs review.');
-    const session = await stripe.billingPortal.sessions.create({ customer: row.stripe_customer_id, return_url: `${frontendBase}/settings` });
+    const returnUrl = returnPath == null ? `${frontendBase}/settings` : new URL(returnPath, new URL(frontendBase).origin).href;
+    const session = await stripe.billingPortal.sessions.create({ customer: row.stripe_customer_id, return_url: returnUrl });
     return { url: session.url };
   }
   async function prepareAccountDeletion(userId) {

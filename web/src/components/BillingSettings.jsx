@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import client from '../api/client';
-import { hostedBillingUrl } from '../api/hostedBilling.mjs';
+import { billingReturnPath, billingReturnState, hostedBillingUrl } from '../api/hostedBilling.mjs';
 import PricingModal from './PricingModal';
 
 export default function BillingSettings({ profile, onProfileUpdate }) {
@@ -14,16 +14,13 @@ export default function BillingSettings({ profile, onProfileUpdate }) {
   const [opening, setOpening] = useState(null);
   const updateProfile = useRef(onProfileUpdate);
   updateProfile.current = onProfileUpdate;
-  const returnState = useRef(new URLSearchParams(window.location.search).get('upgrade'));
+  const returnState = useRef(billingReturnState().result);
 
   useEffect(() => {
     const controller = new AbortController();
     let stopped = false; let timer; let finishWait;
-    const params = new URLSearchParams(window.location.search);
-    if (params.has('upgrade')) {
-      params.delete('upgrade');
-      window.history.replaceState(window.history.state, '', window.location.pathname + (params.size ? `?${params}` : '') + window.location.hash);
-    }
+    const returned = billingReturnState();
+    if (returned.hasMarker) navigate(returned.returnPath, { replace: true });
     async function check() {
       setChecking(true);
       if (returnState.current === 'success') setNotice('Checking your membership with Stripe…');
@@ -38,7 +35,6 @@ export default function BillingSettings({ profile, onProfileUpdate }) {
           if (['pro', 'business'].includes(data.plan)) {
             setNotice(`Your ${data.plan === 'pro' ? 'Pro' : 'Business'} membership is active.`);
             returnState.current = null;
-            if (data.plan === 'business') navigate('/recruiting', { replace: true });
             break;
           }
           setNotice('Your membership is not active yet. Payment may still be processing. Check status again shortly.');
@@ -50,14 +46,15 @@ export default function BillingSettings({ profile, onProfileUpdate }) {
     }
     check();
     return () => { stopped = true; controller.abort(); window.clearTimeout(timer); finishWait?.(); };
-  }, [refresh]);
+  }, [refresh, navigate]);
 
   async function openBilling(tier, quantity = 1) {
     if (opening) return;
     setOpening(tier); setNotice('');
     try {
       const portal = tier === 'portal';
-      const { data } = await client.post(portal ? '/billing/create-portal-session' : '/billing/create-checkout-session', portal ? {} : { tier, quantity });
+      const returnPath = billingReturnPath();
+      const { data } = await client.post(portal ? '/billing/create-portal-session' : '/billing/create-checkout-session', portal ? { returnPath } : { tier, quantity, returnPath });
       window.location.assign(hostedBillingUrl(data.url, portal ? 'portal' : 'checkout'));
     } catch (error) {
       setNotice(error?.response?.data?.message || 'Could not open secure billing. Please try again.');

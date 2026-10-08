@@ -21558,15 +21558,20 @@ app.get('/billing/config', billingResponse(async () => {
 
 app.post('/billing/create-checkout-session', authenticate, billingLimiter, billingResponse(async req => {
   if (!process.env.STRIPE_WEBHOOK_SECRET) throw Object.assign(new Error('Billing is not configured yet.'), { status: 503 });
-  if (!req.body || Object.keys(req.body).some(key => !['tier', 'quantity'].includes(key))) {
-    throw Object.assign(new Error('Send only the subscription tier and number of people. Payment details are collected by Stripe.'), { status: 400 });
+  if (!req.body || Object.keys(req.body).some(key => !['tier', 'quantity', 'returnPath'].includes(key))) {
+    throw Object.assign(new Error('Send only the subscription tier, number of people, and return page. Payment details are collected by Stripe.'), { status: 400 });
   }
   if (req.body.tier === 'business' && isDBId(req.user.id) && await businessTeams.effectiveMembership(req.user.id)) {
     throw Object.assign(new Error('Leave your current Business team in Settings before starting your own Business membership.'), { status: 409 });
   }
-  return billing.createCheckout(req.user.id, req.body.tier, req.body.quantity);
+  return billing.createCheckout(req.user.id, req.body.tier, req.body.quantity, req.body.returnPath);
 }));
-app.post('/billing/create-portal-session', authenticate, billingLimiter, billingResponse(req => billing.portal(req.user.id)));
+app.post('/billing/create-portal-session', authenticate, billingLimiter, billingResponse(req => {
+  if (req.body && Object.keys(req.body).some(key => key !== 'returnPath')) {
+    throw Object.assign(new Error('Send only the return page. Payment details are collected by Stripe.'), { status: 400 });
+  }
+  return billing.portal(req.user.id, req.body?.returnPath);
+}));
 app.get('/billing/status', authenticate, billingLimiter, billingResponse(async req => {
   const status = await billing.status(req.user.id);
   const businessTeam = isDBId(req.user.id) ? await businessTeams.effectiveMembership(req.user.id) : null;

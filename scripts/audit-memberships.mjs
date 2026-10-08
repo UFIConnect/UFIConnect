@@ -85,7 +85,7 @@ try {
     await dialog.getByRole('button', { name: 'Choose Pro', exact: true }).click();
     await page.getByText('Could not open secure billing. Please try again.', { exact: true }).waitFor();
     check(page.url().startsWith(server.origin), 'An untrusted checkout URL never receives the browser');
-    assert.deepEqual(requests, [{ tier: 'pro', quantity: 1 }]); checks++;
+    assert.deepEqual(requests, [{ tier: 'pro', quantity: 1, returnPath: '/settings' }]); checks++;
     await dialog.getByRole('button', { name: 'Close', exact: true }).click();
     businessReady = true;
     await upgrade.click();
@@ -94,7 +94,7 @@ try {
     check(await dialog.getByText('$199.94', { exact: true }).isVisible(), 'Business shows its configured recurring price');
     await dialog.getByRole('button', { name: 'Choose Business', exact: true }).click();
     await page.getByText('Could not open secure billing. Please try again.', { exact: true }).waitFor();
-    assert.deepEqual(requests.at(-1), { tier: 'business', quantity: 1 }); checks++;
+    assert.deepEqual(requests.at(-1), { tier: 'business', quantity: 1, returnPath: '/settings' }); checks++;
     await dialog.getByRole('button', { name: 'Close', exact: true }).click();
     ready = false;
     await upgrade.click();
@@ -146,14 +146,14 @@ try {
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Resume Builder checkout fits ${width}px`);
     await resumePurchase.click();
     await page.getByText('Could not start checkout. Please try again.', { exact: true }).waitFor();
-    assert.deepEqual(requests.at(-1), { tier: 'resume_builder_monthly' }); checks++;
+    assert.deepEqual(requests.at(-1), { tier: 'resume_builder_monthly', returnPath: '/resume-builder' }); checks++;
     check(page.url().startsWith(server.origin), 'Resume Builder blocks untrusted payment redirects');
     await page.getByRole('radio', { name: /6 months/ }).check();
     const sixMonthPurchase = page.getByRole('button', { name: 'Unlock for $149.94 per 6 mo', exact: true });
     check(await sixMonthPurchase.isEnabled(), 'Choosing six months updates the checkout price');
     await sixMonthPurchase.click();
     await page.getByText('Could not start checkout. Please try again.', { exact: true }).last().waitFor();
-    assert.deepEqual(requests.at(-1), { tier: 'resume_builder' }); checks++;
+    assert.deepEqual(requests.at(-1), { tier: 'resume_builder', returnPath: '/resume-builder' }); checks++;
     await page.screenshot({ path: `.cache/audit-ui/resume-pricing-${width}.png`, fullPage: true });
     const reopenResume = async () => {
       await auditNavigate(page, server.origin + '/settings');

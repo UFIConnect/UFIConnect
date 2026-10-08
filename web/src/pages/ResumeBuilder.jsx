@@ -6,7 +6,7 @@ import Layout from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import client from '../api/client';
-import { hostedBillingUrl } from '../api/hostedBilling.mjs';
+import { billingReturnPath, billingReturnState, hostedBillingUrl } from '../api/hostedBilling.mjs';
 import useBillingConfig from '../hooks/useBillingConfig';
 import './ResumeBuilderPricing.css';
 import {
@@ -628,13 +628,14 @@ export default function ResumeBuilder() {
   }, [billingConfig]);
 
   useEffect(() => {
-    const upgrade = new URLSearchParams(window.location.search).get('upgrade');
-    if (!upgrade) return;
-    window.history.replaceState({}, '', window.location.pathname);
-    if (upgrade === 'cancelled') {
+    const returned = billingReturnState();
+    if (!returned.hasMarker) return;
+    navigate(returned.returnPath, { replace: true });
+    if (returned.result === 'cancelled') {
       showToast('Checkout was closed. Check Manage billing in Settings if you need to review a payment.', 'info');
       return;
     }
+    if (returned.result !== 'success') return;
     client.get('/billing/status').then(() => refreshProfile())
       .then((nextProfile) => {
         showToast(nextProfile?.resumeBuilderAddon
@@ -642,7 +643,7 @@ export default function ResumeBuilder() {
           : 'Access is not active yet. Payment may still be processing; check billing status in Settings.', nextProfile?.resumeBuilderAddon ? 'success' : 'info');
       })
       .catch(() => showToast('We could not confirm your billing status. Check Manage billing in Settings before starting another checkout.', 'info'));
-  }, [refreshProfile, showToast]);
+  }, [navigate, refreshProfile, showToast]);
 
   useEffect(() => {
     if (!unlocked) return;
@@ -707,7 +708,7 @@ export default function ResumeBuilder() {
     if (unlocking || billingReady !== true) return;
     setUnlocking(true);
     try {
-      const { data: checkout } = await client.post('/billing/create-checkout-session', { tier: resumeTier });
+      const { data: checkout } = await client.post('/billing/create-checkout-session', { tier: resumeTier, returnPath: billingReturnPath() });
       window.location.assign(hostedBillingUrl(checkout.url));
     } catch (err) {
       showToast(err?.response?.data?.message || 'Could not start checkout. Please try again.', 'error');

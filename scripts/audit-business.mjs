@@ -47,7 +47,7 @@ try {
     check(await dialog.getByText('$59.82', { exact: true }).isVisible(), 'Three people cost $59.82 per month');
     await dialog.getByRole('button', { name: 'Choose Business', exact: true }).click();
     await dialog.getByRole('alert').waitFor();
-    assert.deepEqual(requests.at(-1), { tier: 'business', quantity: 3 }); checks++;
+    assert.deepEqual(requests.at(-1), { tier: 'business', quantity: 3, returnPath: '/settings' }); checks++;
     check(page.url().startsWith(server.origin), 'Untrusted payment URL does not navigate');
     await dialog.getByRole('spinbutton', { name: 'Number of people, including you' }).fill('0');
     check(await dialog.getByRole('button', { name: 'Unavailable', exact: true }).isDisabled(), 'Zero people cannot be purchased');
@@ -56,7 +56,9 @@ try {
     await page.screenshot({ path: `.cache/audit-ui/business-pricing-${width}.png`, fullPage: true });
     plan = 'business';
     await page.goto(server.origin + '/settings?upgrade=success');
-    await page.waitForURL('**/recruiting');
+    await page.getByRole('heading', { name: 'Business plan', exact: true }).waitFor();
+    check(new URL(page.url()).pathname === '/settings', 'Confirmed Business activation keeps the Settings return page');
+    await auditNavigate(page, server.origin + '/recruiting');
     await page.getByRole('heading', { name: 'Talent Company recruiting', exact: true }).waitFor();
     check(await page.getByRole('navigation', { name: 'Recruiting workspace' }).getByRole('link').count() === 7, 'Business shell includes Cross Post and Posts & comparisons');
     check(await page.getByRole('link', { name: 'Videos', exact: true }).count() === 0, 'Business has no video navigation');
