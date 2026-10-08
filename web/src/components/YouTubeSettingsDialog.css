@@ -1,0 +1,16 @@
+.youtube-settings-dialog { width: min(480px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); margin: auto; padding: 0; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--border); border-radius: 18px; background: var(--card, #fff); color: var(--text, #0f172a); box-shadow: 0 24px 80px #0005; }
+.youtube-settings-dialog::backdrop { background: #071324b3; }
+.youtube-settings-dialog:not([open]) { display: none; }
+.youtube-settings-content { padding: 20px; overflow-wrap: anywhere; }
+.youtube-settings-content header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 24px; }
+.youtube-settings-content h2 { margin: 0; font-size: 1.15rem; }
+.youtube-settings-content h3 { margin: 0 0 10px; font-size: .9rem; }
+.youtube-settings-close { display: grid; place-items: center; flex: 0 0 40px; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 10px; background: var(--bg, #f1f5f9); color: inherit; cursor: pointer; }
+.youtube-settings-content section + section { margin-top: 24px; }
+.youtube-settings-choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.youtube-settings-choices button { flex: 1 0 60px; min-height: 44px; padding: 8px 12px; border: 1px solid var(--border, #cbd5e1); border-radius: 10px; background: var(--bg, #f1f5f9); color: inherit; font: inherit; font-size: .88rem; cursor: pointer; }
+.youtube-settings-choices button[aria-checked="true"] { color: var(--primary, #2563eb); background: var(--primary-light, #eff6ff); border-color: var(--primary, #2563eb); font-weight: 700; }
+.youtube-settings-close:focus-visible, .youtube-settings-choices button:focus-visible, .youtube-settings-provider button:focus-visible { outline: 3px solid var(--primary, #2563eb); outline-offset: 2px; }
+.youtube-settings-help, .youtube-settings-provider p { margin: 0; font-size: .86rem; color: var(--muted, #64748b); line-height: 1.6; }
+.youtube-settings-provider { padding-top: 20px; border-top: 1px solid var(--border, #cbd5e1); }
+.youtube-settings-provider .btn { width: 100%; min-height: 44px; height: auto; margin-top: 16px; padding: 10px 14px; white-space: normal; }

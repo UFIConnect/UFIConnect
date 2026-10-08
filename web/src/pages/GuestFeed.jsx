@@ -165,8 +165,8 @@ function GuestPostCard({ post, active, muted, registerRef }) {
         <div className="post-chrome-actions">
           <PostLikes post={post} />
           {post.commentsCount > 0 && <span style={{ fontSize: '.8rem', color: 'var(--muted)' }}>{post.commentsCount.toLocaleString()} comments</span>}
-          <PostOptionsMenu post={post} />
           <OpenOnSource post={post} />
+          <PostOptionsMenu post={post} />
         </div>
       </div>
     </div>

@@ -15,7 +15,7 @@ import Layout from '../components/Layout';
 import GuestShell from '../components/GuestShell';
 import PostLikes from '../components/PostLikes';
 import ConnectedPostActions from '../components/ConnectedPostActions';
-import { PostTime, PostOptionsMenu } from '../components/PostCardChrome';
+import { OpenOnSource, PostHeader, PostOptionsMenu } from '../components/PostCardChrome';
 import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
@@ -239,29 +239,7 @@ export default function PostDetail() {
         </button>
 
         <div className="card post-card">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-            {!post.isExternal && post.author?.id ? (
-              <>
-                <Link to={post.author.id === profile?.id ? '/profile' : `/u/${encodeURIComponent(post.author.id)}`} style={{ textDecoration: 'none', color: 'inherit' }}>
-                  <div className="avatar avatar-md">{initials(post.author?.name)}</div>
-                </Link>
-                <div>
-                  <Link to={post.author.id === profile?.id ? '/profile' : `/u/${encodeURIComponent(post.author.id)}`} style={{ fontWeight: 700, fontSize: '.88rem', textDecoration: 'none', color: 'inherit' }}>{post.author?.name || 'Member'}</Link>
-                  <PostTime post={post} />
-                </div>
-              </>
-            ) : (
-              <>
-                <SourceMark source={post.source} label={src.icon} />
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: '.82rem', color: src.color }}>{post.sourceLabel || src.label}</div>
-                  <div style={{ fontSize: '.72rem', color: 'var(--muted)' }}>
-                    {post.author?.name || ''}<PostTime post={post} />
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
+          <PostHeader post={post} member={!post.isExternal} />
 
           {post.title && <h1 style={{ fontSize: '1.15rem', fontWeight: 700, margin: '0 0 10px', lineHeight: 1.4, overflowWrap: 'break-word', wordBreak: 'break-word' }}><PostInlineText text={post.title} /></h1>}
           {isCareerPost(post) ? <JobPostContent post={post} /> : post.content && (
@@ -316,16 +294,11 @@ export default function PostDetail() {
           )}
 
           <PostLinkPreviews post={post} />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+          <div className="post-chrome-actions" style={{ paddingTop: 10, borderTop: '1px solid var(--border)' }}>
             <PostLikes post={post} onPostUpdated={updated => setPost(current => ({ ...current, ...updated }))} />
             {token && <SavePostButton post={post} className="btn btn-ghost btn-sm save-item-button" />}
+            <OpenOnSource post={post} />
             <PostOptionsMenu post={post} onPostUpdated={updated => setPost(previous => ({ ...previous, ...updated }))} onRemoved={() => navigate('/')} />
-            {post.sourceUrl && (
-              <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
-                style={{ marginLeft: 'auto', fontSize: '.75rem', fontWeight: 700, color: src.color, textDecoration: 'none' }}>
-                Open on {post.sourceLabel || src.label} ↗
-              </a>
-            )}
           </div>
         </div>
 

@@ -1,4 +1,4 @@
-import { postDiscussionUrl } from '../../../backend/post-links.mjs';
+import { postDiscussionUrl, safePostLink } from '../../../backend/post-links.mjs';
 import JobPostContent from '../components/JobPostContent';
 import { isCareerPost } from '../utils/jobSummary.mjs';
 import ArticleIllustration from '../components/ArticleIllustration';
@@ -1273,8 +1273,8 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen, onPostUpdated })
         </button>}
         <SavePostButton post={post} className="post-chrome-action save-item-button" showLabel={false} />
         <SharePostButton post={post} />
-        <PostOptionsMenu post={post} />
         <OpenOnSource post={post} label="Watch on YouTube" />
+        <PostOptionsMenu post={post} onOpenComments={() => { if (!showComments) setShowComments(true); }} />
       </div>
       <ConnectedPostActions post={post} active={showComments} />
     </div>
@@ -1620,7 +1620,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
 
   const ownPost = !isExternal && !!profile?.id && post.author?.id === profile.id && isCommunityPost;
   async function copyPostLink() {
-    const url = isExternal && post.sourceUrl ? post.sourceUrl : `${window.location.origin}/p/${encodeURIComponent(post.id)}`;
+    const url = isExternal && safePostLink(post.sourceUrl) ? safePostLink(post.sourceUrl) : `${window.location.origin}/p/${encodeURIComponent(post.id)}`;
     try { await navigator.clipboard.writeText(url); showToast('Link copied.', 'success'); }
     catch { showToast('Could not copy the link. Open the post to share it.', 'error'); }
   }
@@ -1750,7 +1750,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
       {hasVideo && !videoIsPlayable && <SourceMediaFallback post={post} />}
       <PostLinkPreviews post={post} />
 
-      {/* Actions: likes, comments, save, share, the options menu, then the source link. */}
+      {/* Actions end with the original post link and the options menu. */}
       <div className="post-chrome-actions">
         <PostLikes post={post} onPostUpdated={onPostUpdated} />
         {hasComments && (
@@ -1767,7 +1767,6 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
         )}
         <SavePostButton post={post} className="post-chrome-action feed-save-post-button" showLabel={false} />
         <SharePostButton post={post} />
-        <PostOptionsMenu post={post} items={optionItems} onPostUpdated={onPostUpdated} onRemoved={onRemoved} />
         {post.source === 'wikivoyage' && post.travelDestinationId && onGuideOpen ? <button type="button" className="post-chrome-action" onClick={() => onGuideOpen({id:post.travelDestinationId,city:post.city,country:post.country})}>Open city guide</button> : <OpenOnSource
           post={post}
           label={`${isJob ? 'Apply' : post.isLiveCamera ? 'Watch live' : hasVideo ? 'Watch' : 'Open'}${post.isLiveCamera ? '' : ` on ${src.label}`}`}
@@ -1776,6 +1775,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
             reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true });
           }}
         />}
+        <PostOptionsMenu post={post} items={optionItems} onOpenComments={hasComments ? () => { if (!showComments) toggleComments(); } : undefined} onPostUpdated={onPostUpdated} onRemoved={onRemoved} />
       </div>
 
       {/* Inline comments / replies / answers / reviews */}

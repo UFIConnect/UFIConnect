@@ -45,12 +45,12 @@ try {
     await page.mouse.move(0, 0);
     await page.waitForTimeout(400);
     assert.equal(await firstVideo.evaluate(video => video.paused), false, 'Music keeps playing after the pointer leaves');
-    await firstSlide.click();
+    await page.locator('[data-post-id="music-0"]').getByRole('button', { name: 'Pause video', exact: true }).click();
     assert.equal(await firstVideo.evaluate(video => video.paused), true, 'Music can still be paused manually');
     await page.mouse.move(0, 0);
     await firstSlide.hover();
     assert.equal(await firstVideo.evaluate(video => video.paused), true, 'Hovering does not undo a manual pause');
-    await firstSlide.click();
+    await page.locator('[data-post-id="music-0"]').getByRole('button', { name: 'Play video', exact: true }).click();
     const scroll = page.locator('[data-video-feed-scroll]');
     await scroll.evaluate(el => el.scrollTo(0, el.clientHeight));
     await page.waitForFunction(() => document.querySelector('[data-video-feed-scroll]').scrollTop > 0);

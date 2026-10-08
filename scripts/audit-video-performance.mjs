@@ -116,6 +116,10 @@ try {
       const post = scroll?.querySelector(`[data-post-id="${target}"]`);
       return post && Math.abs(post.getBoundingClientRect().top - scroll.getBoundingClientRect().top) <= 2;
     }, id);
+    const playbackAction = async (id, label) => {
+      const slide = page.locator(`[data-post-id="${id}"]`);
+      await slide.getByRole('group', { name: 'Playback controls', exact: true }).getByRole('button', { name: label, exact: true }).click();
+    };
     await openFeed();
     await page.waitForFunction(() => { const video = document.querySelector('[data-post-id="native-0"] video'); return video && !video.paused && video.currentTime > .1; });
     assert.ok(await page.locator('.video-feed-slide').count() <= MAX_MOUNTED_SLIDES);
@@ -140,12 +144,17 @@ try {
     assert.equal(calls.length, hiddenCalls, 'Hidden idle feed does not issue extra feed requests');
     await page.evaluate(() => window.__videoAuditVisibility(false));
     await page.waitForFunction(() => { const video = document.querySelector('[data-post-id="native-0"] video'); return video && !video.paused; });
-    await page.locator('[data-post-id="native-0"]').getByRole('button', { name: 'Pause video', exact: true }).click();
+    await playbackAction('native-0', 'Pause video');
     await page.evaluate(() => { window.__videoAuditVisibility(true); window.__videoAuditVisibility(false); });
     await page.waitForTimeout(300);
     assert.equal(await page.locator('[data-post-id="native-0"] video').evaluate(video => video.paused), true, 'Visibility changes preserve a manual pause');
-    await page.locator('[data-post-id="native-0"]').getByRole('button', { name: 'Play video', exact: true }).click();
-    // Focus the feed, not its seek slider or other interactive controls.
+    await playbackAction('native-0', 'Play video');
+    const previouslyMuted = await page.locator('[data-post-id="native-0"] video').evaluate(video => video.muted);
+    await playbackAction('native-0', previouslyMuted ? 'Unmute video' : 'Mute video');
+    assert.equal(await page.locator('[data-post-id="native-0"] video').evaluate(video => video.muted), !previouslyMuted,
+      'The visible sound control changes the native player sound state');
+    await playbackAction('native-0', previouslyMuted ? 'Mute video' : 'Unmute video');
+    // Focus the feed before testing its navigation shortcuts.
     await page.locator('[data-video-feed-scroll]').focus();
     await page.keyboard.press('ArrowDown');
     await awaitActive('native-1');
@@ -169,19 +178,19 @@ try {
     phase = 'provider';
     await openFeed();
     await page.waitForFunction(() => [...window.__videoAuditPlayers].some(player => player.state === 1));
-    await page.locator('[data-post-id="provider-0"]').getByRole('button', { name: 'Pause video', exact: true }).click();
+    await playbackAction('provider-0', 'Pause video');
     await page.waitForTimeout(650);
     assert.ok(await page.evaluate(() => [...window.__videoAuditPlayers].every(player => player.state !== 1)), 'An early explicit YouTube pause is not undone by autoplay retry');
-    await page.locator('[data-post-id="provider-0"]').getByRole('button', { name: 'Play video', exact: true }).click();
+    await playbackAction('provider-0', 'Play video');
     await page.evaluate(() => window.__videoAuditVisibility(true));
     await page.waitForFunction(() => [...window.__videoAuditPlayers].every(player => player.state !== 1));
     await page.evaluate(() => window.__videoAuditVisibility(false));
     await page.waitForFunction(() => [...window.__videoAuditPlayers].some(player => player.state === 1));
-    await page.locator('[data-post-id="provider-0"]').getByRole('button', { name: 'Pause video', exact: true }).click();
+    await playbackAction('provider-0', 'Pause video');
     await page.evaluate(() => { window.__videoAuditVisibility(true); window.__videoAuditVisibility(false); });
     await page.waitForTimeout(650);
     assert.ok(await page.evaluate(() => [...window.__videoAuditPlayers].every(player => player.state !== 1)), 'YouTube visibility and autoplay retry preserve an explicit pause');
-    await page.locator('[data-post-id="provider-0"]').getByRole('button', { name: 'Play video', exact: true }).click();
+    await playbackAction('provider-0', 'Play video');
     let maxPosts = 0, maxSlides = 0, maxFrames = 0;
     for (let pageNumber = 1; pageNumber < 24; pageNumber += 1) {
       const target = `provider-${pageNumber * 10 - 3}`;

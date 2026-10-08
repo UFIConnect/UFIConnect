@@ -14,8 +14,14 @@ const server = await createServer({ root: path.join(root, 'web'), configFile: pa
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api'), 'import.meta.env.VITE_API_FALLBACK_URL': JSON.stringify('') },
   server: { host: '127.0.0.1', port: 5247, strictPort: false, proxy: { '/api': { target: app.base, rewrite: value => value.replace(/^\/api/, '') } } } });
 let browser;
+const channelId = 'UCabcdefghijklmnopqrstuv';
+const avatarUrl = 'https://media.example.invalid/avatar.svg';
 const post = (id, extra = {}) => ({ id, source: 'reddit', title: `Video ${id}`, content: 'Details belong below the video.',
-  mediaType: 'video', mediaUrl: 'https://media.example.invalid/fixture.mp4', sourceUrl: 'https://example.com/original',
+  author: extra.source === 'youtube'
+    ? { id: `youtube_${channelId}`, name: 'Audit channel', channelId, avatarUrl }
+    : { id: 'reddit_audit_creator', name: 'audit_creator', avatarUrl },
+  mediaType: 'video', mediaUrl: 'https://media.example.invalid/fixture.mp4',
+  sourceUrl: extra.source === 'youtube' ? `https://www.youtube.com/watch?v=${extra.embedId}` : 'https://www.reddit.com/r/audit/comments/abcd/fixture/',
   // Synthetic media is fulfilled locally; this fixture grants its playback rights explicitly.
   directPlaybackAuthorized: true,
   isExternal: true, createdAt: '2026-09-22T12:00:00Z', ...extra });
@@ -31,10 +37,14 @@ try {
     // Provider APIs are deterministic fixtures. No public videos are scanned
     // or downloaded; the actual iframe request still exercises referrer policy.
     await page.addInitScript(() => {
+      window.__videoLayoutPlayers = new Set();
+      window.__videoLayoutRateRequests = [];
+      window.__videoLayoutHoldRateChange = false;
       window.YT = { PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 }, Player: class {
         constructor(frame, config) {
-          this.frame = frame; this.config = config; this.state = 1;
+          this.frame = frame; this.config = config; this.state = 1; this.rate = 1;
           this.id = new URL(frame.src).pathname.split('/').pop();
+          window.__videoLayoutPlayers.add(this);
           setTimeout(() => config.events?.onReady?.({ target: this }), 20);
         }
         getIframe() { return this.frame; }
@@ -42,10 +52,19 @@ try {
         getDuration() { return this.id === 'short000001' ? 3 : 30; }
         getCurrentTime() { return 1; }
         getPlayerState() { return this.state; }
+        getAvailablePlaybackRates() { return [0.5, 1, 1.5, 2]; }
+        getPlaybackRate() { return this.rate; }
+        getOptions() { return []; }
+        setPlaybackRate(rate) {
+          window.__videoLayoutRateRequests.push(rate);
+          const confirm = () => { this.rate = rate; this.config.events?.onPlaybackRateChange?.({ target: this, data: rate }); };
+          if (window.__videoLayoutHoldRateChange) window.__videoLayoutConfirmRate = confirm;
+          else setTimeout(confirm, 20);
+        }
         loadVideoById(id) { this.id = id; const url = new URL(this.frame.src); url.pathname = `/embed/${id}`; this.frame.src = url.href; }
         playVideo() { this.state = 1; }
         pauseVideo() { this.state = 2; }
-        mute() {} unMute() {} seekTo() {} destroy() { this.frame.remove(); }
+        mute() {} unMute() {} seekTo() {} destroy() { window.__videoLayoutPlayers.delete(this); this.frame.remove(); }
       } };
     });
     await page.route('https://www.youtube.com/embed/**', async route => {
@@ -54,7 +73,9 @@ try {
     });
     await page.route('https://player.vimeo.com/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><button>Vimeo controls</button>' }));
     await page.route('https://vimeo.com/api/oembed.json?*', route => route.fulfill({ json: { duration: 3, thumbnail_url: null } }));
-    await page.route('https://media.example.invalid/**', route => route.fulfill({ status: 404, body: '' }));
+    await page.route('https://media.example.invalid/**', route => route.request().url() === avatarUrl
+      ? route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80" fill="#315299"/></svg>' })
+      : route.fulfill({ status: 404, body: '' }));
     let posts = [];
     const feedRequests = [];
     await page.route(/\/api\/office\/feed\/(?:videos|music)(?:\/following)?\?/, route => {
@@ -68,6 +89,88 @@ try {
       await auditNavigate(page, origin + 'saved');
       await page.locator('.video-feed-view').waitFor({ state: 'detached' });
       await auditNavigate(page, origin + surface);
+    };
+    const assertInViewport = async (locator, message) => {
+      assert.ok(await locator.evaluate(element => {
+        const rect = element.getBoundingClientRect();
+        return rect.x >= 0 && rect.y >= 0 && rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1;
+      }), message);
+    };
+    const checkFullScreen = async slide => {
+      const routeBefore = page.url();
+      const more = slide.getByRole('button', { name: 'More options', exact: true });
+      await more.click();
+      await page.getByRole('menuitem', { name: 'Full screen', exact: true }).click();
+      await page.waitForFunction(() => document.fullscreenElement === document.documentElement);
+      assert.ok(await slide.getByRole('group', { name: 'Playback controls', exact: true }).isVisible());
+      await more.click();
+      await assertInViewport(page.getByRole('menu'), 'The menu remains reachable in full screen');
+      await page.getByRole('menuitem', { name: 'Exit full screen', exact: true }).click();
+      await page.waitForFunction(() => !document.fullscreenElement);
+      assert.equal(page.url(), routeBefore, 'Exiting full screen keeps the feed route');
+      await more.click();
+      await page.getByRole('menuitem', { name: 'Full screen', exact: true }).click();
+      await page.waitForFunction(() => document.fullscreenElement === document.documentElement);
+      await page.keyboard.press('Escape');
+      assert.equal(page.url(), routeBefore, 'Escape in full screen does not navigate away from the video');
+      // Some headless browsers leave native full-screen dismissal to browser
+      // chrome; explicitly exit any remaining session before the next check.
+      await page.evaluate(async () => { if (document.fullscreenElement) await document.exitFullscreen(); });
+      await page.waitForFunction(() => !document.fullscreenElement);
+    };
+    const checkPostActions = async (slide, profileHref) => {
+      const actions = slide.getByRole('group', { name: 'Post actions', exact: true });
+      assert.ok(await actions.isVisible());
+      assert.ok(await actions.locator('.post-chrome-like').isVisible(), 'Likes stay visible');
+      assert.ok(await actions.getByRole('button', { name: /^Comments/ }).isVisible(), 'Comments stay visible');
+      assert.ok(await actions.getByRole('button', { name: 'Save post', exact: true }).isVisible(), 'Save stays visible');
+      assert.equal(await slide.locator('input[type="range"], .video-feed-action-rail, .video-feed-scrubber, .video-feed-progress').count(), 0,
+        'App playback rails and scrubbers are absent');
+      const playback = slide.getByRole('group', { name: 'Playback controls', exact: true });
+      assert.ok(await playback.isVisible(), 'Core playback commands stay visible');
+      assert.equal(await playback.getByRole('button', { name: /^(?:Play|Pause) video$/ }).count(), 1);
+      assert.equal(await playback.getByRole('button', { name: /^(?:Mute|Unmute) video$/ }).count(), 1);
+      const original = actions.getByRole('link', { name: 'View original post', exact: true });
+      const more = actions.getByRole('button', { name: 'More options', exact: true });
+      assert.ok(await original.isVisible() && await more.isVisible());
+      const order = await actions.evaluate(element => {
+        const original = element.querySelector('.post-chrome-source-link');
+        const more = element.querySelector('.post-chrome-more');
+        const sourceBounds = original.getBoundingClientRect(), moreBounds = more.getBoundingClientRect();
+        return { adjacent: original.nextElementSibling === more, last: element.lastElementChild === more,
+          sourceRight: sourceBounds.right, menuLeft: moreBounds.left };
+      });
+      assert.ok(order.adjacent && order.last && order.sourceRight <= order.menuLeft + 1,
+        'The original-source link is immediately before the rightmost menu');
+      assert.equal(await slide.locator('.post-chrome-identity').getAttribute('href'), profileHref,
+        'The author name links to its real source profile');
+      const routeBefore = page.url();
+      const scrollBefore = await page.locator('[data-video-feed-scroll]').evaluate(el => el.scrollTop);
+      await more.click();
+      const menu = page.getByRole('menu');
+      await menu.waitFor({ state: 'visible' });
+      assert.equal(await menu.evaluate(el => el.parentElement === document.body), true,
+        'The menu escapes the caption scroll container');
+      await assertInViewport(menu, 'The complete menu stays inside the viewport');
+      assert.equal(await menu.getByRole('menuitem', { name: 'Full screen', exact: true }).count(), 1,
+        'Full screen is available from the source menu');
+      assert.equal(await menu.getByRole('menuitem', { name: /^(?:Play|Pause|Mute|Unmute) video$/ }).count(), 0,
+        'The source menu does not duplicate visible playback controls');
+      await page.keyboard.press('Escape');
+      await menu.waitFor({ state: 'detached' });
+      assert.equal(page.url(), routeBefore, 'Escape closes the menu without leaving the video route');
+      assert.equal(await more.evaluate(el => document.activeElement === el), true, 'Escape restores menu-button focus');
+      assert.equal(await page.locator('[data-video-feed-scroll]').evaluate(el => el.scrollTop), scrollBefore,
+        'Menu dismissal does not advance the video');
+      const photo = slide.getByRole('button', { name: /profile photo$/ });
+      await photo.click();
+      const viewer = page.getByRole('dialog', { name: /profile photo$/ });
+      await viewer.waitFor();
+      assert.equal(await viewer.locator('img').getAttribute('src'), avatarUrl);
+      assert.equal(await viewer.getByRole('link', { name: 'Go to profile', exact: true }).getAttribute('href'), profileHref);
+      await page.keyboard.press('Escape');
+      await viewer.waitFor({ state: 'detached' });
+      assert.equal(page.url(), routeBefore, 'Escape dismisses the photo without leaving the video route');
     };
     for (const surface of ['videos', 'music']) {
       await visit(surface, [post('below-five', { videoDurationSeconds: 4.99 }), post('unsupported', { mediaUrl: 'https://example.com/article' }), post('exactly-five', { videoDurationSeconds: 5 })]);
@@ -91,6 +194,9 @@ try {
         && rectangles.media.bottom > rectangles.actions.top + 1;
       assert.equal(mediaOverlapsActions, false, 'Commands stay outside the full video frame');
       assert.equal(rectangles.fit, 'contain', 'Native video preserves the full frame');
+      assert.equal(await accepted.locator('video').evaluate(video => video.controls), true, 'Native player controls remain enabled');
+      await checkPostActions(accepted, 'https://www.reddit.com/user/audit_creator/');
+      if (width === 1440) await checkFullScreen(accepted);
       assert.equal(await page.getByRole('button', { name: /^(Previous|Next) video$/ }).count(), 0);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     }
@@ -122,6 +228,51 @@ try {
     assert.equal(await frame.evaluate(element => document.activeElement === element), true, 'Keyboard users can focus the provider frame');
     const youtubePost = page.locator('[data-post-id="youtube-long"]');
     await youtubePost.locator('[data-video-actions]').waitFor({ state: 'visible' });
+    await checkPostActions(youtubePost, `https://www.youtube.com/channel/${channelId}`);
+    if (width === 1440) await checkFullScreen(youtubePost);
+    const checkYouTubeSettings = async () => {
+      const routeBefore = page.url();
+      const more = youtubePost.getByRole('button', { name: 'More options', exact: true });
+      await more.click();
+      await assertInViewport(page.getByRole('menu'), 'YouTube options fit the viewport');
+      await page.getByRole('menuitem', { name: /^YouTube settings\b/ }).click();
+      const dialog = page.getByRole('dialog', { name: 'YouTube settings', exact: true });
+      await dialog.waitFor({ state: 'visible' });
+      await assertInViewport(dialog, 'YouTube settings fit the viewport');
+      const speeds = dialog.getByRole('radiogroup', { name: 'Playback speed', exact: true });
+      assert.deepEqual(await speeds.getByRole('radio').allTextContents(), ['0.5×', '1×', '1.5×', '2×'],
+        'Only playback rates exposed by the actual player are offered');
+      const rateBefore = await page.evaluate(() => [...window.__videoLayoutPlayers].find(player => player.id === 'long0000001').getPlaybackRate());
+      const nextRate = rateBefore === 1.5 ? 2 : 1.5;
+      const nextControl = speeds.getByRole('radio', { name: `${nextRate}×`, exact: true });
+      await page.evaluate(() => { window.__videoLayoutHoldRateChange = true; window.__videoLayoutRateRequests = []; });
+      await nextControl.click();
+      await page.waitForFunction(rate => window.__videoLayoutRateRequests.at(-1) === rate, nextRate);
+      assert.equal(await nextControl.getAttribute('aria-checked'), 'false', 'An unconfirmed rate request does not change the selected setting');
+      assert.equal(await speeds.getByRole('radio', { name: `${rateBefore}×`, exact: true }).getAttribute('aria-checked'), 'true');
+      await page.evaluate(() => { window.__videoLayoutConfirmRate(); window.__videoLayoutHoldRateChange = false; });
+      await page.waitForFunction(rate => document.querySelector(`[role="radio"][aria-label="${rate}×"]`)?.getAttribute('aria-checked') === 'true'
+        || [...document.querySelectorAll('[role="radio"]')].some(el => el.textContent.trim() === `${rate}×` && el.getAttribute('aria-checked') === 'true'), nextRate);
+      assert.equal(await nextControl.getAttribute('aria-checked'), 'true', 'The setting updates after the provider confirms the rate');
+      await dialog.getByRole('button', { name: 'Use YouTube player controls', exact: true }).click();
+      await dialog.waitFor({ state: 'detached' });
+      await page.waitForFunction(() => document.activeElement === document.querySelector('.video-feed-youtube-player iframe'));
+      assert.equal(await frame.evaluate(el => document.activeElement === el), true, 'Quality and captions hand off to the official player controls');
+      await providerFrame.getByRole('button', { name: 'Provider controls' }).click();
+      await more.click();
+      await page.getByRole('menuitem', { name: /^YouTube settings\b/ }).click();
+      await dialog.waitFor({ state: 'visible' });
+      await page.keyboard.press('Escape');
+      await dialog.waitFor({ state: 'detached' });
+      assert.equal(page.url(), routeBefore, 'Escape closes YouTube settings without leaving the feed');
+      assert.equal(await more.evaluate(el => document.activeElement === el), true, 'Settings dismissal restores the menu trigger');
+    };
+    await checkYouTubeSettings();
+    if (width === 390) {
+      await page.setViewportSize({ width: 844, height: 390 });
+      await checkYouTubeSettings();
+      await page.setViewportSize({ width, height: 850 });
+    }
     await page.waitForFunction(() => {
       const frame = document.querySelector('.video-feed-youtube-player iframe')?.getBoundingClientRect();
       const media = document.querySelector('[data-post-id="youtube-long"] [data-video-media]')?.getBoundingClientRect();
@@ -203,7 +354,10 @@ try {
       }
     }
     assert.deepEqual(errors, []);
-    console.log(`PASS: permanent playback controls, full media, 5-second boundary, metadata filtering, cross-origin wheel/touch browsing in Videos + Music, one persistent interactive iframe, fresh-batch refresh at ${width}px`);
+    console.log(`PASS: visible playback and engagement, full screen, confirmed YouTube speed, official controls, source menus and profile/photos, portrait/landscape bounds, full media, 5-second boundary, metadata filtering, cross-origin wheel/touch browsing in Videos + Music, one persistent interactive iframe, fresh-batch refresh at ${width}px`);
     await context.close();
   }
 } finally { await browser?.close(); await server.close(); await app.close(); }
+
+// Settings races run after the layout browser and server have closed.
+await import('./audit-video-settings.mjs');
