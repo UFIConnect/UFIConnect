@@ -9,9 +9,13 @@ const B = 'b0000000-0000-4000-8000-000000000002';
 function deferred() { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; }
 async function database(t) {
   const pg = new PGlite(); t.after(() => pg.close());
-  await pg.exec(`CREATE TABLE users(id UUID PRIMARY KEY,name TEXT,email TEXT,plan TEXT DEFAULT 'free',auth_version INTEGER DEFAULT 0,billing_closed BOOLEAN DEFAULT false);
+  await pg.exec(`CREATE TABLE users(id UUID PRIMARY KEY,name TEXT,email TEXT,plan TEXT DEFAULT 'free',auth_version INTEGER DEFAULT 0,billing_closed BOOLEAN DEFAULT false,
+    profile_hidden BOOLEAN DEFAULT false,role_settings JSONB DEFAULT '{}');
     CREATE TABLE direct_messages(id TEXT PRIMARY KEY,conversation_id TEXT,sender_id TEXT,receiver_id TEXT,content TEXT,attachment JSONB,read BOOLEAN,created_at TIMESTAMPTZ);
     CREATE TABLE notifications(id TEXT PRIMARY KEY,user_id TEXT,type TEXT,actor_id TEXT,target_type TEXT,target_id TEXT,preview TEXT);
+    CREATE TABLE blocks(blocker_id TEXT,blocked_id TEXT);
+    CREATE TABLE connections(from_id TEXT,to_id TEXT,status TEXT);
+    CREATE TABLE follows(follower_id TEXT,following_id TEXT);
     CREATE TABLE attachments(id TEXT PRIMARY KEY,user_id TEXT,is_primary BOOLEAN)`);
   await pg.query("INSERT INTO users(id,name,email) VALUES($1,'Alice','alice@example.invalid'),($2,'Bob','bob@example.invalid')", [A,B]);
   return pg;

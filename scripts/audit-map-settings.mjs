@@ -40,7 +40,9 @@ const server = await createServer({
 let browser;
 try {
   await server.listen();
-  browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
+  const forceSoftwareGpu = process.argv.includes('--software-gpu');
+  browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined,
+    ...(forceSoftwareGpu ? { args: ['--use-angle=swiftshader'] } : {}) });
   for (const width of [1440, 390]) {
     // This audit exercises settings and real pointer clicks. Pause through the
     // supported preference, verify the desktop Maximum default, then use the
@@ -101,6 +103,29 @@ try {
       assert.ok(await page.locator('.map-post-feed > article, .map-post-feed > .card').count() > 0, 'Map posts use the full feed card');
 
       const renderingQuality = page.getByRole('combobox', { name: 'Rendering quality', exact: true });
+      const useAutomaticRendering = async () => {
+        if (await renderingQuality.inputValue() !== 'auto') await renderingQuality.selectOption('auto');
+        await page.waitForFunction(() => Number(document.querySelector('.map-city-scene canvas')?.dataset.instances) > 3000,
+          undefined, { timeout: 30000 });
+        const gpu = await page.locator('.map-city-scene canvas').evaluate(canvas => {
+          const context = canvas.getContext('webgl2'), debug = context?.getExtension('WEBGL_debug_renderer_info');
+          return { renderer: context ? String(context.getParameter(debug ? debug.UNMASKED_RENDERER_WEBGL : context.RENDERER)) : '', instances: Number(canvas.dataset.instances) };
+        });
+        const software = /swiftshader|llvmpipe|softpipe|software|microsoft basic render/i.test(gpu.renderer);
+        if (forceSoftwareGpu) assert.ok(software, 'The requested software-GPU reproduction must use a software renderer');
+        console.log('MAP_AUTOMATIC_GPU ' + JSON.stringify({ width, ...gpu, software }));
+        if (!software) return;
+        // Automatic samples a 12-frame/one-second window before adapting. A
+        // paused software renderer never completes that window, so briefly play
+        // through its real controls, observe the measured tier, then pause.
+        await page.getByRole('button', { name: 'Play animation', exact: true }).click();
+        await page.waitForFunction(() => ['balanced', 'basic'].includes(document.querySelector('.map-city-scene canvas')?.dataset.renderQuality),
+          undefined, { timeout: 30000 });
+        await page.getByRole('button', { name: 'Pause animation', exact: true }).click();
+        const adaptive = await page.locator('.map-city-scene canvas').evaluate(canvas => ({ ...canvas.dataset }));
+        assert.equal(Number(adaptive.instances), gpu.instances, 'Adaptive software rendering preserves the full instanced city model');
+        console.log('MAP_AUTOMATIC_READY ' + JSON.stringify({ width, ...adaptive }));
+      };
       if (width === 1440) {
         assert.equal(await renderingQuality.inputValue(), 'maximum', 'Desktop opens at Maximum detail');
         await page.waitForFunction(() => {
@@ -110,8 +135,8 @@ try {
         const maximum = await page.locator('.map-city-scene canvas').evaluate(canvas => ({ ...canvas.dataset }));
         assert.ok(Number(maximum.drawCalls) < 80, 'Maximum city geometry remains instanced');
         console.log('MAP_MAXIMUM_RENDERING ' + JSON.stringify(maximum));
-        await renderingQuality.selectOption('auto');
       }
+      await useAutomaticRendering();
 
       let tools = await openTools();
       const sourcePages = tools.getByRole('navigation', { name: 'Source option pages' });
@@ -245,8 +270,8 @@ try {
       assert.deepEqual((await state()).topicSelections['community:city'], ['Community']);
       if (width === 1440) {
         assert.equal(await renderingQuality.inputValue(), 'maximum', 'Reload preserves the desktop Maximum default');
-        await renderingQuality.selectOption('auto');
       }
+      await useAutomaticRendering();
 
       tools = await openTools('Topics');
       await tools.getByRole('button', { name: 'Clear topics', exact: true }).click();

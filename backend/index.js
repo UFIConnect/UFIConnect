@@ -22,6 +22,12 @@ const { OFFICE_MEMBERS_SCHEMA, registerOfficeMemberRoutes } = require('./office-
 const { SIGNIN_SCHEMA, registerSignInRoutes, isDeliverableEmail } = require('./auth-signin');
 const { SNAP_SCHEMA, createSnaps, registerSnapRoutes } = require('./snaps');
 const { createSnapMedia } = require('./snap-media');
+const { createSessionCookie, readSessionCookie, isPrivateRequest,
+  privateConnectionResponse, webConnectionStatus } = require('./web-connection-security');
+const { validateResumeUpload, extractResumeText: extractValidatedResumeText, MAX_RESUME_BYTES } = require('./resume-import');
+const { createMessageMedia, publicMessage, registerMessageAttachmentRoutes, MESSAGE_MEDIA_SCHEMA } = require('./messaging-security');
+const { createMessageAccess } = require('./message-access');
+const { createSourceImageDownloader } = require('./source-image-download');
 const { CREATOR_ANALYTICS_SCHEMA, createCreatorAnalytics, registerCreatorAnalyticsRoutes } = require('./creator-analytics');
 const { createUfiVault, registerUfiVaultRoutes, UFI_VAULT_SCHEMA } = require('./ufi-vault');
 const { createOfficeAgentChat, sanitizeSnapshot: sanitizeAgentSnapshot } = require('./office-agent-chat');
@@ -95,6 +101,7 @@ const {
 dotenv.config();
 const tokenVault = createTokenVault(process.env);
 const snapMedia = createSnapMedia({ env: process.env });
+const messageMedia = createMessageMedia({ env: process.env });
 const snaps = createSnaps({ db, getUser, screenMemberContent,
   validateUpload: (userId, body) => snapMedia.validate(userId, body),
   removeMedia: (publicId, mediaType) => snapMedia.remove(publicId, mediaType),
@@ -366,9 +373,17 @@ app.use('/analytics', analyticsRouter);
 app.use('/office/agents/:id/chat', (_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); },
   requireOfficeToken, express.json({ limit: '8kb', strict: true }),
   (error, _req, res, _next) => res.status(error.status === 413 ? 413 : 400).json({ error: 'Invalid agent chat request.' }));
+app.use(privateConnectionResponse);
 app.use(express.json({ limit: '512kb' }));
+app.use((error, _req, res, next) => {
+  if (!['entity.parse.failed', 'entity.too.large'].includes(error.type)) return next(error);
+  const status = error.type === 'entity.too.large' ? 413 : 400;
+  return res.status(status).set('Cache-Control', 'no-store').json({
+    message: status === 413 ? 'This request is too large.' : 'Invalid JSON request.',
+  });
+});
 app.use((req, res, next) => {
-  if (req.headers.authorization || req.path.startsWith('/auth/') || req.path.startsWith('/profile')) {
+  if (isPrivateRequest(req)) {
     res.set('Cache-Control', 'no-store');
     res.set('Pragma', 'no-cache');
     if (!securityStorageReady) return res.status(503).json({ message: 'Account security storage is initializing. Please try again shortly.' });
@@ -15910,6 +15925,7 @@ function isAllowedDownloadUrl(url) {
     return CONTENT_DOWNLOAD_HOST_ALLOWLIST.includes(hostname);
   } catch { return false; }
 }
+const downloadSourceImage = createSourceImageDownloader({ isAllowedUrl: isAllowedDownloadUrl });
 
 // Background refresh for FOLLOWING_SOURCE_FETCHERS, on the same 5-minute
 // rate SOURCE_CONFIG uses for the app-level continuous workers. There's no
@@ -16818,19 +16834,13 @@ async function issueSession(user) {
   return signSecurityToken({ id: user.id, sid, ver: user.authVersion || 0, purpose: 'session' }, JWT_SECRET, SESSION_TTL_SECONDS);
 }
 
-const SESSION_COOKIE_NAME = 'ufi_session';
 function sessionCookie(token, maxAge = SESSION_TTL_SECONDS) {
-  const parts = [`${SESSION_COOKIE_NAME}=${encodeURIComponent(token || '')}`, 'Path=/', 'HttpOnly', 'SameSite=Lax', `Max-Age=${Math.max(0, maxAge)}`];
-  if (process.env.NODE_ENV === 'production') parts.push('Secure');
-  return parts.join('; ');
+  return createSessionCookie(token, maxAge, process.env);
 }
 function setSessionCookie(res, token) { res.setHeader('Set-Cookie', sessionCookie(token)); }
 function clearSessionCookie(res) { res.setHeader('Set-Cookie', sessionCookie('', 0)); }
 function cookieSessionToken(req) {
-  const raw = typeof req.headers.cookie === 'string' ? req.headers.cookie : '';
-  const pair = raw.split(';').map(value => value.trim()).find(value => value.startsWith(`${SESSION_COOKIE_NAME}=`));
-  if (!pair) return null;
-  try { return decodeURIComponent(pair.slice(SESSION_COOKIE_NAME.length + 1)); } catch { return null; }
+  return readSessionCookie(req, process.env);
 }
 function cookieOriginAllowed(req) {
   if (process.env.NODE_ENV !== 'production') return true;
@@ -17678,6 +17688,7 @@ async function migrateDB() {
     for (const statement of ANALYTICS_MIGRATIONS) await db.query(statement);
     for (const statement of OFFICE_MEMBERS_SCHEMA) await db.query(statement);
     for (const statement of SNAP_SCHEMA) await db.query(statement);
+    for (const statement of MESSAGE_MEDIA_SCHEMA) await db.query(statement);
     for (const statement of CREATOR_ANALYTICS_SCHEMA) await db.query(statement);
     await db.query(COPYRIGHT_REPORT_BRIDGE_SCHEMA);
     for (const statement of UFI_VAULT_SCHEMA) await db.query(statement);
@@ -20106,6 +20117,9 @@ async function authenticateOptional(req, res, next) {
   if (!authHeader && !cookieToken) return next();
   const token = authHeader ? /^Bearer ([^\s]+)$/i.exec(authHeader)?.[1] : cookieToken;
   if (!token) return next();
+  if (cookieToken && !['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !cookieOriginAllowed(req)) {
+    return res.status(403).json({ message: 'Session origin is not allowed.' });
+  }
   try {
     req.user = await resolveSession(token);
     req.authToken = token;
@@ -20311,6 +20325,10 @@ app.get('/auth/config', (_req, res) => {
       issuer: auth0Enabled ? AUTH0_ISSUER : '',
     },
   });
+});
+
+app.get('/security/web-connection', authenticate, (req, res) => {
+  res.set('Cache-Control', 'private, no-store').json(webConnectionStatus(req));
 });
 
 app.get('/auth/me', authenticate, async (req, res) => {
@@ -28085,30 +28103,11 @@ require('./native-post-management').registerNativePostManagement(app, {
 // a normal multipart upload instead of a direct-to-Cloudinary handoff.
 const attachmentUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 8 * 1024 * 1024 }, // 8MB — generous for any real resume/CV
+  limits: { fileSize: MAX_RESUME_BYTES, files: 1, fields: 0, parts: 2 },
 });
 
 async function extractResumeText(buffer, filename) {
-  const ext = (filename.split('.').pop() || '').toLowerCase();
-  try {
-    if (ext === 'pdf') {
-      const { PDFParse } = require('pdf-parse');
-      const parser = new PDFParse({ data: buffer });
-      const result = await parser.getText();
-      return result?.text || '';
-    }
-    if (ext === 'docx') {
-      const mammoth = require('mammoth');
-      const result = await mammoth.extractRawText({ buffer });
-      return result?.value || '';
-    }
-    if (ext === 'txt') {
-      return buffer.toString('utf8');
-    }
-  } catch (e) {
-    console.warn(`extractResumeText (${filename}):`, e.message);
-  }
-  return '';
+  return extractValidatedResumeText(buffer, filename);
 }
 
 // Common resume/job-posting vocabulary — tech stack, tools, and general
@@ -28236,7 +28235,12 @@ async function withAttachmentTransaction(userId, work) {
   return withActiveMembers(db, [userId], work);
 }
 
-app.post('/profile/attachments', authenticate, (req, res) => {
+const resumeImportLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 30,
+  standardHeaders: true, legacyHeaders: false,
+  keyGenerator: req => req.user?.id || rateLimitKey(req),
+  message: { message: 'Please wait before importing more documents.' },
+});
+app.post('/profile/attachments', authenticate, resumeImportLimiter, (req, res) => {
   attachmentUpload.single('file')(req, res, async (err) => {
     if (err) {
       const tooLarge = err.code === 'LIMIT_FILE_SIZE';
@@ -28244,11 +28248,8 @@ app.post('/profile/attachments', authenticate, (req, res) => {
     }
     try {
       if (!req.file) return res.status(400).json({ message: 'No file uploaded.' });
-      const { originalname, mimetype, size, buffer } = req.file;
-      const ext = (originalname.split('.').pop() || '').toLowerCase();
-      if (!['pdf', 'docx', 'txt'].includes(ext)) {
-        return res.status(400).json({ message: 'Only PDF, DOCX, and TXT files are supported.' });
-      }
+      const { filename: originalname, mimeType: mimetype } = validateResumeUpload(req.file);
+      const { size, buffer } = req.file;
       if (!db.isConnected()) return res.status(503).json({ message: 'File storage is not available right now.' });
 
       const text = await extractResumeText(buffer, originalname);
@@ -28274,8 +28275,9 @@ app.post('/profile/attachments', authenticate, (req, res) => {
         atsScore: score, atsChecks: checks, keywords, createdAt, isPrimary: true,
       });
     } catch (e) {
-      console.error('POST /profile/attachments:', e.message);
-      res.status(500).json({ message: 'Failed to process the file. Please try again.' });
+      const status = [400, 413].includes(e.status) ? e.status : 500;
+      if (status === 500) console.error('POST /profile/attachments: processing failed');
+      res.status(status).json({ message: status === 500 ? 'Failed to process the file. Please try again.' : e.message });
     }
   });
 });
@@ -28325,7 +28327,8 @@ app.get('/profile/attachments/:id/download', authenticate, async (req, res) => {
     );
     if (!rows.length) return res.status(404).json({ message: 'Not found.' });
     const row = rows[0];
-    res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(row.filename)}"`);
     res.send(row.file_data);
   } catch (e) { console.error('GET /profile/attachments/:id/download:', e.message); res.status(500).end(); }
@@ -28394,7 +28397,16 @@ const UPLOAD_FOLDERS = {
   covers:   'uficonnect-covers',
   messages: 'uficonnect-messages',
 };
-app.get('/media/upload-signature', authenticate, (req, res) => {
+app.get('/media/upload-signature', authenticate, contentSubmissionLimiter, async (req, res) => {
+  if (req.query.folder === 'messages') {
+    try {
+      const signature = messageMedia.signature(req.user.id);
+      await messageMedia.recordUploadIntent(db, req.user.id, signature);
+      return res.json(signature);
+    } catch (error) {
+      return res.status(error.status || 503).json({ message: error.status ? error.message : 'Message uploads are temporarily unavailable.' });
+    }
+  }
   if (req.query.folder === 'snaps') {
     try { return res.json(snapMedia.signature(req.user.id)); }
     catch (error) { return res.status(error.status || 503).json({ message: error.message }); }
@@ -28957,7 +28969,7 @@ app.post('/users/:id/block', authenticate, async (req, res) => {
     const blockerId = req.user.id;
     const blockedId = req.params.id;
     if (blockerId === blockedId) return res.status(400).json({ message: "Can't block yourself." });
-    if (!(await getUser(blockedId))) return res.status(404).json({ message: 'User not found.' });
+    if (!(await getPublicTargetUser(blockedId))) return res.status(404).json({ message: 'User not found.' });
     // Blocking is safety-relevant — a block that "works" in-memory but isn't
     // durable would silently lift after the next restart, re-exposing the
     // blocker to someone they explicitly blocked. Bail before mutating
@@ -28966,42 +28978,39 @@ app.post('/users/:id/block', authenticate, async (req, res) => {
       return res.status(503).json({ message: 'Blocking is temporarily unavailable — please try again in a moment.' });
     }
 
-    if (!blocks.find(b => b.blockerId === blockerId && b.blockedId === blockedId)) {
-      const id = `block_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-      blocks.push({ id, blockerId, blockedId, createdAt: new Date().toISOString() });
-      await db.query(
+    const id = `block_${crypto.randomUUID()}`;
+    await withActiveMembers(db, [blockerId, blockedId], async client => {
+      await client.query(
         `INSERT INTO blocks (id, blocker_id, blocked_id) VALUES ($1,$2,$3) ON CONFLICT (blocker_id, blocked_id) DO NOTHING`,
         [id, blockerId, blockedId]
       );
+      await client.query(`DELETE FROM follows WHERE (follower_id=$1 AND following_id=$2) OR (follower_id=$2 AND following_id=$1)`, [blockerId, blockedId]);
+      await client.query(`DELETE FROM connections WHERE (from_id=$1 AND to_id=$2) OR (from_id=$2 AND to_id=$1)`, [blockerId, blockedId]);
+    });
+    if (!blocks.find(b => b.blockerId === blockerId && b.blockedId === blockedId)) {
+      blocks.push({ id, blockerId, blockedId, createdAt: new Date().toISOString() });
     }
 
     follows = follows.filter(f =>
       !((f.followerId === blockerId && f.followingId === blockedId) ||
         (f.followerId === blockedId && f.followingId === blockerId)));
-    const removedConn = connections.find(c =>
-      (c.fromId === blockerId && c.toId === blockedId) || (c.fromId === blockedId && c.toId === blockerId));
-    connections = connections.filter(c => c !== removedConn);
-    await db.query(`DELETE FROM follows WHERE (follower_id=$1 AND following_id=$2) OR (follower_id=$2 AND following_id=$1)`, [blockerId, blockedId]);
-    if (removedConn) await db.query(`DELETE FROM connections WHERE id=$1`, [removedConn.id]);
+    connections = connections.filter(c => !((c.fromId === blockerId && c.toId === blockedId) || (c.fromId === blockedId && c.toId === blockerId)));
 
     res.json({ ok: true, blocked: true });
-  } catch (e) { console.error('POST /users/:id/block:', e); res.status(500).json({ error: 'Internal server error' }); }
+  } catch (e) { console.error('POST /users/:id/block: request failed', e.status || 500); res.status([404, 503].includes(e.status) ? e.status : 503).json({ message: e.status ? e.message : 'Blocking is temporarily unavailable. Please try again.' }); }
 });
 
 app.delete('/users/:id/block', authenticate, async (req, res) => {
   try {
     const blockerId = req.user.id;
     const blockedId = req.params.id;
-    const idx = blocks.findIndex(b => b.blockerId === blockerId && b.blockedId === blockedId);
-    if (idx >= 0) {
-      if (!db.isConnected()) {
-        return res.status(503).json({ message: 'Unblocking is temporarily unavailable — please try again in a moment.' });
-      }
-      blocks.splice(idx, 1);
-      await db.query(`DELETE FROM blocks WHERE blocker_id=$1 AND blocked_id=$2`, [blockerId, blockedId]);
+    if (!db.isConnected()) {
+      return res.status(503).json({ message: 'Unblocking is temporarily unavailable — please try again in a moment.' });
     }
+    await withActiveMembers(db, [blockerId], client => client.query(`DELETE FROM blocks WHERE blocker_id=$1 AND blocked_id=$2`, [blockerId, blockedId]));
+    blocks = blocks.filter(block => block.blockerId !== blockerId || block.blockedId !== blockedId);
     res.json({ ok: true, blocked: false });
-  } catch (e) { console.error('DELETE /users/:id/block:', e); res.status(500).json({ error: 'Internal server error' }); }
+  } catch (e) { console.error('DELETE /users/:id/block: request failed', e.status || 500); res.status([404, 503].includes(e.status) ? e.status : 503).json({ message: e.status ? e.message : 'Unblocking is temporarily unavailable. Please try again.' }); }
 });
 
 app.get('/users/blocked', authenticate, async (req, res) => {
@@ -32267,13 +32276,21 @@ app.get('/command-center/your-content/download', authenticate, async (req, res) 
   }
   const url = String(req.query.url || '');
   if (!isAllowedDownloadUrl(url)) return res.status(400).json({ message: 'That URL cannot be downloaded.' });
-  https.get(url, (upstream) => {
-    if (upstream.statusCode >= 400) { res.status(502).json({ message: 'Could not fetch that file.' }); return; }
-    const ext = (upstream.headers['content-type'] || '').includes('png') ? 'png' : 'jpg';
-    res.setHeader('Content-Type', upstream.headers['content-type'] || 'application/octet-stream');
-    res.setHeader('Content-Disposition', `attachment; filename="content.${ext}"`);
-    upstream.pipe(res);
-  }).on('error', () => res.status(502).json({ message: 'Could not fetch that file.' }));
+  const controller = new AbortController();
+  const abortDownload = () => { if (!res.writableEnded) controller.abort(); };
+  res.once('close', abortDownload);
+  try {
+    const image = await downloadSourceImage(url, { signal: controller.signal });
+    if (controller.signal.aborted || res.destroyed) return;
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Disposition', `attachment; filename="content.${image.extension}"`);
+    res.send(image.body);
+  } catch (error) {
+    if (!controller.signal.aborted && !res.destroyed) {
+      res.status([400, 413, 504].includes(error.status) ? error.status : 502).json({ message: error.message });
+    }
+  } finally { res.removeListener('close', abortDownload); }
 });
 
 // --- Command Center: cross-post --------------------------------------------
@@ -33147,24 +33164,48 @@ async function getDirectMessagesFromDB(userId, otherId) {
     const conversationId = directConversationId(userId, otherId);
     const { rows } = await db.query(
       `SELECT * FROM direct_messages
-       WHERE conversation_id=$1
+       WHERE conversation_id=$1 AND ((sender_id=$2 AND receiver_id=$3) OR (sender_id=$3 AND receiver_id=$2))
        ORDER BY created_at ASC
        LIMIT 500`,
-      [conversationId]
+      [conversationId, userId, otherId]
     );
     await db.query(
       `UPDATE direct_messages SET read=true
-       WHERE conversation_id=$1 AND receiver_id=$2`,
-      [conversationId, userId]
+       WHERE conversation_id=$1 AND receiver_id=$2 AND sender_id=$3`,
+      [conversationId, userId, otherId]
     );
     return rows.map(dbDirectMessageToApi);
   } catch (e) {
-    console.error('direct messages DB:', e.message);
-    return [];
+    console.error('direct messages DB: request failed');
+    throw Object.assign(new Error('Messages are temporarily unavailable. Please try again.'), { status: 503 });
   }
 }
 
-app.get('/messages', authenticate, async (req, res) => {
+const messageAccess = createMessageAccess({ db, isDBId,
+  localRelationship: (uid, otherId) => ({
+    blocked: isBlockedEitherWay(uid, otherId),
+    connected: getConnectionStatus(uid, otherId) === 'connected',
+    canViewPrivate: canViewHiddenProfile({ id: otherId }, uid),
+    existing: conversations.some(conv => conv.participants.includes(uid) && conv.participants.includes(otherId)),
+  }),
+  localBlockedIds: uid => blocks.filter(block => block.blockerId === uid || block.blockedId === uid)
+    .map(block => block.blockerId === uid ? block.blockedId : block.blockerId),
+});
+const messageAttachmentReadLimiter = rateLimit({ windowMs: 60 * 1000, limit: 60,
+  standardHeaders: true, legacyHeaders: false,
+  keyGenerator: req => req.user?.id || rateLimitKey(req),
+  message: { message: 'Please wait before loading more message attachments.' },
+});
+registerMessageAttachmentRoutes(app, { authenticate, privateResponse: inboxPrivate,
+  limiter: messageAttachmentReadLimiter, db, media: messageMedia, getTargetUser: getPublicTargetUser,
+  isBlocked: async (uid, otherId) => (await messageAccess.relationship(uid, otherId)).blocked,
+});
+if (!IS_PIPELINE_ROLE) {
+  const messageCleanupTimer = setInterval(() => { void messageMedia.cleanup(db).catch(() => {}); }, 60 * 1000);
+  messageCleanupTimer.unref?.();
+}
+
+app.get('/messages', authenticate, inboxPrivate, async (req, res) => {
   try {
     const uid = req.user.id;
     const myConvs = conversations.filter((c) => c.participants.includes(uid));
@@ -33203,18 +33244,25 @@ app.get('/messages', authenticate, async (req, res) => {
       });
     });
 
-    const merged = [...byParticipant.values()]
+    const blockedIds = await messageAccess.blockedIds(uid);
+    const merged = [...byParticipant.values()].filter(conv => conv.participant && !blockedIds.has(conv.participant.id))
       .sort((a, b) => new Date(b.lastMessage?.createdAt || 0) - new Date(a.lastMessage?.createdAt || 0));
     res.json({ conversations: merged });
-  } catch (e) { console.error('GET /messages:', e); res.status(500).json({ error: 'Internal server error' }); }
+  } catch (e) { console.error('GET /messages: request failed', e.status || 500); res.status(e.status === 503 ? 503 : 500).json({ message: e.status ? e.message : 'Messages could not be loaded.' }); }
 });
 
-app.get('/messages/:userId', authenticate, async (req, res) => {
+app.get('/messages/:userId', authenticate, inboxPrivate, async (req, res) => {
   try {
     const uid = req.user.id;
     const otherId = req.params.userId;
     const otherUser = await getPublicTargetUser(otherId);
     if (!otherUser) return res.status(404).json({ message: 'User not found.' });
+    if (uid === otherId) return res.status(400).json({ message: "You can't message yourself." });
+    const relationship = await messageAccess.relationship(uid, otherId);
+    if (relationship.blocked) return res.status(403).json({ message: 'This conversation is not available.' });
+    if (isProfileHidden(otherUser) && !relationship.canViewPrivate && !relationship.existing) {
+      return res.status(403).json({ message: 'This profile is private.' });
+    }
     let conv = conversations.find((c) => c.participants.includes(uid) && c.participants.includes(otherId));
     if (conv) conv.messages.forEach((m) => { if (m.senderId !== uid) m.read = true; });
     const dbMessages = await getDirectMessagesFromDB(uid, otherId);
@@ -33231,12 +33279,12 @@ app.get('/messages/:userId', authenticate, async (req, res) => {
     res.json({
       conversationId: conv?.id || directConversationId(uid, otherId),
       participant: sanitizeUser(otherUser),
-      messages: mergedMessages,
+      messages: mergedMessages.map(message => publicMessage(message, otherId, process.env.CLOUDINARY_CLOUD_NAME)),
     });
-  } catch (e) { console.error('GET /messages/:userId:', e); res.status(e.status === 404 ? 404 : e.status === 503 ? 503 : 500).json({ error: e.status ? e.message : 'Internal server error' }); }
+  } catch (e) { console.error('GET /messages/:userId: request failed', e.status || 500); res.status([400, 403, 404, 503].includes(e.status) ? e.status : 500).json({ message: e.status ? e.message : 'Messages could not be loaded.' }); }
 });
 
-app.post('/messages/:userId', authenticate, contentSubmissionLimiter, async (req, res) => {
+app.post('/messages/:userId', authenticate, inboxPrivate, contentSubmissionLimiter, async (req, res) => {
   try {
     const uid = req.user.id;
     const otherId = req.params.userId;
@@ -33247,15 +33295,19 @@ app.post('/messages/:userId', authenticate, contentSubmissionLimiter, async (req
     if (uid === otherId) return res.status(400).json({ message: "You can't message yourself." });
     const otherUser = await getPublicTargetUser(otherId);
     if (!otherUser) return res.status(404).json({ message: 'User not found.' });
-    if (isBlockedEitherWay(uid, otherId)) return res.status(403).json({ message: 'Unable to send messages to this user.' });
+    const relationship = await messageAccess.relationship(uid, otherId);
+    if (relationship.blocked) return res.status(403).json({ message: 'Unable to send messages to this user.' });
+    if (isProfileHidden(otherUser) && !relationship.canViewPrivate && !relationship.existing) {
+      return res.status(403).json({ message: 'This profile is private.' });
+    }
     // 'connections' restricts new conversations to accepted connections only
     // — doesn't touch an already-existing conversation, so tightening this
     // setting can't retroactively strand a chat that was fine when it started.
     if (otherUser.roleSettings?.privacy_messagePermission === 'connections'
-      && getConnectionStatus(uid, otherId) !== 'connected'
-      && !conversations.some(c => c.participants.includes(uid) && c.participants.includes(otherId))) {
+      && !relationship.connected && !relationship.existing) {
       return res.status(403).json({ message: 'This person only accepts messages from their connections.' });
     }
+    const verifiedAttachment = attachment ? await messageMedia.validate(uid, attachment) : null;
     const screening = rawContent.trim()
       ? await screenMemberContent({ content: rawContent, kind: 'message', maxLength: 2000 })
       : { allowed: true, content: '' };
@@ -33265,10 +33317,10 @@ app.post('/messages/:userId', authenticate, contentSubmissionLimiter, async (req
     }
 
     const newMsg = {
-      id: `m_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      id: `m_${crypto.randomUUID()}`,
       senderId: uid,
       content: screening.content,
-      attachment: attachment || null,
+      attachment: verifiedAttachment,
       createdAt: new Date().toISOString(),
       read: false,
     };
@@ -33287,6 +33339,21 @@ app.post('/messages/:userId', authenticate, contentSubmissionLimiter, async (req
     const conversationId = directConversationId(uid, otherId);
     const preview = newMsg.content ? truncateWithEllipsis(newMsg.content, 120) : 'Photo';
     const senderName = await withActiveMembers(db, [uid, otherId], async (client, members) => {
+      // Upload verification and screening can take time. Re-read permissions
+      // under the account locks before committing a message or notification.
+      const currentRelationship = await messageAccess.relationship(uid, otherId, client);
+      let currentTarget = otherUser;
+      if (isDBId(otherId)) {
+        const { rows: [row] } = await client.query('SELECT profile_hidden, role_settings FROM users WHERE id=$1', [otherId]);
+        if (!row) throw Object.assign(new Error('This account is unavailable.'), { status: 404 });
+        currentTarget = { profileHidden: row.profile_hidden, roleSettings: row.role_settings || {} };
+      }
+      if (currentRelationship.blocked
+        || (isProfileHidden(currentTarget) && !currentRelationship.canViewPrivate && !currentRelationship.existing)
+        || (currentTarget.roleSettings?.privacy_messagePermission === 'connections'
+          && !currentRelationship.connected && !currentRelationship.existing)) {
+        throw Object.assign(new Error('This person is not accepting this message.'), { status: 403 });
+      }
       await client.query(
         `INSERT INTO direct_messages
          (id, conversation_id, sender_id, receiver_id, content, attachment, read, created_at)
@@ -33311,10 +33378,10 @@ app.post('/messages/:userId', authenticate, contentSubmissionLimiter, async (req
     sendPushToUser(otherId, { title: senderName, body: preview, url: `/messages/${uid}` }).catch(() => {});
 
     res.json({
-      message: newMsg,
+      message: publicMessage(newMsg, otherId, process.env.CLOUDINARY_CLOUD_NAME),
       participant: sanitizeUser(otherUser),
     });
-  } catch (e) { console.error('POST /messages/:userId:', e); res.status(e.status === 404 ? 404 : e.status === 503 ? 503 : 500).json({ error: e.status ? e.message : 'Internal server error' }); }
+  } catch (e) { console.error('POST /messages/:userId: request failed', e.status || 500); res.status([400, 403, 404, 409, 413, 422, 503].includes(e.status) ? e.status : 500).json({ message: e.status ? e.message : 'This message could not be sent.' }); }
 });
 
 // --- Start --------------------------------------------------------------------

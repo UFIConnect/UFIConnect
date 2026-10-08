@@ -3,6 +3,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import useTabMetrics from '../analytics/useTabMetrics';
 import Layout from '../components/Layout';
 import client from '../api/client';
+import { useAuth } from '../contexts/AuthContext';
+import { getAccessToken, subscribeToSession } from '../auth/session';
 import { ArrowLeft, ExternalLink, RefreshCw } from 'lucide-react';
 import ConnectedInboxSources, { inboxExternalUrl, inboxSourceName } from '../components/ConnectedInboxSources';
 import './Messages.css';
@@ -34,17 +36,20 @@ function NewMessageModal({ onClose, onSelect }) {
   }, []);
 
   useEffect(() => {
+    const controller = new AbortController();
     clearTimeout(timerRef.current);
-    if (!query.trim()) { setResults([]); return; }
+    setResults([]);
+    if (!query.trim()) { setLoading(false); return () => controller.abort(); }
     timerRef.current = setTimeout(async () => {
       setLoading(true);
       try {
-        const { data } = await client.get(`/users/search?q=${encodeURIComponent(query.trim())}&limit=8`);
+        const { data } = await client.get(`/users/search?q=${encodeURIComponent(query.trim())}&limit=8`, { signal: controller.signal });
+        if (controller.signal.aborted) return;
         setResults(data.users || data.results || []);
-      } catch { setResults([]); }
-      finally { setLoading(false); }
+      } catch { if (!controller.signal.aborted) setResults([]); }
+      finally { if (!controller.signal.aborted) setLoading(false); }
     }, 300);
-    return () => clearTimeout(timerRef.current);
+    return () => { clearTimeout(timerRef.current); controller.abort(); };
   }, [query]);
 
   return (
@@ -143,6 +148,13 @@ function NewMessageModal({ onClose, onSelect }) {
 }
 
 export default function Messages({ embedded = false }) {
+  const { profile, token } = useAuth();
+  const session = useRef({ token, revision: 0 });
+  if (session.current.token !== token) session.current = { token, revision: session.current.revision + 1 };
+  return <MessagesInbox key={JSON.stringify([profile?.id, session.current.revision])} embedded={embedded} token={token} />;
+}
+
+function MessagesInbox({ embedded, token }) {
   const navigate = useNavigate();
   const [convs, setConvs] = useState([]);
   const [sources, setSources] = useState([]);
@@ -160,6 +172,7 @@ export default function Messages({ embedded = false }) {
   const request = useRef(0);
   const threadRequest = useRef(0);
   const selectedRef = useRef(null);
+  const controller = useRef(new AbortController());
 
   const loadMessages = useCallback(async () => {
     const id = ++request.current;
@@ -168,8 +181,8 @@ export default function Messages({ embedded = false }) {
     setLoading(true);
     const loadGroup = async (endpoint, origin) => {
       try {
-        const { data } = await client.get(endpoint);
-        if (id !== request.current) return;
+        const { data } = await client.get(endpoint, { signal: controller.current.signal });
+        if (id !== request.current || getAccessToken() !== token) return;
         const next = (data.conversations || []).map(conv => ({ ...conv, ...(origin === 'native' ? { source: 'ufi' } : {}), origin }));
         if (origin === 'connected') {
           setSources(data.sources || []);
@@ -184,15 +197,23 @@ export default function Messages({ embedded = false }) {
         setConvs(current => [...current.filter(conv => conv.origin !== origin), ...next]
           .sort((a, b) => (Date.parse(b.lastMessage?.createdAt) || 0) - (Date.parse(a.lastMessage?.createdAt) || 0)));
       } catch {
-        if (id !== request.current) return;
+        if (id !== request.current || getAccessToken() !== token) return;
         if (origin === 'native') setError('Could not load UFIConnect messages. Try refreshing.');
         else setSourceError('Could not refresh connected sources. Try again.');
       }
     };
     await Promise.allSettled([loadGroup('/messages', 'native'), loadGroup('/connected-inbox/messages', 'connected')]);
-    if (id === request.current) setLoading(false);
-  }, []);
-  useEffect(() => { loadMessages(); return () => { request.current += 1; threadRequest.current += 1; }; }, [loadMessages]);
+    if (id === request.current && getAccessToken() === token) setLoading(false);
+  }, [token]);
+  useEffect(() => {
+    controller.current = new AbortController();
+    const activeController = controller.current;
+    const unsubscribe = subscribeToSession(next => {
+      if (next !== token) { activeController.abort(); request.current += 1; threadRequest.current += 1; }
+    });
+    loadMessages();
+    return () => { activeController.abort(); unsubscribe(); request.current += 1; threadRequest.current += 1; };
+  }, [loadMessages, token]);
 
   useEffect(() => {
     if (!showModal) return;
@@ -203,17 +224,18 @@ export default function Messages({ embedded = false }) {
 
   async function markThreadRead(conv, requestId) {
     try {
-      const { data } = await client.post('/connected-inbox/messages/mark-read', { ids: [conv.id] });
-      if (requestId !== threadRequest.current) return;
+      const { data } = await client.post('/connected-inbox/messages/mark-read', { ids: [conv.id] }, { signal: controller.current.signal });
+      if (requestId !== threadRequest.current || getAccessToken() !== token) return;
       if (Array.isArray(data.markedIds) && !data.markedIds.includes(conv.id)) throw new Error('Read status was not saved');
       setConvs(current => current.map(item => item.id === conv.id && item.source === conv.source ? { ...item, unreadCount: 0 } : item));
       setReadError('');
       window.dispatchEvent(new Event('ufi-notifications-updated'));
     } catch {
-      if (requestId === threadRequest.current) setReadError('Could not save read status. Try opening this conversation again.');
+      if (requestId === threadRequest.current && getAccessToken() === token) setReadError('Could not save read status. Try opening this conversation again.');
     }
   }
   async function openConversation(conv) {
+    if (controller.current.signal.aborted || getAccessToken() !== token) return;
     if (conv.origin !== 'connected') { navigate(`/messages/${encodeURIComponent(conv.participant?.id || conv.id)}`); return; }
     const id = ++threadRequest.current;
     selectedRef.current = conv;
@@ -223,13 +245,13 @@ export default function Messages({ embedded = false }) {
     setReadError('');
     setThreadLoading(true);
     try {
-      const { data } = await client.get(`/connected-inbox/messages/${encodeURIComponent(conv.source)}/${encodeURIComponent(conv.id)}`);
-      if (id !== threadRequest.current) return;
+      const { data } = await client.get(`/connected-inbox/messages/${encodeURIComponent(conv.source)}/${encodeURIComponent(conv.id)}`, { signal: controller.current.signal });
+      if (id !== threadRequest.current || getAccessToken() !== token) return;
       setThread({ ...conv, ...data.conversation, messages: data.messages || data.conversation?.messages || [] });
       setThreadLoading(false);
       await markThreadRead(conv, id);
     } catch {
-      if (id === threadRequest.current) {
+      if (id === threadRequest.current && getAccessToken() === token) {
         setThreadError('Could not load this conversation. Refresh it or open the original source.');
         setThreadLoading(false);
       }

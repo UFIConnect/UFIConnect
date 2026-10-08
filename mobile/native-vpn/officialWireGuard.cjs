@@ -1,5 +1,5 @@
 'use strict';
-const PROFILE_URL = 'https://uficonnect.org/vault#vpn';
+const PROFILE_URL = 'https://uficonnect.org/vault?device=vpn#vpn';
 const INSTALL_URL = 'https://apps.apple.com/app/wireguard/id1441195209';
 function hasPaidAccess(status, now = Date.now()) {
   if (status?.vpnConnectorAddon !== true || !Array.isArray(status.subscriptions)) return false;
