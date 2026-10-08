@@ -148,12 +148,10 @@ try {
     assert.equal(writes, 4, 'Home views must not submit provider writes');
     await auditNavigate(page, base + 'videos');
     const video = page.locator('[data-post-id="audit-likes"]');
-    await video.getByRole('button', { name: 'More options', exact: true }).click();
-    const videoLike = page.getByRole('menu', { name: 'Post options on Reddit', exact: true }).getByRole('menuitem', { name: 'Connect Reddit to like, 47 likes', exact: true });
+    const videoLike = video.getByRole('group', { name: 'Post actions', exact: true }).getByRole('link', { name: 'Connect Reddit to like, 47 likes', exact: true });
     await videoLike.waitFor();
     assert.equal(await videoLike.getAttribute('href'), '/connected-accounts?interactions=1');
-    assert.equal(await videoLike.locator('.post-chrome-like-count').innerText(), 'Upvote · 47 likes');
-    await page.keyboard.press('Escape');
+    assert.equal(await videoLike.locator('.post-chrome-like-count').innerText(), '47 likes');
     assert.equal(writes, 4);
     post.source = 'uficonnect'; post.isExternal = false; post.author.id = 'likes-reader';
     await auditNavigate(page, base + 'p/audit-likes');
