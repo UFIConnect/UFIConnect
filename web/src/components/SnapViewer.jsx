@@ -93,7 +93,7 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
     document.addEventListener('keydown', escape, true);
     return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape, true); };
   }, [optionsOpen, deleting]);
-  function goTo(nextIndex) {
+  function goTo(nextIndex, direction) {
     if (deleting || confirmDelete || nextIndex === index || !items[nextIndex]) return false;
     const next = items[nextIndex];
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
@@ -101,7 +101,7 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
     // The outgoing cube face is a static preview, never a second player. Its
     // identity and target guards remove it synchronously on account changes.
     setTransition(reduceMotion ? null : {
-      identity, to: `${next.source}:${next.id}`, direction: nextIndex > index ? 'forward' : 'backward',
+      identity, to: `${next.source}:${next.id}`, direction: direction > 0 ? 'forward' : 'backward',
       poster: snap.source === 'uficonnect' && !profile?.id ? null : poster,
       author, avatars: authorPhotos, source, availability: snapAvailabilityLabel(snap, now),
       caption: snap.caption || '', posted: posted?.relative || '',
@@ -112,7 +112,10 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
     onChange(next);
     return true;
   }
-  function move(direction) { return goTo(index + direction); }
+  function move(direction) {
+    if (items.length < 2) return false;
+    return goTo((index + direction + items.length) % items.length, direction);
+  }
   function canGesture(target) {
     return !optionsOpen && !deleting && !confirmDelete
       && !target.closest?.('video, iframe, .twitch-clip-player, .snap-viewer-media-twitch, .snap-viewer-menu, .snap-viewer-details, a, button, input, textarea, select, [contenteditable="true"]');
@@ -239,7 +242,7 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
     {optionsOpen && dialog.current && createPortal(<div ref={menuPanel} id={menuId} className="snap-viewer-menu post-chrome-menu" role="group" aria-label="Snap options"
       onKeyDown={event => event.stopPropagation()}>
       {sourceItems.map(item => <a key={item.key} href={safePostLink(item.href)} target="_blank" rel="noopener noreferrer" onClick={() => closeOptions(false)}>{item.label}{item.detail && <small>{item.detail}</small>}</a>)}
-      <button type="button" disabled={index === 0 || deleting || confirmDelete} onClick={() => move(-1)} aria-label="Previous snap">Previous snap</button>
+      <button type="button" disabled={items.length < 2 || deleting || confirmDelete} onClick={() => move(-1)} aria-label="Previous snap">Previous snap</button>
       {onReport && <button type="button" disabled={deleting} onClick={() => { closeOptions(false); onReport(snap); }} aria-label="Report this snap"><Flag size={16} aria-hidden="true" />Report</button>}
       {canDelete && (confirmDelete ? <div className="snap-viewer-delete-confirm"><p>Delete this snap?</p><button type="button" className="post-chrome-menu-danger" disabled={deleting} onClick={remove} autoFocus>{deleting ? 'Deleting…' : 'Delete snap'}</button><button type="button" disabled={deleting} onClick={() => { setConfirmDelete(false); setError(''); window.requestAnimationFrame(() => menuPanel.current?.querySelector('[aria-label="Delete this snap"]')?.focus({ preventScroll: true })); }}>Cancel</button></div>
         : <button type="button" className="post-chrome-menu-danger" onClick={() => setConfirmDelete(true)} aria-label="Delete this snap"><Trash2 size={16} aria-hidden="true" />Delete</button>)}

@@ -169,9 +169,17 @@ try {
     check(await profileForSnap('facebook-fixture').getAttribute('aria-label') === "View Facebook fixture's 2 snaps"
       && await profileForSnap('facebook-fixture').locator('.snap-profile-count').innerText() === '2', 'Same-author snaps share one circle with their actual snap count');
     const profilePositions = await facebookProfiles.locator('.snap-profile-button').evaluateAll(elements => elements.map(element => ({ x: element.getBoundingClientRect().x, y: element.getBoundingClientRect().y })));
-    check(profilePositions.some(position => position.x > profilePositions[0].x + 10)
-      && new Set(profilePositions.map(position => Math.round(position.y))).size === 3, 'Ten author circles use exactly three compact horizontal rows');
-    check(await facebookProfiles.evaluate(element => element.scrollWidth > element.clientWidth), 'Extra author columns scroll horizontally inside their source box');
+    check(new Set(profilePositions.map(position => Math.round(position.x))).size === 3
+      && new Set(profilePositions.map(position => Math.round(position.y))).size === 4, 'Ten author circles form three columns with more rows below');
+    check(await facebookProfiles.evaluate(element => element.scrollHeight > element.clientHeight && element.scrollWidth <= element.clientWidth
+      && element.clientHeight <= 270), 'Only three compact profile rows fit in the source box and extra rows scroll vertically');
+    await facebookProfiles.evaluate(element => { element.scrollTop = 0; });
+    await facebookProfiles.hover(); await page.mouse.wheel(0, 150);
+    await page.waitForFunction(() => document.querySelector('[data-snap-source="facebook"] .snap-source-items')?.scrollTop > 0);
+    check(await profileForSnap('facebook-profile-8').evaluate(element => {
+      const bounds = element.getBoundingClientRect(), parent = element.closest('.snap-source-items').getBoundingClientRect();
+      return bounds.y >= parent.y && bounds.bottom <= parent.bottom;
+    }), 'Scrolling down reveals the last profile without opening a snap or scrolling sideways');
     check(await rail.locator('.snap-profile-button').evaluateAll(elements => elements.every(element => element.querySelectorAll('.snap-profile-avatar img').length === 1)), 'Every author circle contains a profile image');
     check(await rail.locator('.snap-profile-ring, .snap-profile-avatar').evaluateAll(elements => elements.every(element => {
       const bounds = element.getBoundingClientRect(); return bounds.width <= 54 && Math.abs(bounds.width - bounds.height) < 2 && getComputedStyle(element).borderRadius === '50%';
@@ -331,6 +339,25 @@ try {
     await reloadAllSnaps();
     await page.waitForFunction(() => !document.querySelector('.snap-source-notices'));
     check(await rail.locator('.snap-source-box').count() === 3, 'Refreshing clears recovered provider notices and restores current source groups');
+
+    await openSnap('twitter-fixture');
+    const connectedViewer = page.locator('dialog.snap-viewer');
+    const swipeConnected = async direction => {
+      await connectedViewer.locator('.snap-viewer-topbar').evaluate((element, direction) => {
+        const bounds = element.getBoundingClientRect(), x = bounds.x + 80, y = bounds.y + 20;
+        const makeTouch = clientX => new Touch({ identifier: 55, target: element, clientX, clientY: y });
+        element.dispatchEvent(new TouchEvent('touchstart', { touches: [makeTouch(x)], bubbles: true }));
+        element.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: [makeTouch(x - direction * 65)], bubbles: true }));
+      }, direction);
+    };
+    await swipeConnected(1);
+    await page.waitForFunction(() => document.querySelector('.snap-viewer-caption')?.textContent === 'native-public');
+    check(await connectedViewer.locator('.snap-viewer-cube').getAttribute('data-cube-direction') === 'forward', 'Left swipe connects the last source to the first available profile with the correct cube direction');
+    await settleCube();
+    await swipeConnected(-1);
+    await page.waitForFunction(() => document.querySelector('.snap-viewer-caption')?.textContent === 'twitter-fixture');
+    check(await connectedViewer.locator('.snap-viewer-cube').getAttribute('data-cube-direction') === 'backward', 'Right swipe connects the first profile back to the last source');
+    await settleCube(); await closeViewer();
 
     await openSnap('other-native');
     let viewer = page.locator('dialog.snap-viewer'); await viewer.waitFor();
