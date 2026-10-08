@@ -1,0 +1,7 @@
+.media-playback-controls { display: flex; align-items: center; gap: 4px; width: 100%; min-width: 0; min-height: 44px; color: #edf1f7; background: #080c12; }
+.media-playback-controls button { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; flex: 0 0 44px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; touch-action: manipulation; }
+.media-playback-controls button:hover { background: #202b3a; }
+.media-playback-controls input[type="range"] { flex: 1 1 0; width: 0; min-width: 36px; height: 44px; margin: 0 4px; padding: 0; accent-color: #a7c7ff; cursor: pointer; touch-action: pan-x; }
+.media-playback-controls .media-playback-time { flex: 0 0 auto; color: #9eacbe; font-size: .72rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.media-playback-controls button:disabled, .media-playback-controls input:disabled { opacity: .45; cursor: default; }
+.media-playback-controls button:focus-visible, .media-playback-controls input:focus-visible { outline: 2px solid #a7c7ff; outline-offset: -2px; }

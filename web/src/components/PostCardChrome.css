@@ -68,4 +68,8 @@
   .post-chrome-actions { gap: 4px; }
   .post-chrome-action { padding: 0 9px; min-width: 38px; }
   .post-chrome-source-link > svg { display: none; }
+  /* Reserve the following source mark on More so flex wrapping keeps the pair
+     together, with the existing button sizes and full engagement labels. */
+  .post-chrome-actions:not(.video-feed-post-actions):not(.snap-viewer-post-actions) > .post-chrome-more:has(+ .post-chrome-source-link) { padding-right: 44px; }
+  .post-chrome-actions:not(.video-feed-post-actions):not(.snap-viewer-post-actions) > .post-chrome-more + .post-chrome-source-link { width: 40px; min-width: 40px; box-sizing: border-box; margin-left: -44px; }
 }

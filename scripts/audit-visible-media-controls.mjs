@@ -1,5 +1,6 @@
 // Production assets and synthetic member/media responses; provider calls are blocked.
 // Optional hosted origin: UFI_MEDIA_CONTROLS_AUDIT_ORIGIN=https://uficonnect.org
+// Optional focused viewport: UFI_MEDIA_CONTROLS_AUDIT_WIDTH=1440|390|320
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -8,6 +9,8 @@ import { startBuiltServer } from '../web/scripts/serve-built.mjs';
 import { installAuditMember, auditNavigate } from './audit-session.mjs';
 
 const require = createRequire(import.meta.url);
+const widths = process.env.UFI_MEDIA_CONTROLS_AUDIT_WIDTH ? [Number(process.env.UFI_MEDIA_CONTROLS_AUDIT_WIDTH)] : [1440, 390, 320];
+assert.ok(widths.every(width => [1440, 390, 320].includes(width)), 'The focused media viewport must be 1440, 390, or 320');
 const { createAppHarness, member } = require('../backend/test-support/app-harness');
 const app = await createAppHarness();
 const server = process.env.UFI_MEDIA_CONTROLS_AUDIT_ORIGIN
@@ -19,6 +22,7 @@ const results = [];
 const mediaHost = 'media.controls.invalid';
 const mediaUrl = `https://${mediaHost}/fixture.mp4`;
 const avatarUrl = `https://${mediaHost}/avatar.svg`;
+const nativeMedia = await fs.readFile(new URL('../web/public/media/preparation/closing-questions.mp4', import.meta.url));
 const description = `${'Full caption details explain the recording, its context and the source. '.repeat(7)}ENDING_DETAILS_MARKER`;
 const snapDescription = `${'The clip caption explains its context and original source. '.repeat(7)}ENDING_DETAILS_MARKER`;
 const channelId = 'UCabcdefghijklmnopqrstuv';
@@ -68,6 +72,19 @@ async function captionControls(scope, expandedSelector) {
   assert.equal(await scope.locator(`[id="${controls}"]`).count(), 1);
   assert.match(await scope.locator(expandedSelector).innerText(), /ENDING_DETAILS_MARKER/,
     'Expanded captions include the full ending instead of truncating the post details');
+  const bar = scope.locator('.media-playback-controls');
+  if (await bar.count()) {
+    const captions = scope.locator('.video-feed-details, .snap-viewer-details').first();
+    assert.equal(await bar.evaluate(element => Boolean(element.closest('.video-feed-details, .snap-viewer-details'))), false,
+      'Playback controls remain outside the scrolling caption');
+    const before = await bar.boundingBox();
+    await captions.evaluate(element => { element.scrollTop = element.scrollHeight; });
+    const after = await bar.boundingBox();
+    assert.ok(before && after && Math.abs(before.y - after.y) <= 1 && Math.abs(before.x - after.x) <= 1,
+      'Scrolling expanded caption details does not move playback controls');
+    await visiblePlaybackBar(scope);
+    await captions.evaluate(element => { element.scrollTop = 0; });
+  }
   await less.click();
   assert.equal(await scope.getByRole('button', { name: 'Read more', exact: true }).getAttribute('aria-expanded'), 'false');
   assert.equal(scope.page().url(), route, 'Caption expansion preserves the current route');
@@ -76,6 +93,142 @@ async function captionControls(scope, expandedSelector) {
 const noHiddenControls = async menu => assert.equal(await menu.getByText(
   /^(?:Read more|Show less|(?:Show|Hide) player controls|(?:Show|Hide) video controls)$/i, { exact: true }).count(), 0,
   'Caption and player controls are absent from overflow');
+
+async function visiblePlaybackBar(scope) {
+  const bar = scope.locator('.media-playback-controls');
+  assert.equal(await bar.count(), 1, 'One app playback row belongs to the current media');
+  await bar.waitFor({ state: 'visible' });
+  const play = bar.getByRole('button', { name: /^(?:Play|Pause) video$/ });
+  const mute = bar.getByRole('button', { name: /^(?:Mute|Unmute) video$/ });
+  const progress = bar.getByRole('slider', { name: 'Video progress', exact: true });
+  assert.equal(await play.count(), 1); assert.equal(await mute.count(), 1); assert.equal(await progress.count(), 1);
+  assert.ok(await bar.locator('.media-playback-time').isVisible(), 'Playback time stays visible with the commands');
+  assert.ok(await bar.evaluate(element => {
+    const [play, mute] = element.querySelectorAll('button'), progress = element.querySelector('input[type="range"]');
+    return play && mute && progress && play.nextElementSibling === mute && mute.nextElementSibling === progress;
+  }), 'Play/Pause then Mute/Unmute precede the progress cursor in DOM and keyboard order');
+  const [playBox, muteBox, progressBox] = await Promise.all([play.boundingBox(), mute.boundingBox(), progress.boundingBox()]);
+  assert.ok(playBox && muteBox && progressBox
+    && playBox.x + playBox.width <= muteBox.x + 1 && muteBox.x + muteBox.width <= progressBox.x + 1
+    && Math.abs(playBox.y - muteBox.y) <= 1 && Math.abs(playBox.y - progressBox.y) <= 1,
+  `Playback commands remain left of the cursor on one row: ${JSON.stringify({ playBox, muteBox, progressBox })}`);
+  for (const [label, bounds] of [['Play/Pause', playBox], ['Mute/Unmute', muteBox], ['Video progress', progressBox]]) {
+    assert.ok(bounds.width >= (label === 'Video progress' ? 36 : 44) && bounds.height >= 44,
+      `${label} retains a usable touch target: ${JSON.stringify(bounds)}`);
+    assert.ok(bounds.x >= -1 && bounds.x + bounds.width <= scope.page().viewportSize().width + 1,
+      `${label} fits the viewport`);
+  }
+  assert.ok(await bar.evaluate(element => {
+    for (let ancestor = element; ancestor; ancestor = ancestor.parentElement) {
+      const style = getComputedStyle(ancestor);
+      if (style.display === 'none' || style.visibility !== 'visible' || Number(style.opacity) < .99) return false;
+    }
+    return true;
+  }), 'Playback controls stay fully visible through their ancestor styles');
+  return { bar, play, mute, progress };
+}
+
+async function seekProgress(progress, seconds) {
+  await progress.evaluate((element, value) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(element, String(value));
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+  }, seconds);
+}
+
+async function nativePlaybackCommands(scope, player) {
+  const { play, mute, progress } = await visiblePlaybackBar(scope);
+  const handle = await player.elementHandle();
+  await scope.page().waitForFunction(video => video.readyState >= 1 && Number.isFinite(video.duration) && video.duration > 0, handle);
+  if (await player.evaluate(video => video.paused)) await play.click();
+  await scope.page().waitForFunction(video => !video.paused, handle);
+  await scope.getByRole('button', { name: 'Pause video', exact: true }).click();
+  await scope.page().waitForFunction(video => video.paused, handle);
+  await scope.getByRole('button', { name: 'Play video', exact: true }).click();
+  await scope.page().waitForFunction(video => !video.paused, handle);
+  await scope.getByRole('button', { name: 'Pause video', exact: true }).click();
+  await scope.page().waitForFunction(video => video.paused, handle);
+  const initiallyMuted = await player.evaluate(video => video.muted);
+  await mute.click();
+  await scope.page().waitForFunction(({ video, expected }) => video.muted === expected, { video: handle, expected: !initiallyMuted });
+  assert.equal(await mute.getAttribute('aria-label'), initiallyMuted ? 'Mute video' : 'Unmute video');
+  await mute.click();
+  await scope.page().waitForFunction(({ video, expected }) => video.muted === expected, { video: handle, expected: initiallyMuted });
+  const duration = await player.evaluate(video => video.duration), target = Math.round(Math.min(5, duration * .35) * 10) / 10;
+  await progress.waitFor({ state: 'visible' });
+  assert.equal(await progress.isDisabled(), false, 'Decoded native media has a usable progress cursor');
+  await seekProgress(progress, target);
+  await scope.page().waitForFunction(({ video, target }) => Math.abs(video.currentTime - target) <= .35, { video: handle, target });
+  assert.ok(Math.abs(Number(await progress.inputValue()) - target) <= .35, 'The progress cursor reflects the actual native seek');
+  return { nativePlayPauseMuteSeek: true };
+}
+
+async function youtubePlaybackCommands(scope) {
+  const { play, mute, progress } = await visiblePlaybackBar(scope);
+  const page = scope.page();
+  await page.waitForFunction(() => window.__auditYTPlayers?.some(player => !player.destroyed && player.frame.isConnected));
+  await page.waitForFunction(() => !document.querySelector('.media-playback-controls button')?.disabled);
+  const current = () => page.evaluate(() => {
+    const player = window.__auditYTPlayers.findLast(player => !player.destroyed && player.frame.isConnected);
+    return { state: player.getPlayerState(), muted: player.isMuted(), time: player.getCurrentTime(), duration: player.getDuration(), seeks: player.calls.seeks };
+  });
+  if ((await current()).state !== 1) await play.click();
+  await page.waitForFunction(() => window.__auditYTPlayers.findLast(player => !player.destroyed && player.frame.isConnected)?.getPlayerState() === 1);
+  await page.evaluate(() => window.__auditYTPlayers.findLast(player => !player.destroyed && player.frame.isConnected).bufferVideo());
+  await page.waitForTimeout(300); // Include a real 250ms player poll while BUFFERING remains active.
+  assert.equal(await play.getAttribute('aria-label'), 'Pause video', 'A buffering YouTube player retains the Pause command');
+  await scope.getByRole('button', { name: 'Pause video', exact: true }).click();
+  await page.waitForFunction(() => window.__auditYTPlayers.findLast(player => !player.destroyed && player.frame.isConnected)?.getPlayerState() === 2);
+  await scope.getByRole('button', { name: 'Play video', exact: true }).click();
+  await page.waitForFunction(() => window.__auditYTPlayers.findLast(player => !player.destroyed && player.frame.isConnected)?.getPlayerState() === 1);
+  await scope.getByRole('button', { name: 'Pause video', exact: true }).click();
+  await page.waitForFunction(() => window.__auditYTPlayers.findLast(player => !player.destroyed && player.frame.isConnected)?.getPlayerState() === 2);
+  const initiallyMuted = (await current()).muted;
+  await mute.click();
+  await page.waitForFunction(expected => window.__auditYTPlayers.findLast(player => !player.destroyed && player.frame.isConnected)?.isMuted() === expected, !initiallyMuted);
+  assert.equal(await mute.getAttribute('aria-label'), initiallyMuted ? 'Mute video' : 'Unmute video');
+  await mute.click();
+  await page.waitForFunction(expected => window.__auditYTPlayers.findLast(player => !player.destroyed && player.frame.isConnected)?.isMuted() === expected, initiallyMuted);
+  assert.equal(await progress.isDisabled(), false, 'Ready YouTube media exposes its actual duration to the progress cursor');
+  const target = 7.5;
+  await seekProgress(progress, target);
+  try {
+    await page.waitForFunction(target => {
+      const player = window.__auditYTPlayers.findLast(player => !player.destroyed && player.frame.isConnected);
+      return player?.calls.seeks.includes(target) && Math.abs(player.getCurrentTime() - target) <= .35;
+    }, target, { timeout: 5000 });
+  } catch (error) {
+    console.log('YouTube seek diagnostic:', JSON.stringify({ target, player: await current(),
+      range: await progress.evaluate(element => ({ min: element.min, max: element.max, value: element.value, disabled: element.disabled })) }));
+    throw error;
+  }
+  await page.waitForFunction(target => Math.abs(Number(document.querySelector('.media-playback-controls input')?.value) - target) <= .35, target);
+  return { youtubePlayPauseMuteSeek: true, youtubeBufferingCanPause: true };
+}
+
+async function vimeoPlaybackCommands(scope, player) {
+  const { mute, progress } = await visiblePlaybackBar(scope);
+  const frame = await (await player.elementHandle()).contentFrame();
+  assert.ok(frame, 'The synthetic official Vimeo frame is available');
+  await frame.waitForFunction(() => window.__auditVimeo);
+  await scope.getByRole('button', { name: 'Pause video', exact: true }).click();
+  await frame.waitForFunction(() => window.__auditVimeo.paused === true);
+  await scope.getByRole('button', { name: 'Play video', exact: true }).click();
+  await frame.waitForFunction(() => window.__auditVimeo.paused === false);
+  await scope.getByRole('button', { name: 'Pause video', exact: true }).click();
+  await frame.waitForFunction(() => window.__auditVimeo.paused === true);
+  const initiallyMuted = await frame.evaluate(() => window.__auditVimeo.muted);
+  await mute.click();
+  await frame.waitForFunction(expected => window.__auditVimeo.muted === expected, !initiallyMuted);
+  await scope.getByRole('button', { name: initiallyMuted ? 'Mute video' : 'Unmute video', exact: true }).waitFor();
+  await mute.click();
+  await frame.waitForFunction(expected => window.__auditVimeo.muted === expected, initiallyMuted);
+  const target = 6.4;
+  assert.equal(await progress.isDisabled(), false, 'The trusted Vimeo response enables progress');
+  await seekProgress(progress, target);
+  await frame.waitForFunction(target => Math.abs(window.__auditVimeo.currentTime - target) <= .1, target);
+  assert.ok(Math.abs(Number(await progress.inputValue()) - target) <= .1, 'The app cursor follows the Vimeo seek response');
+  return { vimeoPlayPauseMuteSeek: true };
+}
 
 async function horizontalSwipe(context, page, box, direction, y = box.y + box.height / 2) {
   const start = box.x + box.width * (direction > 0 ? .65 : .15), end = box.x + box.width * (direction > 0 ? .15 : .65);
@@ -86,56 +239,37 @@ async function horizontalSwipe(context, page, box, direction, y = box.y + box.he
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await cdp.detach();
 }
 
-async function nativePlayerOptions(context, player) {
+async function nativePlayerOptions(player) {
   const flags = await player.evaluate(video => ({ controls: video.controls,
     options: [...video.controlsList], pictureInPictureDisabled: video.disablePictureInPicture,
     remotePlaybackDisabled: video.disableRemotePlayback }));
-  assert.equal(flags.controls, true, 'Native play/seek/volume controls remain enabled');
+  assert.equal(flags.controls, false, 'The reliable app playback row replaces the duplicate native control bar');
+  assert.equal(await player.getAttribute('controls'), null);
   for (const option of ['nodownload', 'noplaybackrate', 'noremoteplayback']) assert.ok(flags.options.includes(option));
   assert.equal(flags.pictureInPictureDisabled, true); assert.equal(flags.remotePlaybackDisabled, true);
   assert.equal(flags.options.includes('nofullscreen'), false, 'Fullscreen remains available');
-  await player.hover({ position: { x: 12, y: 12 } });
-  const cdp = await context.newCDPSession(player.page());
-  try {
-    const { root } = await cdp.send('DOM.getDocument', { depth: -1, pierce: true });
-    const shadows = [];
-    const visit = node => {
-      if (node.nodeName === 'VIDEO') shadows.push(...(node.shadowRoots || []).filter(shadow => shadow.shadowRootType === 'user-agent'));
-      for (const child of [...(node.children || []), ...(node.shadowRoots || []), ...(node.contentDocument ? [node.contentDocument] : [])]) visit(child);
-    };
-    visit(root);
-    const overflow = [];
-    const inspect = node => {
-      const values = [];
-      for (let index = 0; index < (node.attributes || []).length; index += 2) {
-        if (['pseudo', 'id', 'aria-label', 'class'].includes(node.attributes[index])) values.push(node.attributes[index + 1]);
-      }
-      if (['INPUT', 'BUTTON'].includes(node.nodeName) && /overflow[- ](?:menu[- ]?)?button|more.*(?:media|control)/i.test(values.join(' '))) overflow.push(node);
-      for (const child of node.children || []) inspect(child);
-    };
-    shadows.forEach(inspect);
-    const styles = [];
-    for (const node of overflow) {
-      const { object } = await cdp.send('DOM.resolveNode', { backendNodeId: node.backendNodeId });
-      const { result } = await cdp.send('Runtime.callFunctionOn', { objectId: object.objectId, returnByValue: true,
-        functionDeclaration: 'function(){ const style=getComputedStyle(this), rect=this.getBoundingClientRect(); return {display:style.display,visibility:style.visibility,width:rect.width,height:rect.height}; }' });
-      styles.push(result.value);
-    }
-    assert.ok(styles.every(style => style.display === 'none' || style.visibility === 'hidden' || style.width === 0 || style.height === 0),
-      `Native overflow is removed from the actual Chromium controls: ${JSON.stringify(styles)}`);
-    return { nativeOptions: flags.options, userAgentShadowInspected: shadows.length > 0,
-      overflowNodesInspected: styles.length, nativeOverflowVisible: false };
-  } finally { await cdp.detach(); }
+  return { nativeOptions: flags.options, nativeControlBarReplaced: true };
 }
 
 async function changeNativePlayerSettings(page, menu, player, more, role = 'menuitem') {
   const route = page.url(), source = await player.getAttribute('src');
+  await player.evaluate(video => {
+    const track = video.addTextTrack('subtitles', 'Synthetic English', 'en');
+    track.addCue(new VTTCue(0, 30, 'Synthetic caption fixture.'));
+    track.mode = 'disabled';
+  });
   await menu.getByRole(role, { name: /^Player settings\b/ }).click();
   const dialog = page.getByRole('dialog', { name: 'Player settings', exact: true });
   await dialog.waitFor({ state: 'visible' });
   await dialog.getByRole('radiogroup', { name: 'Playback speed', exact: true })
     .getByRole('radio', { name: '1.5\u00d7', exact: true }).click();
   assert.equal(await player.evaluate(video => video.playbackRate), 1.5, 'The UFIConnect overflow settings change the actual native player');
+  const captions = dialog.getByRole('radiogroup', { name: 'Captions', exact: true });
+  await captions.getByRole('radio', { name: 'Synthetic English', exact: true }).click();
+  assert.equal(await player.evaluate(video => [...video.textTracks].find(track => track.label === 'Synthetic English').mode), 'showing',
+    'Player settings enable the actual native caption track');
+  await captions.getByRole('radio', { name: 'Off', exact: true }).click();
+  assert.equal(await player.evaluate(video => [...video.textTracks].find(track => track.label === 'Synthetic English').mode), 'disabled');
   await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'detached' });
   assert.ok(await more.evaluate(element => document.activeElement === element), 'Escape restores the existing post overflow trigger');
   assert.equal(page.url(), route); assert.equal(await player.getAttribute('src'), source, 'Settings preserve the selected media');
@@ -144,7 +278,7 @@ async function changeNativePlayerSettings(page, menu, player, more, role = 'menu
 
 try {
   await fs.mkdir(output, { recursive: true });
-  for (const width of [1440, 390]) {
+  for (const width of widths) {
     const id = `visible-controls-${width}`, user = member(id, { plan: 'pro' }); app.seedUser(user);
     const context = await browser.newContext({ viewport: { width, height: 950 }, serviceWorkers: 'block',
       reducedMotion: 'reduce', hasTouch: width < 600, isMobile: width < 600 });
@@ -153,20 +287,38 @@ try {
     let videoRows = [], feedRows = [], snapRows = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.addInitScript(() => {
-      window.YT = { PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 }, Player: class {
-        constructor(frame, config) { this.frame = frame; this.state = 2; this.rate = 1;
+      window.__auditYTPlayers = [];
+      window.YT = { PlayerState: { UNSTARTED: -1, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5, ENDED: 0 }, Player: class {
+        constructor(frame, config) { this.frame = frame; this.config = config; this.state = -1; this.rate = 1; this.time = 0; this.muted = true; this.volume = 100;
+          this.startedAt = performance.now(); this.calls = { plays: 0, pauses: 0, mutes: 0, unmutes: 0, seeks: [], cues: [] };
           this.id = new URL(frame.src).pathname.split('/').pop();
+          window.__auditYTPlayers.push(this);
           setTimeout(() => config.events?.onReady?.({ target: this }), 20); }
         getIframe() { return this.frame; } getVideoData() { return { video_id: this.id }; }
-        getDuration() { return 30; } getCurrentTime() { return 0; } getPlayerState() { return this.state; }
-        getAvailablePlaybackRates() { return [1]; } getPlaybackRate() { return this.rate; } getOptions() { return []; }
-        loadVideoById(id) { this.id = id; } playVideo() { this.state = 1; } pauseVideo() { this.state = 2; }
-        mute() {} unMute() {} seekTo() {} destroy() { this.frame.remove(); }
+        getDuration() { return 30; } getCurrentTime() { return Math.min(30, this.time + (this.state === 1 ? (performance.now() - this.startedAt) / 1000 * this.rate : 0)); }
+        getPlayerState() { return this.state; } isMuted() { return this.muted; } getVolume() { return this.volume; }
+        getAvailablePlaybackRates() { return [1, 1.5, 2]; } getPlaybackRate() { return this.rate; } getOptions() { return []; }
+        setPlaybackRate(rate) { this.time = this.getCurrentTime(); this.startedAt = performance.now(); this.rate = rate; this.config.events?.onPlaybackRateChange?.({ target: this, data: rate }); }
+        loadVideoById(id) { this.id = typeof id === 'object' ? id.videoId : id; this.time = 0; this.playVideo(); }
+        cueVideoById(options) { this.id = options.videoId; this.time = options.startSeconds || 0; this.startedAt = performance.now(); this.state = 5; this.calls.seeks.push(this.time); this.calls.cues.push(this.time); this.config.events?.onStateChange?.({ target: this, data: 5 }); }
+        bufferVideo() { this.time = this.getCurrentTime(); this.state = 3; this.config.events?.onStateChange?.({ target: this, data: 3 }); }
+        playVideo() { this.time = this.getCurrentTime(); this.startedAt = performance.now(); this.state = 1; this.calls.plays++; this.config.events?.onStateChange?.({ target: this, data: 1 }); }
+        pauseVideo() { this.time = this.getCurrentTime(); this.state = 2; this.calls.pauses++; this.config.events?.onStateChange?.({ target: this, data: 2 }); }
+        mute() { this.muted = true; this.calls.mutes++; } unMute() { this.muted = false; this.calls.unmutes++; }
+        setVolume(volume) { this.volume = volume; }
+        seekTo(seconds) { this.time = Math.max(0, Math.min(30, seconds)); this.startedAt = performance.now(); this.calls.seeks.push(seconds); }
+        destroy() { this.destroyed = true; this.frame.remove(); }
       } };
     });
     await context.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url());
-      if (url.hostname === mediaHost && /\.(?:mp4|ts)$/.test(url.pathname)) return; // Pending synthetic media, never a provider fetch.
+      if (url.hostname === mediaHost && /\.mp4$/.test(url.pathname)) {
+        const range = /^bytes=(\d+)-(\d*)$/.exec(request.headers().range || '');
+        const start = range ? Number(range[1]) : 0, end = range && range[2] ? Math.min(Number(range[2]), nativeMedia.length - 1) : nativeMedia.length - 1;
+        return route.fulfill({ status: range ? 206 : 200, contentType: 'video/mp4', body: nativeMedia.subarray(start, end + 1),
+          headers: { 'Accept-Ranges': 'bytes', 'Content-Length': String(end - start + 1), ...(range ? { 'Content-Range': `bytes ${start}-${end}/${nativeMedia.length}` } : {}) } });
+      }
+      if (url.hostname === mediaHost && /\.ts$/.test(url.pathname)) return; // HLS transport stays pending without fetching a provider.
       if (url.hostname === mediaHost && /\.m3u8$/.test(url.pathname)) return route.fulfill({
         contentType: 'application/vnd.apple.mpegurl', body: `#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:30\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:30.0,\nhttps://${mediaHost}/segment.ts\n#EXT-X-ENDLIST\n` });
       if (url.hostname === 'vimeo.com' && url.pathname === '/api/oembed.json') return route.fulfill({ json: { duration: 30 } });
@@ -174,7 +326,20 @@ try {
         return route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="90"><rect width="120" height="90" fill="#1e3a8a"/></svg>' });
       }
       if (['www.youtube.com', 'www.youtube-nocookie.com', 'player.vimeo.com'].includes(url.hostname) && request.resourceType() === 'document') {
-        embeds.push(url.href); return route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><body style="margin:0;background:#172554;color:white"><button>Provider controls</button></body></html>' });
+        embeds.push(url.href); return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><body style="margin:0;background:#172554;color:white"><button>Provider controls</button>${url.hostname === 'player.vimeo.com' ? `<script>
+          const emit=message=>parent.postMessage(message,'*'),state=window.__auditVimeo={paused:false,muted:true,volume:1,currentTime:0};
+          addEventListener('message',event=>{let message;try{message=typeof event.data==='string'?JSON.parse(event.data):event.data}catch{return}
+            if(message?.method==='ping')emit({method:'ping'});
+            if(message?.method==='getDuration')emit({method:'getDuration',value:30});
+            if(message?.method==='getPaused')emit({method:'getPaused',value:state.paused});
+            if(message?.method==='getMuted')emit({method:'getMuted',value:state.muted});
+            if(message?.method==='getVolume')emit({method:'getVolume',value:state.volume});
+            if(message?.method==='play'||message?.method==='pause'){state.paused=message.method==='pause';emit({event:message.method})}
+            if(message?.method==='setMuted'){state.muted=Boolean(message.value);emit({method:'setMuted',value:state.muted});emit({event:'volumechange',data:{muted:state.muted,volume:state.volume}})}
+            if(message?.method==='setVolume'){state.volume=Number(message.value);emit({method:'setVolume',value:state.volume});emit({event:'volumechange',data:{muted:state.muted,volume:state.volume}})}
+            if(message?.method==='setCurrentTime'){state.currentTime=Number(message.value)||0;emit({method:'setCurrentTime',value:state.currentTime});emit({event:'timeupdate',data:{seconds:state.currentTime,duration:30}})}
+          });setTimeout(()=>emit({event:'ready'}),30);
+        </script>` : ''}</body></html>` });
       }
       const api = /^(?:\/api\/|\/fallback\/)/.test(url.pathname)
         || ['fetch', 'xhr', 'eventsource'].includes(request.resourceType()) && !url.pathname.startsWith('/assets/');
@@ -228,20 +393,20 @@ try {
           const frame = kind === 'youtube' ? page.frameLocator('.video-feed-youtube-player iframe') : slide.frameLocator('iframe');
           await frame.getByRole('button', { name: 'Provider controls', exact: true }).click();
         } else {
-          assert.equal(await player.evaluate(element => element.controls), true, 'Direct media native controls are enabled without overflow');
-          assert.equal(await player.getAttribute('controls'), '');
-          nativeOptions = await nativePlayerOptions(context, player);
+          nativeOptions = await nativePlayerOptions(player);
         }
-        const playback = slide.locator('.video-feed-playback-status');
-        assert.ok(await playback.isVisible());
-        assert.equal(await slide.locator('.video-feed-play-button, .video-feed-sound-button').count(), 0,
-          'Native or official controls are not duplicated by app play and mute buttons');
-        assert.equal(await slide.getByRole('button', { name: /^(?:Play|Pause|Mute|Unmute) video$/ }).count(), 0);
-        assert.ok(await playback.locator('.video-feed-playback-time').isVisible(), 'Playback time remains available');
+        const { bar: playback } = await visiblePlaybackBar(slide);
+        assert.equal(await slide.getByRole('button', { name: /^(?:Play|Pause|Mute|Unmute) video$/ }).count(), 2,
+          'The app exposes one Play/Pause and one Mute/Unmute button for this media');
+        let commands = {};
+        if (kind === 'native' || kind === 'external') commands = await nativePlaybackCommands(slide, player);
+        if (kind === 'youtube') commands = await youtubePlaybackCommands(slide);
+        if (kind === 'vimeo') commands = await vimeoPlaybackCommands(slide, player);
         if (kind === 'native') {
           await slide.locator('[data-video-media]').hover({ position: { x: 12, y: 12 } });
           await page.waitForFunction(() => document.querySelector('.video-feed-slide')?.dataset.cursorIdle === 'true');
-          assert.equal(await playback.evaluate(element => getComputedStyle(element).opacity), '1', 'Playback time remains visible after pointer idle');
+          await visiblePlaybackBar(slide);
+          assert.equal(await playback.evaluate(element => getComputedStyle(element).opacity), '1', 'The entire playback row remains visible after pointer idle');
         }
         await captionControls(slide, '.video-feed-caption-expanded');
         const more = await sourceAfterMenu(slide.getByRole('group', { name: 'Post actions', exact: true }));
@@ -254,8 +419,8 @@ try {
         }
         assert.ok(await more.evaluate(element => document.activeElement === element));
         if (kind === 'external') await page.screenshot({ path: `${output}/${surface}-${width}.png`, fullPage: true });
-        results.push({ width, surface, kind, providerControlsVisible: true, noDuplicateAppButtons: true,
-          captionExpansion: true, sourceRightOfOverflow: true, nativeSettingsChangeActualRate: Boolean(nativeOptions), ...nativeOptions });
+        results.push({ width, surface, kind, providerControlsVisible: ['youtube', 'vimeo'].includes(kind), appControlsLeftOfProgress: true,
+          captionExpansion: true, sourceRightOfOverflow: true, nativeSettingsChangeActualRateAndCaptions: Boolean(nativeOptions), ...commands, ...nativeOptions });
         console.log(`PASS ${surface} ${kind}: visible controls/caption/source order ${width}px`);
       }
       await visit(`/${surface}`, [native(`${surface}-swipe-one`), native(`${surface}-swipe-two`), native(`${surface}-swipe-three`)]);
@@ -263,16 +428,18 @@ try {
       await first.locator('video').waitFor({ state: 'visible' });
       await captionControls(first, '.video-feed-caption-expanded');
       assert.equal(await scroll.evaluate(element => Math.round(element.scrollTop)), 0, 'Caption buttons do not change the active video');
+      const progress = first.getByRole('slider', { name: 'Video progress', exact: true });
+      const cursorBox = await progress.boundingBox();
+      await horizontalSwipe(context, page, cursorBox, 1);
+      assert.equal(await scroll.evaluate(element => Math.round(element.scrollTop)), 0, 'Dragging the custom progress cursor does not advance the feed');
       let bounds = await first.locator('video').boundingBox();
-      await horizontalSwipe(context, page, bounds, 1, bounds.y + bounds.height - 20);
-      assert.equal(await scroll.evaluate(element => Math.round(element.scrollTop)), 0, 'Swiping native player controls does not navigate the feed');
       await horizontalSwipe(context, page, bounds, 1, bounds.y + bounds.height * .2);
       await page.waitForFunction(() => { const scroll = document.querySelector('[data-video-feed-scroll]'); return scroll && Math.abs(scroll.scrollTop - scroll.clientHeight) <= 2; });
       await page.waitForTimeout(550);
       bounds = await page.locator(`[data-post-id="${surface}-swipe-two"] video`).boundingBox();
       await horizontalSwipe(context, page, bounds, -1, bounds.y + bounds.height * .2);
       await page.waitForFunction(() => document.querySelector('[data-video-feed-scroll]')?.scrollTop <= 2);
-      results.push({ width, surface, kind: 'horizontal-swipe', advancesAndRestores: true, nativeControlsPreserved: true });
+      results.push({ width, surface, kind: 'horizontal-swipe', advancesAndRestores: true, appCursorPreserved: true });
       console.log(`PASS ${surface}: horizontal swipes and player-control guard ${width}px`);
     }
     feedRows = [{ ...external('generic-external', 'devto'), mediaType: null, mediaUrl: null, sourceUrl: 'https://dev.to/fixture/controls-layout' }];
@@ -307,8 +474,41 @@ try {
       const player = viewer.locator(kind === 'youtube' ? 'iframe' : 'video'); await player.waitFor({ state: 'visible' });
       let nativeOptions = null;
       if (kind === 'youtube') assert.equal(new URL(await player.getAttribute('src')).searchParams.get('controls'), '1');
-      else nativeOptions = await nativePlayerOptions(context, player);
-      assert.equal(await viewer.getByRole('slider').count(), 0, 'Snap navigation uses screen swipes without a slider');
+      else nativeOptions = await nativePlayerOptions(player);
+      assert.equal(await viewer.getByRole('slider', { name: 'Snap position', exact: true }).count(), 0,
+        'The removed snap-position navigation remains absent');
+      assert.equal(await viewer.getByRole('slider', { name: 'Video progress', exact: true }).count(), 1,
+        'The visible cursor controls video playback rather than snap navigation');
+      await visiblePlaybackBar(viewer);
+      assert.equal(await viewer.locator('.snap-viewer-cube-outgoing video, .snap-viewer-cube-outgoing iframe').count(), 0,
+        'The static outgoing cube face never duplicates a live player');
+      let playbackCommands = {};
+      if (kind === 'youtube') {
+        await page.waitForFunction(() => window.__auditYTPlayers?.some(player => !player.destroyed && player.frame.isConnected));
+        assert.equal(await page.evaluate(() => window.__auditYTPlayers.findLast(player => !player.destroyed && player.frame.isConnected).calls.plays), 0,
+          'Opening an external YouTube Snap does not start playback');
+        const progress = viewer.getByRole('slider', { name: 'Video progress', exact: true });
+        await page.waitForFunction(() => !document.querySelector('.snap-viewer-playback input')?.disabled);
+        await seekProgress(progress, 4);
+        await page.waitForFunction(() => {
+          const player = window.__auditYTPlayers.findLast(player => !player.destroyed && player.frame.isConnected);
+          return player?.calls.cues.includes(4) && player.getCurrentTime() === 4;
+        });
+        assert.equal(await page.evaluate(() => window.__auditYTPlayers.findLast(player => !player.destroyed && player.frame.isConnected).calls.plays), 0,
+          'Seeking an unstarted external Snap cues its position without playing');
+        assert.equal(await page.evaluate(() => window.__auditYTPlayers.findLast(player => !player.destroyed && player.frame.isConnected).getPlayerState()), 5);
+        playbackCommands = await youtubePlaybackCommands(viewer);
+        playbackCommands.youtubeUnstartedSeekDoesNotPlay = true;
+      } else {
+        if (kind === 'external') {
+          assert.equal(await player.evaluate(video => video.autoplay), false, 'External native Snaps do not request autoplay');
+          assert.equal(await player.evaluate(video => video.paused), true, 'An external native Snap waits for an explicit Play gesture');
+        }
+        playbackCommands = await nativePlaybackCommands(viewer, player);
+      }
+      await page.mouse.move(0, 0);
+      await page.waitForTimeout(2300);
+      await visiblePlaybackBar(viewer);
       const selection = await viewer.locator('.snap-viewer-caption').innerText();
       await captionControls(viewer, '.snap-viewer-caption');
       assert.equal(await viewer.locator('.snap-viewer-caption').innerText(), selection, 'Caption controls do not advance the clip');
@@ -318,6 +518,10 @@ try {
       if (kind !== 'native') await sourceAfterMenu(commands, 'Snap options');
       else assert.equal(await commands.locator('.post-chrome-source-link').count(), 0, 'Native Snaps do not invent an external source');
       if (kind === 'external') {
+        const cursorBox = await viewer.getByRole('slider', { name: 'Video progress', exact: true }).boundingBox();
+        await horizontalSwipe(context, page, cursorBox, 1);
+        assert.equal(await viewer.locator('.snap-viewer-caption').innerText(), selection,
+          'Using the playback cursor does not advance the selected Snap');
         const swipe = async direction => {
           const bounds = await viewer.locator('.snap-viewer-topbar').boundingBox();
           const topActions = viewer.locator('.snap-viewer-topbar .snap-viewer-top-actions');
@@ -325,22 +529,29 @@ try {
           assert.ok(safe.width * .5 >= 55, 'The swipe starts and ends in plain topbar space outside interactive source/menu controls');
           return horizontalSwipe(context, page, safe, direction);
         };
+        await page.emulateMedia({ reducedMotion: 'no-preference' });
         await swipe(1);
         await viewer.locator('.snap-viewer-caption').getByText('Second source clip caption.', { exact: true }).waitFor();
+        assert.equal(await viewer.locator('.snap-viewer-cube-outgoing').count(), 1, 'A real cube turn renders its outgoing static face');
+        assert.equal(await viewer.locator('.snap-viewer-cube-outgoing video, .snap-viewer-cube-outgoing iframe').count(), 0,
+          'A real cube transition keeps the outgoing face free of players');
+        assert.equal(await viewer.locator('video, iframe').count(), 1, 'One live player owns the newly selected Snap during the turn');
         assert.equal(await commands.locator('.post-chrome-source-link').getAttribute('href'), 'https://mastodon.social/@fixture/98767');
         // Let the gesture cooldown elapse while checking the newly selected source identity.
         await page.waitForTimeout(550);
         await swipe(-1);
         await page.waitForFunction(expected => document.querySelector('.snap-viewer-caption')?.textContent === expected, selection);
-        await viewer.locator('video').focus(); await page.keyboard.press('ArrowRight');
-        assert.equal(await viewer.locator('.snap-viewer-caption').innerText(), selection, 'Native video-control keys do not move to the next Snap');
+        await viewer.locator('.snap-viewer-cube-outgoing').waitFor({ state: 'detached' });
+        await page.emulateMedia({ reducedMotion: 'reduce' });
+        await viewer.getByRole('slider', { name: 'Video progress', exact: true }).focus(); await page.keyboard.press('ArrowRight');
+        assert.equal(await viewer.locator('.snap-viewer-caption').innerText(), selection, 'Playback-cursor keys do not move to the next Snap');
       } else if (kind === 'youtube') {
         await viewer.frameLocator('iframe').getByRole('button', { name: 'Provider controls', exact: true }).click();
         await page.keyboard.press('ArrowRight');
         assert.equal(await viewer.locator('.snap-viewer-caption').innerText(), selection, 'Provider iframe keys do not move to the next Snap');
       } else {
-        await player.focus(); await page.keyboard.press('ArrowRight');
-        assert.equal(await viewer.locator('.snap-viewer-caption').innerText(), selection, 'Native Snap player keys do not advance its author group');
+        await viewer.getByRole('slider', { name: 'Video progress', exact: true }).focus(); await page.keyboard.press('ArrowRight');
+        assert.equal(await viewer.locator('.snap-viewer-caption').innerText(), selection, 'Playback-cursor keys do not advance the Snap author group');
       }
       await commands.getByRole('button', { name: 'Snap options', exact: true }).click();
       const menu = viewer.getByRole('group', { name: 'Snap options', exact: true }); await menu.waitFor();
@@ -356,8 +567,9 @@ try {
       }
       if (kind === 'external') await page.screenshot({ path: `${output}/snaps-${width}.png`, fullPage: true });
       await viewer.getByRole('button', { name: 'Close snap', exact: true }).click();
-      results.push({ width, surface: 'snaps', kind, providerControlsVisible: true, captionExpansion: true,
-        sourceRightOfOverflow: kind !== 'native', nativeSettingsChangeActualRate: Boolean(nativeOptions), ...nativeOptions });
+      results.push({ width, surface: 'snaps', kind, providerControlsVisible: kind === 'youtube', captionExpansion: true,
+        appControlsLeftOfProgress: true, idleControlsVisible: true, sourceRightOfOverflow: kind !== 'native',
+        nativeSettingsChangeActualRateAndCaptions: Boolean(nativeOptions), ...playbackCommands, ...nativeOptions });
       console.log(`PASS snaps ${kind}: visible controls/caption/source order ${width}px`);
     }
     assert.deepEqual(errors, [], 'No browser exceptions'); assert.deepEqual(writes, [], 'No provider or account writes');
