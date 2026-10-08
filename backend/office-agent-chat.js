@@ -2,6 +2,8 @@
 
 const https = require('node:https');
 const { requestedActions } = require('./office-agent-actions');
+const MAX_REQUEST_BYTES = 1024 * 1024;
+const TOPIC_SCAN_CHARACTERS = 16384;
 
 // This assistant can explain observations. It has no tools, database handle,
 // command runner, deployment hook, or access to raw logs/customer records.
@@ -26,6 +28,7 @@ const NUMBERS = ['postCount', 'fetchCount', 'consecutiveErrors', 'totalErrors', 
   'lastChecked', 'lastMismatches', 'totalFixed', 'lastFixed'];
 const TIMES = ['lastSuccess', 'lastAttempt', 'lastFetch', 'lastRun', 'lastStarted', 'lastFinished', 'lastSweep'];
 const PURPOSES = Object.freeze({
+  ai: 'Explains sanitized service observations and offers supported Office tasks. Tasks run only after the operator chooses an authorized control.',
   stability: 'Observes this process memory and event-loop lag and applies refresh throttling.',
   crash_guard: 'Records runtime exceptions and rejection counters for this process.',
   refresh_queue: 'Coordinates pending source refresh work on the pipeline service.',
@@ -79,7 +82,8 @@ function sanitizeSnapshot(input) {
     observedAt: iso(input.observedAt) || new Date().toISOString(),
     status: STATUS.has(input.status) ? input.status : 'unknown',
     cadence: typeof input.cadence === 'string' && /^[\da-z /+.,-]{1,60}$/i.test(input.cadence) ? input.cadence : null,
-    purpose: diagnosticCapability === 'source-worker' ? 'Fetches public source content on the pipeline service and stages it for transfer to the API feed.'
+    purpose: input.agentId === 'ai' ? PURPOSES.ai
+      : diagnosticCapability === 'source-worker' ? 'Fetches public source content on the pipeline service and stages it for transfer to the API feed.'
       : diagnosticCapability === 'on-demand' ? 'Provides connected-account content on demand. A registry heartbeat does not verify connection or fetch success.'
         : PURPOSES[input.agentId] || (input.agentId.startsWith('web_') ? 'Observes the configured website or service checks. Only the listed measurements are available.' : 'Reports local operational observations.'),
     metrics,
@@ -88,13 +92,20 @@ function sanitizeSnapshot(input) {
 
 function validateBody(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(k => !['message', 'history'].includes(k))) return { status: 400, error: 'Send a message and an optional conversation history.' };
-  if (Buffer.byteLength(JSON.stringify(body), 'utf8') > 8000) return { status: 413, error: 'Recent conversation context is too large. Send a smaller request.' };
-  if (typeof body.message !== 'string' || !body.message.trim() || body.message.length > 1200) return { status: 400, error: 'Message must contain 1 to 1200 characters.' };
+  if (Buffer.byteLength(JSON.stringify(body), 'utf8') > MAX_REQUEST_BYTES) return { status: 413, error: 'The request exceeds service capacity. Send the message in smaller parts.' };
+  if (typeof body.message !== 'string' || !body.message.trim()) return { status: 400, error: 'Message must contain text.' };
   const history = body.history ?? [];
-  if (!Array.isArray(history) || history.length > 8 || history.some(item => !item || typeof item !== 'object' || Array.isArray(item)
+  if (!Array.isArray(history) || history.some(item => !item || typeof item !== 'object' || Array.isArray(item)
     || Object.keys(item).some(k => !['role', 'content'].includes(k)) || !['user', 'assistant'].includes(item.role)
-    || typeof item.content !== 'string' || !item.content.trim() || item.content.length > 1200)) return { status: 400, error: 'History may contain up to 8 user or assistant messages, each at most 1200 characters.' };
+    || typeof item.content !== 'string' || !item.content.trim())) return { status: 400, error: 'History must contain user or assistant messages with text.' };
   return { message: body.message.trim(), history };
+}
+
+// Large messages stay intact in the Office transcript. Topic/action matching
+// reads a bounded beginning and ending, and only fixed labels reach the model.
+function topicText(text) {
+  return text.length <= TOPIC_SCAN_CHARACTERS ? text
+    : `${text.slice(0, TOPIC_SCAN_CHARACTERS / 2)}\n${text.slice(-TOPIC_SCAN_CHARACTERS / 2)}`;
 }
 
 // Only these fixed topic labels may cross the provider boundary. In particular,
@@ -107,22 +118,27 @@ function topicFor(text) {
   if (/\b(cadence|often|interval|schedule|frequency|refresh)\b/i.test(text)) return 'cadence';
   if (/\b(pipeline|dependenc\w*|transfer|stage|flow|database|db|cache)\b/i.test(text)) return 'dependencies';
   if (/\b(next|check|recommend|investigate|help|why)\b/i.test(text)) return 'next_steps';
-  if (/\b(purpose|responsib\w*|role|what.*do|who.*you|explain|work)\b/i.test(text)) return 'purpose';
+  if (/\b(purpose|responsib\w*|role|what.{0,120}\bdo|who.{0,120}\byou|explain|work)\b/i.test(text)) return 'purpose';
   if (/\b(status|health|state|count|fetch|latest|last|hello|hi|doing|ready)\b/i.test(text)) return 'status';
   if (/\b(more|that|it|detail|continue|and|yes)\b/i.test(text)) return 'follow_up';
   return 'unsupported';
 }
 
 function conversationTopics(message, history) {
-  const previousTopics = history.filter(item => item.role === 'user').map(item => topicFor(item.content))
-    .filter(topic => !['unsupported', 'action_request', 'follow_up'].includes(topic)).slice(-4);
-  const requested = topicFor(message);
+  const previousTopics = [];
+  for (let index = history.length - 1; index >= 0 && previousTopics.length < 4; index--) {
+    if (history[index].role !== 'user') continue;
+    const topic = topicFor(topicText(history[index].content));
+    if (!['unsupported', 'action_request', 'follow_up'].includes(topic)) previousTopics.unshift(topic);
+  }
+  const requested = topicFor(topicText(message));
   return { topic: requested === 'follow_up' ? previousTopics.at(-1) || 'status' : requested, previousTopics };
 }
 
 function diagnostics(snapshot, topic, reason) {
   const prefix = reason === 'unconfigured' ? 'AI conversation is not configured; this is a local diagnostics summary. '
-    : reason === 'unavailable' ? 'AI conversation is temporarily unavailable; this is a local diagnostics summary. ' : 'Local diagnostics: ';
+    : reason === 'unavailable' ? 'AI conversation is temporarily unavailable; this is a local diagnostics summary. '
+      : reason === 'capacity' ? 'AI explanations have reached their current capacity; this is a local diagnostics summary. No extra AI request was made. ' : 'Local diagnostics: ';
   const ownership = `The ${snapshot.agentId} observation comes from the ${snapshot.serviceRole} service. `
     + (snapshot.executionRole === 'pipeline' ? 'This worker runs on the pipeline service. ' : snapshot.executionRole === 'on-demand' ? 'This integration runs on demand. ' : 'Counters describe this service process only. ');
   let detail;
@@ -204,29 +220,35 @@ function createOfficeAgentChat({ getAgentSnapshot, getActions = () => [], apiKey
     try { snapshot = sanitizeSnapshot(getAgentSnapshot(req.params.id)); }
     catch { return res.status(503).json({ error: 'Agent observation is temporarily unavailable.' }); }
     if (!snapshot) return res.status(404).json({ error: 'Unknown agent.' });
-    if (now() - windowStarted >= 60000) { windowStarted = now(); requests = 0; }
-    if (++requests > 40 || inFlight >= 2) return res.status(429).set('Retry-After', '60').json({ error: 'Agent chat is busy. Try again shortly.' });
     const topics = conversationTopics(validated.message, validated.history);
-    const actions = requestedActions(validated.message, getActions(snapshot));
+    let actions;
+    try { actions = requestedActions(topicText(validated.message), getActions(snapshot)); }
+    catch { return res.status(503).json({ error: 'Agent task availability is temporarily unavailable.' }); }
     if (actions !== null) topics.topic = 'action_request';
+    let paidReply = Boolean(key) && !['action_request', 'unsupported'].includes(topics.topic), capacityLimited = false;
+    if (paidReply) {
+      const currentTime = now();
+      if (currentTime - windowStarted >= 60000) { windowStarted = currentTime; requests = 0; }
+      if (requests >= 18 || inFlight >= 2) { paidReply = false; capacityLimited = true; }
+      else { requests++; inFlight++; }
+    }
     const controller = new AbortController();
     const cancel = () => { if (!res.writableEnded) controller.abort(); };
     res.once('close', cancel);
     let mode = 'diagnostics';
     let reply;
     const localOnly = ['action_request', 'unsupported'].includes(topics.topic);
-    inFlight++;
     try {
-      if (key && !localOnly) {
+      if (paidReply) {
         try { reply = await requestAnswer({ apiKey: key, model: selectedModel, snapshot, topics, signal: controller.signal, request, timeoutMs }); mode = 'ai'; }
         catch { reply = diagnostics(snapshot, topics.topic, 'unavailable'); }
-      } else reply = diagnostics(snapshot, topics.topic, localOnly ? 'local' : 'unconfigured');
+      } else reply = diagnostics(snapshot, topics.topic, capacityLimited ? 'capacity' : localOnly ? 'local' : 'unconfigured');
       if (actions !== null) reply = actions.length
         ? `Available task${actions.length === 1 ? '' : 's'}: ${actions.map(action => action.label).join('; ')}. Choose Run task below to execute through Office Controls. No command was executed by this message.`
         : 'This agent cannot perform that task. Choose one of its available actions, or use Office Controls for other supported work. No command was executed.';
       if (!res.destroyed && !controller.signal.aborted) res.json({ agentId: snapshot.agentId, serviceRole: snapshot.serviceRole, mode, reply,
         observedAt: snapshot.observedAt, actions: actions || [], suggestions: ['What is your status?', 'What do you do?', 'How often do you refresh?', 'What should I check next?'] });
-    } finally { inFlight--; res.removeListener('close', cancel); }
+    } finally { if (paidReply) inFlight--; res.removeListener('close', cancel); }
   };
 }
 

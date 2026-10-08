@@ -375,7 +375,7 @@ app.use('/analytics', analyticsRouter);
 // Bound chat bodies before the application's larger JSON parser and reject
 // parser errors without returning any submitted text.
 app.use('/office/agents/:id/chat', (_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); },
-  requireOfficeToken, express.json({ limit: '8kb', strict: true }),
+  requireOfficeToken, express.json({ limit: '1mb', strict: true }),
   (error, _req, res, _next) => res.status(error.status === 413 ? 413 : 400).json({ error: 'Invalid agent chat request.' }));
 app.use(privateConnectionResponse);
 app.use(express.json({ limit: '512kb' }));
@@ -6525,6 +6525,24 @@ const officeClients = new Map();
 
 // One-shot fetchers registered by startSourceWorker — used for manual triggers
 const SOURCE_FETCHERS = {};
+const officeAgentChecks = new Map();
+function observeOfficeCheck(id, check) {
+  return function (...args) {
+    const state = officeAgentChecks.get(id) || { totalRuns: 0 };
+    if (state.status === 'running') return { skipped: true };
+    Object.assign(state, { status: 'running', lastRun: Date.now(), totalRuns: state.totalRuns + 1 });
+    officeAgentChecks.set(id, state);
+    const finish = result => {
+      Object.assign(state, { status: result?.skipped ? 'idle' : result === false ? 'degraded' : 'healthy', lastFinished: Date.now() });
+      return result;
+    };
+    const fail = error => { Object.assign(state, { status: 'degraded', lastFinished: Date.now() }); throw error; };
+    try {
+      const result = check(...args);
+      return result?.then ? result.then(finish, fail) : finish(result);
+    } catch (error) { return fail(error); }
+  };
+}
 
 const OFFICE_AGENT_BADGES = {
   reddit: 'RD', hn: 'HN', github: 'GH', devto: 'DEV', medium: 'MED',
@@ -13048,9 +13066,9 @@ function runCacheHelperCheck() {
   if (isStabilityCritical()) {
     trimRuntimeCaches('critical');
     logAgentAction('cache_helper', '??', 'Cache merge skipped while stability guard is critical', '#FBBF24');
-    return;
+    return { skipped: true };
   }
-  if (agentSourceCache.size === 0) return;
+  if (agentSourceCache.size === 0) return { skipped: true };
   const allSourcePosts = realFeedPosts([...agentSourceCache.values()].flatMap(v => v.posts || []));
   const total = allSourcePosts.length;
   const n = addAndBroadcast(allSourcePosts);
@@ -13366,7 +13384,7 @@ async function runFeedOptimizer() {
     trimRuntimeCaches('critical');
     logAgentAction('optimizer', '??',
       `Skipped source healing while stability guard is critical - refresh x${refreshControl.multiplier}`, '#FBBF24');
-    return;
+    return { skipped: true };
   }
 
   const now = Date.now();
@@ -13386,6 +13404,11 @@ async function runFeedOptimizer() {
     const neverSucceeded  = health.lastSuccess === null && health.fetchCount > 20;
 
     statsBySource.push({ id, postCount, isPaused, isDegraded });
+
+    // Existing provider cooldowns and absent app credentials are not faults
+    // that a generic recovery sweep can repair by immediately retrying.
+    if (!require('./office-agent-activation').officeSourceReady(id, process.env)
+      || (health.paused && health.pauseUntil > now)) continue;
 
     if (isPaused || isDegraded || isStaleEmpty || neverSucceeded) {
       const errorCount = health.consecutiveErrors;
@@ -14099,6 +14122,7 @@ async function runDeployCheck() {
   return runDeployCheckAll();
 }
 async function runDeployCheckAll() {
+  let reachable = true;
   const targets = [
     { name: 'API',    url: 'https://api.uficonnect.org/health' },
     { name: 'Pipeline', url: 'https://uficonnect-pipeline-708r.onrender.com/health' },
@@ -14109,15 +14133,19 @@ async function runDeployCheckAll() {
     const start = Date.now();
     try {
       const status = await new Promise((resolve, reject) => {
-        https.get(target.url, (r) => { r.resume(); resolve(r.statusCode); }).on('error', reject);
+        https.get(target.url, (r) => { r.resume(); resolve(r.statusCode); }).on('error', reject)
+          .setTimeout(10000, function () { this.destroy(new Error('Service check timed out.')); });
       });
+      if (status >= 400) reachable = false;
       const ms = Date.now() - start;
       logAgentAction('deploy', status < 400 ? '?' : '??',
         `${target.name}: HTTP ${status} — ${ms}ms`, status < 400 ? '#38BDF8' : '#FBBF24');
     } catch {
+      reachable = false;
       logAgentAction('deploy', '?', `${target.name}: unreachable`, '#F87171');
     }
   }
+  return reachable;
 }
 
 // --- Data Agent: monitor DB health and in-memory record counts ---------------
@@ -14267,6 +14295,16 @@ function runAgentActivityCheck(fullSweep = false) {
 }
 
 // Seed immediately on startup (non-blocking)
+// Track actual invocations independently of registry presence heartbeats.
+runSecurityScan = observeOfficeCheck('security', runSecurityScan);
+runPerfCheck = observeOfficeCheck('perf', runPerfCheck);
+runCommunityCheck = observeOfficeCheck('community', runCommunityCheck);
+runSeoCheck = observeOfficeCheck('seo', runSeoCheck);
+runOppsCheck = observeOfficeCheck('opps', runOppsCheck);
+runDataCheck = observeOfficeCheck('data', runDataCheck);
+runDeployCheckAll = observeOfficeCheck('deploy', runDeployCheckAll);
+runCacheHelperCheck = observeOfficeCheck('cache_helper', runCacheHelperCheck);
+runFeedOptimizer = observeOfficeCheck('optimizer', runFeedOptimizer);
 installCrashGuard();
 runStabilityGuard();
 logAgentAction('feed',      '??', 'UFIconnect Agent System initialized', '#60A5FA');
@@ -14276,7 +14314,7 @@ if (process.env.REDDIT_CLIENT_ID && process.env.REDDIT_CLIENT_SECRET) {
   console.log('[Reddit] OAuth credentials found — will use authenticated API access');
   getRedditToken().catch(e => console.warn('[Reddit] Startup token warm failed:', e.message));
 } else {
-  console.warn('[Reddit] No REDDIT_CLIENT_ID/SECRET in env — falling back to anonymous (may get 429)');
+  console.warn('[Reddit] Authorized public source inactive until credentials are configured');
 }
 // Start rolling workers immediately; warm the larger cache after the server has had
 // a moment to come online so cold starts and Office health checks stay responsive.
@@ -25046,6 +25084,22 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
 
 // --- Office: agent registry ---------------------------------------------------
 const AGENT_DEFS = {
+  weworkremotely: {
+    name: 'We Work Remotely Agent', emoji: 'WWR', color: '#22C55E', interval: '5min',
+    description: 'Collects public remote career listings through the configured paced Pipeline worker.',
+  },
+  cntraveler: {
+    name: 'Condé Nast Traveler Agent', emoji: 'CNT', color: '#38BDF8', interval: '5min',
+    description: 'Collects public travel stories through the configured paced Pipeline worker.',
+  },
+  twitch: {
+    name: 'Twitch Agent', emoji: 'TW', color: '#A78BFA', interval: '5min',
+    description: 'Uses the configured Twitch app to discover public clips. Member account feeds use separate connections.',
+  },
+  ai: {
+    name: 'Office AI Agent', emoji: 'AI', color: '#A78BFA', interval: 'on-demand', triggerable: false,
+    description: 'Choose an Office action, review its requirements, and run it through authenticated controls. AI explains observed metrics when its provider is configured.',
+  },
   // -- Platform source agents (one per data source) --------------------------
   reddit: {
     name: 'Reddit Agent', emoji: 'RD', color: '#FF6347', interval: '15s / 4 shards',
@@ -26024,7 +26078,9 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
     const cachedPosts = cache?.posts || [];
     const globalPostCount = statusGlobalBySource.get(id) || 0;
     const liveCount = cache?.totalSeen ?? (cachedPosts.length || globalPostCount);
-    const status = h
+    const status = !IS_PIPELINE_ROLE ? 'unavailable'
+      : !require('./office-agent-activation').officeSourceReady(workerId, process.env) ? 'disabled'
+      : h
       ? (h.paused ? 'paused' : h.consecutiveErrors >= 3 ? 'degraded' : 'healthy')
       : 'starting';
     return {
@@ -26432,7 +26488,7 @@ function getOfficeAgentObservation(id, observedAt = new Date().toISOString()) {
   if (!Object.prototype.hasOwnProperty.call(AGENT_DEFS, id)) return null;
   const sourceWorker = Object.prototype.hasOwnProperty.call(SOURCE_CONFIG, id)
     || ['remotive', 'muse'].includes(id) || typeof SOURCE_FETCHERS[id] === 'function';
-  const executionRole = sourceWorker || ['refresh_queue', 'equalizer'].includes(id) ? 'pipeline' : id === 'instagram' ? 'on-demand' : 'both';
+  const executionRole = sourceWorker || ['refresh_queue', 'equalizer', 'optimizer', 'cache_helper'].includes(id) ? 'pipeline' : id === 'ai' ? 'api' : id === 'instagram' ? 'on-demand' : 'both';
   const hasRuntimeMetrics = ['stability', 'crash_guard', 'refresh_queue', 'sort_agent', 'sort_distrib', 'mix_optimizer',
     'sort_optimizer', 'activity', 'autofix', 'perf', 'equalizer', 'filter', 'topic_filter', 'topic_audit', 'topic_fix'].includes(id) || id.startsWith('web_');
   const diagnosticCapability = sourceWorker ? 'source-worker' : id === 'instagram' ? 'on-demand'
@@ -26443,6 +26499,7 @@ function getOfficeAgentObservation(id, observedAt = new Date().toISOString()) {
   if (sourceWorker) {
     const health = workerHealth.get(id);
     if (SERVICE_ROLE !== 'pipeline') status = 'unavailable';
+    else if (!require('./office-agent-activation').officeSourceReady(id, process.env)) status = 'disabled';
     else if (health) {
       metrics = health;
       status = health.paused ? 'paused' : health.consecutiveErrors > 0 ? 'degraded' : health.lastSuccess ? 'healthy' : 'unknown';
@@ -26455,6 +26512,16 @@ function getOfficeAgentObservation(id, observedAt = new Date().toISOString()) {
     if (id === 'equalizer') metrics = { ...metrics, pending: equalizerPendingTotal() };
     if (id === 'topic_fix') metrics = { ...metrics, pending: topicMismatchQueue.length };
     if (metrics.totalRuns === 0 || (id === 'activity' && metrics.totalSweeps === 0)) status = 'idle';
+  } else if (officeAgentChecks.has(id)) {
+    metrics = officeAgentChecks.get(id);
+    status = metrics.status;
+  } else if (id === 'feed') {
+    status = globalFeedCache.refreshedAt ? 'healthy' : 'idle';
+    metrics = { lastRun: globalFeedCache.refreshedAt || null };
+  }
+  if (id === 'ai') {
+    status = 'ready';
+    metrics = { enabled: Boolean(process.env.OPENAI_API_KEY) };
   }
   if (executionRole === 'pipeline' && SERVICE_ROLE !== 'pipeline') status = 'unavailable';
   if (['feed', 'cache_helper', 'data', 'perf', 'seo', 'opps'].includes(id)) metrics = {
@@ -26466,11 +26533,7 @@ function getOfficeAgentObservation(id, observedAt = new Date().toISOString()) {
     observedAt, status, cadence: AGENT_DEFS[id].interval, metrics });
 }
 
-const officeAgentChatLimiter = rateLimit({
-  windowMs: 60 * 1000, limit: 18, standardHeaders: 'draft-8', legacyHeaders: false,
-  keyGenerator: rateLimitKey, message: { error: 'Too many agent chat messages. Try again shortly.' },
-});
-app.post('/office/agents/:id/chat', requireOfficeToken, officeAgentChatLimiter, createOfficeAgentChat({
+app.post('/office/agents/:id/chat', requireOfficeToken, createOfficeAgentChat({
   getAgentSnapshot: getOfficeAgentObservation,
   getActions: snapshot => require('./office-agent-actions').agentActions(snapshot, officeControlCatalog()),
   apiKey: process.env.OPENAI_API_KEY,
@@ -27120,12 +27183,16 @@ function officeControlCatalog() {
     ));
     const renderConfigured = missingRenderServices.length === 0;
     const deployConfigured = !renderServices.length || githubConfigured || renderConfigured;
-    const available = (!needsGithub || githubConfigured) && deployConfigured;
+    const sourceConfigured = !control.sourceId || require('./office-agent-activation').officeSourceReady(control.sourceId, process.env);
+    const automationConfigured = control.id !== 'automation.enable' || Boolean(process.env.AUTOFIX_GITHUB_TOKEN && process.env.OPENAI_API_KEY);
+    const available = (!needsGithub || githubConfigured) && deployConfigured && sourceConfigured && automationConfigured;
     return {
       ...control,
       available,
       unavailableReason: needsGithub && !githubConfigured
         ? 'Set OFFICE_GITHUB_TOKEN in Render with repository Contents and Actions write access.'
+        : !sourceConfigured ? 'This public source needs its provider credentials. Open Office Setup.'
+        : !automationConfigured ? 'Automatic fixes need a dedicated repository token and an AI provider key. Open Office Setup.'
         : !deployConfigured
           ? `Set OFFICE_GITHUB_TOKEN or deployment configuration for ${missingRenderServices.join(', ')}.`
           : null,
@@ -27224,6 +27291,26 @@ async function executeOfficeControl(control, body) {
   }
 
   switch (control.id) {
+    case 'agents.activate-configured': {
+      const { officeSourceReady, planOfficeActivation, activateOfficeAgents } = require('./office-agent-activation');
+      const agents = Object.fromEntries(Object.entries(AGENT_DEFS).map(([id, def]) => {
+        const observation = getOfficeAgentObservation(id);
+        return [id, { ...def, executionRole: observation.executionRole, observation,
+          health: { ...workerHealth.get(id), status: observation.status } }];
+      }));
+      const sourceIds = Object.keys(SOURCE_FETCHERS);
+      const plan = planOfficeActivation({ role: SERVICE_ROLE, agents, sourceIds,
+        critical: isStabilityCritical(), sourceReady: id => officeSourceReady(id, process.env) });
+      return activateOfficeAgents({ role: SERVICE_ROLE, plan,
+        checks: { security: runSecurityScan, perf: runPerfCheck, community: runCommunityCheck, seo: runSeoCheck,
+          opps: runOppsCheck, data: runDataCheck, stability: runStabilityGuard, activity: () => runAgentActivityCheck(false),
+          cache_helper: runCacheHelperCheck, optimizer: runFeedOptimizer, sort_agent: runSortAgentCheck,
+          sort_distrib: runSortDistribCheck, mix_optimizer: runMixOptimizerCheck, sort_optimizer: runSortOptimizerCheck,
+          topic_audit: runTopicAuditCheck, topic_fix: runTopicFixCheck },
+        enqueue: ids => { const accepted = ids.filter(id => !sourceRefreshQueue.pendingIds.has(id) && !sourceRefreshQueue.currentIds.includes(id));
+          enqueueSourceRefresh(accepted, 'office configured agent activation'); return accepted; },
+      });
+    }
     case 'feed.refresh-all': {
       const ids = Object.keys(SOURCE_FETCHERS);
       enqueueSourceRefresh(ids, 'office-controls full refresh');
@@ -27504,6 +27591,7 @@ app.get('/office/setup', requireOfficeToken, (_req, res) => {
   }]));
   res.set('Cache-Control', 'no-store').json(buildOfficeSetup({
     env: process.env, role: SERVICE_ROLE, database: db.isConnected(), backup: db.getBackupStatus(), social, autofixEnabled: autofixState.enabled,
+    sourceWorkers: Object.fromEntries([...workerHealth].map(([id, health]) => [id, { ...health, postCount: agentSourceCache.get(id)?.posts?.length || 0 }])),
   }));
 });
 

@@ -2817,6 +2817,10 @@ export default function App() {
   const [versions, setVersions] = useState(null);
   const [connected, setConnected] = useState(false);
   const [actionError, setActionError] = useState('');
+  const [activating, setActivating] = useState(false);
+  const [activationResult, setActivationResult] = useState(null);
+  const [activationError, setActivationError] = useState('');
+  const activationPending = useRef(false);
   const [telemetry, setTelemetry] = useState({
     api: { updatedAt: null, loading: true, error: '' },
     pipeline: { updatedAt: null, loading: true, error: '' },
@@ -2959,6 +2963,38 @@ export default function App() {
       },
     });
   }, [needsOfficeTelemetry]);
+
+  const activateConfiguredAgents = async () => {
+    if (activationPending.current) return;
+    activationPending.current = true;
+    setActivating(true); setActivationError(''); setActivationResult(null);
+    const services = [];
+    try {
+      const targets = [['api', API], ...(PIPELINE_API !== API ? [['pipeline', PIPELINE_API]] : [])];
+      for (const [role, base] of targets) {
+        try {
+          const catalogResponse = await officeFetch(`${base}/office/controls`);
+          if (!catalogResponse.ok) throw Error('Office controls are unavailable.');
+          const catalog = await catalogResponse.json();
+          const control = catalog.controls?.find(item => item.id === 'agents.activate-configured');
+          if (catalog.role !== role || !control || control.available === false) throw Error('Agent activation is unavailable on this service. Check Setup.');
+          const response = await officeFetch(`${base}/office/controls/agents.activate-configured/execute`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contextId: 'office-configured-activation', contextLabel: 'Connect configured Office agents' }),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok || data.ok !== true || data.result?.role !== role) throw Error('Activation could not be confirmed. Check Office Controls history before retrying.');
+          services.push({ ...data.result, role, runId: data.runId });
+        } catch (error) {
+          services.push({ role, queued: 0, checked: 0, skipped: 0, failed: 1,
+            items: [{ id: 'service', label: `${role === 'api' ? 'API' : 'Pipeline'} connection`, status: 'failed', reason: error.message }] });
+        }
+      }
+      setActivationResult({ services, completedAt: new Date().toISOString() });
+      if (services.some(service => service.failed > 0)) setActivationError('Some agents need attention. Review the results and Setup.');
+      await Promise.allSettled([fetchStatus(), fetchPipelineStatus(), fetchAgents()]);
+    } finally { activationPending.current = false; setActivating(false); }
+  };
 
   // Fires at both services and lets whichever one actually owns this id's
   // trigger key handle it (the office UI has no reliable client-side way to
@@ -3201,7 +3237,8 @@ export default function App() {
           {actionError && <div role="alert" style={{ color: '#fca5a5', paddingBottom: 16 }}>{actionError}</div>}
           {view === 'city' && <Suspense fallback={<p style={{ color: '#64748b' }}>Opening Live City…</p>}><LiveCity status={status} pipelineStatus={pipelineStatus} agents={agents} log={log}
             telemetry={{ ...telemetry, streamConnected: connected }} officeFetch={officeFetch}
-            apiBase={API} pipelineBase={PIPELINE_API} onNavigate={navigateOffice} /></Suspense>}
+            apiBase={API} pipelineBase={PIPELINE_API} onNavigate={navigateOffice} onActivate={activateConfiguredAgents}
+            activating={activating} activationResult={activationResult} activationError={activationError} /></Suspense>}
           {view === 'post-pipeline' && <PostPipeline apiBase={API} request={officeFetch} pipelineStatus={pipelineStatus} />}
           {view === 'local-web' && <LocalWeb apiBase={API} request={officeFetch} />}
           {view === 'overview' && <OverviewView status={status} pipelineStatus={pipelineStatus} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
@@ -3223,7 +3260,8 @@ export default function App() {
           {view === 'feed'     && <FeedManagerView pipelineStatus={pipelineStatus} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'analytics'&& <AnalyticsView />}
           {view === 'reports' && <Reports apiBase={API} request={officeFetch} />}
-          {view === 'setup' && <Setup apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} />}
+          {view === 'setup' && <Setup apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} onNavigate={navigateOffice}
+            onActivate={activateConfiguredAgents} activating={activating} activationResult={activationResult} activationError={activationError} />}
           {view === 'deploy'   && <DeployView triggerDeploy={triggerDeploy} deploying={deploying} log={log} />}
           {view === 'autofix'  && <AutofixView />}
           {view === 'versions' && <VersionsView versions={versions} status={status} pipelineStatus={pipelineStatus} />}

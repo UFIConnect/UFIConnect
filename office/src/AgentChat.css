@@ -12,6 +12,16 @@
 .lc-task-review p { color: #d1c7b7; line-height: 1.6; }
 .lc-task-review button { margin: 5px 8px 0 0; min-height: 36px; }
 .lc-message p { white-space: pre-wrap; }
+.lc-ai-action-setup { margin: 14px 0; padding: 12px; border: 1px solid #355677; border-radius: 9px; background: #102235; font-size: 12px; }
+.lc-ai-action-setup h4, .lc-ai-action-setup h5 { margin: 0 0 8px; color: #d5e8f6; font-size: 12px; }
+.lc-ai-action-setup p { margin: 8px 0; color: #9db4c9; line-height: 1.6; overflow-wrap: anywhere; }
+.lc-ai-action-setup label { display: block; margin: 12px 0 6px; color: #c8dcef; }
+.lc-ai-action-setup select { box-sizing: border-box; width: 100%; min-width: 0; padding: 9px; border: 1px solid #355677; border-radius: 5px; background: #0b1b2c; color: #d5e8f6; font: inherit; }
+.lc-ai-action-setup > button { margin-top: 8px; padding: 8px 10px; min-height: 36px; border: 1px solid #355677; border-radius: 5px; background: #142c43; color: #c3e4ff; font: inherit; cursor: pointer; }
+.lc-ai-action-setup :disabled { opacity: .55; cursor: default; }
+.lc-ai-action-prerequisites small { color: #859eb5; }
+.lc-ai-saved-action { margin-top: 16px; }
+.lc-ai-saved-action .lc-agent-task { margin-top: 0; }
 .lc-web-editor { padding: 12px; margin: 14px 0; border: 1px solid #355677; border-radius: 9px; font-size: 12px; background: #102235; }
 .lc-web-editor header { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .lc-web-editor h4 { margin: 8px 0; color: #d5e8f6; }

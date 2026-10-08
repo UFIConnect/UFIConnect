@@ -19,6 +19,7 @@ function Fixture() {
  return <main style={{padding:12,maxWidth:800,margin:'auto',background:'#0b1523',color:'#d5e8f6'}}>
  <button onClick={()=>setAgent({id:'security',name:'Security',serviceRole:'api'})}>Security agent</button>
  <button onClick={()=>setAgent({id:'reddit',name:'Reddit',serviceRole:'pipeline'})}>Source agent</button>
+ <button onClick={()=>setAgent({id:'ai',name:'Office AI',serviceRole:'api'})}>AI agent</button>
  <button onClick={()=>setHistories(h=>({...h,[key]:Array.from({length:70},(_,i)=>({role:i%2?'assistant':'user',mode:'diagnostics',content:'Saved message '+i}))}))}>Seed earlier history</button>
  <AgentChat key={key} agent={agent} officeFetch={request} base={agent.serviceRole==='api'?'${API}':'${PIPELINE}'} apiBase='${API}' pipelineBase='${PIPELINE}' messages={histories[key]||[]} updateMessages={messages=>setHistories(h=>({...h,[key]:messages}))}/>
  </main>;
@@ -35,7 +36,12 @@ let checks = 0, browser;
 const check = (condition, message) => { assert.ok(condition, message); checks++; };
 const sha = 'a'.repeat(40), commitSha = 'c'.repeat(40), original = '<h1>Welcome to UFIConnect</h1>', next = '<h1>Your connected feed</h1>';
 const webAction = { id: 'commit.web-frontend', label: 'Commit public web frontend', description: 'Review and commit a public web file.', target: 'api', input: 'frontend-file', frontendTarget: 'web', impact: 'critical', available: true, requiresConfirmation: true };
-const tasks = id => [id === 'reddit'
+const aiTasks = [
+  { id: 'agents.activate-configured', label: 'Activate configured agents', description: 'Queue configured workers and run eligible checks.', target: 'both', impact: 'medium', available: true, requiresConfirmation: false },
+  { id: 'health.website', label: 'Run complete website health', description: 'Inspect the public website.', target: 'api', impact: 'low', available: false, unavailableReason: 'The website service needs setup.', requiresConfirmation: false },
+  webAction,
+];
+const tasks = id => id === 'ai' ? aiTasks : [id === 'reddit'
   ? { id: 'source.refresh.reddit', label: 'Refresh Reddit', description: 'Queue source work on Pipeline.', target: 'pipeline', impact: 'low', available: true, requiresConfirmation: false }
   : { id: 'health.security', label: 'Run security check', description: 'Read authentication configuration.', target: 'both', impact: 'low', available: true, requiresConfirmation: false },
   { id: 'feed.clear-delivery-caches', label: 'Clear delivery caches', description: 'Expire feed cache keys.', target: 'api', impact: 'medium', available: true, requiresConfirmation: true }, webAction];
@@ -72,6 +78,14 @@ try {
     await page.getByRole('button', { name: 'Run task: Run security check', exact: true }).waitFor();
     for (let i = 0; i < 8; i++) { await page.getByLabel('Message this agent', { exact: true }).fill('status ' + i); await page.getByRole('button', { name: 'Send message', exact: true }).click(); await page.getByText('Fixture reply status ' + i, { exact: true }).waitFor(); }
     check(await page.getByText('status 0', { exact: true }).count() === 1, 'Conversation retains messages beyond twelve');
+    const longMessage = 'Detailed Office observations '.repeat(400) + ' What is your status?';
+    const messageEditor = page.getByLabel('Message this agent', { exact: true });
+    check(await messageEditor.getAttribute('maxlength') === null, 'Message editor has no character restriction');
+    await messageEditor.fill(longMessage); await page.getByRole('button', { name: 'Send message', exact: true }).click();
+    await page.locator('.lc-message-assistant p').last().filter({ hasText: 'Fixture reply Detailed Office observations' }).waitFor();
+    check(await page.locator('.lc-message-user p').last().textContent() === longMessage, 'Long messages remain intact in the transcript');
+    check(requests.filter(row => row.path.endsWith('/chat')).at(-1)?.body.message === longMessage, 'More than 8 KB of message text is submitted without truncation');
+    check(await page.getByText('status 0', { exact: true }).count() === 1, 'Sending a long message keeps earlier conversation');
     await page.getByRole('button', { name: 'Seed earlier history', exact: true }).click();
     check(await page.getByRole('button', { name: 'Show earlier messages (20)', exact: true }).count() === 1, 'Earlier messages are paged without being dropped');
     await page.getByRole('button', { name: 'Show earlier messages (20)', exact: true }).click();
@@ -109,6 +123,27 @@ try {
     const commit = requests.filter(row => row.path.endsWith('commit.web-frontend/execute')).at(-1);
     check(commit.role === 'api' && commit.body.confirmed === true && commit.body.expectedSha === sha && commit.body.content === next, 'Commit uses reviewed content, exact revision and audited API control');
     check(await page.getByText(/The release workflow must pass its checks before deployment/).count() === 1, 'Commit result distinguishes committed from deployed');
+    await page.getByRole('button', { name: 'AI agent', exact: true }).click();
+    const setup = page.getByRole('region', { name: 'AI action setup', exact: true });
+    await setup.getByLabel('Choose AI action', { exact: true }).selectOption('agents.activate-configured');
+    check(await setup.getByText(/API and Pipeline/).count() === 1, 'Action setup shows both service targets');
+    const executionsBeforeSetup = requests.filter(row => row.path.endsWith('/execute')).length;
+    await setup.getByRole('button', { name: 'Save setup', exact: true }).click();
+    await setup.getByText('Setup saved for this Office session. No task was started.', { exact: true }).waitFor();
+    check(requests.filter(row => row.path.endsWith('/execute')).length === executionsBeforeSetup, 'Saving setup does not execute a task');
+    await page.screenshot({ path: path.join(root, `.cache/audit-ui/office-ai-setup-${width}.png`), fullPage: false });
+    await page.getByRole('button', { name: 'Security agent', exact: true }).click(); await page.getByRole('button', { name: 'AI agent', exact: true }).click();
+    await setup.getByRole('button', { name: 'Run saved AI action', exact: true }).waitFor();
+    check(await setup.getByLabel('Choose AI action', { exact: true }).inputValue() === 'agents.activate-configured', 'Saved AI setup survives switching inspectors');
+    await setup.getByRole('button', { name: 'Run saved AI action', exact: true }).click();
+    await page.getByText(/Activate configured agents\nAPI: Control completed/).waitFor();
+    const activationRequests = requests.filter(row => row.path.endsWith('/agents.activate-configured/execute'));
+    check(activationRequests.length === 2 && activationRequests[0].role === 'api' && activationRequests[1].role === 'pipeline', 'Saved action runs through its canonical service controls');
+    check(activationRequests.every(row => row.body.contextId === 'agent-chat:api:ai' && row.body.confirmed === false), 'Saved setup preserves task audit context and canonical confirmation');
+    await setup.getByLabel('Choose AI action', { exact: true }).selectOption('health.website'); await setup.getByRole('button', { name: 'Save setup', exact: true }).click();
+    check(await setup.getByRole('button', { name: 'Run saved AI action', exact: true }).isDisabled(), 'Missing prerequisites prevent saved action execution');
+    check(await setup.getByText('The website service needs setup.', { exact: true }).count() === 2, 'Setup and saved action show the required prerequisite');
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'AI setup and long conversations fit the viewport');
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'Agent tasks and web preview fit the viewport');
     check(errors.length === 0, 'No browser errors');
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/office-agent-actions-${width}.png`), fullPage: false });

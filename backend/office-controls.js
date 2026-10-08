@@ -1,5 +1,13 @@
 const BASE_OFFICE_CONTROLS = Object.freeze([
   {
+    id: 'agents.activate-configured',
+    category: 'Office agents',
+    label: 'Activate configured agents',
+    description: 'Run eligible inactive agent checks and queue configured source workers on their owning service. Provider cooldowns and missing credentials remain visible.',
+    target: 'both',
+    impact: 'medium',
+  },
+  {
     id: 'feed.refresh-all',
     category: 'Public feed',
     label: 'Refresh every feed source',
