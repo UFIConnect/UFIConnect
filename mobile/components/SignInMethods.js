@@ -12,6 +12,8 @@ export default function SignInMethods({ mode = 'login', navigation, disabled = f
   const [working, setWorking] = useState(false), [resendAt, setResendAt] = useState(0), [now, setNow] = useState(Date.now());
   const mounted = useRef(true), request = useRef(0), locked = useRef(false);
   const signup = mode === 'register';
+  const accountAction = signup ? 'Sign up' : 'Sign in';
+  const websitePath = signup ? '/register' : '/login';
   const providerBusy = auth.providerAuthState?.busy === true;
   const busy = working || providerBusy || disabled;
   const retrySeconds = Math.max(0, Math.ceil((resendAt - now) / 1000));
@@ -88,9 +90,9 @@ export default function SignInMethods({ mode = 'login', navigation, disabled = f
         const available = methods?.[provider]?.available === true;
         const label = provider === 'google' ? 'Google' : 'Apple';
         return <View key={provider}>
-          <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Continue with ${label}`} accessibilityState={{ disabled: !available || busy }}
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${accountAction} with ${label}`} accessibilityState={{ disabled: !available || busy }}
             style={[styles.outline, (!available || busy) && styles.disabled]} disabled={!available || busy} onPress={() => providerSignIn(provider)}>
-            <Text style={styles.outlineText}>Continue with {label}</Text>
+            <Text style={styles.outlineText}>{accountAction} with {label}</Text>
           </TouchableOpacity>
           {!available && <Text style={styles.availability}>{methods?.[provider]?.websiteOnly ? `${label} sign-in is available in the installed app and on our website.` : `${label} sign-in is currently unavailable.`}</Text>}
         </View>;
@@ -103,7 +105,7 @@ export default function SignInMethods({ mode = 'login', navigation, disabled = f
       {methods?.phone?.available !== true && <Text style={styles.availability}>Phone verification is currently unavailable.</Text>}
     </>}
     {Object.values(methods || {}).some(method => method.websiteOnly) && <TouchableOpacity accessibilityRole="link" style={styles.linkButton}
-      onPress={() => Linking.openURL('https://uficonnect.org/login').catch(() => setError('Open uficonnect.org/login in your browser.'))}><Text style={styles.link}>Sign in on uficonnect.org</Text></TouchableOpacity>}
+      onPress={() => Linking.openURL(`https://uficonnect.org${websitePath}`).catch(() => setError(`Open uficonnect.org${websitePath} in your browser.`))}><Text style={styles.link}>{accountAction} on uficonnect.org</Text></TouchableOpacity>}
     {!checking && !methods && <TouchableOpacity accessibilityRole="button" style={styles.linkButton} onPress={loadMethods}><Text style={styles.link}>Retry sign-in options</Text></TouchableOpacity>}
     {(error || auth.providerAuthState?.error) ? <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.error}>{error || auth.providerAuthState.error}</Text> : null}
     {providerBusy && <View style={styles.pending}>

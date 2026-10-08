@@ -150,13 +150,14 @@ export default function AccountAccess({ mode = 'login', returnTo = '/', onSigned
     {callbackError && <p className="auth-error" role="alert">{callbackError}</p>}
     <div className="account-access-providers">
       {['google', 'apple'].map(provider => <button key={provider} type="button" className={`account-access-provider account-access-provider-${provider}`} disabled={unavailable || connected(provider) || !providerReady(provider)} onClick={() => startProvider(provider)}>
-        <ProviderMark provider={provider} /><span>Continue with {provider === 'google' ? 'Google' : 'Apple'}</span>
+        <ProviderMark provider={provider} /><span>{linking ? 'Connect' : signup ? 'Sign up with' : 'Sign in with'} {provider === 'google' ? 'Google' : 'Apple'}</span>
         {connected(provider) ? <small>Connected</small> : !providerReady(provider) && <small><LockKeyhole size={12} aria-hidden="true" />{availabilityLabel(provider)}</small>}
       </button>)}
       <button type="button" className="account-access-provider" disabled={unavailable || (connected('phone') && !replacingPhone) || !providerReady('phone')} aria-expanded={phoneOpen} onClick={() => { setPhoneOpen(value => !value); setCode(''); setError(''); }}>
         <Phone size={20} aria-hidden="true" /><span>{replacingPhone ? 'Change phone number' : linking ? 'Connect phone number' : 'Continue with phone number'}</span>{connected('phone') ? <small>Connected</small> : !providerReady('phone') && <small><LockKeyhole size={12} aria-hidden="true" />{availabilityLabel('phone')}</small>}
       </button>
     </div>
+    {!linking && <p className="account-access-status">Google and Apple authenticate your account directly. No separate UFIConnect password is needed.</p>}
     {statusError && <p className="account-access-status" role="status">{statusError} <button type="button" onClick={() => setRevision(value => value + 1)}>Retry options</button></p>}
     {error && <p className="auth-error" role="alert">{error}</p>}
     {phoneOpen && <div className="account-access-phone">

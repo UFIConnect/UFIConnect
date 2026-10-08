@@ -5,6 +5,8 @@ const { PGlite } = require('@electric-sql/pglite');
 const { createTokenVault } = require('./token-vault');
 const { SIGNIN_SCHEMA, createSignIn, verifyIdentityToken, providerSettings, safeReturnTo, phoneNumber } = require('./auth-signin');
 const { BUSINESS_TEAM_SCHEMA } = require('./business-teams');
+const { readSessionCookie } = require('./web-connection-security');
+const { SESSION_TTL_SECONDS } = require('./auth-security');
 const { createAppHarness } = require('./test-support/app-harness');
 
 let signingKey, keySet, jwtSign, applePrivateKey;
@@ -41,6 +43,7 @@ async function fixture(t, { phone=false, apple=false } = {}) {
   if(phone) Object.assign(env,{TWILIO_ACCOUNT_SID:'AC'+'1'.repeat(32),TWILIO_AUTH_TOKEN:'private-sms-key',TWILIO_VERIFY_SERVICE_SID:'VA'+'2'.repeat(32)});
   if(apple) Object.assign(env,{APPLE_CLIENT_ID:'apple-client',APPLE_TEAM_ID:'TEAM',APPLE_KEY_ID:'KEY',APPLE_PRIVATE_KEY:applePrivateKey});
   let tail=Promise.resolve(), exchanges=0, requests=0, checks=0, approved=false, currentNonce;
+  const diagnostics=[];
   const db = { isConnected:()=>true, query:(sql,params)=>pg.query(sql,params), withClient(fn) { const result=tail.then(()=>fn({query:(sql,params)=>pg.query(sql,params)}));tail=result.catch(()=>{});return result; } };
   const fetcher = async (url,options) => {
     exchanges++;
@@ -52,9 +55,10 @@ async function fixture(t, { phone=false, apple=false } = {}) {
   };
   const phoneProvider={request:async()=>{requests++;return {status:'pending',sid:'VE'+'3'.repeat(32)};},verify:async(sid)=>{checks++;return {status:approved?'approved':'pending',sid};}};
   const options={db,env,vault:createTokenVault(env),callbackBase:'https://api.uficonnect.org',frontendBase:'https://uficonnect.org',fetcher,keySets:{google:keySet,apple:keySet},phoneProvider,
-    issueSession:async(user)=>`session-for-${user.id}`,profileFor:async(user)=>({id:user.id,email:user.email_is_placeholder?'':user.email}),onUser:row=>row};
+    issueSession:async(user)=>`session-for-${user.id}`,profileFor:async(user)=>({id:user.id,email:user.email_is_placeholder?'':user.email}),onUser:row=>row,
+    reportFailure:diagnostic=>diagnostics.push(diagnostic)};
   const service=createSignIn(options);
-  return {pg,db,env,options,service,setNonce:n=>{currentNonce=n;},approve:()=>{approved=true;},counts:()=>({exchanges,requests,checks})};
+  return {pg,db,env,options,service,diagnostics,setNonce:n=>{currentNonce=n;},approve:()=>{approved=true;},counts:()=>({exchanges,requests,checks})};
 }
 test('readiness is explicit; input normalization rejects redirects and invalid phone numbers', () => {
   assert.equal(providerSettings({YOUTUBE_CLIENT_ID:'id',YOUTUBE_CLIENT_SECRET:'secret'}).google.configured,true);
@@ -129,6 +133,8 @@ test('web OAuth binds browser cookie, keeps secrets encrypted and consumes callb
   const url=new URL(start.url), state=url.searchParams.get('state');
   f.setNonce(url.searchParams.get('nonce'));
   assert.equal(url.searchParams.get('scope'),'openid email profile');
+  assert.equal(url.searchParams.get('include_granted_scopes'),'false');
+  assert.equal(url.searchParams.get('prompt'),'select_account');
   assert.equal(url.searchParams.get('code_challenge_method'),'S256');
   assert.ok(!start.verifier);
   const stored=(await f.pg.query('SELECT * FROM auth_signin_flows')).rows[0];
@@ -136,16 +142,60 @@ test('web OAuth binds browser cookie, keeps secrets encrypted and consumes callb
   assert.ok(!JSON.stringify(stored).includes(url.searchParams.get('nonce')));
   const req={method:'GET',query:{state,code:'provider-code'},headers:{}};
   const denied=response(); await f.service.complete('google',req,denied);
-  assert.match(denied.location,/error=/);
+  assert.match(denied.location,/auth_error=browser_binding/);
+  assert.deepEqual(f.diagnostics,[{provider:'google',stage:'binding',publicCode:'browser_binding'}]);
   assert.equal(f.counts().exchanges,0);
   req.headers.cookie=res.headers['Set-Cookie'][0].split(';')[0];
   const success=response(); await f.service.complete('google',req,success);
   assert.match(success.location,/returnTo=%2Fjobs/);
   assert.equal(success.headers['Set-Cookie'].length,2);
+  assert.equal(f.diagnostics.length,1,'Successful verification emits no failure diagnostic');
   assert.equal((await f.pg.query('SELECT COUNT(*)::int AS n FROM users')).rows[0].n,1);
   const replay=response(); await f.service.complete('google',req,replay);
   assert.match(replay.location,/error=/);
   assert.equal(f.counts().exchanges,1);
+});
+
+test('OAuth callback diagnostics contain only bounded classifications and never provider or identity payloads', async t => {
+  const f=await fixture(t);
+  let latestNonce;
+  async function complete(service) {
+    const started=response(), start=await service.start('google',{mode:'signup'},started), url=new URL(start.url);
+    latestNonce=url.searchParams.get('nonce'); f.setNonce(latestNonce);
+    const result=response();
+    await service.complete('google',{method:'GET',headers:{cookie:started.headers['Set-Cookie'][0].split(';')[0]},
+      query:{state:url.searchParams.get('state'),code:'private-diagnostic-code',id_token:'private-diagnostic-token',user:'private-diagnostic-user'}},result);
+    return result;
+  }
+  const expired=response(); await f.service.complete('google',{method:'GET',headers:{},query:{state:'private-diagnostic-state'}},expired);
+  assert.match(expired.location,/auth_error=expired/);
+  assert.deepEqual(f.diagnostics.pop(),{provider:'google',stage:'flow',publicCode:'expired'});
+  for(const providerCode of ['invalid_grant','private-diagnostic-provider-error']) {
+    const service=createSignIn({...f.options,fetcher:async()=>({ok:false,json:async()=>({error:providerCode,error_description:'private-diagnostic-description',id_token:'private-diagnostic-token',email:'private-diagnostic@example.invalid'})})});
+    const result=await complete(service);
+    assert.match(result.location,/auth_error=unavailable/);
+    assert.deepEqual(f.diagnostics.pop(),{provider:'google',stage:'token',publicCode:'unavailable',...(providerCode==='invalid_grant'?{providerCode}:{})});
+  }
+  const invalidIdentity=createSignIn({...f.options,fetcher:async()=>({ok:true,json:async()=>({id_token:await jwtSign({nonce:latestNonce},{audience:'private-diagnostic-audience'})})})});
+  const invalid=await complete(invalidIdentity);
+  assert.match(invalid.location,/auth_error=failed/);
+  assert.deepEqual(f.diagnostics.pop(),{provider:'google',stage:'identity',publicCode:'failed',identityCode:'ERR_JWT_CLAIM_VALIDATION_FAILED'});
+  assert.equal((await f.pg.query('SELECT COUNT(*)::int AS n FROM users')).rows[0].n,0);
+  await f.pg.query("INSERT INTO users(name,email,password_hash) VALUES('Existing','person@example.invalid','preserved-password-hash')");
+  const collision=await complete(f.service);
+  assert.match(collision.location,/auth_error=account_exists/);
+  assert.deepEqual(f.diagnostics.pop(),{provider:'google',stage:'account',publicCode:'account_exists'});
+  assert.equal((await f.pg.query('SELECT COUNT(*)::int AS n FROM users')).rows[0].n,1);
+  assert.equal((await f.pg.query('SELECT COUNT(*)::int AS n FROM auth_login_identities')).rows[0].n,0,'Email collisions never authorize or link the existing account');
+  const sessionFailure=createSignIn({...f.options,fetcher:async()=>({ok:true,json:async()=>({id_token:await jwtSign({nonce:latestNonce,email:'new@example.invalid'})})}),
+    issueSession:async()=>{throw Object.assign(new Error('private-diagnostic-session-secret'),{code:'private-diagnostic-code',publicCode:'private-diagnostic-public-code',providerCode:'private-diagnostic-provider-code'});}});
+  const failedSession=await complete(sessionFailure);
+  assert.match(failedSession.location,/auth_error=failed/);
+  assert.equal(failedSession.headers['Set-Cookie'],undefined);
+  assert.deepEqual(f.diagnostics.pop(),{provider:'google',stage:'session',publicCode:'failed'});
+  const brokenLogger=createSignIn({...f.options,reportFailure:()=>{throw new Error('private-diagnostic-logger-error');}});
+  const recovered=response(); await brokenLogger.complete('google',{method:'GET',headers:{},query:{state:'bad'}},recovered);
+  assert.match(recovered.location,/auth_error=expired/,'A logger failure cannot break error recovery');
 });
 test('native callback only returns one-use handoff code; verifier survives restarts and rejects interception', async t => {
   const f=await fixture(t);
@@ -191,6 +241,26 @@ test('Apple form_post binds a secure cookie and signs the expected short-lived c
   assert.equal(user.name,'Apple Member');
   assert.equal(user.email,'person@example.invalid');
   assert.equal(user.auth_provider,'apple');
+  const sessionCookie=result.headers['Set-Cookie'].find(value=>value.startsWith('__Host-ufi_session='));
+  assert.ok(sessionCookie,'Apple callback sets the host-bound production cookie');
+  assert.match(sessionCookie,new RegExp(`; Max-Age=${SESSION_TTL_SECONDS}; Secure$`));
+  assert.equal(readSessionCookie({headers:{cookie:sessionCookie.split(';')[0]}},f.env),`session-for-${user.id}`);
+});
+
+test('production Google callback issues the session cookie accepted by production restoration', async t => {
+  const f=await fixture(t); f.env.NODE_ENV='production';
+  const started=response(), start=await f.service.start('google',{mode:'signup'},started), url=new URL(start.url);
+  f.setNonce(url.searchParams.get('nonce'));
+  const result=response();
+  await f.service.complete('google',{method:'GET',headers:{cookie:started.headers['Set-Cookie'][0].split(';')[0]},query:{state:url.searchParams.get('state'),code:'provider-code'}},result);
+  assert.match(result.location,/\/login\?provider=google$/);
+  const cookie=result.headers['Set-Cookie'].find(value=>value.startsWith('__Host-ufi_session='));
+  assert.ok(cookie,'Google callback sets the host-bound production cookie');
+  assert.match(cookie,new RegExp(`; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL_SECONDS}; Secure$`));
+  const user=(await f.pg.query('SELECT * FROM users')).rows[0];
+  assert.equal(readSessionCookie({headers:{cookie:cookie.split(';')[0]}},f.env),`session-for-${user.id}`);
+  assert.equal(readSessionCookie({headers:{cookie:cookie.split(';')[0].replace('__Host-ufi_session=','ufi_session=')}},f.env),null,'Legacy cookies cannot restore production identity');
+  assert.equal(f.diagnostics.length,0);
 });
 test('native cancellation creates no account and expired flows cannot complete', async t => {
   const f=await fixture(t),start=await f.service.start('google',{client:'native'}),url=new URL(start.url);
@@ -313,6 +383,23 @@ test('phone verification requires provider approval and never links an unverifie
   assert.ok(!phone.email.includes('555'));
   await assert.rejects(f.service.verifyPhone({verificationId:requested.verificationId,code:'654321'},{}));
   assert.equal((await f.pg.query('SELECT COUNT(*)::int AS n FROM users')).rows[0].n,2);
+});
+
+test('restricted SMS recipients receive a useful error without a verification flow or provider details', async t => {
+  const f=await fixture(t,{phone:true});
+  const service=createSignIn({...f.options,phoneProvider:undefined,fetcher:async(url)=>{
+    assert.match(url,/^https:\/\/verify\.twilio\.com\/v2\/Services\/VA[0-9a-f]+\/Verifications$/);
+    return {ok:false,json:async()=>({code:21608,message:'Trial account cannot send to +15551234567; account AC-private'})};
+  }});
+  await assert.rejects(service.requestPhone({phoneNumber:'+15551234567',mode:'signup',name:'Member'}),error=>{
+    assert.equal(error.status,503);
+    assert.equal(error.publicCode,'phone_delivery_unavailable');
+    assert.equal(error.message,'Phone verification is not available for this number. Choose another sign-in method.');
+    assert.doesNotMatch(error.message,/15551234567|AC-private|Trial/);
+    return true;
+  });
+  assert.equal((await f.pg.query('SELECT COUNT(*)::int AS n FROM auth_signin_flows')).rows[0].n,0);
+  assert.equal((await f.pg.query('SELECT COUNT(*)::int AS n FROM users')).rows[0].n,0);
 });
 test('phone resend limits persist across workers and attempts stop before a sixth provider check', async t => {
   const f=await fixture(t,{phone:true});

@@ -55,6 +55,7 @@ const server = await createServer({ root: path.join(root, 'web'), configFile: pa
     }); },
   }], server: { host: '127.0.0.1', port: 5282, strictPort: false } });
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
+const providerButtonName = (mode, provider) => new RegExp('^' + (mode === 'link' ? 'Connect ' : mode === 'signup' ? 'Sign up with ' : 'Sign in with ') + (provider === 'google' ? 'Google' : 'Apple'));
 const panelName = mode => mode === 'link' ? 'Account sign-in methods' : mode === 'signup' ? 'Account creation options' : 'Sign-in options';
 const profileFor = mode => ({ id: 'account-access-member', name: 'Private Member', email: 'private@example.test', title: 'Engineer', plan: 'free', authProvider: 'local', onboardingComplete: mode !== 'signup', skills: [], joinedGroups: [], preferences: {}, roleSettings: {} });
 const flowRequests = calls => calls.filter(call => /^\/auth\/(?:providers\/(?:google|apple)\/(?:start|link)|phone\/(?:request|link|verify))$/.test(call.endpoint));
@@ -84,7 +85,7 @@ try {
     page.setDefaultTimeout(15000);
     await installAuditState(page);
     const errors = [], calls = []; page.on('pageerror', error => errors.push(error.message));
-    let authenticated = mode === 'link', statusFailure = mode === 'login', phoneLinked = false;
+    let authenticated = mode === 'link', statusFailure = mode === 'login', phoneLinked = false, appleReady = false;
     const profile = profileFor(mode);
     await context.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url());
@@ -96,10 +97,11 @@ try {
       if (/events|stream/.test(endpoint)) return route.fulfill({ contentType: 'text/event-stream', body: '' });
       if (endpoint === '/auth/session') return route.fulfill({ status: authenticated ? 200 : 401, json: authenticated ? { token: 'synthetic-account-session', profile } : { message: 'Signed out' } });
       if (endpoint === '/auth/config') return route.fulfill({ json: { auth0: { enabled: false } } });
-      if (endpoint === '/auth/providers') return route.fulfill({ status: statusFailure ? 500 : 200, json: statusFailure ? { message: 'Synthetic unavailable status' } : { providers: readyProviders } });
+      if (endpoint === '/auth/providers') return route.fulfill({ status: statusFailure ? 500 : 200, json: statusFailure ? { message: 'Synthetic unavailable status' } : { providers: { ...readyProviders, apple: { configured: true, enabled: appleReady } } } });
       if (endpoint === '/auth/login') { authenticated = true; return route.fulfill({ json: { token: 'synthetic-email-session', profile } }); }
       if (endpoint === '/auth/providers/linked') return route.fulfill({ json: { methods: phoneLinked ? [{ provider: 'phone', linkedAt: '2026-10-08T00:00:00Z' }] : [], passwordAvailable: true } });
       if (/^\/auth\/providers\/google\/(start|link)$/.test(endpoint)) return route.fulfill({ json: { authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth?state=synthetic' } });
+      if (/^\/auth\/providers\/apple\/(start|link)$/.test(endpoint)) return route.fulfill({ json: { authorizationUrl: 'https://appleid.apple.com/auth/authorize?state=synthetic' } });
       if (endpoint === '/auth/phone/request' || endpoint === '/auth/phone/link') return route.fulfill({ json: { verificationId: 'synthetic-verification', expiresIn: 600, resendAfter: 60 } });
       if (endpoint === '/auth/phone/verify') {
         if (body.code === '000000') return route.fulfill({ status: mode === 'link' ? 409 : 400, json: { message: mode === 'link' ? 'This sign-in method is already connected to another account.' : 'That code could not be verified.' } });
@@ -121,15 +123,24 @@ try {
       await page.screenshot({ path: path.join(root, `.cache/audit-ui/account-access-locked-login-${width}.png`), fullPage: true });
       statusFailure = false; await panel.getByRole('button', { name: 'Retry options', exact: true }).click();
     }
-    await panel.getByRole('button', { name: /^Continue with Google/ }).waitFor();
+    await panel.getByRole('button', { name: providerButtonName(mode, 'google') }).waitFor();
     await page.waitForFunction(() => [...document.querySelectorAll('.account-access-provider')].some(button => button.textContent.includes('Google') && !button.disabled));
-    await assertProviderLock(panel, /^Continue with Apple/, 'Unavailable');
+    await assertProviderLock(panel, providerButtonName(mode, 'apple'), 'Unavailable');
     {
-      await panel.getByRole('button', { name: /^Continue with Google/ }).click();
+      await panel.getByRole('button', { name: providerButtonName(mode, 'google') }).click();
       await page.waitForURL('https://accounts.google.com/**');
       const start = calls.find(call => call.endpoint.endsWith(mode === 'link' ? '/google/link' : '/google/start'));
       assert.deepEqual(start.body, mode === 'link' ? { client: 'web' } : { client: 'web', mode, returnTo: mode === 'signup' ? '/' : '/settings?tab=security' });
       assert.equal(Boolean(start.authorization), mode === 'link');
+      appleReady = true;
+      await page.goto(base + target);
+      await page.waitForFunction(() => !document.querySelector('.account-access-provider-apple')?.disabled);
+      await panel.getByRole('button', { name: providerButtonName(mode, 'apple') }).click();
+      await page.waitForURL('https://appleid.apple.com/**');
+      const appleStart = calls.find(call => call.endpoint.endsWith(mode === 'link' ? '/apple/link' : '/apple/start'));
+      assert.deepEqual(appleStart.body, start.body);
+      assert.equal(Boolean(appleStart.authorization), mode === 'link');
+      appleReady = false;
       await page.goto(base + target);
     }
     await panel.getByRole('button', { name: mode === 'link' ? /^Connect phone number/ : /^Continue with phone number/ }).click();
@@ -184,7 +195,7 @@ try {
     assert.deepEqual(errors, []);
     await context.close(); console.log(`PASS account access ${mode}: readiness, provider destination, phone verification, private data, layout at ${width}px`);
   }
-  for (const width of [1440, 390]) for (const mode of ['login', 'signup', 'link']) {
+  if (!process.argv.includes('--providers-only')) for (const width of [1440, 390]) for (const mode of ['login', 'signup', 'link']) {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, serviceWorkers: 'block' });
     const page = await context.newPage(); page.setDefaultTimeout(15000);
     await installAuditState(page);
@@ -208,7 +219,7 @@ try {
     });
     await page.goto(`${base}__account-access-readiness?mode=${mode}`);
     const panel = page.getByRole('region', { name: panelName(mode), exact: true });
-    const names = [/^Continue with Google/, /^Continue with Apple/, mode === 'link' ? /^Connect phone number/ : /^Continue with phone number/];
+    const names = [providerButtonName(mode, 'google'), providerButtonName(mode, 'apple'), mode === 'link' ? /^Connect phone number/ : /^Continue with phone number/];
     const assertAllLocked = async status => { for (const name of names) await assertProviderLock(panel, name, status); };
     await assertAllLocked('Checking availability');
     assert.equal(flowRequests(calls).length, 0, 'Loading availability never starts a sign-in flow');
@@ -294,7 +305,7 @@ try {
     await context.close();
     console.log(`PASS account readiness ${mode}: strict booleans, missing/malformed/partial state, loading/error/retry, guarded phone send/verify/resend at ${width}px`);
   }
-  for (const width of [1440, 390]) for (const mode of ['login', 'signup']) {
+  if (!process.argv.includes('--providers-only')) for (const width of [1440, 390]) for (const mode of ['login', 'signup']) {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, serviceWorkers: 'block' });
     const page = await context.newPage(); page.setDefaultTimeout(15000); await installAuditState(page);
     const errors = [], calls = [], external = []; page.on('pageerror', error => errors.push(error.message));

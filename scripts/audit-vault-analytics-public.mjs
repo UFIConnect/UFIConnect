@@ -115,9 +115,9 @@ try {
       check(await subscribe.isEnabled(), 'Configured Vault membership opens checkout');
       const webProtection = page.locator('.web-protection-panel');
       const protectionStatus = webProtection.locator('.web-protection-status');
-      await protectionStatus.filter({ hasText: 'Protected' }).waitFor();
-      check(await webProtection.getByRole('heading', { name: 'Web protection', exact: true }).count() === 1, 'Ordinary browser Vault presents verified web protection');
-      check(await webProtection.getByRole('switch', { name: 'Vault connection monitoring', exact: true }).getAttribute('aria-checked') === 'true', 'Vault connection monitoring starts enabled');
+      await protectionStatus.filter({ hasText: 'Subscription required' }).waitFor();
+      check(await webProtection.getByRole('heading', { name: 'Web protection', exact: true }).count() === 1, 'Ordinary browser Vault presents subscription-gated connection monitoring');
+      check(await webProtection.getByRole('switch', { name: 'Vault connection monitoring', exact: true }).getAttribute('aria-checked') === 'false', 'Unpaid Vault connection monitoring starts disabled');
       check(await page.getByRole('button', { name: /^(Connect|Enable) VPN$/ }).count() === 0, 'Ordinary browser Vault has no native VPN launch action');
       await subscribe.click();
       await page.getByText('Synthetic checkout failure. Please retry.', { exact: true }).waitFor();
@@ -128,8 +128,8 @@ try {
       await page.goto(origin + '/vault?upgrade=success');
       await page.getByText('Payment is still being confirmed. Check status again shortly before starting another checkout.', { exact: true }).waitFor();
       check(await page.getByRole('button', { name: 'Create vault', exact: true }).isDisabled(), 'A checkout return URL cannot grant membership');
-      await protectionStatus.filter({ hasText: 'Protected' }).waitFor();
-      check(await webProtection.getByRole('button', { name: 'Check protection', exact: true }).isEnabled(), 'Unpaid members can verify their browser connection');
+      await protectionStatus.filter({ hasText: 'Subscription required' }).waitFor();
+      check(await webProtection.getByRole('button', { name: 'Check protection', exact: true }).isDisabled(), 'An unpaid checkout return cannot enable Vault monitoring');
       check(await page.getByRole('button', { name: 'Create vault', exact: true }).isDisabled(), 'New Vault creation requires an active subscription');
       check(await page.locator('.vault-unlock-content .vault-vpn-subscription').count() === 1, 'VPN offer is in A space that’s yours');
       check(await page.locator('.vault-secondary-column .vault-vpn-subscription').count() === 0, 'VPN offer has no duplicate in the right column');
@@ -144,8 +144,8 @@ try {
       vpnPaid = false;
       await page.getByRole('button', { name: 'Check subscription status', exact: true }).click();
       await subscribe.waitFor();
-      await protectionStatus.filter({ hasText: 'Protected' }).waitFor();
-      check(await webProtection.getByRole('button', { name: 'Check protection', exact: true }).isEnabled(), 'Loss of paid entitlement keeps browser protection available');
+      await protectionStatus.filter({ hasText: 'Subscription required' }).waitFor();
+      check(await webProtection.getByRole('button', { name: 'Check protection', exact: true }).isDisabled(), 'Loss of paid entitlement stops Vault monitoring');
       await page.getByRole('navigation', { name: 'Vault pages' }).getByRole('link', { name: 'Device', exact: true }).click();
       check(await page.getByRole('button', { name: 'Orders are not open yet', exact: true }).isDisabled(), 'Device ordering remains locked');
       check(await page.locator('.vault-device-page input,.vault-device-page form').count() === 0, 'Locked ordering does not collect personal or payment details');

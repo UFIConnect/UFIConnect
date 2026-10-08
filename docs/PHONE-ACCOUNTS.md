@@ -35,3 +35,38 @@ A failed lazy page load after returning to UFIConnect gets one fresh-document
 retry within five minutes. A persistent page or render failure shows Reload,
 sign-in, and Home recovery links instead of an empty screen. This recovery
 does not establish the cause of a particular member's blank page.
+
+## Provider activation and errors
+
+Phone sign-in is enabled when the API has a valid Twilio account, auth token,
+Verify service, connected database, and encryption key. An enabled button does
+not establish that Twilio permits delivery to every destination. Trial accounts
+restrict recipients; unrestricted delivery requires the provider's account
+upgrade and compliance requirements. Review the current
+[Twilio 21608 requirements](https://www.twilio.com/docs/api/errors/21608).
+A rejected SMS does not create an account or a usable verification flow.
+
+Google and Apple buttons on Register create an account after provider
+authentication. Login uses the same verified provider identity to sign in.
+Google requests only `openid email profile` for authentication, separately from
+permissions to read or interact with YouTube. An existing email/password
+account must first sign in with its existing method and connect the provider
+in Settings → Security; a matching email alone does not link accounts.
+
+The current reused Google client returns to
+`https://api.uficonnect.org/auth/social/youtube/callback`. A separately configured
+Google sign-in client returns to
+`https://api.uficonnect.org/auth/providers/google/callback`. The registered
+callback must match the client actually selected by the API. Apple uses
+`https://api.uficonnect.org/auth/providers/apple/callback` with `form_post`.
+
+An error on a provider's page must be diagnosed from its exact error code and
+details in the provider console. Reaching the account-entry page or receiving
+`invalid_grant` for a deliberately invalid code does not establish successful
+sign-in, publishing approval, or unrestricted account access.
+
+Failed callbacks returning to UFIConnect emit `[signin] callback failure`
+with only the provider, stage, and approved error codes. The record excludes
+authorization codes, tokens, cookies, email, and provider messages. It identifies
+expired flows, browser binding failures, token exchange, identity verification,
+account conflicts, and session failures without revealing account data.

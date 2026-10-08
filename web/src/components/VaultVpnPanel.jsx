@@ -14,7 +14,7 @@ function managedPlatform() {
   if (typeof navigator === 'undefined') return null;
   if (/Android/i.test(navigator.userAgent)) return 'android';
   if (/iPad|iPhone|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) return 'ios';
-  return /Win/i.test(navigator.platform || navigator.userAgent) ? 'windows' : null;
+  return /^Win(?:32|64|CE|dows)?$/i.test(navigator.platform || '') || /\bWindows\b/i.test(navigator.userAgent || '') ? 'windows' : null;
 }
 
 function launchUrl(data) {
@@ -126,10 +126,10 @@ export function ManagedVpnPanel({ accountId, activityTarget, subscriptionTarget,
 export default function VaultVpnPanel(props) {
   const { search } = useLocation();
   // Native clients explicitly request their separate device connection flow.
-  // Every ordinary browser visit uses automatic web protection.
+  // Ordinary browser visits use subscription-gated connection monitoring.
   if (new URLSearchParams(search).get('device') === 'vpn') return <ManagedVpnPanel {...props} />;
   return <>
-    <WebProtectionPanel accountId={props.accountId} />
+    <WebProtectionPanel accountId={props.accountId} billing={props.billing} />
     {props.subscriptionTarget && createPortal(<VaultVpnSubscription billing={props.billing} />, props.subscriptionTarget)}
     {props.activityTarget && createPortal(<section className="vault-panel vault-activity" aria-labelledby="vault-activity-title">
       <div className="vault-panel-heading"><h2 id="vault-activity-title">Across UFIConnect</h2><ShieldCheck size={16} /></div>
