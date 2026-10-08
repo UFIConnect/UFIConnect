@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { PGlite } = require('@electric-sql/pglite');
 const express = require('express');
+const { SNAP_SCHEMA } = require('./snaps');
 const { REPORT_SCHEMA, createContentReports, registerContentReportRoutes, reportInput, createReportVisibilityFilter, reportSuppressionPredicate } = require('./content-reports');
 const input = { targetType: 'post', targetId: 'youtube-example', reason: 'copyright', details: 'Private report evidence', source: 'youtube', sourceUrl: 'https://www.youtube.com/watch?v=abcdefghijk' };
 
@@ -155,6 +156,23 @@ test('native removal deletes stored posts and discussions or a comment and its c
   assert.equal((await pg.query('SELECT * FROM community_posts')).rows.length, 0);
   assert.equal((await pg.query('SELECT * FROM post_comments')).rows.length, 0);
   assert.equal((await pg.query('SELECT * FROM report_content_suppressions')).rows.length, 2);
+});
+
+test('native Snap reports suppress and hide the owned asset without bypassing storage cleanup', async t => {
+  const { pg, service, removed } = await fixture(t);
+  for (const sql of SNAP_SCHEMA) await pg.exec(sql);
+  const owner = '11111111-1111-4111-8111-111111111111', snapId = `snap_${owner}`;
+  await pg.query('INSERT INTO users(id) VALUES($1)', [owner]);
+  await pg.query(`INSERT INTO community_snaps(id,author_id,caption,media_url,media_type,thumbnail_url,public_id,media_bytes,created_at,expires_at)
+    VALUES($1,$2,'Caption','https://media.invalid/snap.jpg','image','https://media.invalid/snap.jpg','owned-asset',100,NOW(),NOW()+INTERVAL '24 hours')`, [snapId, owner]);
+  const report = await service.submit('member', { targetType: 'post', targetId: snapId, source: 'uficonnect', reason: 'spam' });
+  assert.equal((await service.actions(report.id)).removal.kind, 'native_snap');
+  const result = await service.act(report.id, action('remove_uficonnect'));
+  assert.equal(result.kind, 'native_snap'); assert.equal(result.removed, true);
+  const snap = (await pg.query('SELECT deleted_at,media_cleaned_at FROM community_snaps WHERE id=$1', [snapId])).rows[0];
+  assert.ok(snap.deleted_at); assert.equal(snap.media_cleaned_at, null, 'Media stays available to the cleanup worker');
+  assert.equal((await pg.query('SELECT target_id FROM report_content_suppressions')).rows[0].target_id, snapId);
+  assert.equal((await service.actions(report.id)).removal.removed, true); assert.equal(removed.length, 1);
 });
 
 test('forged report identity and missing targets cannot authorize removal or source reporting', async t => {

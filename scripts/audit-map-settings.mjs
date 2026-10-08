@@ -42,9 +42,10 @@ try {
   await server.listen();
   browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
   for (const width of [1440, 390]) {
-    // This audit exercises settings and real pointer clicks. Keep the 3D city
-    // paused through its supported preference so software-rendered CI frames
-    // do not compete with scrolling/actionability checks.
+    // This audit exercises settings and real pointer clicks. Pause through the
+    // supported preference, verify the desktop Maximum default, then use the
+    // Automatic option for repeated settings and route changes. CI's software
+    // GPU otherwise blocks Apply's request lifecycle while rebuilding SSAO.
     const context = await browser.newContext({ viewport: { width, height: 1000 }, isMobile: width < 600, hasTouch: width < 600, reducedMotion: 'reduce' });
     await context.tracing.start({ screenshots: true, snapshots: true, sources: false });
     const page = await context.newPage();
@@ -98,6 +99,19 @@ try {
       assert.equal(await page.getByText('All 16 nature cities', { exact: true }).count(), 0);
       assert.equal(await page.locator('.map-city-footer').count(), 0);
       assert.ok(await page.locator('.map-post-feed > article, .map-post-feed > .card').count() > 0, 'Map posts use the full feed card');
+
+      const renderingQuality = page.getByRole('combobox', { name: 'Rendering quality', exact: true });
+      if (width === 1440) {
+        assert.equal(await renderingQuality.inputValue(), 'maximum', 'Desktop opens at Maximum detail');
+        await page.waitForFunction(() => {
+          const data = document.querySelector('.map-city-scene canvas')?.dataset;
+          return data?.renderQuality === 'physical' && Number(data.instances) > 3000;
+        }, undefined, { timeout: 30000 });
+        const maximum = await page.locator('.map-city-scene canvas').evaluate(canvas => ({ ...canvas.dataset }));
+        assert.ok(Number(maximum.drawCalls) < 80, 'Maximum city geometry remains instanced');
+        console.log('MAP_MAXIMUM_RENDERING ' + JSON.stringify(maximum));
+        await renderingQuality.selectOption('auto');
+      }
 
       let tools = await openTools();
       const sourcePages = tools.getByRole('navigation', { name: 'Source option pages' });
@@ -229,6 +243,10 @@ try {
       await page.getByText('uficonnect map post', { exact: true }).waitFor({ timeout: 30000 });
       assert.deepEqual((await state()).sourceSelections.community, ['uficonnect']);
       assert.deepEqual((await state()).topicSelections['community:city'], ['Community']);
+      if (width === 1440) {
+        assert.equal(await renderingQuality.inputValue(), 'maximum', 'Reload preserves the desktop Maximum default');
+        await renderingQuality.selectOption('auto');
+      }
 
       tools = await openTools('Topics');
       await tools.getByRole('button', { name: 'Clear topics', exact: true }).click();
@@ -258,7 +276,8 @@ try {
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Map controls must fit the viewport');
       await page.screenshot({ path: path.join(output, `map-settings-${width}.png`), fullPage: true });
       if (width === 1440) {
-        assert.equal(await page.getByRole('combobox', { name: 'Rendering quality', exact: true }).inputValue(), 'maximum');
+        assert.equal(await renderingQuality.inputValue(), 'auto', 'Drive checks use the supported adaptive renderer');
+        assert.equal(await renderingQuality.locator('option[value="maximum"]').count(), 1, 'Maximum detail remains selectable');
         await page.getByRole('button', { name: 'Drive mode', exact: true }).click();
         await page.waitForFunction(() => Number(document.querySelector('.map-city-scene canvas')?.dataset.driveProgress) > .005, { timeout: 30000 });
         const drive = page.getByRole('group', { name: 'Drive between cities', exact: true });
@@ -268,8 +287,11 @@ try {
         await page.waitForTimeout(200);
         assert.equal(await page.locator('.map-city-scene canvas').getAttribute('data-drive-progress'), paused, 'Pause stops the vehicle');
         const rendering = await page.locator('.map-city-scene canvas').evaluate(canvas => ({ ...canvas.dataset }));
-        assert.equal(rendering.renderQuality, 'physical');
-        assert.ok(Number(rendering.instances) > 3000 && Number(rendering.drawCalls) < 80, 'Detailed city geometry remains instanced');
+        assert.ok(['physical', 'balanced', 'basic'].includes(rendering.renderQuality), 'Automatic rendering keeps a supported quality tier');
+        assert.ok(Number(rendering.instances) > 3000, 'Automatic keeps the detailed instanced city model');
+        // The direct renderer counts city draws; Maximum's composer reports its
+        // last output pass. Compare model instances rather than those counters.
+        assert.ok(Number(rendering.drawCalls) > 0, 'Automatic renders the city');
         await page.screenshot({ path: path.join(output, 'map-drive-desktop.png') });
         console.log('MAP_RENDERING ' + JSON.stringify(rendering));
         for (const id of ['airport', 'shopping']) {
@@ -283,6 +305,17 @@ try {
         const landmarks = page.getByRole('group', { name: 'Travel and Shop landmarks', exact: true });
         assert.equal(await landmarks.getByRole('link', { name: 'Open Travel' }).getAttribute('href'), '/?feed=countries');
         assert.equal(await landmarks.getByRole('link', { name: 'Open Shop' }).getAttribute('href'), '/?feed=ufi&channel=shop');
+        // Restore the actual Maximum choice after the settings and drive checks.
+        // Measure one physical scene without forcing every refetch to rebuild it.
+        await renderingQuality.selectOption('maximum');
+        await page.waitForFunction(() => {
+          const data = document.querySelector('.map-city-scene canvas')?.dataset;
+          return data?.renderQuality === 'physical' && Number(data.instances) > 3000;
+        }, undefined, { timeout: 30000 });
+        const maximum = await page.locator('.map-city-scene canvas').evaluate(canvas => ({ ...canvas.dataset }));
+        assert.ok(Number(maximum.drawCalls) < 80, 'Maximum remains instanced after settings and driving');
+        await page.screenshot({ path: path.join(output, 'map-maximum-desktop.png') });
+        console.log('MAP_MAXIMUM_FINAL_RENDERING ' + JSON.stringify(maximum));
       }
       if (width < 600) {
         tools = await openTools('Topics');

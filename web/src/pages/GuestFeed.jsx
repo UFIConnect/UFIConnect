@@ -3,6 +3,7 @@ import { isCareerPost } from '../utils/jobSummary.mjs';
 import ArticleIllustration from '../components/ArticleIllustration';
 import PostImage from '../components/PostImage';
 import SourceMediaFallback from '../components/SourceMediaFallback';
+import SnapFeedRail from '../components/SnapFeedRail';
 import VimeoPreview from '../components/VimeoPreview';
 import { extractVimeoId } from '../components/videoMedia';
 import { useState, useEffect, useRef, useCallback } from 'react';
@@ -349,6 +350,7 @@ export default function GuestFeed() {
           <p>{locationContext?.available ? `Approximate area: ${[locationContext.city, locationContext.countryName || locationContext.country].filter(Boolean).join(', ')}. Public recommendations may use this area.` : 'Showing global public posts.'}</p>
           <p><Link to="/register">Create an account</Link> to personalize your feed, follow communities, and join conversations. Already a member? <Link to="/login">Sign in</Link>.</p>
         </section>
+        <SnapFeedRail mode="home" />
         <div className="guest-feed-banner">
           <div className="guest-feed-banner-actions" style={{ marginLeft: 'auto' }}>
             <button

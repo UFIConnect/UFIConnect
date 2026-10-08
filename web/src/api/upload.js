@@ -13,6 +13,7 @@ export function uploadMedia(file, onProgress, folder = 'posts') {
     form.append('timestamp', sig.timestamp);
     form.append('signature', sig.signature);
     form.append('folder', sig.folder);
+    if (sig.publicId) form.append('public_id', sig.publicId);
 
     const xhr = new XMLHttpRequest();
     xhr.open('POST', `https://api.cloudinary.com/v1_1/${sig.cloudName}/auto/upload`);
@@ -23,7 +24,9 @@ export function uploadMedia(file, onProgress, folder = 'posts') {
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
           const result = JSON.parse(xhr.responseText);
-          resolve({ url: result.secure_url, type: result.resource_type === 'video' ? 'video' : 'image' });
+          resolve({ url: result.secure_url, type: result.resource_type === 'video' ? 'video' : 'image',
+            upload: { publicId: result.public_id, version: result.version, signature: result.signature },
+          });
         } catch {
           reject(new Error('Unexpected upload response'));
         }

@@ -20,6 +20,8 @@ const { createAnalyticsBridgeHandler } = require('./analytics-bridge');
 const { ANALYTICS_SCHEMA, ANALYTICS_MIGRATIONS, createAggregateAnalytics } = require('./aggregate-analytics');
 const { OFFICE_MEMBERS_SCHEMA, registerOfficeMemberRoutes } = require('./office-members');
 const { SIGNIN_SCHEMA, registerSignInRoutes, isDeliverableEmail } = require('./auth-signin');
+const { SNAP_SCHEMA, createSnaps, registerSnapRoutes } = require('./snaps');
+const { createSnapMedia } = require('./snap-media');
 const { CREATOR_ANALYTICS_SCHEMA, createCreatorAnalytics, registerCreatorAnalyticsRoutes } = require('./creator-analytics');
 const { createUfiVault, registerUfiVaultRoutes, UFI_VAULT_SCHEMA } = require('./ufi-vault');
 const { createOfficeAgentChat, sanitizeSnapshot: sanitizeAgentSnapshot } = require('./office-agent-chat');
@@ -92,6 +94,11 @@ const {
 
 dotenv.config();
 const tokenVault = createTokenVault(process.env);
+const snapMedia = createSnapMedia({ env: process.env });
+const snaps = createSnaps({ db, getUser, screenMemberContent,
+  validateUpload: (userId, body) => snapMedia.validate(userId, body),
+  removeMedia: (publicId, mediaType) => snapMedia.remove(publicId, mediaType),
+});
 let securityStorageReady = process.env.NODE_ENV !== 'production';
 const generatedContent = createGeneratedContentStore(db);
 const generatedMedia = createGeneratedMediaStorage({ env: process.env });
@@ -17670,6 +17677,7 @@ async function migrateDB() {
     await db.query(ANALYTICS_SCHEMA);
     for (const statement of ANALYTICS_MIGRATIONS) await db.query(statement);
     for (const statement of OFFICE_MEMBERS_SCHEMA) await db.query(statement);
+    for (const statement of SNAP_SCHEMA) await db.query(statement);
     for (const statement of CREATOR_ANALYTICS_SCHEMA) await db.query(statement);
     await db.query(COPYRIGHT_REPORT_BRIDGE_SCHEMA);
     for (const statement of UFI_VAULT_SCHEMA) await db.query(statement);
@@ -27923,6 +27931,11 @@ const creatorAnalytics = createCreatorAnalytics({ db, getUser: getPublicTargetUs
 registerCreatorAnalyticsRoutes(app, {service:creatorAnalytics,authenticate,limiter:contentSubmissionLimiter});
 scheduleRecurring(() => creatorAnalytics.prune().catch(() => {}), 60 * 60 * 1000);
 registerUfiVaultRoutes(app, {vault:ufiVault,authenticate,limiter:contentSubmissionLimiter});
+registerSnapRoutes(app, { service: snaps, authenticate, authenticateOptional, limiter: contentSubmissionLimiter });
+if (!IS_PIPELINE_ROLE) {
+  const snapCleanupTimer = setInterval(() => { void snaps.cleanup().catch(() => {}); }, 15 * 60 * 1000);
+  snapCleanupTimer.unref?.();
+}
 require('./source-interactions').registerSourceInteractionRoutes(app, {
   authenticate, limiter: contentSubmissionLimiter, getUser: getPublicTargetUser, screenMemberContent,
   fetchImpl: fetch, atprotoGet, atprotoPostJSON, mastodonService, policyEnv: process.env,
@@ -28382,6 +28395,10 @@ const UPLOAD_FOLDERS = {
   messages: 'uficonnect-messages',
 };
 app.get('/media/upload-signature', authenticate, (req, res) => {
+  if (req.query.folder === 'snaps') {
+    try { return res.json(snapMedia.signature(req.user.id)); }
+    catch (error) { return res.status(error.status || 503).json({ message: error.message }); }
+  }
   const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
   const apiKey    = process.env.CLOUDINARY_API_KEY;
   const apiSecret = process.env.CLOUDINARY_API_SECRET;

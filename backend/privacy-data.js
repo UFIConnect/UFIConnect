@@ -53,6 +53,11 @@ async function deleteAccountData(db, userId) {
     ]) await query(`DELETE FROM ${table} WHERE user_id=$1`);
     for (const table of ['ufi_vault_challenges','ufi_vault_credentials','ufi_vault_security_events']) await query(`DELETE FROM ${table} WHERE account_id=$1`);
     await query('DELETE FROM reports WHERE reporter_id=$1');
+    // A native Snap asset still needs storage deletion after the account FK
+    // removes its row. Queue only its owned media identity in this transaction.
+    await query(`INSERT INTO snap_media_cleanup(public_id,media_type)
+      SELECT public_id,media_type FROM community_snaps WHERE author_id=$1::uuid AND media_cleaned_at IS NULL
+      ON CONFLICT(public_id) DO NOTHING`);
     // auth_sessions, user_sign_in_events and billing_checkout_attempts cascade.
     await query('DELETE FROM users WHERE id=$1');
     return { deleted: true };
@@ -98,6 +103,9 @@ async function exportAccountData(db, userId) {
       attachments: `SELECT id,filename,mime_type AS "mimeType",file_size AS "fileSize",encode(file_data,'base64') AS "fileBase64",
         extracted_text AS "extractedText",ats_score AS "atsScore",ats_feedback AS "atsFeedback",keywords,
         is_primary AS "isPrimary",created_at AS "createdAt" FROM attachments WHERE user_id=$1 ORDER BY created_at,id`,
+      snaps: `SELECT id,caption,media_url AS "mediaUrl",media_type AS "mediaType",visibility,
+        created_at AS "createdAt",expires_at AS "expiresAt",deleted_at AS "deletedAt"
+        FROM community_snaps WHERE author_id=$1::uuid ORDER BY created_at,id`,
       savedPosts: `SELECT post_id AS id,post_snapshot AS snapshot,created_at AS "savedAt",updated_at AS "updatedAt"
         FROM saved_posts WHERE user_id=$1 ORDER BY created_at,post_id`,
       trackedJobs: `SELECT job_id AS id,status,title,org,source,source_url AS "sourceUrl",match_score AS "matchScore",

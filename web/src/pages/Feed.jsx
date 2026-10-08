@@ -29,6 +29,7 @@ import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import FollowingConnectionNotice from '../components/FollowingConnectionNotice';
 import HomeFeedTools from '../components/HomeFeedTools';
 import SourceWebsiteDirectory from '../components/SourceWebsiteDirectory';
+import SnapFeedRail from '../components/SnapFeedRail';
 import TopicFilterControl, { TopicChoices } from '../components/TopicFilterControl';
 import TravelDestinationPicker, { useTravelDestinations, travelCityMatches } from '../components/TravelDestinationPicker';
 import TravelGuideDialog from '../components/TravelGuideDialog';
@@ -3473,6 +3474,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       </section>}
 
       {/* Home uses public discovery; Following uses authorized personal feeds. */}
+      {usesSourceControls && <SnapFeedRail mode={viewMode === 'following' ? 'following' : 'home'} favorites={currentSourceFavoriteKeys} />}
       {usesSourceControls && (
         <div className="feed-source-filter-row feed-unified-control-bar">
           <div className="feed-source-picker">
