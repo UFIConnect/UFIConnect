@@ -17,9 +17,9 @@ export function AccountCategoryNavigation({ sections, category, onChange, compac
   return <fieldset className={`account-category-filter${compact ? ' account-category-filter--compact' : ''}`} aria-label="Account categories">
     <legend>Categories</legend>
     {compact ? <select className="form-select" aria-label="Account category" value={active} onChange={event => onChange(event.target.value)}>
-      {options.map(option => <option key={option.id} value={option.id}>{option.label} ({option.total})</option>)}
+      {options.map(option => <option key={option.id} value={option.id}>{option.label}{option.showCount !== false ? ` (${option.total})` : ''}</option>)}
     </select> : <ul>{options.map(option => <li key={option.id}>
-      <button type="button" aria-pressed={active === option.id} onClick={() => onChange(option.id)}>{option.label} <span>{option.total}</span></button>
+      <button type="button" aria-pressed={active === option.id} onClick={() => onChange(option.id)}>{option.label}{option.showCount !== false && <> <span>{option.total}</span></>}</button>
     </li>)}</ul>}
   </fieldset>;
 }

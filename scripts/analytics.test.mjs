@@ -27,6 +27,12 @@ test('every source selector uses registered fixed categories and private data ca
     for (const value of ['private@example.invalid', 'https://private.mastodon.invalid', 'private-account-id']) assert.equal(PAGE_CATEGORIES[`${group}_${value}`], undefined);
   }
   for (const category of ['video_mode_following', 'music_mode_feed', 'notification_filter_unread', 'notification_filter_requests', 'connected_accounts_category_social', 'home_panel_accounts', 'workspace_writing']) assert.ok(PAGE_CATEGORIES[category], category);
+  for (const group of ['connected_accounts_category', 'home_accounts_category', 'command_center_accounts_category']) {
+    const entry = PAGE_CATEGORIES[`${group}_location`];
+    assert.equal(entry?.viewType, 'tab', group);
+    assert.equal(entry?.path, `/analytics-tabs/${group.replaceAll('_', '-')}/location`);
+    assert.equal(PAGE_CATEGORIES[`${group}_San_Francisco`], undefined, 'User cities cannot become analytics categories');
+  }
 });
 
 test('all rendered web routes resolve to a fixed category or an explicit private exclusion', async () => {

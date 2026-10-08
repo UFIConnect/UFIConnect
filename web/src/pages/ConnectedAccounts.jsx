@@ -11,6 +11,9 @@ import { sourceAuthorizationState } from '../components/sourceAuthorization.mjs'
 import { useAuth } from '../contexts/AuthContext';
 import { accountSections, selectedAccountSections } from '../components/sourceDirectory';
 import { AccountCategoryNavigation } from '../components/DirectoryControls';
+import useLocationBasedAccounts from '../components/useLocationBasedAccounts';
+import AccountLocationNotice from '../components/AccountLocationNotice';
+import { locationAccountSection } from '../../../shared/accountLocation.js';
 
 const PLATFORM_BENEFITS = {
   linkedin:  ['Import your work history & headline', 'Show LinkedIn posts in your feed', 'Get matched with relevant jobs'],
@@ -92,6 +95,7 @@ export default function ConnectedAccounts() {
     const controller = new AbortController();
     setLoading(true);
     setCatalogAccountId(null);
+    setCategoryFilter('social');
     setPlatforms([]);
     setConnected({});
     setMastodonServer(null);
@@ -225,7 +229,10 @@ export default function ConnectedAccounts() {
   // then wondering why it only appears in their private workspace.
   const careerPlatforms = platforms.filter(([key, p]) => p.category === 'career' || (isBusinessMembership && key === 'linkedin'));
   const generalPlatforms = platforms.filter(([, p]) => !p.commandCenterOnly);
-  const accountCategories = accountSections(isBusinessMembership ? careerPlatforms : generalPlatforms, { business: isBusinessMembership });
+  const visiblePlatforms = catalogAccountId === profile?.id ? isBusinessMembership ? careerPlatforms : generalPlatforms : [];
+  const locationRanking = useLocationBasedAccounts(categoryFilter === 'location' && !loading && catalogAccountId === profile?.id);
+  const accountCategories = [...accountSections(visiblePlatforms, { business: isBusinessMembership }),
+    locationAccountSection(visiblePlatforms, locationRanking.data, { business: isBusinessMembership })];
   const activeCategory = accountCategories.some(section => section.id === categoryFilter) ? categoryFilter : accountCategories[0]?.id;
   const displayedSections = selectedAccountSections(accountCategories, activeCategory);
   useTabMetrics('connected_accounts_category', activeCategory || '');
@@ -307,6 +314,7 @@ export default function ConnectedAccounts() {
               <div className="account-category-heading">
                 <h2 id={`accounts-${section.id}-heading`}>{section.label}</h2>
               </div>
+              {section.id === 'location' && <AccountLocationNotice ranking={locationRanking} count={section.total} />}
               <div className="account-category-items">
               {section.items.map(([key, p]) => (
                 <PlatformCard

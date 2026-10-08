@@ -31,6 +31,11 @@ entries('home_accounts_status', 'Home connected accounts status', statuses);
 entries('command_center_accounts_status', 'Command Center accounts status', statuses);
 const categories = [['all', 'All categories'], ['social', 'Social'], ['video', 'Video and streaming'], ['work', 'Work and development'], ['publishing', 'Publishing'], ['career', 'Career sites'], ['travel', 'Travel'], ['audio', 'Music and audio']];
 entries('connected_accounts_category', 'Connected accounts category', categories);
+for (const [group, label] of [
+  ['connected_accounts_category', 'Connected accounts category'],
+  ['home_accounts_category', 'Home connected accounts category'],
+  ['command_center_accounts_category', 'Command Center accounts category'],
+]) entries(group, label, [['location', 'Location based']]);
 entries('crosspost_category', 'Cross-post category', categories);
 entries('business_posts', 'Business posts', [['list', 'Your posts'], ['compare', 'Similar role comparison']]);
 catalog.career_posts = { category: 'career_posts', path: '/career-posts', title: 'Business Cross Post', label: 'Business Cross Post', platform: 'web', group: 'Business', viewType: 'page' };

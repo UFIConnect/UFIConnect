@@ -30,6 +30,9 @@ import { DISCOVERY_CATEGORIES, discoveryPostContext } from '../components/discov
 import '../components/DiscoveryCategoryBar.css';
 import './CommandCenterPlatforms.css';
 import CONTENT_PLATFORMS from '../../../backend/content-platforms.json';
+import useLocationBasedAccounts from '../components/useLocationBasedAccounts';
+import AccountLocationNotice from '../components/AccountLocationNotice';
+import { locationAccountSection } from '../../../shared/accountLocation.js';
 
 // Compatibility with an older API during a rolling deployment. New own-post
 // integrations activate only when the server advertises their capability.
@@ -854,6 +857,7 @@ function MemberAccountsSection() {
 
   useEffect(() => {
     const controller = new AbortController();
+    setAccountCategory('social');
     loadAccounts({ signal: controller.signal });
     return () => { controller.abort(); accountRequest.current++; };
   }, [loadAccounts]);
@@ -928,12 +932,14 @@ function MemberAccountsSection() {
     }
   }
 
-  if (platforms === null) return <div className="empty-state"><span className="spinner spinner-primary" /></div>;
-
   const memberPlatforms = isBusinessMembership
-    ? platforms.filter(([key, platform]) => key === 'linkedin' || platform.category === 'career' || CAREER_ACCOUNT_PLATFORMS.includes(key))
-    : platforms;
-  const accountGroups = accountSections(memberPlatforms, { business: isBusinessMembership });
+    ? (platforms || []).filter(([key, platform]) => key === 'linkedin' || platform.category === 'career' || CAREER_ACCOUNT_PLATFORMS.includes(key))
+    : platforms || [];
+  const locationRanking = useLocationBasedAccounts(accountCategory === 'location' && platforms !== null && accountsOwner === accountId && !error);
+  if (platforms === null) return <div className="empty-state"><span className="spinner spinner-primary" /></div>;
+  const visiblePlatforms = accountsOwner === accountId ? memberPlatforms : [];
+  const accountGroups = [...accountSections(visiblePlatforms, { business: isBusinessMembership }),
+    locationAccountSection(visiblePlatforms, locationRanking.data, { business: isBusinessMembership })];
   const displayedAccountGroups = selectedAccountSections(accountGroups, accountCategory);
 
   return (
@@ -956,6 +962,7 @@ function MemberAccountsSection() {
           <div className="account-category-heading">
             <h3 id={`member-accounts-${section.id}`}>{section.label}</h3>
           </div>
+          {section.id === 'location' && <AccountLocationNotice ranking={locationRanking} count={section.total} />}
           <div className="account-category-items">
       {section.items.map(([key, platform]) => {
         const isConnected = !!connected[key];

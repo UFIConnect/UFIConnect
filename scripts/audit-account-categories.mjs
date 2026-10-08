@@ -126,7 +126,8 @@ try {
     await auditNavigate(page, server.resolvedUrls.local[0] + 'connected-accounts');
     await page.getByRole('heading', { name: 'Business Career Connections', exact: true }).waitFor();
     await categoryList.getByRole('button', { name: /^Career sites \d+$/ }).waitFor();
-    assert.equal(await categoryList.getByRole('button').count(), 1, 'Business membership exposes Career sites only');
+    assert.equal(await categoryList.getByRole('button').count(), 2, 'Business membership exposes Career sites and its scoped Location based view');
+    assert.equal(await categoryList.getByRole('button', { name: 'Location based', exact: true }).count(), 1);
     assert.equal(await categoryList.getByRole('button', { name: /^All\b/ }).count(), 0);
     assert.equal(await categoryList.getByRole('button', { name: /^Career sites \d+$/ }).getAttribute('aria-pressed'), 'true', 'Unavailable Social defaults to the first available business category');
     assert.deepEqual(await page.locator('section.account-category-section h2').allTextContents(), ['Career sites']);

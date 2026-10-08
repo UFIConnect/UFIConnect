@@ -73,13 +73,13 @@ test('source website destinations remain distinct from authorization and reject 
 
 test('Metro watches shared taxonomy and metadata; its Babel pipeline accepts the actual maintained account modules', () => {
   const config = require('./metro.config.js');
-  for (const relative of ['../shared/accountCategories.js', '../shared/accountWebsiteUrls.js', '../backend/account-directory.json']) {
+  for (const relative of ['../shared/accountCategories.js', '../shared/accountWebsiteUrls.js', '../shared/accountLocation.js', '../backend/account-directory.json']) {
     const file = path.resolve(root, relative);
     assert.ok([config.projectRoot, ...config.watchFolders].some(folder => file.startsWith(folder + path.sep)), `Metro can see ${relative}`);
   }
   assert.ok(config.resolver.sourceExts.includes('json'));
   const babel = require('./node_modules/@babel/core');
-  for (const relative of ['screens/ConnectedAccountsScreen.js', 'connectedAccounts.js', '../shared/accountCategories.js', '../shared/accountWebsiteUrls.js']) {
+  for (const relative of ['screens/ConnectedAccountsScreen.js', 'connectedAccounts.js', '../shared/accountCategories.js', '../shared/accountWebsiteUrls.js', '../shared/accountLocation.js']) {
     const filename = path.resolve(root, relative);
     const result = babel.transformSync(fs.readFileSync(filename, 'utf8'), { filename, configFile: false, babelrc: false,
       plugins: [require.resolve('./node_modules/@babel/plugin-transform-modules-commonjs'), require.resolve('./node_modules/@babel/plugin-transform-react-jsx')] });

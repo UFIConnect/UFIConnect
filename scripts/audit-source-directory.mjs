@@ -246,7 +246,8 @@ try {
       const careerWebsiteCount = Object.values(accountDirectory).filter(platform => platform.category === 'career').length;
       assert.equal(await page.getByRole('link', { name: /^Visit .* website$/ }).count(), careerWebsiteCount, 'Business includes every declared external career destination');
       const businessCategories = page.getByRole('group', { name: 'Account categories' });
-      assert.equal(await businessCategories.getByRole('button').count(), 1);
+      assert.equal(await businessCategories.getByRole('button').count(), 2);
+      assert.equal(await businessCategories.getByRole('button', { name: 'Location based', exact: true }).count(), 1);
       assert.equal(await businessCategories.getByRole('button', { name: /^Career sites \d+$/ }).getAttribute('aria-pressed'), 'true');
       assert.equal(await page.getByRole('link', { name: 'Open Reddit website' }).count(), 0);
       assert.equal(await page.getByRole('combobox', { name: 'Filter accounts' }).count(), 0);

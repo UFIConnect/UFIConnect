@@ -4129,5 +4129,32 @@
     "platform": "web",
     "group": "Connected accounts category",
     "viewType": "tab"
+  },
+  "connected_accounts_category_location": {
+    "category": "connected_accounts_category_location",
+    "path": "/analytics-tabs/connected-accounts-category/location",
+    "title": "Connected accounts category: Location based",
+    "label": "Connected accounts category: Location based",
+    "platform": "web",
+    "group": "Connected accounts category",
+    "viewType": "tab"
+  },
+  "home_accounts_category_location": {
+    "category": "home_accounts_category_location",
+    "path": "/analytics-tabs/home-accounts-category/location",
+    "title": "Home connected accounts category: Location based",
+    "label": "Home connected accounts category: Location based",
+    "platform": "web",
+    "group": "Home connected accounts category",
+    "viewType": "tab"
+  },
+  "command_center_accounts_category_location": {
+    "category": "command_center_accounts_category_location",
+    "path": "/analytics-tabs/command-center-accounts-category/location",
+    "title": "Command Center accounts category: Location based",
+    "label": "Command Center accounts category: Location based",
+    "platform": "web",
+    "group": "Command Center accounts category",
+    "viewType": "tab"
   }
 }

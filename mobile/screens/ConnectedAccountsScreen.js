@@ -7,6 +7,7 @@ import { PLATFORM_META } from '../platforms';
 import ACCOUNT_DIRECTORY from '../../backend/account-directory.json';
 import { accountSections, selectedAccountSections } from '../../shared/accountCategories.js';
 import { normalizeConnectedAccounts, nativeAccountReadiness, nativeAccountWebsite } from '../connectedAccounts.js';
+import { accountLocationBasisLabel, accountLocationCityLabel, locationAccountSection, normalizeAccountLocationReport } from '../../shared/accountLocation.js';
 
 async function openWebsite(url) {
   try { await Linking.openURL(url); }
@@ -48,9 +49,11 @@ export default function ConnectedAccountsScreen() {
   const business = profile?.plan === 'business';
   const current = useRef({}); current.current = { id: profile?.id, token, business };
   const generation = useRef(0);
+  const locationGeneration = useRef(0);
   const [platforms, setPlatforms] = useState([]), [loading, setLoading] = useState(true);
   const [catalogOwner, setCatalogOwner] = useState(null), [error, setError] = useState('');
   const [category, setCategory] = useState('social'), [busy, setBusy] = useState(false);
+  const [locationReport, setLocationReport] = useState(null), [locationAttempt, setLocationAttempt] = useState(0);
   const sameOwner = owner => owner && current.current.id === owner.id && current.current.token === owner.token && current.current.business === owner.business;
 
   const fetchPlatforms = useCallback(async ({ signal } = {}) => {
@@ -76,6 +79,24 @@ export default function ConnectedAccountsScreen() {
     return () => { controller.abort(); generation.current++; };
   }, [fetchPlatforms]);
 
+  useEffect(() => {
+    const request = ++locationGeneration.current, owner = { id: profile?.id, token, business };
+    const controller = new AbortController();
+    const active = () => !controller.signal.aborted && request === locationGeneration.current && sameOwner(owner);
+    setLocationReport(null);
+    if (category !== 'location' || loading || error || !sameOwner(catalogOwner)) return undefined;
+    setLocationReport({ owner, pending: true, data: null, error: '' });
+    axios.get(API_BASE + '/social/platforms/location', { signal: controller.signal, headers: { Authorization: 'Bearer ' + token } })
+      .then(({ data }) => {
+        if (!active()) return;
+        const normalized = normalizeAccountLocationReport(data);
+        if (!normalized) throw new Error('Location ranking unavailable.');
+        setLocationReport({ owner, pending: false, data: normalized, error: '' });
+      })
+      .catch(() => { if (active()) setLocationReport({ owner, pending: false, data: null, error: 'Could not load location based accounts. Try again.' }); });
+    return () => { controller.abort(); locationGeneration.current++; };
+  }, [category, loading, error, catalogOwner, profile?.id, token, business, locationAttempt]);
+
   function handleDisconnect(id) {
     const owner = { ...current.current }, platform = platforms.find(([key]) => key === id)?.[1];
     if (!sameOwner(catalogOwner) || platform?.connected !== true || busy) return;
@@ -96,7 +117,9 @@ export default function ConnectedAccountsScreen() {
   }
 
   if (loading || !sameOwner(catalogOwner)) return <View style={styles.center}><ActivityIndicator size="large" color={COLORS.primary} /></View>;
-  const sections = accountSections(platforms, { business }), visibleSections = selectedAccountSections(sections, category);
+  const ranking = sameOwner(locationReport?.owner) ? locationReport : null;
+  const sections = [...accountSections(platforms, { business }), locationAccountSection(platforms, ranking?.data, { business })];
+  const visibleSections = selectedAccountSections(sections, category);
   const active = sections.some(section => section.id === category) ? category : sections[0]?.id;
   const categories = sections;
   return <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
@@ -105,13 +128,23 @@ export default function ConnectedAccountsScreen() {
     {error ? <View><Text style={styles.reason} accessibilityRole="alert">{error}</Text><TouchableOpacity style={styles.retry} accessibilityRole="button" accessibilityLabel="Retry account connections" onPress={() => fetchPlatforms()}><Text style={styles.retryText}>Retry</Text></TouchableOpacity></View> : <>
       <Text style={styles.categoryLegend}>Categories</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={styles.categoryList} accessibilityLabel="Account categories">
-        {categories.map(item => <TouchableOpacity key={item.id} accessibilityRole="button" accessibilityLabel={item.label + ' ' + item.total}
+        {categories.map(item => <TouchableOpacity key={item.id} accessibilityRole="button" accessibilityLabel={item.label + (item.showCount !== false ? ' ' + item.total : '')}
           accessibilityState={{ selected: active === item.id }} style={[styles.categoryButton, active === item.id && styles.categoryActive]} onPress={() => setCategory(item.id)}>
-          <Text style={[styles.categoryText, active === item.id && styles.categoryActiveText]}>{item.label} ({item.total})</Text>
+          <Text style={[styles.categoryText, active === item.id && styles.categoryActiveText]}>{item.label}{item.showCount !== false ? ` (${item.total})` : ''}</Text>
         </TouchableOpacity>)}
       </ScrollView>
       {visibleSections.map(section => <View key={section.id} style={styles.section}>
         <Text style={styles.sectionTitle} accessibilityRole="header">{section.label}</Text>
+        {section.id === 'location' && <View style={styles.locationNotice} accessibilityLabel="Location based account ranking">
+          <Text style={styles.locationCity}>City: {accountLocationCityLabel(ranking?.data)}</Text>
+          {!ranking || ranking.pending ? <Text style={styles.reason}>Finding sources for this location…</Text> : ranking.error ? <>
+            <Text style={styles.reason} accessibilityRole="alert">{ranking.error}</Text>
+            <TouchableOpacity style={styles.retry} accessibilityRole="button" accessibilityLabel="Retry location based accounts" onPress={() => setLocationAttempt(value => value + 1)}><Text style={styles.retryText}>Retry</Text></TouchableOpacity>
+          </> : <>
+            <Text style={styles.reason}>{accountLocationBasisLabel(ranking.data)}</Text>
+            {!section.total && <Text style={styles.reason}>No matching sources for this location.</Text>}
+          </>}
+        </View>}
         {section.items.map(([id, platform]) => <PlatformCard key={id} platform={platform} busy={busy} onDisconnect={handleDisconnect} />)}
       </View>)}
       {!visibleSections.length && <Text style={styles.subtitle}>No account connections are available yet.</Text>}
@@ -128,6 +161,7 @@ const styles = StyleSheet.create({
   categoryList: { gap: 8, paddingBottom: 10 }, categoryButton: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, borderRadius: 9, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface },
   categoryActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary }, categoryText: { fontSize: 13, color: COLORS.text }, categoryActiveText: { color: '#fff' },
   section: { marginTop: 16 }, sectionTitle: { fontSize: 17, fontWeight: '700', color: COLORS.text, marginBottom: 10 },
+  locationNotice: { marginBottom: 12 }, locationCity: { fontSize: 13, fontWeight: '600', color: COLORS.text, lineHeight: 20 },
   card: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 12, padding: 14, marginBottom: 10 },
   cardHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 }, iconWrap: { width: 40, height: 40, borderRadius: 10, justifyContent: 'center', alignItems: 'center' }, icon: { fontSize: 19 },
   cardBody: { flex: 1, minWidth: 0 }, cardName: { fontSize: 15, fontWeight: '700', color: COLORS.text }, cardDescription: { fontSize: 12, color: COLORS.muted, lineHeight: 18, marginTop: 3 }, connected: { fontSize: 12, color: COLORS.success, marginTop: 5 },

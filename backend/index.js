@@ -76,6 +76,7 @@ const { createTwitchFeed } = require('./twitch-feed');
 const { canonicalizePreferenceTopics, matchesPreferenceTopic } = require('./feed-preferences');
 const { parseMapSourceTopics, normalizeMapTopic } = require('../shared/map-feed-topics.mjs');
 const { ISO_COUNTRY_CODES, trustedFeedNetworkLocation, memberFeedSnapshotKey } = require('./feed-location');
+const { rankLocationAccounts } = require('./account-location');
 const { RADIUS_MILES, RADIUS_KM, distanceKm, nearestFeedCity, feedCityByName, deviceFeedPoint } = require('./feed-city-location');
 const { sourceAuthorProfileUrl, safePostLink } = require('./post-links.mjs');
 const {
@@ -9496,9 +9497,9 @@ async function requireAutomaticFeedLocation(req, res, next) {
   return res.status(428).json({ code: 'feed_location_required',
     message: 'Location is required for your feed. Enable device location or retry automatic IP location.' });
 }
-function getFeedLocationContext(req, user = null) {
+function getFeedLocationContext(req, user = null, modeOverride = null) {
   const settings = user?.roleSettings || {};
-  const feedMode = feedLocationMode(req);
+  const feedMode = modeOverride || feedLocationMode(req);
   const destination = DESTINATION_FEED_MODES.has(feedMode);
   const preference = normalizeRegionalFeedLocation(settings.feedRegionalLocation);
   const automatic = automaticFeedLocation(req, user);
@@ -20882,6 +20883,35 @@ function mastodonAccountLinks(token) {
   try { const origin = mastodonOrigin(JSON.parse(token).origin); return { siteUrl: origin, loginUrl: origin + '/auth/sign_in' }; }
   catch { return {}; }
 }
+app.get('/social/platforms/location', (_req, res, next) => {
+  res.set('Cache-Control', 'private, no-store');
+  next();
+}, authenticate, async (req, res) => {
+  const user = await getEffectiveUser(req.user.id);
+  if (!user) return res.status(404).json({ message: 'Not found.' });
+  const careerOnly = user.plan === 'business';
+  const visible = careerOnly ? BUSINESS_WORK_ACCOUNT_PLATFORMS : NON_BUSINESS_ACCOUNT_PLATFORMS;
+  // Account discovery follows the current area, never a saved vacation or a
+  // caller-supplied destination query. Only coarse context leaves the server.
+  const location = getFeedLocationContext(req, user, 'feed');
+  const ranking = rankLocationAccounts({
+    platforms: Object.fromEntries([...visible].map(key => [key, PLATFORMS[key]])),
+    location, publicPosts: globalFeedCache.posts, careerOnly,
+    matchPost(post, context) {
+      const countries = explicitLocationCountries([post.location, post.country, post.countryCode].filter(Boolean).join(' '));
+      const country = countryCodeFromInput(post.countryCode || post.country);
+      if ((country && country !== context.country) || (countries.size && !countries.has(context.country))) return null;
+      const match = feedPostLocationMatch(post, context);
+      // Disambiguate city names when only text (rather than distance) matched.
+      if (match.type === 'local') {
+        if (country !== context.country && !countries.has(context.country)) return null;
+      }
+      return match;
+    },
+    isPublicPost: post => !MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(post.source) && realFeedPosts([post]).length === 1,
+  });
+  res.json({ ...ranking, locationContext: publicFeedLocationContext(location) });
+});
 app.get('/social/platforms', authenticate, async (req, res) => {
   const user = await getEffectiveUser(req.user.id);
   const careerOnly = user?.plan === 'business';

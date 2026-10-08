@@ -74,7 +74,7 @@ try {
     assert.equal(await tools.locator('.home-connected-account-row').count(), 2);
     const categorySelect = tools.getByRole('combobox', { name: 'Account category', exact: true });
     assert.equal(await categorySelect.inputValue(), 'social');
-    assert.deepEqual(await categorySelect.locator('option').allTextContents(), sections.map(section => `${section.label} (${section.total})`));
+    assert.deepEqual(await categorySelect.locator('option').allTextContents(), [...sections.map(section => `${section.label} (${section.total})`), 'Location based']);
     assert.equal(await categorySelect.locator('option[value="all"]').count(), 0, 'All is absent from Home account navigation');
     let visited = 0;
     for (const expected of sections) {

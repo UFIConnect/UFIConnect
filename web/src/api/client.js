@@ -60,8 +60,8 @@ client.interceptors.request.use(async (config) => {
   config.withCredentials = true;
   config.fetchOptions = { ...config.fetchOptions, redirect: 'error', cache: 'no-store', referrerPolicy: 'no-referrer' };
   if (token && token === getAccessToken()) config.headers.Authorization = `Bearer ${token}`;
-  // Send location only to authenticated feed reads. OAuth, billing, public
-  // pages and source providers never receive this header.
+  // Send location only to authenticated feeds and local account discovery.
+  // OAuth, billing, public pages and source providers never receive this header.
   const location = deviceFeedRequestHeader(config, getAccessToken());
   if (location) config.headers['X-UFI-Device-Location'] = location;
   else config.headers.delete('X-UFI-Device-Location');

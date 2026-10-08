@@ -13,6 +13,9 @@ import { DirectoryControls, AccountCategoryNavigation, AccountSiteLink } from '.
 import { SOURCE_CATEGORIES, sourceSections, accountSections, selectedAccountSections } from './sourceDirectory';
 import UnavailableFeedSources from './UnavailableFeedSources';
 import useTabMetrics from '../analytics/useTabMetrics';
+import useLocationBasedAccounts from './useLocationBasedAccounts';
+import AccountLocationNotice from './AccountLocationNotice';
+import { locationAccountSection } from '../../../shared/accountLocation.js';
 
 const LINK_FIELDS = [
   { key: 'linkedin', label: 'LinkedIn', placeholder: 'https://linkedin.com/in/yourname' },
@@ -120,7 +123,7 @@ export default function HomeFeedTools({
 
   useEffect(() => {
     setAccountPlatforms(null); setAccountConnected({}); setAccountOwner(null);
-    setAccountAction(null); setBlueskyHandle(null); setAccountCategory('all');
+    setAccountAction(null); setBlueskyHandle(null); setAccountCategory('social');
   }, [profile?.id, profile?.plan]);
 
   useEffect(() => {
@@ -162,7 +165,10 @@ export default function HomeFeedTools({
   const sourceGroups = sourceSections(availableSources, normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites)[favoriteMode], sourceCategory, disabledSources);
   const visibleSources = sourceGroups.flatMap(section => section.items);
   const visibleEnabledCount = visibleSources.filter(source => !disabledSources.has(source)).length;
-  const accountGroups = accountSections(visibleAccountPlatforms, { business: profile?.plan === 'business' });
+  const locationRanking = useLocationBasedAccounts(showAccounts && openPanel === 'accounts' && accountCategory === 'location'
+    && accountPlatforms !== null && accountOwner === profile?.id && !accountError);
+  const accountGroups = [...accountSections(visibleAccountPlatforms, { business: profile?.plan === 'business' }),
+    locationAccountSection(visibleAccountPlatforms, locationRanking.data, { business: profile?.plan === 'business' })];
   const displayedAccountGroups = selectedAccountSections(accountGroups, accountCategory);
 
   async function persistDisabledSources(next, previous, pendingKey, successMessage) {
@@ -441,6 +447,7 @@ export default function HomeFeedTools({
               <div className="home-account-category-heading">
                 <h4>{section.label}</h4>
               </div>
+              {section.id === 'location' && <AccountLocationNotice ranking={locationRanking} count={section.total} />}
               {section.items.map(([key, platform]) => {
                 const isConnected = platform.connectionMode !== 'external' && accountConnected[key] === true;
                 const isConnecting = accountAction === `connect:${key}`;

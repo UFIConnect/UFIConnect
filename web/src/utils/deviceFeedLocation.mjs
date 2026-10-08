@@ -12,9 +12,13 @@ export function deviceFeedLocationKey(now = Date.now()) {
 
 export function deviceFeedRequestHeader(config, token, now = Date.now()) {
   const path = String(config?.url || '').split('?')[0];
+  // Only feed reads and the exact local-account recommendation endpoint need
+  // this session location. OAuth, account settings and other social calls do not.
+  const locatedRead = /^\/(?:office\/)?feed(?:\/(?:location|music|videos(?:\/following)?))?$/.test(path)
+    || path === '/social/platforms/location';
   if (!token || config?.headers?.Authorization !== `Bearer ${token}`
     || String(config.method || 'get').toLowerCase() !== 'get'
-    || !/^\/(?:office\/)?feed(?:\/(?:location|music|videos(?:\/following)?))?$/.test(path)) return null;
+    || !locatedRead) return null;
   return deviceFeedLocationHeader(token, now);
 }
 

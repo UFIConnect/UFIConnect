@@ -21,22 +21,28 @@ async function fixture(t, state = 'granted') {
     moveTime(ms) { time += ms; }, change() { change?.(); }, tick() { return tick?.(); }, visible() { visibility?.(); }, get callback() { return callback; } };
 }
 
-test('browser asks for high accuracy, rounds coordinates, and sends them only to the current member feed GET', async t => {
+test('browser location is restricted to current-member feed and local-account GET requests', async t => {
   const f = await fixture(t); const stop = f.start('alice-token'); t.after(stop); await f.settle();
   assert.deepEqual(f.options, { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
   f.success();
   assert.deepEqual(JSON.parse(f.module.deviceFeedLocationHeader('alice-token')).slice(0, 3), [34.052, -118.244, 95]);
   assert.equal(f.module.deviceFeedLocationHeader('bob-token'), null);
   const config = url => ({ url, headers: { Authorization: 'Bearer alice-token' } });
-  for (const url of ['/feed/location', '/office/feed?source=youtube', '/office/feed/videos', '/office/feed/music']) {
+  for (const url of ['/feed/location', '/office/feed?source=youtube', '/office/feed/videos', '/office/feed/music',
+    '/social/platforms/location', '/social/platforms/location?refresh=1']) {
     assert.ok(f.module.deviceFeedRequestHeader(config(url), 'alice-token'), url);
   }
   for (const url of ['/feed/guest', '/feed/guest?limit=10', '/profile', '/billing/status', '/auth/login',
-    'https://example.com/office/feed', '//example.com/feed', '/source/youtube', '/feed/post-id/likes', '/feed/stats', '/feed/sources', '/feed/stream']) {
+    'https://example.com/office/feed', '//example.com/feed', '/source/youtube', '/feed/post-id/likes', '/feed/stats', '/feed/sources', '/feed/stream',
+    '/social/platforms', '/social/platforms/location/other', '/social/platforms/location/', '/auth/social/github/start',
+    'https://example.com/social/platforms/location', '//example.com/social/platforms/location']) {
     assert.equal(f.module.deviceFeedRequestHeader(config(url), 'alice-token'), null, url);
   }
   assert.equal(f.module.deviceFeedRequestHeader({ ...config('/office/feed'), method: 'post' }, 'alice-token'), null);
   assert.equal(f.module.deviceFeedRequestHeader(config('/office/feed'), 'bob-token'), null);
+  assert.equal(f.module.deviceFeedRequestHeader({ ...config('/social/platforms/location'), method: 'post' }, 'alice-token'), null);
+  assert.equal(f.module.deviceFeedRequestHeader(config('/social/platforms/location'), 'bob-token'), null);
+  assert.equal(f.module.deviceFeedRequestHeader({ url: '/social/platforms/location' }, 'alice-token'), null);
   f.moveTime(16 * 60000);
   assert.equal(f.module.deviceFeedLocationHeader('alice-token', Date.now() + 16 * 60000), null);
 });
