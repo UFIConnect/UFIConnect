@@ -1,4 +1,5 @@
 import { safePostLink } from '../../../backend/post-links.mjs';
+import { directMediaPlaybackAllowed, officialYouTubeId } from '../utils/sourceMediaPolicy.mjs';
 
 export const SNAP_MAX_CAPTION = 500;
 export const SNAP_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -39,6 +40,57 @@ export function snapTimeRemaining(expiresAt, now = Date.now()) {
   if (!Number.isFinite(remaining) || remaining <= 0) return 'Expired';
   return remaining < 3_600_000 ? `${Math.max(1, Math.ceil(remaining / 60_000))}m left`
     : `${Math.ceil(remaining / 3_600_000)}h left`;
+}
+
+export function isExternalSnap(snap) {
+  return snap?.isExternal === true || (typeof snap?.source === 'string' && snap.source !== 'uficonnect');
+}
+
+export function snapDurationLabel(seconds) {
+  const duration = Math.round(Number(seconds));
+  if (!Number.isFinite(duration) || duration <= 0) return '';
+  return duration < 60 ? `${duration}s` : `${Math.floor(duration / 60)}:${String(duration % 60).padStart(2, '0')}`;
+}
+
+export function snapAvailabilityLabel(snap, now = Date.now()) {
+  if (!isExternalSnap(snap)) return snapTimeRemaining(snap?.expiresAt, now);
+  const labels = ['Recent source clip'];
+  const duration = snapDurationLabel(snap.videoDurationSeconds);
+  if (duration) labels.push(duration);
+  const published = new Date(snap.createdAt);
+  if (snap.createdAt && Number.isFinite(published.getTime())) {
+    labels.push(published.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }));
+  }
+  return labels.join(' · ');
+}
+
+export function normalizeSnapSourceErrors(errors) {
+  if (!errors || typeof errors !== 'object' || Array.isArray(errors)) return {};
+  return Object.fromEntries(Object.entries(errors).flatMap(([source, error]) => {
+    const message = typeof error === 'string' ? error : typeof error?.message === 'string' ? error.message : '';
+    return /^[a-z][a-z0-9_-]{0,79}$/.test(source) && message.trim() ? [[source, message.trim().slice(0, 240)]] : [];
+  }));
+}
+
+export function snapPlaybackInfo(snap) {
+  const safeHttps = value => {
+    const safe = safePostLink(value);
+    return safe && new URL(safe).protocol === 'https:' ? safe : null;
+  };
+  const mediaUrl = safeHttps(snap?.mediaUrl);
+  const original = safeHttps(snap?.sourceUrl);
+  const poster = safeHttps(snap?.thumbnailUrl);
+  if (snap?.mediaType !== 'video') return { kind: 'image', mediaUrl, original, poster };
+  if (snap.mediaKind === 'youtube' || snap.source === 'youtube') {
+    const id = officialYouTubeId(mediaUrl) || officialYouTubeId(original);
+    if (id && (!snap.embedId || snap.embedId === id)) return { kind: 'youtube', id, original, poster };
+    return { kind: 'source', original, poster };
+  }
+  if (snap.mediaKind === 'source') return { kind: 'source', original, poster };
+  if (mediaUrl && directMediaPlaybackAllowed(snap)) {
+    return { kind: snap.mediaKind === 'hls' || /\.m3u8(?:[?#]|$)/i.test(mediaUrl) ? 'hls' : 'file', mediaUrl, original, poster };
+  }
+  return { kind: 'source', original, poster };
 }
 
 export function snapFileError(file) {

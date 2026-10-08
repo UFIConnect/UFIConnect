@@ -15,7 +15,6 @@
     "twitch": "following",
     "bluesky": "following",
     "mastodon": "following",
-    "twitter": "interests",
-    "facebook": "interests"
+    "twitter": "following"
   }
 }

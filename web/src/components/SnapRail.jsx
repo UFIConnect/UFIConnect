@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, Camera, RefreshCw, Star, Play } from 'lucide-react';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { SOURCE_META } from './sourceMeta';
-import { rankSnapGroups } from './snapRanking.mjs';
+import { rankSnapGroups, normalizeSnapSourceErrors, snapDurationLabel } from './snapRanking.mjs';
 import SnapComposer from './SnapComposer';
 import SnapViewer from './SnapViewer';
 import ReportModal from './ReportModal';
@@ -22,6 +22,7 @@ function SnapThumbnail({ snap, onOpen }) {
       : <img src={snap.thumbnailUrl || snap.mediaUrl} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} />)}
     {failed && <span className="snap-thumbnail-fallback"><Camera size={22} /></span>}
     {snap.mediaType === 'video' && <span className="snap-thumbnail-play" aria-hidden="true"><Play size={13} fill="currentColor" /></span>}
+    {snap.mediaType === 'video' && snapDurationLabel(snap.videoDurationSeconds) && <span className="snap-thumbnail-duration">{snapDurationLabel(snap.videoDurationSeconds)}</span>}
     <span className="snap-thumbnail-author">{author}</span>
   </button>;
 }
@@ -29,7 +30,7 @@ function SnapThumbnail({ snap, onOpen }) {
 // The feed owns fetching and session isolation. This rail only groups actual,
 // active snaps, so an unavailable provider never appears as a populated box.
 export default function SnapRail({ mode = 'home', items = [], favorites = [], profile,
-  loading = false, error = '', onRefresh, onPostSnap, onDeleteSnap, notice = '' }) {
+  loading = false, error = '', sourceErrors = {}, onRefresh, onPostSnap, onDeleteSnap, notice = '' }) {
   const titleId = useId(), rowId = useId();
   const row = useRef(null);
   const [now, setNow] = useState(Date.now);
@@ -39,6 +40,7 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
   const groups = useMemo(() => rankSnapGroups(items, favorites, now), [items, favorites, now]);
   const activeItems = groups.flatMap(group => group.items);
   const selectedIndex = activeItems.findIndex(snap => `${snap.source}:${snap.id}` === selectedId);
+  const sourceFailures = Object.entries(normalizeSnapSourceErrors(sourceErrors));
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now()), 30_000);
     return () => window.clearInterval(interval);
@@ -55,7 +57,7 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
   }
   return <section className="snap-rail" aria-labelledby={titleId} data-snap-mode={mode}>
     <header className="snap-rail-heading">
-      <div><h2 id={titleId}><Camera size={18} />Snaps</h2><p>{favorites.length ? 'Your favorite sources first' : 'Photos and videos that last 24 hours'}</p></div>
+      <div><h2 id={titleId}><Camera size={18} />Snaps</h2><p>Recent source clips and UFI snaps{favorites.length ? ' · Favorite sources first' : ''}</p></div>
       <div className="snap-rail-actions">
         {profile?.id && onPostSnap
           ? <button type="button" className="snap-post-button" onClick={() => setComposing(true)}><Camera size={16} />Post snap</button>
@@ -65,6 +67,10 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
     </header>
     {error && <p className="snap-rail-message snap-rail-error" role="alert">{error}</p>}
     {notice && <p className="snap-rail-message">{notice}</p>}
+    {sourceFailures.length > 0 && <div className="snap-source-notices" role="status" aria-label="Snap source availability">
+      <p>Some sources could not refresh.</p>
+      <ul>{sourceFailures.map(([source, message]) => <li key={source}><strong>{SOURCE_META[source]?.label || source}</strong>: {message}</li>)}</ul>
+    </div>}
     {groups.length > 0 ? <div className="snap-rail-browser">
       <div ref={row} id={rowId} className="snap-source-row" tabIndex={0} role="region" aria-label="Snap sources" aria-busy={loading}>
         {groups.map(group => {

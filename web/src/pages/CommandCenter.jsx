@@ -10,6 +10,7 @@ import client, { publicOAuthRequestConfig } from '../api/client';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS, CAREER_ACCOUNT_PLATFORMS, withCareerAccountFallback } from '../components/sourceMeta';
 import ExternalAccountLogin from '../components/ExternalAccountLogin';
 import AccountConnectionAction from '../components/AccountConnectionAction';
+import AccountActionIcon from '../components/AccountActionIcon';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { WritingArea, PhotoAttachment, PostPreview, downloadPostText, POST_TEMPLATES } from '../components/PublishingComposer';
 import { composerTextLimit, readSessionDraft } from '../utils/publishingDraft.mjs';
@@ -1614,8 +1615,10 @@ export function CrossPostSection({ initialCategory } = {}) {
             catch { showToast('Select and copy the draft text, then open the source website.', 'error'); }
           }}>Copy draft</button>}
           {available && !external && capability?.supported && connected[p] && !reconnect && platformTargetButton(p)}
-          {available && !external && <Link to={connectionPath(p)} className="btn btn-ghost btn-sm" style={{ textDecoration: 'none' }}>
-            {reconnect ? `Reconnect ${meta.label}` : connected[p] ? `Manage ${meta.label}` : `Connect ${meta.label}`}
+          {available && !external && <Link to={connectionPath(p)} className="btn btn-ghost btn-sm account-icon-action" style={{ textDecoration: 'none' }}
+            aria-label={reconnect ? `Reconnect ${meta.label}` : connected[p] ? `Manage ${meta.label}` : `Connect ${meta.label}`}
+            title={reconnect ? `Reconnect ${meta.label}` : connected[p] ? `Manage ${meta.label}` : `Connect ${meta.label}`}>
+            <AccountActionIcon platform={p} />
           </Link>}
         </div>
       </div>
@@ -1691,7 +1694,7 @@ export function CrossPostSection({ initialCategory } = {}) {
                   <span style={{ color: 'var(--muted)' }}>
                     {t.status === 'posted' && t.postedUrl ? <a href={t.postedUrl} target="_blank" rel="noopener noreferrer">View post</a> : (t.error || resultMeta.label)}
                   </span>
-                  {t.reconnectRequired && <Link to={connectionPath(t.platform)}>Reconnect {meta.label}</Link>}
+                  {t.reconnectRequired && <Link to={connectionPath(t.platform)} className="btn btn-ghost btn-sm account-icon-action" aria-label={`Reconnect ${meta.label}`} title={`Reconnect ${meta.label}`}><AccountActionIcon platform={t.platform} /></Link>}
                 </div>
               );
             })}

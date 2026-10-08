@@ -1,0 +1,42 @@
+.btn.account-icon-action,
+.account-icon-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  flex: 0 0 44px;
+  gap: 0;
+  text-decoration: none;
+}
+.account-icon-action:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+.account-action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: #fff;
+  color: #334155;
+  flex-shrink: 0;
+}
+.account-action-spinner {
+  width: 18px;
+  height: 18px;
+  border-width: 2px;
+  border-top-color: currentColor;
+}
+.home-connected-account-row .source-directory-account-actions .btn.account-icon-action {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+}

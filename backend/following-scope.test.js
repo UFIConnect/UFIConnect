@@ -13,6 +13,8 @@ test('Following supports Mastodon home timelines and excludes own-post-only inte
   assert.equal(isFollowingSourceAllowed('TikTok'), false);
   assert.equal(isFollowingSourceAllowed('mastodon'), true);
   assert.equal(isFollowingSourceAllowed('youtube'), true);
+  assert.equal(isFollowingSourceAllowed('twitter'), true);
+  assert.equal(isFollowingSourceAllowed('facebook'), false);
   assert.equal(isFollowingSourceAllowed('uficonnect'), true);
   for (const source of ['medium', 'dribbble', 'threads', 'linkedin', 'discord', 'figma', 'weworkremotely', 'reuters', 'airbnb', 'unknown']) {
     assert.equal(isFollowingSourceAllowed(source), false, `${source} has no installed personal feed adapter`);
@@ -36,8 +38,9 @@ test('public Home sources and connected Following sources share an explicit capa
   }
   assert.ok(SOURCE_WEBSITE_IDS.includes('reuters'));
   assert.ok(SOURCE_WEBSITE_IDS.includes('spotify'));
-  assert.equal(following.twitter, 'interests');
-  assert.equal(following.facebook, 'interests');
+  assert.equal(following.twitter, 'following');
+  assert.equal(following.facebook, undefined);
+  assert.ok(Object.values(following).every(capability => capability === 'following'));
 });
 
 test('external website sign-in and identity-only tokens never become Following post sources', async t => {
@@ -58,7 +61,8 @@ test('external website sign-in and identity-only tokens never become Following p
   assert.deepEqual(catalog.data.platforms.weworkremotely.feed, { home: true, following: null });
   assert.deepEqual(catalog.data.platforms.cntraveler.feed, { home: true, following: null });
   assert.deepEqual(catalog.data.platforms.youtube.feed, { home: true, following: 'following' });
-  assert.deepEqual(catalog.data.platforms.twitter.feed, { home: true, following: 'interests' });
+  assert.deepEqual(catalog.data.platforms.twitter.feed, { home: true, following: 'following' });
+  assert.deepEqual(catalog.data.platforms.facebook.feed, { home: true, following: null });
   assert.deepEqual(catalog.data.platforms.reuters.feed, { home: false, following: null });
   assert.equal(catalog.data.connected.airbnb, false);
 });

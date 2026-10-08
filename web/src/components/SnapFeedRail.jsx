@@ -9,6 +9,6 @@ export default function SnapFeedRail({ mode = 'home', favorites }) {
   const savedFavorites = normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites);
   return <SnapRail key={`${profile?.id || 'guest'}:${mode}`} mode={mode} profile={profile}
     favorites={favorites || (profile?.id ? savedFavorites[mode === 'following' ? 'following' : 'feed'] : [])}
-    items={snaps.items} loading={snaps.loading} error={snaps.error}
+    items={snaps.items} loading={snaps.loading} error={snaps.error} sourceErrors={snaps.sourceErrors}
     onRefresh={snaps.refresh} onPostSnap={snaps.publish} onDeleteSnap={snaps.remove} />;
 }

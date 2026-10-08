@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import useTabMetrics from '../analytics/useTabMetrics';
 import Layout from '../components/Layout';
 import AccountConnectionAction from '../components/AccountConnectionAction';
+import AccountActionIcon from '../components/AccountActionIcon';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { withCareerAccountFallback } from '../components/sourceMeta';
@@ -245,14 +246,18 @@ export default function ConnectedAccounts() {
             <h2>Likes and comments</h2>
             <p>Authorize publishing actions on a connected source. Your comments will be published on that platform.</p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              {['reddit', 'twitter', 'youtube', 'github', 'gitlab', 'bluesky', 'mastodon'].filter(key => connected[key]).map(key => <button key={key} className="btn btn-outline btn-sm" disabled={!!connecting} onClick={() => handleConnect(key)}>Enable actions on {key === 'twitter' ? 'X' : key === 'mastodon' ? 'Mastodon' : key}</button>)}
+              {['reddit', 'twitter', 'youtube', 'github', 'gitlab', 'bluesky', 'mastodon'].filter(key => connected[key]).map(key => {
+                const label = `Enable actions on ${key === 'twitter' ? 'X' : key === 'mastodon' ? 'Mastodon' : key}`;
+                return <button key={key} type="button" className="btn btn-outline btn-sm account-icon-action" disabled={!!connecting} onClick={() => handleConnect(key)} aria-label={label} title={label} aria-busy={connecting === key}><AccountActionIcon platform={key} busy={connecting === key} /></button>;
+              })}
             </div>
           </section>}
           {(searchParams.get('analytics') === '1' || searchParams.get('monetization') === '1') && <section className="card" aria-labelledby="source-analytics-permissions" style={{ marginBottom: 20, padding: 20 }}>
             <h2 id="source-analytics-permissions" style={{ fontSize: '1.1rem', margin: '0 0 8px' }}>YouTube analytics permissions</h2>
             <p style={{ color: 'var(--muted)', fontSize: '.85rem', lineHeight: 1.6 }}>Authorize read access to your channel analytics{searchParams.get('monetization') === '1' ? ' and estimated revenue' : ''}. YouTube controls eligibility, reporting delays, advertising, and payouts. Review the permissions on Google’s authorization screen.</p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 14 }}>
-              <button type="button" className="btn btn-primary btn-sm" disabled={!!connecting || !platforms.some(([key, item]) => key === 'youtube' && item.configured && !item.forceComingSoon)} onClick={() => handleConnect('youtube')}>{connecting === 'youtube' ? 'Opening Google…' : connected.youtube ? 'Update YouTube permissions' : 'Connect YouTube analytics'}</button>
+              <button type="button" className="btn btn-primary btn-sm account-icon-action" disabled={!!connecting || !platforms.some(([key, item]) => key === 'youtube' && item.configured && !item.forceComingSoon)} onClick={() => handleConnect('youtube')}
+                aria-label={connecting === 'youtube' ? 'Opening Google…' : connected.youtube ? 'Update YouTube permissions' : 'Connect YouTube analytics'} title={connected.youtube ? 'Update YouTube permissions' : 'Connect YouTube analytics'} aria-busy={connecting === 'youtube'}><AccountActionIcon platform="youtube" busy={connecting === 'youtube'} /></button>
               <Link className="btn btn-ghost btn-sm" to="/analytics">Return to analytics</Link>
             </div>
           </section>}
@@ -341,7 +346,7 @@ export default function ConnectedAccounts() {
             <p style={{ color: 'var(--muted)', fontSize: '.8rem' }}>Your password stays on your server. UFIConnect imports public posts from your Mastodon home timeline and your own account. You will also grant permission to find original posts, like or unlike them, and publish replies when you choose.</p>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => setMastodonServer(null)}>Cancel</button>
-              <button type="submit" className="btn btn-primary btn-sm" disabled={!mastodonServer.trim()}>Continue to Mastodon</button>
+              <button type="submit" className="btn btn-primary btn-sm account-icon-action" disabled={!mastodonServer.trim()} aria-label="Continue to Mastodon" title="Continue to Mastodon"><AccountActionIcon platform="mastodon" /></button>
             </div>
           </form>
         </div>
@@ -385,8 +390,8 @@ export default function ConnectedAccounts() {
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => setBlueskyHandle(null)}>
                 Cancel
               </button>
-              <button type="submit" className="btn btn-primary btn-sm" disabled={!blueskyHandle.trim()}>
-                Continue
+              <button type="submit" className="btn btn-primary btn-sm account-icon-action" disabled={!blueskyHandle.trim()} aria-label="Continue" title="Continue to Bluesky">
+                <AccountActionIcon platform="bluesky" />
               </button>
             </div>
           </form>

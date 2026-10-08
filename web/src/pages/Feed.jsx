@@ -26,6 +26,7 @@ import {
   FOLLOWING_EXCLUDED_SOURCE_IDS,
 } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
+import AccountActionIcon from '../components/AccountActionIcon';
 import FollowingConnectionNotice from '../components/FollowingConnectionNotice';
 import HomeFeedTools from '../components/HomeFeedTools';
 import SourceWebsiteDirectory from '../components/SourceWebsiteDirectory';
@@ -738,10 +739,10 @@ function FilterPanel({ filters, onChange, sources, onClose, panelRef, includeTop
 function SocialConnectGate({ platform, onConnect, connecting }) {
   const meta = SOURCE_META[platform] || {};
   const descriptions = {
-    twitter:   'See posts, threads, and trending topics from the people you follow on X (Twitter).',
-    linkedin:  'Bring your LinkedIn feed into UFIconnect — professional updates, articles, and job posts.',
-    instagram: 'View posts and reels from the creators and brands you follow on Instagram.',
-    facebook:  'See updates from your Facebook friends and the pages you follow.',
+    twitter:   'See recent posts from your X home timeline when your account access supports it.',
+    linkedin:  'Connect LinkedIn for the profile and publishing features you authorize. LinkedIn does not provide a home timeline here.',
+    instagram: 'Connect Instagram for supported account media and publishing features. It does not provide the accounts-you-follow timeline here.',
+    facebook:  'Connect Facebook for supported account features. Facebook does not provide a friends or followed-pages timeline here.',
   };
   return (
     <div style={{
@@ -763,17 +764,21 @@ function SocialConnectGate({ platform, onConnect, connecting }) {
         {descriptions[platform] || `Connect your ${meta.label} account to see your personalised feed here.`}
       </p>
       <button
+        type="button"
+        className="account-icon-action"
         onClick={onConnect}
         disabled={connecting}
+        aria-label={`Connect ${meta.label}`}
+        title={connecting ? `Opening ${meta.label} authorization…` : `Connect ${meta.label}`}
+        aria-busy={connecting}
         style={{
-          padding: '12px 32px', borderRadius: 24, fontWeight: 700, fontSize: '.95rem',
+          width: 44, height: 44, padding: 0, borderRadius: 12, fontWeight: 700, fontSize: '.95rem',
           background: meta.color, color: '#fff', border: 'none', cursor: connecting ? 'default' : 'pointer',
           opacity: connecting ? 0.7 : 1, display: 'flex', alignItems: 'center', gap: 8,
           transition: 'opacity .15s',
         }}
       >
-        {connecting ? <span className="spinner" style={{ borderTopColor: '#fff', width: 16, height: 16 }} /> : <SourceMark source={platform} label={meta.icon} size={13} active />}
-        {connecting ? 'Redirecting…' : `Connect ${meta.label}`}
+        <AccountActionIcon platform={platform} busy={connecting} />
       </button>
       <p style={{ marginTop: 16, fontSize: '.78rem', color: 'var(--muted)' }}>
         You can disconnect at any time from Settings → Connected Accounts

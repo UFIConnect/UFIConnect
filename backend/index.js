@@ -21,6 +21,7 @@ const { ANALYTICS_SCHEMA, ANALYTICS_MIGRATIONS, createAggregateAnalytics } = req
 const { OFFICE_MEMBERS_SCHEMA, registerOfficeMemberRoutes } = require('./office-members');
 const { SIGNIN_SCHEMA, registerSignInRoutes, isDeliverableEmail } = require('./auth-signin');
 const { SNAP_SCHEMA, createSnaps, registerSnapRoutes } = require('./snaps');
+const { createExternalSnapLoader, PUBLIC_CLIP_QUERY } = require('./external-snaps');
 const { createSnapMedia } = require('./snap-media');
 const { createSessionCookie, readSessionCookie, isPrivateRequest,
   privateConnectionResponse, webConnectionStatus } = require('./web-connection-security');
@@ -2735,6 +2736,7 @@ function extractRedditMedia(d) {
       mediaType: 'video',
       mediaUrl: decodeHTMLEntities(d.media.reddit_video.fallback_url),
       mediaPoster: poster ? decodeHTMLEntities(poster) : null,
+      videoDurationSeconds: normalizeVideoDurationSeconds(d.media.reddit_video.duration),
     };
   }
   // Gallery posts (common for food/photo/art subs) carry no `preview` field
@@ -4306,7 +4308,9 @@ function mastodonMedia(media) {
   // Reddit's v.redd.it, which genuinely has no distinct poster field), so
   // it's captured here instead of being left unused.
   if (media.type === 'video' || media.type === 'gifv') {
-    return { mediaType: 'video', mediaUrl: media.url || media.preview_url || null, mediaPoster: media.preview_url || null };
+    return { mediaType: 'video', mediaUrl: media.url || null, mediaPoster: media.preview_url || null,
+      videoDurationSeconds: normalizeVideoDurationSeconds(media.meta?.original?.duration),
+      ...(media.type === 'gifv' ? { videoPresentation: 'gif' } : {}) };
   }
   return { mediaType: null, mediaUrl: null };
 }
@@ -5979,7 +5983,29 @@ async function fetchLinkedIn(keyword, userToken = null) {
   }
 }
 
-// --- Twitter/X: requires TWITTER_BEARER_TOKEN env var ------------------------
+// X Following uses the authenticated member's reverse chronological timeline.
+// It never reads public search results or the application's bearer token.
+const twitterFollowingFetches = new Map();
+let twitterFollowingProvider = null;
+async function fetchTwitterFollowingTimeline(token, { bust = false, connectedAt = null } = {}) {
+  if (!token) return [];
+  const key = connectedSourceCacheKey('twitter_following', token, connectedAt);
+  const cached = !bust && getCached(key);
+  if (cached) return cached;
+  if (twitterFollowingFetches.has(key)) return twitterFollowingFetches.get(key);
+  const task = (async () => {
+    twitterFollowingProvider ||= require('./twitter-following').createTwitterFollowingFetcher({ fetchJSON });
+    const raw = await twitterFollowingProvider(token);
+    const window = connectedSourceWindow(connectedAt);
+    const scoped = capFollowingPosts(raw, { sinceMs: window.startMs, untilMs: window.untilMs, limit: 50 });
+    setCached(key, scoped, FOLLOWING_SOURCE_REFRESH_MS);
+    return scoped;
+  })().finally(() => twitterFollowingFetches.delete(key));
+  twitterFollowingFetches.set(key, task);
+  return task;
+}
+
+// --- Twitter/X public discovery: requires TWITTER_BEARER_TOKEN ----------------
 async function fetchTwitter(keyword, userToken = null) {
   const token = userToken || process.env.TWITTER_BEARER_TOKEN;
   if (!token) return [];
@@ -6322,7 +6348,7 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false, userId = null
 // is configured. Per-user personalized content from a member's own connected
 // account is separate and stays scoped to just that member — see the
 // FEED_SOCIAL_TABS handling in handleFeedRequest (single-source-tab search)
-// and CONNECTED_SOCIAL_SEARCH_FETCHERS in getFollowingFeedPosts (Following).
+// and FOLLOWING_SOURCE_FETCHERS in getFollowingFeedPosts (Following).
 async function fetchTwitterShared(keyword)   { return fetchTwitter(keyword); }
 async function fetchLinkedInShared(keyword)  { return fetchLinkedIn(keyword); }
 async function fetchFacebookShared(keyword)  { return fetchFacebook(keyword); }
@@ -14400,23 +14426,23 @@ const PLATFORMS = {
   },
   twitter: {
     name: 'X (Twitter)', color: '#000000', icon: 'twitter',
-    description: 'Follow hashtags and conversations in your fields.',
+    description: 'Read posts from accounts you follow on X and publish using your connected account.',
     scopes: ['tweet.read', 'tweet.write', 'users.read', 'offline.access'],
     authUrl: 'https://twitter.com/i/oauth2/authorize',
     loginUrl: 'https://twitter.com/i/flow/login',
     setupUrl: 'https://developer.twitter.com/en/portal/dashboard',
     reviewRequired: false,
-    note: 'Basic tier API required ($100/month). Elevated access for higher volume.',
+    note: 'Following uses the official home timeline with your permission. X API access and usage credits are required for UFIConnect; provider limits and charges apply.',
   },
   facebook: {
     name: 'Facebook', color: '#1877F2', icon: 'facebook',
-    description: 'See posts and discussions from your Facebook Groups.',
+    description: 'Connect your Facebook profile. Public discovery is separate from your friends and followed accounts.',
     scopes: ['email', 'public_profile'],
     authUrl: `${META_LOGIN_BASE}/dialog/oauth`,
     loginUrl: 'https://www.facebook.com/login',
     setupUrl: 'https://developers.facebook.com/apps',
     reviewRequired: false,
-    note: 'Basic profile connection. Group post feed coming once Facebook App Review is approved.',
+    note: 'Basic profile connection. This integration does not read a personal friends or Following feed.',
   },
   instagram: {
     name: 'Instagram', color: '#E1306C', icon: 'instagram',
@@ -15312,19 +15338,11 @@ function serializeCommunityPost(post, viewerId = null) {
 }
 
 // --- Following feed -------------------------------------------------------
-// UFI's own follow graph (the `follows` array/table) is real and populated
-// today, so posts from people you follow on UFIconnect itself work now.
-// "Include followers from all the platforms" is real per-platform work each
-// requires: (1) that platform's OAuth actually configured, and (2) a
-// genuine "posts from accounts I follow"/"my own activity" API — which
-// several of these platforms don't expose to third-party apps at all even
-// with a valid user token (LinkedIn has no such endpoint; Twitter's
-// requires elevated API access). YouTube, GitHub, GitLab, and Reddit all
-// have real, freely-available endpoints for this (see each fetcher's own
-// comment); Bluesky (AT Protocol) and Mastodon do too, once their OAuth
-// connect flows exist. Add an entry here per platform as each becomes
-// available — deliberately never backed by keyword search, which would
-// mislabel unrelated public posts as "from people you follow."
+// Native posts use UFI's follow graph. Connected sources require both an
+// installed account authorization flow and an API for followed content.
+// X uses its authenticated home timeline; provider access and usage credits
+// still apply. Public keyword search and an account's own posts do not fill
+// an unavailable Following timeline.
 const FOLLOWING_SOURCE_FETCHERS = {
   mastodon: fetchMastodonHomeTimeline,
   youtube:  fetchYouTubeSubscriptionFeed,     // recent uploads from channels the member subscribes to — see its own comment
@@ -15333,6 +15351,7 @@ const FOLLOWING_SOURCE_FETCHERS = {
   reddit:   fetchRedditHomeFeed,              // oauth.reddit.com/ — the member's real personalized front page
   twitch:   fetchTwitchFollowedStreams,       // GET /streams/followed — currently-live followed channels, see its own comment
   bluesky:  fetchBlueskyFollowingTimeline,    // app.bsky.feed.getTimeline — the member's real following timeline
+  twitter:  fetchTwitterFollowingTimeline,    // /2/users/:id/timelines/reverse_chronological — authenticated followed accounts
   // figma, linkedin, dribbble, threads, and medium are deliberately absent —
   // none of them expose a real "posts from accounts I follow" API to a
   // third-party app, only an own-content one (verified directly against
@@ -15995,33 +16014,14 @@ async function refreshFollowingSourceCaches() {
   }
 }
 
-// Twitter/LinkedIn/Instagram/Facebook have no real "following timeline" API
-// available to third-party apps at all (see the block comment above) — the
-// closest thing UFIconnect can actually offer once one of these is
-// connected is a keyword search scoped to the user's own interests, run
-// with their token. That used to be merged straight into the *main* true-
-// mix feed (as a live, per-request, un-cached fetch) as one raw
-// unsorted/undiversified block ahead of everything else — confirmed live
-// as the reason "true mix" broke down for anyone with a connected account:
-// the diversify/rank pipeline never saw this content at all, it was just
-// concatenated in front of it. It belongs here instead, alongside genuine
-// UFIconnect-follow-graph posts, not in the algorithmically mixed feed — and
-// tagged `matchedByInterest: true` so the client can label it honestly
-// (interest-matched, not literally "people you follow on X") rather than
-// implying it's a real following timeline the way the internal posts are.
-const CONNECTED_SOCIAL_SEARCH_FETCHERS = {
-  linkedin:  fetchLinkedIn,
-  twitter:   fetchTwitter,
-  instagram: fetchInstagram,
-  facebook:  fetchFacebook,
-};
-
+// Following contains native followed authors and authorized source timelines.
+// Providers with identity, own-content or public discovery access only stay
+// outside this pool, even if the member has connected their account.
 // Following uses the same duration placement as Home: short-form clips go
 // to Videos, long-form video stays among regular posts. Legacy rows without
 // duration remain reachable until the pipeline metadata backfill catches up.
 // sourceFilter (a single source id or array — 'uficonnect' for native
-// follow-graph posts, plus whatever's in CONNECTED_SOCIAL_SEARCH_FETCHERS/
-// FOLLOWING_SOURCE_FETCHERS) scopes both which pools get computed at all
+// follow-graph posts, plus FOLLOWING_SOURCE_FETCHERS) scopes which pools run
 // (skipping an external fetch entirely when it's filtered out, not just
 // discarding its results after) and which internal posts pass through —
 // this is what the Following tab's own filter chips call into, mirroring
@@ -16030,10 +16030,9 @@ const CONNECTED_SOCIAL_SEARCH_FETCHERS = {
 // and connected-account posts have been merged.
 async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false, surface = null } = {}) {
   const wanted = sourceFilter == null ? null : new Set(Array.isArray(sourceFilter) ? sourceFilter : [sourceFilter]);
-  const isFollowingSurface = surface === 'feed' || surface === 'videos';
   const wantsSource = (src) => (
     isSourceDisplayAllowed(src, { env: process.env })
-    && (!isFollowingSurface || isFollowingSourceAllowed(src))
+    && isFollowingSourceAllowed(src)
     && (!wanted || wanted.has(src))
   );
 
@@ -16096,7 +16095,10 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
       // full cache window with "Refresh now" doing nothing at all —
       // confirmed live as a genuinely stuck-empty YouTube Following tab.
       const cached = !bust && followingSourceCache.get(`${userId}::${source}`);
-      if (cached && Date.now() - cached.fetchedAt < FOLLOWING_SOURCE_CACHE_MAX_AGE_MS) {
+      // Old X caches may contain interest searches from a previous release.
+      // Refresh those entries instead of serving them as followed content.
+      if (cached && Date.now() - cached.fetchedAt < FOLLOWING_SOURCE_CACHE_MAX_AGE_MS
+          && !cached.posts.some(post => post?.matchedByInterest === true)) {
         externalPosts.push(...cached.posts);
         continue;
       }
@@ -16111,41 +16113,8 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
     }
   }
 
-  if (user?.socialTokens) {
-    const prefs = user.preferences || {};
-    const socialKws = (prefs.interests || []).map(interestKeyword).filter(Boolean).slice(0, 3);
-    if (socialKws.length > 0) {
-      const fetches = [];
-      for (const [source, fetcher] of Object.entries(CONNECTED_SOCIAL_SEARCH_FETCHERS)) {
-        if (!wantsSource(source)) continue;
-        const token = user.socialTokens[source];
-        if (!token) continue;
-        fetches.push(Promise.allSettled(socialKws.map(kw =>
-          fetcher(kw, token).then(raw => realFeedPosts(raw).map(p => ({
-            ...normalizeFeedPost({ ...p, source }),
-            authorId: `${source}_${userId}`,
-            matchedByInterest: true,
-          })))
-        )).then(results => {
-          const posts = results.flatMap(r => r.status === 'fulfilled' ? r.value : []);
-          if (!posts.length) {
-            const failure = results.find(r => r.status === 'rejected')?.reason;
-            if (failure) sourceErrors[source] = String(failure?.message || failure || 'Fetch failed').slice(0, 200);
-          }
-          return { source, posts };
-        }));
-      }
-      if (fetches.length > 0) {
-        const results = await Promise.all(fetches);
-        for (const result of results) {
-          externalPosts.push(...capConnectedSourcePosts(result.posts, user, result.source));
-        }
-      }
-    }
-  }
-
   let merged = interleaveByAuthor([...internalPosts, ...externalPosts]);
-  if (isFollowingSurface) merged = merged.filter(post => isFollowingSourceAllowed(post?.source));
+  merged = merged.filter(post => isFollowingSourceAllowed(post?.source) && post?.matchedByInterest !== true);
   if (surface === 'videos') merged = merged.filter(isVideoSurfacePost);
   if (surface === 'feed') merged = merged.filter(isRegularFeedSurfacePost);
   return { posts: merged, sourceErrors };
@@ -19840,8 +19809,8 @@ async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', pa
     const params = [];
     // This used to exclude Twitter/LinkedIn/Instagram/Facebook outright,
     // conflating two different things: a *per-user live* fetch of a
-    // member's own connected account (still correctly confined to Following
-    // only — see CONNECTED_SOCIAL_SEARCH_FETCHERS/getFollowingFeedPosts,
+    // member's own connected account (scoped to that member,
+    // with genuine timelines handled by getFollowingFeedPosts,
     // never persisted here, and mixing that live per-request block into the
     // main feed was the real historical bug that broke true mix for anyone
     // with a connected account), versus the *shared, cached* app-level
@@ -20574,10 +20543,10 @@ const refreshConnectedAccessToken = require('./connected-token-refresh').createC
       return { accessToken: JSON.stringify({ ...session, accessToken: result.data.access_token }), refreshToken: result.data.refresh_token };
     }
     const cfg = SOCIAL_CFG[platform];
-    if (!cfg || !['youtube', 'github', 'gitlab', 'twitch', 'reddit'].includes(platform)) return null;
+    if (!cfg || !['youtube', 'github', 'gitlab', 'twitch', 'reddit', 'twitter'].includes(platform)) return null;
     const params = { grant_type: 'refresh_token', refresh_token: refreshToken };
     const headers = {};
-    if (platform === 'reddit') headers.Authorization = `Basic ${Buffer.from(`${cfg.clientId()}:${cfg.clientSecret()}`).toString('base64')}`;
+    if (platform === 'reddit' || platform === 'twitter') headers.Authorization = `Basic ${Buffer.from(`${cfg.clientId()}:${cfg.clientSecret()}`).toString('base64')}`;
     else Object.assign(params, { client_id: cfg.clientId(), client_secret: cfg.clientSecret() });
     raw = await postForm(cfg.tokenUrl, params, headers);
     return raw?.access_token ? { accessToken: raw.access_token, refreshToken: raw.refresh_token } : null;
@@ -23397,12 +23366,10 @@ async function handleFeedRequest(req, res) {
   // live here and dropped into the main feed as a raw, undiversified block —
   // confirmed live as the reason "true mix" broke down for anyone with a
   // connected account: this content never passed through the diversify/rank
-  // pipeline below at all, it was just concatenated in front of it. Moved to
-  // getFollowingFeedPosts instead (see CONNECTED_SOCIAL_SEARCH_FETCHERS
-  // there) — it's genuinely a personal, per-user result set anyway, which
-  // fits the Following tab's model far better than the algorithmically
-  // mixed public feed everyone else's request also has to stay consistent
-  // with.
+  // pipeline below at all, it was just concatenated in front of it. Keep
+  // connected account results separate from the shared public supply.
+  // getFollowingFeedPosts now reads only genuine followed content; public
+  // interest searches do not fill an unavailable source timeline.
 
 
   // Sort external posts only: ranked (time-decay + engagement), interleaved
@@ -27949,7 +27916,39 @@ const creatorAnalytics = createCreatorAnalytics({ db, getUser: getPublicTargetUs
 registerCreatorAnalyticsRoutes(app, {service:creatorAnalytics,authenticate,limiter:contentSubmissionLimiter});
 scheduleRecurring(() => creatorAnalytics.prune().catch(() => {}), 60 * 60 * 1000);
 registerUfiVaultRoutes(app, {vault:ufiVault,authenticate,limiter:contentSubmissionLimiter});
-registerSnapRoutes(app, { service: snaps, authenticate, authenticateOptional, limiter: contentSubmissionLimiter });
+let publicSnapCache = null;
+let publicSnapRead = null;
+async function getPublicSnapPosts() {
+  const memory = () => realFeedPosts([
+    ...globalFeedCache.posts,
+    ...[...agentSourceCache.values()].flatMap(cache => cache.posts || []),
+  ]).filter(post => FEED_SOURCE_CATALOG.home.includes(post.source) && post.mediaType === 'video');
+  if (!db.isConnected()) return { posts: memory(), sourceErrors: {} };
+  if (publicSnapCache && Date.now() - publicSnapCache.fetchedAt < 60000) {
+    return { posts: [...memory(), ...publicSnapCache.posts], sourceErrors: {} };
+  }
+  if (!publicSnapRead) {
+    publicSnapRead = (async () => {
+      try {
+        // One indexed, bounded read per minute. Source workers already pull
+        // the public posts; a rail visit never starts another provider crawl.
+        const { rows } = await db.readQuery(PUBLIC_CLIP_QUERY,
+          [FEED_SOURCE_CATALOG.home, new Date(Date.now() - 7 * 86400000).toISOString(), new Date().toISOString()]);
+        const posts = realFeedPosts(rows.map(dbRowToFeedPost));
+        publicSnapCache = { posts, fetchedAt: Date.now() };
+        return { posts, sourceErrors: {} };
+      } catch {
+        return { posts: [], sourceErrors: { sources: 'Public source clips are temporarily unavailable. Try refreshing shortly.' } };
+      }
+    })().finally(() => { publicSnapRead = null; });
+  }
+  const stored = await publicSnapRead;
+  return { posts: [...memory(), ...stored.posts], sourceErrors: stored.sourceErrors };
+}
+registerSnapRoutes(app, { service: snaps, authenticate, authenticateOptional, limiter: contentSubmissionLimiter,
+  loadExternalSnaps: createExternalSnapLoader({ getPublicPosts: getPublicSnapPosts,
+    getFollowingPosts: getFollowingFeedPosts, getUser,
+    filterVisible: posts => visibleReportContent(realFeedPosts(posts)) }) });
 if (!IS_PIPELINE_ROLE) {
   const snapCleanupTimer = setInterval(() => { void snaps.cleanup().catch(() => {}); }, 15 * 60 * 1000);
   snapCleanupTimer.unref?.();

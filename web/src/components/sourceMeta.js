@@ -124,10 +124,10 @@ export const CONNECTED_SOCIAL_PLATFORMS = [
   'medium', 'dribbble', 'twitch', 'threads', 'bluesky', 'mastodon',
 ];
 
-// Include only installed personalized-feed adapters in Following. The shared
-// catalog also distinguishes genuine timelines from connected interest feeds.
+// Include only installed adapters for authenticated followed content. Public
+// discovery, keyword search and own-content adapters remain in their own feeds.
 export const FOLLOWING_EXCLUDED_SOURCE_IDS = CONNECTED_SOCIAL_PLATFORMS.filter(
-  source => !Object.hasOwn(FEED_SOURCE_CATALOG.following, source),
+  source => FEED_SOURCE_CATALOG.following[source] !== 'following',
 );
 
 // Shared by the desktop feed rail and the mobile app menu. Keeping this
@@ -139,7 +139,7 @@ export const HOME_FEED_SOURCE_IDS = [...new Set([
 
 export const FOLLOWING_FEED_SOURCE_IDS = [
   'uficonnect',
-  ...Object.keys(FEED_SOURCE_CATALOG.following),
+  ...Object.entries(FEED_SOURCE_CATALOG.following).filter(([, capability]) => capability === 'following').map(([source]) => source),
 ];
 
 export const SOURCE_WEBSITE_IDS = Object.keys(ACCOUNT_DIRECTORY).filter(
