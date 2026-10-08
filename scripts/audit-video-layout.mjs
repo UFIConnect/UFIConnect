@@ -46,6 +46,7 @@ try {
       window.YT = { PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 }, Player: class {
         constructor(frame, config) {
           this.frame = frame; this.config = config; this.state = 1; this.rate = 1;
+          this.time = 1; this.muted = true; this.volume = 100;
           this.id = new URL(frame.src).pathname.split('/').pop();
           window.__videoLayoutPlayers.add(this);
           setTimeout(() => config.events?.onReady?.({ target: this }), 20);
@@ -53,8 +54,11 @@ try {
         getIframe() { return this.frame; }
         getVideoData() { return { video_id: this.id }; }
         getDuration() { return this.id === 'short000001' ? 3 : 30; }
-        getCurrentTime() { return 1; }
+        getCurrentTime() { return this.time; }
         getPlayerState() { return this.state; }
+        isMuted() { return this.muted; }
+        getVolume() { return this.volume; }
+        setVolume(volume) { this.volume = Math.max(0, Math.min(100, Number(volume))); }
         getAvailablePlaybackRates() { return [0.5, 1, 1.5, 2]; }
         getPlaybackRate() { return this.rate; }
         getOptions() { return []; }
@@ -64,10 +68,13 @@ try {
           if (window.__videoLayoutHoldRateChange) window.__videoLayoutConfirmRate = confirm;
           else setTimeout(confirm, 20);
         }
-        loadVideoById(id) { this.id = id; const url = new URL(this.frame.src); url.pathname = `/embed/${id}`; this.frame.src = url.href; }
-        playVideo() { this.state = 1; }
-        pauseVideo() { this.state = 2; }
-        mute() {} unMute() {} seekTo() {} destroy() { window.__videoLayoutPlayers.delete(this); this.frame.remove(); }
+        loadVideoById(id) { this.id = id; this.time = 0; const url = new URL(this.frame.src); url.pathname = `/embed/${id}`; this.frame.src = url.href; }
+        playVideo() { this.state = 1; this.config.events?.onStateChange?.({ target: this, data: 1 }); }
+        pauseVideo() { this.state = 2; this.config.events?.onStateChange?.({ target: this, data: 2 }); }
+        mute() { this.muted = true; }
+        unMute() { this.muted = false; }
+        seekTo(time) { this.time = Math.max(0, Math.min(this.getDuration(), Number(time))); }
+        destroy() { window.__videoLayoutPlayers.delete(this); this.frame.remove(); }
       } };
     });
     await page.route('https://www.youtube.com/embed/**', async route => {
@@ -98,6 +105,30 @@ try {
         const rect = element.getBoundingClientRect();
         return rect.x >= 0 && rect.y >= 0 && rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1;
       }), message);
+    };
+    const checkPlaybackControls = async slide => {
+      const playback = slide.locator('.media-playback-controls');
+      assert.equal(await playback.count(), 1, 'Each slide has one app playback row');
+      assert.equal(await playback.getByRole('button').count(), 2, 'Play/Pause and Mute/Unmute are visible app buttons');
+      assert.ok(await playback.getByRole('button', { name: /^(?:Play|Pause) video$/ }).isVisible());
+      assert.ok(await playback.getByRole('button', { name: /^(?:Mute|Unmute) video$/ }).isVisible());
+      assert.equal(await slide.locator('input[type="range"]').count(), 1, 'Each slide has one app progress control');
+      assert.ok(await playback.getByRole('slider', { name: 'Video progress', exact: true }).isVisible());
+      assert.ok(await playback.locator('.media-playback-time').isVisible());
+      assert.ok(await playback.evaluate(element => {
+        const [play, sound, progress, time] = [...element.children];
+        if (play?.tagName !== 'BUTTON' || sound?.tagName !== 'BUTTON' || progress?.type !== 'range'
+          || !time?.classList.contains('media-playback-time') || element.children.length !== 4) return false;
+        const row = element.getBoundingClientRect();
+        const media = element.closest('.video-feed-slide').querySelector('[data-video-media]').getBoundingClientRect();
+        const rects = [play, sound, progress, time].map(child => child.getBoundingClientRect());
+        return row.top >= media.bottom - 1 && row.left <= media.left + 25 && row.right <= media.right + 1
+          && getComputedStyle(element).position === 'static'
+          && rects.every(rect => rect.top >= row.top - 1 && rect.bottom <= row.bottom + 1 && rect.width > 0)
+          && rects[0].left >= row.left - 1 && rects[0].right <= rects[1].left + 1
+          && rects[1].right <= rects[2].left + 1 && rects[2].right <= rects[3].left + 1;
+      }), 'Play/Pause and Mute/Unmute sit left of progress and time in one row below the video');
+      return playback;
     };
     if (!hnOnly) {
       const saved = new Set(); let likeWrites = 0;
@@ -135,22 +166,22 @@ try {
         await page.getByRole('dialog', { name: 'Comments', exact: true }).waitFor();
         await page.getByRole('button', { name: 'Close comments', exact: true }).click();
         await page.getByRole('dialog', { name: 'Comments', exact: true }).waitFor({ state: 'hidden' });
-        const playback = slide.locator('.video-feed-playback-status');
-        const placement = await playback.evaluate(element => {
-          const controls = element.getBoundingClientRect();
-          const media = element.closest('.video-feed-slide').querySelector('[data-video-media]').getBoundingClientRect();
-          return controls.top >= media.bottom && controls.left <= media.left + 25 && getComputedStyle(element).position === 'static';
+        // The media response is an offline fixture. Supply the same player
+        // metadata events a decoded video emits instead of using post duration.
+        await slide.locator('video').evaluate(video => {
+          Object.defineProperty(video, 'duration', { configurable: true, value: 30 });
+          Object.defineProperty(video, 'currentTime', { configurable: true, value: 0 });
+          video.dispatchEvent(new Event('loadedmetadata')); video.dispatchEvent(new Event('timeupdate'));
         });
-        assert.ok(placement, 'Playback time sits under the video on the left');
-        assert.equal(await slide.locator('.video-feed-play-button, .video-feed-sound-button').count(), 0,
-          'Official/native player controls have no duplicate app play or mute buttons');
-        assert.equal(await playback.locator('.video-feed-playback-time').textContent(), '0:00 / 0:30');
+        await page.waitForFunction(() => document.querySelector('.media-playback-time')?.textContent === '0:00 / 0:30');
+        const playback = await checkPlaybackControls(slide);
+        assert.equal(await playback.locator('.media-playback-time').textContent(), '0:00 / 0:30');
         await slide.locator('video').evaluate(video => {
           Object.defineProperty(video, 'duration', { configurable: true, value: 3661 });
           Object.defineProperty(video, 'currentTime', { configurable: true, value: 12 });
           video.dispatchEvent(new Event('loadedmetadata')); video.dispatchEvent(new Event('timeupdate'));
         });
-        await page.waitForFunction(() => document.querySelector('.video-feed-playback-time')?.textContent === '0:12 / 1:01:01');
+        await page.waitForFunction(() => document.querySelector('.media-playback-time')?.textContent === '0:12 / 1:01:01');
         await more.click(); const menu = page.getByRole('menu');
         assert.equal(await menu.locator('.video-feed-menu-action').count(), 0, 'Visible engagement actions are not duplicated in the menu');
         await page.keyboard.press('Escape'); await menu.waitFor({ state: 'detached' });
@@ -159,23 +190,25 @@ try {
         await page.waitForFunction(() => document.querySelector('.video-feed-slide')?.dataset.cursorIdle === 'true');
         assert.equal(await playback.evaluate(element => getComputedStyle(element).opacity), '1');
         assert.equal(await playback.evaluate(element => getComputedStyle(element).pointerEvents), 'auto');
+        await checkPlaybackControls(slide);
         assert.ok(await actions.isVisible(), 'Likes, Comments, Save and source navigation remain available on idle');
         await page.mouse.move(bounds.x + 22, bounds.y + 22);
-        await page.waitForFunction(() => getComputedStyle(document.querySelector('.video-feed-playback-status')).opacity === '1');
+        await page.waitForFunction(() => getComputedStyle(document.querySelector('.media-playback-controls')).opacity === '1');
         if (width < 600) {
           await page.touchscreen.tap(bounds.x + 32, bounds.y + 32);
           assert.equal(await playback.evaluate(element => getComputedStyle(element).opacity), '1');
           await page.touchscreen.tap(bounds.x + 42, bounds.y + 42);
-          await page.waitForFunction(() => getComputedStyle(document.querySelector('.video-feed-playback-status')).opacity === '1');
+          await page.waitForFunction(() => getComputedStyle(document.querySelector('.media-playback-controls')).opacity === '1');
         }
         await page.keyboard.press('Tab');
         await slide.locator('video').focus();
         await page.waitForFunction(() => document.querySelector('.video-feed-slide')?.dataset.cursorIdle === 'true');
-        assert.equal(await playback.evaluate(element => getComputedStyle(element).opacity), '1', 'Playback time remains visible when the native player is focused');
+        assert.equal(await playback.evaluate(element => getComputedStyle(element).opacity), '1', 'Playback buttons, progress and time remain visible when the native player is focused');
+        await checkPlaybackControls(slide);
         await page.mouse.move(bounds.x + 52, bounds.y + 52);
         await page.screenshot({ path: path.join(root, '.cache', `controls-below-${surface}-${width}.png`) });
       }
-      console.log(`PASS persistent playback below left, time, visible Like/Comments/Save and post link in Videos + Music at ${width}px`);
+      console.log(`PASS persistent Play/Pause + Mute left of progress/time, visible Like/Comments/Save and post link in Videos + Music at ${width}px`);
       if (menusOnly) { assert.deepEqual(errors, []); await context.close(); continue; }
     }
     const checkFullScreen = async slide => {
@@ -184,7 +217,7 @@ try {
       await more.click();
       await page.getByRole('menuitem', { name: 'Full screen', exact: true }).click();
       await page.waitForFunction(() => document.fullscreenElement === document.documentElement);
-      assert.ok(await slide.locator('.video-feed-playback-status').isVisible());
+      await checkPlaybackControls(slide);
       await more.click();
       await assertInViewport(page.getByRole('menu'), 'The menu remains reachable in full screen');
       await page.getByRole('menuitem', { name: 'Exit full screen', exact: true }).click();
@@ -206,18 +239,10 @@ try {
       assert.equal(await actions.getByRole('button', { name: /^Comments(?: |$)/ }).count(), 1);
       assert.equal(await actions.getByRole('button', { name: 'Save post', exact: true }).count(), 1);
       assert.equal(await actions.locator('.post-chrome-like').count(), invalidSource ? 0 : 1);
-      assert.equal(await slide.locator('input[type="range"], .video-feed-action-rail, .video-feed-scrubber, .video-feed-progress').count(), 0,
-        'App playback rails and scrubbers are absent');
-      const playback = slide.locator('.video-feed-playback-status');
+      assert.equal(await slide.locator('.video-feed-action-rail, .video-feed-scrubber, .video-feed-progress').count(), 0,
+        'Obsolete playback rails do not duplicate the shared control row');
       await slide.locator('[data-video-media]').hover({ position: { x: 12, y: 12 } });
-      assert.ok(await playback.isVisible(), 'Playback time remains available');
-      assert.equal(await slide.locator('.video-feed-play-button, .video-feed-sound-button').count(), 0,
-        'Player controls are not duplicated by app buttons');
-      assert.ok(await playback.locator('.video-feed-playback-time').evaluate(time => {
-        const rect = time.getBoundingClientRect();
-        const media = time.closest('.video-feed-slide').querySelector('[data-video-media]').getBoundingClientRect();
-        return rect.top >= media.bottom && rect.x <= media.left + 80 && rect.right <= media.right;
-      }), 'Playback time stays below the media');
+      await checkPlaybackControls(slide);
       assert.equal(await actions.locator('.post-chrome-source-link').count(), 1, 'The post link stays visible');
       const more = actions.getByRole('button', { name: 'More options', exact: true });
       assert.ok(await more.isVisible());
@@ -272,8 +297,8 @@ try {
       sourceUrl: 'https://news.ycombinator.com/item?id=123456', embedId: 'stalehn0001', videoDurationSeconds: 30 })]);
     const hnNative = page.locator('[data-post-id="hn-native-stale"]');
     await hnNative.locator('video').waitFor();
-    assert.equal(await hnNative.locator('video').evaluate(video => video.controls), true,
-      'Hacker News direct video shows its native toolbar alongside app playback buttons');
+    assert.equal(await hnNative.locator('video').evaluate(video => video.controls), false,
+      'Hacker News direct video uses the single app playback bar without a duplicate native toolbar');
     assert.equal(await page.locator('.video-feed-youtube-player iframe').count(), 0,
       'A stale embedId on a Hacker News direct video never creates a YouTube player');
     await checkPostActions(hnNative, hnProfile);
@@ -334,7 +359,8 @@ try {
         && rectangles.media.bottom > rectangles.actions.top + 1;
       assert.equal(mediaOverlapsActions, false, 'Commands stay outside the full video frame');
       assert.equal(rectangles.fit, 'contain', 'Native video preserves the full frame');
-      assert.equal(await accepted.locator('video').evaluate(video => video.controls), true, 'Native toolbar is visible by default');
+      assert.equal(await accepted.locator('video').evaluate(video => video.controls), false,
+        'Native video uses the single app playback bar without a duplicate browser toolbar');
       await checkPostActions(accepted, 'https://www.reddit.com/user/audit_creator/');
       if (width === 1440) await checkFullScreen(accepted);
       assert.equal(await page.getByRole('button', { name: /^(Previous|Next) video$/ }).count(), 0);

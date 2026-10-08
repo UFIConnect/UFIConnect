@@ -18,12 +18,12 @@
 .video-feed-view .video-feed-body { position: relative; flex: 1; min-height: 0; width: 100%; }
 .video-feed-view .video-feed-scroll { position: relative; height: 100%; overflow-y: auto; scroll-snap-type: y mandatory; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
 .video-feed-view .video-feed-snap-item { height: 100%; scroll-snap-align: start; scroll-snap-stop: always; }
-.video-feed-view .video-feed-slide { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; background: var(--video-chrome); }
+.video-feed-view .video-feed-slide { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto auto; background: var(--video-chrome); }
 .video-feed-view .video-feed-media { grid-column: 1; grid-row: 1; position: relative; min-height: 0; min-width: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; background: var(--video-chrome); color: #e8edf5; }
 .video-feed-view .video-feed-media > video,
 .video-feed-view .video-feed-media > iframe,
 .video-feed-view .video-feed-media > img { display: block; width: 100%; height: 100%; object-fit: contain; border: 0; }
-.video-feed-view .video-feed-details { grid-column: 1; grid-row: 2; position: relative; min-width: 0; max-height: max(190px, min(35dvh, 280px)); overflow-y: auto; overscroll-behavior: contain; padding: 10px 13px max(5px, env(safe-area-inset-bottom)); background: var(--video-chrome); font-size: .74rem; }
+.video-feed-view .video-feed-details { grid-column: 1; grid-row: 3; position: relative; min-width: 0; max-height: max(190px, min(35dvh, 280px)); overflow-y: auto; overscroll-behavior: contain; padding: 4px 13px max(5px, env(safe-area-inset-bottom)); background: var(--video-chrome); font-size: .74rem; }
 .video-feed-view .post-chrome-header { margin-bottom: 4px; }
 .video-feed-view .video-feed-post-actions { margin-top: 4px; flex-wrap: nowrap; gap: 4px; }
 .video-feed-view .video-feed-post-actions .post-chrome-action { min-height: 44px; min-width: 44px; padding-inline: 8px; }
@@ -34,8 +34,7 @@
 .video-feed-view .video-feed-post-actions > .post-chrome-more { margin-left: auto; flex-shrink: 0; }
 .video-feed-view .video-feed-post-actions > .post-chrome-source-link { margin-left: 0; flex-shrink: 0; }
 .video-feed-view .video-feed-post-actions > .post-chrome-source-link > svg { display: block; }
-.video-feed-view .video-feed-playback-status { display: flex; align-items: center; min-height: 20px; margin: 0 0 6px; }
-.video-feed-view .video-feed-playback-time { color: var(--video-muted); font-size: .75rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.video-feed-view .video-feed-playback-status { grid-column: 1; grid-row: 2; min-width: 0; padding: 0 13px; background: var(--video-chrome); }
 .video-feed-view [data-cursor-idle="true"] .video-feed-media { cursor: none; }
 .post-chrome-menu .video-feed-menu-action { display: flex; align-items: center; gap: 8px; }
 .post-chrome-menu .video-feed-menu-action svg { flex-shrink: 0; }
@@ -60,13 +59,13 @@
 .video-feed-view .video-feed-loading { position: absolute; z-index: 5; inset: 0; display: grid; place-content: center; color: #fff; background: #0008; pointer-events: none; }
 .video-feed-view .video-feed-placeholder { height: 100%; background: var(--video-chrome); }
 .video-feed-view .video-feed-playback-note { color: #edc581; font-size: .7rem; line-height: 1.4; margin: 3px 0; }
-@media (min-width: 769px) { .video-feed-view .video-feed-top-controls, .video-feed-view .video-feed-details { padding-inline: 24px; } }
+@media (min-width: 769px) { .video-feed-view .video-feed-top-controls, .video-feed-view .video-feed-details, .video-feed-view .video-feed-playback-status { padding-inline: 24px; } }
 @media (max-width: 400px) {
   .video-feed-view .video-feed-top-controls { gap: 3px; padding-inline: 5px; }
   .video-feed-view .video-feed-header-button { width: 30px; flex-basis: 30px; }
   .video-feed-view .video-feed-mode-switch { gap: 2px; }
   .video-feed-view .video-feed-mode-switch button { padding-inline: 7px; font-size: .74rem; }
-  .video-feed-view .video-feed-details { padding-inline: 9px; }
+  .video-feed-view .video-feed-details, .video-feed-view .video-feed-playback-status { padding-inline: 9px; }
   .video-feed-view .video-feed-caption-summary { gap: 5px; }
   .video-feed-view .video-feed-caption h2 { font-size: .7rem; }
 }

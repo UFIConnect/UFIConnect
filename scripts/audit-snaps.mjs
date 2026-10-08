@@ -455,7 +455,8 @@ try {
     await viewer.getByRole('button', { name: 'Snap options', exact: true }).click();
     const optionsBounds = await viewer.getByRole('group', { name: 'Snap options', exact: true }).boundingBox();
     check(optionsBounds.x >= 0 && optionsBounds.x + optionsBounds.width <= width + 2, 'The Videos-style snap options menu stays inside the viewport');
-    check(await viewer.getByRole('slider').count() === 0 && await viewer.getByText('Snap position', { exact: true }).count() === 0, 'Snap position sliders and labels are removed from the options');
+    check(await viewer.getByRole('group', { name: 'Snap options', exact: true }).getByRole('slider').count() === 0
+      && await viewer.getByText('Snap position', { exact: true }).count() === 0, 'Snap position sliders and labels are removed from the options');
     await page.keyboard.press('ArrowRight');
     check(await viewer.locator('.snap-viewer-caption').innerText() === 'other-native', 'Arrow keys inside the options menu do not navigate snaps');
     await page.keyboard.press('Escape');
