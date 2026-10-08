@@ -53,7 +53,8 @@ try {
       check(!url.href.includes(TOKEN) && req.headers()['x-office-token'] === TOKEN, 'Office credentials use headers');
       const body = req.postData() ? req.postDataJSON() : null; requests.push({ role, path: url.pathname, body });
       const actions = url.pathname.match(/^\/office\/agents\/(\w+)\/actions$/);
-      if (actions) return route.fulfill({ headers, json: { agentId: actions[1], serviceRole: role, actions: tasks(actions[1]) } });
+      if (actions) return route.fulfill({ headers, json: { agentId: actions[1], serviceRole: role, actions: tasks(actions[1]).map(action => role === 'pipeline' && action.id === 'commit.web-frontend'
+        ? { ...action, available: false, unavailableReason: 'GitHub is configured on API only.' } : action) } });
       const chat = url.pathname.match(/^\/office\/agents\/(\w+)\/chat$/);
       if (chat) { check(body.history.length <= 4, 'Large conversation sends bounded recent context');
         return route.fulfill({ headers, json: { agentId: chat[1], serviceRole: role, mode: 'diagnostics', observedAt: new Date().toISOString(), reply: 'Fixture reply ' + body.message, actions: body.message.startsWith('refresh') ? [tasks(chat[1])[0]] : [], suggestions: [] } }); }
@@ -93,6 +94,7 @@ try {
     check(!await page.getByText(/Control completed. Run fixture-run-42/).count(), 'Failed action does not report success');
     await page.getByRole('button', { name: 'Source agent', exact: true }).click();
     await page.getByRole('button', { name: 'Run task: Commit public web frontend', exact: true }).first().click();
+    check(requests.some(row => row.role === 'api' && row.path === '/office/agents/reddit/actions'), 'Pipeline agent checks public web permissions on API');
     await page.getByRole('button', { name: 'Load current file', exact: true }).click();
     await page.getByLabel('Describe the change', { exact: true }).fill('Improve the public homepage heading');
     await page.getByRole('button', { name: 'Prepare web change', exact: true }).click(); await page.getByRole('region', { name: 'Web change preview', exact: true }).waitFor();

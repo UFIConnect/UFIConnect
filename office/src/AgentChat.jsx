@@ -38,11 +38,33 @@ export default function AgentChat({ agent, officeFetch, base, apiBase, pipelineB
     officeFetch(`${base}/office/agents/${encodeURIComponent(agent.id)}/actions`, { signal: controller.signal })
       .then(async response => { if (!response.ok) throw Error('Task list unavailable'); const data = await response.json();
         if (data.agentId !== agent.id || data.serviceRole !== agent.serviceRole) throw Error('Incorrect agent task list');
-        if (!controller.signal.aborted) setActions(validActions(data.actions)); })
+        let list = validActions(data.actions);
+        // Capabilities are checked on the service that will execute the task.
+        // Pipeline does not need a GitHub write key to open API's web editor.
+        const otherRole = agent.serviceRole === 'api' ? 'pipeline' : 'api', otherBase = otherRole === 'api' ? apiBase : pipelineBase;
+        if (list.some(action => action.target === otherRole || action.target === 'both')) {
+          try {
+            if (!otherBase) throw Error('Missing task service');
+            const otherResponse = await officeFetch(`${otherBase}/office/agents/${encodeURIComponent(agent.id)}/actions`, { signal: controller.signal });
+            if (!otherResponse.ok) throw Error('Task service unavailable');
+            const other = await otherResponse.json();
+            if (other.agentId !== agent.id || other.serviceRole !== otherRole) throw Error('Incorrect task service');
+            const remote = validActions(other.actions);
+            list = list.map(action => {
+              if (action.target !== otherRole && action.target !== 'both') return action;
+              const owner = remote.find(item => item.id === action.id && item.target === action.target && item.requiresConfirmation === action.requiresConfirmation);
+              if (!owner) return { ...action, available: false, unavailableReason: 'This task could not be verified on its required service. Retry tasks.' };
+              return { ...action, available: action.target === 'both' ? action.available !== false && owner.available !== false : owner.available,
+                unavailableReason: action.target === 'both' && action.available === false ? action.unavailableReason : owner.unavailableReason };
+            });
+          } catch { list = list.map(action => action.target === otherRole || action.target === 'both'
+            ? { ...action, available: false, unavailableReason: 'Task availability could not be checked on the required service. Retry tasks.' } : action); }
+        }
+        if (!controller.signal.aborted) setActions(list); })
       .catch(() => { if (!controller.signal.aborted) setActionsError('Could not load this agent’s tasks. Retry to check available actions.'); })
       .finally(() => { if (!controller.signal.aborted) setActionsLoading(false); });
     return () => controller.abort();
-  }, [agent.id, agent.serviceRole, base, revision]);
+  }, [agent.id, agent.serviceRole, base, apiBase, pipelineBase, revision]);
   function append(items) { const next = [...latest.current, ...items]; latest.current = next; updateMessages(next); }
   function clear() {
     if (actionBusy.current) return;
@@ -74,9 +96,10 @@ export default function AgentChat({ agent, officeFetch, base, apiBase, pipelineB
     finally { clearTimeout(timeout); if (sequence.current === token) { pending.current = null; setBusy(false); } }
   }
   async function execute(action, confirmed = false) {
-    if (busy || actionBusy.current || action.available === false) return;
+    if (busy || actionBusy.current) return;
     const canonical = actions.find(item => item.id === action.id);
     if (!canonical) { setError('Reload the task list before running this action.'); return; }
+    if (canonical.available === false) { setError(canonical.unavailableReason || 'This task is unavailable.'); return; }
     if (canonical.input === 'frontend-file' && canonical.frontendTarget === 'web') {
       setWebEditor({ instruction: draft || latest.current.filter(item => item.role === 'user').at(-1)?.content || '' }); setReview(null); return;
     }
@@ -105,6 +128,7 @@ export default function AgentChat({ agent, officeFetch, base, apiBase, pipelineB
     } finally { actionBusy.current = false; if (mounted.current) setRunning(''); }
   }
   function actionCard(action, key = action.id) {
+    action = actions.find(item => item.id === action.id) || action;
     return <div className="lc-agent-task" key={key}><div><strong>{action.label}</strong><p>{action.description}</p><small>{action.target === 'both' ? 'API and Pipeline' : action.target === 'pipeline' ? 'Pipeline' : 'API'} · {action.impact} impact</small>{action.available === false && <p className="lc-error">{action.unavailableReason}</p>}</div><button type="button" disabled={busy || !!running || actionsLoading || action.available === false} onClick={() => execute(action)} aria-label={`Run task: ${action.label}`}><Play size={13} />{running === action.id ? 'Running…' : action.input === 'frontend-file' ? 'Edit public web' : action.requiresConfirmation ? 'Review task' : 'Run task'}</button></div>;
   }
   const suggestions = messages.at(-1)?.suggestions || [], visible = messages.slice(-visibleCount);
