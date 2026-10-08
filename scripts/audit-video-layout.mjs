@@ -8,6 +8,7 @@ import { installAuditMember, auditNavigate } from './audit-session.mjs';
 const require = createRequire(import.meta.url);
 const { createAppHarness, member } = require('../backend/test-support/app-harness');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const hnOnly = process.argv.includes('--hn-only');
 const app = await createAppHarness();
 app.seedUser(member('video-layout-audit'));
 const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
@@ -28,7 +29,7 @@ const post = (id, extra = {}) => ({ id, source: 'reddit', title: `Video ${id}`, 
 try {
   await server.listen();
   browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
-  for (const width of [320, 390, 1440]) {
+  for (const width of hnOnly ? [390, 1440] : [320, 390, 1440]) {
     const context = await browser.newContext({ viewport: { width, height: 850 }, hasTouch: width < 600, isMobile: width < 600 });
     const page = await context.newPage(); page.setDefaultTimeout(15000);
     const errors = [], embedRequests = [];
@@ -118,7 +119,7 @@ try {
       await page.evaluate(async () => { if (document.fullscreenElement) await document.exitFullscreen(); });
       await page.waitForFunction(() => !document.fullscreenElement);
     };
-    const checkPostActions = async (slide, profileHref) => {
+    const checkPostActions = async (slide, profileHref, youtube = false) => {
       const actions = slide.getByRole('group', { name: 'Post actions', exact: true });
       assert.ok(await actions.isVisible());
       assert.ok(await actions.locator('.post-chrome-like').isVisible(), 'Likes stay visible');
@@ -127,21 +128,23 @@ try {
       assert.equal(await slide.locator('input[type="range"], .video-feed-action-rail, .video-feed-scrubber, .video-feed-progress').count(), 0,
         'App playback rails and scrubbers are absent');
       const playback = slide.getByRole('group', { name: 'Playback controls', exact: true });
-      assert.ok(await playback.isVisible(), 'Core playback commands stay visible');
-      assert.equal(await playback.getByRole('button', { name: /^(?:Play|Pause) video$/ }).count(), 1);
-      assert.equal(await playback.getByRole('button', { name: /^(?:Mute|Unmute) video$/ }).count(), 1);
-      const original = actions.getByRole('link', { name: 'View original post', exact: true });
+      assert.ok(await playback.isVisible(), 'The sound control stays visible');
+      assert.equal(await slide.getByRole('button', { name: /^(?:Play|Pause) video$/ }).count(), 0,
+        'Play and pause belong to the player controls');
+      const sound = playback.getByRole('button', { name: /^(?:Mute|Unmute) video$/ });
+      assert.equal(await sound.count(), 1);
+      assert.ok(await sound.evaluate(button => {
+        const rect = button.getBoundingClientRect();
+        const media = button.closest('[data-video-media]').getBoundingClientRect();
+        const target = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+        return Math.abs(rect.top - media.top - 12) <= 1 && Math.abs(media.right - rect.right - 12) <= 1
+          && button.contains(target);
+      }), 'Mute occupies the video top-right corner and is reachable above the player');
+      assert.equal(await actions.locator('.post-chrome-source-link').count(), 0, 'The original-source action is removed');
       const more = actions.getByRole('button', { name: 'More options', exact: true });
-      assert.ok(await original.isVisible() && await more.isVisible());
-      const order = await actions.evaluate(element => {
-        const original = element.querySelector('.post-chrome-source-link');
-        const more = element.querySelector('.post-chrome-more');
-        const sourceBounds = original.getBoundingClientRect(), moreBounds = more.getBoundingClientRect();
-        return { adjacent: original.nextElementSibling === more, last: element.lastElementChild === more,
-          sourceRight: sourceBounds.right, menuLeft: moreBounds.left };
-      });
-      assert.ok(order.adjacent && order.last && order.sourceRight <= order.menuLeft + 1,
-        'The original-source link is immediately before the rightmost menu');
+      assert.ok(await more.isVisible());
+      assert.equal(await actions.evaluate(element => element.lastElementChild.classList.contains('post-chrome-more')), true,
+        'More options remains the last post action');
       assert.equal(await slide.locator('.post-chrome-identity').getAttribute('href'), profileHref,
         'The author name links to its real source profile');
       const routeBefore = page.url();
@@ -156,6 +159,10 @@ try {
         'Full screen is available from the source menu');
       assert.equal(await menu.getByRole('menuitem', { name: /^(?:Play|Pause|Mute|Unmute) video$/ }).count(), 0,
         'The source menu does not duplicate visible playback controls');
+      assert.equal(await menu.getByRole('menuitem', { name: /^(?:Open on |Open original post|Open (?:Reddit|Hacker News) discussion|Watch on )/ }).count(), 0,
+        'Original-source opening commands are removed');
+      if (!youtube) assert.equal(await menu.getByRole('menuitem', { name: /YouTube/i }).count(), 0,
+        'Videos without a playable YouTube URL have no YouTube options');
       await page.keyboard.press('Escape');
       await menu.waitFor({ state: 'detached' });
       assert.equal(page.url(), routeBefore, 'Escape closes the menu without leaving the video route');
@@ -172,8 +179,55 @@ try {
       await viewer.waitFor({ state: 'detached' });
       assert.equal(page.url(), routeBefore, 'Escape dismisses the photo without leaving the video route');
     };
+    const hnAuthor = { id: 'hn_audit_creator', name: 'audit_creator', avatarUrl };
+    const hnProfile = 'https://news.ycombinator.com/user?id=audit_creator';
+    const beforeHnRequests = embedRequests.length;
+    await visit('videos', [post('hn-native-stale', { source: 'hackernews', author: hnAuthor,
+      sourceUrl: 'https://news.ycombinator.com/item?id=123456', embedId: 'stalehn0001', videoDurationSeconds: 30 })]);
+    const hnNative = page.locator('[data-post-id="hn-native-stale"]');
+    await hnNative.locator('video').waitFor();
+    assert.equal(await hnNative.locator('video').evaluate(video => video.controls), true,
+      'Hacker News direct video keeps the native player controls');
+    assert.equal(await page.locator('.video-feed-youtube-player iframe').count(), 0,
+      'A stale embedId on a Hacker News direct video never creates a YouTube player');
+    await checkPostActions(hnNative, hnProfile);
+    assert.equal(await page.getByRole('dialog', { name: 'YouTube settings', exact: true }).count(), 0);
+    assert.equal(embedRequests.length, beforeHnRequests, 'A Hacker News direct video makes no YouTube embed requests');
+
+    await visit('videos', [post('hn-youtube-article', { source: 'hackernews', author: hnAuthor,
+      sourceUrl: 'https://news.ycombinator.com/item?id=123457', mediaUrl: 'https://www.youtube.com/watch?v=hnvideo0001',
+      embedId: 'stalehn0002', videoDurationSeconds: 30 })]);
+    const hnYoutube = page.locator('[data-post-id="hn-youtube-article"]');
+    const hnFrame = page.locator('.video-feed-youtube-player iframe');
+    await hnFrame.waitFor({ state: 'visible' });
+    assert.equal(new URL(await hnFrame.getAttribute('src')).pathname, '/embed/hnvideo0001',
+      'A Hacker News article plays its actual official YouTube URL instead of a stale embedId');
+    assert.equal(new URL(await hnFrame.getAttribute('src')).searchParams.get('controls'), '1');
+    assert.equal(await hnYoutube.locator('video').count(), 0);
+    await checkPostActions(hnYoutube, hnProfile, true);
+    await hnYoutube.getByRole('button', { name: 'More options', exact: true }).click();
+    const hnMenu = page.getByRole('menu');
+    await hnMenu.waitFor({ state: 'visible' });
+    assert.equal(await hnMenu.getByRole('menuitem', { name: /^YouTube settings\b/ }).count(), 1,
+      'A real YouTube video embedded in a Hacker News article offers YouTube settings');
+    assert.equal(await hnMenu.getByRole('menuitem', { name: /^Likes on Hacker News/ }).count(), 1,
+      'The article retains its Hacker News source actions');
+    assert.equal(await hnMenu.getByRole('menuitem', { name: /Likes on YouTube|Watch later on YouTube|channel playlists on YouTube/ }).count(), 0,
+      'An embedded video does not turn the Hacker News article into a YouTube source post');
+    await hnMenu.getByRole('menuitem', { name: /^YouTube settings\b/ }).click();
+    const hnSettings = page.getByRole('dialog', { name: 'YouTube settings', exact: true });
+    await hnSettings.waitFor({ state: 'visible' });
+    const hnRate = hnSettings.getByRole('radiogroup', { name: 'Playback speed', exact: true }).getByRole('radio', { name: '1.5×', exact: true });
+    await hnRate.click();
+    await page.waitForFunction(() => [...window.__videoLayoutPlayers].some(player => player.id === 'hnvideo0001' && player.getPlaybackRate() === 1.5));
+    await page.waitForFunction(() => document.querySelector('[role="radio"][aria-label="1.5×"]')?.getAttribute('aria-checked') === 'true');
+    await page.keyboard.press('Escape'); await hnSettings.waitFor({ state: 'detached' });
+    assert.ok(embedRequests.slice(beforeHnRequests).every(request => new URL(request.url).pathname === '/embed/hnvideo0001'),
+      'Only the actual Hacker News embedded YouTube video is requested');
+    console.log(`PASS Hacker News video controls: stale embedId stays native with no YouTube options; official YouTube media URL exposes working settings; no original-source or app Play/Pause actions; top-right mute at ${width}px`);
+    if (hnOnly) { assert.deepEqual(errors, []); await context.close(); continue; }
     for (const surface of ['videos', 'music']) {
-      await visit(surface, [post('below-five', { videoDurationSeconds: 4.99 }), post('unsupported', { mediaUrl: 'https://example.com/article' }), post('exactly-five', { videoDurationSeconds: 5 })]);
+      await visit(surface, [post('below-five', { videoDurationSeconds: 4.99 }), post('unsupported', { mediaUrl: 'https://example.com/article' }), post('exactly-five', { videoDurationSeconds: 5, embedId: 'stale000001' })]);
       const accepted = page.locator('[data-post-id="exactly-five"]');
       await accepted.waitFor();
       assert.equal(await page.locator('[data-post-id="below-five"], [data-post-id="unsupported"]').count(), 0);
@@ -207,17 +261,31 @@ try {
     });
     await page.locator('[data-post-id="native-short"]').waitFor({ state: 'detached' });
     await page.locator('[data-post-id="native-long"]').waitFor();
-    await visit('videos', [post('vimeo-short', { mediaUrl: 'https://vimeo.com/123456' }), post('vimeo-next', { videoDurationSeconds: 20 })]);
+    await visit('videos', [post('vimeo-short', { mediaUrl: 'https://vimeo.com/123456', embedId: 'stale000004' }), post('vimeo-next', { videoDurationSeconds: 20 })]);
     await page.locator('[data-post-id="vimeo-next"]').waitFor();
     await page.locator('[data-post-id="vimeo-short"]').waitFor({ state: 'detached' });
-    await visit('videos', [post('youtube-short', { source: 'youtube', embedId: 'short000001' }), post('youtube-long', { source: 'youtube', embedId: 'long0000001' })]);
+    await visit('videos', [post('youtube-labelled-native', { source: 'youtube', embedId: 'stale000002',
+      sourceUrl: `https://www.youtube.com/channel/${channelId}`, videoDurationSeconds: 30 })]);
+    const labelledNative = page.locator('[data-post-id="youtube-labelled-native"]');
+    await labelledNative.locator('video').waitFor();
+    assert.equal(await page.locator('.video-feed-youtube-player iframe').count(), 0,
+      'A YouTube label and stale embedId do not turn a direct file into a YouTube video');
+    await checkPostActions(labelledNative, `https://www.youtube.com/channel/${channelId}`);
+
+    await visit('videos', [post('youtube-short', { source: 'youtube', embedId: 'short000001' }),
+      post('youtube-long', { source: 'youtube', embedId: 'stale000003', sourceUrl: 'https://www.youtube.com/watch?v=long0000001' })]);
     await page.locator('[data-post-id="youtube-long"]').waitFor();
     await page.locator('[data-post-id="youtube-short"]').waitFor({ state: 'detached' });
     const frame = page.locator('.video-feed-youtube-player iframe').first();
     await frame.waitFor({ state: 'visible' });
+    await page.waitForFunction(() => {
+      const src = document.querySelector('.video-feed-youtube-player iframe')?.src;
+      return src && new URL(src).pathname === '/embed/long0000001';
+    });
     const frameInfo = await frame.evaluate(element => ({ policy: element.referrerPolicy, src: element.src,
       pointerEvents: getComputedStyle(element).pointerEvents, tabIndex: element.tabIndex, width: element.getBoundingClientRect().width }));
     assert.equal(frameInfo.policy, 'strict-origin-when-cross-origin');
+    assert.equal(new URL(frameInfo.src).pathname, '/embed/long0000001', 'The playable URL overrides a stale embedId');
     assert.equal(new URL(frameInfo.src).searchParams.get('origin'), new URL(origin).origin);
     assert.equal(new URL(frameInfo.src).searchParams.get('controls'), '1');
     assert.equal(frameInfo.pointerEvents, 'auto');
@@ -228,7 +296,7 @@ try {
     assert.equal(await frame.evaluate(element => document.activeElement === element), true, 'Keyboard users can focus the provider frame');
     const youtubePost = page.locator('[data-post-id="youtube-long"]');
     await youtubePost.locator('[data-video-actions]').waitFor({ state: 'visible' });
-    await checkPostActions(youtubePost, `https://www.youtube.com/channel/${channelId}`);
+    await checkPostActions(youtubePost, `https://www.youtube.com/channel/${channelId}`, true);
     if (width === 1440) await checkFullScreen(youtubePost);
     const checkYouTubeSettings = async () => {
       const routeBefore = page.url();
@@ -354,10 +422,10 @@ try {
       }
     }
     assert.deepEqual(errors, []);
-    console.log(`PASS: visible playback and engagement, full screen, confirmed YouTube speed, official controls, source menus and profile/photos, portrait/landscape bounds, full media, 5-second boundary, metadata filtering, cross-origin wheel/touch browsing in Videos + Music, one persistent interactive iframe, fresh-batch refresh at ${width}px`);
+    console.log(`PASS: top-right mute, player play/pause controls, no original-source action, YouTube options only for real YouTube URLs, engagement, full screen, confirmed YouTube speed, profile/photos, portrait/landscape bounds, full media, 5-second boundary, metadata filtering, cross-origin wheel/touch browsing in Videos + Music, one persistent interactive iframe, fresh-batch refresh at ${width}px`);
     await context.close();
   }
 } finally { await browser?.close(); await server.close(); await app.close(); }
 
 // Settings races run after the layout browser and server have closed.
-await import('./audit-video-settings.mjs');
+if (!hnOnly) await import('./audit-video-settings.mjs');

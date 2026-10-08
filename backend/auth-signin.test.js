@@ -7,11 +7,12 @@ const { SIGNIN_SCHEMA, createSignIn, verifyIdentityToken, providerSettings, safe
 const { BUSINESS_TEAM_SCHEMA } = require('./business-teams');
 const { createAppHarness } = require('./test-support/app-harness');
 
-let signingKey, keySet, jwtSign;
+let signingKey, keySet, jwtSign, applePrivateKey;
 test.before(async () => {
   const { generateKeyPair, exportJWK, createLocalJWKSet, SignJWT } = await import('jose');
   const keys = await generateKeyPair('RS256');
   signingKey = keys.privateKey;
+  applePrivateKey = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ type: 'pkcs8', format: 'pem' });
   keySet = createLocalJWKSet({ keys: [{ ...await exportJWK(keys.publicKey), kid:'test-key', alg:'RS256' }] });
   jwtSign = async (claims, overrides = {}) => new SignJWT({ email:'person@example.invalid', email_verified:true, name:'Provider Member', nonce:'test-nonce', ...claims })
     .setProtectedHeader({ alg:'RS256', kid:'test-key' }).setIssuer(overrides.issuer || 'https://accounts.google.com')
@@ -38,7 +39,7 @@ async function fixture(t, { phone=false, apple=false } = {}) {
   for (const sql of SIGNIN_SCHEMA) await pg.exec(sql);
   const env = { NODE_ENV:'test', JWT_SECRET:'unique-test-only-key', OAUTH_TOKEN_ENCRYPTION_KEY:Buffer.alloc(32,2).toString('base64'), YOUTUBE_CLIENT_ID:'google-client',YOUTUBE_CLIENT_SECRET:'private-google-key' };
   if(phone) Object.assign(env,{TWILIO_ACCOUNT_SID:'AC'+'1'.repeat(32),TWILIO_AUTH_TOKEN:'private-sms-key',TWILIO_VERIFY_SERVICE_SID:'VA'+'2'.repeat(32)});
-  if(apple) Object.assign(env,{APPLE_CLIENT_ID:'apple-client',APPLE_TEAM_ID:'TEAM',APPLE_KEY_ID:'KEY',APPLE_PRIVATE_KEY:'not-used-until-exchange'});
+  if(apple) Object.assign(env,{APPLE_CLIENT_ID:'apple-client',APPLE_TEAM_ID:'TEAM',APPLE_KEY_ID:'KEY',APPLE_PRIVATE_KEY:applePrivateKey});
   let tail=Promise.resolve(), exchanges=0, requests=0, checks=0, approved=false, currentNonce;
   const db = { isConnected:()=>true, query:(sql,params)=>pg.query(sql,params), withClient(fn) { const result=tail.then(()=>fn({query:(sql,params)=>pg.query(sql,params)}));tail=result.catch(()=>{});return result; } };
   const fetcher = async (url,options) => {
@@ -63,6 +64,55 @@ test('readiness is explicit; input normalization rejects redirects and invalid p
   assert.equal(safeReturnTo('/jobs?view=saved'),'/jobs?view=saved');
   assert.equal(phoneNumber('+1 (555) 123-4567'),'+15551234567');
   assert.equal(phoneNumber('5551234567'),null);
+});
+test('provider readiness rejects blank and partial credentials without mixing Google credential pairs', () => {
+  const google = { YOUTUBE_CLIENT_ID:'fallback-id',YOUTUBE_CLIENT_SECRET:'fallback-secret' };
+  for (const invalid of [{YOUTUBE_CLIENT_SECRET:' \n '},{YOUTUBE_CLIENT_ID:'  '},{GOOGLE_CLIENT_ID:'dedicated'},{GOOGLE_CLIENT_SECRET:'dedicated-secret'}]) {
+    assert.equal(providerSettings({...google,...invalid}).google.configured,false);
+  }
+  const fallback=providerSettings({...google,GOOGLE_CLIENT_ID:'  ',GOOGLE_CLIENT_SECRET:'\n '}).google;
+  assert.equal(fallback.configured,true);
+  assert.equal(fallback.callbackPath,'/auth/social/youtube/callback');
+  const dedicated=providerSettings({...google,GOOGLE_CLIENT_ID:' dedicated ',GOOGLE_CLIENT_SECRET:' dedicated-secret '}).google;
+  assert.equal(dedicated.configured,true);
+  assert.equal(dedicated.clientId,'dedicated');
+  assert.equal(dedicated.clientSecret,'dedicated-secret');
+  assert.equal(dedicated.callbackPath,'/auth/providers/google/callback');
+  const phone={TWILIO_ACCOUNT_SID:'AC'+'1'.repeat(32),TWILIO_AUTH_TOKEN:'sms-secret',TWILIO_VERIFY_SERVICE_SID:'VA'+'2'.repeat(32)};
+  for(const key of Object.keys(phone)) assert.equal(providerSettings({...phone,[key]:' \n '}).phone.configured,false);
+  assert.equal(providerSettings(Object.fromEntries(Object.entries(phone).map(([key,value])=>[key,' '+value+' ']))).phone.configured,true);
+});
+test('Apple readiness requires a usable unencrypted PKCS8 P-256 signing key and all client identifiers', () => {
+  const apple={APPLE_CLIENT_ID:'apple-client',APPLE_TEAM_ID:'TEAM',APPLE_KEY_ID:'KEY',APPLE_PRIVATE_KEY:applePrivateKey};
+  assert.equal(providerSettings(apple).apple.configured,true);
+  assert.equal(providerSettings({...apple,APPLE_PRIVATE_KEY:applePrivateKey.replace(/\n/g,'\\n')}).apple.configured,true);
+  const wrongCurve=crypto.generateKeyPairSync('ec',{namedCurve:'secp384r1'}).privateKey.export({type:'pkcs8',format:'pem'});
+  const rsa=crypto.KeyObject.from(signingKey).export({type:'pkcs8',format:'pem'});
+  const sec1=crypto.createPrivateKey(applePrivateKey).export({type:'sec1',format:'pem'});
+  for(const key of ['not-a-signing-key',' \n ',wrongCurve,rsa,sec1]) assert.equal(providerSettings({...apple,APPLE_PRIVATE_KEY:key}).apple.configured,false);
+  for(const key of ['APPLE_CLIENT_ID','APPLE_TEAM_ID','APPLE_KEY_ID']) assert.equal(providerSettings({...apple,[key]:' \n '}).apple.configured,false);
+});
+test('public readiness and start guards agree before storing flows or contacting an unconfigured provider', async () => {
+  const storageKey=Buffer.alloc(32,2).toString('base64');
+  const db={isConnected:()=>true,query:()=>assert.fail('Unavailable sign-in must not write a flow')};
+  const options={db,vault:{seal:()=>assert.fail('Unavailable sign-in must not encrypt a flow')},
+    callbackBase:'https://api.uficonnect.org',frontendBase:'https://uficonnect.org',fetcher:()=>assert.fail('Unavailable sign-in must not contact a provider')};
+  const service=createSignIn({...options,env:{OAUTH_TOKEN_ENCRYPTION_KEY:storageKey,GOOGLE_CLIENT_ID:'configured-id',GOOGLE_CLIENT_SECRET:' \n ',
+    APPLE_CLIENT_ID:'apple-client',APPLE_TEAM_ID:'TEAM',APPLE_KEY_ID:'KEY',APPLE_PRIVATE_KEY:'malformed',
+    TWILIO_ACCOUNT_SID:'AC'+'1'.repeat(32),TWILIO_AUTH_TOKEN:' \n ',TWILIO_VERIFY_SERVICE_SID:'VA'+'2'.repeat(32)}});
+  assert.deepEqual(service.publicProviders(),{providers:{google:{configured:false,enabled:false},apple:{configured:false,enabled:false},phone:{configured:false,enabled:false}}});
+  for(const provider of ['google','apple']) await assert.rejects(service.start(provider,{},response()),{status:503,publicCode:'unavailable'});
+  await assert.rejects(service.requestPhone({phoneNumber:'+15551234567'}),{status:503,publicCode:'unavailable'});
+  for(const key of ['', ' ', 'invalid', Buffer.alloc(31,2).toString('base64'), ' '+storageKey, Buffer.alloc(32,255).toString('base64url')]) {
+    const unavailable=createSignIn({...options,env:{OAUTH_TOKEN_ENCRYPTION_KEY:key,YOUTUBE_CLIENT_ID:'configured-id',YOUTUBE_CLIENT_SECRET:'private-provider-secret'}});
+    assert.deepEqual(unavailable.publicProviders().providers.google,{configured:true,enabled:false});
+    await assert.rejects(unavailable.start('google',{client:'native'}),{status:503,publicCode:'unavailable'});
+  }
+  const available=createSignIn({...options,env:{OAUTH_TOKEN_ENCRYPTION_KEY:storageKey,YOUTUBE_CLIENT_ID:'configured-id',YOUTUBE_CLIENT_SECRET:'private-provider-secret'}});
+  assert.deepEqual(available.publicProviders().providers.google,{configured:true,enabled:true});
+  const disconnected=createSignIn({...options,db:{...db,isConnected:()=>false},env:{OAUTH_TOKEN_ENCRYPTION_KEY:storageKey,YOUTUBE_CLIENT_ID:'configured-id',YOUTUBE_CLIENT_SECRET:'private-provider-secret'}});
+  assert.deepEqual(disconnected.publicProviders().providers.google,{configured:true,enabled:false});
+  await assert.rejects(disconnected.start('google'),{status:503,publicCode:'unavailable'});
 });
 test('signed identity tokens require the correct issuer, audience, nonce, expiry and verified email', async () => {
   const options={audience:'google-client',nonce:'test-nonce',keySet};

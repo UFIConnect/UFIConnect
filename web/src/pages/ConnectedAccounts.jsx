@@ -7,6 +7,7 @@ import AccountActionIcon from '../components/AccountActionIcon';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { withCareerAccountFallback } from '../components/sourceMeta';
+import { sourceAuthorizationState } from '../components/sourceAuthorization.mjs';
 import { useAuth } from '../contexts/AuthContext';
 import { AccountSiteLink } from '../components/DirectoryControls';
 import { accountSections, filterAccounts } from '../components/sourceDirectory';
@@ -74,21 +75,36 @@ export default function ConnectedAccounts() {
 
   useEffect(() => {
     const requested = searchParams.get('connect');
-    if (!['mastodon', 'bluesky'].includes(requested) || isBusinessMembership) return;
-    if (requested === 'mastodon') setMastodonServer('');
+    if (!['mastodon', 'bluesky'].includes(requested) || isBusinessMembership || loading) return;
+    const platform = platforms.find(([key]) => key === requested)?.[1];
+    const state = sourceAuthorizationState(platform, { isConnected: !!connected[requested] });
+    if (!state.ready) flash_('error', state.reason);
+    else if (requested === 'mastodon') setMastodonServer('');
     else setBlueskyHandle('');
     const nextParams = new URLSearchParams(searchParams);
     nextParams.delete('connect');
     setSearchParams(nextParams, { replace: true });
-  }, [searchParams, setSearchParams, isBusinessMembership]);
+  }, [searchParams, setSearchParams, isBusinessMembership, loading, platforms, connected]);
 
   useEffect(() => {
-    client.get('/social/platforms').then((pRes) => {
+    if (!profile?.id) return undefined;
+    let active = true;
+    const controller = new AbortController();
+    setLoading(true);
+    setPlatforms([]);
+    setConnected({});
+    setMastodonServer(null);
+    setBlueskyHandle(null);
+    client.get('/social/platforms', { signal: controller.signal }).then((pRes) => {
+      if (!active) return;
       const includeCareer = pRes.data.careerOnly === true || isBusinessMembership;
       setPlatforms(Object.entries(withCareerAccountFallback(pRes.data.platforms, includeCareer)));
       setConnected(pRes.data.connected || {});
-    }).catch(console.error).finally(() => setLoading(false));
-  }, [isBusinessMembership]);
+    }).catch(() => {
+      if (active) flash_('error', 'Could not load account connections. Sign-in remains locked.');
+    }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; controller.abort(); };
+  }, [profile?.id, isBusinessMembership]);
 
   // Handle OAuth callback redirect params (?social_connected=platform or ?social_error=platform)
   useEffect(() => {
@@ -128,6 +144,8 @@ export default function ConnectedAccounts() {
   }
 
   async function handleConnect(platform) {
+    const state = sourceAuthorizationState(platforms.find(([key]) => key === platform)?.[1], { isConnected: !!connected[platform] });
+    if (!state.ready) { flash_('error', state.reason); return; }
     // Bluesky has no fixed authorization URL to redirect straight to — AT
     // Protocol is federated, so the real authorization server first has to
     // be discovered from whichever handle the member actually uses (see
@@ -139,6 +157,8 @@ export default function ConnectedAccounts() {
   }
 
   async function startConnect(platform, handle) {
+    const state = sourceAuthorizationState(platforms.find(([key]) => key === platform)?.[1], { isConnected: !!connected[platform] });
+    if (!state.ready) { flash_('error', state.reason); return; }
     const connectParams = new URLSearchParams();
     if (searchParams.get('returnTo') === 'command-center') connectParams.set('returnTo', 'command-center');
     if (handle) connectParams.set(platform === 'mastodon' ? 'server' : 'handle', handle.trim());
@@ -248,7 +268,8 @@ export default function ConnectedAccounts() {
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {['reddit', 'twitter', 'youtube', 'github', 'gitlab', 'bluesky', 'mastodon'].filter(key => connected[key]).map(key => {
                 const label = `Enable actions on ${key === 'twitter' ? 'X' : key === 'mastodon' ? 'Mastodon' : key}`;
-                return <button key={key} type="button" className="btn btn-outline btn-sm account-icon-action" disabled={!!connecting} onClick={() => handleConnect(key)} aria-label={label} title={label} aria-busy={connecting === key}><AccountActionIcon platform={key} busy={connecting === key} /></button>;
+                const authorization = sourceAuthorizationState(platforms.find(([id]) => id === key)?.[1], { isConnected: true });
+                return <button key={key} type="button" className="btn btn-outline btn-sm account-icon-action" disabled={!!connecting || !authorization.ready} onClick={() => handleConnect(key)} aria-label={label} title={authorization.ready ? label : `${label}. Locked. ${authorization.reason}`} aria-busy={connecting === key}><AccountActionIcon platform={key} busy={connecting === key} /></button>;
               })}
             </div>
           </section>}
@@ -256,7 +277,7 @@ export default function ConnectedAccounts() {
             <h2 id="source-analytics-permissions" style={{ fontSize: '1.1rem', margin: '0 0 8px' }}>YouTube analytics permissions</h2>
             <p style={{ color: 'var(--muted)', fontSize: '.85rem', lineHeight: 1.6 }}>Authorize read access to your channel analytics{searchParams.get('monetization') === '1' ? ' and estimated revenue' : ''}. YouTube controls eligibility, reporting delays, advertising, and payouts. Review the permissions on Google’s authorization screen.</p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 14 }}>
-              <button type="button" className="btn btn-primary btn-sm account-icon-action" disabled={!!connecting || !platforms.some(([key, item]) => key === 'youtube' && item.configured && !item.forceComingSoon)} onClick={() => handleConnect('youtube')}
+              <button type="button" className="btn btn-primary btn-sm account-icon-action" disabled={!!connecting || !sourceAuthorizationState(platforms.find(([key]) => key === 'youtube')?.[1], { isConnected: !!connected.youtube }).ready} onClick={() => handleConnect('youtube')}
                 aria-label={connecting === 'youtube' ? 'Opening Google…' : connected.youtube ? 'Update YouTube permissions' : 'Connect YouTube analytics'} title={connected.youtube ? 'Update YouTube permissions' : 'Connect YouTube analytics'} aria-busy={connecting === 'youtube'}><AccountActionIcon platform="youtube" busy={connecting === 'youtube'} /></button>
               <Link className="btn btn-ghost btn-sm" to="/analytics">Return to analytics</Link>
             </div>
@@ -282,7 +303,7 @@ export default function ConnectedAccounts() {
               Recruiting accounts
             </div>
             <p style={{ fontSize: '.8rem', color: 'var(--muted)', lineHeight: 1.5, margin: '0 0 10px' }}>
-              LinkedIn authorization enables hiring posts in Cross Post. Career site sign-in opens the provider’s website; compare available job listings in Posts & comparisons.
+              LinkedIn authorization enables hiring posts in Cross Post. Visit career websites or compare available job listings in Posts & comparisons.
             </p>
             {displayedCareer.map(([key, p]) => {
               const unavailable = p.forceComingSoon || !p.configured;
@@ -412,7 +433,8 @@ function PlatformCard({
     ? 'Reconnect YouTube once to keep your videos syncing when access expires.'
     : `Reconnect ${p.name} to update your account permissions.`);
   const detailsId = `account-${platformKey}-details`;
-  const authorizationUnavailable = comingSoon || !p.configured;
+  const authorization = sourceAuthorizationState(p, { isConnected });
+  const authorizationUnavailable = !authorization.ready;
 
   return (
     <div className="card account-platform-card">
@@ -462,7 +484,7 @@ function PlatformCard({
             {external ? p.note : locked && !isConnected
               ? 'An active membership is required before an account can be connected.'
               : authorizationUnavailable
-              ? (p.note || 'Authorization is unavailable for this provider. Open its official website to use your account.')
+              ? (p.note || authorization.reason)
               : `Sign in & connect opens ${p.name}'s authorization page. Sign in there and approve UFIConnect access.`}
             {isConnected && p.reconnectRequired && <p role="alert" style={{ margin: '6px 0 0' }}>{reconnectMessage}</p>}
           </div>

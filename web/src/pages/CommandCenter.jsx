@@ -8,8 +8,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS, CAREER_ACCOUNT_PLATFORMS, withCareerAccountFallback } from '../components/sourceMeta';
-import ExternalAccountLogin from '../components/ExternalAccountLogin';
 import AccountConnectionAction from '../components/AccountConnectionAction';
+import { sourceAuthorizationState } from '../components/sourceAuthorization.mjs';
 import AccountActionIcon from '../components/AccountActionIcon';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { WritingArea, PhotoAttachment, PostPreview, downloadPostText, POST_TEMPLATES } from '../components/PublishingComposer';
@@ -872,6 +872,8 @@ function MemberAccountsSection() {
   }, [location.pathname, location.search, navigate, showToast, platforms]);
 
   async function connectAccount(platform) {
+    const state = sourceAuthorizationState(platforms?.find(([key]) => key === platform)?.[1], { isConnected: !!connected[platform] });
+    if (!state.ready) { showToast(state.reason, 'error'); return; }
     if (platform === 'mastodon' || platform === 'bluesky') {
       navigate(`/connected-accounts?connect=${platform}&returnTo=command-center`);
       return;
@@ -917,7 +919,7 @@ function MemberAccountsSection() {
         <h3 style={{ margin: '0 0 4px', fontSize: '.98rem' }}>{isBusinessMembership ? 'Business career connections' : 'All account connections'}</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.82rem', lineHeight: 1.55, margin: 0 }}>
           {isBusinessMembership
-            ? 'Sign in at career providers or manage supported account integrations. Job browsing remains in Opportunities.'
+            ? 'Visit career websites or manage supported account integrations. Job browsing remains in Opportunities.'
             : 'Sign in and authorize your accounts for supported feeds, replies, and publishing.'}
         </p>
       </div>
@@ -933,7 +935,8 @@ function MemberAccountsSection() {
           <div className="account-category-items">
       {section.items.map(([key, platform]) => {
         const isConnected = !!connected[key];
-        const unavailable = !platform.configured || platform.forceComingSoon;
+        const authorization = sourceAuthorizationState(platform, { isConnected });
+        const unavailable = !authorization.ready;
         const external = platform.connectionMode === 'external';
         return (
           <div key={key} className="card member-account-card" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -954,7 +957,7 @@ function MemberAccountsSection() {
               <summary>Account details</summary>
               <p>{external ? platform.note
                 : platform.locked && !isConnected ? 'An active membership is required to authorize this account.'
-                : unavailable ? platform.note || 'Authorization is unavailable for this provider. Open its official website to use your account.'
+                : unavailable ? platform.note || authorization.reason
                 : `Sign in & connect opens ${platform.name}'s authorization page. Sign in there and approve UFIConnect access.`}</p>
               {isConnected && platform.reconnectRequired && <p role="alert">{platform.reconnectMessage || `Sign in again to renew ${platform.name} permissions.`}</p>}
               {!external && <div className="account-platform-detail-actions">
@@ -1593,10 +1596,10 @@ export function CrossPostSection({ initialCategory } = {}) {
     const meta = SOURCE_META[p] || { label: platforms[p]?.name || p, icon: p };
     const platform = platforms[p];
     const capability = platform?.crossPost;
-    const available = platform?.configured && !platform.forceComingSoon;
+    const available = sourceAuthorizationState(platform, { isConnected: !!connected[p] }).ready;
     const reconnect = connected[p] && (platform?.reconnectRequired || capability?.reconnectRequired);
     const external = platform?.connectionMode === 'external';
-    const status = external ? platform.loginUrl ? 'Website sign-in' : 'Publisher website' : !available ? 'Coming soon' : reconnect ? 'Reconnect required' : connected[p] ? 'Connected' : 'Not connected';
+    const status = external ? 'Website only · Connection locked' : !available ? 'Coming soon' : reconnect ? 'Reconnect required' : connected[p] ? 'Connected' : 'Not connected';
     const detail = external ? platform.note : !available ? platform?.note || 'Account connection setup is pending.'
       : reconnect ? capability?.reconnectMessage || platform?.reconnectMessage || 'Reconnect to restore publishing permission.'
       : !capability?.supported ? capability?.note || 'This connection does not provide a publishing route.'
@@ -1609,7 +1612,7 @@ export function CrossPostSection({ initialCategory } = {}) {
         <span style={{ fontSize: '.73rem', color: 'var(--muted)' }}>{status}{available && !capability?.supported ? ' · Publishing unavailable' : ''}</span>
         {detail && <p style={{ fontSize: '.73rem', color: 'var(--muted)', lineHeight: 1.5, margin: 0, overflowWrap: 'anywhere' }}>{detail}</p>}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 'auto' }}>
-          {external && <ExternalAccountLogin platform={p} />}
+          {external && <AccountConnectionAction platformKey={p} platform={platform} compact />}
           {external && platform.category !== 'publication' && <button type="button" className="btn btn-ghost btn-sm" disabled={!content.trim()} onClick={async () => {
             try { await navigator.clipboard.writeText(content.trim()); showToast('Draft copied. Review and publish it on the source website.', 'success'); }
             catch { showToast('Select and copy the draft text, then open the source website.', 'error'); }
@@ -1675,7 +1678,7 @@ export function CrossPostSection({ initialCategory } = {}) {
           </div>
           <p role="status" style={{ fontSize: '.78rem', margin: '14px 0 0', lineHeight: 1.5 }}>{selected.size
             ? `Selected (${selected.size}): ${[...selected].map(platform => SOURCE_META[platform]?.label || platform).join(', ')}`
-            : activeDestinationCategory === 'career' || activeDestinationCategory === 'travel' ? 'Sign in on a source website. Copy your own draft when the source supports publishing.' : 'Choose the accounts to publish to.'}</p>
+            : activeDestinationCategory === 'career' || activeDestinationCategory === 'travel' ? 'Visit a source website. Copy your own draft when the source supports publishing.' : 'Choose the accounts to publish to.'}</p>
         </div>
         {profile?.plan !== 'business' && <button className="btn btn-primary" type="submit" form="ufi-crosspost-compose" disabled={posting || tooLong || uploadingMedia || checkingConnections || (!content.trim() && !media) || !selected.size} style={{ marginTop: 18 }}>{posting ? 'Publishing…' : 'Send'}</button>}
       </div>

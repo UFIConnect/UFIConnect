@@ -67,7 +67,7 @@ try {
     await page.getByRole('textbox', { name: 'Requirements — one per line', exact: true }).fill('JavaScript\nPostgreSQL');
     await page.getByRole('checkbox', { name: /LinkedIn/ }).check();
     await page.getByRole('searchbox', { name: 'Find a career site' }).fill('indeed');
-    check(await page.getByRole('link', { name: 'Sign in on Indeed', exact: true }).getAttribute('href') === directory.indeed.loginUrl, 'Indeed uses its official sign-in link');
+    check(await page.getByRole('link', { name: 'Visit Indeed website', exact: true }).getAttribute('href') === directory.indeed.siteUrl, 'Indeed uses its official website link');
     check(await page.locator('.business-career-list > div').count() === 1, 'Career source search reduces the list');
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Cross Post fits ${width}px`);
     await page.screenshot({ path: `.cache/audit-ui/business-crosspost-${width}.png`, fullPage: true });

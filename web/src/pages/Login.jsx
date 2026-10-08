@@ -9,9 +9,10 @@ import PublicFooter from '../components/PublicFooter';
 import { safeReturnPath } from '../auth/returnPath';
 import AccountAccess from '../components/AccountAccess';
 import { SIGNIN_ERRORS } from '../auth/accountAccess.mjs';
+import { LockKeyhole } from 'lucide-react';
 
 export default function Login() {
-  const { login, token, profile, loading: restoring, auth0Enabled, loginWithAuth0 } = useAuth();
+  const { login, token, profile, loading: restoring, auth0Enabled, auth0Ready, auth0Checking, loginWithAuth0 } = useAuth();
   const navigate  = useNavigate();
   const location = useLocation();
   const params = new URLSearchParams(location.search);
@@ -77,11 +78,17 @@ export default function Login() {
             <button
               className="btn btn-primary btn-full btn-lg"
               type="button"
-              onClick={() => loginWithAuth0()}
-              disabled={loading || accessBusy}
+              onClick={async () => {
+                if (!auth0Ready || loading || accessBusy) return;
+                setLoading(true); setError('');
+                try { await loginWithAuth0(); } catch (failure) { setError(failure.message || 'Sign-in could not start.'); }
+                finally { setLoading(false); }
+              }}
+              disabled={!auth0Ready || loading || accessBusy}
               style={{ marginBottom: 14 }}
             >
-              Continue with Auth0
+              {!auth0Ready && <LockKeyhole size={16} aria-hidden="true" />} Continue with Auth0
+              {!auth0Ready && <span> · {auth0Checking ? 'Checking availability' : 'Unavailable'}</span>}
             </button>
             <div style={{
               display: 'flex',

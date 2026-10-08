@@ -1,4 +1,4 @@
-import { HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS } from './sourceMeta';
+import { HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS } from './sourceMeta.js';
 
 export function normalizeSourceFavorites(value) {
   const saved = value && typeof value === 'object' && !Array.isArray(value) ? value : {};

@@ -23,7 +23,7 @@ import {
   SOURCE_META,
   HOME_FEED_SOURCE_IDS,
   FOLLOWING_FEED_SOURCE_IDS,
-  FOLLOWING_EXCLUDED_SOURCE_IDS,
+  isFollowingFeedSource,
 } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import AccountActionIcon from '../components/AccountActionIcon';
@@ -305,7 +305,7 @@ async function getFollowingNativeCompatibility(viewer, bust = false) {
     const isFollowedAuthor = followedIds.has(post.authorId || post.author?.id);
     const postGroupId = post.groupId || post.group?.id;
     return isFollowedAuthor && postGroupId === 'ufi-general';
-  });
+  }).map(post => ({ ...post, source: 'uficonnect' }));
   const posts = sortPostsForView(nativePosts);
   followingNativeCompatCache.set(viewer.id, {
     posts,
@@ -445,7 +445,6 @@ const FOLLOWING_SOURCE_TABS = [
     .filter(key => key !== 'uficonnect')
     .map(key => ({ key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || 'SRC' })),
 ];
-const FOLLOWING_EXCLUDED_SOURCES = new Set(FOLLOWING_EXCLUDED_SOURCE_IDS);
 const DEFAULT_FILTERS = { sort: 'newest', sources: [], timeRange: 'all', topics: [] };
 const FEED_PAGE_SIZE = 50;
 const FEED_AUTO_REFRESH_MS = 2 * 60 * 1000;
@@ -736,7 +735,7 @@ function FilterPanel({ filters, onChange, sources, onClose, panelRef, includeTop
 }
 
 /** Gate shown when user clicks a social tab but hasn't connected that account */
-function SocialConnectGate({ platform, onConnect, connecting }) {
+function SocialConnectGate({ platform, onConnect }) {
   const meta = SOURCE_META[platform] || {};
   const descriptions = {
     twitter:   'See recent posts from your X home timeline when your account access supports it.',
@@ -767,18 +766,16 @@ function SocialConnectGate({ platform, onConnect, connecting }) {
         type="button"
         className="account-icon-action"
         onClick={onConnect}
-        disabled={connecting}
-        aria-label={`Connect ${meta.label}`}
-        title={connecting ? `Opening ${meta.label} authorization…` : `Connect ${meta.label}`}
-        aria-busy={connecting}
+        aria-label={`Connection options for ${meta.label}`}
+        title={`Connection options for ${meta.label}`}
         style={{
           width: 44, height: 44, padding: 0, borderRadius: 12, fontWeight: 700, fontSize: '.95rem',
-          background: meta.color, color: '#fff', border: 'none', cursor: connecting ? 'default' : 'pointer',
-          opacity: connecting ? 0.7 : 1, display: 'flex', alignItems: 'center', gap: 8,
+          background: meta.color, color: '#fff', border: 'none', cursor: 'pointer',
+          display: 'flex', alignItems: 'center', gap: 8,
           transition: 'opacity .15s',
         }}
       >
-        <AccountActionIcon platform={platform} busy={connecting} />
+        <AccountActionIcon platform={platform} />
       </button>
       <p style={{ marginTop: 16, fontSize: '.78rem', color: 'var(--muted)' }}>
         You can disconnect at any time from Settings → Connected Accounts
@@ -1999,7 +1996,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const routeFeedParams = new URLSearchParams(routeLocation.search);
   const routeRequestedFeed = routeFeedParams.get('feed');
   const routeRequestsAllHome = !forcedMode && routeRequestedFeed === 'feed' && routeFeedParams.get('all') === '1';
-  const [connecting,    setConnecting]   = useState(false);
   // Set from a single-source-tab response's `locked:true` (see FEED_SOCIAL_TABS
   // server-side) — a gated platform tab clicked without that account connected.
   // null whenever the current view isn't a locked single-gated-source tab.
@@ -2238,7 +2234,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       setLockedPlatform(null);
       setFeedError(null);
       const incoming = (data.posts || []).filter(post => (
-        activeMode !== 'following' || !FOLLOWING_EXCLUDED_SOURCES.has(String(post?.source || '').toLowerCase())
+        activeMode !== 'following' || (isFollowingFeedSource(post?.source) && post?.matchedByInterest !== true)
       ));
       if (activeMode === 'countries' && viewModeRef.current === 'countries') {
         setTravelLiveFeeds(Array.isArray(data.liveFeeds) ? data.liveFeeds : []);
@@ -2857,7 +2853,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       const incoming = (data.posts || []).filter(p => (
         p?.id
         && !knownIds.current.has(p.id)
-        && (viewModeRef.current !== 'following' || !FOLLOWING_EXCLUDED_SOURCES.has(String(p.source || '').toLowerCase()))
+        && (viewModeRef.current !== 'following' || (isFollowingFeedSource(p.source) && p.matchedByInterest !== true))
       ));
       incoming.forEach(p => markKnownId(p.id));
       if (incoming.length > 0) {
@@ -3089,7 +3085,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       : []);
     if (disabled.size > 0) result = result.filter(p => !disabled.has(p.source));
     if (viewMode === 'following') {
-      result = result.filter(p => !FOLLOWING_EXCLUDED_SOURCES.has(String(p?.source || '').toLowerCase()));
+      result = result.filter(p => isFollowingFeedSource(p?.source) && p?.matchedByInterest !== true);
     }
 
     // Search
@@ -3690,16 +3686,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       {lockedPlatform ? (
         <SocialConnectGate
           platform={lockedPlatform}
-          connecting={connecting}
-          onConnect={async () => {
-            if (lockedPlatform === 'mastodon') { navigate('/connected-accounts?connect=mastodon'); return; }
-            setConnecting(true);
-            try {
-              const { data } = await client.get(`/auth/social/${lockedPlatform}/start`);
-              if (data?.url) { window.location.href = data.url; return; }
-            } catch {}
-            setConnecting(false);
-          }}
+          onConnect={() => navigate(`/connected-accounts?connect=${encodeURIComponent(lockedPlatform)}`)}
         />
       ) : loading ? (
         <div>

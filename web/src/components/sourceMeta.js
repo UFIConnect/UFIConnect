@@ -84,7 +84,7 @@ export const CAREER_ACCOUNT_PLATFORMS = Object.keys(ACCOUNT_DIRECTORY).filter(ke
 export const TRAVEL_ACCOUNT_PLATFORMS = Object.keys(ACCOUNT_DIRECTORY).filter(key => ACCOUNT_DIRECTORY[key].category === 'travel');
 export const NEWS_ACCOUNT_PLATFORMS = Object.keys(ACCOUNT_DIRECTORY).filter(key => ACCOUNT_DIRECTORY[key].category === 'publication');
 
-// Official website sign-in is separate from an authorized account connection.
+// Official website visits are separate from an authorized account connection.
 // These records also keep the directory useful during independent API/web rolls.
 const EXTERNAL_ACCOUNT_FALLBACK = Object.fromEntries(Object.entries(ACCOUNT_DIRECTORY).map(([key, entry]) => [key, {
   ...entry, connectionMode: 'external', configured: false, forceComingSoon: false,
@@ -97,8 +97,10 @@ export function withCareerAccountFallback(platforms = {}, careerOnly = false) {
   const merged = Object.fromEntries(keys.map(key => {
     const fallback = EXTERNAL_ACCOUNT_FALLBACK[key];
     const provider = platforms[key];
-    const entry = provider?.configured && !provider.forceComingSoon
-      ? provider : fallback ? {...provider, ...fallback} : provider;
+    const entry = provider ? {
+      ...fallback, ...provider,
+      connectionMode: provider.connectionMode || (provider.configured === true ? 'oauth' : fallback?.connectionMode || 'oauth'),
+    } : fallback;
     return [key, entry];
   }));
   return careerOnly ? Object.fromEntries(Object.entries(merged).filter(([key, entry]) => key === 'linkedin' || entry?.category === 'career')) : merged;
@@ -132,15 +134,17 @@ export const FOLLOWING_EXCLUDED_SOURCE_IDS = CONNECTED_SOCIAL_PLATFORMS.filter(
 
 // Shared by the desktop feed rail and the mobile app menu. Keeping this
 // vocabulary here prevents the two controls from quietly drifting apart.
-export const HOME_FEED_SOURCE_IDS = [...new Set([
-  ...FEED_SOURCE_CATALOG.home,
-  ...Object.keys(ACCOUNT_DIRECTORY).filter(source => ACCOUNT_DIRECTORY[source].feedSupported === true),
-])];
+export const HOME_FEED_SOURCE_IDS = [...new Set(FEED_SOURCE_CATALOG.home)];
 
 export const FOLLOWING_FEED_SOURCE_IDS = [
   'uficonnect',
   ...Object.entries(FEED_SOURCE_CATALOG.following).filter(([, capability]) => capability === 'following').map(([source]) => source),
 ];
+
+const followingFeedSources = new Set(FOLLOWING_FEED_SOURCE_IDS);
+export function isFollowingFeedSource(source) {
+  return typeof source === 'string' && followingFeedSources.has(source.trim().toLowerCase());
+}
 
 export const SOURCE_WEBSITE_IDS = Object.keys(ACCOUNT_DIRECTORY).filter(
   source => !HOME_FEED_SOURCE_IDS.includes(source) && !FOLLOWING_FEED_SOURCE_IDS.includes(source),

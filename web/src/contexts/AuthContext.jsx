@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback } from 'rea
 import { useAuth0 } from '@auth0/auth0-react';
 import { useRef } from 'react';
 import client, { publicOAuthRequestConfig } from '../api/client';
-import { auth0AuthorizationParams, isAuth0Configured } from '../auth/auth0Config';
+import { auth0AuthorizationParams, auth0BackendAvailable, isAuth0Configured } from '../auth/auth0Config';
 import { clearSession, getAccessToken, setAccessToken, subscribeToSession } from '../auth/session';
 import { clearDeviceFeedLocation, startDeviceFeedLocation } from '../utils/deviceFeedLocation.mjs';
 import { clearRequiredFeedLocation } from '../utils/requiredFeedLocation.mjs';
@@ -22,6 +22,18 @@ export function AuthProvider({ children }) {
   const restoreRequest = useRef(null);
   const auth0 = useAuth0();
   const auth0Enabled = isAuth0Configured;
+  const [auth0Ready, setAuth0Ready] = useState(false);
+  const [auth0Checking, setAuth0Checking] = useState(auth0Enabled);
+
+  useEffect(() => {
+    if (!auth0Enabled) return undefined;
+    const controller = new AbortController();
+    client.get('/auth/config', publicOAuthRequestConfig({ signal: controller.signal }))
+      .then(({ data }) => { if (!controller.signal.aborted) setAuth0Ready(auth0BackendAvailable(data?.auth0)); })
+      .catch(() => { if (!controller.signal.aborted) setAuth0Ready(false); })
+      .finally(() => { if (!controller.signal.aborted) setAuth0Checking(false); });
+    return () => controller.abort();
+  }, [auth0Enabled]);
 
   useEffect(() => subscribeToSession((nextToken) => {
     clearRequiredFeedLocation();
@@ -95,7 +107,7 @@ export function AuthProvider({ children }) {
   }, [token, refreshProfile, auth0Enabled, auth0.isLoading, restoringSession]);
 
   useEffect(() => {
-    if (!auth0Enabled || auth0.isLoading || !auth0.isAuthenticated) return undefined;
+    if (!auth0Enabled || !auth0Ready || auth0.isLoading || !auth0.isAuthenticated) return undefined;
     let cancelled = false;
     let generation = restoreGeneration.current;
     const isCurrent = () => !cancelled && generation === restoreGeneration.current;
@@ -116,7 +128,7 @@ export function AuthProvider({ children }) {
       .catch(() => { if (isCurrent()) clearSession(); })
       .finally(() => { if (isCurrent()) setLoading(false); });
     return () => { cancelled = true; };
-  }, [auth0Enabled, auth0.isAuthenticated, auth0.isLoading, auth0.getAccessTokenSilently]);
+  }, [auth0Enabled, auth0Ready, auth0.isAuthenticated, auth0.isLoading, auth0.getAccessTokenSilently]);
 
   function acceptSession(data) {
     // A late startup response must never replace a newer explicit sign-in.
@@ -170,13 +182,26 @@ export function AuthProvider({ children }) {
     return logout({ revoke: false });
   }
 
-  function loginWithAuth0() {
-    if (!auth0Enabled) return Promise.reject(new Error('Auth0 is not configured.'));
+  async function confirmAuth0Availability() {
+    if (!auth0Enabled || !auth0Ready) throw new Error('This sign-in method is not available yet.');
+    try {
+      const { data } = await client.get('/auth/config', publicOAuthRequestConfig());
+      if (auth0BackendAvailable(data?.auth0)) return;
+    } catch {
+      setAuth0Ready(false);
+      throw new Error('This sign-in method could not be verified. Please try again later.');
+    }
+    setAuth0Ready(false);
+    throw new Error('This sign-in method is not available yet.');
+  }
+
+  async function loginWithAuth0() {
+    await confirmAuth0Availability();
     return auth0.loginWithRedirect({ authorizationParams: auth0AuthorizationParams('login') });
   }
 
-  function registerWithAuth0() {
-    if (!auth0Enabled) return Promise.reject(new Error('Auth0 is not configured.'));
+  async function registerWithAuth0() {
+    await confirmAuth0Availability();
     return auth0.loginWithRedirect({ authorizationParams: auth0AuthorizationParams('signup') });
   }
 
@@ -188,7 +213,7 @@ export function AuthProvider({ children }) {
     <AuthContext.Provider value={{
       token, profile, loading: loading || restoringSession || (auth0Enabled && auth0.isLoading),
       sessionError: sessionError && !token, retrySession, login, register, verifyPhoneSignIn, logout, logoutAll,
-      updateProfileLocally, refreshProfile, auth0Enabled, loginWithAuth0, registerWithAuth0, deviceLocationRevision,
+      updateProfileLocally, refreshProfile, auth0Enabled, auth0Ready, auth0Checking, loginWithAuth0, registerWithAuth0, deviceLocationRevision,
       retryDeviceLocation: () => setDeviceLocationAttempt(value => value + 1),
     }}>
       {children}

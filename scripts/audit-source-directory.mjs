@@ -42,7 +42,7 @@ try {
     const id = `directory-${width}`;
     app.seedUser(member(id, { plan: 'pro', roleSettings: { feedSourceFavorites: { feed: ['youtube', 'reddit'], following: [] } } }));
     const context = await browser.newContext({ viewport: { width, height: 900 }, hasTouch: width <= 768, isMobile: width < 600 });
-    await context.route('https://secure.indeed.com/account/login', route => route.fulfill({ contentType: 'text/html', body: '<title>Indeed test sign-in</title>' }));
+    await context.route('https://www.indeed.com/', route => route.fulfill({ contentType: 'text/html', body: '<title>Indeed test website</title>' }));
     const page = await context.newPage();
     await installAuditMember(page, app, id);
     const errors = [];
@@ -64,14 +64,14 @@ try {
     await homeSources.getByRole('button', { name: 'Condé Nast Traveler', exact: true }).waitFor();
     await page.getByRole('button', { name: 'View all feed sources', exact: true }).click();
     const websites = page.getByRole('region', { name: 'Source websites', exact: true });
-    await websites.getByRole('link', { name: 'Sign in on Reuters', exact: true }).waitFor();
-    assert.equal(await websites.getByRole('link', { name: 'Sign in on Reuters', exact: true }).getAttribute('href'), 'https://www.reuters.com/');
+    await websites.getByRole('link', { name: 'Visit Reuters website', exact: true }).waitFor();
+    assert.equal(await websites.getByRole('link', { name: 'Visit Reuters website', exact: true }).getAttribute('href'), 'https://www.reuters.com/');
     assert.equal(await homeSources.getByRole('button', { name: 'Reuters', exact: true }).count(), 0);
     await websites.getByRole('combobox', { name: 'Filter source websites', exact: true }).selectOption('travel');
-    await websites.getByRole('link', { name: 'Sign in on Airbnb', exact: true }).waitFor();
+    await websites.getByRole('link', { name: 'Visit Airbnb website', exact: true }).waitFor();
     await websites.getByRole('combobox', { name: 'Filter source websites', exact: true }).selectOption('audio');
-    await websites.getByRole('link', { name: 'Sign in on Spotify', exact: true }).waitFor();
-    assert.equal(await websites.getByRole('link', { name: 'Sign in on Spotify', exact: true }).getAttribute('rel'), 'noopener noreferrer');
+    await websites.getByRole('link', { name: 'Visit Spotify website', exact: true }).waitFor();
+    assert.equal(await websites.getByRole('link', { name: 'Visit Spotify website', exact: true }).getAttribute('rel'), 'noopener noreferrer');
     await page.getByRole('button', { name: 'View all feed sources', exact: true }).click();
     if (width <= 768) await page.getByRole('button', { name: 'Open menu', exact: true }).click();
     const tools = page.locator(width <= 768 ? '#mobile-feed-drawer .home-feed-side-tools' : '.home-feed-right-tabs .home-feed-side-tools');
@@ -96,15 +96,15 @@ try {
     await tools.getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).waitFor();
     assert.equal(await tools.getByRole('searchbox').count(), 0, 'Connected accounts has no search bar');
     assert.equal(await tools.getByRole('link', { name: 'Open Instagram website' }).count(), 0);
-    assert.equal(await tools.getByRole('link', { name: 'Sign in on Indeed' }).count(), 1);
+    assert.equal(await tools.getByRole('link', { name: 'Visit Indeed website' }).count(), 1);
     assert.equal(await tools.getByRole('combobox', { name: 'Filter accounts' }).count(), 0);
     assert.equal(await tools.locator('.home-connected-account-status, .account-site-link').count(), 0);
     assert.equal(await tools.locator('.home-connected-account-row').count(), 5);
     const popupPromise = context.waitForEvent('page');
-    await tools.getByRole('link', { name: 'Sign in on Indeed' }).click();
+    await tools.getByRole('link', { name: 'Visit Indeed website' }).click();
     const popup = await popupPromise;
     await popup.waitForLoadState();
-    assert.equal(popup.url(), 'https://secure.indeed.com/account/login');
+    assert.equal(popup.url(), 'https://www.indeed.com/');
     assert.equal(await popup.evaluate(() => window.opener), null);
     await popup.close();
     assert.equal(authorizationRequests, 0, 'Opening a website must not start account authorization');
@@ -184,8 +184,8 @@ try {
       app.seedUser(member('business-directory', { plan: 'business' }));
       await installAuditMember(page, app, 'business-directory');
       await auditNavigate(page, server.resolvedUrls.local[0] + 'connected-accounts');
-      await page.getByRole('link', { name: 'Sign in on Indeed' }).waitFor();
-      assert.equal(await page.getByRole('link', { name: /^Sign in on / }).count(), 21, 'Business includes all career website destinations');
+      await page.getByRole('link', { name: 'Visit Indeed website' }).waitFor();
+      assert.equal(await page.getByRole('link', { name: /^Visit .* website$/ }).count(), 21, 'Business includes all career website destinations');
       assert.equal(await page.getByRole('link', { name: 'Open Reddit website' }).count(), 0);
       assert.equal(await page.getByRole('combobox', { name: 'Filter accounts' }).count(), 0);
     }

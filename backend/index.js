@@ -548,10 +548,11 @@ const PORT = process.env.PORT || 3000;
 const JWT_SECRET = resolveJwtSecret(process.env);
 const localSessions = new Map();
 const AUTH0_DOMAIN = (process.env.AUTH0_DOMAIN || process.env.AUTH0_ISSUER_BASE_URL || '')
+  .trim()
   .replace(/^https?:\/\//, '')
-  .replace(/\/+$/, '');
-const AUTH0_AUDIENCE = process.env.AUTH0_AUDIENCE || '';
-const AUTH0_ISSUER = (process.env.AUTH0_ISSUER || (AUTH0_DOMAIN ? `https://${AUTH0_DOMAIN}/` : ''))
+  .replace(/\/+$/, '').toLowerCase();
+const AUTH0_AUDIENCE = (process.env.AUTH0_AUDIENCE || '').trim();
+const AUTH0_ISSUER = ((process.env.AUTH0_ISSUER || '').trim() || (AUTH0_DOMAIN ? `https://${AUTH0_DOMAIN}/` : ''))
   .replace(/\/?$/, '/');
 const auth0Enabled = Boolean(AUTH0_DOMAIN && AUTH0_AUDIENCE && AUTH0_ISSUER);
 let auth0Jwks = null;
@@ -1136,7 +1137,7 @@ function socialCredentialStatus(platform, req) {
     if (i === 1) return cfg?.clientSecret?.();
     return process.env[key];
   });
-  const missingEnv = requiredEnv.filter((_key, i) => !values[i]);
+  const missingEnv = requiredEnv.filter((_key, i) => typeof values[i] !== 'string' || !values[i].trim());
   return {
     configured: missingEnv.length === 0,
     requiredEnv,
@@ -20941,8 +20942,8 @@ app.get('/social/platforms', authenticate, async (req, res) => {
       },
       ownContent: { supported: Boolean(OWN_CONTENT_FETCHERS[key]) },
       feed: {
-        home: FEED_SOURCE_CATALOG.home.includes(key) || Boolean(ACCOUNT_DIRECTORY[key]?.feedSupported),
-        following: FEED_SOURCE_CATALOG.following[key] || null,
+        home: FEED_SOURCE_CATALOG.home.includes(key),
+        following: FEED_SOURCE_CATALOG.following[key] === 'following' ? 'following' : null,
       },
     }];
   }));
