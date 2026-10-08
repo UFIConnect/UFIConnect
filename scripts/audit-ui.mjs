@@ -308,7 +308,7 @@ try {
     await page.locator('input[name="password"]').fill('test-only-password');
     await page.locator('input[name="confirmPassword"]').fill('test-only-password');
     assert.equal(await page.locator('input[name="phone"]').inputValue(), '');
-    await page.getByRole('button', { name: /^Continue/ }).click();
+    await page.getByRole('button', { name: 'Continue →', exact: true }).click();
     await page.getByRole('heading', { name: 'Who are you professionally?' }).waitFor();
     checks++;
     await auditNavigate(page, base + '?audit-public=1');

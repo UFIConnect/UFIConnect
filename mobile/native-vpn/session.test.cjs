@@ -16,8 +16,11 @@ function fixture({stopFails=false,stored=null,platform='android'}={}) {
     if(name==='../security/apiConfig')return{resolveApiBase:()=> 'https://api.uficonnect.org'};
     if(name==='../security/sessionStorage')return{createSessionStorage:()=>storage};
     if(name==='../security/accountDeletion')return require('../security/accountDeletion');
+    // OAuth has its own injected-flow tests. These email-session tests must
+    // never open a provider browser or run a provider exchange implicitly.
+    if(name==='../security/providerSignIn')return{PENDING_KEY:'uficonnect.provider-signin',createProviderSignIn:()=>{throw Error('Unexpected provider OAuth flow in email session fixture');}};
     if(name==='../native-vpn/client')return{disconnectVpnSession:async token=>{calls.push(token?'vpn-stop-signed-in':'vpn-stop-no-session');if(stopFails)throw Error('native stop failed');return{stopped:true,revoked:true};}};
-    throw Error('Unexpected import');
+    throw Error('Unexpected import: '+name);
   }};
   vm.runInNewContext(code,sandbox,{filename:file});const value=sandbox.exports.AuthProvider({children:null}).props.value;
   return{calls,value,effects,setStopFails:value=>{stopFails=value;},responseError:error=>onResponseError(error)};
