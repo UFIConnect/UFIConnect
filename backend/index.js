@@ -964,12 +964,18 @@ const SOCIAL_CFG = {
     // set; the old names would fail against a newly-created app.
     scope: 'openid profile email w_member_social',
     pkce: false,
+    profileUrl: 'https://api.linkedin.com/v2/userinfo',
+    profileIdField: 'sub',
   },
   twitter: {
-    authUrl:  'https://twitter.com/i/oauth2/authorize',
-    tokenUrl: 'https://api.twitter.com/2/oauth2/token',
-    clientId:     () => process.env.TWITTER_CLIENT_ID,
-    clientSecret: () => process.env.TWITTER_CLIENT_SECRET,
+    authUrl:  'https://x.com/i/oauth2/authorize',
+    tokenUrl: 'https://api.x.com/2/oauth2/token',
+    // X_CLIENT_KEY is the existing OAuth 2.0 client ID setting. An OAuth
+    // 1.0 API key or app-only bearer token cannot authorize member accounts.
+    clientId:     () => [process.env.TWITTER_CLIENT_ID, process.env.X_CLIENT_ID, process.env.X_CLIENT_KEY]
+      .find(value => typeof value === 'string' && value.trim())?.trim(),
+    clientSecret: () => [process.env.TWITTER_CLIENT_SECRET, process.env.X_CLIENT_SECRET]
+      .find(value => typeof value === 'string' && value.trim())?.trim(),
     scope: 'tweet.read tweet.write users.read offline.access',
     pkce: true,
     basicAuth: true,
@@ -1166,6 +1172,13 @@ function createOAuthState(userId, platform, codeVerifier, extra) {
   const payload = { userId, platform };
   if (codeVerifier) payload.cv = codeVerifier;
   if (extra) payload.x = extra;
+  // X limits state to 500 characters. AES-GCM authenticates this compact
+  // envelope and binds it to X; keep the PKCE verifier encrypted and the
+  // same ten-minute expiry without a second, longer JWT wrapper.
+  if (platform === 'twitter') {
+    payload.expiresAt = Date.now() + 600000;
+    return 'x1.' + tokenVault.seal(JSON.stringify(payload), 'twitter-oauth-state');
+  }
   // PKCE verifiers and provider metadata must not be readable in redirect URLs.
   return jwt.sign({ purpose: 'oauth-state', data: tokenVault.seal(JSON.stringify(payload), 'oauth-state') }, JWT_SECRET,
     { algorithm: 'HS256', issuer: 'uficonnect', audience: 'uficonnect-oauth', expiresIn: '10m' });
@@ -1173,6 +1186,13 @@ function createOAuthState(userId, platform, codeVerifier, extra) {
 
 function verifyOAuthState(state, platform) {
   try {
+    if (typeof state === 'string' && state.startsWith('x1.')) {
+      if (platform !== 'twitter' || state.length > 500) return null;
+      const payload = JSON.parse(tokenVault.open(state.slice(3), 'twitter-oauth-state'));
+      if (payload.platform !== platform || typeof payload.userId !== 'string'
+        || !Number.isSafeInteger(payload.expiresAt) || payload.expiresAt <= Date.now()) return null;
+      return { userId: payload.userId, platform, codeVerifier: payload.cv, extra: payload.x };
+    }
     const envelope = jwt.verify(state, JWT_SECRET, { algorithms: ['HS256'], issuer: 'uficonnect', audience: 'uficonnect-oauth' });
     if (envelope.purpose !== 'oauth-state' || typeof envelope.data !== 'string') return null;
     const payload = JSON.parse(tokenVault.open(envelope.data, 'oauth-state'));
@@ -14444,9 +14464,9 @@ const PLATFORMS = {
     name: 'X (Twitter)', color: '#000000', icon: 'twitter',
     description: 'Read posts from accounts you follow on X and publish using your connected account.',
     scopes: ['tweet.read', 'tweet.write', 'users.read', 'offline.access'],
-    authUrl: 'https://twitter.com/i/oauth2/authorize',
-    loginUrl: 'https://twitter.com/i/flow/login',
-    setupUrl: 'https://developer.twitter.com/en/portal/dashboard',
+    authUrl: 'https://x.com/i/oauth2/authorize',
+    loginUrl: 'https://x.com/i/flow/login',
+    setupUrl: 'https://developer.x.com/',
     reviewRequired: false,
     note: 'Following uses the official home timeline with your permission. X API access and usage credits are required for UFIConnect; provider limits and charges apply.',
   },
@@ -20862,7 +20882,8 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
 
     if (cfg.profileUrl) {
       const profile = await fetchJSON(cfg.profileUrl, { Authorization: `Bearer ${accessToken}` });
-      if (!profile?.id || profile.err || profile.error) {
+      const identity = profile?.[cfg.profileIdField || 'id'];
+      if (!identity || (cfg.profileIdField && (typeof identity !== 'string' || !identity.trim())) || profile.err || profile.error) {
         throw Object.assign(new Error('Provider could not verify the connected profile.'), { providerErrorCode: 'profile_unavailable' });
       }
     }

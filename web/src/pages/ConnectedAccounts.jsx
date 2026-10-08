@@ -17,7 +17,7 @@ import AccountLocationGroups from '../components/AccountLocationGroups';
 import { locationAccountSection } from '../../../shared/accountLocation.js';
 
 const PLATFORM_BENEFITS = {
-  linkedin:  ['Import your work history & headline', 'Show LinkedIn posts in your feed', 'Get matched with relevant jobs'],
+  linkedin:  ['Authorize your basic LinkedIn profile', 'Publish text and photo posts from Cross-Post', 'Manage and disconnect your LinkedIn connection'],
   github:    ['Showcase your repos & contributions', 'Display commit activity on profile', 'Find open-source collaborators'],
   gitlab:    ['Showcase GitLab projects', 'Display CI/CD and open-source work', 'Find developer collaborators'],
   twitter:   ['Surface relevant tech threads', 'Share posts across platforms', 'Follow industry conversations'],
