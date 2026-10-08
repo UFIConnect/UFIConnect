@@ -8,6 +8,8 @@ import useTabMetrics, { useSelectedTabMetrics } from '../analytics/useTabMetrics
 import { postTextPreview } from '../../../backend/post-text.mjs';
 import PostImage from '../components/PostImage';
 import SourceMediaFallback from '../components/SourceMediaFallback';
+import TwitchClipPlayer from '../components/TwitchClipPlayer';
+import { officialTwitchClipId } from '../utils/sourceMediaPolicy.mjs';
 import { getAccessToken, privateSessionStorage } from '../auth/session';
 import { createAuthenticatedStream } from '../api/authenticatedStream';
 ﻿import { useState, useEffect, useCallback, useRef, useMemo, Component, memo } from 'react';
@@ -1518,8 +1520,9 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
   // Same idea, for RSS articles embedding a Vimeo player instead (see
   // parseRSSItems' vimeo detection backend-side).
   const videoVimeoId = hasVideo && !videoYouTubeId ? extractVimeoId(videoLinkUrl) : null;
+  const videoTwitchId = hasVideo && post.source === 'twitch' ? officialTwitchClipId(post.sourceUrl) || officialTwitchClipId(videoLinkUrl) : null;
   const videoIsDirectFile = hasVideo && !videoPlaylistUrl && !videoYouTubeId && !videoVimeoId && isDirectVideoUrl(videoLinkUrl, post);
-  const videoIsPlayable = hasVideo && (videoPlaylistUrl || videoIsDirectFile || videoYouTubeId || videoVimeoId);
+  const videoIsPlayable = hasVideo && (videoPlaylistUrl || videoIsDirectFile || videoYouTubeId || videoVimeoId || videoTwitchId);
   const commentCount   = post.commentsCount || 0;
   const commUrl        = commentUrl(post);
   const hasComments    = COMMENT_SOURCES.has(post.source) || isUFIconnectInteractive || Boolean(originalSourceUrl(post));
@@ -1677,7 +1680,9 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
         </button>
       )}
 
-      {hasVideo && videoYouTubeId ? (
+      {hasVideo && videoTwitchId ? (
+        <div style={{ marginTop: 12 }}><TwitchClipPlayer post={post} forcePause={isMediaOpen} /></div>
+      ) : hasVideo && videoYouTubeId ? (
         // A YouTube embed manages its own click-to-play/iframe swap (see
         // YouTubeEmbedBlock) — not wrapped in the onMediaOpen button below,
         // since that would nest an interactive iframe inside a button and

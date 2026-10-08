@@ -6,7 +6,7 @@ const CLIP_MAX_SECONDS = 180;
 const CLIP_LOOKBACK_MS = 7 * 86400000;
 const CLIP_PER_SOURCE = 16;
 const CLIP_TOTAL = 200;
-const FOLLOWING_CLIP_SOURCES = ['youtube', 'reddit', 'mastodon', 'bluesky', 'twitter'];
+const FOLLOWING_CLIP_SOURCES = ['youtube', 'reddit', 'mastodon', 'bluesky', 'twitter', 'twitch'];
 const PUBLIC_CLIP_QUERY = `
   SELECT clip.* FROM unnest($1::text[]) AS sources(source)
   CROSS JOIN LATERAL (

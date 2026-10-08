@@ -32,3 +32,37 @@ export function officialVimeoId(value) {
   const id = parts.length === 1 ? parts[0] : parts.length === 2 && parts[0] === 'video' ? parts[1] : null;
   return /^\d+$/.test(id || '') ? id : null;
 }
+
+export function officialTwitchClipId(value) {
+  const url = sourceUrl(value, ['clips.twitch.tv', 'twitch.tv', 'www.twitch.tv']);
+  if (!url || value.length > 2048) return null;
+  const parts = url.pathname.split('/').filter(Boolean);
+  const id = url.hostname === 'clips.twitch.tv' && /^\/[^/]+\/?$/.test(url.pathname) ? parts[0]
+    : ['twitch.tv', 'www.twitch.tv'].includes(url.hostname) && parts.length === 3 && /^\/[a-zA-Z0-9_]{1,25}\/clip\/[^/]+\/?$/.test(url.pathname) ? parts[2] : null;
+  return /^[A-Za-z0-9_-]{1,140}$/.test(id || '') && !['embed', 'create'].includes(id) ? id : null;
+}
+
+export function officialTwitchClipUrl(value) {
+  const id = officialTwitchClipId(value);
+  return id ? `https://clips.twitch.tv/${id}` : null;
+}
+
+// Twitch clip iframes require the hostname actually serving the parent page.
+// Incoming embed URLs/parent values never supply this parameter.
+export function officialTwitchClipEmbedUrl(value, parentHostname) {
+  const id = officialTwitchClipId(value);
+  if (!id || typeof parentHostname !== 'string' || parentHostname.length > 253
+    || !parentHostname.split('.').every(label => /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/.test(label))) return null;
+  const params = new URLSearchParams({ clip: id, parent: parentHostname.toLowerCase(), autoplay: 'false' });
+  return `https://clips.twitch.tv/embed?${params}`;
+}
+
+export function officialTwitchPosterUrl(value) {
+  if (typeof value !== 'string' || value.length > 2048 || /[\s\\]/.test(value)) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username || url.password || url.port
+      || !['twitch.tv', 'jtvnw.net', 'ttvnw.net'].some(host => url.hostname === host || url.hostname.endsWith(`.${host}`))) return null;
+    return url.href;
+  } catch { return null; }
+}

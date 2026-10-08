@@ -35,7 +35,8 @@ function snapSource(value, mode) {
   const allowed = mode === 'ufi' ? [] : mode === 'following'
     ? Object.entries(sourceCatalog.following).filter(([, capability]) => capability === 'following').map(([source]) => source)
     : sourceCatalog.home;
-  if (typeof value !== 'string' || !['uficonnect', ...allowed].includes(value)) {
+  const supported = mode === 'home' ? allowed : ['uficonnect', ...allowed];
+  if (typeof value !== 'string' || !supported.includes(value)) {
     throw failure(400, 'Choose a supported Snap source.');
   }
   return value;
@@ -62,6 +63,7 @@ function createSnaps({ db, getUser, validateUpload, removeMedia, screenMemberCon
     mode = snapMode(mode);
     if (viewerId != null && !uuidPattern.test(viewerId)) throw failure(401, 'Sign in again to view your Snaps.');
     if (mode === 'following' && !viewerId) throw failure(401, 'Sign in to view Following Snaps.');
+    if (mode === 'home') return [];
     const boundedLimit = Math.max(1, Math.min(200, Number.parseInt(limit, 10) || 100));
     // Resolve audience, block and hidden-profile rules from persistent records,
     // so another API worker cannot serve a stale follower or blocked author.
@@ -169,7 +171,7 @@ function registerSnapRoutes(app, { service, authenticate, authenticateOptional, 
     const mode = snapMode(req.query.mode), viewerId = req.user?.id || null;
     if (mode === 'following' && !viewerId) throw failure(401, 'Sign in to view Following Snaps.');
     const source = snapSource(req.query.source, mode);
-    const native = !source || source === 'uficonnect' ? await service.list({ mode, viewerId }) : [];
+    const native = mode !== 'home' && (!source || source === 'uficonnect') ? await service.list({ mode, viewerId }) : [];
     let external = { snaps: [], sourceErrors: {} };
     if (mode !== 'ufi' && source !== 'uficonnect') {
       try { external = await loadExternalSnaps({ mode, viewerId, source, bust: req.query.bust === '1' }); }
@@ -179,7 +181,8 @@ function registerSnapRoutes(app, { service, authenticate, authenticateOptional, 
     const sourceErrors = source ? { ...(errors[source] ? { [source]: errors[source] } : {}),
       ...(errors.sources ? { [source]: errors.sources } : {}) } : errors;
     return { snaps: [...native, ...(Array.isArray(external?.snaps) ? external.snaps : [])]
-      .filter(snap => !source || snap.source === source), sourceErrors };
+      .filter(snap => (!source || snap.source === source)
+        && (mode !== 'home' || (snap.isExternal === true && sourceCatalog.home.includes(snap.source)))), sourceErrors };
   }));
   app.post('/snaps', authenticate, limiter, respond(async req => ({ snap: await service.create(req.user.id, req.body) }), 201));
   app.delete('/snaps/:id', authenticate, limiter, respond(req => service.remove(req.user.id, req.params.id)));

@@ -7,7 +7,7 @@ function clip(id, source = 'mastodon', extra = {}) {
   return { id, source, title: 'A short update from a followed creator', content: 'A source video about a community project.', mediaType: 'video', mediaUrl: 'https://files.mastodon.social/video.mp4',
     mediaPoster: 'https://files.mastodon.social/poster.jpg', videoDurationSeconds: 30,
     sourceUrl: source === 'mastodon' ? `https://mastodon.social/@creator/${id.replace(/\D/g, '') || '123'}`
-      : source === 'twitter' ? 'https://x.com/creator/status/123' : 'https://www.youtube.com/watch?v=abcdefghijk',
+      : source === 'twitter' ? 'https://x.com/creator/status/123' : source === 'twitch' ? 'https://clips.twitch.tv/RealClip-Ab12' : 'https://www.youtube.com/watch?v=abcdefghijk',
     createdAt: new Date(now - 60000).toISOString(), isExternal: true,
     author: { name: 'Source creator', profileUrl: 'https://mastodon.social/@creator' }, ...extra };
 }
@@ -37,6 +37,31 @@ test('public Home and authorized Following keep their audiences separate and res
   assert.equal(externalSnapsFromPosts([interest], { now, mode: 'following' }).length, 0);
   assert.equal(externalSnapsFromPosts([clip('1')], { now, disabledSources: ['mastodon'] }).length, 0);
   assert.equal(externalSnapsFromPosts([clip('1', 'instagram')], { now }).length, 0);
+  assert.equal(externalSnapsFromPosts([clip('ufi', 'uficonnect')], { now }).length, 0);
+});
+
+test('Twitch clips use canonical source playback and only the current member\'s followed channels in Following', async () => {
+  const { clipPost } = require('./twitch-feed');
+  const post = clipPost({ id: 'RealClip-Ab12', broadcaster_id: '101', broadcaster_name: 'Creator',
+    title: 'Recent clip', url: 'https://clips.twitch.tv/RealClip-Ab12',
+    thumbnail_url: 'https://clips-media-assets2.twitch.tv/preview.jpg',
+    created_at: new Date(now - 60000).toISOString(), duration: 180 }, { id: '101', login: 'creator' }, now);
+  let publicReads = 0;
+  const followingReads = [];
+  const load = createExternalSnapLoader({ now: () => now, env: {}, getUser: async id => id === 'member' ? { roleSettings: {} } : null,
+    getPublicPosts: async () => { publicReads++; return { posts: [post] }; },
+    getFollowingPosts: async (...args) => { followingReads.push(args); return { posts: [post] }; } });
+  const publicClips = await load({ mode: 'home', source: 'twitch' });
+  assert.equal(publicClips.snaps[0].sourceUrl, post.sourceUrl);
+  assert.equal(publicClips.snaps[0].author.profileUrl, 'https://www.twitch.tv/creator');
+  assert.equal(publicClips.snaps[0].mediaKind, 'source');
+  assert.equal(publicClips.snaps[0].directPlaybackAuthorized, false);
+  assert.equal(publicClips.snaps[0].videoDurationSeconds, 180);
+  const following = await load({ mode: 'following', viewerId: 'member', source: 'twitch', bust: true });
+  assert.deepEqual(following.snaps, publicClips.snaps);
+  assert.deepEqual(followingReads, [['member', ['twitch'], { bust: true, surface: null }]]);
+  assert.deepEqual(await load({ mode: 'following', viewerId: 'missing', source: 'twitch' }), { snaps: [], sourceErrors: {} });
+  assert.equal(followingReads.length, 1); assert.equal(publicReads, 1);
 });
 
 test('bounded source round robin retains quiet providers and removes duplicate clips', () => {
@@ -122,7 +147,7 @@ test('bounded public clip query filters length before each source limit and enfo
     id TEXT PRIMARY KEY, source TEXT NOT NULL, media_type TEXT,
     media_url TEXT, source_url TEXT, video_duration_seconds INTEGER,
     post_created_at TIMESTAMPTZ NOT NULL)`);
-  const sources = ['mastodon', 'reddit', 'youtube'];
+  const sources = ['mastodon', 'reddit', 'youtube', 'twitch'];
   for (const source of sources) {
     await db.query(`INSERT INTO feed_posts_cache
       SELECT $1 || '_long_' || n, $1, 'video', 'https://media.invalid/long.mp4',

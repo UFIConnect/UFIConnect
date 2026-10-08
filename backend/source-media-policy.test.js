@@ -6,7 +6,7 @@ const vm = require('node:vm');
 
 test('source social videos cannot enter a native direct-file player by default', async () => {
   const { directMediaPlaybackAllowed } = await import('../web/src/utils/sourceMediaPolicy.mjs');
-  for (const source of ['youtube', 'tiktok', 'instagram', 'facebook', 'twitter', 'bluesky', 'mastodon', 'reddit', 'vimeo', 'devto']) {
+  for (const source of ['youtube', 'tiktok', 'instagram', 'facebook', 'twitter', 'bluesky', 'mastodon', 'reddit', 'vimeo', 'devto', 'twitch']) {
     assert.equal(directMediaPlaybackAllowed({ source, isExternal: true, mediaUrl: 'https://cdn.example/video.mp4' }), false);
     assert.equal(directMediaPlaybackAllowed({ source }), false);
   }
@@ -14,6 +14,41 @@ test('source social videos cannot enter a native direct-file player by default',
   assert.equal(directMediaPlaybackAllowed({ source: 'uficonnect' }), true);
   assert.equal(directMediaPlaybackAllowed({ source: 'livecamera', isExternal: false }), true);
   assert.equal(directMediaPlaybackAllowed({ source: 'licensed-provider', directPlaybackAuthorized: true }), true);
+});
+
+test('Twitch clip embeds use canonical provider links and the current parent hostname', async () => {
+  const { officialTwitchClipId, officialTwitchClipUrl, officialTwitchClipEmbedUrl } = await import('../web/src/utils/sourceMediaPolicy.mjs');
+  for (const value of ['https://clips.twitch.tv/RealClip-Ab12', 'https://www.twitch.tv/creator/clip/RealClip-Ab12?tt_content=clips']) {
+    assert.equal(officialTwitchClipId(value), 'RealClip-Ab12');
+    assert.equal(officialTwitchClipUrl(value), 'https://clips.twitch.tv/RealClip-Ab12');
+    const embed = new URL(officialTwitchClipEmbedUrl(value, 'uficonnect.org'));
+    assert.equal(embed.origin, 'https://clips.twitch.tv');
+    assert.equal(embed.pathname, '/embed');
+    assert.deepEqual(Object.fromEntries(embed.searchParams), { clip: 'RealClip-Ab12', parent: 'uficonnect.org', autoplay: 'false' });
+  }
+  for (const value of ['http://clips.twitch.tv/RealClip-Ab12', 'https://clips.twitch.tv.evil.example/RealClip-Ab12',
+    'https://user:secret@clips.twitch.tv/RealClip-Ab12', 'https://clips.twitch.tv:8443/RealClip-Ab12',
+    'https://clips.twitch.tv/embed?clip=RealClip-Ab12&parent=evil.example', 'https://clips.twitch.tv/create',
+    'https://clips.twitch.tv/a/clip/RealClip-Ab12', 'https://clips.twitch.tv/RealClip%2FAb12',
+    'https://www.twitch.tv/creator/videos/RealClip-Ab12', 'https://www.twitch.tv/creator', 'https://cdn.example/clip.mp4']) {
+    assert.equal(officialTwitchClipId(value), null, value);
+    assert.equal(officialTwitchClipEmbedUrl(value, 'uficonnect.org'), null, value);
+  }
+  for (const parent of ['https://uficonnect.org', 'uficonnect.org:443', 'uficonnect.org&autoplay=true', 'user@uficonnect.org', '.uficonnect.org', '', null]) {
+    assert.equal(officialTwitchClipEmbedUrl('https://clips.twitch.tv/RealClip-Ab12', parent), null);
+  }
+  assert.equal(new URL(officialTwitchClipEmbedUrl('https://clips.twitch.tv/RealClip-Ab12', 'www.uficonnect.org')).searchParams.get('parent'), 'www.uficonnect.org');
+  assert.equal(new URL(officialTwitchClipEmbedUrl('https://clips.twitch.tv/RealClip-Ab12', '127.0.0.1')).searchParams.get('parent'), '127.0.0.1');
+});
+
+test('Twitch clip posters reject untrusted hosts, insecure URLs and URL credentials', async () => {
+  const { officialTwitchPosterUrl } = await import('../web/src/utils/sourceMediaPolicy.mjs');
+  assert.equal(officialTwitchPosterUrl('https://clips-media-assets2.twitch.tv/clip-preview.jpg'), 'https://clips-media-assets2.twitch.tv/clip-preview.jpg');
+  assert.equal(officialTwitchPosterUrl('https://static-cdn.jtvnw.net/clip-preview.jpg'), 'https://static-cdn.jtvnw.net/clip-preview.jpg');
+  for (const value of ['http://static-cdn.jtvnw.net/poster.jpg', 'https://static-cdn.jtvnw.net.evil.example/poster.jpg',
+    'https://name:secret@static-cdn.jtvnw.net/poster.jpg', 'https://evil.example/poster.jpg', 'data:image/png;base64,none']) {
+    assert.equal(officialTwitchPosterUrl(value), null);
+  }
 });
 
 test('player identity comes only from an official HTTPS source URL', async () => {

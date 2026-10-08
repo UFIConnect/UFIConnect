@@ -23,7 +23,6 @@ import useTabMetrics from '../analytics/useTabMetrics';
 import { safePostLink } from '../../../backend/post-links.mjs';
 
 import VideoDurationControl, { VIDEO_DURATION_LIMIT } from '../components/VideoDurationControl';
-import { AccountSiteLink } from '../components/DirectoryControls';
 import { accountSections } from '../components/sourceDirectory';
 import { DISCOVERY_CATEGORIES, discoveryPostContext } from '../components/discoveryCategories';
 import '../components/DiscoveryCategoryBar.css';
@@ -823,22 +822,36 @@ function MemberAccountsSection() {
   const [connecting, setConnecting] = useState(null);
   const [disconnecting, setDisconnecting] = useState(null);
   const isBusinessMembership = profile?.plan === 'business';
+  const accountId = String(profile?.id || '');
+  const currentAccount = useRef(accountId); currentAccount.current = accountId;
+  const accountRequest = useRef(0);
+  const [accountsOwner, setAccountsOwner] = useState('');
 
-  const loadAccounts = useCallback(async () => {
+  const loadAccounts = useCallback(async ({ signal } = {}) => {
+    const request = ++accountRequest.current;
+    const current = () => accountId && currentAccount.current === accountId && request === accountRequest.current && !signal?.aborted;
     setError('');
+    setPlatforms(null); setConnected({}); setAccountsOwner('');
+    if (!accountId) return;
     try {
-      const { data } = await client.get('/social/platforms');
+      const { data } = await client.get('/social/platforms', { signal });
+      if (!current()) return;
       const includeCareer = data.careerOnly === true || isBusinessMembership;
       setPlatforms(Object.entries(withCareerAccountFallback(data.platforms, includeCareer)));
       setConnected(data.connected || {});
+      setAccountsOwner(accountId);
     } catch (requestError) {
+      if (!current()) return;
       setError(requestError?.response?.data?.message || 'Could not load Command Center accounts.');
       setPlatforms([]);
+      setAccountsOwner(accountId);
     }
-  }, [isBusinessMembership]);
+  }, [accountId, isBusinessMembership]);
 
   useEffect(() => {
-    loadAccounts();
+    const controller = new AbortController();
+    loadAccounts({ signal: controller.signal });
+    return () => { controller.abort(); accountRequest.current++; };
   }, [loadAccounts]);
 
   useEffect(() => {
@@ -847,12 +860,17 @@ function MemberAccountsSection() {
     const failedPlatform = params.get('social_error');
     const reason = params.get('reason');
     const target = connectedPlatform || failedPlatform;
-    if (!target || !platforms?.some(([key]) => key === target)) return;
+    if (!target || !platforms || accountsOwner !== accountId) return;
 
     if (connectedPlatform) {
-      setConnected(current => ({ ...current, [connectedPlatform]: true }));
-      window.dispatchEvent(new Event('ufi-connections-changed'));
-      showToast(`${platforms.find(([key]) => key === connectedPlatform)?.[1]?.name || connectedPlatform} connected successfully.`, 'success');
+      const platform = platforms.find(([key]) => key === connectedPlatform)?.[1];
+      const verified = connected[connectedPlatform] === true && sourceAuthorizationState(platform, { isConnected: true }).ready;
+      if (verified) {
+        window.dispatchEvent(new Event('ufi-connections-changed'));
+        showToast(`${platform.name} connected successfully.`, 'success');
+      } else {
+        showToast('Connection could not be confirmed. Refresh your accounts and try again.', 'error');
+      }
     } else {
       const name = platforms.find(([key]) => key === failedPlatform)?.[1]?.name || failedPlatform;
       const code = String(reason || '').split(':')[0];
@@ -869,7 +887,7 @@ function MemberAccountsSection() {
       showToast(`Could not connect ${name}. ${explanation}`, 'error');
     }
     navigate({ pathname: location.pathname, search: '?tab=accounts' }, { replace: true });
-  }, [location.pathname, location.search, navigate, showToast, platforms]);
+  }, [location.pathname, location.search, navigate, showToast, platforms, connected, accountsOwner, accountId]);
 
   async function connectAccount(platform) {
     const state = sourceAuthorizationState(platforms?.find(([key]) => key === platform)?.[1], { isConnected: !!connected[platform] });
@@ -960,11 +978,10 @@ function MemberAccountsSection() {
                 : unavailable ? platform.note || authorization.reason
                 : `Sign in & connect opens ${platform.name}'s authorization page. Sign in there and approve UFIConnect access.`}</p>
               {isConnected && platform.reconnectRequired && <p role="alert">{platform.reconnectMessage || `Sign in again to renew ${platform.name} permissions.`}</p>}
-              {!external && <div className="account-platform-detail-actions">
-                {isConnected && <button type="button" className="btn btn-danger btn-sm" onClick={() => disconnectAccount(key)} disabled={disconnecting === key || connecting === key}>
+              {!external && isConnected && <div className="account-platform-detail-actions">
+                <button type="button" className="btn btn-danger btn-sm" onClick={() => disconnectAccount(key)} disabled={disconnecting === key || connecting === key}>
                   {disconnecting === key ? 'Disconnecting…' : `Disconnect ${platform.name}`}
-                </button>}
-                <AccountSiteLink platform={key} name={platform.name} siteUrl={platform.siteUrl} />
+                </button>
               </div>}
             </details>
           </div>

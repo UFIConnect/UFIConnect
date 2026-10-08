@@ -98,7 +98,14 @@ try {
     assert.equal(await tools.getByRole('link', { name: 'Open Instagram website' }).count(), 0);
     assert.equal(await tools.getByRole('link', { name: 'Visit Indeed website' }).count(), 1);
     assert.equal(await tools.getByRole('combobox', { name: 'Filter accounts' }).count(), 0);
-    assert.equal(await tools.locator('.home-connected-account-status, .account-site-link').count(), 0);
+    assert.equal(await tools.locator('.home-connected-account-status').count(), 0);
+    assert.equal(await tools.locator('.account-site-link').count(), 4, 'Every Connect action has a separate website link');
+    const homeYouTubeSite = tools.getByRole('link', { name: 'Open YouTube website', exact: true });
+    assert.equal(await homeYouTubeSite.getAttribute('href'), 'https://www.youtube.com/');
+    assert.equal(await homeYouTubeSite.getAttribute('target'), '_blank');
+    assert.equal(await homeYouTubeSite.getAttribute('rel'), 'noopener noreferrer');
+    assert.equal(await tools.getByRole('button', { name: 'Sign in and connect WIRED', exact: true }).isDisabled(), true,
+      'The website link does not unlock an unconfigured connection');
     assert.equal(await tools.locator('.home-connected-account-row').count(), 5);
     const popupPromise = context.waitForEvent('page');
     await tools.getByRole('link', { name: 'Visit Indeed website' }).click();
@@ -168,7 +175,9 @@ try {
     assert.equal(await page.getByRole('combobox', { name: 'Filter accounts' }).count(), 0);
     assert.equal(await page.getByRole('searchbox', { name: 'Search accounts', exact: true }).count(), 0);
     await page.getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).waitFor();
-    assert.equal(await page.getByRole('link', { name: 'Open Reddit website' }).count(), 0);
+    const redditSite = page.getByRole('link', { name: 'Open Reddit website', exact: true });
+    assert.equal(await redditSite.count(), 1, 'Connected accounts retain a single website action');
+    assert.equal(await redditSite.getAttribute('href'), 'https://www.reddit.com/');
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/accounts-page-${width}.png`) });
     await auditNavigate(page, server.resolvedUrls.local[0] + 'command-center?tab=accounts');
     assert.equal(await page.getByRole('combobox', { name: 'Filter accounts' }).count(), 0);
@@ -177,7 +186,15 @@ try {
     const memberAccounts = page.locator('.member-account-card');
     const youtubeAccount = memberAccounts.getByRole('button', { name: 'Sign in and connect YouTube', exact: true });
     assert.equal(await youtubeAccount.count(), 1, 'Command Center includes configured general account connections');
-    assert.equal(await memberAccounts.locator('.account-site-link:visible').count(), 0, 'Source website details stay out of the primary sign-in action row');
+    assert.equal(await memberAccounts.locator('.account-site-link:visible').count(), await memberAccounts.count(),
+      'Command Center shows one website link beside each account connection');
+    assert.ok((await memberAccounts.evaluateAll(cards => cards.map(card => card.querySelectorAll('.account-site-link').length)))
+      .every(count => count === 1), 'Account details do not duplicate website links');
+    assert.equal(await youtubeAccount.isEnabled(), true, 'Configured providers remain connectable');
+    assert.equal(await memberAccounts.getByRole('button', { name: 'Sign in and connect LinkedIn', exact: true }).isDisabled(), true,
+      'Forced provider restrictions remain locked');
+    assert.equal(await memberAccounts.getByRole('button', { name: 'Sign in and connect WIRED', exact: true }).isDisabled(), true,
+      'Unconfigured providers remain locked');
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/member-accounts-${width}.png`) });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
     if (width === 390) {

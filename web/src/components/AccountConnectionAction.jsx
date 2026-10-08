@@ -1,4 +1,4 @@
-import ExternalAccountLogin from './ExternalAccountLogin';
+import { AccountSiteLink } from './DirectoryControls';
 import { Lock } from 'lucide-react';
 import { sourceAuthorizationState } from './sourceAuthorization.mjs';
 import AccountActionIcon from './AccountActionIcon';
@@ -18,6 +18,7 @@ export default function AccountConnectionAction({
       <AccountActionIcon platform={platformKey} busy={connecting && state.ready} />
       {!state.ready && <span className="account-action-lock" aria-hidden="true" style={{ position: 'absolute', right: 3, bottom: 3, display: 'flex', padding: 1, borderRadius: 3, background: 'var(--card)', color: 'var(--text)' }}><Lock size={12} strokeWidth={2.5} /></span>}
     </button>
-    {platform?.connectionMode === 'external' && <ExternalAccountLogin platform={platformKey} className={className} compact={compact} />}
+    <AccountSiteLink platform={platformKey} name={platform?.name} siteUrl={platform?.siteUrl} className="account-connection-site-link"
+      label={platform?.connectionMode === 'external' ? `Visit ${platform?.name || platformKey} website` : undefined} />
   </>;
 }

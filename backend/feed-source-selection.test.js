@@ -9,10 +9,10 @@ function postRow(source, index, duration = 1200) {
   return {
     id: `${source}_selection_${index}`, source, topic,
     title: `Science research update ${index}`, content: 'Researchers share a detailed science project update.',
-    source_url: source === 'youtube' ? videoUrl : `https://example.com/science/${index}`,
+    source_url: source === 'youtube' ? videoUrl : source === 'twitch' ? `https://clips.twitch.tv/FixtureClip${index}` : `https://example.com/science/${index}`,
     author_name: 'Science publisher', post_created_at: new Date(Date.now() - index * 60000).toISOString(),
     media_type: 'video', video_duration_seconds: duration,
-    media_url: source === 'youtube' ? videoUrl : `https://example.com/video/${index}.mp4`,
+    media_url: source === 'youtube' ? videoUrl : source === 'twitch' ? `https://clips.twitch.tv/FixtureClip${index}` : `https://example.com/video/${index}.mp4`,
   };
 }
 
@@ -57,9 +57,9 @@ const base = '/office/feed?mode=feed&sort=newest&passive=1&topics=Science&limit=
 const ids = response => response.data.posts.map(post => post.id);
 
 test('new supported public sources load separately and together in Home', async t => {
-  const sources = ['weworkremotely', 'cntraveler'];
+  const sources = ['weworkremotely', 'cntraveler', 'twitch'];
   const { app, reads } = await feedFixture(t, { sources });
-  for (const selected of [[sources[0]], [sources[1]], sources]) {
+  for (const selected of [...sources.map(source => [source]), sources]) {
     const result = await app.request(`${base}&sources=${selected.join(',')}`, { userId: 'source-reader' });
     assert.equal(result.status, 200);
     assert.deepEqual([...new Set(result.data.posts.map(post => post.source))].sort(), [...selected].sort(), JSON.stringify({ response: result.data, errors: app.errors, reads }));

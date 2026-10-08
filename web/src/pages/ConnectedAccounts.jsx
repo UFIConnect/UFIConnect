@@ -9,7 +9,6 @@ import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { withCareerAccountFallback } from '../components/sourceMeta';
 import { sourceAuthorizationState } from '../components/sourceAuthorization.mjs';
 import { useAuth } from '../contexts/AuthContext';
-import { AccountSiteLink } from '../components/DirectoryControls';
 import { accountSections, filterAccounts } from '../components/sourceDirectory';
 
 const PLATFORM_BENEFITS = {
@@ -58,6 +57,7 @@ export default function ConnectedAccounts() {
   const [platforms, setPlatforms]       = useState([]);
   const [connected, setConnected]       = useState({});
   const [loading,   setLoading]         = useState(true);
+  const [catalogAccountId, setCatalogAccountId] = useState(null);
   const [expanded,  setExpanded]        = useState(null);
   const [flash,     setFlash]           = useState(null);
   const [connecting, setConnecting]     = useState(null);
@@ -91,6 +91,7 @@ export default function ConnectedAccounts() {
     let active = true;
     const controller = new AbortController();
     setLoading(true);
+    setCatalogAccountId(null);
     setPlatforms([]);
     setConnected({});
     setMastodonServer(null);
@@ -102,20 +103,32 @@ export default function ConnectedAccounts() {
       setConnected(pRes.data.connected || {});
     }).catch(() => {
       if (active) flash_('error', 'Could not load account connections. Sign-in remains locked.');
-    }).finally(() => { if (active) setLoading(false); });
+    }).finally(() => {
+      if (active) {
+        setCatalogAccountId(profile.id);
+        setLoading(false);
+      }
+    });
     return () => { active = false; controller.abort(); };
   }, [profile?.id, isBusinessMembership]);
 
-  // Handle OAuth callback redirect params (?social_connected=platform or ?social_error=platform)
+  // Redirect parameters identify the callback. Current account metadata must
+  // confirm the connection before displaying success or notifying other tabs.
   useEffect(() => {
+    if (!profile?.id || loading || catalogAccountId !== profile.id) return;
     const connected_ = searchParams.get('social_connected');
     const errPlatform = searchParams.get('social_error');
     const errReason   = searchParams.get('reason');
     if (connected_) {
-      window.dispatchEvent(new Event('ufi-connections-changed'));
-      setConnected(prev => ({ ...prev, [connected_]: true }));
-      flash_('success', `${connected_} connected successfully.`);
-      setSearchParams({}, { replace: true });
+      const platform = platforms.find(([key]) => key === connected_)?.[1];
+      const confirmed = connected[connected_] === true
+        && sourceAuthorizationState(platform, { isConnected: true }).ready;
+      if (confirmed) {
+        window.dispatchEvent(new Event('ufi-connections-changed'));
+        flash_('success', `${platform.name} connected successfully.`);
+      } else {
+        flash_('error', 'Could not confirm the source connection. Refresh and connect again.', 8000);
+      }
     } else if (errPlatform) {
       // token_exchange_failed:<providerErrorCode> — see the backend
       // callback's own comment — carries the provider's own short error
@@ -134,9 +147,13 @@ export default function ConnectedAccounts() {
         : providerCode                            ? `Could not connect ${errPlatform}: ${decodeURIComponent(providerCode)}.`
         : `Could not connect ${errPlatform}.`;
       flash_('error', msg, 8000);
-      setSearchParams({}, { replace: true });
     }
-  }, []); // eslint-disable-line
+    if (connected_ || errPlatform) {
+      const nextParams = new URLSearchParams(searchParams);
+      ['social_connected', 'social_error', 'reason'].forEach(key => nextParams.delete(key));
+      setSearchParams(nextParams, { replace: true });
+    }
+  }, [profile?.id, loading, catalogAccountId, searchParams, setSearchParams, platforms, connected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function flash_(type, msg, ms = 4000) {
     setFlash({ type, msg });
@@ -508,7 +525,6 @@ function PlatformCard({
             {isConnected && <button type="button" className="btn btn-danger btn-sm" onClick={onDisconnect} disabled={disconnecting || connecting}>
               {disconnecting ? <><span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> Disconnecting…</> : `Disconnect ${p.name}`}
             </button>}
-            <AccountSiteLink platform={platformKey} name={p.name} siteUrl={p.siteUrl} />
           </div>}
         </div>
       )}

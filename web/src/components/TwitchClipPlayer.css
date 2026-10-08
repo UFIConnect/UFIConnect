@@ -1,0 +1,18 @@
+.twitch-clip-player { width: 100%; min-width: 0; color: #fff; background: #0b0b0b; border-radius: 12px; overflow: hidden; }
+.twitch-clip-stage { position: relative; width: 100%; min-height: 200px; aspect-ratio: 16 / 9; background: #111; overflow: hidden; }
+.twitch-clip-player[data-embedding="true"] .twitch-clip-stage { min-height: 300px; }
+.twitch-clip-stage > iframe { position: absolute; inset: 0; display: block; width: 100%; height: 100%; min-height: 300px; border: 0; }
+.twitch-clip-stage > img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; }
+.twitch-clip-placeholder { display: grid; place-items: center; width: 100%; height: 100%; position: absolute; inset: 0; background: linear-gradient(145deg, #241335, #111); }
+.twitch-clip-play { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 10px 16px; border: 1px solid #bb9de8; border-radius: 9px; background: rgb(35 19 54 / 92%); color: #fff; font: inherit; font-size: .82rem; font-weight: 650; white-space: nowrap; cursor: pointer; }
+.twitch-clip-play:disabled { opacity: .55; cursor: default; }
+.twitch-clip-source { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 44px; padding: 4px 10px; font-size: .73rem; }
+.twitch-clip-watermark, .twitch-clip-source a { display: inline-flex; align-items: center; gap: 6px; }
+.twitch-clip-watermark { flex-shrink: 0; }
+.twitch-clip-source a { min-height: 36px; color: #fff; text-decoration: none; }
+.twitch-clip-source a:hover { text-decoration: underline; }
+.twitch-clip-player button:focus-visible, .twitch-clip-player a:focus-visible { outline: 2px solid #c4a1ff; outline-offset: 3px; }
+.twitch-clip-error { position: absolute; bottom: 10px; left: 10px; right: 10px; padding: 8px; border-radius: 7px; background: rgb(0 0 0 / 80%); color: #ddd; font-size: .76rem; line-height: 1.5; }
+.snap-viewer .snap-viewer-media-twitch { height: auto; min-height: 0; }
+.snap-viewer .snap-viewer-media-twitch .twitch-clip-stage > iframe { height: 100%; min-height: 300px; }
+.snap-viewer .snap-viewer-media-twitch .twitch-clip-stage > img { height: 100%; }

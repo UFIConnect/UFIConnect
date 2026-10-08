@@ -72,6 +72,7 @@ const { createFeedReadAdmission } = require('./feed-read-admission');
 const { PUBLIC_GROUP_LEGACY_SOURCES, inferPublicGroupId } = require('./group-feed');
 const { GENERAL_UFI_GROUP_ID, isGeneralUfiFollowingPost, isFollowingSourceAllowed } = require('./following-scope');
 const FEED_SOURCE_CATALOG = require('../shared/feed-source-catalog.json');
+const { createTwitchFeed } = require('./twitch-feed');
 const { canonicalizePreferenceTopics, matchesPreferenceTopic } = require('./feed-preferences');
 const { parseMapSourceTopics, normalizeMapTopic } = require('../shared/map-feed-topics.mjs');
 const { ISO_COUNTRY_CODES, trustedFeedNetworkLocation, memberFeedSnapshotKey } = require('./feed-location');
@@ -2259,6 +2260,7 @@ function bustCachePrefix(prefix)  { for (const k of postCache.keys()) if (k.star
 const SOURCE_CONFIG = {
   weworkremotely: { ttl: 60*60000, delay: 300000, shards: 1 },
   cntraveler: { ttl: 60*60000, delay: 300000, shards: 1 },
+  twitch: { ttl: 60*60000, delay: 300000, shards: 1 }, // bounded public clips, app credentials only
   //               TTL (ms)           DELAY/topic     shards
   // -- [BREAKING] 15-30s - live social/news firehose ---------------------------
   reddit:        { ttl:  8*60000, delay: 15000, shards: 8 },  // r/new firehose, many subreddits — was 4
@@ -5331,53 +5333,15 @@ async function fetchGitLabFollowingActivity(token, { bust = false, connectedAt =
   }
 }
 
-// Twitch: currently-live streams from channels the member follows, via
-// Helix's GET /streams/followed (requires user:read:follows). Helix calls
-// need a Client-Id header alongside the bearer token — unlike every other
-// platform here. Only ever returns something when a followed channel is
-// actually live right now; that's a real API limitation (there's no
-// "recent VODs from people I follow" endpoint), not a bug.
-async function fetchTwitchFollowedStreams(token, { bust = false } = {}) {
-  if (!token) return [];
-  const key = `twitch_followed_${token.slice(-12)}`;
-  const cached = !bust && getCached(key);
-  if (cached) return cached;
-  const headers = { Authorization: `Bearer ${token}`, 'Client-Id': SOCIAL_CFG.twitch.clientId() };
-  try {
-    const me = await fetchJSON('https://api.twitch.tv/helix/users', headers);
-    const userId = me?.data?.[0]?.id;
-    if (!userId) return [];
-    const data = await fetchJSON(
-      `https://api.twitch.tv/helix/streams/followed?user_id=${userId}&first=100`,
-      headers
-    );
-    const posts = (Array.isArray(data?.data) ? data.data : [])
-      .filter(s => s?.id)
-      .map(s => ({
-        id:          `twitch_${s.id}`,
-        authorId:    `twitch_${s.user_id}`,
-        groupId:     'ext_twitch',
-        content:     s.title || 'Live on Twitch',
-        title:       s.title || 'Live on Twitch',
-        source:      'twitch', sourceLabel: 'Twitch',
-        sourceUrl:   `https://www.twitch.tv/${s.user_login}`,
-        topic:       s.game_name || null,
-        author:      { name: s.user_name || 'Twitch', title: s.game_name ? `Streaming ${s.game_name}` : 'Live now' },
-        likes: [], likesCount: s.viewer_count || 0, commentsCount: 0,
-        createdAt:   normalizeTimestamp(s.started_at),
-        isExternal:  true,
-        mediaType:   'image',
-        mediaUrl:    (s.thumbnail_url || '').replace('{width}', '440').replace('{height}', '248') || null,
-        group:       { id: 'ext_twitch', name: 'Twitch', category: 'Streaming' },
-      }));
-    setCached(key, posts);
-    return posts;
-  } catch (e) {
-    console.warn('Twitch followed streams fetch:', e.message);
-    const stale = postCache.get(key)?.v;
-    if (stale) return stale;
-    throw e;
-  }
+const twitchFeed = createTwitchFeed({ fetcher: fetch,
+  getConfig: () => ({ clientId: process.env.TWITCH_CLIENT_ID, clientSecret: process.env.TWITCH_CLIENT_SECRET }) });
+// Public clips use the app's client-credentials token. Followed live streams
+// and clips use only the current member's authorized user:read:follows token.
+async function fetchTwitchPublicClips() {
+  return isSourceDisplayAllowed('twitch', { env: process.env }) ? twitchFeed.publicClips() : [];
+}
+async function fetchTwitchFollowedStreams(token, options = {}) {
+  return twitchFeed.following(token, options);
 }
 
 // Remote OK: remote professional job listings
@@ -6479,7 +6443,7 @@ async function fetchAllTopicPosts(interests = [], role = '', skills = [], goals 
     soResults, mastoResults, lobResults, arxivResults,
     indeedResults, phResults, tcResults, vergeResults, ihResults, hashnodeResults, blueskyResults,
     arsResults, wiredResults, regResults, vbResults, smashingResults, phoronixResults, infoqResults, mittrResults,
-    gitlabResults, remoteokResults, ycResults, crunchbaseResults, behanceResults, designwebResults,
+    gitlabResults, remoteokResults, ycResults, crunchbaseResults, behanceResults, designwebResults, twitchResults,
   ] = await Promise.all([
     run('reddit')        ? Promise.all(topics.map(kw => fetchRedditByKeyword(kw))).catch(() => []) : [],
     run('hackernews')    ? Promise.all(topics.map(kw => fetchHNByKeyword(kw))).catch(() => [])     : [],
@@ -6512,6 +6476,7 @@ async function fetchAllTopicPosts(interests = [], role = '', skills = [], goals 
     run('crunchbase')    ? Promise.all(topics.map(kw => fetchCrunchbaseNews(kw))).catch(() => [])       : [],
     run('behance')       ? Promise.all(topics.map(kw => fetchBehanceProjects(kw))).catch(() => [])      : [],
     run('designweb')     ? Promise.all(topics.map(kw => fetchDesignWeb(kw))).catch(() => [])            : [],
+    run('twitch')        ? fetchTwitchPublicClips().catch(() => []) : [],
   ]);
 
   return {
@@ -6546,6 +6511,7 @@ async function fetchAllTopicPosts(interests = [], role = '', skills = [], goals 
     crunchbase:    crunchbaseResults.flat(),
     behance:       behanceResults.flat(),
     designweb:     designwebResults.flat(),
+    twitch:        twitchResults,
   };
 }
 
@@ -7380,6 +7346,7 @@ function startContinuousWorkers() {
     //  id               emoji   color       fetchFn                  keyMapper  startDelay
     ['weworkremotely', 'WWR', '#EF4444', expandedFeedSources.weworkremotely, () => 'jobs', 36000],
     ['cntraveler', 'LM', '#026B9C', expandedFeedSources.cntraveler, () => 'Travel', 38000],
+    ['twitch', 'Tw', '#9146FF', fetchTwitchPublicClips, () => 'Streaming', 40000],
     ['reddit',        '??', '#FF6347', fetchRedditByKeyword,     t => t,  0],  // pass topic name directly for TOPIC_SUBREDDITS lookup
     ['hn',            '??', '#FF6600', fetchHNByKeyword,         kw,   1000],
     ['github',        '??', '#94A3B8', fetchGitHubByKeyword,     kw,   2000],
@@ -14498,7 +14465,7 @@ const PLATFORMS = {
   },
   twitch: {
     name: 'Twitch', color: '#9146FF', icon: 'twitch',
-    description: 'Surface streams and updates from channels you follow.',
+    description: 'Browse public clips and read live streams and clips from channels you follow.',
     scopes: ['user:read:follows'],
     authUrl: 'https://id.twitch.tv/oauth2/authorize',
     loginUrl: 'https://www.twitch.tv/login',
@@ -15351,7 +15318,7 @@ const FOLLOWING_SOURCE_FETCHERS = {
   github:   fetchGitHubFollowingActivity,     // received_events — activity from people the member follows, see its own comment
   gitlab:   fetchGitLabFollowingActivity,     // /users/:id/following + per-followed-user /events — see its own comment
   reddit:   fetchRedditHomeFeed,              // oauth.reddit.com/ — the member's real personalized front page
-  twitch:   fetchTwitchFollowedStreams,       // GET /streams/followed — currently-live followed channels, see its own comment
+  twitch:   fetchTwitchFollowedStreams,       // member's followed streams + clips from authorized /channels/followed
   bluesky:  fetchBlueskyFollowingTimeline,    // app.bsky.feed.getTimeline — the member's real following timeline
   twitter:  fetchTwitterFollowingTimeline,    // /2/users/:id/timelines/reverse_chronological — authenticated followed accounts
   // figma, linkedin, dribbble, threads, and medium are deliberately absent —

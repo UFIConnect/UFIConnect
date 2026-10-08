@@ -29,6 +29,7 @@ test('public Home sources and connected Following sources share an explicit capa
   assert.ok(HOME_FEED_SOURCE_IDS.includes('weworkremotely'));
   assert.ok(HOME_FEED_SOURCE_IDS.includes('cntraveler'));
   assert.ok(HOME_FEED_SOURCE_IDS.includes('hackernews'));
+  assert.ok(HOME_FEED_SOURCE_IDS.includes('twitch'));
   assert.equal(following.hackernews, undefined);
   assert.deepEqual(FOLLOWING_FEED_SOURCE_IDS, ['uficonnect', ...Object.keys(following)]);
   for (const source of FOLLOWING_FEED_SOURCE_IDS) assert.equal(isFollowingSourceAllowed(source), true);
@@ -65,6 +66,7 @@ test('external website sign-in and identity-only tokens never become Following p
   assert.deepEqual(catalog.data.platforms.weworkremotely.feed, { home: true, following: null });
   assert.deepEqual(catalog.data.platforms.cntraveler.feed, { home: true, following: null });
   assert.deepEqual(catalog.data.platforms.youtube.feed, { home: true, following: 'following' });
+  assert.deepEqual(catalog.data.platforms.twitch.feed, { home: true, following: 'following' });
   assert.deepEqual(catalog.data.platforms.twitter.feed, { home: true, following: 'following' });
   assert.deepEqual(catalog.data.platforms.facebook.feed, { home: true, following: null });
   assert.deepEqual(catalog.data.platforms.reuters.feed, { home: false, following: null });

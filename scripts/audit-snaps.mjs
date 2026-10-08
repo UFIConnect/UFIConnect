@@ -110,14 +110,14 @@ try {
     await installAuditMember(page, app, owner);
     await auditNavigate(page, origin + '?feed=feed');
     const rail = page.locator('.snap-rail');
-    await rail.getByRole('button', { name: /View Snap owner's snap: native-public/ }).waitFor();
+    await rail.getByRole('button', { name: /facebook-fixture/ }).waitFor();
     check((await rail.getAttribute('data-snap-mode')) === 'home', 'Home reads its own Snap mode');
     await page.waitForFunction(() => { const image = document.querySelector('.snap-thumbnail img'); return image?.complete && image.naturalWidth > 0; });
     check(true, 'Snap thumbnails load actual media before opening the viewer');
-    assert.deepEqual(await rail.locator('.snap-source-box').evaluateAll(elements => elements.map(element => element.dataset.snapSource)), ['uficonnect', 'facebook', 'twitter']); checks++;
+    assert.deepEqual(await rail.locator('.snap-source-box').evaluateAll(elements => elements.map(element => element.dataset.snapSource)), ['facebook', 'twitter']); checks++;
     const nativeBox = rail.locator('[data-snap-source="uficonnect"]');
-    check(await nativeBox.getByRole('button', { name: 'Post snap', exact: true }).count() === 1
-      && await rail.getByRole('button', { name: 'Post snap', exact: true }).count() === 1, 'Post snap is contained only in the first UFI box');
+    check(await nativeBox.count() === 0 && await rail.getByRole('button', { name: 'Post snap', exact: true }).count() === 0
+      && await rail.getByRole('button', { name: /native-public|native-private|other-native/ }).count() === 0, 'Home excludes native snaps and native posting, including rows from a stale response');
     check(await rail.getByRole('heading', { name: 'Snaps', exact: true }).count() === 0
       && await rail.locator('.snap-rail-heading, .snap-rail-description').count() === 0, 'The rail has no visible Snaps title or subtitle');
     check(await rail.getByRole('button', { name: /previous|next|scroll|earlier|later/i }).count() === 0, 'The source row has no navigation arrows');
@@ -131,7 +131,8 @@ try {
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/snaps-home-${width}.png`) });
 
     const feedReadCount = () => reads.filter(read => read.endpoint !== '/snaps').length;
-    const refreshSource = async (label, source, mode = 'home') => {
+    const refreshSource = async (label, source, mode) => {
+      mode ||= await rail.getAttribute('data-snap-mode');
       const beforeFeed = feedReadCount(), beforeSnaps = reads.filter(read => read.endpoint === '/snaps').length;
       const response = page.waitForResponse(result => {
         const url = new URL(result.url());
@@ -144,7 +145,8 @@ try {
       assert.deepEqual(sourceReads, [{ endpoint: '/snaps', mode, source, bust: '1' }]); checks++;
       check(feedReadCount() === beforeFeed, `${label} refresh leaves post feeds untouched`);
     };
-    const reloadAllSnaps = async (mode = 'home') => {
+    const reloadAllSnaps = async (mode) => {
+      mode ||= await rail.getAttribute('data-snap-mode');
       const response = page.waitForResponse(result => {
         const url = new URL(result.url());
         return url.pathname === '/api/snaps' && url.searchParams.get('mode') === mode && !url.searchParams.has('source');
@@ -153,6 +155,12 @@ try {
       await response;
       await page.waitForFunction(() => document.querySelector('.snap-source-row')?.getAttribute('aria-busy') === 'false');
     };
+    await refreshSource('X (Twitter)', 'twitter');
+    check(await nativeBox.count() === 0, 'Refreshing a Home source never adds the UFI box');
+    await auditNavigate(page, origin + '?feed=following');
+    await nativeBox.getByRole('button', { name: /native-public/ }).waitFor();
+    check(await nativeBox.getByRole('button', { name: 'Post snap', exact: true }).count() === 1
+      && await rail.getByRole('button', { name: 'Post snap', exact: true }).count() === 1, 'Following retains posting only inside its UFI box');
     await refreshSource('UFI', 'uficonnect');
 
     const populatedRows = [...rows];
@@ -263,7 +271,7 @@ try {
     await rail.getByRole('button', { name: /View Snap author's snap: other-native/ }).click();
     await page.locator('dialog.snap-viewer').getByRole('link', { name: 'Snap author', exact: true }).click();
     await page.waitForURL(url => url.pathname === `/u/${author}`);
-    await auditNavigate(page, origin + '?feed=feed');
+    await auditNavigate(page, origin + '?feed=following');
     await rail.getByRole('button', { name: /View Snap owner's snap: native-public/ }).waitFor();
 
     await rail.getByRole('button', { name: 'Post snap', exact: true }).click();
@@ -299,13 +307,13 @@ try {
     check(await rail.getAttribute('data-snap-mode') === 'ufi', 'Standalone UFI also includes the native Snap rail');
 
     await auditNavigate(page, origin + '?feed=feed');
-    await rail.getByRole('button', { name: /native-public/ }).waitFor();
+    await rail.getByRole('button', { name: /twitter-fixture/ }).waitFor();
     holdMode = 'home';
-    await rail.getByRole('button', { name: 'Refresh UFI snaps', exact: true }).click(); await heldRequest;
+    await rail.getByRole('button', { name: 'Refresh X (Twitter) snaps', exact: true }).click(); await heldRequest;
     const oldHome = held; held = null;
     await auditNavigate(page, origin + '?feed=following');
     await page.locator('.snap-rail[data-snap-mode="following"]').getByRole('button', { name: /native-public/ }).waitFor();
-    await oldHome.route.fulfill({ json: { snaps: [snap('late-home-fixture', 'uficonnect', { caption: 'Wrong old Home response' })], sourceErrors: {} } }).catch(() => {});
+    await oldHome.route.fulfill({ json: { snaps: [snap('late-home-fixture', 'twitter', { caption: 'Wrong old Home response' })], sourceErrors: {} } }).catch(() => {});
     await page.waitForTimeout(150);
     check(await rail.getByRole('button', { name: /Wrong old Home response/ }).count() === 0, 'Late Home responses never replace Following snaps');
     assert.deepEqual(await rail.locator('.snap-source-box').evaluateAll(elements => elements.map(element => element.dataset.snapSource)), ['uficonnect', 'facebook', 'twitter']); checks++;
@@ -326,12 +334,12 @@ try {
     check(await rail.getByRole('button', { name: /Private first account snap/ }).count() === 0, 'Switching accounts clears private snap state and rejects the previous account response');
     viewerId = null;
     await auditNavigate(page, origin + 'global?audit-public=1');
-    await rail.getByRole('button', { name: /other-native/ }).waitFor();
+    await rail.getByRole('button', { name: /facebook-fixture/ }).waitFor();
     check(await rail.getByRole('button', { name: /Private first account snap/ }).count() === 0, 'Public Snap discovery excludes followers-only snaps');
-    check(await nativeBox.getByRole('link', { name: 'Post snap', exact: true }).getAttribute('href') === '/login', 'Guest posting stays inside the UFI box and routes to sign-in');
-    await refreshSource('UFI', 'uficonnect');
+    check(await nativeBox.count() === 0 && await rail.getByRole('link', { name: 'Post snap', exact: true }).count() === 0, 'Guest Home excludes UFI snaps and native posting');
+    await refreshSource('X (Twitter)', 'twitter');
     check(await rail.locator('.snap-source-favorite').count() === 0, 'Guests have no invented favorite sources');
-    await rail.getByRole('button', { name: /other-native/ }).click();
+    await rail.getByRole('button', { name: /facebook-fixture/ }).click();
     viewer = page.locator('dialog.snap-viewer'); await viewer.waitFor();
     check(await viewer.getByRole('button', { name: 'Delete this snap', exact: true }).count() === 0 && await viewer.getByRole('button', { name: 'Report this snap', exact: true }).count() === 0, 'Guest viewer exposes no authenticated content mutations');
     await page.keyboard.press('Escape');
@@ -339,7 +347,7 @@ try {
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/snaps-global-${width}.png`) });
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'No page overflow after dialogs, routes or account switching');
     assert.deepEqual(errors, []); checks++;
-    console.log(`PASS: UFI-first Snap boxes, contained posting, scoped refresh/error isolation, source favorites, Home/Following/UFI placement, signed upload, audience, profile/report/delete, expiry, session isolation and layout at ${width}px`);
+    console.log(`PASS: external-only Home Snaps, UFI/Following posting, scoped refresh/error isolation, source favorites, signed upload, audience, profile/report/delete, expiry, session isolation and layout at ${width}px`);
     await context.close();
   }
   console.log(`PASS: ${checks} Snap browser checks.`);

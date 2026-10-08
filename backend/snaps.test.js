@@ -38,18 +38,18 @@ test('native Snaps respect followers, blocks, profile visibility and expiry with
   const followed = await service.create(bob, body('followed', 'followers'));
   const publicSnap = await service.create(carol, body('public'));
   await service.create(hidden, body('hidden'));
-  assert.deepEqual((await service.list()).map(snap => snap.id), [publicSnap.id]);
+  assert.deepEqual((await service.list({ mode: 'ufi' })).map(snap => snap.id), [publicSnap.id]);
   assert.deepEqual((await service.list({ viewerId: alice, mode: 'following' })).map(snap => snap.id), [own.id]);
   await pg.query('INSERT INTO follows VALUES($1,$2)', [alice, bob]);
-  assert.deepEqual(new Set((await service.list({ viewerId: alice, mode: 'home' })).map(snap => snap.id)), new Set([own.id, followed.id, publicSnap.id]));
+  assert.deepEqual(new Set((await service.list({ viewerId: alice, mode: 'ufi' })).map(snap => snap.id)), new Set([own.id, followed.id, publicSnap.id]));
   assert.deepEqual(new Set((await service.list({ viewerId: alice, mode: 'following' })).map(snap => snap.id)), new Set([own.id, followed.id]));
   await pg.query('INSERT INTO blocks VALUES($1,$2)', [bob, alice]);
   assert.deepEqual((await service.list({ viewerId: alice, mode: 'following' })).map(snap => snap.id), [own.id]);
   await pg.query("INSERT INTO report_content_suppressions VALUES('post',$1)", [publicSnap.id]);
-  assert.deepEqual((await service.list()).map(snap => snap.id), []);
+  assert.deepEqual((await service.list({ mode: 'ufi' })).map(snap => snap.id), []);
   await assert.rejects(service.list({ mode: 'following' }), error => error.status === 401);
   controls.clock(now + 86400000);
-  assert.deepEqual(await service.list({ viewerId: alice }), [], 'Exact 24 hour boundary is expired');
+  assert.deepEqual(await service.list({ viewerId: alice, mode: 'ufi' }), [], 'Exact 24 hour boundary is expired');
 });
 test('publication is durable, rejects changes to ownership/lifetime and fails closed on screening or storage errors', async t => {
   const { pg, service, body, controls } = await fixture(t);
@@ -72,7 +72,7 @@ test('owner removal hides immediately; failed media cleanup retries and successf
   const { pg, service, body, controls, removedMedia } = await fixture(t);
   const snap = await service.create(alice, body('owned-photo'));
   await assert.rejects(service.remove(bob, snap.id), error => error.status === 404);
-  await service.remove(alice, snap.id); assert.deepEqual(await service.list(), []);
+  await service.remove(alice, snap.id); assert.deepEqual(await service.list({ mode: 'ufi' }), []);
   controls.destructionFails(true);
   assert.deepEqual(await service.cleanup(), { cleaned: 0, retrying: 1 });
   assert.equal((await pg.query('SELECT media_cleaned_at FROM community_snaps')).rows[0].media_cleaned_at, null);
@@ -121,7 +121,7 @@ test('source refresh isolates native storage and external adapters, rejects inva
     const response = { code: 200, set() {}, status(code) { this.code = code; return this; }, json(body) { this.body = body; return this; } };
     await get({ query, user }, response); return response;
   }
-  const native = await request({ mode: 'home', source: 'uficonnect', bust: '1' });
+  const native = await request({ mode: 'ufi', source: 'uficonnect', bust: '1' });
   assert.deepEqual(native.body.snaps, [{ id: 'native', source: 'uficonnect' }]);
   assert.equal(nativeReads, 1); assert.equal(externalCalls.length, 0);
   const external = await request({ mode: 'following', source: 'mastodon', bust: '1' });
@@ -129,10 +129,40 @@ test('source refresh isolates native storage and external adapters, rejects inva
   assert.deepEqual(external.body.sourceErrors, { mastodon: 'Reconnect Mastodon.' });
   assert.equal(nativeReads, 1);
   assert.deepEqual(externalCalls, [{ mode: 'following', viewerId: alice, source: 'mastodon', bust: true }]);
-  for (const query of [{ mode: 'home', source: 'unknown' }, { mode: 'ufi', source: 'mastodon' },
+  for (const query of [{ mode: 'home', source: 'unknown' }, { mode: 'home', source: 'uficonnect' }, { mode: 'ufi', source: 'mastodon' },
     { mode: 'following', source: 'facebook' }, { mode: 'home', source: ['mastodon'] }]) {
     assert.equal((await request(query)).code, 400);
   }
   assert.equal((await request({ mode: 'following', source: 'mastodon' }, null)).code, 401);
   assert.equal(nativeReads, 1); assert.equal(externalCalls.length, 1);
+});
+
+test('Home Snaps never read native storage and reject native source selection', async () => {
+  let get, nativeReads = 0, externalReads = 0;
+  registerSnapRoutes({ get: (_path, ...handlers) => { get = handlers.at(-1); }, post() {}, delete() {} }, {
+    service: { list: async () => { nativeReads++; throw new Error('Native storage must not be queried by Home'); } },
+    authenticate() {}, authenticateOptional() {}, limiter() {},
+    loadExternalSnaps: async () => {
+      externalReads++;
+      return { snaps: [{ id: 'native', source: 'uficonnect', isExternal: false },
+        { id: 'spoofed', source: 'uficonnect', isExternal: true },
+        { id: 'unsupported', source: 'unknown', isExternal: true },
+        { id: 'external', source: 'mastodon', isExternal: true }] };
+    },
+  });
+  async function request(query, user = null) {
+    const res = { code: 200, set() {}, status(value) { this.code = value; return this; }, json(body) { this.body = body; } };
+    await get({ query, user }, res); return res;
+  }
+  for (const query of [{}, { mode: 'home' }, { mode: 'home', source: 'mastodon', bust: '1' }]) {
+    const response = await request(query, { id: alice });
+    assert.equal(response.code, 200);
+    assert.deepEqual(response.body.snaps, [{ id: 'external', source: 'mastodon', isExternal: true }]);
+  }
+  assert.equal((await request({ mode: 'home', source: 'uficonnect' })).code, 400);
+  assert.equal(nativeReads, 0); assert.equal(externalReads, 3);
+  const nativeService = createSnaps({ db: { isConnected: () => false, query: async () => { throw new Error('No database reads'); } } });
+  assert.deepEqual(await nativeService.list({ mode: 'home' }), []);
+  assert.deepEqual(await nativeService.list({ mode: 'home', viewerId: alice }), []);
+  await assert.rejects(nativeService.list({ mode: 'ufi' }), { status: 503 });
 });

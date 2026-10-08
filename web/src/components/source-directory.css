@@ -8,6 +8,7 @@
 .source-directory-section .home-feed-source-name { white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
 .source-directory-account-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
 .source-directory-account-actions .account-site-link, .account-site-link { width: 36px; height: 36px; min-width: 36px; padding: 0; flex-shrink: 0; }
+.account-site-link.account-connection-site-link { width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
 .home-connected-account-row { grid-template-columns: 22px minmax(0, 1fr); border: 0; border-bottom: 1px solid var(--border); border-radius: 0; padding: 9px 0; }
 .home-connected-account-row .source-directory-account-actions { grid-column: 2; }
 .home-connected-account-name { white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }

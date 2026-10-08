@@ -27,7 +27,7 @@ function SnapThumbnail({ snap, onOpen }) {
   </button>;
 }
 
-// UFI stays available for posting. Other boxes contain actual active clips;
+// UFI and Following keep native posting. Home shows external source clips;
 // unavailable providers never appear as populated groups.
 export default function SnapRail({ mode = 'home', items = [], favorites = [], profile,
   loading = false, error = '', sourceErrors = {}, refreshingSources = [], onRefresh, onPostSnap, onDeleteSnap, notice = '' }) {
@@ -37,10 +37,12 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
   const [reportSnap, setReportSnap] = useState(null);
   const groups = useMemo(() => {
     const ranked = rankSnapGroups(items, favorites, now);
+    const external = ranked.filter(group => group.source !== 'uficonnect');
+    if (mode === 'home') return external;
     const native = ranked.find(group => group.source === 'uficonnect')
       || { source: 'uficonnect', items: [], favorite: favorites.includes('uficonnect') };
-    return [native, ...ranked.filter(group => group.source !== 'uficonnect')];
-  }, [items, favorites, now]);
+    return [native, ...external];
+  }, [mode, items, favorites, now]);
   const activeItems = groups.flatMap(group => group.items);
   const selectedIndex = activeItems.findIndex(snap => `${snap.source}:${snap.id}` === selectedId);
   const sourceFailures = Object.entries(normalizeSnapSourceErrors(sourceErrors));
