@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { clearSession, getAccessToken } from '../auth/session';
 import { deviceFeedRequestHeader } from '../utils/deviceFeedLocation.mjs';
+import { allowFeedLocation, requireFeedLocation } from '../utils/requiredFeedLocation.mjs';
 import { isRelativeApiRequest } from './apiEndpointPolicy';
 import {
   getCanonicalApiBaseUrl,
@@ -77,10 +78,18 @@ client.interceptors.request.use(async (config) => {
 client.interceptors.response.use(
   (res) => {
     markApiOriginHealthy(res.config?._ufiApiOrigin);
+    const token = getAccessToken();
+    const path = String(res.config?.url || '').split('?')[0];
+    if (token && res.config?.headers?.Authorization === `Bearer ${token}`
+      && /^\/(?:office\/)?feed(?:\/(?:location|music|videos(?:\/following)?))?$/.test(path)
+      && (path !== '/feed/location' || res.data?.automaticLocationAvailable)) allowFeedLocation(token);
     return res;
   },
   async (error) => {
     const { config, response } = error;
+    const token = getAccessToken();
+    if (token && response?.status === 428 && response.data?.code === 'feed_location_required'
+      && config?.headers?.Authorization === `Bearer ${token}`) requireFeedLocation(token);
     if (response?.status === 401 && !config?._ufiReauthentication && config?.headers?.Authorization === `Bearer ${getAccessToken()}`) {
       clearSession();
     }
