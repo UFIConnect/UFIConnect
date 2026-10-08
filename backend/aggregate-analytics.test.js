@@ -258,7 +258,7 @@ test('authenticated VPN requests do not update shared app activity', async t => 
   const app = await createAppHarness({ connected: true }); t.after(() => app.close());
   app.seedUser(require('./test-support/app-harness').member('vpn-metrics-test'));
   const before = app.queries.length;
-  assert.equal((await app.request('/vpn/config', { userId: 'vpn-metrics-test' })).status, 200);
+  assert.equal((await app.request('/vpn/config', { userId: 'vpn-metrics-test' })).status, 401);
   assert.equal(app.queries.slice(before).some(query => query.sql.includes('site_activity_heartbeat')), false);
   // The exclusion must not disable the existing activity signal elsewhere.
   await app.request('/profile', { userId: 'vpn-metrics-test' });

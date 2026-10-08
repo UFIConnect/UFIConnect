@@ -155,6 +155,12 @@ export function AuthProvider({ children }) {
 
   async function verifyPhoneSignIn(verificationId, code, { signal } = {}) {
     const { data } = await client.post('/auth/phone/verify', { verificationId, code }, publicOAuthRequestConfig({ signal }));
+    if (data.requiresSignup) return data;
+    return acceptSession(data);
+  }
+
+  async function completePhoneSignup(registrationId, name, { signal } = {}) {
+    const { data } = await client.post('/auth/phone/complete-signup', { registrationId, name }, publicOAuthRequestConfig({ signal }));
     return acceptSession(data);
   }
 
@@ -212,7 +218,7 @@ export function AuthProvider({ children }) {
   return (
     <AuthContext.Provider value={{
       token, profile, loading: loading || restoringSession || (auth0Enabled && auth0.isLoading),
-      sessionError: sessionError && !token, retrySession, login, register, verifyPhoneSignIn, logout, logoutAll,
+      sessionError: sessionError && !token, retrySession, login, register, verifyPhoneSignIn, completePhoneSignup, logout, logoutAll,
       updateProfileLocally, refreshProfile, auth0Enabled, auth0Ready, auth0Checking, loginWithAuth0, registerWithAuth0, deviceLocationRevision,
       retryDeviceLocation: () => setDeviceLocationAttempt(value => value + 1),
     }}>

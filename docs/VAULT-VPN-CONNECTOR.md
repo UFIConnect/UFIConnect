@@ -20,6 +20,8 @@ Imported profiles work independently of the UFIConnect app and browser. Signing 
 
 An active paid UFI Vault membership is required to create a profile and carry traffic. Trial access does not qualify. The gateway rechecks current membership and receives short authorizations lasting at most five minutes. Failed payment verification removes access; the same imported profile can recover after a temporary verification outage.
 
+Member VPN configuration and app connection requests also require verified, current paid Vault access. Pro or Business alone does not grant VPN access. The website locks these controls until membership is verified, ignores late connection responses after access changes and clears prepared private profile downloads when membership ends. Gateway availability and supported client setup are checked separately from payment.
+
 Profile registration is persistent. It reserves a member slot and gateway address until explicitly revoked, invalidated by account security changes, or removed with the account. Password changes/reset and signing out all sessions revoke registrations. Temporary billing outages and ordinary website logout do not erase them. Members can list and remove their own registrations without an active subscription.
 
 Each account may have three registered VPN devices/profiles. The approved gateway allows 100 registrations. No additional server, upgrade, or automatic capacity purchase occurs.

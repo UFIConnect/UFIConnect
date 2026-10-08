@@ -19,6 +19,7 @@ import ConfirmActionDialog from '../components/ConfirmActionDialog';
 import LegalLinks from '../components/LegalLinks';
 import AccountAccess from '../components/AccountAccess';
 import WebProtectionPanel from '../components/WebProtectionPanel';
+import SettingsEmailAddress from '../components/SettingsEmailAddress';
 
 // ── Shared preference constants ───────────────────────────────────────────────
 const GOALS = [
@@ -267,7 +268,10 @@ export default function Settings() {
         privacy_showConnections: privacy.showConnections,
         privacy_messagePermission: messagePermission,
       };
-      const payload = { ...form, skills: form.skills.split(',').map(s => s.trim()).filter(Boolean), roleSettings: merged };
+      // Phone sign-in changes use verified identity replacement in Security.
+      // A saved profile draft must never overwrite the verified login number.
+      const { phone: _phone, ...profileFields } = form;
+      const payload = { ...profileFields, skills: form.skills.split(',').map(s => s.trim()).filter(Boolean), roleSettings: merged };
       const { data } = await client.patch('/profile', payload);
       const persisted = data.profile || data;
       updateProfileLocally(persisted);
@@ -718,6 +722,7 @@ export default function Settings() {
       )}
 
       {/* ── Account tab ──────────────────────────────────────────────────────── */}
+      {activeTab === 'account' && <SettingsEmailAddress profile={profile} onProfileUpdate={updateProfileLocally} />}
       {activeTab === 'account' && (
         <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {/* Account info */}
@@ -733,18 +738,13 @@ export default function Settings() {
               )}
               <div>
                 <div style={{ fontWeight: 600, fontSize: '.9rem' }}>{profile.name}</div>
-                <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>{profile.email}</div>
+                <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>{profile.hasEmail === false ? 'Phone account' : profile.email}</div>
               </div>
             </div>
             <div className="form-group" style={{ marginBottom: 4 }}>
-              <label className="form-label">Email address</label>
-              <input className="form-input" value={profile.email} disabled style={{ background: 'var(--bg-secondary)', color: 'var(--muted)' }} />
-              <span style={{ fontSize: '.72rem', color: 'var(--muted)', marginTop: 3, display: 'block' }}>Email cannot be changed. Contact support if you need help.</span>
-            </div>
-            <div className="form-group" style={{ marginBottom: 4 }}>
-              <label className="form-label">Billing phone number</label>
-              <input className="form-input" type="tel" name="phone" value={form.phone} onChange={handleChange} placeholder="+1 555 123 4567" autoComplete="tel" inputMode="tel" />
-              <span style={{ fontSize: '.72rem', color: 'var(--muted)', marginTop: 3, display: 'block' }}>Include your country code. This stays private and is used only to keep Stripe billing accurate.</span>
+              <label className="form-label" htmlFor="settings-phone-number">Private phone number</label>
+              <input id="settings-phone-number" className="form-input" type="tel" value={profile.phone || ''} readOnly placeholder="No phone number added" />
+              <span style={{ fontSize: '.72rem', color: 'var(--muted)', marginTop: 3, display: 'block' }}>Add or change your sign-in number in <Link to="/settings?tab=security" onClick={() => setActiveTab('security')}>Security</Link>. The new number must be verified before it replaces your current number.</span>
             </div>
             {profile?.plan !== 'business' && <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>
               Profile photo and cover image are managed from your <Link to="/profile">profile page</Link>.
@@ -864,7 +864,7 @@ export default function Settings() {
           {securityStatusError && <div className="auth-error" role="alert">{securityStatusError}</div>}
           <div className="card">
             <SectionHeading>Sign-in methods</SectionHeading>
-            <AccountAccess mode="link" onSignedIn={() => navigate('/settings?tab=security&linked=phone', { replace: true })} />
+            <AccountAccess mode="link" allowPhoneReplacement onSignedIn={() => navigate('/settings?tab=security&linked=phone', { replace: true })} />
           </div>
           <div className="card">
             <SectionHeading>Password</SectionHeading>

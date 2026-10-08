@@ -61,7 +61,7 @@ import '/src/pages/Vault.css';
 setAccessToken('synthetic-account-a');
 window.__profileAudit={downloads:[],clearSession,dispatches:[],dispatchWaiting:false};
 let dispatchHold=null,releaseDispatch=null;
-window.__profileAudit.holdDispatch=()=>{dispatchHold=new Promise(resolve=>{releaseDispatch=resolve;});};
+window.__profileAudit.holdDispatch=()=>{window.__profileAudit.dispatchWaiting=false;dispatchHold=new Promise(resolve=>{releaseDispatch=resolve;});};
 window.__profileAudit.releaseDispatch=()=>{releaseDispatch();dispatchHold=null;};
 client.interceptors.request.use(async config=>{
  if(config.method==='post'&&config.url==='/vpn/profiles'){
@@ -95,14 +95,14 @@ try {
     const context = await browser.newContext({ viewport: { width, height: 900 }, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1', serviceWorkers: 'block' });
     page = await context.newPage(); page.setDefaultTimeout(10000); await page.clock.install();
     const requests = [], errors = [], posted = [], profiles = new Map();
-    let registrations = 0, removals = 0, failure = false, poison = false, unavailable = false, held = null;
+    let registrations = 0, removals = 0, failure = false, poison = false, unavailable = false, held = null, configReads = 0;
     page.on('pageerror', error => errors.push(error.message));
     page.on('request', request => requests.push({ url: request.url(), body: request.postData() || '' }));
     await context.route('**/api/**', async route => {
       const request = route.request(), url = new URL(request.url());
       if (!url.pathname.startsWith('/api/')) return route.continue();
       const owner = request.headers().authorization;
-      if (url.pathname === '/api/vpn/config') return route.fulfill({ json: { ...config, available: !unavailable } });
+      if (url.pathname === '/api/vpn/config') { configReads++; return route.fulfill({ json: { ...config, available: !unavailable } }); }
       if (url.pathname === '/api/vpn/profiles' && request.method() === 'GET') return route.fulfill({ json: { profiles: [...profiles.values()].filter(value => value.owner === owner).map(value => value.data.profile) } });
       if (url.pathname === '/api/vpn/profiles' && request.method() === 'POST') {
         registrations++; const body = request.postDataJSON(); posted.push(body);
@@ -126,8 +126,10 @@ try {
     const consent = page.getByRole('checkbox');
     await page.locator('.vault-status').filter({ hasText: 'Subscription required' }).waitFor();
     check(registrations === 0 && await button.isDisabled(), 'Opening #vpn does not create a profile');
+    check(configReads === 0, 'Unpaid iPhone user never fetches member VPN configuration');
     await page.evaluate(() => window.__profileAudit.update({ trial: true }));
     check(await button.isDisabled(), 'Vault trial cannot create paid VPN profile');
+    check(configReads === 0, 'Vault trial never fetches paid VPN configuration');
     await page.evaluate(() => window.__profileAudit.update({ trial: false, paid: true }));
     await page.locator('.vault-status').filter({ hasText: 'Ready for WireGuard' }).waitFor();
     check(await button.isDisabled(), 'First use requires disclosure consent');
@@ -159,6 +161,10 @@ try {
     check(!await page.locator('body').innerText().then(text => text.includes(privateKey)), 'Private key is never displayed as page text');
     check((await page.locator('.vault-status').innerText()) === 'Profile ready', 'Downloaded profile is not presented as connected');
     check(await page.getByRole('link', { name: /Get official WireGuard/ }).getAttribute('href') === 'https://apps.apple.com/app/wireguard/id1441195209', 'Official iOS app link only');
+    await page.evaluate(() => window.__profileAudit.update({ paid: false }));
+    await page.locator('.vault-status').filter({ hasText: 'Subscription required' }).waitFor();
+    check(await page.getByRole('link', { name: 'Download VPN profile', exact: true }).count() === 0, 'Membership loss immediately hides the private download');
+    check(await page.evaluate(async url => { try { await fetch(url); return false; } catch { return true; } }, download.url), 'Membership loss revokes the prepared private Blob');
     await page.evaluate(() => window.__profileAudit.update({ accountId: 'account-b', paid: true }));
     check(await page.getByRole('link', { name: 'Download VPN profile', exact: true }).count() === 0, 'Account switch immediately removes old private download');
     check(await page.evaluate(async url => { try { await fetch(url); return false; } catch { return true; } }, download.url), 'Old account Blob URL is revoked');
@@ -195,6 +201,14 @@ try {
     await button.click(); await page.getByRole('alert').filter({ hasText: 'temporarily unavailable' }).waitFor();
     check(posted.at(-1).publicKey !== pendingKey, 'Uncertain registration retry key is discarded after three minutes');
     failure = false;
+    await page.evaluate(() => window.__profileAudit.holdDispatch());
+    const beforeCancellation = registrations;
+    await button.click(); await page.waitForFunction(() => window.__profileAudit.dispatchWaiting);
+    await page.evaluate(() => window.__profileAudit.update({ paid: false }));
+    await page.evaluate(() => window.__profileAudit.releaseDispatch());
+    await page.waitForFunction(() => window.__profileAudit.dispatches.at(-1)?.aborted);
+    check(registrations === beforeCancellation, 'Membership loss aborts profile generation before delayed dispatch');
+    check(await page.evaluate(() => window.__profileAudit.downloads.length) === 2, 'Canceled profile preparation cannot produce a private download');
     const text = await page.locator('body').innerText();
     check(!/terminal|powershell|configured countries|Device, locations and setup|Add configured location/i.test(text) && await page.locator('select,input:not([type=checkbox])').count() === 0, 'No manual commands or device/location forms');
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Profile flow fits viewport');

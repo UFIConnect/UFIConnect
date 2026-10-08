@@ -9,26 +9,36 @@ export default function useSnaps(mode, viewerId) {
   currentIdentity.current = identity;
   const controller = useRef(null);
   const requestGeneration = useRef(0);
-  const [snapshot, setSnapshot] = useState({ identity: '', snaps: [], loading: false, error: '', sourceErrors: {} });
-  const refresh = useCallback(async (bust = false) => {
+  const [snapshot, setSnapshot] = useState({ identity: '', snaps: [], loading: false, error: '', sourceErrors: {}, refreshingSources: [] });
+  const refresh = useCallback(async (bust = false, source = null) => {
     controller.current?.abort();
     const request = new AbortController();
     controller.current = request;
     const generation = ++requestGeneration.current;
     if (mode === 'following' && !viewerId) {
-      setSnapshot({ identity, snaps: [], loading: false, error: '', sourceErrors: {} });
+      setSnapshot({ identity, snaps: [], loading: false, error: '', sourceErrors: {}, refreshingSources: [] });
       return;
     }
-    setSnapshot(previous => ({ identity, snaps: previous.identity === identity ? previous.snaps : [], loading: true, error: '', sourceErrors: previous.identity === identity ? previous.sourceErrors : {} }));
+    setSnapshot(previous => ({ identity, snaps: previous.identity === identity ? previous.snaps : [], loading: true, error: '', sourceErrors: previous.identity === identity ? previous.sourceErrors : {}, refreshingSources: source ? [source] : [] }));
     try {
-      const { data } = await client.get('/snaps', { params: { mode, ...(bust ? { bust: '1' } : {}) }, signal: request.signal });
+      const { data } = await client.get('/snaps', { params: { mode, ...(source ? { source } : {}), ...(bust ? { bust: '1' } : {}) }, signal: request.signal });
       if (!Array.isArray(data?.snaps)) throw new Error('Snaps could not be loaded.');
       if (generation === requestGeneration.current && identity === currentIdentity.current && !request.signal.aborted) {
-        setSnapshot({ identity, snaps: data.snaps, loading: false, error: '', sourceErrors: normalizeSnapSourceErrors(data.sourceErrors) });
+        setSnapshot(previous => {
+          const existing = previous.identity === identity ? previous : { snaps: [], sourceErrors: {} };
+          const sourceErrors = normalizeSnapSourceErrors(data.sourceErrors);
+          if (source) {
+            const retainedErrors = { ...existing.sourceErrors };
+            delete retainedErrors[source];
+            return { identity, snaps: [...existing.snaps.filter(snap => snap.source !== source), ...data.snaps.filter(snap => snap.source === source)], loading: false, error: '', sourceErrors: { ...retainedErrors, ...(sourceErrors[source] ? { [source]: sourceErrors[source] } : {}) }, refreshingSources: [] };
+          }
+          return { identity, snaps: data.snaps, loading: false, error: '', sourceErrors, refreshingSources: [] };
+        });
       }
     } catch (error) {
       if (request.signal.aborted || generation !== requestGeneration.current || identity !== currentIdentity.current) return;
-      setSnapshot(previous => ({ ...previous, loading: false, error: error.response?.data?.message || error.message || 'Snaps could not be loaded.' }));
+      const message = error.response?.data?.message || error.message || 'Snaps could not be loaded.';
+      setSnapshot(previous => ({ ...previous, loading: false, refreshingSources: [], ...(source ? { sourceErrors: { ...previous.sourceErrors, [source]: message } } : { error: message }) }));
     }
   }, [identity, mode, viewerId]);
   useEffect(() => {
@@ -37,7 +47,7 @@ export default function useSnaps(mode, viewerId) {
     const clear = () => {
       controller.current?.abort();
       requestGeneration.current++;
-      setSnapshot({ identity: '', snaps: [], loading: false, error: '', sourceErrors: {} });
+      setSnapshot({ identity: '', snaps: [], loading: false, error: '', sourceErrors: {}, refreshingSources: [] });
     };
     window.addEventListener('ufi-connections-changed', reload);
     window.addEventListener('ufi-session-cleared', clear);
@@ -52,7 +62,7 @@ export default function useSnaps(mode, viewerId) {
     if (!viewerId) throw new Error('Sign in to post a Snap.');
     const publishingIdentity = identity;
     const { data } = await client.post('/snaps', payload, { timeout: 60000 });
-    if (publishingIdentity === currentIdentity.current) await refresh(true);
+    if (publishingIdentity === currentIdentity.current) await refresh(true, 'uficonnect');
     return data.snap;
   }, [identity, viewerId, refresh]);
   const remove = useCallback(async snapId => {
@@ -63,6 +73,6 @@ export default function useSnaps(mode, viewerId) {
       setSnapshot(previous => previous.identity === identity ? { ...previous, snaps: previous.snaps.filter(snap => snap.id !== snapId) } : previous);
     }
   }, [identity, viewerId]);
-  const visible = snapshot.identity === identity ? snapshot : { snaps: [], loading: true, error: '', sourceErrors: {} };
-  return { items: visible.snaps, loading: visible.loading, error: visible.error, sourceErrors: visible.sourceErrors, refresh: () => refresh(true), publish, remove };
+  const visible = snapshot.identity === identity ? snapshot : { snaps: [], loading: true, error: '', sourceErrors: {}, refreshingSources: [] };
+  return { items: visible.snaps, loading: visible.loading, error: visible.error, sourceErrors: visible.sourceErrors, refreshingSources: visible.refreshingSources, refresh: source => refresh(true, source), publish, remove };
 }

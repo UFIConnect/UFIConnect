@@ -56,7 +56,8 @@ try {
       snap('twitter-fixture', 'twitter', { author: { id: 'twitter-author', name: 'X fixture', profileUrl: 'https://x.com/example' }, sourceUrl: 'https://x.com/example/status/123' }),
       snap('expired-fixture', 'instagram', { caption: 'Expired fixture', expiresAt: new Date(Date.now() - 1000).toISOString() }),
     ];
-    const visibleRows = mode => rows.filter(item => (mode !== 'ufi' || item.source === 'uficonnect')
+    const visibleRows = (mode, source) => rows.filter(item => (mode !== 'ufi' || item.source === 'uficonnect')
+      && (!source || item.source === source)
       && (item.visibility !== 'followers' || item.author.id === viewerId));
     page.on('pageerror', error => errors.push(error.message));
     await context.route('**/*', async route => {
@@ -77,8 +78,10 @@ try {
       const endpoint = url.pathname.replace(/^\/api/, ''), method = request.method();
       const fulfill = json => route.fulfill({ json });
       if (endpoint === '/snaps' && method === 'GET') {
-        const mode = url.searchParams.get('mode') || 'home'; reads.push({ endpoint, mode });
-        const body = { snaps: visibleRows(mode), sourceErrors: sourceFailures };
+        const mode = url.searchParams.get('mode') || 'home', source = url.searchParams.get('source');
+        reads.push({ endpoint, mode, source, bust: url.searchParams.get('bust') });
+        const sourceErrors = source ? Object.fromEntries(Object.entries(sourceFailures).filter(([key]) => key === source)) : { ...sourceFailures };
+        const body = { snaps: visibleRows(mode, source), sourceErrors };
         if (holdMode === mode) {
           holdMode = null; held = { route, body }; heldRequestResolve(); return;
         }
@@ -111,7 +114,13 @@ try {
     check((await rail.getAttribute('data-snap-mode')) === 'home', 'Home reads its own Snap mode');
     await page.waitForFunction(() => { const image = document.querySelector('.snap-thumbnail img'); return image?.complete && image.naturalWidth > 0; });
     check(true, 'Snap thumbnails load actual media before opening the viewer');
-    assert.deepEqual(await rail.locator('.snap-source-box').evaluateAll(elements => elements.map(element => element.dataset.snapSource)), ['facebook', 'twitter', 'uficonnect']); checks++;
+    assert.deepEqual(await rail.locator('.snap-source-box').evaluateAll(elements => elements.map(element => element.dataset.snapSource)), ['uficonnect', 'facebook', 'twitter']); checks++;
+    const nativeBox = rail.locator('[data-snap-source="uficonnect"]');
+    check(await nativeBox.getByRole('button', { name: 'Post snap', exact: true }).count() === 1
+      && await rail.getByRole('button', { name: 'Post snap', exact: true }).count() === 1, 'Post snap is contained only in the first UFI box');
+    check(await rail.getByRole('heading', { name: 'Snaps', exact: true }).count() === 0
+      && await rail.locator('.snap-rail-heading, .snap-rail-description').count() === 0, 'The rail has no visible Snaps title or subtitle');
+    check(await rail.getByRole('button', { name: /previous|next|scroll|earlier|later/i }).count() === 0, 'The source row has no navigation arrows');
     check(await rail.getByRole('button', { name: /Expired fixture/ }).count() === 0, 'Expired snaps are removed before rendering');
     const cardBoxes = await rail.locator('.snap-source-box').evaluateAll(elements => elements.map(element => ({ x: element.getBoundingClientRect().x, y: element.getBoundingClientRect().y, background: getComputedStyle(element).backgroundColor })));
     check(cardBoxes.every(box => box.background === 'rgb(8, 8, 8)'), 'Every source is contained in a black box');
@@ -122,11 +131,39 @@ try {
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/snaps-home-${width}.png`) });
 
     const feedReadCount = () => reads.filter(read => read.endpoint !== '/snaps').length;
-    const beforeFeed = feedReadCount(), beforeSnaps = reads.filter(read => read.endpoint === '/snaps').length;
-    await rail.getByRole('button', { name: 'Refresh snaps', exact: true }).click();
-    await rail.getByRole('button', { name: 'Refresh snaps', exact: true }).waitFor({ state: 'visible' });
-    await page.waitForFunction(() => !document.querySelector('.snap-refresh-button')?.disabled);
-    check(reads.filter(read => read.endpoint === '/snaps').length === beforeSnaps + 1 && feedReadCount() === beforeFeed, 'Snap refresh does not consume or reload post feeds');
+    const refreshSource = async (label, source, mode = 'home') => {
+      const beforeFeed = feedReadCount(), beforeSnaps = reads.filter(read => read.endpoint === '/snaps').length;
+      const response = page.waitForResponse(result => {
+        const url = new URL(result.url());
+        return url.pathname === '/api/snaps' && url.searchParams.get('mode') === mode && url.searchParams.get('source') === source && url.searchParams.get('bust') === '1';
+      });
+      await rail.getByRole('button', { name: `Refresh ${label} snaps`, exact: true }).click();
+      await response;
+      await page.waitForFunction(source => document.querySelector(`[data-snap-source="${source}"] .snap-refresh-button`)?.disabled === false, source);
+      const sourceReads = reads.filter(read => read.endpoint === '/snaps').slice(beforeSnaps);
+      assert.deepEqual(sourceReads, [{ endpoint: '/snaps', mode, source, bust: '1' }]); checks++;
+      check(feedReadCount() === beforeFeed, `${label} refresh leaves post feeds untouched`);
+    };
+    const reloadAllSnaps = async (mode = 'home') => {
+      const response = page.waitForResponse(result => {
+        const url = new URL(result.url());
+        return url.pathname === '/api/snaps' && url.searchParams.get('mode') === mode && !url.searchParams.has('source');
+      });
+      await page.evaluate(() => window.dispatchEvent(new Event('ufi-connections-changed')));
+      await response;
+      await page.waitForFunction(() => document.querySelector('.snap-source-row')?.getAttribute('aria-busy') === 'false');
+    };
+    await refreshSource('UFI', 'uficonnect');
+
+    const populatedRows = [...rows];
+    rows = rows.filter(item => item.source !== 'uficonnect');
+    await refreshSource('UFI', 'uficonnect');
+    await nativeBox.getByText('No UFI snaps yet.', { exact: true }).waitFor();
+    assert.deepEqual(await rail.locator('.snap-source-box').evaluateAll(elements => elements.map(element => element.dataset.snapSource)), ['uficonnect', 'facebook', 'twitter']); checks++;
+    check(await nativeBox.locator('.snap-thumbnail').count() === 0 && await nativeBox.getByRole('button', { name: 'Post snap', exact: true }).isEnabled(), 'An empty UFI box stays first and permits posting without fabricated snaps');
+    check(await rail.getByRole('button', { name: /facebook-fixture/ }).count() === 1 && await rail.getByRole('button', { name: /twitter-fixture/ }).count() === 1, 'An empty UFI refresh preserves other source content');
+    rows = populatedRows;
+    await refreshSource('UFI', 'uficonnect');
 
     const originalRows = [...rows];
     const publicClip = (id, source, sourceUrl, extra = {}) => snap(id, source, {
@@ -142,15 +179,32 @@ try {
       publicClip('authorized-file-fixture', 'mastodon', 'https://mastodon.social/@clipper/98766', { mediaKind: 'file', mediaUrl: 'https://media.snaps.invalid/clip.mp4', directPlaybackAuthorized: true }),
       publicClip('authorized-hls-fixture', 'mastodon', 'https://mastodon.social/@clipper/98767', { mediaKind: 'hls', mediaUrl: 'https://media.snaps.invalid/clip.m3u8', directPlaybackAuthorized: true }),
     );
-    sourceFailures = { twitch: 'Clip refresh is temporarily unavailable.' };
-    await rail.getByRole('button', { name: 'Refresh snaps', exact: true }).click();
+    sourceFailures = { twitch: 'Clip refresh is temporarily unavailable.', twitter: 'X clips could not refresh.' };
+    await reloadAllSnaps();
     await rail.getByRole('button', { name: /youtube-short-fixture/ }).waitFor();
     await rail.getByRole('status', { name: 'Snap source availability', exact: true }).getByText('Twitch', { exact: true }).waitFor();
+    await rail.getByRole('status', { name: 'Snap source availability', exact: true }).getByText('X (Twitter)', { exact: true }).waitFor();
     check(await rail.locator('.snap-source-box').count() === 7, 'Each populated source has its own box while an unavailable source has no fabricated box');
     check(await rail.locator('[data-snap-source="twitch"]').count() === 0, 'Source failures leave other clips visible');
-    check(!(await rail.locator('.snap-rail-heading p').innerText()).includes('last 24 hours'), 'Public source clips are not described as expiring stories');
+    check(await rail.getByText(/last 24 hours/i).count() === 0, 'Public source clips are not described as expiring stories');
     const expandedBoxes = await rail.locator('.snap-source-box').evaluateAll(elements => elements.map(element => ({ y: element.getBoundingClientRect().y, background: getComputedStyle(element).backgroundColor })));
     check(expandedBoxes.every(box => box.background === 'rgb(8, 8, 8)' && Math.abs(box.y - expandedBoxes[0].y) < 2), 'All populated source boxes remain black and on one horizontal row');
+
+    const beforeScopedRows = [...rows];
+    rows = rows.map(item => item.id === 'twitter-fixture' ? { ...item, caption: 'Updated X snap' }
+      : item.id === 'facebook-fixture' ? { ...item, caption: 'Unrequested Facebook update' } : item);
+    sourceFailures = { twitch: 'Clip refresh is temporarily unavailable.' };
+    await refreshSource('X (Twitter)', 'twitter');
+    await rail.getByRole('button', { name: /Updated X snap/ }).waitFor();
+    check(await rail.getByRole('button', { name: /twitter-fixture/ }).count() === 0, 'A scoped refresh replaces the chosen source content');
+    check(await rail.getByRole('button', { name: /facebook-fixture/ }).count() === 1
+      && await rail.getByRole('button', { name: /Unrequested Facebook update/ }).count() === 0
+      && await nativeBox.getByRole('button', { name: /native-public/ }).count() === 1, 'Refreshing X preserves UFI and Facebook content even when their server fixtures change');
+    const availability = rail.getByRole('status', { name: 'Snap source availability', exact: true });
+    check(await availability.getByText('Twitch', { exact: true }).count() === 1
+      && await availability.getByText('X (Twitter)', { exact: true }).count() === 0, 'A recovered source clears only its own error and preserves unrelated source errors');
+    rows = beforeScopedRows;
+    await refreshSource('X (Twitter)', 'twitter');
 
     for (const [id, expectedHost, expectedPath] of [
       ['youtube-short-fixture', 'www.youtube.com', '/embed/abcdefghijk'],
@@ -185,12 +239,14 @@ try {
     }
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Public source clips and availability notices keep the page within the viewport');
     rows = originalRows; sourceFailures = {};
-    await rail.getByRole('button', { name: 'Refresh snaps', exact: true }).click();
+    await reloadAllSnaps();
     await page.waitForFunction(() => !document.querySelector('.snap-source-notices'));
     check(await rail.locator('.snap-source-box').count() === 3, 'Refreshing clears recovered provider notices and restores current source groups');
 
     await rail.getByRole('button', { name: /View Snap author's snap: other-native/ }).click();
     let viewer = page.locator('dialog.snap-viewer'); await viewer.waitFor();
+    check(await viewer.getByRole('button', { name: 'Previous snap', exact: true }).count() === 1
+      && await viewer.getByRole('button', { name: 'Next snap', exact: true }).count() === 1, 'Viewer navigation arrows remain available independently of the source row');
     await page.waitForFunction(() => { const image = document.querySelector('.snap-viewer-media img'); return image?.complete && image.naturalWidth > 0; });
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/snaps-viewer-${width}.png`) });
     check(await viewer.getByRole('link', { name: 'Snap author', exact: true }).getAttribute('href') === `/u/${author}`, 'Snap author routes to the posting profile');
@@ -245,11 +301,11 @@ try {
     await auditNavigate(page, origin + '?feed=feed');
     await rail.getByRole('button', { name: /native-public/ }).waitFor();
     holdMode = 'home';
-    await rail.getByRole('button', { name: 'Refresh snaps', exact: true }).click(); await heldRequest;
+    await rail.getByRole('button', { name: 'Refresh UFI snaps', exact: true }).click(); await heldRequest;
     const oldHome = held; held = null;
     await auditNavigate(page, origin + '?feed=following');
     await page.locator('.snap-rail[data-snap-mode="following"]').getByRole('button', { name: /native-public/ }).waitFor();
-    await oldHome.route.fulfill({ json: { snaps: [snap('late-home-fixture', 'facebook', { caption: 'Wrong old Home response' })], sourceErrors: {} } }).catch(() => {});
+    await oldHome.route.fulfill({ json: { snaps: [snap('late-home-fixture', 'uficonnect', { caption: 'Wrong old Home response' })], sourceErrors: {} } }).catch(() => {});
     await page.waitForTimeout(150);
     check(await rail.getByRole('button', { name: /Wrong old Home response/ }).count() === 0, 'Late Home responses never replace Following snaps');
     assert.deepEqual(await rail.locator('.snap-source-box').evaluateAll(elements => elements.map(element => element.dataset.snapSource)), ['uficonnect', 'facebook', 'twitter']); checks++;
@@ -258,7 +314,7 @@ try {
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/snaps-following-${width}.png`) });
 
     heldRequest = new Promise(resolve => { heldRequestResolve = resolve; }); holdMode = 'following';
-    await rail.getByRole('button', { name: 'Refresh snaps', exact: true }).click(); await heldRequest;
+    await rail.getByRole('button', { name: 'Refresh UFI snaps', exact: true }).click(); await heldRequest;
     const oldAccount = held;
     viewerId = nextOwner;
     rows.push(snap('next-account-fixture', 'uficonnect', { owned: true, author: { id: nextOwner, name: 'Next member' } }));
@@ -272,7 +328,8 @@ try {
     await auditNavigate(page, origin + 'global?audit-public=1');
     await rail.getByRole('button', { name: /other-native/ }).waitFor();
     check(await rail.getByRole('button', { name: /Private first account snap/ }).count() === 0, 'Public Snap discovery excludes followers-only snaps');
-    check(await rail.getByRole('link', { name: 'Post snap', exact: true }).getAttribute('href') === '/login', 'Guest posting routes to sign-in');
+    check(await nativeBox.getByRole('link', { name: 'Post snap', exact: true }).getAttribute('href') === '/login', 'Guest posting stays inside the UFI box and routes to sign-in');
+    await refreshSource('UFI', 'uficonnect');
     check(await rail.locator('.snap-source-favorite').count() === 0, 'Guests have no invented favorite sources');
     await rail.getByRole('button', { name: /other-native/ }).click();
     viewer = page.locator('dialog.snap-viewer'); await viewer.waitFor();
@@ -282,7 +339,7 @@ try {
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/snaps-global-${width}.png`) });
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'No page overflow after dialogs, routes or account switching');
     assert.deepEqual(errors, []); checks++;
-    console.log(`PASS: Snap grouping, favorites, Home/Following/UFI placement, refresh, signed upload, audience, profile/report/delete, expiry, session isolation and layout at ${width}px`);
+    console.log(`PASS: UFI-first Snap boxes, contained posting, scoped refresh/error isolation, source favorites, Home/Following/UFI placement, signed upload, audience, profile/report/delete, expiry, session isolation and layout at ${width}px`);
     await context.close();
   }
   console.log(`PASS: ${checks} Snap browser checks.`);

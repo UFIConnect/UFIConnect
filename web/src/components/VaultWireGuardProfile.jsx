@@ -24,6 +24,8 @@ export default function VaultWireGuardProfile({ accountId, config, checking, ava
   const listAbort = useRef(null);
   const sessionToken = getAccessToken();
   const account = useRef(accountId); account.current = accountId;
+  const currentBilling = useRef(billing); currentBilling.current = billing;
+  const paid = paidVpnAccess(billing);
   const forget = useCallback(() => {
     clearTimeout(identityTimer.current); clearTimeout(downloadTimer.current);
     forgetIdentity(identity.current); identity.current = null;
@@ -61,22 +63,29 @@ export default function VaultWireGuardProfile({ accountId, config, checking, ava
     window.addEventListener('pagehide', clear);
     return () => { revision.current++; listSequence.current++; operation.current?.abort.abort(); operation.current = null; listAbort.current?.abort(); forget(); window.removeEventListener('ufi-session-cleared', clear); window.removeEventListener('pagehide', clear); };
   }, [accountId, sessionToken, loadProfiles, forget]);
+  useLayoutEffect(() => {
+    if (billing.checking || paid) return;
+    if (operation.current?.action === 'create') {
+      operation.current.abort.abort(); operation.current = null; setBusy(false);
+    }
+    forget(); setReady(null); setAgreed(false);
+  }, [billing.checking, paid, forget]);
   const available = config?.available === true && config?.profileImportAvailable === true && config?.protocol === 'wireguard'
     && Array.isArray(config.gateways) && config.gateways.some(value => value?.country === 'DE');
-  const paid = paidVpnAccess(billing);
   const visibleProfiles = profilesOwner.current?.account === accountId && profilesOwner.current?.token === sessionToken ? profiles : null;
-  const visibleReady = ready?.account === accountId && ready?.token === sessionToken ? ready : null;
+  const visibleReady = paid && ready?.account === accountId && ready?.token === sessionToken ? ready : null;
   const canCreate = Boolean(accountId && paid && available && !checking && visibleProfiles && agreed);
-  const start = () => {
+  const start = (action = 'remove') => {
     if (operation.current || !accountId || !sessionToken || getAccessToken() !== sessionToken) return null;
-    const request = { account: accountId, revision: revision.current, token: sessionToken, abort: new AbortController() };
+    const request = { account: accountId, action, revision: revision.current, token: sessionToken, abort: new AbortController() };
     operation.current = request; setBusy(true); setError(''); listSequence.current++;
-    return { request, current: () => account.current === request.account && revision.current === request.revision && getAccessToken() === request.token };
+    return { request, current: () => !request.abort.signal.aborted && account.current === request.account && revision.current === request.revision && getAccessToken() === request.token
+      && (request.action !== 'create' || paidVpnAccess(currentBilling.current)) };
   };
   const finish = request => { if (operation.current === request) { operation.current = null; setBusy(false); } };
   async function createProfile() {
-    if (!canCreate || file.current) return;
-    const work = start(); if (!work) return;
+    if (!canCreate || !paidVpnAccess(currentBilling.current) || file.current) return;
+    const work = start('create'); if (!work) return;
     try {
       // Reuse this in-memory key on an explicit retry: a response lost in transit
       // must not consume another registration slot. Never persist these bytes.
@@ -141,7 +150,7 @@ export default function VaultWireGuardProfile({ accountId, config, checking, ava
   const status = checking || billing.checking ? 'Checking availability' : !paid ? 'Subscription required'
     : !available ? 'Unavailable' : visibleReady ? 'Profile ready' : 'Ready for WireGuard';
   return <section id="vpn" className="vault-panel vault-vpn-panel vault-managed-vpn" aria-labelledby="vault-vpn-title">
-    <div className="vault-panel-heading"><span className="vault-eyebrow"><Globe2 size={15} /> CONNECTION</span><button className="vault-icon-button" type="button" aria-label="Check VPN availability" disabled={checking || busy} onClick={() => { setError(''); refresh(); void loadProfiles(); }}><RefreshCw size={15} /></button></div>
+    <div className="vault-panel-heading"><span className="vault-eyebrow"><Globe2 size={15} /> CONNECTION</span><button className="vault-icon-button" type="button" aria-label="Check VPN availability" disabled={!paid || checking || busy} onClick={() => { setError(''); refresh(); void loadProfiles(); }}><RefreshCw size={15} /></button></div>
     <div className="vault-vpn-heading"><h2 id="vault-vpn-title">UFIConnect VPN</h2><span className="vault-status" role="status"><i />{status}</span></div>
     <p className="vault-helper">Import your profile into WireGuard once. Then switch UFIConnect on in WireGuard whenever you want to connect. Germany is selected automatically.</p>
     <a className="vault-text-button" href="https://apps.apple.com/app/wireguard/id1441195209" target="_blank" rel="noopener noreferrer">Get official WireGuard for iPhone <Download size={14} /></a>

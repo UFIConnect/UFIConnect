@@ -256,6 +256,45 @@ test('verified phone linking updates the signed-in account without replacing its
   assert.equal(loggedIn.row.password_hash,'preserved-password-hash');
   assert.equal(loggedIn.row.email,'person@example.invalid');
 });
+test('verified phone replacement removes the old primary login and rejects replay or stale pending edits', async t => {
+  const f=await fixture(t,{phone:true});
+  const original=await f.service.provision({provider:'phone',subject:'+15551234567'},{mode:'signup',name:'Phone Member'});
+  const sid=crypto.randomUUID();
+  await f.pg.query("INSERT INTO auth_sessions(id,user_id,expires_at) VALUES($1,$2,NOW()+INTERVAL '1 day')",[sid,original.row.id]);
+  const member={...original.row,sid,ver:0,authProvider:'phone'};
+  const next=await f.service.requestPhone({phoneNumber:'+15557654321',replacePhone:true},member);
+  const stale=await f.service.requestPhone({phoneNumber:'+15559876543',replacePhone:true},member);
+  f.approve();
+  const updated=await f.service.verifyPhone({verificationId:next.verificationId,code:'123456'},{});
+  assert.equal(updated.profile.id,member.id);
+  assert.equal(updated.created,false);
+  const row=(await f.pg.query('SELECT * FROM users WHERE id=$1',[member.id])).rows[0];
+  assert.equal(row.phone,'+15557654321');
+  assert.equal(row.auth_subject,'+15557654321');
+  assert.equal(row.email,original.row.email);
+  assert.equal(row.password_hash,original.row.password_hash);
+  assert.deepEqual((await f.pg.query("SELECT subject FROM auth_login_identities WHERE user_id=$1 AND provider='phone'",[member.id])).rows.map(value=>value.subject),['+15557654321']);
+  await assert.rejects(f.service.provision({provider:'phone',subject:'+15551234567'},{mode:'login'}),{publicCode:'account_missing'});
+  await assert.rejects(f.service.verifyPhone({verificationId:next.verificationId,code:'123456'},{}));
+  await assert.rejects(f.service.verifyPhone({verificationId:stale.verificationId,code:'123456'},{}),{status:409,publicCode:'invalid_flow'});
+  assert.equal((await f.service.provision({provider:'phone',subject:'+15557654321'},{mode:'login'})).row.id,member.id);
+});
+test('phone replacement preserves password accounts and rejects another owner or revoked sessions', async t => {
+  const f=await fixture(t,{phone:true}),member=await linkUser(f);
+  await f.service.provision({provider:'phone',subject:'+15551234567'},{mode:'link',linkContext:{id:member.id,sid:member.sid,ver:0}});
+  const owner=await f.service.provision({provider:'phone',subject:'+15557654321'},{mode:'signup',name:'Other'});
+  const collision=await f.service.requestPhone({phoneNumber:'+15557654321',replacePhone:true},member);
+  f.approve();
+  await assert.rejects(f.service.verifyPhone({verificationId:collision.verificationId,code:'123456'},{}),{status:409,publicCode:'account_exists'});
+  const fresh=await f.service.requestPhone({phoneNumber:'+15559876543',replacePhone:true},member);
+  await f.pg.query('DELETE FROM auth_sessions WHERE id=$1',[member.sid]);
+  await assert.rejects(f.service.verifyPhone({verificationId:fresh.verificationId,code:'123456'},{}),{status:401,publicCode:'invalid_flow'});
+  const row=(await f.pg.query('SELECT * FROM users WHERE id=$1',[member.id])).rows[0];
+  assert.equal(row.phone,'+15551234567');
+  assert.equal(row.password_hash,'preserved-password-hash');
+  assert.equal(row.auth_provider,'local');
+  assert.equal((await f.service.provision({provider:'phone',subject:'+15557654321'},{mode:'login'})).row.id,owner.row.id);
+});
 test('phone verification requires provider approval and never links an unverified profile number', async t => {
   const f=await fixture(t,{phone:true});
   await f.pg.query("INSERT INTO users(name,email,password_hash,phone) VALUES('Local','local@example.invalid','hash','+15551234567')");
@@ -287,13 +326,62 @@ test('phone resend limits persist across workers and attempts stop before a sixt
   await f.pg.exec("UPDATE auth_phone_limits SET last_sent=NOW()-INTERVAL '2 minutes',hour_count=5");
   await assert.rejects(restarted.requestPhone(input),{status:429});
 });
-test('phone login requires a verified phone identity and expired codes cannot authorize', async t => {
+test('new phone login continues signup using the same verified number without email, password or another SMS', async t => {
   const f=await fixture(t,{phone:true});
   const requested=await f.service.requestPhone({phoneNumber:'+15551234567',mode:'login'});
   f.approve();
-  await assert.rejects(f.service.verifyPhone({verificationId:requested.verificationId,code:'123456'},{}),{status:404});
+  const continuation=await f.service.verifyPhone({verificationId:requested.verificationId,code:'123456'},{});
+  assert.equal(continuation.requiresSignup,true);
+  assert.equal(continuation.expiresIn,300);
+  assert.equal(continuation.token,undefined);
+  assert.equal((await f.pg.query('SELECT COUNT(*)::int AS n FROM users')).rows[0].n,0);
+  const proof=(await f.pg.query('SELECT * FROM auth_signin_flows')).rows[0];
+  assert.equal(proof.phase,'handoff');
+  assert.equal(proof.mode,'signup');
+  assert.ok(proof.payload.startsWith('enc:v1:'));
+  assert.ok(!JSON.stringify(proof).includes('+15551234567'));
+  assert.ok(!JSON.stringify(proof).includes(continuation.registrationId));
+  await assert.rejects(f.service.completePhoneSignup({registrationId:continuation.registrationId,name:' '},{}),/name/);
+  await assert.rejects(f.service.verifyPhone({verificationId:requested.verificationId,code:'123456'},{}));
+  const result=await f.service.completePhoneSignup({registrationId:continuation.registrationId,name:' Phone Member ',phoneNumber:'+15550000000',email:'ignored@example.invalid',password:'ignored'},{});
+  assert.equal(result.created,true);
+  assert.equal(result.profile.email,'');
+  const user=(await f.pg.query('SELECT * FROM users')).rows[0];
+  assert.equal(user.name,'Phone Member');
+  assert.equal(user.auth_subject,'+15551234567');
+  assert.equal(user.phone,'+15551234567');
+  assert.equal(user.email_is_placeholder,true);
+  assert.match(user.email,/@identity\.uficonnect\.invalid$/);
+  await assert.rejects(f.service.completePhoneSignup({registrationId:continuation.registrationId,name:'Replay'},{}),{publicCode:'expired'});
+  assert.deepEqual(f.counts(),{exchanges:0,requests:1,checks:1});
+  assert.equal((await f.pg.query('SELECT COUNT(*)::int AS n FROM users')).rows[0].n,1);
+});
+test('phone registration proofs are short-lived and atomically consumed across workers', async t => {
+  const f=await fixture(t,{phone:true});
+  f.approve();
+  const first=await f.service.requestPhone({phoneNumber:'+15551234567',mode:'login'});
+  const expired=await f.service.verifyPhone({verificationId:first.verificationId,code:'123456'},{});
+  await f.pg.exec("UPDATE auth_signin_flows SET expires_at=NOW()-INTERVAL '1 second'");
+  await assert.rejects(f.service.completePhoneSignup({registrationId:expired.registrationId,name:'Member'},{}),{publicCode:'expired'});
   await f.pg.exec("UPDATE auth_phone_limits SET last_sent=NOW()-INTERVAL '2 minutes'");
-  const next=await f.service.requestPhone({phoneNumber:'+15551234567',mode:'signup',name:'Member'});
+  const second=await f.service.requestPhone({phoneNumber:'+15551234567',mode:'login'});
+  const verified=await f.service.verifyPhone({verificationId:second.verificationId,code:'123456'},{});
+  const restarted=createSignIn(f.options);
+  const results=await Promise.allSettled([f.service.completePhoneSignup({registrationId:verified.registrationId,name:'Member'},{}),restarted.completePhoneSignup({registrationId:verified.registrationId,name:'Member'}, {})]);
+  assert.equal(results.filter(result=>result.status==='fulfilled').length,1);
+  assert.equal(results.find(result=>result.status==='rejected').reason.publicCode,'expired');
+  assert.equal((await f.pg.query('SELECT COUNT(*)::int AS n FROM users')).rows[0].n,1);
+});
+test('phone login restores only an already verified identity and expired OTPs cannot authorize', async t => {
+  const f=await fixture(t,{phone:true});
+  const owner=await f.service.provision({provider:'phone',subject:'+15551234567'},{mode:'signup',name:'Member'});
+  const requested=await f.service.requestPhone({phoneNumber:'+15551234567',mode:'login'});
+  f.approve();
+  const loggedIn=await f.service.verifyPhone({verificationId:requested.verificationId,code:'123456'},{});
+  assert.equal(loggedIn.profile.id,owner.row.id);
+  assert.equal(loggedIn.requiresSignup,undefined);
+  await f.pg.exec("UPDATE auth_phone_limits SET last_sent=NOW()-INTERVAL '2 minutes'");
+  const next=await f.service.requestPhone({phoneNumber:'+15551234567',mode:'login'});
   await f.pg.exec("UPDATE auth_signin_flows SET expires_at=NOW()-INTERVAL '1 second'");
   await assert.rejects(f.service.verifyPhone({verificationId:next.verificationId,code:'123456'},{}));
 });
@@ -307,6 +395,39 @@ test('sign-in migrations preserve pending flows; cleanup removes expired encrypt
   await f.service.prune();
   assert.equal((await f.pg.query('SELECT COUNT(*)::int AS n FROM auth_signin_flows')).rows[0].n,0);
   assert.equal((await f.pg.query('SELECT COUNT(*)::int AS n FROM auth_phone_limits')).rows[0].n,0);
+});
+test('real phone signup routes issue no session before completion, restore the phone session and accept onboarding without email', async t => {
+  const f=await fixture(t,{phone:true});
+  for(const sql of BUSINESS_TEAM_SCHEMA) await f.pg.exec(sql);
+  await f.pg.exec(`ALTER TABLE users ADD COLUMN role TEXT DEFAULT '', ADD COLUMN goals TEXT[] DEFAULT '{}',
+    ADD COLUMN interests TEXT[] DEFAULT '{}', ADD COLUMN experience TEXT DEFAULT '', ADD COLUMN joined_groups TEXT[] DEFAULT '{}',
+    ADD COLUMN onboarding_complete BOOLEAN DEFAULT false, ADD COLUMN bio TEXT DEFAULT '', ADD COLUMN role_settings JSONB DEFAULT '{}';`);
+  const signin=require('./auth-signin');
+  const app=await createAppHarness({env:f.env,connected:true,query:(sql,params)=>f.pg.query(sql,params.map(value=>Object.prototype.toString.call(value)==='[object Date]'?new Date(value.getTime()):value)),withClient:fn=>f.db.withClient(fn),
+    modules:{'./auth-signin':{...signin,registerSignInRoutes:(server,options)=>signin.registerSignInRoutes(server,{...options,phoneProvider:f.options.phoneProvider})}}});
+  t.after(()=>app.close());
+  const challenge=await app.request('/auth/phone/request',{method:'POST',body:{phoneNumber:'+15551234567',mode:'login'}});
+  assert.equal(challenge.status,200);
+  f.approve();
+  const verified=await app.request('/auth/phone/verify',{method:'POST',body:{verificationId:challenge.data.verificationId,code:'123456'}});
+  assert.equal(verified.status,200);
+  assert.equal(verified.data.requiresSignup,true);
+  assert.equal(verified.headers.get('set-cookie'),null);
+  const completed=await app.request('/auth/phone/complete-signup',{method:'POST',body:{registrationId:verified.data.registrationId,name:'Phone Member'}});
+  assert.equal(completed.status,200);
+  assert.equal(completed.data.profile.email,'');
+  assert.equal(completed.data.profile.hasEmail,false);
+  assert.equal(completed.data.profile.authProvider,'phone');
+  assert.equal(completed.data.profile.onboardingComplete,false);
+  const cookie=completed.headers.get('set-cookie').split(';')[0];
+  const restored=await app.request('/auth/session',{headers:{cookie}});
+  assert.equal(restored.status,200);
+  assert.equal(restored.data.profile.id,completed.data.profile.id);
+  const onboarding=await app.request('/profile/onboarding',{method:'POST',headers:{authorization:`Bearer ${restored.data.token}`},body:{role:'Engineer',interests:['Open Source'],experience:'junior'}});
+  assert.equal(onboarding.status,200);
+  assert.equal(onboarding.data.profile.onboardingComplete,true);
+  assert.equal(onboarding.data.profile.email,'');
+  assert.deepEqual(f.counts(),{exchanges:0,requests:1,checks:1});
 });
 test('real application routes restore Google sessions while Apple and phone remain unavailable', async t => {
   const f=await fixture(t);

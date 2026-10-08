@@ -136,7 +136,7 @@ try {
     if (mode === 'signup') await panel.getByLabel('Full name', { exact: true }).fill('Private Signup Member');
     await panel.getByLabel('Phone number', { exact: true }).fill('555');
     await panel.getByRole('button', { name: 'Send verification code', exact: true }).click();
-    await panel.getByText('Enter your phone number with its country code, such as +1 555 123 4567.', { exact: true }).waitFor();
+    await panel.getByText('Enter a valid phone number for the selected country, or paste an international number with +.', { exact: true }).waitFor();
     assert.equal(calls.some(call => ['/auth/phone/request', '/auth/phone/link'].includes(call.endpoint)), false);
     await panel.getByLabel('Phone number', { exact: true }).fill('+1 (415) 555-0123');
     await panel.getByRole('button', { name: 'Send verification code', exact: true }).click();
@@ -156,7 +156,16 @@ try {
     await page.waitForURL(url => mode === 'signup' ? url.pathname === '/onboarding' : url.pathname === '/settings' && (mode !== 'link' || url.searchParams.get('linked') === 'phone'));
     if (mode === 'link') {
       await panel.getByText('Phone number is connected for sign-in.', { exact: true }).waitFor();
-      assert.equal(await panel.getByRole('button', { name: /Connect phone number.*Connected/ }).isDisabled(), true);
+      assert.equal(await panel.getByRole('button', { name: /Change phone number.*Connected/ }).isEnabled(), true);
+      await page.clock.install(); await page.clock.fastForward(65000);
+      await panel.getByRole('button', { name: /Change phone number.*Connected/ }).click();
+      await panel.getByLabel('Country or region', { exact: true }).selectOption('GB');
+      await panel.getByLabel('Phone number', { exact: true }).fill('020 7946 0123');
+      await panel.getByRole('button', { name: 'Send verification code', exact: true }).click();
+      await panel.getByLabel('Verification code', { exact: true }).fill('123456');
+      await panel.getByRole('button', { name: 'Verify and change phone number', exact: true }).click();
+      await panel.getByRole('button', { name: /Change phone number.*Connected/ }).waitFor();
+      assert.deepEqual(calls.filter(call => call.endpoint === '/auth/phone/link').at(-1).body, { phoneNumber: '+442079460123', replacePhone: true });
       await page.goto(base + 'settings?tab=security&auth_error=account_exists');
       await panel.getByText('This sign-in method is already connected to another account.', { exact: true }).waitFor();
     }

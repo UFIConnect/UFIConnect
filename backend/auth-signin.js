@@ -129,7 +129,7 @@ function createSignIn({ db, env = process.env, vault, callbackBase, frontendBase
     if (!user?.id || !user.sid || !Number.isSafeInteger(user.ver)) throw fail('Sign in again before connecting a login method.',401,'invalid_flow');
     return { id:user.id, sid:user.sid, ver:user.ver };
   }
-  async function linkIdentity(identity, context) {
+  async function linkIdentity(identity, context, phoneReplacement) {
     if (!context?.id || !context.sid || !Number.isSafeInteger(context.ver)) throw fail('Sign in again before connecting a login method.',401,'invalid_flow');
     try {
       return await transaction(async client => {
@@ -139,14 +139,19 @@ function createSignIn({ db, env = process.env, vault, callbackBase, frontendBase
         const owner=(await client.query(identityLookup,[identity.provider,identity.subject])).rows[0];
         if (owner && owner.id!==current.id) throw fail('This sign-in method is already connected to another account.',409,'account_exists');
         const linked=(await client.query('SELECT subject FROM auth_login_identities WHERE user_id=$1 AND provider=$2',[current.id,identity.provider])).rows[0];
-        if (linked && linked.subject!==identity.subject) throw fail('A different identity from this provider is already connected to your account.',409,'account_exists');
+        const replacing = identity.provider === 'phone' && phoneReplacement;
+        if (replacing) {
+          const primary = current.auth_provider === 'phone' ? current.auth_subject : null;
+          if ((linked?.subject || null) !== phoneReplacement.previousSubject || primary !== phoneReplacement.previousPrimarySubject) throw fail('Your phone sign-in method changed. Start verification again.',409,'invalid_flow');
+          await client.query("DELETE FROM auth_login_identities WHERE user_id=$1 AND provider='phone'",[current.id]);
+        } else if (linked && linked.subject!==identity.subject) throw fail('A different identity from this provider is already connected to your account.',409,'account_exists');
         await client.query(`INSERT INTO auth_login_identities(provider,subject,user_id) VALUES($1,$2,$3)
           ON CONFLICT(provider,subject) DO NOTHING`,[identity.provider,identity.subject,current.id]);
         // A conflicting claim must not be treated as a successful link.
         const claimed=(await client.query('SELECT user_id FROM auth_login_identities WHERE provider=$1 AND subject=$2',[identity.provider,identity.subject])).rows[0];
         if (claimed?.user_id!==current.id) throw fail('This sign-in method is already connected to another account.',409,'account_exists');
         if(identity.provider==='phone') {
-          const updated=await client.query('UPDATE users SET phone=$1 WHERE id=$2 RETURNING *',[identity.subject,current.id]);
+          const updated=await client.query("UPDATE users SET phone=$1,auth_subject=CASE WHEN auth_provider='phone' THEN $1 ELSE auth_subject END WHERE id=$2 RETURNING *",[identity.subject,current.id]);
           return {row:updated.rows[0],created:false};
         }
         return {row:current,created:false};
@@ -164,7 +169,7 @@ function createSignIn({ db, env = process.env, vault, callbackBase, frontendBase
   async function provision(identity, details = {}) {
     // Only a verified provider subject authorizes an existing account. Profile
     // phone numbers and matching email addresses never grant account access.
-    if(details.mode==='link') return linkIdentity(identity,details.linkContext);
+    if(details.mode==='link') return linkIdentity(identity,details.linkContext,details.phoneReplacement);
     const existing = await db.query(identityLookup, [identity.provider, identity.subject]);
     if (existing.rows[0]) return { row: existing.rows[0], created: false };
     if (identity.provider === 'phone' && details.mode !== 'signup') throw fail('No phone sign-in account exists for this number. Choose Sign up to create one.', 404, 'account_missing');
@@ -298,6 +303,13 @@ function createSignIn({ db, env = process.env, vault, callbackBase, frontendBase
     if (!number) throw fail('Enter a phone number with its country code, such as +1 555 123 4567.');
     if (mode === 'signup' && (typeof input.name !== 'string' || !input.name.trim() || input.name.length > 120)) throw fail('Enter your name to create an account.');
     if (input.title != null && (typeof input.title !== 'string' || input.title.length > 250)) throw fail('Enter a shorter job title.');
+    let phoneReplacement;
+    if (context && input.replacePhone === true) {
+      const current=(await db.query('SELECT auth_provider,auth_subject FROM users WHERE id=$1',[context.id])).rows[0];
+      if (!current) throw fail('Sign in again before changing your phone number.',401,'invalid_flow');
+      const linked=(await db.query("SELECT subject FROM auth_login_identities WHERE user_id=$1 AND provider='phone'",[context.id])).rows[0];
+      phoneReplacement = { previousSubject: linked?.subject || null, previousPrimarySubject: current.auth_provider === 'phone' ? current.auth_subject : null };
+    }
     const key = crypto.createHmac('sha256', env.JWT_SECRET).update(number).digest('hex');
     await prune();
     await db.withClient(async client => {
@@ -320,7 +332,7 @@ function createSignIn({ db, env = process.env, vault, callbackBase, frontendBase
     if (response.status !== 'pending' || !/^VE[a-f0-9]{32}$/i.test(response.sid || '')) throw fail('Could not send a verification code. Try again later.', 502, 'unavailable');
     const verificationId = random(), id = digest(verificationId);
     await db.query(`INSERT INTO auth_signin_flows (id,provider,client,mode,binding_hash,payload,expires_at)
-      VALUES ($1,'phone','web',$2,$3,$4,NOW()+INTERVAL '10 minutes')`, [id, mode, key, seal(id, { number, sid: response.sid, mode, name: mode === 'signup' ? input.name.trim() : '', title: input.title || '', ...(context ? {linkContext:context} : {}) })]);
+      VALUES ($1,'phone','web',$2,$3,$4,NOW()+INTERVAL '10 minutes')`, [id, mode, key, seal(id, { number, sid: response.sid, mode, name: mode === 'signup' ? input.name.trim() : '', title: input.title || '', ...(context ? {linkContext:context} : {}), ...(phoneReplacement ? {phoneReplacement} : {}) })]);
     return { verificationId, expiresIn: 600, resendAfter: 60 };
   }
   async function verifyPhone(input, req) {
@@ -337,11 +349,34 @@ function createSignIn({ db, env = process.env, vault, callbackBase, frontendBase
       await db.query("UPDATE auth_signin_flows SET phase='pending' WHERE id=$1 AND phase='checking'", [id]);
       throw fail('The code is incorrect or has expired.');
     }
+    if (payload.mode === 'login' && !(await db.query(identityLookup, ['phone', payload.number])).rows[0]) {
+      // Keep verified ownership while a new member supplies their name. This
+      // encrypted, short-lived proof replaces the OTP and can be used once.
+      const registrationId = random(), registrationKey = digest(registrationId);
+      await transaction(async client => {
+        const consumed = await client.query("DELETE FROM auth_signin_flows WHERE id=$1 AND phase='checking' AND expires_at>NOW() RETURNING id", [id]);
+        if (!consumed.rows[0]) throw fail('This code has already been used or expired.');
+        await client.query(`INSERT INTO auth_signin_flows (id,provider,client,mode,binding_hash,payload,phase,expires_at)
+          VALUES ($1,'phone','web','signup',$2,$3,'handoff',NOW()+INTERVAL '5 minutes')`,
+        [registrationKey, claimed.rows[0].binding_hash, seal(registrationKey, { number: payload.number, mode: 'signup', phoneSignupVerified: true })]);
+      });
+      return { requiresSignup: true, registrationId, expiresIn: 300 };
+    }
     const consumed = await db.query("DELETE FROM auth_signin_flows WHERE id=$1 AND phase='checking' RETURNING id", [id]);
     if (!consumed.rows[0]) throw fail('This code has already been used.');
     return session({ provider: 'phone', subject: payload.number }, payload, req);
   }
-  return { publicProviders, start, complete, finish, requestPhone, verifyPhone, provision, callback, prune, linked };
+  async function completePhoneSignup(input, req) {
+    ensure('phone');
+    if (!validOpaque(input?.registrationId)) throw fail('Phone verification has expired. Request a new code.', 400, 'expired');
+    if (typeof input?.name !== 'string' || !input.name.trim() || input.name.length > 120) throw fail('Enter your name to create an account.');
+    const consumed = await db.query("DELETE FROM auth_signin_flows WHERE id=$1 AND provider='phone' AND client='web' AND mode='signup' AND phase='handoff' AND expires_at>NOW() RETURNING *", [digest(input.registrationId)]);
+    if (!consumed.rows[0]) throw fail('Phone verification has expired or has already been used. Request a new code.', 400, 'expired');
+    const payload = open(consumed.rows[0]);
+    if (payload.phoneSignupVerified !== true || phoneNumber(payload.number) !== payload.number) throw fail('Request a new phone verification code.', 400, 'expired');
+    return session({ provider: 'phone', subject: payload.number }, { mode: 'signup', name: input.name.trim() }, req);
+  }
+  return { publicProviders, start, complete, finish, requestPhone, verifyPhone, completePhoneSignup, provision, callback, prune, linked };
 }
 
 function registerSignInRoutes(app, options) {
@@ -364,7 +399,8 @@ function registerSignInRoutes(app, options) {
   app.post('/auth/providers/apple/callback', limiter, express.urlencoded({ extended:false, limit:'12kb', parameterLimit:10 }), (req,res) => service.complete('apple',req,res));
   app.post('/auth/providers/finish', limiter, guarded(async(req,res) => { const result = await service.finish(req.body,req); options.setSessionCookie(res,result.token); return result; }));
   app.post('/auth/phone/request', limiter, guarded(req => service.requestPhone(req.body)));
-  app.post('/auth/phone/verify', limiter, guarded(async(req,res) => { const result = await service.verifyPhone(req.body,req); options.setSessionCookie(res,result.token); return result; }));
+  app.post('/auth/phone/verify', limiter, guarded(async(req,res) => { const result = await service.verifyPhone(req.body,req); if (result.token) options.setSessionCookie(res,result.token); return result; }));
+  app.post('/auth/phone/complete-signup', limiter, guarded(async(req,res) => { const result = await service.completePhoneSignup(req.body,req); options.setSessionCookie(res,result.token); return result; }));
   return service;
 }
 

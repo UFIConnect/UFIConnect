@@ -10,6 +10,7 @@ import { SavedItemsProvider } from './contexts/SavedItemsContext';
 import { auth0AuthorizationParams, auth0Config, isAuth0Configured } from './auth/auth0Config';
 import './index.css';
 import { reportClientError } from './api/errorReporting';
+import AppRecoveryBoundary from './components/AppRecoveryBoundary';
 
 // Optional diagnostics report a broad category only after this browser opts
 // in. Error messages, rejected values and stack traces are never submitted.
@@ -66,6 +67,7 @@ function OptionalAuth0Provider({ children }) {
 document.querySelectorAll('[data-prerender-meta]').forEach(node => node.remove());
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
+    <AppRecoveryBoundary>
     <HelmetProvider>
       <OptionalAuth0Provider>
         <BrowserRouter basename={import.meta.env.BASE_URL}>
@@ -79,5 +81,6 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         </BrowserRouter>
       </OptionalAuth0Provider>
     </HelmetProvider>
+    </AppRecoveryBoundary>
   </React.StrictMode>
 );

@@ -50,12 +50,12 @@ try {
   await context.addInitScript(platform => Object.defineProperty(navigator, 'platform', { get: () => platform }), device.platform === 'windows' ? 'Win32' : 'Linux armv8l');
   page=await context.newPage();page.setDefaultTimeout(10000);
   const errors=[],requests=[];
-  let available=true,configFailure=false,launchFailure=false,badUrl=false,badNonce=false,expired=false,held=null,launches=0;
+  let available=true,configFailure=false,launchFailure=false,badUrl=false,badNonce=false,expired=false,held=null,launches=0,configReads=0;
   page.on('pageerror',error=>{errors.push(error.message);console.error('Browser error: '+error.message);});
   await context.route('**/api/**',async route=>{
    const request=route.request(),url=new URL(request.url());
    if(!url.pathname.startsWith('/api/'))return route.continue();
-   if(url.pathname==='/api/vpn/config')return route.fulfill({status:configFailure?503:200,json:configFailure?{message:'Unavailable'}:{available,protocol:'wireguard',gateways:available?[{id:'test-us-1',label:'US'}]:[]}});
+   if(url.pathname==='/api/vpn/config'){configReads++;return route.fulfill({status:configFailure?503:200,json:configFailure?{message:'Unavailable'}:{available,protocol:'wireguard',gateways:available?[{id:'test-us-1',label:'US'}]:[]}});}
    if(url.pathname==='/api/vpn/launch'){
     launches++;requests.push(request.postDataJSON());
     if(held)await held;
@@ -79,6 +79,8 @@ try {
   await page.getByRole('status').filter({hasText:'Subscription required'}).waitFor();
   check(await button.isDisabled(),'Unpaid member cannot launch');
   check(launches===0,'Locked state makes no launch request');
+  check(configReads===0,'Unpaid member never requests member VPN configuration');
+  check(await page.getByLabel('Check VPN availability').isDisabled(),'Unpaid availability control is locked');
   await page.evaluate(()=>window.__vpnAudit.update({active:true}));
   await button.waitFor();
   check(await button.isEnabled(),'Paid member with gateway can connect');
@@ -133,6 +135,18 @@ try {
   await new Promise(resolve=>setTimeout(resolve,100));
   check((await page.evaluate(()=>window.__vpnAudit.launched.length))===1,'Old account completion cannot open its ticket');
   check((await page.locator('.vault-status').innerText())==='Ready to open app','Old completion cannot change new account status');
+  let releaseCanceled;held=new Promise(resolve=>{releaseCanceled=resolve;});
+  const beforeCancellation=launches;
+  await button.click();
+  await page.waitForFunction(()=>document.querySelector('.vault-vpn-quick-action button').disabled);
+  await new Promise(resolve=>setTimeout(resolve,80));
+  check(launches===beforeCancellation+1,'Pending paid handoff was sent before membership changed');
+  await page.evaluate(()=>window.__vpnAudit.update({active:false}));
+  await page.locator('.vault-status').filter({hasText:'Subscription required'}).waitFor();
+  releaseCanceled();held=null;
+  await new Promise(resolve=>setTimeout(resolve,100));
+  check((await page.evaluate(()=>window.__vpnAudit.launched.length))===1,'Membership loss blocks a late native app handoff');
+  check(await button.isDisabled(),'VPN remains locked after canceled handoff');
   check(requests.every(body=>JSON.stringify(body)===JSON.stringify({platform:device.platform})),'Launch only sends the detected supported platform');
   const text=await page.locator('body').innerText();
   check(!/terminal|powershell|Proton|local companion|configured countries|setup pending|Open VPN controls/i.test(text),'Production UI contains no legacy terminal/provider/setup flow');

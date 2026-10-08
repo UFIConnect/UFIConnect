@@ -1,13 +1,9 @@
 .snap-rail { margin: 0 0 18px; min-width: 0; }
-.snap-rail-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
-.snap-rail-heading h2 { display: flex; align-items: center; gap: 7px; margin: 0; color: var(--text); font-size: .95rem; font-weight: 750; }
-.snap-rail-heading p { margin: 4px 0 0; color: var(--muted); font-size: .73rem; }
-.snap-rail-actions { display: flex; align-items: center; gap: 7px; flex-shrink: 0; }
 .snap-post-button, .snap-refresh-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; border-radius: 9px; padding: 7px 11px; border: 1px solid var(--border); background: #111; color: #fff; font-size: .77rem; font-weight: 650; text-decoration: none; cursor: pointer; }
-.snap-refresh-button { width: 36px; padding: 7px; color: var(--text); background: var(--card-bg, var(--surface)); }
+.snap-refresh-button { width: 36px; min-width: 36px; flex-shrink: 0; padding: 7px; color: #fff; border-color: #444; background: #1c1c1c; }
 .snap-refresh-button:disabled { opacity: .55; cursor: default; }
 .snap-post-button:hover { background: #252525; color: #fff; }
-.snap-refresh-button:hover:not(:disabled) { background: var(--surface); }
+.snap-refresh-button:hover:not(:disabled) { background: #303030; }
 .snap-rail-message { margin: 0 0 10px; color: var(--muted); font-size: .77rem; line-height: 1.5; }
 .snap-rail-error { color: var(--error, #dc2626); }
 .snap-rail-browser { min-width: 0; }
@@ -20,6 +16,10 @@
 .snap-source-count { display: inline-flex; align-items: center; justify-content: center; min-width: 21px; height: 21px; padding: 0 5px; background: #252525; border-radius: 6px; color: #bdbdbd; font-size: .65rem; font-weight: 650; }
 .snap-source-favorite { color: #ffd16a; flex: 0 0 auto; }
 .snap-source-items { display: flex; gap: 7px; overflow-x: auto; scrollbar-width: thin; scrollbar-color: #505050 #111; padding-bottom: 2px; }
+.snap-source-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; min-height: 132px; padding: 15px; color: #bdbdbd; text-align: center; font-size: .76rem; line-height: 1.5; }
+.snap-source-compose { display: flex; margin-top: 10px; }
+.snap-source-compose .snap-post-button { width: 100%; min-height: 40px; border-color: #444; background: #222; color: #fff; }
+.snap-source-compose .snap-post-button:hover { background: #303030; }
 .snap-thumbnail { position: relative; flex: 0 0 78px; height: 132px; overflow: hidden; border-radius: 9px; border: 1px solid #333; padding: 0; background: #202020; color: #fff; cursor: pointer; text-align: left; }
 .snap-thumbnail img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .snap-thumbnail-author { position: absolute; inset: auto 0 0; padding: 22px 6px 8px; background: linear-gradient(transparent, rgb(0 0 0 / 84%)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .64rem; font-weight: 650; }
@@ -30,10 +30,6 @@
 .snap-source-notices ul { margin: 0; padding-left: 18px; }
 .snap-source-notices strong { color: var(--text); }
 .snap-thumbnail-fallback { display: grid; place-items: center; width: 100%; height: 100%; color: #ccc; background: linear-gradient(145deg, #292929, #111); }
-.snap-rail-navigation { display: flex; justify-content: flex-end; gap: 5px; margin-top: 2px; }
-.snap-rail-navigation button { display: grid; place-items: center; width: 29px; height: 29px; border: 1px solid var(--border); border-radius: 7px; color: var(--muted); background: var(--card-bg, var(--surface)); cursor: pointer; }
-.snap-empty { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 9px; min-height: 100px; padding: 18px; border: 1px solid #303030; border-radius: 13px; background: #080808; color: #d8d8d8; font-size: .83rem; }
-.snap-empty small { width: 100%; text-align: center; color: #a4a4a4; font-size: .73rem; }
 .snap-rail button:focus-visible, .snap-rail a:focus-visible, .snap-source-row:focus-visible { outline: 2px solid var(--primary, #4f6ef7); outline-offset: 3px; }
 .snap-thumbnail:focus-visible { outline-color: #fff; outline-offset: -4px; }
 .snap-refresh-spinning { animation: snap-refresh-spin 1s linear infinite; }
@@ -102,8 +98,6 @@
 .snap-viewer button:focus-visible, .snap-viewer a:focus-visible, .snap-composer button:focus-visible { outline: 2px solid #87a3ff; outline-offset: 2px; }
 
 @media (max-width: 450px) {
-  .snap-rail-heading { gap: 6px; }
-  .snap-rail-heading p { max-width: 155px; font-size: .68rem; }
   .snap-post-button { padding: 7px 8px; font-size: .71rem; }
   .snap-post-button svg { width: 14px; }
   .snap-source-box { flex-basis: 254px; }

@@ -1,8 +1,10 @@
 # Source clips in Home and Following
 
 The Snaps row sits above the source selector. Every source with available media
-gets its own black box in a horizontal, scrollable row. Favorite sources come
-first; source names and original post links remain visible in the viewer.
+gets its own black box in a horizontal, scrollable row. UFI stays first, including
+when empty, with its Post snap action. Favorite sources follow it. The row has
+no visible title, subtitle, or arrow controls; it supports touch and keyboard
+scrolling. Source names and original post links remain visible in the viewer.
 
 Native UFI Snaps keep their existing 24-hour lifetime, member visibility rules,
 report suppression, and owner deletion controls.
@@ -36,5 +38,8 @@ not advance to another clip.
 The public database read is bounded per source, shared for one minute, and
 coalesced across requests. The rail reuses member Following caches without a
 forced refresh, so loading it beside the feed does not force an extra paid read.
+Each source box has its own refresh action, which requests only that source and
+preserves clips and notices from the other sources. Native publication reloads
+UFI only. Explicit external refresh bypasses that source's cache.
 Provider failures do not remove clips from working sources. Neither surface
 consumes the main post feed's seen state.

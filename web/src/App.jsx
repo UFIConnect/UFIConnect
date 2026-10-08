@@ -13,6 +13,7 @@ import RequireFeedLocation from './components/RequireFeedLocation';
 // route content. The consent controller still prevents optional collection
 // until the visitor has made a choice.
 const AnalyticsPrivacy = lazy(() => import('./components/AnalyticsPrivacy'));
+const PhoneEmailReminder = lazy(() => import('./components/PhoneEmailReminder'));
 
 const MAINTENANCE = import.meta.env.VITE_MAINTENANCE_MODE === 'true';
 
@@ -350,6 +351,7 @@ function AppContent() {
     </BusinessRoutes>
     </Suspense>
     <AnalyticsPrivacyControls />
+    <Suspense fallback={null}><PhoneEmailReminder /></Suspense>
     </>
   );
 }

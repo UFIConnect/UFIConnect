@@ -57,7 +57,7 @@ export default function VaultVpnSubscription({ billing }) {
   return <section className="vault-vpn-guide vault-vpn-subscription" aria-labelledby="vpn-subscription-title">
     <h3 id="vpn-subscription-title">UFI Vault · $3.94 USD / month</h3>
     <p>Create your encrypted vault and add, edit or import passwords, documents and keys with one membership. Items are saved in this browser; keep an encrypted backup for recovery.</p>
-    <p>Web protection runs automatically throughout UFIConnect, including your Vault, without an app or download. It is available to every signed-in account. Membership also includes device VPN access in supported native clients.</p>
+    <p>Web protection runs automatically throughout UFIConnect, including your Vault, without an app or download. It is available to every signed-in account. Device VPN access requires an active, paid UFI Vault membership, a supported client and an available VPN gateway.</p>
     <p>Your existing encrypted items remain yours: unlock, view, download, restore or delete them even without a subscription.</p>
     {billing.preview ? <><button type="button" className="vault-button vault-button--secondary" disabled>Subscribe — local preview</button><p role="status">Local review: sample Vault and connector controls only. No payment is taken and this preview does not grant a paid subscription.</p></> : <>
       {billing.active && <p role="status">Active{pending?.cancelAtPeriodEnd ? ` · Cancels${pending.currentPeriodEnd ? ` on ${new Date(pending.currentPeriodEnd * 1000).toLocaleDateString()}` : ' at the end of your billing period'}` : ''}</p>}

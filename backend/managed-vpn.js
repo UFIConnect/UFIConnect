@@ -104,7 +104,7 @@ function createManagedVpn({ db, billing, gateways = [], now = Date.now, leaseSec
     }
     catch { throw fault(503, 'VPN membership verification is temporarily unavailable.'); }
     const subscriptions = Array.isArray(status?.subscriptions)
-      ? status.subscriptions.filter(item => item.kind === 'vpn_connector' && item.status === 'active') : [];
+      ? status.subscriptions.filter(item => item?.kind === 'vpn_connector' && item?.status === 'active') : [];
     const paidThrough = subscriptions.length === 1 ? Number(subscriptions[0].currentPeriodEnd) * 1000 : 0;
     if (status?.vpnConnectorAddon !== true || !Number.isFinite(paidThrough) || paidThrough <= now()) {
       throw fault(403, 'An active, paid UFI Vault membership is required for VPN access.');
@@ -205,6 +205,20 @@ function createManagedVpn({ db, billing, gateways = [], now = Date.now, leaseSec
       clientRequired: true, maxDevices, leaseSeconds, trialAccess: false,
       profileImportAvailable: configured.some(gateway => gateway.country === 'DE') && !!db?.isConnected?.(),
       gateways: configured.map(gatewayPublic) };
+  }
+  async function memberConfig(userId, identity) {
+    account(userId);
+    const paidUntil = await entitlement(userId);
+    return transaction(async client => {
+      const { rows: [owner] } = await client.query('SELECT id,vpn_connector_addon,billing_closed,auth_version,auth_provider,auth_subject FROM users WHERE id=$1 FOR UPDATE', [userId]);
+      if (!owner || owner.billing_closed || owner.vpn_connector_addon !== true || paidUntil <= now()) {
+        throw fault(403, 'An active, paid UFI Vault membership is required for VPN access.');
+      }
+      // Billing verification is asynchronous. Recheck the current account and
+      // session before exposing member VPN configuration, as enrollment does.
+      await verifyIdentity(client, owner, identity);
+      return config();
+    });
   }
   function profileConfiguration(row, gateway) {
     const value = configuration(row, gateway);
@@ -372,7 +386,7 @@ function createManagedVpn({ db, billing, gateways = [], now = Date.now, leaseSec
     });
     return { version: 1, gatewayId: gateway.id, generatedAt: iso(generatedAt), expiresAt: iso(expiresAt), peers };
   }
-  return { config, list, enroll, remove, listProfiles, enrollProfile, removeProfile, desired, launch, consumeLaunch,
+  return { config, memberConfig, list, enroll, remove, listProfiles, enrollProfile, removeProfile, desired, launch, consumeLaunch,
     authenticateGateway: (gatewayId, authorization) => authorizeGateway(gatewayId, authorization).id };
 }
 
@@ -407,7 +421,7 @@ function registerManagedVpnRoutes(app, { vpn, authenticate, limiter, gatewayLimi
     catch (error) { failure(res, error); }
   };
   const member = [authenticate, ...(limiter ? [limiter] : [])];
-  app.get('/vpn/config', ...member, respond(() => vpn.config()));
+  app.get('/vpn/config', ...member, respond(req => vpn.memberConfig(req.user.id, req.user || null)));
   app.post('/vpn/launch', ...member, respond(req => vpn.launch(req.user.id, req.body, req.user || null)));
   app.post('/vpn/launch/consume', ...member, respond(req => vpn.consumeLaunch(req.user.id, req.body, req.user || null)));
   app.get('/vpn/devices', ...member, respond(req => vpn.list(req.user.id)));

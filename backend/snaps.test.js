@@ -104,3 +104,35 @@ test('Snap routes enforce authentication and private caching; UFI never invokes 
   assert.equal((await get('home')).cache, 'private, no-store'); assert.equal(externalReads, 1);
   assert.equal((await get('invalid')).code, 400);
 });
+
+test('source refresh isolates native storage and external adapters, rejects invalid sources and protects Following', async () => {
+  let get, nativeReads = 0;
+  const externalCalls = [];
+  registerSnapRoutes({ get: (_path, ...handlers) => { get = handlers.at(-1); }, post() {}, delete() {} }, {
+    service: { list: async () => { nativeReads++; return [{ id: 'native', source: 'uficonnect' }]; } },
+    authenticate() {}, authenticateOptional() {}, limiter() {},
+    loadExternalSnaps: async options => {
+      externalCalls.push(options);
+      return { snaps: [{ id: 'masto', source: 'mastodon' }, { id: 'x', source: 'twitter' }],
+        sourceErrors: { mastodon: 'Reconnect Mastodon.', twitter: 'Reconnect X.' } };
+    },
+  });
+  async function request(query, user = { id: alice }) {
+    const response = { code: 200, set() {}, status(code) { this.code = code; return this; }, json(body) { this.body = body; return this; } };
+    await get({ query, user }, response); return response;
+  }
+  const native = await request({ mode: 'home', source: 'uficonnect', bust: '1' });
+  assert.deepEqual(native.body.snaps, [{ id: 'native', source: 'uficonnect' }]);
+  assert.equal(nativeReads, 1); assert.equal(externalCalls.length, 0);
+  const external = await request({ mode: 'following', source: 'mastodon', bust: '1' });
+  assert.deepEqual(external.body.snaps, [{ id: 'masto', source: 'mastodon' }]);
+  assert.deepEqual(external.body.sourceErrors, { mastodon: 'Reconnect Mastodon.' });
+  assert.equal(nativeReads, 1);
+  assert.deepEqual(externalCalls, [{ mode: 'following', viewerId: alice, source: 'mastodon', bust: true }]);
+  for (const query of [{ mode: 'home', source: 'unknown' }, { mode: 'ufi', source: 'mastodon' },
+    { mode: 'following', source: 'facebook' }, { mode: 'home', source: ['mastodon'] }]) {
+    assert.equal((await request(query)).code, 400);
+  }
+  assert.equal((await request({ mode: 'following', source: 'mastodon' }, null)).code, 401);
+  assert.equal(nativeReads, 1); assert.equal(externalCalls.length, 1);
+});

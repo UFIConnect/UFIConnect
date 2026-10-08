@@ -39,6 +39,8 @@ export function ManagedVpnPanel({ accountId, activityTarget, subscriptionTarget,
   const generation = useRef(0), sequence = useRef(0), inFlight = useRef(null);
   const currentAccount = useRef(accountId); currentAccount.current = accountId;
   const sessionToken = getAccessToken();
+  const currentBilling = useRef(billing); currentBilling.current = billing;
+  const paid = paidVpnAccess(billing);
   const platform = managedPlatform();
   useEffect(() => {
     const scroll = () => { if (window.location.hash === '#vpn') document.getElementById('vpn')?.scrollIntoView({ block: 'start' }); };
@@ -48,15 +50,17 @@ export function ManagedVpnPanel({ accountId, activityTarget, subscriptionTarget,
   }, []);
   const refresh = useCallback(async () => {
     const request = ++sequence.current, account = accountId, revision = generation.current, token = getAccessToken();
-    const current = () => currentAccount.current === account && revision === generation.current && request === sequence.current && token === getAccessToken();
+    if (!account || !token || !paidVpnAccess(currentBilling.current)) { setConfig(null); setChecking(false); return; }
+    const current = () => currentAccount.current === account && revision === generation.current && request === sequence.current && token === getAccessToken() && paidVpnAccess(currentBilling.current);
     setChecking(true);
     try {
-      if (!token) return;
       const { data } = await client.get('/vpn/config', { headers: { Authorization: `Bearer ${token}` } });
       if (current()) { setConfig(data); setError(''); }
-    } catch { if (current()) { setConfig(null); setError('VPN availability could not be checked. Try again.'); } }
+    } catch (failure) { if (current()) { setConfig(null); setError(failure?.response?.status === 403
+      ? 'An active paid Vault membership is required for VPN access. Check your subscription status.'
+      : 'VPN availability could not be checked. Try again.'); } }
     finally { if (current()) setChecking(false); }
-  }, [accountId]);
+  }, [accountId, paid, sessionToken]);
   useEffect(() => {
     generation.current++; sequence.current++; inFlight.current = null;
     setConfig(null); setOpened(false); setOpening(false); setHelp(false); setError('');
@@ -68,12 +72,11 @@ export function ManagedVpnPanel({ accountId, activityTarget, subscriptionTarget,
     return () => { generation.current++; sequence.current++; window.removeEventListener('ufi-session-cleared', invalidate); window.removeEventListener('focus', focus); };
   }, [accountId, refresh]);
   const available = config?.available === true && config?.protocol === 'wireguard' && Array.isArray(config?.gateways) && config.gateways.length > 0;
-  const paid = paidVpnAccess(billing);
   const canConnect = Boolean(accountId && sessionToken && paid && available && platform && !checking);
   async function connect() {
-    if (!canConnect || inFlight.current || sessionToken !== getAccessToken() || currentAccount.current !== accountId) return;
+    if (!canConnect || !paidVpnAccess(currentBilling.current) || inFlight.current || sessionToken !== getAccessToken() || currentAccount.current !== accountId) return;
     const operation = { account: accountId, revision: generation.current, token: sessionToken };
-    const current = () => currentAccount.current === operation.account && generation.current === operation.revision && operation.token === getAccessToken();
+    const current = () => currentAccount.current === operation.account && generation.current === operation.revision && operation.token === getAccessToken() && paidVpnAccess(currentBilling.current);
     inFlight.current = operation;
     setOpening(true); setOpened(false); setError('');
     try {
@@ -98,7 +101,7 @@ export function ManagedVpnPanel({ accountId, activityTarget, subscriptionTarget,
   </>;
   return <>
     <section id="vpn" className="vault-panel vault-vpn-panel vault-managed-vpn" aria-labelledby="vault-vpn-title">
-      <div className="vault-panel-heading"><span className="vault-eyebrow"><Globe2 size={15} /> CONNECTION</span><button className="vault-icon-button" type="button" aria-label="Check VPN availability" disabled={checking || opening} onClick={refresh}><RefreshCw size={15} /></button></div>
+      <div className="vault-panel-heading"><span className="vault-eyebrow"><Globe2 size={15} /> CONNECTION</span><button className="vault-icon-button" type="button" aria-label="Check VPN availability" disabled={!paid || checking || opening} onClick={refresh}><RefreshCw size={15} /></button></div>
       <div className="vault-vpn-heading"><h2 id="vault-vpn-title">UFIConnect VPN</h2><span className="vault-status" role="status"><i />{label}</span></div>
       <p className="vault-helper">{platform === 'windows' ? 'Use your existing UFIConnect subscription. Install UFIConnect VPN once, sign in to the same account, then press Enable. The app handles the connection automatically.' : 'Connect this device with the UFIConnect app for Windows or Android. Install a version with VPN support and sign in to the same account once. On iPhone, open this page to get a WireGuard profile.'}</p>
       {platform === 'windows' && <div className="vault-vpn-guide">

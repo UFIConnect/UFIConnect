@@ -1,0 +1,7 @@
+.settings-email-address { margin-bottom: 16px; scroll-margin-top: 95px; }
+.settings-email-heading { display: flex; align-items: center; gap: 8px; color: var(--primary); margin-bottom: 12px; }
+.settings-email-heading h2 { color: var(--text); font-size: 1rem; margin: 0; }
+.settings-email-helper { font-size: .85rem; line-height: 1.6; color: var(--muted); margin: 0 0 14px; overflow-wrap: anywhere; }
+.settings-email-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.settings-email-success { display: flex; align-items: flex-start; gap: 8px; font-size: .85rem; line-height: 1.6; color: var(--primary); margin-bottom: 12px; }
+.settings-email-address .btn { min-height: 40px; }

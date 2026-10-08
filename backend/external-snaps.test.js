@@ -67,6 +67,24 @@ test('loader has no public fallback for Following, does not force paid cache bus
   assert.equal((await load({ mode: 'home' })).snaps[0].id, 'public'); assert.equal(publicReads, 1);
 });
 
+test('explicit source refresh calls only its provider and bypasses only its cache', async () => {
+  const followingCalls = [], publicCalls = [];
+  const load = createExternalSnapLoader({ now: () => now, env: {},
+    getUser: async () => ({ roleSettings: { disabledSources: ['twitter'] } }),
+    getPublicPosts: async options => { publicCalls.push(options); return { posts: [clip('masto'), clip('other', 'twitter')] }; },
+    getFollowingPosts: async (...args) => { followingCalls.push(args); return { posts: [clip('followed'), clip('other', 'twitter')] }; },
+  });
+  const following = await load({ mode: 'following', viewerId: 'member', source: 'mastodon', bust: true });
+  assert.deepEqual(followingCalls, [['member', ['mastodon'], { bust: true, surface: null }]]);
+  assert.deepEqual(following.snaps.map(snap => snap.id), ['followed']); assert.equal(publicCalls.length, 0);
+  assert.deepEqual(await load({ mode: 'following', viewerId: 'member', source: 'twitter', bust: true }), { snaps: [], sourceErrors: {} });
+  assert.equal(followingCalls.length, 1);
+  assert.deepEqual(await load({ mode: 'home', viewerId: 'member', source: 'uficonnect', bust: true }), { snaps: [], sourceErrors: {} });
+  assert.equal(publicCalls.length, 0);
+  assert.deepEqual((await load({ mode: 'home', source: 'mastodon', bust: true })).snaps.map(snap => snap.id), ['masto']);
+  assert.deepEqual(publicCalls, [{ source: 'mastodon', bust: true }]);
+});
+
 test('official source player links cannot accept arbitrary iframe hosts or malformed input', async () => {
   const { officialSnapEmbedUrl } = await import('../web/src/utils/snapSourcePlayer.mjs');
   assert.equal(officialSnapEmbedUrl({ source: 'mastodon', sourceUrl: 'https://mastodon.social/@creator/123' }), 'https://mastodon.social/@creator/123/embed');
@@ -93,9 +111,7 @@ test('real Snap route serves connected short clips only to their member and neve
   assert.deepEqual(response.data.snaps.map(snap => snap.id), ['authorized']);
   assert.deepEqual((await app.request('/snaps?mode=home')).data.snaps, []);
   assert.deepEqual((await app.request('/snaps?mode=following', { userId: 'other-reader' })).data.snaps, []);
-  // The harness stubs native Snap storage; the real service's 401 is tested
-  // in snaps.test.js. External providers must still never read for a guest.
-  assert.deepEqual((await app.request('/snaps?mode=following')).data.snaps, []);
+  assert.equal((await app.request('/snaps?mode=following')).status, 401);
 });
 
 test('bounded public clip query filters length before each source limit and enforces canonical Shorts and recency', async t => {

@@ -56,6 +56,83 @@ test('VPN config is truthful and never exposes gateway credentials', async t => 
   await assert.rejects(unconfigured.enroll(ALICE, { publicKey: key(), label: 'phone' }), { status: 503 });
 });
 
+test('member VPN configuration requires current paid Vault entitlement and a verified same-account session', async t => {
+  const f = await fixture(t), identity = await sessionIdentity(f);
+  for (const plan of ['free', 'pro', 'business']) {
+    f.control.status[ALICE] = { ...f.paid(), plan };
+    const result = await f.vpn.memberConfig(ALICE, identity);
+    assert.equal(result.available, true);
+    assert.deepEqual(result.gateways, [{ id: gateway.id, label: gateway.label, country: 'US' }]);
+    assert.equal(JSON.stringify(result).includes(gateway.token), false);
+    assert.equal(JSON.stringify(result).includes(gateway.endpoint), false);
+  }
+  for (const status of [
+    { vpnConnectorAddon: true, subscriptions: [] },
+    { ...f.paid(), vpnConnectorAddon: false },
+    { vpnConnectorAddon: true, subscriptions: [null] },
+    { vpnConnectorAddon: true, subscriptions: [{ ...f.paid().subscriptions[0], kind: 'business' }] },
+    { vpnConnectorAddon: true, subscriptions: [{ ...f.paid().subscriptions[0], status: 'trialing' }] },
+    { vpnConnectorAddon: true, subscriptions: [{ ...f.paid().subscriptions[0], status: 'canceled' }] },
+    { vpnConnectorAddon: true, subscriptions: [{ ...f.paid().subscriptions[0], currentPeriodEnd: f.control.now / 1000 }] },
+    { vpnConnectorAddon: true, subscriptions: [...f.paid().subscriptions, ...f.paid().subscriptions] },
+    { plan: 'pro', vpnConnectorAddon: false, subscriptions: [{ kind: 'plan', status: 'active' }] },
+    { plan: 'business', vpnConnectorAddon: false, subscriptions: [{ kind: 'plan', status: 'active' }] },
+  ]) {
+    f.control.status[ALICE] = status;
+    await assert.rejects(f.vpn.memberConfig(ALICE, identity), { status: 403 });
+  }
+  delete f.control.status[ALICE];
+  for (const unverified of [null, { id: ALICE }, { ...identity, id: BOB }, { ...identity, sid: randomUUID() }, { ...identity, ver: 1 }]) {
+    await assert.rejects(f.vpn.memberConfig(ALICE, unverified), { status: 401 });
+  }
+  const unconfigured = createManagedVpn({ db: f.db, billing: f.billing, now: () => f.control.now });
+  assert.equal((await unconfigured.memberConfig(ALICE, identity)).available, false);
+  f.control.failBilling = true;
+  await assert.rejects(f.vpn.memberConfig(ALICE, identity), { status: 503, message: 'VPN membership verification is temporarily unavailable.' });
+});
+
+test('configuration rechecks account cancellation and session revocation after billing verification', async t => {
+  const f = await fixture(t), identity = await sessionIdentity(f);
+  f.control.onStatus = async () => f.pg.query('DELETE FROM auth_sessions WHERE id=$1', [identity.sid]);
+  await assert.rejects(f.vpn.memberConfig(ALICE, identity), { status: 401 });
+  const nextIdentity = await sessionIdentity(f);
+  f.control.onStatus = async () => f.pg.query('UPDATE users SET vpn_connector_addon=false WHERE id=$1', [ALICE]);
+  await assert.rejects(f.vpn.memberConfig(ALICE, nextIdentity), { status: 403 });
+  f.control.onStatus = async () => f.pg.query('UPDATE users SET vpn_connector_addon=true,billing_closed=true WHERE id=$1', [ALICE]);
+  await assert.rejects(f.vpn.memberConfig(ALICE, nextIdentity), { status: 403 });
+});
+
+test('VPN configuration HTTP route ignores caller entitlement flags and does not cache a previous paid success', async t => {
+  const f = await fixture(t), identity = await sessionIdentity(f);
+  const express = require('express'), http = require('node:http');
+  const app = express();
+  registerManagedVpnRoutes(app, { vpn: f.vpn, authenticate: (req, res, next) => {
+    if (req.get('x-test-account') !== ALICE) return res.sendStatus(401);
+    req.user = identity; next();
+  } });
+  const server = http.createServer(app);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const request = () => fetch(base + '/vpn/config?vpnConnectorAddon=true&tier=vpn_connector&userId=' + BOB, { headers: { 'x-test-account': ALICE } });
+  assert.equal((await fetch(base + '/vpn/config')).status, 401);
+  const allowed = await request();
+  assert.equal(allowed.status, 200);
+  assert.equal((await allowed.json()).available, true);
+  assert.match(allowed.headers.get('cache-control'), /private, no-store/);
+  f.control.status[ALICE] = { vpnConnectorAddon: false, subscriptions: [] };
+  const denied = await request();
+  assert.equal(denied.status, 403);
+  const body = await denied.json();
+  assert.match(body.message, /paid UFI Vault membership/);
+  assert.equal(body.gateways, undefined);
+  assert.equal(f.control.billingReads, 2);
+  f.control.failBilling = true;
+  const unavailable = await request();
+  assert.equal(unavailable.status, 503);
+  assert.equal((await unavailable.text()).includes('internal diagnostic'), false);
+});
+
 test('paid enrollment returns public native configuration with both IP families and is idempotent', async t => {
   const f = await fixture(t);
   const publicKey = key();

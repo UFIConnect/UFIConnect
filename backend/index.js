@@ -20,6 +20,7 @@ const { createAnalyticsBridgeHandler } = require('./analytics-bridge');
 const { ANALYTICS_SCHEMA, ANALYTICS_MIGRATIONS, createAggregateAnalytics } = require('./aggregate-analytics');
 const { OFFICE_MEMBERS_SCHEMA, registerOfficeMemberRoutes } = require('./office-members');
 const { SIGNIN_SCHEMA, registerSignInRoutes, isDeliverableEmail } = require('./auth-signin');
+const { PHONE_EMAIL_SCHEMA, registerPhoneEmailSettingsRoutes } = require('./phone-email-settings');
 const { SNAP_SCHEMA, createSnaps, registerSnapRoutes } = require('./snaps');
 const { createExternalSnapLoader, PUBLIC_CLIP_QUERY } = require('./external-snaps');
 const { createSnapMedia } = require('./snap-media');
@@ -17003,6 +17004,7 @@ async function migrateDB() {
     await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_stripe_customer_idx ON users(stripe_customer_id) WHERE stripe_customer_id IS NOT NULL`);
     await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_auth_subject_idx ON users(auth_provider, auth_subject) WHERE auth_subject IS NOT NULL`);
     for (const statement of SIGNIN_SCHEMA) await db.query(statement);
+    for (const statement of PHONE_EMAIL_SCHEMA) await db.query(statement);
     // Resume Builder — an independent add-on subscription, not a plan
     // tier (see /billing/create-checkout-session + the webhook's own
     // comments): a free or paid-plan user can hold this at the same time as
@@ -20286,6 +20288,12 @@ registerSignInRoutes(app, {
   recordSignIn: recordSuccessfulSignIn,
   fetcher: (...args) => fetch(...args),
 });
+registerPhoneEmailSettingsRoutes(app, {
+  db, env: process.env, vault: tokenVault, authenticate, limiter: authLimiter,
+  mailAvailable: emailConfigured,
+  sendMail: message => getMailTransport().sendMail({ from: process.env.EMAIL_FROM || process.env.SMTP_USER, ...message }),
+  onUser: row => syncToMemory(dbRowToMemUser(row)), profileFor: effectiveProfile,
+});
 app.get('/auth/config', (_req, res) => {
   res.json({
     auth0: {
@@ -21129,14 +21137,31 @@ app.patch('/profile', authenticate, async (req, res) => {
   if (profileHidden !== undefined) user.profileHidden = !!profileHidden;
   try {
     if (isDBId(user.id)) {
-      const { rows } = await db.query(
+      const { rows } = await db.withClient(async client => {
+        await client.query('BEGIN');
+        try {
+          const current = (await client.query('SELECT id,phone,auth_provider FROM users WHERE id=$1 FOR UPDATE', [user.id])).rows[0];
+          if (!current) throw new Error('Profile record was not found before save');
+          let directPhoneUpdate = hasPhoneUpdate;
+          if (hasPhoneUpdate) {
+            const linkedPhone = (await client.query("SELECT subject FROM auth_login_identities WHERE user_id=$1 AND provider='phone'", [user.id])).rows[0];
+            if (linkedPhone || current.auth_provider === 'phone') {
+              if ((normalizedPhone || '') !== (current.phone || '')) throw Object.assign(new Error('Change your sign-in phone number in Security and verify the new number.'), { status: 409, publicCode: 'phone_verification_required' });
+              directPhoneUpdate = false;
+            }
+          }
+          const updated = await client.query(
         `UPDATE users SET name=$1,title=$2,bio=$3,skills=$4,organization=$5,links=$6,role_settings=(COALESCE(role_settings, '{}'::jsonb)::jsonb || ($7::jsonb - 'feedLocations')) ||
           CASE WHEN $7::jsonb ? 'feedLocations' THEN jsonb_build_object('feedLocations',
-            COALESCE(role_settings->'feedLocations', '{}'::jsonb)::jsonb || ($7::jsonb->'feedLocations')) ELSE '{}'::jsonb END,profile_hidden=$8,avatar_url=$9,cover_url=$10,phone=$11 WHERE id=$12 RETURNING *`,
+            COALESCE(role_settings->'feedLocations', '{}'::jsonb)::jsonb || ($7::jsonb->'feedLocations')) ELSE '{}'::jsonb END,profile_hidden=$8,avatar_url=$9,cover_url=$10,phone=CASE WHEN $13::boolean THEN $11 ELSE phone END WHERE id=$12 RETURNING *`,
         [user.name, user.title, user.bio, user.skills, user.organization,
          JSON.stringify(user.links || {}), JSON.stringify(roleSettingsPatch), user.profileHidden || false,
-         user.avatarUrl || '', user.coverUrl || '', user.phone || '', user.id]
-      );
+         user.avatarUrl || '', user.coverUrl || '', user.phone || '', user.id, directPhoneUpdate]
+          );
+          await client.query('COMMIT');
+          return updated;
+        } catch (error) { await client.query('ROLLBACK'); throw error; }
+      });
       if (!rows[0]) throw new Error('Profile record was not found after save');
       Object.assign(user, dbRowToMemUser(rows[0]));
     } else {
@@ -21145,8 +21170,9 @@ app.patch('/profile', authenticate, async (req, res) => {
     invalidateUserFeedSnapshots(user.id);
     res.json(await effectiveProfile(user));
   } catch (e) {
-    console.error('PATCH /profile DB:', e.message);
     Object.assign(user, prev);
+    if (e.status === 409) return res.status(409).json({ message: e.message, code: e.publicCode });
+    console.error('PATCH /profile DB:', e.message);
     res.status(500).json({ message: 'Failed to save changes. Please try again.' });
   }
 });
@@ -27917,33 +27943,42 @@ const creatorAnalytics = createCreatorAnalytics({ db, getUser: getPublicTargetUs
 registerCreatorAnalyticsRoutes(app, {service:creatorAnalytics,authenticate,limiter:contentSubmissionLimiter});
 scheduleRecurring(() => creatorAnalytics.prune().catch(() => {}), 60 * 60 * 1000);
 registerUfiVaultRoutes(app, {vault:ufiVault,authenticate,limiter:contentSubmissionLimiter});
-let publicSnapCache = null;
-let publicSnapRead = null;
-async function getPublicSnapPosts() {
+const publicSnapCache = new Map();
+const publicSnapReads = new Map();
+async function getPublicSnapPosts({ source = null, bust = false } = {}) {
+  const sources = source ? [source] : FEED_SOURCE_CATALOG.home;
+  const key = source || 'all';
   const memory = () => realFeedPosts([
     ...globalFeedCache.posts,
     ...[...agentSourceCache.values()].flatMap(cache => cache.posts || []),
-  ]).filter(post => FEED_SOURCE_CATALOG.home.includes(post.source) && post.mediaType === 'video');
+  ]).filter(post => sources.includes(post.source) && post.mediaType === 'video');
   if (!db.isConnected()) return { posts: memory(), sourceErrors: {} };
-  if (publicSnapCache && Date.now() - publicSnapCache.fetchedAt < 60000) {
-    return { posts: [...memory(), ...publicSnapCache.posts], sourceErrors: {} };
+  const cached = !bust && publicSnapCache.get(key);
+  if (cached && Date.now() - cached.fetchedAt < 60000) {
+    return { posts: [...memory(), ...cached.posts], sourceErrors: {} };
   }
-  if (!publicSnapRead) {
-    publicSnapRead = (async () => {
+  if (!publicSnapReads.has(key)) {
+    const read = (async () => {
       try {
         // One indexed, bounded read per minute. Source workers already pull
         // the public posts; a rail visit never starts another provider crawl.
         const { rows } = await db.readQuery(PUBLIC_CLIP_QUERY,
-          [FEED_SOURCE_CATALOG.home, new Date(Date.now() - 7 * 86400000).toISOString(), new Date().toISOString()]);
+          [sources, new Date(Date.now() - 7 * 86400000).toISOString(), new Date().toISOString()]);
         const posts = realFeedPosts(rows.map(dbRowToFeedPost));
-        publicSnapCache = { posts, fetchedAt: Date.now() };
+        const fetchedAt = Date.now();
+        publicSnapCache.set(key, { posts, fetchedAt });
+        if (source) publicSnapCache.delete('all');
+        else for (const candidate of sources) {
+          publicSnapCache.set(candidate, { posts: posts.filter(post => post.source === candidate), fetchedAt });
+        }
         return { posts, sourceErrors: {} };
       } catch {
-        return { posts: [], sourceErrors: { sources: 'Public source clips are temporarily unavailable. Try refreshing shortly.' } };
+        return { posts: [], sourceErrors: { [source || 'sources']: 'Public source clips are temporarily unavailable. Try refreshing shortly.' } };
       }
-    })().finally(() => { publicSnapRead = null; });
+    })().finally(() => { publicSnapReads.delete(key); });
+    publicSnapReads.set(key, read);
   }
-  const stored = await publicSnapRead;
+  const stored = await publicSnapReads.get(key);
   return { posts: [...memory(), ...stored.posts], sourceErrors: stored.sourceErrors };
 }
 registerSnapRoutes(app, { service: snaps, authenticate, authenticateOptional, limiter: contentSubmissionLimiter,

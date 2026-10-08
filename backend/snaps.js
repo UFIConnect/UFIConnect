@@ -1,6 +1,7 @@
 'use strict';
 
 const { randomUUID } = require('node:crypto');
+const sourceCatalog = require('../shared/feed-source-catalog.json');
 const SNAP_LIFETIME_MS = 24 * 60 * 60 * 1000;
 const SNAP_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS community_snaps (
@@ -28,6 +29,16 @@ function snapMode(value) {
   if (value == null || value === 'home') return 'home';
   if (['following', 'ufi'].includes(value)) return value;
   throw failure(400, 'Choose Home, Following, or UFI Snaps.');
+}
+function snapSource(value, mode) {
+  if (value == null) return null;
+  const allowed = mode === 'ufi' ? [] : mode === 'following'
+    ? Object.entries(sourceCatalog.following).filter(([, capability]) => capability === 'following').map(([source]) => source)
+    : sourceCatalog.home;
+  if (typeof value !== 'string' || !['uficonnect', ...allowed].includes(value)) {
+    throw failure(400, 'Choose a supported Snap source.');
+  }
+  return value;
 }
 function snapFromRow(row, viewerId) {
   return { id: row.id, source: 'uficonnect', sourceLabel: 'UFIConnect',
@@ -156,16 +167,22 @@ function registerSnapRoutes(app, { service, authenticate, authenticateOptional, 
   };
   app.get('/snaps', authenticateOptional, respond(async req => {
     const mode = snapMode(req.query.mode), viewerId = req.user?.id || null;
-    const native = await service.list({ mode, viewerId });
+    if (mode === 'following' && !viewerId) throw failure(401, 'Sign in to view Following Snaps.');
+    const source = snapSource(req.query.source, mode);
+    const native = !source || source === 'uficonnect' ? await service.list({ mode, viewerId }) : [];
     let external = { snaps: [], sourceErrors: {} };
-    if (mode !== 'ufi') {
-      try { external = await loadExternalSnaps({ mode, viewerId, bust: req.query.bust === '1' }); }
-      catch { external.sourceErrors = { sources: 'Source Snaps are temporarily unavailable. Refresh to try again.' }; }
+    if (mode !== 'ufi' && source !== 'uficonnect') {
+      try { external = await loadExternalSnaps({ mode, viewerId, source, bust: req.query.bust === '1' }); }
+      catch { external.sourceErrors = { [source || 'sources']: 'Source Snaps are temporarily unavailable. Refresh to try again.' }; }
     }
-    return { snaps: [...native, ...(Array.isArray(external?.snaps) ? external.snaps : [])], sourceErrors: external?.sourceErrors || {} };
+    const errors = external?.sourceErrors || {};
+    const sourceErrors = source ? { ...(errors[source] ? { [source]: errors[source] } : {}),
+      ...(errors.sources ? { [source]: errors.sources } : {}) } : errors;
+    return { snaps: [...native, ...(Array.isArray(external?.snaps) ? external.snaps : [])]
+      .filter(snap => !source || snap.source === source), sourceErrors };
   }));
   app.post('/snaps', authenticate, limiter, respond(async req => ({ snap: await service.create(req.user.id, req.body) }), 201));
   app.delete('/snaps/:id', authenticate, limiter, respond(req => service.remove(req.user.id, req.params.id)));
 }
 
-module.exports = { SNAP_SCHEMA, SNAP_LIFETIME_MS, snapMode, snapFromRow, createSnaps, registerSnapRoutes };
+module.exports = { SNAP_SCHEMA, SNAP_LIFETIME_MS, snapMode, snapSource, snapFromRow, createSnaps, registerSnapRoutes };

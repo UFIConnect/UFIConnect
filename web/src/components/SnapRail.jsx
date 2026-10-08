@@ -1,6 +1,6 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Camera, RefreshCw, Star, Play } from 'lucide-react';
+import { Camera, RefreshCw, Star, Play } from 'lucide-react';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { SOURCE_META } from './sourceMeta';
 import { rankSnapGroups, normalizeSnapSourceErrors, snapDurationLabel } from './snapRanking.mjs';
@@ -27,17 +27,20 @@ function SnapThumbnail({ snap, onOpen }) {
   </button>;
 }
 
-// The feed owns fetching and session isolation. This rail only groups actual,
-// active snaps, so an unavailable provider never appears as a populated box.
+// UFI stays available for posting. Other boxes contain actual active clips;
+// unavailable providers never appear as populated groups.
 export default function SnapRail({ mode = 'home', items = [], favorites = [], profile,
-  loading = false, error = '', sourceErrors = {}, onRefresh, onPostSnap, onDeleteSnap, notice = '' }) {
-  const titleId = useId(), rowId = useId();
-  const row = useRef(null);
+  loading = false, error = '', sourceErrors = {}, refreshingSources = [], onRefresh, onPostSnap, onDeleteSnap, notice = '' }) {
   const [now, setNow] = useState(Date.now);
   const [selectedId, setSelectedId] = useState(null);
   const [composing, setComposing] = useState(false);
   const [reportSnap, setReportSnap] = useState(null);
-  const groups = useMemo(() => rankSnapGroups(items, favorites, now), [items, favorites, now]);
+  const groups = useMemo(() => {
+    const ranked = rankSnapGroups(items, favorites, now);
+    const native = ranked.find(group => group.source === 'uficonnect')
+      || { source: 'uficonnect', items: [], favorite: favorites.includes('uficonnect') };
+    return [native, ...ranked.filter(group => group.source !== 'uficonnect')];
+  }, [items, favorites, now]);
   const activeItems = groups.flatMap(group => group.items);
   const selectedIndex = activeItems.findIndex(snap => `${snap.source}:${snap.id}` === selectedId);
   const sourceFailures = Object.entries(normalizeSnapSourceErrors(sourceErrors));
@@ -47,48 +50,43 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
   }, []);
   useEffect(() => { setSelectedId(null); setComposing(false); setReportSnap(null); }, [mode, profile?.id]);
   useEffect(() => { if (selectedId && selectedIndex < 0) setSelectedId(null); }, [selectedId, selectedIndex]);
-  function moveRow(direction) {
-    row.current?.scrollBy({ left: direction * Math.max(240, row.current.clientWidth * .8), behavior: 'smooth' });
-  }
   async function publish(payload) {
     const result = await onPostSnap(payload);
     setNow(Date.now());
     return result;
   }
-  return <section className="snap-rail" aria-labelledby={titleId} data-snap-mode={mode}>
-    <header className="snap-rail-heading">
-      <div><h2 id={titleId}><Camera size={18} />Snaps</h2><p>Recent source clips and UFI snaps{favorites.length ? ' · Favorite sources first' : ''}</p></div>
-      <div className="snap-rail-actions">
-        {profile?.id && onPostSnap
-          ? <button type="button" className="snap-post-button" onClick={() => setComposing(true)}><Camera size={16} />Post snap</button>
-          : !profile?.id && <Link to="/login" className="snap-post-button"><Camera size={16} />Post snap</Link>}
-        <button type="button" className="snap-refresh-button" disabled={loading || !onRefresh} onClick={onRefresh} aria-label="Refresh snaps" title="Refresh snaps"><RefreshCw size={17} className={loading ? 'snap-refresh-spinning' : ''} /></button>
-      </div>
-    </header>
+  return <section className="snap-rail" aria-label="Snaps" data-snap-mode={mode}>
     {error && <p className="snap-rail-message snap-rail-error" role="alert">{error}</p>}
     {notice && <p className="snap-rail-message">{notice}</p>}
     {sourceFailures.length > 0 && <div className="snap-source-notices" role="status" aria-label="Snap source availability">
       <p>Some sources could not refresh.</p>
       <ul>{sourceFailures.map(([source, message]) => <li key={source}><strong>{SOURCE_META[source]?.label || source}</strong>: {message}</li>)}</ul>
     </div>}
-    {groups.length > 0 ? <div className="snap-rail-browser">
-      <div ref={row} id={rowId} className="snap-source-row" tabIndex={0} role="region" aria-label="Snap sources" aria-busy={loading}>
+    <div className="snap-rail-browser">
+      <div className="snap-source-row" tabIndex={0} role="region" aria-label="Snap sources" aria-busy={loading}>
         {groups.map(group => {
-          const source = SOURCE_META[group.source] || { label: group.source, icon: group.source.slice(0, 2) };
-          return <article key={group.source} className="snap-source-box" data-snap-source={group.source} aria-label={`${source.label} snaps`}>
+          const isNative = group.source === 'uficonnect';
+          const source = isNative ? { ...SOURCE_META.uficonnect, label: 'UFI' } : SOURCE_META[group.source] || { label: group.source, icon: group.source.slice(0, 2) };
+          const isRefreshing = refreshingSources.includes(group.source) || (loading && refreshingSources.length === 0);
+          const refreshLabel = `Refresh ${source.label} snaps`;
+          return <article key={group.source} className="snap-source-box" data-snap-source={group.source} aria-label={`${source.label} snaps`} aria-busy={isRefreshing}>
             <header className="snap-source-heading"><span className="snap-source-mark" aria-hidden="true">{hasBrandIcon(group.source) ? <BrandIcon platform={group.source} size={17} /> : <b>{source.icon}</b>}</span>
-              <strong>{source.label}</strong><span className="snap-source-count">{group.items.length}</span>
+              <strong>{source.label}</strong>{group.items.length > 0 && <span className="snap-source-count">{group.items.length}</span>}
               {group.favorite && <Star className="snap-source-favorite" size={15} fill="currentColor" aria-label="Favorite source" />}
+              <button type="button" className="snap-refresh-button" disabled={loading || !onRefresh} onClick={() => onRefresh(group.source)} aria-label={refreshLabel} title={refreshLabel} aria-busy={isRefreshing}><RefreshCw size={16} className={isRefreshing ? 'snap-refresh-spinning' : ''} /></button>
             </header>
-            <div className="snap-source-items">{group.items.map(snap => <SnapThumbnail key={`${snap.source}:${snap.id}`} snap={snap} onOpen={() => setSelectedId(`${snap.source}:${snap.id}`)} />)}</div>
+            {group.items.length > 0
+              ? <div className="snap-source-items">{group.items.map(snap => <SnapThumbnail key={`${snap.source}:${snap.id}`} snap={snap} onOpen={() => setSelectedId(`${snap.source}:${snap.id}`)} />)}</div>
+              : <div className="snap-source-empty" role="status" aria-live="polite"><Camera size={22} aria-hidden="true" /><span>{isRefreshing ? 'Loading UFI snaps...' : error || sourceErrors.uficonnect ? 'UFI snaps could not load. Try refreshing.' : 'No UFI snaps yet.'}</span></div>}
+            {isNative && <div className="snap-source-compose">
+              {profile?.id && onPostSnap
+                ? <button type="button" className="snap-post-button" onClick={() => setComposing(true)}><Camera size={16} />Post snap</button>
+                : !profile?.id && <Link to="/login" className="snap-post-button"><Camera size={16} />Post snap</Link>}
+            </div>}
           </article>;
         })}
       </div>
-      {groups.length > 1 && <div className="snap-rail-navigation">
-        <button type="button" aria-controls={rowId} aria-label="Previous snap sources" onClick={() => moveRow(-1)}><ChevronLeft size={17} /></button>
-        <button type="button" aria-controls={rowId} aria-label="Next snap sources" onClick={() => moveRow(1)}><ChevronRight size={17} /></button>
-      </div>}
-    </div> : <div className="snap-empty" role="status" aria-live="polite"><Camera size={22} /><span>{loading ? 'Loading snaps…' : error ? 'Snaps could not load. Try refreshing.' : 'No active snaps yet.'}</span>{!loading && !error && profile?.id && <small>Share a photo or video with your community.</small>}</div>}
+    </div>
     {selectedIndex >= 0 && <SnapViewer items={activeItems} index={selectedIndex} profile={profile} now={now}
       onChange={snap => setSelectedId(`${snap.source}:${snap.id}`)} onClose={() => setSelectedId(null)} onDelete={onDeleteSnap}
       onReport={profile?.id ? snap => { setSelectedId(null); setReportSnap(snap); } : undefined} />}

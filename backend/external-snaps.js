@@ -94,18 +94,20 @@ function externalSnapsFromPosts(posts, { mode = 'home', now = Date.now(), disabl
 }
 
 function createExternalSnapLoader({ getPublicPosts, getFollowingPosts, getUser, filterVisible = async posts => posts, now = Date.now, env = process.env }) {
-  return async ({ mode, viewerId }) => {
-    if (mode === 'ufi' || (mode === 'following' && !viewerId)) return { snaps: [], sourceErrors: {} };
+  return async ({ mode, viewerId, source = null, bust = false }) => {
+    if (mode === 'ufi' || source === 'uficonnect' || (mode === 'following' && !viewerId)) return { snaps: [], sourceErrors: {} };
     const user = viewerId ? await getUser(viewerId) : null;
     if (mode === 'following' && !user) return { snaps: [], sourceErrors: {} };
     const disabledSources = Array.isArray(user?.roleSettings?.disabledSources) ? user.roleSettings.disabledSources : [];
-    const sources = FOLLOWING_CLIP_SOURCES.filter(source => !disabledSources.includes(source) && isSourceDisplayAllowed(source, { env }));
+    const sources = FOLLOWING_CLIP_SOURCES.filter(candidate => (!source || candidate === source)
+      && !disabledSources.includes(candidate) && isSourceDisplayAllowed(candidate, { env }));
     // Snaps reuse the authenticated following cache. Loading/refreshing the
     // rail must not trigger an extra forced paid read after loading the feed.
+    // An explicit refresh affects only the source whose button was clicked.
     const loaded = mode === 'following'
-      ? sources.length ? await getFollowingPosts(viewerId, sources, { bust: false, surface: null }) : { posts: [], sourceErrors: {} }
-      : await getPublicPosts();
-    const visible = await filterVisible(loaded.posts || []);
+      ? sources.length ? await getFollowingPosts(viewerId, sources, { bust: Boolean(source && bust), surface: null }) : { posts: [], sourceErrors: {} }
+      : await getPublicPosts({ source, bust: Boolean(source && bust) });
+    const visible = await filterVisible((loaded.posts || []).filter(post => !source || post.source === source));
     return { snaps: externalSnapsFromPosts(visible, { mode, now: now(), disabledSources, env }), sourceErrors: loaded.sourceErrors || {} };
   };
 }
