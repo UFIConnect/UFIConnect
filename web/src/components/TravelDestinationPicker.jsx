@@ -34,12 +34,9 @@ export default function TravelDestinationPicker({ destinations, selected, disabl
   const matches = destinations.filter(city => terms.every(term => normalize([city.city, city.country, city.countryCode].join(' ')).includes(term)));
   return (
     <div className="travel-destination-picker">
-      <div className="travel-city-rail-heading">
-        <strong aria-live="polite">Cities{destinations.length ? ` (${terms.length ? matches.length + ' of ' : ''}${destinations.length})` : ''}</strong>
-      </div>
       <div className="travel-city-search">
         <Search size={17} aria-hidden="true" />
-        <input type="search" aria-label="Search cities" placeholder={`Search ${destinations.length || ''} cities or countries`.replace('  ', ' ')}
+        <input type="search" aria-label="Search cities" placeholder="Search cities or countries"
           value={query} onChange={event => onQueryChange(event.target.value)} autoComplete="off" />
         {query && <button type="button" className="btn btn-ghost btn-sm" aria-label="Clear city search" onClick={() => onQueryChange('')}><X size={17} /></button>}
       </div>

@@ -1253,7 +1253,6 @@ input, textarea, select { font-family: inherit; }
 .travel-city-search .btn { min-width: 44px; min-height: 44px; }
 .travel-city-navigation { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px; border-bottom: 1px solid var(--border); }
 .travel-city-navigation .btn { min-height: 44px; gap: 5px; }
-.travel-city-navigation > span { text-align: center; color: var(--muted); font-size: .75rem; }
 .travel-live-loop-choice {
   display: flex;
   flex: 0 0 144px;

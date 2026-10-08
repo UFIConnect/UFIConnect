@@ -96,9 +96,94 @@ test('cold Travel responds without waiting for guide and news providers', async 
     app.getCountriesCameraFeed({ city: 'Seattle', country: 'US', countryName: 'United States', source: 'member', available: true }),
     new Promise((_, reject) => { const timer = setTimeout(() => reject(new Error('Travel waited for an optional provider')), 500); timer.unref(); }),
   ]);
-  assert.equal(result.posts.length, 91);
+  assert.equal(result.posts.length, 1, 'a saved city keeps its own guide during a provider outage');
   assert.equal(result.posts[0].city, 'Seattle');
   assert.equal(result.travel.storiesUpdating, true);
+  assert.equal(app.locationLiveFeedCache.has('countries:vacation-discovery'), false, 'a selected city does not fetch the unrelated worldwide pool');
+});
+
+test('an automatic network city scopes Travel picks without saving a member destination', async t => {
+  const app = await harness(t, { env: { TRUST_PROXY: 'loopback', CF_VISITOR_LOCATION_HEADERS: 'true' } });
+  const traveler = member('automatic-traveler');
+  app.seedUser(traveler);
+  const result = await app.request('/office/feed?mode=countries&limit=20', { userId: traveler.id,
+    headers: { 'x-forwarded-for': '203.0.113.45, 173.245.48.20', 'cf-ipcountry': 'US', 'cf-ipcity': 'Seattle' } });
+  assert.equal(result.status, 200);
+  assert.equal(result.data.posts.length, 1);
+  assert.equal(result.data.posts[0].city, 'Seattle');
+  assert.equal(result.data.posts[0].countryCode, 'US');
+  assert.equal(result.data.equalizer.selectedLocation, 'Seattle, United States');
+  assert.equal(result.data.location.source, 'network');
+  assert.equal(result.data.location.savedForMember, false);
+  assert.equal(app.locationLiveFeedCache.has('countries:vacation-discovery'), false, 'first-visit city picks must not fetch the worldwide pool');
+  assert.deepEqual(traveler.roleSettings, {}, 'automatic city selection does not save a profile preference');
+});
+
+test('selected Travel picks stay in their destination across pagination, member changes and city switches', async t => {
+  const app = await harness(t);
+  app.seedUser(member('city-traveler'));
+  app.seedUser(member('other-traveler', { roleSettings: { feedLocations: { countries: { country: 'France', city: 'Paris' } } } }));
+  const select = async selection => {
+    const result = await app.request('/profile', { userId: 'city-traveler', method: 'PATCH',
+      body: { roleSettings: { feedLocations: { countries: selection } } } });
+    assert.equal(result.status, 200);
+  };
+  await select({ country: 'Japan', city: '' });
+  const country = await app.request('/office/feed?mode=countries&limit=1', { userId: 'city-traveler' });
+  assert.equal(country.status, 200);
+  assert.equal(country.data.posts.length, 1);
+  assert.equal(country.data.posts[0].countryCode, 'JP');
+  assert.equal(country.data.hasMore, true);
+  const next = await app.request(`/office/feed?mode=countries&limit=1&page=2&cursor=${encodeURIComponent(country.data.cursor)}`, { userId: 'city-traveler' });
+  assert.equal(next.data.posts.length, 1);
+  assert.equal(next.data.posts[0].countryCode, 'JP');
+  assert.notEqual(next.data.posts[0].id, country.data.posts[0].id);
+
+  await select({ country: 'United States', city: 'Seattle' });
+  const selected = await app.request(`/office/feed?mode=countries&limit=20&cursor=${encodeURIComponent(country.data.cursor)}`, { userId: 'city-traveler' });
+  assert.equal(selected.status, 200);
+  assert.equal(selected.data.posts.length, 1, 'an old destination cursor cannot introduce worldwide picks');
+  assert.equal(selected.data.posts[0].city, 'Seattle');
+  assert.equal(selected.data.posts[0].countryCode, 'US');
+  assert.equal(selected.data.hasMore, false);
+  assert.match(selected.headers.get('cache-control'), /private.*no-store/, 'member Travel retains the outside privacy fix');
+
+  const other = await app.request('/office/feed?mode=countries&limit=20', { userId: 'other-traveler' });
+  assert.equal(other.data.posts.length, 1);
+  assert.equal(other.data.posts[0].city, 'Paris');
+  assert.equal(other.data.posts[0].countryCode, 'FR');
+  const reload = await app.request('/office/feed?mode=countries&limit=20', { userId: 'city-traveler' });
+  assert.equal(reload.data.location.city, 'Seattle');
+  assert.ok(reload.data.posts.every(post => post.city === 'Seattle' && post.countryCode === 'US'));
+
+  await select({ country: 'Canada', city: 'London' });
+  const sameName = await app.request('/office/feed?mode=countries&limit=20', { userId: 'city-traveler' });
+  assert.equal(sameName.data.posts.length, 1);
+  assert.equal(sameName.data.posts[0].city, 'London');
+  assert.equal(sameName.data.posts[0].countryCode, 'CA', 'same-named cities in another country cannot become selected picks');
+});
+
+test('strict selected picks keep verified fallback cameras separate and reject unrelated cached stories', async t => {
+  let app;
+  app = await harness(t, { env: { YOUTUBE_API_KEY: 'test-key' }, modules: { './travel-providers': { ...providers, fetchTravelResource: async url => {
+    assert.ok(url.includes('/videos?'), 'warm selected picks need no worldwide discovery or search request');
+    app.setYouTubeCallReady();
+    return { items: [{ id: 'rnXIjl_Rzy4', liveStreamingDetails: { actualStartTime: '2026-09-01' }, status: { privacyStatus: 'public', embeddable: true } }] };
+  } } } });
+  const stories = [
+    { id: 'paris-fr', city: 'Paris', country: 'France', countryCode: 'FR', source: 'travelnews' },
+    { id: 'paris-us', city: 'Paris', country: 'United States', countryCode: 'US', source: 'travelnews' },
+    { id: 'lyon-fr', city: 'Lyon', country: 'France', countryCode: 'FR', source: 'travelevents' },
+    { id: 'unknown', source: 'travelnews' },
+  ];
+  app.locationLiveFeedCache.set('countries:selected:paris:france', { posts: stories, expiresAt: Date.now() + 60000 });
+  const selected = await app.getCountriesCameraFeed({ city: 'Paris', country: 'FR', countryName: 'France', source: 'member', available: true });
+  assert.equal(selected.posts.length, 1);
+  assert.equal(selected.posts[0].id, 'paris-fr');
+  assert.equal(selected.liveFeeds.length, 1, 'a city without its own camera retains a verified fallback');
+  assert.equal(selected.liveFeeds[0].city, 'New York', 'fallback retains its actual location');
+  assert.equal(selected.liveFeeds[0].liveVerified, true);
+  assert.equal(selected.travel.localCameraAvailable, false);
 });
 
 test('profile location persists, applies to Travel, and can be cleared', async t => {

@@ -30,6 +30,8 @@ try {
     let failRead = true;
     let read = false;
     let accepted = false;
+    let failMessageSources = false;
+    const messageReads = [];
     const searches = [];
     await page.route('**/api/notifications', route => route.fulfill({ json: { notifications: [
       { id: 'like-1', type: 'like', user: { id: 'maya', name: 'Maya Chen' }, targetId: 'post-1', preview: 'A new perspective on building thoughtful products.', read, createdAt: new Date().toISOString() },
@@ -38,7 +40,12 @@ try {
     ] } }));
     await page.route('**/api/notifications/mark-read', route => { if (!failRead) read = true; return route.fulfill({ status: failRead ? 503 : 200, json: { ok: !failRead } }); });
     await page.route('**/api/connected-inbox/notifications', route => route.fulfill({ json: { notifications: [], sources: [] } }));
-    await page.route('**/api/connected-inbox/messages', route => route.fulfill({ json: { conversations: [], sources: [] } }));
+    await page.route('**/api/notifications/badge-counts', route => route.fulfill({ json: { notificationCount: 1, unreadMessages: 3 } }));
+    await page.route('**/api/messages', route => route.fulfill({ json: { conversations: [{ id: 'native-thread', participant: { id: 'maya', name: 'Maya Chen' }, unreadCount: 2, lastMessage: { text: 'Native inbox preview', createdAt: new Date().toISOString() } }] } }));
+    await page.route('**/api/messages/maya', route => route.fulfill({ json: { participant: { id: 'maya', name: 'Maya Chen' }, messages: [{ id: 'native-message', senderId: 'maya', content: 'Native message body', createdAt: new Date().toISOString() }] } }));
+    await page.route('**/api/connected-inbox/messages', route => route.fulfill({ status: failMessageSources ? 503 : 200, json: failMessageSources ? { error: 'Unavailable' } : { conversations: [{ id: 'connected-thread', source: 'reddit', title: 'Reddit community conversation', unreadCount: messageReads.length ? 0 : 1, lastMessage: { text: 'Connected inbox preview', createdAt: new Date().toISOString() } }], sources: [{ source: 'reddit', name: 'Reddit', status: 'ready' }] } }));
+    await page.route('**/api/connected-inbox/messages/reddit/connected-thread', route => route.fulfill({ json: { messages: [{ id: 'connected-message', senderName: 'Alex Morgan', text: 'Connected message body', createdAt: new Date().toISOString() }] } }));
+    await page.route('**/api/connected-inbox/messages/mark-read', route => { messageReads.push(route.request().postDataJSON()); return route.fulfill({ json: { markedIds: ['connected-thread'] } }); });
     await page.route('**/api/users/alex/connect', route => { accepted = true; return route.fulfill({ json: { ok: true } }); });
     await page.route('**/api/users/search?*', route => { searches.push(new URL(route.request().url()).searchParams.get('q')); return route.fulfill({ json: { users: [{ id: 'maya', name: 'Maya Chen', title: 'Software engineer', role: 'Developer', skills: [], interests: [] }], totalCount: 1, registeredCount: 1, hasMore: false, countSource: 'database' } }); });
     await page.route('**/api/office/feed?*', route => {
@@ -157,7 +164,7 @@ try {
       assert.equal(await headerInput.inputValue(), '');
       assert.equal(page.url(), feedUrl);
     }
-    const messages = page.locator('.global-search-center').getByRole('link', { name: 'Messages', exact: true });
+    const messages = page.locator('.global-search-center').getByRole('button', { name: 'Messages', exact: true });
     await messages.waitFor({ state: 'visible' });
     const searchBounds = await globalSearch.boundingBox();
     const messageBounds = await messages.boundingBox();
@@ -166,11 +173,68 @@ try {
       'Messages sits beside search without overlapping the input');
     assert.ok(Math.abs((searchBounds.y + searchBounds.height / 2) - (messageBounds.y + messageBounds.height / 2)) <= 20,
       'Messages shares the search row');
+    assert.equal(await messages.getByLabel('3 unread messages').count(), 1);
+    const originalUrl = page.url();
+    const messagePopup = page.getByRole('dialog', { name: 'Messages', exact: true });
     await messages.click();
+    await messagePopup.getByText('Native inbox preview', { exact: true }).waitFor();
+    await messagePopup.getByText('Connected inbox preview', { exact: true }).waitFor();
+    assert.equal(page.url(), originalUrl, 'Opening Messages preserves the current page');
+    assert.equal(await messagePopup.getAttribute('aria-modal'), 'true');
+    assert.equal(await messages.getAttribute('aria-expanded'), 'true');
+    assert.equal(messageReads.length, 0, 'Opening the inbox leaves conversations unread');
+    assert.equal(await page.locator('.shell').count(), 1, 'The embedded inbox does not create a nested app shell');
+    await messagePopup.getByLabel('Message source').selectOption('reddit');
+    assert.equal(await messagePopup.getByText('Native inbox preview', { exact: true }).count(), 0);
+    await messagePopup.getByRole('button', { name: /Reddit community conversation/ }).click();
+    await messagePopup.getByText('Connected message body', { exact: true }).waitFor();
+    assert.equal(page.url(), originalUrl, 'Connected conversations stay inside the popup');
+    await page.waitForFunction(() => !document.querySelector('.messages-popup .conv-unread-badge'));
+    assert.deepEqual(messageReads, [{ ids: ['connected-thread'] }]);
+    await messagePopup.getByRole('button', { name: 'Back to conversations', exact: true }).click();
+    await messagePopup.getByLabel('Message source').selectOption('all');
+    failMessageSources = true;
+    await messagePopup.getByRole('button', { name: 'Refresh messages', exact: true }).click();
+    const sourceDetails = messagePopup.locator('.connected-inbox-sources');
+    await sourceDetails.locator('summary').click();
+    const sourceError = sourceDetails.getByRole('alert').filter({ hasText: 'Could not refresh connected sources. Try again.' });
+    await sourceError.waitFor();
+    await messagePopup.getByText('Native inbox preview', { exact: true }).waitFor();
+    failMessageSources = false;
+    await messagePopup.getByRole('button', { name: 'Retry sources', exact: true }).click();
+    await sourceError.waitFor({ state: 'detached' });
+    await messagePopup.getByRole('button', { name: 'New Message', exact: true }).click();
+    const newMessage = messagePopup.getByRole('dialog', { name: 'New message', exact: true });
+    await newMessage.getByRole('textbox').waitFor({ state: 'visible' });
+    await page.keyboard.press('Escape');
+    await newMessage.waitFor({ state: 'detached' });
+    assert.equal(await messagePopup.isVisible(), true, 'Escape closes only the new-message search when it is open');
+    await page.screenshot({ path: path.join(root, `.cache/audit-ui/messages-popup-${width}.png`) });
+    await messagePopup.getByRole('button', { name: 'Close messages', exact: true }).click();
+    await messagePopup.waitFor({ state: 'detached' });
+    assert.equal(await messages.evaluate(element => document.activeElement === element), true, 'Closing Messages returns focus to its button');
+    await messages.click();
+    await messagePopup.waitFor({ state: 'visible' });
+    await page.keyboard.press('Escape');
+    await messagePopup.waitFor({ state: 'detached' });
+    assert.equal(await messages.evaluate(element => document.activeElement === element), true, 'Escape returns focus to Messages');
+    await messages.click();
+    await messagePopup.waitFor({ state: 'visible' });
+    await page.locator('.messages-popup-backdrop').click({ position: { x: 1, y: 1 } });
+    await messagePopup.waitFor({ state: 'detached' });
+    assert.equal(page.url(), originalUrl, 'Dismissing Messages never changes the page');
+    await messages.click();
+    await messagePopup.getByRole('button', { name: /Maya Chen/ }).click();
+    await page.waitForURL(url => url.pathname === '/messages/maya');
+    await page.getByText('Native message body', { exact: true }).waitFor();
+    await auditNavigate(page, originalUrl);
+    await messages.click();
+    await messagePopup.getByRole('link', { name: 'Open inbox', exact: true }).click();
     await page.waitForURL(url => url.pathname === '/messages');
+    await page.getByRole('heading', { name: 'Messages', exact: true }).waitFor();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
     assert.deepEqual(errors, []);
-    console.log(`PASS: in-place Home/Following search, popup search/close/Escape/focus, Messages and notification actions at ${width}px`);
+    console.log(`PASS: in-place Home/Following search, search and Messages popup keyboard/dismissal, native/connected inbox and notification actions at ${width}px`);
     await context.close();
   }
 } finally { await browser?.close(); await server.close(); await app.close(); }

@@ -26,7 +26,11 @@ function NewMessageModal({ onClose, onSelect }) {
   const inputRef = useRef(null);
   const timerRef = useRef(null);
 
-  useEffect(() => { inputRef.current?.focus(); }, []);
+  useEffect(() => {
+    const opener = document.activeElement;
+    inputRef.current?.focus();
+    return () => { if (opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true }); };
+  }, []);
 
   useEffect(() => {
     clearTimeout(timerRef.current);
@@ -45,6 +49,7 @@ function NewMessageModal({ onClose, onSelect }) {
   return (
     <div
       onClick={onClose}
+      onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); } }}
       style={{
         position: 'fixed', inset: 0, zIndex: 1000,
         background: 'rgba(0,0,0,0.45)',
@@ -53,6 +58,9 @@ function NewMessageModal({ onClose, onSelect }) {
       }}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="New message"
         onClick={e => e.stopPropagation()}
         style={{
           background: 'var(--surface)', borderRadius: 16,
@@ -64,7 +72,7 @@ function NewMessageModal({ onClose, onSelect }) {
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
           <span style={{ fontWeight: 700, fontSize: '.95rem' }}>New Message</span>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', color: 'var(--muted)', lineHeight: 1 }}>×</button>
+          <button type="button" aria-label="Close new message" onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', color: 'var(--muted)', lineHeight: 1 }}>×</button>
         </div>
 
         {/* Search input */}
@@ -133,7 +141,7 @@ function NewMessageModal({ onClose, onSelect }) {
   );
 }
 
-export default function Messages() {
+export default function Messages({ embedded = false }) {
   const navigate = useNavigate();
   const [convs, setConvs] = useState([]);
   const [sources, setSources] = useState([]);
@@ -232,10 +240,10 @@ export default function Messages() {
   const sourceOptions = [...new Set([...sources.map(source => source.source), ...convs.filter(conv => conv.origin === 'connected').map(conv => conv.source)])];
   const threadUrl = inboxExternalUrl(thread?.url || selected?.url);
 
-  return <Layout unreadCount={totalUnread}>
+  const content = <>
     {showModal && <NewMessageModal onClose={() => setShowModal(false)} onSelect={handleSelectUser} />}
     <div className="page-header messages-header">
-      <div><h1 className="page-title">Messages</h1><p className="page-subtitle">{loading ? 'Loading your inboxes' : totalUnread > 0 ? `${totalUnread} unread message${totalUnread > 1 ? 's' : ''}` : 'Your UFIConnect and connected source conversations'}</p></div>
+      <div>{!embedded && <h1 className="page-title">Messages</h1>}<p className="page-subtitle">{loading ? 'Loading your inboxes' : totalUnread > 0 ? `${totalUnread} unread message${totalUnread > 1 ? 's' : ''}` : 'Your UFIConnect and connected source conversations'}</p></div>
       <div className="messages-header-actions"><button className="btn btn-ghost btn-sm" aria-label="Refresh messages" disabled={loading} onClick={loadMessages}><RefreshCw size={17} /></button><button className="btn btn-primary btn-sm" onClick={() => setShowModal(true)}>New Message</button></div>
     </div>
     <div className="messages-inboxes">
@@ -259,5 +267,6 @@ export default function Messages() {
         </>}
       </section>}
     </div>
-  </Layout>;
+  </>;
+  return embedded ? content : <Layout unreadCount={totalUnread}>{content}</Layout>;
 }

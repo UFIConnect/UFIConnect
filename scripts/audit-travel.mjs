@@ -12,6 +12,7 @@ const { createAppHarness, member } = require('../backend/test-support/app-harnes
 const providers = require('../backend/travel-providers');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let app;
+let paginationGeneration = 0;
 app = await createAppHarness({ env: { YOUTUBE_API_KEY: 'travel-ui-test' }, modules: { './travel-providers': {
   ...providers,
   fetchTravelResource: async (url, options) => {
@@ -22,7 +23,15 @@ app = await createAppHarness({ env: { YOUTUBE_API_KEY: 'travel-ui-test' }, modul
         id, liveStreamingDetails: { actualStartTime: '2026-09-01T00:00:00Z' }, status: { privacyStatus: 'public', embeddable: true },
       })) };
     }
-    if (options?.json === false) return '<rss><channel></channel></rss>';
+    if (options?.json === false) {
+      const providerUrl = new URL(url);
+      const query = providerUrl.searchParams.get('q') || '';
+      if (providerUrl.hostname === 'news.google.com' && providerUrl.pathname === '/rss/search'
+          && query.includes('"London" "United Kingdom"') && query.includes('travel OR tourism')) {
+        return '<rss><channel>' + Array.from({ length: 6 }, (_, index) => `<item><title>London travel guide fixture ${paginationGeneration}-${index}</title><description>London travel guide and places to visit.</description><link>https://example.invalid/london/${paginationGeneration}/${index}</link><source>London Audit News</source><pubDate>${new Date(Date.now() - index * 60000).toUTCString()}</pubDate></item>`).join('') + '</channel></rss>';
+      }
+      return '<rss><channel></channel></rss>';
+    }
     throw new Error('Guide provider unavailable in UI fixture');
   },
 } } });
@@ -112,6 +121,11 @@ try {
       await rail.getByRole('button', { name: 'Retry destinations', exact: true }).click();
     }
     await cityChoice('US:Seattle').waitFor({ state: 'attached' });
+    await page.waitForFunction(() => document.querySelector('.travel-content-heading')?.textContent.includes('Amsterdam')).catch(async error => {
+      console.log(JSON.stringify({ width, profileWrites, settings: app.users.find(user => user.id === id)?.roleSettings, travel: await rail.textContent() }));
+      throw error;
+    });
+    await waitForCitySave();
     assert.equal(await cities.getByRole('button').count(), 91, 'all 91 cities share the Live Travel rail');
     const citySearch = rail.getByRole('searchbox', {name:'Search cities',exact:true});
     const beforeSearch = profileWrites;
@@ -137,10 +151,9 @@ try {
     const cityIds = await cities.getByRole('button').evaluateAll(buttons => buttons.map(button => button.dataset.destinationId));
     assert.equal(new Set(cityIds).size, 91);
     const navigation = rail.getByRole('group', { name: 'City navigation', exact: true });
-    await navigation.getByText('City 1 of 91', { exact: true }).waitFor();
+    assert.equal(await cityChoice(cityIds[0]).getAttribute('aria-pressed'), 'true');
     await navigation.getByRole('button', { name: 'Previous city', exact: true }).click();
     await waitForCitySave();
-    await navigation.getByText('City 91 of 91', { exact: true }).waitFor();
     assert.equal(await cityChoice(cityIds[90]).getAttribute('aria-pressed'), 'true', 'Previous wraps to the final catalog city');
     await navigation.getByRole('button', { name: 'Next city', exact: true }).click();
     await waitForCitySave();
@@ -149,8 +162,11 @@ try {
       await navigation.getByRole('button', { name: 'Next city', exact: true }).click();
       await waitForCitySave();
       const index = step % 91;
-      assert.equal(await cityChoice(cityIds[index]).getAttribute('aria-pressed'), 'true', 'Next follows the complete catalog, including cities without cameras');
-      await navigation.getByText(`City ${index + 1} of 91`, { exact: true }).waitFor();
+      assert.equal(await cityChoice(cityIds[index]).getAttribute('aria-pressed'), 'true',
+        `Next follows the complete catalog at step ${step}: ${JSON.stringify({ expected: cityIds[index],
+          active: await cities.locator('[aria-pressed="true"]').getAttribute('data-destination-id'),
+          saved: app.users.find(user => user.id === id)?.roleSettings?.feedLocations?.countries,
+          profileWrites, errors })}`);
       assert.ok(await rail.locator('iframe').count() <= 1, 'Only the current city can mount a player');
     }
     const beforeCameraChoices = profileWrites;
@@ -203,7 +219,7 @@ try {
       await cityChoice(({ 'New York': 'US:New_York_City', Tokyo: 'JP:Tokyo', London: 'GB:London' })[city]).click();
       await waitForCitySave();
       await page.waitForFunction(city => document.querySelector('.travel-live-loop-choice.active')?.textContent.includes(city), city);
-      assert.equal(await page.getByRole('searchbox', { name: 'Travel city', exact: true }).inputValue(), city);
+      assert.match(await page.locator('.travel-content-heading').textContent(), new RegExp(city));
       assert.match(await rail.locator('.travel-live-loop-choice.active').textContent(), new RegExp(city));
     }
     assert.equal(profileWrites - beforeCameraChoices, 6, 'one save per city selection in the inline and expanded viewers');
@@ -250,8 +266,9 @@ try {
     await page.keyboard.press('Escape');
     await guide.waitFor({state:'detached'});
     const heading = page.locator('.travel-content-heading');
-    await page.getByRole('searchbox', { name: 'Travel city', exact: true }).fill('Not saved yet');
+    await citySearch.fill('Not saved yet');
     await rail.locator('.travel-camera-fallback').getByText(/No live camera is available in Seattle\./).waitFor();
+    await rail.getByRole('button', { name: 'Clear city search', exact: true }).click();
     assert.equal(await cityChoice('US:Seattle').getAttribute('aria-pressed'), 'true', 'Unsaved input cannot change the city player or guide');
     assert.match(await heading.textContent(), /Seattle/);
     assert.doesNotMatch(await heading.textContent(), /Not saved yet/);
@@ -260,7 +277,7 @@ try {
     await page.waitForFunction(() => document.querySelector('[data-destination-id="US:Seattle"]')?.getAttribute('aria-pressed') === 'true');
     failSave = true;
     await cityChoice('JP:Osaka').click();
-    await page.getByText('Could not save this location. Your previous feed location is still active.').waitFor();
+    await page.getByText('Could not save this destination. Your previous location is still active.').waitFor();
     assert.equal(await cityChoice('US:Seattle').getAttribute('aria-pressed'), 'true');
     failSave = false;
     await cityChoice('JP:Tokyo').click();
@@ -280,7 +297,7 @@ try {
     assert.equal(await rail.locator('iframe').count(),0,'exhausted streams stop instead of looping');
     await rail.getByRole('button',{name:'Refresh live cameras',exact:true}).click();
     await page.waitForFunction(() => window.__travelPlayers.some(player=>player.frame.isConnected && player.playing));
-    await cityChoice('GB:London').click();
+    await cityChoice('JP:Tokyo').click();
     await waitForCitySave();
     await rail.scrollIntoViewIfNeeded();
     await rail.locator('.travel-live-loop-stage').hover();
@@ -294,9 +311,15 @@ try {
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/travel-${width}.png`) });
     hideCameras = true;
     failPagination = true;
-    await page.getByRole('button', { name: 'Clear', exact: true }).click();
+    paginationGeneration++;
+    const londonCacheKey = 'countries:selected:london:united kingdom';
+    app.locationLiveFeedCache.delete(londonCacheKey);
+    const londonLocation = { available: true, city: 'London', country: 'GB', countryName: 'United Kingdom', declared: ['London', 'United Kingdom'], source: 'member' };
+    await app.getCountriesCameraFeed(londonLocation, id);
+    await app.locationLiveFeedCache.get(londonCacheKey)?.pending;
+    await cityChoice('GB:London').click();
     await rail.getByText('Live camera checks are temporarily unavailable.').waitFor();
-    assert.equal(await page.getByRole('searchbox', { name: 'Travel city', exact: true }).inputValue(), '');
+    assert.equal(await cityChoice('GB:London').getAttribute('aria-pressed'), 'true');
     assert.equal(await cities.getByRole('button').count(), 91, 'city choices remain available without live cameras');
     assert.equal(await rail.locator('iframe').count(), 0);
     await page.locator('[data-feed-has-more]').first().evaluate(element => element.scrollIntoView({ block: 'end' }));

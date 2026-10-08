@@ -9365,6 +9365,7 @@ const COUNTRY_INPUT_CODES = {
   netherlands: 'NL', ireland: 'IE', india: 'IN',
   'new zealand': 'NZ', brazil: 'BR', mexico: 'MX',
   singapore: 'SG', poland: 'PL', portugal: 'PT', sweden: 'SE',
+  turkey: 'TR', turkiye: 'TR', 'czech republic': 'CZ',
 };
 
 // DisplayNames can resolve the rest of ISO 3166-1 without maintaining a
@@ -11237,6 +11238,8 @@ function readTravelDiscoveryCache(key, ttl, loader, destinations) {
 }
 
 async function getCountriesCameraFeed(location, viewerId = null) {
+  const selectedLocation = travelLocationHasSavedSelection(location)
+    || Boolean(location?.available && location?.city);
   // Guides and stories can stay cached for a while. Camera availability cannot:
   // a stream can end at any moment, so its independently verified snapshot has
   // a much shorter lifetime and is never stored in this discovery cache.
@@ -11245,7 +11248,7 @@ async function getCountriesCameraFeed(location, viewerId = null) {
       console.warn('[Travel] live-camera verification failed:', error?.message || error);
       return [];
     }),
-    readTravelDiscoveryCache('countries:vacation-discovery', COUNTRIES_DISCOVERY_CACHE_MS, async () => {
+    selectedLocation ? null : readTravelDiscoveryCache('countries:vacation-discovery', COUNTRIES_DISCOVERY_CACHE_MS, async () => {
       const [guideResult, newsResult] = await Promise.allSettled([
         fetchCountryDestinationGuides(),
         fetchCountryDiscoveryNewsPosts(),
@@ -11276,7 +11279,6 @@ async function getCountriesCameraFeed(location, viewerId = null) {
 
   let selectedEntry = null;
   let regionalPosts = [];
-  const selectedLocation = travelLocationHasSavedSelection(location);
   if (selectedLocation) {
     selectedEntry = await readTravelDiscoveryCache(
       locationCacheKey('countries:selected', location),
@@ -11298,7 +11300,9 @@ async function getCountriesCameraFeed(location, viewerId = null) {
       },
       selectedTravelGuideDestinations(location),
     );
-    regionalPosts = (selectedEntry?.posts || []).map(post => markSelectedTravelPost(post, location));
+    regionalPosts = (selectedEntry?.posts || [])
+      .filter(post => location?.city ? travelCityMatches(post, location) : travelCountryMatches(post, location))
+      .map(post => markSelectedTravelPost(post, location));
   }
 
   const worldwidePosts = rankFeedPostsForLocation(
@@ -11306,7 +11310,12 @@ async function getCountriesCameraFeed(location, viewerId = null) {
     location,
     { preserveFirst: 0, chunkSize: 12 },
   );
-  const travelPosts = mergeUniqueTravelPosts(regionalPosts, worldwidePosts);
+  // The selected destination defines the picks below Live Travel. Keep a
+  // worldwide camera fallback in its separate rail, without filling these
+  // cards with unrelated destinations when local providers have no stories.
+  const travelPosts = selectedLocation
+    ? mergeUniqueTravelPosts(regionalPosts)
+    : mergeUniqueTravelPosts(worldwidePosts);
   const scopedCameras = prioritizeLiveCamerasForLocation(cameras, location);
   // Keep the live cameras as their own rail instead of spending the first
   // page of Travel on them. The client can rotate one lightweight player at
@@ -11331,7 +11340,7 @@ async function getCountriesCameraFeed(location, viewerId = null) {
       selectedEntry?.fetchedAt,
       liveCameraVerificationState.lastRun ? new Date(liveCameraVerificationState.lastRun).toISOString() : null,
     ].filter(Boolean).sort().at(-1) || new Date().toISOString(),
-    catalogSize: rawPosts.length + cameras.length,
+    catalogSize: travelPosts.length + cameras.length,
     equalizer: {
       mode: 'live-weighted-round-robin',
       liveCameras: liveFeeds.length,

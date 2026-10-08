@@ -1112,15 +1112,17 @@ function TravelLiveLoop({ feeds = [], mediaOpenId, location, onLocationSelect, o
   const [failedStreams, setFailedStreams] = useState(() => new Set());
   const [selecting, setSelecting] = useState(false);
   const selectingRef = useRef(false);
+  const initialCityAttempted = useRef(false);
   const [inView, setInView] = useState(false);
   const [pageVisible, setPageVisible] = useState(() => typeof document === 'undefined' || !document.hidden);
   const loopRef = useRef(null);
   const liveFeeds = useMemo(() => (Array.isArray(feeds) ? feeds : [])
     .filter(feed => feed?.id && feed.liveVerified && extractYouTubeId(feed.sourceUrl || feed.mediaUrl)), [feeds]);
   const savedIndex = destinations.findIndex(city => travelCityMatches(city, location));
+  const defaultCity = destinations.find(city => travelCityMatches(city, { city: city.city, country: location?.country })) || destinations[0];
   const selected = savedIndex >= 0 ? destinations[savedIndex] : location?.city
     ? { city: location.city, country: location.country }
-    : destinations[0] || null;
+    : defaultCity || null;
   const selectedIndex = selected?.id ? destinations.findIndex(city => city.id === selected.id) : -1;
   const streamKey = feed => feed.id + ':' + extractYouTubeId(feed.sourceUrl || feed.mediaUrl);
   const availableFeeds = liveFeeds.filter(feed => !failedStreams.has(streamKey(feed)));
@@ -1165,6 +1167,11 @@ function TravelLiveLoop({ feeds = [], mediaOpenId, location, onLocationSelect, o
       : (selectedIndex + direction + destinations.length) % destinations.length;
     return selectCity(destinations[index]);
   };
+  useEffect(() => {
+    if (location?.city || !defaultCity || busy || initialCityAttempted.current) return;
+    initialCityAttempted.current = true;
+    void selectCity(defaultCity);
+  }, [location?.city, defaultCity?.id, busy]);
   const allPlaybackFailed = liveFeeds.length > 0 && !availableFeeds.length;
   const cameraStatus = allPlaybackFailed ? 'Live cameras are temporarily unavailable. Check again shortly.'
     : status?.camerasChecking ? 'Checking live cameras...'
@@ -1215,7 +1222,6 @@ function TravelLiveLoop({ feeds = [], mediaOpenId, location, onLocationSelect, o
       </div>}
       {destinations.length > 0 && <div className="travel-city-navigation" role="group" aria-label="City navigation">
         <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => moveCity(-1)} aria-label="Previous city"><ArrowLeft size={17} />Previous</button>
-        <span role="status" aria-live="polite">{selectedIndex >= 0 ? 'City ' + (selectedIndex + 1) + ' of ' + destinations.length : destinations.length + ' cities'}</span>
         <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => moveCity(1)} aria-label="Next city">Next<ArrowRight size={17} /></button>
       </div>}
       <TravelDestinationPicker destinations={destinations} selected={selected} disabled={busy}
@@ -2660,7 +2666,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   }, [applyLocationFilters]);
 
   const selectTravelLiveLocation = useCallback((camera) => {
-    const next = normalizeLocationFilters({ country: camera?.country, city: camera?.city });
+    const next = normalizeLocationFilters({ country: camera?.countryCode || camera?.country, city: camera?.city });
     if (!next.country && !next.city) return;
     const saved = savedFeedLocation(profileRef.current?.roleSettings, 'countries');
     if (next.city === saved.city && next.country === saved.country) return;
@@ -3343,7 +3349,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   </>;
 
   return (
-    <Layout wide={!forcedMode} discoveryPost={postContext} feedSearch={EMBEDDED_HOME_MODES.has(viewMode) ? undefined : {
+    <Layout wide={!forcedMode} hideSearch={viewMode === 'countries'} discoveryPost={postContext} feedSearch={EMBEDDED_HOME_MODES.has(viewMode) ? undefined : {
       query: search,
       onSubmit: submitFeedSearch,
       label: 'Search this feed',
@@ -3372,7 +3378,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       <>
       {!isLocationFeed && <FeedLocationControl context={locationContext} />}
       {/* Specialized feeds keep location and filter controls together. */}
-      {showsAdvancedFilters && <section className={`feed-specialized-toolbar${isLocationFeed ? ' feed-specialized-toolbar--location' : ''}`}>
+      {showsAdvancedFilters && viewMode !== 'countries' && <section className={`feed-specialized-toolbar${isLocationFeed ? ' feed-specialized-toolbar--location' : ''}`}>
         {isLocationFeed && (
           <div className="feed-location-heading">
             <strong>{viewMode === 'countries' ? 'Travel location' : viewMode === 'bars' ? 'Bars and clubs location' : 'Restaurant location'}</strong>
@@ -3626,10 +3632,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           onLocationSelect={selectTravelLiveLocation}
           onGuideOpen={setGuideDestination}
           guideOpen={Boolean(guideDestination)}
-          disabled={locationSaving || refreshing}
+          disabled={loading || locationSaving || refreshing}
           status={travelStatus}
           onRetry={() => loadFeed(true, activeTabsRef.current, { replace: true, preserveScroll: true, bust: false })}
         />
+        {locationMessage && <div className="feed-location-message" role="status">{locationMessage}</div>}
         <DiscoveryCategoryBar mode={viewMode} filters={filters} onChange={applyFilters} actions={discoveryActions} />
       </>}
 
@@ -3783,8 +3790,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                   {locationMessage || (viewMode === 'bars' ? 'Explore bars, clubs, and local pubs. Choose a city or country above to narrow your discoveries.' : viewMode === 'restaurants'
                     ? 'This feed searches for recent restaurant openings worldwide. Add a country or city above to bring matching reports closer to the top.'
                     : travelLocationLabel
-                      ? `Travel is showing live views, guides, and current stories for ${travelLocationLabel}, then a wider worldwide scroll.`
-                      : 'Travel combines live public cameras, destination guides, and fresh travel ideas. Add a country or city to see matching places first.')}
+                      ? `No travel picks are available for ${travelLocationLabel} yet. Choose another city in Live Travel or refresh.`
+                      : 'Choose a city in Live Travel to see its guides and current stories.')}
                 </p>
                 <button className="btn btn-ghost btn-sm" onClick={() => loadFeed(true, activeTabsRef.current, { replace: true, bust: false })}>Refresh now</button>
               </>
@@ -3819,7 +3826,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         <>
           {viewMode === 'countries' && contentPosts.length > 0 && (
             <div className="travel-content-heading">
-              <span>{travelLocationLabel ? `Travel picks: ${travelLocationLabel} and worldwide` : 'Travel picks'}</span>
+              <span>{travelLocationLabel ? `Travel picks: ${travelLocationLabel}` : 'Travel picks'}</span>
             </div>
           )}
 
