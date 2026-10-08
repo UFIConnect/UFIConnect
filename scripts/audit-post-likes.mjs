@@ -62,7 +62,7 @@ try {
         return route.fulfill({ json: { published: true, liked, source: payload.source, action: 'like' } });
       }
       if (endpoint === '/office/feed') return route.fulfill({ json: { posts: [{ ...post, likedByMe: true, likesCount: 3 }], hasMore: false } });
-      if (endpoint.startsWith('/office/feed/videos')) return route.fulfill({ json: { posts: [{ ...post, source: 'reddit', sourceLikesCount: 47, likedByMe: liked, likesCount: 2 + Number(liked), mediaType: 'video', mediaUrl: 'https://media.example.invalid/likes.mp4', directPlaybackAuthorized: true, videoDurationSeconds: 30 }], hasMore: false } });
+      if (endpoint.startsWith('/office/feed/videos')) return route.fulfill({ json: { posts: [{ ...post, source: 'reddit', sourceUrl: 'https://www.reddit.com/r/audit/comments/abcd/shared_recruiting_tools/', sourceLikesCount: 47, likedByMe: liked, likesCount: 2 + Number(liked), mediaType: 'video', mediaUrl: 'https://media.example.invalid/likes.mp4', directPlaybackAuthorized: true, videoDurationSeconds: 30 }], hasMore: false } });
       if (endpoint === '/feed/audit-likes') return route.fulfill({ json: { post: { ...post, likedByMe: liked, likesCount: 2 + Number(liked) } } });
       if (endpoint === '/feed/audit-likes/comments') return route.fulfill({ json: { comments: [], hasMore: false } });
       if (endpoint === '/feed/audit-likes/like') {
@@ -148,7 +148,12 @@ try {
     assert.equal(writes, 4, 'Home views must not submit provider writes');
     await auditNavigate(page, base + 'videos');
     const video = page.locator('[data-post-id="audit-likes"]');
-    await video.getByRole('link', { name: 'Connect Reddit to like, 47 likes', exact: true }).waitFor();
+    await video.getByRole('button', { name: 'More options', exact: true }).click();
+    const videoLike = page.getByRole('menu', { name: 'Post options on Reddit', exact: true }).getByRole('menuitem', { name: 'Connect Reddit to like, 47 likes', exact: true });
+    await videoLike.waitFor();
+    assert.equal(await videoLike.getAttribute('href'), '/connected-accounts?interactions=1');
+    assert.equal(await videoLike.locator('.post-chrome-like-count').innerText(), 'Upvote · 47 likes');
+    await page.keyboard.press('Escape');
     assert.equal(writes, 4);
     post.source = 'uficonnect'; post.isExternal = false; post.author.id = 'likes-reader';
     await auditNavigate(page, base + 'p/audit-likes');
