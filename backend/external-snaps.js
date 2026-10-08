@@ -1,6 +1,7 @@
 'use strict';
 const { isSourceDisplayAllowed, validateOriginalUrl, getSourcePolicy } = require('./source-policy');
 const catalog = require('../shared/feed-source-catalog.json');
+const { authorProfilePhoto } = require('./source-profile-photos');
 
 const CLIP_MAX_SECONDS = 180;
 const CLIP_LOOKBACK_MS = 7 * 86400000;
@@ -75,7 +76,8 @@ function externalSnapsFromPosts(posts, { mode = 'home', now = Date.now(), disabl
       id: String(post.id), source: post.source, sourceLabel: post.sourceLabel || post.source,
       sourceUrl, author: { id: post.author?.id || post.authorId || null,
         name: post.author?.name || post.sourceLabel || post.source,
-        avatarUrl: httpsUrl(post.author?.avatarUrl), profileUrl: httpsUrl(post.author?.profileUrl) },
+        avatarUrl: authorProfilePhoto(post), profileUrl: httpsUrl(post.author?.profileUrl || post.authorUrl),
+        ...(post.author?.channelId ? { channelId: post.author.channelId } : {}) },
       caption: String(post.title || post.content || '').replace(/<[^>]*>/g, '').slice(0, 500),
       mediaType: 'video', mediaUrl, thumbnailUrl,
       mediaKind: youtube ? 'youtube' : trustedDirect ? /\.m3u8(?:\?|$)/i.test(mediaUrl) ? 'hls' : 'file' : 'source',
@@ -93,7 +95,8 @@ function externalSnapsFromPosts(posts, { mode = 'home', now = Date.now(), disabl
   return result;
 }
 
-function createExternalSnapLoader({ getPublicPosts, getFollowingPosts, getUser, filterVisible = async posts => posts, now = Date.now, env = process.env }) {
+function createExternalSnapLoader({ getPublicPosts, getFollowingPosts, getUser, filterVisible = async posts => posts,
+  hydrateAvatars = async snaps => snaps, now = Date.now, env = process.env }) {
   return async ({ mode, viewerId, source = null, bust = false }) => {
     if (mode === 'ufi' || source === 'uficonnect' || (mode === 'following' && !viewerId)) return { snaps: [], sourceErrors: {} };
     const user = viewerId ? await getUser(viewerId) : null;
@@ -108,7 +111,12 @@ function createExternalSnapLoader({ getPublicPosts, getFollowingPosts, getUser, 
       ? sources.length ? await getFollowingPosts(viewerId, sources, { bust: Boolean(source && bust), surface: null }) : { posts: [], sourceErrors: {} }
       : await getPublicPosts({ source, bust: Boolean(source && bust) });
     const visible = await filterVisible((loaded.posts || []).filter(post => !source || post.source === source));
-    return { snaps: externalSnapsFromPosts(visible, { mode, now: now(), disabledSources, env }), sourceErrors: loaded.sourceErrors || {} };
+    const selected = externalSnapsFromPosts(visible, { mode, now: now(), disabledSources, env });
+    // Hydrate only eligible short clips after audience and removal filtering.
+    // Profile metadata is optional: an outage cannot hide playable clips.
+    let snaps = selected;
+    try { snaps = await hydrateAvatars(selected); } catch {}
+    return { snaps: Array.isArray(snaps) ? snaps : selected, sourceErrors: loaded.sourceErrors || {} };
   };
 }
 

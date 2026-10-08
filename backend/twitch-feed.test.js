@@ -42,6 +42,10 @@ test('clips preserve canonical identity, attribution, duration and views without
   assert.equal(result.visibility, 'public');
   assert.equal(streamPost(stream()).likesCount, 0);
   assert.equal(streamPost(stream()).viewsCount, 120);
+  const channelPhoto = 'https://static-cdn.jtvnw.net/jtv_user_pictures/broadcaster.png';
+  assert.equal(clipPost(clip(), { ...channel, profile_image_url: channelPhoto }, NOW).author.avatarUrl, channelPhoto);
+  assert.equal(result.author.id, 'twitch_101');
+  assert.equal(result.author.avatarUrl, undefined, 'The clip preview is never used as the broadcaster photo');
 });
 
 test('clips reject unrelated channels, forged links, unsupported durations and stale timestamps', () => {
@@ -157,4 +161,52 @@ test('clip discovery stays within six public or three followed channels and eigh
   const followed = await many.feed.following('personal-member-token', { userId: 'account' });
   assert.equal(followed.filter(post => post.id.startsWith('twitch_clip_')).length, 24);
   assert.equal(many.calls.filter(call => call.url.pathname === '/helix/clips').length, 3);
+});
+
+test('Snap photos use official broadcaster metadata with one cached app-token batch and no member identity substitution', async () => {
+  let authorPhoto = 'https://static-cdn.jtvnw.net/jtv_user_pictures/broadcaster.png';
+  const f = fixture({ handler: ({ url }) => url.pathname === '/helix/users' && (url.searchParams.has('id') || url.searchParams.has('login'))
+    ? response({ data: [{ id: '101', login: channel.login, profile_image_url: authorPhoto, email: 'private-provider-email' },
+      { id: '888', login: 'connected_viewer', profile_image_url: 'https://static-cdn.jtvnw.net/jtv_user_pictures/viewer.png' }] }) : null });
+  const publicPosts = await f.feed.publicPosts();
+  const selected = publicPosts.filter(post => post.mediaType === 'video').map(post => ({ ...post,
+    author: { ...post.author, avatarUrl: 'https://static-cdn.jtvnw.net/jtv_user_pictures/expired-broadcaster.png' } }));
+  const before = f.calls.length;
+  const [first, concurrent] = await Promise.all([f.feed.hydrateAvatars(selected), f.feed.hydrateAvatars(selected)]);
+  assert.deepEqual(first, concurrent); assert.equal(f.calls.length, before + 1);
+  assert.equal(first[0].author.avatarUrl, authorPhoto); assert.equal(first[0].author.name, channel.name);
+  assert.equal(first[0].clipCreator.id, '222');
+  assert.equal(f.calls.at(-1).url.pathname, '/helix/users');
+  assert.deepEqual(f.calls.at(-1).url.searchParams.getAll('id'), ['101']);
+  assert.equal(f.calls.at(-1).options.headers.Authorization, 'Bearer synthetic-app-token');
+  assert.doesNotMatch(JSON.stringify(first), /private-provider-email|synthetic-app-token|viewer\.png/);
+  const stored = selected.map(post => ({ ...post, authorId: undefined, author: { name: post.author.name, profileUrl: post.author.profileUrl } }));
+  assert.equal((await f.feed.hydrateAvatars(stored))[0].author.avatarUrl, authorPhoto);
+  assert.equal(f.calls.length, before + 1, 'Known login alias reuses the broadcaster ID lookup');
+  authorPhoto = 'https://static-cdn.jtvnw.net/jtv_user_pictures/current-broadcaster.png';
+  f.control.now += 24 * 60 * 60000;
+  assert.equal((await f.feed.hydrateAvatars(selected))[0].author.avatarUrl, authorPhoto);
+  assert.equal(f.calls.filter(call => call.url.pathname === '/helix/users').length, 2, 'Profile metadata refreshes only after its cached day expires');
+});
+
+test('Snap avatar failures use negative caching and fixed proven profile identities without dropping media', async () => {
+  const f = fixture({ handler: ({ url }) => url.pathname === '/helix/users' && url.searchParams.has('id')
+    ? response({ message: 'private-provider-error' }, 429) : null });
+  const selected = [clipPost(clip(), { ...channel, profile_image_url: 'https://static-cdn.jtvnw.net/jtv_user_pictures/prior.png' }, NOW)];
+  assert.deepEqual(await f.feed.hydrateAvatars(selected), selected);
+  const before = f.calls.length;
+  assert.deepEqual(await f.feed.hydrateAvatars(selected), selected); assert.equal(f.calls.length, before);
+  const forged = [{ source: 'twitch', author: { name: channel.id, profileUrl: 'https://twitch.tv.evil.invalid/' + channel.login } }];
+  assert.deepEqual(await f.feed.hydrateAvatars(forged), forged); assert.equal(f.calls.length, before);
+  const missing = fixture({ config: { clientId: 'client' } });
+  assert.equal(await missing.feed.hydrateAvatars(selected), selected); assert.equal(missing.calls.length, 0);
+});
+
+test('missing official Twitch photos retain supplied broadcaster photos', async () => {
+  const f = fixture({ handler: ({ url }) => url.pathname === '/helix/users' && url.searchParams.has('id')
+    ? response({ data: [{ id: channel.id, login: channel.login, profile_image_url: '' }] }) : null });
+  const selected = [clipPost(clip(), { ...channel, profile_image_url: 'https://static-cdn.jtvnw.net/jtv_user_pictures/prior.png' }, NOW)];
+  assert.deepEqual(await f.feed.hydrateAvatars(selected), selected);
+  const calls = f.calls.length;
+  assert.deepEqual(await f.feed.hydrateAvatars(selected), selected); assert.equal(f.calls.length, calls);
 });

@@ -6,7 +6,8 @@ import { postProfileLink, safePostLink } from '../../../backend/post-links.mjs';
 import { SOURCE_META } from './sourceMeta';
 import { isExternalSnap, snapAvailabilityLabel, snapPlaybackInfo } from './snapRanking.mjs';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
-import { OpenOnSource, PostAvatar, postTimes } from './PostCardChrome';
+import { OpenOnSource, postTimes } from './PostCardChrome';
+import SnapAvatar from './SnapAvatar';
 import { sourcePostMenuItems } from '../utils/sourcePostMenu.mjs';
 import { HlsVideoPlayer, youTubeEmbedUrl } from './videoMedia';
 import { officialSnapEmbedUrl } from '../utils/snapSourcePlayer.mjs';
@@ -18,8 +19,8 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
   const dialog = useRef(null), mounted = useRef(true), titleId = useId();
   const cube = useRef(null);
   const menuWrap = useRef(null), menuButton = useRef(null), menuPanel = useRef(null);
-  const menuId = useId(), positionId = useId();
-  const gesture = useRef({ touch: null, wheelDelta: 0, wheelAt: 0, movedAt: 0 });
+  const menuId = useId();
+  const gesture = useRef({ touch: null, pointer: null, wheelDelta: 0, wheelAt: 0, movedAt: 0 });
   const [failed, setFailed] = useState(false), [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false), [error, setError] = useState('');
   const [transition, setTransition] = useState(null);
@@ -28,6 +29,7 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
   const profileLink = postProfileLink(snap, profile?.id), original = safePostLink(snap.sourceUrl);
   const source = SOURCE_META[snap.source]?.label || snap.source;
   const authorPost = { ...snap, author: { ...snap.author, name: author, avatarUrl: safePostLink(snap.author?.avatarUrl) } };
+  const authorPhotos = [...(Array.isArray(snap.author?.avatarUrls) ? snap.author.avatarUrls : []), authorPost.author.avatarUrl];
   const posted = postTimes(snap);
   const playback = snapPlaybackInfo(snap);
   const twitchClip = playback.kind === 'source' && snap.source === 'twitch' && (officialTwitchClipId(snap.sourceUrl) || officialTwitchClipId(snap.mediaUrl));
@@ -48,8 +50,15 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
   }, []);
   useEffect(() => {
     setFailed(false); setConfirmDelete(false); setError('');
-    gesture.current.touch = null; gesture.current.wheelDelta = 0;
-  }, [snap.id, snap.source]);
+    gesture.current.touch = null; gesture.current.pointer = null; gesture.current.wheelDelta = 0;
+  }, [snap.id, snap.source, identity]);
+  useEffect(() => {
+    // A non-passive listener consumes viewer scrolling before the browser can
+    // move the page or history. Player/control input stays native.
+    const surfaces = Array.from(dialog.current?.querySelectorAll('.snap-viewer-topbar, .snap-viewer-media') || []);
+    surfaces.forEach(element => element.addEventListener('wheel', scrollSnap, { passive: false }));
+    return () => surfaces.forEach(element => element.removeEventListener('wheel', scrollSnap));
+  });
   useEffect(() => {
     if (!transition) return undefined;
     if (transition.identity !== identity || transition.to !== mediaKey) { setTransition(null); return undefined; }
@@ -94,8 +103,7 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
     setTransition(reduceMotion ? null : {
       identity, to: `${next.source}:${next.id}`, direction: nextIndex > index ? 'forward' : 'backward',
       poster: snap.source === 'uficonnect' && !profile?.id ? null : poster,
-      author, avatar: authorPost.author.avatarUrl, source, availability: snapAvailabilityLabel(snap, now),
-      initials: author.trim().split(/\s+/).slice(0, 2).map(part => Array.from(part)[0] || '').join('').toUpperCase() || 'U',
+      author, avatars: authorPhotos, source, availability: snapAvailabilityLabel(snap, now),
       caption: snap.caption || '', posted: posted?.relative || '',
       audience: snap.source === 'uficonnect' ? snap.visibility === 'followers' ? 'Followers only' : 'Public' : '',
     });
@@ -107,11 +115,14 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
   function move(direction) { return goTo(index + direction); }
   function canGesture(target) {
     return !optionsOpen && !deleting && !confirmDelete
-      && !target.closest?.('video, iframe, .twitch-clip-player, .snap-viewer-menu, .snap-viewer-details, a, button, input, textarea, select, [contenteditable="true"]');
+      && !target.closest?.('video, iframe, .twitch-clip-player, .snap-viewer-media-twitch, .snap-viewer-menu, .snap-viewer-details, a, button, input, textarea, select, [contenteditable="true"]');
   }
   function scrollSnap(event) {
-    if (!canGesture(event.target) || event.ctrlKey || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+    if (!canGesture(event.target) || event.ctrlKey || event.metaKey) return;
+    if (!Number.isFinite(event.deltaY) || !Number.isFinite(event.deltaX) || !event.deltaY && !event.deltaX) return;
+    if (event.cancelable) event.preventDefault();
     const current = gesture.current, time = Date.now();
+    if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) { current.wheelDelta = 0; return; }
     if (time - current.movedAt < 500) { current.wheelDelta = 0; return; }
     const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? event.currentTarget.clientHeight : 1);
     if (time - current.wheelAt > 200 || Math.sign(delta) !== Math.sign(current.wheelDelta)) current.wheelDelta = 0;
@@ -132,12 +143,34 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
     const touch = Array.from(event.changedTouches).find(item => item.identifier === start.id);
     if (!touch) return;
     const vertical = start.y - touch.clientY, horizontal = start.x - touch.clientX;
-    if (Math.abs(vertical) >= 55 && Math.abs(vertical) > Math.abs(horizontal) * 1.2) move(Math.sign(vertical));
+    if (Math.abs(horizontal) >= 55 && Math.abs(horizontal) > Math.abs(vertical) * 1.2) move(Math.sign(horizontal));
   }
-  const swipeHandlers = {
+  function startDrag(event) {
+    gesture.current.pointer = null;
+    if (!canGesture(event.target)) return;
+    event.currentTarget.focus?.({ preventScroll: true });
+    if (event.pointerType !== 'mouse' || event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey) return;
+    gesture.current.pointer = { id: event.pointerId, x: event.clientX, y: event.clientY, time: Date.now() };
+    try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* A cancelled pointer needs no capture. */ }
+    event.preventDefault();
+  }
+  function endDrag(event) {
+    const start = gesture.current.pointer;
+    gesture.current.pointer = null;
+    if (!start || start.id !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (!canGesture(event.target) || Date.now() - start.time > 2000 || Date.now() - gesture.current.movedAt < 500) return;
+    const horizontal = start.x - event.clientX, vertical = start.y - event.clientY;
+    if (Math.abs(horizontal) >= 55 && Math.abs(horizontal) > Math.abs(vertical) * 1.2) move(Math.sign(horizontal));
+  }
+  const gestureHandlers = {
     onTouchStart: startSwipe, onTouchEnd: endSwipe,
     onTouchMove: event => { if (event.touches.length !== 1) gesture.current.touch = null; },
     onTouchCancel: () => { gesture.current.touch = null; },
+    onPointerDown: startDrag, onPointerUp: endDrag,
+    onPointerCancel: () => { gesture.current.pointer = null; },
+    onLostPointerCapture: () => { gesture.current.pointer = null; },
+    onDragStart: event => { if (canGesture(event.target)) event.preventDefault(); },
   };
   async function remove() {
     if (deleting || !canDelete || !confirmDelete) return;
@@ -151,18 +184,18 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
     onKeyDown={event => {
       if (optionsOpen || event.defaultPrevented || event.repeat || event.altKey || event.ctrlKey || event.metaKey
         || (!event.target.closest?.('.snap-viewer-close') && !canGesture(event.target))) return;
-      if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') { event.preventDefault(); move(-1); }
-      else if (event.key === 'ArrowRight' || event.key === 'ArrowDown') { event.preventDefault(); move(1); }
+      if (event.key === 'ArrowLeft') { event.preventDefault(); move(-1); }
+      else if (event.key === 'ArrowRight') { event.preventDefault(); move(1); }
     }}>
     <button type="button" className="snap-dialog-icon snap-viewer-close" disabled={deleting} onClick={onClose} aria-label="Close snap" autoFocus><X size={22} /></button>
     <div ref={cube} className="snap-viewer-cube" data-cube-direction={activeTransition?.direction}
       onAnimationEnd={event => { if (event.target === event.currentTarget) setTransition(current => current?.to === mediaKey ? null : current); }}>
       {activeTransition && <div className="snap-viewer-cube-outgoing" aria-hidden="true" inert>
         <div className="snap-viewer-preview-shell">
-          <div className="snap-viewer-preview-topbar"><strong>Snaps</strong><span>Swipe up or down</span></div>
+          <div className="snap-viewer-preview-topbar"><strong>Snaps</strong><span>Swipe left or right</span></div>
           <div className="snap-viewer-preview-media">{activeTransition.poster && <img src={activeTransition.poster} alt="" referrerPolicy="no-referrer" onError={event => { event.currentTarget.hidden = true; }} />}</div>
           <div className="snap-viewer-preview-details">
-            <div className="snap-viewer-preview-author"><span className="snap-viewer-preview-avatar">{activeTransition.avatar ? <img src={activeTransition.avatar} alt="" referrerPolicy="no-referrer" onError={event => { event.currentTarget.hidden = true; }} /> : activeTransition.initials}</span><div><strong className="snap-viewer-preview-name">{activeTransition.author}</strong><span className="snap-viewer-preview-source">{activeTransition.source} · {activeTransition.availability}</span>{activeTransition.posted && <span className="snap-viewer-preview-time">{activeTransition.posted}</span>}</div></div>
+            <div className="snap-viewer-preview-author"><SnapAvatar urls={activeTransition.avatars} className="snap-viewer-preview-avatar" /><div><strong className="snap-viewer-preview-name">{activeTransition.author}</strong><span className="snap-viewer-preview-source">{activeTransition.source} · {activeTransition.availability}</span>{activeTransition.posted && <span className="snap-viewer-preview-time">{activeTransition.posted}</span>}</div></div>
             {activeTransition.caption && <p className="snap-viewer-preview-caption">{activeTransition.caption}</p>}
             {activeTransition.audience && <p className="snap-viewer-preview-audience">{activeTransition.audience}</p>}
           </div>
@@ -170,7 +203,7 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
       </div>}
       <div className="snap-viewer-cube-current">
     <div className="snap-viewer-inner">
-      <div className="snap-viewer-topbar" onWheel={scrollSnap} {...swipeHandlers}><strong>Snaps</strong><span className="snap-viewer-swipe-hint">Swipe up or down</span>
+      <div className="snap-viewer-topbar" {...gestureHandlers}><strong>Snaps</strong><span className="snap-viewer-swipe-hint">Swipe left or right</span>
         <div className="snap-viewer-top-actions" role="group" aria-label="Snap commands">
           {original && <OpenOnSource post={snap} onClick={() => closeOptions(false)} />}
           <div ref={menuWrap} className="snap-viewer-menu-wrap post-chrome-more"><button ref={menuButton} type="button" className="post-chrome-action"
@@ -180,8 +213,8 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
         </div>
       </div>
       <div className={`snap-viewer-media${twitchClip ? ' snap-viewer-media-twitch' : ''}`} tabIndex={0} role="region" aria-label="Snap media"
-        onWheel={scrollSnap} {...swipeHandlers}
-        onPointerDown={event => { if (canGesture(event.target)) event.currentTarget.focus({ preventScroll: true }); }}>
+        aria-description="Scroll up or down, swipe left or right, or use the left and right arrow keys to view snaps."
+        aria-keyshortcuts="ArrowLeft ArrowRight" {...gestureHandlers}>
         {failed ? <p role="status">This snap’s media could not load.{original && <a href={original} target="_blank" rel="noopener noreferrer">Open on {source}</a>}</p>
         : twitchClip ? <TwitchClipPlayer key={mediaKey} post={snap} title={`${source} clip by ${author}`} />
         : playback.kind === 'youtube' ? <iframe key={mediaKey} src={youTubeEmbedUrl(playback.id, { autoplay: '0' })} title={`${source} clip by ${author}`} referrerPolicy="strict-origin-when-cross-origin" allow="encrypted-media; fullscreen; picture-in-picture" allowFullScreen onError={() => setFailed(true)} />
@@ -193,7 +226,7 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
       </div>
       <section className="snap-viewer-details" aria-label="Snap details">
         <header><div className="snap-social-header">
-          <PostAvatar post={authorPost} member={snap.source === 'uficonnect'} />
+          <SnapAvatar urls={authorPhotos} source={snap.source} member={snap.source === 'uficonnect'} badge className="post-chrome-avatar" />
           <div className="snap-viewer-author snap-social-identity"><strong id={titleId} className="snap-social-name post-chrome-name">{profileLink?.to ? <Link to={profileLink.to} onClick={onClose}>{author}</Link> : profileLink?.href && !profileLink.fallback ? <a href={profileLink.href} target="_blank" rel="noopener noreferrer">{author}</a> : author}</strong>
             <span className="snap-viewer-source-details"><span className="snap-source-mark" aria-hidden="true">{hasBrandIcon(snap.source) ? <BrandIcon platform={snap.source} size={16} /> : <b>{source.slice(0, 2)}</b>}</span><span>{source} · {snapAvailabilityLabel(snap, now)}</span></span>
             {posted && <time className="snap-social-meta" dateTime={posted.iso} title={posted.full} aria-label={posted.full}>{posted.relative}</time>}
@@ -206,7 +239,6 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
     {optionsOpen && dialog.current && createPortal(<div ref={menuPanel} id={menuId} className="snap-viewer-menu post-chrome-menu" role="group" aria-label="Snap options"
       onKeyDown={event => event.stopPropagation()}>
       {sourceItems.map(item => <a key={item.key} href={safePostLink(item.href)} target="_blank" rel="noopener noreferrer" onClick={() => closeOptions(false)}>{item.label}{item.detail && <small>{item.detail}</small>}</a>)}
-      <div className="snap-viewer-menu-position" role="group" aria-label="Snap navigation"><label htmlFor={positionId}>Snap position</label><input id={positionId} type="range" className="snap-viewer-position" min="1" max={items.length} step="1" value={index + 1} aria-valuetext={`${index + 1} of ${items.length} snaps`} disabled={items.length < 2 || deleting || confirmDelete} onChange={event => goTo(Number(event.target.value) - 1)} /><span aria-live="polite">{index + 1} / {items.length}</span></div>
       <button type="button" disabled={index === 0 || deleting || confirmDelete} onClick={() => move(-1)} aria-label="Previous snap">Previous snap</button>
       {onReport && <button type="button" disabled={deleting} onClick={() => { closeOptions(false); onReport(snap); }} aria-label="Report this snap"><Flag size={16} aria-hidden="true" />Report</button>}
       {canDelete && (confirmDelete ? <div className="snap-viewer-delete-confirm"><p>Delete this snap?</p><button type="button" className="post-chrome-menu-danger" disabled={deleting} onClick={remove} autoFocus>{deleting ? 'Deleting…' : 'Delete snap'}</button><button type="button" disabled={deleting} onClick={() => { setConfirmDelete(false); setError(''); window.requestAnimationFrame(() => menuPanel.current?.querySelector('[aria-label="Delete this snap"]')?.focus({ preventScroll: true })); }}>Cancel</button></div>

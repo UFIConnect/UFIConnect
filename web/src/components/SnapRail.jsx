@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Camera, RefreshCw, Star } from 'lucide-react';
-import { safePostLink, sourceAuthorProfileUrl } from '../../../backend/post-links.mjs';
+import { sourceAuthorProfileUrl } from '../../../backend/post-links.mjs';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { SOURCE_META } from './sourceMeta';
 import { rankSnapGroups, normalizeSnapSourceErrors } from './snapRanking.mjs';
 import SnapComposer from './SnapComposer';
 import SnapViewer from './SnapViewer';
+import SnapAvatar, { snapAvatarUrls } from './SnapAvatar';
 import ReportModal from './ReportModal';
 import './SnapRail.css';
 
@@ -23,20 +24,16 @@ function groupSnapProfiles(items, source) {
   return [...profiles.values()];
 }
 
-function SnapProfile({ group, onOpen }) {
-  const [failed, setFailed] = useState(false);
+function SnapProfile({ group, onOpen, refreshKey }) {
   const snap = group.items[0];
   const author = snap.author?.name || 'UFIConnect member';
-  const avatar = group.items.map(item => safePostLink(item.author?.avatarUrl)).find(Boolean);
-  const initials = author.trim().split(/\s+/).slice(0, 2).map(part => Array.from(part)[0] || '').join('').toUpperCase() || 'U';
+  const avatars = group.items.map(item => item.author?.avatarUrl);
   const count = group.items.length;
-  useEffect(() => setFailed(false), [avatar]);
   return <button type="button" className="snap-profile-button" onClick={onOpen}
     data-snap-id={snap.id} data-snap-ids={JSON.stringify(group.items.map(item => item.id))} data-snap-author-key={group.key}
     aria-label={`View ${author}'s ${count === 1 ? 'snap' : `${count} snaps`}`} title={`${author} · ${count} ${count === 1 ? 'snap' : 'snaps'}`}>
-    <span className="snap-profile-ring" aria-hidden="true"><span className="snap-profile-avatar">
-      {avatar && !failed ? <img src={avatar} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} /> : <b>{initials}</b>}
-    </span>{count > 1 && <span className="snap-profile-count">{count}</span>}</span>
+    <span className="snap-profile-ring" aria-hidden="true"><SnapAvatar urls={avatars} source={snap.source} refreshKey={refreshKey} />
+      {count > 1 && <span className="snap-profile-count">{count}</span>}</span>
     <span className="snap-profile-name">{author}</span>
   </button>;
 }
@@ -49,6 +46,7 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
   const [selectedId, setSelectedId] = useState(null);
   const [composing, setComposing] = useState(false);
   const [reportSnap, setReportSnap] = useState(null);
+  const [photoRevisions, setPhotoRevisions] = useState({});
   const groups = useMemo(() => {
     const ranked = rankSnapGroups(items, favorites, now);
     const external = ranked.filter(group => group.source !== 'uficonnect');
@@ -58,7 +56,10 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
     return [native, ...external];
   }, [mode, items, favorites, now]);
   const profileGroups = useMemo(() => groups.map(group => ({ ...group, profiles: groupSnapProfiles(group.items, group.source) })), [groups]);
-  const activeItems = profileGroups.flatMap(group => group.profiles.flatMap(author => author.items));
+  const activeItems = profileGroups.flatMap(group => group.profiles.flatMap(author => {
+    const avatarUrls = snapAvatarUrls(author.items.map(item => item.author?.avatarUrl));
+    return author.items.map(item => ({ ...item, author: { ...item.author, avatarUrls } }));
+  }));
   const selectedIndex = activeItems.findIndex(snap => `${snap.source}:${snap.id}` === selectedId);
   const sourceFailures = Object.entries(normalizeSnapSourceErrors(sourceErrors));
   useEffect(() => {
@@ -71,6 +72,12 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
     const result = await onPostSnap(payload);
     setNow(Date.now());
     return result;
+  }
+  async function refreshSource(source) {
+    await onRefresh(source);
+    // A deliberate refresh retries a transient photo failure once, even when
+    // the source still returns the same image URL.
+    setPhotoRevisions(current => ({ ...current, [source]: (current[source] || 0) + 1 }));
   }
   return <section className="snap-rail" aria-label="Snaps" data-snap-mode={mode}>
     {error && <p className="snap-rail-message snap-rail-error" role="alert">{error}</p>}
@@ -90,10 +97,10 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
             <header className="snap-source-heading"><span className="snap-source-mark" aria-hidden="true">{hasBrandIcon(group.source) ? <BrandIcon platform={group.source} size={17} /> : <b>{source.icon}</b>}</span>
               <strong>{source.label}</strong>{group.items.length > 0 && <span className="snap-source-count">{group.items.length}</span>}
               {group.favorite && <Star className="snap-source-favorite" size={15} fill="currentColor" aria-label="Favorite source" />}
-              <button type="button" className="snap-refresh-button" disabled={loading || !onRefresh} onClick={() => onRefresh(group.source)} aria-label={refreshLabel} title={refreshLabel} aria-busy={isRefreshing}><RefreshCw size={16} className={isRefreshing ? 'snap-refresh-spinning' : ''} /></button>
+              <button type="button" className="snap-refresh-button" disabled={loading || !onRefresh} onClick={() => refreshSource(group.source)} aria-label={refreshLabel} title={refreshLabel} aria-busy={isRefreshing}><RefreshCw size={16} className={isRefreshing ? 'snap-refresh-spinning' : ''} /></button>
             </header>
             {group.items.length > 0
-              ? <ul className="snap-source-items" role="list" aria-label={`${source.label} snap profiles`}>{group.profiles.map(author => <li key={author.key} className="snap-profile-item"><SnapProfile group={author} onOpen={() => setSelectedId(`${author.items[0].source}:${author.items[0].id}`)} /></li>)}</ul>
+              ? <ul className="snap-source-items" role="list" aria-label={`${source.label} snap profiles`} style={{ '--snap-profile-rows': Math.min(3, group.profiles.length) }}>{group.profiles.map(author => <li key={author.key} className="snap-profile-item"><SnapProfile group={author} refreshKey={photoRevisions[group.source]} onOpen={() => setSelectedId(`${author.items[0].source}:${author.items[0].id}`)} /></li>)}</ul>
               : <div className="snap-source-empty" role="status" aria-live="polite"><Camera size={22} aria-hidden="true" /><span>{isRefreshing ? 'Loading UFI snaps...' : error || sourceErrors.uficonnect ? 'UFI snaps could not load. Try refreshing.' : 'No UFI snaps yet.'}</span></div>}
             {isNative && <div className="snap-source-compose">
               {profile?.id && onPostSnap

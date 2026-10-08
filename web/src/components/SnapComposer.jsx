@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Camera, X, Globe2, Users } from 'lucide-react';
 import PhotoPickerButton from './PhotoPickerButton';
-import { PostAvatar } from './PostCardChrome';
+import SnapAvatar from './SnapAvatar';
 import { safePostLink } from '../../../backend/post-links.mjs';
 import { uploadMedia } from '../api/upload';
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll';
@@ -39,7 +39,7 @@ export default function SnapComposer({ profile, onClose, onPublish }) {
   const busy = uploading || publishing;
   const captionRequired = preview?.type === 'video';
   const author = profile?.name || 'UFIConnect member';
-  const authorPost = { source: 'uficonnect', author: { name: author, avatarUrl: safePostLink(profile?.avatarUrl) } };
+  const authorAvatar = safePostLink(profile?.avatarUrl);
   useLockBodyScroll();
   useEffect(() => {
     mounted.current = true;
@@ -89,7 +89,7 @@ export default function SnapComposer({ profile, onClose, onPublish }) {
     <form onSubmit={publish}>
       <header><div><h2 id={titleId}><Camera size={20} />Post a snap</h2><p>Your photo or video disappears after 24 hours.</p></div><button type="button" className="snap-dialog-icon" onClick={onClose} disabled={busy} aria-label="Close snap composer"><X size={20} /></button></header>
       <div className="snap-composer-owner snap-social-header" aria-label={`Posting as ${author}`}>
-        <PostAvatar post={authorPost} member />
+          <SnapAvatar urls={[authorAvatar]} member className="post-chrome-avatar" />
         <div className="snap-social-identity post-chrome-identity"><span className="post-chrome-who">
           <strong className="snap-social-name post-chrome-name">{author}</strong>
           <span className="snap-social-meta"><span>UFIConnect</span><span aria-hidden="true"> · </span>{visibility === 'followers' ? <><Users size={13} aria-hidden="true" />Followers</> : <><Globe2 size={13} aria-hidden="true" />Public</>}</span>
