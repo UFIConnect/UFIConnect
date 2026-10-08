@@ -331,8 +331,12 @@ try {
     check(await viewer.locator('.snap-viewer-cube').getAttribute('data-cube-direction') === 'forward'
       && await viewer.locator('.snap-viewer-cube-outgoing[aria-hidden="true"][inert]').count() === 1
       && await viewer.locator('.snap-viewer-cube-outgoing video, .snap-viewer-cube-outgoing iframe').count() === 0
-      && await mediaStage.evaluate(element => getComputedStyle(element).perspective !== 'none')
-      && await viewer.locator('.snap-viewer-cube').evaluate(element => getComputedStyle(element).transformStyle === 'preserve-3d' && element.getAnimations().length > 0), 'Snap navigation turns two cube faces in perspective without a second live player');
+      && await viewer.evaluate(element => getComputedStyle(element).perspective !== 'none')
+      && await viewer.locator('.snap-viewer-cube-current .snap-viewer-details').count() === 1
+      && await viewer.locator('.snap-viewer-cube-current .snap-viewer-topbar').count() === 1
+      && await viewer.locator(':scope > .snap-viewer-close').count() === 1
+      && await viewer.getByRole('button', { name: 'Close snap', exact: true }).isEnabled()
+      && await viewer.locator('.snap-viewer-cube').evaluate(element => element.clientWidth === innerWidth && element.clientHeight === innerHeight && getComputedStyle(element).transformStyle === 'preserve-3d' && element.getAnimations().length > 0), 'Snap navigation turns the whole screen including its profile and actions as two cube faces without a second live player');
     await page.waitForTimeout(120);
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/snaps-cube-${width}.png`) });
     await settleCube();
