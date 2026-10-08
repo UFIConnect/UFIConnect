@@ -15,7 +15,8 @@ export function cityRoadPoint(kind, position, offset = 0) {
   return [point[0] + dz / length * offset, point[1] - dx / length * offset];
 }
 export const cityRoadPoints = (kind, offset = 0, height = .075, segments = 384) => Array.from({ length: segments + 1 }, (_, i) => {
-  const point = cityRoadPoint(kind, i / segments, offset);
+  const bounds = kind === 'arterial' ? CITY_ARTERIAL_BOUNDS : [0, 1];
+  const point = cityRoadPoint(kind, bounds[0] + (bounds[1] - bounds[0]) * i / segments, offset);
   return [point[0], height, point[1]];
 });
 export const CITY_SITES = Array.from({ length: 16 }, (_, i) => {
@@ -49,6 +50,7 @@ export function nearestCityArterial(point) {
 export const CITY_AIRPORT = { id: 'airport', label: 'Airport', to: '/?feed=countries', focus: [-99, 72], camera: [20, 35, 44], entrance: [-90, 60], junction: cityRoadPoint('arterial', .5 - 90 / 232), angle: .5 - 90 / 232 };
 export const CITY_SHOPPING = { id: 'shopping', label: 'Shopping center', to: '/?feed=ufi&channel=shop', focus: [44, 89], camera: [22, 29, -40], entrance: [64, 83], junction: cityRoadPoint('arterial', .5 + 64 / 232), angle: .5 + 64 / 232 };
 export const CITY_LANDMARKS = [CITY_AIRPORT, CITY_SHOPPING];
+export const CITY_ARTERIAL_BOUNDS = [Math.min(...[...CITY_SITES, ...CITY_LANDMARKS].map(site => site.angle)), Math.max(...[...CITY_SITES, ...CITY_LANDMARKS].map(site => site.angle))];
 export function citySegmentDistance(point, a, b) {
   const dx = b[0] - a[0], dz = b[1] - a[1], squared = dx * dx + dz * dz;
   const t = squared ? Math.max(0, Math.min(1, ((point[0] - a[0]) * dx + (point[1] - a[1]) * dz) / squared)) : 0;
@@ -122,10 +124,9 @@ export const CITY_HIGHWAY_LINKS = [-36, 90].map(x => highwayConnector(x, 'highwa
 export function cityEndRoadPoint(side, position) {
   return [side * (137 + 2 * Math.sin(position * Math.PI) + Math.sin(position * Math.PI * 2)), 2.9, -54 + 98 * position];
 }
-export const CITY_END_ROADS = [-1, 1].map(side => ({ side, points: Array.from({ length: 99 }, (_, i) => cityEndRoadPoint(side, i / 98)) }));
-export const CITY_END_JUNCTIONS = CITY_END_ROADS.flatMap(road => CITY_HIGHWAY_KINDS.map(kind => {
-  const position = road.side > 0 ? 1 : 0, end = cityRoadPoint(kind, position), junction = cityEndRoadPoint(road.side, (end[1] + 54) / 98);
-  return { kind, side: road.side, points: [[end[0], 2.9, end[1]], junction] };
+export const CITY_END_JUNCTIONS = [-1, 1].flatMap(side => CITY_HIGHWAY_KINDS.map(kind => {
+  const position = side > 0 ? 1 : 0, end = cityRoadPoint(kind, position), junction = cityEndRoadPoint(side, (end[1] + 54) / 98);
+  return { kind, side, points: [[end[0], 2.9, end[1]], junction] };
 }));
 export const CITY_SIDE_EXITS = [{ index: 0, side: -1 }, { index: 1, side: -1 }, { index: 14, side: 1 }, { index: 15, side: 1 }].map(exit => {
   const site = CITY_SITES[exit.index], d = site.entrance, nx = Math.sin(site.rotation), nz = Math.cos(site.rotation);
@@ -138,6 +139,11 @@ export const CITY_SIDE_EXITS = [{ index: 0, side: -1 }, { index: 1, side: -1 }, 
   const distances = [0];
   for (let i = 1; i < plan.length; i++) distances.push(distances[i - 1] + Math.hypot(plan[i][0] - plan[i - 1][0], plan[i][1] - plan[i - 1][1]));
   return { ...exit, points: plan.map(([x, z], i) => { const t = distances[i] / distances.at(-1); return [x, 2.9 - 2.825 * t * t * (3 - 2 * t), z]; }) };
+});
+export const CITY_END_ROADS = [-1, 1].map(side => {
+  const joins = [...CITY_END_JUNCTIONS.filter(junction => junction.side === side).map(junction => junction.points.at(-1)), ...CITY_SIDE_EXITS.filter(exit => exit.side === side).map(exit => exit.points[0])];
+  const first = Math.min(...joins.map(point => point[2])), last = Math.max(...joins.map(point => point[2])), segments = Math.ceil(last - first);
+  return { side, points: Array.from({ length: segments + 1 }, (_, i) => cityEndRoadPoint(side, (first + (last - first) * i / segments + 54) / 98)) };
 });
 // Neighborhood streets meet the back of the boulevard. Northern links remain
 // clear of the lake, airport and shopping center in the southern waterfront.

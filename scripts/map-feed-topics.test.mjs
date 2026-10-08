@@ -132,4 +132,10 @@ test('district setbacks, expressway clearance and ramp grades support the curved
       for (const [index, site] of CITY_SITES.entries()) if (index !== exit.index) assert.ok(Math.hypot(b[0] - site.x, b[2] - site.z) > 11, 'Side exits clear neighboring districts');
     }
   }
+  for (const road of CITY_END_ROADS) {
+    const joins = [...CITY_END_JUNCTIONS.filter(junction => junction.side === road.side).map(junction => junction.points.at(-1)), ...CITY_SIDE_EXITS.filter(exit => exit.side === road.side).map(exit => exit.points[0])];
+    for (const point of [road.points[0], road.points.at(-1)]) assert.ok(joins.some(join => Math.hypot(...point.map((value, i) => value - join[i])) < .001), 'Side roads end at a highway or city exit, without unused extensions');
+  }
+  const cityRoad = cityRoadPoints('arterial');
+  for (const point of [cityRoad[0], cityRoad.at(-1)]) assert.ok(CITY_SITES.some(site => Math.hypot(point[0] - site.junction[0], point[2] - site.junction[1]) < .001), 'The main city road ends at an outer city junction');
 });
