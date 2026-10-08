@@ -34,11 +34,13 @@ function SettingsChoices({ label, options, selected, onChange }) {
   </div>;
 }
 
-export default function YouTubeSettingsDialog({ settings, onRateChange, onCaptionSizeChange, onPlayerControls, onClose }) {
+export default function YouTubeSettingsDialog({ settings, title = 'YouTube settings', onRateChange, onCaptionSizeChange, onCaptionTrackChange, onPlayerControls, onClose }) {
   const dialog = useRef(null), closeButton = useRef(null), restoreFocus = useRef(true);
   const rates = [...new Set((settings?.rates || []).filter(rate => Number.isFinite(rate) && rate > 0))].sort((left, right) => left - right);
   const captionSize = settings?.captionFontSize;
   const hasCaptionSize = Number.isInteger(captionSize) && captionSize >= -1 && captionSize <= 3;
+  const nativeSettings = title === 'Player settings';
+  const tracks = nativeSettings ? (settings?.captionTracks || []).filter(track => typeof track?.value === 'string' && track.value !== 'off' && typeof track.label === 'string') : [];
 
   useEffect(() => {
     const previous = document.activeElement, overflow = document.body.style.overflow, current = dialog.current;
@@ -49,14 +51,14 @@ export default function YouTubeSettingsDialog({ settings, onRateChange, onCaptio
     };
   }, []);
 
-  return createPortal(<dialog ref={dialog} className="youtube-settings-dialog" aria-label="YouTube settings"
+  return createPortal(<dialog ref={dialog} className="youtube-settings-dialog" aria-label={title}
     onCancel={event => { event.preventDefault(); event.stopPropagation(); onClose(); }}
     onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); } }}
     onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
     <div className="youtube-settings-content">
       <header>
-        <h2>YouTube settings</h2>
-        <button ref={closeButton} type="button" className="youtube-settings-close" aria-label="Close YouTube settings" onClick={onClose}>
+        <h2>{title}</h2>
+        <button ref={closeButton} type="button" className="youtube-settings-close" aria-label={`Close ${title}`} onClick={onClose}>
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
         </button>
       </header>
@@ -69,11 +71,16 @@ export default function YouTubeSettingsDialog({ settings, onRateChange, onCaptio
         <h3>Caption size</h3>
         <SettingsChoices label="Caption size" options={CAPTION_SIZES} selected={captionSize} onChange={onCaptionSizeChange} />
       </section>}
-      <section className="youtube-settings-provider">
+      {nativeSettings ? <section>
+        <h3>Captions</h3>
+        {tracks.length ? <SettingsChoices label="Captions" options={[{ value: 'off', label: 'Off' }, ...tracks]}
+          selected={settings?.captionTrack || 'off'} onChange={onCaptionTrackChange} />
+          : <p className="youtube-settings-help">Caption tracks are unavailable for this video.</p>}
+      </section> : <section className="youtube-settings-provider">
         <h3>Quality and captions</h3>
         <p>Use the YouTube player’s gear for quality and caption language, and CC to turn captions on or off.</p>
         <button type="button" className="btn btn-primary" onClick={() => { restoreFocus.current = false; onPlayerControls(); }}>Use YouTube player controls</button>
-      </section>
+      </section>}
     </div>
   </dialog>, document.body);
 }

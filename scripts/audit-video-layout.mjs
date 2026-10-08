@@ -135,13 +135,15 @@ try {
         await page.getByRole('dialog', { name: 'Comments', exact: true }).waitFor();
         await page.getByRole('button', { name: 'Close comments', exact: true }).click();
         await page.getByRole('dialog', { name: 'Comments', exact: true }).waitFor({ state: 'hidden' });
-        const playback = slide.getByRole('group', { name: 'Playback controls', exact: true });
+        const playback = slide.locator('.video-feed-playback-status');
         const placement = await playback.evaluate(element => {
           const controls = element.getBoundingClientRect();
           const media = element.closest('.video-feed-slide').querySelector('[data-video-media]').getBoundingClientRect();
           return controls.top >= media.bottom && controls.left <= media.left + 25 && getComputedStyle(element).position === 'static';
         });
-        assert.ok(placement, 'Playback controls sit under the video on the left');
+        assert.ok(placement, 'Playback time sits under the video on the left');
+        assert.equal(await slide.locator('.video-feed-play-button, .video-feed-sound-button').count(), 0,
+          'Official/native player controls have no duplicate app play or mute buttons');
         assert.equal(await playback.locator('.video-feed-playback-time').textContent(), '0:00 / 0:30');
         await slide.locator('video').evaluate(video => {
           Object.defineProperty(video, 'duration', { configurable: true, value: 3661 });
@@ -154,26 +156,26 @@ try {
         await page.keyboard.press('Escape'); await menu.waitFor({ state: 'detached' });
         const bounds = await slide.locator('[data-video-media]').boundingBox();
         await page.mouse.move(bounds.x + 12, bounds.y + 12);
-        await page.waitForFunction(() => getComputedStyle(document.querySelector('.video-feed-playback-controls')).opacity === '0');
-        assert.equal(await slide.locator('video').evaluate(video => getComputedStyle(video).cursor), 'none');
-        assert.equal(await playback.evaluate(element => getComputedStyle(element).pointerEvents), 'none');
+        await page.waitForFunction(() => document.querySelector('.video-feed-slide')?.dataset.cursorIdle === 'true');
+        assert.equal(await playback.evaluate(element => getComputedStyle(element).opacity), '1');
+        assert.equal(await playback.evaluate(element => getComputedStyle(element).pointerEvents), 'auto');
         assert.ok(await actions.isVisible(), 'Likes, Comments, Save and source navigation remain available on idle');
         await page.mouse.move(bounds.x + 22, bounds.y + 22);
-        await page.waitForFunction(() => getComputedStyle(document.querySelector('.video-feed-playback-controls')).opacity === '1');
+        await page.waitForFunction(() => getComputedStyle(document.querySelector('.video-feed-playback-status')).opacity === '1');
         if (width < 600) {
           await page.touchscreen.tap(bounds.x + 32, bounds.y + 32);
-          await page.waitForFunction(() => getComputedStyle(document.querySelector('.video-feed-playback-controls')).opacity === '0');
+          assert.equal(await playback.evaluate(element => getComputedStyle(element).opacity), '1');
           await page.touchscreen.tap(bounds.x + 42, bounds.y + 42);
-          await page.waitForFunction(() => getComputedStyle(document.querySelector('.video-feed-playback-controls')).opacity === '1');
+          await page.waitForFunction(() => getComputedStyle(document.querySelector('.video-feed-playback-status')).opacity === '1');
         }
         await page.keyboard.press('Tab');
-        await playback.getByRole('button', { name: /^(?:Play|Pause) video$/ }).focus();
+        await slide.locator('video').focus();
         await page.waitForFunction(() => document.querySelector('.video-feed-slide')?.dataset.cursorIdle === 'true');
-        assert.equal(await playback.evaluate(element => getComputedStyle(element).opacity), '1', 'Keyboard focus keeps playback controls visible');
+        assert.equal(await playback.evaluate(element => getComputedStyle(element).opacity), '1', 'Playback time remains visible when the native player is focused');
         await page.mouse.move(bounds.x + 52, bounds.y + 52);
         await page.screenshot({ path: path.join(root, '.cache', `controls-below-${surface}-${width}.png`) });
       }
-      console.log(`PASS playback below left, time, visible Like/Comments/Save, post link and accessible idle fade in Videos + Music at ${width}px`);
+      console.log(`PASS persistent playback below left, time, visible Like/Comments/Save and post link in Videos + Music at ${width}px`);
       if (menusOnly) { assert.deepEqual(errors, []); await context.close(); continue; }
     }
     const checkFullScreen = async slide => {
@@ -182,7 +184,7 @@ try {
       await more.click();
       await page.getByRole('menuitem', { name: 'Full screen', exact: true }).click();
       await page.waitForFunction(() => document.fullscreenElement === document.documentElement);
-      assert.ok(await slide.getByRole('group', { name: 'Playback controls', exact: true }).isVisible());
+      assert.ok(await slide.locator('.video-feed-playback-status').isVisible());
       await more.click();
       await assertInViewport(page.getByRole('menu'), 'The menu remains reachable in full screen');
       await page.getByRole('menuitem', { name: 'Exit full screen', exact: true }).click();
@@ -206,30 +208,26 @@ try {
       assert.equal(await actions.locator('.post-chrome-like').count(), invalidSource ? 0 : 1);
       assert.equal(await slide.locator('input[type="range"], .video-feed-action-rail, .video-feed-scrubber, .video-feed-progress').count(), 0,
         'App playback rails and scrubbers are absent');
-      const playback = slide.getByRole('group', { name: 'Playback controls', exact: true });
+      const playback = slide.locator('.video-feed-playback-status');
       await slide.locator('[data-video-media]').hover({ position: { x: 12, y: 12 } });
-      assert.ok(await playback.isVisible(), 'Playback controls reveal on activity');
-      assert.equal(await playback.getByRole('button', { name: /^(?:Play|Pause) video$/ }).count(), 1,
-        'Play and pause stay visible beside mute');
-      const sound = playback.getByRole('button', { name: /^(?:Mute|Unmute) video$/ });
-      assert.equal(await sound.count(), 1);
-      assert.ok(await sound.evaluate(button => {
-        const rect = button.getBoundingClientRect();
-        const media = button.closest('.video-feed-slide').querySelector('[data-video-media]').getBoundingClientRect();
-        const target = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
-        return rect.top >= media.bottom && rect.x <= media.left + 80 && rect.right <= media.right
-          && button.contains(target);
-      }), 'Mute sits below the video on the left beside play');
+      assert.ok(await playback.isVisible(), 'Playback time remains available');
+      assert.equal(await slide.locator('.video-feed-play-button, .video-feed-sound-button').count(), 0,
+        'Player controls are not duplicated by app buttons');
+      assert.ok(await playback.locator('.video-feed-playback-time').evaluate(time => {
+        const rect = time.getBoundingClientRect();
+        const media = time.closest('.video-feed-slide').querySelector('[data-video-media]').getBoundingClientRect();
+        return rect.top >= media.bottom && rect.x <= media.left + 80 && rect.right <= media.right;
+      }), 'Playback time stays below the media');
       assert.equal(await actions.locator('.post-chrome-source-link').count(), 1, 'The post link stays visible');
       const more = actions.getByRole('button', { name: 'More options', exact: true });
       assert.ok(await more.isVisible());
-      assert.equal(await actions.evaluate(element => element.lastElementChild.classList.contains('post-chrome-more') && element.lastElementChild.previousElementSibling.classList.contains('post-chrome-source-link')), true,
-        'The source link precedes the three-dot menu');
+      assert.equal(await actions.evaluate(element => element.lastElementChild.classList.contains('post-chrome-source-link') && element.lastElementChild.previousElementSibling.classList.contains('post-chrome-more')), true,
+        'The source link follows the three-dot menu');
       assert.ok(await actions.evaluate(element => {
         const more = element.querySelector('.post-chrome-more').getBoundingClientRect();
         const link = element.querySelector('.post-chrome-source-link').getBoundingClientRect();
-        return more.left >= link.right && Math.abs(link.top - more.top) < 1;
-      }), 'Three dots sit to the right of the source link in the same row');
+        return link.left >= more.right && Math.abs(link.top - more.top) < 1;
+      }), 'The source link sits to the right of three dots in the same row');
       assert.equal(await slide.locator('.post-chrome-identity').getAttribute('href'), profileHref,
         'The author name links to its real source profile');
       const routeBefore = page.url();
@@ -244,6 +242,8 @@ try {
         'Full screen is available from the source menu');
       assert.equal(await menu.getByRole('menuitem', { name: /^(?:Play|Pause|Mute|Unmute) video$/ }).count(), 0,
         'The source menu does not duplicate visible playback controls');
+      assert.equal(await menu.getByRole('menuitem', { name: /^(?:Show|Hide) player controls$|^Read more$|^Show less$/ }).count(), 0,
+        'Player controls and caption expansion remain outside overflow');
       assert.ok(await menu.getByRole('menuitem', { name: /^(?:Open on |Open original post|Open (?:Reddit|Hacker News) discussion|Watch on )/ }).count() > 0,
         'The original-post link is restored inside the menu');
       assert.equal(await menu.locator('.video-feed-menu-action').count(), 0, 'Like and Save are visible in the layout');
@@ -272,8 +272,8 @@ try {
       sourceUrl: 'https://news.ycombinator.com/item?id=123456', embedId: 'stalehn0001', videoDurationSeconds: 30 })]);
     const hnNative = page.locator('[data-post-id="hn-native-stale"]');
     await hnNative.locator('video').waitFor();
-    assert.equal(await hnNative.locator('video').evaluate(video => video.controls), false,
-      'Hacker News direct video hides the native toolbar while retaining app playback buttons');
+    assert.equal(await hnNative.locator('video').evaluate(video => video.controls), true,
+      'Hacker News direct video shows its native toolbar alongside app playback buttons');
     assert.equal(await page.locator('.video-feed-youtube-player iframe').count(), 0,
       'A stale embedId on a Hacker News direct video never creates a YouTube player');
     await checkPostActions(hnNative, hnProfile);
@@ -288,7 +288,7 @@ try {
     await hnFrame.waitFor({ state: 'visible' });
     assert.equal(new URL(await hnFrame.getAttribute('src')).pathname, '/embed/hnvideo0001',
       'A Hacker News article plays its actual official YouTube URL instead of a stale embedId');
-    assert.equal(new URL(await hnFrame.getAttribute('src')).searchParams.get('controls'), '0');
+    assert.equal(new URL(await hnFrame.getAttribute('src')).searchParams.get('controls'), '1');
     assert.equal(await hnYoutube.locator('video').count(), 0);
     await checkPostActions(hnYoutube, hnProfile, true);
     await hnYoutube.getByRole('button', { name: 'More options', exact: true }).click();
@@ -334,7 +334,7 @@ try {
         && rectangles.media.bottom > rectangles.actions.top + 1;
       assert.equal(mediaOverlapsActions, false, 'Commands stay outside the full video frame');
       assert.equal(rectangles.fit, 'contain', 'Native video preserves the full frame');
-      assert.equal(await accepted.locator('video').evaluate(video => video.controls), false, 'Native toolbar is hidden by default');
+      assert.equal(await accepted.locator('video').evaluate(video => video.controls), true, 'Native toolbar is visible by default');
       await checkPostActions(accepted, 'https://www.reddit.com/user/audit_creator/');
       if (width === 1440) await checkFullScreen(accepted);
       assert.equal(await page.getByRole('button', { name: /^(Previous|Next) video$/ }).count(), 0);
@@ -373,7 +373,7 @@ try {
     assert.equal(frameInfo.policy, 'strict-origin-when-cross-origin');
     assert.equal(new URL(frameInfo.src).pathname, '/embed/long0000001', 'The playable URL overrides a stale embedId');
     assert.equal(new URL(frameInfo.src).searchParams.get('origin'), new URL(origin).origin);
-    assert.equal(new URL(frameInfo.src).searchParams.get('controls'), '0');
+    assert.equal(new URL(frameInfo.src).searchParams.get('controls'), '1');
     assert.equal(frameInfo.pointerEvents, 'auto');
     assert.ok(frameInfo.tabIndex >= 0 && frameInfo.width > 100, 'Provider controls remain reachable at useful size');
     const providerFrame = page.frameLocator('.video-feed-youtube-player iframe').first();

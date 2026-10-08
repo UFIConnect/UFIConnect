@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { MoreHorizontal, X, ExternalLink, Trash2, Flag, Globe2, Users } from 'lucide-react';
@@ -14,10 +14,25 @@ import { officialSnapEmbedUrl } from '../utils/snapSourcePlayer.mjs';
 import { officialTwitchClipId } from '../utils/sourceMediaPolicy.mjs';
 import TwitchClipPlayer from './TwitchClipPlayer';
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll';
+import useNativePlayerSettings from '../hooks/useNativePlayerSettings';
+import YouTubeSettingsDialog from './YouTubeSettingsDialog';
+
+function SnapCaption({ caption }) {
+  const [expanded, setExpanded] = useState(false);
+  const captionId = useId();
+  const hasMore = caption.length > 200;
+  const preview = hasMore ? `${caption.slice(0, 200).replace(/\s+\S*$/, '').trimEnd()}…` : caption;
+  return <div className="snap-viewer-caption-wrap">
+    <p id={captionId} className="snap-viewer-caption">{expanded ? caption : preview}</p>
+    {hasMore && <button type="button" className="snap-viewer-read-more" aria-expanded={expanded} aria-controls={captionId}
+      onClick={() => setExpanded(value => !value)}>{expanded ? 'Show less' : 'Read more'}</button>}
+  </div>;
+}
 
 export default function SnapViewer({ items, index, profile, now, onChange, onClose, onDelete, onReport }) {
   const dialog = useRef(null), mounted = useRef(true), titleId = useId();
   const cube = useRef(null);
+  const nativeVideo = useRef(null);
   const menuWrap = useRef(null), menuButton = useRef(null), menuPanel = useRef(null);
   const menuId = useId();
   const gesture = useRef({ touch: null, pointer: null, wheelDelta: 0, wheelAt: 0, movedAt: 0 });
@@ -25,6 +40,8 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
   const [confirmDelete, setConfirmDelete] = useState(false), [error, setError] = useState('');
   const [transition, setTransition] = useState(null);
   const [optionsOpen, setOptionsOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState(null);
+  const [playerSettingsOpen, setPlayerSettingsOpen] = useState(false);
   const snap = items[index], author = snap.author?.name || 'UFIConnect member';
   const profileLink = postProfileLink(snap, profile?.id), original = safePostLink(snap.sourceUrl);
   const source = SOURCE_META[snap.source]?.label || snap.source;
@@ -37,6 +54,9 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
   const sourceEmbed = sourceEmbedCandidate && typeof window !== 'undefined' && new URL(sourceEmbedCandidate).origin !== window.location.origin ? sourceEmbedCandidate : null;
   const mediaKey = `${snap.source}:${snap.id}`;
   const identity = String(profile?.id || 'guest');
+  const getNativeVideo = useCallback(() => nativeVideo.current, []);
+  const nativePlayback = playback.kind === 'file' || playback.kind === 'hls';
+  const nativeSettings = useNativePlayerSettings({ getVideo: getNativeVideo, enabled: nativePlayback, mediaKey: `${identity}:${mediaKey}` });
   const activeTransition = transition?.identity === identity && transition.to === mediaKey ? transition : null;
   const canDelete = onDelete && snap.source === 'uficonnect' && profile?.id && (snap.owned || String(snap.author?.id || snap.authorId) === String(profile.id));
   const sourceItems = snap.source === 'uficonnect' ? [] : sourcePostMenuItems(snap).filter(item => item.key !== 'original'
@@ -49,7 +69,7 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
     return () => { mounted.current = false; if (previous?.isConnected) previous.focus({ preventScroll: true }); };
   }, []);
   useEffect(() => {
-    setFailed(false); setConfirmDelete(false); setError('');
+    setFailed(false); setConfirmDelete(false); setError(''); setPlayerSettingsOpen(false);
     gesture.current.touch = null; gesture.current.pointer = null; gesture.current.wheelDelta = 0;
   }, [snap.id, snap.source, identity]);
   useEffect(() => {
@@ -93,6 +113,20 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
     document.addEventListener('keydown', escape, true);
     return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape, true); };
   }, [optionsOpen, deleting]);
+  useLayoutEffect(() => {
+    if (!optionsOpen) { setMenuPosition(null); return undefined; }
+    const update = () => {
+      const anchor = menuButton.current?.getBoundingClientRect(), menu = menuPanel.current;
+      if (!anchor || !menu) return;
+      const edge = 12, gap = 6, maxHeight = Math.max(80, window.innerHeight - edge * 2);
+      const width = menu.getBoundingClientRect().width, height = Math.min(menu.scrollHeight, maxHeight);
+      const above = anchor.top - gap - edge, below = window.innerHeight - anchor.bottom - gap - edge;
+      const top = below >= height || below > above ? Math.min(anchor.bottom + gap, window.innerHeight - height - edge) : Math.max(edge, anchor.top - gap - height);
+      setMenuPosition({ top: Math.max(edge, top), left: Math.max(edge, Math.min(anchor.right - width, window.innerWidth - width - edge)), maxHeight });
+    };
+    update(); window.addEventListener('resize', update); window.addEventListener('scroll', update, true);
+    return () => { window.removeEventListener('resize', update); window.removeEventListener('scroll', update, true); };
+  }, [optionsOpen, sourceItems.length, nativePlayback, canDelete, confirmDelete, error]);
   function goTo(nextIndex, direction) {
     if (deleting || confirmDelete || nextIndex === index || !items[nextIndex]) return false;
     const next = items[nextIndex];
@@ -135,14 +169,17 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
   }
   function startSwipe(event) {
     gesture.current.touch = null;
-    if (!canGesture(event.target) || event.touches.length !== 1) return;
+    if (optionsOpen || deleting || confirmDelete || event.touches.length !== 1
+      || event.target.closest?.('iframe, .twitch-clip-player, .snap-viewer-media-twitch, .snap-viewer-menu, .snap-viewer-details, a, button, input, textarea, select, [contenteditable="true"]')) return;
     const touch = event.touches[0];
+    const video = event.target.closest?.('video');
+    if (video && touch.clientY >= video.getBoundingClientRect().bottom - 64) return;
     gesture.current.touch = { id: touch.identifier, x: touch.clientX, y: touch.clientY, time: Date.now() };
   }
   function endSwipe(event) {
     const start = gesture.current.touch;
     gesture.current.touch = null;
-    if (!start || !canGesture(event.target) || event.touches.length || Date.now() - start.time > 900 || Date.now() - gesture.current.movedAt < 500) return;
+    if (!start || optionsOpen || deleting || confirmDelete || event.touches.length || Date.now() - start.time > 900 || Date.now() - gesture.current.movedAt < 500) return;
     const touch = Array.from(event.changedTouches).find(item => item.identifier === start.id);
     if (!touch) return;
     const vertical = start.y - touch.clientY, horizontal = start.x - touch.clientX;
@@ -207,24 +244,17 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
       <div className="snap-viewer-cube-current">
     <div className="snap-viewer-inner">
       <div className="snap-viewer-topbar" {...gestureHandlers}><strong>Snaps</strong><span className="snap-viewer-swipe-hint">Swipe left or right</span>
-        <div className="snap-viewer-top-actions" role="group" aria-label="Snap commands">
-          {original && <OpenOnSource post={snap} onClick={() => closeOptions(false)} />}
-          <div ref={menuWrap} className="snap-viewer-menu-wrap post-chrome-more"><button ref={menuButton} type="button" className="post-chrome-action"
-            aria-label="Snap options" title="Snap options" aria-expanded={optionsOpen} aria-controls={menuId} disabled={deleting}
-            onClick={() => { if (optionsOpen) closeOptions(); else setOptionsOpen(true); }}
-            onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setOptionsOpen(true); } }}><MoreHorizontal size={20} aria-hidden="true" /></button></div>
-        </div>
       </div>
       <div className={`snap-viewer-media${twitchClip ? ' snap-viewer-media-twitch' : ''}`} tabIndex={0} role="region" aria-label="Snap media"
         aria-description="Scroll up or down, swipe left or right, or use the left and right arrow keys to view snaps."
         aria-keyshortcuts="ArrowLeft ArrowRight" {...gestureHandlers}>
         {failed ? <p role="status">This snap’s media could not load.{original && <a href={original} target="_blank" rel="noopener noreferrer">Open on {source}</a>}</p>
         : twitchClip ? <TwitchClipPlayer key={mediaKey} post={snap} title={`${source} clip by ${author}`} />
-        : playback.kind === 'youtube' ? <iframe key={mediaKey} src={youTubeEmbedUrl(playback.id, { autoplay: '0' })} title={`${source} clip by ${author}`} referrerPolicy="strict-origin-when-cross-origin" allow="encrypted-media; fullscreen; picture-in-picture" allowFullScreen onError={() => setFailed(true)} />
+        : playback.kind === 'youtube' ? <iframe key={mediaKey} src={youTubeEmbedUrl(playback.id, { autoplay: '0', controls: '1' })} title={`${source} clip by ${author}`} referrerPolicy="strict-origin-when-cross-origin" allow="encrypted-media; fullscreen; picture-in-picture" allowFullScreen onError={() => setFailed(true)} />
         : playback.kind === 'source' && sourceEmbed ? <iframe key={mediaKey} src={sourceEmbed} title={`${source} post by ${author}`} referrerPolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-presentation" allow="encrypted-media; fullscreen; picture-in-picture" allowFullScreen onError={() => setFailed(true)} />
         : playback.kind === 'source' ? <div key={mediaKey} className="snap-viewer-source-preview">{playback.poster && <img src={playback.poster} alt={snap.caption || `${author}'s source clip`} referrerPolicy="no-referrer" onError={event => { event.currentTarget.hidden = true; }} />}{playback.original ? <a href={playback.original} target="_blank" rel="noopener noreferrer"><ExternalLink size={16} />Watch on {source}</a> : <p role="status">Open this clip on its original source.</p>}</div>
-        : playback.kind === 'hls' ? <HlsVideoPlayer key={mediaKey} src={playback.mediaUrl} poster={playback.poster} autoPlay={!isExternalSnap(snap)} muted loop={false} onError={() => setFailed(true)} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-        : playback.kind === 'file' ? <video key={mediaKey} src={playback.mediaUrl} poster={playback.poster || undefined} controls autoPlay={!isExternalSnap(snap)} muted playsInline preload="metadata" onError={() => setFailed(true)} />
+        : playback.kind === 'hls' ? <HlsVideoPlayer key={mediaKey} videoRef={nativeVideo} src={playback.mediaUrl} poster={playback.poster} controls controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture disableRemotePlayback autoPlay={!isExternalSnap(snap)} muted loop={false} onError={() => setFailed(true)} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+        : playback.kind === 'file' ? <video key={mediaKey} ref={nativeVideo} src={playback.mediaUrl} poster={playback.poster || undefined} controls controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture disableRemotePlayback autoPlay={!isExternalSnap(snap)} muted playsInline preload="metadata" onError={() => setFailed(true)} />
         : playback.mediaUrl ? <img key={mediaKey} src={playback.mediaUrl} alt={snap.caption || `${author}'s snap`} referrerPolicy="no-referrer" onError={() => setFailed(true)} /> : <p role="status">This snap’s media could not load.</p>}
       </div>
       <section className="snap-viewer-details" aria-label="Snap details">
@@ -235,19 +265,30 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
             {posted && <time className="snap-social-meta" dateTime={posted.iso} title={posted.full} aria-label={posted.full}>{posted.relative}</time>}
           </div>
         </div></header>
-      {snap.caption && <p className="snap-viewer-caption">{snap.caption}</p>}
+      {snap.caption && <SnapCaption key={`${identity}:${mediaKey}:${snap.caption}`} caption={snap.caption} />}
       {snap.source === 'uficonnect' && <p className="snap-viewer-audience">{snap.visibility === 'followers' ? <><Users size={13} />Followers only</> : <><Globe2 size={13} />Public</>}</p>}
       </section>
+      <div className="snap-viewer-post-actions post-chrome-actions" role="group" aria-label="Snap commands">
+        <div ref={menuWrap} className="snap-viewer-menu-wrap post-chrome-more"><button ref={menuButton} type="button" className="post-chrome-action"
+          aria-label="Snap options" title="Snap options" aria-expanded={optionsOpen} aria-controls={menuId} disabled={deleting}
+          onClick={() => { if (optionsOpen) closeOptions(); else setOptionsOpen(true); }}
+          onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setOptionsOpen(true); } }}><MoreHorizontal size={20} aria-hidden="true" /></button></div>
+        {original && <OpenOnSource post={snap} onClick={() => closeOptions(false)} />}
+      </div>
     </div>
     {optionsOpen && dialog.current && createPortal(<div ref={menuPanel} id={menuId} className="snap-viewer-menu post-chrome-menu" role="group" aria-label="Snap options"
+      style={{ ...menuPosition, right: 'auto', visibility: menuPosition ? undefined : 'hidden' }}
       onKeyDown={event => event.stopPropagation()}>
       {sourceItems.map(item => <a key={item.key} href={safePostLink(item.href)} target="_blank" rel="noopener noreferrer" onClick={() => closeOptions(false)}>{item.label}{item.detail && <small>{item.detail}</small>}</a>)}
+      {nativePlayback && <button type="button" disabled={deleting} onClick={() => { closeOptions(); setPlayerSettingsOpen(true); }}>Player settings<small>Playback speed and captions</small></button>}
       <button type="button" disabled={items.length < 2 || deleting || confirmDelete} onClick={() => move(-1)} aria-label="Previous snap">Previous snap</button>
       {onReport && <button type="button" disabled={deleting} onClick={() => { closeOptions(false); onReport(snap); }} aria-label="Report this snap"><Flag size={16} aria-hidden="true" />Report</button>}
       {canDelete && (confirmDelete ? <div className="snap-viewer-delete-confirm"><p>Delete this snap?</p><button type="button" className="post-chrome-menu-danger" disabled={deleting} onClick={remove} autoFocus>{deleting ? 'Deleting…' : 'Delete snap'}</button><button type="button" disabled={deleting} onClick={() => { setConfirmDelete(false); setError(''); window.requestAnimationFrame(() => menuPanel.current?.querySelector('[aria-label="Delete this snap"]')?.focus({ preventScroll: true })); }}>Cancel</button></div>
         : <button type="button" className="post-chrome-menu-danger" onClick={() => setConfirmDelete(true)} aria-label="Delete this snap"><Trash2 size={16} aria-hidden="true" />Delete</button>)}
       {error && <p className="snap-viewer-error" role="alert">{error}</p>}
     </div>, dialog.current)}
+    {playerSettingsOpen && nativePlayback && <YouTubeSettingsDialog title="Player settings" settings={nativeSettings.settings}
+      onRateChange={nativeSettings.setRate} onCaptionTrackChange={nativeSettings.setCaptionTrack} onClose={() => setPlayerSettingsOpen(false)} />}
       </div>
     </div>
   </dialog>, document.body);

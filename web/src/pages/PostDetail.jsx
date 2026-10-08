@@ -297,8 +297,8 @@ export default function PostDetail() {
           <div className="post-chrome-actions" style={{ paddingTop: 10, borderTop: '1px solid var(--border)' }}>
             <PostLikes post={post} onPostUpdated={updated => setPost(current => ({ ...current, ...updated }))} />
             {token && <SavePostButton post={post} className="btn btn-ghost btn-sm save-item-button" />}
-            <OpenOnSource post={post} />
             <PostOptionsMenu post={post} onPostUpdated={updated => setPost(previous => ({ ...previous, ...updated }))} onRemoved={() => navigate('/')} />
+            <OpenOnSource post={post} />
           </div>
         </div>
 

@@ -53,10 +53,10 @@
 .post-chrome-like .post-chrome-action[data-locked="true"] { opacity: .55; }
 .post-chrome-like-count { min-width: 0; white-space: nowrap; }
 .post-chrome-like .post-chrome-action[aria-pressed="true"] { color: #E0245E; background: color-mix(in srgb, #E0245E 12%, var(--card, #fff)); }
-/* Original post link and options sit together, with options last. */
-.post-chrome-actions > .post-chrome-source-link { margin-left: auto; }
-.post-chrome-actions > .post-chrome-more:last-child { margin-left: auto; }
-.post-chrome-actions > .post-chrome-source-link + .post-chrome-more { margin-left: 0; }
+/* Options precede the original post link in both visual and keyboard order. */
+.post-chrome-actions > .post-chrome-more { margin-left: auto; flex-shrink: 0; }
+.post-chrome-actions > .post-chrome-source-link { margin-left: 0; flex-shrink: 0; }
+.post-chrome-actions > .post-chrome-source-link:only-child { margin-left: auto; }
 .post-chrome-source-link { gap: 4px; color: var(--source-color); background: color-mix(in srgb, var(--source-color) 10%, var(--card, #fff)); text-decoration: none; }
 .post-chrome-open-mark { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; background: var(--card, #fff); flex-shrink: 0; }
 .post-chrome-open-mark b { font-size: .58rem; color: var(--source-color); }

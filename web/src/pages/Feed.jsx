@@ -1270,8 +1270,8 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen, onPostUpdated })
         </button>}
         <SavePostButton post={post} className="post-chrome-action save-item-button" showLabel={false} />
         <SharePostButton post={post} />
-        <OpenOnSource post={post} label="Watch on YouTube" />
         <PostOptionsMenu post={post} onOpenComments={() => { if (!showComments) setShowComments(true); }} />
+        <OpenOnSource post={post} label="Watch on YouTube" />
       </div>
       <ConnectedPostActions post={post} active={showComments} />
     </div>
@@ -1750,7 +1750,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
       {hasVideo && !videoIsPlayable && <SourceMediaFallback post={post} />}
       <PostLinkPreviews post={post} />
 
-      {/* Actions end with the original post link and the options menu. */}
+      {/* Actions end with the options menu, then the original post link. */}
       <div className="post-chrome-actions">
         <PostLikes post={post} onPostUpdated={onPostUpdated} />
         {hasComments && (
@@ -1767,7 +1767,9 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
         )}
         <SavePostButton post={post} className="post-chrome-action feed-save-post-button" showLabel={false} />
         <SharePostButton post={post} />
-        {post.source === 'wikivoyage' && post.travelDestinationId && onGuideOpen ? <button type="button" className="post-chrome-action" onClick={() => onGuideOpen({id:post.travelDestinationId,city:post.city,country:post.country})}>Open city guide</button> : <OpenOnSource
+        {post.source === 'wikivoyage' && post.travelDestinationId && onGuideOpen && <button type="button" className="post-chrome-action" onClick={() => onGuideOpen({id:post.travelDestinationId,city:post.city,country:post.country})}>Open city guide</button>}
+        <PostOptionsMenu post={post} items={optionItems} onOpenComments={hasComments ? () => { if (!showComments) toggleComments(); } : undefined} onPostUpdated={onPostUpdated} onRemoved={onRemoved} />
+        {!(post.source === 'wikivoyage' && post.travelDestinationId && onGuideOpen) && <OpenOnSource
           post={post}
           label={`${isJob ? 'Apply' : post.isLiveCamera ? 'Watch live' : hasVideo ? 'Watch' : 'Open'}${post.isLiveCamera ? '' : ` on ${src.label}`}`}
           onClick={event => {
@@ -1775,7 +1777,6 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
             reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true });
           }}
         />}
-        <PostOptionsMenu post={post} items={optionItems} onOpenComments={hasComments ? () => { if (!showComments) toggleComments(); } : undefined} onPostUpdated={onPostUpdated} onRemoved={onRemoved} />
       </div>
 
       {/* Inline comments / replies / answers / reviews */}

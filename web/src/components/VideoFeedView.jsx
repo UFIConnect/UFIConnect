@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useId } from 'react';
 import { Link } from 'react-router-dom';
 import client from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
@@ -6,11 +6,12 @@ import { useToast } from '../contexts/ToastContext';
 import { feedLocationKey } from '../utils/feedLocation.mjs';
 import { directMediaPlaybackAllowed } from '../utils/sourceMediaPolicy.mjs';
 import { sourcePostMenuItems } from '../utils/sourcePostMenu.mjs';
-import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, isYouTubeShortsUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, useGlobalMuted, fetchVimeoMetadata, youTubePosterUrl, SoundIcon, createYouTubePlayerFrame, youTubeEmbedUrl } from './videoMedia';
+import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, isYouTubeShortsUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, useGlobalMuted, fetchVimeoMetadata, youTubePosterUrl, createYouTubePlayerFrame, youTubeEmbedUrl } from './videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import FollowingConnectionNotice from './FollowingConnectionNotice';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
+import useNativePlayerSettings from '../hooks/useNativePlayerSettings';
 import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { reportConsumed, reportEngaged, reportEngagementSignal } from '../api/engagement';
 import { reportNegativeSignal } from '../api/errorReporting';
@@ -24,7 +25,7 @@ import useTabMetrics, { useSelectedTabMetrics } from '../analytics/useTabMetrics
 import YouTubeSettingsDialog from './YouTubeSettingsDialog';
 import { PostHeader, PostOptionsMenu, OpenOnSource, CommentIcon, HeartIcon } from './PostCardChrome';
 import { isMemberPost, safePostLink } from '../../../backend/post-links.mjs';
-import { Play, Pause, Search, SlidersHorizontal, RotateCw, ArrowUpRight } from 'lucide-react';
+import { Search, SlidersHorizontal, RotateCw, ArrowUpRight } from 'lucide-react';
 import { videoDurationSeconds, isShortFeedVideo, videoSourceKey, safeMediaUrl, fitVideoFrame } from '../utils/videoFeedPolicy.mjs';
 import './VideoFeedView.css';
 import './navigation.css';
@@ -232,7 +233,7 @@ function playbackTime(seconds) {
   return minutes >= 60 ? `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}:${tail}` : `${minutes}:${tail}`;
 }
 
-function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComments, sharedYt, onDurationResolved, onPostUpdated, onRemoved, fullScreen, onFullScreen }) {
+function VideoSlide({ post, active, muted, isScrolling, onOpenComments, sharedYt, onDurationResolved, onPostUpdated, onRemoved, fullScreen, onFullScreen }) {
   const slideRef = useRef(null);
   const src = resolveVideoSource(post);
   const fileVideoRef = useRef(null);
@@ -243,9 +244,9 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   // there's actually more than the clamp already reveals: a long title, or
   // real content beyond just the title repeated.
   const [captionExpanded, setCaptionExpanded] = useState(false);
+  const captionId = useId();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [playerControls, setPlayerControls] = useState(false);
-  useEffect(() => { if (!active) { setSettingsOpen(false); setPlayerControls(false); } }, [active]);
+  useEffect(() => { if (!active) setSettingsOpen(false); }, [active]);
   const [cursorIdle, setCursorIdle] = useState(false);
   const cursorTimer = useRef(null);
   const cursorActivity = useCallback(() => {
@@ -277,7 +278,6 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   // sharedYt instead (see effectiveDuration/
   // effectiveCurrentTime below), since its player lives in the parent now.
   const [paused, setPaused] = useState(false);
-  const [nativeMuted, setNativeMuted] = useState(muted);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const scrollResumeRef = useRef(false);
@@ -307,6 +307,12 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   }, [src?.kind, src?.id, post, onDurationResolved]);
 
   const getNativeEl = useCallback(() => (src?.kind === 'hls' ? hlsVideoRef.current : fileVideoRef.current), [src?.kind]);
+  const isNative = src?.kind === 'file' || src?.kind === 'hls';
+  const nativeSettings = useNativePlayerSettings({
+    getVideo: getNativeEl,
+    enabled: active && isNative,
+    mediaKey: `${post.id || ''}:${src?.kind || ''}:${src?.src || ''}`,
+  });
 
   useEffect(() => {
     if (!active || src?.kind === 'youtube') return;
@@ -557,61 +563,42 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
     }
   }
 
-  function toggleSound() {
-    const video = getNativeEl();
-    if (!video) { onToggleMute(); return; }
-    const nextMuted = !video.muted;
-    video.muted = nextMuted;
-    setNativeMuted(nextMuted);
-    if (nextMuted !== muted) onToggleMute();
-  }
-
-  const mediaMuted = ['file', 'hls'].includes(src?.kind) ? nativeMuted : muted;
-  const mediaPaused = isYoutube ? Boolean(sharedYt?.paused) : paused;
   const validSourceActions = post.source !== 'youtube' || isYoutube;
   const sourceItems = sourcePostMenuItems(post).filter(item => validSourceActions || item.key === 'original')
     .map(item => validSourceActions ? item : { ...item, label: 'Open original post' });
   const options = [
     { label: fullScreen ? 'Exit full screen' : 'Full screen', onSelect: () => onFullScreen(getNativeEl()) },
-    src && { label: (isYoutube ? sharedYt?.controlsVisible : playerControls) ? 'Hide player controls' : 'Show player controls',
-      onSelect: () => { if (isYoutube) sharedYt?.toggleControls?.(); else setPlayerControls(value => !value); } },
     isYoutube && { label: 'YouTube settings', detail: 'Playback speed, quality and captions', onSelect: () => setSettingsOpen(true) },
-    (post.title || hasExtraCaption || post.author?.name) && { label: captionExpanded ? 'Show less' : 'Read more', onSelect: () => setCaptionExpanded(value => !value) },
+    isNative && { label: 'Player settings', detail: 'Playback speed and available captions', onSelect: () => setSettingsOpen(true) },
   ].filter(Boolean);
   return (
     <article ref={slideRef} className="video-feed-slide" data-cursor-idle={cursorIdle}>
       <div className="video-feed-media" data-video-media onClick={event => {
-        if (!event.target.closest('iframe, button') && (!event.target.closest('video') || !playerControls)) togglePlay();
+        if (!event.target.closest('iframe, button, video')) togglePlay();
       }}>
         {!src ? <p>Video unavailable</p> : src.kind === 'youtube' ? null : src.kind === 'vimeo' ? (
           active ? <iframe ref={vimeoIframeRef}
-            src={`https://player.vimeo.com/video/${src.id}?autoplay=1&muted=${userWantsSound() ? 0 : 1}&loop=1&api=1&title=0&byline=0&portrait=0&controls=${playerControls ? 1 : 0}`}
+            src={`https://player.vimeo.com/video/${src.id}?autoplay=1&muted=${userWantsSound() ? 0 : 1}&loop=1&api=1&title=0&byline=0&portrait=0&controls=1`}
             referrerPolicy="strict-origin-when-cross-origin"
             allow="autoplay; fullscreen; picture-in-picture" allowFullScreen title={post.title || 'Vimeo video'} />
           : vimeoPoster ? <img src={vimeoPoster} alt="" draggable={false} /> : null
         ) : src.kind === 'hls' ? (
-          active ? <HlsVideoPlayer src={src.src} poster={src.poster} autoPlay muted={muted} loop controls={playerControls}
+          active ? <HlsVideoPlayer src={src.src} poster={src.poster} autoPlay muted={muted} loop controls
+            controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture disableRemotePlayback
             videoRef={hlsVideoRef} onTimeUpdate={event => setCurrentTime(event.target.currentTime)}
-            onVolumeChange={event => setNativeMuted(event.target.muted)}
             onLoadedMetadata={acceptNativeMetadata} onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
             onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id, context: { surface: 'videos' } })}
             style={{ height: '100%', width: '100%', objectFit: 'contain' }} /> : null
         ) : <video ref={fileVideoRef} src={src.src} poster={src.poster || undefined}
-            preload={active ? 'auto' : 'metadata'} muted={muted} loop playsInline controls={playerControls} draggable={false}
-            onTimeUpdate={event => setCurrentTime(event.target.currentTime)} onVolumeChange={event => setNativeMuted(event.target.muted)}
+            preload={active ? 'auto' : 'metadata'} muted={muted} loop playsInline controls draggable={false}
+            controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture disableRemotePlayback
+            onTimeUpdate={event => setCurrentTime(event.target.currentTime)}
             onLoadedMetadata={acceptNativeMetadata} onDurationChange={acceptNativeMetadata}
             onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
             onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id, context: { surface: 'videos' } })} />}
       </div>
       <div className="video-feed-details video-caption-scroll" data-video-details>
-        <div className="video-feed-playback-controls" role="group" aria-label="Playback controls">
-          <button type="button" className="video-feed-play-button" onClick={event => { event.stopPropagation(); togglePlay(); }}
-            disabled={!src || (isYoutube && !sharedYt?.ready)} aria-label={mediaPaused ? 'Play video' : 'Pause video'} title={mediaPaused ? 'Play video' : 'Pause video'}>
-            {mediaPaused ? <Play size={20} aria-hidden="true" /> : <Pause size={20} aria-hidden="true" />}
-          </button>
-          <button type="button" className="video-feed-sound-button" onClick={event => { event.stopPropagation(); toggleSound(); }}
-            disabled={!src || src.kind === 'vimeo' || (isYoutube && !sharedYt?.ready)} aria-label={mediaMuted ? 'Unmute video' : 'Mute video'}
-            title={src?.kind === 'vimeo' ? 'Use player controls for volume' : mediaMuted ? 'Unmute video' : 'Mute video'}><SoundIcon muted={mediaMuted} size={20} /></button>
+        <div className="video-feed-playback-status">
           <span className="video-feed-playback-time" aria-label="Playback time">
             {playbackTime(effectiveCurrentTime)} / {playbackTime(effectiveDuration || videoDurationSeconds(post) || NaN)}
           </span>
@@ -621,8 +608,12 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
         <div className="video-feed-caption" data-video-caption data-expanded={captionExpanded}>
           <div className="video-feed-caption-summary">
             {post.title && <h2>{post.title}</h2>}
+            {(post.title || hasExtraCaption || post.author?.name) && <button type="button" className="video-feed-caption-toggle"
+              aria-expanded={captionExpanded} aria-controls={captionId} onClick={() => setCaptionExpanded(value => !value)}>
+              {captionExpanded ? 'Show less' : 'Read more'}
+            </button>}
           </div>
-          {captionExpanded && <div className="video-feed-caption-expanded">
+          {captionExpanded && <div id={captionId} className="video-feed-caption-expanded">
             {post.matchedByLocation && <span>{post.locationMatchLabel || 'Near you'}</span>}
             {post.title && <p className="video-feed-expanded-title">{post.title}</p>}
             {captionBody && <p><PostInlineText text={captionBody} /></p>}
@@ -635,14 +626,17 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
             <CommentIcon />{Number.isFinite(post.commentsCount) && <span>{post.commentsCount.toLocaleString()}</span>}
           </button>
           <SavePostButton post={post} className="post-chrome-action" showLabel={false} />
+          <PostOptionsMenu post={post} items={options} sourceItems={sourceItems} onOpenComments={() => onOpenComments?.(post)} onPostUpdated={onPostUpdated} onRemoved={onRemoved} />
           {isMemberPost(post) ? <Link className="post-chrome-action post-chrome-source-link" to={`/p/${encodeURIComponent(post.id)}`} aria-label="Open post" title="Open post"><ArrowUpRight size={18} aria-hidden="true" /></Link>
             : <OpenOnSource post={post} label={validSourceActions ? undefined : 'Open original post'} />}
-          <PostOptionsMenu post={post} items={options} sourceItems={sourceItems} onOpenComments={() => onOpenComments?.(post)} onPostUpdated={onPostUpdated} onRemoved={onRemoved} />
         </div>
       </div>
       {settingsOpen && isYoutube && <YouTubeSettingsDialog settings={sharedYt?.settings}
         onRateChange={sharedYt?.setPlaybackRate} onCaptionSizeChange={sharedYt?.setCaptionFontSize}
         onClose={() => setSettingsOpen(false)} onPlayerControls={() => { setSettingsOpen(false); sharedYt?.focusControls?.(); }} />}
+      {settingsOpen && isNative && <YouTubeSettingsDialog title="Player settings" settings={nativeSettings.settings}
+        onRateChange={nativeSettings.setRate} onCaptionTrackChange={nativeSettings.setCaptionTrack}
+        onClose={() => setSettingsOpen(false)} />}
     </article>
   );
 }
@@ -914,6 +908,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   const durationCacheRef = useRef(new Map());
   const queueRef = useRef(videoPosts);
   const activeIndexRef = useRef(activeIndex);
+  const lastSwipeAtRef = useRef(-Infinity);
   const pendingScrollIndexRef = useRef(null);
   queueRef.current = videoPosts;
   activeIndexRef.current = activeIndex;
@@ -956,7 +951,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   // tap was needed on every single slide scrolled to, forever — see
   // userWantsSound's own comment. Once the user has directly tapped unmute
   // at all this browser, slides start already unmuted instead.
-  const [muted, toggleMuted] = useGlobalMuted();
+  const [muted] = useGlobalMuted();
   const [hasMore, setHasMore] = useState(true);
   const [tailWaiting, setTailWaiting] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -1554,9 +1549,9 @@ export default function VideoFeedView({ onExit, music = false }) {
     const container = containerRef.current;
     if (!container) return;
     const handleKey = event => {
-      if (event.target !== container || !['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp'].includes(event.key)) return;
+      if (event.target !== container || !['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft', 'PageDown', 'PageUp'].includes(event.key)) return;
       event.preventDefault();
-      const direction = ['ArrowDown', 'PageDown'].includes(event.key) ? 1 : -1;
+      const direction = ['ArrowDown', 'ArrowRight', 'PageDown'].includes(event.key) ? 1 : -1;
       const next = Math.max(0, Math.min(queueRef.current.length - 1, activeIndexRef.current + direction));
       container.scrollTo({ top: next * container.clientHeight, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
     };
@@ -1617,38 +1612,64 @@ export default function VideoFeedView({ onExit, music = false }) {
     };
   }, [videoPosts.length]);
 
-  // iOS can occasionally finish a vertical gesture without moving this
-  // nested snap container when the gesture began over embedded media or an
-  // overlay control. Native scrolling remains the primary path; this only
-  // advances when a clear swipe produced effectively zero container motion.
+  // Horizontal swipes browse the same queue as vertical scrolling. Native
+  // controls and cross-origin players keep their own gestures; no overlay
+  // intercepts them. The delayed vertical fallback only handles a clear
+  // swipe that did not move the nested snap container on its own.
+  const activeSwipePostId = videoPosts[activeIndex]?.id;
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     let gesture = null;
     let fallbackTimer = null;
+    let pendingSwipe = null;
+    const cancelTouch = () => {
+      gesture = null;
+      pendingSwipe = null;
+      clearTimeout(fallbackTimer);
+    };
     const handleTouchStart = event => {
+      cancelTouch();
       const target = event.target instanceof Element ? event.target : null;
       const video = target?.closest('video[controls]');
       const controlTouch = video && event.touches[0]?.clientY >= video.getBoundingClientRect().bottom - 64;
-      if (event.touches.length !== 1 || controlTouch || target?.closest('input, button, a, [role="button"]')) {
-        gesture = null;
+      if (event.touches.length !== 1 || controlTouch
+        || target?.closest('input, textarea, select, button, a, audio[controls], [role="button"], [role="slider"], [contenteditable="true"]')
+        || performance.now() - lastSwipeAtRef.current < 500) {
         return;
       }
       gesture = {
+        x: event.touches[0].clientX,
         y: event.touches[0].clientY,
+        identifier: event.touches[0].identifier,
+        startedAt: performance.now(),
         scrollTop: container.scrollTop,
+        scrollMoved: false,
         nestedScroller: event.target instanceof Element
           ? event.target.closest('.video-caption-scroll')
           : null,
       };
     };
+    const handleTouchMove = event => {
+      if (event.touches.length !== 1) cancelTouch();
+    };
+    const handleGestureScroll = () => {
+      const start = gesture || pendingSwipe;
+      if (start && Math.abs(container.scrollTop - start.scrollTop) > 16) start.scrollMoved = true;
+    };
     const handleTouchEnd = event => {
-      if (!gesture || event.changedTouches.length !== 1) return;
+      if (!gesture) return;
       const start = gesture;
       gesture = null;
+      if (event.touches.length || event.changedTouches.length !== 1
+        || event.changedTouches[0].identifier !== start.identifier
+        || performance.now() - start.startedAt > 900 || start.scrollMoved) return;
+      const deltaX = start.x - event.changedTouches[0].clientX;
       const deltaY = start.y - event.changedTouches[0].clientY;
-      if (Math.abs(deltaY) < 56) return;
-      if (start.nestedScroller) {
+      const horizontal = Math.abs(deltaX) >= 56 && Math.abs(deltaX) >= Math.abs(deltaY) * 1.4;
+      const vertical = Math.abs(deltaY) >= 56 && Math.abs(deltaY) >= Math.abs(deltaX) * 1.4;
+      if (!horizontal && !vertical) return;
+      if (vertical && start.nestedScroller) {
         const maxScroll = start.nestedScroller.scrollHeight - start.nestedScroller.clientHeight;
         const canContinueInside = deltaY > 0
           ? start.nestedScroller.scrollTop < maxScroll - 1
@@ -1656,28 +1677,44 @@ export default function VideoFeedView({ onExit, music = false }) {
         if (canContinueInside) return;
       }
       clearTimeout(fallbackTimer);
-      fallbackTimer = setTimeout(() => {
-        if (Math.abs(container.scrollTop - start.scrollTop) > 16) return;
+      const advance = () => {
+        pendingSwipe = null;
+        if (start.scrollMoved || Math.abs(container.scrollTop - start.scrollTop) > 16
+          || performance.now() - lastSwipeAtRef.current < 500) return;
         const height = container.clientHeight || 1;
         const startIndex = Math.round(start.scrollTop / height);
+        const direction = (horizontal ? deltaX : deltaY) > 0 ? 1 : -1;
         const targetIndex = Math.min(
-          Math.max(startIndex + (deltaY > 0 ? 1 : -1), 0),
+          Math.max(startIndex + direction, 0),
           Math.max(videoPosts.length - 1, 0),
         );
-        container.scrollTo({ top: targetIndex * height, behavior: 'smooth' });
-      }, 120);
+        if (targetIndex === startIndex) return;
+        lastSwipeAtRef.current = performance.now();
+        container.scrollTo({
+          top: targetIndex * height,
+          behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+        });
+      };
+      if (horizontal) advance();
+      else {
+        pendingSwipe = start;
+        fallbackTimer = setTimeout(advance, 120);
+      }
     };
-    const cancelTouch = () => { gesture = null; };
     container.addEventListener('touchstart', handleTouchStart, { passive: true });
+    container.addEventListener('touchmove', handleTouchMove, { passive: true });
     container.addEventListener('touchend', handleTouchEnd, { passive: true });
     container.addEventListener('touchcancel', cancelTouch, { passive: true });
+    container.addEventListener('scroll', handleGestureScroll, { passive: true });
     return () => {
-      clearTimeout(fallbackTimer);
+      cancelTouch();
       container.removeEventListener('touchstart', handleTouchStart);
+      container.removeEventListener('touchmove', handleTouchMove);
       container.removeEventListener('touchend', handleTouchEnd);
       container.removeEventListener('touchcancel', cancelTouch);
+      container.removeEventListener('scroll', handleGestureScroll);
     };
-  }, [videoPosts.length]);
+  }, [activeIndex, activeSwipePostId, videoPosts.length, regionalKey, music, searchQuery]);
 
   // Fetch the next page a couple of slides before actually running out.
   // emptyStreakRef cap (see its own declaration above): without it, a
@@ -1839,8 +1876,6 @@ export default function VideoFeedView({ onExit, music = false }) {
   const sharedYtRetryRef = useRef(null);
   const sharedYtReadyTimeoutRef = useRef(null);
   const sharedYtResumeRef = useRef(null);
-  const [controlsForPostId, setControlsForPostId] = useState(null);
-  const youtubeControlsVisible = Boolean(controlsForPostId && controlsForPostId === videoPosts[activeIndex]?.id);
   const [sharedYt, setSharedYt] = useState({ paused: false, duration: 0, currentTime: 0, failed: false });
   sharedYtDesiredIdRef.current = activeSrc?.kind === 'youtube' ? activeSrc.id : null;
   sharedYtMutedRef.current = muted;
@@ -1931,7 +1966,7 @@ export default function VideoFeedView({ onExit, music = false }) {
       try { player?.destroy(); } catch {}
       try { sharedYtHostRef.current?.replaceChildren(); } catch {}
     };
-  }, [youtubeControlsVisible]);
+  }, []);
 
   useEffect(() => {
     const videoId = activeSrc?.kind === 'youtube' ? activeSrc.id : null;
@@ -1982,7 +2017,7 @@ export default function VideoFeedView({ onExit, music = false }) {
       const isCurrent = () => sharedYtMountedRef.current && sharedYtLifecycleRef.current === lifecycle;
       sharedYtCreatingRef.current = true;
       host.replaceChildren();
-      const mount = createYouTubePlayerFrame(host, videoId, { autoplay: document.hidden ? 0 : 1, mute: 1, loop: 0, controls: youtubeControlsVisible ? 1 : 0 }, queueRef.current[activeIndexRef.current]?.title);
+      const mount = createYouTubePlayerFrame(host, videoId, { autoplay: document.hidden ? 0 : 1, mute: 1, loop: 0, controls: 1 }, queueRef.current[activeIndexRef.current]?.title);
 
       clearTimeout(sharedYtReadyTimeoutRef.current);
       sharedYtReadyTimeoutRef.current = setTimeout(() => {
@@ -1998,7 +2033,7 @@ export default function VideoFeedView({ onExit, music = false }) {
           videoId: initialId,
           playerVars: {
             autoplay: document.hidden ? 0 : 1, mute: 1, playsinline: 1, loop: 0,
-            controls: youtubeControlsVisible ? 1 : 0, rel: 0,
+            controls: 1, rel: 0,
             origin: window.location.origin,
           },
           events: {
@@ -2046,7 +2081,6 @@ export default function VideoFeedView({ onExit, music = false }) {
                 setSharedYt(s => ({ ...s, duration, currentTime: resume?.time || 0, paused: Boolean(resume?.paused) }));
               } catch {}
               if (!resume?.paused) startSharedYtAutoplayRetry(e.target, desiredId);
-              if (youtubeControlsVisible) requestAnimationFrame(() => e.target.getIframe()?.focus());
             },
             onStateChange: (e) => {
               if (!isCurrent()) return;
@@ -2101,7 +2135,7 @@ export default function VideoFeedView({ onExit, music = false }) {
       clearTimeout(sharedYtPendingLoadRef.current);
       clearInterval(sharedYtRetryRef.current);
     };
-  }, [activeSrc?.kind, activeSrc?.id, startSharedYtAutoplayRetry, youtubeControlsVisible]);
+  }, [activeSrc?.kind, activeSrc?.id, startSharedYtAutoplayRetry]);
 
   useEffect(() => {
     const visibilityChanged = () => {
@@ -2183,7 +2217,6 @@ export default function VideoFeedView({ onExit, music = false }) {
     } catch { showToast('Caption size could not change. Try the YouTube player settings.', 'error'); }
   };
   const focusYouTubeControls = () => {
-    setControlsForPostId(videoPosts[activeIndex]?.id || null);
     requestAnimationFrame(() => {
       const frame = sharedYtWrapperRef.current?.querySelector('iframe');
       frame?.focus();
@@ -2483,10 +2516,9 @@ export default function VideoFeedView({ onExit, music = false }) {
               data-idx={idx} data-post-id={post.id || ''} data-source={post.source || ''} className="video-feed-snap-item">
               {Math.abs(idx - activeIndex) <= VIDEO_MOUNT_RADIUS ? <VideoSlide post={post} onPostUpdated={updatePost} onRemoved={removed => setVideoPosts(previous => previous.filter(item => item.id !== removed.id))} active={idx === activeIndex}
                 fullScreen={fullScreen} onFullScreen={onFullScreen}
-                muted={muted} onToggleMute={toggleMuted} isScrolling={isScrolling} onOpenComments={setCommentsPost}
+                muted={muted} isScrolling={isScrolling} onOpenComments={setCommentsPost}
                 onDurationResolved={onDurationResolved}
-                sharedYt={idx === activeIndex ? { ...sharedYt, ready: sharedYtReadyRef.current, controlsVisible: youtubeControlsVisible,
-                  toggleControls: () => setControlsForPostId(youtubeControlsVisible ? null : videoPosts[activeIndex]?.id || null),
+                sharedYt={idx === activeIndex ? { ...sharedYt, ready: sharedYtReadyRef.current,
                   togglePlay: sharedYtTogglePlay, setPlaybackRate: setYouTubePlaybackRate, setCaptionFontSize: setYouTubeCaptionFontSize, focusControls: focusYouTubeControls } : undefined} />
                 : <div className="video-feed-placeholder" />}
             </div>)}
@@ -2501,7 +2533,7 @@ export default function VideoFeedView({ onExit, music = false }) {
             visibility: activeSrc?.kind === 'youtube' && !isScrolling ? 'visible' : 'hidden' }}>
           <div ref={sharedYtHostRef} style={{ width: '100%', height: '100%', display: sharedYt.failed ? 'none' : 'block' }} />
           {sharedYt.failed && activeSrc?.kind === 'youtube' && <iframe
-            src={youTubeEmbedUrl(activeSrc.id, { autoplay: 1, mute: muted ? 1 : 0, controls: youtubeControlsVisible ? 1 : 0 })}
+            src={youTubeEmbedUrl(activeSrc.id, { autoplay: 1, mute: muted ? 1 : 0, controls: 1 })}
             referrerPolicy="strict-origin-when-cross-origin"
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }}
             allow="autoplay; encrypted-media; fullscreen; picture-in-picture" allowFullScreen title={videoPosts[activeIndex]?.title || 'YouTube video'} />}

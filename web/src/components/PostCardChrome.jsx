@@ -337,7 +337,7 @@ export function SharePostButton({ post }) {
   return <button type="button" className="post-chrome-action" aria-label="Share post" title="Share post" onClick={share}><ShareIcon /></button>;
 }
 
-// Compact source link that sits in the action row: the source's own mark and
+// Compact source link placed after More options in the action row: the source's own mark and
 // an arrow, named for screen readers ("Open on Reddit", "Apply on Indeed").
 export function OpenOnSource({ post, label, onClick }) {
   const src = postSource(post);
