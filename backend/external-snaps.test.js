@@ -110,6 +110,29 @@ test('explicit source refresh calls only its provider and bypasses only its cach
   assert.deepEqual(publicCalls, [{ source: 'mastodon', bust: true }]);
 });
 
+test('Snap author photos retain provider aliases without using clip thumbnails', () => {
+  const avatar = 'https://files.mastodon.social/real-author.jpg';
+  const snapshots = externalSnapsFromPosts([clip('1', 'mastodon', { author: { name: 'Actual author', avatar_url: avatar } }),
+    clip('2', 'mastodon', { author: { name: 'No photo supplied' } })], { now });
+  assert.equal(snapshots[0].author.avatarUrl, avatar);
+  assert.equal(snapshots[1].author.avatarUrl, null);
+  assert.notEqual(snapshots[1].author.avatarUrl, snapshots[1].thumbnailUrl);
+});
+
+test('avatar enrichment sees only visible eligible short clips and cannot make an outage hide media', async () => {
+  const hydrated = [];
+  const load = createExternalSnapLoader({ now: () => now, env: {}, getUser: async () => null,
+    getPublicPosts: async () => ({ posts: [clip('removed'), clip('long', 'mastodon', { videoDurationSeconds: 500 }),
+      clip('private', 'twitter', { visibility: 'followers' }), ...Array.from({ length: 20 }, (_, n) => clip('valid-' + n))], sourceErrors: { youtube: 'Reconnect YouTube.' } }),
+    filterVisible: async posts => posts.filter(post => post.id !== 'removed'),
+    hydrateAvatars: async snaps => { hydrated.push(snaps); throw Error('Private provider diagnostic'); } });
+  const result = await load({ mode: 'home' });
+  assert.equal(hydrated.length, 1); assert.equal(hydrated[0].length, 16);
+  assert.ok(hydrated[0].every(snap => snap.id.startsWith('valid-')));
+  assert.deepEqual(result.snaps, hydrated[0]);
+  assert.deepEqual(result.sourceErrors, { youtube: 'Reconnect YouTube.' });
+});
+
 test('official source player links cannot accept arbitrary iframe hosts or malformed input', async () => {
   const { officialSnapEmbedUrl } = await import('../web/src/utils/snapSourcePlayer.mjs');
   assert.equal(officialSnapEmbedUrl({ source: 'mastodon', sourceUrl: 'https://mastodon.social/@creator/123' }), 'https://mastodon.social/@creator/123/embed');

@@ -27,6 +27,11 @@ test('source author profiles survive actual single/bulk writes, promotion, archi
   const expected = `https://www.youtube.com/channel/${channel}`;
   const [post] = app.parseYouTubeChannelRSS(`<feed><yt:channelId>${channel}</yt:channelId><entry><yt:videoId>abcdefghijk</yt:videoId><title>A useful science update</title><published>${new Date().toISOString()}</published><author><name>Creator display name</name></author></entry></feed>`, 'science', 'Fallback name');
   assert.equal(post.author.profileUrl, expected);
+  assert.equal(post.author.channelId, channel);
+  assert.equal(post.authorId, `youtube_channel_${channel}`);
+  assert.equal(post.author.id, post.authorId);
+  const [renamed] = app.parseYouTubeChannelRSS(`<feed><yt:channelId>${channel}</yt:channelId><entry><yt:videoId>abcdefghijk</yt:videoId><title>A useful science update</title><published>${new Date().toISOString()}</published><author><name>Renamed creator</name></author></entry></feed>`, 'science', 'Fallback name');
+  assert.equal(renamed.author.id, post.author.id, 'A changed display name must not change the provider channel identity used for Snap profiles');
   assert.equal(await app.savePostsToDB([post], 'feed_posts_staging'), 1);
   let row = (await pg.query('SELECT * FROM feed_posts_staging WHERE id=$1', [post.id])).rows[0];
   assert.equal(app.dbRowToFeedPost(row).author.profileUrl, expected);
@@ -47,5 +52,6 @@ test('source author profiles survive actual single/bulk writes, promotion, archi
   row = (await pg.query('SELECT * FROM feed_posts_archive WHERE id=$1', [post.id])).rows[0];
   assert.equal(app.dbRowToFeedPost(row).author.profileUrl, updated.author.profileUrl);
   assert.equal(app.dbRowToFeedPost({ ...row, author_profile_url: 'javascript:alert(1)' }).author.profileUrl, undefined);
-  assert.equal(app.buildSavedPostSnapshot({ ...post, author: { name: 'Unknown', profileUrl: 'javascript:alert(1)' } }).author.profileUrl, '');
+  assert.equal(app.buildSavedPostSnapshot({ ...post, author: { name: 'Unknown', profileUrl: 'javascript:alert(1)' } }).author.profileUrl, expected, 'A safe known channel identity replaces an unsafe supplied link');
+  assert.equal(app.buildSavedPostSnapshot({ ...post, authorId: 'youtube_unknown', author: { name: 'Unknown', profileUrl: 'javascript:alert(1)' } }).author.profileUrl, '', 'Unsafe profile links remain rejected when there is no genuine channel identity');
 });

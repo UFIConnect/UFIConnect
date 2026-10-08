@@ -3059,9 +3059,11 @@ async function fetchDevToByTag(tag) {
         const ytId = (v.video_source_url || v.video || '').match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/i)?.[1];
         const mediaUrl = ytId ? `https://www.youtube.com/watch?v=${ytId}` : null;
         if (!mediaUrl) return;
+        const providerId = /^\d{1,15}$/.test(String(v.user_id || '')) ? String(v.user_id) : null;
+        const authorId = providerId ? `devto_user_${providerId}` : `devto_${v.user?.name || 'creator'}`;
         posts.push({
           id:          `devto_video_${v.id}`,
-          authorId:    `devto_${v.user?.name || 'creator'}`,
+          authorId,
           groupId:     'ext_devto',
           content:     v.title,
           title:       v.title,
@@ -3069,7 +3071,7 @@ async function fetchDevToByTag(tag) {
           sourceLabel: 'DEV Community',
           sourceUrl:   `https://dev.to${v.path}`,
           topic:       tag,
-          author:      { id: `devto_${v.user?.name || 'creator'}`, name: v.user?.name || 'DEV Community', title: 'DEV Community', organization: 'DEV Community', avatarUrl: safeAvatarUrl(v.user?.profile_image_90 || v.user?.profile_image) },
+          author:      { id: authorId, ...(providerId ? { providerId } : {}), name: v.user?.name || 'DEV Community', title: 'DEV Community', organization: 'DEV Community', avatarUrl: safeAvatarUrl(v.user?.profile_image_90 || v.user?.profile_image) },
           likes: [], likesCount: 0, commentsCount: 0,
           createdAt:   normalizeTimestamp(now - i * 5 * 60000),
           isExternal:  true,
@@ -3843,10 +3845,11 @@ function parseYouTubeChannelRSS(xml, keyword, channelName) {
     const author    = get(/<name>(.*?)<\/name>/) || channelName;
     const channelId = get(/<yt:channelId>(.*?)<\/yt:channelId>/) || (/<yt:channelId>(.*?)<\/yt:channelId>/.exec(xml) || [])[1] || '';
     const profileUrl = sourceAuthorProfileUrl({ source: 'youtube', channelId });
+    const authorId = profileUrl ? `youtube_channel_${channelId}` : `youtube_ch_${author.replace(/\s+/g, '_')}`;
     if (!videoId || !title) continue;
     posts.push({
       id:          `youtube_${videoId}`,
-      authorId:    `youtube_ch_${author.replace(/\s+/g, '_')}`,
+      authorId,
       groupId:     'ext_youtube',
       content:     desc || title,
       title,
@@ -3855,7 +3858,7 @@ function parseYouTubeChannelRSS(xml, keyword, channelName) {
       sourceUrl:   `https://www.youtube.com/watch?v=${videoId}`,
       embedId:     videoId,
       topic:       keyword,
-      author:      { id: `youtube_ch_${author.replace(/\s+/g, '_')}`, name: author, title: 'YouTube', organization: 'YouTube', ...(profileUrl ? { profileUrl } : {}) },
+      author:      { id: authorId, name: author, title: 'YouTube', organization: 'YouTube', ...(profileUrl ? { profileUrl, channelId } : {}) },
       likes: [], likesCount: 0, commentsCount: 0,
       createdAt:   normalizeTimestamp(published || updated),
       isExternal:  true,
@@ -3868,6 +3871,7 @@ function parseYouTubeChannelRSS(xml, keyword, channelName) {
 }
 
 function mapYouTubePost(videoId, title, description, channelTitle, channelId, publishedAt, thumbnailUrl, keyword, isShort = false, durationSeconds = null, categoryId = null) {
+  const profileUrl = sourceAuthorProfileUrl({ source: 'youtube', channelId });
   return {
     id:          `youtube_${videoId}`,
     authorId:    `youtube_${channelId || 'unknown'}`,
@@ -3884,7 +3888,7 @@ function mapYouTubePost(videoId, title, description, channelTitle, channelId, pu
     sourceUrl:   isShort ? `https://www.youtube.com/shorts/${videoId}` : `https://www.youtube.com/watch?v=${videoId}`,
     embedId:     videoId,
     topic:       String(categoryId) === '10' ? 'Music' : keyword,
-    author:      { id: `youtube_${channelId || 'unknown'}`, name: channelTitle || null, title: channelTitle || 'YouTube', organization: 'YouTube' },
+    author:      { id: `youtube_${channelId || 'unknown'}`, name: channelTitle || null, title: channelTitle || 'YouTube', organization: 'YouTube', ...(profileUrl ? { profileUrl, channelId } : {}) },
     likes: [], likesCount: 0, commentsCount: 0,
     createdAt:   normalizeTimestamp(publishedAt),
     isExternal:  true,
@@ -6182,17 +6186,19 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false, userId = null
       .map(c => ({
         playlistId: c.contentDetails?.relatedPlaylists?.uploads,
         channelTitle: c.snippet?.title || 'YouTube',
+        channelId: c.id,
+        avatarUrl: safeAvatarUrl(c.snippet?.thumbnails?.medium?.url || c.snippet?.thumbnails?.default?.url || c.snippet?.thumbnails?.high?.url),
       }))
       .filter(c => c.playlistId);
     if (!uploadsPlaylists.length) { setCached(key, []); return []; }
 
     const perChannelVideos = await Promise.all(
-      uploadsPlaylists.map(({ playlistId, channelTitle }) =>
+      uploadsPlaylists.map(({ playlistId, channelTitle, channelId, avatarUrl }) =>
         fetchJSON(
           `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=${playlistId}&maxResults=${YOUTUBE_SUB_FEED_VIDEOS_PER_CHANNEL}`,
           auth
         )
-          .then(r => (r?.items || []).map(item => ({ item, channelTitle })))
+          .then(r => (r?.items || []).map(item => ({ item, channelTitle, channelId, avatarUrl })))
           .catch(() => []) // one channel's uploads playlist being unavailable (deleted/private) shouldn't drop the rest
       )
     );
@@ -6229,12 +6235,12 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false, userId = null
 
     const window = connectedSourceWindow(connectedAt);
     const posts = rawVideos
-      .map(({ item, channelTitle }) => {
+      .map(({ item, channelTitle, channelId, avatarUrl }) => {
         const videoId = item.snippet.resourceId.videoId;
         const stats = detailsById.get(videoId);
         return {
           id:          `youtube_sub_${videoId}`,
-          authorId:    `youtube_channel_${item.snippet.channelId || channelTitle}`,
+          authorId:    `youtube_channel_${channelId || item.snippet.channelId || channelTitle}`,
           groupId:     'ext_youtube',
           content:     item.snippet.description || '',
           title:       item.snippet.title || 'YouTube video',
@@ -6246,7 +6252,9 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false, userId = null
           // 'youtube' with an embedId.
           embedId:     videoId,
           topic:       null,
-          author:      { name: channelTitle, title: 'YouTube' },
+          author:      { id: `youtube_channel_${channelId || item.snippet.channelId || channelTitle}`, name: channelTitle, title: 'YouTube',
+            ...(avatarUrl ? { avatarUrl } : {}),
+            ...(sourceAuthorProfileUrl({ source: 'youtube', channelId }) ? { channelId, profileUrl: sourceAuthorProfileUrl({ source: 'youtube', channelId }) } : {}) },
           likes: [], likesCount: stats?.likeCount || 0, commentsCount: stats?.commentCount || 0,
           createdAt:   normalizeTimestamp(item.snippet.publishedAt),
           isExternal:  true,
@@ -28065,10 +28073,26 @@ async function getPublicSnapPosts({ source = null, bust = false } = {}) {
   const stored = await publicSnapReads.get(key);
   return { posts: [...memory(), ...stored.posts], sourceErrors: stored.sourceErrors };
 }
+const hydrateYouTubeSnapPhotos = require('./source-profile-photos').createYouTubeProfilePhotoHydrator({
+  fetcher: (...args) => fetch(...args), getApiKey: () => process.env.YOUTUBE_API_KEY,
+});
+const hydrateDevToSnapPhotos = require('./source-profile-photos').createDevToProfilePhotoHydrator({
+  fetcher: (...args) => fetch(...args),
+});
 registerSnapRoutes(app, { service: snaps, authenticate, authenticateOptional, limiter: contentSubmissionLimiter,
   loadExternalSnaps: createExternalSnapLoader({ getPublicPosts: getPublicSnapPosts,
     getFollowingPosts: getFollowingFeedPosts, getUser,
-    filterVisible: posts => visibleReportContent(realFeedPosts(posts)) }) });
+    filterVisible: posts => visibleReportContent(realFeedPosts(posts)),
+    hydrateAvatars: async items => {
+      const results = await Promise.allSettled([
+        hydrateYouTubeSnapPhotos(items.filter(item => item.source === 'youtube')),
+        twitchFeed.hydrateAvatars(items.filter(item => item.source === 'twitch')),
+        hydrateDevToSnapPhotos(items.filter(item => item.source === 'devto')),
+      ]);
+      const photos = new Map(results.flatMap(result => result.status === 'fulfilled' && Array.isArray(result.value)
+        ? result.value.map(item => [`${item.source}:${item.id}`, item]) : []));
+      return items.map(item => photos.get(`${item.source}:${item.id}`) || item);
+    } }) });
 if (!IS_PIPELINE_ROLE) {
   const snapCleanupTimer = setInterval(() => { void snaps.cleanup().catch(() => {}); }, 15 * 60 * 1000);
   snapCleanupTimer.unref?.();

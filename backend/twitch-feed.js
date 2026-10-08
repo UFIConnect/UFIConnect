@@ -1,6 +1,7 @@
 'use strict';
 
 const { createHash } = require('node:crypto');
+const { authorProfilePhoto, createCachedProfileLookup, profilePhotoUrl } = require('./source-profile-photos');
 const LOOKBACK_MS = 7 * 86400000;
 const CLIP_SLUG = /^[A-Za-z0-9_-]{1,140}$/;
 const CHANNEL_ID = /^\d{1,30}$/;
@@ -36,7 +37,8 @@ function clipPost(clip, channel, now = Date.now()) {
     id: 'twitch_clip_' + clip.id, externalId: clip.id, authorId: 'twitch_' + channel.id, groupId: 'ext_twitch',
     source: 'twitch', sourceLabel: 'Twitch', sourceUrl, authorUrl: 'https://www.twitch.tv/' + channel.login,
     title: clip.title || 'Clip on Twitch', content: clip.title || 'Clip on Twitch', topic: channel.category || null,
-    author: { name: clip.broadcaster_name || channel.name || 'Twitch', title: channel.category || 'Twitch creator',
+    author: { id: 'twitch_' + channel.id, name: clip.broadcaster_name || channel.name || 'Twitch', title: channel.category || 'Twitch creator',
+      ...(imageUrl(authorProfilePhoto({ author: channel })) ? { avatarUrl: imageUrl(authorProfilePhoto({ author: channel })) } : {}),
       profileUrl: 'https://www.twitch.tv/' + channel.login },
     clipCreator: { id: clip.creator_id || null, name: clip.creator_name || null },
     likes: [], likesCount: 0, commentsCount: 0, viewsCount: count(clip.view_count),
@@ -54,7 +56,8 @@ function streamPost(stream) {
     id: 'twitch_' + stream.id, authorId: 'twitch_' + stream.user_id, groupId: 'ext_twitch',
     content: stream.title || 'Live on Twitch', title: stream.title || 'Live on Twitch', source: 'twitch', sourceLabel: 'Twitch',
     sourceUrl: 'https://www.twitch.tv/' + stream.user_login, authorUrl: 'https://www.twitch.tv/' + stream.user_login,
-    topic: stream.game_name || null, author: { name: stream.user_name || 'Twitch', title: stream.game_name ? 'Streaming ' + stream.game_name : 'Live now',
+    topic: stream.game_name || null, author: { id: 'twitch_' + stream.user_id, name: stream.user_name || 'Twitch', title: stream.game_name ? 'Streaming ' + stream.game_name : 'Live now',
+      ...(imageUrl(stream.profile_image_url) ? { avatarUrl: imageUrl(stream.profile_image_url) } : {}),
       profileUrl: 'https://www.twitch.tv/' + stream.user_login },
     likes: [], likesCount: 0, commentsCount: 0, viewsCount: count(stream.viewer_count),
     createdAt: stream.started_at, isExternal: true, visibility: 'public', mediaType: 'image', mediaUrl: imageUrl(stream.thumbnail_url),
@@ -97,6 +100,61 @@ function createTwitchFeed({ fetcher = fetch, now = Date.now, getConfig = () => (
   }
   const helix = (path, params, config, token, personal = false) => request('https://api.twitch.tv/helix/' + path + '?' + new URLSearchParams(params),
     { headers: { Authorization: 'Bearer ' + token, 'Client-Id': config.clientId } }, personal);
+  function profileIdentity(post) {
+    if (post?.source !== 'twitch') return null;
+    for (const value of [post.author?.id, post.authorId]) {
+      const id = typeof value === 'string' && /^twitch_(\d{1,30})$/.exec(value)?.[1];
+      if (id) return 'id:' + id;
+    }
+    const link = profilePhotoUrl(post.author?.profileUrl || post.authorUrl);
+    if (!link) return null;
+    const url = new URL(link);
+    if (!['twitch.tv', 'www.twitch.tv'].includes(url.hostname)) return null;
+    const login = /^\/([a-zA-Z0-9_]{1,25})\/?$/.exec(url.pathname)?.[1];
+    return login ? 'login:' + login.toLowerCase() : null;
+  }
+  // Get Users supplies the broadcaster's photo, never the clip creator's or
+  // a stream thumbnail. Public metadata is safely shared across snap loads.
+  // https://dev.twitch.tv/docs/api/reference/#get-users
+  const profileLookups = new Map();
+  function profileLookup(config) {
+    const identity = fingerprint(config.clientId + '\0' + config.clientSecret);
+    if (profileLookups.has(identity)) return profileLookups.get(identity);
+    const lookup = createCachedProfileLookup({ now, batchSize: 100, load: async keys => {
+      const token = await appAccess(config);
+      const params = keys.map(key => key.startsWith('id:') ? ['id', key.slice(3)] : ['login', key.slice(6)]);
+      let data;
+      try { data = await helix('users', params, config, token); }
+      catch (error) { if (error.status === 401) appToken = null; throw error; }
+      const result = new Map(), requested = new Set(keys);
+      for (const user of Array.isArray(data?.data) ? data.data : []) {
+        if (!CHANNEL_ID.test(user.id || '') || !CHANNEL_LOGIN.test(user.login || '')) continue;
+        const id = 'id:' + user.id, login = 'login:' + user.login.toLowerCase();
+        if (!requested.has(id) && !requested.has(login)) continue;
+        const photo = imageUrl(user.profile_image_url);
+        if (requested.has(id)) result.set(id, photo);
+        if (requested.has(login)) result.set(login, photo);
+        lookup.seed(id, photo); lookup.seed(login, photo);
+      }
+      return result;
+    } });
+    profileLookups.set(identity, lookup);
+    while (profileLookups.size > 2) profileLookups.delete(profileLookups.keys().next().value);
+    return lookup;
+  }
+  async function hydrateAvatars(posts) {
+    const config = settings();
+    if (!Array.isArray(posts) || !config.clientId || !config.clientSecret) return posts;
+    // Supplied profile URLs can become stale. Official cached metadata
+    // replaces them; failed or missing lookups preserve the supplied photo.
+    const keys = posts.map(profileIdentity).filter(Boolean);
+    if (!keys.length) return posts;
+    const photos = await profileLookup(config).lookup(keys);
+    return posts.map(post => {
+      const identity = profileIdentity(post), photo = identity && photos.get(identity);
+      return photo ? { ...post, author: { ...post.author, avatarUrl: photo } } : post;
+    });
+  }
   async function inventory(key, ttl, load) {
     if (cache.get(key)?.expiresAt > now()) return cache.get(key).posts;
     if (pending.has(key)) return pending.get(key);
@@ -162,7 +220,7 @@ function createTwitchFeed({ fetcher = fetch, now = Date.now, getConfig = () => (
       return [...streams, ...recent];
     });
   }
-  return { publicPosts, publicClips, following };
+  return { publicPosts, publicClips, following, hydrateAvatars };
 }
 
 module.exports = { createTwitchFeed, clipPost, streamPost, LOOKBACK_MS };

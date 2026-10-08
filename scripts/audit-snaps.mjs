@@ -47,7 +47,7 @@ try {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, hasTouch: width < 600, isMobile: width < 600, serviceWorkers: 'block' });
     const page = await context.newPage(); page.setDefaultTimeout(16000);
     const errors = [], writes = [], reads = [], imageRequests = [];
-    let viewerId = owner, uploadCount = 0, uploadedForm = '', held = null, holdMode = null, sourceFailures = {};
+    let viewerId = owner, uploadCount = 0, uploadedForm = '', held = null, holdMode = null, sourceFailures = {}, recoverImage = false;
     let heldRequestResolve;
     let heldRequest = new Promise(resolve => { heldRequestResolve = resolve; });
     // Three source rows exercise grouping/ranking only. The audit does not
@@ -73,7 +73,8 @@ try {
       const headers = { 'Access-Control-Allow-Origin': new URL(origin).origin, 'Access-Control-Allow-Credentials': 'true', 'Access-Control-Allow-Headers': '*' };
       if (url.hostname === 'profiles.snaps.invalid') {
         imageRequests.push(url.href);
-        return url.href === avatarUrl ? route.fulfill({ body: photo, contentType: 'image/png' }) : route.fulfill({ status: 404, body: 'Missing fixture' });
+        return url.href === avatarUrl || url.href === brokenAvatarUrl && recoverImage
+          ? route.fulfill({ body: photo, contentType: 'image/png' }) : route.fulfill({ status: 404, body: 'Missing fixture' });
       }
       if (url.hostname === 'res.cloudinary.com') { imageRequests.push(url.href); return route.fulfill({ body: photo, contentType: 'image/png' }); }
       if (url.hostname === 'api.cloudinary.com') {
@@ -138,7 +139,7 @@ try {
       for (let position = 0; position < ids.indexOf(id); position++) {
         const previousCaption = await viewer.locator('.snap-viewer-caption').innerText();
         await viewer.getByRole('region', { name: 'Snap media', exact: true }).focus();
-        await page.keyboard.press('ArrowDown');
+        await page.keyboard.press('ArrowRight');
         await page.waitForFunction(previous => document.querySelector('.snap-viewer-caption')?.textContent !== previous, previousCaption);
       }
       await page.waitForFunction(expected => document.querySelector('.snap-viewer-caption')?.textContent === expected, caption);
@@ -157,9 +158,10 @@ try {
     check(!imageRequests.includes(photoUrl), 'The rail does not request snap media or thumbnails before a viewer opens');
     check(await rail.locator('.snap-thumbnail').count() === 0, 'Rectangular snap thumbnails are removed');
     await profileForSnap('twitter-fixture').scrollIntoViewIfNeeded();
-    await profileForSnap('twitter-fixture').locator('.snap-profile-avatar b').waitFor();
-    check(await profileForSnap('twitter-fixture').locator('img').count() === 0 && await profileForSnap('twitter-fixture').locator('b').innerText() === 'XF', 'Broken author photos fall back to profile initials');
-    check(await profileForSnap('facebook-profile-8').locator('b').innerText() === 'CP', 'An author without a photo has initials instead of media artwork');
+    await profileForSnap('twitter-fixture').locator('.snap-profile-avatar img[data-snap-avatar="default"]').waitFor();
+    check(await profileForSnap('twitter-fixture').locator('img').count() === 1 && await profileForSnap('twitter-fixture').locator('.snap-profile-avatar b').count() === 0, 'Broken author photos use a local profile image instead of initials or snap artwork');
+    await profileForSnap('facebook-profile-8').scrollIntoViewIfNeeded();
+    check(await profileForSnap('facebook-profile-8').locator('img[data-snap-avatar="default"]').count() === 1, 'An author without a photo has a local profile image instead of media artwork');
     const facebookProfiles = rail.locator('[data-snap-source="facebook"] .snap-source-items');
     check(await facebookProfiles.getAttribute('aria-label') === 'Facebook snap profiles' && await facebookProfiles.locator(':scope > li.snap-profile-item').count() === 10, 'Snaps form a semantic profile list with one circle per distinct author');
     const facebookIds = JSON.parse(await profileForSnap('facebook-fixture').getAttribute('data-snap-ids'));
@@ -167,10 +169,13 @@ try {
     check(await profileForSnap('facebook-fixture').getAttribute('aria-label') === "View Facebook fixture's 2 snaps"
       && await profileForSnap('facebook-fixture').locator('.snap-profile-count').innerText() === '2', 'Same-author snaps share one circle with their actual snap count');
     const profilePositions = await facebookProfiles.locator('.snap-profile-button').evaluateAll(elements => elements.map(element => ({ x: element.getBoundingClientRect().x, y: element.getBoundingClientRect().y })));
-    check(profilePositions.some(position => position.x > profilePositions[0].x + 10) && profilePositions.some(position => position.y > profilePositions[0].y + 10), 'Profile circles sit next to each other and wrap into multiple rows');
+    check(profilePositions.some(position => position.x > profilePositions[0].x + 10)
+      && new Set(profilePositions.map(position => Math.round(position.y))).size === 3, 'Ten author circles use exactly three compact horizontal rows');
+    check(await facebookProfiles.evaluate(element => element.scrollWidth > element.clientWidth), 'Extra author columns scroll horizontally inside their source box');
+    check(await rail.locator('.snap-profile-button').evaluateAll(elements => elements.every(element => element.querySelectorAll('.snap-profile-avatar img').length === 1)), 'Every author circle contains a profile image');
     check(await rail.locator('.snap-profile-ring, .snap-profile-avatar').evaluateAll(elements => elements.every(element => {
-      const bounds = element.getBoundingClientRect(); return Math.abs(bounds.width - bounds.height) < 2 && getComputedStyle(element).borderRadius === '50%';
-    })), 'Profile rings and photos remain circular');
+      const bounds = element.getBoundingClientRect(); return bounds.width <= 54 && Math.abs(bounds.width - bounds.height) < 2 && getComputedStyle(element).borderRadius === '50%';
+    })), 'Compact profile rings and photos remain circular and at most 54 pixels wide');
     await openSnap('facebook-fixture-older');
     check(await page.locator('dialog.snap-viewer').getByRole('link', { name: 'Facebook fixture', exact: true }).getAttribute('href') === 'https://www.facebook.com/example', 'Grouped snaps retain their actual posting profile');
     await closeViewer();
@@ -215,7 +220,15 @@ try {
       await response;
       await page.waitForFunction(() => document.querySelector('.snap-source-row')?.getAttribute('aria-busy') === 'false');
     };
+    const failedPhotoRequests = imageRequests.filter(url => url === brokenAvatarUrl).length;
+    recoverImage = true;
     await refreshSource('X (Twitter)', 'twitter');
+    await profileForSnap('twitter-fixture').scrollIntoViewIfNeeded();
+    await page.waitForFunction(expected => {
+      const image = document.querySelector('.snap-profile-button[data-snap-id="twitter-fixture"] img');
+      return image?.dataset.snapAvatar === 'profile' && image.src === expected && image.complete && image.naturalWidth > 0;
+    }, brokenAvatarUrl);
+    check(imageRequests.filter(url => url === brokenAvatarUrl).length === failedPhotoRequests + 1, 'Explicit source refresh retries the same failed author photo once and renders its recovered image');
     check(await nativeBox.count() === 0, 'Refreshing a Home source never adds the UFI box');
     await auditNavigate(page, origin + '?feed=following');
     await profileForSnap('native-public').waitFor();
@@ -303,8 +316,14 @@ try {
       const videoViewer = page.locator('dialog.snap-viewer'); await videoViewer.locator('video').waitFor();
       check(await videoViewer.locator('iframe').count() === 0 && await videoViewer.locator('video').getAttribute('loop') === null, 'Recorded authorization enables non-looping native or HLS playback');
       const selection = await videoViewer.locator('.snap-viewer-caption').innerText();
-      await videoViewer.locator('video').evaluate(element => { element.dispatchEvent(new Event('ended')); element.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); });
-      check(await videoViewer.locator('.snap-viewer-caption').innerText() === selection, 'Finishing playback or seeking with arrow keys never changes the selected clip');
+      await videoViewer.locator('video').evaluate(element => {
+        element.dispatchEvent(new Event('ended'));
+        element.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+        element.dispatchEvent(new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true }));
+        element.dispatchEvent(new PointerEvent('pointerdown', { pointerType: 'mouse', pointerId: 5, button: 0, clientX: 200, clientY: 100, bubbles: true }));
+        element.dispatchEvent(new PointerEvent('pointerup', { pointerType: 'mouse', pointerId: 5, button: 0, clientX: 60, clientY: 100, bubbles: true }));
+      });
+      check(await videoViewer.locator('.snap-viewer-caption').innerText() === selection, 'Playback, seeking, vertical scrolling and mouse drags on native video controls never change the clip');
       await videoViewer.getByRole('button', { name: 'Close snap', exact: true }).click();
     }
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Public source clips and availability notices keep the page within the viewport');
@@ -327,8 +346,8 @@ try {
       && await viewer.locator('.snap-social-meta[datetime]').count() === 1, 'Viewing fills the screen like Videos and Music, with the author profile and original time');
     const mediaStage = viewer.getByRole('region', { name: 'Snap media', exact: true });
     await mediaStage.focus();
-    await page.keyboard.press('ArrowDown');
-    check(await viewer.locator('.snap-viewer-caption').innerText() !== 'other-native', 'ArrowDown advances from the full-screen media stage');
+    await page.keyboard.press('ArrowRight');
+    check(await viewer.locator('.snap-viewer-caption').innerText() !== 'other-native', 'ArrowRight advances from the full-screen media stage');
     check(await viewer.locator('.snap-viewer-cube').getAttribute('data-cube-direction') === 'forward'
       && await viewer.locator('.snap-viewer-cube-outgoing[aria-hidden="true"][inert]').count() === 1
       && await viewer.locator('.snap-viewer-cube-outgoing video, .snap-viewer-cube-outgoing iframe').count() === 0
@@ -341,15 +360,37 @@ try {
     await page.waitForTimeout(120);
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/snaps-cube-${width}.png`) });
     await settleCube();
-    await page.keyboard.press('ArrowUp');
-    check(await viewer.locator('.snap-viewer-caption').innerText() === 'other-native', 'ArrowUp restores the previous snap');
+    await page.keyboard.press('ArrowLeft');
+    check(await viewer.locator('.snap-viewer-caption').innerText() === 'other-native', 'ArrowLeft restores the previous snap');
     await settleCube();
-    await mediaStage.dispatchEvent('wheel', { deltaY: 120, deltaX: 0, bubbles: true });
-    check(await viewer.locator('.snap-viewer-caption').innerText() !== 'other-native', 'Scrolling the media stage advances one snap');
-    await mediaStage.focus(); await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowUp');
+    check(await viewer.locator('.snap-viewer-caption').innerText() === 'other-native', 'Vertical arrow keys do not navigate horizontally arranged snaps');
+    await mediaStage.hover(); await page.mouse.wheel(120, 0);
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    check(await viewer.locator('.snap-viewer-caption').innerText() === 'other-native', 'Horizontal trackpad scrolling does not navigate snaps');
+    await page.mouse.wheel(0, 120);
+    await page.waitForFunction(() => {
+      const caption = document.querySelector('.snap-viewer-caption'); return caption && caption.textContent !== 'other-native';
+    });
+    check(await viewer.locator('.snap-viewer-caption').innerText() !== 'other-native', 'Vertical wheel and trackpad scrolling advances one snap');
+    const horizontalCaption = await viewer.locator('.snap-viewer-caption').innerText();
+    await mediaStage.dispatchEvent('wheel', { deltaY: 120, deltaX: 0, bubbles: true, cancelable: true });
+    check(await viewer.locator('.snap-viewer-caption').innerText() === horizontalCaption, 'A trackpad burst does not skip through multiple snaps');
+    await settleCube();
+    await mediaStage.dispatchEvent('wheel', { deltaY: -120, deltaX: 0, bubbles: true, cancelable: true });
+    await page.waitForFunction(() => document.querySelector('.snap-viewer-caption')?.textContent === 'other-native');
+    check(await viewer.locator('.snap-viewer-caption').innerText() === 'other-native', 'Scrolling up restores the previous snap');
+    await settleCube();
+    await mediaStage.dispatchEvent('wheel', { deltaY: 120, deltaX: 40, bubbles: true });
+    await page.waitForFunction(() => {
+      const caption = document.querySelector('.snap-viewer-caption'); return caption && caption.textContent !== 'other-native';
+    });
+    check(await viewer.locator('.snap-viewer-caption').innerText() !== 'other-native', 'Dominant vertical scrolling supports diagonal trackpad input');
+    await mediaStage.focus(); await page.keyboard.press('ArrowLeft');
     await settleCube();
     await viewer.locator('.snap-viewer-details').dispatchEvent('wheel', { deltaY: 120, bubbles: true });
-    check(await viewer.locator('.snap-viewer-caption').innerText() === 'other-native', 'Scrolling profile details does not change the snap');
+    await viewer.locator('.snap-viewer-details').dispatchEvent('wheel', { deltaX: 120, bubbles: true });
+    check(await viewer.locator('.snap-viewer-caption').innerText() === 'other-native', 'Scrolling profile details on either axis does not change the snap');
     if (width < 600) {
       await page.waitForTimeout(550);
       await mediaStage.evaluate(element => {
@@ -358,18 +399,38 @@ try {
         element.dispatchEvent(new TouchEvent('touchstart', { touches: [touch(y + 60)], bubbles: true }));
         element.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: [touch(y - 60)], bubbles: true }));
       });
-      check(await viewer.locator('.snap-viewer-caption').innerText() !== 'other-native', 'A vertical swipe advances the full-screen snap on phones');
-      await mediaStage.focus(); await page.keyboard.press('ArrowUp');
+      check(await viewer.locator('.snap-viewer-caption').innerText() === 'other-native', 'A vertical phone swipe does not advance snaps');
+      await mediaStage.evaluate(element => {
+        const bounds = element.getBoundingClientRect(), x = bounds.x + bounds.width / 2, y = bounds.y + bounds.height / 2;
+        const touch = clientX => new Touch({ identifier: 2, target: element, clientX, clientY: y });
+        element.dispatchEvent(new TouchEvent('touchstart', { touches: [touch(x + 60)], bubbles: true }));
+        element.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: [touch(x - 60)], bubbles: true }));
+      });
+      check(await viewer.locator('.snap-viewer-caption').innerText() !== 'other-native', 'Swiping left advances the full-screen snap on phones');
+      await settleCube();
+      await mediaStage.evaluate(element => {
+        const bounds = element.getBoundingClientRect(), x = bounds.x + bounds.width / 2, y = bounds.y + bounds.height / 2;
+        const touch = clientX => new Touch({ identifier: 3, target: element, clientX, clientY: y });
+        element.dispatchEvent(new TouchEvent('touchstart', { touches: [touch(x - 60)], bubbles: true }));
+        element.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: [touch(x + 60)], bubbles: true }));
+      });
+      check(await viewer.locator('.snap-viewer-caption').innerText() === 'other-native', 'Swiping right restores the previous snap on phones');
+      await settleCube();
+    } else {
+      const bounds = await mediaStage.boundingBox(), x = bounds.x + bounds.width / 2, y = bounds.y + bounds.height / 2;
+      await page.mouse.move(x + 80, y); await page.mouse.down(); await page.mouse.move(x - 80, y, { steps: 5 }); await page.mouse.up();
+      check(await viewer.locator('.snap-viewer-caption').innerText() !== 'other-native', 'Dragging the media stage left advances a desktop snap');
+      await settleCube();
+      await page.mouse.move(x - 80, y); await page.mouse.down(); await page.mouse.move(x + 80, y, { steps: 5 }); await page.mouse.up();
+      check(await viewer.locator('.snap-viewer-caption').innerText() === 'other-native', 'Dragging the media stage right restores the previous desktop snap');
       await settleCube();
     }
     await viewer.getByRole('button', { name: 'Snap options', exact: true }).click();
     const optionsBounds = await viewer.getByRole('group', { name: 'Snap options', exact: true }).boundingBox();
     check(optionsBounds.x >= 0 && optionsBounds.x + optionsBounds.width <= width + 2, 'The Videos-style snap options menu stays inside the viewport');
-    const position = viewer.getByRole('slider', { name: 'Snap position', exact: true });
-    const beforePosition = await position.inputValue();
-    await position.focus(); await page.keyboard.press('ArrowRight');
-    check(Number(await position.inputValue()) === Number(beforePosition) + 1, 'The position control supports accessible forward navigation without Next');
-    await page.keyboard.press('ArrowLeft'); await settleCube();
+    check(await viewer.getByRole('slider').count() === 0 && await viewer.getByText('Snap position', { exact: true }).count() === 0, 'Snap position sliders and labels are removed from the options');
+    await page.keyboard.press('ArrowRight');
+    check(await viewer.locator('.snap-viewer-caption').innerText() === 'other-native', 'Arrow keys inside the options menu do not navigate snaps');
     await page.keyboard.press('Escape');
     check(await viewer.getByRole('group', { name: 'Snap options', exact: true }).count() === 0
       && await viewer.count() === 1, 'Escape closes snap options while keeping the viewer open');
@@ -467,7 +528,7 @@ try {
     await page.keyboard.press('Escape');
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await viewer.getByRole('region', { name: 'Snap media', exact: true }).focus();
-    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowRight');
     check(await viewer.locator('.snap-viewer-cube-outgoing').count() === 0
       && await viewer.locator('.snap-viewer-cube').evaluate(element => getComputedStyle(element).animationName === 'none'), 'Reduced-motion users change snaps immediately without a cube animation');
     await page.emulateMedia({ reducedMotion: 'no-preference' });
@@ -490,8 +551,11 @@ try {
       check(controls.y + controls.height <= stageBounds.y + stageBounds.height + 2, `Twitch source controls are reachable at the bottom of the short landscape stage: ${JSON.stringify({ controls, stage: stageBounds, scroll: await stage.evaluate(element => ({ top: element.scrollTop, height: element.scrollHeight, client: element.clientHeight })) })}`);
       const selected = await landscape.locator('.snap-viewer-caption').innerText();
       await page.waitForTimeout(550);
-      await landscape.locator('.snap-viewer-topbar').dispatchEvent('wheel', { deltaY: 120, deltaX: 0, bubbles: true });
-      check(await landscape.locator('.snap-viewer-caption').innerText() !== selected && await landscape.locator('iframe').count() <= 1, 'The topbar advances an embedded snap while retaining only one live player');
+      await landscape.locator('.snap-viewer-topbar').dispatchEvent('wheel', { deltaY: 120, deltaX: 0, bubbles: true, cancelable: true });
+      await page.waitForFunction(previous => {
+        const caption = document.querySelector('.snap-viewer-caption'); return caption && caption.textContent !== previous;
+      }, selected);
+      check(await landscape.locator('.snap-viewer-caption').innerText() !== selected && await landscape.locator('iframe').count() <= 1, 'Vertical topbar scrolling advances an embedded snap while retaining only one live player');
       await closeViewer();
     }
     assert.deepEqual(errors, []); checks++;
