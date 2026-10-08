@@ -10,7 +10,8 @@ import client, { publicOAuthRequestConfig } from '../api/client';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS, CAREER_ACCOUNT_PLATFORMS, withCareerAccountFallback } from '../components/sourceMeta';
 import ExternalAccountLogin from '../components/ExternalAccountLogin';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
-import PhotoPickerButton from '../components/PhotoPickerButton';
+import { WritingArea, PhotoAttachment, PostPreview, downloadPostText, POST_TEMPLATES } from '../components/PublishingComposer';
+import { composerTextLimit, readSessionDraft } from '../utils/publishingDraft.mjs';
 import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
 import { useSavedItems } from '../contexts/SavedItemsContext';
 import GeneratedContentHistory from '../components/GeneratedContentHistory';
@@ -1349,14 +1350,17 @@ export function CrossPostSection({ initialCategory } = {}) {
     : null;
   const [connected, setConnected] = useState(null);
   const [platforms, setPlatforms] = useState({});
-  const [content, setContent] = useState('');
-  const [selected, setSelected] = useState(new Set());
-  const [posting, setPosting] = useState(false);
+  const draftKey = `ufi_crosspost_draft:${profile?.id}`;
+  const sendingKey = `${draftKey}:sending`;
+  const [content, setContent] = useState(() => readSessionDraft(privateSessionStorage, draftKey).content);
+  const [selected, setSelected] = useState(() => new Set(readSessionDraft(privateSessionStorage, draftKey).selected));
+  const [posting, setPosting] = useState(() => privateSessionStorage.getItem(sendingKey) === '1');
   const [lastResult, setLastResult] = useState(null);
   const [history, setHistory] = useState(null);
   const [loadError, setLoadError] = useState('');
-  const [media, setMedia] = useState(null);
+  const [media, setMedia] = useState(() => readSessionDraft(privateSessionStorage, draftKey).media);
   const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [mediaError, setMediaError] = useState('');
   const [syncing, setSyncing] = useState(false);
   const [destinationCategory, setDestinationCategory] = useState(initialCategory || (profile?.plan === 'business' ? 'career' : 'social'));
@@ -1364,6 +1368,15 @@ export function CrossPostSection({ initialCategory } = {}) {
   const [checkingConnections, setCheckingConnections] = useState(false);
   const catalogRequest = useRef(0);
   const catalogController = useRef(null);
+  const sending = useRef(false);
+  const photoRequest = useRef(0);
+  const textLimit = composerTextLimit(selected, media);
+  const tooLong = content.trim().length > textLimit.limit;
+  useEffect(() => {
+    if (content || media || selected.size) privateSessionStorage.setItem(draftKey, JSON.stringify({ content, media, selected: [...selected] }));
+    else privateSessionStorage.removeItem(draftKey);
+  }, [draftKey, content, media, selected]);
+  useEffect(() => () => { photoRequest.current++; }, []);
 
   const loadCrossPostData = useCallback(async () => {
     const requestId = ++catalogRequest.current;
@@ -1410,6 +1423,18 @@ export function CrossPostSection({ initialCategory } = {}) {
   }, [loadCrossPostData]);
 
   useEffect(() => {
+    function finished(event) {
+      if (event.detail?.userId !== profile?.id || sending.current) return;
+      const saved = readSessionDraft(privateSessionStorage, draftKey);
+      setContent(saved.content); setMedia(saved.media); setSelected(new Set(saved.selected)); setPosting(false);
+      loadCrossPostData();
+    }
+    window.addEventListener('ufi-crosspost-finished', finished);
+    return () => window.removeEventListener('ufi-crosspost-finished', finished);
+  }, [draftKey, profile?.id, loadCrossPostData]);
+
+  useEffect(() => {
+    if (connected === null) return;
     setSelected(previous => {
       const next = new Set([...previous].filter(key => crossPostReady(key, platforms, connected, profile?.plan, media)));
       return next.size === previous.size ? previous : next;
@@ -1417,6 +1442,7 @@ export function CrossPostSection({ initialCategory } = {}) {
   }, [platforms, connected, profile?.plan, media]);
 
   function toggle(platform) {
+    if (posting) return;
     if (platform === 'uficonnect') { setSelected(prev => { const next = new Set(prev); if (next.has(platform)) next.delete(platform); else next.add(platform); return next; }); return; }
     const capability = platforms[platform]?.crossPost;
     if (selected.has(platform)) {
@@ -1445,22 +1471,24 @@ export function CrossPostSection({ initialCategory } = {}) {
   }
 
   async function handlePhoto(file) {
-    if (!file || uploadingMedia) return;
+    if (!file || uploadingMedia || posting) return;
     if (!file.type.startsWith('image/')) { setMediaError('Choose a photo file.'); return; }
-    if (file.size > MAX_UPLOAD_BYTES) { setMediaError('That photo is too large.'); return; }
-    setUploadingMedia(true); setMediaError('');
+    if (file.size > 10 * 1024 * 1024) { setMediaError('Choose a photo smaller than 10 MB.'); return; }
+    const id = ++photoRequest.current;
+    setUploadingMedia(true); setUploadProgress(0); setMediaError('');
     try {
-      const uploaded = await uploadMedia(file, null, 'crossposts');
-      setMedia(uploaded);
+      const uploaded = await uploadMedia(file, progress => { if (id === photoRequest.current) setUploadProgress(progress); }, 'crossposts');
+      if (id === photoRequest.current) setMedia({ ...uploaded, name: file.name });
     } catch (err) {
-      setMediaError(err?.response?.data?.message || err?.message || 'Could not upload the photo.');
+      if (id === photoRequest.current) setMediaError(err?.response?.data?.message || err?.message || 'Could not upload the photo.');
     } finally {
-      setUploadingMedia(false);
+      if (id === photoRequest.current) setUploadingMedia(false);
     }
   }
 
   function removePhoto() {
     setMedia(null);
+    setMediaError('');
     setSelected(prev => new Set([...prev].filter(platform => !platforms[platform]?.crossPost?.requiresPhoto)));
   }
 
@@ -1479,13 +1507,16 @@ export function CrossPostSection({ initialCategory } = {}) {
 
   async function handlePost(e) {
     e.preventDefault();
-    if ((!content.trim() && !media) || !selected.size || posting || uploadingMedia || checkingConnections) return;
+    if ((!content.trim() && !media) || !selected.size || sending.current || privateSessionStorage.getItem(sendingKey) === '1' || tooLong || uploadingMedia || checkingConnections) return;
     const ready = new Set([...selected].filter(key => crossPostReady(key, platforms, connected, profile?.plan, media)));
     if (ready.size !== selected.size) {
       setSelected(ready);
       showToast('Some accounts are no longer ready to publish. Review the remaining selection before sending.', 'error');
       return;
     }
+    sending.current = true;
+    privateSessionStorage.setItem(sendingKey, '1');
+    let cachedDraft = JSON.stringify({ content, media, selected: [...selected] });
     setPosting(true);
     setLastResult(null);
     const nativeTargets = [];
@@ -1493,6 +1524,10 @@ export function CrossPostSection({ initialCategory } = {}) {
       if (selected.has('uficonnect')) {
         const result = await client.post('/groups/ufi-general/posts', { content: content.trim(), mediaUrl: media?.url, mediaType: media?.type });
         nativeTargets.push({ platform: 'uficonnect', status: 'posted', postedUrl: result.data?.post?.id ? '/p/' + result.data.post.id : '/?feed=ufi' });
+        if (privateSessionStorage.getItem(draftKey) === cachedDraft) {
+          cachedDraft = JSON.stringify({ content, media, selected: [...selected].filter(key => key !== 'uficonnect') });
+          privateSessionStorage.setItem(draftKey, cachedDraft);
+        }
         setSelected(prev => new Set([...prev].filter(key => key !== 'uficonnect')));
       }
       const external = [...selected].filter(key => key !== 'uficonnect');
@@ -1514,6 +1549,7 @@ export function CrossPostSection({ initialCategory } = {}) {
       });
       if (data.id) setHistory(prev => [{ id: data.id, content: content.trim(), mediaUrl: data.mediaUrl, targets: data.targets, createdAt: new Date().toISOString() }, ...(prev || [])]);
       if (!data.historySaved) showToast('Your post was sent, but its history will finish syncing shortly.', 'error');
+      if (privateSessionStorage.getItem(draftKey) === cachedDraft) privateSessionStorage.removeItem(draftKey);
       setContent('');
       setSelected(new Set());
       setMedia(null);
@@ -1521,6 +1557,9 @@ export function CrossPostSection({ initialCategory } = {}) {
       if (nativeTargets.length) setLastResult(nativeTargets);
       showToast((nativeTargets.length ? 'UFIconnect published; it is deselected to avoid duplicates. ' : '') + (err?.response?.data?.message || 'Could not send your post. Please try again.'), 'error');
     } finally {
+      privateSessionStorage.removeItem(sendingKey);
+      window.dispatchEvent(new CustomEvent('ufi-crosspost-finished', { detail: { userId: profile?.id } }));
+      sending.current = false;
       setPosting(false);
     }
   }
@@ -1551,7 +1590,7 @@ export function CrossPostSection({ initialCategory } = {}) {
     const deliveryHint = capability.delivery === 'handoff' ? ' · TikTok inbox' : capability.requiresPhoto ? ' · photo' : '';
     return (
       <button
-        type="button" onClick={() => toggle(p)} disabled={checkingConnections || !crossPostReady(p, platforms, connected, profile?.plan, media)} aria-pressed={active}
+        type="button" onClick={() => toggle(p)} disabled={posting || checkingConnections || !crossPostReady(p, platforms, connected, profile?.plan, media)} aria-pressed={active}
         className="btn btn-sm"
         title={needsPhoto ? 'Add a photo to publish to this account.' : incompatibleVideo ? 'This account does not support this video attachment.' : capability.note}
         style={{ background: active ? 'var(--primary)' : 'var(--bg-secondary)', color: active ? '#fff' : 'var(--text)', border: 'none', opacity: needsPhoto ? .55 : 1 }}
@@ -1610,6 +1649,18 @@ export function CrossPostSection({ initialCategory } = {}) {
             <Link to={`/?feed=${category}`} className="btn btn-ghost btn-sm">Back to {categoryLabel}</Link>
           </div>
         </div>}
+        {profile?.plan === 'free' && <p style={{ fontSize: '.8rem' }}>UFIconnect posting is available to everyone. Publishing to connected accounts requires Pro.</p>}
+        {
+          <form id="ufi-crosspost-compose" onSubmit={handlePost} className="publish-composer-grid" style={{ marginTop: 22 }}>
+            <div className="publish-composer-main">
+              <WritingArea value={content} onChange={setContent} label={profile?.plan === 'business' ? 'Hiring update' : 'Post draft'} disabled={posting} maxLength={textLimit.limit} templates={profile?.plan === 'business' ? [] : POST_TEMPLATES} placeholder={categoryLabel ? `What would you like to share about ${categoryLabel.toLowerCase()}?` : 'Start with your main idea. Add context, a question or a next step.'} />
+              {profile?.plan !== 'business' && <PhotoAttachment media={media} onFile={handlePhoto} onRemove={removePhoto} busy={uploadingMedia} disabled={posting} progress={uploadProgress} error={mediaError} />}
+              <div className="publish-draft-actions"><button type="button" className="btn btn-ghost btn-sm" disabled={posting || uploadingMedia || (!content && !media)} onClick={() => { setContent(''); removePhoto(); }}>Clear draft</button><span>Draft retained during navigation in this session</span></div>
+              {tooLong && <p className="publish-over-limit" role="alert">Shorten this draft by {content.trim().length - textLimit.limit} characters for {SOURCE_META[textLimit.platform]?.label || 'the selected destinations'}. Your full text remains in the editor.</p>}
+            </div>
+            <PostPreview content={content} media={media} name={profile?.name} destinations={[...selected].map(platform => SOURCE_META[platform]?.label || platform)} onDownload={downloadPostText} onCopy={async () => { try { await navigator.clipboard.writeText(content); showToast('Post text copied.', 'success'); } catch { showToast('Clipboard unavailable. Download the text or copy it from the editor.', 'error'); } }} />
+          </form>
+        }
         <div style={{ marginTop: 16, padding: 12, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
             <strong style={{ fontSize: '.8rem' }}>Publishing destinations</strong>
@@ -1625,7 +1676,7 @@ export function CrossPostSection({ initialCategory } = {}) {
               <h4 id={`crosspost-category-${group.id}`} style={{ margin: '0 0 8px', fontSize: '.78rem', color: 'var(--muted)' }}>{group.label}</h4>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 8 }}>
                 {group.items.map(([platform]) => platform === 'uficonnect'
-                  ? <button key={platform} type="button" className="btn btn-sm" aria-pressed={selected.has(platform)} onClick={() => toggle(platform)} style={{ background: selected.has(platform) ? 'var(--primary)' : 'var(--card)', color: selected.has(platform) ? '#fff' : 'var(--text)' }}><SourceMark source={platform} active={selected.has(platform)} /> UFIConnect</button>
+                  ? <button key={platform} type="button" className="btn btn-sm" disabled={posting} aria-pressed={selected.has(platform)} onClick={() => toggle(platform)} style={{ background: selected.has(platform) ? 'var(--primary)' : 'var(--card)', color: selected.has(platform) ? '#fff' : 'var(--text)' }}><SourceMark source={platform} active={selected.has(platform)} /> UFIConnect</button>
                   : publishingDestination(platform))}
               </div>
             </section>)}
@@ -1634,37 +1685,7 @@ export function CrossPostSection({ initialCategory } = {}) {
             ? `Selected (${selected.size}): ${[...selected].map(platform => SOURCE_META[platform]?.label || platform).join(', ')}`
             : activeDestinationCategory === 'career' || activeDestinationCategory === 'travel' ? 'Sign in on a source website. Copy your own draft when the source supports publishing.' : 'Choose the accounts to publish to.'}</p>
         </div>
-        {profile?.plan === 'free' && <p style={{ fontSize: '.8rem' }}>UFIconnect posting is available to everyone. Publishing to connected accounts requires Pro.</p>}
-        {
-          <form onSubmit={handlePost} style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 16 }}>
-            <textarea
-              value={content} onChange={e => setContent(e.target.value)} rows={4}
-              aria-label={profile?.plan === 'business' ? 'Hiring update' : 'Post draft'}
-              placeholder={profile?.plan === 'business' ? 'Describe the role, responsibilities, requirements, location, and how to apply.' : categoryLabel ? `What would you like to share about ${categoryLabel.toLowerCase()}?` : 'What do you want to share?'}
-              style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border)', fontSize: '.85rem', fontFamily: 'inherit', resize: 'vertical' }}
-            />
-            {profile?.plan !== 'business' && <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <PhotoPickerButton
-                onFileSelected={handlePhoto}
-                disabled={uploadingMedia}
-                label={uploadingMedia ? 'Uploading photo...' : 'Add photo'}
-                className="btn btn-ghost btn-sm"
-              />
-              {media && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  {media.type === 'video'
-                    ? <video src={media.url} muted playsInline style={{ width: 46, height: 46, objectFit: 'cover', borderRadius: 6, background: '#111' }} />
-                    : <img src={media.url} alt="Selected for cross-posting" style={{ width: 46, height: 46, objectFit: 'cover', borderRadius: 6 }} />}
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={removePhoto}>Remove photo</button>
-                </div>
-              )}
-              {mediaError && <span style={{ color: 'var(--danger)', fontSize: '.76rem' }}>{mediaError}</span>}
-            </div>}
-            {profile?.plan !== 'business' && <button className="btn btn-primary ufi-post-action" type="submit" disabled={posting || uploadingMedia || checkingConnections || (!content.trim() && !media) || !selected.size} style={{ alignSelf: 'flex-start' }}>
-              {posting ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Send'}
-            </button>}
-          </form>
-        }
+        {profile?.plan !== 'business' && <button className="btn btn-primary" type="submit" form="ufi-crosspost-compose" disabled={posting || tooLong || uploadingMedia || checkingConnections || (!content.trim() && !media) || !selected.size} style={{ marginTop: 18 }}>{posting ? 'Publishing…' : 'Send'}</button>}
       </div>
 
       {lastResult && (
@@ -1705,6 +1726,7 @@ export function CrossPostSection({ initialCategory } = {}) {
                   : <img src={h.mediaUrl} alt="Cross-posted" style={{ width: '100%', maxHeight: 280, objectFit: 'contain', borderRadius: 6, marginBottom: 10, background: 'var(--bg-secondary)' }} />)}
                 <p style={{ margin: '0 0 8px', fontSize: '.85rem', whiteSpace: 'pre-wrap' }}><PostInlineText text={h.content} /></p>
                 <PostLinkPreviews text={h.content} />
+                <button type="button" className="btn btn-ghost btn-sm" disabled={posting || uploadingMedia} onClick={() => { setContent(h.content || ''); setMedia(h.mediaUrl ? { url: h.mediaUrl, type: h.mediaUrl.includes('/video/upload/') ? 'video' : 'image' } : null); setLastResult(null); }}>Reuse as draft</button>
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: '.72rem', color: 'var(--muted)' }}>
                   {(h.targets || []).map(t => {
                     const resultMeta = PLATFORM_RESULT_META[t.status] || PLATFORM_RESULT_META.failed;

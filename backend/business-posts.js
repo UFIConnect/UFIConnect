@@ -14,8 +14,8 @@ const BUSINESS_POST_SCHEMA = [
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const text = value => typeof value === 'string' ? value.trim() : '';
 const count = value => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
-const list = value => text(value).split(/\n+/).map(item => item.replace(/^[-*•]\s*/, '').trim()).filter(Boolean);
-function normalizeDetails(input = {}) {
+const list = value => text(value).split(/\n+/).map(item => item.replace(/^(?:[-*•]|\d+[.)])\s*/, '').trim()).filter(Boolean);
+function normalizeDetails(input = {}, { validatePhoto = () => false } = {}) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw fail(400, 'Add the hiring post details.');
   const limits = { title: 150, company: 150, location: 150, pay: 150, description: 1500, duties: 1500, requirements: 1500, applyUrl: 500 };
   const details = {};
@@ -25,6 +25,10 @@ function normalizeDetails(input = {}) {
   }
   if (details.title.length < 3 || details.description.length < 20) throw fail(400, 'Add a role title and a description of at least 20 characters.');
   if (details.applyUrl && !safeUrl(details.applyUrl)) throw fail(400, 'Use an https or http application link.');
+  if (input.mediaUrl) {
+    if (typeof input.mediaUrl !== 'string' || input.mediaUrl.length > 1000 || !safeUrl(input.mediaUrl) || !validatePhoto(input.mediaUrl)) throw fail(400, 'Upload the photo through UFIConnect before attaching it.');
+    details.mediaUrl = input.mediaUrl.trim();
+  }
   const content = [details.title, details.company, details.location && `Location: ${details.location}`,
     details.pay && `Pay: ${details.pay}`, details.description,
     details.duties && `Responsibilities\n${list(details.duties).map(item => `- ${item}`).join('\n')}`,
@@ -74,7 +78,7 @@ function compareJobs(post, candidates) {
   }).filter(job => job.match.titleTerms.length > 0).sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
 }
 
-function createBusinessPosts({ db, getUser, screenContent, publishNative, publishLinkedIn, loadJobs, loadHiringPosts = async () => [] }) {
+function createBusinessPosts({ db, getUser, screenContent, publishNative, publishLinkedIn, loadJobs, loadHiringPosts = async () => [], validatePhoto = () => false }) {
   async function member(id) {
     const user = await getUser(id);
     if (!user || user.plan !== 'business') throw fail(403, 'Business membership is required.');
@@ -96,7 +100,7 @@ function createBusinessPosts({ db, getUser, screenContent, publishNative, publis
   async function create(id, input) {
     const user = await member(id);
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.requestId || '')) throw fail(400, 'A request ID is required.');
-    const { details, content } = normalizeDetails(input.details);
+    const { details, content } = normalizeDetails(input.details, { validatePhoto });
     const targets = [...new Set(Array.isArray(input.targets) ? input.targets : [])];
     if (targets.some(target => !['uficonnect', 'linkedin'].includes(target))) throw fail(400, 'Choose a supported recruiting destination.');
     if (targets.includes('linkedin') && !user.socialTokens?.linkedin) throw fail(400, 'Connect LinkedIn before publishing there.');
@@ -106,7 +110,8 @@ function createBusinessPosts({ db, getUser, screenContent, publishNative, publis
       if (existing.fingerprint !== fingerprint) throw fail(409, 'This request was already used for a different post.');
       return rowToPost(await owned(id, existing.id));
     }
-    const screening = await screenContent({ content, kind: 'post', maxLength: 2000 });
+    const mediaUrl = details.mediaUrl || null;
+    const screening = await screenContent({ content, mediaUrl, mediaType: mediaUrl ? 'image' : null, kind: 'post', maxLength: 2000 });
     if (!screening.allowed) throw fail(screening.reason === 'screening_unavailable' ? 503 : 422, 'This hiring post could not be approved for publication.');
     const postId = `bp_${randomUUID()}`;
     const pending = targets.map(platform => ({ platform, status: 'processing' }));
@@ -125,8 +130,8 @@ function createBusinessPosts({ db, getUser, screenContent, publishNative, publis
     for (const platform of targets) {
       try {
         const outcome = platform === 'uficonnect'
-          ? await publishNative(user, { id: postId, title: details.title, content: screening.content })
-          : await publishLinkedIn(user, { content: screening.content, crossPostId: postId });
+          ? await publishNative(user, { id: postId, title: details.title, content: screening.content, mediaUrl, mediaType: mediaUrl ? 'image' : null })
+          : await publishLinkedIn(user, { content: screening.content, crossPostId: postId, mediaUrl, mediaType: mediaUrl ? 'image' : null });
         outcomes.push({ ...outcome, platform });
         if (platform === 'uficonnect' && outcome.status === 'posted') nativePostId = postId;
       } catch { outcomes.push({ platform, status: 'unconfirmed', error: 'Delivery could not be confirmed. Check the destination before creating another post.' }); }

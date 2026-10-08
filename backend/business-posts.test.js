@@ -117,8 +117,44 @@ test('post pagination stays scoped to the member and comparison pages do not rep
 });
 test('composed content remains complete and unsafe application links or overlong posts are rejected',()=>{
   assert.match(normalizeDetails(details).content,/- JavaScript\n- PostgreSQL/);
+  assert.match(normalizeDetails({...details,duties:'1. Design APIs\n2. Maintain services'}).content,/Responsibilities\n- Design APIs\n- Maintain services/);
   assert.throws(()=>normalizeDetails({...details,applyUrl:'javascript:alert(1)'}),{status:400});
   assert.throws(()=>normalizeDetails({...details,description:'a'.repeat(1500),duties:'b'.repeat(1500)}),{status:400});
+});
+
+test('hiring photos are screened, saved with drafts and delivered to native and LinkedIn destinations', async () => {
+  const url = 'https://res.cloudinary.com/fixture/image/upload/hiring.png';
+  const deliveries = [], screens = [];
+  const {service} = fixture({
+    validatePhoto: value => value === url,
+    screenContent: async options => { screens.push(options); return {allowed:true,content:options.content}; },
+    publishNative: async (user, payload) => { deliveries.push({platform:'uficonnect',...payload}); return {status:'posted'}; },
+    publishLinkedIn: async (user, payload) => { deliveries.push({platform:'linkedin',...payload}); return {status:'posted'}; },
+  });
+  const input = {requestId:randomUUID(),details:{...details,mediaUrl:url},targets:['uficonnect','linkedin']};
+  const post = await service.create(OWNER,input);
+  assert.equal(post.details.mediaUrl,url);
+  assert.deepEqual(screens.map(item=>[item.mediaUrl,item.mediaType]),[[url,'image']]);
+  assert.deepEqual(deliveries.map(item=>[item.platform,item.mediaUrl,item.mediaType]),[['uficonnect',url,'image'],['linkedin',url,'image']]);
+  await service.create(OWNER,input);
+  assert.equal(deliveries.length,2,'Retry does not publish a second photo');
+  const draft=await service.create(OWNER,{...input,requestId:randomUUID(),targets:[]});
+  assert.equal(draft.details.mediaUrl,url);
+  assert.equal(draft.status,'draft');
+  assert.equal(deliveries.length,2,'Draft photo is saved without delivery');
+  await assert.rejects(service.create(OWNER,{...input,details:{...details,mediaUrl:url+'?changed=true'}}),{status:400});
+});
+
+test('unverified photos and rejected image screening cannot publish or create a draft',async()=>{
+  const url='https://res.cloudinary.com/fixture/image/upload/hiring.png';
+  const {service,calls}=fixture({validatePhoto:value=>value===url,screenContent:async()=>({allowed:false,reason:'disallowed'})});
+  for(const mediaUrl of ['https://other.example/image.png','https://res.cloudinary.com/other/image/upload/photo.png','data:image/png;base64,abc','https://res.cloudinary.com/fixture/video/upload/photo.mp4']) {
+    await assert.rejects(service.create(OWNER,{requestId:randomUUID(),details:{...details,mediaUrl},targets:['linkedin']}),{status:400});
+  }
+  await assert.rejects(service.create(OWNER,{requestId:randomUUID(),details:{...details,mediaUrl:url},targets:['linkedin']}),{status:422});
+  assert.deepEqual(calls,[]);
+  assert.equal((await service.posts(OWNER)).posts.length,0);
+  assert.throws(()=>normalizeDetails({...details,mediaUrl:url}),{status:400},'Validation is closed when upload configuration is unavailable');
 });
 test('real route registration protects storage and keeps Business account connections limited to recruiting',async t=>{
   const app=await createAppHarness({env:{LINKEDIN_CLIENT_ID:'fixture-id',LINKEDIN_CLIENT_SECRET:'fixture-secret'}});t.after(()=>app.close());
@@ -128,6 +164,7 @@ test('real route registration protects storage and keeps Business account connec
   assert.equal((await app.request('/business/posts',{userId:'pro-post-http'})).status,403);
   const catalog=(await app.request('/social/platforms',{userId:'business-post-http'})).data;
   assert.equal(catalog.platforms.linkedin.crossPost.supported,true);assert.equal(catalog.platforms.reddit,undefined);
+  assert.equal(catalog.businessPublishing.photos,true);
   assert.equal((await app.request('/auth/social/reddit/start',{userId:'business-post-http'})).status,403);
   const linkedin=await app.request('/auth/social/linkedin/start',{userId:'business-post-http'});
   assert.equal(linkedin.status,200);assert.match(linkedin.data.url,/linkedin\.com/);

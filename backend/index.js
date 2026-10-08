@@ -20941,6 +20941,7 @@ app.get('/social/platforms', authenticate, async (req, res) => {
     connected,
     connectedPlatforms: Object.keys(connected).filter(key => connected[key]),
     connectedAt: Object.fromEntries(Object.keys(connected).filter(key => connected[key]).map(key => [key, connectedSourceWindow(user, key).connectedAt])),
+    businessPublishing: { photos: careerOnly },
     careerOnly,
   });
 });
@@ -32922,15 +32923,16 @@ app.post('/command-center/cross-post', authenticate, contentSubmissionLimiter, a
 
 const businessPosts = createBusinessPosts({
   db, getUser: getEffectiveUser,
+  validatePhoto: isCloudinaryCrossPostImageUrl,
   screenContent: options => screenMemberContent(options),
   publishLinkedIn: (user, options) => publishCrossPostTarget(user, 'linkedin', options),
-  async publishNative(user, { id, title, content }) {
+  async publishNative(user, { id, title, content, mediaUrl = null, mediaType = null }) {
     const createdAt = new Date().toISOString();
-    await db.query(`INSERT INTO community_posts(id,group_id,author_id,author_name,title,content,source,source_label,created_at)
-      VALUES($1,'ufi-general',$2,$3,$4,$5,'uficonnect','Hiring',$6) ON CONFLICT(id) DO NOTHING`,
-    [id, user.id, user.name, title, content, createdAt]);
+    await db.query(`INSERT INTO community_posts(id,group_id,author_id,author_name,title,content,source,source_label,created_at,media_url,media_type)
+      VALUES($1,'ufi-general',$2,$3,$4,$5,'uficonnect','Hiring',$6,$7,$8) ON CONFLICT(id) DO NOTHING`,
+    [id, user.id, user.name, title, content, createdAt, mediaUrl, mediaType]);
     const post = { id, groupId: 'ufi-general', authorId: user.id, title, content, createdAt,
-      source: 'uficonnect', sourceLabel: 'Hiring', likes: [], commentsCount: 0 };
+      source: 'uficonnect', sourceLabel: 'Hiring', likes: [], commentsCount: 0, mediaUrl, mediaType };
     if (!posts.some(existing => existing.id === id)) posts.unshift(post);
     broadcastSSE([serializeCommunityPost(post, user.id)]);
     return { status: 'posted', postedUrl: `https://uficonnect.org/p/${encodeURIComponent(id)}` };

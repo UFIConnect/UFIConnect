@@ -7,9 +7,10 @@ import api from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { summarizeJob } from '../utils/jobSummary.mjs';
 import { trackCategoryview } from '../analytics';
+import { privateSessionStorage } from '../auth/session';
 
 const when = value => value && !Number.isNaN(new Date(value).getTime()) ? new Date(value).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : 'Date unavailable';
-const lines = value => String(value || '').split(/\n+/).map(line => line.replace(/^[-*•]\s*/, '').trim()).filter(Boolean);
+const lines = value => String(value || '').split(/\n+/).map(line => line.replace(/^(?:[-*•]|\d+[.)])\s*/, '').trim()).filter(Boolean);
 function Metrics({ post }) {
   return <div><dl className="business-post-metrics">{['likes', 'comments', 'views'].map(key => <div key={key}><dt>{key}</dt><dd>{post.metrics?.[key] === null || post.metrics?.[key] === undefined ? 'Unavailable' : Number(post.metrics[key]).toLocaleString()}</dd></div>)}</dl><p className="business-post-muted">{post.metricScope}</p></div>;
 }
@@ -25,6 +26,7 @@ function Detail({ post, own = false }) {
     <h4>Responsibilities</h4>{duties.length ? <ul>{duties.slice(0, 8).map((duty, i) => <li key={i}>{duty}</li>)}</ul> : <p className="business-post-muted">See the full description for role tasks.</p>}
     <h4>Requirements</h4>{requirements.length ? <ul>{requirements.slice(0, 8).map((item, i) => <li key={i}>{item}</li>)}</ul> : <p className="business-post-muted">No separate requirements section was provided.</p>}
     <h4>Role task summary</h4><p>{summary.summary || 'Specific tasks were not supplied in this listing.'}</p>
+    {details.mediaUrl && <img className="business-post-photo" src={details.mediaUrl} alt={`Photo for ${details.title}`} loading="lazy" />}
     <h4>Engagement</h4><Metrics post={post} />
     <details className="business-post-full"><summary>Read complete post</summary><pre>{post.content}</pre></details>
     {!own && post.source !== 'UFIConnect' && post.sourceUrl && <a className="btn btn-outline btn-sm" href={post.sourceUrl} target="_blank" rel="noopener noreferrer">Open original job listing</a>}
@@ -54,7 +56,7 @@ export default function BusinessPosts() {
     return () => { active = false; };
   }, [postId, page, similarPage, refresh]);
   if (profile?.plan !== 'business') return <Navigate to="/settings" replace />;
-  function reuse(post) { sessionStorage.setItem(`ufi_business_post_draft:${profile.id}`, JSON.stringify(post.details)); }
+  function reuse(post) { privateSessionStorage.setItem(`ufi_business_post_draft:${profile.id}`, JSON.stringify(post.details)); }
   const other = comparison?.posts.find(post => post.id === selected);
   return <Layout>
     <Helmet><title>Posts & comparisons | UFIConnect Business</title><meta name="robots" content="noindex" /></Helmet>

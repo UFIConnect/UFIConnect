@@ -63,8 +63,8 @@ try {
     await page.getByLabel('Location & work arrangement').fill('Los Angeles, CA · Hybrid');
     await page.getByLabel('Pay range').fill('$120,000–$160,000/year');
     await page.getByLabel('Role description', { exact: true }).fill('Build reliable software and APIs for recruiting teams.');
-    await page.getByLabel('Responsibilities — one per line').fill('Design APIs\nMaintain services');
-    await page.getByLabel('Requirements — one per line').fill('JavaScript\nPostgreSQL');
+    await page.getByRole('textbox', { name: 'Responsibilities — one per line', exact: true }).fill('Design APIs\nMaintain services');
+    await page.getByRole('textbox', { name: 'Requirements — one per line', exact: true }).fill('JavaScript\nPostgreSQL');
     await page.getByRole('checkbox', { name: /LinkedIn/ }).check();
     await page.getByRole('searchbox', { name: 'Find a career site' }).fill('indeed');
     check(await page.getByRole('link', { name: 'Sign in on Indeed', exact: true }).getAttribute('href') === directory.indeed.loginUrl, 'Indeed uses its official sign-in link');
