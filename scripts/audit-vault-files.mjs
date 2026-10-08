@@ -48,7 +48,7 @@ try {
       if (url.pathname === '/api/security/vault/status') return route.fulfill({ json: { phase: 'software-prototype', state: 'disabled', available: false } });
       if (url.pathname === '/api/billing/config') return route.fulfill({ json: { paymentsReady: true, tiers: { vpn_connector: true }, pricing: { vpn_connector: { active: true, unitAmount: 394, currency: 'USD', interval: 'month', intervalCount: 1 } } } });
       if (url.pathname === '/api/billing/create-checkout-session') {
-        assert.deepEqual(route.request().postDataJSON(), { tier: 'vpn_connector' });
+        assert.deepEqual(route.request().postDataJSON(), { tier: 'vpn_connector', returnPath: '/vault' });
         await new Promise(resolve => { releaseCheckout = resolve; });
         return route.fulfill({ json: { url: 'https://checkout.stripe.com/vault-audit' } });
       }

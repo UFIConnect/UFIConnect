@@ -27,6 +27,7 @@ function setup() {
   const idempotency = new Map();
   const creates = [];
   const portalCustomers = [];
+  const portalCreates = [];
   let failWrite = false;
   let failProvider = false;
   let tail = Promise.resolve();
@@ -70,7 +71,7 @@ function setup() {
       async *list({ customer }) { for (const value of subscriptions.values()) if (value.customer === customer) yield value; },
       async cancel(id, options) { assert.equal(options.prorate, false); assert.equal(options.invoice_now, false); if (failProvider) throw new Error('provider outage'); subscriptions.get(id).status = 'canceled'; },
     },
-    billingPortal: { sessions: { async create(data) { portalCustomers.push(data.customer); return { url: 'https://billing.stripe.com/test' }; } } },
+    billingPortal: { sessions: { async create(data) { portalCustomers.push(data.customer); portalCreates.push(data); return { url: 'https://billing.stripe.com/test' }; } } },
   };
   const catalog = { allowedPrices: new Map([['price_pro', 'pro'], ['price_business', 'business'], ['price_business_team', 'business_team'], ['price_resume', 'resume_builder'], ['price_resume_monthly', 'resume_builder_monthly'], ['price_vpn', 'vpn_connector']]),
     tiers: Object.fromEntries([['pro', 'price_pro'], ['business', 'price_business'], ['business_team', 'price_business_team'], ['resume_builder', 'price_resume'], ['resume_builder_monthly', 'price_resume_monthly'], ['vpn_connector', 'price_vpn']].map(([tier, priceId]) => [tier, { available: true, priceId }])) };
@@ -87,7 +88,7 @@ function setup() {
     sessions.set(id, value); return value;
   };
   const event = (id = 'evt_1', type = 'checkout.session.completed', object = { id: 'cs_paid', customer: 'cus_a' }) => ({ id, type, data: { object } });
-  return { service, stripe, db, catalog, sub, session, event, creates, sessions, subscriptions, portalCustomers,
+  return { service, stripe, db, catalog, sub, session, event, creates, sessions, subscriptions, portalCustomers, portalCreates,
     failWrite() { failWrite = true; }, providerOutage() { failProvider = true; } };
 }
 async function alice() { return (await pg.query('SELECT * FROM users WHERE id=$1', [A])).rows[0]; }
@@ -608,6 +609,136 @@ test('simultaneous checkout requests reuse one durable hosted Checkout', async (
   assert.equal(f.sessions.get('cs_1').status, 'expired');
 });
 
+test('checkout keeps the launch page, query, and hash for every membership slot', async () => {
+  const f = setup();
+  const returnPath = '/command-center?tab=ai-content&topic=Product%20design&upgrade=old&upgrade=stale#draft';
+  for (const tier of ['pro', 'business', 'resume_builder_monthly', 'vpn_connector']) {
+    await f.service.createCheckout(A, tier, 1, returnPath);
+    const call = f.creates.at(-1).data;
+    for (const [field, outcome] of [['success_url', 'success'], ['cancel_url', 'cancelled']]) {
+      const url = new URL(call[field]);
+      assert.equal(url.origin, 'https://uficonnect.org');
+      assert.equal(url.pathname, '/command-center');
+      assert.equal(url.searchParams.get('tab'), 'ai-content');
+      assert.equal(url.searchParams.get('topic'), 'Product design');
+      assert.deepEqual(url.searchParams.getAll('upgrade'), [outcome]);
+      assert.equal(url.hash, '#draft');
+    }
+  }
+  const attempts = (await pg.query('SELECT return_path FROM billing_checkout_attempts WHERE user_id=$1', [A])).rows;
+  assert.equal(attempts.length, 3);
+  assert.ok(attempts.every(attempt => attempt.return_path === returnPath));
+});
+
+test('legacy callers keep tier defaults and portal returns to Settings', async () => {
+  const f = setup();
+  for (const [tier, path] of [['pro', '/settings'], ['resume_builder', '/resume-builder'], ['vpn_connector', '/vault']]) {
+    await f.service.createCheckout(A, tier);
+    const call = f.creates.at(-1).data;
+    assert.equal(call.success_url, `https://uficonnect.org${path}?upgrade=success`);
+    assert.equal(call.cancel_url, `https://uficonnect.org${path}?upgrade=cancelled`);
+  }
+  assert.ok((await pg.query('SELECT return_path FROM billing_checkout_attempts')).rows.every(attempt => attempt.return_path === null));
+  await f.service.portal(B);
+  assert.deepEqual(f.portalCreates, [{ customer: 'cus_b', return_url: 'https://uficonnect.org/settings' }]);
+});
+
+test('portal returns to the exact launch tab and hash using only the authenticated customer', async () => {
+  const f = setup();
+  const returnPath = '/command-center?tab=accounts&source=github#billing';
+  await f.service.portal(B, returnPath);
+  assert.deepEqual(f.portalCreates, [{ customer: 'cus_b', return_url: 'https://uficonnect.org' + returnPath }]);
+  assert.equal(f.creates.length, 0);
+});
+
+test('unsafe or malformed return destinations fail before any Stripe operation', async () => {
+  const f = setup();
+  f.stripe.customers.retrieve = async () => { throw new Error('Stripe must not be contacted'); };
+  const invalid = [null, false, 17, {}, ['/vault'], '', 'settings', '?tab=accounts', '#billing',
+    'https://outside.example/pay', 'https://uficonnect.org/settings', '//outside.example', '///outside.example',
+    '/\\outside.example', '/%5coutside.example', '/%255coutside.example', '/%2foutside.example', '/%252foutside.example',
+    '/settings\n', '/settings?x=%0d%0aLocation:outside', '/settings#%2500', '/settings\u007f', '/' + 'a'.repeat(2048)];
+  for (const returnPath of invalid) {
+    await assert.rejects(f.service.createCheckout(A, 'pro', 1, returnPath), { status: 400 }, JSON.stringify(returnPath));
+    await assert.rejects(f.service.portal(A, returnPath), { status: 400 }, JSON.stringify(returnPath));
+  }
+  assert.equal(f.creates.length + f.portalCreates.length, 0);
+  assert.equal((await pg.query('SELECT * FROM billing_checkout_attempts')).rows.length, 0);
+});
+
+test('same return page reuses checkout and a different tab expires the previous payable session first', async () => {
+  const f = setup();
+  const start = '/command-center?tab=ai-content#draft', next = '/command-center?tab=resume-builder#templates';
+  const results = await Promise.all([f.service.createCheckout(A, 'pro', 1, start), f.service.createCheckout(A, 'pro', 1, start)]);
+  assert.equal(results[0].url, results[1].url);
+  assert.equal(f.creates.length, 1);
+  const replacement = await f.service.createCheckout(A, 'pro', 1, next);
+  assert.notEqual(replacement.url, results[0].url);
+  assert.equal(f.sessions.get('cs_1').status, 'expired');
+  assert.equal([...f.sessions.values()].filter(session => session.status === 'open').length, 1);
+  assert.equal(new URL(f.creates.at(-1).data.cancel_url).hash, '#templates');
+  assert.equal(new URL(f.creates.at(-1).data.cancel_url).searchParams.get('tab'), 'resume-builder');
+  assert.equal((await pg.query('SELECT return_path FROM billing_checkout_attempts WHERE user_id=$1', [A])).rows[0].return_path, next);
+  assert.equal((await alice()).plan, 'free', 'Opening or moving checkout cannot grant membership');
+});
+
+test('a new return page after a crash replays the persisted request before safely replacing it', async () => {
+  const f = setup(); f.failWrite();
+  const start = '/vault#passwords', next = '/command-center?tab=accounts#vault';
+  await assert.rejects(f.service.createCheckout(A, 'vpn_connector', 1, start), /simulated DB/);
+  const pending = (await pg.query('SELECT * FROM billing_checkout_attempts WHERE user_id=$1', [A])).rows[0];
+  assert.equal(pending.return_path, start);
+  assert.equal(pending.session_id, null);
+  const restarted = createBilling({ db: f.db, stripe: f.stripe, getCatalog: async () => f.catalog, frontendBase: 'https://uficonnect.org' });
+  await restarted.createCheckout(A, 'vpn_connector', 1, next);
+  assert.equal(f.creates.length, 3, 'Replay one original request, then create one replacement');
+  assert.equal(f.creates[0].options.idempotencyKey, f.creates[1].options.idempotencyKey);
+  assert.deepEqual(f.creates[0].data, f.creates[1].data, 'Persisted return path keeps Stripe replay parameters identical');
+  assert.notEqual(f.creates[1].options.idempotencyKey, f.creates[2].options.idempotencyKey);
+  assert.equal(f.sessions.get('cs_1').status, 'expired');
+  assert.equal([...f.sessions.values()].filter(session => session.status === 'open').length, 1);
+  assert.equal(new URL(f.creates[2].data.success_url).searchParams.get('tab'), 'accounts');
+  assert.equal((await pg.query('SELECT return_path FROM billing_checkout_attempts WHERE user_id=$1', [A])).rows[0].return_path, next);
+});
+
+test('return page changes recover aged attempts from provider history without replaying an expired key', async () => {
+  const f = setup(); f.failWrite();
+  await assert.rejects(f.service.createCheckout(A, 'pro', 1, '/settings#membership'), /simulated DB/);
+  await pg.query("UPDATE billing_checkout_attempts SET created_at=NOW()-INTERVAL '25 hours' WHERE user_id=$1", [A]);
+  await f.service.createCheckout(A, 'pro', 1, '/command-center?tab=accounts#membership');
+  assert.equal(f.creates.length, 2);
+  assert.notEqual(f.creates[0].options.idempotencyKey, f.creates[1].options.idempotencyKey);
+  assert.equal(f.sessions.get('cs_1').status, 'expired');
+  assert.equal([...f.sessions.values()].filter(session => session.status === 'open').length, 1);
+});
+
+test('return page changes stop on uncertain expiry, completed payments, and ownership mismatch', async () => {
+  for (const scenario of ['expiry_outage', 'payment_wins', 'wrong_owner']) {
+    const f = setup();
+    await f.service.createCheckout(A, 'pro', 1, '/settings');
+    if (scenario === 'wrong_owner') f.sessions.get('cs_1').client_reference_id = B;
+    else f.stripe.checkout.sessions.expire = async id => {
+      if (scenario === 'payment_wins') { f.sessions.get(id).status = 'complete'; return; }
+      throw new Error('provider outage');
+    };
+    await assert.rejects(f.service.createCheckout(A, 'pro', 1, '/command-center?tab=accounts'));
+    assert.equal(f.creates.length, 1, scenario);
+    assert.equal((await pg.query('SELECT return_path FROM billing_checkout_attempts WHERE user_id=$1', [A])).rows[0].return_path, '/settings');
+    await pg.query('DELETE FROM billing_checkout_attempts WHERE user_id=$1', [A]);
+  }
+});
+
+test('legacy open checkout with an old return page is closed before reopening from Command Center', async () => {
+  const f = setup();
+  f.session('cs_legacy', null, { status: 'open', payment_status: 'unpaid',
+    line_items: [{ price: 'price_pro', quantity: 1 }], url: 'https://checkout.stripe.com/legacy',
+    success_url: 'https://uficonnect.org/settings?upgrade=success', cancel_url: 'https://uficonnect.org/settings?upgrade=cancelled' });
+  await f.service.createCheckout(A, 'pro', 1, '/command-center?tab=ai-content#draft');
+  assert.equal(f.sessions.get('cs_legacy').status, 'expired');
+  assert.equal(f.creates.length, 1);
+  assert.equal(new URL(f.creates[0].data.success_url).pathname, '/command-center');
+});
+
 test('crash after Stripe accepts Checkout reuses the persisted idempotency key', async () => {
   const f = setup(); f.failWrite();
   await assert.rejects(f.service.createCheckout(A, 'pro'), /simulated DB/);
@@ -718,6 +849,7 @@ test('billing rejects invalid tiers and volatile storage before contacting Strip
 test('legacy open checkouts are adopted, but different prices and unrecorded subscriptions cannot be charged twice', async () => {
   const f = setup();
   f.session('cs_legacy', null, { status: 'open', payment_status: 'unpaid',
+    success_url: 'https://uficonnect.org/settings?upgrade=success', cancel_url: 'https://uficonnect.org/settings?upgrade=cancelled',
     line_items: [{ price: 'price_pro', quantity: 1 }], url: 'https://checkout.stripe.com/legacy' });
   assert.equal((await f.service.createCheckout(A, 'pro')).url, 'https://checkout.stripe.com/legacy');
   assert.equal(f.creates.length, 0);
@@ -786,6 +918,41 @@ test('public billing config reports the verified tiered Pro price and authentica
   assert.equal((await app.request('/billing/status')).status, 401);
   assert.equal((await app.request('/billing/create-checkout-session', { method: 'POST', body: { tier: 'pro' } })).status, 401);
   assert.equal((await app.request('/billing/create-portal-session', { method: 'POST', body: {} })).status, 401);
+});
+
+test('actual billing routes forward returnPath while rejecting payment fields and unauthenticated requests', async t => {
+  const f = setup();
+  const app = await createAppHarness({ connected: true,
+    query: (sql, params) => sql.startsWith('SELECT id FROM auth_sessions')
+      ? { rows: [{ id: params[0] }] } : pg.query(sql, params),
+    env: { STRIPE_SECRET_KEY: 'sk_test_fixture', STRIPE_WEBHOOK_SECRET: 'whsec_fixture', STRIPE_PRICE_ID: 'price_pro', FRONTEND_URL: 'https://uficonnect.org' },
+    modules: { stripe: () => ({ ...f.stripe, prices: { async retrieve(id) {
+      assert.equal(id, 'price_pro');
+      return { id, type: 'recurring', active: true, currency: 'usd', unit_amount: 1994,
+        recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' } };
+    } } }) },
+  });
+  t.after(() => app.close());
+  app.seedUser(member(A)); app.seedUser(member(B));
+  const returnPath = '/command-center?tab=ai-content#compose';
+  const checkout = await app.request('/billing/create-checkout-session', { method: 'POST', userId: A, body: { tier: 'pro', returnPath } });
+  assert.equal(checkout.status, 200, JSON.stringify(checkout.data));
+  assert.equal(checkout.headers.get('cache-control'), 'no-store');
+  assert.equal(f.creates[0].data.success_url, 'https://uficonnect.org/command-center?tab=ai-content&upgrade=success#compose');
+  assert.equal(f.creates[0].data.customer, 'cus_a');
+  const portal = await app.request('/billing/create-portal-session', { method: 'POST', userId: B, body: { returnPath } });
+  assert.equal(portal.status, 200, JSON.stringify(portal.data));
+  assert.equal(portal.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(f.portalCreates, [{ customer: 'cus_b', return_url: 'https://uficonnect.org' + returnPath }]);
+  for (const [endpoint, fields] of [['create-checkout-session', { tier: 'pro' }], ['create-portal-session', {}]]) {
+    const request = body => app.request('/billing/' + endpoint, { method: 'POST', userId: A, body });
+    assert.equal((await request({ ...fields, returnPath: '//outside.example/' })).status, 400);
+    assert.equal((await request({ ...fields, returnPath, customer: 'cus_b' })).status, 400);
+    assert.equal((await request({ ...fields, returnPath, cardNumber: 'never-collected-here' })).status, 400);
+    assert.equal((await app.request('/billing/' + endpoint, { method: 'POST', body: { ...fields, returnPath } })).status, 401);
+  }
+  assert.equal(f.creates.length, 1);
+  assert.equal(f.portalCreates.length, 1);
 });
 
 test('public config enables exact Business prices and both Resume Builder billing cadences', async t => {

@@ -7,6 +7,7 @@ import PricingModal, { TIERS } from '../components/PricingModal';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import client, { publicOAuthRequestConfig } from '../api/client';
+import { billingReturnPath, billingReturnState, hostedBillingUrl } from '../api/hostedBilling.mjs';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS, CAREER_ACCOUNT_PLATFORMS, withCareerAccountFallback } from '../components/sourceMeta';
 import AccountConnectionAction from '../components/AccountConnectionAction';
 import { sourceAuthorizationState } from '../components/sourceAuthorization.mjs';
@@ -1961,6 +1962,8 @@ export default function CommandCenter() {
 
   useEffect(() => {
     if (!profile?.id) return undefined;
+    const returned = billingReturnState();
+    if (returned.hasMarker) navigate(returned.returnPath, { replace: true });
     const controller = new AbortController();
     let stopped = false;
     let pending = false;
@@ -2000,7 +2003,7 @@ export default function CommandCenter() {
       window.removeEventListener('focus', refreshOnReturn);
       document.removeEventListener('visibilitychange', refreshOnReturn);
     };
-  }, [profile?.id, refreshProfile, membershipRefresh]);
+  }, [profile?.id, refreshProfile, membershipRefresh, navigate]);
 
   const selectSection = useCallback((nextSection, { replace = false } = {}) => {
     if (!SECTION_KEYS.has(nextSection)) return;
@@ -2025,8 +2028,8 @@ export default function CommandCenter() {
   async function handleUpgrade(tier, quantity = 1) {
     setUpgrading(tier);
     try {
-      const { data } = await client.post('/billing/create-checkout-session', { tier, quantity });
-      window.location.href = data.url;
+      const { data } = await client.post('/billing/create-checkout-session', { tier, quantity, returnPath: billingReturnPath() });
+      window.location.assign(hostedBillingUrl(data.url));
     } catch (err) {
       showToast(err?.response?.data?.message || 'Could not start checkout. Please try again.', 'error');
       setUpgrading(null);

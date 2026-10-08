@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import client from '../api/client';
-import { hostedBillingUrl } from '../api/hostedBilling.mjs';
+import { billingReturnPath, hostedBillingUrl } from '../api/hostedBilling.mjs';
 import { getAccessToken, subscribeToSession } from '../auth/session';
 import { paidVpnAccess } from '../lib/vpnAccess';
 
@@ -81,7 +81,8 @@ export default function useVaultSubscription(accountId, preview, enabled = true)
     const request = operation.current;
     setOpening(portal ? 'portal' : 'checkout'); setNotice(null);
     try {
-      const { data } = await client.post(portal ? '/billing/create-portal-session' : '/billing/create-checkout-session', portal ? {} : { tier: 'vpn_connector' }, { headers: { Authorization: `Bearer ${token}` } });
+      const returnPath = billingReturnPath();
+      const { data } = await client.post(portal ? '/billing/create-portal-session' : '/billing/create-checkout-session', portal ? { returnPath } : { tier: 'vpn_connector', returnPath }, { headers: { Authorization: `Bearer ${token}` } });
       if (request !== operation.current || currentAccount.current !== accountId || token !== getAccessToken()) return;
       window.location.assign(hostedBillingUrl(data.url, portal ? 'portal' : 'checkout'));
     } catch (error) { if (request === operation.current && currentAccount.current === accountId && token === getAccessToken()) setNotice({ accountId, token, message: error?.response?.data?.message || 'Could not open secure billing. Try again.' }); }

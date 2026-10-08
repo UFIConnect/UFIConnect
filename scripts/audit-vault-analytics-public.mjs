@@ -73,7 +73,8 @@ try {
         if (endpoint === '/billing/status') return route.fulfill({ headers, json: { plan: 'free', vpnConnectorAddon: vpnPaid, hasBillingAccount: vpnPaid, subscriptions: vpnPaid ? [{ kind: 'vpn_connector', status: 'active', currentPeriodEnd: Math.floor(Date.now() / 1000) + 3600 }] : [] } });
         if (endpoint === '/billing/create-checkout-session') {
           checkoutRequests++;
-          check(JSON.stringify(request.postDataJSON()) === JSON.stringify({ tier: 'vpn_connector' }), 'Vault checkout sends only the existing tier');
+          assert.deepEqual(request.postDataJSON(), { tier: 'vpn_connector', returnPath: '/vault' });
+          checks++;
           return route.fulfill({ headers, status: checkoutFailure ? 503 : 200,
             json: checkoutFailure ? { message: 'Synthetic checkout failure. Please retry.' } : { url: 'https://checkout.stripe.com/synthetic-vault' } });
         }
