@@ -5,6 +5,7 @@ import client, { publicOAuthRequestConfig } from '../api/client';
 import { auth0AuthorizationParams, isAuth0Configured } from '../auth/auth0Config';
 import { clearSession, getAccessToken, setAccessToken, subscribeToSession } from '../auth/session';
 import { clearDeviceFeedLocation, startDeviceFeedLocation } from '../utils/deviceFeedLocation.mjs';
+import { clearRequiredFeedLocation } from '../utils/requiredFeedLocation.mjs';
 
 const AuthContext = createContext(null);
 
@@ -16,12 +17,14 @@ export function AuthProvider({ children }) {
   const [sessionError, setSessionError] = useState(false);
   const [restoreAttempt, setRestoreAttempt] = useState(0);
   const [deviceLocationRevision, setDeviceLocationRevision] = useState(0);
+  const [deviceLocationAttempt, setDeviceLocationAttempt] = useState(0);
   const restoreGeneration = useRef(0);
   const restoreRequest = useRef(null);
   const auth0 = useAuth0();
   const auth0Enabled = isAuth0Configured;
 
   useEffect(() => subscribeToSession((nextToken) => {
+    clearRequiredFeedLocation();
     clearDeviceFeedLocation();
     setToken(nextToken);
     if (!nextToken) setProfile(null);
@@ -31,7 +34,7 @@ export function AuthProvider({ children }) {
     if (!token || !profile?.id || !profile.onboardingComplete || !window.isSecureContext) return undefined;
     return startDeviceFeedLocation({ token, navigator, document,
       onChange: () => setDeviceLocationRevision(value => value + 1) });
-  }, [token, profile?.id, profile?.onboardingComplete]);
+  }, [token, profile?.id, profile?.onboardingComplete, deviceLocationAttempt]);
 
   useEffect(() => {
     let cancelled = false;
@@ -186,6 +189,7 @@ export function AuthProvider({ children }) {
       token, profile, loading: loading || restoringSession || (auth0Enabled && auth0.isLoading),
       sessionError: sessionError && !token, retrySession, login, register, verifyPhoneSignIn, logout, logoutAll,
       updateProfileLocally, refreshProfile, auth0Enabled, loginWithAuth0, registerWithAuth0, deviceLocationRevision,
+      retryDeviceLocation: () => setDeviceLocationAttempt(value => value + 1),
     }}>
       {children}
     </AuthContext.Provider>

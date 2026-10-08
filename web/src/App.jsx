@@ -7,6 +7,7 @@ import { getGoogleAnalytics } from './analytics/browserAnalytics';
 import { getGoogleAds } from './analytics/browserAds';
 import { publicRoutes } from './seo-routes.mjs';
 import { isBusinessRouteAllowed } from './businessRoutes.mjs';
+import RequireFeedLocation from './components/RequireFeedLocation';
 
 // Privacy controls load independently so their UI and styles never hold up
 // route content. The consent controller still prevents optional collection
@@ -161,7 +162,7 @@ function HomeRoute() {
     return <Landing />;
   }
   if (profile && !profile.onboardingComplete) return <Navigate to="/onboarding" replace />;
-  return <Feed key={profile?.id} />;
+  return <RequireFeedLocation><Feed key={profile?.id} /></RequireFeedLocation>;
 }
 
 function GlobalFeedRoute() {
@@ -247,7 +248,7 @@ function AppContent() {
       <Route path="/global" element={<GlobalFeedRoute />} />
       <Route path="/global-scroll" element={<Navigate to="/global" replace />} />
       <Route path="/videos" element={
-        <RequireAuth><RequireOnboarding><Videos /></RequireOnboarding></RequireAuth>
+        <RequireAuth><RequireOnboarding><RequireFeedLocation><Videos /></RequireFeedLocation></RequireOnboarding></RequireAuth>
       }/>
       {/* "You" is the member's own connected-account posts, separate from
           Following mode's other-people/interest-matched feed. */}
@@ -255,7 +256,7 @@ function AppContent() {
         <RequireAuth><RequireOnboarding><YourPostsFeed /></RequireOnboarding></RequireAuth>
       }/>
       <Route path="/music" element={
-        <RequireAuth><RequireOnboarding><Videos music /></RequireOnboarding></RequireAuth>
+        <RequireAuth><RequireOnboarding><RequireFeedLocation><Videos music /></RequireFeedLocation></RequireOnboarding></RequireAuth>
       }/>
       <Route path="/groups" element={
         <RequireAuth><RequireOnboarding><Groups /></RequireOnboarding></RequireAuth>
@@ -320,7 +321,7 @@ function AppContent() {
       <Route path="/saved/:kind" element={<RequireAuth><RequireOnboarding><SavedItems /></RequireOnboarding></RequireAuth>} />
       <Route path="/vault" element={<RequireAuth><RequireOnboarding><VaultRoute /></RequireOnboarding></RequireAuth>} />
       <Route path="/vault/device" element={<RequireAuth><RequireOnboarding><VaultDevice /></RequireOnboarding></RequireAuth>} />
-      <Route path="/maps" element={<RequireAuth><RequireOnboarding><Maps /></RequireOnboarding></RequireAuth>} />
+      <Route path="/maps" element={<RequireAuth><RequireOnboarding><RequireFeedLocation><Maps /></RequireFeedLocation></RequireOnboarding></RequireAuth>} />
       <Route path="/centers/:kind" element={<RequireAuth><RequireOnboarding><WorkspaceCenter /></RequireOnboarding></RequireAuth>} />
       <Route path="/groups/post" element={<RequireAuth><RequireOnboarding><GroupPost /></RequireOnboarding></RequireAuth>} />
 

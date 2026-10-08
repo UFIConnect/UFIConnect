@@ -509,11 +509,6 @@ const mediaGenerationLimiter = rateLimit({
   message: { message: 'Video generation is limited to a few requests per hour. Please try again later.' },
 });
 
-// Holomine brain service (simulated or external via HOLOMINE_URL)
-try {
-  const holomine = require('./holomine');
-  holomine.register(app, { externalUrl: process.env.HOLOMINE_URL || null });
-} catch (err) { console.warn('holomine module not loaded:', err.message); }
 
 // Maintenance mode — set MAINTENANCE=true env var to activate
 if (process.env.MAINTENANCE === 'true') {
@@ -9449,7 +9444,8 @@ function countryName(countryCode) {
   }
 }
 
-// Location is a coarse recommendation signal, never an access-control rule.
+// Automatic location is required for member feeds. Destinations remain separate
+// from the member's current area and cannot satisfy this requirement.
 const DESTINATION_FEED_MODES = new Set(['local', 'countries', 'restaurants', 'bars']);
 function feedLocationMode(req) {
   return String(req.query?.mode || (req.path?.includes('/music') ? 'music' : req.path?.includes('/videos') ? 'videos' : 'feed'));
@@ -9457,15 +9453,28 @@ function feedLocationMode(req) {
 function normalizeRegionalFeedLocation(value) {
   return { mode: 'auto', country: '', city: '' };
 }
+function automaticFeedLocation(req, user = null) {
+  const devicePoint = user ? deviceFeedPoint(req) : null;
+  if (devicePoint) return { ...(nearestFeedCity(devicePoint) || {}), point: devicePoint, source: 'device' };
+  const network = trustedFeedNetworkLocation(req, { visitorLocationHeaders: process.env.CF_VISITOR_LOCATION_HEADERS === 'true' });
+  return { ...network, source: 'network' };
+}
+async function requireAutomaticFeedLocation(req, res, next) {
+  const user = await getUser(req.user.id);
+  if (!user) return res.status(404).json({ message: 'Not found.' });
+  const automatic = automaticFeedLocation(req, user);
+  if (automatic.point || automatic.country) return next();
+  res.set('Cache-Control', 'private, no-store');
+  return res.status(428).json({ code: 'feed_location_required',
+    message: 'Location is required for your feed. Enable device location or retry automatic IP location.' });
+}
 function getFeedLocationContext(req, user = null) {
   const settings = user?.roleSettings || {};
   const feedMode = feedLocationMode(req);
   const destination = DESTINATION_FEED_MODES.has(feedMode);
   const preference = normalizeRegionalFeedLocation(settings.feedRegionalLocation);
-  const network = trustedFeedNetworkLocation(req, { visitorLocationHeaders: process.env.CF_VISITOR_LOCATION_HEADERS === 'true' });
-  const devicePoint = user ? deviceFeedPoint(req) : null;
-  const automatic = devicePoint ? { ...(nearestFeedCity(devicePoint) || {}), point: devicePoint } : network;
-  const automaticSource = devicePoint ? 'device' : 'network';
+  const automatic = automaticFeedLocation(req, user);
+  const automaticSource = automatic.source;
   let selected = {}, source = 'none', mode = destination ? 'auto' : preference.mode;
   if (destination) {
     const hasScope = Object.prototype.hasOwnProperty.call(settings.feedLocations || {}, feedMode);
@@ -20993,7 +21002,9 @@ app.get('/feed/location', (_req, res, next) => {
 }, authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
-  return res.json({ locationContext: publicFeedLocationContext(getFeedLocationContext(req, user)) });
+  const automatic = automaticFeedLocation(req, user);
+  return res.json({ locationRequired: true, automaticLocationAvailable: Boolean(automatic.point || automatic.country),
+    locationContext: publicFeedLocationContext(getFeedLocationContext(req, user)) });
 });
 
 app.patch('/profile', authenticate, async (req, res) => {
@@ -23481,8 +23492,8 @@ async function handleFeedRequest(req, res) {
     if (!res.headersSent) await sendFeedResponse(req, res, { posts: [], hasMore: false, totalAvailable: 0, error: true });
   }
 }
-app.get('/feed', authenticate, handleFeedRequest);
-app.get('/office/feed', authenticate, handleFeedRequest);
+app.get('/feed', authenticate, requireAutomaticFeedLocation, handleFeedRequest);
+app.get('/office/feed', authenticate, requireAutomaticFeedLocation, handleFeedRequest);
 
 // --- Guest feed - a real but deliberately minimal read for a visitor with no
 // account ----------------------------------------------------------------
@@ -23979,10 +23990,10 @@ const videoReadAdmission = createFeedReadAdmission({
   maxQueued: envNumber('VIDEO_READ_MAX_QUEUED', 64, 0, 512),
   queueTimeoutMs: envNumber('VIDEO_READ_QUEUE_TIMEOUT_MS', 2000, 100, 10000),
 });
-app.get('/feed/videos', authenticate, videoReadAdmission.wrap(handleVideoFeedRequest));
-app.get('/office/feed/videos', authenticate, videoReadAdmission.wrap(handleVideoFeedRequest));
+app.get('/feed/videos', authenticate, requireAutomaticFeedLocation, videoReadAdmission.wrap(handleVideoFeedRequest));
+app.get('/office/feed/videos', authenticate, requireAutomaticFeedLocation, videoReadAdmission.wrap(handleVideoFeedRequest));
 
-app.get('/office/feed/music', authenticate, videoReadAdmission.wrap(async (req, res) => {
+app.get('/office/feed/music', authenticate, requireAutomaticFeedLocation, videoReadAdmission.wrap(async (req, res) => {
   try {
     const sources = String(req.query.sources || req.query.source || '').split(',').map(canonicalFeedSourceId).filter(isAggregateFeedSource);
     const { matchesSearch, matchesTopic } = parseVideoFilters(req);
@@ -24076,8 +24087,8 @@ async function handleFollowingVideoFeedRequest(req, res) {
     res.status(500).json({ posts: [], hasMore: false });
   }
 }
-app.get('/feed/videos/following', authenticate, videoReadAdmission.wrap(handleFollowingVideoFeedRequest));
-app.get('/office/feed/videos/following', authenticate, videoReadAdmission.wrap(handleFollowingVideoFeedRequest));
+app.get('/feed/videos/following', authenticate, requireAutomaticFeedLocation, videoReadAdmission.wrap(handleFollowingVideoFeedRequest));
+app.get('/office/feed/videos/following', authenticate, requireAutomaticFeedLocation, videoReadAdmission.wrap(handleFollowingVideoFeedRequest));
 
 // --- Proactive snapshot warming ---------------------------------------------
 // Without this, the first request after a snapshot's TTL expires pays the

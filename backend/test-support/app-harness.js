@@ -8,7 +8,7 @@ const jwt = require('jsonwebtoken');
 
 // Run the real routes without loading deployment secrets, starting workers,
 // writing local account data, or connecting to production services.
-async function createAppHarness({ env = {}, connected = false, query, withClient, generationUsage, modules = {} } = {}) {
+async function createAppHarness({ env = {}, connected = false, query, withClient, generationUsage, modules = {}, automaticLocation = true } = {}) {
   const entry = path.resolve(__dirname, '../index.js');
   const localRequire = createRequire(entry);
   // Cold SDK loading can exceed the route VM's execution limit on Windows.
@@ -32,6 +32,16 @@ async function createAppHarness({ env = {}, connected = false, query, withClient
   db.readQuery = db.query;
   const expressFactory = Object.assign(() => {
     const app = express();
+    // Unrelated route and browser tests represent a located member. Location
+    // tests disable this fixture or supply explicit device / edge headers.
+    app.use((req, _res, next) => {
+      if (automaticLocation && req.headers.authorization && req.method === 'GET'
+        && /^\/(?:office\/)?feed(?:\/(?:location|music|videos(?:\/following)?))?$/.test(req.path)
+        && !Object.keys(req.headers).some(key => /^cf-|^x-ufi-device-location$|^x-forwarded-for$/i.test(key))) {
+        req.headers['x-ufi-device-location'] = JSON.stringify([0, 0, 100, Date.now()]);
+      }
+      next();
+    });
     app.listen = () => null;
     return app;
   }, express);
