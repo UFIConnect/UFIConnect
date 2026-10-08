@@ -1,8 +1,10 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
 const { Readable } = require('node:stream');
 const { createAppHarness, member } = require('./test-support/app-harness');
+const { createSourceImageDownloader } = require('./source-image-download');
 
 const now = Date.now();
 const today = new Date(now).toISOString().slice(0, 10) + 'T00:00:00.000Z';
@@ -190,23 +192,46 @@ test('malformed upstream data is surfaced as a fetch error, not an empty success
 
 test('downloads allow only Dribbble shot-image paths on exact CDNs and never video or lookalike hosts', async t => {
   const downloaded = [];
+  const images = [
+    { url: 'https://d13yacurqjgara.cloudfront.net/users/1/screenshots/100/design.png', mimeType: 'image/png', extension: 'png',
+      body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64') },
+    { url: 'https://cdn.dribbble.com/userupload/100/design.webp?resize=800x600', mimeType: 'image/webp', extension: 'webp',
+      body: Buffer.from('UklGRhwAAABXRUJQVlA4TA8AAAAvAUAAAAcQ9Y/+ByKi/wEA', 'base64') },
+  ];
+  let spoofedImage = false;
   const { app } = await fixture(t, async () => ({ data: [], headers: {} }), { modules: {
-    https: { Agent: require('node:https').Agent, request() { throw new Error('Unexpected external request'); }, get(url, handler) {
-      downloaded.push(url);
-      const response = Readable.from(['synthetic image']);
-      response.statusCode = 200; response.headers = { 'content-type': 'image/png' };
-      handler(response);
-      return { on() { return this; } };
-    } },
+    './source-image-download': { createSourceImageDownloader: options => createSourceImageDownloader({ ...options,
+      get(target, requestOptions, handler) {
+        downloaded.push(target.href);
+        assert.equal(requestOptions.headers['Accept-Encoding'], 'identity');
+        const image = images.find(image => image.url === target.href);
+        assert.ok(image, 'Only a declared synthetic image may be requested');
+        const body = spoofedImage ? Buffer.from('synthetic image') : image.body;
+        const response = Readable.from([body]);
+        response.statusCode = 200; response.headers = { 'content-type': image.mimeType, 'content-length': String(body.length) };
+        const request = new EventEmitter(); request.destroy = () => response.destroy();
+        queueMicrotask(() => handler(response));
+        return request;
+      },
+    }) },
   } });
-  for (const url of ['https://d13yacurqjgara.cloudfront.net/users/1/screenshots/100/design.png', 'https://cdn.dribbble.com/userupload/100/design.webp?resize=800x600']) {
-    const result = await app.request('/command-center/your-content/download?' + new URLSearchParams({ url }), { userId: 'alice' });
+  for (const image of images) {
+    const result = await fetch(app.base + '/command-center/your-content/download?' + new URLSearchParams({ url: image.url }), {
+      headers: { authorization: `Bearer ${app.token('alice')}` },
+    });
     assert.equal(result.status, 200);
-    assert.match(result.headers.get('content-disposition'), /attachment/);
+    assert.deepEqual(Buffer.from(await result.arrayBuffer()), image.body);
+    assert.equal(result.headers.get('content-disposition'), `attachment; filename="content.${image.extension}"`);
+    assert.equal(result.headers.get('content-type'), 'application/octet-stream');
+    assert.equal(result.headers.get('x-content-type-options'), 'nosniff');
   }
   for (const url of ['https://cdn.dribbble.com/users/1/videos/100/movie.webm', 'https://cdn.dribbble.com/userupload/100/page.html', 'https://cdn.dribbble.com.attacker.invalid/userupload/100/image.png', 'https://another.cloudfront.net/users/1/screenshots/100/image.png', 'https://cdn.dribbble.com:444/userupload/100/image.png', 'https://alice:secret@cdn.dribbble.com/userupload/100/image.png', 'http://cdn.dribbble.com/userupload/100/image.png']) {
     const result = await app.request('/command-center/your-content/download?' + new URLSearchParams({ url }), { userId: 'alice' });
     assert.equal(result.status, 400, url);
   }
   assert.equal(downloaded.length, 2);
+  spoofedImage = true;
+  const rejected = await app.request('/command-center/your-content/download?' + new URLSearchParams({ url: images[0].url }), { userId: 'alice' });
+  assert.equal(rejected.status, 502, 'Plain text advertised as PNG must fail production validation');
+  assert.equal(downloaded.length, 3);
 });
