@@ -5,9 +5,7 @@
 .job-post-duties ul { padding-left:21px; margin:0; }
 .job-post-duties li { margin:7px 0; }
 .job-post-full { padding:12px 0; border-top:1px solid var(--border); }
-.job-post-full summary { cursor:pointer; color:var(--primary); font-weight:650; padding:4px 0; }
-.job-post-full > div { white-space:pre-wrap; margin:12px 0; }
-.job-post-full a { text-decoration:underline; }
+.job-post-full button { color:var(--primary); font-weight:650; }
 .job-post-summary { border-left:3px solid var(--primary); padding:12px 14px; border-radius:0 8px 8px 0; background:var(--surface); margin-top:14px; }
 .post-topic-illustration { margin:16px 0 4px; border:1px solid var(--border); border-radius:12px; overflow:hidden; background:var(--surface); }
 .post-topic-illustration svg { display:block; width:100%; height:auto; max-height:220px; color:var(--primary); }
