@@ -25,6 +25,9 @@
 .account-category-filter button[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); color: #fff; }
 .account-category-filter button:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 .account-category-filter button span { font-variant-numeric: tabular-nums; font-size: .72rem; opacity: .85; }
+.account-category-filter--compact { width: 100%; margin-bottom: 4px; }
+.account-category-filter--compact select { width: 100%; min-width: 0; min-height: 44px; font-size: .8rem; }
+.home-account-category + .home-account-category { margin-top: 8px; }
 .account-directory-empty p { margin: 0 0 10px; }
 .account-category-section { min-width: 0; margin-bottom: 24px; }
 .account-category-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 10px; padding-bottom: 9px; border-bottom: 1px solid var(--border); }

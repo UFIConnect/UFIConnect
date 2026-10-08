@@ -23,7 +23,8 @@ import useTabMetrics from '../analytics/useTabMetrics';
 import { safePostLink } from '../../../backend/post-links.mjs';
 
 import VideoDurationControl, { VIDEO_DURATION_LIMIT } from '../components/VideoDurationControl';
-import { accountSections } from '../components/sourceDirectory';
+import { accountSections, selectedAccountSections } from '../components/sourceDirectory';
+import { AccountCategoryNavigation } from '../components/DirectoryControls';
 import { DISCOVERY_CATEGORIES, discoveryPostContext } from '../components/discoveryCategories';
 import '../components/DiscoveryCategoryBar.css';
 import './CommandCenterPlatforms.css';
@@ -826,6 +827,8 @@ function MemberAccountsSection() {
   const currentAccount = useRef(accountId); currentAccount.current = accountId;
   const accountRequest = useRef(0);
   const [accountsOwner, setAccountsOwner] = useState('');
+  const [accountCategory, setAccountCategory] = useState('all');
+  useTabMetrics('command_center_accounts_category', accountCategory);
 
   const loadAccounts = useCallback(async ({ signal } = {}) => {
     const request = ++accountRequest.current;
@@ -927,9 +930,10 @@ function MemberAccountsSection() {
   if (platforms === null) return <div className="empty-state"><span className="spinner spinner-primary" /></div>;
 
   const memberPlatforms = isBusinessMembership
-    ? platforms.filter(([key, platform]) => platform.category === 'career' || CAREER_ACCOUNT_PLATFORMS.includes(key))
+    ? platforms.filter(([key, platform]) => key === 'linkedin' || platform.category === 'career' || CAREER_ACCOUNT_PLATFORMS.includes(key))
     : platforms;
-  const accountGroups = accountSections(memberPlatforms, connected);
+  const accountGroups = accountSections(memberPlatforms, { business: isBusinessMembership });
+  const displayedAccountGroups = selectedAccountSections(accountGroups, accountCategory);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -942,10 +946,11 @@ function MemberAccountsSection() {
         </p>
       </div>
       {error && <SectionError message={error} onRetry={loadAccounts} />}
+      {!!accountGroups.length && <AccountCategoryNavigation sections={accountGroups} category={accountCategory} onChange={setAccountCategory} />}
       {!memberPlatforms.length && !error && (
         <div className="card" style={{ textAlign: 'center', padding: 28, color: 'var(--muted)', fontSize: '.85rem' }}>{isBusinessMembership ? 'No career account connections are available yet.' : 'No account connections are available yet.'}</div>
       )}
-      {accountGroups.map(section => (
+      {displayedAccountGroups.map(section => (
         <section key={section.id} className="account-category-section" aria-labelledby={`member-accounts-${section.id}`}>
           <div className="account-category-heading">
             <h3 id={`member-accounts-${section.id}`}>{section.label}</h3>

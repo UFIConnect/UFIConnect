@@ -10,6 +10,19 @@ export function DirectoryControls({ label, filter, onFilterChange, options }) {
   </div>;
 }
 
+export function AccountCategoryNavigation({ sections, category, onChange, compact = false }) {
+  const options = [{ id: 'all', label: 'All', total: sections.reduce((total, section) => total + section.total, 0) }, ...sections];
+  const active = options.some(option => option.id === category) ? category : 'all';
+  return <fieldset className={`account-category-filter${compact ? ' account-category-filter--compact' : ''}`} aria-label="Account categories">
+    <legend>Categories</legend>
+    {compact ? <select className="form-select" aria-label="Account category" value={active} onChange={event => onChange(event.target.value)}>
+      {options.map(option => <option key={option.id} value={option.id}>{option.label} ({option.total})</option>)}
+    </select> : <ul>{options.map(option => <li key={option.id}>
+      <button type="button" aria-pressed={active === option.id} onClick={() => onChange(option.id)}>{option.label} <span>{option.total}</span></button>
+    </li>)}</ul>}
+  </fieldset>;
+}
+
 export function AccountSiteLink({ platform, name, siteUrl, className = '', label }) {
   let href = ACCOUNT_SITE_URLS[platform] || siteUrl;
   if (platform === 'mastodon' && siteUrl) {

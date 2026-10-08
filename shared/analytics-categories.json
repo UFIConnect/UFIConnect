@@ -944,15 +944,6 @@
     "group": "Home source",
     "viewType": "tab"
   },
-  "home_source_twitch": {
-    "category": "home_source_twitch",
-    "path": "/analytics-tabs/home-source/twitch",
-    "title": "Home source: Twitch",
-    "label": "Home source: Twitch",
-    "platform": "web",
-    "group": "Home source",
-    "viewType": "tab"
-  },
   "home_source_youtube": {
     "category": "home_source_youtube",
     "path": "/analytics-tabs/home-source/youtube",
@@ -3958,5 +3949,185 @@
     "platform": "web",
     "group": "Business",
     "viewType": "page"
+  },
+  "home_source_twitch": {
+    "category": "home_source_twitch",
+    "path": "/analytics-tabs/home-source/twitch",
+    "title": "Home source: Twitch",
+    "label": "Home source: Twitch",
+    "platform": "web",
+    "group": "Home source",
+    "viewType": "tab"
+  },
+  "home_accounts_category_all": {
+    "category": "home_accounts_category_all",
+    "path": "/analytics-tabs/home-accounts-category/all",
+    "title": "Home connected accounts category: All categories",
+    "label": "Home connected accounts category: All categories",
+    "platform": "web",
+    "group": "Home connected accounts category",
+    "viewType": "tab"
+  },
+  "home_accounts_category_social": {
+    "category": "home_accounts_category_social",
+    "path": "/analytics-tabs/home-accounts-category/social",
+    "title": "Home connected accounts category: Social",
+    "label": "Home connected accounts category: Social",
+    "platform": "web",
+    "group": "Home connected accounts category",
+    "viewType": "tab"
+  },
+  "home_accounts_category_video": {
+    "category": "home_accounts_category_video",
+    "path": "/analytics-tabs/home-accounts-category/video",
+    "title": "Home connected accounts category: Video & Streaming",
+    "label": "Home connected accounts category: Video & Streaming",
+    "platform": "web",
+    "group": "Home connected accounts category",
+    "viewType": "tab"
+  },
+  "home_accounts_category_work": {
+    "category": "home_accounts_category_work",
+    "path": "/analytics-tabs/home-accounts-category/work",
+    "title": "Home connected accounts category: Work & Development",
+    "label": "Home connected accounts category: Work & Development",
+    "platform": "web",
+    "group": "Home connected accounts category",
+    "viewType": "tab"
+  },
+  "home_accounts_category_design": {
+    "category": "home_accounts_category_design",
+    "path": "/analytics-tabs/home-accounts-category/design",
+    "title": "Home connected accounts category: Design",
+    "label": "Home connected accounts category: Design",
+    "platform": "web",
+    "group": "Home connected accounts category",
+    "viewType": "tab"
+  },
+  "home_accounts_category_publishing": {
+    "category": "home_accounts_category_publishing",
+    "path": "/analytics-tabs/home-accounts-category/publishing",
+    "title": "Home connected accounts category: News & Publishing",
+    "label": "Home connected accounts category: News & Publishing",
+    "platform": "web",
+    "group": "Home connected accounts category",
+    "viewType": "tab"
+  },
+  "home_accounts_category_career": {
+    "category": "home_accounts_category_career",
+    "path": "/analytics-tabs/home-accounts-category/career",
+    "title": "Home connected accounts category: Career sites",
+    "label": "Home connected accounts category: Career sites",
+    "platform": "web",
+    "group": "Home connected accounts category",
+    "viewType": "tab"
+  },
+  "home_accounts_category_travel": {
+    "category": "home_accounts_category_travel",
+    "path": "/analytics-tabs/home-accounts-category/travel",
+    "title": "Home connected accounts category: Travel",
+    "label": "Home connected accounts category: Travel",
+    "platform": "web",
+    "group": "Home connected accounts category",
+    "viewType": "tab"
+  },
+  "home_accounts_category_audio": {
+    "category": "home_accounts_category_audio",
+    "path": "/analytics-tabs/home-accounts-category/audio",
+    "title": "Home connected accounts category: Music & Audio",
+    "label": "Home connected accounts category: Music & Audio",
+    "platform": "web",
+    "group": "Home connected accounts category",
+    "viewType": "tab"
+  },
+  "command_center_accounts_category_all": {
+    "category": "command_center_accounts_category_all",
+    "path": "/analytics-tabs/command-center-accounts-category/all",
+    "title": "Command Center accounts category: All categories",
+    "label": "Command Center accounts category: All categories",
+    "platform": "web",
+    "group": "Command Center accounts category",
+    "viewType": "tab"
+  },
+  "command_center_accounts_category_social": {
+    "category": "command_center_accounts_category_social",
+    "path": "/analytics-tabs/command-center-accounts-category/social",
+    "title": "Command Center accounts category: Social",
+    "label": "Command Center accounts category: Social",
+    "platform": "web",
+    "group": "Command Center accounts category",
+    "viewType": "tab"
+  },
+  "command_center_accounts_category_video": {
+    "category": "command_center_accounts_category_video",
+    "path": "/analytics-tabs/command-center-accounts-category/video",
+    "title": "Command Center accounts category: Video & Streaming",
+    "label": "Command Center accounts category: Video & Streaming",
+    "platform": "web",
+    "group": "Command Center accounts category",
+    "viewType": "tab"
+  },
+  "command_center_accounts_category_work": {
+    "category": "command_center_accounts_category_work",
+    "path": "/analytics-tabs/command-center-accounts-category/work",
+    "title": "Command Center accounts category: Work & Development",
+    "label": "Command Center accounts category: Work & Development",
+    "platform": "web",
+    "group": "Command Center accounts category",
+    "viewType": "tab"
+  },
+  "command_center_accounts_category_design": {
+    "category": "command_center_accounts_category_design",
+    "path": "/analytics-tabs/command-center-accounts-category/design",
+    "title": "Command Center accounts category: Design",
+    "label": "Command Center accounts category: Design",
+    "platform": "web",
+    "group": "Command Center accounts category",
+    "viewType": "tab"
+  },
+  "command_center_accounts_category_publishing": {
+    "category": "command_center_accounts_category_publishing",
+    "path": "/analytics-tabs/command-center-accounts-category/publishing",
+    "title": "Command Center accounts category: News & Publishing",
+    "label": "Command Center accounts category: News & Publishing",
+    "platform": "web",
+    "group": "Command Center accounts category",
+    "viewType": "tab"
+  },
+  "command_center_accounts_category_career": {
+    "category": "command_center_accounts_category_career",
+    "path": "/analytics-tabs/command-center-accounts-category/career",
+    "title": "Command Center accounts category: Career sites",
+    "label": "Command Center accounts category: Career sites",
+    "platform": "web",
+    "group": "Command Center accounts category",
+    "viewType": "tab"
+  },
+  "command_center_accounts_category_travel": {
+    "category": "command_center_accounts_category_travel",
+    "path": "/analytics-tabs/command-center-accounts-category/travel",
+    "title": "Command Center accounts category: Travel",
+    "label": "Command Center accounts category: Travel",
+    "platform": "web",
+    "group": "Command Center accounts category",
+    "viewType": "tab"
+  },
+  "command_center_accounts_category_audio": {
+    "category": "command_center_accounts_category_audio",
+    "path": "/analytics-tabs/command-center-accounts-category/audio",
+    "title": "Command Center accounts category: Music & Audio",
+    "label": "Command Center accounts category: Music & Audio",
+    "platform": "web",
+    "group": "Command Center accounts category",
+    "viewType": "tab"
+  },
+  "connected_accounts_category_design": {
+    "category": "connected_accounts_category_design",
+    "path": "/analytics-tabs/connected-accounts-category/design",
+    "title": "Connected accounts category: Design",
+    "label": "Connected accounts category: Design",
+    "platform": "web",
+    "group": "Connected accounts category",
+    "viewType": "tab"
   }
 }

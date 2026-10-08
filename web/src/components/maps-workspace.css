@@ -92,6 +92,14 @@
 .map-drive-controls label { display: flex; align-items: center; gap: 8px; font-size: .8rem; }
 .map-drive-controls select { min-height: 44px; max-width: 180px; color: var(--text); background: var(--card); border: 1px solid var(--border); border-radius: 8px; font: inherit; padding: 6px 8px; }
 .map-drive-controls [role="status"] { font-size: .8rem; color: var(--muted); }
+.map-drive-status { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 160px; }
+.map-drive-status [role="status"] { color: var(--text); font-weight: 600; }
+.map-drive-status small { color: var(--muted); font-size: .72rem; }
+.map-drive-signal { display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--text); font-size: .75rem; white-space: nowrap; }
+.map-drive-signal i { width: 9px; height: 9px; border-radius: 50%; background: #d64b47; }
+.map-drive-signal[data-signal="yellow"] i { background: #bb8513; }
+.map-drive-signal[data-signal="green"] i { background: #218452; }
+@media (max-width: 768px) { .map-drive-controls { padding-inline: 12px; } .map-drive-status { flex-basis: 100%; } }
 .map-landmarks { display: flex; flex-wrap: wrap; gap: 10px; padding: 12px 20px; border-bottom: 1px solid var(--border); }
 .map-landmarks > div { display: flex; align-items: center; gap: 12px; flex: 1 1 210px; padding: 8px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
 .map-landmarks button { color: var(--text); background: none; border: 0; font: inherit; cursor: pointer; min-height: 44px; text-align: left; }

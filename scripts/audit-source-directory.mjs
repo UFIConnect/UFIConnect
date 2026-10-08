@@ -99,7 +99,7 @@ try {
     assert.equal(await tools.getByRole('link', { name: 'Visit Indeed website' }).count(), 1);
     assert.equal(await tools.getByRole('combobox', { name: 'Filter accounts' }).count(), 0);
     assert.equal(await tools.locator('.home-connected-account-status').count(), 0);
-    assert.equal(await tools.locator('.account-site-link').count(), 4, 'Every Connect action has a separate website link');
+    assert.equal(await tools.locator('.account-site-link').count(), 5, 'Every account, including connected accounts, has a separate website link');
     const homeYouTubeSite = tools.getByRole('link', { name: 'Open YouTube website', exact: true });
     assert.equal(await homeYouTubeSite.getAttribute('href'), 'https://www.youtube.com/');
     assert.equal(await homeYouTubeSite.getAttribute('target'), '_blank');

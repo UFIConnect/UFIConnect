@@ -1,5 +1,8 @@
 import ACCOUNT_DIRECTORY from '../../../backend/account-directory.json' with { type: 'json' };
-import { SOURCE_META, CAREER_ACCOUNT_PLATFORMS } from './sourceMeta';
+import { SOURCE_META, CAREER_ACCOUNT_PLATFORMS } from './sourceMeta.js';
+import { accountCategory as sharedAccountCategory, accountSections as sharedAccountSections } from '../../../shared/accountCategories.js';
+import { ACCOUNT_PROVIDER_SITES } from '../../../shared/accountWebsiteUrls.js';
+export { ACCOUNT_CATEGORIES, selectedAccountSections } from '../../../shared/accountCategories.js';
 
 export const SOURCE_CATEGORIES = [
   ['social', 'Social & community'], ['developer', 'Development & research'],
@@ -41,46 +44,17 @@ export function filterAccounts(entries) {
   return [...entries].sort(([a, pa], [b, pb]) => (pa.name || a).localeCompare(pb.name || b));
 }
 
-export const ACCOUNT_CATEGORIES = [
-  ['social', 'Social'], ['video', 'Video & Streaming'],
-  ['work', 'Work & Development'], ['publishing', 'Publishing'], ['career', 'Career sites'],
-  ['travel', 'Travel'], ['audio', 'Music & Audio'],
-];
-export function accountCategory(key, platform) {
-  if (['travel', 'audio', 'work', 'video'].includes(platform.category)) return platform.category;
-  if (platform.category === 'career' || CAREER_ACCOUNT_PLATFORMS.includes(key)) return 'career';
-  if (['youtube', 'twitch', 'tiktok'].includes(key)) return 'video';
-  if (['github', 'gitlab', 'linkedin', 'dribbble', 'behance', 'figma', 'stackoverflow', 'producthunt'].includes(key)) return 'work';
-  if (platform.category === 'publication' || ['medium', 'wordpress', 'tumblr', 'devto', 'hashnode', 'freecodecamp'].includes(key)) return 'publishing';
-  return 'social';
+export function accountCategory(key, platform = {}, { business = false } = {}) {
+  return sharedAccountCategory(key, platform, { business, careerSources: CAREER_ACCOUNT_PLATFORMS });
 }
 
 // Categories describe the providers without status-based ordering or filters.
-export function accountSections(entries) {
-  return ACCOUNT_CATEGORIES.map(([id, label]) => {
-    const categoryEntries = entries.filter(([key, platform]) => accountCategory(key, platform) === id);
-    return {
-      id, label,
-      total: categoryEntries.length,
-      items: filterAccounts(categoryEntries),
-    };
-  }).filter(section => section.items.length);
+export function accountSections(entries, { business = false } = {}) {
+  return sharedAccountSections(entries, { business, careerSources: CAREER_ACCOUNT_PLATFORMS });
 }
 
 // Public destinations only. Authorization always uses the existing OAuth start route.
 export const ACCOUNT_SITE_URLS = {
   ...Object.fromEntries(Object.entries(ACCOUNT_DIRECTORY).map(([key, entry]) => [key, entry.siteUrl])),
-  discord: 'https://discord.com/channels/@me', figma: 'https://www.figma.com/files',
-  linkedin: 'https://www.linkedin.com/', twitter: 'https://x.com/', facebook: 'https://www.facebook.com/',
-  instagram: 'https://www.instagram.com/', tiktok: 'https://www.tiktok.com/', threads: 'https://www.threads.com/',
-  github: 'https://github.com/', gitlab: 'https://gitlab.com/', youtube: 'https://www.youtube.com/',
-  reddit: 'https://www.reddit.com/', medium: 'https://medium.com/', dribbble: 'https://dribbble.com/',
-  twitch: 'https://www.twitch.tv/', bluesky: 'https://bsky.app/', mastodon: 'https://joinmastodon.org/servers',
-  pinterest: 'https://www.pinterest.com/', tumblr: 'https://www.tumblr.com/', wordpress: 'https://wordpress.com/',
-  indeed: 'https://www.indeed.com/', usajobs: 'https://www.usajobs.gov/', remoteok: 'https://remoteok.com/',
-  remotive: 'https://remotive.com/', muse: 'https://www.themuse.com/', glassdoor: 'https://www.glassdoor.com/',
-  handshake: 'https://app.joinhandshake.com/', wellfound: 'https://wellfound.com/', ziprecruiter: 'https://www.ziprecruiter.com/', dice: 'https://www.dice.com/',
-  wired: 'https://www.wired.com/', mittr: 'https://www.technologyreview.com/', smashing: 'https://www.smashingmagazine.com/',
-  infoq: 'https://www.infoq.com/', theregister: 'https://www.theregister.com/', arstechnica: 'https://arstechnica.com/',
-  phoronix: 'https://www.phoronix.com/', devto: 'https://dev.to/', freecodecamp: 'https://www.freecodecamp.org/',
+  ...ACCOUNT_PROVIDER_SITES,
 };

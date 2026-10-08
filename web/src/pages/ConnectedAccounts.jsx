@@ -9,7 +9,8 @@ import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { withCareerAccountFallback } from '../components/sourceMeta';
 import { sourceAuthorizationState } from '../components/sourceAuthorization.mjs';
 import { useAuth } from '../contexts/AuthContext';
-import { accountSections, filterAccounts } from '../components/sourceDirectory';
+import { accountSections, selectedAccountSections } from '../components/sourceDirectory';
+import { AccountCategoryNavigation } from '../components/DirectoryControls';
 
 const PLATFORM_BENEFITS = {
   linkedin:  ['Import your work history & headline', 'Show LinkedIn posts in your feed', 'Get matched with relevant jobs'],
@@ -225,19 +226,9 @@ export default function ConnectedAccounts() {
   // then wondering why it only appears in their private workspace.
   const careerPlatforms = platforms.filter(([key, p]) => p.category === 'career' || (isBusinessMembership && key === 'linkedin'));
   const generalPlatforms = platforms.filter(([, p]) => !p.commandCenterOnly);
-  const accountCategories = accountSections(isBusinessMembership ? careerPlatforms : generalPlatforms, connected);
+  const accountCategories = accountSections(isBusinessMembership ? careerPlatforms : generalPlatforms, { business: isBusinessMembership });
   const activeCategory = accountCategories.some(section => section.id === categoryFilter) ? categoryFilter : 'all';
-  const selectedCategory = accountCategories.find(section => section.id === activeCategory);
-  const selectedKeys = selectedCategory && new Set(selectedCategory.items.map(([key]) => key));
-  const inSelectedCategory = ([key]) => !selectedKeys || selectedKeys.has(key);
-  const displayedGeneral = filterAccounts(generalPlatforms.filter(inSelectedCategory), connected, 'all');
-  const displayedCareer = filterAccounts(careerPlatforms.filter(inSelectedCategory), connected, 'all');
-  const generalSections = accountSections(generalPlatforms, connected)
-    .filter(section => activeCategory === 'all' || section.id === activeCategory);
-  const categoryOptions = [
-    { id: 'all', label: 'All', count: (isBusinessMembership ? careerPlatforms : generalPlatforms).length },
-    ...accountCategories.map(section => ({ id: section.id, label: section.label, count: section.total })),
-  ];
+  const displayedSections = selectedAccountSections(accountCategories, activeCategory);
 
   return (
     <Layout>
@@ -300,50 +291,19 @@ export default function ConnectedAccounts() {
             </div>
           </section>}
           <div className="account-directory-page">
-            <fieldset className="account-category-filter" aria-label="Account categories">
-              <legend>Categories</legend>
-              <ul>
-                {categoryOptions.map(category => <li key={category.id}>
-                  <button type="button" aria-pressed={activeCategory === category.id} onClick={() => setCategoryFilter(category.id)}>
-                    {category.label} <span>{category.count}</span>
-                  </button>
-                </li>)}
-              </ul>
-            </fieldset>
+            <AccountCategoryNavigation sections={accountCategories} category={activeCategory} onChange={setCategoryFilter} />
           </div>
-          {!(isBusinessMembership ? displayedCareer : displayedGeneral).length && <div className="source-directory-empty account-directory-empty" role="status">
+          {!displayedSections.length && <div className="source-directory-empty account-directory-empty" role="status">
             <p>No matching accounts</p>
             {activeCategory !== 'all' && <button type="button" className="btn btn-outline btn-sm" onClick={() => setCategoryFilter('all')}>Clear category</button>}
           </div>}
-          {isBusinessMembership && displayedCareer.length > 0 && <section style={{ marginBottom: 28 }} aria-labelledby="career-sites-heading">
-            <div id="career-sites-heading" style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 6 }}>
-              Recruiting accounts
-            </div>
+          {isBusinessMembership && displayedSections.length > 0 &&
             <p style={{ fontSize: '.8rem', color: 'var(--muted)', lineHeight: 1.5, margin: '0 0 10px' }}>
               LinkedIn authorization enables hiring posts in Cross Post. Visit career websites or compare available job listings in Posts & comparisons.
             </p>
-            {displayedCareer.map(([key, p]) => {
-              const unavailable = p.forceComingSoon || !p.configured;
-              return (
-                <PlatformCard
-                  key={key}
-                  platformKey={key}
-                  p={p}
-                  isConnected={Boolean(connected[key])}
-                  comingSoon={!connected[key] && unavailable}
-                  expanded={expanded === key}
-                  onToggle={() => setExpanded(expanded === key ? null : key)}
-                  onConnect={() => handleConnect(key)}
-                  onDisconnect={() => handleDisconnect(key)}
-                  connecting={connecting === key}
-                  disconnecting={disconnecting === key}
-                  locked={Boolean(p.locked)}
-                />
-              );
-            })}
-          </section>}
+          }
 
-          {!isBusinessMembership && generalSections.map(section => (
+          {displayedSections.map(section => (
             <section key={section.id} className="account-category-section" aria-labelledby={`accounts-${section.id}-heading`}>
               <div className="account-category-heading">
                 <h2 id={`accounts-${section.id}-heading`}>{section.label}</h2>

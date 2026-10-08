@@ -16,12 +16,15 @@ const platforms = {
   youtube: { name: 'YouTube', configured: true, locked: true },
   twitch: { name: 'Twitch', configured: true },
   github: { name: 'GitHub', configured: true },
+  dribbble: { name: 'Dribbble', configured: true },
   medium: { name: 'Medium', configured: false },
   wired: { name: 'WIRED', category: 'publication', configured: true, forceComingSoon: true },
   instagram: { name: 'Instagram', configured: true, commandCenterOnly: true },
   indeed: { name: 'Indeed', category: 'career', configured: false },
+  booking: { name: 'Booking.com', category: 'travel', configured: false, siteUrl: 'https://www.booking.com/' },
+  spotify: { name: 'Spotify', category: 'audio', configured: false, siteUrl: 'https://open.spotify.com/' },
 };
-const categories = ['Social', 'Video & Streaming', 'Work & Development', 'Publishing', 'Career sites'];
+const categories = ['Social', 'Video & Streaming', 'Work & Development', 'Design', 'News & Publishing', 'Career sites', 'Travel', 'Music & Audio'];
 const server = await createServer({
   root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api') },
@@ -67,22 +70,35 @@ try {
     await tools.getByRole('button', { name: /Connected accounts/ }).click();
     await tools.getByRole('heading', { name: 'Social', exact: true }).waitFor();
     assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), categories);
-    assert.equal(await tools.locator('.home-connected-account-row').count(), 8);
+    assert.equal(await tools.locator('.home-connected-account-row').count(), 11);
     for (const [category, providers] of [
       ['Social', ['Mastodon', 'Bluesky']], ['Video & Streaming', ['YouTube', 'Twitch']],
-      ['Work & Development', ['GitHub']], ['Publishing', ['Medium', 'WIRED']],
+      ['Work & Development', ['GitHub']], ['Design', ['Dribbble']], ['News & Publishing', ['Medium', 'WIRED']],
+      ['Travel', ['Booking.com']], ['Music & Audio', ['Spotify']],
     ]) {
       const section = tools.getByRole('region', { name: `${category} accounts`, exact: true });
       for (const provider of providers) assert.ok((await section.innerText()).includes(provider));
     }
     assert.equal(await tools.getByRole('link', { name: 'Open Instagram website' }).count(), 0);
     assert.equal(await tools.getByRole('link', { name: 'Visit Indeed website' }).count(), 1);
-    assert.equal(await tools.locator('.account-site-link, .home-connected-account-status').count(), 0);
+    assert.equal(await tools.locator('.account-site-link').count(), 11, 'Every account, including connected and locked accounts, has one source website action');
+    assert.equal(await tools.locator('.home-connected-account-status').count(), 0);
     assert.equal(await tools.getByRole('button', { name: 'Coming soon', exact: true }).count(), 0);
     for (const provider of ['Medium', 'WIRED', 'YouTube']) {
       assert.equal(await tools.getByRole('button', { name: `Sign in and connect ${provider}`, exact: true }).isDisabled(), true);
     }
     assert.equal(authorizationRequests, 0, 'Displaying grouped accounts must not start authorization');
+    const categorySelect = tools.getByRole('combobox', { name: 'Account category', exact: true });
+    assert.deepEqual(await categorySelect.locator('option').allTextContents(), ['All (11)', 'Social (2)', 'Video & Streaming (2)', 'Work & Development (1)', 'Design (1)', 'News & Publishing (2)', 'Career sites (1)', 'Travel (1)', 'Music & Audio (1)']);
+    await categorySelect.selectOption('design');
+    assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), ['Design']);
+    assert.equal(await tools.getByRole('button', { name: 'Sign in and connect Dribbble', exact: true }).isDisabled(), false);
+    await categorySelect.selectOption('publishing');
+    assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), ['News & Publishing']);
+    assert.ok(await tools.getByRole('button', { name: 'Sign in and connect Medium', exact: true }).isDisabled());
+    await categorySelect.selectOption('all');
+    assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), categories);
+    assert.equal(authorizationRequests, 0, 'Category selection must not authorize any source');
     assert.equal(await tools.getByRole('combobox', { name: 'Filter accounts', exact: true }).count(), 0);
     const social = tools.getByRole('region', { name: 'Social accounts', exact: true });
     assert.equal(await tools.locator('.home-account-category-heading span').count(), 0);

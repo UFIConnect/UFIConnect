@@ -85,7 +85,7 @@ try {
     const accounts = page.getByRole('tabpanel', { name: 'Connected Accounts', exact: true });
     await accounts.getByRole('heading', { name: 'All account connections', exact: true }).waitFor();
     assert.equal(await accounts.locator('.member-account-card').count(), 9, 'Command Center includes every catalog account');
-    for (const category of ['Social', 'Video & Streaming', 'Work & Development', 'Publishing']) await accounts.getByRole('heading', { name: category, exact: true }).waitFor();
+    for (const category of ['Social', 'Video & Streaming', 'Work & Development', 'News & Publishing']) await accounts.getByRole('heading', { name: category, exact: true }).waitFor();
     const card = name => accounts.locator('.member-account-card').filter({ has: page.getByText(name, { exact: true }) });
     assert.equal(await accounts.getByRole('combobox', { name: 'Filter accounts' }).count(), 0);
     assert.equal(await accounts.getByText(/^(Connected|Coming soon|Membership|Reconnect needed)$/).count(), 0);
@@ -94,7 +94,7 @@ try {
     assert.ok(await card('GitLab').getByRole('button', { name: 'Sign in and connect GitLab', exact: true }).isDisabled());
     await card('Mastodon').locator('summary').click();
     await card('Mastodon').getByText(catalog.mastodon.reconnectMessage, { exact: true }).waitFor();
-    assert.equal(await card('Mastodon').getByRole('link', { name: 'Open Mastodon website' }).getAttribute('href'), 'https://social.example');
+    assert.equal(await card('Mastodon').getByRole('link', { name: 'Open Mastodon website' }).getAttribute('href'), 'https://social.example/');
     await card('YouTube').getByRole('button', { name: 'Sign in and connect YouTube', exact: true }).click();
     await page.getByText('Synthetic provider response', { exact: true }).waitFor();
     assert.deepEqual(oauth[0], { endpoint: '/auth/social/youtube/start', params: { returnTo: 'command-center' } });

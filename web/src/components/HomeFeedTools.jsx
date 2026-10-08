@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '../contexts/ToastContext';
@@ -9,8 +9,8 @@ import { normalizeSourceFavorites } from './sourceFavorites';
 import AccountConnectionAction from './AccountConnectionAction';
 import { sourceAuthorizationState } from './sourceAuthorization.mjs';
 import AccountActionIcon from './AccountActionIcon';
-import { DirectoryControls } from './DirectoryControls';
-import { SOURCE_CATEGORIES, sourceSections, accountSections } from './sourceDirectory';
+import { DirectoryControls, AccountCategoryNavigation, AccountSiteLink } from './DirectoryControls';
+import { SOURCE_CATEGORIES, sourceSections, accountSections, selectedAccountSections } from './sourceDirectory';
 import useTabMetrics from '../analytics/useTabMetrics';
 
 const LINK_FIELDS = [
@@ -69,6 +69,7 @@ export default function HomeFeedTools({
   onActivePanelChange,
 }) {
   const { profile, updateProfileLocally } = useAuth();
+  const currentAccount = useRef(''); currentAccount.current = `${profile?.id || ''}:${profile?.plan || ''}`;
   const navigate = useNavigate();
   const { showToast } = useToast();
   const [uncontrolledOpenPanel, setUncontrolledOpenPanel] = useState(null);
@@ -76,9 +77,11 @@ export default function HomeFeedTools({
   const [savingSourceId, setSavingSourceId] = useState(null);
   const [sourceCategory, setSourceCategory] = useState('social');
   const [accountPlatforms, setAccountPlatforms] = useState(null);
+  const [accountOwner, setAccountOwner] = useState(null);
   const [accountConnected, setAccountConnected] = useState({});
   const [accountError, setAccountError] = useState('');
   const [accountAction, setAccountAction] = useState(null);
+  const [accountCategory, setAccountCategory] = useState('all');
   const [blueskyHandle, setBlueskyHandle] = useState(null);
   const [skills, setSkills] = useState([]);
   const [skillInput, setSkillInput] = useState('');
@@ -103,6 +106,7 @@ export default function HomeFeedTools({
   const openPanel = activePanel === undefined ? uncontrolledOpenPanel : activePanel;
   useTabMetrics('home_panel', openPanel);
   useTabMetrics('home_directory', sourceCategory, openPanel === 'sources');
+  useTabMetrics('home_accounts_category', accountCategory, openPanel === 'accounts');
 
   useEffect(() => {
     if (openPanel !== 'files' || attachmentsLoading || attachments.length) return;
@@ -114,7 +118,12 @@ export default function HomeFeedTools({
   }, [openPanel, attachments.length, attachmentsLoading]);
 
   useEffect(() => {
-    if (openPanel !== 'accounts' || accountPlatforms !== null) return;
+    setAccountPlatforms(null); setAccountConnected({}); setAccountOwner(null);
+    setAccountAction(null); setBlueskyHandle(null); setAccountCategory('all');
+  }, [profile?.id, profile?.plan]);
+
+  useEffect(() => {
+    if (!profile?.id || openPanel !== 'accounts' || accountPlatforms !== null) return;
     let cancelled = false;
     setAccountError('');
     client.get('/social/platforms')
@@ -123,15 +132,17 @@ export default function HomeFeedTools({
         const includeCareer = data.careerOnly === true || profile?.plan === 'business';
         setAccountPlatforms(withCareerAccountFallback(data.platforms, includeCareer));
         setAccountConnected(data.connected || {});
+        setAccountOwner(profile.id);
       })
       .catch(error => {
         if (!cancelled) {
           setAccountPlatforms({});
+          setAccountOwner(profile.id);
           setAccountError(error?.response?.data?.message || 'Could not load connected accounts.');
         }
       });
     return () => { cancelled = true; };
-  }, [openPanel, accountPlatforms, profile?.plan]);
+  }, [openPanel, accountPlatforms, profile?.id, profile?.plan]);
 
   const toggle = (key) => {
     const next = openPanel === key ? null : key;
@@ -141,16 +152,17 @@ export default function HomeFeedTools({
   const availableSources = useMemo(() => [...new Set(sourceIds)].filter(source => SOURCE_META[source]), [sourceIds]);
   const enabledSourceCount = availableSources.filter(source => !disabledSources.has(source)).length;
   const visibleAccountPlatforms = useMemo(() => {
-    if (accountPlatforms === null) return [];
+    if (accountPlatforms === null || accountOwner !== profile?.id) return [];
     const entries = Object.entries(accountPlatforms);
     return profile?.plan === 'business'
       ? entries.filter(([key, platform]) => key === 'linkedin' || platform.category === 'career')
       : entries.filter(([, platform]) => !platform.commandCenterOnly);
-  }, [accountPlatforms, profile?.plan]);
+  }, [accountPlatforms, accountOwner, profile?.id, profile?.plan]);
   const sourceGroups = sourceSections(availableSources, normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites)[favoriteMode], sourceCategory, disabledSources);
   const visibleSources = sourceGroups.flatMap(section => section.items);
   const visibleEnabledCount = visibleSources.filter(source => !disabledSources.has(source)).length;
-  const accountGroups = accountSections(visibleAccountPlatforms, accountConnected);
+  const accountGroups = accountSections(visibleAccountPlatforms, { business: profile?.plan === 'business' });
+  const displayedAccountGroups = selectedAccountSections(accountGroups, accountCategory);
 
   async function persistDisabledSources(next, previous, pendingKey, successMessage) {
     setDisabledSources(next);
@@ -204,12 +216,14 @@ export default function HomeFeedTools({
 
   function reloadAccounts() {
     setAccountPlatforms(null);
+    setAccountOwner(null); setAccountConnected({});
     setAccountError('');
   }
 
   async function startAccountConnection(platform, handle = '') {
-    const state = sourceAuthorizationState(accountPlatforms?.[platform], { isConnected: !!accountConnected[platform] });
+    const state = sourceAuthorizationState(accountOwner === profile?.id ? accountPlatforms?.[platform] : null, { isConnected: accountConnected[platform] === true });
     if (!state.ready) { setAccountError(state.reason); return; }
+    const owner = currentAccount.current;
     const handleParam = handle.trim() ? `?handle=${encodeURIComponent(handle.trim())}` : '';
     setAccountAction(`connect:${platform}`);
     setAccountError('');
@@ -218,16 +232,18 @@ export default function HomeFeedTools({
         `/auth/social/${platform}/start${handleParam}`,
         publicOAuthRequestConfig(),
       );
+      if (currentAccount.current !== owner) return;
       if (!data?.url) throw new Error('Missing provider authorization URL.');
       window.location.href = data.url;
     } catch (error) {
+      if (currentAccount.current !== owner) return;
       setAccountError(error?.response?.data?.detail || error?.response?.data?.error || error.message || 'Could not start this connection.');
       setAccountAction(null);
     }
   }
 
   function connectAccount(platform) {
-    const state = sourceAuthorizationState(accountPlatforms?.[platform], { isConnected: !!accountConnected[platform] });
+    const state = sourceAuthorizationState(accountOwner === profile?.id ? accountPlatforms?.[platform] : null, { isConnected: accountConnected[platform] === true });
     if (!state.ready) { setAccountError(state.reason); return; }
     if (platform === 'mastodon') {
       navigate('/connected-accounts?connect=mastodon');
@@ -241,10 +257,13 @@ export default function HomeFeedTools({
   }
 
   async function disconnectAccount(platform) {
+    if (accountOwner !== profile?.id || accountConnected[platform] !== true) return;
+    const owner = currentAccount.current;
     setAccountAction(`disconnect:${platform}`);
     setAccountError('');
     try {
       await client.delete(`/social/connect/${platform}`);
+      if (currentAccount.current !== owner) return;
       setAccountConnected(current => ({ ...current, [platform]: false }));
       const linked = (profile?.connectedPlatforms || Object.keys(accountConnected).filter(key => accountConnected[key]
         && accountPlatforms?.[key]?.connectionMode !== 'external')).filter(key => key !== platform);
@@ -253,9 +272,10 @@ export default function HomeFeedTools({
         socialConnected: { ...(profile?.socialConnected || {}), [platform]: false } });
       showToast(`${accountPlatforms?.[platform]?.name || platform} disconnected.`, 'success');
     } catch (error) {
+      if (currentAccount.current !== owner) return;
       setAccountError(error?.response?.data?.error || 'Could not disconnect this account.');
     } finally {
-      setAccountAction(null);
+      if (currentAccount.current === owner) setAccountAction(null);
     }
   }
 
@@ -413,13 +433,14 @@ export default function HomeFeedTools({
               <button type="button" className="btn btn-ghost btn-sm" onClick={reloadAccounts}>Retry</button>
             </div>
           )}
-          {accountPlatforms !== null && accountGroups.map(section => (
+          {accountPlatforms !== null && !!accountGroups.length && <AccountCategoryNavigation sections={accountGroups} category={accountCategory} onChange={setAccountCategory} compact />}
+          {accountPlatforms !== null && displayedAccountGroups.map(section => (
             <section className="home-account-category" key={section.id} aria-label={`${section.label} accounts`}>
               <div className="home-account-category-heading">
                 <h4>{section.label}</h4>
               </div>
               {section.items.map(([key, platform]) => {
-                const isConnected = platform.connectionMode !== 'external' && Boolean(accountConnected[key]);
+                const isConnected = platform.connectionMode !== 'external' && accountConnected[key] === true;
                 const isConnecting = accountAction === `connect:${key}`;
                 const isDisconnecting = accountAction === `disconnect:${key}`;
                 return (
@@ -429,11 +450,12 @@ export default function HomeFeedTools({
                       {platform.name || SOURCE_META[key]?.label || key}
                     </span>
                     <div className="source-directory-account-actions">
-                      {isConnected ? (
+                      {isConnected ? <>
                         <button type="button" className="btn btn-danger btn-sm" onClick={() => disconnectAccount(key)} disabled={accountAction !== null}>
                           {isDisconnecting ? 'Wait...' : 'Disconnect'}
                         </button>
-                      ) : (
+                        <AccountSiteLink platform={key} name={platform.name} siteUrl={platform.siteUrl} className="account-connection-site-link" />
+                      </> : (
                         <AccountConnectionAction platformKey={key} platform={platform} onConnect={() => connectAccount(key)}
                           connecting={isConnecting} disabled={accountAction !== null} className="btn btn-primary btn-sm" compact />
                       )}
