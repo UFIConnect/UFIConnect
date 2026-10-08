@@ -98,9 +98,6 @@ export const CITY_GROUND_ROADS = [
 // Bridge piers skip at-grade roads and rail. Longer spans carry the deck across
 // these junctions so a collector never drives into a support column.
 export const CITY_HIGHWAY_KINDS = ['highway', 'highway-return'];
-export const CITY_HIGHWAY_PIERS = Object.fromEntries(CITY_HIGHWAY_KINDS.map(kind => [kind,
-  cityRoadPoints(kind).filter(([x, , z], i) => i < 384 && i % 12 === 0
-    && CITY_GROUND_ROADS.every(([a, b]) => citySegmentDistance([x, z], a, b) > 3))]));
 function highwayConnector(x, fromKind, toKind, endHeight) {
   const upper = fromKind === 'highway';
   const position = .5 + x / (toKind === 'arterial' ? 232 : 260);
@@ -122,6 +119,44 @@ function highwayConnector(x, fromKind, toKind, endHeight) {
   });
 }
 export const CITY_HIGHWAY_LINKS = [-36, 90].map(x => highwayConnector(x, 'highway', 'highway-return', 2.9));
+export function cityEndRoadPoint(side, position) {
+  return [side * (137 + 2 * Math.sin(position * Math.PI) + Math.sin(position * Math.PI * 2)), 2.9, -54 + 98 * position];
+}
+export const CITY_END_ROADS = [-1, 1].map(side => ({ side, points: Array.from({ length: 99 }, (_, i) => cityEndRoadPoint(side, i / 98)) }));
+export const CITY_END_JUNCTIONS = CITY_END_ROADS.flatMap(road => CITY_HIGHWAY_KINDS.map(kind => {
+  const position = road.side > 0 ? 1 : 0, end = cityRoadPoint(kind, position), junction = cityEndRoadPoint(road.side, (end[1] + 54) / 98);
+  return { kind, side: road.side, points: [[end[0], 2.9, end[1]], junction] };
+}));
+export const CITY_SIDE_EXITS = [{ index: 0, side: -1 }, { index: 1, side: -1 }, { index: 14, side: 1 }, { index: 15, side: 1 }].map(exit => {
+  const site = CITY_SITES[exit.index], d = site.entrance, nx = Math.sin(site.rotation), nz = Math.cos(site.rotation);
+  const startPosition = (d[1] - 42 + 54) / 98, a = cityEndRoadPoint(exit.side, startPosition), b = [a[0], a[2] + 35], c = [d[0] - nx * 12, d[1] - nz * 12];
+  const plan = Array.from({ length: 97 }, (_, i) => {
+    const t = i / 96, u = 1 - t;
+    return [u ** 3 * a[0] + 3 * u * u * t * b[0] + 3 * u * t * t * c[0] + t ** 3 * d[0],
+      u ** 3 * a[2] + 3 * u * u * t * b[1] + 3 * u * t * t * c[1] + t ** 3 * d[1]];
+  });
+  const distances = [0];
+  for (let i = 1; i < plan.length; i++) distances.push(distances[i - 1] + Math.hypot(plan[i][0] - plan[i - 1][0], plan[i][1] - plan[i - 1][1]));
+  return { ...exit, points: plan.map(([x, z], i) => { const t = distances[i] / distances.at(-1); return [x, 2.9 - 2.825 * t * t * (3 - 2 * t), z]; }) };
+});
+// Neighborhood streets meet the back of the boulevard. Northern links remain
+// clear of the lake, airport and shopping center in the southern waterfront.
+export const CITY_LOCAL_LINKS = Array.from({ length: 7 }, (_, i) => {
+  const first = CITY_SITES[i * 2], second = CITY_SITES[(i + 1) * 2];
+  const rear = site => [site.x + Math.sin(site.rotation) * 6.67, site.z + Math.cos(site.rotation) * 6.67];
+  const a = rear(first), d = rear(second), b = [a[0] + Math.sin(first.rotation) * 6, a[1] + Math.cos(first.rotation) * 6], c = [d[0] + Math.sin(second.rotation) * 6, d[1] + Math.cos(second.rotation) * 6];
+  return Array.from({ length: 65 }, (_, j) => {
+    const t = j / 64, u = 1 - t;
+    return [u ** 3 * a[0] + 3 * u * u * t * b[0] + 3 * u * t * t * c[0] + t ** 3 * d[0], .075,
+      u ** 3 * a[1] + 3 * u * u * t * b[1] + 3 * u * t * t * c[1] + t ** 3 * d[1]];
+  });
+});
+for (const road of CITY_LOCAL_LINKS) for (let i = 1; i < road.length; i++) {
+  CITY_GROUND_ROADS.push([[road[i - 1][0], road[i - 1][2]], [road[i][0], road[i][2]]]);
+}
+export const CITY_HIGHWAY_PIERS = Object.fromEntries(CITY_HIGHWAY_KINDS.map(kind => [kind,
+  cityRoadPoints(kind).filter(([x, , z], i) => i < 384 && i % 12 === 0
+    && CITY_GROUND_ROADS.every(([a, b]) => citySegmentDistance([x, z], a, b) > 3))]));
 export const CITY_RAMPS = [highwayConnector(-36, 'highway-return', 'arterial', .075), highwayConnector(90, 'highway-return', 'arterial', .075)];
 export const CITY_TOP_EXITS = [{ index: 4, id: 'travel', label: 'Travel' }, { index: 12, id: 'business', label: 'Business' }].map(exit => {
   const site = CITY_SITES[exit.index], nx = Math.sin(site.rotation), nz = Math.cos(site.rotation);
