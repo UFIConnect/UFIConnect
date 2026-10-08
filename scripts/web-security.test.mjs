@@ -1,11 +1,31 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { parse } from 'yaml';
 import { validateNewPassword } from '../web/src/auth/passwordPolicy.js';
 import { redactTelemetry, telemetryPath } from '../web/src/api/telemetryPrivacy.js';
 import { createAuthenticatedStream } from '../web/src/api/authenticatedStream.js';
 import { isRelativeApiRequest, validateApiBaseUrl } from '../web/src/api/apiEndpointPolicy.js';
 import { browserSecurityPolicy } from '../web/securityPolicy.mjs';
 import { safeReturnPath } from '../web/src/auth/returnPath.js';
+
+test('only the public homepage receives a bounded shared cache while browser and private cache boundaries remain intact', () => {
+  const blueprint = parse(fs.readFileSync(new URL('../render.yaml', import.meta.url), 'utf8'));
+  const web = blueprint.services.find(service => service.name === 'uficonnect-web');
+  const cacheRules = web.headers.filter(header => header.name === 'Cache-Control');
+  const homepageRules = cacheRules.filter(header => header.path === '/' || header.path === '/index.html');
+  assert.deepEqual(homepageRules.map(header => header.path), ['/', '/index.html']);
+  for (const rule of homepageRules) {
+    assert.equal(rule.value, 'public, max-age=0, s-maxage=30, must-revalidate');
+    assert.doesNotMatch(rule.value, /immutable|stale-while-revalidate|stale-if-error/);
+  }
+  assert.deepEqual(cacheRules.filter(header => /s-maxage/.test(header.value)).map(header => header.path), ['/', '/index.html'], 'Private routes and wildcard paths do not inherit the new shared cache');
+  for (const route of ['/health*', '/sw.js']) assert.equal(cacheRules.find(header => header.path === route)?.value, 'no-cache, no-store, must-revalidate');
+  assert.equal(cacheRules.find(header => header.path === '/assets/*')?.value, 'public, max-age=31536000, immutable');
+  const office = blueprint.services.find(service => service.name === 'uficonnect-office');
+  assert.equal(office.headers.find(header => header.name === 'Cache-Control' && header.path === '/index.html')?.value, 'no-cache, no-store, must-revalidate');
+  for (const service of blueprint.services.filter(service => service.runtime !== 'static')) assert.equal(Boolean(service.headers?.some(header => /s-maxage=30/.test(header.value))), false, 'The API and pipeline do not gain the public homepage policy');
+});
 
 test('sign-in resumes internal destinations without allowing external redirects or auth loops', () => {
   for (const path of ['/videos?source=reddit#resume', '/music', '/?feed=restaurants']) assert.equal(safeReturnPath(path), path);
