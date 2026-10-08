@@ -52,7 +52,7 @@ try {
         await new Promise(resolve => { releaseCheckout = resolve; });
         return route.fulfill({ json: { url: 'https://checkout.stripe.com/vault-audit' } });
       }
-      if (url.pathname === '/api/billing/status') return route.fulfill({ json: { plan: 'free', vpnConnectorAddon: vaultPaid, hasBillingAccount: vaultPaid, subscriptions: vaultPaid ? [{ kind: 'vpn_connector', status: 'active' }] : [] } });
+      if (url.pathname === '/api/billing/status') return route.fulfill({ json: { plan: 'free', vpnConnectorAddon: vaultPaid, hasBillingAccount: vaultPaid, subscriptions: vaultPaid ? [{ kind: 'vpn_connector', status: 'active', currentPeriodEnd: Math.floor(Date.now() / 1000) + 3600 }] : [] } });
       return route.continue();
     });
     async function refreshEntitlement(paid) {
