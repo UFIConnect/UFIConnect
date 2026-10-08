@@ -1,6 +1,7 @@
 'use strict';
 
 const https = require('node:https');
+const { requestedActions } = require('./office-agent-actions');
 
 // This assistant can explain observations. It has no tools, database handle,
 // command runner, deployment hook, or access to raw logs/customer records.
@@ -34,14 +35,14 @@ const PURPOSES = Object.freeze({
   mix_optimizer: 'Checks the diversity and freshness of cached feed pools.',
   sort_optimizer: 'Checks rank-score spread and ranking order in a feed sample.',
   activity: 'Refreshes registry heartbeats. These are not successful fetches or completed jobs.',
-  autofix: 'Observes the separately configured autofix workflow. Chat cannot run or enable it.',
+  autofix: 'Observes the configured autofix workflow. Supported changes are available through the reviewed Office task controls.',
   perf: 'Reports process memory, event-loop lag, and cache inventory. It does not run Lighthouse.',
   community: 'Reports local community inventory. It does not measure sentiment or perform moderation.',
   seo: 'Reports feed inventory. It does not measure browser Web Vitals or certify indexing.',
   opps: 'Reports cached job inventory. It does not verify whether positions remain open.',
   security: 'Summarizes authentication configuration and runtime counters. It is not a vulnerability scanner.',
   data: 'Observes database connectivity and local cache inventory.',
-  deploy: 'Checks service reachability. Chat cannot deploy anything.',
+  deploy: 'Checks service reachability. Reviewed deployment tasks use the existing Office controls and release checks.',
   optimizer: 'Monitors source worker freshness and retry state.',
   cache_helper: 'Merges per-source cached posts into the global feed cache.',
   equalizer: 'Interleaves bounded source queues on the pipeline before screening. Counts describe queued, drained and accepted posts.',
@@ -87,7 +88,7 @@ function sanitizeSnapshot(input) {
 
 function validateBody(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(k => !['message', 'history'].includes(k))) return { status: 400, error: 'Send a message and an optional conversation history.' };
-  if (Buffer.byteLength(JSON.stringify(body), 'utf8') > 8000) return { status: 413, error: 'Conversation is too large. Clear older messages and try again.' };
+  if (Buffer.byteLength(JSON.stringify(body), 'utf8') > 8000) return { status: 413, error: 'Recent conversation context is too large. Send a smaller request.' };
   if (typeof body.message !== 'string' || !body.message.trim() || body.message.length > 1200) return { status: 400, error: 'Message must contain 1 to 1200 characters.' };
   const history = body.history ?? [];
   if (!Array.isArray(history) || history.length > 8 || history.some(item => !item || typeof item !== 'object' || Array.isArray(item)
@@ -192,7 +193,7 @@ function requestAnswer({ apiKey, model, snapshot, topics, signal, timeoutMs = 15
   });
 }
 
-function createOfficeAgentChat({ getAgentSnapshot, apiKey = '', model = 'gpt-5-mini', request, timeoutMs, now = Date.now }) {
+function createOfficeAgentChat({ getAgentSnapshot, getActions = () => [], apiKey = '', model = 'gpt-5-mini', request, timeoutMs, now = Date.now }) {
   const key = String(apiKey).trim();
   const selectedModel = /^[a-zA-Z0-9_.:-]{1,80}$/.test(model) ? model : 'gpt-5-mini';
   let inFlight = 0, windowStarted = now(), requests = 0;
@@ -206,6 +207,8 @@ function createOfficeAgentChat({ getAgentSnapshot, apiKey = '', model = 'gpt-5-m
     if (now() - windowStarted >= 60000) { windowStarted = now(); requests = 0; }
     if (++requests > 40 || inFlight >= 2) return res.status(429).set('Retry-After', '60').json({ error: 'Agent chat is busy. Try again shortly.' });
     const topics = conversationTopics(validated.message, validated.history);
+    const actions = requestedActions(validated.message, getActions(snapshot));
+    if (actions !== null) topics.topic = 'action_request';
     const controller = new AbortController();
     const cancel = () => { if (!res.writableEnded) controller.abort(); };
     res.once('close', cancel);
@@ -218,8 +221,11 @@ function createOfficeAgentChat({ getAgentSnapshot, apiKey = '', model = 'gpt-5-m
         try { reply = await requestAnswer({ apiKey: key, model: selectedModel, snapshot, topics, signal: controller.signal, request, timeoutMs }); mode = 'ai'; }
         catch { reply = diagnostics(snapshot, topics.topic, 'unavailable'); }
       } else reply = diagnostics(snapshot, topics.topic, localOnly ? 'local' : 'unconfigured');
+      if (actions !== null) reply = actions.length
+        ? `Available task${actions.length === 1 ? '' : 's'}: ${actions.map(action => action.label).join('; ')}. Choose Run task below to execute through Office Controls. No command was executed by this message.`
+        : 'This agent cannot perform that task. Choose one of its available actions, or use Office Controls for other supported work. No command was executed.';
       if (!res.destroyed && !controller.signal.aborted) res.json({ agentId: snapshot.agentId, serviceRole: snapshot.serviceRole, mode, reply,
-        observedAt: snapshot.observedAt, suggestions: ['What is your status?', 'What do you do?', 'How often do you refresh?', 'What should I check next?'] });
+        observedAt: snapshot.observedAt, actions: actions || [], suggestions: ['What is your status?', 'What do you do?', 'How often do you refresh?', 'What should I check next?'] });
     } finally { inFlight--; res.removeListener('close', cancel); }
   };
 }

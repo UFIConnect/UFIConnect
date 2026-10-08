@@ -26436,8 +26436,29 @@ const officeAgentChatLimiter = rateLimit({
 });
 app.post('/office/agents/:id/chat', requireOfficeToken, officeAgentChatLimiter, createOfficeAgentChat({
   getAgentSnapshot: getOfficeAgentObservation,
+  getActions: snapshot => require('./office-agent-actions').agentActions(snapshot, officeControlCatalog()),
   apiKey: process.env.OPENAI_API_KEY,
   model: process.env.OFFICE_CHAT_OPENAI_MODEL || process.env.AI_CONTENT_OPENAI_MODEL || 'gpt-5-mini',
+}));
+
+app.get('/office/agents/:id/actions', requireOfficeToken, (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const snapshot = getOfficeAgentObservation(req.params.id);
+  if (!snapshot) return res.status(404).json({ error: 'Unknown agent.' });
+  res.json({ agentId: snapshot.agentId, serviceRole: SERVICE_ROLE,
+    actions: require('./office-agent-actions').agentActions(snapshot, officeControlCatalog()) });
+});
+
+app.post('/office/agents/:id/web-draft', requireOfficeToken, require('./office-web-draft').createOfficeWebDraft({
+  getAgentSnapshot: getOfficeAgentObservation,
+  getFile: async filePath => {
+    const token = officeGithubToken();
+    if (!token) throw Object.assign(new Error('Office GitHub access is not configured.'), { status: 503 });
+    return getGitHubFileContent(filePath, token);
+  },
+  apiKey: process.env.OPENAI_API_KEY,
+  model: process.env.OFFICE_CHAT_OPENAI_MODEL || process.env.AI_CONTENT_OPENAI_MODEL || 'gpt-5-mini',
+  serviceRole: SERVICE_ROLE,
 }));
 
 app.get('/office/agents', requireOfficeToken, (req, res) => {
@@ -27122,7 +27143,7 @@ async function executeFrontendControl(control, body) {
   if (!/^[a-f0-9]{40}$/i.test(expectedSha)) throw new Error('Reload the current GitHub file before committing.');
   const requestedMessage = String(body?.commitMessage || '').trim().replace(/\s+/g, ' ').slice(0, 120);
   if (requestedMessage.length < 6) throw new Error('Enter a specific commit message.');
-  if (/(?:OFFICE_TOKEN|DATABASE_URL|STRIPE_SECRET_KEY|AUTOFIX_GITHUB_TOKEN)\s*[:=]/i.test(content)) {
+  if (/(?:OFFICE_TOKEN|DATABASE_URL|STRIPE_SECRET_KEY|AUTOFIX_GITHUB_TOKEN|OPENAI_API_KEY)\s*[:=]|-----BEGIN\s+(?:[A-Z ]*PRIVATE KEY)|\bsk-[A-Za-z0-9_-]{20,}/i.test(content)) {
     throw new Error('Potential server secret assignment detected in frontend content.');
   }
 
@@ -27295,6 +27316,10 @@ async function executeOfficeControl(control, body) {
         eventLoopLagMs: refreshControl.eventLoopLagMs,
         heapRatio: refreshControl.heapRatio,
       };
+    case 'health.community':
+      runCommunityCheck();
+      return { groups: groups.length, members: users.length, conversations: conversations.length,
+        messages: conversations.reduce((total, conversation) => total + (conversation.messages?.length || 0), 0), scope: 'Local process inventory only.' };
     case 'health.data':
       await runDataCheck();
       return {

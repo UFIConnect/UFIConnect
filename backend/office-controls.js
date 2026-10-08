@@ -248,6 +248,14 @@ const BASE_OFFICE_CONTROLS = Object.freeze([
     impact: 'low',
   },
   {
+    id: 'health.community',
+    category: 'Public health',
+    label: 'Check community inventory',
+    description: 'Read aggregate local group, conversation, member and message counts. This check does not moderate content.',
+    target: 'api',
+    impact: 'low',
+  },
+  {
     id: 'health.data',
     category: 'Public health',
     label: 'Refresh data diagnostics',

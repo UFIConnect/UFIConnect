@@ -1,7 +1,8 @@
+import AgentChat from '../AgentChat';
 // The Live City shown in the hosted Office until the new one (../LiveCity.jsx) is finalized.
 // Kept as it was before the towns rebuild; the local Office runs the new version.
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, ArrowDownLeft, ArrowUpRight, Building2, Check, ChevronRight, CircleHelp, Focus, Home, Layers3, MessageSquare, Minus, Pause, Play, Plus, Radio, Search, Send, ShieldCheck, Trash2, X } from 'lucide-react';
+import { Activity, ArrowDownLeft, ArrowUpRight, Building2, Check, ChevronRight, CircleHelp, Focus, Home, Layers3, Minus, Pause, Play, Plus, Radio, Search, ShieldCheck, X } from 'lucide-react';
 import { buildCityModel, cityNumber, cityTimestamp } from '../city-model.mjs';
 import { buildCityStreets } from './city-streets.mjs';
 import './LiveCity.css';
@@ -249,65 +250,6 @@ function BuildingInterior({ district, model, onClose, onSelectAgent, interiorRef
   </section>;
 }
 
-function chatError(status) {
-  if (status === 401 || status === 403) return 'Office access is required. Reconnect your Office session and try again.';
-  if (status === 404) return 'Agent chat is unavailable on this service version. Refresh after the service is updated.';
-  if (status === 429) return 'This agent is handling another request or its request limit was reached. Try again shortly.';
-  if (status === 400 || status === 413) return 'That message could not be accepted. Try a shorter question about this agent.';
-  return 'The agent service is unavailable. Your message was not completed. Try again shortly.';
-}
-
-function AgentChat({ agent, officeFetch, base, messages, updateMessages }) {
-  const [draft, setDraft] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const pending = useRef(null);
-  const sequence = useRef(0);
-  useEffect(() => () => { sequence.current += 1; pending.current?.abort(); }, []);
-  function clear() { sequence.current += 1; pending.current?.abort(); pending.current = null; setBusy(false); setError(''); setDraft(''); updateMessages([]); }
-  async function send(event) {
-    event.preventDefault();
-    const message = draft.trim();
-    if (!message || busy || !knownRole(agent.serviceRole)) return;
-    const token = ++sequence.current, controller = new AbortController();
-    pending.current = controller; setBusy(true); setError('');
-    const history = messages.filter(item => item.role === 'user').slice(-4).map(item => ({ role: 'user', content: item.content.slice(0, 1200) }));
-    while (history.length && new TextEncoder().encode(JSON.stringify({ message, history })).length > 7800) history.shift();
-    const sentMessages = [...messages, { role: 'user', content: message }].slice(-12);
-    updateMessages(sentMessages); setDraft('');
-    let timedOut = false;
-    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 35_000);
-    try {
-      const response = await officeFetch(`${String(base || '').replace(/\/$/, '')}/office/agents/${encodeURIComponent(agent.id)}/chat`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message, history }), signal: controller.signal,
-      });
-      if (!response.ok) throw Object.assign(new Error('Agent request failed'), { status: response.status });
-      const data = await response.json();
-      if (data?.agentId !== agent.id || data?.serviceRole !== agent.serviceRole || !['ai', 'diagnostics'].includes(data?.mode) || typeof data.reply !== 'string' || !data.reply.trim()) throw new Error('Invalid agent reply');
-      if (sequence.current !== token || controller.signal.aborted) return;
-      updateMessages([...sentMessages, { role: 'assistant', content: data.reply.slice(0, 6000), mode: data.mode, observedAt: data.observedAt,
-        suggestions: Array.isArray(data.suggestions) ? data.suggestions.filter(item => typeof item === 'string').slice(0, 4).map(item => item.slice(0, 160)) : [] }].slice(-12));
-    } catch (failure) {
-      if (sequence.current === token && (!controller.signal.aborted || timedOut)) setError(timedOut ? 'The agent took too long to respond. Try again shortly.' : chatError(failure.status));
-    } finally {
-      clearTimeout(timeout);
-      if (sequence.current === token) { pending.current = null; setBusy(false); }
-    }
-  }
-  const suggestions = messages.at(-1)?.suggestions || [];
-  return <section className="lc-chat" aria-label="Agent conversation"><div className="lc-section-heading"><h3><MessageSquare size={16} /> Ask this agent</h3><button type="button" aria-label="Clear conversation" onClick={clear} disabled={!messages.length && !busy && !draft}><Trash2 size={14} />Clear</button></div>
-    <p className="lc-hint">Read-only explanations of this service’s observations. AI responses are labeled; diagnostics work without AI. Chat cannot trigger jobs or change settings.</p>
-    <div className="lc-chat-history" role="log" aria-live="polite" aria-relevant="additions text" aria-label={`${agent.name} conversation`}>
-      {!messages.length && <div className="lc-chat-empty"><MessageSquare size={24} /><p>Ask about health, recent work, failures, or the next check.</p></div>}
-      {messages.map((item, index) => <article className={`lc-message lc-message-${item.role}`} key={index}><header>{item.role === 'user' ? 'You' : item.mode === 'ai' ? 'AI explanation' : 'Diagnostics reply'}{item.observedAt && <time>{stamp(item.observedAt)}</time>}</header><p>{item.content}</p></article>)}
-      {busy && <p className="lc-chat-wait" role="status">Reading this agent’s observations…</p>}
-    </div>
-    {error && <p role="alert" className="lc-error">{error}</p>}
-    {!!suggestions.length && <div className="lc-suggestions">{suggestions.map(suggestion => <button type="button" key={suggestion} disabled={busy} onClick={() => setDraft(suggestion)}>{suggestion}</button>)}</div>}
-    <form onSubmit={send}><label htmlFor="lc-agent-message">Message this agent</label><textarea id="lc-agent-message" rows={3} maxLength={1200} value={draft} onChange={event => setDraft(event.target.value)} placeholder="What needs attention in your service?" disabled={!knownRole(agent.serviceRole)} />
-      <div className="lc-compose-footer"><small>{draft.length}/1200 · memory only</small><button type="submit" disabled={busy || !draft.trim() || !knownRole(agent.serviceRole)}><Send size={14} />Send message</button></div>
-    </form><p className="lc-hint">Up to 12 messages per conversation, in this page only. Clear removes this local history.</p>
-  </section>;
-}
-
 function AgentInspector({ agent, model, officeFetch, apiBase, pipelineBase, onNavigate, messages, updateMessages }) {
   const health = agent.health || {};
   const state = agent.observation !== 'fresh' ? agent.observation : health.status || 'unknown';
@@ -324,7 +266,7 @@ function AgentInspector({ agent, model, officeFetch, apiBase, pipelineBase, onNa
     ]} />
     {health.lastError && <p className="lc-notice">This service reports an agent error. Inspect its protected service logs for details.</p>}
     <div className="lc-crosslinks"><button type="button" onClick={() => onNavigate('agents')}>Open Agents <ArrowUpRight size={14} /></button><button type="button" onClick={() => onNavigate('post-pipeline')}>Open Post Pipeline <ArrowUpRight size={14} /></button></div>
-    <AgentChat key={agent.key} agent={agent} officeFetch={officeFetch} base={agent.serviceRole === 'pipeline' ? pipelineBase : apiBase} messages={messages} updateMessages={updateMessages} />
+    <AgentChat key={agent.key} agent={agent} officeFetch={officeFetch} apiBase={apiBase} pipelineBase={pipelineBase} base={agent.serviceRole === 'pipeline' ? pipelineBase : apiBase} messages={messages} updateMessages={updateMessages} />
     <History entries={entries} />
   </>;
 }
@@ -394,7 +336,7 @@ export default function LiveCity({ status, pipelineStatus, agents = {}, log = []
   }
   function updateMessages(key, messages) { setConversations(current => {
     const next = { ...current }; delete next[key]; next[key] = messages;
-    return Object.fromEntries(Object.entries(next).slice(-8));
+    return next;
   }); }
   return <section className="live-city" data-testid="live-city" aria-label="Live City" data-motion={motionState} data-animation-scope={motionScope} style={{ '--lc-fast-motion': `${1.4 / speed}s`, '--lc-medium-motion': `${2.8 / speed}s`, '--lc-slow-motion': `${4.8 / speed}s` }}>
     <header className="lc-page-header"><div><div className="lc-eyebrow"><span className="lc-brand-mark"><Layers3 size={14} /></span> UFICONNECT / SERVICE OBSERVATORY</div><h1>Live City<span>.</span></h1><p>A working map of your platform. Follow the content. Meet the agents. Inspect the evidence.</p></div><button type="button" className="lc-open-pipeline" onClick={() => onNavigate('post-pipeline')}>Explore post history <ArrowUpRight size={16} /></button></header>
