@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const { buildOfficeSetup } = require('./office-setup');
 
 test('account login settings reuse Google credentials and accurately gate Apple and Twilio', () => {
@@ -13,6 +14,8 @@ test('account login settings reuse Google credentials and accurately gate Apple 
   assert.equal(item('login-phone').status,'missing');
   assert.ok(!JSON.stringify(items).includes('private-google'));
   Object.assign(env,{APPLE_CLIENT_ID:'private',APPLE_TEAM_ID:'private',APPLE_KEY_ID:'private',APPLE_PRIVATE_KEY:'private',TWILIO_ACCOUNT_SID:'AC'+'1'.repeat(32),TWILIO_AUTH_TOKEN:'private',TWILIO_VERIFY_SERVICE_SID:'VA'+'2'.repeat(32)});
+  assert.equal(buildOfficeSetup({env}).items.find(v=>v.id==='login-apple').status,'missing', 'An invalid signing key cannot enable Apple sign-in');
+  env.APPLE_PRIVATE_KEY=crypto.generateKeyPairSync('ec',{namedCurve:'prime256v1'}).privateKey.export({type:'pkcs8',format:'pem'});
   const configured=buildOfficeSetup({env}).items;
   assert.equal(configured.find(v=>v.id==='login-apple').status,'configured');
   assert.equal(configured.find(v=>v.id==='login-phone').status,'configured');
