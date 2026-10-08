@@ -1,7 +1,8 @@
 import AgentChat from './AgentChat';
+import { OfficeActivationResult } from './Setup';
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, ArrowDownLeft, ArrowUpRight, Building2, Check, ChevronRight, CircleHelp, Focus, Home, Layers3, Minus, Pause, Play, Plus, Radio, Search, ShieldCheck, X } from 'lucide-react';
-import { buildCityModel, cityNumber, cityTimestamp } from './city-model.mjs';
+import { agentInactiveExplanation, buildCityModel, cityNumber, cityTimestamp } from './city-model.mjs';
 import { buildCityStreets } from './city-streets.mjs';
 import './LiveCity.css';
 const CityScene3D = lazy(() => import('./CityScene3D'));
@@ -272,7 +273,8 @@ function AgentInspector({ agent, model, officeFetch, apiBase, pipelineBase, onNa
       { label: 'Last fetch', value: cityTimestamp(agent.lastFetch), time: true }, { label: 'Registry received', value: cityTimestamp(agent.receivedAt), time: true },
     ]} />
     {health.lastError && <p className="lc-notice">This service reports an agent error. Inspect its protected service logs for details.</p>}
-    <div className="lc-crosslinks"><button type="button" onClick={() => onNavigate('agents')}>Open Agents <ArrowUpRight size={14} /></button><button type="button" onClick={() => onNavigate('post-pipeline')}>Open Post Pipeline <ArrowUpRight size={14} /></button></div>
+    {agentInactiveExplanation(agent) && <p className="lc-notice" role="status">{agentInactiveExplanation(agent)}</p>}
+    <div className="lc-crosslinks"><button type="button" onClick={() => onNavigate('setup')}>Open Setup <ArrowUpRight size={14} /></button><button type="button" onClick={() => onNavigate('controls')}>Open Controls <ArrowUpRight size={14} /></button><button type="button" onClick={() => onNavigate('agents')}>Open Agents <ArrowUpRight size={14} /></button><button type="button" onClick={() => onNavigate('post-pipeline')}>Open Post Pipeline <ArrowUpRight size={14} /></button></div>
     <AgentChat key={agent.key} agent={agent} officeFetch={officeFetch} apiBase={apiBase} pipelineBase={pipelineBase} base={agent.serviceRole === 'pipeline' ? pipelineBase : apiBase} messages={messages} updateMessages={updateMessages} />
     <History entries={entries} />
   </>;
@@ -290,7 +292,8 @@ function DistrictInspector({ district, onNavigate, onSelectAgent, onEnter }) {
   </>;
 }
 
-export default function LiveCity({ status, pipelineStatus, agents = {}, log = [], telemetry = {}, officeFetch, apiBase = '', pipelineBase = '', onNavigate = () => {} }) {
+export default function LiveCity({ status, pipelineStatus, agents = {}, log = [], telemetry = {}, officeFetch, apiBase = '', pipelineBase = '', onNavigate = () => {},
+  onActivate, activating = false, activationResult, activationError = '' }) {
   const [now, setNow] = useState(Date.now), [paused, setPaused] = useState(false);
   const [speed, setSpeed] = useState(1), [motionScope, setMotionScope] = useState('all');
   const [reduced, setReduced] = useState(() => typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -346,7 +349,8 @@ export default function LiveCity({ status, pipelineStatus, agents = {}, log = []
     return next;
   }); }
   return <section className="live-city" data-testid="live-city" aria-label="Live City" data-motion={motionState} data-animation-scope={motionScope} style={{ '--lc-fast-motion': `${1.4 / speed}s`, '--lc-medium-motion': `${2.8 / speed}s`, '--lc-slow-motion': `${4.8 / speed}s` }}>
-    <header className="lc-page-header"><div><div className="lc-eyebrow"><span className="lc-brand-mark"><Layers3 size={14} /></span> UFICONNECT / SERVICE OBSERVATORY</div><h1>Live City<span>.</span></h1><p>A working map of your platform. Follow the content. Meet the agents. Inspect the evidence.</p></div><button type="button" className="lc-open-pipeline" onClick={() => onNavigate('post-pipeline')}>Explore post history <ArrowUpRight size={16} /></button></header>
+    <header className="lc-page-header"><div><div className="lc-eyebrow"><span className="lc-brand-mark"><Layers3 size={14} /></span> UFICONNECT / SERVICE OBSERVATORY</div><h1>Live City<span>.</span></h1><p>A working map of your platform. Follow the content. Meet the agents. Inspect the evidence.</p></div><div className="lc-header-actions"><button type="button" className="lc-activate-agents" onClick={onActivate} disabled={activating || !onActivate}>{activating ? 'Activating configured agents…' : 'Activate configured agents'}</button><button type="button" className="lc-open-pipeline" onClick={() => onNavigate('setup')}>Open Setup <ArrowUpRight size={16} /></button><button type="button" className="lc-open-pipeline" onClick={() => onNavigate('post-pipeline')}>Explore post history <ArrowUpRight size={16} /></button></div></header>
+    <OfficeActivationResult result={activationResult} error={activationError} />
     <div className="lc-observations">{['api', 'pipeline'].map(role => <div className="lc-observation" key={role} data-service={role} data-freshness={model.observations[role].state}><span>{roleName(role)} telemetry</span><Status state={model.observations[role].state} /><small>{safeObservationError(model.observations[role].error) || age(model.observations[role].updatedAt, now)}</small></div>)}<div className="lc-observation"><span>Agent activity stream</span><strong className={model.streamConnected ? 'lc-stream-connected' : ''}><Radio size={13} />{model.streamConnected ? 'Connected' : 'Disconnected'}</strong><small>Connection only; not a work counter</small></div><div className="lc-observation"><span>Registered agent homes</span><strong>{model.homes.length}</strong><small>{model.agents.length} distinct service observations</small></div></div>
     <div className="lc-layout"><div className="lc-main"><CityMap model={model} selected={selectedDistrict.id} selectedAgent={selectedAgent} onSelectAgent={key => select('agent', key)} onEnter={enterBuilding} paused={paused} setPaused={setPaused} reduced={reduced} speed={speed} setSpeed={setSpeed} motionScope={motionScope} setMotionScope={setMotionScope} />
       {interiorDistrict && <BuildingInterior district={interiorDistrict} model={model} interiorRef={interiorPanel} onClose={() => { setInterior(null); window.requestAnimationFrame(() => inspector.current?.focus()); }} onSelectAgent={key => select('agent', key)} />}
@@ -357,7 +361,7 @@ export default function LiveCity({ status, pipelineStatus, agents = {}, log = []
           <span className="lc-agent-avatar" style={{ '--district-color': model.byId[agent.district]?.color }} aria-hidden="true">{String(agent.emoji || agent.id.slice(0, 3)).slice(0, 4)}</span><span className="lc-agent-summary"><strong>{agent.name}</strong><small>{roleName(agent.serviceRole)} · {model.byId[agent.district]?.label}</small><Status state={agent.observation === 'fresh' ? agent.health?.status || 'unknown' : agent.observation} /></span><ChevronRight size={15} />
         </button>)}</div>
       </section></div>
-      <aside className="lc-inspector" aria-label="City inspector" ref={inspector} tabIndex={-1}><div className="lc-inspector-topline"><span><CircleHelp size={14} /> INSPECTOR</span><span><ShieldCheck size={13} /> Read only</span></div>
+      <aside className="lc-inspector" aria-label="City inspector" ref={inspector} tabIndex={-1}><div className="lc-inspector-topline"><span><CircleHelp size={14} /> INSPECTOR</span><span><ShieldCheck size={13} /> Live observations</span></div>
         {selectedAgent ? <AgentInspector key={selectedAgent.key} agent={selectedAgent} model={model} officeFetch={officeFetch} apiBase={apiBase} pipelineBase={pipelineBase} onNavigate={onNavigate} messages={conversations[selectedAgent.key] || []} updateMessages={messages => updateMessages(selectedAgent.key, messages)} /> : <DistrictInspector district={selectedDistrict} onNavigate={onNavigate} onSelectAgent={key => select('agent', key)} onEnter={() => enterBuilding(selectedDistrict.id)} />}
         <div className="lc-inspector-footer"><Check size={13} />Values come from the selected service’s last observation.</div>
       </aside>

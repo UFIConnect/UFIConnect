@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const { buildOfficeSetup } = require('./office-setup');
+const { buildOfficeSetup, getOfficeSourceReadiness } = require('./office-setup');
 
 test('account login settings reuse Google credentials and accurately gate Apple and Twilio', () => {
   const env={YOUTUBE_CLIENT_ID:'private-google-id',YOUTUBE_CLIENT_SECRET:'private-google-secret',OAUTH_CALLBACK_BASE_URL:'https://api.uficonnect.org'};
@@ -51,4 +51,56 @@ test('Resume Builder reports monthly and six-month price configuration independe
   assert.equal(sixMonthOnly.items.find(item => item.id === 'resume-monthly-billing').status, 'missing');
   assert.equal(sixMonthOnly.items.find(item => item.id === 'resume-billing').status, 'configured');
   assert.ok(!JSON.stringify([monthlyOnly, sixMonthOnly]).includes('private-'));
+});
+
+test('public collector prerequisites use actual worker keys and remain separate from member OAuth', () => {
+  const env = { TWITTER_CLIENT_ID: 'private-client', TWITTER_CLIENT_SECRET: 'private-secret', LINKEDIN_CLIENT_ID: 'private-client', LINKEDIN_CLIENT_SECRET: 'private-secret', FACEBOOK_APP_ID: 'private-client', FACEBOOK_APP_SECRET: 'private-secret', USAJOBS_API_KEY: 'private-search-key', USAJOBS_EMAIL: 'private-wrong-alias' };
+  const pipeline = buildOfficeSetup({ env, role: 'pipeline' });
+  const item = id => pipeline.items.find(value => value.id === `source-${id}`);
+  assert.deepEqual(item('twitter').missingEnv, ['TWITTER_BEARER_TOKEN']);
+  assert.deepEqual(item('linkedin').missingEnv, ['LINKEDIN_TOKEN']);
+  assert.deepEqual(item('facebook').missingEnv, ['FACEBOOK_TOKEN']);
+  assert.deepEqual(item('reddit').missingEnv, ['REDDIT_CLIENT_ID', 'REDDIT_CLIENT_SECRET']);
+  assert.deepEqual(item('usajobs').missingEnv, ['USAJOBS_USER_AGENT']);
+  assert.ok(!buildOfficeSetup({ env }).items.some(value => value.id.startsWith('source-')));
+  assert.equal(getOfficeSourceReadiness('reddit', { REDDIT_CLIENT_ID: 'private', REDDIT_CLIENT_SECRET: '  ' }).configured, false);
+  assert.equal(getOfficeSourceReadiness('usajobs', { USAJOBS_API_KEY: 'private', USAJOBS_USER_AGENT: 'private-email' }).configured, true);
+  assert.equal(getOfficeSourceReadiness('hn', {}).configured, true, 'A public collector without key requirements can use its existing worker');
+  assert.ok(!JSON.stringify(pipeline).includes('private-'));
+});
+
+test('source setup requires configured credentials and actual post observations before reporting ready', () => {
+  const sourceWorkers = { twitter: { lastSuccess: 1, postCount: 25 }, twitch: { lastSuccess: 1, postCount: 0 }, usajobs: { lastSuccess: 1, postCount: 25, consecutiveErrors: 1 } };
+  const env = { TWITCH_CLIENT_ID: 'private-id', TWITCH_CLIENT_SECRET: 'private-secret', USAJOBS_API_KEY: 'private-key', USAJOBS_USER_AGENT: 'private-email' };
+  const options = { role: 'pipeline', env, sourceWorkers };
+  let items = buildOfficeSetup(options).items;
+  assert.equal(items.find(item => item.id === 'source-twitter').status, 'missing', 'An empty token worker cannot claim readiness from a successful empty return');
+  assert.equal(items.find(item => item.id === 'twitch').status, 'configured');
+  assert.equal(items.find(item => item.id === 'source-usajobs').status, 'degraded');
+  env.TWITTER_BEARER_TOKEN = 'private-token';
+  sourceWorkers.twitch.postCount = 10;
+  items = buildOfficeSetup(options).items;
+  assert.equal(items.find(item => item.id === 'source-twitter').status, 'ready');
+  assert.equal(items.find(item => item.id === 'twitch').status, 'ready');
+  sourceWorkers.twitter.paused = true;
+  sourceWorkers.twitter.lastError = 'private-provider-error';
+  const report = buildOfficeSetup(options);
+  assert.equal(report.items.find(item => item.id === 'source-twitter').status, 'degraded');
+  assert.ok(!JSON.stringify(report).includes('private-'));
+});
+
+test('AI action setup exposes safe capability flags independently of paid explanations', () => {
+  const env = { OFFICE_TOKEN: 'private-token', DATABASE_URL: 'private-url', OFFICE_CHAT_OPENAI_MODEL: 'private-model' };
+  const report = buildOfficeSetup({ env, database: true });
+  const actions = report.items.find(item => item.id === 'agent-actions');
+  const explanations = report.items.find(item => item.id === 'agent-chat');
+  assert.equal(actions.status, 'ready');
+  assert.equal(actions.capabilities.actionControlsConfigured, true);
+  assert.equal(actions.capabilities.explanationKeyConfigured, false);
+  assert.equal(actions.capabilities.modelConfigured, true);
+  assert.equal(explanations.status, 'missing');
+  assert.equal(explanations.capabilities.usesDefaultModel, false);
+  assert.equal(buildOfficeSetup({ env, database: false }).items.find(item => item.id === 'agent-actions').status, 'degraded');
+  assert.ok(!buildOfficeSetup({ env, role: 'pipeline' }).items.some(item => item.id === 'agent-actions'));
+  assert.ok(!JSON.stringify(report).includes('private-'));
 });

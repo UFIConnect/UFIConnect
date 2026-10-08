@@ -2,7 +2,19 @@
 
 Each agent exposes tasks from the authenticated Office Controls catalog. Type a request or choose an action. Source refreshes run on Pipeline; public web edits and release controls run on API. Shared tasks call both services and report each result separately. Results include the durable Office run ID; queued refreshes are reported as queued work.
 
-Conversation history has no message count cap while the page is open. Earlier messages remain available through **Show earlier messages**. History stays in memory and is cleared on leaving or clearing the page. Requests contain a bounded recent context. Rate limits still protect service capacity.
+**Activate configured agents** in Live City and **Connect configured setups** in Setup use the same audited control on API and Pipeline. Existing healthy workers are checked without starting another refresh. Eligible inactive workers enter the paced queue; provider cooldowns, missing app credentials, member account connections, and separate automatic-code-change controls keep their own requirements. Status reflects actual checks and worker observations, independently of registry heartbeats.
+
+The message editor has no character limit, and conversation history has no message count cap while the page is open. Earlier messages remain available through **Show earlier messages**. History stays in memory and is cleared on leaving or clearing the page. The full current message is submitted without truncation; requests carry only the four most recent user messages that fit alongside it. A 1 MiB transport safeguard rejects exceptionally large requests, restores the message in the editor, and asks the operator to send smaller parts.
+
+Local diagnostics and task suggestions have no per-minute conversation budget. Paid AI explanations allow 18 provider requests per minute and two in flight per service process. When that capacity is occupied, the message is accepted and receives a clearly labeled local diagnostics summary without another provider call. Failures count toward the provider budget and are not automatically retried. Large inputs are classified from a bounded beginning and ending. Provider context contains at most four fixed topic labels plus the sanitized observation, never the message text or transcript.
+
+## AI action setup
+
+The **Office AI agent** offers a curated set of existing Office tasks: queue and feed inspection, configured-agent activation, security and website checks, source optimization, topic auditing, and reviewed public website editing. Availability and prerequisites come from the authenticated catalog on each required service.
+
+In **Action setup**, choose one task and select **Save setup**. This remembers only its task ID for the current Office page session, including when switching inspectors. It does not execute work or schedule an unattended task. **Run action** uses the current catalog and the existing task review; changes that require confirmation still require **Confirm and run task**. Missing credentials, service configuration, or audit storage keep the corresponding task unavailable. Public web editing opens its separate file review workflow.
+
+Messages can propose supported tasks, but neither model output nor saved preferences can execute arbitrary commands. Operator execution runs through Office Controls and records its result and run ID. A disabled AI provider does not disable supported local task controls.
 
 ## Public website edits
 

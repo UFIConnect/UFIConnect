@@ -3,11 +3,17 @@ import { MessageSquare, Play, Send, Trash2 } from 'lucide-react';
 import './AgentChat.css';
 import OfficeWebEditor from './OfficeWebEditor';
 const knownRole = role => ['api', 'pipeline'].includes(role);
+// Only task IDs are remembered for this page session; credentials and prompts
+// are never persisted. Execution still checks the current authenticated catalog.
+const aiActionSetups = new Map();
+const requestCapacity = 1024 * 1024;
 const stamp = value => Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString() : 'Not reported';
+const taskTarget = action => action.target === 'both' ? 'API and Pipeline' : action.target === 'pipeline' ? 'Pipeline' : 'API';
 function chatError(status) {
   if (status === 401) return 'Office access is unavailable. Check your Office connection and retry.';
   if (status === 503) return 'The agent service is unavailable. Check your Office connection and retry.';
   if (status === 404) return 'Agent chat is unavailable on this service version. Refresh after the service is updated.';
+  if (status === 413) return 'The request exceeds service capacity. Your message is back in the editor; send it in smaller parts.';
   if (status === 429) return 'The agent is busy. Wait briefly, then send your message again.';
   return 'The agent could not respond. Your conversation remains here; try again.';
 }
@@ -26,13 +32,21 @@ function taskResult(data) {
   return lines.length ? lines.join('\n') : 'Detailed results are recorded in Office Controls history.';
 }
 export default function AgentChat({ agent, officeFetch, base, apiBase, pipelineBase, messages, updateMessages }) {
+  const setupKey = `${base}:${agent.serviceRole}:${agent.id}`;
   const [draft, setDraft] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [actions, setActions] = useState([]), [actionsError, setActionsError] = useState(''), [actionsLoading, setActionsLoading] = useState(true), [revision, setRevision] = useState(0);
   const [running, setRunning] = useState(''), [review, setReview] = useState(null), [visibleCount, setVisibleCount] = useState(50);
   const [webEditor, setWebEditor] = useState(null);
+  const [selectedActionId, setSelectedActionId] = useState(() => aiActionSetups.get(setupKey) || '');
+  const [savedActionId, setSavedActionId] = useState(() => aiActionSetups.get(setupKey) || '');
+  const [setupMessage, setSetupMessage] = useState('');
   const pending = useRef(null), sequence = useRef(0), mounted = useRef(false), latest = useRef(messages), actionBusy = useRef(false);
   latest.current = messages;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; sequence.current++; pending.current?.abort(); }; }, []);
+  useEffect(() => {
+    const saved = aiActionSetups.get(setupKey) || '';
+    setSelectedActionId(saved); setSavedActionId(saved); setSetupMessage('');
+  }, [setupKey]);
   useEffect(() => {
     const controller = new AbortController(); setActionsLoading(true); setActionsError('');
     officeFetch(`${base}/office/agents/${encodeURIComponent(agent.id)}/actions`, { signal: controller.signal })
@@ -79,8 +93,8 @@ export default function AgentChat({ agent, officeFetch, base, apiBase, pipelineB
     const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 25000);
     // Keep the conversation without a count cap. Only recent topic context
     // enters a bounded request; the full transcript stays in this page.
-    const history = latest.current.filter(item => item.role === 'user').slice(-4).map(item => ({ role: 'user', content: item.content.slice(0, 1200) }));
-    while (history.length && new TextEncoder().encode(JSON.stringify({ message, history })).length > 7800) history.shift();
+    const history = latest.current.filter(item => item.role === 'user').slice(-4).map(item => ({ role: 'user', content: item.content }));
+    while (history.length && new TextEncoder().encode(JSON.stringify({ message, history })).length > requestCapacity) history.shift();
     append([{ role: 'user', content: message }]); setDraft('');
     try {
       const response = await officeFetch(`${base}/office/agents/${encodeURIComponent(agent.id)}/chat`, {
@@ -92,7 +106,10 @@ export default function AgentChat({ agent, officeFetch, base, apiBase, pipelineB
       if (sequence.current !== token || controller.signal.aborted) return;
       append([{ role: 'assistant', content: data.reply.slice(0, 6000), mode: data.mode, observedAt: data.observedAt, actions: validActions(data.actions),
         suggestions: Array.isArray(data.suggestions) ? data.suggestions.filter(item => typeof item === 'string').slice(0, 4).map(item => item.slice(0, 160)) : [] }]);
-    } catch (failure) { if (sequence.current === token && (!controller.signal.aborted || timedOut)) setError(timedOut ? 'The agent took too long to respond. Try again shortly.' : chatError(failure.status)); }
+    } catch (failure) { if (sequence.current === token && (!controller.signal.aborted || timedOut)) {
+      if (failure.status === 413) setDraft(current => current || message);
+      setError(timedOut ? 'The agent took too long to respond. Try again shortly.' : chatError(failure.status));
+    } }
     finally { clearTimeout(timeout); if (sequence.current === token) { pending.current = null; setBusy(false); } }
   }
   async function execute(action, confirmed = false) {
@@ -127,14 +144,34 @@ export default function AgentChat({ agent, officeFetch, base, apiBase, pipelineB
       if (mounted.current) append([{ role: 'assistant', mode: 'task', content: `${canonical.label}\n${results.join('\n\n')}`, observedAt: new Date().toISOString() }]);
     } finally { actionBusy.current = false; if (mounted.current) setRunning(''); }
   }
-  function actionCard(action, key = action.id) {
+  function saveActionSetup() {
+    const chosen = actions.find(action => action.id === selectedActionId);
+    if (!chosen || actionsLoading || actionsError || busy || actionBusy.current) return;
+    aiActionSetups.set(setupKey, chosen.id); setSavedActionId(chosen.id);
+    setSetupMessage('Setup saved for this Office session. No task was started.');
+  }
+  function actionCard(action, key = action.id, saved = false) {
     action = actions.find(item => item.id === action.id) || action;
-    return <div className="lc-agent-task" key={key}><div><strong>{action.label}</strong><p>{action.description}</p><small>{action.target === 'both' ? 'API and Pipeline' : action.target === 'pipeline' ? 'Pipeline' : 'API'} · {action.impact} impact</small>{action.available === false && <p className="lc-error">{action.unavailableReason}</p>}</div><button type="button" disabled={busy || !!running || actionsLoading || action.available === false} onClick={() => execute(action)} aria-label={`Run task: ${action.label}`}><Play size={13} />{running === action.id ? 'Running…' : action.input === 'frontend-file' ? 'Edit public web' : action.requiresConfirmation ? 'Review task' : 'Run task'}</button></div>;
+    return <div className="lc-agent-task" key={key}><div><strong>{action.label}</strong><p>{action.description}</p><small>{taskTarget(action)} · {action.impact} impact</small>{action.available === false && <p className="lc-error">{action.unavailableReason}</p>}</div><button type="button" disabled={busy || !!running || actionsLoading || !!actionsError || action.available === false} onClick={() => execute(action)} aria-label={saved ? 'Run saved AI action' : `Run task: ${action.label}`}><Play size={13} />{running === action.id ? 'Running…' : action.input === 'frontend-file' ? 'Edit public web' : action.requiresConfirmation ? 'Review task' : saved ? 'Run action' : 'Run task'}</button></div>;
   }
   const suggestions = messages.at(-1)?.suggestions || [], visible = messages.slice(-visibleCount);
+  const selectedAction = actions.find(action => action.id === selectedActionId), savedAction = actions.find(action => action.id === savedActionId);
   return <section className="lc-chat" aria-label="Agent conversation">
     <div className="lc-section-heading"><h3><MessageSquare size={16} />Ask this agent</h3><button type="button" aria-label="Clear conversation" onClick={clear} disabled={!!running || (!messages.length && !busy && !draft)}><Trash2 size={14} />Clear</button></div>
     <p className="lc-hint">Ask about this agent or request a supported task. Run task executes through Office Controls and records the result. AI explanations use the available observations.</p>
+    {agent.id === 'ai' && <section className="lc-ai-action-setup" aria-label="AI action setup">
+      <h4>Action setup</h4><p>Choose a supported task and save it for this Office session. Run it when ready; saving does not start work.</p>
+      <label htmlFor="lc-ai-action">Choose AI action</label>
+      <select id="lc-ai-action" value={selectedActionId} disabled={actionsLoading || !!actionsError || !!running} onChange={event => { setSelectedActionId(event.target.value); setSetupMessage(''); }}>
+        <option value="">Choose an action</option>{actions.map(action => <option key={action.id} value={action.id}>{action.label}{action.available === false ? ' — needs setup' : ''}</option>)}
+      </select>
+      {selectedAction && <div className="lc-ai-action-prerequisites"><p>{selectedAction.description}</p><small>{taskTarget(selectedAction)} · {selectedAction.impact} impact · {selectedAction.requiresConfirmation ? 'Review and confirmation required' : 'Runs when you choose Run action'}</small>
+        <p>{selectedAction.available === false ? selectedAction.unavailableReason || 'The required service needs setup.' : 'Available on the required service. Office access and prerequisites are checked again when you run it.'}</p></div>}
+      <button type="button" onClick={saveActionSetup} disabled={!selectedAction || actionsLoading || !!actionsError || busy || !!running}>Save setup</button>
+      {setupMessage && <p role="status">{setupMessage}</p>}
+      {savedAction && <div className="lc-ai-saved-action"><h5>Saved action</h5>{actionCard(savedAction, 'saved-ai-action', true)}{selectedActionId !== savedActionId && <p>Save setup to replace this action with your new selection.</p>}</div>}
+      {!!savedActionId && !savedAction && !actionsLoading && !actionsError && <p role="status">The saved action is unavailable in this service version. Choose another supported task.</p>}
+    </section>}
     <details className="lc-agent-actions" open><summary>Agent actions {actions.length ? `(${actions.length})` : ''}</summary>
       {actionsLoading && <p role="status">Loading available tasks…</p>}
       {actionsError && <p role="alert" className="lc-error">{actionsError}<button type="button" disabled={!!running} onClick={() => setRevision(value => value + 1)}>Retry tasks</button></p>}
@@ -151,8 +188,8 @@ export default function AgentChat({ agent, officeFetch, base, apiBase, pipelineB
     {review && <section className="lc-task-review" role="region" aria-label="Review agent task"><h4>Review {review.label}</h4><p>{review.description}</p><p>This {review.impact} impact task runs on {review.target === 'both' ? 'API and Pipeline' : review.target}.</p><button type="button" onClick={() => execute(review, true)} disabled={!!running || busy}>Confirm and run task</button><button type="button" onClick={() => setReview(null)}>Cancel task</button></section>}
     {error && <p role="alert" className="lc-error">{error}</p>}
     {!!suggestions.length && <div className="lc-suggestions">{suggestions.map(suggestion => <button type="button" key={suggestion} disabled={busy || !!running} onClick={() => setDraft(suggestion)}>{suggestion}</button>)}</div>}
-    <form onSubmit={send}><label htmlFor="lc-agent-message">Message this agent</label><textarea id="lc-agent-message" rows={3} maxLength={1200} value={draft} onChange={event => setDraft(event.target.value)} placeholder="Ask a question or request a task" disabled={!knownRole(agent.serviceRole)} />
-      <div className="lc-compose-footer"><small>{draft.length}/1200 · memory only</small><button type="submit" disabled={busy || !!running || !draft.trim() || !knownRole(agent.serviceRole)}><Send size={14} />Send message</button></div>
+    <form onSubmit={send}><label htmlFor="lc-agent-message">Message this agent</label><textarea id="lc-agent-message" rows={3} value={draft} onChange={event => setDraft(event.target.value)} placeholder="Ask a question or request a task" disabled={!knownRole(agent.serviceRole)} />
+      <div className="lc-compose-footer"><small>{draft.length.toLocaleString()} characters · memory only</small><button type="submit" disabled={busy || !!running || !draft.trim() || !knownRole(agent.serviceRole)}><Send size={14} />Send message</button></div>
     </form><p className="lc-hint">{messages.length} messages · No conversation message limit. History stays in this page until you clear it or leave. Recent context keeps each request small.</p>
   </section>;
 }

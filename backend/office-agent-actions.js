@@ -3,6 +3,8 @@
 // Chat text cannot choose arbitrary commands. Public web edits use the separate
 // reviewed file editor and the existing commit control.
 const TASKS = Object.freeze({
+  ai: ['runtime.inspect-queues', 'agents.activate-configured', 'feed.inspect-delivery', 'health.security',
+    'health.website', 'feed.optimize-sources', 'feed.audit-topics'],
   feed: ['feed.inspect-delivery', 'feed.refresh-all', 'feed.transfer-staging', 'feed.clear-delivery-caches'],
   refresh_queue: ['runtime.inspect-queues', 'feed.refresh-all'],
   equalizer: ['feed.equalize', 'runtime.inspect-queues'],
@@ -39,12 +41,13 @@ function agentActions(snapshot, catalog = []) {
 }
 function requestedActions(message, actions) {
   const text = String(message).trim().toLowerCase();
-  if (!/^(?:please\s+)?(?:(?:can|could|would)\s+you\s+)?(?:run|check|inspect|audit|refresh|sync|merge|sort|rebalance|heal|optimize|apply|transfer|clear|trim|clean|enable|disable|deploy|drain|do|fetch|pull|edit|change|update|fix|add|remove|style|improve)\b/.test(text)) return null;
+  if (!/^(?:please\s+)?(?:(?:can|could|would)\s+you\s+)?(?:run|check|inspect|audit|refresh|sync|merge|sort|rebalance|heal|optimize|apply|transfer|clear|trim|clean|enable|disable|activate|deploy|drain|do|fetch|pull|edit|change|update|fix|add|remove|style|improve)\b/.test(text)) return null;
   const matches = actions.filter(action => {
     const id = action.id;
     if (id === 'commit.web-frontend') return /\b(edit|change|update|fix|add|remove|style|improve)\b.*\b(homepage|website|public\s+web|web\s+(?:page|file)|web\/)\b/.test(text);
     if (id.startsWith('source.refresh.')) return /\b(refresh|fetch|pull)\b/.test(text);
     if (id === 'runtime.inspect-queues') return /\b(queues?|pending|backlog)\b/.test(text);
+    if (id === 'agents.activate-configured') return /\b(activate|enable)\b.*\b(configured\s+agents?|agents?)\b/.test(text);
     if (id === 'automation.enable') return /\benable\b.*\b(auto\s*fix|automation)\b/.test(text);
     if (id === 'automation.disable') return /\bdisable\b.*\b(auto\s*fix|automation)\b/.test(text);
     if (id === 'automation.audit') return /\b(audit|check)\b.*\b(auto\s*fix|automation|errors?)\b/.test(text);

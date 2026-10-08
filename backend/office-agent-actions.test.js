@@ -31,8 +31,27 @@ test('typed tasks select only actions exposed by the selected agent', () => {
   assert.deepEqual(requestedActions('Deploy the website', agentActions(snapshot('deploy'), catalog)).map(action => action.id), ['deploy.web']);
   assert.deepEqual(requestedActions('Update the homepage heading', source).map(action => action.id), ['commit.web-frontend']);
 });
+test('Office AI offers only curated controls with their live prerequisites and reviewed execution rules', () => {
+  const liveCatalog = [...catalog.filter(control => control.id !== 'agents.activate-configured'),
+    { id: 'agents.activate-configured', label: 'Activate configured agents', description: 'Start configured workers only.',
+      target: 'both', impact: 'medium', requiresConfirmation: true, available: false, unavailableReason: 'Audit database unavailable.' },
+    { id: 'custom.shell', label: 'Arbitrary shell', description: 'Must never be exposed.', target: 'api', requiresConfirmation: false },
+  ];
+  const ai = agentActions(snapshot('ai'), liveCatalog);
+  assert.deepEqual(ai.map(action => action.id), ['runtime.inspect-queues', 'agents.activate-configured', 'feed.inspect-delivery',
+    'health.security', 'health.website', 'feed.optimize-sources', 'feed.audit-topics', 'commit.web-frontend']);
+  const activation = ai.find(action => action.id === 'agents.activate-configured');
+  assert.equal(activation.target, 'both'); assert.equal(activation.requiresConfirmation, true);
+  assert.equal(activation.available, false); assert.equal(activation.unavailableReason, 'Audit database unavailable.');
+  assert.deepEqual(requestedActions('Please activate the configured agents', ai).map(action => action.id), ['agents.activate-configured']);
+  assert.deepEqual(requestedActions('Run an arbitrary shell command', ai), []);
+  assert.deepEqual(requestedActions('Deploy the API', ai), []);
+  const web = ai.find(action => action.id === 'commit.web-frontend');
+  assert.equal(web.input, 'frontend-file'); assert.equal(web.frontendTarget, 'web'); assert.equal(web.requiresConfirmation, true);
+});
 test('agent task routes require Office access, propose tasks without executing, and use audited controls', async t => {
-  const app = await createAppHarness({ connected: true, env: { OFFICE_TOKEN: 'office-actions-test', OFFICE_GITHUB_TOKEN: 'fixture-only', OPENAI_API_KEY: '' } });t.after(() => app.close());
+  const app = await createAppHarness({ connected: true, env: { OFFICE_TOKEN: 'office-actions-test', OFFICE_GITHUB_TOKEN: 'fixture-only',
+    REDDIT_CLIENT_ID: 'fixture-only', REDDIT_CLIENT_SECRET: 'fixture-only', OPENAI_API_KEY: '' } });t.after(() => app.close());
   const headers = { 'x-office-token': 'office-actions-test' };
   assert.equal((await app.request('/office/agents/security/actions')).status, 401);
   assert.equal((await app.request('/office/agents/not_real/actions', { headers })).status, 404);
@@ -44,6 +63,18 @@ test('agent task routes require Office access, propose tasks without executing, 
   assert.equal(proposed.status, 200); assert.equal(proposed.data.mode, 'diagnostics');
   assert.deepEqual(proposed.data.actions.map(action => action.id), ['health.security']);
   assert.match(proposed.data.reply, /No command was executed/); assert.equal(app.queries.length, count);
+  const aiTasks = await app.request('/office/agents/ai/actions', { headers });
+  assert.equal(aiTasks.status, 200); assert.equal(aiTasks.data.agentId, 'ai');
+  const activation = aiTasks.data.actions.find(action => action.id === 'agents.activate-configured');
+  assert.ok(activation);
+  assert.equal(activation.requiresConfirmation, Boolean(catalog.find(control => control.id === activation.id).requiresConfirmation));
+  assert.equal(activation.target, 'both');
+  const beforeAiRequest = app.queries.length;
+  const aiRequest = await app.request('/office/agents/ai/chat', { method: 'POST', headers, body: { message: 'Activate configured agents' } });
+  assert.equal(aiRequest.status, 200); assert.equal(aiRequest.data.mode, 'diagnostics');
+  assert.deepEqual(aiRequest.data.actions.map(action => action.id), ['agents.activate-configured']);
+  assert.match(aiRequest.data.reply, /No command was executed/);
+  assert.equal(app.queries.length, beforeAiRequest, 'AI task suggestions cannot execute controls or write audit records');
   const executed = await app.request('/office/controls/health.community/execute', { method: 'POST', headers, body: { contextId: 'agent-chat:api:community', contextLabel: 'Community task' } });
   assert.equal(executed.status, 200); assert.equal(executed.data.ok, true); assert.ok(executed.data.runId);
   assert.equal(typeof executed.data.result.groups, 'number');
