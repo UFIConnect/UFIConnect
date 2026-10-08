@@ -6,6 +6,7 @@ import { postProfileLink, safePostLink } from '../../../backend/post-links.mjs';
 import { SOURCE_META } from './sourceMeta';
 import { isExternalSnap, snapAvailabilityLabel, snapPlaybackInfo } from './snapRanking.mjs';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
+import { PostAvatar, postTimes } from './PostCardChrome';
 import { HlsVideoPlayer, youTubeEmbedUrl } from './videoMedia';
 import { officialSnapEmbedUrl } from '../utils/snapSourcePlayer.mjs';
 import { officialTwitchClipId } from '../utils/sourceMediaPolicy.mjs';
@@ -19,6 +20,8 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
   const snap = items[index], author = snap.author?.name || 'UFIConnect member';
   const profileLink = postProfileLink(snap, profile?.id), original = safePostLink(snap.sourceUrl);
   const source = SOURCE_META[snap.source]?.label || snap.source;
+  const authorPost = { ...snap, author: { ...snap.author, name: author, avatarUrl: safePostLink(snap.author?.avatarUrl) } };
+  const posted = postTimes(snap);
   const playback = snapPlaybackInfo(snap);
   const twitchClip = playback.kind === 'source' && snap.source === 'twitch' && (officialTwitchClipId(snap.sourceUrl) || officialTwitchClipId(snap.mediaUrl));
   const sourceEmbedCandidate = playback.kind === 'source' ? officialSnapEmbedUrl(snap) : null;
@@ -47,9 +50,13 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
       if (event.key === 'ArrowLeft') { event.preventDefault(); move(-1); } else if (event.key === 'ArrowRight') { event.preventDefault(); move(1); }
     }}>
     <div className="snap-viewer-inner">
-      <header><div className="snap-viewer-author"><strong id={titleId}>{profileLink?.to ? <Link to={profileLink.to} onClick={onClose}>{author}</Link> : profileLink?.href && !profileLink.fallback ? <a href={profileLink.href} target="_blank" rel="noopener noreferrer">{author}</a> : author}</strong>
-        <span className="snap-viewer-source-details"><span className="snap-source-mark" aria-hidden="true">{hasBrandIcon(snap.source) ? <BrandIcon platform={snap.source} size={16} /> : <b>{source.slice(0, 2)}</b>}</span><span>{source} · {snapAvailabilityLabel(snap, now)}</span></span>
-      </div><button type="button" className="snap-dialog-icon" disabled={deleting} onClick={onClose} aria-label="Close snap"><X size={22} /></button></header>
+      <header><div className="snap-social-header">
+        <PostAvatar post={authorPost} member={snap.source === 'uficonnect'} />
+        <div className="snap-viewer-author snap-social-identity"><strong id={titleId} className="snap-social-name post-chrome-name">{profileLink?.to ? <Link to={profileLink.to} onClick={onClose}>{author}</Link> : profileLink?.href && !profileLink.fallback ? <a href={profileLink.href} target="_blank" rel="noopener noreferrer">{author}</a> : author}</strong>
+          <span className="snap-viewer-source-details"><span className="snap-source-mark" aria-hidden="true">{hasBrandIcon(snap.source) ? <BrandIcon platform={snap.source} size={16} /> : <b>{source.slice(0, 2)}</b>}</span><span>{source} · {snapAvailabilityLabel(snap, now)}</span></span>
+          {posted && <time className="snap-social-meta" dateTime={posted.iso} title={posted.full} aria-label={posted.full}>{posted.relative}</time>}
+        </div>
+      </div><button type="button" className="snap-dialog-icon" disabled={deleting} onClick={onClose} aria-label="Close snap" autoFocus><X size={22} /></button></header>
       <div className={`snap-viewer-media${twitchClip ? ' snap-viewer-media-twitch' : ''}`}>{failed ? <p role="status">This snap’s media could not load.{original && <a href={original} target="_blank" rel="noopener noreferrer">Open on {source}</a>}</p>
         : twitchClip ? <TwitchClipPlayer key={mediaKey} post={snap} title={`${source} clip by ${author}`} />
         : playback.kind === 'youtube' ? <iframe key={mediaKey} src={youTubeEmbedUrl(playback.id, { autoplay: '0' })} title={`${source} clip by ${author}`} referrerPolicy="strict-origin-when-cross-origin" allow="encrypted-media; fullscreen; picture-in-picture" allowFullScreen onError={() => setFailed(true)} />
@@ -61,10 +68,10 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
       {snap.caption && <p className="snap-viewer-caption">{snap.caption}</p>}
       {snap.source === 'uficonnect' && <p className="snap-viewer-audience">{snap.visibility === 'followers' ? <><Users size={13} />Followers only</> : <><Globe2 size={13} />Public</>}</p>}
       {error && <p className="snap-viewer-error" role="alert">{error}</p>}
-      <footer><div className="snap-viewer-navigation"><button type="button" disabled={index === 0 || deleting} onClick={() => move(-1)} aria-label="Previous snap"><ChevronLeft size={20} /></button><span>{index + 1} / {items.length}</span><button type="button" disabled={index === items.length - 1 || deleting} onClick={() => move(1)} aria-label="Next snap"><ChevronRight size={20} /></button></div>
-        <div className="snap-viewer-actions">{original && <a href={original} target="_blank" rel="noopener noreferrer"><ExternalLink size={15} />Open on {source}</a>}
-          {onReport && <button type="button" disabled={deleting} onClick={() => onReport(snap)} aria-label="Report this snap"><Flag size={16} /></button>}
-          {canDelete && (confirmDelete ? <><button type="button" disabled={deleting} onClick={remove}>{deleting ? 'Deleting…' : 'Delete snap'}</button><button type="button" disabled={deleting} onClick={() => setConfirmDelete(false)}>Cancel</button></> : <button type="button" onClick={() => setConfirmDelete(true)} aria-label="Delete this snap"><Trash2 size={16} /></button>)}</div>
+      <footer><div className="snap-viewer-navigation" role="group" aria-label="Snap navigation"><button type="button" disabled={index === 0 || deleting} onClick={() => move(-1)} aria-label="Previous snap"><ChevronLeft size={20} /></button><span aria-live="polite">{index + 1} / {items.length}</span><button type="button" disabled={index === items.length - 1 || deleting} onClick={() => move(1)} aria-label="Next snap"><ChevronRight size={20} /></button></div>
+        <div className="snap-viewer-actions">{original && <a className="post-chrome-action" href={original} target="_blank" rel="noopener noreferrer"><ExternalLink size={15} />Open on {source}</a>}
+          {onReport && <button type="button" className="post-chrome-action" disabled={deleting} onClick={() => onReport(snap)} aria-label="Report this snap"><Flag size={16} />Report</button>}
+          {canDelete && (confirmDelete ? <><button type="button" className="post-chrome-action" disabled={deleting} onClick={remove}>{deleting ? 'Deleting…' : 'Delete snap'}</button><button type="button" className="post-chrome-action" disabled={deleting} onClick={() => setConfirmDelete(false)}>Cancel</button></> : <button type="button" className="post-chrome-action" onClick={() => setConfirmDelete(true)} aria-label="Delete this snap"><Trash2 size={16} />Delete</button>)}</div>
       </footer>
     </div>
   </dialog>, document.body);

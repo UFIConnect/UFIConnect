@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { sourceAuthorizationState } from './sourceAuthorization.mjs';
-import { withCareerAccountFallback, HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS, isFollowingFeedSource } from './sourceMeta.js';
+import { withCareerAccountFallback, HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS, isFollowingFeedSource, unavailableFeedSourceIds } from './sourceMeta.js';
 import feedCatalog from '../../../shared/feed-source-catalog.json' with { type: 'json' };
 import { normalizeSourceFavorites } from './sourceFavorites.js';
 
@@ -54,4 +54,24 @@ test('feed choices use real public collectors and followed-content adapters', ()
   for (const kind of Object.values(feedCatalog.following)) assert.equal(kind, 'following');
   for (const source of ['uficonnect', 'youtube', ' mastodon ', 'twitter']) assert.equal(isFollowingFeedSource(source), true);
   for (const source of [undefined, 'unknown-provider', 'spotify', 'cntraveler', 'facebook', 'hackernews', 'indeed']) assert.equal(isFollowingFeedSource(source), false);
+});
+
+test('new account and website sources remain visible as unavailable without entering feed or favorites allowlists', () => {
+  const home = unavailableFeedSourceIds('feed');
+  const following = unavailableFeedSourceIds('following');
+  for (const key of ['instagram', 'tiktok', 'threads', 'linkedin', 'pinterest', 'tumblr', 'wordpress', 'reuters', 'bbc', 'spotify']) {
+    assert.ok(home.includes(key), key);
+    assert.ok(following.includes(key), key);
+  }
+  assert.ok(following.includes('weworkremotely'));
+  assert.ok(following.includes('cntraveler'));
+  assert.equal(home.includes('weworkremotely'), false);
+  assert.equal(home.includes('cntraveler'), false);
+  for (const source of home) assert.equal(HOME_FEED_SOURCE_IDS.includes(source), false);
+  for (const source of following) assert.equal(FOLLOWING_FEED_SOURCE_IDS.includes(source), false);
+  assert.equal(unavailableFeedSourceIds('following', { includeWebsites: false }).includes('reuters'), false);
+  const business = unavailableFeedSourceIds('following', { careerOnly: true });
+  assert.ok(business.includes('weworkremotely'));
+  for (const source of ['instagram', 'airbnb', 'bbc']) assert.equal(business.includes(source), false);
+  assert.deepEqual(normalizeSourceFavorites({ feed: home, following }), { feed: [], following: [] });
 });

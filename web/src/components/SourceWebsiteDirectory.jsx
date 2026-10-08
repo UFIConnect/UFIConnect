@@ -1,14 +1,18 @@
 import { useMemo, useState } from 'react';
 import ACCOUNT_DIRECTORY from '../../../backend/account-directory.json';
-import { SOURCE_WEBSITE_IDS } from './sourceMeta';
+import { HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS } from './sourceMeta';
 import { ACCOUNT_CATEGORIES, accountCategory } from './sourceDirectory';
 import ExternalAccountLogin from './ExternalAccountLogin';
 import { DirectoryControls } from './DirectoryControls';
 
-export default function SourceWebsiteDirectory({ plan }) {
+export default function SourceWebsiteDirectory({ plan, mode = 'feed' }) {
   const [category, setCategory] = useState(plan === 'business' ? 'career' : 'publishing');
-  const entries = useMemo(() => SOURCE_WEBSITE_IDS.map(key => [key, ACCOUNT_DIRECTORY[key]])
-    .filter(([, entry]) => plan !== 'business' || entry.category === 'career'), [plan]);
+  const entries = useMemo(() => {
+    const supported = new Set(mode === 'following' ? FOLLOWING_FEED_SOURCE_IDS : HOME_FEED_SOURCE_IDS);
+    return Object.entries(ACCOUNT_DIRECTORY).filter(([key, entry]) => !supported.has(key)
+      && (plan !== 'business' || entry.category === 'career'));
+  }, [plan, mode]);
+  const reason = mode === 'following' ? 'Following unavailable' : 'Public feed unavailable';
   const categories = ACCOUNT_CATEGORIES.filter(([id]) => entries.some(([key, entry]) => accountCategory(key, entry) === id));
   const selected = categories.some(([id]) => id === category) ? category : categories[0]?.[0];
   const visible = entries.filter(([key, entry]) => accountCategory(key, entry) === selected)
@@ -16,10 +20,13 @@ export default function SourceWebsiteDirectory({ plan }) {
   if (!entries.length) return null;
   return <section className="feed-source-websites" aria-label="Source websites" style={{ gridColumn: '1 / -1', minWidth: 0, borderTop: '1px solid var(--border)', marginTop: 12, paddingTop: 12 }}>
     <h4 style={{ margin: '0 0 6px' }}>Source websites</h4>
-    <p style={{ color: 'var(--muted)', fontSize: '.78rem', margin: '0 0 8px' }}>Read or listen on these sources.</p>
+    <p style={{ color: 'var(--muted)', fontSize: '.78rem', margin: '0 0 8px' }}>{reason}. Read or listen on the source website.</p>
     <DirectoryControls label="source websites" filter={selected} onFilterChange={setCategory} options={categories} />
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-      {visible.map(([key]) => <ExternalAccountLogin key={key} platform={key} />)}
-    </div>
+    <ul className="feed-source-website-list">
+      {visible.map(([key, entry]) => <li key={key}>
+        <button type="button" disabled aria-label={`${entry.name}: ${reason}`}>{entry.name}</button>
+        <ExternalAccountLogin platform={key} />
+      </li>)}
+    </ul>
   </section>;
 }

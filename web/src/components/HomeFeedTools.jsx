@@ -11,6 +11,7 @@ import { sourceAuthorizationState } from './sourceAuthorization.mjs';
 import AccountActionIcon from './AccountActionIcon';
 import { DirectoryControls, AccountCategoryNavigation, AccountSiteLink } from './DirectoryControls';
 import { SOURCE_CATEGORIES, sourceSections, accountSections, selectedAccountSections } from './sourceDirectory';
+import UnavailableFeedSources from './UnavailableFeedSources';
 import useTabMetrics from '../analytics/useTabMetrics';
 
 const LINK_FIELDS = [
@@ -422,6 +423,7 @@ export default function HomeFeedTools({
           </div>)}
           {!sourceGroups.length && <div className="source-directory-empty" role="status">No matching sources</div>}
         </div>
+        <UnavailableFeedSources mode={favoriteMode} category={sourceCategory} plan={profile?.plan} />
       </ToolPanel>}
 
       {showAccounts && <ToolPanel title="Connected accounts" open={openPanel === 'accounts'} onToggle={() => toggle('accounts')}>

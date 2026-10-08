@@ -32,6 +32,7 @@ import AccountActionIcon from '../components/AccountActionIcon';
 import FollowingConnectionNotice from '../components/FollowingConnectionNotice';
 import HomeFeedTools from '../components/HomeFeedTools';
 import SourceWebsiteDirectory from '../components/SourceWebsiteDirectory';
+import UnavailableFeedSources from '../components/UnavailableFeedSources';
 import SnapFeedRail from '../components/SnapFeedRail';
 import TopicFilterControl, { TopicChoices } from '../components/TopicFilterControl';
 import TravelDestinationPicker, { useTravelDestinations, travelCityMatches } from '../components/TravelDestinationPicker';
@@ -3573,7 +3574,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                     {sourceFavoriteSaving ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Save favorites'}
                   </button>
                 </div>
-                <SourceWebsiteDirectory plan={profile?.plan} />
+                <UnavailableFeedSources mode={sourceFavoriteMode} plan={profile?.plan} includeWebsites={false} />
+                <SourceWebsiteDirectory plan={profile?.plan} mode={sourceFavoriteMode} />
               </div>
             )}
           </div>

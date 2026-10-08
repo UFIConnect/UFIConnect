@@ -5335,10 +5335,10 @@ async function fetchGitLabFollowingActivity(token, { bust = false, connectedAt =
 
 const twitchFeed = createTwitchFeed({ fetcher: fetch,
   getConfig: () => ({ clientId: process.env.TWITCH_CLIENT_ID, clientSecret: process.env.TWITCH_CLIENT_SECRET }) });
-// Public clips use the app's client-credentials token. Followed live streams
+// Public stream cards and clips use the app's client-credentials token. Followed live streams
 // and clips use only the current member's authorized user:read:follows token.
-async function fetchTwitchPublicClips() {
-  return isSourceDisplayAllowed('twitch', { env: process.env }) ? twitchFeed.publicClips() : [];
+async function fetchTwitchPublicPosts() {
+  return isSourceDisplayAllowed('twitch', { env: process.env }) ? twitchFeed.publicPosts() : [];
 }
 async function fetchTwitchFollowedStreams(token, options = {}) {
   return twitchFeed.following(token, options);
@@ -6476,7 +6476,7 @@ async function fetchAllTopicPosts(interests = [], role = '', skills = [], goals 
     run('crunchbase')    ? Promise.all(topics.map(kw => fetchCrunchbaseNews(kw))).catch(() => [])       : [],
     run('behance')       ? Promise.all(topics.map(kw => fetchBehanceProjects(kw))).catch(() => [])      : [],
     run('designweb')     ? Promise.all(topics.map(kw => fetchDesignWeb(kw))).catch(() => [])            : [],
-    run('twitch')        ? fetchTwitchPublicClips().catch(() => []) : [],
+    run('twitch')        ? fetchTwitchPublicPosts().catch(() => []) : [],
   ]);
 
   return {
@@ -7346,7 +7346,7 @@ function startContinuousWorkers() {
     //  id               emoji   color       fetchFn                  keyMapper  startDelay
     ['weworkremotely', 'WWR', '#EF4444', expandedFeedSources.weworkremotely, () => 'jobs', 36000],
     ['cntraveler', 'LM', '#026B9C', expandedFeedSources.cntraveler, () => 'Travel', 38000],
-    ['twitch', 'Tw', '#9146FF', fetchTwitchPublicClips, () => 'Streaming', 40000],
+    ['twitch', 'Tw', '#9146FF', fetchTwitchPublicPosts, () => 'Streaming', 40000],
     ['reddit',        '??', '#FF6347', fetchRedditByKeyword,     t => t,  0],  // pass topic name directly for TOPIC_SUBREDDITS lookup
     ['hn',            '??', '#FF6600', fetchHNByKeyword,         kw,   1000],
     ['github',        '??', '#94A3B8', fetchGitHubByKeyword,     kw,   2000],

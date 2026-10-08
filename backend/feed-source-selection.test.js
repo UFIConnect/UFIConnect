@@ -6,13 +6,14 @@ const { createAppHarness, member } = require('./test-support/app-harness');
 const topic = 'Science';
 function postRow(source, index, duration = 1200) {
   const videoUrl = `https://www.youtube.com/watch?v=fixture${String(index).padStart(4, '0')}`;
+  const twitchStream = source === 'twitch';
   return {
     id: `${source}_selection_${index}`, source, topic,
     title: `Science research update ${index}`, content: 'Researchers share a detailed science project update.',
-    source_url: source === 'youtube' ? videoUrl : source === 'twitch' ? `https://clips.twitch.tv/FixtureClip${index}` : `https://example.com/science/${index}`,
+    source_url: source === 'youtube' ? videoUrl : twitchStream ? `https://www.twitch.tv/creator_${index}` : `https://example.com/science/${index}`,
     author_name: 'Science publisher', post_created_at: new Date(Date.now() - index * 60000).toISOString(),
-    media_type: 'video', video_duration_seconds: duration,
-    media_url: source === 'youtube' ? videoUrl : source === 'twitch' ? `https://clips.twitch.tv/FixtureClip${index}` : `https://example.com/video/${index}.mp4`,
+    media_type: twitchStream ? 'image' : 'video', video_duration_seconds: twitchStream ? null : duration,
+    media_url: source === 'youtube' ? videoUrl : twitchStream ? `https://static-cdn.jtvnw.net/previews/live_user_creator_${index}-440x248.jpg` : `https://example.com/video/${index}.mp4`,
   };
 }
 

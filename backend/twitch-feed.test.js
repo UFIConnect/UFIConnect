@@ -74,9 +74,26 @@ test('public clips use only app credentials, omit mature channels and share cach
   assert.ok(f.calls.every(call => call.options.redirect === 'error'));
 });
 
+test('Home retains public stream cards while Snaps reads only short clips, sharing the same provider inventory', async () => {
+  const f = fixture({ handler: ({ url }) => url.pathname === '/helix/streams'
+    ? response({ data: [stream(), stream({ id: '9002', user_id: '202', user_login: 'mature_creator', is_mature: true })] }) : null });
+  const [home, snaps] = await Promise.all([f.feed.publicPosts(), f.feed.publicClips()]);
+  assert.deepEqual(home.map(post => post.id), ['twitch_9001', 'twitch_clip_RealClip-Ab12']);
+  assert.equal(home[0].mediaType, 'image');
+  assert.equal(home[0].sourceUrl, 'https://www.twitch.tv/followed_creator');
+  assert.equal(home[0].visibility, 'public');
+  assert.equal(home[0].viewsCount, 120);
+  assert.equal(home[0].likesCount, 0);
+  assert.equal(home[0].videoDurationSeconds, undefined, 'A live stream is not labeled as a short clip');
+  assert.deepEqual(snaps.map(post => post.id), ['twitch_clip_RealClip-Ab12']);
+  assert.equal(f.calls.length, 3, 'Stream cards reuse the existing bounded public discovery response');
+  assert.ok(f.calls.slice(1).every(call => call.options.headers.Authorization === 'Bearer synthetic-app-token'));
+  assert.equal(f.calls.some(call => /\/followed$/.test(call.url.pathname)), false);
+});
+
 test('public ingestion remains idle until both app credentials are configured and never fills a personal feed', async () => {
   for (const config of [{}, { clientId: 'client' }, { clientSecret: 'secret' }]) {
-    const f = fixture({ config }); assert.deepEqual(await f.feed.publicClips(), []); assert.equal(f.calls.length, 0);
+    const f = fixture({ config }); assert.deepEqual(await f.feed.publicClips(), []); assert.deepEqual(await f.feed.publicPosts(), []); assert.equal(f.calls.length, 0);
   }
   const f = fixture(); assert.deepEqual(await f.feed.following(null), []); assert.equal(f.calls.length, 0);
 });
