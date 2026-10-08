@@ -45,9 +45,10 @@ try {
     await page.getByRole('button', { name: 'Decline analytics', exact: true }).click();
     if (mode === 'signup') await page.getByText('Create one', { exact: true }).click();
     await page.getByRole('button', { name: 'Continue with phone number', exact: true }).waitFor();
-    assert.equal(await page.getByRole('button', { name: 'Continue with Apple', exact: true }).isDisabled(), true);
-    assert.equal(await page.getByRole('button', { name: 'Continue with Google', exact: true }).isDisabled(), true, 'Expo preview sends social sign-in to the main website');
-    await page.getByRole('link', { name: 'Sign in on uficonnect.org', exact: true }).waitFor();
+    const accountAction = mode === 'signup' ? 'Sign up' : 'Sign in';
+    assert.equal(await page.getByRole('button', { name: `${accountAction} with Apple`, exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: `${accountAction} with Google`, exact: true }).isDisabled(), true, 'Expo preview sends social sign-in to the main website');
+    await page.getByRole('link', { name: `${accountAction} on uficonnect.org`, exact: true }).waitFor();
     await page.getByRole('button', { name: 'Continue with phone number', exact: true }).click();
     await page.getByLabel('Phone number for verification', { exact: true }).fill('555');
     await page.getByRole('button', { name: 'Send verification code', exact: true }).click();

@@ -64,7 +64,8 @@ try {
     const page = await context.newPage(); page.setDefaultTimeout(15000);
     await page.clock.install();
     const errors = [], requests = [], downloads = [];
-    let mode = 'https', calls = 0, held = null, release;
+    let mode = 'https', subscriptionMode = 'unpaid', expiresAt = 0, calls = 0, held = null, release;
+    let billingHeld = null, releaseBilling;
     page.on('pageerror', error => errors.push(error.message));
     page.on('download', download => downloads.push(download.suggestedFilename()));
     await context.route('**/*', async route => {
@@ -85,7 +86,14 @@ try {
         return route.fulfill({ json: value }).catch(() => {});
       }
       if (url.pathname === '/api/profile') return route.fulfill({ json: { id: owner, name: 'Synthetic Member', email: 'synthetic@example.invalid', plan: 'free', onboardingComplete: true, preferences: {}, roleSettings: {} } });
-      if (url.pathname === '/api/billing/status') return route.fulfill({ json: { plan: 'free', vpnConnectorAddon: false, subscriptions: [] } });
+      if (url.pathname === '/api/billing/status') {
+        const paid = owner !== 'account-b' && subscriptionMode !== 'unpaid';
+        const value = { plan: 'free', vpnConnectorAddon: paid, subscriptions: paid ? [{ kind: 'vpn_connector',
+          status: subscriptionMode === 'trial' ? 'trialing' : 'active',
+          currentPeriodEnd: subscriptionMode === 'expired' ? 1 : subscriptionMode === 'expiring' ? expiresAt : Math.floor(Date.now() / 1000) + 3600 }] : [] };
+        if (billingHeld && owner === 'account-a') await billingHeld;
+        return route.fulfill({ json: value }).catch(() => {});
+      }
       if (url.pathname === '/api/billing/config') return route.fulfill({ json: { paymentsReady: false, tiers: {}, pricing: {} } });
       if (url.pathname === '/api/profile/security') return route.fulfill({ json: { passwordChangeAvailable: true, serverSessionRevocation: true, multiFactorAvailable: false } });
       if (url.pathname === '/api/auth/providers') return route.fulfill({ json: { providers: {} } });
@@ -99,15 +107,36 @@ try {
     const status = panel.getByRole('status');
     const refresh = panel.getByRole('button', { name: 'Check protection', exact: true });
     const monitoring = panel.getByRole('switch', { name: 'Vault connection monitoring', exact: true });
-    await status.filter({ hasText: 'Protected' }).waitFor();
+    await status.filter({ hasText: 'Subscription required' }).waitFor();
     check(await panel.getByRole('heading', { name: 'Web protection' }).isVisible(), `${device.name}: browser Vault shows web protection`);
     check(await panel.getByText('No app, profile or download is needed.', { exact: false }).isVisible(), `${device.name}: download-free browser scope explained`);
     check(await page.getByRole('button', { name: /Get VPN profile|Connect VPN|Enable VPN/ }).count() === 0, `${device.name}: no native VPN action in ordinary browser visit`);
     check(await page.getByRole('link', { name: /Download Windows preview|Get official WireGuard|Download VPN profile/ }).count() === 0, `${device.name}: no connection download offered`);
-    check(await refresh.isEnabled(), `${device.name}: unpaid account can check automatic protection`);
+    check(await monitoring.getAttribute('aria-checked') === 'false' && await monitoring.isDisabled() && await refresh.isDisabled(), `${device.name}: unpaid Vault cannot enable monitoring or claim protection`);
+    check(calls === 0, `${device.name}: unpaid Vault starts no connection monitoring requests`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), `${device.name}: Vault does not overflow the viewport`);
     await panel.scrollIntoViewIfNeeded();
     await page.screenshot({ path: path.join(output, device.name + '-vault.png'), fullPage: true });
+
+    const subscriptionRefresh = page.getByRole('button', { name: 'Check subscription status', exact: true });
+    for (const value of ['trial', 'expired']) {
+      subscriptionMode = value;
+      await subscriptionRefresh.click();
+      await status.filter({ hasText: 'Subscription required' }).waitFor();
+      check(await monitoring.isDisabled() && await monitoring.getAttribute('aria-checked') === 'false' && calls === 0,
+        `${device.name}: ${value} billing flags cannot activate monitoring`);
+      check(await page.locator('.vault-vpn-subscription [role="status"]').filter({ hasText: /^Active/ }).count() === 0,
+        `${device.name}: ${value} membership is never presented as active`);
+    }
+    subscriptionMode = 'expiring'; expiresAt = Math.floor(await page.evaluate(() => Date.now()) / 1000) + 3;
+    await subscriptionRefresh.click();
+    await status.filter({ hasText: 'Protected' }).waitFor();
+    await page.clock.fastForward(3500);
+    await status.filter({ hasText: 'Subscription required' }).waitFor();
+    check(await monitoring.isDisabled() && await monitoring.getAttribute('aria-checked') === 'false', `${device.name}: period expiry stops monitoring without waiting for the minute poll`);
+    subscriptionMode = 'paid';
+    await subscriptionRefresh.click();
+    await status.filter({ hasText: 'Protected' }).waitFor();
 
     check(await monitoring.getAttribute('aria-checked') === 'true' && await monitoring.isEnabled(), `${device.name}: Vault monitoring starts On`);
     check(await panel.getByText('HTTPS, Vault encryption and account security stay active.', { exact: false }).isVisible(), `${device.name}: pausing monitoring preserves security`);
@@ -183,6 +212,24 @@ try {
     await page.evaluate(() => window.__webProtectionAudit.update('account-b'));
     check(await status.filter({ hasText: 'Protected' }).count() === 0, `${device.name}: account switch immediately clears previous verification`);
     release(); held = null;
+    await status.filter({ hasText: 'Subscription required' }).waitFor();
+    check(await monitoring.isDisabled() && await monitoring.getAttribute('aria-checked') === 'false', `${device.name}: an unpaid account cannot inherit a delayed paid connection report`);
+    await page.evaluate(() => window.__webProtectionAudit.update('account-a'));
+    await status.filter({ hasText: 'Protected' }).waitFor();
+
+    billingHeld = new Promise(resolve => { releaseBilling = resolve; });
+    const [pendingBilling] = await Promise.all([
+      page.waitForRequest(request => new URL(request.url()).pathname === '/api/billing/status'), subscriptionRefresh.click(),
+    ]);
+    await status.filter({ hasText: 'Checking subscription' }).waitFor();
+    const cancelledBilling = page.waitForEvent('requestfailed', { predicate: request => request === pendingBilling });
+    await page.evaluate(() => window.__webProtectionAudit.update('account-b'));
+    await status.filter({ hasText: 'Subscription required' }).waitFor();
+    releaseBilling(); billingHeld = null;
+    await cancelledBilling;
+    await page.waitForTimeout(100);
+    check(await status.filter({ hasText: 'Protected' }).count() === 0 && await monitoring.isDisabled(), `${device.name}: a delayed paid billing response cannot activate another account`);
+    await page.evaluate(() => window.__webProtectionAudit.update('account-a'));
     await status.filter({ hasText: 'Protected' }).waitFor();
 
     held = new Promise(resolve => { release = resolve; });

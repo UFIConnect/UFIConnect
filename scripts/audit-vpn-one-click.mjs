@@ -47,7 +47,9 @@ try {
   {platform:'android',width:390,userAgent:'Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/131.0.0.0 Mobile Safari/537.36'},
  ]){
   const context=await browser.newContext({viewport:{width:device.width,height:900},userAgent:device.userAgent,serviceWorkers:'block'});
-  await context.addInitScript(platform => Object.defineProperty(navigator, 'platform', { get: () => platform }), device.platform === 'windows' ? 'Win32' : 'Linux armv8l');
+  // Model Windows UA emulation on a Linux runner so platform and UA fallback
+  // detection are exercised independently of the host OS.
+  await context.addInitScript(platform => Object.defineProperty(navigator, 'platform', { get: () => platform }), device.platform === 'windows' ? 'Linux x86_64' : 'Linux armv8l');
   page=await context.newPage();page.setDefaultTimeout(10000);
   const errors=[],requests=[];
   let available=true,configFailure=false,launchFailure=false,badUrl=false,badNonce=false,expired=false,held=null,launches=0,configReads=0;
@@ -82,7 +84,7 @@ try {
   check(configReads===0,'Unpaid member never requests member VPN configuration');
   check(await page.getByLabel('Check VPN availability').isDisabled(),'Unpaid availability control is locked');
   await page.evaluate(()=>window.__vpnAudit.update({active:true}));
-  await button.waitFor();
+  await page.locator('.vault-status').filter({hasText:'Ready to open app'}).waitFor();
   check(await button.isEnabled(),'Paid member with gateway can connect');
   available=false;
   await page.getByLabel('Check VPN availability').click();
@@ -155,6 +157,19 @@ try {
   await page.screenshot({path:path.join(output,device.platform+'.png'),fullPage:true});
   await context.close();
  }
- console.log(`PASS: ${checks} VPN handoff browser checks across Windows desktop and Android; no native handler launched.`);
+ const unsupported=await browser.newContext({viewport:{width:1440,height:900},userAgent:'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15'});
+ await unsupported.addInitScript(()=>Object.defineProperty(navigator,'platform',{get:()=> 'Darwin'}));
+ const unsupportedPage=await unsupported.newPage();
+ await unsupported.route('**/api/**',route=>new URL(route.request().url()).pathname.startsWith('/api/')
+  ? route.fulfill({json:{available:true,protocol:'wireguard',gateways:[{id:'test-us-1',label:'US'}]}}) : route.continue());
+ await unsupportedPage.goto(base+'__vpn-audit');
+ await unsupportedPage.locator('.vault-status').filter({hasText:'Subscription required'}).waitFor();
+ await unsupportedPage.evaluate(()=>window.__vpnAudit.update({active:true}));
+ await unsupportedPage.locator('.vault-status').filter({hasText:'App required'}).waitFor();
+ check(await unsupportedPage.getByRole('button',{name:'Connect VPN',exact:true}).isDisabled(),'Darwin platform does not enable Windows handoff');
+ check(await unsupportedPage.getByRole('link',{name:'Download Windows preview',exact:true}).count()===0,'Unsupported macOS does not receive a Windows installer');
+ check(await unsupportedPage.evaluate(()=>window.__vpnAudit.launched.length)===0,'Unsupported platform cannot launch a native handler');
+ await unsupported.close();
+ console.log(`PASS: ${checks} VPN handoff browser checks across Windows desktop, Android and unsupported macOS; no native handler launched.`);
 }catch(error){await page?.screenshot({path:path.join(output,'failure.png'),fullPage:true}).catch(()=>{});throw error;}
 finally{await browser?.close();await server.close();}

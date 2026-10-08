@@ -3,9 +3,15 @@
 const crypto = require('node:crypto');
 const bcrypt = require('bcryptjs');
 const express = require('express');
+const { SESSION_TTL_SECONDS } = require('./auth-security');
+const { createSessionCookie } = require('./web-connection-security');
 
 const PREFIX = 'ufi_signin_';
 const PHONE_ALIAS_DOMAIN = 'identity.uficonnect.invalid';
+const PUBLIC_FAILURE_CODES = new Set(['failed','cancelled','invalid_flow','expired','account_exists','account_missing','unavailable','browser_binding','rate_limited','phone_delivery_unavailable']);
+const PROVIDER_FAILURE_CODES = new Set(['invalid_request','invalid_client','invalid_grant','unauthorized_client','unsupported_grant_type','invalid_scope','access_denied','server_error','temporarily_unavailable']);
+const IDENTITY_FAILURE_CODES = new Set(['ERR_JWT_EXPIRED','ERR_JWT_CLAIM_VALIDATION_FAILED','ERR_JWS_SIGNATURE_VERIFICATION_FAILED','ERR_JWS_INVALID','ERR_JWT_INVALID','ERR_JOSE_ALG_NOT_ALLOWED','ERR_JWKS_NO_MATCHING_KEY','ERR_JWKS_MULTIPLE_MATCHING_KEYS','ERR_JWKS_TIMEOUT','ERR_JWKS_INVALID']);
+const FAILURE_STAGES = new Set(['flow','binding','token','identity','account','session']);
 const SIGNIN_SCHEMA = [
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS email_is_placeholder BOOLEAN NOT NULL DEFAULT false`,
   `CREATE TABLE IF NOT EXISTS auth_signin_flows (
@@ -94,7 +100,8 @@ async function verifyIdentityToken(provider, token, { audience, nonce, keySet } 
   return { provider, subject: payload.sub, email: payload.email ? payload.email.trim().toLowerCase() : '', name: typeof payload.name === 'string' ? payload.name.slice(0, 120) : '' };
 }
 
-function createSignIn({ db, env = process.env, vault, callbackBase, frontendBase, issueSession, profileFor, onUser, onCreated = () => {}, recordSignIn = () => {}, fetcher = fetch, keySets = {}, phoneProvider } = {}) {
+function createSignIn({ db, env = process.env, vault, callbackBase, frontendBase, issueSession, profileFor, onUser, onCreated = () => {}, recordSignIn = () => {}, fetcher = fetch, keySets = {}, phoneProvider,
+  reportFailure = diagnostic => console.warn('[signin] callback failure', JSON.stringify(diagnostic)) } = {}) {
   const settings = providerSettings(env);
   const callback = provider => `${callbackBase}${provider === 'google' ? settings.google.callbackPath : `/auth/providers/${provider}/callback`}`;
   const storageReady = () => db.isConnected() && encryptionKeyConfigured(env.OAUTH_TOKEN_ENCRYPTION_KEY);
@@ -113,7 +120,13 @@ function createSignIn({ db, env = process.env, vault, callbackBase, frontendBase
     const response = await fetcher(url, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers }, body: new URLSearchParams(params).toString(), signal: AbortSignal.timeout(15000) });
     let result;
     try { result = await response.json(); } catch { throw fail('The sign-in provider is temporarily unavailable.', 502, 'unavailable'); }
-    if (!response.ok) throw fail('The sign-in provider could not complete verification.', 502, 'unavailable');
+    if (!response.ok) {
+      if (url.startsWith('https://verify.twilio.com/v2/') && Number(result?.code) === 21608)
+        throw fail('Phone verification is not available for this number. Choose another sign-in method.', 503, 'phone_delivery_unavailable');
+      const error = fail('The sign-in provider could not complete verification.', 502, 'unavailable');
+      if (['https://oauth2.googleapis.com/token','https://appleid.apple.com/auth/token'].includes(url) && PROVIDER_FAILURE_CODES.has(result?.error)) error.providerCode = result.error;
+      throw error;
+    }
     return result;
   }
   async function transaction(work) {
@@ -195,8 +208,10 @@ function createSignIn({ db, env = process.env, vault, callbackBase, frontendBase
       throw fail('An account already uses this email. Sign in with your existing method.', 409, 'account_exists');
     }
   }
-  async function session(identity, details, req) {
+  async function session(identity, details, req, onStage = () => {}) {
+    onStage('account');
     const { row, created } = await provision(identity, details);
+    onStage('session');
     const user = onUser(row);
     const token = await issueSession(user);
     recordSignIn(user, req);
@@ -224,6 +239,10 @@ function createSignIn({ db, env = process.env, vault, callbackBase, frontendBase
     const url = new URL(provider === 'google' ? 'https://accounts.google.com/o/oauth2/v2/auth' : 'https://appleid.apple.com/auth/authorize');
     Object.entries({ client_id: settings[provider].clientId, redirect_uri: callback(provider), response_type: 'code', scope: provider === 'google' ? 'openid email profile' : 'name email', state, nonce }).forEach(([k,v]) => url.searchParams.set(k,v));
     if (provider === 'google') {
+      // Account authentication stays separate from permissions to read a
+      // connected source, including when reusing the YouTube OAuth client.
+      url.searchParams.set('include_granted_scopes', 'false');
+      url.searchParams.set('prompt', 'select_account');
       url.searchParams.set('code_challenge', crypto.createHash('sha256').update(codeVerifier).digest('base64url'));
       url.searchParams.set('code_challenge_method', 'S256');
     } else url.searchParams.set('response_mode', 'form_post');
@@ -237,45 +256,60 @@ function createSignIn({ db, env = process.env, vault, callbackBase, frontendBase
   async function complete(provider, req, res) {
     const params = req.method === 'POST' ? req.body : req.query;
     const state = params?.state;
-    let row;
+    let row, stage = 'flow';
     try {
       ensure(provider);
-      if (typeof state !== 'string' || !state.startsWith(PREFIX) || !validOpaque(state.slice(PREFIX.length))) throw fail('This sign-in request has expired. Start again.');
+      if (typeof state !== 'string' || !state.startsWith(PREFIX) || !validOpaque(state.slice(PREFIX.length))) throw fail('This sign-in request has expired. Start again.', 400, 'expired');
       const id = digest(state);
       row = (await db.query('SELECT * FROM auth_signin_flows WHERE id=$1 AND provider=$2 AND phase=$3 AND expires_at>NOW()', [id, provider, 'pending'])).rows[0];
-      if (!row) throw fail('This sign-in request has expired. Start again.');
-      if (row.client === 'web' && (!validOpaque(browserBinding(req)) || digest(browserBinding(req)) !== row.binding_hash)) throw fail('Start sign-in in this browser and try again.');
+      if (!row) throw fail('This sign-in request has expired. Start again.', 400, 'expired');
+      stage = 'binding';
+      if (row.client === 'web' && (!validOpaque(browserBinding(req)) || digest(browserBinding(req)) !== row.binding_hash)) throw fail('Start sign-in in this browser and try again.', 400, 'browser_binding');
       // Consume before any external request: callback replay cannot create a
       // second session, including when provider verification is slow.
+      stage = 'flow';
       const consumed = await db.query('DELETE FROM auth_signin_flows WHERE id=$1 AND phase=$2 AND expires_at>NOW() RETURNING *', [id,'pending']);
-      if (!consumed.rows[0]) throw fail('This sign-in request has expired. Start again.');
+      if (!consumed.rows[0]) throw fail('This sign-in request has expired. Start again.', 400, 'expired');
       const payload = open(row);
-      if (params.error) throw fail('Sign-in was cancelled.', 400, 'cancelled');
+      if (params.error) {
+        const error = fail('Sign-in was cancelled.', 400, 'cancelled');
+        if (PROVIDER_FAILURE_CODES.has(params.error)) error.providerCode = params.error;
+        throw error;
+      }
       if (typeof params.code !== 'string' || !params.code || params.code.length > 4096) throw fail('The provider did not return a sign-in code.');
+      stage = 'token';
       const tokens = await form(provider === 'google' ? 'https://oauth2.googleapis.com/token' : 'https://appleid.apple.com/auth/token', {
         grant_type: 'authorization_code', code: params.code, client_id: settings[provider].clientId,
         client_secret: provider === 'google' ? settings.google.clientSecret : await appleSecret(), redirect_uri: callback(provider),
         ...(provider === 'google' ? { code_verifier: payload.codeVerifier } : {}),
       });
+      stage = 'identity';
       const identity = await verifyIdentityToken(provider, tokens.id_token, { audience: settings[provider].clientId, nonce: payload.nonce, keySet: keySets[provider] });
       if (provider === 'apple' && typeof params.user === 'string' && params.user.length <= 4096) {
         try { const name = JSON.parse(params.user)?.name; identity.name = [name?.firstName,name?.lastName].filter(v=>typeof v==='string').join(' ').slice(0,120); } catch {}
       }
       if (row.client === 'native') {
+        stage = 'session';
         const code = random(), handoffId = digest(code);
         await db.query(`INSERT INTO auth_signin_flows (id,provider,client,mode,binding_hash,payload,phase,expires_at)
           VALUES ($1,$2,'native',$3,$4,$5,'handoff',NOW()+INTERVAL '2 minutes')`, [handoffId, provider, row.mode, row.binding_hash, seal(handoffId, { identity, mode: row.mode, ...(payload.linkContext ? {linkContext:payload.linkContext} : {}) })]);
         return res.redirect(`uficonnect://auth/callback#code=${code}`);
       }
-      const result = await session(identity, { mode: row.mode, linkContext:payload.linkContext }, req);
+      const result = await session(identity, { mode: row.mode, linkContext:payload.linkContext }, req, value => { stage = value; });
       res.append('Set-Cookie', flowCookie('', 0));
-      res.append('Set-Cookie', `ufi_session=${encodeURIComponent(result.token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${env.NODE_ENV === 'production' ? '; Secure' : ''}`);
+      res.append('Set-Cookie', createSessionCookie(result.token, SESSION_TTL_SECONDS, env));
       const target = new URL(row.mode==='link'?'/settings':'/login', frontendBase);
       if(row.mode==='link') { target.searchParams.set('tab','security'); target.searchParams.set('linked',provider); }
       else { target.searchParams.set('provider', provider); if (payload.returnTo) target.searchParams.set('returnTo', payload.returnTo); }
       return res.redirect(target.toString());
     } catch (error) {
-      const code = error.publicCode || 'failed';
+      const code = PUBLIC_FAILURE_CODES.has(error?.publicCode) ? error.publicCode : 'failed';
+      // Log only bounded classifications. Error messages and provider payloads
+      // can contain credentials or identity data and never enter diagnostics.
+      const diagnostic = { provider: ['google','apple'].includes(provider) ? provider : 'unknown', stage: FAILURE_STAGES.has(stage) ? stage : 'flow', publicCode: code };
+      if (PROVIDER_FAILURE_CODES.has(error?.providerCode)) diagnostic.providerCode = error.providerCode;
+      if (IDENTITY_FAILURE_CODES.has(error?.code)) diagnostic.identityCode = error.code;
+      try { reportFailure(diagnostic); } catch {}
       if (row?.client === 'native') return res.redirect(`uficonnect://auth/callback#error=${encodeURIComponent(code)}`);
       const target = new URL(row?.mode==='link'?'/settings':'/login', frontendBase);
       if(row?.mode==='link') target.searchParams.set('tab','security');

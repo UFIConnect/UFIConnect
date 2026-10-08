@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Check, Power, RefreshCw, ShieldCheck, ShieldAlert } from 'lucide-react';
 import useWebConnection from '../security/useWebConnection';
 import { webConnectionProtected } from '../security/webConnection.mjs';
+import { paidVpnAccess } from '../lib/vpnAccess';
 import './WebProtectionPanel.css';
 
 const SAFEGUARDS = [
@@ -17,19 +18,23 @@ function monitoringPreference(key) {
   try { return window.localStorage.getItem(key) !== 'off'; } catch { return true; }
 }
 
-export default function WebProtectionPanel({ accountId, variant = 'vault' }) {
+export default function WebProtectionPanel({ accountId, billing, variant = 'vault' }) {
+  const vault = variant === 'vault';
+  const paid = !vault || paidVpnAccess(billing);
   const preferenceKey = variant === 'vault' && accountId ? `ufi:vault-monitoring:${encodeURIComponent(accountId)}` : null;
   const currentPreference = useRef(preferenceKey); currentPreference.current = preferenceKey;
   const savedMonitoring = useMemo(() => monitoringPreference(preferenceKey), [preferenceKey]);
   const [monitoring, setMonitoring] = useState(null);
-  const enabled = variant !== 'vault' || (monitoring?.key === preferenceKey ? monitoring.enabled : savedMonitoring);
+  const enabled = paid && (!vault || (monitoring?.key === preferenceKey ? monitoring.enabled : savedMonitoring));
   const { status, checking, error, refresh, authenticated } = useWebConnection(accountId, enabled);
   const heading = useId();
   const monitoringLabel = useId();
-  const protectedConnection = webConnectionProtected(status);
-  const label = !accountId || !authenticated ? 'Sign in to check' : !enabled ? 'Monitoring paused'
+  const protectedConnection = enabled && webConnectionProtected(status);
+  const label = !accountId || !authenticated ? 'Sign in to check' : vault && billing?.checking ? 'Checking subscription'
+    : !paid ? 'Subscription required' : !enabled ? 'Monitoring paused'
     : checking ? 'Checking protection' : protectedConnection ? 'Protected' : 'Needs attention';
   const toggleMonitoring = () => {
+    if (!paid || !accountId || !authenticated) return;
     const next = !enabled;
     setMonitoring({ key: preferenceKey, enabled: next });
     try { if (preferenceKey) window.localStorage.setItem(preferenceKey, next ? 'on' : 'off'); } catch { /* Keep the control usable without browser storage. */ }
@@ -67,16 +72,17 @@ export default function WebProtectionPanel({ accountId, variant = 'vault' }) {
         {protectedConnection ? <ShieldCheck size={14} aria-hidden="true" /> : !enabled ? <Power size={14} aria-hidden="true" /> : <ShieldAlert size={14} aria-hidden="true" />}{label}
       </span>
     </div>
-    <p>Protection runs automatically across UFIConnect in this browser. No app, profile or download is needed.</p>
+    <p>{vault ? 'Your paid Vault membership includes automatic connection monitoring inside UFIConnect. No app, profile or download is needed.' : 'Protection runs automatically across UFIConnect in this browser. No app, profile or download is needed.'}</p>
     {variant === 'vault' && <>
       <div className="web-protection-monitoring">
         <h3 id={monitoringLabel}>Vault connection monitoring</h3>
         <button type="button" role="switch" aria-labelledby={monitoringLabel} aria-checked={enabled}
-          className={`web-protection-switch${enabled ? ' is-on' : ''}`} disabled={!accountId || !authenticated} onClick={toggleMonitoring}>
+          className={`web-protection-switch${enabled ? ' is-on' : ''}`} disabled={!paid || !accountId || !authenticated} onClick={toggleMonitoring}>
           <Power size={15} aria-hidden="true" />{enabled ? 'On' : 'Off'}
         </button>
       </div>
       <p className="web-protection-caption">Turn automatic connection checks on or off. HTTPS, Vault encryption and account security stay active.</p>
+      {!paid && !billing?.checking && <p className="web-protection-caption">An active paid Vault membership is required to enable connection monitoring. Subscribe or check your subscription status.</p>}
     </>}
     {status && <ul className="web-protection-checks">
       <li>{status.transport.encrypted ? <Check size={16} aria-hidden="true" /> : <ShieldAlert size={16} aria-hidden="true" />}
