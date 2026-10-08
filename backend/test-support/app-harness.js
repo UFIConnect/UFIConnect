@@ -53,6 +53,15 @@ async function createAppHarness({ env = {}, connected = false, query, withClient
       if (name === 'express') return expressFactory;
       if (name === 'dotenv') return { config() {} };
       if (name === './db') return db;
+      if (name === './snaps') return {
+        ...localRequire(name), createSnaps: options => ({
+          ...localRequire(name).createSnaps(options),
+          // Unrelated audits use synthetic member IDs and no Snap storage.
+          // Snap audience/auth/storage rules have their own database tests;
+          // callers can replace this fixture through the modules argument.
+          list: async () => [],
+        }),
+      };
       if (name === './generation-usage' && generationUsage) return {
         ...localRequire(name), createGenerationUsage: () => generationUsage,
       };

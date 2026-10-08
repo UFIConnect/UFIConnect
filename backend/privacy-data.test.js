@@ -15,6 +15,7 @@ const { UFI_VAULT_SCHEMA } = require('./ufi-vault');
 const { REPORT_SCHEMA } = require('./content-reports');
 const { MANAGED_VPN_SCHEMA } = require('./managed-vpn-schema');
 const { INBOX_RECEIPTS_SCHEMA } = require('./inbox-receipts');
+const { SNAP_SCHEMA } = require('./snaps');
 const { schemaStatements: GENERATION_USAGE_SCHEMA } = require('./generation-usage');
 
 const alice = '11111111-1111-4111-8111-111111111111';
@@ -45,10 +46,12 @@ async function schema(pg) {
   for (const sql of BUSINESS_TEAM_SCHEMA) await pg.exec(sql);
   for (const sql of BUSINESS_POST_SCHEMA) await pg.exec(sql);
   for (const sql of [...CREATOR_ANALYTICS_SCHEMA, ...UFI_VAULT_SCHEMA, ...REPORT_SCHEMA]) await pg.exec(sql);
+  for (const sql of SNAP_SCHEMA) await pg.exec(sql);
 }
 
 async function seed(pg) {
   await pg.exec(`TRUNCATE ${[...tables, 'generated_content', 'billing_checkout_attempts', 'billing_webhook_events'].join(',')} RESTART IDENTITY CASCADE`);
+  await pg.exec('TRUNCATE snap_media_cleanup');
   const insert = async (table, row) => {
     const columns = Object.keys(row);
     await pg.query(`INSERT INTO ${table} (${columns.join(',')}) VALUES (${columns.map((_, index) => `$${index + 1}`).join(',')})`, Object.values(row));
@@ -70,6 +73,10 @@ async function seed(pg) {
       enrollment_mode: prefix === 'a' ? 'profile' : 'native', registration_auth_version: prefix === 'a' ? 0 : null,
       public_key: Buffer.alloc(32, prefix === 'a' ? 1 : 2).toString('base64'), tunnel_address: prefix === 'a' ? '10.80.0.2' : '10.80.0.3' });
     await insert('community_posts', { id: `${prefix}-post`, group_id: 'shared-group', author_id: uid, content: `${prefix}-post-content`, likes: [alice, bob], comments_count: 1 });
+    await insert('community_snaps', { id: `snap_${uid}`, author_id: uid, caption: `${prefix}-snap-caption`,
+      media_url: `https://media.invalid/${prefix}.jpg`, media_type: 'image', thumbnail_url: `https://media.invalid/${prefix}.jpg`,
+      public_id: `uficonnect-snaps/snap-${uid}-asset`, media_bytes: 100,
+      created_at: '2026-10-08T12:00:00Z', expires_at: '2026-10-09T12:00:00Z' });
     await insert('post_comments', { id: `${prefix}-comment`, post_id: 'b-post', author_id: uid, content: `${prefix}-comment-content` });
     await insert('attachments', { id: `${prefix}-file`, user_id: uid, filename: `${prefix}.txt`, file_size: 9, file_data: Buffer.from(`${prefix}-contents`), extracted_text: `${prefix}-resume-text` });
     await insert('saved_posts', { user_id: uid, post_id: `${prefix}-saved`, post_snapshot: JSON.stringify({ title: `${prefix}-saved-title` }) });
@@ -170,13 +177,13 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
     assert.equal(exported.generationUsage[0].used, 1);
     assert.equal(exported.generationRequests[0].state, 'completed');
     assert.equal(Object.hasOwn(exported.generationRequests[0], 'id'), false);
-    for (const key of ['posts', 'comments', 'attachments', 'savedPosts', 'trackedJobs', 'generatedContent', 'resumeDrafts',
+    for (const key of ['posts', 'snaps', 'comments', 'attachments', 'savedPosts', 'trackedJobs', 'generatedContent', 'resumeDrafts',
       'crossPosts', 'businessPosts', 'ownedGroups', 'notifications', 'inboxReadReceipts', 'reports', 'seenPosts', 'engagementPreferences', 'restaurantLikes', 'externalPostLikes',
       'pushRegistrations', 'signIns', 'legacyPageViews', 'legacyClientErrors', 'legacyServerErrors', 'legacyUsageSignals', 'billingCheckouts', 'vpnLocations', 'vpnDevices', 'generationUsage', 'generationRequests']) {
       assert.equal(exported[key].length, 1, key);
     }
     const serialized = JSON.stringify(exported);
-    for (const forbidden of ['secret-', 'other-private-conversation', 'b-summary', 'b-report-details', 'b-resume-text', 'b-prompt', 'b-vpn-profile', 'b-vpn-device']) {
+    for (const forbidden of ['secret-', 'other-private-conversation', 'b-summary', 'b-report-details', 'b-resume-text', 'b-prompt', 'b-vpn-profile', 'b-vpn-device', 'b-snap-caption']) {
       assert.equal(serialized.includes(forbidden), false, forbidden);
     }
   });
@@ -216,6 +223,9 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
     assert.deepEqual((await pg.query('SELECT id FROM post_comments')).rows, [{ id: 'b-comment' }]);
     assert.deepEqual((await pg.query('SELECT id FROM direct_messages')).rows, [{ id: 'unrelated' }]);
     assert.deepEqual((await pg.query('SELECT id FROM reports')).rows, [{ id: 'b-report' }]);
+    assert.deepEqual((await pg.query('SELECT author_id FROM community_snaps')).rows, [{ author_id: bob }]);
+    assert.deepEqual((await pg.query('SELECT public_id,media_type FROM snap_media_cleanup')).rows,
+      [{ public_id: `uficonnect-snaps/snap-${alice}-asset`, media_type: 'image' }]);
   });
 
   await t.test('a real SQL failure rolls back earlier deletes and leaves process memory unchanged', async () => {

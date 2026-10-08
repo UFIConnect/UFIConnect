@@ -86,7 +86,11 @@ async function resolveReportTarget(query, report) {
   if (!target && report.target_type === 'post') {
     const native = await query("SELECT id FROM community_posts WHERE id=$1 AND COALESCE(source,'uficonnect')='uficonnect'", [report.target_id]);
     if (native.rows[0]) target = { target_type: 'post', target_id: native.rows[0].id, source: 'uficonnect', source_url: null, kind: 'native_post' };
-    else {
+    else if (/^snap_[a-f0-9-]{36}$/i.test(report.target_id)) {
+      const { rows } = await query('SELECT id FROM community_snaps WHERE id=$1 AND deleted_at IS NULL AND media_cleaned_at IS NULL', [report.target_id]);
+      if (rows[0]) target = { target_type: 'post', target_id: rows[0].id, source: 'uficonnect', source_url: null, kind: 'native_snap' };
+    }
+    if (!target) {
       const { rows } = await query(`SELECT id, source, source_url FROM feed_posts_cache WHERE id=$1
         UNION ALL SELECT id, source, source_url FROM feed_posts_staging WHERE id=$1
         UNION ALL SELECT id, source, source_url FROM feed_posts_archive WHERE id=$1 LIMIT 1`, [report.target_id]);
@@ -265,6 +269,8 @@ function createContentReports({ db, notifyChildSafety = async () => {}, onRemove
             if (target.kind === 'native_post') {
               await client.query('DELETE FROM post_comments WHERE post_id=$1', [target.target_id]);
               await client.query("DELETE FROM community_posts WHERE id=$1 AND COALESCE(source,'uficonnect')='uficonnect'", [target.target_id]);
+            } else if (target.kind === 'native_snap') {
+              await client.query('UPDATE community_snaps SET deleted_at=COALESCE(deleted_at,NOW()) WHERE id=$1', [target.target_id]);
             } else if (target.kind === 'native_comment' && !target.removed) {
               const deleted = await client.query('DELETE FROM post_comments WHERE id=$1 RETURNING post_id', [target.target_id]);
               if (deleted.rows[0]) await client.query('UPDATE community_posts SET comments_count=GREATEST(comments_count-1,0) WHERE id=$1', [deleted.rows[0].post_id]);
