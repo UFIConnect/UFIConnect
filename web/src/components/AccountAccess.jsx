@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Phone } from 'lucide-react';
+import { LockKeyhole, Phone } from 'lucide-react';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { normalizedPhoneNumber, providerAuthorizationUrl, SIGNIN_ERRORS } from '../auth/accountAccess.mjs';
@@ -35,6 +35,9 @@ export default function AccountAccess({ mode = 'login', returnTo = '/', onSigned
   const callbackParams = new URLSearchParams(location.search);
   const callbackError = linking && callbackParams.has('auth_error') ? (callbackParams.get('auth_error') === 'account_exists' ? 'This sign-in method is already connected to another account.' : SIGNIN_ERRORS[callbackParams.get('auth_error')] || 'This sign-in method could not be connected. Please try again.') : '';
   const connected = provider => linked?.methods?.some(method => method.provider === provider) === true;
+  const providerReady = provider => providers?.[provider]?.configured === true && providers?.[provider]?.enabled === true;
+  const availabilityLabel = provider => !providers ? statusError ? 'Unavailable' : 'Checking availability'
+    : providers[provider]?.configured !== true ? 'Setup required' : 'Unavailable';
   const linkedProvider = linking && ['google', 'apple', 'phone'].includes(callbackParams.get('linked')) && connected(callbackParams.get('linked')) ? callbackParams.get('linked') : null;
   const unavailable = busy || disabled || (linking && !linked);
   useEffect(() => {
@@ -65,7 +68,7 @@ export default function AccountAccess({ mode = 'login', returnTo = '/', onSigned
   function current(controller) { return mounted.current && !controller.signal.aborted; }
 
   async function startProvider(provider) {
-    if (locked.current || unavailable || connected(provider) || !providers?.[provider]?.enabled) return;
+    if (locked.current || unavailable || connected(provider) || !providerReady(provider)) return;
     const controller = begin();
     try {
       const { data } = await client.post(`/auth/providers/${provider}/${linking ? 'link' : 'start'}`, linking ? { client: 'web' } : { client: 'web', mode, returnTo: safeReturnPath(returnTo) }, publicOAuthRequestConfig({ signal: controller.signal }));
@@ -75,7 +78,7 @@ export default function AccountAccess({ mode = 'login', returnTo = '/', onSigned
 
   async function sendCode(event) {
     event?.preventDefault();
-    if (locked.current || unavailable || Date.now() < resendAt) return;
+    if (locked.current || unavailable || !providerReady('phone') || Date.now() < resendAt) return;
     const phoneNumber = normalizedPhoneNumber(phone);
     if (!phoneNumber) { setError('Enter your phone number with its country code, such as +1 555 123 4567.'); return; }
     if (signup && !name.trim()) { setError('Enter your name to create your account.'); return; }
@@ -97,7 +100,7 @@ export default function AccountAccess({ mode = 'login', returnTo = '/', onSigned
 
   async function verifyCode(event) {
     event.preventDefault();
-    if (locked.current || unavailable || !verification) return;
+    if (locked.current || unavailable || !providerReady('phone') || !verification) return;
     if (Date.now() >= verification.expiresAt) { setError('This verification expired. Request a new code.'); return; }
     if (!/^\d{4,10}$/.test(code)) { setError('Enter the verification code from your text message.'); return; }
     const controller = begin();
@@ -117,12 +120,12 @@ export default function AccountAccess({ mode = 'login', returnTo = '/', onSigned
     {linkedProvider && !callbackError && <p className="account-access-success" role="status">{linkedProvider === 'phone' ? 'Phone number' : linkedProvider === 'google' ? 'Google' : 'Apple'} is connected for sign-in.</p>}
     {callbackError && <p className="auth-error" role="alert">{callbackError}</p>}
     <div className="account-access-providers">
-      {['google', 'apple'].map(provider => <button key={provider} type="button" className={`account-access-provider account-access-provider-${provider}`} disabled={unavailable || connected(provider) || !providers?.[provider]?.enabled} onClick={() => startProvider(provider)}>
+      {['google', 'apple'].map(provider => <button key={provider} type="button" className={`account-access-provider account-access-provider-${provider}`} disabled={unavailable || connected(provider) || !providerReady(provider)} onClick={() => startProvider(provider)}>
         <ProviderMark provider={provider} /><span>Continue with {provider === 'google' ? 'Google' : 'Apple'}</span>
-        {connected(provider) ? <small>Connected</small> : providers && !providers[provider]?.enabled && <small>Unavailable</small>}
+        {connected(provider) ? <small>Connected</small> : !providerReady(provider) && <small><LockKeyhole size={12} aria-hidden="true" />{availabilityLabel(provider)}</small>}
       </button>)}
-      <button type="button" className="account-access-provider" disabled={unavailable || connected('phone') || !providers?.phone?.enabled} aria-expanded={phoneOpen} onClick={() => { setPhoneOpen(value => !value); setCode(''); setError(''); }}>
-        <Phone size={20} aria-hidden="true" /><span>{linking ? 'Connect phone number' : 'Continue with phone number'}</span>{connected('phone') ? <small>Connected</small> : providers && !providers.phone?.enabled && <small>Unavailable</small>}
+      <button type="button" className="account-access-provider" disabled={unavailable || connected('phone') || !providerReady('phone')} aria-expanded={phoneOpen} onClick={() => { setPhoneOpen(value => !value); setCode(''); setError(''); }}>
+        <Phone size={20} aria-hidden="true" /><span>{linking ? 'Connect phone number' : 'Continue with phone number'}</span>{connected('phone') ? <small>Connected</small> : !providerReady('phone') && <small><LockKeyhole size={12} aria-hidden="true" />{availabilityLabel('phone')}</small>}
       </button>
     </div>
     {statusError && <p className="account-access-status" role="status">{statusError} <button type="button" onClick={() => setRevision(value => value + 1)}>Retry options</button></p>}
@@ -133,12 +136,12 @@ export default function AccountAccess({ mode = 'login', returnTo = '/', onSigned
         {signup && <div className="form-group"><label className="form-label" htmlFor={`${id}-name`}>Full name</label><input id={`${id}-name`} className="form-input" autoComplete="name" value={name} maxLength={100} onChange={event => setName(event.target.value)} disabled={busy} required /></div>}
         <div className="form-group"><label className="form-label" htmlFor={`${id}-phone`}>Phone number</label><input id={`${id}-phone`} className="form-input" type="tel" autoComplete="tel" inputMode="tel" value={phone} onChange={event => setPhone(event.target.value)} placeholder="+1 555 123 4567" disabled={busy} required /></div>
         <p>We’ll text a verification code to this number. Your phone number stays private.</p>
-        <button className="btn btn-primary btn-full" disabled={unavailable || now < resendAt} type="submit">{busy ? 'Sending…' : now < resendAt ? `Try again in ${Math.ceil((resendAt - now) / 1000)}s` : 'Send verification code'}</button>
+        <button className="btn btn-primary btn-full" disabled={unavailable || !providerReady('phone') || now < resendAt} type="submit">{busy ? 'Sending…' : now < resendAt ? `Try again in ${Math.ceil((resendAt - now) / 1000)}s` : 'Send verification code'}</button>
       </form> : <form onSubmit={verifyCode}>
         <h2>Verify your phone number</h2><p>Enter the code sent to {phone}. It expires in 10 minutes.</p>
         <div className="form-group"><label className="form-label" htmlFor={`${id}-code`}>Verification code</label><input id={`${id}-code`} className="form-input" type="text" inputMode="numeric" autoComplete="one-time-code" value={code} maxLength={10} onChange={event => setCode(event.target.value.replace(/\D/g, ''))} disabled={busy} autoFocus required /></div>
-        <button className="btn btn-primary btn-full" disabled={unavailable || now >= verification.expiresAt} type="submit">{busy ? 'Verifying…' : linking ? 'Verify and connect phone' : signup ? 'Verify and create account' : 'Verify and sign in'}</button>
-        <div className="account-access-resend"><button type="button" disabled={busy || now < resendAt} onClick={sendCode}>{now < resendAt ? `Resend in ${Math.ceil((resendAt - now) / 1000)}s` : 'Resend code'}</button><button type="button" disabled={busy} onClick={() => { setVerification(null); setCode(''); setError(''); }}>Use a different number</button></div>
+        <button className="btn btn-primary btn-full" disabled={unavailable || !providerReady('phone') || now >= verification.expiresAt} type="submit">{busy ? 'Verifying…' : linking ? 'Verify and connect phone' : signup ? 'Verify and create account' : 'Verify and sign in'}</button>
+        <div className="account-access-resend"><button type="button" disabled={unavailable || !providerReady('phone') || now < resendAt} onClick={sendCode}>{now < resendAt ? `Resend in ${Math.ceil((resendAt - now) / 1000)}s` : 'Resend code'}</button><button type="button" disabled={busy} onClick={() => { setVerification(null); setCode(''); setError(''); }}>Use a different number</button></div>
       </form>}
     </div>}
     {!linking && <div className="account-access-divider"><span />Or continue with email<span /></div>}

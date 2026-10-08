@@ -202,7 +202,7 @@ function ShareIcon() {
 // The "more" button opens the post's options. Each item is
 // { label, detail?, danger?, busy?, disabled?, ariaLabel?, to?, href?, onSelect }.
 // Playback callbacks belong to the player; source links never imply an API write.
-export function PostOptionsMenu({ post, items = [], onOpenComments, onPostUpdated, onRemoved }) {
+export function PostOptionsMenu({ post, items = [], sourceItems, onOpenComments, onPostUpdated, onRemoved }) {
   const { profile, token } = useAuth();
   const { showToast } = useToast();
   const [open, setOpen] = useState(false);
@@ -249,7 +249,7 @@ export function PostOptionsMenu({ post, items = [], onOpenComments, onPostUpdate
       post?.id && { label: 'Likes on UFIconnect', to: `/p/${encodeURIComponent(post.id)}`, detail: 'View likes on the post.' },
       post?.id && { label: 'Go to profile', ...destination, disabled: !destination, detail: destination ? post.author?.name : 'Author profile unavailable.' },
       post?.id && !suppliedItems.some(item => item.label === 'Open post') && { label: 'Open post', to: `/p/${encodeURIComponent(post.id)}` },
-    ] : sourcePostMenuItems(post, { onOpenComments, includeComments: !hasCommentsItem })),
+    ] : sourceItems ?? sourcePostMenuItems(post, { onOpenComments, includeComments: !hasCommentsItem })),
     ...suppliedItems,
     post?.id && (native || original) && !suppliedItems.some(item => /^Copy (?:original link|link to post)$/i.test(item.label)) && { label: native ? 'Copy link to post' : 'Copy original link', onSelect: copyLink },
     ownPost && { label: 'Edit post', busy: deleteBusy, onSelect: () => setEditOpen(true) },

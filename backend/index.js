@@ -547,10 +547,11 @@ const PORT = process.env.PORT || 3000;
 const JWT_SECRET = resolveJwtSecret(process.env);
 const localSessions = new Map();
 const AUTH0_DOMAIN = (process.env.AUTH0_DOMAIN || process.env.AUTH0_ISSUER_BASE_URL || '')
+  .trim()
   .replace(/^https?:\/\//, '')
-  .replace(/\/+$/, '');
-const AUTH0_AUDIENCE = process.env.AUTH0_AUDIENCE || '';
-const AUTH0_ISSUER = (process.env.AUTH0_ISSUER || (AUTH0_DOMAIN ? `https://${AUTH0_DOMAIN}/` : ''))
+  .replace(/\/+$/, '').toLowerCase();
+const AUTH0_AUDIENCE = (process.env.AUTH0_AUDIENCE || '').trim();
+const AUTH0_ISSUER = ((process.env.AUTH0_ISSUER || '').trim() || (AUTH0_DOMAIN ? `https://${AUTH0_DOMAIN}/` : ''))
   .replace(/\/?$/, '/');
 const auth0Enabled = Boolean(AUTH0_DOMAIN && AUTH0_AUDIENCE && AUTH0_ISSUER);
 let auth0Jwks = null;
@@ -1135,7 +1136,7 @@ function socialCredentialStatus(platform, req) {
     if (i === 1) return cfg?.clientSecret?.();
     return process.env[key];
   });
-  const missingEnv = requiredEnv.filter((_key, i) => !values[i]);
+  const missingEnv = requiredEnv.filter((_key, i) => typeof values[i] !== 'string' || !values[i].trim());
   return {
     configured: missingEnv.length === 0,
     requiredEnv,
@@ -15995,20 +15996,10 @@ async function refreshFollowingSourceCaches() {
   }
 }
 
-// Twitter/LinkedIn/Instagram/Facebook have no real "following timeline" API
-// available to third-party apps at all (see the block comment above) — the
-// closest thing UFIconnect can actually offer once one of these is
-// connected is a keyword search scoped to the user's own interests, run
-// with their token. That used to be merged straight into the *main* true-
-// mix feed (as a live, per-request, un-cached fetch) as one raw
-// unsorted/undiversified block ahead of everything else — confirmed live
-// as the reason "true mix" broke down for anyone with a connected account:
-// the diversify/rank pipeline never saw this content at all, it was just
-// concatenated in front of it. It belongs here instead, alongside genuine
-// UFIconnect-follow-graph posts, not in the algorithmically mixed feed — and
-// tagged `matchedByInterest: true` so the client can label it honestly
-// (interest-matched, not literally "people you follow on X") rather than
-// implying it's a real following timeline the way the internal posts are.
+// These installed adapters search the connected member's interests. They
+// remain available to account-scoped Home callers (surface: null), and mark
+// results as interest matches. Following surfaces use only real followed
+// content from FOLLOWING_SOURCE_FETCHERS and the native follow graph.
 const CONNECTED_SOCIAL_SEARCH_FETCHERS = {
   linkedin:  fetchLinkedIn,
   twitter:   fetchTwitter,
@@ -16111,7 +16102,7 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
     }
   }
 
-  if (user?.socialTokens) {
+  if (!isFollowingSurface && user?.socialTokens) {
     const prefs = user.preferences || {};
     const socialKws = (prefs.interests || []).map(interestKeyword).filter(Boolean).slice(0, 3);
     if (socialKws.length > 0) {
@@ -20972,8 +20963,8 @@ app.get('/social/platforms', authenticate, async (req, res) => {
       },
       ownContent: { supported: Boolean(OWN_CONTENT_FETCHERS[key]) },
       feed: {
-        home: FEED_SOURCE_CATALOG.home.includes(key) || Boolean(ACCOUNT_DIRECTORY[key]?.feedSupported),
-        following: FEED_SOURCE_CATALOG.following[key] || null,
+        home: FEED_SOURCE_CATALOG.home.includes(key),
+        following: FEED_SOURCE_CATALOG.following[key] === 'following' ? 'following' : null,
       },
     }];
   }));

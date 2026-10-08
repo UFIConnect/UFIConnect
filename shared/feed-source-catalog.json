@@ -1,11 +1,11 @@
 {
   "home": [
     "reddit", "github", "youtube", "hackernews", "twitter", "facebook",
-    "indeed", "remoteok", "remotive", "muse", "usajobs",
+    "indeed", "remoteok", "remotive", "muse", "usajobs", "weworkremotely",
     "bluesky", "gitlab", "devto", "medium", "stackoverflow", "lobsters", "arxiv",
     "producthunt", "techcrunch", "theverge", "indiehackers", "hashnode",
     "arstechnica", "wired", "theregister", "venturebeat", "smashing", "phoronix", "infoq", "mittr",
-    "yc", "crunchbase", "behance", "designweb", "mastodon"
+    "yc", "crunchbase", "behance", "designweb", "mastodon", "cntraveler"
   ],
   "following": {
     "youtube": "following",
@@ -14,8 +14,6 @@
     "reddit": "following",
     "twitch": "following",
     "bluesky": "following",
-    "mastodon": "following",
-    "twitter": "interests",
-    "facebook": "interests"
+    "mastodon": "following"
   }
 }

@@ -1,22 +1,21 @@
 import ExternalAccountLogin from './ExternalAccountLogin';
+import { Lock } from 'lucide-react';
+import { sourceAuthorizationState } from './sourceAuthorization.mjs';
 
-// OAuth already includes the provider's sign-in screen. Website-only accounts
-// keep their official sign-in link without inventing a UFIConnect authorization.
+// Catalog readiness controls account authorization. Website visits remain a
+// separate action with a label that describes where the link goes.
 export default function AccountConnectionAction({
   platformKey, platform, onConnect, connecting = false, disabled = false,
   isConnected = false, className = 'btn btn-outline btn-sm', compact = false,
 }) {
-  if (platform.connectionMode === 'external') {
-    return <ExternalAccountLogin platform={platformKey} className={className} compact={compact} />;
-  }
-  const unavailable = !platform.configured || platform.forceComingSoon;
-  const membershipRequired = platform.locked && !isConnected;
-  const reason = unavailable
-    ? 'Review this provider’s authorization options in its account details.'
-    : membershipRequired ? 'An active membership is required to authorize this account.' : undefined;
-  return <button type="button" className={className} onClick={onConnect}
-    disabled={disabled || connecting || unavailable || membershipRequired}
-    aria-label={`Sign in and connect ${platform.name}`} title={reason}>
-    {connecting ? <><span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> Opening…</> : 'Sign in & connect'}
-  </button>;
+  const state = sourceAuthorizationState(platform, { isConnected });
+  const inactive = disabled || connecting || !state.ready;
+  return <>
+    <button type="button" className={className} onClick={inactive ? undefined : onConnect}
+      disabled={inactive} aria-label={`Sign in and connect ${platform?.name || platformKey}`} title={state.reason || undefined}>
+      {!state.ready ? <><Lock size={13} aria-hidden="true" /> {compact ? 'Locked' : 'Sign in & connect · Locked'}</>
+        : connecting ? <><span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> Opening…</> : 'Sign in & connect'}
+    </button>
+    {platform?.connectionMode === 'external' && <ExternalAccountLogin platform={platformKey} className={className} compact={compact} />}
+  </>;
 }

@@ -118,7 +118,7 @@ try {
       await page.evaluate(async () => { if (document.fullscreenElement) await document.exitFullscreen(); });
       await page.waitForFunction(() => !document.fullscreenElement);
     };
-    const checkPostActions = async (slide, profileHref) => {
+    const checkPostActions = async (slide, profileHref, youtube = false) => {
       const actions = slide.getByRole('group', { name: 'Post actions', exact: true });
       assert.ok(await actions.isVisible());
       assert.ok(await actions.locator('.post-chrome-like').isVisible(), 'Likes stay visible');
@@ -127,21 +127,23 @@ try {
       assert.equal(await slide.locator('input[type="range"], .video-feed-action-rail, .video-feed-scrubber, .video-feed-progress').count(), 0,
         'App playback rails and scrubbers are absent');
       const playback = slide.getByRole('group', { name: 'Playback controls', exact: true });
-      assert.ok(await playback.isVisible(), 'Core playback commands stay visible');
-      assert.equal(await playback.getByRole('button', { name: /^(?:Play|Pause) video$/ }).count(), 1);
-      assert.equal(await playback.getByRole('button', { name: /^(?:Mute|Unmute) video$/ }).count(), 1);
-      const original = actions.getByRole('link', { name: 'View original post', exact: true });
+      assert.ok(await playback.isVisible(), 'The sound control stays visible');
+      assert.equal(await slide.getByRole('button', { name: /^(?:Play|Pause) video$/ }).count(), 0,
+        'Play and pause belong to the player controls');
+      const sound = playback.getByRole('button', { name: /^(?:Mute|Unmute) video$/ });
+      assert.equal(await sound.count(), 1);
+      assert.ok(await sound.evaluate(button => {
+        const rect = button.getBoundingClientRect();
+        const media = button.closest('[data-video-media]').getBoundingClientRect();
+        const target = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+        return Math.abs(rect.top - media.top - 12) <= 1 && Math.abs(media.right - rect.right - 12) <= 1
+          && button.contains(target);
+      }), 'Mute occupies the video top-right corner and is reachable above the player');
+      assert.equal(await actions.locator('.post-chrome-source-link').count(), 0, 'The original-source action is removed');
       const more = actions.getByRole('button', { name: 'More options', exact: true });
-      assert.ok(await original.isVisible() && await more.isVisible());
-      const order = await actions.evaluate(element => {
-        const original = element.querySelector('.post-chrome-source-link');
-        const more = element.querySelector('.post-chrome-more');
-        const sourceBounds = original.getBoundingClientRect(), moreBounds = more.getBoundingClientRect();
-        return { adjacent: original.nextElementSibling === more, last: element.lastElementChild === more,
-          sourceRight: sourceBounds.right, menuLeft: moreBounds.left };
-      });
-      assert.ok(order.adjacent && order.last && order.sourceRight <= order.menuLeft + 1,
-        'The original-source link is immediately before the rightmost menu');
+      assert.ok(await more.isVisible());
+      assert.equal(await actions.evaluate(element => element.lastElementChild.classList.contains('post-chrome-more')), true,
+        'More options remains the last post action');
       assert.equal(await slide.locator('.post-chrome-identity').getAttribute('href'), profileHref,
         'The author name links to its real source profile');
       const routeBefore = page.url();
@@ -156,6 +158,10 @@ try {
         'Full screen is available from the source menu');
       assert.equal(await menu.getByRole('menuitem', { name: /^(?:Play|Pause|Mute|Unmute) video$/ }).count(), 0,
         'The source menu does not duplicate visible playback controls');
+      assert.equal(await menu.getByRole('menuitem', { name: /^(?:Open on |Open original post|Open Reddit discussion|Watch on )/ }).count(), 0,
+        'Original-source opening commands are removed');
+      if (!youtube) assert.equal(await menu.getByRole('menuitem', { name: /YouTube/i }).count(), 0,
+        'Videos without a playable YouTube URL have no YouTube options');
       await page.keyboard.press('Escape');
       await menu.waitFor({ state: 'detached' });
       assert.equal(page.url(), routeBefore, 'Escape closes the menu without leaving the video route');
@@ -173,7 +179,7 @@ try {
       assert.equal(page.url(), routeBefore, 'Escape dismisses the photo without leaving the video route');
     };
     for (const surface of ['videos', 'music']) {
-      await visit(surface, [post('below-five', { videoDurationSeconds: 4.99 }), post('unsupported', { mediaUrl: 'https://example.com/article' }), post('exactly-five', { videoDurationSeconds: 5 })]);
+      await visit(surface, [post('below-five', { videoDurationSeconds: 4.99 }), post('unsupported', { mediaUrl: 'https://example.com/article' }), post('exactly-five', { videoDurationSeconds: 5, embedId: 'stale000001' })]);
       const accepted = page.locator('[data-post-id="exactly-five"]');
       await accepted.waitFor();
       assert.equal(await page.locator('[data-post-id="below-five"], [data-post-id="unsupported"]').count(), 0);
@@ -207,17 +213,31 @@ try {
     });
     await page.locator('[data-post-id="native-short"]').waitFor({ state: 'detached' });
     await page.locator('[data-post-id="native-long"]').waitFor();
-    await visit('videos', [post('vimeo-short', { mediaUrl: 'https://vimeo.com/123456' }), post('vimeo-next', { videoDurationSeconds: 20 })]);
+    await visit('videos', [post('vimeo-short', { mediaUrl: 'https://vimeo.com/123456', embedId: 'stale000004' }), post('vimeo-next', { videoDurationSeconds: 20 })]);
     await page.locator('[data-post-id="vimeo-next"]').waitFor();
     await page.locator('[data-post-id="vimeo-short"]').waitFor({ state: 'detached' });
-    await visit('videos', [post('youtube-short', { source: 'youtube', embedId: 'short000001' }), post('youtube-long', { source: 'youtube', embedId: 'long0000001' })]);
+    await visit('videos', [post('youtube-labelled-native', { source: 'youtube', embedId: 'stale000002',
+      sourceUrl: `https://www.youtube.com/channel/${channelId}`, videoDurationSeconds: 30 })]);
+    const labelledNative = page.locator('[data-post-id="youtube-labelled-native"]');
+    await labelledNative.locator('video').waitFor();
+    assert.equal(await page.locator('.video-feed-youtube-player iframe').count(), 0,
+      'A YouTube label and stale embedId do not turn a direct file into a YouTube video');
+    await checkPostActions(labelledNative, `https://www.youtube.com/channel/${channelId}`);
+
+    await visit('videos', [post('youtube-short', { source: 'youtube', embedId: 'short000001' }),
+      post('youtube-long', { source: 'youtube', embedId: 'stale000003', sourceUrl: 'https://www.youtube.com/watch?v=long0000001' })]);
     await page.locator('[data-post-id="youtube-long"]').waitFor();
     await page.locator('[data-post-id="youtube-short"]').waitFor({ state: 'detached' });
     const frame = page.locator('.video-feed-youtube-player iframe').first();
     await frame.waitFor({ state: 'visible' });
+    await page.waitForFunction(() => {
+      const src = document.querySelector('.video-feed-youtube-player iframe')?.src;
+      return src && new URL(src).pathname === '/embed/long0000001';
+    });
     const frameInfo = await frame.evaluate(element => ({ policy: element.referrerPolicy, src: element.src,
       pointerEvents: getComputedStyle(element).pointerEvents, tabIndex: element.tabIndex, width: element.getBoundingClientRect().width }));
     assert.equal(frameInfo.policy, 'strict-origin-when-cross-origin');
+    assert.equal(new URL(frameInfo.src).pathname, '/embed/long0000001', 'The playable URL overrides a stale embedId');
     assert.equal(new URL(frameInfo.src).searchParams.get('origin'), new URL(origin).origin);
     assert.equal(new URL(frameInfo.src).searchParams.get('controls'), '1');
     assert.equal(frameInfo.pointerEvents, 'auto');
@@ -228,7 +248,7 @@ try {
     assert.equal(await frame.evaluate(element => document.activeElement === element), true, 'Keyboard users can focus the provider frame');
     const youtubePost = page.locator('[data-post-id="youtube-long"]');
     await youtubePost.locator('[data-video-actions]').waitFor({ state: 'visible' });
-    await checkPostActions(youtubePost, `https://www.youtube.com/channel/${channelId}`);
+    await checkPostActions(youtubePost, `https://www.youtube.com/channel/${channelId}`, true);
     if (width === 1440) await checkFullScreen(youtubePost);
     const checkYouTubeSettings = async () => {
       const routeBefore = page.url();
@@ -354,7 +374,7 @@ try {
       }
     }
     assert.deepEqual(errors, []);
-    console.log(`PASS: visible playback and engagement, full screen, confirmed YouTube speed, official controls, source menus and profile/photos, portrait/landscape bounds, full media, 5-second boundary, metadata filtering, cross-origin wheel/touch browsing in Videos + Music, one persistent interactive iframe, fresh-batch refresh at ${width}px`);
+    console.log(`PASS: top-right mute, player play/pause controls, no original-source action, YouTube options only for real YouTube URLs, engagement, full screen, confirmed YouTube speed, profile/photos, portrait/landscape bounds, full media, 5-second boundary, metadata filtering, cross-origin wheel/touch browsing in Videos + Music, one persistent interactive iframe, fresh-batch refresh at ${width}px`);
     await context.close();
   }
 } finally { await browser?.close(); await server.close(); await app.close(); }

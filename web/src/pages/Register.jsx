@@ -10,6 +10,7 @@ import PublicFooter from '../components/PublicFooter';
 import AccountAccess from '../components/AccountAccess';
 import { searchRoleOptions } from '../utils/roleSearch.mjs';
 import '../components/TopicPicker.css';
+import { LockKeyhole } from 'lucide-react';
 
 const ROLE_MACROS = [
   {
@@ -476,7 +477,7 @@ const EXPERIENCE_LEVELS = [
 ];
 
 export default function Register() {
-  const { register, auth0Enabled, registerWithAuth0 } = useAuth();
+  const { register, auth0Enabled, auth0Ready, auth0Checking, registerWithAuth0 } = useAuth();
   const navigate = useNavigate();
 
   const [step,          setStep]        = useState(0);
@@ -621,11 +622,17 @@ export default function Register() {
                   <button
                     className="btn btn-primary btn-full btn-lg"
                     type="button"
-                    onClick={() => registerWithAuth0()}
-                    disabled={loading || accessBusy}
+                    onClick={async () => {
+                      if (!auth0Ready || loading || accessBusy) return;
+                      setLoading(true); setError('');
+                      try { await registerWithAuth0(); } catch (failure) { setError(failure.message || 'Sign-in could not start.'); }
+                      finally { setLoading(false); }
+                    }}
+                    disabled={!auth0Ready || loading || accessBusy}
                     style={{ marginBottom: 14 }}
                   >
-                    Continue with Auth0
+                    {!auth0Ready && <LockKeyhole size={16} aria-hidden="true" />} Continue with Auth0
+                    {!auth0Ready && <span> · {auth0Checking ? 'Checking availability' : 'Unavailable'}</span>}
                   </button>
                   <div style={{
                     display: 'flex',

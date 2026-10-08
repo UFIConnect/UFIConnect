@@ -7,6 +7,7 @@ import { SOURCE_META, withCareerAccountFallback } from './sourceMeta';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { normalizeSourceFavorites } from './sourceFavorites';
 import AccountConnectionAction from './AccountConnectionAction';
+import { sourceAuthorizationState } from './sourceAuthorization.mjs';
 import { DirectoryControls } from './DirectoryControls';
 import { SOURCE_CATEGORIES, sourceSections, accountSections } from './sourceDirectory';
 import useTabMetrics from '../analytics/useTabMetrics';
@@ -206,6 +207,8 @@ export default function HomeFeedTools({
   }
 
   async function startAccountConnection(platform, handle = '') {
+    const state = sourceAuthorizationState(accountPlatforms?.[platform], { isConnected: !!accountConnected[platform] });
+    if (!state.ready) { setAccountError(state.reason); return; }
     const handleParam = handle.trim() ? `?handle=${encodeURIComponent(handle.trim())}` : '';
     setAccountAction(`connect:${platform}`);
     setAccountError('');
@@ -223,6 +226,8 @@ export default function HomeFeedTools({
   }
 
   function connectAccount(platform) {
+    const state = sourceAuthorizationState(accountPlatforms?.[platform], { isConnected: !!accountConnected[platform] });
+    if (!state.ready) { setAccountError(state.reason); return; }
     if (platform === 'mastodon') {
       navigate('/connected-accounts?connect=mastodon');
       return;

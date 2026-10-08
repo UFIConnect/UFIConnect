@@ -100,7 +100,7 @@ try {
     const careerCount = await page.locator('.account-platform-card').count();
     assert.ok(careerCount > 1);
     assert.equal(await page.getByRole('button', { name: 'Sign in and connect Indeed', exact: true }).count(), 1);
-    assert.equal(await page.getByRole('link', { name: /^Sign in on / }).count(), careerCount - 1, 'Website-only career sources keep their official sign-in action');
+    assert.equal(await page.getByRole('link', { name: /^Visit .* website$/ }).count(), careerCount - 1, 'Website-only career sources keep their official website link');
     assert.equal(await page.getByRole('combobox', { name: /Filter accounts/ }).count(), 0);
     await categoryList.getByRole('button', { name: /^All \d+$/ }).click();
     assert.equal(await categoryList.getByRole('button', { name: /^All \d+$/ }).getAttribute('aria-pressed'), 'true');

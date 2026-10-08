@@ -16,7 +16,7 @@ export default function SourceWebsiteDirectory({ plan }) {
   if (!entries.length) return null;
   return <section className="feed-source-websites" aria-label="Source websites" style={{ gridColumn: '1 / -1', minWidth: 0, borderTop: '1px solid var(--border)', marginTop: 12, paddingTop: 12 }}>
     <h4 style={{ margin: '0 0 6px' }}>Source websites</h4>
-    <p style={{ color: 'var(--muted)', fontSize: '.78rem', margin: '0 0 8px' }}>Read, listen, or sign in directly on these sources.</p>
+    <p style={{ color: 'var(--muted)', fontSize: '.78rem', margin: '0 0 8px' }}>Read or listen on these sources.</p>
     <DirectoryControls label="source websites" filter={selected} onFilterChange={setCategory} options={categories} />
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
       {visible.map(([key]) => <ExternalAccountLogin key={key} platform={key} />)}

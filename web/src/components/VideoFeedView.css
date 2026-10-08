@@ -25,8 +25,10 @@
 .video-feed-view .video-feed-media > img { display: block; width: 100%; height: 100%; object-fit: contain; border: 0; }
 .video-feed-view .video-feed-details { grid-column: 1; grid-row: 2; position: relative; min-width: 0; max-height: max(190px, min(35dvh, 280px)); overflow-y: auto; overscroll-behavior: contain; padding: 10px 13px max(5px, env(safe-area-inset-bottom)); background: var(--video-chrome); font-size: .74rem; }
 .video-feed-view .post-chrome-header { margin-bottom: 4px; }
-.video-feed-view .video-feed-playback-controls { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
-.video-feed-view .video-feed-playback-controls .post-chrome-action { min-width: 36px; min-height: 32px; padding: 0 8px; border-radius: 6px; background: var(--bg-secondary); }
+.video-feed-view .video-feed-playback-controls { position: absolute; top: 12px; right: 12px; z-index: 3; }
+.video-feed-view .video-feed-sound-button { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border: 1px solid #ffffff40; border-radius: 50%; background: #080c12d9; color: #fff; cursor: pointer; touch-action: manipulation; }
+.video-feed-view .video-feed-sound-button:hover { background: #202b3a; }
+.video-feed-view .video-feed-sound-button:disabled { opacity: .5; cursor: default; }
 .video-feed-view .video-feed-post-actions { margin-top: 4px; }
 .video-feed-view .video-feed-caption { position: static; max-width: none; min-width: 0; }
 .video-feed-view .video-feed-caption-summary { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 28px; }
@@ -40,6 +42,7 @@
 .video-feed-view .video-feed-expanded-title { color: var(--video-ink); font-weight: 550; }
 .video-feed-view .video-feed-top-controls button:disabled { opacity: .35; cursor: default; }
 .video-feed-view .video-feed-top-controls button:focus-visible,
+.video-feed-view .video-feed-media button:focus-visible,
 .video-feed-view .video-feed-details button:focus-visible,
 .video-feed-view .video-feed-details a:focus-visible { outline: 2px solid #a7c7ff; outline-offset: -2px; }
 .video-feed-view .video-feed-youtube-player,

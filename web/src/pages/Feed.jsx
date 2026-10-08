@@ -23,7 +23,7 @@ import {
   SOURCE_META,
   HOME_FEED_SOURCE_IDS,
   FOLLOWING_FEED_SOURCE_IDS,
-  FOLLOWING_EXCLUDED_SOURCE_IDS,
+  isFollowingFeedSource,
 } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import FollowingConnectionNotice from '../components/FollowingConnectionNotice';
@@ -304,7 +304,7 @@ async function getFollowingNativeCompatibility(viewer, bust = false) {
     const isFollowedAuthor = followedIds.has(post.authorId || post.author?.id);
     const postGroupId = post.groupId || post.group?.id;
     return isFollowedAuthor && postGroupId === 'ufi-general';
-  });
+  }).map(post => ({ ...post, source: 'uficonnect' }));
   const posts = sortPostsForView(nativePosts);
   followingNativeCompatCache.set(viewer.id, {
     posts,
@@ -444,7 +444,6 @@ const FOLLOWING_SOURCE_TABS = [
     .filter(key => key !== 'uficonnect')
     .map(key => ({ key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || 'SRC' })),
 ];
-const FOLLOWING_EXCLUDED_SOURCES = new Set(FOLLOWING_EXCLUDED_SOURCE_IDS);
 const DEFAULT_FILTERS = { sort: 'newest', sources: [], timeRange: 'all', topics: [] };
 const FEED_PAGE_SIZE = 50;
 const FEED_AUTO_REFRESH_MS = 2 * 60 * 1000;
@@ -2233,7 +2232,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       setLockedPlatform(null);
       setFeedError(null);
       const incoming = (data.posts || []).filter(post => (
-        activeMode !== 'following' || !FOLLOWING_EXCLUDED_SOURCES.has(String(post?.source || '').toLowerCase())
+        activeMode !== 'following' || isFollowingFeedSource(post?.source)
       ));
       if (activeMode === 'countries' && viewModeRef.current === 'countries') {
         setTravelLiveFeeds(Array.isArray(data.liveFeeds) ? data.liveFeeds : []);
@@ -2852,7 +2851,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       const incoming = (data.posts || []).filter(p => (
         p?.id
         && !knownIds.current.has(p.id)
-        && (viewModeRef.current !== 'following' || !FOLLOWING_EXCLUDED_SOURCES.has(String(p.source || '').toLowerCase()))
+        && (viewModeRef.current !== 'following' || isFollowingFeedSource(p.source))
       ));
       incoming.forEach(p => markKnownId(p.id));
       if (incoming.length > 0) {
@@ -3084,7 +3083,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       : []);
     if (disabled.size > 0) result = result.filter(p => !disabled.has(p.source));
     if (viewMode === 'following') {
-      result = result.filter(p => !FOLLOWING_EXCLUDED_SOURCES.has(String(p?.source || '').toLowerCase()));
+      result = result.filter(p => isFollowingFeedSource(p?.source));
     }
 
     // Search

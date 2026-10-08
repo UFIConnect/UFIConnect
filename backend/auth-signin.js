@@ -47,13 +47,31 @@ function safeReturnTo(value) {
   const parsed = new URL(value, 'https://uficonnect.com');
   return parsed.origin === 'https://uficonnect.com' && !/^\/(?:auth|login|register)(?:\/|$)/.test(parsed.pathname) ? parsed.pathname + parsed.search + parsed.hash : '';
 }
+const credential = value => typeof value === 'string' ? value.trim() : '';
+function appleSigningKey(value) {
+  if (!/^-----BEGIN PRIVATE KEY-----\r?\n/.test(value)) return false;
+  try {
+    const key = crypto.createPrivateKey(value);
+    return key.asymmetricKeyType === 'ec' && key.asymmetricKeyDetails?.namedCurve === 'prime256v1';
+  } catch { return false; }
+}
+function encryptionKeyConfigured(value) {
+  if (typeof value !== 'string' || !value) return false;
+  const key = Buffer.from(value, 'base64');
+  return key.length === 32 && key.toString('base64') === value;
+}
 function providerSettings(env) {
-  const googleClientId = env.GOOGLE_CLIENT_ID || env.YOUTUBE_CLIENT_ID || '';
-  const googleClientSecret = env.GOOGLE_CLIENT_ID ? env.GOOGLE_CLIENT_SECRET || '' : env.YOUTUBE_CLIENT_SECRET || '';
+  const dedicatedGoogle = Boolean(credential(env.GOOGLE_CLIENT_ID) || credential(env.GOOGLE_CLIENT_SECRET));
+  const googleClientId = credential(dedicatedGoogle ? env.GOOGLE_CLIENT_ID : env.YOUTUBE_CLIENT_ID);
+  const googleClientSecret = credential(dedicatedGoogle ? env.GOOGLE_CLIENT_SECRET : env.YOUTUBE_CLIENT_SECRET);
+  const apple = { clientId: credential(env.APPLE_CLIENT_ID), teamId: credential(env.APPLE_TEAM_ID),
+    keyId: credential(env.APPLE_KEY_ID), privateKey: credential(env.APPLE_PRIVATE_KEY).replace(/\\n/g, '\n') };
+  const phone = { accountSid: credential(env.TWILIO_ACCOUNT_SID), authToken: credential(env.TWILIO_AUTH_TOKEN), serviceSid: credential(env.TWILIO_VERIFY_SERVICE_SID) };
   return {
-    google: { configured: Boolean(googleClientId && googleClientSecret), clientId: googleClientId, clientSecret: googleClientSecret },
-    apple: { configured: ['APPLE_CLIENT_ID','APPLE_TEAM_ID','APPLE_KEY_ID','APPLE_PRIVATE_KEY'].every(k => Boolean(env[k])), clientId: env.APPLE_CLIENT_ID || '' },
-    phone: { configured: /^AC[a-f0-9]{32}$/i.test(env.TWILIO_ACCOUNT_SID || '') && Boolean(env.TWILIO_AUTH_TOKEN) && /^VA[a-f0-9]{32}$/i.test(env.TWILIO_VERIFY_SERVICE_SID || '') },
+    google: { configured: Boolean(googleClientId && googleClientSecret), clientId: googleClientId, clientSecret: googleClientSecret,
+      callbackPath: dedicatedGoogle ? '/auth/providers/google/callback' : '/auth/social/youtube/callback' },
+    apple: { ...apple, configured: Boolean(apple.clientId && apple.teamId && apple.keyId && appleSigningKey(apple.privateKey)) },
+    phone: { ...phone, configured: /^AC[a-f0-9]{32}$/i.test(phone.accountSid) && Boolean(phone.authToken) && /^VA[a-f0-9]{32}$/i.test(phone.serviceSid) },
   };
 }
 
@@ -78,11 +96,12 @@ async function verifyIdentityToken(provider, token, { audience, nonce, keySet } 
 
 function createSignIn({ db, env = process.env, vault, callbackBase, frontendBase, issueSession, profileFor, onUser, onCreated = () => {}, recordSignIn = () => {}, fetcher = fetch, keySets = {}, phoneProvider } = {}) {
   const settings = providerSettings(env);
-  const callback = provider => `${callbackBase}${provider === 'google' && !env.GOOGLE_CLIENT_ID ? '/auth/social/youtube/callback' : `/auth/providers/${provider}/callback`}`;
-  const publicProviders = () => ({ providers: Object.fromEntries(Object.entries(settings).map(([id, value]) => [id, { configured: value.configured, enabled: value.configured && db.isConnected() && Boolean(env.OAUTH_TOKEN_ENCRYPTION_KEY) }])) });
+  const callback = provider => `${callbackBase}${provider === 'google' ? settings.google.callbackPath : `/auth/providers/${provider}/callback`}`;
+  const storageReady = () => db.isConnected() && encryptionKeyConfigured(env.OAUTH_TOKEN_ENCRYPTION_KEY);
+  const publicProviders = () => ({ providers: Object.fromEntries(Object.entries(settings).map(([id, value]) => [id, { configured: value.configured, enabled: value.configured && storageReady() }])) });
   const ensure = provider => {
     if (!settings[provider]?.configured) throw fail('This sign-in method is not available yet.', 503, 'unavailable');
-    if (!db.isConnected() || !env.OAUTH_TOKEN_ENCRYPTION_KEY) throw fail('Sign-in storage is temporarily unavailable.', 503, 'unavailable');
+    if (!storageReady()) throw fail('Sign-in storage is temporarily unavailable.', 503, 'unavailable');
   };
   const seal = (id, value) => vault.seal(JSON.stringify(value), `signin:${id}`);
   const open = row => JSON.parse(vault.open(row.payload, `signin:${row.id}`));
@@ -207,8 +226,8 @@ function createSignIn({ db, env = process.env, vault, callbackBase, frontendBase
   }
   async function appleSecret() {
     const { SignJWT, importPKCS8 } = await jose();
-    const key = await importPKCS8(env.APPLE_PRIVATE_KEY.replace(/\\n/g, '\n'), 'ES256');
-    return new SignJWT({}).setProtectedHeader({ alg: 'ES256', kid: env.APPLE_KEY_ID }).setIssuer(env.APPLE_TEAM_ID).setSubject(env.APPLE_CLIENT_ID).setAudience('https://appleid.apple.com').setIssuedAt().setExpirationTime('5m').sign(key);
+    const key = await importPKCS8(settings.apple.privateKey, 'ES256');
+    return new SignJWT({}).setProtectedHeader({ alg: 'ES256', kid: settings.apple.keyId }).setIssuer(settings.apple.teamId).setSubject(settings.apple.clientId).setAudience('https://appleid.apple.com').setIssuedAt().setExpirationTime('5m').sign(key);
   }
   async function complete(provider, req, res) {
     const params = req.method === 'POST' ? req.body : req.query;
@@ -268,8 +287,8 @@ function createSignIn({ db, env = process.env, vault, callbackBase, frontendBase
     return session(payload.identity, payload, req);
   }
   const twilio = phoneProvider || {
-    async request(number) { return form(`https://verify.twilio.com/v2/Services/${env.TWILIO_VERIFY_SERVICE_SID}/Verifications`, { To: number, Channel: 'sms' }, { Authorization: `Basic ${Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString('base64')}` }); },
-    async verify(sid, code) { return form(`https://verify.twilio.com/v2/Services/${env.TWILIO_VERIFY_SERVICE_SID}/VerificationCheck`, { VerificationSid: sid, Code: code }, { Authorization: `Basic ${Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString('base64')}` }); },
+    async request(number) { return form(`https://verify.twilio.com/v2/Services/${settings.phone.serviceSid}/Verifications`, { To: number, Channel: 'sms' }, { Authorization: `Basic ${Buffer.from(`${settings.phone.accountSid}:${settings.phone.authToken}`).toString('base64')}` }); },
+    async verify(sid, code) { return form(`https://verify.twilio.com/v2/Services/${settings.phone.serviceSid}/VerificationCheck`, { VerificationSid: sid, Code: code }, { Authorization: `Basic ${Buffer.from(`${settings.phone.accountSid}:${settings.phone.authToken}`).toString('base64')}` }); },
   };
   async function requestPhone(input, authenticatedLinkUser) {
     ensure('phone');

@@ -1,0 +1,57 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { sourceAuthorizationState } from './sourceAuthorization.mjs';
+import { withCareerAccountFallback, HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS, isFollowingFeedSource } from './sourceMeta.js';
+import feedCatalog from '../../../shared/feed-source-catalog.json' with { type: 'json' };
+import { normalizeSourceFavorites } from './sourceFavorites.js';
+
+test('missing, partial and unavailable source authorization stays locked', () => {
+  for (const platform of [undefined, {}, { configured: false }, { configured: 'true' },
+    { configured: true, forceComingSoon: true }, { configured: true, authorizationAvailable: false },
+    { configured: true, authorizationSupported: false }, { configured: true, connectionMode: 'external' }]) {
+    assert.equal(sourceAuthorizationState(platform).ready, false);
+    assert.equal(sourceAuthorizationState(platform, { isConnected: true }).ready, false);
+  }
+});
+
+test('removed interest and unsupported Following favorites do not remain selected', () => {
+  assert.deepEqual(normalizeSourceFavorites({ feed: ['twitter', 'facebook', 'weworkremotely'], following: ['twitter', 'facebook', 'spotify', 'future-unsupported', 'youtube', 'youtube'] }), {
+    feed: ['twitter', 'facebook', 'weworkremotely'], following: ['youtube'],
+  });
+});
+
+test('working authorization and existing member permissions stay available', () => {
+  assert.equal(sourceAuthorizationState({ configured: true, connectionMode: 'oauth', crossPost: { supported: false }, ownPosts: { supported: false } }).ready, true);
+  assert.equal(sourceAuthorizationState({ configured: true, locked: true }).ready, false);
+  assert.equal(sourceAuthorizationState({ configured: true, locked: true }, { isConnected: true }).ready, true);
+});
+
+test('directory fallback cannot replace explicit catalog readiness or permissions', () => {
+  const platforms = withCareerAccountFallback({
+    indeed: { name: 'Indeed', category: 'career', configured: false, forceComingSoon: true, connectionMode: 'oauth', locked: true },
+    youtube: { name: 'YouTube', configured: true, analytics: { authorized: true } },
+    spotify: { name: 'Spotify', configured: true, connectionMode: 'external' },
+  });
+  assert.equal(platforms.indeed.configured, false);
+  assert.equal(platforms.indeed.forceComingSoon, true);
+  assert.equal(platforms.indeed.locked, true);
+  assert.equal(platforms.indeed.connectionMode, 'oauth');
+  assert.equal(sourceAuthorizationState(platforms.indeed).ready, false);
+  assert.equal(sourceAuthorizationState(platforms.youtube).ready, true);
+  assert.deepEqual(platforms.youtube.analytics, { authorized: true });
+  assert.equal(sourceAuthorizationState(platforms.spotify).ready, false);
+  const career = withCareerAccountFallback({}, true);
+  assert.equal(sourceAuthorizationState(career.indeed).ready, false);
+  assert.equal(career.indeed.connectionMode, 'external');
+});
+
+test('feed choices use real public collectors and followed-content adapters', () => {
+  assert.deepEqual(HOME_FEED_SOURCE_IDS, [...new Set(feedCatalog.home)]);
+  for (const key of ['weworkremotely', 'cntraveler']) assert.ok(HOME_FEED_SOURCE_IDS.includes(key));
+  assert.deepEqual(FOLLOWING_FEED_SOURCE_IDS, ['uficonnect', ...Object.keys(feedCatalog.following)]);
+  for (const key of ['youtube', 'github', 'gitlab', 'reddit', 'twitch', 'bluesky', 'mastodon']) assert.ok(FOLLOWING_FEED_SOURCE_IDS.includes(key));
+  for (const key of ['spotify', 'airbnb', 'indeed', 'twitter', 'facebook', 'discord', 'figma', 'linkedin', 'instagram', 'tiktok']) assert.equal(FOLLOWING_FEED_SOURCE_IDS.includes(key), false);
+  for (const kind of Object.values(feedCatalog.following)) assert.equal(kind, 'following');
+  for (const source of ['uficonnect', 'youtube', ' mastodon ']) assert.equal(isFollowingFeedSource(source), true);
+  for (const source of [undefined, 'unknown-provider', 'spotify', 'cntraveler', 'twitter', 'facebook', 'indeed']) assert.equal(isFollowingFeedSource(source), false);
+});

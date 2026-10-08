@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { feedLocationKey } from '../utils/feedLocation.mjs';
 import { directMediaPlaybackAllowed } from '../utils/sourceMediaPolicy.mjs';
+import { sourcePostMenuItems } from '../utils/sourcePostMenu.mjs';
 import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, isYouTubeShortsUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, useGlobalMuted, fetchVimeoMetadata, youTubePosterUrl, SoundIcon, createYouTubePlayerFrame, youTubeEmbedUrl } from './videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
@@ -20,9 +21,9 @@ import PostInlineText from './PostInlineText';
 import PostLinkPreviews from './PostLinkPreviews';
 import useTabMetrics, { useSelectedTabMetrics } from '../analytics/useTabMetrics';
 import YouTubeSettingsDialog from './YouTubeSettingsDialog';
-import { CommentIcon, OpenOnSource, PostHeader, PostOptionsMenu } from './PostCardChrome';
+import { CommentIcon, PostHeader, PostOptionsMenu } from './PostCardChrome';
 import { isMemberPost, safePostLink } from '../../../backend/post-links.mjs';
-import { ChevronDown, Search, SlidersHorizontal, RotateCw, Play, Pause } from 'lucide-react';
+import { ChevronDown, Search, SlidersHorizontal, RotateCw } from 'lucide-react';
 import { videoDurationSeconds, isShortFeedVideo, videoSourceKey, safeMediaUrl, fitVideoFrame } from '../utils/videoFeedPolicy.mjs';
 import './VideoFeedView.css';
 import './navigation.css';
@@ -124,7 +125,7 @@ function SourceMark({ source, label, size = 14, active = false }) {
 // every slide, not just one at a time.
 function resolveVideoSource(post) {
   if (!post || typeof post !== 'object') return null;
-  // Dedicated YouTube posts carry embedId (or a recoverable sourceUrl); any
+  // Dedicated YouTube posts carry a playable sourceUrl; any
   // other source's article can embed a real YouTube video too (see
   // parseRSSItems' video detection backend-side), in which case either URL
   // can carry the player. Do not prefer one field blindly: a source article
@@ -134,8 +135,10 @@ function resolveVideoSource(post) {
     const parsed = safeMediaUrl(url);
     return parsed && /^(?:www\.|m\.)?(?:youtube(?:-nocookie)?\.com|youtu\.be)$/.test(parsed.hostname);
   });
-  const youtubeUrl = youtubeUrls.find(url => extractYouTubeId(url)) || youtubeUrls[0] || null;
-  const ytId = /^[\w-]{11}$/.test(String(post.embedId || '')) ? post.embedId : extractYouTubeId(youtubeUrl);
+  const youtubeUrl = youtubeUrls.find(url => extractYouTubeId(url));
+  // Persisted provider labels and embedId can be stale. Only an actual
+  // official video URL identifies the player and its YouTube settings.
+  const ytId = extractYouTubeId(youtubeUrl);
   if (ytId) {
     // Real Shorts are persisted with a /shorts/ sourceUrl specifically so
     // this survives the DB round-trip (see isYouTubeShortsUrl's own
@@ -238,7 +241,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   const hasExtraCaption = (post.title?.length || 0) > 80 || Boolean(captionBody);
 
   // file/hls/vimeo's own fully-local playback state — youtube reads
-  // sharedYt instead (see effectivePaused/effectiveDuration/
+  // sharedYt instead (see effectiveDuration/
   // effectiveCurrentTime below), since its player lives in the parent now.
   const [paused, setPaused] = useState(false);
   const [nativeMuted, setNativeMuted] = useState(muted);
@@ -305,7 +308,6 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   // by VideoFeedView), everything else keeps reading this slide's own
   // local state exactly as before.
   const isYoutube = src?.kind === 'youtube';
-  const effectivePaused = isYoutube ? !!sharedYt?.paused : paused;
   const effectiveDuration = isYoutube ? (sharedYt?.duration || 0) : duration;
   const effectiveCurrentTime = isYoutube ? (sharedYt?.currentTime || 0) : currentTime;
   const acceptNativeMetadata = (event) => {
@@ -531,7 +533,8 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   }
 
   const mediaMuted = ['file', 'hls'].includes(src?.kind) ? nativeMuted : muted;
-  const originalUrl = safeMediaUrl(post.sourceUrl)?.href;
+  const sourceItems = sourcePostMenuItems(post).filter(item => item.key !== 'original'
+    && (post.source !== 'youtube' || isYoutube));
   const options = [
     { label: fullScreen ? 'Exit full screen' : 'Full screen', onSelect: () => onFullScreen(getNativeEl()) },
     isYoutube && { label: 'YouTube settings', detail: 'Playback speed, quality and captions', onSelect: () => setSettingsOpen(true) },
@@ -539,7 +542,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   return (
     <article className="video-feed-slide">
       <div className="video-feed-media" data-video-media onClick={event => {
-        if (!event.target.closest('iframe, video')) togglePlay();
+        if (!event.target.closest('iframe, video, button')) togglePlay();
       }}>
         {!src ? <p>Video unavailable</p> : src.kind === 'youtube' ? null : src.kind === 'vimeo' ? (
           active ? <iframe ref={vimeoIframeRef}
@@ -560,14 +563,13 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
             onLoadedMetadata={acceptNativeMetadata} onDurationChange={acceptNativeMetadata}
             onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
             onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id, context: { surface: 'videos' } })} />}
+        <div className="video-feed-playback-controls" role="group" aria-label="Playback controls">
+          <button type="button" className="video-feed-sound-button" onClick={event => { event.stopPropagation(); toggleSound(); }} disabled={!src || src.kind === 'vimeo'} aria-label={mediaMuted ? 'Unmute video' : 'Mute video'} title={src?.kind === 'vimeo' ? 'Use the player volume control' : mediaMuted ? 'Unmute video' : 'Mute video'}><SoundIcon muted={mediaMuted} size={20} /></button>
+        </div>
       </div>
       <div className="video-feed-details video-caption-scroll" data-video-details>
-        <div className="video-feed-playback-controls" role="group" aria-label="Playback controls">
-          <button type="button" className="post-chrome-action" onClick={togglePlay} disabled={!src} aria-label={effectivePaused ? 'Play video' : 'Pause video'} title={effectivePaused ? 'Play video' : 'Pause video'}>{effectivePaused ? <Play size={18} aria-hidden="true" /> : <Pause size={18} aria-hidden="true" />}</button>
-          <button type="button" className="post-chrome-action" onClick={toggleSound} disabled={!src || src.kind === 'vimeo'} aria-label={mediaMuted ? 'Unmute video' : 'Mute video'} title={src?.kind === 'vimeo' ? 'Use the player volume control' : mediaMuted ? 'Unmute video' : 'Mute video'}><SoundIcon muted={mediaMuted} size={18} /></button>
-        </div>
         <PostHeader post={post} member={isMemberPost(post)} />
-        {isYoutube && sharedYt?.failed && <p className="video-feed-playback-note" role="status">The embedded player could not start. Try its play button{originalUrl ? ' or open the original video.' : '.'}</p>}
+        {isYoutube && sharedYt?.failed && <p className="video-feed-playback-note" role="status">The embedded player could not start. Try its play button.</p>}
         <div className="video-feed-caption" data-video-caption data-expanded={captionExpanded}>
           <div className="video-feed-caption-summary">
             {post.title && <h2>{post.title}</h2>}
@@ -584,8 +586,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           <PostLikes post={post} onPostUpdated={onPostUpdated} />
           <button type="button" className="post-chrome-action" onClick={() => onOpenComments?.(post)} aria-label={`Comments${Number.isFinite(post.commentsCount) ? ` ${post.commentsCount.toLocaleString()}` : ''}`} title="Comments"><CommentIcon /></button>
           <SavePostButton post={post} className="post-chrome-action video-feed-save-button" showLabel={false} />
-          <OpenOnSource post={post} label="View original post" onClick={() => reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true })} />
-          <PostOptionsMenu post={post} items={options} onPostUpdated={onPostUpdated} onRemoved={onRemoved} />
+          <PostOptionsMenu post={post} items={options} sourceItems={sourceItems} onPostUpdated={onPostUpdated} onRemoved={onRemoved} />
         </div>
       </div>
       {settingsOpen && isYoutube && <YouTubeSettingsDialog settings={sharedYt?.settings}
@@ -1986,6 +1987,12 @@ export default function VideoFeedView({ onExit, music = false }) {
             },
             onStateChange: (e) => {
               if (!isCurrent()) return;
+              // A pause from the official controls must survive the early
+              // autoplay retry, just as the app's former pause button did.
+              if (e.data === YT.PlayerState.PAUSED && !document.hidden
+                && e.target.getVideoData?.()?.video_id === sharedYtDesiredIdRef.current) {
+                clearInterval(sharedYtRetryRef.current);
+              }
               // loadVideoById does not replace the iframe's original playlist.
               // Loop the currently selected clip ourselves so ending a later
               // clip cannot jump back to the first video's stale playlist.

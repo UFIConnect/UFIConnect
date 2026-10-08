@@ -2,7 +2,8 @@
 
 const GENERAL_UFI_GROUP_ID = 'ufi-general';
 const { following } = require('../shared/feed-source-catalog.json');
-const FOLLOWING_SOURCES = new Set(['uficonnect', ...Object.keys(following)]);
+const FOLLOWING_SOURCES = new Set(['uficonnect', ...Object.entries(following)
+  .filter(([, capability]) => capability === 'following').map(([source]) => source)]);
 
 function isGeneralUfiFollowingPost(post) {
   return Boolean(

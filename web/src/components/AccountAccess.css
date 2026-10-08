@@ -7,6 +7,7 @@
 .account-access-provider-apple { background: #000; color: #fff; border-color: #000; }
 .account-access-provider-google small { font-family: Arial, sans-serif; }
 .account-access-provider small { font-size: .7rem; font-weight: 500; color: var(--muted); }
+.account-access-provider small { display: inline-flex; align-items: center; gap: 4px; }
 .account-access-provider:disabled { cursor: default; opacity: .65; }
 .account-access-provider:focus-visible, .account-access button:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 .account-access-divider { display: flex; align-items: center; gap: 10px; margin: 18px 0 0; color: var(--muted); font-size: .8rem; }

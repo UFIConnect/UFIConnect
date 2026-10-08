@@ -76,7 +76,7 @@ try {
       for (const provider of providers) assert.ok((await section.innerText()).includes(provider));
     }
     assert.equal(await tools.getByRole('link', { name: 'Open Instagram website' }).count(), 0);
-    assert.equal(await tools.getByRole('link', { name: 'Sign in on Indeed' }).count(), 1);
+    assert.equal(await tools.getByRole('link', { name: 'Visit Indeed website' }).count(), 1);
     assert.equal(await tools.locator('.account-site-link, .home-connected-account-status').count(), 0);
     assert.equal(await tools.getByRole('button', { name: 'Coming soon', exact: true }).count(), 0);
     for (const provider of ['Medium', 'WIRED', 'YouTube']) {
