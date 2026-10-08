@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { appendMapPosts, mapSourceTopicScope, mapTopicMatches, mapPostTarget, parseMapSourceTopics } from '../shared/map-feed-topics.mjs';
-import { CITY_SITES, CITY_RAMPS, CITY_TOP_EXITS, CITY_HIGHWAY_LINKS, CITY_HIGHWAY_KINDS, CITY_LANDMARKS, CITY_HIGHWAY_PIERS, CITY_GROUND_ROADS, cityCollectorPoints, citySegmentDistance, cityHighwayJourney, cityRoadPoint, cityRoadPoints, cityDriveOrigin, cityDriveWaypoints } from '../web/src/local/cityEngineering.mjs';
+import { CITY_SITES, CITY_RAMPS, CITY_TOP_EXITS, CITY_SIDE_EXITS, CITY_LOCAL_LINKS, CITY_END_ROADS, CITY_END_JUNCTIONS, CITY_HIGHWAY_LINKS, CITY_HIGHWAY_KINDS, CITY_LANDMARKS, CITY_HIGHWAY_PIERS, CITY_GROUND_ROADS, cityCollectorPoints, citySegmentDistance, cityHighwayJourney, cityRoadPoint, cityRoadPoints, cityDriveOrigin, cityDriveWaypoints } from '../web/src/local/cityEngineering.mjs';
 
 const post = (id, source, topic) => ({ key: source + ':' + id, id, source, topic, category: 'technology' });
 test('map filtering expands supported labels without unrelated text matches', () => {
@@ -113,6 +113,23 @@ test('district setbacks, expressway clearance and ramp grades support the curved
       const a = exit.points[i - 1], b = exit.points[i], grade = Math.abs(b[1] - a[1]) / Math.hypot(b[0] - a[0], b[2] - a[2]);
       assert.ok(grade <= .08, 'Direct city exits stay below 8% grade');
       for (const [index, site] of CITY_SITES.entries()) if (index !== exit.index) assert.ok(Math.hypot(b[0] - site.x, b[2] - site.z) > 11, 'Direct exits clear neighboring cities');
+    }
+  }
+  assert.equal(CITY_END_JUNCTIONS.length, 4, 'Both ends of each major highway have a junction');
+  for (const junction of CITY_END_JUNCTIONS) {
+    const end = cityRoadPoint(junction.kind, junction.side > 0 ? 1 : 0), road = CITY_END_ROADS.find(road => road.side === junction.side);
+    assert.deepEqual(junction.points[0], [end[0], 2.9, end[1]]);
+    const to = junction.points.at(-1), distance = Math.min(...road.points.slice(1).map((point, i) => citySegmentDistance([to[0], to[2]], [road.points[i][0], road.points[i][2]], [point[0], point[2]])));
+    assert.ok(distance < .01, 'Highway ends join the curved side road at deck height');
+  }
+  assert.equal(CITY_LOCAL_LINKS.length, 7);
+  for (const exit of CITY_SIDE_EXITS) {
+    const to = exit.points.at(-1), entrance = CITY_SITES[exit.index].entrance;
+    assert.ok(Math.hypot(to[0] - entrance[0], to[2] - entrance[1]) < .001, 'Side exits reach the city boulevard');
+    for (let i = 1; i < exit.points.length; i++) {
+      const a = exit.points[i - 1], b = exit.points[i];
+      assert.ok(Math.abs(b[1] - a[1]) / Math.hypot(b[0] - a[0], b[2] - a[2]) <= .08, 'Side exits maintain a smooth grade');
+      for (const [index, site] of CITY_SITES.entries()) if (index !== exit.index) assert.ok(Math.hypot(b[0] - site.x, b[2] - site.z) > 11, 'Side exits clear neighboring districts');
     }
   }
 });

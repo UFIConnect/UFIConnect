@@ -10,7 +10,7 @@ import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { CITY_NATURE } from '../local/cityNature';
 import { CITY_DOWNTOWN } from '../local/cityDowntown';
-import { CITY_SITES, CITY_ARCHITECTURE, CITY_RAMPS, CITY_TOP_EXITS, CITY_HIGHWAY_LINKS, CITY_HIGHWAY_KINDS, CITY_AIRPORT, CITY_SHOPPING, CITY_LANDMARKS, CITY_HIGHWAY_PIERS, CITY_GROUND_ROADS, cityCollectorPoints, citySegmentDistance, cityHighwayJourney, cityRoadPoint, cityRoadPoints, cityDriveOrigin, cityDriveWaypoints } from '../local/cityEngineering.mjs';
+import { CITY_SITES, CITY_ARCHITECTURE, CITY_RAMPS, CITY_TOP_EXITS, CITY_SIDE_EXITS, CITY_LOCAL_LINKS, CITY_END_ROADS, CITY_END_JUNCTIONS, CITY_HIGHWAY_LINKS, CITY_HIGHWAY_KINDS, CITY_AIRPORT, CITY_SHOPPING, CITY_LANDMARKS, CITY_HIGHWAY_PIERS, CITY_GROUND_ROADS, cityCollectorPoints, citySegmentDistance, cityHighwayJourney, cityRoadPoint, cityRoadPoints, cityDriveOrigin, cityDriveWaypoints } from '../local/cityEngineering.mjs';
 
 // Decorative city simulation. It never represents measured traffic or member activity.
 export default function MapCityScene({ homes, cities, overview, focusLandmark = '', motion, quality = 'auto', theme, title, cityId, selected, onSelect, onCitySelect, onCivicSelect, resetKey, onFallback, driving = false, drivePaused = false, driveDestination = '', onDriveArrival }) {
@@ -607,7 +607,7 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
       // Divided expressway: continuous swept deck, shoulders, barriers and pier spans.
       for (const kind of CITY_HIGHWAY_KINDS) {
         const highway = cityRoadPoints(kind, 0, 2.9);
-        const junctions = kind === 'highway' ? [...CITY_HIGHWAY_LINKS.map(link => link[0]), ...CITY_TOP_EXITS.map(exit => exit.points[0])] : [...CITY_HIGHWAY_LINKS.map(link => link.at(-1)), ...CITY_RAMPS.map(ramp => ramp[0])];
+        const junctions = [...CITY_END_JUNCTIONS.filter(item => item.kind === kind).map(item => item.points[0]), ...(kind === 'highway' ? [...CITY_HIGHWAY_LINKS.map(link => link[0]), ...CITY_TOP_EXITS.map(exit => exit.points[0])] : [...CITY_HIGHWAY_LINKS.map(link => link.at(-1)), ...CITY_RAMPS.map(ramp => ramp[0])])];
         roadRibbon(central, highway, 7.6, '#59666c', .3);
         roadBarrier(central, cityRoadPoints(kind, 0, 3.22), .38, '#c3c6b9', .32, junctions);
         for (const side of [-1, 1]) {
@@ -625,7 +625,36 @@ export default function MapCityScene({ homes, cities, overview, focusLandmark = 
           box(support, '#c5c9bd', 0, -.12, 0, 1.8, .3, 1.8);
         }
       }
-      [...CITY_HIGHWAY_LINKS, ...CITY_RAMPS, ...CITY_TOP_EXITS.map(exit => exit.points)].forEach(ramp => {
+      for (const road of CITY_END_ROADS) {
+        const junctions = [...CITY_END_JUNCTIONS.filter(item => item.side === road.side).map(item => item.points.at(-1)), ...CITY_SIDE_EXITS.filter(exit => exit.side === road.side).map(exit => exit.points[0])];
+        roadRibbon(central, road.points, 3.4, '#59666c', .3);
+        for (const side of [-1, 1]) {
+          const barrier = offsetAlignment(road.points, side * 1.55, .6);
+          roadBarrier(central, barrier, .12, '#a2adb0', .14, junctions);
+          roadRibbon(central, offsetAlignment(road.points, side * 1.4, .165), .07, '#e4e3d8', .015);
+          for (let i = 0; i < barrier.length; i += 3) if (!junctions.some(point => Math.hypot(point[0] - barrier[i][0], point[2] - barrier[i][2]) < 6)) box(central, '#88999d', barrier[i][0], 3.2, barrier[i][2], .06, .6, .06);
+        }
+        for (let i = 0; i + 1 < road.points.length; i += 4) roadPiece(central, road.points[i].map((value, axis) => axis === 1 ? value + .165 : value), road.points[i + 1].map((value, axis) => axis === 1 ? value + .165 : value), .08, '#e4e3d8', .015);
+        for (let i = 4; i < road.points.length; i += 8) {
+          const [x, , z] = road.points[i];
+          box(central, '#aeb8b8', x, 1.17, z, .85, 2.65, .85);
+          box(central, '#bfc4bf', x, 2.52, z, 2.8, .35, .95);
+          box(central, '#c5c9bd', x, -.12, z, 1.8, .3, 1.8);
+        }
+      }
+      for (const junction of CITY_END_JUNCTIONS) {
+        roadRibbon(central, junction.points, 3.4, '#59666c', .3);
+        const [x, y, z] = junction.points.at(-1);
+        cylinder(central, '#59666c', x, y - .15, z, 2.1, .3);
+        const stop = junction.points[0], direction = junction.side;
+        for (const side of [-1, 1]) box(central, '#e4e3d8', stop[0] + direction * 4, 3.07, stop[2] + side * .7, .12, .015, 1.2);
+      }
+      for (const road of CITY_LOCAL_LINKS) {
+        roadRibbon(central, road, 1.85, '#68777c');
+        for (const side of [-1, 1]) roadRibbon(central, offsetAlignment(road, side * 1.2, .025), .38, '#dad9cb', .1);
+        for (let i = 0; i + 1 < road.length; i += 8) roadPiece(central, road[i].map((value, axis) => axis === 1 ? value + .05 : value), road[i + 1].map((value, axis) => axis === 1 ? value + .05 : value), .065, '#eeeade', .015);
+      }
+      [...CITY_HIGHWAY_LINKS, ...CITY_RAMPS, ...CITY_TOP_EXITS.map(exit => exit.points), ...CITY_SIDE_EXITS.map(exit => exit.points)].forEach(ramp => {
         roadRibbon(central, ramp, 2.45, '#59666c', .22);
         for (const side of [-1, 1]) {
           const barrier = offsetAlignment(ramp, side * 1.12, .45);
