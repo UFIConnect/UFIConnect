@@ -212,6 +212,10 @@ test('production Expo config fails closed on HTTP despite conflicting developmen
   assert.equal(config.ios.infoPlist.NSAppTransportSecurity.NSAllowsLocalNetworking, false);
   assert.equal(config.plugins.includes('./plugins/withSecurity'), true);
   assert.equal(config.updates.enabled, false);
+  assert.ok(config.scheme.includes('uficonnect'), 'Provider sign-in callbacks open the installed app');
+  assert.ok(!config.scheme.includes('uficonnect-vpn'), 'The VPN scheme remains Android-only');
+  assert.ok(config.android.scheme.includes('uficonnect'));
+  assert.ok(config.android.scheme.includes('uficonnect-vpn'));
 });
 
 test('native release manifest disables cleartext and backup even if previous defaults allowed them', () => {

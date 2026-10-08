@@ -7,6 +7,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import PublicFooter from '../components/PublicFooter';
+import AccountAccess from '../components/AccountAccess';
 
 const ROLE_MACROS = [
   {
@@ -484,6 +485,7 @@ export default function Register() {
   const [experience,    setExperience]  = useState('');
   const [error,         setError]       = useState('');
   const [loading,       setLoading]     = useState(false);
+  const [accessBusy, setAccessBusy] = useState(false);
 
   function handleChange(e) {
     setForm(f => ({ ...f, [e.target.name]: e.target.value }));
@@ -492,6 +494,7 @@ export default function Register() {
 
   function handleStep1(e) {
     e.preventDefault();
+    if (loading || accessBusy) return;
     if (!form.name || !form.email || !form.password || !form.confirmPassword) {
       setError('Name, email, and password fields are required.'); return;
     }
@@ -612,6 +615,7 @@ export default function Register() {
                     className="btn btn-primary btn-full btn-lg"
                     type="button"
                     onClick={() => registerWithAuth0()}
+                    disabled={loading || accessBusy}
                     style={{ marginBottom: 14 }}
                   >
                     Continue with Auth0
@@ -632,6 +636,8 @@ export default function Register() {
                   </div>
                 </>
               )}
+
+              <AccountAccess mode="signup" disabled={loading} onBusyChange={setAccessBusy} onSignedIn={user => navigate(user?.onboardingComplete ? '/' : '/onboarding', { replace: true })} />
 
               <form onSubmit={handleStep1}>
                 <div className="form-group">
@@ -662,7 +668,7 @@ export default function Register() {
                     placeholder="Re-enter your password" value={form.confirmPassword} onChange={handleChange} autoComplete="new-password" />
                 </div>
 
-                <button className="btn btn-primary btn-full btn-lg" type="submit">
+                <button className="btn btn-primary btn-full btn-lg" type="submit" disabled={loading || accessBusy}>
                   Continue →
                 </button>
               </form>

@@ -8,7 +8,7 @@ export default ({ config }) => ({
   slug: 'ufic',
   owner: 'uficonnect',
   version: '1.0.0',
-  scheme: (Array.isArray(config.scheme) ? config.scheme : config.scheme ? [config.scheme] : []).filter(value => value !== 'uficonnect-vpn'),
+  scheme: [...new Set(['uficonnect', ...(Array.isArray(config.scheme) ? config.scheme : config.scheme ? [config.scheme] : [])])].filter(value => value !== 'uficonnect-vpn'),
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'light',
@@ -29,7 +29,7 @@ export default ({ config }) => ({
     },
   },
   android: {
-    scheme: 'uficonnect-vpn',
+    scheme: ['uficonnect', 'uficonnect-vpn'],
     adaptiveIcon: {
       foregroundImage: './assets/adaptive-icon.png',
       backgroundColor: '#102A6B',

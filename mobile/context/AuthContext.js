@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
-import { Platform } from 'react-native';
+import { Linking, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import axios from 'axios';
@@ -8,6 +8,7 @@ import { resolveApiBase } from '../security/apiConfig';
 import { createSessionStorage } from '../security/sessionStorage';
 import { deleteAccountWithSession } from '../security/accountDeletion';
 import { disconnectVpnSession } from '../native-vpn/client';
+import { createProviderSignIn, PENDING_KEY } from '../security/providerSignIn';
 
 export const API_BASE = resolveApiBase(Constants.expoConfig?.extra?.apiUrl, __DEV__);
 const sessionStorage = createSessionStorage({
@@ -29,6 +30,8 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const currentToken = useRef(null);
   const accountDeletionPending = useRef(null);
+  const providerSignIn = useRef(null);
+  const [providerAuthState, setProviderAuthState] = useState({ busy: false, phase: 'idle', error: '' });
 
   const clearLocalSession = useCallback(async () => {
     const session = currentToken.current;
@@ -96,6 +99,9 @@ export function AuthProvider({ children }) {
   }, [clearLocalSession]);
 
   async function acceptSession(data) {
+    if (typeof data?.token !== 'string' || !data.token || !data.profile || typeof data.profile !== 'object') {
+      throw new Error('Sign-in returned an incomplete session. Please try again.');
+    }
     try {
       // The managed Android tunnel must not carry over between app accounts.
       await disconnectManagedVpnSession(currentToken.current);
@@ -123,6 +129,63 @@ export function AuthProvider({ children }) {
   async function register(name, email, password, title, phone) {
     const res = await axios.post(`${API_BASE}/auth/register`, { name, email, password, title, phone }, { timeout: REQUEST_TIMEOUT });
     return acceptSession(res.data);
+  }
+
+  useEffect(() => {
+    if (Platform.OS === 'web' || loading) return undefined;
+    const options = { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY };
+    if (!providerSignIn.current) providerSignIn.current = createProviderSignIn({
+      apiBase: API_BASE,
+      post: async (path, body) => (await axios.post(`${API_BASE}${path}`, body, { timeout: REQUEST_TIMEOUT })).data,
+      store: {
+        read: async () => { const raw = await SecureStore.getItemAsync(PENDING_KEY, options); return raw ? JSON.parse(raw) : null; },
+        write: value => SecureStore.setItemAsync(PENDING_KEY, JSON.stringify(value), options),
+        clear: () => SecureStore.deleteItemAsync(PENDING_KEY, options),
+      },
+      openURL: url => Linking.openURL(url), acceptSession,
+      discardSession: data => typeof data?.token === 'string' ? axios.post(`${API_BASE}/auth/logout`, {}, {
+        headers: { Authorization: `Bearer ${data.token}` }, timeout: REQUEST_TIMEOUT,
+      }) : Promise.resolve(),
+      canAccept: () => !currentToken.current,
+    });
+    const controller = providerSignIn.current;
+    const unsubscribe = controller.subscribe(setProviderAuthState);
+    let active = true;
+    const subscription = Linking.addEventListener('url', ({ url }) => { void controller.open(url); });
+    void controller.restore().then(() => Linking.getInitialURL()).then(url => { if (active && url) return controller.open(url); }).catch(() => {});
+    return () => { active = false; subscription.remove(); unsubscribe(); };
+  }, [loading]);
+
+  async function getSignInMethods() {
+    const response = await axios.get(`${API_BASE}/auth/providers`, { timeout: REQUEST_TIMEOUT });
+    const providers = response.data?.providers || {};
+    return Object.fromEntries(['google', 'apple', 'phone'].map(provider => [provider, {
+      available: providers[provider]?.enabled === true && (provider === 'phone' || Platform.OS !== 'web'),
+      websiteOnly: Platform.OS === 'web' && provider !== 'phone' && providers[provider]?.enabled === true,
+    }]));
+  }
+
+  async function startProviderSignIn(provider, mode) {
+    if (Platform.OS === 'web' || !providerSignIn.current) throw new Error('Use uficonnect.org to sign in with Google or Apple in a browser.');
+    await providerSignIn.current.start(provider, mode === 'register' ? 'signup' : 'login');
+  }
+
+  async function cancelProviderSignIn() {
+    try { await providerSignIn.current?.cancel(); }
+    catch { setProviderAuthState({ busy: false, phase: 'idle', error: 'Sign-in could not be cleared from secure storage. Please try again.' }); }
+  }
+
+  async function startPhoneSignIn({ phone, mode, name, title }) {
+    const body = { phoneNumber: phone, mode: mode === 'register' ? 'signup' : 'login' };
+    if (body.mode === 'signup') Object.assign(body, { name, title });
+    const response = await axios.post(`${API_BASE}/auth/phone/request`, body, { timeout: REQUEST_TIMEOUT });
+    if (typeof response.data?.verificationId !== 'string') throw new Error('The verification request could not start.');
+    return { verificationId: response.data.verificationId, retryAfter: response.data.resendAfter || 60 };
+  }
+
+  async function verifyPhoneSignIn({ verificationId, code }) {
+    const response = await axios.post(`${API_BASE}/auth/phone/verify`, { verificationId, code }, { timeout: REQUEST_TIMEOUT });
+    return acceptSession(response.data);
   }
 
   async function logout() {
@@ -184,6 +247,7 @@ export function AuthProvider({ children }) {
       token, profile, loading,
       onboardingComplete,
       login, register, logout, logoutAll, changePassword, deleteAccount, updateProfileLocally,
+      getSignInMethods, startProviderSignIn, cancelProviderSignIn, providerAuthState, startPhoneSignIn, verifyPhoneSignIn,
     }}>
       {children}
     </AuthContext.Provider>

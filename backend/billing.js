@@ -1,4 +1,5 @@
 const { randomUUID } = require('node:crypto');
+const { isDeliverableEmail } = require('./auth-signin');
 
 // Store identifiers and reconciliation outcomes only, never Stripe payloads,
 // payment credentials, card numbers, CVCs, or billing addresses.
@@ -208,7 +209,7 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
       }
     }
     const created = await stripe.customers.create({
-      email: row.email, name: row.name || undefined,
+      ...(!row.email_is_placeholder && isDeliverableEmail(row.email) ? { email: row.email } : {}), name: row.name || undefined,
       metadata: { uficonnect_user_id: row.id },
     }, { idempotencyKey: `ufi-customer:${row.id}:${row.stripe_customer_id || 'initial'}` });
     const { rows } = await client.query('UPDATE users SET stripe_customer_id=$1 WHERE id=$2 RETURNING *', [created.id, row.id]);

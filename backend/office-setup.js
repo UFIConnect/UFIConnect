@@ -1,4 +1,5 @@
 // Configuration inventory only: never return environment values or provider errors.
+const { providerSettings } = require('./auth-signin');
 function buildOfficeSetup({ env = {}, role = 'api', database = false, backup = {}, social = {}, autofixEnabled = env.AUTOFIX_ENABLED === 'true' } = {}) {
   const items = [];
   const present = key => Boolean(String(env[key] || '').trim());
@@ -20,6 +21,21 @@ function buildOfficeSetup({ env = {}, role = 'api', database = false, backup = {
   add('youtube', 'YouTube search', 'Content sources', ['YOUTUBE_API_KEY'], 'Enables keyword search and duration information; public channel feeds remain available without it.');
   add('twitch', 'Twitch discovery', 'Content sources', ['TWITCH_CLIENT_ID', 'TWITCH_CLIENT_SECRET'], 'Enables Twitch API discovery.');
   if (role === 'api') {
+    const signIn = providerSettings(env);
+    const callbackBase = (env.OAUTH_CALLBACK_BASE_URL || env.PUBLIC_API_URL || 'https://api.uficonnect.org').replace(/\/$/, '');
+    const googleKeys = env.GOOGLE_CLIENT_ID ? ['GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET'] : ['YOUTUBE_CLIENT_ID','YOUTUBE_CLIENT_SECRET'];
+    add('login-google', 'Google login and signup', 'Accounts and notifications', googleKeys, 'Account sign-in requests only openid, email and profile. This is separate from connecting a YouTube source.', {
+      configured: signIn.google.configured,
+      detail: `Use a Google OAuth web client and authorize ${callbackBase}${env.GOOGLE_CLIENT_ID ? '/auth/providers/google/callback' : '/auth/social/youtube/callback'}. Existing YouTube app credentials can be reused. Provider sign-in has not been tested by this inventory.`,
+    });
+    add('login-apple', 'Apple login and signup', 'Accounts and notifications', ['APPLE_CLIENT_ID','APPLE_TEAM_ID','APPLE_KEY_ID','APPLE_PRIVATE_KEY'], 'Requires an Apple Developer account, a Sign in with Apple Services ID associated with an app, and a private key.', {
+      configured: signIn.apple.configured,
+      detail: `Set APPLE_CLIENT_ID to the Services ID, APPLE_TEAM_ID to the developer team, APPLE_KEY_ID to the key ID, and APPLE_PRIVATE_KEY to the PEM .p8 key. Register the website domain and return URL ${callbackBase}/auth/providers/apple/callback. Requires HTTPS; callback uses form_post.`,
+    });
+    add('login-phone', 'Phone number login and signup', 'Accounts and notifications', ['TWILIO_ACCOUNT_SID','TWILIO_AUTH_TOKEN','TWILIO_VERIFY_SERVICE_SID'], 'Requires a Twilio account and an SMS-enabled Verify service. Account creation and SMS billing must be set up in Twilio.', {
+      configured: signIn.phone.configured,
+      detail: 'Set the AC account SID, account auth token, and VA Verify service SID on the API service. Enable intended destination countries and review Twilio fraud protection, sender requirements and SMS charges. Codes expire after ten minutes; requests and verification attempts are limited.',
+    });
     add('managed-recovery', 'Primary database recovery evidence', 'Core services', ['RENDER_API_KEY', 'RENDER_DATABASE_ID'], 'Reads Render point-in-time recovery and export metadata. Review Data recovery in Overview for verified provider status; restore drills are separate.');
     add('backup', 'Feed read failover', 'Core services', ['DATABASE_URL_BACKUP'], 'Copies a bounded recent feed snapshot. This does not back up accounts, messages, or the full database.', {
       status: !present('DATABASE_URL_BACKUP') ? 'missing' : backup.connected && backup.lastSyncAt ? 'ready' : 'degraded',

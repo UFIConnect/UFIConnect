@@ -92,6 +92,17 @@ function setup() {
 }
 async function alice() { return (await pg.query('SELECT * FROM users WHERE id=$1', [A])).rows[0]; }
 
+test('phone-only account aliases are omitted when creating Stripe customers', async () => {
+  const f=setup();
+  await pg.query('UPDATE users SET email=$1,stripe_customer_id=NULL WHERE id=$2',['opaque-id@identity.uficonnect.invalid',A]);
+  let supplied;
+  const create=f.stripe.customers.create;
+  f.stripe.customers.create=async data=>{supplied=data;return create(data);};
+  await f.service.createCheckout(A,'pro');
+  assert.ok(supplied);
+  assert.equal(Object.hasOwn(supplied,'email'),false);
+});
+
 function rejectedCheckout(replayed = true, overrides = {}) {
   return Object.assign(new Error('Product configuration rejected'), {
     type: 'StripeInvalidRequestError', statusCode: 400,

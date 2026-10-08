@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import PasswordInput from '../components/PasswordInput';
+import SignInMethods from '../components/SignInMethods';
 import { validateNewPassword } from '../security/passwordPolicy';
 import { COLORS } from '../theme';
 
@@ -16,6 +17,7 @@ export default function RegisterScreen({ navigation }) {
   const [title, setTitle] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [alternativeBusy, setAlternativeBusy] = useState(false);
   const [concealKey, setConcealKey] = useState(0);
   useEffect(() => navigation.addListener('blur', () => setPassword('')), [navigation]);
 
@@ -49,6 +51,8 @@ export default function RegisterScreen({ navigation }) {
           <Text style={styles.title}>Create account</Text>
           <Text style={styles.subtitle}>Connect with your communities.</Text>
 
+          <SignInMethods mode="register" navigation={navigation} disabled={loading} onBusyChange={setAlternativeBusy} />
+
           <Text style={styles.label}>Full name</Text>
           <TextInput style={styles.input} placeholder="Alex Kim" placeholderTextColor={COLORS.muted}
             value={name} onChangeText={setName} autoCapitalize="words" />
@@ -67,15 +71,15 @@ export default function RegisterScreen({ navigation }) {
 
           <Text style={styles.label}>Password</Text>
           <PasswordInput style={styles.input} placeholder="At least 12 characters" placeholderTextColor={COLORS.muted}
-            value={password} onChangeText={setPassword} newPassword accessibilityLabel="New password" editable={!loading} concealKey={concealKey} />
+            value={password} onChangeText={setPassword} newPassword accessibilityLabel="New password" editable={!loading && !alternativeBusy} concealKey={concealKey} />
 
-          <TouchableOpacity style={styles.button} onPress={handleRegister} disabled={loading}>
+          <TouchableOpacity style={styles.button} onPress={handleRegister} disabled={loading || alternativeBusy}>
             {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Create account</Text>}
           </TouchableOpacity>
 
           <View style={styles.footer}>
             <Text style={styles.footerText}>Already have an account? </Text>
-            <TouchableOpacity onPress={() => navigation.popTo('Login')}>
+            <TouchableOpacity disabled={loading || alternativeBusy} onPress={() => navigation.popTo('Login')}>
               <Text style={styles.link}>Sign in</Text>
             </TouchableOpacity>
           </View>

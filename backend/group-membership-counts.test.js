@@ -1,0 +1,32 @@
+'use strict';
+const test=require('node:test');
+const assert=require('node:assert/strict');
+require('./generated-media');
+const {PGlite}=require('@electric-sql/pglite');
+const {createAppHarness,member}=require('./test-support/app-harness');
+const {createNativeGroupCountHydrator}=require('./group-membership-counts');
+const A='c0000000-0000-4000-8000-000000000001',B='c0000000-0000-4000-8000-000000000002';
+test('native group cards and details derive real membership counts even when stored counters and worker caches are stale',async t=>{
+  const pg=new PGlite();t.after(()=>pg.close());
+  await pg.exec("CREATE TABLE users(id UUID PRIMARY KEY,name TEXT,joined_groups TEXT[] DEFAULT '{}',billing_closed BOOLEAN DEFAULT false,auth_version INTEGER DEFAULT 0)");
+  await pg.query("INSERT INTO users VALUES($1,'Synthetic viewer',ARRAY['ufi-general'],false,0),($2,'Other synthetic member',ARRAY['ufi-general','ufi-tech','ufi-tech'],false,0)",[A,B]);
+  const app=await createAppHarness({connected:true,query:(sql,params)=>sql.startsWith('SELECT id FROM auth_sessions')?Promise.resolve({rows:[{id:params[0]}],rowCount:1}):pg.query(sql,params)});t.after(()=>app.close());
+  app.seedUser(member(A,{joinedGroups:['ufi-general']}));
+  const general=app.groups.find(group=>group.id==='ufi-general'),tech=app.groups.find(group=>group.id==='ufi-tech');general.members=0;tech.members=999;
+  app.groups.push({id:'external-counter',name:'External source community',isExternal:true,members:4321});
+  const publicList=await app.request('/groups?scope=native');assert.equal(publicList.status,200,JSON.stringify(publicList.data));
+  assert.equal(publicList.data.groups.find(group=>group.id==='ufi-general').members,2);
+  assert.equal(publicList.data.groups.find(group=>group.id==='ufi-tech').members,1,'Repeated IDs in one account membership array still count one member');
+  assert.equal(publicList.data.groups.find(group=>group.id==='ufi-business').members,0);
+  assert.equal(general.members,0);assert.equal(tech.members,999,'Reading verified totals does not mutate shared cached counters');
+  const detail=await app.request('/groups/ufi-general',{userId:A});assert.equal(detail.status,200,JSON.stringify(detail.data));assert.equal(detail.data.group.members,2);
+  const internal=await app.request('/groups/internal',{userId:A});assert.equal(internal.status,200);assert.equal(internal.data.groups.find(group=>group.id==='ufi-general').members,2);
+  const all=await app.request('/groups');assert.equal(all.data.groups.find(group=>group.id==='external-counter').members,4321,'Provider community totals keep their existing source values');
+  assert.equal((await pg.query('SELECT COUNT(*)::integer AS count FROM users')).rows[0].count,2,'Read routes preserve database accounts');
+});
+test('native count reads report database unavailability without replacing a source count with a false zero',async()=>{
+  const group={id:'native',isExternal:false,members:777};
+  const hydrate=createNativeGroupCountHydrator({db:{isConnected:()=>true,query:async()=>{throw new Error('Synthetic outage');}}});
+  await assert.rejects(hydrate([group]),error=>error.status===503);assert.equal(group.members,777);
+  const external={id:'external',isExternal:true,members:4321};assert.deepEqual(await hydrate([external]),[external]);
+});

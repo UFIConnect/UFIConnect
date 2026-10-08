@@ -31,9 +31,9 @@
     "web": "expo start --web",
     "export": "expo export --platform all",
     "doctor": "expo-doctor",
-    "test:export": "node scripts/audit-export.mjs",
+    "test:export": "node scripts/audit-export.mjs && node scripts/audit-signin.mjs",
     "test:moderation": "node scripts/audit-moderation.mjs",
-    "test:security": "node --test security/security.test.js security/dependencyCompatibility.test.js security/dependencyBackports.test.js security/accountDeletion.test.js security/moderation.test.js analytics/screenPolicy.test.js analytics/serviceMetrics.test.js && npm run test:vpn",
+    "test:security": "node --test security/security.test.js security/dependencyCompatibility.test.js security/dependencyBackports.test.js security/accountDeletion.test.js security/moderation.test.js security/providerSignIn.test.js analytics/screenPolicy.test.js analytics/serviceMetrics.test.js && npm run test:vpn",
     "test:analytics": "node scripts/audit-analytics.mjs && node scripts/audit-preferences.mjs"
   },
   "dependencies": {

@@ -77,6 +77,7 @@ async function createAppHarness({ env = {}, connected = false, query, withClient
       savePostsToDB, savePostsToDBFast, parseYouTubeChannelRSS, buildSavedPostSnapshot, ARCHIVE_COLUMNS,
       getFeedLocationContext, feedPostLocationMatch, rankFeedPostsForLocation, jobMatchesUserLocation, mainFeedSnapshotKey, mainFeedSnapshots,
       getFollowingFeedPosts, getCommunityPosts, followingSourceCache,
+      sseClients, broadcastSSE, flushSSEBatch,
       refreshConnectedAccessToken,
       createDPoPProof,
       setFollowingFetcher(source, handler) { FOLLOWING_SOURCE_FETCHERS[source] = handler; },

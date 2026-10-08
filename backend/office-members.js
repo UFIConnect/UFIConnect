@@ -84,7 +84,7 @@ function createOfficeMembers({ db, getCachedUserIds = () => [], clearUserCache =
     // Counts and the page use the same PostgreSQL statement snapshot. Office
     // reads authoritative records directly, never a feed/profile cache.
     const { rows: [row] } = await db.query(`WITH account_rows AS (
-      SELECT id,name,email,created_at,COALESCE(onboarding_complete,false) AS onboarded,
+      SELECT id,name,CASE WHEN email LIKE '%@identity.uficonnect.invalid' THEN '' ELSE email END AS email,created_at,COALESCE(onboarding_complete,false) AS onboarded,
         (profile_hidden IS TRUE OR COALESCE(role_settings->>'privacy_publicProfile','true')='false') AS hidden FROM users
     ), filtered AS (
       SELECT * FROM account_rows WHERE ($1='' OR id::text=$1 OR strpos(lower(name),lower($1))>0 OR strpos(lower(email),lower($1))>0)
@@ -148,6 +148,7 @@ function createOfficeMembers({ db, getCachedUserIds = () => [], clearUserCache =
     if (!mailAvailable()) throw failure(503, 'Email delivery is not configured.');
     const { rows: [user] } = await db.query('SELECT email FROM users WHERE id=$1', [userId]);
     if (!user) throw failure(404, 'Account not found.');
+    if (!user.email || /@identity\.uficonnect\.invalid$/i.test(user.email)) throw failure(422, 'This account has not added an email address.');
     const subject = body.subject.trim(), message = body.message.trim();
     const hash = createHash('sha256').update(JSON.stringify([userId, subject, message])).digest('hex');
     const { rows: claimed } = await db.query(`INSERT INTO office_member_email(id,user_id,subject,payload_hash,status)

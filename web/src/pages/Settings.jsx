@@ -17,6 +17,7 @@ import BusinessTeamSettings from '../components/BusinessTeamSettings';
 import DataPrivacySettings from '../components/DataPrivacySettings';
 import ConfirmActionDialog from '../components/ConfirmActionDialog';
 import LegalLinks from '../components/LegalLinks';
+import AccountAccess from '../components/AccountAccess';
 
 // ── Shared preference constants ───────────────────────────────────────────────
 const GOALS = [
@@ -859,6 +860,10 @@ export default function Settings() {
       {activeTab === 'security' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {securityStatusError && <div className="auth-error" role="alert">{securityStatusError}</div>}
+          <div className="card">
+            <SectionHeading>Sign-in methods</SectionHeading>
+            <AccountAccess mode="link" onSignedIn={() => navigate('/settings?tab=security&linked=phone', { replace: true })} />
+          </div>
           <div className="card">
             <SectionHeading>Password</SectionHeading>
             {!isLocalAuth ? (

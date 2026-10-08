@@ -7,15 +7,19 @@ import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import PublicFooter from '../components/PublicFooter';
 import { safeReturnPath } from '../auth/returnPath';
+import AccountAccess from '../components/AccountAccess';
+import { SIGNIN_ERRORS } from '../auth/accountAccess.mjs';
 
 export default function Login() {
   const { login, token, profile, loading: restoring, auth0Enabled, loginWithAuth0 } = useAuth();
   const navigate  = useNavigate();
   const location = useLocation();
-  const returnTo = safeReturnPath(location.state?.from);
+  const params = new URLSearchParams(location.search);
+  const returnTo = safeReturnPath(location.state?.from || params.get('returnTo'));
   const [form, setForm] = useState({ email: '', password: '' });
-  const [error, setError] = useState('');
+  const [error, setError] = useState(() => SIGNIN_ERRORS[params.get('auth_error')] || (params.has('auth_error') ? 'Sign-in could not be completed. Please try again.' : ''));
   const [loading, setLoading] = useState(false);
+  const [accessBusy, setAccessBusy] = useState(false);
 
   useEffect(() => {
     if (token && !restoring) {
@@ -31,6 +35,7 @@ export default function Login() {
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (loading || accessBusy) return;
     if (!form.email || !form.password) { setError('Please fill in all fields.'); return; }
     setLoading(true);
     try {
@@ -73,6 +78,7 @@ export default function Login() {
               className="btn btn-primary btn-full btn-lg"
               type="button"
               onClick={() => loginWithAuth0()}
+              disabled={loading || accessBusy}
               style={{ marginBottom: 14 }}
             >
               Continue with Auth0
@@ -93,6 +99,8 @@ export default function Login() {
             </div>
           </>
         )}
+
+        <AccountAccess mode="login" returnTo={returnTo} disabled={loading} onBusyChange={setAccessBusy} onSignedIn={user => navigate(user?.onboardingComplete ? returnTo : '/onboarding', { replace: true, state: user?.onboardingComplete ? undefined : { from: returnTo } })} />
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
@@ -124,7 +132,7 @@ export default function Login() {
               autoComplete="current-password"
             />
           </div>
-          <button className="btn btn-primary btn-full btn-lg" type="submit" disabled={loading}>
+          <button className="btn btn-primary btn-full btn-lg" type="submit" disabled={loading || accessBusy}>
             {loading ? <span className="spinner" /> : 'Sign in'}
           </button>
         </form>
@@ -135,7 +143,7 @@ export default function Login() {
 
         <section className="public-page-guidance" aria-labelledby="login-guidance-title">
           <h2 id="login-guidance-title">Need help signing in?</h2>
-          <p>Use the email address you registered with. If you cannot remember your password, <Link to="/forgot-password">request a reset link</Link>.</p>
+          <p>Use the same sign-in method you used to create your account. For email and password, you can <Link to="/forgot-password">request a reset link</Link>.</p>
           {auth0Enabled && <p>If you created your account through Auth0, choose Continue with Auth0 to use the same sign-in method.</p>}
           <p>You can <Link to="/global">browse the public feed</Link> before signing in.</p>
         </section>

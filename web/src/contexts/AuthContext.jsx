@@ -129,6 +129,11 @@ export function AuthProvider({ children }) {
     return acceptSession(data);
   }
 
+  async function verifyPhoneSignIn(verificationId, code, { signal } = {}) {
+    const { data } = await client.post('/auth/phone/verify', { verificationId, code }, publicOAuthRequestConfig({ signal }));
+    return acceptSession(data);
+  }
+
   async function logout({ revoke = true } = {}) {
     restoreGeneration.current += 1;
     restoreRequest.current?.abort();
@@ -170,7 +175,7 @@ export function AuthProvider({ children }) {
   return (
     <AuthContext.Provider value={{
       token, profile, loading: loading || restoringSession || (auth0Enabled && auth0.isLoading),
-      sessionError: sessionError && !token, retrySession, login, register, logout, logoutAll,
+      sessionError: sessionError && !token, retrySession, login, register, verifyPhoneSignIn, logout, logoutAll,
       updateProfileLocally, refreshProfile, auth0Enabled, loginWithAuth0, registerWithAuth0,
     }}>
       {children}

@@ -14,9 +14,12 @@ const { SESSION_TTL_SECONDS, resolveJwtSecret, passwordPolicyError, signSecurity
 const { createTokenVault, migrateSocialCredentials } = require('./token-vault');
 const { isSourceDisplayAllowed } = require('./source-policy');
 const { REPORT_SCHEMA, COPYRIGHT_REPORT_BRIDGE_SCHEMA, registerContentReportRoutes, reportSuppressionPredicate, createReportVisibilityFilter } = require('./content-reports');
+const { nativeGroupVisibilityPredicate, createNativePostVisibilityFilter } = require('./community-post-visibility');
+const { createNativeGroupCountHydrator } = require('./group-membership-counts');
 const { createAnalyticsBridgeHandler } = require('./analytics-bridge');
 const { ANALYTICS_SCHEMA, ANALYTICS_MIGRATIONS, createAggregateAnalytics } = require('./aggregate-analytics');
 const { OFFICE_MEMBERS_SCHEMA, registerOfficeMemberRoutes } = require('./office-members');
+const { SIGNIN_SCHEMA, registerSignInRoutes, isDeliverableEmail } = require('./auth-signin');
 const { CREATOR_ANALYTICS_SCHEMA, createCreatorAnalytics, registerCreatorAnalyticsRoutes } = require('./creator-analytics');
 const { createUfiVault, registerUfiVaultRoutes, UFI_VAULT_SCHEMA } = require('./ufi-vault');
 const { createOfficeAgentChat, sanitizeSnapshot: sanitizeAgentSnapshot } = require('./office-agent-chat');
@@ -1678,6 +1681,7 @@ function getMailTransport() {
   return _mailTransport;
 }
 async function sendPasswordResetEmail(toEmail, resetUrl) {
+  if (!isDeliverableEmail(toEmail)) return;
   const transport = getMailTransport();
   if (!transport) {
     console.warn('[email] Password reset delivery unavailable: SMTP is not configured.');
@@ -6731,10 +6735,12 @@ async function flushSSEBatch() {
     try { posts = await visibleReportContent(sseBatchBuffer.splice(0, SSE_BATCH_MAX)); }
     catch { continue; } // Moderation storage failures never publish unchecked content.
     if (!posts.length) continue;
-    const msg = `data: ${JSON.stringify({ posts })}\n\n`;
     for (const [id, res] of sseClients) {
-      try { res.write(msg); }
-      catch { sseClients.delete(id); }
+      try {
+        const visible = await visibleNativeGroupContent(posts, res.feedViewerId || null);
+        if (visible.length) res.write(`data: ${JSON.stringify({ posts: visible })}\n\n`);
+      }
+      catch { sseClients.delete(id); try { res.end?.(); } catch {} }
     }
   }
 }
@@ -16380,12 +16386,13 @@ async function getCommunityPosts({
     && (!hasAudienceScope
       || audienceAuthorIdSet?.has(p.authorId)
       || audienceGroupIdSet?.has(p.groupId))
+    && (!p.groupId || Boolean(groups.find(group => group.id === p.groupId && canSeeGroup(group, viewerId))))
   );
 
   if (db.isConnected()) {
     try {
-      const clauses = [`COALESCE(source,'uficonnect')='uficonnect'`];
-      const params = [];
+      const params = [viewerId];
+      const clauses = [`COALESCE(source,'uficonnect')='uficonnect'`, nativeGroupVisibilityPredicate('community_posts', '$1')];
       if (authorId) {
         params.push(authorId);
         clauses.push(`author_id=$${params.length}`);
@@ -16422,6 +16429,7 @@ async function getCommunityPosts({
       result = rows.map(dbCommunityPostToMemPost);
     } catch (e) {
       console.error('community posts DB:', e.message);
+      throw Object.assign(new Error('Community posts are temporarily unavailable.'), { status: 503 });
     }
   }
 
@@ -16535,7 +16543,8 @@ function fullProfile(user) {
   ));
 
   return {
-    id: user.id, name: user.name, email: user.email, title: user.title,
+    id: user.id, name: user.name, email: isDeliverableEmail(user.email) ? user.email : '', title: user.title,
+    hasEmail: isDeliverableEmail(user.email),
     // Phone is only returned to the signed-in member through their profile
     // response. Public/member discovery always uses sanitizeUser().
     phone: user.phone || '',
@@ -16599,7 +16608,8 @@ function dbRowToMemUser(row) {
   return {
     id: row.id,
     name: row.name,
-    email: row.email,
+    email: row.email_is_placeholder || !isDeliverableEmail(row.email) ? '' : row.email,
+    emailIsPlaceholder: !!row.email_is_placeholder,
     phone: row.phone || '',
     passwordHash: row.password_hash,
     authVersion: Number(row.auth_version || 0),
@@ -16958,6 +16968,7 @@ async function migrateDB() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT`);
     await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_stripe_customer_idx ON users(stripe_customer_id) WHERE stripe_customer_id IS NOT NULL`);
     await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_auth_subject_idx ON users(auth_provider, auth_subject) WHERE auth_subject IS NOT NULL`);
+    for (const statement of SIGNIN_SCHEMA) await db.query(statement);
     // Resume Builder — an independent add-on subscription, not a plan
     // tier (see /billing/create-checkout-session + the webhook's own
     // comments): a free or paid-plan user can hold this at the same time as
@@ -20127,6 +20138,13 @@ function isLikelyBotRequest(req) {
 // black hole — status defaults to 'open' at creation (see POST /reports);
 // this is where a human actually sees and closes them out.
 const filterReportedContent = createReportVisibilityFilter({ db });
+const visibleNativeGroupContent = createNativePostVisibilityFilter({ db,
+  getGroups: () => groups, getViewer: id => users.find(user => user.id === id),
+  allowMemory: process.env.NODE_ENV !== 'production',
+});
+const hydrateNativeGroupCounts = createNativeGroupCountHydrator({ db,
+  getUsers: () => users, allowMemory: process.env.NODE_ENV !== 'production',
+});
 async function visibleReportContent(content, targetType = 'post') {
   // Local fixtures use memory-only content. Production always checks durable
   // removals, including when feed data came from another worker or backup.
@@ -20213,6 +20231,16 @@ const officeMembers = registerOfficeMemberRoutes(app, {
 });
 
 // --- Auth ---------------------------------------------------------------------
+registerSignInRoutes(app, {
+  db, env: process.env, vault: tokenVault,
+  callbackBase: SAFE_OAUTH_CALLBACK_BASE, frontendBase: FRONTEND_BASE,
+  limiter: authLimiter, authenticate, schedule: setInterval, issueSession, setSessionCookie,
+  profileFor: effectiveProfile,
+  onUser: row => syncToMemory(dbRowToMemUser(row)),
+  onCreated: () => { void officeMembers.recordSignup(201).catch(() => {}); },
+  recordSignIn: recordSuccessfulSignIn,
+  fetcher: (...args) => fetch(...args),
+});
 app.get('/auth/config', (_req, res) => {
   res.json({
     auth0: {
@@ -20244,7 +20272,7 @@ app.post('/auth/register', officeMembers.signupMiddleware, registerLimiter, asyn
   const { name, email, password, title, phone: phoneInput } = req.body || {};
   const passwordError = passwordPolicyError(password);
   if (typeof name !== 'string' || !name.trim() || typeof email !== 'string' ||
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) || passwordError ||
+      !isDeliverableEmail(email.trim()) || passwordError ||
       (phoneInput != null && typeof phoneInput !== 'string') || (title !== undefined && typeof title !== 'string')) {
     return res.status(400).json({ message: passwordError || 'Enter a name and valid email.' });
   }
@@ -20305,7 +20333,7 @@ app.post('/auth/login', authLimiter, async (req, res) => {
       }
       user = cached;
     }
-    if (!user?.passwordHash || user.authProvider === 'auth0' || !await bcrypt.compare(password, user.passwordHash)) {
+    if (!user?.passwordHash || (user.authProvider || 'local') !== 'local' || !await bcrypt.compare(password, user.passwordHash)) {
       return res.status(401).json({ message: 'Invalid email or password.' });
     }
     const token = await issueSession(user);
@@ -20357,7 +20385,7 @@ app.post('/auth/forgot-password', passwordResetLimiter, async (req, res) => {
     const user = db.isConnected()
       ? await fetchAndSyncUserByEmail(email)
       : process.env.NODE_ENV !== 'production' ? users.find((u) => u.email === email && !isDBId(u.id)) : null;
-    if (user && user.authProvider !== 'auth0') {
+    if (user && (user.authProvider || 'local') === 'local' && isDeliverableEmail(user.email)) {
       const resetToken = createPasswordResetToken(user);
       const resetUrl = `${FRONTEND_BASE}/reset-password#token=${resetToken}`;
       await sendPasswordResetEmail(user.email, resetUrl);
@@ -20374,7 +20402,7 @@ app.post('/auth/reset-password', passwordResetLimiter, async (req, res) => {
   if (!payload) return res.status(400).json({ message: 'This reset link is invalid or has expired.' });
   try {
     const user = await getAuthUser(payload.id);
-    if (!user || user.authProvider === 'auth0' || payload.ver !== (user.authVersion || 0)) {
+    if (!user || (user.authProvider || 'local') !== 'local' || payload.ver !== (user.authVersion || 0)) {
       return res.status(400).json({ message: 'This reset link is invalid or has expired.' });
     }
     const previousVersion = user.authVersion || 0;
@@ -21076,7 +21104,7 @@ app.post('/profile/password', authenticate, authLimiter, async (req, res) => {
     // revocation may have completed while this request was waiting to run.
     const user = await getAuthUser(req.user.id);
     if (!user) return res.status(401).json({ message: 'Sign in again before changing your password.' });
-    if (user.authProvider === 'auth0') {
+    if ((user.authProvider || 'local') !== 'local') {
       return res.status(400).json({ message: 'Your password is managed by your sign-in provider, not UFIconnect.' });
     }
     const previousVersion = user.authVersion || 0;
@@ -21104,15 +21132,17 @@ app.post('/profile/password', authenticate, authLimiter, async (req, res) => {
 });
 
 app.get('/profile/security', authenticate, (req, res) => {
-  const local = req.user.authProvider !== 'auth0';
+  const provider = req.user.authProvider || 'local';
+  const local = provider !== 'auth0';
+  const password = provider === 'local';
   res.json({
-    authProvider: local ? 'local' : 'auth0',
-    passwordChangeAvailable: local,
-    passwordMinimumCharacters: 15,
+    authProvider: provider,
+    passwordChangeAvailable: password,
+    passwordMinimumCharacters: 12,
     passwordMaximumUtf8Bytes: 72,
     sessionLifetimeSeconds: local ? SESSION_TTL_SECONDS : null,
     serverSessionRevocation: local,
-    passwordChangeRevokesSessions: local,
+    passwordChangeRevokesSessions: password,
     multiFactorAvailable: false,
     securityAlertsAvailable: false,
   });
@@ -21721,7 +21751,7 @@ app.get('/groups', authenticateOptional, async (req, res) => {
       ? Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 24))
       : 0;
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
-    const page = requestedLimit > 0 ? result.slice(offset, offset + requestedLimit) : result;
+    const page = await hydrateNativeGroupCounts(requestedLimit > 0 ? result.slice(offset, offset + requestedLimit) : result);
     const joinedGroupIds = new Set(viewer?.joinedGroups || []);
     res.json({
       groups: page.map(group => groupForViewer(group, joinedGroupIds)),
@@ -21776,18 +21806,22 @@ app.post('/groups', authenticate, async (req, res) => {
   } catch (e) { console.error('POST /groups:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
-app.get('/groups/internal', authenticate, (req, res) => {
-  res.json({ groups: groups.filter((g) => !g.isExternal && canSeeGroup(g, req.user.id)) });
+app.get('/groups/internal', authenticate, async (req, res) => {
+  try {
+    res.json({ groups: await hydrateNativeGroupCounts(groups.filter((g) => !g.isExternal && canSeeGroup(g, req.user.id))) });
+  } catch (error) { res.status(error.status || 500).json({ message: 'Group member counts are temporarily unavailable.' }); }
 });
 
 app.get('/groups/categories', (req, res) => {
   res.json({ categories: [...new Set(groups.map((g) => g.category))] });
 });
 
-app.get('/groups/recommend', authenticate, (req, res) => {
+app.get('/groups/recommend', authenticate, async (req, res) => {
   const { triggerGroupId, count = 3 } = req.query;
   if (!triggerGroupId) return res.status(400).json({ message: 'triggerGroupId required.' });
-  res.json({ recommended: recommendGroups(req.user.id, triggerGroupId, Number(count)) });
+  try {
+    res.json({ recommended: await hydrateNativeGroupCounts(recommendGroups(req.user.id, triggerGroupId, Number(count))) });
+  } catch (error) { res.status(error.status || 500).json({ message: 'Group member counts are temporarily unavailable.' }); }
 });
 
 // Group members — registered users + sample users who have joined it
@@ -21800,7 +21834,8 @@ app.get('/groups/:id', authenticate, async (req, res) => {
     if (!user || !group || !canSeeGroup(group, user.id)) {
       return res.status(404).json({ message: 'Group not found.' });
     }
-    res.json({ group: groupForViewer(group, new Set(user.joinedGroups || [])) });
+    const [countedGroup] = await hydrateNativeGroupCounts([group]);
+    res.json({ group: groupForViewer(countedGroup, new Set(user.joinedGroups || [])) });
   } catch (e) {
     console.error('GET /groups/:id:', e);
     res.status(500).json({ error: 'Internal server error' });
@@ -21866,10 +21901,11 @@ app.post('/groups/:id/join', authenticate, async (req, res) => {
       user.joinedGroups = nextJoinedGroups;
       group.members += 1;
     }
+    const [countedGroup] = await hydrateNativeGroupCounts([group]);
     res.json({
       joinedGroups: user.joinedGroups,
-      group: groupForViewer(group, new Set(user.joinedGroups)),
-      recommended: recommendGroups(user.id, group.id, 3),
+      group: groupForViewer(countedGroup, new Set(user.joinedGroups)),
+      recommended: await hydrateNativeGroupCounts(recommendGroups(user.id, group.id, 3)),
     });
   } catch (e) { console.error('POST /groups/:id/join:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
@@ -21901,9 +21937,10 @@ app.delete('/groups/:id/join', authenticate, async (req, res) => {
       user.joinedGroups = nextJoinedGroups;
       group.members = Math.max(0, group.members - 1);
     }
+    const [countedGroup] = await hydrateNativeGroupCounts([group]);
     res.json({
       joinedGroups: user.joinedGroups,
-      group: groupForViewer(group, new Set(user.joinedGroups)),
+      group: groupForViewer(countedGroup, new Set(user.joinedGroups)),
     });
   } catch (e) { console.error('DELETE /groups/:id/join:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
@@ -24076,13 +24113,14 @@ app.get('/feed/stream', authenticateSSE, async (req, res) => {
   res.flushHeaders();
 
   const clientId = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  res.feedViewerId = req.user.id;
   sseClients.set(clientId, res);
   let hb = null;
   function cleanup() { if (hb) clearInterval(hb); sseClients.delete(clientId); }
 
   // Send the most recent posts immediately so the client has something to show
   try {
-    const initial = await getInitialSSEPosts(200);
+    const initial = await visibleNativeGroupContent(await getInitialSSEPosts(200), req.user.id);
     if (initial.length) res.write(`data: ${JSON.stringify({ init: true, posts: initial })}\n\n`);
   } catch { cleanup(); return; }
 
@@ -24279,7 +24317,7 @@ app.get('/feed/:postId', authenticateOptional, async (req, res) => {
 
   const communityPost = await getCommunityPostById(postId);
   if (communityPost) {
-    if (!canSeePostLikes(communityPost, req.user?.id)) return res.status(404).json({ message: 'Post not found.' });
+    if (!(await canSeePostLikes(communityPost, req.user?.id))) return res.status(404).json({ message: 'Post not found.' });
     return await sendFeedResponse(req, res, { post: serializeCommunityPost(communityPost, req.user?.id) });
   }
 
@@ -24574,6 +24612,7 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
 
   const communityPost = await getCommunityPostById(postId);
   if (communityPost) {
+    if (!(await canSeePostLikes(communityPost, req.user?.id))) return res.status(404).json({ message: 'Post not found.' });
     const { comments, hasMore, total } = await getCommentsForPost(communityPost.id, limit, offset);
     return res.json({
       comments: comments.map(comment => ({
@@ -27638,10 +27677,10 @@ async function sendFeedResponse(req, res, payload) {
   res.set?.('Cache-Control', viewerId || req.feedLocationContext ? 'private, no-store' : 'no-cache');
   const result = { ...payload };
   if (req.feedLocationContext) result.locationContext = publicFeedLocationContext(req.feedLocationContext);
-  if (Array.isArray(payload.posts)) result.posts = await hydratePostLikes(db, await visibleReportContent(payload.posts), viewerId);
-  if (Array.isArray(payload.liveFeeds)) result.liveFeeds = await hydratePostLikes(db, await visibleReportContent(payload.liveFeeds), viewerId);
+  if (Array.isArray(payload.posts)) result.posts = await hydratePostLikes(db, await visibleNativeGroupContent(await visibleReportContent(payload.posts), viewerId), viewerId);
+  if (Array.isArray(payload.liveFeeds)) result.liveFeeds = await hydratePostLikes(db, await visibleNativeGroupContent(await visibleReportContent(payload.liveFeeds), viewerId), viewerId);
   if (payload.post) {
-    const visible = await visibleReportContent([payload.post]);
+    const visible = await visibleNativeGroupContent(await visibleReportContent([payload.post]), viewerId);
     if (!visible.length) return res.status(404).json({ message: 'Post not found.' });
     [result.post] = await hydratePostLikes(db, visible, viewerId);
   }
@@ -27659,9 +27698,8 @@ async function sendFeedResponse(req, res, payload) {
   return res.json(result);
 }
 
-function canSeePostLikes(post, viewerId) {
-  const group = groups.find(candidate => candidate.id === post.groupId);
-  return !group || canSeeGroup(group, viewerId);
+async function canSeePostLikes(post, viewerId) {
+  return (await visibleNativeGroupContent([post], viewerId)).length > 0;
 }
 
 async function toggleCommunityPostLike(req, res) {
@@ -27669,7 +27707,7 @@ async function toggleCommunityPostLike(req, res) {
     res.set('Cache-Control', 'private, no-store');
     const desired = desiredLike(req.body);
     const post = await getCommunityPostById(req.params.postId);
-    if (!post || !canSeePostLikes(post, req.user.id)) return res.status(404).json({ message: 'Post not found.' });
+    if (!post || !(await canSeePostLikes(post, req.user.id))) return res.status(404).json({ message: 'Post not found.' });
     if (!db.isConnected()) {
       return res.status(503).json({ message: 'Liking is temporarily unavailable — please try again in a moment.' });
     }
@@ -27821,7 +27859,7 @@ async function getPostLikes(req, res) {
     if (!db.isConnected()) return res.status(503).json({ message: 'Likes are temporarily unavailable. Please try again.' });
     const post = await getCommunityPostById(postId);
     if (post) {
-      if (!canSeePostLikes(post, viewerId)) return res.status(404).json({ message: 'Post not found.' });
+      if (!(await canSeePostLikes(post, viewerId))) return res.status(404).json({ message: 'Post not found.' });
       const { rows } = await db.query('SELECT likes FROM community_posts WHERE id=$1', [postId]);
       const likes = rows[0]?.likes || post.likes || [];
       return res.json({ likesCount: likes.length, likedByMe: Boolean(viewerId && likes.includes(viewerId)),
@@ -27841,7 +27879,7 @@ app.get('/feed/:postId/likes', authenticateOptional, getPostLikes);
 app.get('/posts/:postId/comments', authenticate, async (req, res) => {
   try {
     const post = await getCommunityPostById(req.params.postId);
-    if (!post) return res.status(404).json({ message: 'Post not found.' });
+    if (!post || !(await canSeePostLikes(post, req.user.id))) return res.status(404).json({ message: 'Post not found.' });
     const limit = boundedLimit(req.query.limit, 50, 100);
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
     const { comments, hasMore, total } = await getCommentsForPost(post.id, limit, offset);
@@ -27852,7 +27890,7 @@ app.get('/posts/:postId/comments', authenticate, async (req, res) => {
 app.post('/posts/:postId/comments', authenticate, contentSubmissionLimiter, async (req, res) => {
   try {
     const post = await getCommunityPostById(req.params.postId);
-    if (!post) return res.status(404).json({ message: 'Post not found.' });
+    if (!post || !(await canSeePostLikes(post, req.user.id))) return res.status(404).json({ message: 'Post not found.' });
 
     const rawContent = typeof req.body?.content === 'string' ? req.body.content : '';
     const content = rawContent.trim();
@@ -33214,6 +33252,10 @@ db.initDB().then(async () => {
     if (process.env.NODE_ENV === 'production') {
       await db.query('SELECT auth_version FROM users LIMIT 0');
       await db.query('SELECT id FROM auth_sessions LIMIT 0');
+      await db.query('SELECT email_is_placeholder FROM users LIMIT 0');
+      await db.query('SELECT id FROM auth_signin_flows LIMIT 0');
+      await db.query('SELECT key FROM auth_phone_limits LIMIT 0');
+      await db.query('SELECT user_id FROM auth_login_identities LIMIT 0');
       securityStorageReady = true;
     }
     if (IS_PIPELINE_ROLE) await backfillYouTubeVideoDurations();

@@ -1,0 +1,22 @@
+.account-access { margin: 0 0 18px; }
+@font-face { font-family: 'UFI Google Sans'; src: url('/brand/google-sans-medium.woff2') format('woff2'); font-style: normal; font-weight: 500; font-display: swap; }
+.account-access-providers { display: grid; gap: 10px; }
+.account-access-provider { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 46px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface, var(--card-bg)); color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
+.account-access-provider svg, .account-access-provider img { flex: 0 0 auto; }
+.account-access-provider-google { background: #fff; color: #1f1f1f; border-color: #747775; padding-inline: 12px; font: 500 14px/20px 'UFI Google Sans', sans-serif; }
+.account-access-provider-apple { background: #000; color: #fff; border-color: #000; }
+.account-access-provider-google small { font-family: Arial, sans-serif; }
+.account-access-provider small { font-size: .7rem; font-weight: 500; color: var(--muted); }
+.account-access-provider:disabled { cursor: default; opacity: .65; }
+.account-access-provider:focus-visible, .account-access button:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.account-access-divider { display: flex; align-items: center; gap: 10px; margin: 18px 0 0; color: var(--muted); font-size: .8rem; }
+.account-access-divider span { flex: 1; height: 1px; background: var(--border); }
+.account-access-status { color: var(--muted); font-size: .85rem; }
+.account-access-success { color: var(--text); font-size: .85rem; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); }
+.account-access-status button, .account-access-resend button { background: transparent; border: 0; color: var(--primary); font: inherit; cursor: pointer; }
+.account-access-resend { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; margin-top: 12px; font-size: .8rem; }
+.account-access-resend button:disabled { color: var(--muted); cursor: default; }
+.account-access-phone { padding: 16px; margin-top: 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 12px; }
+.account-access-phone h2 { margin: 0 0 14px; font-size: 1rem; color: var(--text); }
+.account-access-phone p { margin: 10px 0 14px; font-size: .85rem; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; }
+@media (max-width: 390px) { .account-access-provider { padding-inline: 8px; gap: 7px; font-size: .85rem; } }

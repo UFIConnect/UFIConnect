@@ -50,6 +50,16 @@ test('account search treats wildcard and SQL syntax as literal text and calendar
   assert.equal((await f.service.list({ q: "' OR 1=1 --" })).pagination.total, 0);
 });
 
+test('phone-only account aliases remain internal and cannot receive Office email', async t => {
+  const f = await fixture(t);
+  const id = await user(f.pg, undefined, { email: 'random-account-reference@identity.uficonnect.invalid' });
+  const list = await f.service.list({ q: id });
+  assert.equal(list.recent[0].email, '');
+  await assert.rejects(f.service.email(id, { requestId: randomUUID(), subject: 'Support', message: 'A message.' }), error => error.status === 422);
+  assert.equal(f.sent.length, 0);
+  assert.equal((await f.pg.query('SELECT COUNT(*)::int AS total FROM office_member_email')).rows[0].total, 0);
+});
+
 test('cache reconciliation clears transient entries across workers without creating or deleting accounts', async t => {
   const f = await fixture(t), id = await user(f.pg);
   f.cache([id, 'orphan']);

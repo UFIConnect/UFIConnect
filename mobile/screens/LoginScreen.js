@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import PasswordInput from '../components/PasswordInput';
+import SignInMethods from '../components/SignInMethods';
 import { COLORS } from '../theme';
 
 export default function LoginScreen({ navigation }) {
@@ -12,6 +13,7 @@ export default function LoginScreen({ navigation }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [alternativeBusy, setAlternativeBusy] = useState(false);
   const [concealKey, setConcealKey] = useState(0);
   useEffect(() => navigation.addListener('blur', () => setPassword('')), [navigation]);
 
@@ -43,6 +45,8 @@ export default function LoginScreen({ navigation }) {
           <Text style={styles.title}>Welcome back</Text>
           <Text style={styles.subtitle}>Sign in to your account</Text>
 
+          <SignInMethods navigation={navigation} disabled={loading} onBusyChange={setAlternativeBusy} />
+
           <Text style={styles.label}>Email</Text>
           <TextInput
             style={styles.input}
@@ -63,11 +67,11 @@ export default function LoginScreen({ navigation }) {
             value={password}
             onChangeText={setPassword}
             accessibilityLabel="Password"
-            editable={!loading}
+            editable={!loading && !alternativeBusy}
             concealKey={concealKey}
           />
 
-          <TouchableOpacity style={styles.button} onPress={handleLogin} disabled={loading}>
+          <TouchableOpacity style={styles.button} onPress={handleLogin} disabled={loading || alternativeBusy}>
             {loading ? (
               <ActivityIndicator color="#fff" />
             ) : (
@@ -77,7 +81,7 @@ export default function LoginScreen({ navigation }) {
 
           <View style={styles.footer}>
             <Text style={styles.footerText}>Don't have an account? </Text>
-            <TouchableOpacity onPress={() => navigation.navigate('Register')}>
+            <TouchableOpacity disabled={loading || alternativeBusy} onPress={() => navigation.navigate('Register')}>
               <Text style={styles.link}>Create one</Text>
             </TouchableOpacity>
           </View>
