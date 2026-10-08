@@ -1,0 +1,6 @@
+{
+  "github": { "label": "GitHub", "collection": "Starred repositories", "hosts": ["github.com"], "docs": "https://docs.github.com/en/rest/activity/starring" },
+  "mastodon": { "label": "Mastodon", "collection": "Bookmarked posts", "hosts": ["mastodon.social", "mastodon.online"], "docs": "https://docs.joinmastodon.org/methods/bookmarks/" },
+  "youtube": { "label": "YouTube", "collection": "Your playlists", "hosts": ["youtube.com", "youtu.be"], "docs": "https://developers.google.com/youtube/v3/docs/playlists/list" },
+  "twitch": { "label": "Twitch", "collection": "Followed channels", "hosts": ["twitch.tv"], "docs": "https://dev.twitch.tv/docs/api/reference/#get-followed-channels" }
+}

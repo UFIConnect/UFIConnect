@@ -1,7 +1,7 @@
 const https = require('node:https');
 const net = require('node:net');
 const crypto = require('node:crypto');
-const MASTODON_SCOPES = 'read:accounts read:statuses read:search write:favourites write:statuses';
+const MASTODON_SCOPES = 'read:accounts read:statuses read:search read:bookmarks write:favourites write:statuses';
 
 function mastodonCanInteract(token, action) {
   try {
@@ -53,7 +53,7 @@ function mastodonPostUrl(value) {
 
 function createMastodonService({ resolveAddress, pinnedLookup, request = https.request }) {
   const apps = new Map();
-  async function json(origin, path, { form, token, idempotencyKey } = {}) {
+  async function json(origin, path, { form, token, idempotencyKey, includeResponse = false } = {}) {
     origin = mastodonOrigin(origin);
     if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//') || /[\\\r\n]/.test(path) || new URL(path, origin).origin !== origin) throw new Error('Invalid Mastodon API path');
     if (idempotencyKey !== undefined && (typeof idempotencyKey !== 'string' || !/^[a-zA-Z0-9-]{16,128}$/.test(idempotencyKey))) throw new Error('Invalid Mastodon request identity');
@@ -77,7 +77,7 @@ function createMastodonService({ resolveAddress, pinnedLookup, request = https.r
         res.on('end', () => {
           // Never follow redirects with an OAuth secret or bearer token.
           if (res.statusCode < 200 || res.statusCode >= 300) return reject(Object.assign(new Error(`Mastodon server returned ${res.statusCode}. Check your server address and try connecting again.`), { status: res.statusCode }));
-          try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
+          try { const data = JSON.parse(Buffer.concat(chunks).toString('utf8')); resolve(includeResponse ? { data, headers: { link: res.headers?.link || '' } } : data); }
           catch { reject(new Error('This server did not return a Mastodon API response.')); }
         });
       });

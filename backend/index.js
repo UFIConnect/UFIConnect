@@ -20588,6 +20588,10 @@ const connectedInbox = require('./connected-inbox').createConnectedInbox({
   receipts: inboxReceipts,
   getAccount: inboxAccount,
 });
+require('./source-apps').registerSourceAppRoutes(app, {
+  authenticate, limiter: rateLimit({ windowMs: 60000, limit: 30, standardHeaders: true, legacyHeaders: false, keyGenerator: rateLimitKey }),
+  getAccount: inboxAccount, mastodonService, refreshToken: refreshConnectedAccessToken, env: process.env,
+});
 
 async function inboxAccount(userId) {
   const stored = await getPublicTargetUser(userId);

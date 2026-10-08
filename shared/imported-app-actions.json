@@ -1,0 +1,19 @@
+{
+  "netflix": { "label": "Netflix", "hosts": ["netflix.com"], "actions": [{ "id": "watch", "label": "Watch Netflix", "url": "https://www.netflix.com/browse" }, { "id": "list", "label": "My List", "url": "https://www.netflix.com/browse/my-list" }] },
+  "instagram": { "label": "Instagram", "hosts": ["instagram.com"], "actions": [{ "id": "instagram", "label": "Open Instagram", "url": "https://www.instagram.com/" }, { "id": "direct", "label": "Instagram messages", "url": "https://www.instagram.com/direct/inbox/" }] },
+  "facebook": { "label": "Facebook", "hosts": ["facebook.com"], "actions": [{ "id": "facebook", "label": "Open Facebook", "url": "https://www.facebook.com/" }, { "id": "messenger", "label": "Messenger", "url": "https://www.messenger.com/" }] },
+  "linkedin": { "label": "LinkedIn", "hosts": ["linkedin.com"], "actions": [{ "id": "linkedin", "label": "LinkedIn feed", "url": "https://www.linkedin.com/feed/" }, { "id": "linkedin-messages", "label": "LinkedIn messages", "url": "https://www.linkedin.com/messaging/" }] },
+  "bluesky": { "label": "Bluesky", "hosts": ["bsky.app", "bsky.social"], "actions": [{ "id": "bluesky", "label": "Open Bluesky", "url": "https://bsky.app/" }] },
+  "mastodon": { "label": "Mastodon", "hosts": ["mastodon.social", "mastodon.online"], "actions": [] },
+  "reddit": { "label": "Reddit", "hosts": ["reddit.com"], "actions": [{ "id": "reddit", "label": "Open Reddit", "url": "https://www.reddit.com/" }] },
+  "twitter": { "label": "X", "hosts": ["x.com", "twitter.com"], "actions": [{ "id": "twitter", "label": "Open X", "url": "https://x.com/" }] },
+  "threads": { "label": "Threads", "hosts": ["threads.net", "threads.com"], "actions": [{ "id": "threads", "label": "Open Threads", "url": "https://www.threads.com/" }] },
+  "tiktok": { "label": "TikTok", "hosts": ["tiktok.com"], "actions": [{ "id": "tiktok", "label": "Watch TikTok", "url": "https://www.tiktok.com/" }] },
+  "youtube": { "label": "YouTube", "hosts": ["youtube.com", "youtu.be"], "actions": [{ "id": "videos", "label": "Watch videos", "to": "/videos" }] },
+  "twitch": { "label": "Twitch", "hosts": ["twitch.tv"], "actions": [{ "id": "watch", "label": "Watch Twitch", "url": "https://www.twitch.tv/directory" }] },
+  "github": { "label": "GitHub", "hosts": ["github.com"], "actions": [{ "id": "pulls", "label": "Pull requests", "url": "https://github.com/pulls" }, { "id": "issues", "label": "Issues", "url": "https://github.com/issues" }] },
+  "discord": { "label": "Discord", "hosts": ["discord.com", "discordapp.com"], "actions": [{ "id": "chat", "label": "Open Discord", "url": "https://discord.com/app" }] },
+  "figma": { "label": "Figma", "hosts": ["figma.com"], "actions": [{ "id": "files", "label": "Figma files", "url": "https://www.figma.com/files" }] },
+  "spotify": { "label": "Spotify", "hosts": ["spotify.com"], "actions": [{ "id": "listen", "label": "Listen on Spotify", "url": "https://open.spotify.com/" }] },
+  "pinterest": { "label": "Pinterest", "hosts": ["pinterest.com"], "actions": [{ "id": "pinterest", "label": "Open Pinterest", "url": "https://www.pinterest.com/" }] }
+}
