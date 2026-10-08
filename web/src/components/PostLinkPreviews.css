@@ -57,8 +57,8 @@
   cursor: pointer;
 }
 .media-lightbox-info .post-link-previews {
-  max-height: min(28dvh, 220px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
   padding: 3px;
 }
+.media-lightbox-links { margin-top: 8px; text-align: left; }
+.media-lightbox-links > summary { color: #93c5fd; cursor: pointer; font-size: .78rem; font-weight: 600; padding: 4px 0; }
+.media-lightbox-links > summary:focus-visible { outline: 2px solid #93c5fd; outline-offset: 3px; }

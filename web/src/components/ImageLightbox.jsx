@@ -695,14 +695,17 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
           </div>
         )}
         </div>
-        <div className="media-lightbox-info" style={{ color: '#fff', marginTop: 14, textAlign: 'center', maxWidth: 560, padding: '0 12px' }}>
-          {post.title && <div style={{ fontWeight: 700, fontSize: '.92rem', marginBottom: 4 }}><PostInlineText text={post.title} /></div>}
+        <div className="media-lightbox-info"
+          onTouchStart={event => event.stopPropagation()} onTouchMove={event => event.stopPropagation()}
+          onTouchEnd={event => event.stopPropagation()} onTouchCancel={event => event.stopPropagation()}
+          style={{ color: '#fff', marginTop: 14, textAlign: 'center', maxWidth: 560, padding: '0 12px' }}>
+          {post.title && <div className="media-lightbox-title" style={{ fontWeight: 700, fontSize: '.92rem', marginBottom: 4 }}><PostInlineText text={post.title} /></div>}
           {post.content && (
             <div style={{ fontSize: '.82rem', opacity: 0.8, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
               <PostInlineText text={post.content} />
             </div>
           )}
-          <PostLinkPreviews key={post.id} post={post} variant="dark" maxVisible={1} />
+          <PostLinkPreviews key={`${post.id || item.url}:${index}`} post={post} variant="dark" maxVisible={1} collapsible />
           <div style={{ fontSize: '.72rem', opacity: 0.55, marginTop: 8 }}>
             {post.author?.name ? `${post.author.name} · ` : ''}{index + 1} / {mediaItems.length}
           </div>
