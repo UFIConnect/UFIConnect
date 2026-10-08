@@ -1,6 +1,7 @@
 'use strict';
 
-const JOB_SOURCES = new Set(['indeed', 'remoteok', 'usajobs', 'remotive', 'muse', 'themuse', 'weworkremotely']);
+const { JOB_SOURCE_IDS } = require('./job-sources.mjs');
+const JOB_SOURCES = new Set(JOB_SOURCE_IDS);
 
 function jobPostedDate(value, now = Date.now()) {
   if (value == null || value === '') return null;

@@ -10,24 +10,21 @@ import { trackCategoryview } from '../analytics';
 
 const when = value => value && !Number.isNaN(new Date(value).getTime()) ? new Date(value).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : 'Date unavailable';
 const lines = value => String(value || '').split(/\n+/).map(line => line.replace(/^[-*•]\s*/, '').trim()).filter(Boolean);
-function section(content, heading) {
-  const match = String(content || '').match(new RegExp(`(?:^|\\n)(?:${heading})\\s*:?\\s*\\n([\\s\\S]*?)(?=\\n(?:Requirements|Qualifications|Responsibilities|Benefits|About us|How to apply|Apply:)\\b|$)`, 'i'));
-  return match ? lines(match[1]) : [];
-}
 function Metrics({ post }) {
   return <div><dl className="business-post-metrics">{['likes', 'comments', 'views'].map(key => <div key={key}><dt>{key}</dt><dd>{post.metrics?.[key] === null || post.metrics?.[key] === undefined ? 'Unavailable' : Number(post.metrics[key]).toLocaleString()}</dd></div>)}</dl><p className="business-post-muted">{post.metricScope}</p></div>;
 }
 function Detail({ post, own = false }) {
   const details = post.details || post;
-  const summary = summarizeJob({ content: post.content });
-  const duties = own ? lines(details.duties) : section(post.content, 'Responsibilities|Duties|What you will do|What you’ll do');
-  const requirements = own ? lines(details.requirements) : section(post.content, 'Requirements|Qualifications|What you will bring');
+  const summary = summarizeJob({ ...details, ...post });
+  const duties = own ? lines(details.duties) : summary.tasks;
+  const requirements = own ? lines(details.requirements) : summary.requirements;
   return <article className="business-post-panel business-comparison-card">
     <span className="recruiting-eyebrow">{own ? 'Your hiring post' : post.source}</span><h3>{details.title}</h3><p>{details.company || 'Company not listed'}</p>
     <dl className="business-post-facts"><div><dt>Location</dt><dd>{details.location || 'Not listed'}</dd></div><div><dt>Pay</dt><dd>{details.pay || 'Not listed'}</dd></div><div><dt>{own && post.status === 'draft' ? 'Saved' : 'Posted'}</dt><dd>{when(post.createdAt)}</dd></div></dl>
-    <h4>Role description</h4><p>{own ? details.description : post.content.split(/\n(?:Responsibilities|Requirements|Qualifications|Duties)\s*:?\s*\n/i)[0].slice(0, 360) || summary.intro}</p>
+    <h4>Role description</h4><p>{own ? details.description : summary.intro || 'No role description was supplied.'}</p>
     <h4>Responsibilities</h4>{duties.length ? <ul>{duties.slice(0, 8).map((duty, i) => <li key={i}>{duty}</li>)}</ul> : <p className="business-post-muted">See the full description for role tasks.</p>}
     <h4>Requirements</h4>{requirements.length ? <ul>{requirements.slice(0, 8).map((item, i) => <li key={i}>{item}</li>)}</ul> : <p className="business-post-muted">No separate requirements section was provided.</p>}
+    <h4>Role task summary</h4><p>{summary.summary || 'Specific tasks were not supplied in this listing.'}</p>
     <h4>Engagement</h4><Metrics post={post} />
     <details className="business-post-full"><summary>Read complete post</summary><pre>{post.content}</pre></details>
     {!own && post.source !== 'UFIConnect' && post.sourceUrl && <a className="btn btn-outline btn-sm" href={post.sourceUrl} target="_blank" rel="noopener noreferrer">Open original job listing</a>}

@@ -5,7 +5,7 @@ import { summarizeJob } from '../utils/jobSummary.mjs';
 import './PostDetails.css';
 
 export default function JobPostContent({ post, compact = false }) {
-  const job = useMemo(()=>summarizeJob(post),[post?.fullDescription,post?.description,post?.content]);
+  const job = useMemo(() => summarizeJob(post), [post]);
   const [listingOpen, setListingOpen] = useState(false);
   return <section className="job-post-content" aria-label="Job description">
     <p className="job-post-intro">{job.intro || 'This source has not supplied the job description. Open the original listing for details.'}</p>

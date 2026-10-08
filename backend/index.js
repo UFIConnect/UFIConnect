@@ -2,7 +2,7 @@ const express = require('express');
 const { mastodonOrigin, mastodonPostUrl, mastodonCanReadStatuses, mastodonCanInteract, MASTODON_SCOPES, createMastodonService, registerMastodonRoutes } = require('./mastodon-oauth');
 const { mastodonContentText } = require('./mastodon-content');
 const { BLUESKY_OAUTH_SCOPE, pushBlueskyAuthorization } = require('./bluesky-oauth');
-const { importedContentLimit, jobDescriptionText, JOB_CONTENT_MAX_CHARS } = require('./job-content');
+const { importedContentLimit, jobDescriptionText, usaJobsDescription, JOB_CONTENT_MAX_CHARS } = require('./job-content');
 const { extractFeedMedia } = require('./rss-media');
 const { normalizePostMedia } = require('./post-media');
 const cors = require('cors');
@@ -5455,7 +5455,7 @@ async function fetchUSAJobsByKeyword(keyword) {
           id:          `usajobs_${it.MatchedObjectId}`,
           authorId:    'usajobs_jobs',
           groupId:     'ext_usajobs',
-          content:     jobDescriptionText([d.UserArea?.Details?.JobSummary, ...[].concat(d.UserArea?.Details?.MajorDuties || []), d.QualificationSummary].filter(Boolean).join('\n\n') || d.PositionTitle, decodeHTMLEntities),
+          content:     usaJobsDescription(d, decodeHTMLEntities),
           title:       d.PositionTitle,
           source:      'usajobs', sourceLabel: 'USAJobs',
           sourceUrl:   d.PositionURI || 'https://www.usajobs.gov',
