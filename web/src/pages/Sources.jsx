@@ -7,9 +7,12 @@ import client from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
+import { SOURCE_META as DIRECTORY_META, HOME_FEED_SOURCE_IDS, CAREER_ACCOUNT_PLATFORMS, TRAVEL_ACCOUNT_PLATFORMS, NEWS_ACCOUNT_PLATFORMS } from '../components/sourceMeta';
+import ExternalAccountLogin from '../components/ExternalAccountLogin';
 import { enabledFirstSourceSections } from '../components/sourceDirectory';
 
 const SOURCE_META = {
+  ...DIRECTORY_META,
   reddit:        { label: 'Reddit',           icon: 'RD', color: '#FF4500', desc: 'Community discussions and threads' },
   hackernews:    { label: 'Hacker News',      icon: 'HN', color: '#FF6600', desc: 'Tech links and founder discussions' },
   devto:         { label: 'DEV Community',    icon: 'DEV', color: '#3B49DF', desc: 'Developer articles and tutorials' },
@@ -53,8 +56,9 @@ const CATEGORIES = [
   { id: 'social',     label: 'Social & Community',   sources: ['reddit', 'mastodon', 'bluesky', 'indiehackers'] },
   { id: 'content',    label: 'Writing & Video',       sources: ['medium', 'hashnode', 'youtube', 'smashing'] },
   { id: 'startups',   label: 'Startups & Business',  sources: ['producthunt', 'yc', 'crunchbase'] },
-  { id: 'jobs',       label: 'Jobs',                  sources: ['indeed', 'remoteok', 'remotive', 'muse', 'usajobs'] },
+  { id: 'jobs',       label: 'Jobs',                  sources: ['indeed', 'remoteok', 'remotive', 'muse', 'usajobs', 'weworkremotely'] },
   { id: 'design',     label: 'Design & Creative',     sources: ['behance', 'designweb'] },
+  { id: 'travel', label: 'Travel', sources: ['cntraveler'] },
   { id: 'community',  label: 'UFIconnect',            sources: ['uficonnect'] },
 ];
 
@@ -291,7 +295,7 @@ export default function Sources() {
   // All known source IDs (union of API data + SOURCE_META)
   const allSourceIds = useMemo(() => {
     const fromApi = (data?.sources || []).map(s => s.id);
-    const fromMeta = Object.keys(SOURCE_META);
+    const fromMeta = [...HOME_FEED_SOURCE_IDS, 'uficonnect'];
     return [...new Set([...fromApi, ...fromMeta])];
   }, [data]);
 
@@ -426,6 +430,15 @@ export default function Sources() {
             );
           })}
 
+          <section className="card" style={{marginBottom: 20}} aria-label="More source websites">
+            <h2 style={{fontSize: '1rem'}}>More source websites</h2>
+            <p style={{fontSize: '.8rem', color: 'var(--muted)'}}>Browse major career sites, news publishers, and travel services. Website sign-in does not enable a UFIConnect feed or automatic publishing.</p>
+            {[['career', 'Career sites', CAREER_ACCOUNT_PLATFORMS.filter(key => !allSourceIds.includes(key))], ['travel', 'Travel services', TRAVEL_ACCOUNT_PLATFORMS], ['news', 'News publishers', NEWS_ACCOUNT_PLATFORMS]].map(([category, label, ids]) => <section key={category} style={{marginTop: 18}}>
+              <h3 style={{fontSize: '.85rem'}}>{label}</h3>
+              <div style={{display: 'flex', flexWrap: 'wrap', gap: 8}}>{ids.map(key => <ExternalAccountLogin key={key} platform={key} />)}</div>
+            </section>)}
+            <Link to="/?feed=countries" className="btn btn-ghost btn-sm" style={{marginTop: 16}}>Open Travel: live cameras, Wikivoyage guides, travel news, and local events</Link>
+          </section>
           {data?.refreshedAt && (
             <div style={{ textAlign: 'center', padding: '16px 0 4px', fontSize: '.7rem', color: 'var(--muted)' }}>
               Source data updated {relativeTime(data.refreshedAt)}

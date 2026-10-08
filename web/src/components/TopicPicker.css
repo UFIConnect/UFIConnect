@@ -1,0 +1,23 @@
+.topic-picker { margin: 20px 0; }
+.topic-picker-search { display:flex; gap:10px; align-items:center; padding:12px 14px; border:1px solid var(--border); border-radius:12px; background:var(--surface); color:var(--muted); }
+.topic-picker-search input { width:100%; min-width:0; border:0; outline:0; background:transparent; color:var(--text); font:inherit; font-size:.87rem; }
+.topic-picker-search:focus-within { outline:2px solid var(--primary); outline-offset:2px; }
+.topic-picker-tabs { display:flex; flex-wrap:wrap; gap:6px; margin:14px 0; }
+.topic-picker-tabs button { padding:8px 11px; border:1px solid var(--border); border-radius:20px; background:var(--surface); color:var(--muted); font:inherit; font-size:.74rem; cursor:pointer; }
+.topic-picker-tabs button[aria-pressed=true] { color:var(--primary); border-color:var(--primary); background:var(--primary-light); font-weight:700; }
+.topic-picker-selected { display:flex; flex-wrap:wrap; gap:6px; padding:12px; border-radius:12px; background:var(--primary-light); }
+.topic-picker-selected button { display:flex; align-items:center; gap:6px; padding:5px 8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text); font:inherit; font-size:.73rem; cursor:pointer; }
+.topic-picker-status,.topic-picker-empty { font-size:.8rem; color:var(--muted); line-height:1.5; margin:14px 0; }
+.topic-picker-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(185px,1fr)); gap:8px; margin-bottom:14px; }
+.topic-picker-grid button { display:flex; align-items:center; gap:10px; padding:13px 12px; min-height:50px; border:1px solid var(--border); border-radius:10px; background:var(--surface); color:var(--text); text-align:left; font:inherit; font-size:.82rem; cursor:pointer; }
+.topic-picker-grid button[aria-pressed=true] { border-color:var(--primary); background:var(--primary-light); font-weight:650; }
+.topic-picker-check { width:20px; height:20px; border:1px solid var(--border); border-radius:6px; flex-shrink:0; display:flex; align-items:center; justify-content:center; background:var(--surface); }
+.topic-picker-grid button[aria-pressed=true] .topic-picker-check { background:var(--primary); color:#fff; border-color:var(--primary); }
+.topic-picker button:focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
+.topic-picker-pagination { display:flex; align-items:center; justify-content:center; gap:12px; flex-wrap:wrap; margin:16px 0; }
+.topic-picker-pagination span { color:var(--muted); font-size:.8rem; }
+.signup-role-results { display:grid; gap:6px; margin:10px 0 20px; }
+.signup-role-results button { padding:11px 13px; border:1px solid var(--border); border-radius:10px; background:var(--surface); color:var(--text); text-align:left; cursor:pointer; font:inherit; }
+.signup-role-results button strong { display:block; font-size:.83rem; }
+.signup-role-results button span { color:var(--muted); font-size:.73rem; }
+@media(max-width:420px) { .topic-picker-grid { grid-template-columns:1fr; } }

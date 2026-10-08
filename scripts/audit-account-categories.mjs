@@ -20,14 +20,14 @@ const fixtures = {
   indeed: { name: 'Indeed', configured: true, category: 'career' },
 };
 const connected = { mastodon: true, github: true, indeed: true };
-const categories = ['Social', 'Video & Streaming', 'Work & Development', 'Publishing'];
+const categories = ['Social', 'Video & Streaming', 'Work & Development', 'Publishing', 'Career sites'];
 const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api') },
   server: { host: '127.0.0.1', port: 5245, strictPort: false, proxy: { '/api': { target: app.base, rewrite: p => p.replace(/^\/api/, '') } } },
 });
 let browser;
 try {
-  await server.listen(); browser = await chromium.launch({ channel: 'msedge' });
+  await server.listen(); browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
   for (const width of [1440, 390, 320]) {
     const context = await browser.newContext({ viewport: { width, height: 900 } });
     const page = await context.newPage(); const errors = []; let accountOnly = false;
@@ -51,9 +51,9 @@ try {
     }
     const status = page.getByRole('combobox', { name: /Filter accounts/ });
     const categoryList = page.getByRole('group', { name: 'Account categories' });
-    assert.equal(await page.locator('.account-platform-card').count(), 4, 'Career and Command Center accounts stay outside the general directory');
-    await categoryList.getByRole('button', { name: 'All 4', exact: true }).waitFor();
-    assert.equal(await categoryList.getByRole('button', { name: 'All 4', exact: true }).getAttribute('aria-pressed'), 'true');
+    assert.equal(await page.locator('.account-platform-card').count(), 5, 'Career accounts appear in the general directory; member-only social connections stay in Command Center');
+    await categoryList.getByRole('button', { name: 'All 5', exact: true }).waitFor();
+    assert.equal(await categoryList.getByRole('button', { name: 'All 5', exact: true }).getAttribute('aria-pressed'), 'true');
     await categoryList.getByRole('button', { name: 'Video & Streaming 1', exact: true }).focus();
     await page.keyboard.press('Enter');
     assert.deepEqual(await page.locator('section.account-category-section h2').allTextContents(), ['Video & Streaming']);
@@ -63,16 +63,16 @@ try {
     await page.getByText('No matching accounts', { exact: true }).waitFor();
     assert.equal(await page.locator('.account-platform-card').count(), 0);
     assert.equal(await categoryList.getByRole('button', { name: 'Video & Streaming 0', exact: true }).getAttribute('aria-pressed'), 'true');
-    await categoryList.getByRole('button', { name: 'All 2', exact: true }).waitFor();
+    await categoryList.getByRole('button', { name: 'All 3', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
     assert.equal(await status.inputValue(), 'all');
-    assert.equal(await categoryList.getByRole('button', { name: 'All 4', exact: true }).getAttribute('aria-pressed'), 'true');
-    assert.equal(await page.locator('.account-platform-card').count(), 4);
+    assert.equal(await categoryList.getByRole('button', { name: 'All 5', exact: true }).getAttribute('aria-pressed'), 'true');
+    assert.equal(await page.locator('.account-platform-card').count(), 5);
     await status.selectOption('connected');
-    assert.deepEqual(await page.locator('section.account-category-section h2').allTextContents(), ['Social', 'Work & Development']);
+    assert.deepEqual(await page.locator('section.account-category-section h2').allTextContents(), ['Social', 'Work & Development', 'Career sites']);
     await categoryList.getByRole('button', { name: 'Work & Development 1', exact: true }).click();
     assert.deepEqual(await page.locator('section.account-category-section h2').allTextContents(), ['Work & Development']);
-    await categoryList.getByRole('button', { name: 'All 2', exact: true }).click();
+    await categoryList.getByRole('button', { name: 'All 3', exact: true }).click();
     await status.selectOption('soon');
     await page.getByRole('heading', { name: 'Publishing', exact: true }).waitFor();
     assert.deepEqual(await page.locator('section.account-category-section h2').allTextContents(), ['Publishing']);
@@ -87,6 +87,11 @@ try {
     for (const name of categories) await panel.getByRole('heading', { name, exact: true }).waitFor();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     accountOnly = false;
+    {
+    const page = await context.newPage();
+    page.on('pageerror', error => errors.push(error.message));
+    const categoryList = page.getByRole('group', { name: 'Account categories' });
+    const status = page.getByRole('combobox', { name: /Filter accounts/ });
     await installAuditMember(page, app, 'business-account-categories');
     await auditNavigate(page, server.resolvedUrls.local[0] + 'connected-accounts');
     await page.getByRole('heading', { name: 'Business Career Connections', exact: true }).waitFor();
@@ -97,12 +102,15 @@ try {
     assert.equal(await page.locator('.account-platform-card').count(), 1);
     assert.ok((await page.locator('.account-platform-card').innerText()).includes('Indeed'));
     await status.selectOption('available');
-    await page.getByText('No matching accounts', { exact: true }).waitFor();
-    assert.equal(await categoryList.getByRole('button', { name: 'Career sites 0', exact: true }).getAttribute('aria-pressed'), 'true');
-    await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
+    await categoryList.getByRole('button', { name: 'Career sites 20', exact: true }).waitFor();
+    assert.equal(await page.locator('.account-platform-card').count(), 20);
+    assert.equal(await page.getByRole('link', { name: /^Sign in on / }).count(), 20);
+    await status.selectOption('all');
+    await categoryList.getByRole('button', { name: 'All 21', exact: true }).click();
     assert.equal(await status.inputValue(), 'all');
     assert.equal(await categoryList.getByRole('button', { name: /^All \d+$/ }).getAttribute('aria-pressed'), 'true');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    }
     assert.deepEqual(errors, []);
     console.log(`PASS category list, counts, combined filters, empty-state reset, membership boundaries and Command Center ${width}`);
     await context.close();

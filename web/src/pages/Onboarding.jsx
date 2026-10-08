@@ -4,6 +4,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import client from '../api/client';
 import { ALL_ROLES, ROLE_TOPICS, EXTRA_INTERESTS } from '../data/roles';
+import TopicPicker from '../components/TopicPicker';
+import { searchRoleOptions } from '../utils/roleSearch.mjs';
 import { safeReturnPath } from '../auth/returnPath';
 
 /* ─── Data ─────────────────────────────────────────────────────────────────── */
@@ -288,13 +290,7 @@ export default function Onboarding() {
     }
   }
 
-  const filteredRoles = useMemo(() => {
-    const q = roleSearch.trim().toLowerCase();
-    if (!q) return ALL_ROLES;
-    return ALL_ROLES.filter(r =>
-      r.value.toLowerCase().includes(q) || r.desc.toLowerCase().includes(q)
-    );
-  }, [roleSearch]);
+  const filteredRoles = useMemo(() => searchRoleOptions([...new Map(ALL_ROLES.map(entry=>[entry.value,entry])).values()], roleSearch), [roleSearch]);
 
   return (
     <div className="onboarding-page">
@@ -476,75 +472,10 @@ export default function Onboarding() {
             <h1 className="onboarding-title">What topics interest you?</h1>
             <p className="onboarding-sub">
               {role ? `Recommended topics for ${/^[aeiou]/i.test(role) ? 'an' : 'a'} ${role} are highlighted first.` : 'Pick as many as you like - your feed will reflect these.'}
-              {' '}Selecting a topic unlocks related ones below.
+              {' '}Search or browse categories. You can update your choices later.
             </p>
 
-            {/* Suggested / unlocked section */}
-            {unlocked.length > 0 && (
-              <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--primary)', marginBottom: 10, letterSpacing: '.3px', textTransform: 'uppercase' }}>
-                  Recommended for you
-                </div>
-                <div style={{ maxHeight: 280, overflowY: 'auto', paddingRight: 4, marginBottom: remaining.length > 0 ? 20 : 0 }}>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                    {unlocked.map(topic => {
-                      const isSelected = interests.includes(topic);
-                      const isSuggested = suggested.includes(topic);
-                      const isNew = related.includes(topic) && !suggested.includes(topic) && topic === lastPicked;
-                      return (
-                        <button
-                          key={topic}
-                          onClick={() => toggleInterest(topic)}
-                          style={{
-                            padding: '8px 14px', borderRadius: 'var(--radius-sm)',
-                            border: `2px solid ${isSelected ? 'var(--primary)' : isSuggested ? '#93C5FD' : 'var(--border)'}`,
-                            background: isSelected ? 'var(--primary)' : isSuggested ? '#EFF6FF' : 'var(--surface)',
-                            color: isSelected ? '#fff' : 'var(--text)',
-                            fontWeight: isSelected ? 700 : 500, fontSize: '.83rem',
-                            cursor: 'pointer', transition: 'all .2s',
-                            boxShadow: isSelected ? '0 2px 8px rgba(0,98,255,.25)' : 'none',
-                          }}
-                        >
-                          {isSelected ? 'Selected: ' : ''}{topic}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* More topics */}
-            {remaining.length > 0 && (
-              <div>
-                <div style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 10, letterSpacing: '.3px', textTransform: 'uppercase' }}>
-                  More topics
-                </div>
-                <div style={{ maxHeight: 280, overflowY: 'auto', paddingRight: 4 }}>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                    {remaining.map(topic => {
-                      const isSelected = interests.includes(topic);
-                      return (
-                        <button
-                          key={topic}
-                          onClick={() => toggleInterest(topic)}
-                          style={{
-                            padding: '7px 13px', borderRadius: 'var(--radius-sm)',
-                            border: `2px solid ${isSelected ? 'var(--primary)' : 'var(--border)'}`,
-                            background: isSelected ? 'var(--primary)' : 'var(--surface)',
-                            color: isSelected ? '#fff' : 'var(--text)',
-                            fontWeight: isSelected ? 700 : 400, fontSize: '.8rem',
-                            cursor: 'pointer', transition: 'all .2s',
-                          }}
-                        >
-                          {isSelected ? 'Selected: ' : ''}{topic}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            )}
+            <TopicPicker topics={ALL_INTERESTS} selected={interests} suggested={unlocked} onToggle={toggleInterest} />
 
             {interests.length > 0 && (
               <div style={{ marginTop: 16, padding: '10px 14px', background: 'var(--primary-light)', borderRadius: 10, fontSize: '.8rem', color: 'var(--primary)', fontWeight: 600 }}>

@@ -2,6 +2,7 @@
 import { Link, useSearchParams } from 'react-router-dom';
 import useTabMetrics from '../analytics/useTabMetrics';
 import Layout from '../components/Layout';
+import ExternalAccountLogin from '../components/ExternalAccountLogin';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { withCareerAccountFallback } from '../components/sourceMeta';
@@ -187,7 +188,7 @@ export default function ConnectedAccounts() {
   // this general page prevents a member from connecting a source here and
   // then wondering why it only appears in their private workspace.
   const careerPlatforms = platforms.filter(([, p]) => p.category === 'career');
-  const generalPlatforms = platforms.filter(([, p]) => p.category !== 'career' && !p.commandCenterOnly);
+  const generalPlatforms = platforms.filter(([, p]) => !p.commandCenterOnly);
   const accountCategories = accountSections(isBusinessMembership ? careerPlatforms : generalPlatforms, connected);
   const activeCategory = accountCategories.some(section => section.id === categoryFilter) ? categoryFilter : 'all';
   const selectedCategory = accountCategories.find(section => section.id === activeCategory);
@@ -218,7 +219,7 @@ export default function ConnectedAccounts() {
         <p className="page-subtitle">
           {isBusinessMembership
             ? 'Your Business membership keeps account connections focused on career providers.'
-            : 'Connect your social, magazine, and article accounts.'}
+            : 'Connect supported accounts or sign in on career, travel, music, and workspace websites.'}
         </p>
       </div>
 
@@ -248,7 +249,7 @@ export default function ConnectedAccounts() {
               <div style={{ fontSize: '.8rem', fontWeight: 800, color: 'var(--primary)' }}>BIZ</div>
               <div>
                 <div style={{ fontWeight: 700, fontSize: '.95rem' }}>{connectedCareerCount} of {careerPlatforms.length} career accounts connected</div>
-                <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>Career providers use the same secure authorization flow as social accounts.</div>
+                <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>Career sign-in opens the official provider website. Available integrations show a separate Connect action.</div>
               </div>
             </div>
           )}
@@ -456,7 +457,8 @@ function PlatformCard({
   platformKey, p, isConnected, comingSoon, expanded, onToggle,
   onDisconnect, onConnect, connecting, disconnecting, locked,
 }) {
-  const benefits = PLATFORM_BENEFITS[platformKey]
+  const external = p.connectionMode === 'external';
+  const benefits = external ? [] : PLATFORM_BENEFITS[platformKey]
     || (p.category === 'publication' ? PUBLICATION_BENEFITS : p.category === 'career' ? CAREER_BENEFITS : []);
   const reconnectMessage = p.reconnectMessage || (platformKey === 'youtube'
     ? 'Reconnect YouTube once to keep your videos syncing when access expires.'
@@ -487,6 +489,7 @@ function PlatformCard({
         <div style={{ flex: '1 1 180px', minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             <span style={{ fontWeight: 700, fontSize: '.92rem' }}>{p.name}</span>
+            {external && <span style={{fontSize:'.7rem',color:'var(--muted)'}}>{p.loginUrl ? 'Website sign-in' : 'Publisher website'}</span>}
             {isConnected && (
               <span style={{
                 fontSize: '.65rem', fontWeight: 700, color: p.reconnectRequired ? '#92400E' : '#059669',
@@ -495,7 +498,7 @@ function PlatformCard({
                 {p.reconnectRequired ? 'Reconnect needed' : 'Connected'}
               </span>
             )}
-            {comingSoon && (
+            {comingSoon && !external && (
               <span style={{
                 fontSize: '.65rem', fontWeight: 700, color: '#92400E',
                 background: '#FEF3C7', padding: '1px 6px', borderRadius: 4,
@@ -524,7 +527,7 @@ function PlatformCard({
           <button onClick={onToggle} className="btn btn-ghost btn-sm" style={{ fontSize: '.72rem', padding: '4px 8px' }}>
             {expanded ? '▲' : '▼'} Details
           </button>
-          {isConnected ? (
+          {external ? <ExternalAccountLogin platform={platformKey} /> : isConnected ? (
             <button className="btn btn-danger btn-sm" onClick={onDisconnect} disabled={disconnecting}>
               {disconnecting ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Disconnect'}
             </button>
@@ -549,7 +552,7 @@ function PlatformCard({
       {expanded && (
         <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
           <div style={{ fontSize: '.8rem', color: 'var(--muted)', marginBottom: benefits.length ? 12 : 0, lineHeight: 1.5 }}>
-            {locked && !isConnected
+            {external ? p.note : locked && !isConnected
               ? 'An active membership is required before an account can be connected.'
               : comingSoon
               // A platform note explains any provider-specific gate rather

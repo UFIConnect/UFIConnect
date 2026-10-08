@@ -21,7 +21,7 @@ const platforms = {
   instagram: { name: 'Instagram', configured: true, commandCenterOnly: true },
   indeed: { name: 'Indeed', category: 'career', configured: false },
 };
-const categories = ['Social', 'Video & Streaming', 'Work & Development', 'Publishing'];
+const categories = ['Social', 'Video & Streaming', 'Work & Development', 'Publishing', 'Career sites'];
 const server = await createServer({
   root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api') },
@@ -67,7 +67,7 @@ try {
     await tools.getByRole('button', { name: /Connected accounts/ }).click();
     await tools.getByRole('heading', { name: 'Social', exact: true }).waitFor();
     assert.deepEqual(await tools.locator('.home-account-category h4').allTextContents(), categories);
-    assert.equal(await tools.locator('.home-connected-account-row').count(), 7);
+    assert.equal(await tools.locator('.home-connected-account-row').count(), 8);
     for (const [category, providers] of [
       ['Social', ['Mastodon', 'Bluesky']], ['Video & Streaming', ['YouTube', 'Twitch']],
       ['Work & Development', ['GitHub']], ['Publishing', ['Medium', 'WIRED']],
@@ -76,7 +76,7 @@ try {
       for (const provider of providers) assert.ok((await section.innerText()).includes(provider));
     }
     assert.equal(await tools.getByRole('link', { name: 'Open Instagram website' }).count(), 0);
-    assert.equal(await tools.getByRole('link', { name: 'Open Indeed website' }).count(), 0);
+    assert.equal(await tools.getByRole('link', { name: 'Open Indeed website' }).count(), 1);
     assert.equal(await tools.getByRole('link', { name: 'Open Mastodon website' }).getAttribute('href'), 'https://fosstodon.org');
     assert.equal(await tools.getByRole('button', { name: 'Coming soon', exact: true }).count(), 2);
     for (const button of await tools.getByRole('button', { name: 'Coming soon', exact: true }).all()) assert.equal(await button.isDisabled(), true);

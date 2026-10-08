@@ -1,4 +1,4 @@
-const CAREER_SOURCES = new Set(['indeed','remoteok','remotive','muse','themuse','usajobs']);
+const CAREER_SOURCES = new Set(['indeed','remoteok','remotive','muse','themuse','usajobs','weworkremotely']);
 export const isCareerPost = post => post?.type === 'job' || CAREER_SOURCES.has(String(post?.source || '').toLowerCase().replace(/[^a-z]/g,''));
 const clean = value => String(value || '').replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi,'').replace(/<li\b[^>]*>/gi,'\n- ').replace(/<\/?(?:p|div|h[1-6]|br|ul|ol)\b[^>]*>/gi,'\n').replace(/<[^>]+>/g,'').replace(/\r\n?/g,'\n').trim();
 const short = (value,max=340) => value.length <= max ? value : value.slice(0,max).replace(/\s+\S*$/,'') + '…';

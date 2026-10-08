@@ -19,6 +19,7 @@ export const JOB_CAREER_SITES = [
   { key: 'remotive', label: 'Remotive' },
   { key: 'muse', label: 'The Muse' },
   { key: 'usajobs', label: 'USAJobs' },
+  { key: 'weworkremotely', label: 'We Work Remotely' },
 ];
 
 function JobControlIcon({ name }) {

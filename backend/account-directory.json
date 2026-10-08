@@ -1,0 +1,454 @@
+{
+  "indeed": {
+    "name": "Indeed",
+    "color": "#2557A7",
+    "icon": "IN",
+    "category": "career",
+    "description": "Job search, applications, and employer hiring tools.",
+    "siteUrl": "https://www.indeed.com/",
+    "loginUrl": "https://secure.indeed.com/account/login"
+  },
+  "usajobs": {
+    "name": "USAJobs",
+    "color": "#005EA8",
+    "icon": "US",
+    "category": "career",
+    "description": "Federal jobs and saved applications.",
+    "siteUrl": "https://www.usajobs.gov/",
+    "loginUrl": "https://www.usajobs.gov/Account/Login"
+  },
+  "remoteok": {
+    "name": "Remote OK",
+    "color": "#10B981",
+    "icon": "RO",
+    "category": "career",
+    "description": "Remote jobs and employer listings.",
+    "siteUrl": "https://remoteok.com/",
+    "loginUrl": "https://remoteok.com/"
+  },
+  "remotive": {
+    "name": "Remotive",
+    "color": "#2563EB",
+    "icon": "RM",
+    "category": "career",
+    "description": "Remote roles and career resources.",
+    "siteUrl": "https://remotive.com/",
+    "loginUrl": "https://remotive.com/"
+  },
+  "muse": {
+    "name": "The Muse",
+    "color": "#7C3AED",
+    "icon": "MU",
+    "category": "career",
+    "description": "Company profiles, job search, and career advice.",
+    "siteUrl": "https://www.themuse.com/",
+    "loginUrl": "https://www.themuse.com/"
+  },
+  "glassdoor": {
+    "name": "Glassdoor",
+    "color": "#0CAA41",
+    "icon": "GD",
+    "category": "career",
+    "description": "Employer reviews, salaries, and jobs.",
+    "siteUrl": "https://www.glassdoor.com/",
+    "loginUrl": "https://www.glassdoor.com/"
+  },
+  "handshake": {
+    "name": "Handshake",
+    "color": "#F97316",
+    "icon": "HS",
+    "category": "career",
+    "description": "Student and graduate recruiting.",
+    "siteUrl": "https://joinhandshake.com/",
+    "loginUrl": "https://app.joinhandshake.com/login"
+  },
+  "wellfound": {
+    "name": "Wellfound",
+    "color": "#111827",
+    "icon": "WF",
+    "category": "career",
+    "description": "Startup jobs, candidate profiles, and recruiting.",
+    "siteUrl": "https://wellfound.com/",
+    "loginUrl": "https://wellfound.com/login"
+  },
+  "ziprecruiter": {
+    "name": "ZipRecruiter",
+    "color": "#E92C2C",
+    "icon": "ZR",
+    "category": "career",
+    "description": "Jobs, applications, and employer hiring.",
+    "siteUrl": "https://www.ziprecruiter.com/",
+    "loginUrl": "https://www.ziprecruiter.com/login"
+  },
+  "dice": {
+    "name": "Dice",
+    "color": "#0066CC",
+    "icon": "DI",
+    "category": "career",
+    "description": "Technology jobs and recruiting.",
+    "siteUrl": "https://www.dice.com/",
+    "loginUrl": "https://www.dice.com/dashboard/login"
+  },
+  "weworkremotely": {
+    "name": "We Work Remotely",
+    "color": "#EF4444",
+    "icon": "WWR",
+    "category": "career",
+    "description": "Remote jobs with an attributed public RSS feed.",
+    "siteUrl": "https://weworkremotely.com/",
+    "loginUrl": "https://weworkremotely.com/",
+    "feedSupported": true
+  },
+  "flexjobs": {
+    "name": "FlexJobs",
+    "color": "#B91C1C",
+    "icon": "FJ",
+    "category": "career",
+    "description": "Flexible and remote job searches.",
+    "siteUrl": "https://www.flexjobs.com/",
+    "loginUrl": "https://www.flexjobs.com/"
+  },
+  "monster": {
+    "name": "Monster",
+    "color": "#6E46AE",
+    "icon": "MO",
+    "category": "career",
+    "description": "Job searches, resumes, and recruiting.",
+    "siteUrl": "https://www.monster.com/",
+    "loginUrl": "https://www.monster.com/"
+  },
+  "reed": {
+    "name": "Reed",
+    "color": "#002F6C",
+    "icon": "RE",
+    "category": "career",
+    "description": "UK jobs, courses, and employer recruiting.",
+    "siteUrl": "https://www.reed.co.uk/",
+    "loginUrl": "https://www.reed.co.uk/"
+  },
+  "airbnb": {
+    "name": "Airbnb",
+    "color": "#FF5A5F",
+    "icon": "AB",
+    "category": "travel",
+    "description": "Stays, experiences, and hosting.",
+    "siteUrl": "https://www.airbnb.com/",
+    "loginUrl": "https://www.airbnb.com/login"
+  },
+  "booking": {
+    "name": "Booking.com",
+    "color": "#003B95",
+    "icon": "BK",
+    "category": "travel",
+    "description": "Accommodation, reservations, and travel planning.",
+    "siteUrl": "https://www.booking.com/",
+    "loginUrl": "https://www.booking.com/"
+  },
+  "expedia": {
+    "name": "Expedia",
+    "color": "#172D6A",
+    "icon": "EX",
+    "category": "travel",
+    "description": "Flights, hotels, and travel itineraries.",
+    "siteUrl": "https://www.expedia.com/",
+    "loginUrl": "https://www.expedia.com/"
+  },
+  "tripadvisor": {
+    "name": "Tripadvisor",
+    "color": "#00AA6C",
+    "icon": "TA",
+    "category": "travel",
+    "description": "Travel reviews, saved places, and trip planning.",
+    "siteUrl": "https://www.tripadvisor.com/",
+    "loginUrl": "https://www.tripadvisor.com/"
+  },
+  "getyourguide": {
+    "name": "GetYourGuide",
+    "color": "#FF5533",
+    "icon": "GYG",
+    "category": "travel",
+    "description": "Tours, tickets, and destination activities.",
+    "siteUrl": "https://www.getyourguide.com/",
+    "loginUrl": "https://www.getyourguide.com/"
+  },
+  "viator": {
+    "name": "Viator",
+    "color": "#008768",
+    "icon": "VI",
+    "category": "travel",
+    "description": "Tours, experiences, and bookings.",
+    "siteUrl": "https://www.viator.com/",
+    "loginUrl": "https://www.viator.com/"
+  },
+  "lonelyplanet": {
+    "name": "Lonely Planet",
+    "color": "#0057B8",
+    "icon": "LP",
+    "category": "travel",
+    "description": "Destination guides and saved travel plans.",
+    "siteUrl": "https://www.lonelyplanet.com/",
+    "loginUrl": "https://www.lonelyplanet.com/membership"
+  },
+  "wikivoyage": {
+    "name": "Wikivoyage",
+    "color": "#339966",
+    "icon": "WV",
+    "category": "travel",
+    "description": "Community destination guides with source attribution.",
+    "siteUrl": "https://en.wikivoyage.org/",
+    "loginUrl": "https://en.wikivoyage.org/wiki/Special:UserLogin"
+  },
+  "vimeo": {
+    "name": "Vimeo",
+    "color": "#1AB7EA",
+    "icon": "VM",
+    "category": "video",
+    "description": "Video publishing and creator accounts.",
+    "siteUrl": "https://vimeo.com/",
+    "loginUrl": "https://vimeo.com/log_in"
+  },
+  "spotify": {
+    "name": "Spotify",
+    "color": "#1DB954",
+    "icon": "SP",
+    "category": "audio",
+    "description": "Music, podcasts, and saved listening.",
+    "siteUrl": "https://open.spotify.com/",
+    "loginUrl": "https://accounts.spotify.com/login"
+  },
+  "soundcloud": {
+    "name": "SoundCloud",
+    "color": "#FF5500",
+    "icon": "SC",
+    "category": "audio",
+    "description": "Music discovery and creator profiles.",
+    "siteUrl": "https://soundcloud.com/",
+    "loginUrl": "https://soundcloud.com/"
+  },
+  "telegram": {
+    "name": "Telegram",
+    "color": "#26A5E4",
+    "icon": "TG",
+    "category": "social",
+    "description": "Channels and conversations on Telegram.",
+    "siteUrl": "https://telegram.org/",
+    "loginUrl": "https://web.telegram.org/"
+  },
+  "slack": {
+    "name": "Slack",
+    "color": "#611F69",
+    "icon": "SL",
+    "category": "work",
+    "description": "Workspaces, teams, and work conversations.",
+    "siteUrl": "https://slack.com/",
+    "loginUrl": "https://slack.com/signin"
+  },
+  "notion": {
+    "name": "Notion",
+    "color": "#111827",
+    "icon": "NO",
+    "category": "work",
+    "description": "Workspace documents, projects, and notes.",
+    "siteUrl": "https://www.notion.so/",
+    "loginUrl": "https://www.notion.so/login"
+  },
+  "linkedin_jobs": {
+    "name": "LinkedIn Jobs",
+    "color": "#0A66C2",
+    "icon": "in",
+    "category": "career",
+    "description": "Professional job searches, applications, and employer hiring.",
+    "siteUrl": "https://www.linkedin.com/jobs/",
+    "loginUrl": "https://www.linkedin.com/login"
+  },
+  "careerbuilder": {
+    "name": "CareerBuilder",
+    "color": "#0066CC",
+    "icon": "CB",
+    "category": "career",
+    "description": "Jobs, resumes, and employer recruiting.",
+    "siteUrl": "https://www.careerbuilder.com/",
+    "loginUrl": "https://www.careerbuilder.com/"
+  },
+  "simplyhired": {
+    "name": "SimplyHired",
+    "color": "#0077B5",
+    "icon": "SH",
+    "category": "career",
+    "description": "Job searches and employer listings.",
+    "siteUrl": "https://www.simplyhired.com/",
+    "loginUrl": "https://www.simplyhired.com/"
+  },
+  "snagajob": {
+    "name": "Snagajob",
+    "color": "#F97316",
+    "icon": "SJ",
+    "category": "career",
+    "description": "Hourly jobs and local hiring.",
+    "siteUrl": "https://www.snagajob.com/",
+    "loginUrl": "https://www.snagajob.com/"
+  },
+  "jobcase": {
+    "name": "Jobcase",
+    "color": "#2563EB",
+    "icon": "JC",
+    "category": "career",
+    "description": "Job search and a community for workers.",
+    "siteUrl": "https://www.jobcase.com/",
+    "loginUrl": "https://www.jobcase.com/"
+  },
+  "seek": {
+    "name": "SEEK",
+    "color": "#E60278",
+    "icon": "SK",
+    "category": "career",
+    "description": "Jobs and recruiting in Australia and New Zealand.",
+    "siteUrl": "https://www.seek.com.au/",
+    "loginUrl": "https://www.seek.com.au/"
+  },
+  "naukri": {
+    "name": "Naukri",
+    "color": "#4A90E2",
+    "icon": "NA",
+    "category": "career",
+    "description": "Jobs, candidate profiles, and recruiting in India.",
+    "siteUrl": "https://www.naukri.com/",
+    "loginUrl": "https://www.naukri.com/"
+  },
+  "cntraveler": {
+    "name": "Condé Nast Traveler",
+    "color": "#026B9C",
+    "icon": "CNT",
+    "category": "travel",
+    "description": "Travel journalism, destination advice, and trip inspiration.",
+    "siteUrl": "https://www.cntraveler.com/",
+    "loginUrl": "https://www.cntraveler.com/",
+    "feedSupported": true
+  },
+  "reuters": {
+    "name": "Reuters",
+    "color": "#FF8000",
+    "icon": "RT",
+    "category": "publication",
+    "description": "News, analysis, and reader services on the official publisher website.",
+    "siteUrl": "https://www.reuters.com/",
+    "loginUrl": "https://www.reuters.com/"
+  },
+  "bbc": {
+    "name": "BBC News",
+    "color": "#B80000",
+    "icon": "BBC",
+    "category": "publication",
+    "description": "News, analysis, and reader services on the official publisher website.",
+    "siteUrl": "https://www.bbc.com/news",
+    "loginUrl": "https://account.bbc.com/signin"
+  },
+  "cnn": {
+    "name": "CNN",
+    "color": "#CC0000",
+    "icon": "CNN",
+    "category": "publication",
+    "description": "News, analysis, and reader services on the official publisher website.",
+    "siteUrl": "https://www.cnn.com/",
+    "loginUrl": "https://www.cnn.com/log-in"
+  },
+  "guardian": {
+    "name": "The Guardian",
+    "color": "#052962",
+    "icon": "TG",
+    "category": "publication",
+    "description": "News, analysis, and reader services on the official publisher website.",
+    "siteUrl": "https://www.theguardian.com/",
+    "loginUrl": "https://profile.theguardian.com/signin"
+  },
+  "nytimes": {
+    "name": "The New York Times",
+    "color": "#111827",
+    "icon": "NYT",
+    "category": "publication",
+    "description": "News, analysis, and reader services on the official publisher website.",
+    "siteUrl": "https://www.nytimes.com/",
+    "loginUrl": "https://myaccount.nytimes.com/auth/login"
+  },
+  "washingtonpost": {
+    "name": "The Washington Post",
+    "color": "#111827",
+    "icon": "WP",
+    "category": "publication",
+    "description": "News, analysis, and reader services on the official publisher website.",
+    "siteUrl": "https://www.washingtonpost.com/",
+    "loginUrl": "https://www.washingtonpost.com/subscribe/signin/"
+  },
+  "wsj": {
+    "name": "The Wall Street Journal",
+    "color": "#111827",
+    "icon": "WSJ",
+    "category": "publication",
+    "description": "News, analysis, and reader services on the official publisher website.",
+    "siteUrl": "https://www.wsj.com/",
+    "loginUrl": "https://www.wsj.com/"
+  },
+  "bloomberg": {
+    "name": "Bloomberg",
+    "color": "#111827",
+    "icon": "BL",
+    "category": "publication",
+    "description": "News, analysis, and reader services on the official publisher website.",
+    "siteUrl": "https://www.bloomberg.com/",
+    "loginUrl": "https://www.bloomberg.com/"
+  },
+  "ft": {
+    "name": "Financial Times",
+    "color": "#0D7680",
+    "icon": "FT",
+    "category": "publication",
+    "description": "News, analysis, and reader services on the official publisher website.",
+    "siteUrl": "https://www.ft.com/",
+    "loginUrl": "https://accounts.ft.com/login"
+  },
+  "foxnews": {
+    "name": "Fox News",
+    "color": "#003366",
+    "icon": "FOX",
+    "category": "publication",
+    "description": "News, analysis, and reader services on the official publisher website.",
+    "siteUrl": "https://www.foxnews.com/",
+    "loginUrl": "https://www.foxnews.com/"
+  },
+  "usatoday": {
+    "name": "USA Today",
+    "color": "#009BFF",
+    "icon": "USA",
+    "category": "publication",
+    "description": "News, analysis, and reader services on the official publisher website.",
+    "siteUrl": "https://www.usatoday.com/",
+    "loginUrl": "https://login.usatoday.com/"
+  },
+  "yahoonews": {
+    "name": "Yahoo News",
+    "color": "#6001D2",
+    "icon": "Y!",
+    "category": "publication",
+    "description": "News, analysis, and reader services on the official publisher website.",
+    "siteUrl": "https://news.yahoo.com/",
+    "loginUrl": "https://login.yahoo.com/"
+  },
+  "apnews": {
+    "name": "AP News",
+    "color": "#FF0000",
+    "icon": "AP",
+    "category": "publication",
+    "description": "News, analysis, and reader services on the official publisher website.",
+    "siteUrl": "https://apnews.com/",
+    "loginUrl": null
+  },
+  "npr": {
+    "name": "NPR",
+    "color": "#D62021",
+    "icon": "NPR",
+    "category": "publication",
+    "description": "News, analysis, and reader services on the official publisher website.",
+    "siteUrl": "https://www.npr.org/",
+    "loginUrl": null
+  }
+}

@@ -3805,5 +3805,122 @@
     "platform": "web",
     "group": "Your Feed source",
     "viewType": "tab"
+  },
+  "home_source_weworkremotely": {
+    "category": "home_source_weworkremotely",
+    "path": "/analytics-tabs/home-source/weworkremotely",
+    "title": "Home source: We Work Remotely",
+    "label": "Home source: We Work Remotely",
+    "platform": "web",
+    "group": "Home source",
+    "viewType": "tab"
+  },
+  "video_source_weworkremotely": {
+    "category": "video_source_weworkremotely",
+    "path": "/analytics-tabs/video-source/weworkremotely",
+    "title": "Video source: We Work Remotely",
+    "label": "Video source: We Work Remotely",
+    "platform": "web",
+    "group": "Video source",
+    "viewType": "tab"
+  },
+  "music_source_weworkremotely": {
+    "category": "music_source_weworkremotely",
+    "path": "/analytics-tabs/music-source/weworkremotely",
+    "title": "Music source: We Work Remotely",
+    "label": "Music source: We Work Remotely",
+    "platform": "web",
+    "group": "Music source",
+    "viewType": "tab"
+  },
+  "maps_source_weworkremotely": {
+    "category": "maps_source_weworkremotely",
+    "path": "/analytics-tabs/maps-source/weworkremotely",
+    "title": "City source: We Work Remotely",
+    "label": "City source: We Work Remotely",
+    "platform": "web",
+    "group": "City source",
+    "viewType": "tab"
+  },
+  "connected_accounts_category_travel": {
+    "category": "connected_accounts_category_travel",
+    "path": "/analytics-tabs/connected-accounts-category/travel",
+    "title": "Connected accounts category: Travel",
+    "label": "Connected accounts category: Travel",
+    "platform": "web",
+    "group": "Connected accounts category",
+    "viewType": "tab"
+  },
+  "connected_accounts_category_audio": {
+    "category": "connected_accounts_category_audio",
+    "path": "/analytics-tabs/connected-accounts-category/audio",
+    "title": "Connected accounts category: Music and audio",
+    "label": "Connected accounts category: Music and audio",
+    "platform": "web",
+    "group": "Connected accounts category",
+    "viewType": "tab"
+  },
+  "crosspost_category_travel": {
+    "category": "crosspost_category_travel",
+    "path": "/analytics-tabs/crosspost-category/travel",
+    "title": "Cross-post category: Travel",
+    "label": "Cross-post category: Travel",
+    "platform": "web",
+    "group": "Cross-post category",
+    "viewType": "tab"
+  },
+  "crosspost_category_audio": {
+    "category": "crosspost_category_audio",
+    "path": "/analytics-tabs/crosspost-category/audio",
+    "title": "Cross-post category: Music and audio",
+    "label": "Cross-post category: Music and audio",
+    "platform": "web",
+    "group": "Cross-post category",
+    "viewType": "tab"
+  },
+  "career_posts": {
+    "category": "career_posts",
+    "path": "/career-posts",
+    "title": "Career posting",
+    "label": "Career posting",
+    "platform": "web",
+    "group": "Business",
+    "viewType": "page"
+  },
+  "home_source_cntraveler": {
+    "category": "home_source_cntraveler",
+    "path": "/analytics-tabs/home-source/cntraveler",
+    "title": "Home source: Condé Nast Traveler",
+    "label": "Home source: Condé Nast Traveler",
+    "platform": "web",
+    "group": "Home source",
+    "viewType": "tab"
+  },
+  "video_source_cntraveler": {
+    "category": "video_source_cntraveler",
+    "path": "/analytics-tabs/video-source/cntraveler",
+    "title": "Video source: Condé Nast Traveler",
+    "label": "Video source: Condé Nast Traveler",
+    "platform": "web",
+    "group": "Video source",
+    "viewType": "tab"
+  },
+  "music_source_cntraveler": {
+    "category": "music_source_cntraveler",
+    "path": "/analytics-tabs/music-source/cntraveler",
+    "title": "Music source: Condé Nast Traveler",
+    "label": "Music source: Condé Nast Traveler",
+    "platform": "web",
+    "group": "Music source",
+    "viewType": "tab"
+  },
+  "maps_source_cntraveler": {
+    "category": "maps_source_cntraveler",
+    "path": "/analytics-tabs/maps-source/cntraveler",
+    "title": "City source: Condé Nast Traveler",
+    "label": "City source: Condé Nast Traveler",
+    "platform": "web",
+    "group": "City source",
+    "viewType": "tab"
   }
 }

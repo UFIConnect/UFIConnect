@@ -6,6 +6,7 @@ import client, { publicOAuthRequestConfig } from '../api/client';
 import { CONNECTED_SOCIAL_PLATFORMS, SOURCE_META, withCareerAccountFallback } from './sourceMeta';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { normalizeSourceFavorites } from './sourceFavorites';
+import ExternalAccountLogin from './ExternalAccountLogin';
 import { DirectoryControls, AccountSiteLink } from './DirectoryControls';
 import { SOURCE_CATEGORIES, ACCOUNT_STATUSES, sourceSections, accountSections } from './sourceDirectory';
 import useTabMetrics from '../analytics/useTabMetrics';
@@ -145,7 +146,7 @@ export default function HomeFeedTools({
     const entries = Object.entries(accountPlatforms);
     return profile?.plan === 'business'
       ? entries.filter(([, platform]) => platform.category === 'career')
-      : entries.filter(([, platform]) => platform.category !== 'career' && !platform.commandCenterOnly);
+      : entries.filter(([, platform]) => !platform.commandCenterOnly);
   }, [accountPlatforms, profile?.plan]);
   const connectedAccountCount = accountPlatforms === null
     ? profileConnected.length
@@ -419,7 +420,8 @@ export default function HomeFeedTools({
                 const isConnected = Boolean(accountConnected[key]);
                 const isConnecting = accountAction === `connect:${key}`;
                 const isDisconnecting = accountAction === `disconnect:${key}`;
-                const comingSoon = !isConnected && (platform.forceComingSoon || !platform.configured);
+                const external = platform.connectionMode === 'external';
+                const comingSoon = !external && !isConnected && (platform.forceComingSoon || !platform.configured);
                 return (
                   <div className="home-connected-account-row" key={key}>
                     <SourceMark source={key} />
@@ -428,7 +430,7 @@ export default function HomeFeedTools({
                       {isConnected && <span className="home-connected-account-status">Connected</span>}
                     </span>
                     <div className="source-directory-account-actions">
-                      {isConnected ? (
+                      {external ? <ExternalAccountLogin platform={key} compact /> : isConnected ? (
                         <button type="button" className="btn btn-danger btn-sm" onClick={() => disconnectAccount(key)} disabled={accountAction !== null}>
                           {isDisconnecting ? 'Wait...' : 'Disconnect'}
                         </button>

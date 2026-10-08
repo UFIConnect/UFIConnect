@@ -1,3 +1,5 @@
+import ACCOUNT_DIRECTORY from '../../../backend/account-directory.json' with { type: 'json' };
+
 export const SOURCE_META = {
   discord:       { label: 'Discord',       color: '#5865F2', icon: 'DS' },
   figma:         { label: 'Figma',         color: '#A259FF', icon: 'FG' },
@@ -59,8 +61,12 @@ export const SOURCE_META = {
   localpulse:    { label: 'Local Pulse',     color: '#0F766E', icon: 'LP' },
   bars:          { label: 'Bars and clubs', color: '#7C3AED', icon: 'BAR' },
   restaurants:   { label: 'Restaurants',     color: '#B45309', icon: 'RS' },
+  weworkremotely: { label: 'We Work Remotely', color: '#EF4444', icon: 'WWR' },
+  cntraveler: { label: 'Condé Nast Traveler', color: '#026B9C', icon: 'LM', desc: 'Travel journalism and destination articles' },
   uficonnect:    { label: 'UFIconnect',      color: 'var(--primary)', icon: 'UFI' },
 };
+
+Object.assign(SOURCE_META, Object.fromEntries(Object.entries(ACCOUNT_DIRECTORY).map(([key, entry]) => [key, {label: entry.name, color: entry.color, icon: entry.icon, desc: entry.description}])));
 
 // Account-owned integrations are managed in Command Center. They only use
 // content from the member who authorizes them and never enter shared feeds.
@@ -73,38 +79,28 @@ export const COMMAND_CENTER_ACCOUNT_PLATFORMS = [
 // Career providers use the same connection lifecycle as social accounts.
 // They remain separate from CONNECTED_SOCIAL_PLATFORMS so authorizing a
 // career account can never make it appear as a Following-feed source.
-export const CAREER_ACCOUNT_PLATFORMS = [
-  'indeed', 'usajobs', 'remoteok', 'remotive', 'muse',
-  'glassdoor', 'handshake', 'wellfound', 'ziprecruiter', 'dice',
-];
+export const CAREER_ACCOUNT_PLATFORMS = Object.keys(ACCOUNT_DIRECTORY).filter(key => ACCOUNT_DIRECTORY[key].category === 'career');
+export const TRAVEL_ACCOUNT_PLATFORMS = Object.keys(ACCOUNT_DIRECTORY).filter(key => ACCOUNT_DIRECTORY[key].category === 'travel');
+export const NEWS_ACCOUNT_PLATFORMS = Object.keys(ACCOUNT_DIRECTORY).filter(key => ACCOUNT_DIRECTORY[key].category === 'publication');
 
-// Render deploys the static web app and API independently. Business members
-// get display-only Coming Soon records while the API is switching revisions;
-// other plans must never receive career-account cards from this fallback.
-const CAREER_ACCOUNT_FALLBACK = Object.fromEntries(CAREER_ACCOUNT_PLATFORMS.map((key) => {
-  const source = SOURCE_META[key];
-  return [key, {
-    name: source.label,
-    color: source.color,
-    icon: key,
-    category: 'career',
-    description: `Connect your ${source.label} account for future career tools.`,
-    note: `${source.label} account authorization is coming soon.`,
-    configured: false,
-    forceComingSoon: true,
-    commandCenterOnly: false,
-    requiresMembership: 'business',
-    locked: false,
-  }];
-}));
-
-export function withCareerAccountFallback(platforms = {}, includeCareer = false) {
-  if (!includeCareer) {
-    return Object.fromEntries(Object.entries(platforms).filter(([key, platform]) => (
-      !CAREER_ACCOUNT_PLATFORMS.includes(key) && platform?.category !== 'career'
-    )));
-  }
-  return { ...CAREER_ACCOUNT_FALLBACK, ...platforms };
+// Official website sign-in is separate from an authorized account connection.
+// These records also keep the directory useful during independent API/web rolls.
+const EXTERNAL_ACCOUNT_FALLBACK = Object.fromEntries(Object.entries(ACCOUNT_DIRECTORY).map(([key, entry]) => [key, {
+  ...entry, connectionMode: 'external', configured: false, forceComingSoon: false,
+  note: 'Open the official website to use its reader or account features. Automatic account sync and publishing are unavailable.',
+  commandCenterOnly: false, requiresMembership: false, locked: false,
+  crossPost: { supported: false, media: 'none', note: 'Publishing is completed on the source website.' },
+}]));
+export function withCareerAccountFallback(platforms = {}, careerOnly = false) {
+  const keys = careerOnly ? [...new Set([...CAREER_ACCOUNT_PLATFORMS, ...Object.keys(platforms)])] : Object.keys(platforms);
+  const merged = Object.fromEntries(keys.map(key => {
+    const fallback = EXTERNAL_ACCOUNT_FALLBACK[key];
+    const provider = platforms[key];
+    const entry = provider?.configured && !provider.forceComingSoon
+      ? provider : fallback ? {...provider, ...fallback} : provider;
+    return [key, entry];
+  }));
+  return careerOnly ? Object.fromEntries(Object.entries(merged).filter(([, entry]) => entry.category === 'career')) : merged;
 }
 
 // Cross-Post shows supported providers and planned publishing destinations.
@@ -115,6 +111,7 @@ export const CROSS_POST_PLATFORM_IDS = [
   'threads', 'linkedin', 'mastodon', 'pinterest', 'tumblr', 'wordpress',
   'youtube', 'wired', 'mittr', 'smashing', 'infoq', 'theregister',
   'arstechnica', 'phoronix', 'devto', 'freecodecamp',
+  ...Object.keys(ACCOUNT_DIRECTORY),
 ];
 
 // Every platform a user can link via Connected Accounts (mirrors
@@ -141,6 +138,7 @@ export const HOME_FEED_SOURCE_IDS = [
   'producthunt', 'techcrunch', 'theverge', 'indiehackers', 'hashnode',
   'arstechnica', 'wired', 'theregister', 'venturebeat', 'smashing', 'phoronix', 'infoq', 'mittr',
   'yc', 'crunchbase', 'behance', 'designweb', 'mastodon',
+  'weworkremotely', 'cntraveler',
 ];
 
 export const FOLLOWING_FEED_SOURCE_IDS = [

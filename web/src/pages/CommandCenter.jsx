@@ -8,6 +8,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS, CAREER_ACCOUNT_PLATFORMS, withCareerAccountFallback } from '../components/sourceMeta';
+import ExternalAccountLogin from '../components/ExternalAccountLogin';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import PhotoPickerButton from '../components/PhotoPickerButton';
 import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
@@ -917,7 +918,7 @@ function MemberAccountsSection() {
         <h3 style={{ margin: '0 0 4px', fontSize: '.98rem' }}>{isBusinessMembership ? 'Business career connections' : 'All account connections'}</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.82rem', lineHeight: 1.55, margin: 0 }}>
           {isBusinessMembership
-            ? 'Career providers use the same secure Connect, Connected, and Disconnect flow as other accounts. Job browsing remains in Opportunities.'
+            ? 'Sign in at career providers or manage supported account integrations. Job browsing remains in Opportunities.'
             : 'Connect accounts for feeds, replies, and publishing. Each provider shows the tools it supports and whether its connection is ready.'}
         </p>
         <p style={{ margin: '10px 0 0', fontSize: '.8rem', fontWeight: 700 }}>{connectedCount} of {memberPlatforms.length} accounts connected</p>
@@ -954,14 +955,14 @@ function MemberAccountsSection() {
                 {accountType && <span style={{ fontSize: '.64rem', fontWeight: 750, color: 'var(--primary)', background: 'var(--primary-light)', padding: '2px 6px', borderRadius: 4 }}>{accountType}</span>}
                 {isConnected && <span style={{ fontSize: '.64rem', fontWeight: 750, color: '#059669', background: '#ECFDF5', padding: '2px 6px', borderRadius: 4 }}>Connected</span>}
                 {isConnected && platform.reconnectRequired && <span style={{ fontSize: '.7rem', color: 'var(--muted)' }}>Reconnect needed</span>}
-                {!isConnected && unavailable && <span style={{ fontSize: '.64rem', fontWeight: 750, color: '#92400E', background: '#FEF3C7', padding: '2px 6px', borderRadius: 4 }}>Coming soon</span>}
+                {!isConnected && unavailable && platform.connectionMode !== 'external' && <span style={{ fontSize: '.64rem', fontWeight: 750, color: '#92400E', background: '#FEF3C7', padding: '2px 6px', borderRadius: 4 }}>Coming soon</span>}
               </div>
               <p style={{ color: 'var(--muted)', fontSize: '.78rem', margin: '4px 0 0', lineHeight: 1.45 }}>{platform.description}</p>
               {isConnected && platform.reconnectRequired && <p style={{ color: 'var(--muted)', fontSize: '.78rem', margin: '4px 0 0', lineHeight: 1.45 }}>{platform.reconnectMessage || `Reconnect ${platform.name} to renew account permissions.`}</p>}
             </div>
             <div className="source-directory-account-actions">
             {isConnected && (platform.reconnectRequired || key === 'mastodon' || key === 'bluesky') && <button type="button" className="btn btn-ghost btn-sm" disabled={unavailable || platform.locked || connecting === key} onClick={() => connectAccount(key)}>Reconnect {platform.name}</button>}
-            {isConnected ? (
+            {platform.connectionMode === 'external' ? <ExternalAccountLogin platform={key} /> : isConnected ? (
               <button type="button" className="btn btn-danger btn-sm" onClick={() => disconnectAccount(key)} disabled={disconnecting === key}>
                 {disconnecting === key ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Disconnect'}
               </button>
@@ -1336,7 +1337,7 @@ function crossPostReady(key, platforms, connected, plan, media) {
     && (media?.type !== 'video' || capability.media === 'link'));
 }
 
-function CrossPostSection() {
+export function CrossPostSection({ initialCategory } = {}) {
   const { profile } = useAuth();
   const { showToast } = useToast();
   const location = useLocation();
@@ -1358,7 +1359,7 @@ function CrossPostSection() {
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [mediaError, setMediaError] = useState('');
   const [syncing, setSyncing] = useState(false);
-  const [destinationCategory, setDestinationCategory] = useState('all');
+  const [destinationCategory, setDestinationCategory] = useState(initialCategory || (profile?.plan === 'business' ? 'career' : 'social'));
   useTabMetrics('crosspost_category', destinationCategory);
   const [checkingConnections, setCheckingConnections] = useState(false);
   const catalogRequest = useRef(0);
@@ -1373,12 +1374,12 @@ function CrossPostSection() {
     setLoadError('');
     const [socialResult, historyResult] = await Promise.allSettled([
       client.get('/social/platforms', { signal: controller.signal }),
-      client.get('/command-center/cross-post/history', { signal: controller.signal }),
+      profile?.plan === 'business' ? Promise.resolve({data:{posts:[]}}) : client.get('/command-center/cross-post/history', { signal: controller.signal }),
     ]);
     if (controller.signal.aborted || requestId !== catalogRequest.current) return;
     if (socialResult.status === 'fulfilled') {
       setConnected(socialResult.value.data.connected || {});
-      setPlatforms(socialResult.value.data.platforms || {});
+      setPlatforms(withCareerAccountFallback(socialResult.value.data.platforms || {}, profile?.plan === 'business'));
     } else {
       setConnected({});
       setPlatforms({});
@@ -1389,7 +1390,7 @@ function CrossPostSection() {
       setLoadError('Some Cross-Post data could not be loaded.');
     }
     setCheckingConnections(false);
-  }, []);
+  }, [profile?.plan]);
 
   useEffect(() => {
     loadCrossPostData();
@@ -1529,13 +1530,14 @@ function CrossPostSection() {
   const shownPlatforms = new Set(categoryContext?.sources.map(source => source.platform) || []);
   const orderedPublishingPlatforms = [...publishingPlatforms].sort((left, right) => Number(shownPlatforms.has(right)) - Number(shownPlatforms.has(left)));
   const destinationGroups = accountSections([
-    ['uficonnect', { name: 'UFIConnect', configured: true }],
+    ...(profile?.plan === 'business' ? [] : [['uficonnect', { name: 'UFIConnect', configured: true }]]),
     ...orderedPublishingPlatforms.map(platform => [platform, platforms[platform]]),
   ], { ...connected, uficonnect: true }).map(group => ({
     ...group,
     items: group.items.sort(([left], [right]) => Number(shownPlatforms.has(right)) - Number(shownPlatforms.has(left))),
   }));
-  const visibleDestinationGroups = destinationGroups.filter(group => destinationCategory === 'all' || group.id === destinationCategory);
+  const activeDestinationCategory = destinationGroups.some(group => group.id === destinationCategory) ? destinationCategory : destinationGroups[0]?.id || '';
+  const visibleDestinationGroups = destinationGroups.filter(group => group.id === activeDestinationCategory);
   const connectionPath = (platform) => platform === 'mastodon' || platform === 'bluesky'
     ? `/connected-accounts?connect=${platform}&returnTo=command-center`
     : '/command-center?tab=accounts';
@@ -1564,8 +1566,9 @@ function CrossPostSection() {
     const capability = platform?.crossPost;
     const available = platform?.configured && !platform.forceComingSoon;
     const reconnect = connected[p] && (platform?.reconnectRequired || capability?.reconnectRequired);
-    const status = !available ? 'Coming soon' : reconnect ? 'Reconnect required' : connected[p] ? 'Connected' : 'Not connected';
-    const detail = !available ? platform?.note || 'Account connection setup is pending.'
+    const external = platform?.connectionMode === 'external';
+    const status = external ? platform.loginUrl ? 'Website sign-in' : 'Publisher website' : !available ? 'Coming soon' : reconnect ? 'Reconnect required' : connected[p] ? 'Connected' : 'Not connected';
+    const detail = external ? platform.note : !available ? platform?.note || 'Account connection setup is pending.'
       : reconnect ? capability?.reconnectMessage || platform?.reconnectMessage || 'Reconnect to restore publishing permission.'
       : !capability?.supported ? capability?.note || 'This connection does not provide a publishing route.'
       : platform.locked ? 'Membership required.'
@@ -1577,8 +1580,13 @@ function CrossPostSection() {
         <span style={{ fontSize: '.73rem', color: 'var(--muted)' }}>{status}{available && !capability?.supported ? ' · Publishing unavailable' : ''}</span>
         {detail && <p style={{ fontSize: '.73rem', color: 'var(--muted)', lineHeight: 1.5, margin: 0, overflowWrap: 'anywhere' }}>{detail}</p>}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 'auto' }}>
-          {available && capability?.supported && connected[p] && !reconnect && platformTargetButton(p)}
-          {available && <Link to={connectionPath(p)} className="btn btn-ghost btn-sm" style={{ textDecoration: 'none' }}>
+          {external && <ExternalAccountLogin platform={p} />}
+          {external && platform.category !== 'publication' && <button type="button" className="btn btn-ghost btn-sm" disabled={!content.trim()} onClick={async () => {
+            try { await navigator.clipboard.writeText(content.trim()); showToast('Draft copied. Review and publish it on the source website.', 'success'); }
+            catch { showToast('Select and copy the draft text, then open the source website.', 'error'); }
+          }}>Copy draft</button>}
+          {available && !external && capability?.supported && connected[p] && !reconnect && platformTargetButton(p)}
+          {available && !external && <Link to={connectionPath(p)} className="btn btn-ghost btn-sm" style={{ textDecoration: 'none' }}>
             {reconnect ? `Reconnect ${meta.label}` : connected[p] ? `Manage ${meta.label}` : `Connect ${meta.label}`}
           </Link>}
         </div>
@@ -1590,9 +1598,9 @@ function CrossPostSection() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       {loadError && <SectionError message={loadError} onRetry={loadCrossPostData} />}
       <div className="card">
-        <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>{categoryLabel ? `Post to ${categoryLabel}` : 'Post to multiple platforms'}</h3>
+        <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>{profile?.plan === 'business' ? 'Prepare a hiring update' : categoryLabel ? `Post to ${categoryLabel}` : 'Post to multiple platforms'}</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0 }}>
-          Send one post through the official publishing route for each selected account. TikTok uses its inbox handoff, then this history confirms when it is complete.
+          {profile?.plan === 'business' ? 'Write your role description, copy the draft, and open a career site to review and publish it with its employer tools. Website sign-in does not enable automatic posting.' : 'Send one post through the official publishing route for each selected account. TikTok uses its inbox handoff, then this history confirms when it is complete.'}
         </p>
         {categoryLabel && <div className="discovery-post-context" aria-label={`${categoryLabel} posting destinations`}>
           <strong>Sites in your {categoryLabel.toLowerCase()} feed</strong>
@@ -1607,8 +1615,7 @@ function CrossPostSection() {
             <strong style={{ fontSize: '.8rem' }}>Publishing destinations</strong>
             <label style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, fontSize: '.75rem', minWidth: 0 }}>
               Category
-              <select className="form-select" aria-label="Publishing category" value={destinationCategory} onChange={event => setDestinationCategory(event.target.value)} style={{ width: 'auto', maxWidth: '100%' }}>
-                <option value="all">All categories</option>
+              <select className="form-select" aria-label="Publishing category" value={activeDestinationCategory} onChange={event => setDestinationCategory(event.target.value)} style={{ width: 'auto', maxWidth: '100%' }}>
                 {destinationGroups.map(group => <option key={group.id} value={group.id}>{group.label}</option>)}
               </select>
             </label>
@@ -1625,17 +1632,18 @@ function CrossPostSection() {
           </div>
           <p role="status" style={{ fontSize: '.78rem', margin: '14px 0 0', lineHeight: 1.5 }}>{selected.size
             ? `Selected (${selected.size}): ${[...selected].map(platform => SOURCE_META[platform]?.label || platform).join(', ')}`
-            : 'Choose the accounts to publish to.'}</p>
+            : activeDestinationCategory === 'career' || activeDestinationCategory === 'travel' ? 'Sign in on a source website. Copy your own draft when the source supports publishing.' : 'Choose the accounts to publish to.'}</p>
         </div>
         {profile?.plan === 'free' && <p style={{ fontSize: '.8rem' }}>UFIconnect posting is available to everyone. Publishing to connected accounts requires Pro.</p>}
         {
           <form onSubmit={handlePost} style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 16 }}>
             <textarea
               value={content} onChange={e => setContent(e.target.value)} rows={4}
-              placeholder={categoryLabel ? `What would you like to share about ${categoryLabel.toLowerCase()}?` : 'What do you want to share?'}
+              aria-label={profile?.plan === 'business' ? 'Hiring update' : 'Post draft'}
+              placeholder={profile?.plan === 'business' ? 'Describe the role, responsibilities, requirements, location, and how to apply.' : categoryLabel ? `What would you like to share about ${categoryLabel.toLowerCase()}?` : 'What do you want to share?'}
               style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border)', fontSize: '.85rem', fontFamily: 'inherit', resize: 'vertical' }}
             />
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            {profile?.plan !== 'business' && <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <PhotoPickerButton
                 onFileSelected={handlePhoto}
                 disabled={uploadingMedia}
@@ -1651,10 +1659,10 @@ function CrossPostSection() {
                 </div>
               )}
               {mediaError && <span style={{ color: 'var(--danger)', fontSize: '.76rem' }}>{mediaError}</span>}
-            </div>
-            <button className="btn btn-primary ufi-post-action" type="submit" disabled={posting || uploadingMedia || checkingConnections || (!content.trim() && !media) || !selected.size} style={{ alignSelf: 'flex-start' }}>
+            </div>}
+            {profile?.plan !== 'business' && <button className="btn btn-primary ufi-post-action" type="submit" disabled={posting || uploadingMedia || checkingConnections || (!content.trim() && !media) || !selected.size} style={{ alignSelf: 'flex-start' }}>
               {posting ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Send'}
-            </button>
+            </button>}
           </form>
         }
       </div>

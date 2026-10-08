@@ -29,7 +29,7 @@ const statuses = [['all', 'All statuses'], ['connected', 'Connected'], ['availab
 entries('connected_accounts_status', 'Connected accounts status', statuses);
 entries('home_accounts_status', 'Home connected accounts status', statuses);
 entries('command_center_accounts_status', 'Command Center accounts status', statuses);
-const categories = [['all', 'All categories'], ['social', 'Social'], ['video', 'Video and streaming'], ['work', 'Work and development'], ['publishing', 'Publishing'], ['career', 'Career sites']];
+const categories = [['all', 'All categories'], ['social', 'Social'], ['video', 'Video and streaming'], ['work', 'Work and development'], ['publishing', 'Publishing'], ['career', 'Career sites'], ['travel', 'Travel'], ['audio', 'Music and audio']];
 entries('connected_accounts_category', 'Connected accounts category', categories);
 entries('crosspost_category', 'Cross-post category', categories);
 entries('home_panel', 'Home panel', [['sources', 'Sources'], ['accounts', 'Connected accounts'], ['skills', 'Skills'], ['files', 'Attachments']]);

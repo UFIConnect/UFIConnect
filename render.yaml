@@ -691,6 +691,12 @@ services:
         source: /recruiting/
         destination: /recruiting/index.html
       - type: rewrite
+        source: /career-posts
+        destination: /career-posts/index.html
+      - type: rewrite
+        source: /career-posts/
+        destination: /career-posts/index.html
+      - type: rewrite
         source: /analytics
         destination: /analytics/index.html
       - type: rewrite

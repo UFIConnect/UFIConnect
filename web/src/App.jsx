@@ -81,6 +81,7 @@ const VaultDeviceOverview = lazy(() => import('./pages/VaultDeviceOverview'));
 const OfficeOverview = lazy(() => import('./pages/OfficeOverview'));
 const Sources        = lazy(() => import('./pages/Sources'));
 const CommandCenter  = lazy(() => import('./pages/CommandCenter'));
+const CareerPublishing = lazy(() => import('./pages/CareerPublishing'));
 const ResumeBuilder  = lazy(() => import('./pages/ResumeBuilder'));
 const CoverLetterPreview = lazy(() => import('./pages/CoverLetterPreview'));
 const YourPostsFeed  = lazy(() => import('./pages/YourPostsFeed'));
@@ -307,6 +308,7 @@ function AppContent() {
       <Route path="/search" element={<SearchRoute />}/>
       <Route path="/people" element={<RequireAuth><RequireOnboarding><PeopleRoute /></RequireOnboarding></RequireAuth>} />
       <Route path="/recruiting" element={<RequireAuth><RequireOnboarding><Recruiting /></RequireOnboarding></RequireAuth>} />
+      <Route path="/career-posts" element={<RequireAuth><RequireOnboarding><CareerPublishing /></RequireOnboarding></RequireAuth>} />
       <Route path="/u/:id" element={
         <RequireAuth><RequireOnboarding><PublicProfile /></RequireOnboarding></RequireAuth>
       }/>

@@ -1,3 +1,4 @@
+import ACCOUNT_DIRECTORY from '../../../backend/account-directory.json' with { type: 'json' };
 import { SOURCE_META, CAREER_ACCOUNT_PLATFORMS } from './sourceMeta';
 
 export const SOURCE_CATEGORIES = [
@@ -8,11 +9,11 @@ export const SOURCE_CATEGORIES = [
 const CATEGORY_SOURCES = {
   social: ['uficonnect', 'reddit', 'twitter', 'facebook', 'bluesky', 'mastodon', 'linkedin', 'threads', 'tumblr'],
   developer: ['github', 'gitlab', 'devto', 'stackoverflow', 'hackernews', 'lobsters', 'arxiv', 'phoronix', 'infoq', 'hashnode', 'freecodecamp'],
-  news: ['medium', 'techcrunch', 'theverge', 'arstechnica', 'wired', 'theregister', 'venturebeat', 'mittr', 'wordpress'],
+  news: ['medium', 'techcrunch', 'theverge', 'arstechnica', 'wired', 'theregister', 'venturebeat', 'mittr', 'wordpress', ...Object.keys(ACCOUNT_DIRECTORY).filter(key => ACCOUNT_DIRECTORY[key].category === 'publication')],
   creative: ['youtube', 'twitch', 'instagram', 'tiktok', 'pinterest', 'behance', 'dribbble', 'designweb', 'smashing'],
   business: ['producthunt', 'yc', 'crunchbase', 'indiehackers'],
   career: CAREER_ACCOUNT_PLATFORMS,
-  local: ['livecamera', 'wikivoyage', 'travelnews', 'travelevents', 'localpulse', 'restaurants'],
+  local: ['livecamera', 'wikivoyage', 'travelnews', 'travelevents', 'localpulse', 'restaurants', ...Object.keys(ACCOUNT_DIRECTORY).filter(key => ACCOUNT_DIRECTORY[key].category === 'travel')],
 };
 export function sourceCategory(source) {
   return SOURCE_CATEGORIES.find(([key]) => CATEGORY_SOURCES[key].includes(source))?.[0] || 'social';
@@ -38,7 +39,8 @@ export function sourceSections(sources, favorites, category, disabledSources) {
 }
 export const ACCOUNT_STATUSES = [['connected', 'Connected'], ['available', 'Available'], ['membership', 'Membership'], ['soon', 'Coming soon']];
 export function accountStatus(platform, connected) {
-  if (connected) return 'connected';
+  if (connected && platform.connectionMode !== 'external') return 'connected';
+  if (platform.connectionMode === 'external') return 'available';
   if (platform.forceComingSoon || !platform.configured) return 'soon';
   return platform.locked ? 'membership' : 'available';
 }
@@ -52,8 +54,10 @@ export function filterAccounts(entries, connected, status) {
 export const ACCOUNT_CATEGORIES = [
   ['social', 'Social'], ['video', 'Video & Streaming'],
   ['work', 'Work & Development'], ['publishing', 'Publishing'], ['career', 'Career sites'],
+  ['travel', 'Travel'], ['audio', 'Music & Audio'],
 ];
 function accountCategory(key, platform) {
+  if (['travel', 'audio', 'work', 'video'].includes(platform.category)) return platform.category;
   if (platform.category === 'career' || CAREER_ACCOUNT_PLATFORMS.includes(key)) return 'career';
   if (['youtube', 'twitch', 'tiktok'].includes(key)) return 'video';
   if (['github', 'gitlab', 'linkedin', 'dribbble', 'behance', 'figma', 'stackoverflow', 'producthunt'].includes(key)) return 'work';
@@ -77,6 +81,7 @@ export function accountSections(entries, connected, status = 'all') {
 
 // Public destinations only. Authorization always uses the existing OAuth start route.
 export const ACCOUNT_SITE_URLS = {
+  ...Object.fromEntries(Object.entries(ACCOUNT_DIRECTORY).map(([key, entry]) => [key, entry.siteUrl])),
   discord: 'https://discord.com/channels/@me', figma: 'https://www.figma.com/files',
   linkedin: 'https://www.linkedin.com/', twitter: 'https://x.com/', facebook: 'https://www.facebook.com/',
   instagram: 'https://www.instagram.com/', tiktok: 'https://www.tiktok.com/', threads: 'https://www.threads.com/',

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import ACCOUNT_DIRECTORY from '../../../backend/account-directory.json';
 
 // Official brand marks (path data + hex from the Simple Icons project,
 // CC0-licensed), rendered inline so common sources need no external request.
@@ -25,6 +26,7 @@ const BRAND_ICONS = {
 // has no published Simple Icons mark. Keeping the map here makes every feed
 // surface render the same source icon instead of drifting into letter badges.
 const EXTERNAL_BRAND_ICON_URLS = {
+  ...Object.fromEntries(Object.entries(ACCOUNT_DIRECTORY).map(([key, entry]) => [key, new URL('/favicon.ico', entry.siteUrl).href])),
   discord:       'https://cdn.simpleicons.org/discord/5865F2',
   figma:         'https://cdn.simpleicons.org/figma/A259FF',
   linkedin:      'https://www.linkedin.com/favicon.ico',
@@ -74,6 +76,7 @@ const EXTERNAL_BRAND_ICON_URLS = {
 // Retry a blocked publisher favicon through Google's cache for the same
 // official domain. A final compact label keeps the slot visible offline.
 const OFFICIAL_SOURCE_DOMAINS = {
+  ...Object.fromEntries(Object.entries(ACCOUNT_DIRECTORY).map(([key, entry]) => [key, new URL(entry.siteUrl).hostname])),
   discord: 'discord.com', figma: 'figma.com',
   linkedin: 'linkedin.com',
   tiktok: 'tiktok.com',

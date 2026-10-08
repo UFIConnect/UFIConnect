@@ -2229,6 +2229,8 @@ function bustCachePrefix(prefix)  { for (const k of postCache.keys()) if (k.star
 // Watch real behavior at this level before pushing any further. Delay (the
 // pacing between successive requests within one shard) stays untouched.
 const SOURCE_CONFIG = {
+  weworkremotely: { ttl: 60*60000, delay: 300000, shards: 1 },
+  cntraveler: { ttl: 60*60000, delay: 300000, shards: 1 },
   //               TTL (ms)           DELAY/topic     shards
   // -- [BREAKING] 15-30s - live social/news firehose ---------------------------
   reddit:        { ttl:  8*60000, delay: 15000, shards: 8 },  // r/new firehose, many subreddits — was 4
@@ -4596,6 +4598,10 @@ function filterAndSlice(items, keyword, max = 1000) {
   const matched = items.filter(it => it.title.toLowerCase().includes(kw) || it.desc.toLowerCase().includes(kw));
   return (matched.length > 0 ? matched : items).slice(0, max);
 }
+
+const expandedFeedSources = require('./expanded-feed-sources').createExpandedFeedSources({
+  fetchJSON, fetchText, parseRSSItems, rssPost, decodeHTMLEntities,
+});
 
 // --- Indeed: job listings by keyword -----------------------------------------
 async function fetchIndeedJobs(keyword) {
@@ -7319,6 +7325,8 @@ function startContinuousWorkers() {
   // Start times are staggered so the initial burst is spread out.
   const SOURCES = [
     //  id               emoji   color       fetchFn                  keyMapper  startDelay
+    ['weworkremotely', 'WWR', '#EF4444', expandedFeedSources.weworkremotely, () => 'jobs', 36000],
+    ['cntraveler', 'LM', '#026B9C', expandedFeedSources.cntraveler, () => 'Travel', 38000],
     ['reddit',        '??', '#FF6347', fetchRedditByKeyword,     t => t,  0],  // pass topic name directly for TOPIC_SUBREDDITS lookup
     ['hn',            '??', '#FF6600', fetchHNByKeyword,         kw,   1000],
     ['github',        '??', '#94A3B8', fetchGitHubByKeyword,     kw,   2000],
@@ -9349,7 +9357,7 @@ function applyResumeMatchedJobs(posts, resumeKeywords, jobPool) {
   }
   return result;
 }
-const JOB_LISTING_SOURCES = ['indeed', 'remoteok', 'usajobs', 'remotive', 'muse'];
+const JOB_LISTING_SOURCES = ['indeed', 'remoteok', 'usajobs', 'remotive', 'muse', 'weworkremotely'];
 
 // --- Location-based matching ------------------------------------------------
 // Cloudflare country is used only after the actual incoming proxy chain has
@@ -14659,6 +14667,12 @@ const PLATFORMS = {
   },
 };
 
+const ACCOUNT_DIRECTORY = require('./account-directory.json');
+Object.assign(PLATFORMS, Object.fromEntries(Object.entries(ACCOUNT_DIRECTORY).map(([key, entry]) => [key, {
+  ...entry, connectionMode: 'external',
+  note: 'Open the official website to use its reader or account features. Automatic account sync and publishing are unavailable.',
+}])));
+
 // Display/connect order for Connected Accounts — Set iteration order
 // follows insertion order, so this list's order IS the UI order.
 // Profile-only connections remain in Command Center and do not create personal feeds.
@@ -14680,11 +14694,9 @@ const PUBLICATION_ACCOUNT_PLATFORMS = new Set([
   'wired', 'mittr', 'smashing', 'infoq', 'theregister',
   'arstechnica', 'phoronix', 'devto', 'freecodecamp',
 ]);
-const CAREER_ACCOUNT_PLATFORMS = new Set([
-  'indeed', 'usajobs', 'remoteok', 'remotive', 'muse',
-  'glassdoor', 'handshake', 'wellfound', 'ziprecruiter', 'dice',
-]);
+const CAREER_ACCOUNT_PLATFORMS = new Set(Object.keys(ACCOUNT_DIRECTORY).filter(key => ACCOUNT_DIRECTORY[key].category === 'career'));
 const NON_BUSINESS_ACCOUNT_PLATFORMS = new Set([
+  ...Object.keys(ACCOUNT_DIRECTORY),
   ...CONNECTED_SOCIAL_PLATFORMS,
   ...PUBLISHING_ONLY_SOCIAL_PLATFORMS,
   ...PUBLICATION_ACCOUNT_PLATFORMS,
@@ -20887,7 +20899,7 @@ app.get('/social/platforms', authenticate, async (req, res) => {
     : [...NON_BUSINESS_ACCOUNT_PLATFORMS];
   const connected = Object.fromEntries(visiblePlatforms.map(p => {
     const token = user?.socialTokens?.[p];
-    return [p, Boolean(token)];
+    return [p, PLATFORMS[p]?.connectionMode !== 'external' && Boolean(token)];
   }));
   const platforms = Object.fromEntries(visiblePlatforms.map(key => {
     const status = socialCredentialStatus(key, req);
@@ -20904,12 +20916,12 @@ app.get('/social/platforms', authenticate, async (req, res) => {
       configured: status.configured,
       missingEnv: status.missingEnv,
       // See FORCE_COMING_SOON_PLATFORMS' own comment.
-      forceComingSoon: FORCE_COMING_SOON_PLATFORMS.has(key),
+      forceComingSoon: PLATFORMS[key].connectionMode !== 'external' && FORCE_COMING_SOON_PLATFORMS.has(key),
       commandCenterOnly,
       // Career connections are isolated to Business accounts at both the
       // catalog and authorization boundaries. Other account connections stay
       // available without using this metadata as a UI-only security check.
-      requiresMembership: CAREER_ACCOUNT_PLATFORMS.has(key) ? 'business' : false,
+      requiresMembership: PLATFORMS[key].connectionMode !== 'external' && CAREER_ACCOUNT_PLATFORMS.has(key) ? 'business' : false,
       locked: false,
       crossPost: {
         ...getCrossPostCapability(key),
@@ -29651,12 +29663,13 @@ const LIVE_JOB_CATALOG_TTL_MS = 60_000;
 let liveJobCatalogCache = { jobs: [], expiresAt: 0, sourceLimit: 0, pending: null };
 
 async function loadLiveJobCatalog(sourceLimit = LIVE_JOB_SOURCE_LIMIT) {
-  const [remotiveResults, museResults, remoteOkResults, usaJobsResults, indeedResults] = await Promise.all([
+  const [remotiveResults, museResults, remoteOkResults, usaJobsResults, indeedResults, wwrResults] = await Promise.all([
     fetchRemotiveOpportunities(sourceLimit),
     fetchMuseOpportunities(sourceLimit),
     fetchRemoteOKOpportunities(sourceLimit),
     fetchUSAJobsOpportunities(sourceLimit),
     fetchIndeedOpportunities(sourceLimit),
+    expandedFeedSources.weworkremotely().catch(() => []),
   ]);
   const seenIds = new Set();
   const seenUrls = new Set();
@@ -29666,7 +29679,7 @@ async function loadLiveJobCatalog(sourceLimit = LIVE_JOB_SOURCE_LIMIT) {
   // dropped here regardless of which source label got there first in this
   // array, keeping whichever one was listed earliest (Remotive, since it's
   // first below) rather than an arbitrary pick.
-  return [...remotiveResults, ...museResults, ...remoteOkResults, ...usaJobsResults, ...indeedResults].filter((j) => {
+  return [...remotiveResults, ...museResults, ...remoteOkResults, ...usaJobsResults, ...indeedResults, ...wwrResults].filter((j) => {
     if (!isLegitimateJobListing(j)) return false;
     if (seenIds.has(j.id)) return false;
     if (j.sourceUrl && seenUrls.has(j.sourceUrl)) return false;

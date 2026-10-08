@@ -8,6 +8,8 @@ import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import PublicFooter from '../components/PublicFooter';
 import AccountAccess from '../components/AccountAccess';
+import { searchRoleOptions } from '../utils/roleSearch.mjs';
+import '../components/TopicPicker.css';
 
 const ROLE_MACROS = [
   {
@@ -447,6 +449,8 @@ const ROLE_FOCUSES = {
   ],
 };
 
+const REGISTER_ROLE_OPTIONS = ROLE_MACROS.flatMap(macro => [...new Set([...macro.titles, ...(ROLE_FOCUSES[macro.role] || [])])].map(value => ({value, category: macro.role, desc: macro.desc, aliases: macro.label})));
+
 const TITLE_PREFIXES = [
   '', 'Junior ', 'Senior ', 'Lead ', 'Principal ', 'Staff ',
   'Head of ', 'Director of ', 'VP of ', 'Chief ', 'Associate ', 'Entry-Level ',
@@ -480,6 +484,8 @@ export default function Register() {
   const [selectedMacro, setMacro]       = useState(null);
   const [title,         setTitle]       = useState('');
   const [titleSearch,   setTitleSearch] = useState('');
+  const [globalRoleSearch, setGlobalRoleSearch] = useState('');
+  const roleMatches = useMemo(() => searchRoleOptions(REGISTER_ROLE_OPTIONS, globalRoleSearch).slice(0, 12), [globalRoleSearch]);
   const [showDropdown,  setShowDropdown]= useState(false);
   const [bio,           setBio]         = useState('');
   const [experience,    setExperience]  = useState('');
@@ -521,6 +527,11 @@ export default function Register() {
   }
 
   function pickTitle(t) {
+    const option = REGISTER_ROLE_OPTIONS.find(item => item.value === t);
+    if (option && !(ROLE_FOCUSES[selectedMacro?.role] || []).includes(t)) {
+      const macro = ROLE_MACROS.find(item => item.role === option.category);
+      if (macro) selectMacro(macro);
+    }
     setTitle(t);
     setTitleSearch(t);
     setShowDropdown(false);
@@ -531,11 +542,7 @@ export default function Register() {
     [selectedMacro?.role]
   );
 
-  const filteredTitles = useMemo(() => {
-    const q = titleSearch.toLowerCase().trim();
-    if (!q) return allTitles.slice(0, 20);
-    return allTitles.filter(t => t.toLowerCase().includes(q)).slice(0, 20);
-  }, [allTitles, titleSearch]);
+  const filteredTitles = useMemo(() => searchRoleOptions([...new Set([...allTitles, ...REGISTER_ROLE_OPTIONS.map(item => item.value)])], titleSearch).slice(0, 20), [allTitles, titleSearch]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -692,6 +699,12 @@ export default function Register() {
                 Pick your category — then choose your specific title from hundreds of options.
               </p>
 
+              <label htmlFor="signup-role-search" style={{display:'block',fontWeight:650,fontSize:'.85rem',marginBottom:8}}>Find your role</label>
+              <input id="signup-role-search" type="search" className="form-input" placeholder="Search roles: software engineer, RN, product manager…" value={globalRoleSearch} onChange={event=>setGlobalRoleSearch(event.target.value)} />
+              {globalRoleSearch.trim() && <div className="signup-role-results" aria-label="Role search results">
+                {roleMatches.map(option=><button type="button" key={option.category+option.value} onClick={()=>{pickTitle(option.value);setGlobalRoleSearch('');}}><strong>{option.value}</strong><span>{option.category}</span></button>)}
+                {!roleMatches.length && <p role="status" style={{fontSize:'.8rem',color:'var(--muted)'}}>No matching roles. Try fewer words, or choose a category and enter your exact title.</p>}
+              </div>}
               {/* Role category grid */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(108px, 1fr))', gap: 7, marginBottom: 20 }}>
                 {ROLE_MACROS.map(macro => {
@@ -748,8 +761,8 @@ export default function Register() {
                           style={{
                             padding: '4px 11px', borderRadius: 'var(--radius-sm)', fontSize: '.75rem', fontWeight: title === t ? 700 : 500,
                             border: `1.5px solid ${title === t ? selectedMacro.color : selectedMacro.color + '50'}`,
-                            background: title === t ? selectedMacro.color : '#fff',
-                            color: title === t ? '#fff' : selectedMacro.color,
+                            background: title === t ? 'var(--primary)' : 'var(--surface)',
+                            color: title === t ? '#fff' : 'var(--text)',
                             cursor: 'pointer',
                           }}
                         >
@@ -776,14 +789,15 @@ export default function Register() {
                       {showDropdown && filteredTitles.length > 0 && (
                         <div style={{
                           position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
-                          background: '#fff', border: '1px solid var(--border)', borderRadius: 10,
+                          background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 10,
                           boxShadow: '0 8px 24px rgba(0,0,0,.1)', marginTop: 4, maxHeight: 220, overflowY: 'auto',
                         }}>
                           {filteredTitles.map(t => (
                             <button
                               key={t}
                               type="button"
-                              onMouseDown={() => pickTitle(t)}
+                              onMouseDown={event => event.preventDefault()}
+                              onClick={() => pickTitle(t)}
                               style={{
                                 display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px',
                                 fontSize: '.84rem', background: 'none', border: 'none', cursor: 'pointer',

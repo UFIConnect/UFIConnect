@@ -1,6 +1,6 @@
 'use strict';
 
-const JOB_SOURCES = new Set(['indeed', 'remoteok', 'usajobs', 'remotive', 'muse', 'themuse']);
+const JOB_SOURCES = new Set(['indeed', 'remoteok', 'usajobs', 'remotive', 'muse', 'themuse', 'weworkremotely']);
 
 function jobPostedDate(value, now = Date.now()) {
   if (value == null || value === '') return null;

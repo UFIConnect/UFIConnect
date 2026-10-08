@@ -82,11 +82,11 @@ try {
     await tools.getByRole('link', { name: 'Open Reddit website' }).waitFor();
     assert.equal(await tools.getByRole('searchbox').count(), 0, 'Connected accounts has no search bar');
     assert.equal(await tools.getByRole('link', { name: 'Open Instagram website' }).count(), 0);
-    assert.equal(await tools.getByRole('link', { name: 'Open Indeed website' }).count(), 0);
+    assert.equal(await tools.getByRole('link', { name: 'Open Indeed website' }).count(), 1);
     await tools.getByRole('combobox', { name: 'Filter accounts' }).selectOption('connected');
     assert.equal(await tools.locator('.home-connected-account-row').count(), 1);
     await tools.getByRole('combobox', { name: 'Filter accounts' }).selectOption('available');
-    assert.equal(await tools.locator('.home-connected-account-row').count(), 1);
+    assert.equal(await tools.locator('.home-connected-account-row').count(), 2);
     const popupPromise = context.waitForEvent('page');
     await tools.getByRole('link', { name: 'Open YouTube website' }).click();
     const popup = await popupPromise;
@@ -173,7 +173,7 @@ try {
       await installAuditMember(page, app, 'business-directory');
       await auditNavigate(page, server.resolvedUrls.local[0] + 'connected-accounts');
       await page.getByRole('link', { name: 'Open Indeed website' }).waitFor();
-      assert.equal(await page.locator('.account-site-link').count(), 10, 'Business includes all career destinations');
+      assert.equal(await page.locator('.account-site-link').count(), 21, 'Business includes all career destinations');
       assert.equal(await page.getByRole('link', { name: 'Open Reddit website' }).count(), 0);
       await page.getByRole('combobox', { name: 'Filter accounts' }).selectOption('connected');
       await page.getByRole('status').getByText('No matching accounts', { exact: true }).waitFor();

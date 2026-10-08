@@ -118,7 +118,9 @@ try {
     const crossPost = page.getByRole('tabpanel', { name: 'Cross-Post', exact: true });
     await crossPost.getByRole('heading', { name: 'Social', exact: true }).waitFor();
     await crossPost.getByText('Earlier queued audit draft', { exact: true }).waitFor();
+    await crossPost.getByRole('combobox', { name: 'Publishing category' }).selectOption('work');
     await crossPost.getByRole('link', { name: 'Connect GitHub', exact: true }).waitFor();
+    await crossPost.getByRole('combobox', { name: 'Publishing category' }).selectOption('social');
     assert.ok(await crossPost.getByRole('button', { name: /Instagram.*photo/ }).isDisabled(), 'Photo-required gate remains');
     await crossPost.getByRole('button', { name: 'X (Twitter)', exact: true }).click();
     await crossPost.getByRole('button', { name: 'UFIConnect', exact: true }).click();

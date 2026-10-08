@@ -7,6 +7,7 @@ const destinations = [
   { to: '/recruiting', label: 'Workspace', Icon: BriefcaseBusiness },
   { to: '/people', label: 'Candidates', Icon: UsersRound },
   { to: '/connected-accounts', label: 'Career sources', Icon: Link2 },
+  { to: '/career-posts', label: 'Career posting', Icon: FileText },
   { to: '/messages', label: 'Messages', Icon: MessagesSquare },
   { to: '/settings', label: 'Settings & billing', Icon: Settings },
 ];

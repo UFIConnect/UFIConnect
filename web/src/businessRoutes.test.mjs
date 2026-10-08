@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { isBusinessRouteAllowed } from './businessRoutes.mjs';
 
 test('Business membership keeps work, billing and account routes available', () => {
-  for (const path of ['/recruiting', '/people', '/connected-accounts', '/messages', '/messages/candidate-123', '/settings', '/privacy', '/terms', '/login']) {
+  for (const path of ['/recruiting', '/career-posts', '/people', '/connected-accounts', '/messages', '/messages/candidate-123', '/settings', '/privacy', '/terms', '/login']) {
     assert.equal(isBusinessRouteAllowed(path), true, path);
     assert.equal(isBusinessRouteAllowed(path + '/'), true, path + '/');
   }
