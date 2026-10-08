@@ -1186,6 +1186,7 @@ function TravelLiveLoop({ feeds = [], mediaOpenId, location, onLocationSelect, o
           <div className="travel-live-loop-subtitle">{selected ? [selected.city, selected.country].filter(Boolean).join(', ') : 'Browse cities and live cameras'}</div>
         </div>
         <div className="travel-live-header-actions">
+          <Link to="/maps?landmark=airport" className="btn btn-ghost btn-sm">Airport map</Link>
           {selected && onGuideOpen && <button type="button" className="btn btn-ghost btn-sm" onClick={() => onGuideOpen(selected)}><BookOpen size={14} aria-hidden="true" />City guide</button>}
           {active && <span className="travel-live-loop-status"><span aria-hidden="true" />Live now</span>}
         </div>

@@ -62,6 +62,7 @@ const { createFeedReadAdmission } = require('./feed-read-admission');
 const { PUBLIC_GROUP_LEGACY_SOURCES, inferPublicGroupId } = require('./group-feed');
 const { GENERAL_UFI_GROUP_ID, isGeneralUfiFollowingPost, isFollowingSourceAllowed } = require('./following-scope');
 const { canonicalizePreferenceTopics, matchesPreferenceTopic } = require('./feed-preferences');
+const { parseMapSourceTopics, normalizeMapTopic } = require('../shared/map-feed-topics.mjs');
 const { ISO_COUNTRY_CODES, trustedFeedNetworkLocation, memberFeedSnapshotKey } = require('./feed-location');
 const { RADIUS_MILES, RADIUS_KM, distanceKm, nearestFeedCity, feedCityByName, deviceFeedPoint } = require('./feed-city-location');
 const { sourceAuthorProfileUrl, safePostLink } = require('./post-links.mjs');
@@ -19452,7 +19453,7 @@ function cursorTsOf(cur) {
 // per-source cursor bookkeeping as everything else, rather than being
 // glued on before/after as a separate step (which would double-trim and
 // desync the cursor from what was actually shown).
-async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit = 20, mediaType = null, videoDurationMinSeconds = null, videoDurationMaxSeconds = null, excludeVideoDurationAtOrBelow = null, topics = null, topicBypassSources = [], timeRange = null, extraLists = {}, seenIds = null, freshOnly = false, maxPostsPerSource = null, _emptySkips = 0 }) {
+async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit = 20, mediaType = null, videoDurationMinSeconds = null, videoDurationMaxSeconds = null, excludeVideoDurationAtOrBelow = null, topics = null, sourceTopics = null, topicBypassSources = [], timeRange = null, extraLists = {}, seenIds = null, freshOnly = false, maxPostsPerSource = null, _emptySkips = 0 }) {
   // Was a flat Math.max(limit, 20) per source regardless of how many
   // sources were asked for — harmless for a 1-3 source filter (each one
   // genuinely needs to supply most of the page), but the unfiltered case
@@ -19534,6 +19535,10 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
         const tsParam = params.length;
         params.push(curId);
         const idParam = params.length;
+        if (sourceTopics) {
+          params.push(sourceTopics[src] ?? null);
+          return `($${srcParam}, $${tsParam}::timestamptz, $${idParam}::text, $${params.length}::text[])`;
+        }
         return `($${srcParam}, $${tsParam}::timestamptz, $${idParam}::text)`;
       }).join(', ');
       const clauses = [
@@ -19562,6 +19567,7 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
         params.push(Math.floor(excludeVideoDurationAtOrBelow));
         clauses.push(`(fp.media_type IS DISTINCT FROM 'video' OR fp.video_duration_seconds IS NULL OR fp.video_duration_seconds > $${params.length})`);
       }
+      if (sourceTopics) clauses.push('(c.topics IS NULL OR LOWER(TRIM(fp.topic)) = ANY(c.topics))');
       if (topics && topics.length) {
         // ANY($N::text[]), not a plain = — multi-select (any post matching
         // ANY of the picked topics), same idea as the sources ANY($N::
@@ -19611,7 +19617,7 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
       // read means an overloaded primary degrades to slightly-stale content
       // instead of an empty page. See db.js's readQuery/initBackupDB.
       const { rows } = await db.readQuery(
-        `WITH c(source, before_ts, before_id) AS (VALUES ${cursorValues})
+        `WITH c(source, before_ts, before_id${sourceTopics ? ', topics' : ''}) AS (VALUES ${cursorValues})
          SELECT picked.*
          FROM c
          CROSS JOIN LATERAL (
@@ -19775,7 +19781,7 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
   if (!page.length && merged.length && !isLiveMode && _emptySkips < 12) {
     return getCursorFeedPage({
       userId, sources, cursorMap: nextCursor, limit, mediaType, videoDurationMinSeconds, videoDurationMaxSeconds, excludeVideoDurationAtOrBelow, topics,
-      topicBypassSources, timeRange, extraLists, seenIds, freshOnly, maxPostsPerSource,
+      sourceTopics, topicBypassSources, timeRange, extraLists, seenIds, freshOnly, maxPostsPerSource,
       _emptySkips: _emptySkips + 1,
     });
   }
@@ -22072,7 +22078,7 @@ async function handleFeedRequest(req, res) {
       .filter(Boolean)
   );
   const isFollowingRequest = req.query.mode === 'following';
-  const usesRegularFeedVideoPlacement = !req.query.mode || ['feed', 'following'].includes(req.query.mode);
+  const usesRegularFeedVideoPlacement = req.query.surface !== 'maps' && (!req.query.mode || ['feed', 'following'].includes(req.query.mode));
   // Posts this user has already been served, anywhere — filtered out of
   // every external candidate pool below (see filterUnseen), never baked into
   // a shared snapshot for the same reason userTopics isn't.
@@ -22118,7 +22124,7 @@ async function handleFeedRequest(req, res) {
     // their posts; only the topic filter above should narrow this pool.
     const scoped = topicsFilter.length || isSourceFiltered || isFollowingRequest ? list
       : filterByUserTopics(list, userTopics, { fallbackToInput: false });
-    return scoped.filter(matchesMemberJob);
+    return req.query.surface === 'maps' ? scoped : scoped.filter(matchesMemberJob);
   };
   const personalizeForUser = (items, options = {}) => {
     const scoped = filterForUser(items);
@@ -22167,7 +22173,14 @@ async function handleFeedRequest(req, res) {
     ? req.query.topics.split(',').map(t => t.trim()).filter(Boolean)
     : (req.query.topic ? [req.query.topic.trim()] : []); // back-compat: old single ?topic=
   const topicsFilterLower = topicsFilter.map(t => t.toLowerCase());
-  const matchesTopic = p => !topicsFilterLower.length || topicsFilterLower.includes((p.topic || '').toLowerCase());
+  let mapSourceTopics = null;
+  if (req.query.surface === 'maps') {
+    try { mapSourceTopics = parseMapSourceTopics(req.query.mapTopics, sourcesParam.length ? sourcesParam : sourceFilter ? [sourceFilter] : []); }
+    catch { return res.status(400).json({ error: 'Choose valid map topics and apply your changes.' }); }
+  }
+  const matchesTopic = p => mapSourceTopics
+    ? mapSourceTopics[p.source] === null || (mapSourceTopics[p.source] || []).includes(normalizeMapTopic(p.topic))
+    : !topicsFilterLower.length || topicsFilterLower.includes((p.topic || '').toLowerCase());
   const feedLimit = Math.min(Math.max(
     parseInt(req.query.limit || `${DEFAULT_FEED_LIMIT}`, 10) || DEFAULT_FEED_LIMIT,
     1
@@ -22478,17 +22491,18 @@ async function handleFeedRequest(req, res) {
         : dbTimeRange;
 
     const cursorOptions = {
-      userId: req.user.id,
+      userId: mapSourceTopics && passivePreview ? null : req.user.id,
       sources: cursorSources,
       cursorMap,
       limit: feedLimit,
-      topics: cursorTopics,
+      topics: mapSourceTopics ? null : cursorTopics,
+      sourceTopics: mapSourceTopics,
       topicBypassSources: usesSavedTopicScope ? JOB_LISTING_SOURCES : [],
       timeRange: cursorTimeRange,
       seenIds,
       freshOnly: req.query.bust === '1',
-      maxPostsPerSource: usesBlendedSources ? BLENDED_FEED_MAX_POSTS_PER_SOURCE : null,
-      excludeVideoDurationAtOrBelow: VIDEO_FEED_MAX_DURATION_SECONDS,
+      maxPostsPerSource: mapSourceTopics ? null : usesBlendedSources ? BLENDED_FEED_MAX_POSTS_PER_SOURCE : null,
+      excludeVideoDurationAtOrBelow: mapSourceTopics ? null : VIDEO_FEED_MAX_DURATION_SECONDS,
     };
     let { posts: cursorPosts, nextCursor, hasMore: cursorHasMore } = await getCursorFeedPage(cursorOptions);
     // A quiet first-page window must not look like the feed is empty while
