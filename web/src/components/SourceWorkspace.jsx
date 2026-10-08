@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CITY_SOURCE_IDS } from '../local/citySources';
 import { SOURCE_META } from './sourceMeta';
 import { downloadText, useLocalWorkspace } from '../local/localWorkspace';
+import { readImportText } from '../utils/importText.mjs';
 
 const DEFAULT = { rows: [], source: 'uficonnect', notes: '', experiment: { objective: 'Rank relevant posts', model: 'Feed-forward neural network', training: 80, metric: 'Precision@10', epochs: 20 }, impressions: 10000, rpm: 3, cost: 0 };
 const EMPTY_ROW = { source: 'uficonnect', date: '', views: 0, likes: 0, comments: 0, saves: 0, revenue: 0 };
@@ -19,23 +20,35 @@ function cleanRows(rows) {
 export default function SourceWorkspace({ kind, accountId }) {
   const saved = useLocalWorkspace(accountId, kind, DEFAULT);
   const value = { ...DEFAULT, ...saved.value, experiment: { ...DEFAULT.experiment, ...saved.value.experiment } };
+  const latestValue = useRef(value);
+  latestValue.current = value;
+  const importEpoch = useRef(0);
+  useEffect(() => () => { importEpoch.current += 1; }, [accountId, kind]);
   const [draft, setDraft] = useState({ ...EMPTY_ROW, date: new Date().toISOString().slice(0, 10) });
   const [notice, setNotice] = useState('');
   const [scope, setScope] = useState('all');
   const rows = Array.isArray(value.rows) ? value.rows : [];
   const filtered = rows.filter(row => scope === 'all' || row.source === scope);
   const totals = filtered.reduce((all, row) => Object.fromEntries(numbers.map(key => [key, all[key] + Number(row[key] || 0)])), Object.fromEntries(numbers.map(key => [key, 0])));
-  const update = patch => saved.save({ ...value, ...patch, updatedAt: new Date().toISOString() });
+  const update = patch => {
+    const next = { ...latestValue.current, ...patch, updatedAt: new Date().toISOString() };
+    if (!saved.save(next)) return false;
+    latestValue.current = next;
+    return true;
+  };
   const options = CITY_SOURCE_IDS.map(source => <option key={source} value={source}>{SOURCE_META[source]?.label || source}</option>);
   const exportData = () => downloadText(`ufi-${kind}.json`, JSON.stringify({ ...value, exportedAt: new Date().toISOString() }, null, 2), 'application/json');
   async function importRows(event) {
     const file = event.target.files?.[0]; event.target.value = ''; if (!file) return;
+    const request = ++importEpoch.current;
     try {
-      if (file.size > 1024 * 1024) throw new Error('Choose an aggregate report under 1 MB.');
-      const data = JSON.parse(await file.text()); const incoming = cleanRows(Array.isArray(data) ? data : data.rows);
-      if (rows.length + incoming.length > 1000) throw new Error('This workspace holds up to 1,000 rows.');
-      if (update({ rows: [...rows, ...incoming] })) setNotice(`${incoming.length} rows imported. Only aggregate metric fields were retained.`);
-    } catch (error) { setNotice(error.message); }
+      const text = await readImportText(file, 1024 * 1024, 'Choose a nonempty aggregate report up to 1 MB.');
+      if (request !== importEpoch.current) return;
+      const data = JSON.parse(text); const incoming = cleanRows(Array.isArray(data) ? data : data?.rows);
+      const currentRows = Array.isArray(latestValue.current.rows) ? latestValue.current.rows : [];
+      if (currentRows.length + incoming.length > 1000) throw new Error('This workspace holds up to 1,000 rows.');
+      if (update({ rows: [...currentRows, ...incoming] })) setNotice(`${incoming.length} rows imported. Only aggregate metric fields were retained.`);
+    } catch (error) { if (request === importEpoch.current) setNotice(error.message); }
   }
   const engagement = totals.views ? ((totals.likes + totals.comments + totals.saves) / totals.views * 100).toFixed(2) : '0.00';
   const experiment = value.experiment;

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useLocation } from 'react-router-dom';
 import { Globe2, LockKeyhole, Power, RefreshCw, ShieldCheck } from 'lucide-react';
 import './VaultVpnPanel.css';
 import client from '../api/client';
@@ -7,6 +8,7 @@ import { getAccessToken } from '../auth/session';
 import VaultVpnSubscription from './VaultVpnSubscription';
 import VaultWireGuardProfile from './VaultWireGuardProfile';
 import { paidVpnAccess } from '../lib/vpnAccess';
+import WebProtectionPanel from './WebProtectionPanel';
 
 function managedPlatform() {
   if (typeof navigator === 'undefined') return null;
@@ -119,5 +121,16 @@ export function ManagedVpnPanel({ accountId, activityTarget, subscriptionTarget,
 }
 
 export default function VaultVpnPanel(props) {
-  return <ManagedVpnPanel {...props} />;
+  const { search } = useLocation();
+  // Native clients explicitly request their separate device connection flow.
+  // Every ordinary browser visit uses automatic web protection.
+  if (new URLSearchParams(search).get('device') === 'vpn') return <ManagedVpnPanel {...props} />;
+  return <>
+    <WebProtectionPanel accountId={props.accountId} />
+    {props.subscriptionTarget && createPortal(<VaultVpnSubscription billing={props.billing} />, props.subscriptionTarget)}
+    {props.activityTarget && createPortal(<section className="vault-panel vault-activity" aria-labelledby="vault-activity-title">
+      <div className="vault-panel-heading"><h2 id="vault-activity-title">Across UFIConnect</h2><ShieldCheck size={16} /></div>
+      <p className="vault-helper">Web protection covers your feed, messages, account settings and Vault. Check protection above to verify this browser’s connection and account session.</p>
+    </section>, props.activityTarget)}
+  </>;
 }

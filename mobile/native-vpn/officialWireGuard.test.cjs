@@ -6,8 +6,8 @@ test('only a current active membership opens the fixed HTTPS profile destination
   const calls=[];
   const result=await openMemberVpnProfile({session:'private-app-session',getMembership:async token=>{assert.equal(token,'private-app-session');return paid();},isCurrent:()=>true,openURL:async(...args)=>calls.push(args)});
   assert.equal(result,'opened');assert.deepEqual(calls,[[PROFILE_URL]]);
-  assert.equal(PROFILE_URL,'https://uficonnect.org/vault#vpn');
-  assert.equal(new URL(PROFILE_URL).search,'');
+  assert.equal(PROFILE_URL,'https://uficonnect.org/vault?device=vpn#vpn');
+  assert.deepEqual([...new URL(PROFILE_URL).searchParams],[['device','vpn']]);
   assert.equal(new URL(INSTALL_URL).hostname,'apps.apple.com');
 });
 test('inactive, trial-like, unknown or malformed access never opens a profile page',async()=>{

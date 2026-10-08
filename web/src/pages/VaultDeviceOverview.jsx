@@ -48,7 +48,7 @@ export default function VaultDeviceOverview() {
       </div>
       <div className="public-overview-note">
         <LockKeyhole size={22} aria-hidden="true" />
-        <div><h3>Know what your membership includes</h3><p>$3.94 USD per month, renewing until canceled; applicable tax is shown at checkout. An active membership is needed to create a Vault or add, edit and import items. You can still unlock, read, export, restore or delete existing items after it ends.</p><p>VPN access is included. On iPhone, get a profile in Vault and import it once into the official WireGuard app. Windows and Android use a UFIConnect app version with VPN support. The connection location is selected automatically. The physical Vault Card is not included.</p></div>
+        <div><h3>Know what your membership includes</h3><p>$3.94 USD per month, renewing until canceled; applicable tax is shown at checkout. An active membership is needed to create a Vault or add, edit and import items. You can still unlock, read, export, restore or delete existing items after it ends.</p><p>Web protection runs automatically across UFIConnect for every signed-in account. Use the browser Vault without an app or connection profile. Membership also includes device VPN access in supported native clients. The physical Vault Card is not included.</p></div>
       </div>
       <Link className="public-overview-button" to="/vault">Open your browser Vault <ArrowRight size={17} aria-hidden="true" /></Link>
     </section>

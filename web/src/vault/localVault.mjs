@@ -194,18 +194,23 @@ export async function restoreEncryptedVault(text, passphrase, storage = storageD
 }
 
 function csvRows(text) {
-  const rows = []; let row = [], field = '', quoted = false;
+  const rows = []; let row = [], field = '', quoted = false, closedQuote = false;
   for (let index = 0; index < text.length; index++) {
     const char = text[index];
     if (char === '"') {
       if (quoted && text[index + 1] === '"') { field += '"'; index++; }
-      else if (quoted || !field) quoted = !quoted;
+      else if (quoted) { quoted = false; closedQuote = true; }
+      else if (!field && !closedQuote) quoted = true;
       else throw new Error('Invalid CSV quoting.');
-    } else if (char === ',' && !quoted) { row.push(field); field = ''; }
+    } else if (char === ',' && !quoted) { row.push(field); field = ''; closedQuote = false; }
     else if ((char === '\n' || char === '\r') && !quoted) {
       if (char === '\r' && text[index + 1] === '\n') index++;
-      row.push(field); if (row.some(value => value.length)) rows.push(row); row = []; field = '';
-    } else field += char;
+      row.push(field); if (row.some(value => value.length)) rows.push(row); row = []; field = ''; closedQuote = false;
+    } else {
+      if (closedQuote) throw new Error('Invalid CSV quoting.');
+      field += char;
+    }
+    if (field.length > 16384 || row.length > 100) throw new Error('A password field is invalid or too large.');
     if (rows.length > MAX_ENTRIES + 1) throw new Error('Import up to 1,000 passwords at a time.');
   }
   if (quoted) throw new Error('An imported CSV field is missing its closing quote.');
@@ -213,7 +218,7 @@ function csvRows(text) {
   return rows;
 }
 export function parsePasswordImport(text, fileName = '') {
-  if (typeof text !== 'string' || encoder.encode(text).length > MAX_TEXT) throw new Error('Choose a password export smaller than 2 MB.');
+  if (typeof text !== 'string' || text.length > MAX_TEXT || encoder.encode(text).length > MAX_TEXT) throw new Error('Choose a password export smaller than 2 MB.');
   text = text.replace(/^\uFEFF/, '');
   let entries;
   if (/\.json$/i.test(fileName) || /^[\s]*[\[{]/.test(text)) {
@@ -221,7 +226,10 @@ export function parsePasswordImport(text, fileName = '') {
     if (value?.encrypted === true || value?.version === 1) throw new Error('Use Restore encrypted backup for an encrypted vault.');
     const items = Array.isArray(value) ? value : value?.items || value?.entries;
     if (!Array.isArray(items)) throw new Error('No password entries were found in this export.');
-    entries = items.filter(item => item?.type == null || item.type === 1).map(item => ({
+    const logins = items.filter(item => item?.type == null || item.type === 1);
+    if (logins.length > MAX_ENTRIES) throw new Error('Import up to 1,000 passwords at a time.');
+    if (logins.some(item => !item || typeof item !== 'object' || Array.isArray(item))) throw new Error('A password entry is invalid.');
+    entries = logins.map(item => ({
       name: item.name || item.title || '', url: item.url || item.login?.uris?.[0]?.uri || '',
       username: item.username || item.login?.username || '', password: item.password || item.login?.password || '', notes: item.notes || '',
     }));
@@ -230,6 +238,8 @@ export function parsePasswordImport(text, fileName = '') {
     if (!headers) throw new Error('The password export is empty.');
     const normalized = headers.map(header => header.trim().toLowerCase().replace(/[ _-]/g, ''));
     const aliases = { name: ['name', 'title'], url: ['url', 'website', 'loginuri'], username: ['username', 'loginusername', 'login', 'email'], password: ['password', 'loginpassword'], notes: ['notes', 'note', 'extra'] };
+    if (new Set(normalized).size !== normalized.length) throw new Error('The CSV contains duplicate columns.');
+    if (rows.some(row => row.length !== headers.length)) throw new Error('Each CSV row must contain the same number of columns as its header.');
     if (!normalized.some(header => aliases.password.includes(header))) throw new Error('The CSV must contain a password column.');
     entries = rows.map(row => Object.fromEntries(Object.entries(aliases).map(([field, names]) => [field, row[normalized.findIndex(header => names.includes(header))] || ''])));
   }

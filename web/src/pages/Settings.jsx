@@ -18,6 +18,7 @@ import DataPrivacySettings from '../components/DataPrivacySettings';
 import ConfirmActionDialog from '../components/ConfirmActionDialog';
 import LegalLinks from '../components/LegalLinks';
 import AccountAccess from '../components/AccountAccess';
+import WebProtectionPanel from '../components/WebProtectionPanel';
 
 // ── Shared preference constants ───────────────────────────────────────────────
 const GOALS = [
@@ -859,6 +860,7 @@ export default function Settings() {
       {/* ── Security tab ─────────────────────────────────────────────────────── */}
       {activeTab === 'security' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <WebProtectionPanel accountId={profile?.id} variant="settings" />
           {securityStatusError && <div className="auth-error" role="alert">{securityStatusError}</div>}
           <div className="card">
             <SectionHeading>Sign-in methods</SectionHeading>

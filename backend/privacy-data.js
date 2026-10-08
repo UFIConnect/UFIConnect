@@ -1,5 +1,7 @@
 'use strict';
 
+const { queueMessageAccountMedia } = require('./messaging-security');
+
 const unavailable = () => Object.assign(new Error('Account storage is temporarily unavailable.'), { status: 503 });
 
 // All statements use the runtime migration schema in index.js, not the older
@@ -40,6 +42,7 @@ async function deleteAccountData(db, userId) {
     await query(`DELETE FROM post_comments WHERE author_id=$1 OR
       post_id IN (SELECT id FROM community_posts WHERE author_id=$1)`);
     await query('DELETE FROM community_posts WHERE author_id=$1');
+    await queueMessageAccountMedia(client, userId);
     await query('DELETE FROM direct_messages WHERE sender_id=$1 OR receiver_id=$1');
     await query('DELETE FROM follows WHERE follower_id=$1 OR following_id=$1');
     await query('DELETE FROM connections WHERE from_id=$1 OR to_id=$1');

@@ -2,7 +2,10 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import client from '../api/client';
-import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
+import { subscribeToSession, getAccessToken } from '../auth/session';
+import { uploadMessageMedia } from './messageMediaUpload';
+import { createMessageRequestScope, messageFileError } from './messageSecurity.mjs';
+import MessageAttachment from './MessageAttachment';
 import EmojiPicker from '../components/EmojiPicker';
 
 function timeLabel(iso) {
@@ -15,8 +18,20 @@ function initials(name = '') {
 
 export default function Conversation() {
   const { userId } = useParams();
-  const navigate   = useNavigate();
-  const { profile } = useAuth();
+  const { profile, token } = useAuth();
+  const session = useRef({ token, revision: 0 });
+  if (session.current.token !== token) session.current = { token, revision: session.current.revision + 1 };
+  return <ConversationThread key={JSON.stringify([profile?.id, userId, session.current.revision])} userId={userId} profile={profile} token={token} />;
+}
+
+function ConversationThread({ userId, profile, token }) {
+  const navigate = useNavigate();
+  const scope = useRef(createMessageRequestScope());
+  const readRequest = useRef(0);
+  const uploadRequest = useRef(0);
+  const sendLock = useRef(false);
+  const [sendError, setSendError] = useState('');
+  const [previewUrl, setPreviewUrl] = useState(null);
 
   const [messages,     setMessages]     = useState([]);
   const [participant,  setParticipant]  = useState(null);
@@ -42,6 +57,11 @@ export default function Conversation() {
   const cameraInputRef = useRef(null);
 
   useEffect(() => {
+    if (!previewUrl) return;
+    return () => URL.revokeObjectURL(previewUrl);
+  }, [previewUrl]);
+
+  useEffect(() => {
     if (!menuOpen) return;
     function handleOutside(e) {
       if (menuRef.current && !menuRef.current.contains(e.target) &&
@@ -52,18 +72,27 @@ export default function Conversation() {
   }, [menuOpen]);
 
   function loadConversation() {
+    const id = ++readRequest.current;
+    const activeScope = scope.current;
     setError(false);
     setLoading(true);
-    client.get(`/messages/${userId}`)
+    client.get(`/messages/${encodeURIComponent(userId)}`, { signal: activeScope.signal })
       .then(({ data }) => {
+        if (!activeScope.isCurrent() || id !== readRequest.current) return;
         setMessages(data.messages || []);
         setParticipant(data.participant || null);
       })
-      .catch(() => setError(true))
-      .finally(() => setLoading(false));
+      .catch(() => { if (activeScope.isCurrent() && id === readRequest.current) setError(true); })
+      .finally(() => { if (activeScope.isCurrent() && id === readRequest.current) setLoading(false); });
   }
 
-  useEffect(() => { loadConversation(); }, [userId]); // eslint-disable-line
+  useEffect(() => {
+    scope.current = createMessageRequestScope();
+    const activeScope = scope.current;
+    const unsubscribe = subscribeToSession(next => { if (next !== token) activeScope.close(); });
+    loadConversation();
+    return () => { activeScope.close(); unsubscribe(); };
+  }, []); // The parent remounts this thread whenever the member, session or recipient changes.
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -72,55 +101,58 @@ export default function Conversation() {
   async function handleFileChosen(e) {
     const file = e.target.files?.[0];
     e.target.value = '';
-    if (!file) return;
+    if (!file || uploading || sending || !scope.current.isCurrent()) return;
     setMenuOpen(false);
-    if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
-      setAttachError('Only photos and videos are supported.');
-      return;
-    }
-    if (file.size > MAX_UPLOAD_BYTES) {
-      setAttachError(`File is too large (max ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)}MB).`);
-      return;
-    }
+    const fileError = messageFileError(file);
+    if (fileError) { setAttachError(fileError); return; }
+    const id = ++uploadRequest.current;
+    const activeScope = scope.current;
     setAttachError('');
     setAttachment(null);
+    setPreviewUrl(null);
     setUploading(true);
     setUploadProgress(0);
     try {
-      const result = await uploadMedia(file, setUploadProgress, 'messages');
+      const result = await uploadMessageMedia(file, progress => {
+        if (activeScope.isCurrent() && id === uploadRequest.current) setUploadProgress(progress);
+      }, activeScope.signal);
+      if (!activeScope.isCurrent() || id !== uploadRequest.current) return;
       setAttachment(result);
+      setPreviewUrl(URL.createObjectURL(file));
     } catch (err) {
-      // Same reasoning as Post.jsx's own handleFileSelect — the real
-      // message (e.g. "Media upload is not configured yet.") tells the
-      // user whether retrying can possibly help, a flat "upload failed"
-      // doesn't.
+      if (!activeScope.isCurrent() || id !== uploadRequest.current) return;
       setAttachError(err?.response?.data?.message || err?.message || 'Upload failed. Please try again.');
     } finally {
-      setUploading(false);
+      if (activeScope.isCurrent() && id === uploadRequest.current) setUploading(false);
     }
   }
 
   async function handleSend(e) {
     e.preventDefault();
     if (!text.trim() && !attachment) return;
-    if (uploading) return;
+    if (uploading || sendLock.current || loading || error || !participant || !scope.current.isCurrent() || getAccessToken() !== token) return;
+    const activeScope = scope.current;
+    sendLock.current = true;
+    setSendError('');
     setSending(true);
     try {
-      const { data } = await client.post(`/messages/${userId}`, {
+      const { data } = await client.post(`/messages/${encodeURIComponent(userId)}`, {
         content: text.trim(),
         ...(attachment ? { attachment } : {}),
-      });
+      }, { signal: activeScope.signal });
+      if (!activeScope.isCurrent()) return;
       setMessages((prev) => [...prev, data.message]);
       if (!participant && data.participant) setParticipant(data.participant);
       setText('');
       setAttachment(null);
+      setPreviewUrl(null);
       setAttachError('');
-    } catch (err) { console.error(err); }
-    finally { setSending(false); }
+    } catch { if (activeScope.isCurrent()) setSendError('Your message could not be sent. Try again.'); }
+    finally { sendLock.current = false; if (activeScope.isCurrent()) setSending(false); }
   }
 
   function handleKeyDown(e) {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(e); }
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); handleSend(e); }
   }
 
   return (
@@ -130,7 +162,7 @@ export default function Conversation() {
         <button className="conv-topbar-back" onClick={() => navigate('/messages')}>←</button>
         <div
           style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: participant ? 'pointer' : 'default', minWidth: 0 }}
-          onClick={() => participant && navigate(userId === profile?.id ? '/profile' : `/u/${userId}`)}
+          onClick={() => participant && navigate(userId === profile?.id ? '/profile' : `/u/${encodeURIComponent(userId)}`)}
         >
           {participant && (
             <div className="avatar avatar-md" style={{ marginRight: 4 }}>
@@ -176,15 +208,7 @@ export default function Conversation() {
               )}
               <div>
                 <div className="msg-bubble" style={msg.attachment ? { padding: msg.content ? undefined : 4 } : undefined}>
-                  {msg.attachment && (
-                    msg.attachment.type === 'video' ? (
-                      <video src={msg.attachment.url} controls style={{ maxWidth: 240, maxHeight: 320, borderRadius: 10, display: 'block' }} />
-                    ) : (
-                      <a href={msg.attachment.url} target="_blank" rel="noopener noreferrer">
-                        <img src={msg.attachment.url} alt="Attachment" style={{ maxWidth: 240, maxHeight: 320, borderRadius: 10, display: 'block', objectFit: 'cover' }} />
-                      </a>
-                    )
-                  )}
+                  {msg.attachment && <MessageAttachment attachment={msg.attachment} userId={userId} messageId={msg.id} scope={scope.current} />}
                   {msg.content && <div style={msg.attachment ? { marginTop: 6 } : undefined}>{msg.content}</div>}
                 </div>
                 <div className="msg-time">{timeLabel(msg.createdAt)}</div>
@@ -216,13 +240,13 @@ export default function Conversation() {
           ) : attachment && (
             <div style={{ position: 'relative', display: 'inline-block' }}>
               {attachment.type === 'video' ? (
-                <video src={attachment.url} style={{ height: 56, borderRadius: 8, display: 'block' }} muted />
+                <video src={previewUrl} style={{ height: 56, borderRadius: 8, display: 'block' }} muted />
               ) : (
-                <img src={attachment.url} alt="" style={{ height: 56, width: 56, objectFit: 'cover', borderRadius: 8, display: 'block' }} />
+                <img src={previewUrl} alt="" style={{ height: 56, width: 56, objectFit: 'cover', borderRadius: 8, display: 'block' }} />
               )}
               <button
                 type="button"
-                onClick={() => setAttachment(null)}
+                onClick={() => { setAttachment(null); setPreviewUrl(null); }}
                 aria-label="Remove attachment"
                 style={{
                   position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: '50%',
@@ -234,17 +258,19 @@ export default function Conversation() {
           )}
         </div>
       )}
+      {sendError && <div role="alert" style={{ padding: '8px 14px', color: 'var(--danger, #DC2626)' }}>{sendError}</div>}
 
       {/* Input bar */}
       <form className="msg-input-bar" onSubmit={handleSend}>
-        <input ref={photoInputRef} type="file" accept="image/*,video/*" onChange={handleFileChosen} style={{ display: 'none' }} />
-        <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handleFileChosen} style={{ display: 'none' }} />
+        <input ref={photoInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime" onChange={handleFileChosen} style={{ display: 'none' }} />
+        <input ref={cameraInputRef} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={handleFileChosen} style={{ display: 'none' }} />
 
         <div style={{ position: 'relative' }}>
           <button
             ref={plusBtnRef}
             type="button"
             className="msg-send-btn"
+            disabled={loading || error || sending || uploading || !participant}
             onClick={() => setMenuOpen(o => !o)}
             aria-label="Add attachment"
             aria-expanded={menuOpen}
@@ -308,10 +334,12 @@ export default function Conversation() {
           rows={1}
           placeholder="Write a message…"
           value={text}
+          maxLength={2000}
+          disabled={loading || error || sending || !participant}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
         />
-        <button className="msg-send-btn" type="submit" disabled={sending || uploading || (!text.trim() && !attachment)}>
+        <button className="msg-send-btn" type="submit" disabled={loading || error || !participant || sending || uploading || (!text.trim() && !attachment)}>
           ↑
         </button>
       </form>

@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
+const { createHash } = require('node:crypto');
 const { PGlite } = require('@electric-sql/pglite');
 const { deleteAccountData, exportAccountData } = require('./privacy-data');
 const { HISTORY_SCHEMA } = require('./generated-content');
@@ -16,11 +17,16 @@ const { REPORT_SCHEMA } = require('./content-reports');
 const { MANAGED_VPN_SCHEMA } = require('./managed-vpn-schema');
 const { INBOX_RECEIPTS_SCHEMA } = require('./inbox-receipts');
 const { SNAP_SCHEMA } = require('./snaps');
+const { MESSAGE_MEDIA_SCHEMA } = require('./messaging-security');
 const { schemaStatements: GENERATION_USAGE_SCHEMA } = require('./generation-usage');
 
 const alice = '11111111-1111-4111-8111-111111111111';
 const bob = '22222222-2222-4222-8222-222222222222';
 const carol = '33333333-3333-4333-8333-333333333333';
+const messageMediaId = (id, suffix = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa') =>
+  `uficonnect-messages/message-${createHash('sha256').update(id).digest('hex')}-${suffix}`;
+const privateMessageMedia = id => ({ publicId: messageMediaId(id), type: 'image', version: 1,
+  format: 'jpg', deliveryType: 'authenticated', bytes: 3 });
 const entry = fs.readFileSync(require.resolve('./index'), 'utf8');
 const tables = new Set(['users', 'auth_sessions', 'community_groups', 'follows', 'connections', 'blocks',
   'reports', 'attachments', 'notifications', 'push_subscriptions', 'job_tracking', 'saved_posts',
@@ -47,11 +53,13 @@ async function schema(pg) {
   for (const sql of BUSINESS_POST_SCHEMA) await pg.exec(sql);
   for (const sql of [...CREATOR_ANALYTICS_SCHEMA, ...UFI_VAULT_SCHEMA, ...REPORT_SCHEMA]) await pg.exec(sql);
   for (const sql of SNAP_SCHEMA) await pg.exec(sql);
+  for (const sql of MESSAGE_MEDIA_SCHEMA) await pg.exec(sql);
 }
 
 async function seed(pg) {
   await pg.exec(`TRUNCATE ${[...tables, 'generated_content', 'billing_checkout_attempts', 'billing_webhook_events'].join(',')} RESTART IDENTITY CASCADE`);
   await pg.exec('TRUNCATE snap_media_cleanup');
+  await pg.exec('TRUNCATE message_media_uploads,message_media_cleanup');
   const insert = async (table, row) => {
     const columns = Object.keys(row);
     await pg.query(`INSERT INTO ${table} (${columns.join(',')}) VALUES (${columns.map((_, index) => `$${index + 1}`).join(',')})`, Object.values(row));
@@ -111,9 +119,11 @@ async function seed(pg) {
   await insert('connections', { id: 'other-connection', from_id: bob, to_id: carol, status: 'accepted' });
   await insert('blocks', { id: 'alice-block', blocker_id: alice, blocked_id: carol });
   await insert('blocks', { id: 'other-block', blocker_id: bob, blocked_id: carol });
-  await insert('direct_messages', { id: 'sent', conversation_id: 'alice-bob', sender_id: alice, receiver_id: bob, content: 'sent-content' });
-  await insert('direct_messages', { id: 'received', conversation_id: 'alice-bob', sender_id: bob, receiver_id: alice, content: 'received-content' });
-  await insert('direct_messages', { id: 'unrelated', conversation_id: 'bob-carol', sender_id: bob, receiver_id: carol, content: 'other-private-conversation' });
+  await insert('direct_messages', { id: 'sent', conversation_id: 'alice-bob', sender_id: alice, receiver_id: bob, content: 'sent-content', attachment: privateMessageMedia(alice) });
+  await insert('direct_messages', { id: 'received', conversation_id: 'alice-bob', sender_id: bob, receiver_id: alice, content: 'received-content', attachment: privateMessageMedia(bob) });
+  await insert('direct_messages', { id: 'unrelated', conversation_id: 'bob-carol', sender_id: bob, receiver_id: carol, content: 'other-private-conversation', attachment: privateMessageMedia(bob) });
+  await insert('message_media_uploads', { public_id: messageMediaId(alice, 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'), owner_id: alice });
+  await insert('message_media_uploads', { public_id: messageMediaId(bob), owner_id: bob });
 }
 
 function harness(pg, control = {}) {
@@ -226,6 +236,11 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
     assert.deepEqual((await pg.query('SELECT author_id FROM community_snaps')).rows, [{ author_id: bob }]);
     assert.deepEqual((await pg.query('SELECT public_id,media_type FROM snap_media_cleanup')).rows,
       [{ public_id: `uficonnect-snaps/snap-${alice}-asset`, media_type: 'image' }]);
+    const pending = (await pg.query('SELECT public_id,media_type FROM message_media_cleanup ORDER BY public_id,media_type')).rows;
+    assert.equal(pending.length, 4);
+    assert.ok(pending.every(row => row.public_id.startsWith(`uficonnect-messages/message-${createHash('sha256').update(alice).digest('hex')}-`)));
+    assert.equal(pending.filter(row => row.public_id === messageMediaId(alice)).length, 1);
+    assert.deepEqual((await pg.query('SELECT owner_id FROM message_media_uploads')).rows, [{ owner_id: bob }]);
   });
 
   await t.test('a real SQL failure rolls back earlier deletes and leaves process memory unchanged', async () => {
@@ -240,6 +255,8 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
     assert.equal((await pg.query('SELECT COUNT(*)::integer AS count FROM direct_messages')).rows[0].count, 3);
     assert.equal((await pg.query('SELECT COUNT(*)::integer AS count FROM users')).rows[0].count, 3);
     assert.equal((await pg.query('SELECT created_by FROM community_groups')).rows[0].created_by, alice);
+    assert.equal((await pg.query('SELECT * FROM message_media_cleanup')).rows.length, 0);
+    assert.equal((await pg.query('SELECT * FROM message_media_uploads')).rows.length, 2);
   });
 
   await t.test('billing must finish first, and caches are cleared only after SQL commit', async () => {

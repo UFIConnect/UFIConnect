@@ -7,9 +7,10 @@ export function inboxSourceName(source) {
 }
 
 export function inboxExternalUrl(value) {
+  if (typeof value !== 'string' || value.length > 4096 || /[\u0000-\u0020\u007f\u202a-\u202e\u2066-\u2069]/.test(value)) return null;
   try {
     const url = new URL(value);
-    return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password ? url.href : null;
+    return url.protocol === 'https:' && !url.port && !url.username && !url.password ? url.href : null;
   } catch { return null; }
 }
 

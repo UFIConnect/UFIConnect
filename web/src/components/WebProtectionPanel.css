@@ -1,0 +1,13 @@
+.web-protection-panel { min-width: 0; scroll-margin-top: 100px; }
+.web-protection-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.web-protection-heading h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 1.15rem; font-weight: 600; }
+.web-protection-status { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--border); border-radius: 20px; padding: 5px 8px; color: var(--muted); font-size: 10px; }
+.web-protection-status.is-protected { color: #15803d; border-color: #15803d; }
+.web-protection-panel > p { color: var(--muted); font-size: 12px; line-height: 1.7; margin: 14px 0; }
+.web-protection-checks { padding: 0; margin: 18px 0; list-style: none; display: grid; gap: 12px; }
+.web-protection-checks li { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; line-height: 1.6; }
+.web-protection-checks svg { flex-shrink: 0; margin-top: 2px; }
+.web-protection-panel > button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+.web-protection-panel .web-protection-error { color: var(--danger, #b91c1c); }
+.web-protection-panel .web-protection-caption { font-size: 11px; }
+.web-protection-privacy { color: var(--text); font-size: 11px; text-decoration: underline; }
