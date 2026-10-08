@@ -80,10 +80,24 @@
 
 .snap-viewer.snap-viewer-feed { --card: #10131b; --surface: #1a1f2b; --text: #f8fafc; --muted: #cbd5e1; --border: #303846; --primary: #abc2ff; --primary-light: #26324d; --danger: #fca5a5; position: fixed; inset: 0; width: 100vw; height: 100dvh; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0; overflow: hidden; background: #080808; color: var(--text); perspective: 2000px; perspective-origin: 50% 50%; }
 .snap-viewer.snap-viewer-feed::backdrop { background: #080808; }
-.snap-viewer-close { position: absolute; top: max(10px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); z-index: 2; }
+.snap-viewer-close { position: absolute; top: max(10px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); z-index: 2; width: 44px; height: 44px; }
 .snap-viewer-inner { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; width: 100%; height: 100%; min-height: 0; overflow: hidden; }
 .snap-viewer-topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 60px; padding: max(10px, env(safe-area-inset-top)) calc(max(16px, env(safe-area-inset-right)) + 52px) 10px max(16px, env(safe-area-inset-left)); color: var(--text); font-size: .85rem; font-weight: 700; touch-action: pan-x pinch-zoom; }
 .snap-viewer-swipe-hint { color: var(--muted); font-size: .74rem; font-weight: 500; }
+.snap-viewer-top-actions { display: flex; align-items: center; flex: 0 0 auto; gap: 4px; margin-left: auto; }
+.snap-viewer-topbar .post-chrome-action { min-width: 44px; min-height: 44px; padding: 8px; background: var(--surface); color: var(--text); }
+.snap-viewer-topbar .post-chrome-action:hover:not(:disabled) { background: var(--primary-light); }
+.snap-viewer-topbar .post-chrome-open-mark { background: #f1f5f9; }
+.snap-viewer-topbar .post-chrome-source-link > svg { display: block; color: var(--text); }
+.snap-viewer-menu-wrap { position: relative; flex: 0 0 auto; }
+.snap-viewer-menu.post-chrome-menu { position: fixed; z-index: 3; top: calc(max(10px, env(safe-area-inset-top)) + 52px); right: max(16px, env(safe-area-inset-right)); width: min(280px, calc(100vw - 32px - env(safe-area-inset-left) - env(safe-area-inset-right))); max-height: calc(100dvh - 84px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); overflow-y: auto; overscroll-behavior: contain; padding: 4px; background: var(--card); color: var(--text); border-color: var(--border); }
+.snap-viewer-menu.post-chrome-menu button, .snap-viewer-menu.post-chrome-menu a { display: flex; align-items: center; gap: 8px; min-height: 44px; font-size: .86rem; }
+.snap-viewer-menu.post-chrome-menu button:hover:not(:disabled), .snap-viewer-menu.post-chrome-menu button:focus-visible, .snap-viewer-menu.post-chrome-menu a:hover, .snap-viewer-menu.post-chrome-menu a:focus-visible { background: var(--surface); }
+.snap-viewer-menu svg { flex-shrink: 0; }
+.snap-viewer-menu .post-chrome-menu-danger { color: var(--danger); }
+.snap-viewer-menu-position { display: block; padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: .76rem; font-weight: 600; }
+.snap-viewer-menu-position > span { display: block; margin-bottom: 4px; }
+.snap-viewer-position { display: block; width: 100%; min-width: 80px; height: 40px; margin: 0; accent-color: var(--primary); cursor: pointer; }
 .snap-viewer-details { width: min(100%, 800px); max-height: min(40dvh, 330px); min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-width: thin; margin: 0 auto; padding: 16px max(18px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); background: var(--card); border-top: 1px solid var(--border); }
 .snap-viewer header { margin-bottom: 10px; }
 .snap-viewer header > .snap-social-header { flex: 1; }
@@ -114,8 +128,7 @@
 .snap-viewer-preview-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: .95rem; font-weight: 700; }
 .snap-viewer-preview-source, .snap-viewer-preview-time { display: block; margin-top: 3px; color: var(--muted); font-size: .71rem; overflow-wrap: anywhere; }
 .snap-viewer-preview-caption { margin: 15px 2px 8px; color: var(--text); font-size: .85rem; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
-.snap-viewer-preview-footer { display: flex; align-items: center; gap: 12px; min-height: 54px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); color: var(--muted); font-size: .73rem; }
-.snap-viewer-preview-footer::after { content: ''; width: clamp(80px, 16vw, 160px); height: 4px; border-radius: 3px; background: var(--primary); }
+.snap-viewer-preview-audience { margin: 8px 2px 0; color: var(--muted); font-size: .73rem; }
 .snap-viewer-cube[data-cube-direction="forward"] { animation: snap-cube-forward .52s cubic-bezier(.22, .7, .24, 1) both; will-change: transform; }
 .snap-viewer-cube[data-cube-direction="backward"] { animation: snap-cube-backward .52s cubic-bezier(.22, .7, .24, 1) both; will-change: transform; }
 .snap-viewer-cube[data-cube-direction="forward"] .snap-viewer-cube-current { transform: rotateY(90deg) translateZ(var(--snap-cube-depth)); }
@@ -139,16 +152,10 @@
 .snap-viewer-caption { margin: 15px 2px 8px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); font-size: .85rem; line-height: 1.6; }
 .snap-viewer-audience { display: flex; align-items: center; gap: 5px; margin: 8px 2px 0; color: var(--muted); font-size: .73rem; }
 .snap-viewer-error { color: var(--danger); font-size: .77rem; line-height: 1.5; }
-.snap-viewer footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
-.snap-viewer-navigation, .snap-viewer-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.snap-viewer-navigation { touch-action: pan-x pinch-zoom; }
-.snap-viewer-position { display: block; width: clamp(80px, 16vw, 160px); height: 40px; margin: 0; accent-color: var(--primary); cursor: pointer; }
-.snap-viewer footer button, .snap-viewer-actions a { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 40px; min-height: 40px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); font: inherit; font-size: .74rem; font-weight: 600; text-decoration: none; cursor: pointer; }
-.snap-viewer footer button:hover:not(:disabled), .snap-viewer-actions a:hover { background: var(--primary-light); color: var(--primary); }
-.snap-viewer footer button:disabled { opacity: .35; cursor: default; }
-.snap-viewer-navigation > span { min-width: 39px; text-align: center; color: var(--muted); font-size: .73rem; font-variant-numeric: tabular-nums; }
 .snap-viewer button:focus-visible, .snap-viewer a:focus-visible, .snap-viewer input:focus-visible, .snap-composer button:focus-visible, .snap-composer textarea:focus-visible, .snap-composer input:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
-.snap-viewer-topbar:focus-visible, .snap-viewer-navigation:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.snap-viewer-topbar:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+
+@media (max-width: 600px) { .snap-viewer-swipe-hint, .snap-viewer-preview-topbar > span { display: none; } }
 
 @media (max-width: 450px) {
   .snap-post-button { padding: 8px; font-size: .74rem; }

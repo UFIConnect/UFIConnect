@@ -136,10 +136,10 @@ try {
       await profileButton.click();
       const viewer = page.locator('dialog.snap-viewer'); await viewer.waitFor();
       for (let position = 0; position < ids.indexOf(id); position++) {
-        const counter = await viewer.locator('.snap-viewer-navigation > span').innerText();
+        const previousCaption = await viewer.locator('.snap-viewer-caption').innerText();
         await viewer.getByRole('region', { name: 'Snap media', exact: true }).focus();
         await page.keyboard.press('ArrowDown');
-        await page.waitForFunction(previous => document.querySelector('.snap-viewer-navigation > span')?.textContent !== previous, counter);
+        await page.waitForFunction(previous => document.querySelector('.snap-viewer-caption')?.textContent !== previous, previousCaption);
       }
       await page.waitForFunction(expected => document.querySelector('.snap-viewer-caption')?.textContent === expected, caption);
       await settleCube();
@@ -315,8 +315,9 @@ try {
 
     await openSnap('other-native');
     let viewer = page.locator('dialog.snap-viewer'); await viewer.waitFor();
-    check(await viewer.getByRole('button', { name: 'Previous snap', exact: true }).count() === 1
-      && await viewer.getByRole('button', { name: 'Next snap', exact: true }).count() === 0, 'The Next button is removed while previous navigation remains available');
+    check(await viewer.locator('.snap-viewer-details footer').count() === 0
+      && await viewer.getByRole('button', { name: 'Previous snap', exact: true }).count() === 0
+      && await viewer.getByRole('button', { name: 'Next snap', exact: true }).count() === 0, 'The bottom command toolbar and navigation buttons are removed');
     await page.waitForFunction(() => { const image = document.querySelector('.snap-viewer-media img'); return image?.complete && image.naturalWidth > 0; });
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/snaps-viewer-${width}.png`) });
     check(await viewer.getByRole('link', { name: 'Snap author', exact: true }).getAttribute('href') === `/u/${author}`, 'Snap author routes to the posting profile');
@@ -345,7 +346,7 @@ try {
     await settleCube();
     await mediaStage.dispatchEvent('wheel', { deltaY: 120, deltaX: 0, bubbles: true });
     check(await viewer.locator('.snap-viewer-caption').innerText() !== 'other-native', 'Scrolling the media stage advances one snap');
-    await viewer.getByRole('button', { name: 'Previous snap', exact: true }).click();
+    await mediaStage.focus(); await page.keyboard.press('ArrowUp');
     await settleCube();
     await viewer.locator('.snap-viewer-details').dispatchEvent('wheel', { deltaY: 120, bubbles: true });
     check(await viewer.locator('.snap-viewer-caption').innerText() === 'other-native', 'Scrolling profile details does not change the snap');
@@ -358,14 +359,21 @@ try {
         element.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: [touch(y - 60)], bubbles: true }));
       });
       check(await viewer.locator('.snap-viewer-caption').innerText() !== 'other-native', 'A vertical swipe advances the full-screen snap on phones');
-      await viewer.getByRole('button', { name: 'Previous snap', exact: true }).click();
+      await mediaStage.focus(); await page.keyboard.press('ArrowUp');
       await settleCube();
     }
+    await viewer.getByRole('button', { name: 'Snap options', exact: true }).click();
+    const optionsBounds = await viewer.getByRole('group', { name: 'Snap options', exact: true }).boundingBox();
+    check(optionsBounds.x >= 0 && optionsBounds.x + optionsBounds.width <= width + 2, 'The Videos-style snap options menu stays inside the viewport');
     const position = viewer.getByRole('slider', { name: 'Snap position', exact: true });
     const beforePosition = await position.inputValue();
     await position.focus(); await page.keyboard.press('ArrowRight');
     check(Number(await position.inputValue()) === Number(beforePosition) + 1, 'The position control supports accessible forward navigation without Next');
     await page.keyboard.press('ArrowLeft'); await settleCube();
+    await page.keyboard.press('Escape');
+    check(await viewer.getByRole('group', { name: 'Snap options', exact: true }).count() === 0
+      && await viewer.count() === 1, 'Escape closes snap options while keeping the viewer open');
+    await viewer.getByRole('button', { name: 'Snap options', exact: true }).click();
     await viewer.getByRole('button', { name: 'Report this snap', exact: true }).click();
     const report = page.getByRole('dialog', { name: 'Report snap', exact: true }); await report.waitFor();
     check(await page.locator('dialog.snap-viewer').count() === 0, 'Native viewer closes before the report dialog');
@@ -401,6 +409,7 @@ try {
     await openSnap('posted-native');
     viewer = page.locator('dialog.snap-viewer');
     await viewer.getByText('Followers only', { exact: true }).waitFor();
+    await viewer.getByRole('button', { name: 'Snap options', exact: true }).click();
     await viewer.getByRole('button', { name: 'Delete this snap', exact: true }).click();
     check(writes.filter(write => write.method === 'DELETE').length === 0, 'Deleting requires a second deliberate action');
     await viewer.getByRole('button', { name: 'Delete snap', exact: true }).click();
@@ -453,7 +462,9 @@ try {
     check(await rail.locator('.snap-source-favorite').count() === 0, 'Guests have no invented favorite sources');
     await openSnap('facebook-fixture');
     viewer = page.locator('dialog.snap-viewer'); await viewer.waitFor();
+    await viewer.getByRole('button', { name: 'Snap options', exact: true }).click();
     check(await viewer.getByRole('button', { name: 'Delete this snap', exact: true }).count() === 0 && await viewer.getByRole('button', { name: 'Report this snap', exact: true }).count() === 0, 'Guest viewer exposes no authenticated content mutations');
+    await page.keyboard.press('Escape');
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await viewer.getByRole('region', { name: 'Snap media', exact: true }).focus();
     await page.keyboard.press('ArrowDown');
