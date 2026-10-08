@@ -62,6 +62,7 @@ try {
   ]) {
     const context = await browser.newContext({ viewport: { width: device.width, height: 1000 }, userAgent: device.userAgent, serviceWorkers: 'block' });
     const page = await context.newPage(); page.setDefaultTimeout(15000);
+    await page.clock.install();
     const errors = [], requests = [], downloads = [];
     let mode = 'https', calls = 0, held = null, release;
     page.on('pageerror', error => errors.push(error.message));
@@ -97,6 +98,7 @@ try {
     const panel = page.locator('.web-protection-panel');
     const status = panel.getByRole('status');
     const refresh = panel.getByRole('button', { name: 'Check protection', exact: true });
+    const monitoring = panel.getByRole('switch', { name: 'Vault connection monitoring', exact: true });
     await status.filter({ hasText: 'Protected' }).waitFor();
     check(await panel.getByRole('heading', { name: 'Web protection' }).isVisible(), `${device.name}: browser Vault shows web protection`);
     check(await panel.getByText('No app, profile or download is needed.', { exact: false }).isVisible(), `${device.name}: download-free browser scope explained`);
@@ -106,6 +108,56 @@ try {
     check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), `${device.name}: Vault does not overflow the viewport`);
     await panel.scrollIntoViewIfNeeded();
     await page.screenshot({ path: path.join(output, device.name + '-vault.png'), fullPage: true });
+
+    check(await monitoring.getAttribute('aria-checked') === 'true' && await monitoring.isEnabled(), `${device.name}: Vault monitoring starts On`);
+    check(await panel.getByText('HTTPS, Vault encryption and account security stay active.', { exact: false }).isVisible(), `${device.name}: pausing monitoring preserves security`);
+    held = new Promise(resolve => { release = resolve; });
+    const [pendingMonitoringRequest] = await Promise.all([
+      page.waitForRequest(request => new URL(request.url()).pathname === '/api/security/web-connection'), refresh.click(),
+    ]);
+    await status.filter({ hasText: 'Checking protection' }).waitFor();
+    check(await monitoring.isEnabled(), `${device.name}: monitoring can be stopped during a pending check`);
+    const cancelledMonitoringRequest = page.waitForEvent('requestfailed', { predicate: request => request === pendingMonitoringRequest });
+    await monitoring.click();
+    await status.filter({ hasText: 'Monitoring paused' }).waitFor();
+    check(await monitoring.getAttribute('aria-checked') === 'false' && await refresh.isDisabled(), `${device.name}: Off pauses checks and disables manual refresh`);
+    release(); held = null;
+    await cancelledMonitoringRequest;
+    check(/abort|cancel/i.test(pendingMonitoringRequest.failure()?.errorText || ''), `${device.name}: Off aborts the pending network request`);
+    await page.waitForTimeout(100);
+    check(await status.filter({ hasText: 'Protected' }).count() === 0 && await panel.locator('time').count() === 0,
+      `${device.name}: delayed report cannot restore paused verification`);
+    const pausedCalls = calls;
+    await refresh.evaluate(button => button.click());
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event('focus'));
+      window.dispatchEvent(new Event('online'));
+      window.dispatchEvent(new Event('offline'));
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await page.clock.fastForward(60001);
+    await page.waitForTimeout(100);
+    check(calls === pausedCalls, `${device.name}: manual refresh, focus, connection events, visibility and polling do not check while Off`);
+    check(await status.filter({ hasText: 'Monitoring paused' }).isVisible() && await panel.getByRole('alert').count() === 0,
+      `${device.name}: paused connection events do not create errors`);
+    await panel.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(output, device.name + '-vault-monitoring-off.png'), fullPage: true });
+    check(await page.evaluate(() => localStorage.getItem('ufi:vault-monitoring:account-a')) === 'off', `${device.name}: Off preference belongs to the current account`);
+    await page.reload();
+    await status.filter({ hasText: 'Monitoring paused' }).waitFor();
+    await page.waitForTimeout(100);
+    check(await monitoring.getAttribute('aria-checked') === 'false' && calls === pausedCalls, `${device.name}: reload restores Off without a request`);
+    await page.evaluate(() => window.__webProtectionAudit.update('account-c'));
+    await status.filter({ hasText: 'Protected' }).waitFor();
+    check(await monitoring.getAttribute('aria-checked') === 'true' && calls > pausedCalls, `${device.name}: another account defaults On and gets its own report`);
+    const otherAccountCalls = calls;
+    await page.evaluate(() => window.__webProtectionAudit.update('account-a'));
+    await status.filter({ hasText: 'Monitoring paused' }).waitFor();
+    await page.waitForTimeout(100);
+    check(await monitoring.getAttribute('aria-checked') === 'false' && calls === otherAccountCalls, `${device.name}: returning to the paused account restores its isolated preference`);
+    await monitoring.click();
+    await status.filter({ hasText: 'Protected' }).waitFor();
+    check(await monitoring.getAttribute('aria-checked') === 'true' && calls > otherAccountCalls, `${device.name}: On obtains a fresh report`);
 
     const firstCalls = calls;
     await refresh.click(); await status.filter({ hasText: 'Protected' }).waitFor();
@@ -140,11 +192,19 @@ try {
     release(); held = null;
     await page.waitForTimeout(100);
     check(await status.filter({ hasText: 'Protected' }).count() === 0 && await refresh.isDisabled(), `${device.name}: delayed report after logout cannot restore protection`);
+    check(await monitoring.isDisabled(), `${device.name}: signed-out users cannot change monitoring`);
+
+    await page.evaluate(() => window.__webProtectionAudit.update('account-a'));
+    await status.filter({ hasText: 'Protected' }).waitFor();
+    await monitoring.click();
+    await status.filter({ hasText: 'Monitoring paused' }).waitFor();
 
     await page.goto(base + 'settings?tab=security');
     await panel.getByRole('heading', { name: 'Web protection' }).waitFor();
     await status.filter({ hasText: 'Protected' }).waitFor();
     check(await refresh.isEnabled(), `${device.name}: Settings security tab uses the same automatic protection control`);
+    check(await panel.getByRole('switch').count() === 0, `${device.name}: Settings remains automatic without the Vault switch`);
+    check(await page.evaluate(() => localStorage.getItem('ufi:vault-monitoring:account-a')) === 'off', `${device.name}: Settings checks remain active while Vault monitoring is Off`);
     await panel.scrollIntoViewIfNeeded();
     await page.screenshot({ path: path.join(output, device.name + '-settings.png'), fullPage: true });
     check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), `${device.name}: Settings does not overflow the viewport`);
@@ -152,6 +212,29 @@ try {
     mode = 'unauthenticated'; await refresh.click();
     await page.waitForFunction(() => window.__webProtectionAudit.getAccessToken() === null);
     check(await status.filter({ hasText: 'Protected' }).count() === 0, `${device.name}: revoked session cannot verify protection`);
+
+    mode = 'https';
+    await page.addInitScript(() => {
+      const originalGet = Storage.prototype.getItem, originalSet = Storage.prototype.setItem;
+      Storage.prototype.getItem = function (key) {
+        if (String(key).startsWith('ufi:vault-monitoring:')) throw new DOMException('Storage unavailable', 'SecurityError');
+        return originalGet.call(this, key);
+      };
+      Storage.prototype.setItem = function (key, value) {
+        if (String(key).startsWith('ufi:vault-monitoring:')) throw new DOMException('Storage unavailable', 'QuotaExceededError');
+        return originalSet.call(this, key, value);
+      };
+    });
+    await page.goto(base + 'vault#vpn');
+    await status.filter({ hasText: 'Protected' }).waitFor();
+    check(await monitoring.getAttribute('aria-checked') === 'true', `${device.name}: blocked preference reads safely default On`);
+    await monitoring.click();
+    await status.filter({ hasText: 'Monitoring paused' }).waitFor();
+    check(await monitoring.getAttribute('aria-checked') === 'false' && await refresh.isDisabled(), `${device.name}: blocked preference writes still allow Off`);
+    const blockedStorageCalls = calls;
+    await monitoring.click();
+    await status.filter({ hasText: 'Protected' }).waitFor();
+    check(await monitoring.getAttribute('aria-checked') === 'true' && calls > blockedStorageCalls, `${device.name}: blocked storage still allows On and a fresh report`);
     check(requests.every(value => !value.path.startsWith('/api/vpn/')), `${device.name}: no VPN API, profile or native handoff requests`);
     check(downloads.length === 0, `${device.name}: no download events`);
     check(errors.length === 0, `${device.name}: no browser errors (${errors.join('; ')})`);

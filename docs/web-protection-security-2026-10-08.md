@@ -55,6 +55,12 @@ membership. Baseline protection cannot be disabled with a browser toggle.
 
 ## Limits
 
+The Vault's connection-monitoring switch starts or pauses its authenticated
+status checks. Pausing aborts pending checks and clears their displayed status.
+The preference is saved per account in this browser; Settings keeps checking
+independently. The switch does not disable HTTPS, Vault encryption, account
+permissions or message/import safeguards, and does not control a VPN tunnel.
+
 This is application security over HTTPS. Native messages are not end-to-end
 encrypted. Historical attachments can still use their earlier public delivery
 URLs; this release does not claim to retroactively privatize those files. Third
