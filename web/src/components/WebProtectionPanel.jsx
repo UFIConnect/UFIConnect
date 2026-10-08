@@ -1,6 +1,6 @@
-import { useEffect, useId } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, RefreshCw, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { Check, Power, RefreshCw, ShieldCheck, ShieldAlert } from 'lucide-react';
 import useWebConnection from '../security/useWebConnection';
 import { webConnectionProtected } from '../security/webConnection.mjs';
 import './WebProtectionPanel.css';
@@ -12,12 +12,41 @@ const SAFEGUARDS = [
   ['validatedImports', 'Vault imports are checked before use'],
 ];
 
+function monitoringPreference(key) {
+  if (!key) return true;
+  try { return window.localStorage.getItem(key) !== 'off'; } catch { return true; }
+}
+
 export default function WebProtectionPanel({ accountId, variant = 'vault' }) {
-  const { status, checking, error, refresh, authenticated } = useWebConnection(accountId);
+  const preferenceKey = variant === 'vault' && accountId ? `ufi:vault-monitoring:${encodeURIComponent(accountId)}` : null;
+  const currentPreference = useRef(preferenceKey); currentPreference.current = preferenceKey;
+  const savedMonitoring = useMemo(() => monitoringPreference(preferenceKey), [preferenceKey]);
+  const [monitoring, setMonitoring] = useState(null);
+  const enabled = variant !== 'vault' || (monitoring?.key === preferenceKey ? monitoring.enabled : savedMonitoring);
+  const { status, checking, error, refresh, authenticated } = useWebConnection(accountId, enabled);
   const heading = useId();
+  const monitoringLabel = useId();
   const protectedConnection = webConnectionProtected(status);
-  const label = checking ? 'Checking protection' : protectedConnection ? 'Protected'
-    : !accountId || !authenticated ? 'Sign in to check' : 'Needs attention';
+  const label = !accountId || !authenticated ? 'Sign in to check' : !enabled ? 'Monitoring paused'
+    : checking ? 'Checking protection' : protectedConnection ? 'Protected' : 'Needs attention';
+  const toggleMonitoring = () => {
+    const next = !enabled;
+    setMonitoring({ key: preferenceKey, enabled: next });
+    try { if (preferenceKey) window.localStorage.setItem(preferenceKey, next ? 'on' : 'off'); } catch { /* Keep the control usable without browser storage. */ }
+  };
+  useEffect(() => {
+    if (!preferenceKey) return undefined;
+    const sync = event => {
+      if (currentPreference.current !== preferenceKey) return;
+      let storage;
+      try { storage = window.localStorage; } catch { return; }
+      if (event.storageArea === storage && (event.key === preferenceKey || event.key === null)) {
+        setMonitoring({ key: preferenceKey, enabled: monitoringPreference(preferenceKey) });
+      }
+    };
+    window.addEventListener('storage', sync);
+    return () => window.removeEventListener('storage', sync);
+  }, [preferenceKey]);
   useEffect(() => {
     if (variant !== 'vault') return undefined;
     const scroll = () => {
@@ -35,10 +64,20 @@ export default function WebProtectionPanel({ accountId, variant = 'vault' }) {
     <div className="web-protection-heading">
       <h2 id={heading}><ShieldCheck size={20} aria-hidden="true" />Web protection</h2>
       <span className={`web-protection-status${protectedConnection ? ' is-protected' : ''}`} role="status">
-        {protectedConnection ? <ShieldCheck size={14} aria-hidden="true" /> : <ShieldAlert size={14} aria-hidden="true" />}{label}
+        {protectedConnection ? <ShieldCheck size={14} aria-hidden="true" /> : !enabled ? <Power size={14} aria-hidden="true" /> : <ShieldAlert size={14} aria-hidden="true" />}{label}
       </span>
     </div>
     <p>Protection runs automatically across UFIConnect in this browser. No app, profile or download is needed.</p>
+    {variant === 'vault' && <>
+      <div className="web-protection-monitoring">
+        <h3 id={monitoringLabel}>Vault connection monitoring</h3>
+        <button type="button" role="switch" aria-labelledby={monitoringLabel} aria-checked={enabled}
+          className={`web-protection-switch${enabled ? ' is-on' : ''}`} disabled={!accountId || !authenticated} onClick={toggleMonitoring}>
+          <Power size={15} aria-hidden="true" />{enabled ? 'On' : 'Off'}
+        </button>
+      </div>
+      <p className="web-protection-caption">Turn automatic connection checks on or off. HTTPS, Vault encryption and account security stay active.</p>
+    </>}
     {status && <ul className="web-protection-checks">
       <li>{status.transport.encrypted ? <Check size={16} aria-hidden="true" /> : <ShieldAlert size={16} aria-hidden="true" />}
         <span>{status.transport.encrypted ? 'Encrypted HTTPS connection' : 'This connection requires HTTPS'}</span></li>
@@ -50,7 +89,7 @@ export default function WebProtectionPanel({ accountId, variant = 'vault' }) {
     {error && <p className="web-protection-error" role="alert">{error}</p>}
     {!checking && !error && status && !protectedConnection && <p className="web-protection-error" role="alert">Open UFIConnect with HTTPS to protect this connection.</p>}
     <button className={variant === 'vault' ? 'vault-button vault-button--secondary vault-button--full' : 'btn btn-ghost btn-sm'}
-      type="button" disabled={checking || !accountId || !authenticated} onClick={refresh}>
+      type="button" disabled={!enabled || checking || !accountId || !authenticated} onClick={refresh}>
       <RefreshCw size={16} aria-hidden="true" />{checking ? 'Checking protection…' : 'Check protection'}
     </button>
     {status && <p className="web-protection-caption">Last checked <time dateTime={status.checkedAt}>{new Date(status.checkedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time>.</p>}
