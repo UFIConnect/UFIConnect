@@ -172,3 +172,6 @@ try {
   await server.close();
   await app.close();
 }
+
+// Keep source menus covered wherever the existing source-like audit runs.
+await import('./audit-source-post-menus.mjs');

@@ -5,7 +5,9 @@
 .post-chrome-avatar-button { padding: 0; border: 0; cursor: zoom-in; font: inherit; }
 .post-chrome-avatar-button:focus-visible { outline: 3px solid #2563eb; outline-offset: 2px; }
 /* Full-size profile photo. */
-.post-chrome-photo-viewer { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 16px; background: rgba(8, 12, 20, .78); }
+.post-chrome-photo-viewer { position: fixed; inset: 0; z-index: 4000; display: grid; place-items: center; width: 100vw; height: 100dvh; max-width: none; max-height: none; margin: 0; border: 0; padding: 16px; color: #fff; background: rgba(8, 12, 20, .78); }
+.post-chrome-photo-viewer::backdrop { background: transparent; }
+.post-chrome-photo-viewer:not([open]) { display: none; }
 .post-chrome-photo-viewer figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 14px; max-width: min(92vw, 520px); }
 .post-chrome-photo-viewer img { width: min(80vmin, 420px); height: min(80vmin, 420px); border-radius: 50%; object-fit: cover; background: var(--card, #fff); box-shadow: 0 18px 50px rgba(0, 0, 0, .45); }
 .post-chrome-photo-viewer figcaption { display: flex; flex-direction: column; align-items: center; gap: 4px; color: #fff; text-align: center; overflow-wrap: anywhere; }
@@ -30,7 +32,7 @@
 .post-chrome-time:hover { color: var(--text); }
 .post-chrome-edited { font-weight: 600; }
 .post-chrome-more { position: relative; }
-.post-chrome-menu { position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 30; min-width: 200px; max-width: min(280px, calc(100vw - 48px)); padding: 4px; background: var(--card, #fff); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 28px rgba(15, 23, 42, .16); }
+.post-chrome-menu { position: fixed; z-index: 4000; width: min(280px, calc(100vw - 24px)); overflow-y: auto; overscroll-behavior: contain; padding: 4px; background: var(--card, #fff); color: var(--text); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 28px rgba(15, 23, 42, .16); }
 .post-chrome-menu button, .post-chrome-menu a { display: block; box-sizing: border-box; width: 100%; padding: 10px 12px; border: 0; border-radius: 8px; background: none; color: var(--text); font: inherit; font-size: .88rem; font-weight: 600; text-align: left; text-decoration: none; cursor: pointer; }
 .post-chrome-menu button:hover:not(:disabled), .post-chrome-menu button:focus-visible, .post-chrome-menu a:hover, .post-chrome-menu a:focus-visible { background: var(--bg, #f1f5f9); outline: none; }
 .post-chrome-menu .post-chrome-menu-danger { color: #B91C1C; }
@@ -51,8 +53,10 @@
 .post-chrome-like .post-chrome-action[data-locked="true"] { opacity: .55; }
 .post-chrome-like-count { min-width: 0; white-space: nowrap; }
 .post-chrome-like .post-chrome-action[aria-pressed="true"] { color: #E0245E; background: color-mix(in srgb, #E0245E 12%, var(--card, #fff)); }
-/* The options menu and then the source link sit together at the end of the row. */
-.post-chrome-actions > .post-chrome-more { margin-left: auto; }
+/* Original post link and options sit together, with options last. */
+.post-chrome-actions > .post-chrome-source-link { margin-left: auto; }
+.post-chrome-actions > .post-chrome-more:last-child { margin-left: auto; }
+.post-chrome-actions > .post-chrome-source-link + .post-chrome-more { margin-left: 0; }
 .post-chrome-source-link { gap: 4px; color: var(--source-color); background: color-mix(in srgb, var(--source-color) 10%, var(--card, #fff)); text-decoration: none; }
 .post-chrome-open-mark { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; background: var(--card, #fff); flex-shrink: 0; }
 .post-chrome-open-mark b { font-size: .58rem; color: var(--source-color); }

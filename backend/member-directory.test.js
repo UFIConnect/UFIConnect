@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { PGlite } = require('@electric-sql/pglite');
 const { searchMemberDirectory } = require('./member-directory');
+const { OFFICE_MEMBERS_SCHEMA } = require('./office-members');
 const { createAppHarness, member } = require('./test-support/app-harness');
 require('./generated-media');
 
@@ -98,21 +99,35 @@ test('search reports database failure instead of a misleading partial cache', as
 });
 
 test('Office reports registered accounts without reading legacy visitor or sign-in histories', async t => {
-  const app = await createAppHarness({ connected: true, env: { OFFICE_TOKEN: 'office-audit-only' }, query: async sql => {
-    if (sql.includes('FROM user_sign_in_events')) throw Error('missing sign-in history');
-    if (sql.includes('COUNT(DISTINCT p.user_id)')) return { rows: [{ count: 2 }] };
-    if (sql.includes('SELECT id, name, email')) return { rows: [] };
-    return { rows: [{ count: sql.includes('profile_hidden IS TRUE') ? 1 : 7 }] };
+  const pg = new PGlite();
+  await pg.exec(`CREATE TABLE users (
+    id UUID PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), onboarding_complete BOOLEAN NOT NULL DEFAULT false,
+    profile_hidden BOOLEAN NOT NULL DEFAULT false, role_settings JSONB NOT NULL DEFAULT '{}');`);
+  for (const sql of OFFICE_MEMBERS_SCHEMA) await pg.exec(sql);
+  for (let index = 1; index <= 7; index++) {
+    await pg.query('INSERT INTO users(id,name,email,onboarding_complete,profile_hidden) VALUES($1,$2,$3,$4,$5)',
+      [`00000000-0000-4000-8000-${String(index).padStart(12, '0')}`, `Registered member ${index}`, `member${index}@example.invalid`, index <= 5, index === 7]);
+  }
+  const app = await createAppHarness({ connected: true, env: { OFFICE_TOKEN: 'office-audit-only' }, query: async (sql, params) => {
+    if (/FROM (page_views|user_sign_in_events)/.test(sql)) throw Error('Legacy activity histories must not be queried');
+    if (/\b(users|signup_daily_counts|office_member_email|office_user_cache_epoch)\b/.test(sql)) return pg.query(sql, params);
+    return { rows: [], rowCount: 0 };
   } });
-  t.after(() => app.close());
+  t.after(async () => { await app.close(); await pg.close(); });
   assert.equal((await app.request('/office/users')).status, 401);
   const response = await app.request('/office/users', { headers: { 'x-office-token': 'office-audit-only' } });
   assert.equal(response.status, 200);
   assert.equal(response.data.total, 7);
   assert.equal(response.data.discoverable, 6);
-  assert.equal(response.data.active, null);
+  assert.equal(response.data.onboarded, 5);
+  assert.equal(response.data.hidden, 1);
+  assert.equal(response.data.countSource, 'database');
+  assert.equal(response.data.cacheUsed, false);
+  assert.equal(response.data.recent.length, 7);
+  assert.equal(Object.hasOwn(response.data, 'active'), false);
   assert.equal(response.data.activeAvailable, false);
-  assert.equal(response.data.signIns, null);
+  assert.equal(Object.hasOwn(response.data, 'signIns'), false);
   assert.equal(response.data.signInsAvailable, false);
   assert.equal(app.queries.some(({ sql }) => /FROM (page_views|user_sign_in_events)/.test(sql)), false);
 });

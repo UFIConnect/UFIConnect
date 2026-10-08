@@ -286,7 +286,7 @@ export function loadYouTubeIframeApi() {
 // browser already supports it (Safari/iOS). Used for Bluesky video — a
 // simple <video src="...m3u8"> only works in Safari; everywhere else needs
 // hls.js to actually decode the stream.
-export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, loop = false, onClick, videoRef: externalRef, onTimeUpdate, onLoadedMetadata, onPlay, onPause, onError, style }) {
+export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, loop = false, onClick, videoRef: externalRef, onTimeUpdate, onLoadedMetadata, onPlay, onPause, onVolumeChange, onError, style }) {
   const videoRef = useRef(null);
   // Callback ref so the caller (VideoFeedView's custom pause/seek controls)
   // can drive the underlying <video> element directly — hls.js attaches to
@@ -376,7 +376,7 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
   return (
     <video ref={setRef} controls={!onClick} autoPlay={autoPlay} muted={muted} loop={loop}
       playsInline draggable={false} poster={poster} onClick={onClick}
-      onTimeUpdate={onTimeUpdate} onLoadedMetadata={onLoadedMetadata} onPlay={onPlay} onPause={onPause}
+      onTimeUpdate={onTimeUpdate} onLoadedMetadata={onLoadedMetadata} onPlay={onPlay} onPause={onPause} onVolumeChange={onVolumeChange}
       // Catches the Safari-native path (no hls.js involved at all — see the
       // canPlayType branch above) plus any real network/decode error hls.js
       // itself doesn't surface through its own event system.

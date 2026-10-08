@@ -1,6 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import client from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import FeedLocationControl from './FeedLocationControl';
 import { feedLocationKey } from '../utils/feedLocation.mjs';
 import { directMediaPlaybackAllowed } from '../utils/sourceMediaPolicy.mjs';
@@ -19,8 +20,10 @@ import PostLikes from './PostLikes';
 import PostInlineText from './PostInlineText';
 import PostLinkPreviews from './PostLinkPreviews';
 import useTabMetrics, { useSelectedTabMetrics } from '../analytics/useTabMetrics';
-import { PostOptionsMenu } from './PostCardChrome';
-import { ChevronDown, Search, SlidersHorizontal, RotateCw, Play, Pause, MessageCircle, ExternalLink } from 'lucide-react';
+import YouTubeSettingsDialog from './YouTubeSettingsDialog';
+import { CommentIcon, OpenOnSource, PostHeader, PostOptionsMenu } from './PostCardChrome';
+import { isMemberPost, safePostLink } from '../../../backend/post-links.mjs';
+import { ChevronDown, Search, SlidersHorizontal, RotateCw, Play, Pause } from 'lucide-react';
 import { videoDurationSeconds, isShortFeedVideo, videoSourceKey, safeMediaUrl, fitVideoFrame } from '../utils/videoFeedPolicy.mjs';
 import './VideoFeedView.css';
 import './navigation.css';
@@ -202,31 +205,34 @@ const VIDEO_COMMENTS_PASSIVE_REFRESH_MS = 30 * 1000;
 // scrollSnapStop comment below) without a visible gap.
 const VIDEO_MOUNT_RADIUS = 2;
 
-function formatTime(sec) {
-  if (!Number.isFinite(sec) || sec < 0) return '0:00';
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
-  return `${m}:${String(s).padStart(2, '0')}`;
+function readYouTubeSettings(player) {
+  const rates = [...new Set((player.getAvailablePlaybackRates?.() || []).filter(rate => Number.isFinite(rate) && rate > 0))].sort((a, b) => a - b);
+  const rate = player.getPlaybackRate?.() || 1;
+  let captionFontSize = null;
+  if (player.getOptions?.('captions')?.includes('fontSize')) {
+    const size = player.getOption('captions', 'fontSize');
+    if (Number.isInteger(size) && size >= -1 && size <= 3) captionFontSize = size;
+  }
+  return { rates, rate, captionFontSize };
 }
 
-// sharedYt: { paused, duration, currentTime, failed, togglePlay, seekTo } —
+// sharedYt: { paused, duration, currentTime, failed, togglePlay } —
 // the one YouTube player VideoFeedView keeps alive across every slide (see
 // its own top comment) instead of each slide owning/destroying its own.
 // Only meaningful when src.kind === 'youtube'; file/hls/vimeo keep their
 // existing fully-local state below, untouched.
-function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComments, sharedYt, onDurationResolved, controlsVisible, onPostUpdated, onRemoved }) {
+function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComments, sharedYt, onDurationResolved, onPostUpdated, onRemoved, fullScreen, onFullScreen }) {
   const src = resolveVideoSource(post);
-  const meta = SOURCE_META[post.source] || SOURCE_META.uficonnect;
   const fileVideoRef = useRef(null);
   const hlsVideoRef = useRef(null);
   const vimeoIframeRef = useRef(null);
-  const seekingRef = useRef(false);
-  const progressBarRef = useRef(null);
   // Caption starts clamped (see the overlay below) — the video is the point
   // of this view, a wall of text over it isn't. "more" only shows up when
   // there's actually more than the clamp already reveals: a long title, or
   // real content beyond just the title repeated.
   const [captionExpanded, setCaptionExpanded] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  useEffect(() => { if (!active) setSettingsOpen(false); }, [active]);
   const captionBody = post.content?.trim() && post.content.trim() !== post.title?.trim()
     ? post.content.trim()
     : '';
@@ -236,9 +242,9 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   // sharedYt instead (see effectivePaused/effectiveDuration/
   // effectiveCurrentTime below), since its player lives in the parent now.
   const [paused, setPaused] = useState(false);
+  const [nativeMuted, setNativeMuted] = useState(muted);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
-  const [seeking, setSeeking] = useState(false);
   const scrollResumeRef = useRef(false);
   const hiddenResumeRef = useRef(false);
   const pausedRef = useRef(paused);
@@ -392,7 +398,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   // other kind here already gets — previously never updated for this kind
   // at all. paused's useState(false) default meant a silently-blocked
   // autoplay just looked like a frozen video with nothing tappable, and
-  // togglePlay()/seekToFraction() had no element to act on either.
+  // togglePlay() had no element to act on either.
   // Vimeo's embed exposes its own postMessage event protocol instead: it
   // pushes an unprompted {event:'ready'} once loaded, then after
   // subscribing with {method:'addEventListener', value:'play'|'pause'|
@@ -428,7 +434,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
       } else if (msg?.event === 'pause' || msg?.event === 'finish') {
         setPaused(true);
       } else if (msg?.event === 'timeupdate' && msg.data) {
-        if (!seekingRef.current) setCurrentTime(msg.data.seconds || 0);
+        setCurrentTime(msg.data.seconds || 0);
         if (msg.data.duration) { setDuration(msg.data.duration); onDurationResolved(post, msg.data.duration); }
       }
     }
@@ -516,62 +522,25 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
     }
   }
 
-  function computeFraction(clientX) {
-    const el = progressBarRef.current;
-    if (!el) return 0;
-    const rect = el.getBoundingClientRect();
-    if (!rect.width) return 0;
-    return Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+  function toggleSound() {
+    const video = getNativeEl();
+    if (!video) { onToggleMute(); return; }
+    const nextMuted = !video.muted;
+    video.muted = nextMuted;
+    setNativeMuted(nextMuted);
+    if (nextMuted !== muted) onToggleMute();
   }
 
-  function seekToFraction(fraction) {
-    const time = fraction * (effectiveDuration || 0);
-    if (isYoutube) {
-      sharedYt?.seekTo?.(time);
-    } else if (src?.kind === 'vimeo') {
-      setCurrentTime(time);
-      try {
-        vimeoIframeRef.current?.contentWindow?.postMessage(
-          JSON.stringify({ method: 'setCurrentTime', value: time }), 'https://player.vimeo.com'
-        );
-      } catch {}
-    } else {
-      setCurrentTime(time);
-      const v = getNativeEl();
-      if (v) v.currentTime = time;
-    }
-  }
-
-  function handleBarPointerDown(e) {
-    e.stopPropagation();
-    if (!effectiveDuration) return;
-    seekingRef.current = true;
-    // Also flips the shared player's own seeking guard (see sharedYt.
-    // seekingRef in VideoFeedView) — that guard is what stops its polling
-    // interval from overwriting the scrub bar's position mid-drag with a
-    // stale getCurrentTime() read, same idea seekingRef already serves for
-    // file/hls, just needs to reach the parent's poll instead of a local one.
-    if (isYoutube && sharedYt?.seekingRef) sharedYt.seekingRef.current = true;
-    setSeeking(true);
-    seekToFraction(computeFraction(e.clientX));
-    const handleMove = (ev) => seekToFraction(computeFraction(ev.clientX));
-    const handleUp = () => {
-      seekingRef.current = false;
-      if (isYoutube && sharedYt?.seekingRef) sharedYt.seekingRef.current = false;
-      setSeeking(false);
-      document.removeEventListener('pointermove', handleMove);
-      document.removeEventListener('pointerup', handleUp);
-    };
-    document.addEventListener('pointermove', handleMove);
-    document.addEventListener('pointerup', handleUp);
-  }
-
-  const progressFraction = effectiveDuration > 0 ? Math.min(1, effectiveCurrentTime / effectiveDuration) : 0;
+  const mediaMuted = ['file', 'hls'].includes(src?.kind) ? nativeMuted : muted;
   const originalUrl = safeMediaUrl(post.sourceUrl)?.href;
+  const options = [
+    { label: fullScreen ? 'Exit full screen' : 'Full screen', onSelect: () => onFullScreen(getNativeEl()) },
+    isYoutube && { label: 'YouTube settings', detail: 'Playback speed, quality and captions', onSelect: () => setSettingsOpen(true) },
+  ].filter(Boolean);
   return (
     <article className="video-feed-slide">
       <div className="video-feed-media" data-video-media onClick={event => {
-        if (!event.target.closest('iframe')) togglePlay();
+        if (!event.target.closest('iframe, video')) togglePlay();
       }}>
         {!src ? <p>Video unavailable</p> : src.kind === 'youtube' ? null : src.kind === 'vimeo' ? (
           active ? <iframe ref={vimeoIframeRef}
@@ -581,56 +550,48 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           : vimeoPoster ? <img src={vimeoPoster} alt="" draggable={false} /> : null
         ) : src.kind === 'hls' ? (
           active ? <HlsVideoPlayer src={src.src} poster={src.poster} autoPlay muted={muted} loop
-            videoRef={hlsVideoRef} onTimeUpdate={event => { if (!seekingRef.current) setCurrentTime(event.target.currentTime); }}
+            videoRef={hlsVideoRef} onTimeUpdate={event => setCurrentTime(event.target.currentTime)}
+            onVolumeChange={event => setNativeMuted(event.target.muted)}
             onLoadedMetadata={acceptNativeMetadata} onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
             onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id, context: { surface: 'videos' } })}
             style={{ height: '100%', width: '100%', objectFit: 'contain' }} /> : null
         ) : <video ref={fileVideoRef} src={src.src} poster={src.poster || undefined}
-            preload={active ? 'auto' : 'metadata'} muted={muted} loop playsInline draggable={false}
-            onTimeUpdate={event => { if (!seekingRef.current) setCurrentTime(event.target.currentTime); }}
+            preload={active ? 'auto' : 'metadata'} muted={muted} loop playsInline controls draggable={false}
+            onTimeUpdate={event => setCurrentTime(event.target.currentTime)} onVolumeChange={event => setNativeMuted(event.target.muted)}
             onLoadedMetadata={acceptNativeMetadata} onDurationChange={acceptNativeMetadata}
             onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
             onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id, context: { surface: 'videos' } })} />}
       </div>
-      <div className="video-feed-action-rail" data-video-actions hidden={!controlsVisible} role="group" aria-label="Video controls and engagement">
-        {effectiveDuration > 0 && <div className="video-feed-playback" role="group" aria-label="Video playback">
-            <input type="range" data-video-scrubber aria-label="Video position" min="0" max="1" step="0.001"
-              value={progressFraction} onChange={event => seekToFraction(Number(event.target.value))} />
-        </div>}
-        <button type="button" onClick={togglePlay} aria-label={effectivePaused ? 'Play video' : 'Pause video'} title={effectivePaused ? 'Play video' : 'Pause video'}>
-          {effectivePaused ? <Play size={18} aria-hidden="true" /> : <Pause size={18} aria-hidden="true" />}
-        </button>
-        <button type="button" onClick={onToggleMute} disabled={src?.kind === 'vimeo'} aria-label={muted ? 'Unmute video' : 'Mute video'} title={src?.kind === 'vimeo' ? 'Use the player volume control' : muted ? 'Unmute video' : 'Mute video'}>
-          <SoundIcon muted={muted} size={18} />
-        </button>
-        {effectiveDuration > 0 && <span className="video-feed-time">{formatTime(effectiveCurrentTime)} / {formatTime(effectiveDuration)}</span>}
-        <span className="video-feed-command-spacer" aria-hidden="true" />
-        <button type="button" onClick={() => onOpenComments?.(post)} aria-label={`Comments${Number.isFinite(post.commentsCount) ? ` ${post.commentsCount.toLocaleString()}` : ''}`} title="Comments">
-          <MessageCircle size={18} aria-hidden="true" />
-        </button>
-        <SavePostButton post={post} className="video-feed-save-button" showLabel={false} />
-        <PostOptionsMenu post={post} onPostUpdated={onPostUpdated} onRemoved={onRemoved} />
-        {originalUrl && <a href={originalUrl} target="_blank" rel="noopener noreferrer" aria-label="View original post" title="View original post"
-          onClick={() => reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true })}><ExternalLink size={17} aria-hidden="true" /></a>}
-      </div>
       <div className="video-feed-details video-caption-scroll" data-video-details>
+        <div className="video-feed-playback-controls" role="group" aria-label="Playback controls">
+          <button type="button" className="post-chrome-action" onClick={togglePlay} disabled={!src} aria-label={effectivePaused ? 'Play video' : 'Pause video'} title={effectivePaused ? 'Play video' : 'Pause video'}>{effectivePaused ? <Play size={18} aria-hidden="true" /> : <Pause size={18} aria-hidden="true" />}</button>
+          <button type="button" className="post-chrome-action" onClick={toggleSound} disabled={!src || src.kind === 'vimeo'} aria-label={mediaMuted ? 'Unmute video' : 'Mute video'} title={src?.kind === 'vimeo' ? 'Use the player volume control' : mediaMuted ? 'Unmute video' : 'Mute video'}><SoundIcon muted={mediaMuted} size={18} /></button>
+        </div>
+        <PostHeader post={post} member={isMemberPost(post)} />
         {isYoutube && sharedYt?.failed && <p className="video-feed-playback-note" role="status">The embedded player could not start. Try its play button{originalUrl ? ' or open the original video.' : '.'}</p>}
         <div className="video-feed-caption" data-video-caption data-expanded={captionExpanded}>
           <div className="video-feed-caption-summary">
-            <div className="video-feed-byline"><SourceMark source={post.source} label={meta.icon} size={11} /><strong>{post.sourceLabel || meta.label}</strong></div>
             {post.title && <h2>{post.title}</h2>}
-            <PostLikes post={post} onPostUpdated={onPostUpdated} />
             {(post.title || hasExtraCaption || post.author?.name) && <button type="button" className="video-feed-caption-toggle" onClick={() => setCaptionExpanded(value => !value)} aria-label={captionExpanded ? 'Show less' : 'Read more'} title={captionExpanded ? 'Show less' : 'Read more'} aria-expanded={captionExpanded}><ChevronDown size={16} aria-hidden="true" /></button>}
           </div>
           {captionExpanded && <div className="video-feed-caption-expanded">
-            {post.author?.name && <span>{post.author.name}</span>}
             {post.matchedByLocation && <span>{post.locationMatchLabel || 'Near you'}</span>}
             {post.title && <p className="video-feed-expanded-title">{post.title}</p>}
             {captionBody && <p><PostInlineText text={captionBody} /></p>}
             <PostLinkPreviews post={post} variant="dark" />
           </div>}
         </div>
+        <div className="post-chrome-actions video-feed-post-actions" data-video-actions role="group" aria-label="Post actions">
+          <PostLikes post={post} onPostUpdated={onPostUpdated} />
+          <button type="button" className="post-chrome-action" onClick={() => onOpenComments?.(post)} aria-label={`Comments${Number.isFinite(post.commentsCount) ? ` ${post.commentsCount.toLocaleString()}` : ''}`} title="Comments"><CommentIcon /></button>
+          <SavePostButton post={post} className="post-chrome-action video-feed-save-button" showLabel={false} />
+          <OpenOnSource post={post} label="View original post" onClick={() => reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true })} />
+          <PostOptionsMenu post={post} items={options} onPostUpdated={onPostUpdated} onRemoved={onRemoved} />
+        </div>
       </div>
+      {settingsOpen && isYoutube && <YouTubeSettingsDialog settings={sharedYt?.settings}
+        onRateChange={sharedYt?.setPlaybackRate} onCaptionSizeChange={sharedYt?.setCaptionFontSize}
+        onClose={() => setSettingsOpen(false)} onPlayerControls={() => { setSettingsOpen(false); sharedYt?.focusControls?.(); }} />}
     </article>
   );
 }
@@ -667,11 +628,32 @@ function mergeVideoCommentLists(primary = [], secondary = []) {
 }
 
 function CommentsSheet({ post, onClose }) {
+  const originalUrl = safePostLink(post.sourceUrl);
   const [comments, setComments] = useState(null);
   const [live, setLive] = useState(false);
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const closeButton = useRef(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const previous = document.activeElement;
+    closeButton.current?.focus();
+    const handleKey = event => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); onCloseRef.current(); return; }
+      if (event.key !== 'Tab') return;
+      const sheet = closeButton.current?.closest('.video-comments-sheet');
+      const controls = [...(sheet?.querySelectorAll('a[href], button:not(:disabled), textarea:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])') || [])].filter(control => control.getClientRects().length > 0);
+      const first = controls[0], last = controls.at(-1);
+      if (!first) return;
+      if (!sheet.contains(document.activeElement) || (!event.shiftKey && document.activeElement === last) || (event.shiftKey && document.activeElement === first)) {
+        event.preventDefault(); (event.shiftKey ? last : first).focus();
+      }
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => { document.removeEventListener('keydown', handleKey); previous?.focus?.(); };
+  }, []);
 
   // How long this specific post's comments were actually open — feeds the
   // feed's own ranking the same way video watch time does (see
@@ -746,6 +728,7 @@ function CommentsSheet({ post, onClose }) {
 
   return (
     <div
+      className="video-comments-sheet" role="dialog" aria-modal="true" aria-label="Comments"
       onClick={onClose}
       style={{
         position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,.55)',
@@ -769,6 +752,7 @@ function CommentsSheet({ post, onClose }) {
             Comments {comments?.length > 0 ? `(${comments.length})` : ''}
           </div>
           <button
+            ref={closeButton}
             onClick={onClose}
             aria-label="Close comments"
             style={{ all: 'unset', color: 'var(--muted)', fontSize: '1.3rem', cursor: 'pointer', lineHeight: 1, padding: 4 }}
@@ -782,9 +766,9 @@ function CommentsSheet({ post, onClose }) {
           )}
           {!loading && comments?.length === 0 && (
             <div style={{ textAlign: 'center', padding: '20px 8px', color: 'var(--muted)', fontSize: '.85rem' }}>
-              {live === false && post.sourceUrl
+              {live === false && originalUrl
                 ? <>No comments loaded from {post.sourceLabel || post.source} yet.<br />
-                    <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--text)', fontWeight: 700 }}>
+                    <a href={originalUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--text)', fontWeight: 700 }}>
                       View the original post ↗
                     </a>
                   </>
@@ -832,6 +816,41 @@ function CommentsSheet({ post, onClose }) {
 
 export default function VideoFeedView({ onExit, music = false }) {
   const { profile } = useAuth();
+  const { showToast } = useToast();
+  const [fullScreen, setFullScreen] = useState(Boolean(document.fullscreenElement));
+  const enteredFullScreen = useRef(false);
+  const fullScreenView = useRef({ mounted: true, generation: 0 });
+  useEffect(() => {
+    fullScreenView.current.mounted = true;
+    const update = () => { setFullScreen(Boolean(document.fullscreenElement)); if (!document.fullscreenElement) enteredFullScreen.current = false; };
+    document.addEventListener('fullscreenchange', update);
+    return () => {
+      fullScreenView.current.mounted = false;
+      fullScreenView.current.generation += 1;
+      document.removeEventListener('fullscreenchange', update);
+      if (enteredFullScreen.current && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    };
+  }, []);
+  const onFullScreen = async nativeVideo => {
+    const generation = fullScreenView.current.generation;
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else if (document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen();
+        if (!fullScreenView.current.mounted || generation !== fullScreenView.current.generation) {
+          if (document.fullscreenElement === document.documentElement) await document.exitFullscreen();
+          return;
+        }
+        enteredFullScreen.current = true;
+      }
+      else if (nativeVideo?.webkitEnterFullscreen) nativeVideo.webkitEnterFullscreen();
+      else showToast('Use the player’s full screen button.', 'info');
+    } catch { if (fullScreenView.current.mounted) showToast('Full screen could not open. Try the player’s full screen button.', 'error'); }
+  };
+  const exitFeed = useCallback(() => {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    onExit();
+  }, [onExit]);
   const memberRef = useRef(profile?.id);
   memberRef.current = profile?.id;
   const [locationContext, setLocationContext] = useState(null);
@@ -932,7 +951,6 @@ export default function VideoFeedView({ onExit, music = false }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   useSelectedTabMetrics(music ? 'music_source' : 'video_source', sourceFilter, filterOpen || sourceFilter.length > 0);
-  const controlsVisible = true;
   // Mirrors state into refs so loadPage (called from effects/callbacks that
   // don't want to be redeclared on every mode/filter change) always reads
   // the current value instead of whatever was captured at its own creation —
@@ -1518,7 +1536,7 @@ export default function VideoFeedView({ onExit, music = false }) {
     if (!container) return;
     function handlePointerDown(e) {
       if (e.pointerType !== 'mouse' || e.button !== 0) return;
-      if (e.target.closest('button, a, [role="button"], .video-caption-scroll')) return;
+      if (e.target.closest('button, a, video[controls], input, [role="button"], .video-caption-scroll')) return;
       const startY = e.clientY;
       const startScrollTop = container.scrollTop;
       let dragged = false;
@@ -1561,7 +1579,10 @@ export default function VideoFeedView({ onExit, music = false }) {
     let gesture = null;
     let fallbackTimer = null;
     const handleTouchStart = event => {
-      if (event.touches.length !== 1) {
+      const target = event.target instanceof Element ? event.target : null;
+      const video = target?.closest('video[controls]');
+      const controlTouch = video && event.touches[0]?.clientY >= video.getBoundingClientRect().bottom - 64;
+      if (event.touches.length !== 1 || controlTouch || target?.closest('input, button, a, [role="button"]')) {
         gesture = null;
         return;
       }
@@ -1764,7 +1785,6 @@ export default function VideoFeedView({ onExit, music = false }) {
   const sharedYtLifecycleRef = useRef(0);
   const sharedYtDesiredIdRef = useRef(null);
   const sharedYtMutedRef = useRef(muted);
-  const sharedYtSeekingRef = useRef(false);
   const sharedYtHiddenResumeRef = useRef(null);
   // Guards a fast-swipe race on loadVideoById — see the effect below.
   const sharedYtPendingLoadRef = useRef(null);
@@ -1875,7 +1895,7 @@ export default function VideoFeedView({ onExit, music = false }) {
       try {
         if (sharedYtLoadedIdRef.current !== targetId) {
           sharedYtLoadedIdRef.current = targetId;
-          setSharedYt(s => ({ ...s, duration: 0, currentTime: 0, paused: false }));
+          setSharedYt(s => ({ ...s, duration: 0, currentTime: 0, paused: false, settings: null }));
           player.loadVideoById(targetId);
         }
         if (sharedYtMutedRef.current) player.mute(); else player.unMute();
@@ -1990,6 +2010,14 @@ export default function VideoFeedView({ onExit, music = false }) {
                 }
               } catch {}
             },
+            onPlaybackRateChange: e => {
+              if (!isCurrent() || e.target.getVideoData?.()?.video_id !== sharedYtDesiredIdRef.current) return;
+              try { setSharedYt(state => ({ ...state, settings: readYouTubeSettings(e.target) })); } catch {}
+            },
+            onApiChange: e => {
+              if (!isCurrent() || e.target.getVideoData?.()?.video_id !== sharedYtDesiredIdRef.current) return;
+              try { setSharedYt(state => ({ ...state, settings: readYouTubeSettings(e.target) })); } catch {}
+            },
             onError: () => {
               sharedYtCreatingRef.current = false;
               if (isCurrent()) setSharedYt(s => ({ ...s, failed: true, paused: true }));
@@ -2035,7 +2063,7 @@ export default function VideoFeedView({ onExit, music = false }) {
 
   useEffect(() => {
     const pollId = setInterval(() => {
-      if (document.hidden || !sharedYtReadyRef.current || !sharedYtDesiredIdRef.current || sharedYtSeekingRef.current) return;
+      if (document.hidden || !sharedYtReadyRef.current || !sharedYtDesiredIdRef.current) return;
       try {
         const player = sharedYtPlayerRef.current;
         const currentTime = player?.getCurrentTime() || 0;
@@ -2047,9 +2075,10 @@ export default function VideoFeedView({ onExit, music = false }) {
         // still switching. Never reject a different item using stale data.
         if (!actualId || actualId !== expectedId) return;
         onDurationResolved(currentPost, duration);
-        setSharedYt(s => (s.currentTime === currentTime && s.duration === duration)
+        const settings = readYouTubeSettings(player);
+        setSharedYt(s => (s.currentTime === currentTime && s.duration === duration && JSON.stringify(s.settings) === JSON.stringify(settings))
           ? s
-          : { ...s, currentTime, duration });
+          : { ...s, currentTime, duration, settings });
       } catch {}
     }, 250);
     return () => clearInterval(pollId);
@@ -2068,11 +2097,32 @@ export default function VideoFeedView({ onExit, music = false }) {
     clearInterval(sharedYtRetryRef.current);
     try { if (p.getPlayerState() === 1) p.pauseVideo(); else p.playVideo(); } catch {}
   }, []);
-
-  const sharedYtSeekTo = useCallback((time) => {
-    setSharedYt(s => ({ ...s, currentTime: time }));
-    try { sharedYtPlayerRef.current?.seekTo(time, true); } catch {}
-  }, []);
+  const currentSettingsPlayer = () => {
+    const player = sharedYtPlayerRef.current;
+    return sharedYtReadyRef.current && player?.getVideoData?.()?.video_id === sharedYtDesiredIdRef.current ? player : null;
+  };
+  const setYouTubePlaybackRate = rate => {
+    try {
+      const player = currentSettingsPlayer();
+      if (!player || !player.getAvailablePlaybackRates?.().includes(rate)) return;
+      player.setPlaybackRate(rate);
+    } catch { showToast('Playback speed could not change. Try the YouTube player settings.', 'error'); }
+  };
+  const setYouTubeCaptionFontSize = size => {
+    try {
+      const player = currentSettingsPlayer();
+      if (!player || !Number.isInteger(size) || size < -1 || size > 3 || !player.getOptions?.('captions')?.includes('fontSize')) return;
+      player.setOption('captions', 'fontSize', size);
+      setSharedYt(state => ({ ...state, settings: readYouTubeSettings(player) }));
+    } catch { showToast('Caption size could not change. Try the YouTube player settings.', 'error'); }
+  };
+  const focusYouTubeControls = () => {
+    requestAnimationFrame(() => {
+      const frame = sharedYtWrapperRef.current?.querySelector('iframe');
+      frame?.focus();
+      showToast('Use YouTube’s settings gear for quality and its CC button for captions.', 'info');
+    });
+  };
 
   // Safety net for the page background showing through as a light strip
   // anywhere this full-bleed view doesn't perfectly cover the real
@@ -2096,16 +2146,21 @@ export default function VideoFeedView({ onExit, music = false }) {
   }, []);
 
   useEffect(() => {
-    const handleKey = (e) => { if (e.key === 'Escape') onExit(); };
+    const handleKey = event => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if (document.fullscreenElement) return;
+      if (document.querySelector('[role="menu"], [role="dialog"], dialog[open], .video-comments-sheet')) return;
+      exitFeed();
+    };
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
-  }, [onExit]);
+  }, [exitFeed]);
 
   return (
     <div className="video-feed-view">
-      <div className="video-feed-frame" data-controls-visible={controlsVisible} data-orientation={activeIsWideVideo ? 'landscape' : 'portrait'}>
+      <div className="video-feed-frame" data-orientation={activeIsWideVideo ? 'landscape' : 'portrait'}>
       <header className="video-feed-top-controls" aria-label={music ? 'Music feed' : 'Video feed'}>
-        <button type="button" className="video-feed-header-button" onPointerDown={event => event.stopPropagation()} onClick={onExit} aria-label="Back to Home" title="Back to Home">
+        <button type="button" className="video-feed-header-button" onPointerDown={event => event.stopPropagation()} onClick={exitFeed} aria-label="Back to Home" title="Back to Home">
           <img className="video-feed-ufi-mark" src="/uficonnect-google-verification-icon.svg" alt="" width="25" height="25" />
         </button>
         <div className="video-feed-mode-switch" role="group" aria-label="Video feed mode">
@@ -2361,10 +2416,10 @@ export default function VideoFeedView({ onExit, music = false }) {
             {videoPosts.map((post, idx) => <div key={post.id || idx} ref={element => { slideRefs.current[idx] = element; }}
               data-idx={idx} data-post-id={post.id || ''} data-source={post.source || ''} className="video-feed-snap-item">
               {Math.abs(idx - activeIndex) <= VIDEO_MOUNT_RADIUS ? <VideoSlide post={post} onPostUpdated={updatePost} onRemoved={removed => setVideoPosts(previous => previous.filter(item => item.id !== removed.id))} active={idx === activeIndex}
-                controlsVisible={controlsVisible}
+                fullScreen={fullScreen} onFullScreen={onFullScreen}
                 muted={muted} onToggleMute={toggleMuted} isScrolling={isScrolling} onOpenComments={setCommentsPost}
                 onDurationResolved={onDurationResolved}
-                sharedYt={idx === activeIndex ? { ...sharedYt, togglePlay: sharedYtTogglePlay, seekTo: sharedYtSeekTo, seekingRef: sharedYtSeekingRef } : undefined} />
+                sharedYt={idx === activeIndex ? { ...sharedYt, togglePlay: sharedYtTogglePlay, setPlaybackRate: setYouTubePlaybackRate, setCaptionFontSize: setYouTubeCaptionFontSize, focusControls: focusYouTubeControls } : undefined} />
                 : <div className="video-feed-placeholder" />}
             </div>)}
         {/* Keep the iframe alive inside the scrolling region across filters

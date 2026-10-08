@@ -90,6 +90,9 @@ try {
       if (endpoint.startsWith('/office/feed/videos')) return route.fulfill({ json: {
         posts: ['youtube', 'mastodon', 'reddit', 'devto'].map((source, i) => ({
           id: `audit-video-${i}`, source, title: `Preparation clip ${i + 1}`,
+          author: i === 0
+            ? { id: 'youtube_UCabcdefghijklmnopqrstuv', name: 'Audit channel', channelId: 'UCabcdefghijklmnopqrstuv' }
+            : { id: `audit-creator-${i}`, name: `Audit creator ${i + 1}`, profileUrl: 'https://example.org/audit-creator' },
           content: 'Practical advice for preparing a clear professional introduction. '.repeat(8),
           sourceUrl: i % 3 === 0 ? 'https://www.youtube.com/watch?v=aaaaaaaaaaa' : 'https://example.org/clip',
           mediaType: 'video', mediaUrl: i % 3 === 0 ? 'https://www.youtube.com/watch?v=aaaaaaaaaaa' : base + 'media/preparation/professional-introduction.mp4',
@@ -230,8 +233,21 @@ try {
     assert.ok(await page.evaluate(() => window.__auditYouTubePlayers.some(player => player.getPlayerState() === 1)), 'YouTube in Videos keeps playing after the pointer leaves');
     assert.equal(await page.locator('.video-feed-youtube-player iframe').evaluate(el => getComputedStyle(el).pointerEvents), 'auto', 'Official player controls remain usable inside the media area');
     const firstSlide = page.locator('[data-post-id="audit-video-0"]');
-    assert.equal(await firstSlide.getByRole('button', { name: 'Show video controls', exact: true }).count(), 0, 'Video commands no longer occupy the bottom caption');
-    assert.ok(await firstSlide.getByRole('group', { name: 'Video controls and engagement', exact: true }).isVisible());
+    assert.equal(await firstSlide.getByRole('button', { name: 'Show video controls', exact: true }).count(), 0, 'Core video commands do not require a reveal button');
+    assert.ok(await firstSlide.getByRole('group', { name: 'Post actions', exact: true }).isVisible());
+    assert.ok(await firstSlide.getByRole('group', { name: 'Playback controls', exact: true }).isVisible());
+    assert.ok(await firstSlide.getByRole('button', { name: 'Pause video', exact: true }).isVisible());
+    assert.equal(await firstSlide.getByRole('button', { name: /^(?:Mute|Unmute) video$/ }).count(), 1);
+    assert.ok(await firstSlide.locator('.post-chrome-like').isVisible(), 'Likes stay outside the playback menu');
+    assert.ok(await firstSlide.getByRole('button', { name: 'Save post', exact: true }).isVisible(), 'Save stays outside the playback menu');
+    assert.equal(await firstSlide.locator('.post-chrome-identity').getAttribute('href'), 'https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv');
+    const more = firstSlide.getByRole('button', { name: 'More options', exact: true });
+    await more.click();
+    await page.getByRole('menu').waitFor({ state: 'visible' });
+    assert.equal(await page.getByRole('menuitem', { name: /^(?:Play|Pause|Mute|Unmute) video$/ }).count(), 0);
+    await page.keyboard.press('Escape');
+    await page.getByRole('menu').waitFor({ state: 'detached' });
+    assert.equal(new URL(page.url()).pathname, '/videos', 'Escape closes the menu without leaving Videos');
     const original = firstSlide.getByRole('link', { name: /View original post/ });
     assert.ok(await original.isVisible());
     const clickable = await original.evaluate(el => {
@@ -259,6 +275,7 @@ try {
     });
     assert.ok(await page.evaluate(() => window.__auditYouTubePlayers.every(player => player.getPlayerState() !== 1)), 'The previous YouTube slide pauses after scrolling');
     assert.equal(await native.evaluate(el => getComputedStyle(el).objectFit), 'contain');
+    assert.equal(await native.evaluate(el => el.controls), true, 'Native playback controls stay available');
     await page.screenshot({ path: path.join(output, `videos-${viewport.width}.png`) });
     checks += 5;
     await page.screenshot({ path: path.join(output, `following-${viewport.width}.png`) });
