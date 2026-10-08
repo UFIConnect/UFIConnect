@@ -57,6 +57,8 @@ test('detailed report includes every page, screen and tab, zero-filled days, cor
     ('2026-10-01','app_feed','page_view','',5),
     ('2026-09-09','creator_analytics','page_view','',6),
     ('2026-09-08','settings_data','page_view','',7),
+    ('2026-05-01','home','page_view','',12),
+    ('2026-04-30','home','page_view','',100),
     ('2026-10-09','home','page_view','',9),
     ('2026-10-08','command_center_media','client_error','render_error',2),
     ('2026-10-01','app_feed','client_error','request_failed',3);`);
@@ -64,13 +66,18 @@ test('detailed report includes every page, screen and tab, zero-filled days, cor
     now: () => Date.parse('2026-10-08T00:01:00Z'), schedule() {} });
   const res = response(); await metrics.report({}, res); const result = res.body;
   assert.equal(res.statusCode, 200);
-  assert.deepEqual(result.range, { from: '2026-09-09', to: '2026-10-08' });
+  assert.deepEqual(result.range, { from: '2026-05-01', to: '2026-10-08' });
   assert.deepEqual([result.today,result.last7,result.last30], [5,9,20]);
   assert.deepEqual(result.platforms, { web: { today:5,last7:5,last30:11 }, mobile:{ today:0,last7:4,last30:9 } });
   assert.deepEqual(result.viewTypes, { page:{ today:2,last7:2,last30:8 },screen:{ today:0,last7:0,last30:5 },tab:{ today:3,last7:7,last30:7 } });
   assert.deepEqual([result.performance.today,result.performance.last7,result.performance.last30], [2,2,5]);
   assert.equal(result.categories.length, analytics.PAGE_CATEGORIES.length);
-  assert.equal(result.daily.length, 30);
+  assert.equal(result.daily.length, 161);
+  assert.equal(result.retentionDays, 161);
+  assert.deepEqual(result.daily[0], { day:'2026-05-01',views:12,errors:0,web:12,mobile:0 });
+  assert.equal(result.history.firstRecordedDay, '2026-05-01');
+  assert.equal(result.history.lastRecordedDay, '2026-10-08');
+  assert.equal(result.categories.find(row => row.category === 'settings_data').daily.find(row => row.day === '2026-09-08').views, 7);
   assert.deepEqual(result.daily.at(-1), { day:'2026-10-08',views:5,errors:2,web:5,mobile:0 });
   assert.ok(result.daily.some(day => day.views === 0));
   const row = result.categories.find(row => row.category === 'command_center_media');
@@ -84,7 +91,8 @@ test('detailed report includes every page, screen and tab, zero-filled days, cor
   assert.equal(result.storage.acknowledgement, 'after-durable-write');
   assert.equal(result.storage.status, 'ready');
   assert.equal(result.performance.byCode.find(row => row.code === 'request_failed').last7, 0);
-  assert.equal((await pg.query("SELECT count(*)::int AS count FROM analytics_daily_counts WHERE day='2026-09-08'")).rows[0].count, 0);
+  assert.equal((await pg.query("SELECT count(*)::int AS count FROM analytics_daily_counts WHERE day='2026-09-08'")).rows[0].count, 1);
+  assert.equal((await pg.query("SELECT count(*)::int AS count FROM analytics_daily_counts WHERE day='2026-04-30'")).rows[0].count, 0);
 });
 
 test('successful collector receipts are durable across restart, including arrivals during retention', async t => {
@@ -192,7 +200,7 @@ test('real analytics endpoints aggregate fixed categories without accepting or p
   assert.equal(app.queries.some(query => /INSERT INTO (page_views|user_sign_in_events|client_error_reports|negative_usage_signals)/.test(query.sql)), false);
 });
 
-test('aggregate batching retries safely, bounds counts, and expires only new aggregates after 30 UTC days', async t => {
+test('aggregate batching retries safely, bounds counts, and preserves May onward beyond rolling windows', async t => {
   const pg = new PGlite(); await pg.exec(analytics.ANALYTICS_SCHEMA); t.after(() => pg.close());
   let fail = true; let inserts = 0; let clock = Date.parse('2026-09-20T10:00:00Z'); let timer;
   const db = { isConnected: () => true, async query(sql, params) {
@@ -214,15 +222,18 @@ test('aggregate batching retries safely, bounds counts, and expires only new agg
   await metrics.pageview({ body: { category: 'home' } }, response());
   await metrics.flush();
   const rows = (await pg.query('SELECT day::text, event_count FROM analytics_daily_counts')).rows;
-  assert.deepEqual(rows.map(row => ({ day: row.day, count: Number(row.event_count) })), [{ day: '2026-10-20', count: 1 }]);
+  assert.deepEqual(rows.map(row => ({ day: row.day, count: Number(row.event_count) })).sort((a,b) => a.day.localeCompare(b.day)), [{ day: '2026-09-20', count: 100 }, { day: '2026-10-20', count: 1 }]);
   assert.equal((await pg.query('SELECT path FROM page_views')).rows[0].path, 'legacy-private-history');
   assert.equal(typeof timer, 'function');
   await Promise.all(Array.from({ length: 5999 }, () => metrics.pageview({ body: { category: 'home' } }, response())));
   const limited = response(); metrics.pageview({ body: { category: 'home' } }, limited); assert.equal(limited.statusCode, 429);
   await metrics.flush();
   clock += 30 * 86400_000;
-  await metrics.flush(); // No new events: scheduled cleanup still expires rows.
-  assert.equal((await pg.query('SELECT count(*)::int AS count FROM analytics_daily_counts')).rows[0].count, 0);
+  await metrics.flush(); // No new events: historical totals still survive cleanup.
+  assert.equal((await pg.query('SELECT count(*)::int AS count FROM analytics_daily_counts')).rows[0].count, 2);
+  const history = response(); await metrics.report({}, history);
+  assert.equal(history.body.last30, 0);
+  assert.equal(history.body.daily.find(row => row.day === '2026-09-20').views, 100);
   await assert.rejects(pg.query("INSERT INTO analytics_daily_counts VALUES (CURRENT_DATE,'private-id','page_view','',1)"));
 });
 

@@ -6,12 +6,13 @@ import { createServer } from '../office/node_modules/vite/dist/node/index.js';
 import catalog from '../shared/analytics-categories.json' with { type: 'json' };
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const API = 'https://office-analytics.invalid', TOKEN = 'synthetic-office-audit';
-const days = Array.from({ length: 30 }, (_, index) => new Date(Date.UTC(2026, 9, 8) - (29 - index) * 86400000).toISOString().slice(0, 10));
+const days = Array.from({ length: 161 }, (_, index) => new Date(Date.UTC(2026, 4, 1) + index * 86400000).toISOString().slice(0, 10));
 function report(empty = false) {
-  return { available: true, mode: 'aggregate', daily: days.map(day => ({ day })),
+  return { available: true, mode: 'aggregate', range: { from:'2026-05-01',to:'2026-10-08' },
+    history: { firstRecordedDay: empty ? null : '2026-08-11',lastRecordedDay: empty ? null : '2026-10-08',restoredViews: empty ? 0 : 7 }, daily: days.map(day => ({ day })),
     categories: Object.values(catalog).map(meta => {
       const views = empty ? 0 : meta.category === 'home' ? 3 : meta.category === 'app_feed' ? 4 : meta.category === 'command_center_accounts' ? 2 : 0;
-      return { ...meta, today: views, last7: views, last30: views, errors: { today: 0, last7: 0, last30: 0 }, daily: days.map(day => ({ day, views: day === days.at(-1) ? views : 0, errors: 0 })) };
+      return { ...meta, today: views, last7: views, last30: views, errors: { today: 0, last7: 0, last30: 0 }, daily: days.map(day => ({ day, views: day === days.at(-1) ? views : !empty && day === '2026-08-11' && meta.category === 'home' ? 7 : 0, errors: 0 })) };
     }), performance: { byCode: [] }, storage: { connected: true, status: 'ready', pendingEvents: 0, collector: { rateLimited: 0, writeFailures: 0 } }, service: { total: 0, since: '2026-10-08T00:00:00Z', responses: [] } };
 }
 const server = await createServer({ root: path.join(root, 'office'), configFile: path.join(root, 'office/vite.config.js'), envDir: false,
@@ -36,7 +37,13 @@ try {
         if (mode === 'unauthorized') return route.fulfill({ status: 401, headers, json: { error: 'Unauthorized' } });
         return route.fulfill({ headers, json: report(mode === 'empty') });
       }
-      if (url.pathname === '/office/users') return route.fulfill({ headers, json: { available: true, recent: [], total: 0, pagination: { total: 0, pages: 1, page: 1 }, signupRequests: { available: true, outcomes: [] }, email: { available: true } } });
+      if (url.pathname === '/office/users') return route.fulfill({ headers, json: { available: true,
+        recent: [{ id:'00000000-0000-4000-8000-000000000001',name:'Recovered May member',email:'member@example.invalid',registeredDay:'2026-05-31',createdAt:'2026-10-08T00:00:00Z',onboarded:false }],
+        total:1,onboarded:0,incomplete:1,today:1,last7:1,last30:1,sinceMay:1,incompleteSinceMay:1,knownRegistrationsSinceMay:15,recoveredRegistrations:14,
+        registrationHistory: { from:'2026-05-01',to:'2026-10-08',earlierRegistrationDates:1,daily:[
+          { day:'2026-05-31',currentRegistrations:1,recoveredRegistrations:0,registrations:1 },
+          { day:'2026-08-12',currentRegistrations:0,recoveredRegistrations:14,registrations:14 },
+        ] }, pagination: { total:1,pages:1,page:1 },signupRequests: { available:true,since:'2026-09-17',outcomes:[] },email: { available:true } } });
       if (url.pathname.endsWith('/stream')) return route.fulfill({ headers, contentType: 'text/event-stream', body: 'data: {"backlog":[]}\n\n' });
       return route.fulfill({ headers, json: { ok: true, server: {}, agents: {}, users: [], records: [], cache: {} } });
     });
@@ -48,8 +55,27 @@ try {
     await table.waitFor();
     assert.equal(await table.locator('tbody tr').count(), Object.keys(catalog).length);
     const metric = label => dashboard.locator('.office-analytics-metrics > div').filter({ has: page.getByText(label, { exact: true }) }).locator('dd');
-    assert.equal(await metric('Page / screen views').innerText(), '7');
+    assert.equal(await metric('Page / screen views').innerText(), '14');
     assert.equal(await metric('Tab opens').innerText(), '2');
+    assert.equal(await dashboard.getByLabel('Period', { exact:true }).inputValue(),'history');
+    assert.equal(await dashboard.getByLabel('From (UTC)', { exact:true }).inputValue(),'2026-05-01');
+    assert.equal(await dashboard.locator('.office-analytics-bar.unavailable').count(),102);
+    await dashboard.getByText('Available analytics begins 2026-08-11.', { exact:false }).waitFor();
+    await dashboard.getByText('View daily data', { exact:true }).click();
+    const dailyTable = dashboard.getByRole('region', { name:'Daily activity table',exact:true });
+    assert.ok((await dailyTable.locator('tbody tr').first().innerText()).includes('Unavailable'));
+    assert.ok((await dailyTable.locator('tbody tr').filter({ has: page.getByText('2026-08-11', { exact:true }) }).innerText()).includes('7'));
+    await dashboard.getByText('View daily data', { exact:true }).click();
+    const accounts = dashboard.getByRole('region', { name:'Registered accounts',exact:true });
+    await accounts.getByText('Recovered May member', { exact:true }).waitFor();
+    assert.equal(await accounts.getByLabel('Registration window', { exact:true }).inputValue(),'since_may');
+    const accountRow = accounts.locator('tbody tr').filter({ hasText:'Recovered May member' });
+    assert.ok((await accountRow.innerText()).includes('2026-05-31'));
+    assert.ok((await accountRow.innerText()).includes('Current account record:'));
+    await accounts.getByText('Daily registration history since May', { exact:true }).click();
+    await accounts.getByText('15 known registrations, including 14 recovered historical registrations.', { exact:false }).waitFor();
+    assert.ok((await accounts.locator('details table tbody tr').filter({ has:page.getByText('2026-05-31',{exact:true}) }).innerText()).includes('1'));
+    await accounts.getByText('Daily registration history since May', { exact:true }).click();
     await dashboard.getByLabel('Platform', { exact: true }).selectOption('mobile');
     assert.equal(await metric('Page / screen views').innerText(), '4');
     await dashboard.getByLabel('Category', { exact: true }).selectOption('app_feed');
@@ -78,7 +104,7 @@ try {
     assert.equal(await metric('Page / screen views').innerText(), '0', 'Old credential request cannot restore stale data');
     assert.equal(await metric('Tab opens').innerText(), '0');
     assert.deepEqual(errors, []);
-    console.log(`PASS Office analytics zero categories, filters, dates, errors, refresh and stale token request protection ${width}`);
+    console.log(`PASS Office May date range, recovered analytics, unavailable dates, registration recovery, filters, errors and stale token protection ${width}`);
     await page.close();
   }
 } finally { await browser?.close(); await server.close(); }

@@ -18,9 +18,9 @@ function postRow(source, index, duration = 1200) {
 
 // Emulate the indexed source/cursor read, leaving authentication, source gates,
 // topic/placement filters, equalization and response pagination in the real app.
-async function feedFixture(t, { duration = 1200, emptyFirstWindow = false, interests = [] } = {}) {
+async function feedFixture(t, { duration = 1200, emptyFirstWindow = false, interests = [], sources = ['youtube', 'reddit', 'github'] } = {}) {
   const reads = [];
-  const inventory = ['youtube', 'reddit', 'github'].flatMap(source =>
+  const inventory = sources.flatMap(source =>
     Array.from({ length: 5 }, (_, index) => postRow(source, index + 1, duration)));
   const app = await createAppHarness({ connected: true, query: async (sql, params) => {
     if (!sql.includes('WITH c(source, before_ts, before_id)')) {
@@ -55,6 +55,18 @@ async function feedFixture(t, { duration = 1200, emptyFirstWindow = false, inter
 
 const base = '/office/feed?mode=feed&sort=newest&passive=1&topics=Science&limit=3';
 const ids = response => response.data.posts.map(post => post.id);
+
+test('new supported public sources load separately and together in Home', async t => {
+  const sources = ['weworkremotely', 'cntraveler'];
+  const { app, reads } = await feedFixture(t, { sources });
+  for (const selected of [[sources[0]], [sources[1]], sources]) {
+    const result = await app.request(`${base}&sources=${selected.join(',')}`, { userId: 'source-reader' });
+    assert.equal(result.status, 200);
+    assert.deepEqual([...new Set(result.data.posts.map(post => post.source))].sort(), [...selected].sort(), JSON.stringify({ response: result.data, errors: app.errors, reads }));
+    assert.ok(result.data.posts.every(post => selected.includes(post.source)));
+  }
+  assert.ok(reads.some(read => sources.every(source => read.sources.includes(source))), 'both sources enter the indexed feed read');
+});
 
 async function subscribedYouTubeFixture(t, interests) {
   const app = await createAppHarness();

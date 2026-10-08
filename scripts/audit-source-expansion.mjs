@@ -32,8 +32,12 @@ try {
   for(const name of ['Career sites','Travel','Music & Audio'])await page.getByRole('heading',{name,exact:true}).waitFor();
   assert.equal(await page.getByRole('link',{name:'Sign in on Airbnb',exact:true}).getAttribute('href'),'https://www.airbnb.com/login');
   assert.equal(await page.getByRole('link',{name:'Sign in on Airbnb',exact:true}).getAttribute('rel'),'noopener noreferrer');
-  await page.getByRole('combobox',{name:'Filter accounts'}).selectOption('connected');
-  assert.equal(await page.getByRole('link',{name:'Sign in on Airbnb',exact:true}).count(),0,'External website sign-in is not a linked account');
+  assert.equal(await page.getByRole('combobox',{name:'Filter accounts'}).count(),0,'Account status filters are removed');
+  const airbnb=page.locator('.account-platform-card').filter({has:page.getByText('Airbnb',{exact:true})});
+  assert.equal(await airbnb.locator('.account-platform-card-actions').getByRole('link').count(),1,'Website-only providers have one sign-in action');
+  await airbnb.getByRole('button',{name:/Details/}).click();
+  await airbnb.getByText(/Automatic account sync and publishing are unavailable/).waitFor();
+  assert.equal(await airbnb.getByRole('button',{name:/Disconnect/}).count(),0,'External website sign-in is not a linked account');
   await auditNavigate(page,server.resolvedUrls.local[0]+'command-center?tab=crosspost');
   const category=page.getByRole('combobox',{name:'Publishing category'});
   await category.waitFor();

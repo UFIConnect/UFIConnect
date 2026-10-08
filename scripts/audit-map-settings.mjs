@@ -177,9 +177,10 @@ try {
       assert.equal(JSON.stringify(await state()), before);
       tools = await openTools();
       assert.equal(await tools.getByRole('group', { name: 'Community sources', exact: true }).getByRole('button', { name: 'Reddit', exact: true }).getAttribute('aria-pressed'), 'false', 'Closing the menu retains the draft');
-      const sourceResponse = page.waitForResponse(response => response.url().includes('/office/feed?') && new URL(response.url()).searchParams.get('sources') === 'uficonnect');
-      await apply(tools);
-      await sourceResponse;
+      await Promise.all([
+        page.waitForResponse(response => response.url().includes('/office/feed?') && new URL(response.url()).searchParams.get('sources') === 'uficonnect'),
+        apply(tools),
+      ]);
       await closeTools();
       await page.waitForFunction(key => JSON.parse(localStorage.getItem(key)).sourceSelections.community.length === 1, workspaceKey);
       await page.waitForFunction(() => !document.querySelector('.city-post-grid')?.textContent.includes('reddit map post'));
@@ -190,12 +191,13 @@ try {
       await tools.getByRole('button', { name: '+ Community', exact: true }).click();
       await page.waitForTimeout(300);
       assert.equal(requests.at(-1).topics, undefined, 'Draft topic edits must not filter applied posts');
-      const topicResponse = page.waitForResponse(response => response.url().includes('/office/feed?') && JSON.parse(new URL(response.url()).searchParams.get('mapTopics')).uficonnect?.includes('community'));
       const slider = tools.getByRole('slider', { name: 'Community post count', exact: true });
       assert.equal(await slider.getAttribute('min'), '20'); assert.equal(await slider.getAttribute('max'), '500');
       await slider.press('End');
-      await apply(tools);
-      await topicResponse;
+      await Promise.all([
+        page.waitForResponse(response => response.url().includes('/office/feed?') && JSON.parse(new URL(response.url()).searchParams.get('mapTopics')).uficonnect?.includes('community')),
+        apply(tools),
+      ]);
       await closeTools();
       assert.deepEqual((await state()).topicSelections['community:city'], ['Community']);
       assert.equal((await state()).topicTargets['community:city'].Community, 500);

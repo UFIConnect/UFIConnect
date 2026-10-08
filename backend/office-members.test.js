@@ -99,6 +99,30 @@ test('signup request diagnostics count fixed outcomes without submitted personal
   assert.deepEqual((await f.pg.query('SELECT * FROM signup_daily_counts')).fields.map(field => field.name), ['day','outcome','event_count']);
 });
 
+test('May registration history uses actual account creation dates and preserves historical signup outcomes', async t => {
+  const f = await fixture(t);
+  const may = await user(f.pg, undefined, { createdAt: '2026-05-01T00:00:00Z' });
+  await user(f.pg, undefined, { createdAt: '2026-06-01T12:00:00Z', complete: true });
+  await user(f.pg, undefined, { createdAt: '2026-04-30T23:59:59Z' });
+  await f.pg.exec("INSERT INTO signup_daily_counts VALUES ('2026-05-01','created',2),('2026-04-30','created',9),('2026-09-08','invalid',3)");
+  const result = await f.service.list({ days: 'since_may' });
+  assert.equal(result.total, 3); assert.equal(result.pagination.total, 2);
+  assert.equal(result.sinceMay, 2); assert.equal(result.incompleteSinceMay, 1);
+  assert.equal(result.registrationFrom, '2026-05-01');
+  assert.equal(result.registrationHistory.from, '2026-05-01');
+  assert.deepEqual(result.registrationHistory.daily, [
+    { day: '2026-05-01', registrations: 1, currentRegistrations: 1, recoveredRegistrations: 0, onboarded: 0, incomplete: 1 },
+    { day: '2026-06-01', registrations: 1, currentRegistrations: 1, recoveredRegistrations: 0, onboarded: 1, incomplete: 0 },
+  ]);
+  assert.ok(result.recent.some(row => row.id === may));
+  assert.equal(result.signupRequests.since, '2026-05-01');
+  assert.equal(result.signupRequests.outcomes.find(row => row.outcome === 'created').requests, 2);
+  assert.equal(result.signupRequests.outcomes.find(row => row.outcome === 'invalid').requests, 3);
+  assert.equal((await f.pg.query("SELECT count(*)::int AS count FROM signup_daily_counts WHERE day='2026-05-01'")).rows[0].count, 1);
+  assert.equal((await f.pg.query("SELECT count(*)::int AS count FROM signup_daily_counts WHERE day='2026-04-30'")).rows[0].count, 0);
+  assert.equal((await f.service.list({ days: 'all' })).pagination.total, 3);
+});
+
 test('email uses stored recipient and repeated/concurrent submissions send once with durable status', async t => {
   const f = await fixture(t), id = await user(f.pg, undefined, { email: 'stored@example.invalid' });
   const body = { requestId: randomUUID(), subject: 'Account support', message: 'Plain text support message' };

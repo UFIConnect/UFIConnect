@@ -3,12 +3,12 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '../contexts/ToastContext';
 import client, { publicOAuthRequestConfig } from '../api/client';
-import { CONNECTED_SOCIAL_PLATFORMS, SOURCE_META, withCareerAccountFallback } from './sourceMeta';
+import { SOURCE_META, withCareerAccountFallback } from './sourceMeta';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { normalizeSourceFavorites } from './sourceFavorites';
-import ExternalAccountLogin from './ExternalAccountLogin';
-import { DirectoryControls, AccountSiteLink } from './DirectoryControls';
-import { SOURCE_CATEGORIES, ACCOUNT_STATUSES, sourceSections, accountSections } from './sourceDirectory';
+import AccountConnectionAction from './AccountConnectionAction';
+import { DirectoryControls } from './DirectoryControls';
+import { SOURCE_CATEGORIES, sourceSections, accountSections } from './sourceDirectory';
 import useTabMetrics from '../analytics/useTabMetrics';
 
 const LINK_FIELDS = [
@@ -73,7 +73,6 @@ export default function HomeFeedTools({
   const [disabledSources, setDisabledSources] = useState(new Set());
   const [savingSourceId, setSavingSourceId] = useState(null);
   const [sourceCategory, setSourceCategory] = useState('social');
-  const [accountFilter, setAccountFilter] = useState('all');
   const [accountPlatforms, setAccountPlatforms] = useState(null);
   const [accountConnected, setAccountConnected] = useState({});
   const [accountError, setAccountError] = useState('');
@@ -102,7 +101,6 @@ export default function HomeFeedTools({
   const openPanel = activePanel === undefined ? uncontrolledOpenPanel : activePanel;
   useTabMetrics('home_panel', openPanel);
   useTabMetrics('home_directory', sourceCategory, openPanel === 'sources');
-  useTabMetrics('home_accounts_status', accountFilter, openPanel === 'accounts');
 
   useEffect(() => {
     if (openPanel !== 'files' || attachmentsLoading || attachments.length) return;
@@ -138,23 +136,19 @@ export default function HomeFeedTools({
     if (activePanel === undefined) setUncontrolledOpenPanel(next);
     onActivePanelChange?.(next);
   };
-  const profileConnected = (profile?.connectedPlatforms || CONNECTED_SOCIAL_PLATFORMS.filter(key => profile?.connectedSocial?.[key] || profile?.socialConnected?.[key]));
   const availableSources = useMemo(() => [...new Set(sourceIds)].filter(source => SOURCE_META[source]), [sourceIds]);
   const enabledSourceCount = availableSources.filter(source => !disabledSources.has(source)).length;
   const visibleAccountPlatforms = useMemo(() => {
     if (accountPlatforms === null) return [];
     const entries = Object.entries(accountPlatforms);
     return profile?.plan === 'business'
-      ? entries.filter(([, platform]) => platform.category === 'career')
+      ? entries.filter(([key, platform]) => key === 'linkedin' || platform.category === 'career')
       : entries.filter(([, platform]) => !platform.commandCenterOnly);
   }, [accountPlatforms, profile?.plan]);
-  const connectedAccountCount = accountPlatforms === null
-    ? profileConnected.length
-    : visibleAccountPlatforms.filter(([key]) => accountConnected[key]).length;
   const sourceGroups = sourceSections(availableSources, normalizeSourceFavorites(profile?.roleSettings?.feedSourceFavorites)[favoriteMode], sourceCategory, disabledSources);
   const visibleSources = sourceGroups.flatMap(section => section.items);
   const visibleEnabledCount = visibleSources.filter(source => !disabledSources.has(source)).length;
-  const accountGroups = accountSections(visibleAccountPlatforms, accountConnected, accountFilter);
+  const accountGroups = accountSections(visibleAccountPlatforms, accountConnected);
 
   async function persistDisabledSources(next, previous, pendingKey, successMessage) {
     setDisabledSources(next);
@@ -246,6 +240,11 @@ export default function HomeFeedTools({
     try {
       await client.delete(`/social/connect/${platform}`);
       setAccountConnected(current => ({ ...current, [platform]: false }));
+      const linked = (profile?.connectedPlatforms || Object.keys(accountConnected).filter(key => accountConnected[key]
+        && accountPlatforms?.[key]?.connectionMode !== 'external')).filter(key => key !== platform);
+      updateProfileLocally({ connectedPlatforms: linked,
+        connectedSocial: { ...(profile?.connectedSocial || {}), [platform]: false },
+        socialConnected: { ...(profile?.socialConnected || {}), [platform]: false } });
       showToast(`${accountPlatforms?.[platform]?.name || platform} disconnected.`, 'success');
     } catch (error) {
       setAccountError(error?.response?.data?.error || 'Could not disconnect this account.');
@@ -399,9 +398,7 @@ export default function HomeFeedTools({
         </div>
       </ToolPanel>}
 
-      {showAccounts && <ToolPanel title="Connected accounts" summary={connectedAccountCount ? `${connectedAccountCount} connected` : 'Add your sources'} open={openPanel === 'accounts'} onToggle={() => toggle('accounts')}>
-        <DirectoryControls label="accounts" filter={accountFilter} onFilterChange={setAccountFilter}
-          options={[["all", "All statuses"], ...ACCOUNT_STATUSES]} />
+      {showAccounts && <ToolPanel title="Connected accounts" open={openPanel === 'accounts'} onToggle={() => toggle('accounts')}>
         <div className="home-connected-account-list" aria-label="Connected account controls">
           {accountPlatforms === null && <div className="home-connected-account-loading"><span className="spinner spinner-primary" /></div>}
           {accountError && (
@@ -414,36 +411,26 @@ export default function HomeFeedTools({
             <section className="home-account-category" key={section.id} aria-label={`${section.label} accounts`}>
               <div className="home-account-category-heading">
                 <h4>{section.label}</h4>
-                <span>{section.connectedCount} of {section.total} connected</span>
               </div>
               {section.items.map(([key, platform]) => {
-                const isConnected = Boolean(accountConnected[key]);
+                const isConnected = platform.connectionMode !== 'external' && Boolean(accountConnected[key]);
                 const isConnecting = accountAction === `connect:${key}`;
                 const isDisconnecting = accountAction === `disconnect:${key}`;
-                const external = platform.connectionMode === 'external';
-                const comingSoon = !external && !isConnected && (platform.forceComingSoon || !platform.configured);
                 return (
                   <div className="home-connected-account-row" key={key}>
                     <SourceMark source={key} />
                     <span className="home-connected-account-name">
                       {platform.name || SOURCE_META[key]?.label || key}
-                      {isConnected && <span className="home-connected-account-status">Connected</span>}
                     </span>
                     <div className="source-directory-account-actions">
-                      {external ? <ExternalAccountLogin platform={key} compact /> : isConnected ? (
+                      {isConnected ? (
                         <button type="button" className="btn btn-danger btn-sm" onClick={() => disconnectAccount(key)} disabled={accountAction !== null}>
                           {isDisconnecting ? 'Wait...' : 'Disconnect'}
                         </button>
-                      ) : comingSoon ? (
-                        <button type="button" className="btn btn-ghost btn-sm" disabled>Coming soon</button>
-                      ) : platform.locked ? (
-                        <button type="button" className="btn btn-ghost btn-sm" disabled>Membership</button>
                       ) : (
-                        <button type="button" className="btn btn-primary btn-sm" onClick={() => connectAccount(key)} disabled={accountAction !== null}>
-                          {isConnecting ? 'Opening...' : 'Connect'}
-                        </button>
+                        <AccountConnectionAction platformKey={key} platform={platform} onConnect={() => connectAccount(key)}
+                          connecting={isConnecting} disabled={accountAction !== null} className="btn btn-primary btn-sm" compact />
                       )}
-                      <AccountSiteLink platform={key} name={platform.name} siteUrl={platform.siteUrl} />
                     </div>
                   </div>
                 );
@@ -462,7 +449,7 @@ export default function HomeFeedTools({
               startAccountConnection('bluesky', handle);
             }}>
               <input className="form-input" autoFocus value={blueskyHandle} onChange={event => setBlueskyHandle(event.target.value)} placeholder="name.bsky.social" />
-              <button type="submit" className="btn btn-primary btn-sm" disabled={!blueskyHandle.trim()}>Connect</button>
+              <button type="submit" className="btn btn-primary btn-sm" disabled={!blueskyHandle.trim()}>Sign in &amp; connect</button>
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => setBlueskyHandle(null)}>Cancel</button>
             </form>
           )}

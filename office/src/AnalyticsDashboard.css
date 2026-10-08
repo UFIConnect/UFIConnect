@@ -40,3 +40,4 @@
 .office-analytics .office-analytics-error p { color: #fecdd3; }
 @media (max-width: 800px) { .office-analytics-metrics, .office-analytics-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .office-analytics-two-columns { grid-template-columns: 1fr; gap: 0; } }
 @media (max-width: 460px) { .office-analytics-filters { grid-template-columns: 1fr; } .office-analytics-card { padding: 14px; } .office-analytics-metrics > div { padding: 13px; } .office-analytics-metrics dd { font-size: 25px; } .office-analytics-legend { gap: 10px; font-size: 11px; } }
+.office-analytics-bar.unavailable { background: repeating-linear-gradient(135deg, rgba(148,163,184,.18) 0 3px, transparent 3px 7px); }
