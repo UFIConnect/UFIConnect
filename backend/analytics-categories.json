@@ -944,6 +944,15 @@
     "group": "Home source",
     "viewType": "tab"
   },
+  "home_source_twitch": {
+    "category": "home_source_twitch",
+    "path": "/analytics-tabs/home-source/twitch",
+    "title": "Home source: Twitch",
+    "label": "Home source: Twitch",
+    "platform": "web",
+    "group": "Home source",
+    "viewType": "tab"
+  },
   "home_source_youtube": {
     "category": "home_source_youtube",
     "path": "/analytics-tabs/home-source/youtube",
