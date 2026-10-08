@@ -15,6 +15,7 @@ import UnavailableFeedSources from './UnavailableFeedSources';
 import useTabMetrics from '../analytics/useTabMetrics';
 import useLocationBasedAccounts from './useLocationBasedAccounts';
 import AccountLocationNotice from './AccountLocationNotice';
+import AccountLocationGroups from './AccountLocationGroups';
 import { locationAccountSection } from '../../../shared/accountLocation.js';
 
 const LINK_FIELDS = [
@@ -448,7 +449,7 @@ export default function HomeFeedTools({
                 <h4>{section.label}</h4>
               </div>
               {section.id === 'location' && <AccountLocationNotice ranking={locationRanking} count={section.total} />}
-              {section.items.map(([key, platform]) => {
+              <AccountLocationGroups section={section} headingLevel={5}>{([key, platform]) => {
                 const isConnected = platform.connectionMode !== 'external' && accountConnected[key] === true;
                 const isConnecting = accountAction === `connect:${key}`;
                 const isDisconnecting = accountAction === `disconnect:${key}`;
@@ -471,7 +472,7 @@ export default function HomeFeedTools({
                     </div>
                   </div>
                 );
-              })}
+              }}</AccountLocationGroups>
             </section>
           ))}
           {accountPlatforms !== null && !accountError && accountGroups.length === 0 && (

@@ -32,6 +32,7 @@ import './CommandCenterPlatforms.css';
 import CONTENT_PLATFORMS from '../../../backend/content-platforms.json';
 import useLocationBasedAccounts from '../components/useLocationBasedAccounts';
 import AccountLocationNotice from '../components/AccountLocationNotice';
+import AccountLocationGroups from '../components/AccountLocationGroups';
 import { locationAccountSection } from '../../../shared/accountLocation.js';
 
 // Compatibility with an older API during a rolling deployment. New own-post
@@ -964,7 +965,7 @@ function MemberAccountsSection() {
           </div>
           {section.id === 'location' && <AccountLocationNotice ranking={locationRanking} count={section.total} />}
           <div className="account-category-items">
-      {section.items.map(([key, platform]) => {
+      <AccountLocationGroups section={section} headingLevel={4}>{([key, platform]) => {
         const isConnected = !!connected[key];
         const authorization = sourceAuthorizationState(platform, { isConnected });
         const unavailable = !authorization.ready;
@@ -999,7 +1000,7 @@ function MemberAccountsSection() {
             </details>
           </div>
         );
-      })}
+      }}</AccountLocationGroups>
           </div>
         </section>
       ))}

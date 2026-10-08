@@ -10,6 +10,7 @@ import { installAuditMember, auditNavigate } from './audit-session.mjs';
 const require = createRequire(import.meta.url);
 const { createAppHarness, member } = require('../backend/test-support/app-harness');
 const directory = require('../backend/account-directory.json');
+const localDirectory = require('../backend/local-account-directory.json');
 const app = await createAppHarness();
 const server = process.env.UFI_ACCOUNT_LOCATION_AUDIT_ORIGIN
   ? { origin: new URL(process.env.UFI_ACCOUNT_LOCATION_AUDIT_ORIGIN).origin, close: async () => {} }
@@ -28,6 +29,22 @@ const platforms = {
 };
 const positions = { losAngeles: { latitude: 34.052235, longitude: -118.243683, accuracy: 15 },
   toronto: { latitude: 43.6532, longitude: -79.3832, accuracy: 15 } };
+const local = (id, name, siteUrl, category, label, scope = 'city') => ({ id, name, siteUrl, category,
+  description: `Official ${scope === 'region' ? 'regional' : 'local'} source for ${label}.`,
+  localArea: { label, scope }, loginUrl: null, color: '#315299', icon: 'Globe',
+  connectionMode: 'external', configured: false, authorizationSupported: false, authorizationAvailable: false });
+const localSources = Object.fromEntries(localDirectory.areas.flatMap(area => area.sources.map(source => [source.id, {
+  ...local(source.id, source.name, source.siteUrl, source.category, area.label, area.scope), ...source,
+}])));
+assert.equal(localSources.local_latimes.siteUrl, 'https://www.latimes.com/', 'The LA fixture uses the actual official source catalog');
+assert.equal(localSources.local_city_la_jobs.siteUrl, 'https://lacity.gov/jobs');
+assert.equal(localSources.local_city_toronto_jobs.siteUrl, 'https://jobs.toronto.ca/');
+// The source response cannot grant OAuth or replace authoritative provider metadata.
+const maliciousSources = [
+  { ...local('local_unsafe', 'Unsafe source', 'javascript:alert(1)', 'career', 'Unknown'), configured: true, authorizationAvailable: true },
+  local('forged_provider', 'Forged provider', 'https://example.test/', 'career', 'Unknown'),
+  { ...local('mastodon', 'Forged Mastodon', 'https://example.test/forged', 'career', 'Unknown'), configured: false },
+];
 const palette = async locator => locator.evaluate(element => {
   const style = getComputedStyle(element);
   return [style.backgroundColor, style.color, style.borderColor, style.borderRadius];
@@ -72,14 +89,21 @@ try {
           const city = unknown ? null : toronto ? 'Toronto' : 'Los Angeles';
           const ids = empty ? ['not-in-current-catalog'] : business
             ? ['nextdoor', 'indeed', 'mastodon', 'glassdoor', 'not-in-current-catalog']
-            : unknown ? ['nextdoor', 'indeed', 'tripadvisor', 'not-in-current-catalog']
-              : toronto ? ['github', 'tripadvisor', 'glassdoor', 'not-in-current-catalog']
-                : ['indeed', 'mastodon', 'nextdoor', 'not-in-current-catalog'];
+            : ['mastodon', 'github', 'nextdoor', 'indeed', 'tripadvisor', 'not-in-current-catalog'];
+          const localIds = empty ? [] : unknown
+            ? business ? ['local_calcareers'] : ['local_calmatters', 'local_calcareers']
+            : toronto ? business ? ['local_city_toronto_jobs'] : ['local_citynews_toronto', 'local_city_toronto_jobs']
+              : business ? ['local_city_la_jobs'] : ['local_latimes', 'local_laist', 'local_city_la_jobs'];
+          const citySources = localIds.map(id => ({ ...localSources[id],
+            // Even forged flags on otherwise valid local metadata must stay locked.
+            configured: true, authorizationSupported: true, authorizationAvailable: true, connectionMode: 'oauth' }));
           locationReads.push({ city, point, business, empty });
-          return send({ locationContext: { country: toronto ? 'CA' : 'US', countryName: toronto ? 'Canada' : 'United States', city,
+          return send({ locationContext: { country: unknown ? 'US' : toronto ? 'CA' : 'US',
+            countryName: unknown ? 'United States' : toronto ? 'Canada' : 'United States', city,
+            region: unknown ? 'California' : toronto ? 'Ontario' : 'California',
             available: true, source: unknown ? 'network' : point ? 'device' : 'network', mode: 'auto', radiusMiles: point ? 100 : null },
-            platformIds: ids, basis: unknown ? 'local_relevance' : 'recent_local_activity', windowDays: 7,
-            activityCounts: unknown ? {} : toronto ? { github: 7 } : { indeed: 12, mastodon: 4 }, careerOnly: business });
+            platformIds: ids, localSources: [...citySources, ...maliciousSources.filter(source => !empty || source.id !== 'mastodon')],
+            basis: 'local_sources_and_platforms', careerOnly: business });
         }
         if (endpoint.startsWith('/auth/social/')) { authorizations.push(endpoint); return send({ message: 'Provider authorization disabled in this audit.' }, 409); }
         if (endpoint === '/social/platforms') return send({ platforms, connected: {}, careerOnly: business });
@@ -124,7 +148,7 @@ try {
         assert.equal(await category.getByRole('button', { name: /^All(?: |$)/ }).count(), 0);
         await category.getByRole('button', { name: /^Location based(?: \d+)?$/ }).click();
       }
-      const notice = scope.getByRole('region', { name: 'Location based account ranking', exact: true });
+      const notice = scope.getByRole('region', { name: 'Location based sources', exact: true });
       await scope.getByRole('heading', { name: 'Location based', exact: true }).waitFor();
       await notice.getByText(/Los Angeles/).waitFor();
       const names = () => cards.locator(surface === 'home' ? '.home-connected-account-name' : surface === 'command' ? ':scope > div strong' : '.account-platform-card-header > div:nth-child(2) > div:first-child > span').allTextContents();
@@ -139,7 +163,10 @@ try {
           const card = cards.filter({ has: page.getByText(name, { exact: true }) });
           assert.equal(await card.count(), 1);
           assert.deepEqual(await palette(card), originalPalette, 'Location entries retain the existing account theme');
-          const key = Object.keys(platforms).find(key => platforms[key].name === name), platform = platforms[key];
+          const platform = [...Object.values(platforms), ...Object.values(localSources)].find(platform => platform.name === name);
+          assert.ok(platform, `Expected fixture metadata for ${name}`);
+          const group = scope.getByRole('group', { name: platform.localArea ? 'Local sources' : 'Popular platforms', exact: true });
+          assert.equal(await group.getByText(name, { exact: true }).count(), 1, 'Local sources and familiar platforms use distinct groups');
           const website = card.getByRole('link', { name: `${platform.connectionMode === 'external' ? 'Visit' : 'Open'} ${name} website`, exact: true });
           assert.equal(await website.getAttribute('href'), platform.siteUrl);
           assert.equal(await website.getAttribute('target'), '_blank');
@@ -149,28 +176,48 @@ try {
             const connect = card.getByRole('button', { name: `Sign in and connect ${name}`, exact: true });
             assert.ok(await connect.isDisabled(), 'Location ranking cannot enable unsupported account authorization');
             await connect.evaluate(button => button.click());
+            if (platform.localArea) {
+              const entry = await card.locator('xpath=..').innerText();
+              assert.match(entry, new RegExp(platform.localArea.label), 'Local entries identify their coverage area');
+              if (platform.localArea.scope === 'region') assert.match(entry, /Regional source/i,
+                'Regional fallback is not presented as a city-specific source');
+            }
+          } else {
+            assert.ok(await card.getByRole('button', { name: `Sign in and connect ${name}`, exact: true }).isEnabled(),
+              'Existing provider readiness survives local-source metadata');
           }
         }
+        assert.equal(await scope.getByText(/Unsafe source|Forged provider|Forged Mastodon/, { exact: true }).count(), 0,
+          'Unsafe links, unknown provider IDs and provider metadata overrides cannot create account cards');
       };
-      await checkRows(business ? ['Indeed', 'Glassdoor'] : ['Indeed', 'Mastodon', 'Nextdoor']);
-      assert.match(await notice.innerText(), /7|seven/i, 'Recent activity states its time window');
+      const popularNames = business ? ['Indeed', 'Glassdoor'] : ['Mastodon', 'GitHub', 'Nextdoor', 'Indeed', 'Tripadvisor'];
+      await checkRows([...(business ? ['City of Los Angeles Jobs'] : ['Los Angeles Times', 'LAist', 'City of Los Angeles Jobs']), ...popularNames]);
+      await scope.getByRole('heading', { name: 'Local sources', exact: true }).waitFor();
+      await scope.getByRole('heading', { name: 'Popular platforms', exact: true }).waitFor();
+      assert.doesNotMatch(await notice.innerText(), /ranked|market share|public posts|last 7 days/i,
+        'Curated city sources and platform availability do not claim measured city popularity');
       assert.ok(locationReads.some(read => read.point && Math.abs(read.point[0] - 34.052) < 0.001), 'Location ranking uses the current device city context');
+      await page.screenshot({ path: `${output}/${surface}-${width}-los-angeles.png`, fullPage: true });
       const beforeChange = locationReads.length;
       await context.setGeolocation(positions.toronto);
       await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
       await notice.getByText(/Toronto/).waitFor();
       assert.ok(locationReads.length > beforeChange && locationReads.some(read => read.city === 'Toronto' && read.point?.[0] > 40));
-      await checkRows(business ? ['Indeed', 'Glassdoor'] : ['GitHub', 'Tripadvisor', 'Glassdoor']);
+      await checkRows([...(business ? ['City of Toronto Jobs'] : ['CityNews Toronto', 'City of Toronto Jobs']), ...popularNames]);
       assert.equal(await notice.getByText(/Los Angeles/).count(), 0, 'A city change clears the previous city label');
+      assert.equal(await scope.getByText('Los Angeles Times', { exact: true }).count(), 0, 'A city change replaces the previous city sources');
       await page.screenshot({ path: `${output}/${surface}-${width}-city.png`, fullPage: true });
       unknown = true;
       await Promise.all([
         page.waitForResponse(response => /\/social\/platforms\/location$/.test(new URL(response.url()).pathname)),
         page.evaluate(() => document.dispatchEvent(new Event('visibilitychange'))),
       ]);
-      await checkRows(business ? ['Indeed', 'Glassdoor'] : ['Nextdoor', 'Indeed', 'Tripadvisor']);
+      await checkRows([...(business ? ['CalCareers'] : ['CalMatters', 'CalCareers']), ...popularNames]);
       assert.equal(await notice.getByText(/Los Angeles|Toronto/).count(), 0, 'Unknown city does not retain a previous city claim');
-      assert.match(await notice.innerText(), /relevance|unavailable|unknown|could not|cannot|not available/i, 'Unknown city uses an honest local relevance fallback');
+      assert.match(await notice.innerText(), /regional|unavailable|unknown|could not|cannot|not available/i, 'Unknown city uses an honest regional fallback');
+      assert.equal(await scope.getByText('CityNews Toronto', { exact: true }).count(), 0,
+        'Unknown city cannot retain a previous city publication');
+      await page.screenshot({ path: `${output}/${surface}-${width}-regional.png`, fullPage: true });
       if (business) {
         assert.equal(await category.getByRole('button', { name: /^(?:Social|Video|Work|Design|News|Travel|Music)(?: |&)/ }).count(), 0, 'Business keeps Career sites and Location based categories');
         assert.equal(await scope.getByText('Nextdoor', { exact: true }).count(), 0);
@@ -193,6 +240,7 @@ try {
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
       await page.screenshot({ path: `${output}/${surface}-${width}-empty.png`, fullPage: true });
       results.push({ surface, width, cityChanges: ['Los Angeles', 'Toronto', null], locationReads: locationReads.length,
+        actualCitySources: true, popularPlatforms: true, regionalFallbackLabeled: true, unsafeMetadataRejected: true,
         sourceLocksPreserved: true, themePreserved: true, emptyCategoryPreserved: true, businessCareerOnly: business, providerCalls: 0 });
       await context.close();
       console.log(`PASS Location based accounts: ${surface} ${width}px`);

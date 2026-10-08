@@ -7,7 +7,7 @@ import { PLATFORM_META } from '../platforms';
 import ACCOUNT_DIRECTORY from '../../backend/account-directory.json';
 import { accountSections, selectedAccountSections } from '../../shared/accountCategories.js';
 import { normalizeConnectedAccounts, nativeAccountReadiness, nativeAccountWebsite } from '../connectedAccounts.js';
-import { accountLocationBasisLabel, accountLocationCityLabel, locationAccountSection, normalizeAccountLocationReport } from '../../shared/accountLocation.js';
+import { accountLocalSourceLabel, accountLocationBasisLabel, accountLocationCityLabel, locationAccountSection, normalizeAccountLocationReport } from '../../shared/accountLocation.js';
 
 async function openWebsite(url) {
   try { await Linking.openURL(url); }
@@ -135,7 +135,7 @@ export default function ConnectedAccountsScreen() {
       </ScrollView>
       {visibleSections.map(section => <View key={section.id} style={styles.section}>
         <Text style={styles.sectionTitle} accessibilityRole="header">{section.label}</Text>
-        {section.id === 'location' && <View style={styles.locationNotice} accessibilityLabel="Location based account ranking">
+        {section.id === 'location' && <View style={styles.locationNotice} accessibilityLabel="Location based sources">
           <Text style={styles.locationCity}>City: {accountLocationCityLabel(ranking?.data)}</Text>
           {!ranking || ranking.pending ? <Text style={styles.reason}>Finding sources for this location…</Text> : ranking.error ? <>
             <Text style={styles.reason} accessibilityRole="alert">{ranking.error}</Text>
@@ -145,7 +145,14 @@ export default function ConnectedAccountsScreen() {
             {!section.total && <Text style={styles.reason}>No matching sources for this location.</Text>}
           </>}
         </View>}
-        {section.items.map(([id, platform]) => <PlatformCard key={id} platform={platform} busy={busy} onDisconnect={handleDisconnect} />)}
+        {(section.groups || [{ id: section.id, items: section.items }]).map(group => <View key={group.id} style={styles.locationGroup}>
+          {!!group.label && <Text style={styles.groupTitle} accessibilityRole="header">{group.label}</Text>}
+          {!!group.label && !group.items.length && <Text style={styles.emptyGroup}>{group.emptyMessage}</Text>}
+          {group.items.map(([id, platform]) => <View key={id}>
+            {group.id === 'local' && <Text style={styles.sourceArea}>{accountLocalSourceLabel(platform)}</Text>}
+            <PlatformCard platform={platform} busy={busy} onDisconnect={handleDisconnect} />
+          </View>)}
+        </View>)}
       </View>)}
       {!visibleSections.length && <Text style={styles.subtitle}>No account connections are available yet.</Text>}
     </>}
@@ -162,6 +169,8 @@ const styles = StyleSheet.create({
   categoryActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary }, categoryText: { fontSize: 13, color: COLORS.text }, categoryActiveText: { color: '#fff' },
   section: { marginTop: 16 }, sectionTitle: { fontSize: 17, fontWeight: '700', color: COLORS.text, marginBottom: 10 },
   locationNotice: { marginBottom: 12 }, locationCity: { fontSize: 13, fontWeight: '600', color: COLORS.text, lineHeight: 20 },
+  locationGroup: { marginBottom: 8 }, groupTitle: { fontSize: 14, fontWeight: '700', color: COLORS.text, marginBottom: 8 },
+  emptyGroup: { fontSize: 12, lineHeight: 18, color: COLORS.muted, marginBottom: 8 }, sourceArea: { fontSize: 12, lineHeight: 18, color: COLORS.muted, marginBottom: 5 },
   card: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: 12, padding: 14, marginBottom: 10 },
   cardHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 }, iconWrap: { width: 40, height: 40, borderRadius: 10, justifyContent: 'center', alignItems: 'center' }, icon: { fontSize: 19 },
   cardBody: { flex: 1, minWidth: 0 }, cardName: { fontSize: 15, fontWeight: '700', color: COLORS.text }, cardDescription: { fontSize: 12, color: COLORS.muted, lineHeight: 18, marginTop: 3 }, connected: { fontSize: 12, color: COLORS.success, marginTop: 5 },

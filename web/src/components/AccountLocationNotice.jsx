@@ -1,7 +1,7 @@
 import { accountLocationBasisLabel, accountLocationCityLabel } from '../../../shared/accountLocation.js';
 
 export default function AccountLocationNotice({ ranking, count }) {
-  return <div className="account-location-notice" role="region" aria-label="Location based account ranking">
+  return <div className="account-location-notice" role="region" aria-label="Location based sources">
     <p className="account-location-city"><strong>City:</strong> {accountLocationCityLabel(ranking.data)}</p>
     {ranking.checking ? <p role="status">Finding sources for this location…</p> : ranking.error ? <>
       <p role="alert">{ranking.error}</p>

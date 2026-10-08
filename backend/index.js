@@ -76,7 +76,7 @@ const { createTwitchFeed } = require('./twitch-feed');
 const { canonicalizePreferenceTopics, matchesPreferenceTopic } = require('./feed-preferences');
 const { parseMapSourceTopics, normalizeMapTopic } = require('../shared/map-feed-topics.mjs');
 const { ISO_COUNTRY_CODES, trustedFeedNetworkLocation, memberFeedSnapshotKey } = require('./feed-location');
-const { rankLocationAccounts } = require('./account-location');
+const { locationAccounts } = require('./account-location');
 const { RADIUS_MILES, RADIUS_KM, distanceKm, nearestFeedCity, feedCityByName, deviceFeedPoint } = require('./feed-city-location');
 const { sourceAuthorProfileUrl, safePostLink } = require('./post-links.mjs');
 const {
@@ -20932,23 +20932,11 @@ app.get('/social/platforms/location', (_req, res, next) => {
   // Account discovery follows the current area, never a saved vacation or a
   // caller-supplied destination query. Only coarse context leaves the server.
   const location = getFeedLocationContext(req, user, 'feed');
-  const ranking = rankLocationAccounts({
+  const recommendations = locationAccounts({
     platforms: Object.fromEntries([...visible].map(key => [key, PLATFORMS[key]])),
-    location, publicPosts: globalFeedCache.posts, careerOnly,
-    matchPost(post, context) {
-      const countries = explicitLocationCountries([post.location, post.country, post.countryCode].filter(Boolean).join(' '));
-      const country = countryCodeFromInput(post.countryCode || post.country);
-      if ((country && country !== context.country) || (countries.size && !countries.has(context.country))) return null;
-      const match = feedPostLocationMatch(post, context);
-      // Disambiguate city names when only text (rather than distance) matched.
-      if (match.type === 'local') {
-        if (country !== context.country && !countries.has(context.country)) return null;
-      }
-      return match;
-    },
-    isPublicPost: post => !MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(post.source) && realFeedPosts([post]).length === 1,
+    location, careerOnly,
   });
-  res.json({ ...ranking, locationContext: publicFeedLocationContext(location) });
+  res.json({ ...recommendations, locationContext: publicFeedLocationContext(location) });
 });
 app.get('/social/platforms', authenticate, async (req, res) => {
   const user = await getEffectiveUser(req.user.id);

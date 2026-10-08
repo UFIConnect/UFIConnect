@@ -1,0 +1,94 @@
+{
+  "reviewedAt": "2026-10-08",
+  "areas": [
+    {
+      "country": "US", "regions": ["California", "CA"], "cities": ["Los Angeles", "LA", "Hollywood", "North Hollywood", "East Los Angeles", "West Los Angeles", "Silver Lake", "Echo Park", "Venice", "San Pedro", "Wilmington", "Encino", "Sherman Oaks"], "label": "Los Angeles", "scope": "city",
+      "sources": [
+        { "id": "local_latimes", "name": "Los Angeles Times", "description": "Los Angeles reporting, California news, culture and sports.", "category": "publishing", "siteUrl": "https://www.latimes.com/", "color": "#111827", "icon": "LA" },
+        { "id": "local_laist", "name": "LAist", "description": "Local reporting, public radio and community guides from Los Angeles.", "category": "publishing", "siteUrl": "https://laist.com/", "color": "#0066CC", "icon": "LA" },
+        { "id": "local_city_la_jobs", "name": "City of Los Angeles Jobs", "description": "Official city employment openings and local career programs.", "category": "career", "siteUrl": "https://lacity.gov/jobs", "color": "#165B94", "icon": "LA" }
+      ]
+    },
+    {
+      "country": "US", "regions": ["California", "CA"], "cities": ["San Francisco", "SF"], "label": "San Francisco", "scope": "city",
+      "sources": [
+        { "id": "local_sfstandard", "name": "The San Francisco Standard", "description": "San Francisco news, city politics, culture and neighborhood reporting.", "category": "publishing", "siteUrl": "https://sfstandard.com/", "color": "#F34B3F", "icon": "SF" },
+        { "id": "local_city_sf_jobs", "name": "San Francisco City Careers", "description": "Official City and County of San Francisco job opportunities.", "category": "career", "siteUrl": "https://careers.sf.gov/", "color": "#006B8F", "icon": "SF" }
+      ]
+    },
+    {
+      "country": "US", "regions": ["California", "CA"], "cities": ["San Diego", "La Jolla"], "label": "San Diego", "scope": "city",
+      "sources": [
+        { "id": "local_voice_sd", "name": "Voice of San Diego", "description": "San Diego investigations, local government and community news.", "category": "publishing", "siteUrl": "https://voiceofsandiego.org/", "color": "#C11D30", "icon": "SD" },
+        { "id": "local_times_sd", "name": "Times of San Diego", "description": "Local San Diego news, business, education and arts coverage.", "category": "publishing", "siteUrl": "https://timesofsandiego.com/", "color": "#006B9F", "icon": "SD" },
+        { "id": "local_city_sd_jobs", "name": "City of San Diego Jobs", "description": "Official city job openings and applicant information.", "category": "career", "siteUrl": "https://www.sandiego.gov/empopp/city-jobs", "color": "#007C91", "icon": "SD" }
+      ]
+    },
+    {
+      "country": "US", "regions": ["California", "CA"], "cities": ["Sacramento", "West Sacramento"], "label": "Sacramento area", "scope": "city",
+      "sources": [
+        { "id": "local_sacbee", "name": "The Sacramento Bee", "description": "Sacramento news, regional reporting and California government coverage.", "category": "publishing", "siteUrl": "https://www.sacbee.com/", "color": "#17609A", "icon": "SB" },
+        { "id": "local_capradio", "name": "CapRadio", "description": "Sacramento public radio, regional news and community stories.", "category": "publishing", "siteUrl": "https://www.capradio.org/", "color": "#2563EB", "icon": "CR" },
+        { "id": "local_city_sac_jobs", "name": "City of Sacramento Careers", "description": "Official city employment opportunities and applicant resources.", "category": "career", "siteUrl": "https://www.cityofsacramento.gov/HR/employment", "color": "#174C69", "icon": "SC" }
+      ]
+    },
+    {
+      "country": "US", "regions": ["California", "CA"], "cities": ["San Jose", "Santa Clara", "Sunnyvale", "Milpitas", "Palo Alto", "Mountain View"], "label": "San Jose and the South Bay", "scope": "region",
+      "sources": [
+        { "id": "local_sjspotlight", "name": "San José Spotlight", "description": "Local reporting from San Jose and Santa Clara County communities.", "category": "publishing", "siteUrl": "https://sanjosespotlight.com/", "color": "#D7262E", "icon": "SJ" }
+      ]
+    },
+    {
+      "country": "US", "regions": ["California", "CA"], "cities": ["San Francisco", "SF", "Oakland", "Berkeley", "San Jose", "Santa Clara", "Sunnyvale", "Palo Alto", "Mountain View", "Fremont", "Hayward", "San Mateo", "Redwood City", "Richmond", "Walnut Creek", "Concord", "San Rafael", "Daly City"], "label": "San Francisco Bay Area", "scope": "region",
+      "sources": [
+        { "id": "local_sfgate", "name": "SFGATE", "description": "Bay Area news, culture, food and community stories.", "category": "publishing", "siteUrl": "https://www.sfgate.com/", "color": "#DF2528", "icon": "SF" }
+      ]
+    },
+    {
+      "country": "US", "regions": ["California", "CA"], "cities": ["Santa Ana", "Anaheim", "Irvine", "Orange", "Huntington Beach", "Fullerton", "Costa Mesa", "Newport Beach", "Garden Grove", "Tustin", "Mission Viejo", "Lake Forest", "Laguna Beach", "Laguna Niguel", "San Clemente", "Buena Park", "Westminster", "Brea", "Yorba Linda"], "label": "Orange County", "scope": "region",
+      "sources": [
+        { "id": "local_voice_oc", "name": "Voice of OC", "description": "Orange County investigations, city government and community reporting.", "category": "publishing", "siteUrl": "https://voiceofoc.org/", "color": "#F36F21", "icon": "OC" },
+        { "id": "local_oc_jobs", "name": "Orange County City Jobs", "description": "Official Orange County directory of municipal employment opportunities.", "category": "career", "siteUrl": "https://www.ocgov.com/services/employment/find-city-job", "color": "#185C8E", "icon": "OC" }
+      ]
+    },
+    {
+      "country": "US", "regions": ["New York", "NY"], "cities": ["New York", "New York City", "NYC", "Manhattan", "Brooklyn", "Queens", "Bronx", "The Bronx", "Staten Island"], "label": "New York City", "scope": "city",
+      "sources": [
+        { "id": "local_gothamist", "name": "Gothamist", "description": "New York City local news, neighborhoods, food and culture.", "category": "publishing", "siteUrl": "https://gothamist.com/", "color": "#E23A2E", "icon": "GO" },
+        { "id": "local_thecity", "name": "THE CITY", "description": "Independent local reporting about New York City and its boroughs.", "category": "publishing", "siteUrl": "https://www.thecity.nyc/", "color": "#1F5078", "icon": "NY" },
+        { "id": "local_city_nyc_jobs", "name": "City of New York Jobs", "description": "Official New York City government jobs across city agencies.", "category": "career", "siteUrl": "https://cityjobs.nyc.gov/", "color": "#1B365D", "icon": "NY" }
+      ]
+    },
+    {
+      "country": "US", "regions": ["Illinois", "IL"], "cities": ["Chicago"], "label": "Chicago", "scope": "city",
+      "sources": [
+        { "id": "local_wbez", "name": "WBEZ Chicago", "description": "Chicago public radio, regional news and local investigations.", "category": "publishing", "siteUrl": "https://www.wbez.org/", "color": "#E33D2E", "icon": "WB" },
+        { "id": "local_wttw", "name": "WTTW News", "description": "Chicago public television news and community reporting.", "category": "publishing", "siteUrl": "https://news.wttw.com/", "color": "#0067B1", "icon": "WT" },
+        { "id": "local_city_chicago_jobs", "name": "City of Chicago Careers", "description": "Official city career opportunities and applicant information.", "category": "career", "siteUrl": "https://chicago.gov/DHR", "color": "#167CA6", "icon": "CH" }
+      ]
+    },
+    {
+      "country": "CA", "regions": ["Ontario", "ON"], "cities": ["Toronto", "North York", "Scarborough", "Etobicoke", "East York"], "label": "Toronto", "scope": "city",
+      "sources": [
+        { "id": "local_citynews_toronto", "name": "CityNews Toronto", "description": "Local Toronto news, current affairs and community coverage.", "category": "publishing", "siteUrl": "https://toronto.citynews.ca/", "color": "#CE202F", "icon": "CN" },
+        { "id": "local_torontotoday", "name": "TorontoToday", "description": "Downtown Toronto local news and neighborhood reporting.", "category": "publishing", "siteUrl": "https://www.torontotoday.ca/", "color": "#14758B", "icon": "TO" },
+        { "id": "local_city_toronto_jobs", "name": "City of Toronto Jobs", "description": "Official City of Toronto employment and recreation job opportunities.", "category": "career", "siteUrl": "https://jobs.toronto.ca/", "color": "#165788", "icon": "TO" }
+      ]
+    },
+    {
+      "country": "GB", "regions": ["England", "Greater London", "London", "ENG"], "cities": ["London", "City of London", "Westminster", "Camden", "Islington", "Kensington", "Chelsea", "Greenwich", "Southwark", "Hackney", "Croydon", "Hammersmith"], "label": "London", "scope": "city",
+      "sources": [
+        { "id": "local_londonstandard", "name": "The London Standard", "description": "London news, culture, sport and city life.", "category": "publishing", "siteUrl": "https://www.standard.co.uk/", "color": "#D71920", "icon": "LS" },
+        { "id": "local_londonist", "name": "Londonist", "description": "London neighborhood guides, culture and things to do.", "category": "publishing", "siteUrl": "https://londonist.com/", "color": "#EE342B", "icon": "LO" },
+        { "id": "local_london_careers", "name": "London Jobs and Skills Hub", "description": "London City Hall employment, training and career resources.", "category": "career", "siteUrl": "https://www.london.gov.uk/programmes-strategies/jobs-and-skills/jobs-and-skills-hub", "color": "#17365D", "icon": "LD" }
+      ]
+    },
+    {
+      "country": "US", "regions": ["California", "CA"], "cities": [], "label": "California", "scope": "region",
+      "sources": [
+        { "id": "local_calmatters", "name": "CalMatters", "description": "Statewide California public policy, politics and community reporting.", "category": "publishing", "siteUrl": "https://calmatters.org/", "color": "#CB2027", "icon": "CA" },
+        { "id": "local_calcareers", "name": "CalCareers", "description": "Official California state government employment opportunities.", "category": "career", "siteUrl": "https://calcareers.ca.gov/", "color": "#174A7E", "icon": "CA" }
+      ]
+    }
+  ]
+}

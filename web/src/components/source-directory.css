@@ -46,6 +46,15 @@
 .account-location-notice p { margin: 0 0 6px; }
 .account-location-notice .account-location-city { color: var(--text); }
 .home-account-category .account-location-notice { font-size: .75rem; margin-bottom: 8px; }
+.account-location-group { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.account-location-group + .account-location-group { margin-top: 8px; }
+.account-location-group-heading { margin: 0; color: var(--text); font-size: .86rem; font-weight: 700; }
+.account-location-empty, .account-location-source-area { margin: 0; color: var(--muted); font-size: .76rem; line-height: 1.5; overflow-wrap: anywhere; }
+.account-location-entry { min-width: 0; }
+.account-location-source-area { margin-bottom: 5px; }
+.home-account-category .account-location-group { gap: 5px; }
+.home-account-category .account-location-group-heading { font-size: .78rem; }
+.home-account-category .account-location-source-area, .home-account-category .account-location-empty { font-size: .72rem; }
 .account-platform-card { margin-bottom: 10px; padding: 14px 16px; }
 .account-platform-card-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .account-platform-card-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; margin-left: auto; }

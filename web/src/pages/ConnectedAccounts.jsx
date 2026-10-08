@@ -13,6 +13,7 @@ import { accountSections, selectedAccountSections } from '../components/sourceDi
 import { AccountCategoryNavigation } from '../components/DirectoryControls';
 import useLocationBasedAccounts from '../components/useLocationBasedAccounts';
 import AccountLocationNotice from '../components/AccountLocationNotice';
+import AccountLocationGroups from '../components/AccountLocationGroups';
 import { locationAccountSection } from '../../../shared/accountLocation.js';
 
 const PLATFORM_BENEFITS = {
@@ -316,7 +317,7 @@ export default function ConnectedAccounts() {
               </div>
               {section.id === 'location' && <AccountLocationNotice ranking={locationRanking} count={section.total} />}
               <div className="account-category-items">
-              {section.items.map(([key, p]) => (
+              <AccountLocationGroups section={section}>{([key, p]) => (
                 <PlatformCard
                   key={key}
                   platformKey={key}
@@ -331,7 +332,7 @@ export default function ConnectedAccounts() {
                   disconnecting={disconnecting === key}
                   locked={Boolean(p.locked)}
                 />
-              ))}
+              )}</AccountLocationGroups>
               </div>
             </section>
           ))}
