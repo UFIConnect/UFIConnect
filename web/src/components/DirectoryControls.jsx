@@ -11,8 +11,9 @@ export function DirectoryControls({ label, filter, onFilterChange, options }) {
 }
 
 export function AccountCategoryNavigation({ sections, category, onChange, compact = false }) {
-  const options = [{ id: 'all', label: 'All', total: sections.reduce((total, section) => total + section.total, 0) }, ...sections];
-  const active = options.some(option => option.id === category) ? category : 'all';
+  if (!sections.length) return null;
+  const options = sections;
+  const active = options.some(option => option.id === category) ? category : options[0].id;
   return <fieldset className={`account-category-filter${compact ? ' account-category-filter--compact' : ''}`} aria-label="Account categories">
     <legend>Categories</legend>
     {compact ? <select className="form-select" aria-label="Account category" value={active} onChange={event => onChange(event.target.value)}>

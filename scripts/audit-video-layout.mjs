@@ -223,13 +223,13 @@ try {
       assert.equal(await actions.locator('.post-chrome-source-link').count(), 1, 'The post link stays visible');
       const more = actions.getByRole('button', { name: 'More options', exact: true });
       assert.ok(await more.isVisible());
-      assert.equal(await actions.evaluate(element => element.lastElementChild.classList.contains('post-chrome-source-link') && element.lastElementChild.previousElementSibling.classList.contains('post-chrome-more')), true,
-        'The post link follows the three-dot menu');
+      assert.equal(await actions.evaluate(element => element.lastElementChild.classList.contains('post-chrome-more') && element.lastElementChild.previousElementSibling.classList.contains('post-chrome-source-link')), true,
+        'The source link precedes the three-dot menu');
       assert.ok(await actions.evaluate(element => {
         const more = element.querySelector('.post-chrome-more').getBoundingClientRect();
         const link = element.querySelector('.post-chrome-source-link').getBoundingClientRect();
-        return link.left >= more.right && Math.abs(link.top - more.top) < 1;
-      }), 'The post link sits to the right of three dots in the same row');
+        return more.left >= link.right && Math.abs(link.top - more.top) < 1;
+      }), 'Three dots sit to the right of the source link in the same row');
       assert.equal(await slide.locator('.post-chrome-identity').getAttribute('href'), profileHref,
         'The author name links to its real source profile');
       const routeBefore = page.url();

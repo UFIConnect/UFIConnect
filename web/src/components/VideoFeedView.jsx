@@ -635,9 +635,9 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
             <CommentIcon />{Number.isFinite(post.commentsCount) && <span>{post.commentsCount.toLocaleString()}</span>}
           </button>
           <SavePostButton post={post} className="post-chrome-action" showLabel={false} />
-          <PostOptionsMenu post={post} items={options} sourceItems={sourceItems} onOpenComments={() => onOpenComments?.(post)} onPostUpdated={onPostUpdated} onRemoved={onRemoved} />
           {isMemberPost(post) ? <Link className="post-chrome-action post-chrome-source-link" to={`/p/${encodeURIComponent(post.id)}`} aria-label="Open post" title="Open post"><ArrowUpRight size={18} aria-hidden="true" /></Link>
             : <OpenOnSource post={post} label={validSourceActions ? undefined : 'Open original post'} />}
+          <PostOptionsMenu post={post} items={options} sourceItems={sourceItems} onOpenComments={() => onOpenComments?.(post)} onPostUpdated={onPostUpdated} onRemoved={onRemoved} />
         </div>
       </div>
       {settingsOpen && isYoutube && <YouTubeSettingsDialog settings={sharedYt?.settings}

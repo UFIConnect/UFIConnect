@@ -63,8 +63,7 @@ export default function ConnectedAccounts() {
   const [flash,     setFlash]           = useState(null);
   const [connecting, setConnecting]     = useState(null);
   const [disconnecting, setDisconnecting] = useState(null);
-  const [categoryFilter, setCategoryFilter] = useState('all');
-  useTabMetrics('connected_accounts_category', categoryFilter);
+  const [categoryFilter, setCategoryFilter] = useState('social');
   // null = modal closed; '' or partial text = open, mid-typing. Bluesky is
   // the one platform with no fixed authorization URL (AT Protocol is
   // federated — the handle is how we find which server to route to), so it
@@ -227,8 +226,9 @@ export default function ConnectedAccounts() {
   const careerPlatforms = platforms.filter(([key, p]) => p.category === 'career' || (isBusinessMembership && key === 'linkedin'));
   const generalPlatforms = platforms.filter(([, p]) => !p.commandCenterOnly);
   const accountCategories = accountSections(isBusinessMembership ? careerPlatforms : generalPlatforms, { business: isBusinessMembership });
-  const activeCategory = accountCategories.some(section => section.id === categoryFilter) ? categoryFilter : 'all';
+  const activeCategory = accountCategories.some(section => section.id === categoryFilter) ? categoryFilter : accountCategories[0]?.id;
   const displayedSections = selectedAccountSections(accountCategories, activeCategory);
+  useTabMetrics('connected_accounts_category', activeCategory || '');
 
   return (
     <Layout>
@@ -295,7 +295,6 @@ export default function ConnectedAccounts() {
           </div>
           {!displayedSections.length && <div className="source-directory-empty account-directory-empty" role="status">
             <p>No matching accounts</p>
-            {activeCategory !== 'all' && <button type="button" className="btn btn-outline btn-sm" onClick={() => setCategoryFilter('all')}>Clear category</button>}
           </div>}
           {isBusinessMembership && displayedSections.length > 0 &&
             <p style={{ fontSize: '.8rem', color: 'var(--muted)', lineHeight: 1.5, margin: '0 0 10px' }}>

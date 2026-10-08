@@ -827,7 +827,7 @@ function MemberAccountsSection() {
   const currentAccount = useRef(accountId); currentAccount.current = accountId;
   const accountRequest = useRef(0);
   const [accountsOwner, setAccountsOwner] = useState('');
-  const [accountCategory, setAccountCategory] = useState('all');
+  const [accountCategory, setAccountCategory] = useState('social');
   useTabMetrics('command_center_accounts_category', accountCategory);
 
   const loadAccounts = useCallback(async ({ signal } = {}) => {
@@ -938,7 +938,7 @@ function MemberAccountsSection() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div className="card" style={{ padding: '18px 20px' }}>
-        <h3 style={{ margin: '0 0 4px', fontSize: '.98rem' }}>{isBusinessMembership ? 'Business career connections' : 'All account connections'}</h3>
+        <h3 style={{ margin: '0 0 4px', fontSize: '.98rem' }}>{isBusinessMembership ? 'Business career connections' : 'Account connections'}</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.82rem', lineHeight: 1.55, margin: 0 }}>
           {isBusinessMembership
             ? 'Visit career websites or manage supported account integrations. Job browsing remains in Opportunities.'

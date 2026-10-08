@@ -82,7 +82,7 @@ export default function HomeFeedTools({
   const [accountConnected, setAccountConnected] = useState({});
   const [accountError, setAccountError] = useState('');
   const [accountAction, setAccountAction] = useState(null);
-  const [accountCategory, setAccountCategory] = useState('all');
+  const [accountCategory, setAccountCategory] = useState('social');
   const [blueskyHandle, setBlueskyHandle] = useState(null);
   const [skills, setSkills] = useState([]);
   const [skillInput, setSkillInput] = useState('');

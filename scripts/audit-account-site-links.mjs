@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { createServer } from '../web/node_modules/vite/dist/node/index.js';
 import { installAuditMember, auditNavigate } from './audit-session.mjs';
+import { accountSections } from '../shared/accountCategories.js';
 
 const require = createRequire(import.meta.url);
 const { createAppHarness, member } = require('../backend/test-support/app-harness');
@@ -19,6 +20,7 @@ const platforms = {
   airbnb: { name: 'Airbnb', category: 'travel', connectionMode: 'external', configured: true, authorizationSupported: false, siteUrl: 'https://www.airbnb.com/' },
   customsite: { name: 'Catalog Website', connectionMode: 'external', siteUrl: 'https://example.invalid/' },
 };
+const categories = accountSections(Object.entries(platforms));
 const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api') },
   server: { host: '127.0.0.1', port: 5297, strictPort: false, proxy: { '/api': { target: app.base, rewrite: value => value.replace(/^\/api/, '') } } } });
@@ -43,7 +45,15 @@ try {
     });
     await installAuditMember(page, app, userId);
     await auditNavigate(page, server.resolvedUrls.local[0] + 'connected-accounts');
+    const navigation = page.getByRole('group', { name: 'Account categories' });
+    await navigation.getByRole('button', { name: /^Social \d+$/ }).waitFor();
+    assert.equal(await navigation.getByRole('button', { name: /^All\b/ }).count(), 0);
+    assert.deepEqual(await page.locator('.account-category-heading h2').allTextContents(), ['Social']);
     for (const [key, platform] of Object.entries(platforms)) {
+      const category = categories.find(section => section.items.some(([id]) => id === key));
+      await navigation.getByRole('button', { name: `${category.label} ${category.total}`, exact: true }).click();
+      assert.deepEqual(await page.locator('.account-category-heading h2').allTextContents(), [category.label], 'Website checks cover each provider through its category');
+      assert.equal(await page.locator('.account-platform-card').count(), category.total);
       const card = page.locator('.account-platform-card').filter({ has: page.getByText(platform.name, { exact: true }) });
       const actions = card.locator('.account-platform-card-actions');
       const connect = actions.getByRole('button', { name: `Sign in and connect ${platform.name}`, exact: true });

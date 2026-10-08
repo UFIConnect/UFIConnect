@@ -50,7 +50,7 @@ export default function ConnectedAccountsScreen() {
   const generation = useRef(0);
   const [platforms, setPlatforms] = useState([]), [loading, setLoading] = useState(true);
   const [catalogOwner, setCatalogOwner] = useState(null), [error, setError] = useState('');
-  const [category, setCategory] = useState('all'), [busy, setBusy] = useState(false);
+  const [category, setCategory] = useState('social'), [busy, setBusy] = useState(false);
   const sameOwner = owner => owner && current.current.id === owner.id && current.current.token === owner.token && current.current.business === owner.business;
 
   const fetchPlatforms = useCallback(async ({ signal } = {}) => {
@@ -72,7 +72,7 @@ export default function ConnectedAccountsScreen() {
 
   useEffect(() => {
     const controller = new AbortController();
-    setCategory('all'); setBusy(false); fetchPlatforms({ signal: controller.signal });
+    setCategory('social'); setBusy(false); fetchPlatforms({ signal: controller.signal });
     return () => { controller.abort(); generation.current++; };
   }, [fetchPlatforms]);
 
@@ -97,8 +97,8 @@ export default function ConnectedAccountsScreen() {
 
   if (loading || !sameOwner(catalogOwner)) return <View style={styles.center}><ActivityIndicator size="large" color={COLORS.primary} /></View>;
   const sections = accountSections(platforms, { business }), visibleSections = selectedAccountSections(sections, category);
-  const active = sections.some(section => section.id === category) ? category : 'all';
-  const categories = [{ id: 'all', label: 'All', total: platforms.length }, ...sections];
+  const active = sections.some(section => section.id === category) ? category : sections[0]?.id;
+  const categories = sections;
   return <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
     <Text style={styles.title} accessibilityRole="header">{business ? 'Business career connections' : 'Connected accounts'}</Text>
     <Text style={styles.subtitle}>Browse by category. Supported account connections finish on uficonnect.org.</Text>
