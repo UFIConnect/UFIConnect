@@ -1,4 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import client from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -21,9 +22,9 @@ import PostInlineText from './PostInlineText';
 import PostLinkPreviews from './PostLinkPreviews';
 import useTabMetrics, { useSelectedTabMetrics } from '../analytics/useTabMetrics';
 import YouTubeSettingsDialog from './YouTubeSettingsDialog';
-import { PostHeader, PostOptionsMenu } from './PostCardChrome';
+import { PostHeader, PostOptionsMenu, OpenOnSource, CommentIcon, HeartIcon } from './PostCardChrome';
 import { isMemberPost, safePostLink } from '../../../backend/post-links.mjs';
-import { Play, Pause, Search, SlidersHorizontal, RotateCw } from 'lucide-react';
+import { Play, Pause, Search, SlidersHorizontal, RotateCw, ArrowUpRight } from 'lucide-react';
 import { videoDurationSeconds, isShortFeedVideo, videoSourceKey, safeMediaUrl, fitVideoFrame } from '../utils/videoFeedPolicy.mjs';
 import './VideoFeedView.css';
 import './navigation.css';
@@ -223,7 +224,16 @@ function readYouTubeSettings(player) {
 // its own top comment) instead of each slide owning/destroying its own.
 // Only meaningful when src.kind === 'youtube'; file/hls/vimeo keep their
 // existing fully-local state below, untouched.
+function playbackTime(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return '—:—';
+  const total = Math.floor(seconds);
+  const minutes = Math.floor(total / 60);
+  const tail = String(total % 60).padStart(2, '0');
+  return minutes >= 60 ? `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}:${tail}` : `${minutes}:${tail}`;
+}
+
 function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComments, sharedYt, onDurationResolved, onPostUpdated, onRemoved, fullScreen, onFullScreen }) {
+  const slideRef = useRef(null);
   const src = resolveVideoSource(post);
   const fileVideoRef = useRef(null);
   const hlsVideoRef = useRef(null);
@@ -238,16 +248,26 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   useEffect(() => { if (!active) { setSettingsOpen(false); setPlayerControls(false); } }, [active]);
   const [cursorIdle, setCursorIdle] = useState(false);
   const cursorTimer = useRef(null);
-  const cursorActivity = event => {
+  const cursorActivity = useCallback(() => {
     clearTimeout(cursorTimer.current);
     setCursorIdle(false);
-    if (event.pointerType === 'mouse') cursorTimer.current = setTimeout(() => setCursorIdle(true), 2200);
-  };
+    cursorTimer.current = setTimeout(() => setCursorIdle(true), 2200);
+  }, []);
   useEffect(() => {
     setCursorIdle(false);
     clearTimeout(cursorTimer.current);
-    return () => clearTimeout(cursorTimer.current);
-  }, [active]);
+    if (!active) return;
+    // The shared YouTube iframe is a sibling of the slide. Listen on their
+    // common container so entering either player also reveals app controls.
+    const body = slideRef.current?.closest('.video-feed-body');
+    const events = ['pointermove', 'pointerdown', 'pointerover', 'focusin', 'keydown'];
+    events.forEach(name => body?.addEventListener(name, cursorActivity));
+    cursorActivity();
+    return () => {
+      clearTimeout(cursorTimer.current);
+      events.forEach(name => body?.removeEventListener(name, cursorActivity));
+    };
+  }, [active, cursorActivity]);
   const captionBody = post.content?.trim() && post.content.trim() !== post.title?.trim()
     ? post.content.trim()
     : '';
@@ -552,10 +572,6 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   const sourceItems = sourcePostMenuItems(post).filter(item => validSourceActions || item.key === 'original')
     .map(item => validSourceActions ? item : { ...item, label: 'Open original post' });
   const options = [
-    { label: 'Like post', ...(validSourceActions ? { element: <PostLikes post={post} onPostUpdated={onPostUpdated} menuItem /> }
-      : { disabled: true, detail: 'A playable source video is required.' }) },
-    { key: 'comments', label: `Comments${Number.isFinite(post.commentsCount) ? ` ${post.commentsCount.toLocaleString()}` : ''}`, onSelect: () => onOpenComments?.(post) },
-    { label: 'Save post', element: <SavePostButton post={post} className="video-feed-menu-action" menuItem /> },
     { label: fullScreen ? 'Exit full screen' : 'Full screen', onSelect: () => onFullScreen(getNativeEl()) },
     src && { label: (isYoutube ? sharedYt?.controlsVisible : playerControls) ? 'Hide player controls' : 'Show player controls',
       onSelect: () => { if (isYoutube) sharedYt?.toggleControls?.(); else setPlayerControls(value => !value); } },
@@ -563,16 +579,13 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
     (post.title || hasExtraCaption || post.author?.name) && { label: captionExpanded ? 'Show less' : 'Read more', onSelect: () => setCaptionExpanded(value => !value) },
   ].filter(Boolean);
   return (
-    <article className="video-feed-slide">
-      <div className="video-feed-media" data-video-media data-cursor-idle={cursorIdle}
-        onPointerMove={cursorActivity} onPointerDown={cursorActivity}
-        onPointerLeave={() => { clearTimeout(cursorTimer.current); setCursorIdle(false); }}
-        onFocusCapture={() => { clearTimeout(cursorTimer.current); setCursorIdle(false); }} onClick={event => {
+    <article ref={slideRef} className="video-feed-slide" data-cursor-idle={cursorIdle}>
+      <div className="video-feed-media" data-video-media onClick={event => {
         if (!event.target.closest('iframe, button') && (!event.target.closest('video') || !playerControls)) togglePlay();
       }}>
         {!src ? <p>Video unavailable</p> : src.kind === 'youtube' ? null : src.kind === 'vimeo' ? (
           active ? <iframe ref={vimeoIframeRef}
-            src={`https://player.vimeo.com/video/${src.id}?autoplay=1&muted=${userWantsSound() ? 0 : 1}&loop=1&api=1&controls=${playerControls ? 1 : 0}`}
+            src={`https://player.vimeo.com/video/${src.id}?autoplay=1&muted=${userWantsSound() ? 0 : 1}&loop=1&api=1&title=0&byline=0&portrait=0&controls=${playerControls ? 1 : 0}`}
             referrerPolicy="strict-origin-when-cross-origin"
             allow="autoplay; fullscreen; picture-in-picture" allowFullScreen title={post.title || 'Vimeo video'} />
           : vimeoPoster ? <img src={vimeoPoster} alt="" draggable={false} /> : null
@@ -589,6 +602,8 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
             onLoadedMetadata={acceptNativeMetadata} onDurationChange={acceptNativeMetadata}
             onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
             onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id, context: { surface: 'videos' } })} />}
+      </div>
+      <div className="video-feed-details video-caption-scroll" data-video-details>
         <div className="video-feed-playback-controls" role="group" aria-label="Playback controls">
           <button type="button" className="video-feed-play-button" onClick={event => { event.stopPropagation(); togglePlay(); }}
             disabled={!src || (isYoutube && !sharedYt?.ready)} aria-label={mediaPaused ? 'Play video' : 'Pause video'} title={mediaPaused ? 'Play video' : 'Pause video'}>
@@ -597,9 +612,10 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           <button type="button" className="video-feed-sound-button" onClick={event => { event.stopPropagation(); toggleSound(); }}
             disabled={!src || src.kind === 'vimeo' || (isYoutube && !sharedYt?.ready)} aria-label={mediaMuted ? 'Unmute video' : 'Mute video'}
             title={src?.kind === 'vimeo' ? 'Use player controls for volume' : mediaMuted ? 'Unmute video' : 'Mute video'}><SoundIcon muted={mediaMuted} size={20} /></button>
+          <span className="video-feed-playback-time" aria-label="Playback time">
+            {playbackTime(effectiveCurrentTime)} / {playbackTime(effectiveDuration || videoDurationSeconds(post) || NaN)}
+          </span>
         </div>
-      </div>
-      <div className="video-feed-details video-caption-scroll" data-video-details>
         <PostHeader post={post} member={isMemberPost(post)} />
         {isYoutube && sharedYt?.failed && <p className="video-feed-playback-note" role="status">The embedded player could not start. Try its play button.</p>}
         <div className="video-feed-caption" data-video-caption data-expanded={captionExpanded}>
@@ -614,7 +630,14 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           </div>}
         </div>
         <div className="post-chrome-actions video-feed-post-actions" data-video-actions role="group" aria-label="Post actions">
+          {validSourceActions ? <PostLikes post={post} onPostUpdated={onPostUpdated} /> : <button type="button" className="post-chrome-action" disabled aria-label="Likes unavailable" title="A playable source video is required"><HeartIcon /></button>}
+          <button type="button" className="post-chrome-action" aria-label={`Comments${Number.isFinite(post.commentsCount) ? ` ${post.commentsCount.toLocaleString()}` : ''}`} title="Comments" onClick={() => onOpenComments?.(post)}>
+            <CommentIcon />{Number.isFinite(post.commentsCount) && <span>{post.commentsCount.toLocaleString()}</span>}
+          </button>
+          <SavePostButton post={post} className="post-chrome-action" showLabel={false} />
           <PostOptionsMenu post={post} items={options} sourceItems={sourceItems} onOpenComments={() => onOpenComments?.(post)} onPostUpdated={onPostUpdated} onRemoved={onRemoved} />
+          {isMemberPost(post) ? <Link className="post-chrome-action post-chrome-source-link" to={`/p/${encodeURIComponent(post.id)}`} aria-label="Open post" title="Open post"><ArrowUpRight size={18} aria-hidden="true" /></Link>
+            : <OpenOnSource post={post} label={validSourceActions ? undefined : 'Open original post'} />}
         </div>
       </div>
       {settingsOpen && isYoutube && <YouTubeSettingsDialog settings={sharedYt?.settings}
