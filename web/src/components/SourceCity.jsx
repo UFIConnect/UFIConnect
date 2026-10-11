@@ -4,6 +4,7 @@ import { CITY_NATURE } from '../local/cityNature';
 import { SOURCE_META } from './sourceMeta';
 import { Link } from 'react-router-dom';
 import { CITY_LANDMARKS } from '../local/cityEngineering.mjs';
+import { useResolvedAppearance } from '../preferences/useResolvedAppearance';
 import './maps-workspace.css';
 const Scene = lazy(() => import('./MapCityScene'));
 
@@ -11,7 +12,8 @@ export default function SourceCity({ cities, enabled, active, onSelect, onCivicS
   const [fallback, setFallback] = useState(false), [reset, setReset] = useState(0), [page, setPage] = useState(0);
   const [overview, setOverview] = useState(true);
   const [viewMode, setViewMode] = useState('plan');
-  const [timeOfDay, setTimeOfDay] = useState('day'), [altitude, setAltitude] = useState(100);
+  const timeOfDay = useResolvedAppearance() === 'dark' ? 'night' : 'day';
+  const [altitude, setAltitude] = useState(100);
   const [focusLandmark, setFocusLandmark] = useState(requestedLandmark);
   const cityHeading = useRef(null), returnFocus = useRef(false);
   const [motion, setMotion] = useState(() => globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'paused' : 'full');
@@ -78,7 +80,6 @@ export default function SourceCity({ cities, enabled, active, onSelect, onCivicS
       <button type="button" onClick={() => setMotion(motion === 'paused' ? intensity : 'paused')}>{motion === 'paused' ? 'Play animation' : 'Pause animation'}</button>
       <button type="button" onClick={() => { setAltitude(100); setReset(value => value + 1); }}>Reset view</button>
       {overview && <button type="button" aria-pressed={birdViewActive} onClick={() => { setViewMode(birdViewActive ? 'perspective' : 'plan'); setFocusLandmark(''); setDriveMode(false); }}>Bird’s-eye view</button>}
-      <button type="button" aria-pressed={timeOfDay === 'night'} onClick={() => { setTimeOfDay(timeOfDay === 'night' ? 'day' : 'night'); setDriveMode(false); }}>Night view</button>
       <label>Altitude<input type="range" aria-label="View altitude" min="35" max="180" step="5" value={altitude} disabled={driveMode} onChange={event => setAltitude(Number(event.target.value))} /><output aria-live="off">{altitude}%</output></label>
       <button type="button" aria-pressed={driveMode} disabled={fallback} title={fallback ? 'Drive mode requires the 3D map.' : undefined} onClick={() => { setOverview(true); setDriveMode(value => !value); setDrivePaused(false); setDriveArrival(''); setDriveStatus({ status: 'driving', signal: null }); }}>{driveMode ? 'Exit drive mode' : 'Drive mode'}</button>
     </div>

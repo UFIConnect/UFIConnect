@@ -13,13 +13,16 @@ const providers = require('../backend/travel-providers');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let app;
 let paginationGeneration = 0;
-app = await createAppHarness({ env: { YOUTUBE_API_KEY: 'travel-ui-test' }, modules: { './travel-providers': {
+app = await createAppHarness({ env: { YOUTUBE_API_KEY: 'travel-ui-test' }, modules: {
+  './travel-camera-streams.json': [...require('../backend/travel-camera-streams.json'),
+    { city: 'Tokyo', country: 'Japan', countryCode: 'JP', videoId: 'tokyoAlt001', title: 'Tokyo waterfront live camera' }],
+  './travel-providers': {
   ...providers,
   fetchTravelResource: async (url, options) => {
     if (url.includes('/w/api.php?')) return {query:{pages:[{ns:0,title:new URL(url).searchParams.get('titles'),extract:'A city introduction.\n\n== Get around ==\nUse local transit and walking routes.\n\n== See ==\nExplore the waterfront. <script>window.__guideInjected=true</script>'}]}};
     if (url.includes('/videos?')) {
       app.setYouTubeCallReady();
-      return { items: ['rnXIjl_Rzy4', 'j9Sa4uBGGQ0', 'r74OyneNmg8'].map(id => ({
+      return { items: ['rnXIjl_Rzy4', 'j9Sa4uBGGQ0', 'r74OyneNmg8', 'tokyoAlt001'].map(id => ({
         id, liveStreamingDetails: { actualStartTime: '2026-09-01T00:00:00Z' }, status: { privacyStatus: 'public', embeddable: true },
       })) };
     }
@@ -35,6 +38,9 @@ app = await createAppHarness({ env: { YOUTUBE_API_KEY: 'travel-ui-test' }, modul
     throw new Error('Guide provider unavailable in UI fixture');
   },
 } } });
+// This audit exercises the verified operator catalog and local playback
+// recovery. It never needs background searches or a discovery timer.
+app.exhaustCameraDiscoveryBudget();
 const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api') },
   server: { host: '127.0.0.1', port: 5214, strictPort: false, proxy: { '/api': { target: app.base, rewrite: p => p.replace(/^\/api/, '') } } },
@@ -44,7 +50,9 @@ try {
   await server.listen();
   browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
   await fs.mkdir(path.join(root, '.cache/audit-ui'), { recursive: true });
-  for (const width of [1440, 768, 390, 320]) {
+  const widths = process.env.TRAVEL_AUDIT_WIDTHS
+    ? process.env.TRAVEL_AUDIT_WIDTHS.split(',').map(Number) : [1440, 768, 390, 320];
+  for (const width of widths) {
     const id = `travel-${width}`;
     app.seedUser(member(id));
     const context = await browser.newContext({ viewport: { width, height: 900 }, hasTouch: width <= 768, isMobile: width < 600 });
@@ -120,12 +128,17 @@ try {
       failDestinations = false;
       await rail.getByRole('button', { name: 'Retry destinations', exact: true }).click();
     }
-    await cityChoice('US:Seattle').waitFor({ state: 'attached' });
+    await cityChoice('US:Seattle').waitFor({ state: 'attached' }).catch(async error => {
+      console.log(JSON.stringify({ width, profileWrites, feedRequests, errors,
+        visiblePage: (await page.locator('body').innerText()).slice(0, 1800) }));
+      throw error;
+    });
     await page.waitForFunction(() => document.querySelector('.travel-content-heading')?.textContent.includes('Amsterdam')).catch(async error => {
       console.log(JSON.stringify({ width, profileWrites, settings: app.users.find(user => user.id === id)?.roleSettings, travel: await rail.textContent() }));
       throw error;
     });
     await waitForCitySave();
+    assert.equal(await rail.getByRole('link', { name: 'Airport map', exact: true }).count(), 0, 'Live Travel does not show the removed airport shortcut');
     assert.equal(await cities.getByRole('button').count(), 91, 'all 91 cities share the Live Travel rail');
     const citySearch = rail.getByRole('searchbox', {name:'Search cities',exact:true});
     const beforeSearch = profileWrites;
@@ -198,9 +211,8 @@ try {
     await player.getByRole('button',{name:'Clear city search',exact:true}).click();
     await player.getByRole('button',{name:'Next city',exact:true}).click();
     await waitForCitySave();
-    await player.locator('iframe').waitFor();
-    await player.locator('.travel-camera-fallback').waitFor();
-    assert.equal(await player.locator('iframe').count(),1,'A city without a camera retains one verified live fallback');
+    await player.locator('.travel-camera-unavailable').waitFor();
+    assert.equal(await player.locator('iframe').count(),0,'A city without a camera never plays another city');
     await player.getByRole('button',{name:'City guide',exact:true}).click();
     const nestedGuide=page.locator('.travel-guide-dialog');
     await nestedGuide.waitFor();
@@ -225,10 +237,8 @@ try {
     assert.equal(profileWrites - beforeCameraChoices, 6, 'one save per city selection in the inline and expanded viewers');
     await cityChoice('US:Seattle').click();
     await waitForCitySave();
-    await rail.locator('.travel-camera-fallback').getByText(/No live camera is available in Seattle\. Watching .+ live\./).waitFor();
-    await rail.locator('.travel-live-loop-stage').scrollIntoViewIfNeeded();
-    await rail.locator('iframe').waitFor();
-    assert.equal(await rail.locator('iframe').count(), 1, 'A city without a camera plays a labeled verified fallback');
+    await rail.getByText('No live camera is available in Seattle right now. Check again shortly.').waitFor();
+    assert.equal(await rail.locator('iframe').count(), 0, 'Other live cities cannot replace the selected city');
     await rail.getByRole('button', { name: 'City guide', exact: true }).click();
     const guide = page.getByRole('dialog', { name: 'Seattle city guide', exact: true });
     await guide.waitFor();
@@ -267,7 +277,7 @@ try {
     await guide.waitFor({state:'detached'});
     const heading = page.locator('.travel-content-heading');
     await citySearch.fill('Not saved yet');
-    await rail.locator('.travel-camera-fallback').getByText(/No live camera is available in Seattle\./).waitFor();
+    await rail.getByText('No live camera is available in Seattle right now. Check again shortly.').waitFor();
     await rail.getByRole('button', { name: 'Clear city search', exact: true }).click();
     assert.equal(await cityChoice('US:Seattle').getAttribute('aria-pressed'), 'true', 'Unsaved input cannot change the city player or guide');
     assert.match(await heading.textContent(), /Seattle/);
@@ -286,15 +296,13 @@ try {
     await rail.locator('.travel-live-loop-stage').hover();
     await page.waitForFunction(() => window.__travelPlayers.some(player => player.frame.isConnected && player.playing));
     await page.evaluate(() => window.__travelPlayers.find(player => player.frame.isConnected).options.events.onError({ data: 100 }));
-    await page.waitForFunction(() => window.__travelPlayers.some(player => player.frame.isConnected && player.playing && player.id !== 'r74OyneNmg8'));
-    await rail.getByText(/No live camera is available in Tokyo\. Watching .+ live\./).waitFor();
-    const fallbackId=await page.evaluate(()=>window.__travelPlayers.find(player=>player.frame.isConnected).id);
+    await page.waitForFunction(() => window.__travelPlayers.some(player => player.frame.isConnected && player.playing && player.id === 'tokyoAlt001'));
+    await rail.getByText('Tokyo waterfront live camera', { exact: true }).waitFor();
+    assert.equal(await cityChoice('JP:Tokyo').getAttribute('aria-pressed'), 'true', 'Playback recovery preserves the selected city');
+    assert.equal(await rail.locator('iframe').count(),1,'Only the next verified Tokyo stream is mounted');
     await page.evaluate(() => window.__travelPlayers.find(player => player.frame.isConnected).options.events.onStateChange({ data: 0 }));
-    await page.waitForFunction(previous => window.__travelPlayers.some(player => player.frame.isConnected && player.playing && player.id !== previous && player.id !== 'r74OyneNmg8'),fallbackId);
-    assert.equal(await rail.locator('iframe').count(),1,'ended live streams switch to another verified camera');
-    await page.evaluate(() => window.__travelPlayers.find(player => player.frame.isConnected).options.events.onError({ data: 100 }));
     await rail.getByText('Live cameras are temporarily unavailable. Check again shortly.').waitFor();
-    assert.equal(await rail.locator('iframe').count(),0,'exhausted streams stop instead of looping');
+    assert.equal(await rail.locator('iframe').count(),0,'exhausted city streams stop instead of playing another city');
     await rail.getByRole('button',{name:'Refresh live cameras',exact:true}).click();
     await page.waitForFunction(() => window.__travelPlayers.some(player=>player.frame.isConnected && player.playing));
     await cityChoice('JP:Tokyo').click();

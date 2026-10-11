@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createTrafficPath, createDriveTrafficPath, continueTrafficPath, trafficPoint, trafficPathSignals, trafficLightPhase,
   trafficTurnSpeed, trafficSnapshot, advanceTrafficVehicle, cityResidentCount } from '../web/src/local/cityTraffic.mjs';
-import { CITY_SITES, CITY_LANDMARKS, cityRoadPoint, cityRoadPoints, cityCollectorPoints,
-  cityDriveOrigin, cityDriveWaypoints } from '../web/src/local/cityEngineering.mjs';
+import { CITY_SITES, CITY_LANDMARKS, CITY_RAMPS, cityRoadPoint, cityRoadPoints, cityCollectorPoints,
+  cityDriveOrigin, cityDriveWaypoints, cityRoadPosition, cityTrafficSignals } from '../web/src/local/cityEngineering.mjs';
 
 const line = (y = .11, z = 0, reverse = false) => createTrafficPath(reverse ? [[100, y, z], [0, y, z]] : [[0, y, z], [100, y, z]]);
 const vehicle = (path = line(), extra = {}) => ({ id: 'driver', priority: 200, path, distance: 0, speed: 0, cruise: 5.5, signals: [], active: true, ...extra });
@@ -97,6 +97,29 @@ test('looping collector routes include the return intersection and use collector
   assert.equal(stopped.status, 'red-light');
 });
 
+test('both highway ramp terminals stop on collector red and enter the arterial on their green', () => {
+  const signals = cityTrafficSignals();
+  assert.equal(signals.length, CITY_SITES.length + CITY_LANDMARKS.length + CITY_RAMPS.length);
+  assert.equal(new Set(signals.map(signal => signal.id)).size, signals.length);
+  for (const [index, ramp] of CITY_RAMPS.entries()) {
+    const signal = signals.find(item => item.id === 'highway-ramp-' + index), end = ramp.at(-1);
+    assert.deepEqual(signal.position, [end[0], .11, end[2]]);
+    assert.ok(Math.abs(signal.axis[0] * signal.collectorAxis[0] + signal.axis[2] * signal.collectorAxis[2]) < .5,
+      'Ramp signal faces a crossing approach rather than an opposing arterial lane');
+    const angle = cityRoadPosition('arterial', end[0]);
+    const onward = Array.from({ length: 20 }, (_, i) => cityRoadPoint('arterial', angle + (i + 1) * .002));
+    const path = createTrafficPath([...ramp, ...onward]);
+    const crossings = trafficPathSignals(path, [signal]);
+    assert.equal(crossings.length, 1); assert.equal(crossings[0].approach, 'collector');
+    const stopLine = crossings[0].distance - 3.5;
+    const stopped = advanceTrafficVehicle(vehicle(path, { distance: stopLine, signals: crossings }),
+      { delta: .05, time: 5 - signal.offset });
+    assert.equal(stopped.status, 'red-light'); assert.equal(stopped.distance, stopLine);
+    const green = advanceTrafficVehicle(stopped, { delta: .05, time: 20 - signal.offset });
+    assert.ok(green.distance > stopped.distance); assert.ok(green.speed > 0);
+  }
+});
+
 test('resident population increases while remaining bounded for mobile and neighborhood scenes', () => {
   assert.equal(cityResidentCount(), 108);
   assert.equal(cityResidentCount({ mobile: true }), 72);
@@ -120,12 +143,7 @@ test('changing direction keeps the current car position and joins the other lane
 test('every surveyed city and landmark arrives with real signal positions and moving adjacent traffic', () => {
   const destinations = [...CITY_SITES, ...CITY_LANDMARKS];
   const arterial = cityRoadPoints('arterial');
-  const signals = destinations.map((site, index) => {
-    const next = cityRoadPoint('arterial', site.angle + .001), junction = site.junction;
-    const length = Math.hypot(next[0] - junction[0], next[1] - junction[1]);
-    return { id: site.id, position: [junction[0], .11, junction[1]],
-      axis: [(next[0] - junction[0]) / length, 0, (next[1] - junction[1]) / length], offset: index * 1.3 };
-  });
+  const signals = cityTrafficSignals(destinations);
   const east = createTrafficPath(cityRoadPoints('arterial', -.9, .11), { loop: true });
   const west = createTrafficPath(cityRoadPoints('arterial', .9, .11).reverse(), { loop: true });
   east.signals = trafficPathSignals(east, signals); west.signals = trafficPathSignals(west, signals);

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { appendMapPosts, mapSourceTopicScope, mapTopicMatches, mapPostTarget, parseMapSourceTopics } from '../shared/map-feed-topics.mjs';
-import { CITY_SITES, CITY_RAMPS, CITY_TOP_EXITS, CITY_SIDE_EXITS, CITY_LOCAL_LINKS, CITY_END_ROADS, CITY_END_JUNCTIONS, CITY_HIGHWAY_LINKS, CITY_HIGHWAY_KINDS, CITY_LANDMARKS, CITY_HIGHWAY_PIERS, CITY_GROUND_ROADS, cityCollectorPoints, citySegmentDistance, cityHighwayJourney, cityRoadPoint, cityRoadPoints, cityRoadPosition, cityDriveOrigin, cityDriveWaypoints } from '../web/src/local/cityEngineering.mjs';
+import { CITY_SITES, CITY_RAMPS, CITY_TOP_EXITS, CITY_SIDE_EXITS, CITY_LOCAL_LINKS, CITY_END_ROADS, CITY_END_JUNCTIONS, CITY_HIGHWAY_LINKS, CITY_HIGHWAY_KINDS, CITY_LANDMARKS, CITY_HIGHWAY_PIERS, CITY_GROUND_ROADS, cityCollectorPoints, citySegmentDistance, cityHighwayJourney, cityRoadPoint, cityRoadPoints, cityRoadPosition, cityDriveOrigin, cityDriveWaypoints, cityRampWidths } from '../web/src/local/cityEngineering.mjs';
 
 const post = (id, source, topic) => ({ key: source + ':' + id, id, source, topic, category: 'technology' });
 test('map filtering expands supported labels without unrelated text matches', () => {
@@ -81,6 +81,20 @@ test('every city and landmark route stays on collectors and arterial roads', () 
     }
   }
 });
+test('ramp mouths taper smoothly into both roads without narrowing the travel lanes', () => {
+  for (const ramp of [...CITY_HIGHWAY_LINKS, ...CITY_RAMPS, ...CITY_TOP_EXITS.map(exit => exit.points), ...CITY_SIDE_EXITS.map(exit => exit.points)]) {
+    const widths = cityRampWidths(ramp);
+    assert.equal(widths.length, ramp.length);
+    assert.equal(widths[0], 3.6); assert.equal(widths.at(-1), 3.6);
+    assert.ok(widths.every(width => Number.isFinite(width) && width >= 2.45 && width <= 3.6));
+    assert.ok(widths.some(width => width === 2.45), 'Each ramp keeps a full-width central travel section');
+    for (let i = 1; i < widths.length; i++) {
+      const length = Math.hypot(ramp[i][0] - ramp[i - 1][0], ramp[i][2] - ramp[i - 1][2]);
+      assert.ok(Math.abs(widths[i] - widths[i - 1]) / length <= .145, 'Road edges widen gradually at the entrance and exit');
+    }
+  }
+});
+
 test('district setbacks, expressway clearance and ramp grades support the curved layout', () => {
   const highway = cityRoadPoints('highway');
   assert.ok(Object.values(CITY_HIGHWAY_PIERS).every(piers => piers.length > 10), 'Both expressways retain supports along their corridors');

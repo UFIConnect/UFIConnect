@@ -67,16 +67,25 @@ try {
       const initial = await snapshot();
       assert.ok(Number(initial.residentPopulation) <= 1000, 'Decorative population remains bounded');
       assert.ok(Number(initial.trafficPopulation) > 0 && Number(initial.trafficPopulation) <= 500, 'Traffic uses a bounded scene population');
-      assert.ok(Number(initial.trafficLights) > 0, 'The scene includes working junction lights');
+      assert.equal(Number(initial.trafficLights), 20, 'City and ramp junctions share working traffic signals');
+      assert.equal(await page.getByRole('heading', { name: 'Map', exact: true }).count(), 1);
+      const centered = await page.getByRole('heading', { name: 'Map', exact: true }).evaluate(element => getComputedStyle(element).textAlign);
+      assert.equal(centered, 'center', 'Map title is centered');
       await page.waitForTimeout(250);
       assert.equal((await snapshot()).trafficTime, initial.trafficTime, 'Reduced motion freezes the idle traffic clock');
 
-      await page.getByRole('button', { name: 'Night view', exact: true }).click();
+      assert.equal(await page.getByRole('button', { name: 'Night view', exact: true }).count(), 0);
+      await page.evaluate(() => window.__ufiAppearance.setPreference('dark'));
       await page.waitForFunction(() => {
         const data = document.querySelector('.map-city-scene canvas')?.dataset;
         return data?.timeOfDay === 'night' && Number(data.trafficLights) > 0;
       });
       await scene.screenshot({ path: path.join(output, `night-city-${width}.png`) });
+      await page.evaluate(() => window.__ufiAppearance.setPreference('light'));
+      await page.waitForFunction(() => document.querySelector('.map-city-scene canvas')?.dataset.timeOfDay === 'day');
+      await page.emulateMedia({ colorScheme: 'dark' });
+      await page.evaluate(() => window.__ufiAppearance.setPreference('system'));
+      await page.waitForFunction(() => document.querySelector('.map-city-scene canvas')?.dataset.timeOfDay === 'night');
       await page.getByRole('button', { name: 'Drive mode', exact: true }).click();
       const drive = page.getByRole('group', { name: 'Drive between cities', exact: true });
       const destination = drive.getByRole('combobox', { name: 'Drive destination', exact: true });

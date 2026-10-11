@@ -163,7 +163,7 @@ test('selected Travel picks stay in their destination across pagination, member 
   assert.equal(sameName.data.posts[0].countryCode, 'CA', 'same-named cities in another country cannot become selected picks');
 });
 
-test('strict selected picks keep verified fallback cameras separate and reject unrelated cached stories', async t => {
+test('strict selected picks keep the verified city catalog separate and reject unrelated cached stories', async t => {
   let app;
   app = await harness(t, { env: { YOUTUBE_API_KEY: 'test-key' }, modules: { './travel-providers': { ...providers, fetchTravelResource: async url => {
     assert.ok(url.includes('/videos?'), 'warm selected picks need no worldwide discovery or search request');
@@ -180,8 +180,8 @@ test('strict selected picks keep verified fallback cameras separate and reject u
   const selected = await app.getCountriesCameraFeed({ city: 'Paris', country: 'FR', countryName: 'France', source: 'member', available: true });
   assert.equal(selected.posts.length, 1);
   assert.equal(selected.posts[0].id, 'paris-fr');
-  assert.equal(selected.liveFeeds.length, 1, 'a city without its own camera retains a verified fallback');
-  assert.equal(selected.liveFeeds[0].city, 'New York', 'fallback retains its actual location');
+  assert.equal(selected.liveFeeds.length, 1, 'verified cameras remain available for manual city navigation');
+  assert.equal(selected.liveFeeds[0].city, 'New York', 'the camera catalog retains each actual location');
   assert.equal(selected.liveFeeds[0].liveVerified, true);
   assert.equal(selected.travel.localCameraAvailable, false);
 });
@@ -271,6 +271,10 @@ test('replacement discovery rejects unrelated streams before verifying candidate
 test('operator cameras stay available without search quota and still require live embedding permission', async t => {
   const candidates = [
     {city:'Paris',country:'France',countryCode:'FR',videoId:'parisLive01',title:'Paris river camera',channelTitle:'Camera operator'},
+    {city:'Paris',country:'France',countryCode:'FR',videoId:'parisLive02',title:'Paris street camera',channelTitle:'Street operator'},
+    {city:'Paris',country:'France',countryCode:'FR',videoId:'parisLive02'},
+    {city:'Paris',country:'France',countryCode:'FR',videoId:'parisPriv01'},
+    {city:'Paris',country:'United States',countryCode:'US',videoId:'parisTex001'},
     {city:'London',country:'United Kingdom',countryCode:'GB',videoId:'londonPriv1'},
     {city:'Tokyo',country:'Japan',countryCode:'JP',videoId:'tkyEnded001'},
     {city:'Sydney',country:'Australia',countryCode:'AU',videoId:'sydneyNoEmb'},
@@ -286,7 +290,7 @@ test('operator cameras stay available without search quota and still require liv
       ids.forEach(id=>checked.add(id));
       return {items:ids.filter(id=>candidates.some(stream=>stream.videoId===id)).map(id=>({id,
         liveStreamingDetails:{actualStartTime:'2026-09-01',...(id==='tkyEnded001'?{actualEndTime:'2026-09-02'}:{})},
-        status:{privacyStatus:id==='londonPriv1'?'private':'public',embeddable:id!=='sydneyNoEmb'},
+        status:{privacyStatus:['londonPriv1','parisPriv01'].includes(id)?'private':'public',embeddable:id!=='sydneyNoEmb'},
       }))};
     }},
   }});
@@ -301,6 +305,10 @@ test('operator cameras stay available without search quota and still require liv
   assert.equal(camera.sourceUrl,'https://www.youtube.com/watch?v=parisLive01');
   assert.match(camera.content,/Paris, France/);
   assert.equal(camera.liveVerified,true);
+  assert.equal(camera.liveAlternates.length,1,'alternates are distinct public, embeddable streams in the same city and country');
+  assert.equal(camera.liveAlternates[0].sourceUrl,'https://www.youtube.com/watch?v=parisLive02');
+  assert.equal(camera.liveAlternates[0].title,'Paris street camera');
+  assert.equal(camera.liveAlternates[0].liveVerified,true);
 });
 
 test('cached discovered streams survive short verification expiry and exhausted search budget', async t => {

@@ -5,6 +5,7 @@ const { BLUESKY_OAUTH_SCOPE, pushBlueskyAuthorization } = require('./bluesky-oau
 const { importedContentLimit, jobDescriptionText, usaJobsDescription, JOB_CONTENT_MAX_CHARS } = require('./job-content');
 const { extractFeedMedia } = require('./rss-media');
 const { normalizePostMedia } = require('./post-media');
+const { verifiedCityAlternates } = require('./travel-live-cameras');
 const cors = require('cors');
 const helmet = require('helmet');
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
@@ -10843,7 +10844,20 @@ async function refreshVerifiedLiveCameraPosts(location = null) {
   // cities members actually select instead of spending it all on rotation.
   scheduleLiveCameraDiscovery(discoveryCandidates, Boolean(location?.available));
 
-  const uniqueVerified = uniqueLiveCameraCities(verified);
+  const verifiedStreams = [...verified.map(post => ({
+    ...post,
+    videoId: liveCameraYouTubeId(post.sourceUrl),
+    title: post.liveStreamTitle || post.title,
+    channelTitle: post.liveStreamChannel,
+    replacement: post.liveReplacement,
+  })), ...OPERATOR_CAMERA_STREAMS];
+  const uniqueVerified = uniqueLiveCameraCities(verified).map(post => ({
+    ...post,
+    liveAlternates: verifiedCityAlternates(
+      { ...post, videoId: liveCameraYouTubeId(post.sourceUrl) },
+      verifiedStreams, states, travelCityMatches,
+    ),
+  }));
 
   liveCameraVerificationState.status = states ? 'ready' : 'degraded';
   liveCameraVerificationState.lastRun = Date.now();
@@ -11332,10 +11346,8 @@ function mergeUniqueTravelPosts(...lists) {
   });
 }
 
-// A saved travel location should decide what starts the rail, not whether
-// the rail exists. Plenty of cities do not have a catalogued public stream
-// yet; in that case the member still gets a live worldwide window instead of
-// a blank Travel experience.
+// Keep verified city cameras available to manual navigation and live badges.
+// The player selects only cameras from its selected city, including alternates.
 function prioritizeLiveCamerasForLocation(cameras, location) {
   const list = Array.isArray(cameras) ? cameras.filter(Boolean) : [];
   if (!list.length || !location?.available) return list;
@@ -11435,9 +11447,9 @@ async function getCountriesCameraFeed(location, viewerId = null) {
     location,
     { preserveFirst: 0, chunkSize: 12 },
   );
-  // The selected destination defines the picks below Live Travel. Keep a
-  // worldwide camera fallback in its separate rail, without filling these
-  // cards with unrelated destinations when local providers have no stories.
+  // The selected destination defines the picks below Live Travel. The camera
+  // catalog stays separate for city navigation; the player does not substitute
+  // another city's camera when the selected city has no playable stream.
   const travelPosts = selectedLocation
     ? mergeUniqueTravelPosts(regionalPosts)
     : mergeUniqueTravelPosts(worldwidePosts);

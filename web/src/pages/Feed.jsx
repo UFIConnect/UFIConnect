@@ -1114,6 +1114,11 @@ function TravelLiveLoop({ feeds = [], mediaOpenId, location, onLocationSelect, o
   const [pageVisible, setPageVisible] = useState(() => typeof document === 'undefined' || !document.hidden);
   const loopRef = useRef(null);
   const liveFeeds = useMemo(() => (Array.isArray(feeds) ? feeds : [])
+    .flatMap(feed => [feed, ...(Array.isArray(feed?.liveAlternates) ? feed.liveAlternates : [])
+      .filter(stream => stream?.liveVerified)
+      .map(stream => ({ ...feed, sourceUrl: stream.sourceUrl, mediaUrl: stream.sourceUrl,
+        title: stream.title || feed.title, liveStreamTitle: stream.title,
+        liveStreamChannel: stream.channelTitle, liveReplacement: stream.replacement }))])
     .filter(feed => feed?.id && feed.liveVerified && extractYouTubeId(feed.sourceUrl || feed.mediaUrl)), [feeds]);
   const savedIndex = destinations.findIndex(city => travelCityMatches(city, location));
   const defaultCity = destinations.find(city => travelCityMatches(city, { city: city.city, country: location?.country })) || destinations[0];
@@ -1123,10 +1128,8 @@ function TravelLiveLoop({ feeds = [], mediaOpenId, location, onLocationSelect, o
   const selectedIndex = selected?.id ? destinations.findIndex(city => city.id === selected.id) : -1;
   const streamKey = feed => feed.id + ':' + extractYouTubeId(feed.sourceUrl || feed.mediaUrl);
   const availableFeeds = liveFeeds.filter(feed => !failedStreams.has(streamKey(feed)));
-  const active = availableFeeds.find(feed => travelCityMatches(selected, feed))
-    || availableFeeds.find(feed => selected?.countryCode && feed.countryCode === selected.countryCode)
-    || availableFeeds[Math.max(0, selectedIndex) % availableFeeds.length];
-  const isLocalCamera = active && travelCityMatches(selected, active);
+  const selectedFeeds = liveFeeds.filter(feed => travelCityMatches(selected, feed));
+  const active = availableFeeds.find(feed => travelCityMatches(selected, feed));
   const embedId = extractYouTubeId(active?.sourceUrl || active?.mediaUrl);
   const busy = disabled || selecting;
   const activeStreamKey = active ? streamKey(active) : null;
@@ -1169,11 +1172,13 @@ function TravelLiveLoop({ feeds = [], mediaOpenId, location, onLocationSelect, o
     initialCityAttempted.current = true;
     void selectCity(defaultCity);
   }, [location?.city, defaultCity?.id, busy]);
-  const allPlaybackFailed = liveFeeds.length > 0 && !availableFeeds.length;
+  const allPlaybackFailed = selectedFeeds.length > 0 && !active;
   const cameraStatus = allPlaybackFailed ? 'Live cameras are temporarily unavailable. Check again shortly.'
     : status?.camerasChecking ? 'Checking live cameras...'
     : status?.cameraStatus === 'degraded' || status?.cameraStatus === 'error'
-      ? 'Live camera checks are temporarily unavailable.' : 'Live cameras are temporarily unavailable. Check again shortly.';
+      ? 'Live camera checks are temporarily unavailable.'
+      : selected ? `No live camera is available in ${selected.city} right now. Check again shortly.`
+      : 'Live cameras are temporarily unavailable. Check again shortly.';
 
   const content = (
     <section ref={loopRef} className="travel-live-loop" aria-label="Live travel cameras">
@@ -1183,7 +1188,6 @@ function TravelLiveLoop({ feeds = [], mediaOpenId, location, onLocationSelect, o
           <div className="travel-live-loop-subtitle">{selected ? [selected.city, selected.country].filter(Boolean).join(', ') : 'Browse cities and live cameras'}</div>
         </div>
         <div className="travel-live-header-actions">
-          <Link to="/maps?landmark=airport" className="btn btn-ghost btn-sm">Airport map</Link>
           {selected && onGuideOpen && <button type="button" className="btn btn-ghost btn-sm" onClick={() => onGuideOpen(selected)}><BookOpen size={14} aria-hidden="true" />City guide</button>}
           {active && <span className="travel-live-loop-status"><span aria-hidden="true" />Live now</span>}
         </div>
@@ -1205,7 +1209,6 @@ function TravelLiveLoop({ feeds = [], mediaOpenId, location, onLocationSelect, o
             </div>
             <div className="travel-live-loop-camera-title">{active.liveStreamTitle || active.title}</div>
             {active.liveStreamChannel && <p>{active.liveStreamChannel}</p>}
-            {!isLocalCamera && selected && <p className="travel-camera-fallback" role="status">No live camera is available in {selected.city}. Watching {active.city}, {active.country} live.</p>}
           </div>
           <div className="travel-live-loop-actions">
             {!expanded && <button ref={watchRef} type="button" className="travel-live-loop-action travel-live-loop-action--primary" onClick={() => setExpanded(true)}>Watch live</button>}
