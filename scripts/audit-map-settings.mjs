@@ -327,9 +327,8 @@ try {
           }, id);
         }
         await page.getByRole('button', { name: 'Exit drive mode', exact: true }).click();
-        const landmarks = page.getByRole('group', { name: 'Travel and Shop landmarks', exact: true });
-        assert.equal(await landmarks.getByRole('link', { name: 'Open Travel' }).getAttribute('href'), '/?feed=countries');
-        assert.equal(await landmarks.getByRole('link', { name: 'Open Shop' }).getAttribute('href'), '/?feed=ufi&channel=shop');
+        assert.equal(await page.getByRole('group', { name: 'Travel and Shop landmarks', exact: true }).count(), 0,
+          'Map does not show the removed airport and shopping center shortcuts');
         // Restore the actual Maximum choice after the settings and drive checks.
         // Measure one physical scene without forcing every refetch to rebuild it.
         await renderingQuality.selectOption('maximum');

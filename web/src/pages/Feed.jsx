@@ -1629,7 +1629,6 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
   // and delete your own. External posts: copy the original link, report or block the account.
   const optionItems = [
     { label: isExternal ? 'Copy original link' : 'Copy link to post', onSelect: copyPostLink },
-    !isExternal && { label: 'Open post', onSelect: () => navigate(`/p/${encodeURIComponent(post.id)}`) },
     !ownPost && { label: 'Report post', onSelect: () => (token ? setReportOpen(true) : showToast('Sign in to report a post.', 'info')) },
     blockTarget && { label: isExternal ? 'Block account' : 'Block member', detail: blockTarget.label, danger: true, busy: blockBusy, ariaLabel: `Block ${blockTarget.label}`, onSelect: blockAuthor },
   ];
@@ -1772,14 +1771,14 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
         <SharePostButton post={post} />
         {post.source === 'wikivoyage' && post.travelDestinationId && onGuideOpen && <button type="button" className="post-chrome-action" onClick={() => onGuideOpen({id:post.travelDestinationId,city:post.city,country:post.country})}>Open city guide</button>}
         <PostOptionsMenu post={post} items={optionItems} onOpenComments={hasComments ? () => { if (!showComments) toggleComments(); } : undefined} onPostUpdated={onPostUpdated} onRemoved={onRemoved} />
-        {!(post.source === 'wikivoyage' && post.travelDestinationId && onGuideOpen) && <OpenOnSource
+        <OpenOnSource
           post={post}
           label={`${isJob ? 'Apply' : post.isLiveCamera ? 'Watch live' : hasVideo ? 'Watch' : 'Open'}${post.isLiveCamera ? '' : ` on ${src.label}`}`}
           onClick={event => {
             event.stopPropagation();
             reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true });
           }}
-        />}
+        />
       </div>
 
       {/* Inline comments / replies / answers / reviews */}

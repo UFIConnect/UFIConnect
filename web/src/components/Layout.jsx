@@ -692,7 +692,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
             </Link>
             <SavedNavigation mobile expanded={savedExpanded} onToggle={toggleSavedNavigation} onNavigate={closeMobileOverlays} />
             <div className="mobile-feed-drawer-bottom mobile-account-drawer-bottom">
-              <NavLink to="/maps" className="mobile-command-menu-item" onClick={closeMobileOverlays}><MapIcon size={18} aria-hidden="true" />Map</NavLink>
+              <NavLink to="/maps" className="mobile-command-menu-item mobile-maps-link" onClick={closeMobileOverlays}><MapIcon size={18} aria-hidden="true" />Map</NavLink>
               <NavLink to="/profile" className="mobile-command-menu-item mobile-account-profile" aria-label="Profile" onClick={closeMobileOverlays}>
                 <span className="mobile-account-avatar" aria-hidden="true">
                   {profile.avatarUrl && failedAvatarUrl !== profile.avatarUrl

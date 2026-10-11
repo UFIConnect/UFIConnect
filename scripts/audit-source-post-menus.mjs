@@ -35,6 +35,12 @@ const fixtures = [
     profile: 'https://github.com/audit', forbidden: ['Watch on YouTube', 'View r/audit'] },
   { source: 'uficonnect', isExternal: false, author: { id: 'community-member', name: 'Community member' },
     links: { 'Open post': '/p/menu-audit' }, profile: '/u/community-member', forbidden: ['Watch on YouTube', 'Open Watch later on YouTube'] },
+  ...[
+    ['wikivoyage', 'https://en.wikivoyage.org/wiki/Tokyo', 'Read original city guide', 'plane'],
+    ['restaurants', 'https://www.openstreetmap.org/node/123', 'Open on Restaurants', 'utensils'],
+    ['bars', 'https://www.openstreetmap.org/node/456', 'Open on Bars and clubs', 'martini'],
+  ].map(([source, sourceUrl, label, icon]) => ({ source, sourceUrl, links: { [label]: sourceUrl }, icon,
+    author: { name: 'Local discovery' }, profile: null, forbidden: ['Watch on YouTube', 'Open Watch later on YouTube'] })),
   { source: 'youtube', sourceUrl: 'https://www.youtube.com/watch?v=audittest01',
     author: { name: 'A display name is not a channel' },
     links: { 'Watch on YouTube': 'https://www.youtube.com/watch?v=audittest01' }, profile: null,
@@ -83,6 +89,8 @@ try {
       await more.waitFor();
       await more.scrollIntoViewIfNeeded();
       const currentUrl = page.url();
+      if (fixture.icon) assert.equal(await page.locator(`.post-chrome-source-link .lucide-${fixture.icon}`).count(), 1,
+        `${fixture.source} has its category icon on the direct link`);
       await more.focus();
       await page.keyboard.press('ArrowDown');
       const menu = page.getByRole('menu');
@@ -92,12 +100,22 @@ try {
       assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= width + 1 && bounds.y + bounds.height <= 851,
         `${fixture.source} menu fits ${width}px viewport`);
       for (const [name, href] of Object.entries(fixture.links)) {
-        const item = menu.getByRole('menuitem', { name, exact: true });
+        const direct = href === fixture.sourceUrl || name === 'Open post';
+        const item = direct ? page.locator('.post-chrome-source-link') : menu.getByRole('menuitem', { name, exact: true });
         assert.equal(await item.getAttribute('href'), href, `${name} keeps its real destination`);
         if (href.startsWith('https:')) {
           assert.equal(await item.getAttribute('target'), '_blank');
           assert.match(await item.getAttribute('rel'), /noopener/);
         }
+      }
+      assert.equal(await menu.getByRole('menuitem', { name: /^(?:Open post|Open on |Open original post|Open Reddit discussion|Watch on |Read original city guide)/ }).count(), 0,
+        'Original post navigation stays outside the options menu');
+      const nextPage = menu.getByRole('menuitem', { name: 'Next options', exact: true });
+      if (await nextPage.count()) {
+        assert.equal(await menu.locator(':scope > [role="menuitem"]').count(), 6, 'Options show six commands per page');
+        await nextPage.click();
+        assert.equal(await menu.getByRole('menuitem', { name: 'Report post', exact: true }).count(), 1, 'Later commands remain reachable');
+        await menu.getByRole('menuitem', { name: 'Previous options', exact: true }).click();
       }
       if (fixture.profile) {
         assert.equal(await menu.getByRole('menuitem', { name: /^Go to profile/ }).getAttribute('href'), fixture.profile,
@@ -110,7 +128,7 @@ try {
         `${fixture.source} omits unrelated or unavailable command: ${name}`);
       assert.equal(await menu.getByRole('menuitem', { name: 'Edit post', exact: true }).count(), 0);
       assert.equal(await menu.getByRole('menuitem', { name: 'Delete post', exact: true }).count(), 0);
-      assert.equal(await menu.getByRole('menuitem', { name: 'Report post', exact: true }).count(), 1);
+      if (!(await nextPage.count())) assert.equal(await menu.getByRole('menuitem', { name: 'Report post', exact: true }).count(), 1);
       assert.ok(await menu.locator('a').evaluateAll(links => links.every(link => {
         const url = new URL(link.href);
         return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password;

@@ -1,5 +1,4 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useId } from 'react';
-import { Link } from 'react-router-dom';
 import client from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -26,7 +25,7 @@ import useTabMetrics, { useSelectedTabMetrics } from '../analytics/useTabMetrics
 import YouTubeSettingsDialog from './YouTubeSettingsDialog';
 import { PostHeader, PostOptionsMenu, OpenOnSource, CommentIcon, HeartIcon } from './PostCardChrome';
 import { isMemberPost, safePostLink } from '../../../backend/post-links.mjs';
-import { Search, SlidersHorizontal, RotateCw, ArrowUpRight } from 'lucide-react';
+import { Search, SlidersHorizontal, RotateCw } from 'lucide-react';
 import { videoDurationSeconds, isShortFeedVideo, videoSourceKey, safeMediaUrl, fitVideoFrame } from '../utils/videoFeedPolicy.mjs';
 import './VideoFeedView.css';
 import './navigation.css';
@@ -690,8 +689,7 @@ function VideoSlide({ post, active, muted, isScrolling, onOpenComments, sharedYt
           </button>
           <SavePostButton post={post} className="post-chrome-action" showLabel={false} />
           <PostOptionsMenu post={post} items={options} sourceItems={sourceItems} onOpenComments={() => onOpenComments?.(post)} onPostUpdated={onPostUpdated} onRemoved={onRemoved} />
-          {isMemberPost(post) ? <Link className="post-chrome-action post-chrome-source-link" to={`/p/${encodeURIComponent(post.id)}`} aria-label="Open post" title="Open post"><ArrowUpRight size={18} aria-hidden="true" /></Link>
-            : <OpenOnSource post={post} label={validSourceActions ? undefined : 'Open original post'} />}
+          <OpenOnSource post={post} label={validSourceActions ? undefined : 'Open original post'} />
         </div>
       </div>
       {settingsOpen && isYoutube && <YouTubeSettingsDialog settings={sharedYt?.settings}

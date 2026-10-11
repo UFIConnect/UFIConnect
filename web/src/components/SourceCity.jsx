@@ -62,15 +62,13 @@ export default function SourceCity({ cities, enabled, active, onSelect, onCivicS
   const currentPage = Math.min(page, pages - 1);
   const visible = sources.slice(currentPage * 12, (currentPage + 1) * 12);
   function openCity(id, source) { setAltitude(100); setFocusLandmark(''); setDriveMode(false); setOverview(false); onSelect(id); if (source) onSourceSelect(source); }
-  function focusBuilding(id) { setAltitude(100); setFocusLandmark(id); setOverview(true); setDriveMode(false); setDriveDestination(id); }
   function showAllCities() {
     setFocusLandmark('');
     if (overview) { cityHeading.current?.focus({ preventScroll: true }); return; }
     returnFocus.current = true;
     setOverview(true);
   }
-  return <section className="map-city-card" aria-label="Source city">
-    <div className="map-city-title"><div><span className="local-eyebrow">{overview ? 'ONE CONNECTED WORLD' : category.label}</span><h2 ref={cityHeading} tabIndex={-1}>{overview ? 'Your UFI city network' : theme.name}</h2><p>{overview ? 'Choose a city below or select a district on the map. Drag to explore; zoom in to see its buildings.' : theme.description}</p></div></div>
+  return <section ref={cityHeading} tabIndex={-1} className="map-city-card" aria-label="Source city">
     {actions && <div className="map-actions-toolbar">{actions}</div>}
     <div className="map-scene-toolbar">
       {!overview && <button type="button" className="map-back-to-all" onClick={showAllCities}>← Back to all cities</button>}
@@ -100,9 +98,6 @@ export default function SourceCity({ cities, enabled, active, onSelect, onCivicS
         driving={driveMode} drivePaused={drivePaused} driveDestination={driveDestination} onDriveStatus={receiveDriveStatus} onDriveArrival={id => { setDriveArrival(id); setDrivePaused(true); }}
         onCitySelect={openCity} onCivicSelect={onCivicSelect} resetKey={reset} onFallback={() => { setFallback(true); setDriveMode(false); setDrivePaused(false); }} />
     </Suspense>}
-    <div className="map-landmarks" role="group" aria-label="Travel and Shop landmarks">
-      {CITY_LANDMARKS.map(item => <div key={item.id}><button type="button" aria-pressed={overview && focusLandmark === item.id} onClick={() => focusBuilding(item.id)}>{item.label}</button><Link to={item.to}>{item.id === 'airport' ? 'Open Travel' : 'Open Shop'} <span aria-hidden="true">→</span></Link></div>)}
-    </div>
     <div className="map-city-picker" role="group" aria-label="Choose your city">
       <button type="button" className="map-all-cities" aria-pressed={overview} onClick={showAllCities} style={{ '--city-color': '#5879a5' }}><i aria-hidden="true" /><span>All<small>16 cities + UFI downtown</small></span></button>
       {CITY_CATEGORIES.map(item => <button type="button" key={item.id} aria-pressed={!overview && item.id === active} onClick={() => openCity(item.id)} style={{ '--city-color': CITY_NATURE[item.id].leaves }}><i aria-hidden="true" /><span>{item.label}<small>{enabled.includes(item.id) ? CITY_NATURE[item.id].name : 'Not in your app yet'}</small></span></button>)}

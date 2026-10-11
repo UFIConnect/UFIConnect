@@ -173,7 +173,7 @@ try {
     check(new Set(profilePositions.map(position => Math.round(position.x))).size === 3
       && new Set(profilePositions.map(position => Math.round(position.y))).size === 4, 'Ten author circles form three columns with more rows below');
     check(await facebookProfiles.evaluate(element => element.scrollHeight > element.clientHeight && element.scrollWidth <= element.clientWidth
-      && element.clientHeight <= 270), 'Only three compact profile rows fit in the source box and extra rows scroll vertically');
+      && element.clientHeight <= 182), 'Only two compact profile rows fit in Home source boxes and extra rows scroll vertically');
     await facebookProfiles.evaluate(element => { element.scrollTop = 0; });
     await facebookProfiles.hover(); await page.mouse.wheel(0, 150);
     await page.waitForFunction(() => document.querySelector('[data-snap-source="facebook"] .snap-source-items')?.scrollTop > 0);
@@ -535,6 +535,8 @@ try {
     check(await profileForSnap('late-home-fixture').count() === 0, 'Late Home responses never replace Following snaps');
     assert.deepEqual(await rail.locator('.snap-source-box').evaluateAll(elements => elements.map(element => element.dataset.snapSource)), ['uficonnect', 'facebook', 'twitter']); checks++;
     const followingSources = page.getByRole('group', { name: 'Following sources', exact: true }); await followingSources.waitFor();
+    check(await rail.locator('.snap-source-items').evaluateAll(elements => elements.every(element => element.clientHeight <= 182)),
+      'Following source boxes also show at most two compact profile rows');
     check((await rail.boundingBox()).y + (await rail.boundingBox()).height <= (await followingSources.boundingBox()).y + 2, 'Following snaps appear above source selection');
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/snaps-following-${width}.png`) });
 

@@ -47,6 +47,7 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
   const [composing, setComposing] = useState(false);
   const [reportSnap, setReportSnap] = useState(null);
   const [photoRevisions, setPhotoRevisions] = useState({});
+  const maxProfileRows = mode === 'home' || mode === 'following' ? 2 : 3;
   const groups = useMemo(() => {
     const ranked = rankSnapGroups(items, favorites, now);
     const external = ranked.filter(group => group.source !== 'uficonnect');
@@ -100,7 +101,7 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
               <button type="button" className="snap-refresh-button" disabled={loading || !onRefresh} onClick={() => refreshSource(group.source)} aria-label={refreshLabel} title={refreshLabel} aria-busy={isRefreshing}><RefreshCw size={16} className={isRefreshing ? 'snap-refresh-spinning' : ''} /></button>
             </header>
             {group.items.length > 0
-              ? <ul className="snap-source-items" role="list" aria-label={`${source.label} snap profiles`} style={{ '--snap-profile-rows': Math.min(3, group.profiles.length) }}>{group.profiles.map(author => <li key={author.key} className="snap-profile-item"><SnapProfile group={author} refreshKey={photoRevisions[group.source]} onOpen={() => setSelectedId(`${author.items[0].source}:${author.items[0].id}`)} /></li>)}</ul>
+              ? <ul className="snap-source-items" role="list" aria-label={`${source.label} snap profiles`} style={{ '--snap-profile-rows': Math.min(maxProfileRows, group.profiles.length) }}>{group.profiles.map(author => <li key={author.key} className="snap-profile-item"><SnapProfile group={author} refreshKey={photoRevisions[group.source]} onOpen={() => setSelectedId(`${author.items[0].source}:${author.items[0].id}`)} /></li>)}</ul>
               : <div className="snap-source-empty" role="status" aria-live="polite"><Camera size={22} aria-hidden="true" /><span>{isRefreshing ? 'Loading UFI snaps...' : error || sourceErrors.uficonnect ? 'UFI snaps could not load. Try refreshing.' : 'No UFI snaps yet.'}</span></div>}
             {isNative && <div className="snap-source-compose">
               {profile?.id && onPostSnap

@@ -37,6 +37,10 @@
 .post-chrome-menu button:hover:not(:disabled), .post-chrome-menu button:focus-visible, .post-chrome-menu a:hover, .post-chrome-menu a:focus-visible { background: var(--bg, #f1f5f9); outline: none; }
 .post-chrome-menu .post-chrome-menu-danger { color: #B91C1C; }
 .post-chrome-menu small { display: block; margin-top: 2px; color: var(--muted); font-size: .74rem; font-weight: 500; overflow-wrap: anywhere; }
+.post-chrome-menu-pages { display: flex; align-items: center; gap: 6px; margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--border); }
+.post-chrome-menu .post-chrome-menu-pages button { flex: 1; width: auto; padding: 10px 8px; text-align: center; font-size: .78rem; }
+.post-chrome-menu-pages button:disabled { opacity: .45; cursor: default; }
+.post-chrome-menu-pages span { flex-shrink: 0; color: var(--muted); font-size: .74rem; font-variant-numeric: tabular-nums; }
 .post-chrome-time time { white-space: nowrap; }
 .post-chrome-live { font-weight: 800; color: #B91C1C; }
 .post-chrome-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 10px; }

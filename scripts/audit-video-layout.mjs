@@ -269,8 +269,8 @@ try {
         'The source menu does not duplicate visible playback controls');
       assert.equal(await menu.getByRole('menuitem', { name: /^(?:Show|Hide) player controls$|^Read more$|^Show less$/ }).count(), 0,
         'Player controls and caption expansion remain outside overflow');
-      assert.ok(await menu.getByRole('menuitem', { name: /^(?:Open on |Open original post|Open (?:Reddit|Hacker News) discussion|Watch on )/ }).count() > 0,
-        'The original-post link is restored inside the menu');
+      assert.equal(await menu.getByRole('menuitem', { name: /^(?:Open on |Open original post|Open (?:Reddit|Hacker News) discussion|Watch on )/ }).count(), 0,
+        'The original-post link stays beside More options and is not duplicated in the menu');
       assert.equal(await menu.locator('.video-feed-menu-action').count(), 0, 'Like and Save are visible in the layout');
       if (!youtube) assert.equal(await menu.getByRole('menuitem', { name: /YouTube/i }).count(), 0,
         'Videos without a playable YouTube URL have no YouTube options: ' + JSON.stringify(await menu.getByRole('menuitem').allTextContents()));
