@@ -7,7 +7,7 @@ const LOCAL_PREVIEW = 'http://127.0.0.1:4173';
 const isLocalConsole = import.meta.env.MODE === 'release-local';
 const STEPS = [['edit', 'Edit'], ['preview', 'Preview'], ['publish', 'Publish']];
 // Maps is the website's 3D source map, served only by the local website.
-const PREVIEW_PAGES = [['/', 'Home'], ['/maps', 'Maps']];
+const PREVIEW_PAGES = [['/', 'Home'], ['/maps', 'Map']];
 const MAX_CHANGE_ROWS = 400;
 const phoneUrl = value => {
   try { const url = new URL(value); return url.protocol === 'https:' && url.hostname.endsWith('.trycloudflare.com') && !url.username && !url.password ? url.origin : ''; }

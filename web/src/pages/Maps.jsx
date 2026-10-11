@@ -336,9 +336,9 @@ export default function Maps() {
     label: 'map menu', controls: 'map-mobile-menu', triggerRef: mobileMenuButton,
     open: mobileToolsOpen, onOpenChange: setMobileToolsOpen,
   } : undefined} feedSearch={{ query, label: 'Search city posts', onSubmit: value => { setQuery(value); setVisibleCount(PAGE_SIZE); } }}>
-    <Helmet><title>Maps · Your city | UFIconnect</title><meta name="robots" content="noindex" /></Helmet>
+    <Helmet><title>Map · Your city | UFIconnect</title><meta name="robots" content="noindex" /></Helmet>
     <div className="local-workspace city-workspace">
-      <header className="local-workspace-heading"><div><span className="local-eyebrow">YOUR WORLD, CONNECTED</span><h1>Maps</h1><p>Choose a city, open its source houses, and explore posts about the topics you enjoy.</p></div></header>
+      <header className="local-workspace-heading map-workspace-heading"><div><span className="local-eyebrow">YOUR WORLD, CONNECTED</span><h1>Map</h1><p>Choose a city, open its source houses, and explore posts about the topics you enjoy.</p></div></header>
       {['countries', 'restaurants', 'bars'].includes(category.mode)
         ? <p className="muted">{category.label} destination: {[locationContext?.city, locationContext?.countryName || locationContext?.country].filter(Boolean).join(', ') || 'Automatic area'}. <Link to={category.route}>Change this destination</Link></p>
         : null}

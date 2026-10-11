@@ -505,7 +505,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
           </button>
         )}
 
-        <NavLink to="/maps" className="nav-link sidebar-maps-link" title="Maps" aria-label="Maps"><span className="nav-icon"><MapIcon size={17} aria-hidden="true" /></span><span className="nav-label">Maps</span></NavLink>
+        <NavLink to="/maps" className="nav-link sidebar-maps-link" title="Map" aria-label="Map"><span className="nav-icon"><MapIcon size={17} aria-hidden="true" /></span><span className="nav-label">Map</span></NavLink>
         {profile && (
           <div className="sidebar-user">
             <div className="avatar avatar-sm">{initials(profile.name)}</div>
@@ -692,7 +692,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
             </Link>
             <SavedNavigation mobile expanded={savedExpanded} onToggle={toggleSavedNavigation} onNavigate={closeMobileOverlays} />
             <div className="mobile-feed-drawer-bottom mobile-account-drawer-bottom">
-              <NavLink to="/maps" className="mobile-command-menu-item" onClick={closeMobileOverlays}><MapIcon size={18} aria-hidden="true" />Maps</NavLink>
+              <NavLink to="/maps" className="mobile-command-menu-item" onClick={closeMobileOverlays}><MapIcon size={18} aria-hidden="true" />Map</NavLink>
               <NavLink to="/profile" className="mobile-command-menu-item mobile-account-profile" aria-label="Profile" onClick={closeMobileOverlays}>
                 <span className="mobile-account-avatar" aria-hidden="true">
                   {profile.avatarUrl && failedAvatarUrl !== profile.avatarUrl

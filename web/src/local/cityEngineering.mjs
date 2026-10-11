@@ -121,8 +121,12 @@ function highwayConnector(x, fromKind, toKind, endHeight) {
   const ahead = cityRoadPoint(fromKind, departure + .001), tangent = [ahead[0] - a[0], ahead[1] - a[1]], magnitude = Math.hypot(...tangent);
   const before = cityRoadPoint(toKind, position - .001), dx = d[0] - before[0], dz = d[1] - before[1], length = Math.hypot(dx, dz);
   const b = [a[0] + tangent[0] / magnitude * (upper ? 12 : 22), a[1] + tangent[1] / magnitude * (upper ? 12 : 22)], middle = [x, d[1] - 20];
+  // Ground-level ramp terminals meet the arterial across its edge, giving both
+  // directions a clear stop line instead of merging through the opposing lane.
+  const terminalControl = toKind === 'arterial' ? [d[0] + dz / length * 14, d[1] - dx / length * 14]
+    : [d[0] - dx / length * 22, d[1] - dz / length * 22];
   const legs = upper ? [[a, b, [x, a[1]], middle], [middle, [x, middle[1] + 10], [d[0] - dx / length * 8, d[1] - dz / length * 8], d]]
-    : [[a, b, [d[0] - dx / length * 22, d[1] - dz / length * 22], d]];
+    : [[a, b, terminalControl, d]];
   const plan = legs.flatMap(([start, first, second, end], leg) => Array.from({ length: leg ? 80 : 81 }, (_, j) => {
     const t = (j + (leg ? 1 : 0)) / 80, u = 1 - t;
     return [u ** 3 * start[0] + 3 * u * u * t * first[0] + 3 * u * t * t * second[0] + t ** 3 * end[0], u ** 3 * start[1] + 3 * u * u * t * first[1] + 3 * u * t * t * second[1] + t ** 3 * end[1]];
@@ -190,6 +194,32 @@ export const CITY_HIGHWAY_PIERS = Object.fromEntries(CITY_HIGHWAY_KINDS.map(kind
   cityRoadPoints(kind).filter(([x, , z], i) => i < 384 && i % 12 === 0
     && CITY_GROUND_ROADS.every(([a, b]) => citySegmentDistance([x, z], a, b) > 3))]));
 export const CITY_RAMPS = [-88, 122].map(x => highwayConnector(x, 'highway-return', 'arterial', .075));
+// Widen the junction mouths gradually without changing the surveyed alignment.
+// The same cross sections also position the edge markings and guardrails.
+export function cityRampWidths(points) {
+  const distances = [0];
+  for (let i = 1; i < points.length; i++) distances.push(distances[i - 1] + Math.hypot(points[i][0] - points[i - 1][0], points[i][2] - points[i - 1][2]));
+  return distances.map(distance => {
+    const t = Math.max(0, 1 - Math.min(distance, distances.at(-1) - distance) / 12);
+    return 2.45 + 1.15 * t * t * (3 - 2 * t);
+  });
+}
+export function cityTrafficSignals(sites = [...CITY_SITES, ...CITY_LANDMARKS]) {
+  const rampTerminals = CITY_RAMPS.map((points, index) => {
+    const end = points.at(-1), approach = points.at(-8);
+    return { id: 'highway-ramp-' + index, angle: cityRoadPosition('arterial', end[0]),
+      junction: [end[0], end[2]], entrance: [approach[0], approach[2]] };
+  });
+  return [...sites, ...rampTerminals].map((site, index) => {
+    const ahead = cityRoadPoint('arterial', site.angle + .001), junction = site.junction;
+    const length = Math.hypot(ahead[0] - junction[0], ahead[1] - junction[1]);
+    const approach = site.id.startsWith('highway-ramp-') ? site.entrance : cityCollectorPoints(site)[1].filter((_, axis) => axis !== 1);
+    const dx = approach[0] - junction[0], dz = approach[1] - junction[1], collectorLength = Math.hypot(dx, dz) || 1;
+    return { id: site.id, position: [junction[0], .11, junction[1]],
+      axis: [(ahead[0] - junction[0]) / length, 0, (ahead[1] - junction[1]) / length],
+      collectorAxis: [dx / collectorLength, 0, dz / collectorLength], offset: index * 1.3 };
+  });
+}
 export const CITY_TOP_EXITS = [{ index: 2, id: 'science', label: 'Science' }, { index: 12, id: 'business', label: 'Business' }].map(exit => {
   const site = CITY_SITES[exit.index], nx = Math.sin(site.rotation), nz = Math.cos(site.rotation);
   const rear = [site.x + nx * CITY_DISTRICT_ANCHOR, site.z + nz * CITY_DISTRICT_ANCHOR], departure = cityRoadPosition('highway', rear[0] - 64);

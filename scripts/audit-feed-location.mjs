@@ -110,7 +110,7 @@ try {
       assert.ok(reads.some(read => read.mode === mode && read.city === 'Paris' && read.point));
     }
     await auditNavigate(page, origin + 'maps');
-    await page.getByRole('heading', { name: 'Maps', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Map', exact: true }).waitFor();
     assert.equal(await page.locator('.feed-region-control').count(), 0);
     const guestsBefore = guestRequests;
     await auditNavigate(page, origin + 'global');

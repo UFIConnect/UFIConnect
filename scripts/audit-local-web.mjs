@@ -140,7 +140,7 @@ try {
     await page.getByRole('button', { name: 'Mobile', exact: true }).click();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
     const previewPages = page.getByRole('group', { name: 'Preview page', exact: true });
-    await previewPages.getByRole('button', { name: 'Maps', exact: true }).click();
+    await previewPages.getByRole('button', { name: 'Map', exact: true }).click();
     assert.equal(await preview.getAttribute('src'), 'http://127.0.0.1:4173/maps', 'Maps opens the Live City page of the local website');
     await page.frameLocator('iframe').getByRole('heading', { name: 'Local website preview' }).waitFor();
     await previewPages.getByRole('button', { name: 'Home', exact: true }).click();

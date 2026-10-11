@@ -452,8 +452,8 @@
   "maps": {
     "category": "maps",
     "path": "/maps",
-    "title": "Maps",
-    "label": "Maps",
+    "title": "Map",
+    "label": "Map",
     "platform": "web",
     "group": "Feeds and community",
     "viewType": "page"
