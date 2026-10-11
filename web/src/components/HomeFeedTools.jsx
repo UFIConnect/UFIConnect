@@ -393,7 +393,7 @@ export default function HomeFeedTools({
         onToggle={() => toggle('sources')}
       >
         <DirectoryControls label="feed sources" filter={sourceCategory} onFilterChange={setSourceCategory}
-          options={[["favorites", "Favorites"], ...SOURCE_CATEGORIES]} />
+          options={[["favorites", "Favorites"], ...SOURCE_CATEGORIES.filter(([id]) => favoriteMode !== 'feed' || id !== 'career')]} />
         <div className="home-feed-source-actions" aria-label="Current category source controls">
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAllSources(true)} disabled={savingSourceId !== null || visibleEnabledCount === visibleSources.length}>
             {savingSourceId === '__all__' ? 'Saving...' : 'Enable all'}
@@ -430,7 +430,7 @@ export default function HomeFeedTools({
           </div>)}
           {!sourceGroups.length && <div className="source-directory-empty" role="status">No matching sources</div>}
         </div>
-        <UnavailableFeedSources mode={favoriteMode} category={sourceCategory} plan={profile?.plan} />
+        {favoriteMode === 'following' && <UnavailableFeedSources mode={favoriteMode} category={sourceCategory} plan={profile?.plan} />}
       </ToolPanel>}
 
       {showAccounts && <ToolPanel title="Connected accounts" open={openPanel === 'accounts'} onToggle={() => toggle('accounts')}>

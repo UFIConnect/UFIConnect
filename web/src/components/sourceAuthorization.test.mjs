@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { sourceAuthorizationState } from './sourceAuthorization.mjs';
-import { withCareerAccountFallback, HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS, isFollowingFeedSource, unavailableFeedSourceIds } from './sourceMeta.js';
+import { withCareerAccountFallback, HOME_FEED_SOURCE_IDS, JOB_FEED_SOURCE_IDS, JOB_WEBSITE_SOURCE_IDS, CAREER_ACCOUNT_PLATFORMS, FOLLOWING_FEED_SOURCE_IDS, isFollowingFeedSource, unavailableFeedSourceIds } from './sourceMeta.js';
 import feedCatalog from '../../../shared/feed-source-catalog.json' with { type: 'json' };
 import { normalizeSourceFavorites } from './sourceFavorites.js';
 
@@ -16,7 +16,7 @@ test('missing, partial and unavailable source authorization stays locked', () =>
 
 test('removed interest and unsupported Following favorites do not remain selected', () => {
   assert.deepEqual(normalizeSourceFavorites({ feed: ['twitter', 'facebook', 'weworkremotely', 'hackernews'], following: ['twitter', 'facebook', 'spotify', 'hackernews', 'future-unsupported', 'youtube', 'youtube'] }), {
-    feed: ['twitter', 'facebook', 'weworkremotely', 'hackernews'], following: ['twitter', 'youtube'],
+    feed: ['twitter', 'facebook', 'hackernews'], following: ['twitter', 'youtube'],
   });
 });
 
@@ -47,7 +47,13 @@ test('directory fallback cannot replace explicit catalog readiness or permission
 
 test('feed choices use real public collectors and followed-content adapters', () => {
   assert.deepEqual(HOME_FEED_SOURCE_IDS, [...new Set(feedCatalog.home)]);
-  for (const key of ['weworkremotely', 'cntraveler', 'hackernews']) assert.ok(HOME_FEED_SOURCE_IDS.includes(key));
+  for (const key of ['cntraveler', 'hackernews']) assert.ok(HOME_FEED_SOURCE_IDS.includes(key));
+  assert.deepEqual(JOB_FEED_SOURCE_IDS, ['indeed', 'remoteok', 'remotive', 'muse', 'usajobs', 'weworkremotely']);
+  for (const key of CAREER_ACCOUNT_PLATFORMS) {
+    assert.equal(HOME_FEED_SOURCE_IDS.includes(key), false, `${key} belongs outside Home`);
+    assert.ok(JOB_FEED_SOURCE_IDS.includes(key) || JOB_WEBSITE_SOURCE_IDS.includes(key), `${key} remains accessible in Jobs`);
+  }
+  for (const key of JOB_WEBSITE_SOURCE_IDS) assert.equal(JOB_FEED_SOURCE_IDS.includes(key), false);
   assert.deepEqual(FOLLOWING_FEED_SOURCE_IDS, ['uficonnect', ...Object.keys(feedCatalog.following)]);
   for (const key of ['youtube', 'github', 'gitlab', 'reddit', 'twitch', 'bluesky', 'mastodon', 'twitter']) assert.ok(FOLLOWING_FEED_SOURCE_IDS.includes(key));
   for (const key of ['spotify', 'airbnb', 'indeed', 'facebook', 'hackernews', 'discord', 'figma', 'linkedin', 'instagram', 'tiktok']) assert.equal(FOLLOWING_FEED_SOURCE_IDS.includes(key), false);
@@ -65,7 +71,7 @@ test('new account and website sources remain visible as unavailable without ente
   }
   assert.ok(following.includes('weworkremotely'));
   assert.ok(following.includes('cntraveler'));
-  assert.equal(home.includes('weworkremotely'), false);
+  assert.equal(home.includes('weworkremotely'), true);
   assert.equal(home.includes('cntraveler'), false);
   for (const source of home) assert.equal(HOME_FEED_SOURCE_IDS.includes(source), false);
   for (const source of following) assert.equal(FOLLOWING_FEED_SOURCE_IDS.includes(source), false);

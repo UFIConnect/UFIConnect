@@ -1,6 +1,7 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
-import { SOURCE_META } from './sourceMeta';
+import { JOB_FEED_SOURCE_IDS, JOB_WEBSITE_SOURCE_IDS, SOURCE_META } from './sourceMeta';
+import ExternalAccountLogin from './ExternalAccountLogin';
 
 export const JOB_SORT_OPTIONS = [
   { value: 'newest', label: 'Newest' },
@@ -13,14 +14,7 @@ export const JOB_SORT_OPTIONS = [
   { value: 'source', label: 'Career site A-Z' },
 ];
 
-export const JOB_CAREER_SITES = [
-  { key: 'indeed', label: 'Indeed' },
-  { key: 'remoteok', label: 'Remote OK' },
-  { key: 'remotive', label: 'Remotive' },
-  { key: 'muse', label: 'The Muse' },
-  { key: 'usajobs', label: 'USAJobs' },
-  { key: 'weworkremotely', label: 'We Work Remotely' },
-];
+export const JOB_CAREER_SITES = JOB_FEED_SOURCE_IDS.map(key => ({ key, label: SOURCE_META[key].label }));
 
 function JobControlIcon({ name }) {
   const common = {
@@ -138,6 +132,19 @@ export default function JobsSidebarControls({ onNavigate }) {
           ))}
         </div>
       </section>
+
+      <details className="jobs-sidebar-section jobs-career-websites">
+        <summary>More career sites</summary>
+        <p>Visit career sites without a listing feed.</p>
+        <div className="jobs-sidebar-options">
+          {JOB_WEBSITE_SOURCE_IDS.map(source => (
+            <div key={source} className="jobs-career-website">
+              <span>{SOURCE_META[source]?.label || source}</span>
+              <ExternalAccountLogin platform={source} />
+            </div>
+          ))}
+        </div>
+      </details>
 
       <section className="jobs-sidebar-section" aria-labelledby="jobs-sidebar-sort-heading">
         <h2 id="jobs-sidebar-sort-heading">Sort options</h2>
