@@ -81,7 +81,7 @@
 .snap-viewer.snap-viewer-feed { --card: #10131b; --surface: #1a1f2b; --text: #f8fafc; --muted: #cbd5e1; --border: #303846; --primary: #abc2ff; --primary-light: #26324d; --danger: #fca5a5; position: fixed; inset: 0; width: 100vw; height: 100dvh; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0; overflow: hidden; background: #080808; color: var(--text); perspective: 2000px; perspective-origin: 50% 50%; }
 .snap-viewer.snap-viewer-feed::backdrop { background: #080808; }
 .snap-viewer-close { position: absolute; top: max(10px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); z-index: 2; width: 44px; height: 44px; }
-.snap-viewer-inner { display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; width: 100%; height: 100%; min-height: 0; overflow: hidden; }
+.snap-viewer-inner { display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; width: 100%; height: 100%; min-height: 0; overflow: hidden; touch-action: pan-y pinch-zoom; }
 .snap-viewer-inner[data-has-playback="true"] { grid-template-rows: auto minmax(0, 1fr) auto auto auto; }
 .snap-viewer-playback { width: min(100%, 800px); min-width: 0; margin: 0 auto; padding: 0 max(18px, env(safe-area-inset-right)) 0 max(18px, env(safe-area-inset-left)); background: #080c12; }
 .snap-viewer-topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 60px; padding: max(10px, env(safe-area-inset-top)) calc(max(16px, env(safe-area-inset-right)) + 52px) 10px max(16px, env(safe-area-inset-left)); color: var(--text); font-size: .85rem; font-weight: 700; touch-action: pan-y pinch-zoom; }
@@ -157,7 +157,7 @@
 .snap-viewer button:focus-visible, .snap-viewer a:focus-visible, .snap-viewer input:focus-visible, .snap-composer button:focus-visible, .snap-composer textarea:focus-visible, .snap-composer input:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .snap-viewer-topbar:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 
-@media (max-width: 600px) { .snap-viewer-swipe-hint, .snap-viewer-preview-topbar > span { display: none; } }
+@media (max-width: 600px) { .snap-viewer-swipe-hint, .snap-viewer-preview-topbar > span { font-size: .67rem; } }
 
 @media (max-width: 450px) {
   .snap-post-button { padding: 8px; font-size: .74rem; }

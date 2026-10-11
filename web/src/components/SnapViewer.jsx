@@ -246,7 +246,7 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
   function startSwipe(event) {
     gesture.current.touch = null;
     if (optionsOpen || deleting || confirmDelete || event.touches.length !== 1
-      || event.target.closest?.('iframe, .twitch-clip-player, .snap-viewer-media-twitch, .snap-viewer-menu, .snap-viewer-details, a, button, input, textarea, select, [contenteditable="true"]')) return;
+      || event.target.closest?.('iframe, .twitch-clip-player, .snap-viewer-media-twitch, .snap-viewer-menu, .snap-viewer-playback, a, button, input, textarea, select, [contenteditable="true"]')) return;
     const touch = event.touches[0];
     const video = event.target.closest?.('video');
     if (video && touch.clientY >= video.getBoundingClientRect().bottom - 64) return;
@@ -318,12 +318,12 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
         </div>
       </div>}
       <div className="snap-viewer-cube-current">
-    <div className="snap-viewer-inner" data-has-playback={hasPlayback ? 'true' : undefined}>
-      <div className="snap-viewer-topbar" {...gestureHandlers}><strong>Snaps</strong><span className="snap-viewer-swipe-hint">Swipe left or right</span>
+    <div className="snap-viewer-inner" data-has-playback={hasPlayback ? 'true' : undefined} {...gestureHandlers}>
+      <div className="snap-viewer-topbar"><strong>Snaps</strong><span className="snap-viewer-swipe-hint">Swipe left or right</span>
       </div>
       <div className={`snap-viewer-media${twitchClip ? ' snap-viewer-media-twitch' : ''}`} tabIndex={0} role="region" aria-label="Snap media"
         aria-description="Scroll up or down, swipe left or right, or use the left and right arrow keys to view snaps."
-        aria-keyshortcuts="ArrowLeft ArrowRight" {...gestureHandlers}>
+        aria-keyshortcuts="ArrowLeft ArrowRight">
         {failed ? <p role="status">This snap’s media could not load.{original && <a href={original} target="_blank" rel="noopener noreferrer">Open on {source}</a>}</p>
         : twitchClip ? <TwitchClipPlayer key={mediaKey} post={snap} title={`${source} clip by ${author}`} />
         : playback.kind === 'youtube' ? <div ref={youtubeControls.hostRef} className="snap-viewer-youtube-player" style={{ width: '100%', height: '100%' }} />
@@ -360,7 +360,6 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
       onKeyDown={event => event.stopPropagation()}>
       {sourceItems.map(item => <a key={item.key} href={safePostLink(item.href)} target="_blank" rel="noopener noreferrer" onClick={() => closeOptions(false)}>{item.label}{item.detail && <small>{item.detail}</small>}</a>)}
       {nativePlayback && <button type="button" disabled={deleting} onClick={() => { closeOptions(); setPlayerSettingsOpen(true); }}>Player settings<small>Playback speed and captions</small></button>}
-      <button type="button" disabled={items.length < 2 || deleting || confirmDelete} onClick={() => move(-1)} aria-label="Previous snap">Previous snap</button>
       {onReport && <button type="button" disabled={deleting} onClick={() => { closeOptions(false); onReport(snap); }} aria-label="Report this snap"><Flag size={16} aria-hidden="true" />Report</button>}
       {canDelete && (confirmDelete ? <div className="snap-viewer-delete-confirm"><p>Delete this snap?</p><button type="button" className="post-chrome-menu-danger" disabled={deleting} onClick={remove} autoFocus>{deleting ? 'Deleting…' : 'Delete snap'}</button><button type="button" disabled={deleting} onClick={() => { setConfirmDelete(false); setError(''); window.requestAnimationFrame(() => menuPanel.current?.querySelector('[aria-label="Delete this snap"]')?.focus({ preventScroll: true })); }}>Cancel</button></div>
         : <button type="button" className="post-chrome-menu-danger" onClick={() => setConfirmDelete(true)} aria-label="Delete this snap"><Trash2 size={16} aria-hidden="true" />Delete</button>)}
