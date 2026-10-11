@@ -133,9 +133,7 @@ try {
     await panel.getByRole('switch', { name: 'Turn off Reddit', exact: true }).waitFor();
     profile = (await app.request('/profile', { userId: id })).data;
     assert.deepEqual(profile.roleSettings.disabledSources, socialDisabled.filter(source => source !== 'reddit'), 'Favorites bulk action affects only displayed favorites');
-    await category.selectOption('career');
-    await panel.getByRole('button', { name: 'Enable all', exact: true }).waitFor();
-    assert.equal(await panel.getByRole('button', { name: 'Enable all', exact: true }).isDisabled(), true);
+    assert.equal(await category.locator('option[value="career"]').count(), 0, 'Career sources moved to Jobs');
     // Wait for the destination feed request as well as its heading. React can
     // show the new source row before navigation has closed the previous drawer.
     const followingLoaded = page.waitForResponse(response => {
