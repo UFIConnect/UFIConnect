@@ -38,6 +38,20 @@ try {
     await installAuditMember(page, app, 'jobs-audit');
     await auditNavigate(page, server.resolvedUrls.local[0] + 'opportunities');
     await page.locator('.job-result-tab').first().waitFor();
+    if (width <= 768) await page.getByRole('button', { name: 'Open menu', exact: true }).click();
+    const jobTools = page.locator(width <= 768 ? '#mobile-feed-drawer' : '.jobs-page-right-tabs');
+    const jobSources = jobTools.getByRole('radiogroup', { name: 'Career sites', exact: true });
+    for (const source of ['Indeed', 'Remote OK', 'Remotive', 'The Muse', 'USAJobs', 'We Work Remotely']) {
+      assert.equal(await jobSources.getByRole('radio', { name: source, exact: true }).count(), 1);
+    }
+    const careerWebsites = jobTools.locator('.jobs-career-websites');
+    await careerWebsites.locator('summary').click();
+    const glassdoor = careerWebsites.getByRole('link', { name: 'Visit Glassdoor website', exact: true });
+    assert.match(await glassdoor.getAttribute('href'), /^https:\/\//);
+    assert.equal(await glassdoor.getAttribute('rel'), 'noopener noreferrer');
+    assert.equal(await jobSources.getByRole('radio', { name: 'Glassdoor', exact: true }).count(), 0, 'Website-only sites do not become feed filters');
+    await careerWebsites.locator('summary').click();
+    if (width <= 768) await page.keyboard.press('Escape');
     assert.equal(await page.locator('.opportunities-page-header, .jobs-personalization-status, .job-result-section-heading').count(), 0);
     assert.match(await page.locator('.job-result-tab').first().textContent(), /Posting date unavailable/);
     assert.match(await page.locator('.job-result-tab').nth(1).textContent(), /Feb 3, 2025/);

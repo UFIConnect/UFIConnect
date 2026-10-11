@@ -135,6 +135,8 @@ export const FOLLOWING_EXCLUDED_SOURCE_IDS = CONNECTED_SOCIAL_PLATFORMS.filter(
 // Shared by the desktop feed rail and the mobile app menu. Keeping this
 // vocabulary here prevents the two controls from quietly drifting apart.
 export const HOME_FEED_SOURCE_IDS = [...new Set(FEED_SOURCE_CATALOG.home)];
+export const JOB_FEED_SOURCE_IDS = [...new Set(FEED_SOURCE_CATALOG.jobs)];
+export const JOB_WEBSITE_SOURCE_IDS = CAREER_ACCOUNT_PLATFORMS.filter(source => !JOB_FEED_SOURCE_IDS.includes(source));
 
 export const FOLLOWING_FEED_SOURCE_IDS = [
   'uficonnect',

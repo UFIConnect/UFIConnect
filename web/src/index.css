@@ -1359,6 +1359,27 @@ input, textarea, select { font-family: inherit; }
   grid-template-columns: minmax(0, 1fr);
   gap: 4px;
 }
+.jobs-career-websites summary {
+  cursor: pointer;
+  font-size: .78rem;
+  font-weight: 650;
+}
+.jobs-career-websites p {
+  color: var(--muted);
+  font-size: .75rem;
+}
+.jobs-career-website {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  font-size: .78rem;
+}
+.jobs-career-website > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .jobs-sidebar-option {
   display: flex;
   align-items: center;

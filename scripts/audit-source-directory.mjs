@@ -70,18 +70,14 @@ try {
     });
     await auditNavigate(page, server.resolvedUrls.local[0] + '?feed=feed&all=1');
     const homeSources = page.getByRole('group', { name: 'Home sources', exact: true });
-    await homeSources.getByRole('button', { name: 'We Work Remotely', exact: true }).waitFor();
+    for (const source of ['Indeed', 'Remote OK', 'Remotive', 'The Muse', 'USAJobs', 'We Work Remotely']) {
+      assert.equal(await homeSources.getByRole('button', { name: source, exact: true }).count(), 0, `${source} moved to Jobs`);
+    }
     await homeSources.getByRole('button', { name: 'Condé Nast Traveler', exact: true }).waitFor();
     await page.getByRole('button', { name: 'View all feed sources', exact: true }).click();
-    const websites = page.getByRole('region', { name: 'Source websites', exact: true });
-    await websites.getByRole('link', { name: 'Visit Reuters website', exact: true }).waitFor();
-    assert.equal(await websites.getByRole('link', { name: 'Visit Reuters website', exact: true }).getAttribute('href'), 'https://www.reuters.com/');
+    assert.equal(await page.getByRole('region', { name: 'Source websites', exact: true }).count(), 0, 'Home only offers feed sources');
+    assert.equal(await page.getByRole('region', { name: 'Public feed unavailable', exact: true }).count(), 0);
     assert.equal(await homeSources.getByRole('button', { name: 'Reuters', exact: true }).count(), 0);
-    await websites.getByRole('combobox', { name: 'Filter source websites', exact: true }).selectOption('travel');
-    await websites.getByRole('link', { name: 'Visit Airbnb website', exact: true }).waitFor();
-    await websites.getByRole('combobox', { name: 'Filter source websites', exact: true }).selectOption('audio');
-    await websites.getByRole('link', { name: 'Visit Spotify website', exact: true }).waitFor();
-    assert.equal(await websites.getByRole('link', { name: 'Visit Spotify website', exact: true }).getAttribute('rel'), 'noopener noreferrer');
     await page.getByRole('button', { name: 'View all feed sources', exact: true }).click();
     if (width <= 768) await page.getByRole('button', { name: 'Open menu', exact: true }).click();
     const tools = page.locator(width <= 768 ? '#mobile-feed-drawer .home-feed-side-tools' : '.home-feed-right-tabs .home-feed-side-tools');
@@ -96,9 +92,8 @@ try {
     assert.equal(await tools.getByRole('combobox', { name: 'Filter feed sources' }).locator('option[value="all"]').count(), 0);
     assert.equal(await tools.getByRole('searchbox').count(), 0);
     assert.equal(await tools.getByRole('button', { name: 'Select favorites', exact: true }).count(), 0);
-    await tools.getByRole('combobox', { name: 'Filter feed sources' }).selectOption('career');
-    assert.ok((await tools.locator('.home-feed-source-name').allTextContents()).includes('USAJobs'));
-    assert.ok(!(await tools.locator('.home-feed-source-name').allTextContents()).includes('Reddit'));
+    assert.equal(await tools.getByRole('combobox', { name: 'Filter feed sources' }).locator('option[value="career"]').count(), 0);
+    assert.equal(await tools.getByRole('region', { name: 'Public feed unavailable', exact: true }).count(), 0);
     await tools.getByRole('combobox', { name: 'Filter feed sources' }).selectOption('favorites');
     assert.deepEqual(await tools.locator('.home-feed-source-name').allTextContents(), ['Reddit', 'YouTube']);
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/source-directory-${width}.png`) });

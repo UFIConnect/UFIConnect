@@ -3575,8 +3575,10 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                     {sourceFavoriteSaving ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Save favorites'}
                   </button>
                 </div>
-                <UnavailableFeedSources mode={sourceFavoriteMode} plan={profile?.plan} includeWebsites={false} />
-                <SourceWebsiteDirectory plan={profile?.plan} mode={sourceFavoriteMode} />
+                {sourceFavoriteMode === 'following' && <>
+                  <UnavailableFeedSources mode={sourceFavoriteMode} plan={profile?.plan} includeWebsites={false} />
+                  <SourceWebsiteDirectory plan={profile?.plan} mode={sourceFavoriteMode} />
+                </>}
               </div>
             )}
           </div>
