@@ -21,12 +21,18 @@ test('Following supports Mastodon home timelines and excludes own-post-only inte
   }
 });
 
-test('public Home sources and connected Following sources share an explicit capability catalog', async () => {
-  const { HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS, SOURCE_WEBSITE_IDS } = await import('../web/src/components/sourceMeta.js');
-  const { home, following } = require('../shared/feed-source-catalog.json');
+test('Home, Jobs and connected Following sources share an explicit capability catalog', async () => {
+  const { HOME_FEED_SOURCE_IDS, JOB_FEED_SOURCE_IDS, JOB_WEBSITE_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS, SOURCE_WEBSITE_IDS } = await import('../web/src/components/sourceMeta.js');
+  const { home, jobs, following } = require('../shared/feed-source-catalog.json');
   const directory = require('./account-directory.json');
   assert.deepEqual(HOME_FEED_SOURCE_IDS, home);
-  assert.ok(HOME_FEED_SOURCE_IDS.includes('weworkremotely'));
+  assert.deepEqual(JOB_FEED_SOURCE_IDS, jobs);
+  assert.deepEqual(JOB_FEED_SOURCE_IDS, ['indeed', 'remoteok', 'remotive', 'muse', 'usajobs', 'weworkremotely']);
+  for (const source of JOB_FEED_SOURCE_IDS) {
+    assert.equal(HOME_FEED_SOURCE_IDS.includes(source), false, `${source} belongs in Jobs`);
+    assert.equal(JOB_WEBSITE_SOURCE_IDS.includes(source), false, `${source} provides a job feed`);
+    assert.equal(isFollowingSourceAllowed(source), false);
+  }
   assert.ok(HOME_FEED_SOURCE_IDS.includes('cntraveler'));
   assert.ok(HOME_FEED_SOURCE_IDS.includes('hackernews'));
   assert.ok(HOME_FEED_SOURCE_IDS.includes('twitch'));
@@ -63,7 +69,9 @@ test('external website sign-in and identity-only tokens never become Following p
   assert.deepEqual(result.data.sourceErrors, {});
   const catalog = await app.request('/social/platforms', { userId: 'directory-following' });
   assert.equal(catalog.status, 200);
-  assert.deepEqual(catalog.data.platforms.weworkremotely.feed, { home: true, following: null });
+  for (const source of require('../shared/feed-source-catalog.json').jobs) {
+    assert.deepEqual(catalog.data.platforms[source].feed, { home: false, following: null }, `${source} stays out of Home and Following`);
+  }
   assert.deepEqual(catalog.data.platforms.cntraveler.feed, { home: true, following: null });
   assert.deepEqual(catalog.data.platforms.youtube.feed, { home: true, following: 'following' });
   assert.deepEqual(catalog.data.platforms.twitch.feed, { home: true, following: 'following' });

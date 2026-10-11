@@ -193,7 +193,10 @@ try {
     assert.ok(copyBox.y >= frameBox.y + frameBox.height - 2, 'camera controls and description stay below the picture');
     const travelUrl = page.url();
     const pageCount = context.pages().length;
-    await rail.getByRole('button', { name: 'Watch live', exact: true }).click();
+    const watchLive = rail.getByRole('button', { name: 'Watch live', exact: true });
+    assert.equal(await watchLive.evaluate(button => getComputedStyle(button).backgroundColor), 'rgb(255, 255, 255)',
+      'Watch live keeps its opaque light background so dark text is readable over the camera overlay');
+    await watchLive.click();
     const player = page.getByRole('dialog', {name:'Live Travel',exact:true});
     await player.waitFor();
     await player.locator('iframe').waitFor();

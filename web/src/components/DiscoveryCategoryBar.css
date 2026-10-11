@@ -27,7 +27,8 @@
 .travel-live-loop .travel-camera-empty { margin: 0 16px 16px; }
 .travel-live-loop .travel-live-loop-navigation { position: static; display: flex; justify-content: center; width: fit-content; margin: 0 auto 12px; }
 .travel-live-loop .travel-live-loop-actions { flex-wrap: wrap; }
-.travel-live-loop button.travel-live-loop-action { background: transparent; cursor: pointer; }
+.travel-live-loop button.travel-live-loop-action { cursor: pointer; }
+.travel-live-loop button.travel-live-loop-action:not(.travel-live-loop-action--primary) { background: transparent; }
 .discovery-post-context { display: grid; gap: 8px; margin: 16px 0; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
 .discovery-post-context p { margin: 0; color: var(--muted); font-size: .8rem; }
 .discovery-post-context-links { display: flex; flex-wrap: wrap; gap: 8px; }
