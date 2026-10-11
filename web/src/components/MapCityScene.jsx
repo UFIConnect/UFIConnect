@@ -236,7 +236,9 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       const [x, y, z] = points[index], before = points[index - 1], after = points[index + 1];
       const magnitude = Math.hypot(after[0] - before[0], after[2] - before[2]) || 1, direction = reverse ? -1 : 1;
       const dx = (after[0] - before[0]) / magnitude * direction, dz = (after[2] - before[2]) / magnitude * direction;
-      const point = (along, across = 0) => [x + dx * along - dz * across, y + .045, z + dz * along + dx * across];
+      const grade = (after[1] - before[1]) / magnitude * direction;
+      // Follow the deck grade so uphill arrow tips stay above the road surface.
+      const point = (along, across = 0) => [x + dx * along - dz * across, y + grade * along + .045, z + dz * along + dx * across];
       roadPiece(parent, point(-.7), point(.7), .1, '#f4efdc', .012);
       for (const side of [-1, 1]) roadPiece(parent, point(.7), point(.15, side * .3), .1, '#f4efdc', .012);
     }
