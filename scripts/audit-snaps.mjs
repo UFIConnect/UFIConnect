@@ -30,10 +30,11 @@ const server = await createServer({ root: path.join(root, 'web'), configFile: pa
   server: { host: '127.0.0.1', port: 5274, strictPort: false, proxy: { '/api': { target: app.base, rewrite: value => value.replace(/^\/api/, '') } } },
 });
 let browser, checks = 0;
+const fixtureTime = Date.now();
 function check(condition, message) { assert.ok(condition, message); checks++; }
 function snap(id, source = 'uficonnect', extra = {}) {
   return { id, source, caption: id, mediaUrl: photoUrl, thumbnailUrl: photoUrl, mediaType: 'image',
-    visibility: 'public', createdAt: new Date(Date.now() - 1000).toISOString(), expiresAt: new Date(Date.now() + 23 * 3600_000).toISOString(),
+    visibility: 'public', createdAt: new Date(fixtureTime - 1000).toISOString(), expiresAt: new Date(fixtureTime + 23 * 3600_000).toISOString(),
     author: { id: author, name: 'Snap author', avatarUrl }, ...extra };
 }
 await fs.mkdir(path.join(root, '.cache/audit-ui'), { recursive: true });
@@ -57,7 +58,7 @@ try {
       snap('native-private', 'uficonnect', { visibility: 'followers', owned: true, caption: 'Private first account snap', author: { id: owner, name: 'Snap owner', avatarUrl } }),
       snap('other-native', 'uficonnect'),
       snap('facebook-fixture', 'facebook', { author: { id: 'facebook-author', name: 'Facebook fixture', avatarUrl, profileUrl: 'https://www.facebook.com/example' }, sourceUrl: 'https://www.facebook.com/stories/example' }),
-      snap('facebook-fixture-older', 'facebook', { caption: 'Second moment from the same author', author: { id: 'facebook-author', name: 'Facebook fixture', avatarUrl, profileUrl: 'https://www.facebook.com/example' }, sourceUrl: 'https://www.facebook.com/stories/example/older', createdAt: new Date(Date.now() - 2000).toISOString() }),
+      snap('facebook-fixture-older', 'facebook', { caption: 'Second moment from the same author', author: { id: 'facebook-author', name: 'Facebook fixture', avatarUrl, profileUrl: 'https://www.facebook.com/example' }, sourceUrl: 'https://www.facebook.com/stories/example/older', createdAt: new Date(fixtureTime - 2000).toISOString() }),
       ...Array.from({ length: 9 }, (_, index) => snap(`facebook-profile-${index}`, 'facebook', {
         author: { id: `facebook-profile-${index}`, name: `Community profile ${index + 1}`, ...(index !== 8 ? { avatarUrl } : {}) },
       })),
@@ -176,6 +177,11 @@ try {
     await facebookProfiles.evaluate(element => { element.scrollTop = 0; });
     await facebookProfiles.hover(); await page.mouse.wheel(0, 150);
     await page.waitForFunction(() => document.querySelector('[data-snap-source="facebook"] .snap-source-items')?.scrollTop > 0);
+    await page.waitForFunction(() => {
+      const element = document.querySelector('.snap-profile-button[data-snap-ids*="facebook-profile-8"]');
+      const bounds = element?.getBoundingClientRect(), parent = element?.closest('.snap-source-items').getBoundingClientRect();
+      return bounds && parent && bounds.y >= parent.y && bounds.bottom <= parent.bottom;
+    });
     check(await profileForSnap('facebook-profile-8').evaluate(element => {
       const bounds = element.getBoundingClientRect(), parent = element.closest('.snap-source-items').getBoundingClientRect();
       return bounds.y >= parent.y && bounds.bottom <= parent.bottom;
@@ -435,13 +441,13 @@ try {
       });
       check(await viewer.locator('.snap-viewer-caption').innerText() !== 'other-native', 'Swiping left advances the full-screen snap on phones');
       await settleCube();
-      await mediaStage.evaluate(element => {
+      await viewer.locator('.snap-viewer-caption').evaluate(element => {
         const bounds = element.getBoundingClientRect(), x = bounds.x + bounds.width / 2, y = bounds.y + bounds.height / 2;
         const touch = clientX => new Touch({ identifier: 3, target: element, clientX, clientY: y });
         element.dispatchEvent(new TouchEvent('touchstart', { touches: [touch(x - 60)], bubbles: true }));
         element.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: [touch(x + 60)], bubbles: true }));
       });
-      check(await viewer.locator('.snap-viewer-caption').innerText() === 'other-native', 'Swiping right restores the previous snap on phones');
+      check(await viewer.locator('.snap-viewer-caption').innerText() === 'other-native', 'Swiping right over the caption restores the previous snap on phones');
       await settleCube();
     } else {
       const bounds = await mediaStage.boundingBox(), x = bounds.x + bounds.width / 2, y = bounds.y + bounds.height / 2;
@@ -453,6 +459,7 @@ try {
       await settleCube();
     }
     await viewer.getByRole('button', { name: 'Snap options', exact: true }).click();
+    check(await viewer.getByRole('group', { name: 'Snap options', exact: true }).getByRole('button', { name: 'Previous snap', exact: true }).count() === 0, 'Snap settings contain no previous-snap command');
     const optionsBounds = await viewer.getByRole('group', { name: 'Snap options', exact: true }).boundingBox();
     check(optionsBounds.x >= 0 && optionsBounds.x + optionsBounds.width <= width + 2, 'The Videos-style snap options menu stays inside the viewport');
     check(await viewer.getByRole('group', { name: 'Snap options', exact: true }).getByRole('slider').count() === 0
