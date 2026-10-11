@@ -69,8 +69,8 @@ try {
       assert.ok(Number(initial.trafficPopulation) > 0 && Number(initial.trafficPopulation) <= 500, 'Traffic uses a bounded scene population');
       assert.equal(Number(initial.trafficLights), 20, 'City and ramp junctions share working traffic signals');
       assert.equal(await page.getByRole('heading', { name: 'Map', exact: true }).count(), 1);
-      const centered = await page.getByRole('heading', { name: 'Map', exact: true }).evaluate(element => getComputedStyle(element).textAlign);
-      assert.equal(centered, 'center', 'Map title is centered');
+      assert.equal(await page.locator('.map-workspace-heading, .map-city-title').count(), 0,
+        'Map does not show introductory headings and descriptions');
       await page.waitForTimeout(250);
       assert.equal((await snapshot()).trafficTime, initial.trafficTime, 'Reduced motion freezes the idle traffic clock');
 

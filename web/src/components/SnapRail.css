@@ -18,6 +18,7 @@
 .snap-source-favorite { color: var(--warning); flex: 0 0 auto; }
 .snap-source-items { display: grid; grid-auto-flow: row; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: 80px; max-height: calc(var(--snap-profile-rows, 3) * 88px + 6px); gap: 8px 4px; min-width: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-width: thin; scroll-snap-type: y proximity; list-style: none; margin: 0; padding: 6px 4px 8px; }
 .snap-profile-item { min-width: 0; list-style: none; scroll-snap-align: start; }
+.snap-source-items { scroll-padding-block: 6px 8px; }
 .snap-profile-button { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 100%; min-width: 0; border: 0; border-radius: 9px; padding: 3px 2px; background: transparent; color: var(--text); font: inherit; cursor: pointer; }
 .snap-profile-ring { display: grid; place-items: center; position: relative; width: 54px; height: 54px; flex: 0 0 auto; padding: 2px; border: 2px solid color-mix(in srgb, var(--snap-source-color, var(--primary)) 75%, #fff); border-radius: 50%; transition: transform .15s ease; }
 .snap-profile-avatar { display: grid; place-items: center; width: 100%; height: 100%; overflow: hidden; border-radius: 50%; background: color-mix(in srgb, var(--snap-source-color, var(--primary)) 12%, var(--card)); color: var(--text); }

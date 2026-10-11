@@ -237,7 +237,8 @@ try {
     assert.ok(await firstSlide.getByRole('group', { name: 'Post actions', exact: true }).isVisible());
     assert.ok(await firstSlide.getByLabel('Playback time', { exact: true }).isVisible());
     assert.ok(await page.evaluate(() => window.__auditYouTubePlayers.some(player => player.options.playerVars.controls === 1)), 'YouTube keeps its own playback controls');
-    assert.equal(await firstSlide.getByRole('button', { name: /^(?:Play|Pause|Mute|Unmute) video$/ }).count(), 0, 'App buttons do not duplicate the player controls');
+    assert.equal(await firstSlide.getByRole('button', { name: /^(?:Play|Pause) video$/ }).count(), 1, 'Play/pause stays visible beside the video cursor');
+    assert.equal(await firstSlide.getByRole('button', { name: /^(?:Mute|Unmute) video$/ }).count(), 1, 'Mute/unmute stays visible beside the video cursor');
     assert.equal(await firstSlide.locator('.post-chrome-identity').getAttribute('href'), 'https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv');
     const postActions = firstSlide.getByRole('group', { name: 'Post actions', exact: true });
     const sourceLike = postActions.getByRole('link', { name: 'Connect YouTube to like, 3 likes', exact: true });
@@ -255,7 +256,8 @@ try {
     await postMenu.waitFor({ state: 'hidden' });
     assert.equal(new URL(page.url()).pathname, '/videos', 'Escape closes the menu without leaving Videos');
     await more.click();
-    const original = postMenu.getByRole('menuitem', { name: 'Watch on YouTube', exact: true });
+    assert.equal(await postMenu.getByRole('menuitem', { name: 'Watch on YouTube', exact: true }).count(), 0);
+    const original = postActions.getByRole('link', { name: 'Watch on YouTube', exact: true });
     await original.waitFor();
     assert.ok(await original.isVisible());
     assert.equal(await original.getAttribute('href'), 'https://www.youtube.com/watch?v=aaaaaaaaaaa');
@@ -292,9 +294,10 @@ try {
     assert.equal(await nativeMenu.getByRole('menuitem', { name: /^(?:Show|Hide) player controls$/ }).count(), 0, 'Native controls do not require an overflow toggle');
     await nativeMenu.getByRole('menuitem', { name: /^Player settings\b/ }).waitFor({ state: 'visible' });
     await page.keyboard.press('Escape');
-    await page.waitForFunction(() => document.querySelector('[data-post-id="audit-video-1"] video')?.controls === true);
-    assert.equal(await native.evaluate(el => el.controls), true, 'Native playback controls remain available');
-    assert.equal(await native.evaluate(el => el.controlsList.contains('nofullscreen')), false, 'Native fullscreen stays available');
+    assert.equal(await native.evaluate(el => el.controls), false, 'The shared controls replace duplicate native controls');
+    const nativeSlide = page.locator('[data-post-id="audit-video-1"]');
+    assert.ok(await nativeSlide.getByRole('button', { name: /^(?:Play|Pause) video$/ }).isVisible(), 'Native play/pause remains available');
+    assert.ok(await nativeSlide.getByRole('button', { name: /^(?:Mute|Unmute) video$/ }).isVisible(), 'Native mute/unmute remains available');
     await page.screenshot({ path: path.join(output, `videos-${viewport.width}.png`) });
     checks += 5;
     await page.screenshot({ path: path.join(output, `following-${viewport.width}.png`) });

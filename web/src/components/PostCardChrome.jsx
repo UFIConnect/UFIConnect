@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
+import { Martini, Plane, Utensils } from 'lucide-react';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { SOURCE_META } from './sourceMeta';
 import { useToast } from '../contexts/ToastContext';
@@ -210,6 +211,7 @@ export function PostOptionsMenu({ post, items = [], sourceItems, onOpenComments,
   const [editOpen, setEditOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [position, setPosition] = useState(null);
+  const [optionsPage, setOptionsPage] = useState(0);
   const menuId = useId();
   const wrapper = useRef(null), button = useRef(null), menu = useRef(null), initialFocus = useRef('first');
   const closeMenu = () => { setOpen(false); button.current?.focus({ preventScroll: true }); };
@@ -245,17 +247,20 @@ export function PostOptionsMenu({ post, items = [], sourceItems, onOpenComments,
     } finally { setDeleteBusy(false); }
   }
   const visible = [
+    ...suppliedItems,
     ...(native ? [
       post?.id && { label: 'Likes on UFIconnect', to: `/p/${encodeURIComponent(post.id)}`, detail: 'View likes on the post.' },
       post?.id && { label: 'Go to profile', ...destination, disabled: !destination, detail: destination ? post.author?.name : 'Author profile unavailable.' },
-      post?.id && !suppliedItems.some(item => item.label === 'Open post') && { label: 'Open post', to: `/p/${encodeURIComponent(post.id)}` },
     ] : sourceItems ?? sourcePostMenuItems(post, { onOpenComments, includeComments: !hasCommentsItem })),
-    ...suppliedItems,
     post?.id && (native || original) && !suppliedItems.some(item => /^Copy (?:original link|link to post)$/i.test(item.label)) && { label: native ? 'Copy link to post' : 'Copy original link', onSelect: copyLink },
     ownPost && { label: 'Edit post', busy: deleteBusy, onSelect: () => setEditOpen(true) },
     ownPost && !items.some(item => item?.label === 'Delete post') && { label: 'Delete post', danger: true, busy: deleteBusy, onSelect: deletePost },
     post?.id && !ownPost && !items.some(item => item?.label === 'Report post') && { label: 'Report post', onSelect: () => setReportOpen(true) },
-  ].filter(Boolean).flatMap(item => item.href ? safePostLink(item.href) ? [{ ...item, href: safePostLink(item.href) }] : [] : [item]);
+  ].filter(item => item && item.key !== 'original' && item.label !== 'Open post')
+    .flatMap(item => item.href ? safePostLink(item.href) ? [{ ...item, href: safePostLink(item.href) }] : [] : [item]);
+  const pageCount = Math.max(1, Math.ceil(visible.length / 6));
+  const activePage = Math.min(optionsPage, pageCount - 1);
+  const pageItems = visible.slice(activePage * 6, (activePage + 1) * 6);
   useLayoutEffect(() => {
     if (!open) { setPosition(null); return undefined; }
     function updatePosition() {
@@ -272,12 +277,12 @@ export function PostOptionsMenu({ post, items = [], sourceItems, onOpenComments,
     updatePosition();
     window.addEventListener('resize', updatePosition); window.addEventListener('scroll', updatePosition, true);
     return () => { window.removeEventListener('resize', updatePosition); window.removeEventListener('scroll', updatePosition, true); };
-  }, [open, visible.length]);
+  }, [open, visible.length, activePage]);
   useEffect(() => {
     if (!open || !position) return;
     const openedItems = [...(menu.current?.querySelectorAll('[role="menuitem"]:not(:disabled)') || [])];
     (initialFocus.current === 'last' ? openedItems.at(-1) : openedItems[0])?.focus({ preventScroll: true });
-  }, [open, Boolean(position)]);
+  }, [open, Boolean(position), activePage]);
   function handleMenuKey(event) {
     const targets = [...menu.current.querySelectorAll('[role="menuitem"]:not(:disabled)')];
     const index = targets.indexOf(document.activeElement);
@@ -295,14 +300,14 @@ export function PostOptionsMenu({ post, items = [], sourceItems, onOpenComments,
   return (
     <div className="post-chrome-more" ref={wrapper}>
       <button ref={button} type="button" className="post-chrome-action" aria-label="More options" aria-haspopup="menu" aria-controls={open ? menuId : undefined} aria-expanded={open} title="More options"
-        onClick={event => { event.stopPropagation(); initialFocus.current = 'first'; setOpen(value => !value); }}
-        onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); initialFocus.current = event.key === 'ArrowUp' ? 'last' : 'first'; setOpen(true); } }}>
+        onClick={event => { event.stopPropagation(); initialFocus.current = 'first'; setOptionsPage(0); setOpen(value => !value); }}
+        onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); initialFocus.current = event.key === 'ArrowUp' ? 'last' : 'first'; setOptionsPage(0); setOpen(true); } }}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" /></svg>
       </button>
       {(open || visible.some(item => item.element)) && createPortal(
         <div ref={menu} id={menuId} className="post-chrome-menu" role="menu" aria-label={`Post options on ${native ? 'UFIConnect' : postSource(post).label}`}
           hidden={!open} style={{ ...position, visibility: position ? undefined : 'hidden' }} onKeyDown={handleMenuKey} onClick={event => event.stopPropagation()}>
-          {visible.map(item => {
+          {pageItems.map(item => {
             if (item.element) return <span key={item.label} role="none">{item.element}</span>;
             const content = <>{item.busy ? `${item.label}…` : item.label}{item.detail && <small>{item.detail}</small>}</>;
             const props = { role: 'menuitem', className: item.danger ? 'post-chrome-menu-danger' : undefined,
@@ -311,6 +316,13 @@ export function PostOptionsMenu({ post, items = [], sourceItems, onOpenComments,
               : item.href ? <a key={item.label} href={item.href} target="_blank" rel="noopener noreferrer" {...props}>{content}</a>
                 : <button key={item.label} type="button" disabled={item.busy || item.disabled} {...props}>{content}</button>;
           })}
+          {pageCount > 1 && <div className="post-chrome-menu-pages" role="group" aria-label="Post options pages">
+            <button type="button" role="menuitem" aria-label="Previous options" disabled={activePage === 0}
+              onClick={() => { initialFocus.current = 'first'; setOptionsPage(activePage - 1); }}>Previous</button>
+            <span role="presentation" aria-live="polite">{activePage + 1} / {pageCount}</span>
+            <button type="button" role="menuitem" aria-label="Next options" disabled={activePage + 1 === pageCount}
+              onClick={() => { initialFocus.current = 'first'; setOptionsPage(activePage + 1); }}>Next</button>
+          </div>}
         </div>, document.body
       )}
       {reportOpen && <ReportModal targetType="post" targetId={String(post.id)} targetLabel="post" source={post.source}
@@ -341,13 +353,18 @@ export function SharePostButton({ post }) {
 // an arrow, named for screen readers ("Open on Reddit", "Apply on Indeed").
 export function OpenOnSource({ post, label, onClick }) {
   const src = postSource(post);
+  const native = isMemberPost(post);
   const href = safePostLink(post?.sourceUrl);
-  if (!href) return null;
-  const name = label || `Open on ${src.label}`;
-  return (
-    <a className="post-chrome-action post-chrome-source-link" href={href} target="_blank" rel="noopener noreferrer" onClick={onClick} style={{ '--source-color': src.color }} aria-label={name} title={name}>
-      <span className="post-chrome-open-mark" aria-hidden="true">{hasBrandIcon(post.source) ? <BrandIcon platform={post.source} size={16} /> : <b>{src.icon}</b>}</span>
+  const internal = native || !href;
+  if (internal && !post?.id) return null;
+  const name = internal ? 'Open post' : label || sourcePostMenuItems(post).find(item => item.key === 'original')?.label || `Open on ${src.label}`;
+  const CategoryIcon = { wikivoyage: Plane, travelnews: Plane, travelevents: Plane, livecamera: Plane, restaurants: Utensils, bars: Martini }[post.source];
+  const props = { className: 'post-chrome-action post-chrome-source-link', onClick,
+    style: { '--source-color': src.color }, 'aria-label': name, title: name };
+  const content = <>
+      <span className="post-chrome-open-mark" aria-hidden="true">{CategoryIcon ? <CategoryIcon size={16} /> : hasBrandIcon(post.source || 'uficonnect') ? <BrandIcon platform={post.source || 'uficonnect'} size={16} /> : <b>{src.icon}</b>}</span>
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></svg>
-    </a>
-  );
+    </>;
+  return internal ? <Link to={`/p/${encodeURIComponent(post.id)}`} {...props}>{content}</Link>
+    : <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{content}</a>;
 }

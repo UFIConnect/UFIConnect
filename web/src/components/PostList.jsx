@@ -2,7 +2,7 @@
 import { Link } from 'react-router-dom';
 import client from '../api/client';
 import PostLikes from './PostLikes';
-import { PostTime, PostOptionsMenu } from './PostCardChrome';
+import { PostTime, PostOptionsMenu, OpenOnSource } from './PostCardChrome';
 import ImageLightbox from './ImageLightbox';
 import { InlineAutoplayVideo } from './videoMedia';
 import { SavePostButton } from './SaveButtons';
@@ -275,7 +275,7 @@ export default function PostList({
 
             {!isShopPost && <PostLinkPreviews post={post} />}
             {isShopPost && <ShopPostDetails post={post} />}
-            <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap', alignItems: 'center', borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+            <div className="post-chrome-actions" style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
               <PostLikes post={post} onPostUpdated={updatePost} />
 
               <button
@@ -293,11 +293,6 @@ export default function PostList({
                 className="btn btn-ghost btn-sm save-item-button"
                 style={{ minWidth: 92 }}
               />
-              <PostOptionsMenu post={post} onPostUpdated={updatePost} onRemoved={removed => {
-                setLocalPosts(previous => previous.filter(item => item.id !== removed.id));
-                onPostDeleted?.(removed.id);
-              }} />
-
               {post.group && (
                 <span style={{
                   fontSize: '.72rem', fontWeight: 600, marginLeft: 'auto',
@@ -307,6 +302,11 @@ export default function PostList({
                   {post.group.name}
                 </span>
               )}
+              <PostOptionsMenu post={post} onPostUpdated={updatePost} onRemoved={removed => {
+                setLocalPosts(previous => previous.filter(item => item.id !== removed.id));
+                onPostDeleted?.(removed.id);
+              }} />
+              <OpenOnSource post={post} />
             </div>
 
             {commentsOpen && (

@@ -338,7 +338,7 @@ export default function Maps() {
   } : undefined} feedSearch={{ query, label: 'Search city posts', onSubmit: value => { setQuery(value); setVisibleCount(PAGE_SIZE); } }}>
     <Helmet><title>Map · Your city | UFIconnect</title><meta name="robots" content="noindex" /></Helmet>
     <div className="local-workspace city-workspace">
-      <header className="local-workspace-heading map-workspace-heading"><div><span className="local-eyebrow">YOUR WORLD, CONNECTED</span><h1>Map</h1><p>Choose a city, open its source houses, and explore posts about the topics you enjoy.</p></div></header>
+      <h1 className="map-accessible-heading">Map</h1>
       {['countries', 'restaurants', 'bars'].includes(category.mode)
         ? <p className="muted">{category.label} destination: {[locationContext?.city, locationContext?.countryName || locationContext?.country].filter(Boolean).join(', ') || 'Automatic area'}. <Link to={category.route}>Change this destination</Link></p>
         : null}
