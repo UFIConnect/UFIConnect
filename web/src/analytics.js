@@ -1,4 +1,5 @@
 import { resolveApiBaseUrl } from './api/apiOrigin';
+import { isNativeRuntime, nativeFetch } from './nativeRuntime.mjs';
 import { canonicalPage, PAGE_CATEGORIES } from './analytics/googleAnalytics.mjs';
 import { setTelemetryRoute, subscribeTelemetryPrivacy, telemetrySuppressed } from './analytics/telemetryPrivacy.mjs';
 
@@ -32,7 +33,7 @@ export function trackCategoryview(category, navigationKey, scope = 'tab') {
   pending.add(controller);
   void resolveApiBaseUrl().then(apiBase => {
     if (controller.signal.aborted || telemetrySuppressed()) return;
-    return fetch(apiBase + '/analytics/pageview', {
+    return (isNativeRuntime() ? nativeFetch : fetch)(apiBase + '/analytics/pageview', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category }),
       referrerPolicy: 'no-referrer', credentials: 'omit', redirect: 'error', cache: 'no-store', signal: controller.signal,
     });

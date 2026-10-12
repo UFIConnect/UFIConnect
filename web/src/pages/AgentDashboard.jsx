@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Layout from '../components/Layout';
+import { continueSourceConnectionInBrowser } from '../nativeRuntime.mjs';
 import { useNavigate } from 'react-router-dom';
 import client from '../api/client';
 import AccountActionIcon from '../components/AccountActionIcon';
@@ -1042,6 +1043,7 @@ export default function AgentDashboard() {
   const activeAgents = useRef(new Set());
 
   async function connectSource(platform) {
+    if (await continueSourceConnectionInBrowser(platform)) return;
     if (platform === 'mastodon') { navigate('/connected-accounts?connect=mastodon'); return; }
     try {
       const { data } = await client.get(`/auth/social/${platform}/start`);

@@ -1,3 +1,5 @@
+import PostPagesNavigation from '../components/PostPagesNavigation';
+import usePostPages from '../hooks/usePostPages';
 import ProfilePhoto from '../components/ProfilePhoto';
 import useTabMetrics from '../analytics/useTabMetrics';
 import { useState, useEffect, useRef } from 'react';
@@ -85,10 +87,9 @@ export default function PublicProfile() {
   const [connecting, setConnecting] = useState(false);
   const [blocking, setBlocking] = useState(false);
   const [modal,    setModal]    = useState(null);
-  const [posts,    setPosts]    = useState([]);
-  const [postsLoading, setPostsLoading] = useState(false);
-  const [postsHasMore, setPostsHasMore] = useState(false);
-  const [postsLoadingMore, setPostsLoadingMore] = useState(false);
+  const postPages = usePostPages({ endpoint: `/users/${id}/posts`, viewerId: myProfile?.id });
+  const posts = postPages.items;
+  const postsLoading = postPages.loading && !posts.length;
   const [moreOpen, setMoreOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('posts');
   useTabMetrics('member', activeTab);
@@ -113,42 +114,20 @@ export default function PublicProfile() {
   }, [moreOpen]);
 
   useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
     setLoading(true);
     setUser(null);
     setActiveTab('posts');
-    client.get(`/users/${id}`)
-      .then(({ data }) => { setUser(data); setError(''); })
+    client.get(`/users/${id}`, { signal: controller.signal })
+      .then(({ data }) => { if (active) { setUser(data); setError(''); } })
       // A hidden profile 403s with { hidden: true } — distinguished from a
       // genuine 404 so the empty state below can say the accurate thing
       // ("this profile is private") instead of the misleading "not found."
-      .catch((err) => setError(err?.response?.data?.hidden ? 'hidden' : 'notfound'))
-      .finally(() => setLoading(false));
+      .catch((err) => { if (active) setError(err?.response?.data?.hidden ? 'hidden' : 'notfound'); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; controller.abort(); };
   }, [id]);
-
-  useEffect(() => {
-    setPostsLoading(true);
-    client.get(`/users/${id}/posts`, { params: { limit: 50 } })
-      .then(({ data }) => { setPosts(data.posts || []); setPostsHasMore(!!data.hasMore); })
-      .catch(() => { setPosts([]); setPostsHasMore(false); })
-      .finally(() => setPostsLoading(false));
-  }, [id]);
-
-  // See PostList's onNearEnd / ImageLightbox's "max view" — same reasoning
-  // as Profile.jsx's own loadMorePosts.
-  async function loadMorePosts() {
-    if (postsLoadingMore || !postsHasMore) return;
-    setPostsLoadingMore(true);
-    try {
-      const { data } = await client.get(`/users/${id}/posts`, { params: { limit: 50, offset: posts.length } });
-      const incoming = data.posts || [];
-      setPosts(prev => {
-        const knownIds = new Set(prev.map(p => p.id));
-        return [...prev, ...incoming.filter(p => !knownIds.has(p.id))];
-      });
-      setPostsHasMore(!!data.hasMore);
-    } catch {}
-    finally { setPostsLoadingMore(false); }
-  }
 
   async function toggleFollow() {
     if (!user) return;
@@ -487,7 +466,7 @@ export default function PublicProfile() {
         )}
 
         {/* Posts */}
-        {activeTab === 'posts' && <div>
+        {activeTab === 'posts' && <div id="member-post-results" style={{ scrollMarginTop: 80 }}>
           <div style={{ maxWidth: 640, marginBottom: 8 }}>
             <h3 style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', margin: '0 0 4px' }}>Posts</h3>
           </div>
@@ -497,8 +476,9 @@ export default function PublicProfile() {
             showAuthor={false}
             emptyTitle="No posts yet"
             emptyDesc={`${user.name} has not posted to the community yet.`}
-            onNearEnd={loadMorePosts}
+            maxWidth={null}
           />
+          <PostPagesNavigation results={postPages} targetId="member-post-results" label="Member post pages" />
         </div>}
 
         {/* Skills */}

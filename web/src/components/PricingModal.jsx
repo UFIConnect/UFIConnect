@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import useBillingConfig from '../hooks/useBillingConfig';
+import { isNativeRuntime } from '../nativeRuntime.mjs';
 import './PricingModal.css';
 
 export const TIERS = [
@@ -38,6 +39,7 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier, error
     return () => previous?.focus?.();
   }, []);
 
+  if (isNativeRuntime()) return <div className="membership-modal-backdrop"><div className="membership-modal" role="dialog" aria-modal="true" aria-label="Membership"><p>Your existing membership determines the tools available in this app.</p><button ref={closeButton} type="button" onClick={onClose}>Close</button></div></div>;
   return (
     <div
       className="membership-modal-backdrop"

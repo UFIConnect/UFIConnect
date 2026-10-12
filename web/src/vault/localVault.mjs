@@ -2,6 +2,7 @@
 // Neither passphrases nor unwrapped encryption keys are persisted.
 import { safeLaunchUrl, cleanVaultPreferences } from './vaultLaunchers.mjs';
 import { cleanVaultFile, VAULT_FILE_KINDS } from './vaultFiles.mjs';
+import { isNativeRuntime } from '../nativeRuntime.mjs';
 export const VAULT_STORAGE_KEY = 'uficonnect.vault.encrypted.v1';
 const ITERATIONS = 600000;
 export const MAX_VAULT_BYTES = 2 * 1024 * 1024;
@@ -269,9 +270,11 @@ async function deviceKey(secret) {
   } finally { raw.fill(0); }
 }
 function deviceSupport() {
+  if (isNativeRuntime()) throw new Error('Use your vault passphrase in this app. Browser device unlock is unavailable here.');
   if (!globalThis.isSecureContext || !globalThis.PublicKeyCredential || !navigator.credentials) throw new Error('Device unlock needs a secure browser with passkey encryption support. Use your passphrase here.');
 }
 export function hasDeviceUnlock(storage = storageDefault()) {
+  if (isNativeRuntime()) return false;
   try { return Boolean(readRecord(storage).device); } catch { return false; }
 }
 export async function enableDeviceUnlock(passphrase, storage = storageDefault()) {

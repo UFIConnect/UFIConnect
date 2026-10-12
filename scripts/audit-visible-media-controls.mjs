@@ -1,19 +1,31 @@
-// Production assets and synthetic member/media responses; provider calls are blocked.
+// Built assets and synthetic member/media responses; provider calls are blocked.
 // Optional hosted origin: UFI_MEDIA_CONTROLS_AUDIT_ORIGIN=https://uficonnect.org
 // Optional focused viewport: UFI_MEDIA_CONTROLS_AUDIT_WIDTH=1440|390|320
+// Local source assets: UFI_MEDIA_CONTROLS_AUDIT_DEV=1 (no hot reload)
+// Focused post/lightbox check: UFI_MEDIA_CONTROLS_AUDIT_SCOPE=details
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { startBuiltServer } from '../web/scripts/serve-built.mjs';
 import { installAuditMember, auditNavigate } from './audit-session.mjs';
+import { createServer } from '../web/node_modules/vite/dist/node/index.js';
 
 const require = createRequire(import.meta.url);
+const detailsOnly = process.env.UFI_MEDIA_CONTROLS_AUDIT_SCOPE === 'details';
 const widths = process.env.UFI_MEDIA_CONTROLS_AUDIT_WIDTH ? [Number(process.env.UFI_MEDIA_CONTROLS_AUDIT_WIDTH)] : [1440, 390, 320];
 assert.ok(widths.every(width => [1440, 390, 320].includes(width)), 'The focused media viewport must be 1440, 390, or 320');
 const { createAppHarness, member } = require('../backend/test-support/app-harness');
 const app = await createAppHarness();
-const server = process.env.UFI_MEDIA_CONTROLS_AUDIT_ORIGIN
+const devServer = process.env.UFI_MEDIA_CONTROLS_AUDIT_DEV === '1' ? await createServer({
+  root: fileURLToPath(new URL('../web', import.meta.url)),
+  envDir: false,
+  define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api'), 'import.meta.env.VITE_API_FALLBACK_URL': JSON.stringify('') },
+  server: { host: '127.0.0.1', port: 0, hmr: false, watch: null },
+}) : null;
+if (devServer) await devServer.listen();
+const server = devServer ? { origin: devServer.resolvedUrls.local[0].replace(/\/$/, ''), close: () => devServer.close() } : process.env.UFI_MEDIA_CONTROLS_AUDIT_ORIGIN
   ? { origin: new URL(process.env.UFI_MEDIA_CONTROLS_AUDIT_ORIGIN).origin, close: async () => {} }
   : await startBuiltServer({ port: 0 });
 const browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
@@ -98,6 +110,15 @@ async function visiblePlaybackBar(scope) {
   const bar = scope.locator('.media-playback-controls');
   assert.equal(await bar.count(), 1, 'One app playback row belongs to the current media');
   await bar.waitFor({ state: 'visible' });
+  const media = scope.locator('[data-video-media], .snap-viewer-media, .media-lightbox-stage').first();
+  if (await media.count()) {
+    const { mediaBounds, barBounds } = await scope.evaluate(element => ({
+      mediaBounds: element.querySelector('[data-video-media], .snap-viewer-media, .media-lightbox-stage').getBoundingClientRect().toJSON(),
+      barBounds: element.querySelector('.media-playback-controls').getBoundingClientRect().toJSON(),
+    }));
+    assert.ok(mediaBounds && barBounds && barBounds.y >= mediaBounds.y + mediaBounds.height - 1,
+      `Playback controls are below the video viewport: ${JSON.stringify({ mediaBounds, barBounds })}`);
+  }
   const play = bar.getByRole('button', { name: /^(?:Play|Pause) video$/ });
   const mute = bar.getByRole('button', { name: /^(?:Mute|Unmute) video$/ });
   const progress = bar.getByRole('slider', { name: 'Video progress', exact: true });
@@ -107,7 +128,9 @@ async function visiblePlaybackBar(scope) {
     const [play, mute] = element.querySelectorAll('button'), progress = element.querySelector('input[type="range"]');
     return play && mute && progress && play.nextElementSibling === mute && mute.nextElementSibling === progress;
   }), 'Play/Pause then Mute/Unmute precede the progress cursor in DOM and keyboard order');
-  const [playBox, muteBox, progressBox] = await Promise.all([play.boundingBox(), mute.boundingBox(), progress.boundingBox()]);
+  const [playBox, muteBox, progressBox] = await bar.evaluate(element => [
+    ...element.querySelectorAll('button'), element.querySelector('input[type="range"]'),
+  ].map(control => control.getBoundingClientRect().toJSON()));
   assert.ok(playBox && muteBox && progressBox
     && playBox.x + playBox.width <= muteBox.x + 1 && muteBox.x + muteBox.width <= progressBox.x + 1
     && Math.abs(playBox.y - muteBox.y) <= 1 && Math.abs(playBox.y - progressBox.y) <= 1,
@@ -138,9 +161,17 @@ async function seekProgress(progress, seconds) {
 async function nativePlaybackCommands(scope, player) {
   const { play, mute, progress } = await visiblePlaybackBar(scope);
   const handle = await player.elementHandle();
-  await scope.page().waitForFunction(video => video.readyState >= 1 && Number.isFinite(video.duration) && video.duration > 0, handle);
-  if (await player.evaluate(video => video.paused)) await play.click();
-  await scope.page().waitForFunction(video => !video.paused, handle);
+  await scope.page().waitForFunction(video => video.readyState >= 2 && Number.isFinite(video.duration) && video.duration > 0, handle);
+  // Start from a settled paused state: initial autoplay can otherwise begin
+  // between a paused read and Playwright's click, turning that click into Pause.
+  await player.evaluate(video => video.pause());
+  await scope.getByRole('button', { name: 'Play video', exact: true }).waitFor();
+  await play.click();
+  try { await scope.page().waitForFunction(video => !video.paused, handle); }
+  catch (error) {
+    console.log('Native play diagnostic:', await player.evaluate(video => ({ connected: video.isConnected, paused: video.paused, readyState: video.readyState, error: video.error?.message, currentTime: video.currentTime, duration: video.duration, muted: video.muted, src: video.currentSrc })), await play.getAttribute('aria-label'));
+    throw error;
+  }
   await scope.getByRole('button', { name: 'Pause video', exact: true }).click();
   await scope.page().waitForFunction(video => video.paused, handle);
   await scope.getByRole('button', { name: 'Play video', exact: true }).click();
@@ -166,7 +197,7 @@ async function youtubePlaybackCommands(scope) {
   const { play, mute, progress } = await visiblePlaybackBar(scope);
   const page = scope.page();
   await page.waitForFunction(() => window.__auditYTPlayers?.some(player => !player.destroyed && player.frame.isConnected));
-  await page.waitForFunction(() => !document.querySelector('.media-playback-controls button')?.disabled);
+  await page.waitForFunction(button => !button.disabled, await play.elementHandle());
   const current = () => page.evaluate(() => {
     const player = window.__auditYTPlayers.findLast(player => !player.destroyed && player.frame.isConnected);
     return { state: player.getPlayerState(), muted: player.isMuted(), time: player.getCurrentTime(), duration: player.getDuration(), seeks: player.calls.seeks };
@@ -201,7 +232,8 @@ async function youtubePlaybackCommands(scope) {
       range: await progress.evaluate(element => ({ min: element.min, max: element.max, value: element.value, disabled: element.disabled })) }));
     throw error;
   }
-  await page.waitForFunction(target => Math.abs(Number(document.querySelector('.media-playback-controls input')?.value) - target) <= .35, target);
+  await page.waitForFunction(({ input, target }) => Math.abs(Number(input.value) - target) <= .35,
+    { input: await progress.elementHandle(), target });
   return { youtubePlayPauseMuteSeek: true, youtubeBufferingCanPause: true };
 }
 
@@ -247,7 +279,7 @@ async function nativePlayerOptions(player) {
   assert.equal(await player.getAttribute('controls'), null);
   for (const option of ['nodownload', 'noplaybackrate', 'noremoteplayback']) assert.ok(flags.options.includes(option));
   assert.equal(flags.pictureInPictureDisabled, true); assert.equal(flags.remotePlaybackDisabled, true);
-  assert.equal(flags.options.includes('nofullscreen'), false, 'Fullscreen remains available');
+  assert.equal(flags.options.includes('nofullscreen'), false, 'The media element does not disable supported fullscreen');
   return { nativeOptions: flags.options, nativeControlBarReplaced: true };
 }
 
@@ -258,8 +290,10 @@ async function changeNativePlayerSettings(page, menu, player, more, role = 'menu
     track.addCue(new VTTCue(0, 30, 'Synthetic caption fixture.'));
     track.mode = 'disabled';
   });
-  await menu.getByRole(role, { name: /^Player settings\b/ }).click();
-  const dialog = page.getByRole('dialog', { name: 'Player settings', exact: true });
+  const settingsOption = menu.getByRole(role, { name: /^[\w ]+ settings\b/ });
+  const settingsTitle = (await settingsOption.innerText()).split('\n')[0];
+  await settingsOption.click();
+  const dialog = page.getByRole('dialog', { name: settingsTitle, exact: true });
   await dialog.waitFor({ state: 'visible' });
   await dialog.getByRole('radiogroup', { name: 'Playback speed', exact: true })
     .getByRole('radio', { name: '1.5\u00d7', exact: true }).click();
@@ -283,6 +317,7 @@ try {
     const context = await browser.newContext({ viewport: { width, height: 950 }, serviceWorkers: 'block',
       reducedMotion: 'reduce', hasTouch: width < 600, isMobile: width < 600 });
     const page = await context.newPage(); page.setDefaultTimeout(18000);
+    if (width === 390) await page.addInitScript(() => Object.defineProperty(document, 'fullscreenEnabled', { configurable: true, value: false }));
     const errors = [], writes = [], providerCalls = [], embeds = [];
     let videoRows = [], feedRows = [], snapRows = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -326,15 +361,17 @@ try {
         return route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="90"><rect width="120" height="90" fill="#1e3a8a"/></svg>' });
       }
       if (['www.youtube.com', 'www.youtube-nocookie.com', 'player.vimeo.com'].includes(url.hostname) && request.resourceType() === 'document') {
-        embeds.push(url.href); return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><body style="margin:0;background:#172554;color:white"><button>Provider controls</button>${url.hostname === 'player.vimeo.com' ? `<script>
+        embeds.push(url.href); return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><body style="margin:0;background:#172554;color:white"><button>Provider branding</button>${url.hostname === 'player.vimeo.com' ? `<script>
           const emit=message=>parent.postMessage(message,'*'),state=window.__auditVimeo={paused:false,muted:true,volume:1,currentTime:0};
           addEventListener('message',event=>{let message;try{message=typeof event.data==='string'?JSON.parse(event.data):event.data}catch{return}
             if(message?.method==='ping')emit({method:'ping'});
+            if(message?.method==='getVideoId')emit({method:'getVideoId',value:Number(location.pathname.split('/').at(-1))});
+            if(message?.method==='getCurrentTime')emit({method:'getCurrentTime',value:state.currentTime});
             if(message?.method==='getDuration')emit({method:'getDuration',value:30});
             if(message?.method==='getPaused')emit({method:'getPaused',value:state.paused});
             if(message?.method==='getMuted')emit({method:'getMuted',value:state.muted});
             if(message?.method==='getVolume')emit({method:'getVolume',value:state.volume});
-            if(message?.method==='play'||message?.method==='pause'){state.paused=message.method==='pause';emit({event:message.method})}
+            if(message?.method==='play'||message?.method==='pause'){state.paused=message.method==='pause';emit({method:message.method,value:true});emit({event:message.method})}
             if(message?.method==='setMuted'){state.muted=Boolean(message.value);emit({method:'setMuted',value:state.muted});emit({event:'volumechange',data:{muted:state.muted,volume:state.volume}})}
             if(message?.method==='setVolume'){state.volume=Number(message.value);emit({method:'setVolume',value:state.volume});emit({event:'volumechange',data:{muted:state.muted,volume:state.volume}})}
             if(message?.method==='setCurrentTime'){state.currentTime=Number(message.value)||0;emit({method:'setCurrentTime',value:state.currentTime});emit({event:'timeupdate',data:{seconds:state.currentTime,duration:30}})}
@@ -360,6 +397,7 @@ try {
       if (endpoint === '/billing/config') return send({ paymentsReady: false, tiers: {}, pricing: {} });
       if (/^\/(?:office\/)?feed\/(?:videos|music)(?:\/following)?$/.test(endpoint)) return send({ posts: videoRows, hasMore: false, waitingForNew: true });
       if (['/office/feed', '/feed', '/posts'].includes(endpoint)) return send({ posts: feedRows, hasMore: false, nativeUficonnectIncluded: true });
+      if (endpoint.startsWith('/feed/') && !endpoint.endsWith('/comments')) return send({ post: feedRows.find(post => post.id === decodeURIComponent(endpoint.slice('/feed/'.length))) || null });
       if (endpoint === '/snaps') {
         const mode = url.searchParams.get('mode'), source = url.searchParams.get('source');
         return send({ snaps: snapRows.filter(snap => (mode !== 'ufi' || snap.source === 'uficonnect') && (!source || snap.source === source)), sourceErrors: {} });
@@ -374,11 +412,12 @@ try {
     });
     await installAuditMember(page, app, id);
     const visit = async (path, rows = []) => {
-      await auditNavigate(page, server.origin + '/saved');
+      await auditNavigate(page, server.origin + '/saved/posts');
+      await page.locator('.saved-page').waitFor({ state: 'visible' });
       videoRows = rows;
       await auditNavigate(page, server.origin + path);
     };
-    for (const surface of ['videos', 'music']) {
+    for (const surface of detailsOnly ? [] : ['videos', 'music']) {
       for (const kind of ['native', 'external', 'hls', 'youtube', 'vimeo']) {
         const post = kind === 'native' ? native(`${surface}-native`) : kind === 'youtube' ? youtube(`${surface}-youtube`)
           : { ...external(`${surface}-${kind}`), ...(kind === 'hls' ? { mediaUrl: `https://${mediaHost}/fixture.m3u8` }
@@ -389,9 +428,9 @@ try {
         await player.waitFor({ state: 'visible' });
         let nativeOptions = null;
         if (kind === 'youtube' || kind === 'vimeo') {
-          assert.equal(new URL(await player.getAttribute('src')).searchParams.get('controls'), '1', 'Official provider controls start enabled');
+          assert.equal(new URL(await player.getAttribute('src')).searchParams.get('controls'), '0', 'Provider playback controls are disabled by the supported parameter');
           const frame = kind === 'youtube' ? page.frameLocator('.video-feed-youtube-player iframe') : slide.frameLocator('iframe');
-          await frame.getByRole('button', { name: 'Provider controls', exact: true }).click();
+          await frame.getByRole('button', { name: 'Provider branding', exact: true }).click();
         } else {
           nativeOptions = await nativePlayerOptions(player);
         }
@@ -412,6 +451,8 @@ try {
         const more = await sourceAfterMenu(slide.getByRole('group', { name: 'Post actions', exact: true }));
         await more.click(); const menu = page.getByRole('menu'); await menu.waitFor();
         await noHiddenControls(menu);
+        if (width === 390) assert.equal(await menu.getByRole('menuitem', { name: /^(?:Exit full screen|Full screen)$/ }).count(), 0,
+          'A device without full-screen capability is not offered an unsupported command');
         if (nativeOptions) await changeNativePlayerSettings(page, menu, player, more);
         else {
           assert.equal(await menu.getByRole('menuitem', { name: /^Player settings\b/ }).count(), 0, 'Provider iframes do not advertise native player settings');
@@ -419,13 +460,16 @@ try {
         }
         assert.ok(await more.evaluate(element => document.activeElement === element));
         if (kind === 'external') await page.screenshot({ path: `${output}/${surface}-${width}.png`, fullPage: true });
-        results.push({ width, surface, kind, providerControlsVisible: ['youtube', 'vimeo'].includes(kind), appControlsLeftOfProgress: true,
+        results.push({ width, surface, kind, providerControlsHidden: ['youtube', 'vimeo'].includes(kind), providerUiUnobscured: ['youtube', 'vimeo'].includes(kind), appControlsBelowMedia: true, appControlsLeftOfProgress: true,
           captionExpansion: true, sourceRightOfOverflow: true, nativeSettingsChangeActualRateAndCaptions: Boolean(nativeOptions), ...commands, ...nativeOptions });
         console.log(`PASS ${surface} ${kind}: visible controls/caption/source order ${width}px`);
       }
       await visit(`/${surface}`, [native(`${surface}-swipe-one`), native(`${surface}-swipe-two`), native(`${surface}-swipe-three`)]);
       const scroll = page.locator('[data-video-feed-scroll]'), first = page.locator(`[data-post-id="${surface}-swipe-one"]`);
       await first.locator('video').waitFor({ state: 'visible' });
+      // Pin this isolated swipe case to its first slide after feed restoration.
+      await scroll.evaluate(element => { element.scrollTop = 0; });
+      await page.waitForFunction(() => document.querySelector('[data-video-feed-scroll]')?.scrollTop <= 2);
       await captionControls(first, '.video-feed-caption-expanded');
       assert.equal(await scroll.evaluate(element => Math.round(element.scrollTop)), 0, 'Caption buttons do not change the active video');
       const progress = first.getByRole('slider', { name: 'Video progress', exact: true });
@@ -452,9 +496,54 @@ try {
     await visit('/?feed=ufi');
     const nativeCard = page.locator('.post-card').filter({ has: page.getByText('Native generic post remains in UFI.', { exact: true }) });
     await nativeCard.waitFor();
-    assert.equal(await nativeCard.locator('.post-chrome-source-link').count(), 0, 'Native posts do not invent a third-party source link');
+    assert.equal(await nativeCard.locator('.post-chrome-source-link').getAttribute('href'), '/p/generic-native', 'Native posts open their internal post route');
     assert.equal(await nativeCard.getByRole('button', { name: 'More options', exact: true }).count(), 1, 'Native post options remain available');
     results.push({ width, surface: 'generic-feed', kind: 'native', nativePostPreserved: true });
+
+    for (const kind of ['native', 'youtube']) {
+      const post = kind === 'native' ? native('detail-native') : youtube('detail-youtube');
+      feedRows = [post];
+      await visit(`/p/${post.id}`);
+      const detail = page.locator('.post-card').first();
+      const player = detail.locator(kind === 'youtube' ? 'iframe' : 'video');
+      await player.waitFor({ state: 'visible' });
+      if (kind === 'youtube') assert.equal(new URL(await player.getAttribute('src')).searchParams.get('controls'), '0');
+      else assert.equal(await player.evaluate(video => video.controls), false);
+      const row = await visiblePlaybackBar(detail);
+      const mediaBounds = await player.boundingBox(), rowBounds = await row.bar.boundingBox();
+      assert.ok(rowBounds.y >= mediaBounds.y + mediaBounds.height - 1, 'Post detail controls stay below its video');
+      const commands = kind === 'youtube' ? await youtubePlaybackCommands(detail) : await nativePlaybackCommands(detail, player);
+      results.push({ width, surface: 'post-detail', kind, appControlsBelowMedia: true, ...commands });
+      console.log(`PASS post detail ${kind}: controls below media ${width}px`);
+
+      // Open the same post through Home to exercise the full-size viewer.
+      await visit(kind === 'native' ? '/?feed=ufi' : '/?feed=feed&all=1');
+      const feedCard = kind === 'native' ? page.locator('.post-card').filter({ has: page.locator('video') }).first()
+        : page.locator('.post-card').filter({ hasText: post.title }).first();
+      await feedCard.waitFor();
+      if (kind === 'youtube') await feedCard.getByRole('button', { name: 'View fullscreen', exact: true }).click();
+      else await feedCard.locator('video').click();
+      const viewer = page.locator('.media-lightbox[aria-modal="true"]');
+      await viewer.waitFor();
+      const expandedPlayer = viewer.locator(kind === 'youtube' ? 'iframe' : 'video');
+      await expandedPlayer.waitFor({ state: 'visible' });
+      if (kind === 'youtube') {
+        assert.equal(new URL(await expandedPlayer.getAttribute('src')).searchParams.get('controls'), '0');
+        await viewer.frameLocator('iframe').getByRole('button', { name: 'Provider branding', exact: true }).click();
+      } else assert.equal(await expandedPlayer.evaluate(video => video.controls), false);
+      assert.equal(await viewer.locator('.media-lightbox-stage button, .media-lightbox-stage input').count(), 0, 'The video viewport has no app control overlays');
+      const header = await viewer.locator('.media-lightbox-video-navigation').boundingBox(), stage = await viewer.locator('.media-lightbox-stage').boundingBox();
+      assert.ok(header.y + header.height <= stage.y + 1, 'Viewer navigation is above the video');
+      const viewerCommands = kind === 'youtube' ? await youtubePlaybackCommands(viewer) : await nativePlaybackCommands(viewer, expandedPlayer);
+      await viewer.getByRole('slider', { name: 'Video progress', exact: true }).focus();
+      await page.keyboard.press('ArrowRight');
+      assert.equal(await viewer.getAttribute('aria-label'), post.title, 'Progress keys do not navigate the viewer');
+      if (width === 390) await page.screenshot({ path: `${output}/lightbox-${kind}-${width}.png`, fullPage: true });
+      await viewer.getByRole('button', { name: 'Close', exact: true }).click();
+      await viewer.waitFor({ state: 'detached' });
+      results.push({ width, surface: 'lightbox', kind, appControlsBelowMedia: true, noAppVideoOverlays: true, ...viewerCommands });
+      console.log(`PASS lightbox ${kind}: controls below media ${width}px`);
+    }
 
     snapRows = [snap('external-snap', 'mastodon', { sourceUrl: 'https://mastodon.social/@fixture/98766', isExternal: true }),
       snap('external-snap-two', 'mastodon', { sourceUrl: 'https://mastodon.social/@fixture/98767', isExternal: true,
@@ -466,14 +555,14 @@ try {
       snap('native-snap-two', 'uficonnect', { author: { id: 'author-native-snap', name: 'Creator native-snap', avatarUrl },
         createdAt: new Date(Date.now() - 5000).toISOString(), caption: 'Second native clip caption.' })];
     feedRows = [];
-    for (const kind of ['external', 'youtube', 'native']) {
+    for (const kind of detailsOnly ? [] : ['external', 'youtube', 'native']) {
       const id = `${kind}-snap`;
       await visit(kind === 'native' ? '/?feed=ufi' : '/?feed=feed&all=1');
       const profile = page.locator(`.snap-profile-button[data-snap-ids*='"${id}"']`); await profile.waitFor(); await profile.click();
       const viewer = page.locator('dialog.snap-viewer'); await viewer.waitFor();
       const player = viewer.locator(kind === 'youtube' ? 'iframe' : 'video'); await player.waitFor({ state: 'visible' });
       let nativeOptions = null;
-      if (kind === 'youtube') assert.equal(new URL(await player.getAttribute('src')).searchParams.get('controls'), '1');
+      if (kind === 'youtube') assert.equal(new URL(await player.getAttribute('src')).searchParams.get('controls'), '0');
       else nativeOptions = await nativePlayerOptions(player);
       assert.equal(await viewer.getByRole('slider', { name: 'Snap position', exact: true }).count(), 0,
         'The removed snap-position navigation remains absent');
@@ -546,7 +635,7 @@ try {
         await viewer.getByRole('slider', { name: 'Video progress', exact: true }).focus(); await page.keyboard.press('ArrowRight');
         assert.equal(await viewer.locator('.snap-viewer-caption').innerText(), selection, 'Playback-cursor keys do not move to the next Snap');
       } else if (kind === 'youtube') {
-        await viewer.frameLocator('iframe').getByRole('button', { name: 'Provider controls', exact: true }).click();
+        await viewer.frameLocator('iframe').getByRole('button', { name: 'Provider branding', exact: true }).click();
         await page.keyboard.press('ArrowRight');
         assert.equal(await viewer.locator('.snap-viewer-caption').innerText(), selection, 'Provider iframe keys do not move to the next Snap');
       } else {
@@ -567,16 +656,26 @@ try {
       }
       if (kind === 'external') await page.screenshot({ path: `${output}/snaps-${width}.png`, fullPage: true });
       await viewer.getByRole('button', { name: 'Close snap', exact: true }).click();
-      results.push({ width, surface: 'snaps', kind, providerControlsVisible: kind === 'youtube', captionExpansion: true,
+      results.push({ width, surface: 'snaps', kind, providerControlsHidden: kind === 'youtube', providerUiUnobscured: kind === 'youtube', appControlsBelowMedia: true, captionExpansion: true,
         appControlsLeftOfProgress: true, idleControlsVisible: true, sourceRightOfOverflow: kind !== 'native',
         nativeSettingsChangeActualRateAndCaptions: Boolean(nativeOptions), ...playbackCommands, ...nativeOptions });
       console.log(`PASS snaps ${kind}: visible controls/caption/source order ${width}px`);
     }
+    assert.equal(await page.locator('.global-search-open').count(), 0, 'The search bar has no trailing popup arrow');
+    if (width < 769) await page.getByRole('button', { name: 'Open account menu', exact: true }).click();
+    const nav = page.locator(width < 769 ? '#mobile-account-drawer .mobile-feed-drawer-content' : '.sidebar-nav');
+    const searchLink = nav.getByRole('link', { name: 'Search', exact: true });
+    await searchLink.waitFor({ state: 'visible' });
+    assert.ok(await searchLink.evaluate(element => element.nextElementSibling?.getAttribute('href') === '/people'), 'Search appears immediately above People');
+    assert.equal(await searchLink.getAttribute('href'), '/search');
+    await searchLink.click(); await page.waitForURL('**/search');
+    results.push({ width, surface: 'navigation', searchAbovePeople: true, searchNavigates: true, noTrailingSearchArrow: true });
     assert.deepEqual(errors, [], 'No browser exceptions'); assert.deepEqual(writes, [], 'No provider or account writes');
     assert.deepEqual(providerCalls, [], 'All remote provider requests are blocked or synthetic player/media responses');
-    assert.ok(embeds.length >= 3);
+    assert.ok(embeds.length >= (detailsOnly ? 2 : 3));
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'No horizontal page overflow');
     await context.close(); console.log(`PASS visible media controls and source/menu order at ${width}px`);
+    await fs.writeFile(`${output}/summary.json`, JSON.stringify({ origin: server.origin, results }, null, 2) + '\n');
   }
   await fs.writeFile(`${output}/summary.json`, JSON.stringify({ origin: server.origin, results }, null, 2) + '\n');
 } finally { await browser.close(); await server.close(); await app.close(); }

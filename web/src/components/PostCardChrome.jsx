@@ -11,6 +11,7 @@ import NativePostEditor from './NativePostEditor';
 import client from '../api/client';
 import { isMemberPost, postProfileLink, safePostLink } from '../../../backend/post-links.mjs';
 import { sourcePostMenuItems } from '../utils/sourcePostMenu.mjs';
+import { publicSiteUrl } from '../utils/publicSiteUrl.mjs';
 import './PostCardChrome.css';
 
 // Shared post-card chrome: author header with the source's own badge, the
@@ -229,7 +230,7 @@ export function PostOptionsMenu({ post, items = [], sourceItems, onOpenComments,
   const suppliedItems = items.filter(Boolean);
   const hasCommentsItem = suppliedItems.some(item => item.key === 'comments' || /^(?:(?:show|hide|view|open) )?comments\b/i.test(item.label || ''));
   async function copyLink() {
-    const url = native && post?.id ? `${window.location.origin}/p/${encodeURIComponent(post.id)}` : original;
+    const url = native && post?.id ? publicSiteUrl(`/p/${encodeURIComponent(post.id)}`) : original;
     if (!url) return;
     try { await navigator.clipboard.writeText(url); showToast('Link copied.', 'success'); }
     catch { showToast('Could not copy the link. Open the post to share it.', 'error'); }
@@ -337,7 +338,7 @@ export function SharePostButton({ post }) {
   const { showToast } = useToast();
   async function share(event) {
     event.preventDefault(); event.stopPropagation();
-    const url = safePostLink(post?.sourceUrl) || `${window.location.origin}/p/${encodeURIComponent(post.id)}`;
+    const url = safePostLink(post?.sourceUrl) || publicSiteUrl(`/p/${encodeURIComponent(post.id)}`);
     try {
       if (navigator.share) { await navigator.share({ title: post?.title || 'UFIconnect post', url }); return; }
       await navigator.clipboard.writeText(url);

@@ -12,6 +12,8 @@ import client from '../api/client';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { SaveJobButton } from '../components/SaveButtons';
 import { postedDate } from '../utils/jobDates';
+import usePagedResults from '../hooks/usePagedResults';
+import ResultsPagination from '../components/ResultsPagination';
 
 const PAGE_SIZE = 20;
 
@@ -185,13 +187,13 @@ function isRemoteJob(job) {
   ].filter(Boolean).join(' '));
 }
 
-export default function Opportunities({ embedded = false, searchQuery = null } = {}) {
+export default function Opportunities({ embedded = false, searchQuery = null, paginated = true } = {}) {
   const { profile } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const postedWithin = ['1', '7', '30'].includes(searchParams.get('postedWithin')) ? searchParams.get('postedWithin') : '';
   const initialRouteQuery = String((embedded ? searchQuery : null) ?? searchParams.get('q') ?? '').trim().slice(0, 200);
-  const [allOpps,   setAllOpps]   = useState([]);
+  const [streamOpps,   setAllOpps]   = useState([]);
   const [liveCount, setLiveCount] = useState(0);
   const filter = 'job';
   const initialSort = JOB_SORT_VALUES.has(searchParams.get('sort')) ? searchParams.get('sort') : 'newest';
@@ -203,11 +205,11 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
   const [availableSources, setAvailableSources] = useState([]);
   const [sourceFilter, setSourceFilter] = useState([]);
   const [search,    setSearch]    = useState(initialRouteQuery);
-  const [loading,   setLoading]   = useState(true);
+  const [streamLoading,   setLoading]   = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [error,     setError]     = useState(false);
-  const [totalCount, setTotalCount] = useState(0);
-  const [hasMore,   setHasMore]   = useState(false);
+  const [streamError,     setError]     = useState(false);
+  const [streamTotalCount, setTotalCount] = useState(0);
+  const [streamHasMore,   setHasMore]   = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const silentRefreshRef = useRef(false);
@@ -222,6 +224,37 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
   // Source and quick-filter changes bypass a stale cached listing cohort;
   // ordinary infinite-scroll requests remain cacheable.
   const bustOnNextFetchRef = useRef(false);
+  const resultsStartRef = useRef(null);
+  const pagedQuery = initialRouteQuery;
+  const pagedJobs = usePagedResults({
+    enabled: paginated, queryKey: JSON.stringify([profile?.id, sort, workSetting, liveOnly, pagedQuery, sourceFilter, postedWithin]),
+    delay: pagedQuery ? 280 : 0, errorMessage: 'Jobs could not be loaded. Please try again.',
+    loadPage: async ({ page, signal }) => {
+      const params = { sort, type: filter, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE };
+      if (pagedQuery) params.search = pagedQuery;
+      if (postedWithin) params.postedWithin = postedWithin;
+      if (workSetting === 'remote') params.remote = true;
+      if (workSetting === 'other') params.remote = false;
+      if (liveOnly) params.live = true;
+      if (sourceFilter.length) params.sources = sourceFilter.join(',');
+      if (bustOnNextFetchRef.current) { params.bust = '1'; bustOnNextFetchRef.current = false; }
+      const { data } = await client.get('/opportunities', { params, signal });
+      return { items: data.opportunities, hasNext: data.hasMore, total: data.totalCount, data };
+    },
+  });
+  const allOpps = paginated ? pagedJobs.items : streamOpps;
+  const loading = paginated ? pagedJobs.loading && !allOpps.length : streamLoading;
+  const error = paginated ? pagedJobs.error : streamError;
+  const totalCount = paginated ? pagedJobs.total ?? 0 : streamTotalCount;
+  const hasMore = paginated ? pagedJobs.hasNext : streamHasMore;
+  useEffect(() => {
+    if (!paginated || !pagedJobs.data) return;
+    setAvailableSources(pagedJobs.data.availableSources || []);
+    setLiveCount(pagedJobs.data.liveCount || 0);
+  }, [paginated, pagedJobs.data]);
+  async function changeJobsPage(page) {
+    if (await pagedJobs.goToPage(page)) requestAnimationFrame(() => resultsStartRef.current?.scrollIntoView({ block: 'start' }));
+  }
 
   useEffect(() => {
     const nextQuery = String((embedded ? searchQuery : null) ?? searchParams.get('q') ?? '').trim().slice(0, 200);
@@ -265,6 +298,7 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
   // the server for more instead of just revealing more of what's already
   // in memory.
   useEffect(() => {
+    if (paginated) return undefined;
     const requestGeneration = ++requestGenerationRef.current;
     loadingMoreRef.current = false;
     setLoadingMore(false);
@@ -320,9 +354,10 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
         setLoading(false);
         if (refreshRequest) setRefreshing(false);
       });
-  }, [filter, sort, workSetting, liveOnly, search, sourceFilter, refreshTick, postedWithin]);
+  }, [paginated, filter, sort, workSetting, liveOnly, search, sourceFilter, refreshTick, postedWithin]);
 
   const requestRefresh = useCallback(() => {
+    if (paginated) { bustOnNextFetchRef.current = true; void pagedJobs.refresh(); return; }
     if (refreshing || refreshRequestRef.current) return;
     refreshRequestRef.current = {
       key: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -332,9 +367,10 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
     setRefreshMessage('');
     setRefreshing(true);
     setRefreshTick((tick) => tick + 1);
-  }, [allOpps, refreshing]);
+  }, [paginated, pagedJobs.refresh, allOpps, refreshing]);
 
   const loadMore = useCallback(() => {
+    if (paginated) return;
     if (loadingMoreRef.current || loading || refreshing || !hasMore) return;
     const requestGeneration = requestGenerationRef.current;
     loadingMoreRef.current = true;
@@ -370,12 +406,13 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
         if (requestGeneration !== requestGenerationRef.current) return;
         loadingMoreRef.current = false; setLoadingMore(false);
       });
-  }, [loading, refreshing, hasMore, allOpps.length, sort, filter, search, workSetting, sourceFilter, liveOnly, postedWithin]);
+  }, [paginated, loading, refreshing, hasMore, allOpps.length, sort, filter, search, workSetting, sourceFilter, liveOnly, postedWithin]);
 
   // Same sentinel + IntersectionObserver pattern as the main Feed page
   // (400px rootMargin fires the fetch just before the sentinel is actually
   // on screen, so more content is ready by the time someone scrolls to it).
   useEffect(() => {
+    if (paginated) return undefined;
     const el = sentinelRef.current;
     if (!el) return;
     const obs = new IntersectionObserver(
@@ -384,13 +421,13 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [filter, loadMore]);
+  }, [paginated, filter, loadMore]);
 
   // Scrolling back up to the top acts as pull-to-refresh, same as every
   // other list page on the site.
   const scrollRefresh = useScrollToRefresh(() => {
     requestRefresh();
-  }, { enabled: !loading && !refreshing });
+  }, { enabled: !loading && !refreshing && (!paginated || (pagedJobs.page === 1 && !pagedJobs.loading)) });
 
   // Keep work-setting views accurate during a rolling frontend/API deploy too.
   // The API performs the full filter; this local guard catches stale responses
@@ -417,7 +454,7 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
           setSearchParams(next, { replace: true });
         },
       }}>
-        <div className={embedded ? 'jobs-page-content jobs-page-content--embedded' : 'jobs-page-layout'}>
+        <div ref={resultsStartRef} className={embedded ? 'jobs-page-content jobs-page-content--embedded' : 'jobs-page-layout'}>
         <div className={embedded ? undefined : 'jobs-page-content'}>
         {(scrollRefresh.pulling || refreshing) && <div className="scroll-refresh-status" role="status" aria-live="polite">
           <span>{refreshing ? 'Refreshing jobs' : scrollRefresh.progress >= 1 ? 'Release to refresh jobs' : 'Pull to refresh jobs'}</span>
@@ -490,7 +527,7 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
             display: 'flex', alignItems: 'center', gap: 8,
           }}>
             <span>!</span>
-            <span>Failed to load jobs. <button onClick={() => window.location.reload()} style={{ background: 'none', border: 'none', color: '#991B1B', cursor: 'pointer', textDecoration: 'underline', fontWeight: 600 }}>Retry</button></span>
+            <span>Failed to load jobs. <button type="button" onClick={() => paginated ? pagedJobs.retry() : setRefreshTick(value => value + 1)} style={{ background: 'none', border: 'none', color: '#991B1B', cursor: 'pointer', textDecoration: 'underline', fontWeight: 600 }}>Retry</button></span>
           </div>
         )}
 
@@ -522,7 +559,7 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
         )}
 
         {/* Opportunities list */}
-        {!loading && !error && displayed.length > 0 && (
+        {!loading && (!error || paginated) && displayed.length > 0 && (
           <div>
             {embedded && <div style={{ fontSize: '.8rem', color: 'var(--muted)', marginBottom: 16, fontWeight: 500 }}>
               {displayed.length >= totalCount ? (
@@ -551,7 +588,7 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
                             }}
                           />
                         ))}
-                    {hasMore && (
+                    {!paginated && hasMore && (
                       <div ref={sentinelRef} className="job-list-sentinel" aria-hidden="true">
                         {loadingMore && <span className="spinner spinner-primary" />}
                       </div>
@@ -680,14 +717,14 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
             {/* Infinite scroll sentinel — same IntersectionObserver pattern
                 as the main Feed page. Kept invisible when nothing more to
                 load so it never leaves stray blank space at the bottom. */}
-            {filter !== 'job' && hasMore && (
+            {!paginated && filter !== 'job' && hasMore && (
               <div ref={sentinelRef} style={{ textAlign: 'center', padding: '24px 0' }}>
                 {loadingMore && <span className="spinner spinner-primary" />}
               </div>
             )}
 
             {/* End message */}
-            {embedded && !hasMore && displayed.length > 0 && (
+            {embedded && !paginated && !hasMore && displayed.length > 0 && (
               <div style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '.8rem', padding: '20px 0' }}>
                 {filter === 'job'
                   ? `All ${totalCount} live job${totalCount !== 1 ? 's' : ''} shown`
@@ -696,6 +733,10 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
             )}
           </div>
         )}
+
+        {paginated && <ResultsPagination page={pagedJobs.page} hasNext={pagedJobs.hasNext} loading={pagedJobs.loading}
+          onPageChange={changeJobsPage} totalPages={pagedJobs.total !== null ? Math.max(1, Math.ceil(pagedJobs.total / PAGE_SIZE)) : undefined}
+          ariaLabel="Job results pages" />}
 
         </div>
         {!embedded && (

@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { continueSourceConnectionInBrowser, subscribeNativeForeground } from '../nativeRuntime.mjs';
 import useTabMetrics from '../analytics/useTabMetrics';
 import Layout from '../components/Layout';
 import AccountConnectionAction from '../components/AccountConnectionAction';
@@ -63,6 +64,7 @@ export default function ConnectedAccounts() {
   const [connected, setConnected]       = useState({});
   const [loading,   setLoading]         = useState(true);
   const [catalogAccountId, setCatalogAccountId] = useState(null);
+  const [nativeAccountRevision, setNativeAccountRevision] = useState(0);
   const [expanded,  setExpanded]        = useState(null);
   const [flash,     setFlash]           = useState(null);
   const [connecting, setConnecting]     = useState(null);
@@ -76,6 +78,8 @@ export default function ConnectedAccounts() {
   const [blueskyHandle, setBlueskyHandle] = useState(null);
   const [mastodonServer, setMastodonServer] = useState(null);
   const isBusinessMembership = profile?.plan === 'business';
+
+  useEffect(() => subscribeNativeForeground(() => setNativeAccountRevision(value => value + 1)), []);
 
   useEffect(() => {
     const requested = searchParams.get('connect');
@@ -115,7 +119,7 @@ export default function ConnectedAccounts() {
       }
     });
     return () => { active = false; controller.abort(); };
-  }, [profile?.id, isBusinessMembership]);
+  }, [profile?.id, isBusinessMembership, nativeAccountRevision]);
 
   // Redirect parameters identify the callback. Current account metadata must
   // confirm the connection before displaying success or notifying other tabs.
@@ -179,6 +183,7 @@ export default function ConnectedAccounts() {
   }
 
   async function startConnect(platform, handle) {
+    if (await continueSourceConnectionInBrowser(platform)) return;
     const state = sourceAuthorizationState(platforms.find(([key]) => key === platform)?.[1], { isConnected: !!connected[platform] });
     if (!state.ready) { flash_('error', state.reason); return; }
     const connectParams = new URLSearchParams();

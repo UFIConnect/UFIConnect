@@ -1,59 +1,54 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import { SavedJobCard, SavedPostCard } from '../components/SavedCards';
 import { useAuth } from '../contexts/AuthContext';
 import { useSavedItems } from '../contexts/SavedItemsContext';
-import client from '../api/client';
+import usePostPages, { POST_PAGE_SIZE } from '../hooks/usePostPages';
+import PostPagesNavigation from '../components/PostPagesNavigation';
+import ResultsPagination from '../components/ResultsPagination';
 
 export default function SavedItems() {
   const { kind } = useParams();
   const { profile } = useAuth();
   const { savedJobs, refreshSavedJobs } = useSavedItems();
-  const [posts, setPosts] = useState([]);
-  const [hasMore, setHasMore] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [error, setError] = useState('');
+  const postPages = usePostPages({ endpoint: '/saved/posts', viewerId: profile?.id, enabled: kind === 'posts' });
+  const [jobPage, setJobPage] = useState(1);
+  const [jobsLoading, setJobsLoading] = useState(false);
+  const [jobsError, setJobsError] = useState('');
+  const [retryJobs, setRetryJobs] = useState(0);
   const [contentHidden, setContentHidden] = useState(false);
-  const generation = useRef(0);
-  const busy = useRef(false);
-
-  async function load(offset = 0, request = generation.current) {
-    if (busy.current) return;
-    busy.current = true;
-    offset ? setLoadingMore(true) : setLoading(true);
-    setError('');
-    try {
-      if (kind === 'jobs') await refreshSavedJobs();
-      else {
-        const { data } = await client.get('/saved/posts', { params: { limit: 50, offset } });
-        if (request !== generation.current) return;
-        const incoming = data.posts || [];
-        setPosts(current => offset ? [...current, ...incoming.filter(post => !current.some(item => item.id === post.id))] : incoming);
-        setHasMore(!!data.hasMore);
-      }
-    } catch {
-      if (request === generation.current) setError(`Saved ${kind} could not be loaded. Please try again.`);
-    } finally {
-      if (request === generation.current) { busy.current = false; setLoading(false); setLoadingMore(false); }
-    }
-  }
 
   useEffect(() => {
-    const request = ++generation.current;
-    busy.current = false;
-    setPosts([]);
+    setJobPage(1);
     setContentHidden(false);
-    setHasMore(false);
-    if (['posts', 'jobs'].includes(kind)) load(0, request);
-    return () => { generation.current++; };
-  }, [kind, profile?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [kind, profile?.id]);
+  useEffect(() => {
+    let active = true;
+    if (kind !== 'jobs' || !profile?.id) return undefined;
+    setJobsLoading(true);
+    setJobsError('');
+    Promise.resolve().then(() => refreshSavedJobs()).catch(() => {
+      if (active) setJobsError('Saved jobs could not be loaded. Please try again.');
+    }).finally(() => { if (active) setJobsLoading(false); });
+    return () => { active = false; };
+  }, [kind, profile?.id, retryJobs, refreshSavedJobs]);
 
-  if (!['posts', 'jobs'].includes(kind)) return <Navigate to="/saved/posts" replace />;
   const jobs = savedJobs.filter(job => ['saved', 'applied'].includes(job.status));
+  const jobTotalPages = Math.max(1, Math.ceil(jobs.length / POST_PAGE_SIZE));
+  const currentJobPage = Math.min(jobPage, jobTotalPages);
+  useEffect(() => { setJobPage(page => Math.min(page, jobTotalPages)); }, [jobTotalPages]);
+  if (!['posts', 'jobs'].includes(kind)) return <Navigate to="/saved/posts" replace />;
+  const visibleJobs = jobs.slice((currentJobPage - 1) * POST_PAGE_SIZE, currentJobPage * POST_PAGE_SIZE);
+  const posts = postPages.items;
+  const loading = kind === 'jobs' ? jobsLoading : postPages.loading && !posts.length;
+  const error = kind === 'jobs' ? jobsError : postPages.error;
   const count = kind === 'jobs' ? jobs.length : posts.length;
-  return <Layout><main className="saved-page">
+  function changeJobPage(page) {
+    setJobPage(page);
+    document.getElementById('saved-page-content')?.scrollIntoView({ block: 'start', behavior: 'instant' });
+  }
+  return <Layout><main className="saved-page paginated-feed-page">
     <h1>Saved</h1>
     <p>{kind === 'jobs' ? 'Keep opportunities and applications in one place.' : 'Return to the posts you want to keep.'}</p>
     <nav className="profile-content-tabs" aria-label="Saved pages">
@@ -62,14 +57,14 @@ export default function SavedItems() {
     </nav>
     <button type="button" className="btn btn-ghost btn-sm saved-content-toggle" aria-expanded={!contentHidden} aria-controls="saved-page-content" onClick={() => setContentHidden(hidden => !hidden)}>{contentHidden ? 'Show' : 'Hide'} saved {kind}</button>
     {contentHidden && <p className="saved-content-hidden">Saved {kind} are hidden.</p>}
-    <section id="saved-page-content" aria-label={`Saved ${kind}`} hidden={contentHidden}>
-    {error && <div className="card profile-saved-state" role="alert">{error}<button className="btn btn-ghost" onClick={() => load(posts.length || 0)}>Try again</button></div>}
+    <section id="saved-page-content" aria-label={`Saved ${kind}`} hidden={contentHidden} style={{ scrollMarginTop: 80 }}>
+    {kind === 'jobs' && jobsError && <div className="card profile-saved-state" role="alert">{jobsError}<button type="button" className="btn btn-ghost" disabled={jobsLoading} onClick={() => setRetryJobs(value => value + 1)}>Try again</button></div>}
     {loading ? <div className="profile-saved-state" role="status">Loading saved {kind}…</div> : <>
       {count > 0 ? <div className="profile-saved-list">
-        {kind === 'jobs' ? jobs.map(job => <SavedJobCard key={job.id} job={job} />) : posts.map(post => <SavedPostCard key={post.id} post={post} onRemoved={id => setPosts(current => current.filter(item => item.id !== id))} />)}
+        {kind === 'jobs' ? visibleJobs.map(job => <SavedJobCard key={job.id} job={job} />) : posts.map(post => <SavedPostCard key={post.id} post={post} onRemoved={() => postPages.refresh()} />)}
       </div> : !error && <div className="card profile-saved-state"><strong>No saved {kind} yet</strong><p>Use Save on a {kind === 'jobs' ? 'job listing' : 'post'} to keep it here.</p><Link className="btn btn-primary" to={kind === 'jobs' ? '/opportunities' : '/'}>Browse {kind}</Link></div>}
-      {kind === 'posts' && hasMore && <button className="btn btn-ghost profile-saved-load-more" disabled={loadingMore} onClick={() => load(posts.length)}>{loadingMore ? 'Loading…' : 'Load more saved posts'}</button>}
     </>}
+    {kind === 'posts' ? <PostPagesNavigation results={postPages} targetId="saved-page-content" label="Saved post pages" /> : count > 0 && <ResultsPagination page={currentJobPage} totalPages={jobTotalPages} hasNext={currentJobPage < jobTotalPages} loading={jobsLoading} onPageChange={changeJobPage} ariaLabel="Saved job pages" />}
     </section>
   </main></Layout>;
 }

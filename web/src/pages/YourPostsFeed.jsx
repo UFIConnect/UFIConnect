@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
+import ResultsPagination from '../components/ResultsPagination';
+import { useAuth } from '../contexts/AuthContext';
 import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
+import usePagedResults from '../hooks/usePagedResults';
 import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { SavePostButton } from '../components/SaveButtons';
 import PostInlineText from '../components/PostInlineText';
@@ -13,7 +16,7 @@ import PostLinkPreviews from '../components/PostLinkPreviews';
 import { safePostLink } from '../../../backend/post-links.mjs';
 import { postTextPreview } from '../../../backend/post-text.mjs';
 
-const PAGE_SIZE = 40;
+const PAGE_SIZE = 12;
 const AUTO_REFRESH_MS = 45 * 1000;
 
 function timeAgo(iso) {
@@ -111,77 +114,40 @@ function OwnPostCard({ post }) {
 }
 
 export default function YourPostsFeed() {
-  const [posts, setPosts] = useState([]);
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
-  const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState('');
-  const [meta, setMeta] = useState({ sources: {}, connectedPlatforms: [], sourceErrors: {}, totalAvailable: 0 });
-  const sentinelRef = useRef(null);
-  const loadingMoreRef = useRef(false);
-
-  const loadPage = useCallback(async ({ pageNo = 1, replace = false, bust = false, silent = false } = {}) => {
-    if (pageNo > 1 && loadingMoreRef.current) return;
-    if (pageNo > 1) {
-      loadingMoreRef.current = true;
-      setLoadingMore(true);
-    } else if (!silent) {
-      setLoading(!posts.length);
-      setRefreshing(!!posts.length);
-    }
-
-    try {
+  const { profile } = useAuth();
+  const headingRef = useRef(null);
+  const bustNextRequest = useRef(false);
+  const results = usePagedResults({
+    enabled: !!profile?.id,
+    queryKey: JSON.stringify(['your-connected-posts', profile?.id]),
+    errorMessage: 'Could not load your connected posts right now. Please try again.',
+    loadPage: async ({ page, signal }) => {
+      const bust = bustNextRequest.current;
+      bustNextRequest.current = false;
       const { data } = await client.get('/command-center/your-content/feed', {
-        params: { page: pageNo, limit: PAGE_SIZE, ...(bust ? { bust: 1 } : {}) },
+        params: { page, limit: PAGE_SIZE, ...(bust ? { bust: 1 } : {}) }, signal,
       });
-      setError('');
-      setMeta({
-        sources: data.sources || {},
-        connectedPlatforms: data.connectedPlatforms || [],
-        sourceErrors: data.sourceErrors || {},
-        totalAvailable: data.totalAvailable || 0,
-      });
-      setPosts(prev => replace ? mergePosts([], data.posts || []) : mergePosts(prev, data.posts || []));
-      setPage(pageNo);
-      setHasMore(data.hasMore !== false);
-    } catch (err) {
-      setError(err?.response?.data?.message || 'Could not load your connected posts right now.');
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-      setLoadingMore(false);
-      loadingMoreRef.current = false;
-    }
-  }, [posts.length]);
-
+      return { items: mergePosts([], data.posts || []), hasNext: data.hasMore === true, total: data.totalAvailable, data };
+    },
+  });
+  const { items: posts, page, hasNext: hasMore, loading, error } = results;
+  const meta = results.data || {};
+  const refreshing = loading && posts.length > 0;
+  const latestResults = useRef(results);
+  latestResults.current = results;
   useEffect(() => {
-    loadPage({ pageNo: 1, replace: true });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    const id = setInterval(() => loadPage({ pageNo: 1, silent: true }), AUTO_REFRESH_MS);
+    const id = setInterval(() => {
+      const current = latestResults.current;
+      if (current.page === 1 && !document.hidden && !current.loading) current.refresh();
+    }, AUTO_REFRESH_MS);
     return () => clearInterval(id);
-  }, [loadPage]);
+  }, []);
 
-  const refreshFeed = useCallback(
-    () => loadPage({ pageNo: 1, replace: true, bust: true, silent: true }),
-    [loadPage]
-  );
-  useScrollToRefresh(refreshFeed, { enabled: !loading && !refreshing });
-
-  useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting && hasMore && !loading && !loadingMoreRef.current) {
-        loadPage({ pageNo: page + 1, silent: true });
-      }
-    }, { rootMargin: '500px' });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [hasMore, loadPage, loading, page]);
+  const refreshFeed = useCallback(() => {
+    bustNextRequest.current = true;
+    return results.refresh();
+  }, [results.refresh]);
+  useScrollToRefresh(refreshFeed, { enabled: page === 1 && !loading });
 
   const activeSources = useMemo(
     () => Object.entries(meta.sources || {}).filter(([, count]) => count > 0),
@@ -196,7 +162,8 @@ export default function YourPostsFeed() {
         <meta name="robots" content="noindex" />
       </Helmet>
       <Layout>
-        <h1 className="page-title" style={{ marginBottom: 20 }}>Your Connected Posts</h1>
+        <div className="paginated-feed-page">
+        <h1 ref={headingRef} className="page-title" style={{ marginBottom: 20 }}>Your Connected Posts</h1>
 
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 18, alignItems: 'center' }}>
           <div className="tag tag-primary">{(meta.totalAvailable || posts.length).toLocaleString()} posts</div>
@@ -204,8 +171,8 @@ export default function YourPostsFeed() {
           <button
             type="button"
             className="btn btn-ghost btn-sm"
-            onClick={() => loadPage({ pageNo: 1, replace: true, bust: true })}
-            disabled={refreshing}
+            onClick={refreshFeed}
+            disabled={loading || refreshing}
             style={{ marginLeft: 'auto' }}
           >
             {refreshing ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Refresh'}
@@ -233,13 +200,14 @@ export default function YourPostsFeed() {
           </div>
         )}
 
-        {loading ? (
+        {loading && posts.length === 0 ? (
           <div className="empty-state"><span className="spinner spinner-primary" /></div>
         ) : error && posts.length === 0 ? (
           <div className="card" style={{ textAlign: 'center', padding: 32 }}>
             <div style={{ fontWeight: 800, marginBottom: 6 }}>Your connected posts did not load</div>
             <p style={{ color: 'var(--muted)', fontSize: '.88rem', margin: '0 0 16px' }}>{error}</p>
-            <Link to="/connected-accounts" className="btn btn-primary btn-sm">Check connected accounts</Link>
+            <button type="button" className="btn btn-primary btn-sm" onClick={results.retry}>Try again</button>{' '}
+            <Link to="/connected-accounts" className="btn btn-ghost btn-sm">Check connected accounts</Link>
           </div>
         ) : posts.length === 0 ? (
           <div className="card" style={{ textAlign: 'center', padding: 32 }}>
@@ -247,26 +215,27 @@ export default function YourPostsFeed() {
               {meta.connectedPlatforms?.length ? 'No connected posts yet' : 'Connect an account to start'}
             </div>
             <p style={{ color: 'var(--muted)', fontSize: '.88rem', margin: '0 0 16px' }}>
-              Your posts from supported connected accounts will appear here in one casual scrolling feed.
+              Your posts from supported connected accounts will appear here.
             </p>
             <Link to="/connected-accounts" className="btn btn-primary btn-sm">Manage accounts</Link>
           </div>
         ) : (
           <>
             {posts.map(post => <OwnPostCard key={post.id} post={post} />)}
-            <div ref={sentinelRef} style={{ height: 1 }} />
-            {loadingMore && (
-              <div style={{ textAlign: 'center', padding: '16px 0 24px' }}>
-                <span className="spinner spinner-primary" />
-              </div>
-            )}
-            {!hasMore && (
+            {error && <p role="alert">{error} <button type="button" className="btn btn-ghost btn-sm" disabled={loading} onClick={results.retry}>Try again</button></p>}
+            {!hasMore && !error && (
               <div style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '.8rem', padding: '12px 16px', marginBottom: 24 }}>
-                You are caught up. New connected posts will appear here automatically.
+                You have reached the last page. Refresh to check for new connected posts.
               </div>
             )}
           </>
         )}
+        <ResultsPagination page={page} hasNext={hasMore} loading={loading}
+          totalPages={results.total > 0 ? Math.ceil(results.total / PAGE_SIZE) : undefined}
+          ariaLabel="Your connected posts pages" onPageChange={async next => {
+            if (await results.goToPage(next)) headingRef.current?.scrollIntoView({ block: 'start' });
+          }} />
+        </div>
       </Layout>
     </>
   );

@@ -1,6 +1,7 @@
 import { privateSessionStorage } from '../auth/session';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { continueSourceConnectionInBrowser, isNativeRuntime, subscribeNativeForeground } from '../nativeRuntime.mjs';
 import { Workflow, Link2, BriefcaseBusiness, Sparkles, Clapperboard, Send, Newspaper, Image, Video, Hash, PencilLine } from 'lucide-react';
 import Layout from '../components/Layout';
 import PricingModal, { TIERS } from '../components/PricingModal';
@@ -96,6 +97,7 @@ function StatChip({ label, value }) {
 }
 
 function LockedState({ onUpgrade }) {
+  if (isNativeRuntime()) return <div className="card" style={{ padding: 24 }}><h2>Command Center</h2><p>Your existing membership must include Command Center to use these tools.</p></div>;
   return (
     <div className="card" style={{ textAlign: 'center', padding: '52px 24px' }}>
       <div style={{ fontSize: '.8rem', fontWeight: 900, letterSpacing: '.08em', color: 'var(--primary)', marginBottom: 12 }}>COMMAND CENTER</div>
@@ -863,6 +865,8 @@ function MemberAccountsSection() {
     return () => { controller.abort(); accountRequest.current++; };
   }, [loadAccounts]);
 
+  useEffect(() => subscribeNativeForeground(() => loadAccounts()), [loadAccounts]);
+
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const connectedPlatform = params.get('social_connected');
@@ -899,6 +903,7 @@ function MemberAccountsSection() {
   }, [location.pathname, location.search, navigate, showToast, platforms, connected, accountsOwner, accountId]);
 
   async function connectAccount(platform) {
+    if (await continueSourceConnectionInBrowser(platform)) return;
     const state = sourceAuthorizationState(platforms?.find(([key]) => key === platform)?.[1], { isConnected: !!connected[platform] });
     if (!state.ready) { showToast(state.reason, 'error'); return; }
     if (platform === 'mastodon' || platform === 'bluesky') {
@@ -2034,6 +2039,7 @@ export default function CommandCenter() {
   }
 
   async function handleUpgrade(tier, quantity = 1) {
+    if (isNativeRuntime()) return;
     setUpgrading(tier);
     try {
       const { data } = await client.post('/billing/create-checkout-session', { tier, quantity, returnPath: billingReturnPath() });
@@ -2112,7 +2118,7 @@ export default function CommandCenter() {
             aria-labelledby={`command-center-tab-${section}`}
             className="command-center-panel"
           >
-            {!hasPaidMembership && ['content', 'media'].includes(section) && <button type="button" className="btn btn-primary btn-sm" onClick={() => setPricingOpen(true)}>Upgrade to create new content</button>}
+            {!isNativeRuntime() && !hasPaidMembership && ['content', 'media'].includes(section) && <button type="button" className="btn btn-primary btn-sm" onClick={() => setPricingOpen(true)}>Upgrade to create new content</button>}
             {section === 'content' && <ContentHubSection key={profile.id} readOnly={!hasPaidMembership} />}
             {section === 'media' && <MediaStudioSection key={profile.id} readOnly={!hasPaidMembership} onOpenCrossPost={() => selectSection('crosspost')} />}
             {section === 'yourfeed' && <YourFeedSection />}

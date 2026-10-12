@@ -13,12 +13,13 @@ export function playbackTime(seconds) {
 
 // This row stays outside the scrolling caption and never fades on idle.
 // Each surface supplies its actual player state and supported operations.
-export default function MediaPlaybackControls({ paused, muted, currentTime, duration, onTogglePlay, onToggleMute, onSeek, disabled = false, label = 'video' }) {
+export default function MediaPlaybackControls({ paused, muted, currentTime, duration, onTogglePlay, onToggleMute, onSeek, disabled = false, label = 'video', mediaKey }) {
   const end = Number.isFinite(duration) && duration > 0 ? duration : 0;
   const position = Math.max(0, Math.min(end, Number.isFinite(currentTime) ? currentTime : 0));
   const [seekDraft, setSeekDraft] = useState(null);
   const seekTimer = useRef(null);
   useEffect(() => () => clearTimeout(seekTimer.current), []);
+  useEffect(() => { clearTimeout(seekTimer.current); setSeekDraft(null); }, [mediaKey]);
   useEffect(() => {
     if (seekDraft !== null && (disabled || Math.abs(position - seekDraft) < .5)) {
       clearTimeout(seekTimer.current);

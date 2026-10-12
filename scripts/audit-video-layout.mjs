@@ -313,7 +313,7 @@ try {
     await hnFrame.waitFor({ state: 'visible' });
     assert.equal(new URL(await hnFrame.getAttribute('src')).pathname, '/embed/hnvideo0001',
       'A Hacker News article plays its actual official YouTube URL instead of a stale embedId');
-    assert.equal(new URL(await hnFrame.getAttribute('src')).searchParams.get('controls'), '1');
+    assert.equal(new URL(await hnFrame.getAttribute('src')).searchParams.get('controls'), '0');
     assert.equal(await hnYoutube.locator('video').count(), 0);
     await checkPostActions(hnYoutube, hnProfile, true);
     await hnYoutube.getByRole('button', { name: 'More options', exact: true }).click();
@@ -399,7 +399,7 @@ try {
     assert.equal(frameInfo.policy, 'strict-origin-when-cross-origin');
     assert.equal(new URL(frameInfo.src).pathname, '/embed/long0000001', 'The playable URL overrides a stale embedId');
     assert.equal(new URL(frameInfo.src).searchParams.get('origin'), new URL(origin).origin);
-    assert.equal(new URL(frameInfo.src).searchParams.get('controls'), '1');
+    assert.equal(new URL(frameInfo.src).searchParams.get('controls'), '0');
     assert.equal(frameInfo.pointerEvents, 'auto');
     assert.ok(frameInfo.tabIndex >= 0 && frameInfo.width > 100, 'Provider controls remain reachable at useful size');
     const providerFrame = page.frameLocator('.video-feed-youtube-player iframe').first();
@@ -434,15 +434,10 @@ try {
       await page.waitForFunction(rate => document.querySelector(`[role="radio"][aria-label="${rate}×"]`)?.getAttribute('aria-checked') === 'true'
         || [...document.querySelectorAll('[role="radio"]')].some(el => el.textContent.trim() === `${rate}×` && el.getAttribute('aria-checked') === 'true'), nextRate);
       assert.equal(await nextControl.getAttribute('aria-checked'), 'true', 'The setting updates after the provider confirms the rate');
-      await dialog.getByRole('button', { name: 'Use YouTube player controls', exact: true }).click();
-      await dialog.waitFor({ state: 'detached' });
-      await page.waitForFunction(() => document.querySelector('.video-feed-youtube-player iframe')?.src.includes('controls=1'));
-      await page.waitForFunction(() => document.activeElement === document.querySelector('.video-feed-youtube-player iframe'));
-      assert.equal(await frame.evaluate(el => document.activeElement === el), true, 'Quality and captions hand off to the official player controls');
-      await providerFrame.getByRole('button', { name: 'Provider controls' }).click();
-      await more.click();
-      await page.getByRole('menuitem', { name: /^YouTube settings\b/ }).click();
-      await dialog.waitFor({ state: 'visible' });
+      assert.ok(await dialog.getByRole('button', { name: 'Open on YouTube', exact: true }).isVisible(),
+        'Provider-managed quality and captions link to the original video');
+      assert.equal(new URL(await frame.getAttribute('src')).searchParams.get('controls'), '0',
+        'Opening settings preserves the clean embedded player');
       await page.keyboard.press('Escape');
       await dialog.waitFor({ state: 'detached' });
       assert.equal(page.url(), routeBefore, 'Escape closes YouTube settings without leaving the feed');

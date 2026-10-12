@@ -1,11 +1,12 @@
 import { useEffect, useId } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { Check, Power, RefreshCw, ShieldCheck, ShieldAlert } from 'lucide-react';
 import useWebConnection from '../security/useWebConnection';
 import { webConnectionProtected } from '../security/webConnection.mjs';
 import { useVaultConnection } from '../contexts/VaultConnectionContext';
 import useVaultConnectionMonitor from '../security/useVaultConnectionMonitor';
 import './WebProtectionPanel.css';
+import { isNativeRuntime } from '../nativeRuntime.mjs';
 
 const SAFEGUARDS = [
   ['revocableSession', 'Verified sign-in and session revocation'],
@@ -35,6 +36,7 @@ function BaselineWebProtection({ accountId }) {
 }
 
 function WebProtectionContent({ accountId, billing, variant, service }) {
+  const location = useLocation();
   const vault = variant === 'vault';
   const { paid, enabled, status, checking, error, refresh, authenticated } = service;
   const heading = useId();
@@ -48,16 +50,10 @@ function WebProtectionContent({ accountId, billing, variant, service }) {
     service.setMonitoring(!enabled);
   };
   useEffect(() => {
-    if (variant !== 'vault') return undefined;
-    const scroll = () => {
-      if (['#vpn', '#web-protection'].includes(window.location.hash)) {
-        document.getElementById('web-protection')?.scrollIntoView({ block: 'start' });
-      }
-    };
-    const frame = requestAnimationFrame(scroll);
-    window.addEventListener('hashchange', scroll);
-    return () => { cancelAnimationFrame(frame); window.removeEventListener('hashchange', scroll); };
-  }, [variant]);
+    if (variant !== 'vault' || !['#vpn', '#web-protection'].includes(location.hash)) return undefined;
+    const frame = requestAnimationFrame(() => document.getElementById('web-protection')?.scrollIntoView({ block: 'start' }));
+    return () => cancelAnimationFrame(frame);
+  }, [variant, location.hash]);
   return <section id={variant === 'vault' ? 'web-protection' : undefined}
     className={`web-protection-panel ${variant === 'vault' ? 'vault-panel' : 'card'}`}
     aria-labelledby={heading} aria-busy={checking}>
@@ -77,7 +73,7 @@ function WebProtectionContent({ accountId, billing, variant, service }) {
         </button>
       </div>
       <p className="web-protection-caption">Turn automatic connection checks on or off. HTTPS, Vault encryption and account security stay active.</p>
-      {!paid && !billing?.checking && <p className="web-protection-caption">An active paid Vault membership is required to enable connection monitoring. Subscribe or check your subscription status.</p>}
+      {!paid && !billing?.checking && <p className="web-protection-caption">{isNativeRuntime() ? 'An active Vault membership is required to enable connection monitoring. Check your membership status to confirm existing access.' : 'An active paid Vault membership is required to enable connection monitoring. Subscribe or check your subscription status.'}</p>}
     </>}
     {status && <ul className="web-protection-checks">
       <li>{status.transport.encrypted ? <Check size={16} aria-hidden="true" /> : <ShieldAlert size={16} aria-hidden="true" />}

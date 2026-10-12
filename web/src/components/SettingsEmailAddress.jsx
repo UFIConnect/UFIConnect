@@ -1,10 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Mail, ShieldCheck } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 import client from '../api/client';
 import { getAccessToken } from '../auth/session';
 import './SettingsEmailAddress.css';
 
 export default function SettingsEmailAddress({ profile, onProfileUpdate }) {
+  const location = useLocation();
   const accountId = profile?.id, token = getAccessToken();
   const missing = profile?.hasEmail === false;
   const owner = useRef(accountId); owner.current = accountId;
@@ -43,10 +45,10 @@ export default function SettingsEmailAddress({ profile, onProfileUpdate }) {
     return () => window.clearInterval(timer);
   }, [verification, resendAt]);
   useEffect(() => {
-    if (window.location.hash !== '#email') return undefined;
+    if (location.hash !== '#email') return undefined;
     const frame = requestAnimationFrame(() => document.getElementById('email')?.scrollIntoView({ block: 'start' }));
     return () => cancelAnimationFrame(frame);
-  }, []);
+  }, [location.hash]);
   function begin() {
     if (operation.current || !accountId || !token || token !== getAccessToken() || owner.current !== accountId) return null;
     const abort = new AbortController(), epoch = generation.current;

@@ -3,7 +3,8 @@ import { useAuth0 } from '@auth0/auth0-react';
 import { useRef } from 'react';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import { auth0AuthorizationParams, auth0BackendAvailable, isAuth0Configured } from '../auth/auth0Config';
-import { clearSession, getAccessToken, setAccessToken, subscribeToSession } from '../auth/session';
+import { clearSession, clearSessionCaches, getAccessToken, setAccessToken, subscribeToSession } from '../auth/session';
+import { isNativeRuntime, nativeLocationNavigator, persistNativeSession, startNativeProviderSignIn } from '../nativeRuntime.mjs';
 import { clearDeviceFeedLocation, startDeviceFeedLocation } from '../utils/deviceFeedLocation.mjs';
 import { clearRequiredFeedLocation } from '../utils/requiredFeedLocation.mjs';
 
@@ -21,7 +22,7 @@ export function AuthProvider({ children }) {
   const restoreGeneration = useRef(0);
   const restoreRequest = useRef(null);
   const auth0 = useAuth0();
-  const auth0Enabled = isAuth0Configured;
+  const auth0Enabled = isAuth0Configured && !isNativeRuntime();
   const [auth0Ready, setAuth0Ready] = useState(false);
   const [auth0Checking, setAuth0Checking] = useState(auth0Enabled);
 
@@ -43,8 +44,8 @@ export function AuthProvider({ children }) {
   }), []);
 
   useEffect(() => {
-    if (!token || !profile?.id || !profile.onboardingComplete || !window.isSecureContext) return undefined;
-    return startDeviceFeedLocation({ token, navigator, document,
+    if (!token || !profile?.id || !profile.onboardingComplete || (!window.isSecureContext && !isNativeRuntime())) return undefined;
+    return startDeviceFeedLocation({ token, navigator: isNativeRuntime() ? nativeLocationNavigator() : navigator, document,
       onChange: () => setDeviceLocationRevision(value => value + 1) });
   }, [token, profile?.id, profile?.onboardingComplete, deviceLocationAttempt]);
 
@@ -130,13 +131,18 @@ export function AuthProvider({ children }) {
     return () => { cancelled = true; };
   }, [auth0Enabled, auth0Ready, auth0.isAuthenticated, auth0.isLoading, auth0.getAccessTokenSilently]);
 
-  function acceptSession(data) {
+  async function acceptSession(data) {
+    if (!data?.token) throw new Error('Sign-in could not be confirmed. Please try again.');
     // A late startup response must never replace a newer explicit sign-in.
-    restoreGeneration.current += 1;
+    const generation = ++restoreGeneration.current;
     restoreRequest.current?.abort();
+    await persistNativeSession(data.token);
+    if (generation !== restoreGeneration.current) throw new Error('The account session changed. Please try again.');
     setRestoringSession(false);
     setSessionError(false);
-    clearSession();
+    // Do not emit a signed-out token between two valid sessions: the native
+    // host must retain the newly accepted credential in secure storage.
+    clearSessionCaches();
     setAccessToken(data.token);
     const nextProfile = data.profile || data.user || null;
     setProfile(nextProfile);
@@ -164,6 +170,15 @@ export function AuthProvider({ children }) {
     return acceptSession(data);
   }
 
+  async function signInWithNativeProvider(provider, mode) {
+    const generation = restoreGeneration.current;
+    const activeToken = getAccessToken();
+    const data = await startNativeProviderSignIn(provider, mode);
+    if (generation !== restoreGeneration.current || activeToken !== getAccessToken()) throw new Error('The account session changed. Please try again.');
+    if (mode === 'link' && data?.linked && !data?.token) return refreshProfile();
+    return acceptSession(data);
+  }
+
   async function logout({ revoke = true } = {}) {
     restoreGeneration.current += 1;
     restoreRequest.current?.abort();
@@ -175,12 +190,14 @@ export function AuthProvider({ children }) {
       ? client.post('/auth/logout', {}, publicOAuthRequestConfig({ headers: { Authorization: `Bearer ${activeToken}` } }))
           .then(() => true).catch(() => false)
       : Promise.resolve(true);
-    clearSession();
-    const revoked = await revocation;
+    // Let native revocation authenticate before removing its secure token.
+    const revoked = isNativeRuntime() ? await revocation : null;
+    const locallyCleared = await clearSession();
+    const confirmedRevoked = revoked ?? await revocation;
     if (auth0Enabled && auth0.isAuthenticated) {
       auth0.logout({ logoutParams: { returnTo: window.location.origin } });
     }
-    return { revoked };
+    return { revoked: confirmedRevoked, locallyCleared };
   }
 
   async function logoutAll() {
@@ -218,7 +235,7 @@ export function AuthProvider({ children }) {
   return (
     <AuthContext.Provider value={{
       token, profile, loading: loading || restoringSession || (auth0Enabled && auth0.isLoading),
-      sessionError: sessionError && !token, retrySession, login, register, verifyPhoneSignIn, completePhoneSignup, logout, logoutAll,
+      sessionError: sessionError && !token, retrySession, login, register, verifyPhoneSignIn, completePhoneSignup, signInWithNativeProvider, logout, logoutAll,
       updateProfileLocally, refreshProfile, auth0Enabled, auth0Ready, auth0Checking, loginWithAuth0, registerWithAuth0, deviceLocationRevision,
       retryDeviceLocation: () => setDeviceLocationAttempt(value => value + 1),
     }}>

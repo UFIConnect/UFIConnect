@@ -4,6 +4,8 @@ import { deriveBlueskyPlaylistUrl, isDirectVideoUrl, extractYouTubeId, loadYouTu
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll';
 import PostInlineText from './PostInlineText';
 import PostLinkPreviews from './PostLinkPreviews';
+import MediaPlaybackControls from './MediaPlaybackControls';
+import { isNativeRuntime } from '../nativeRuntime.mjs';
 import { safePostLink } from '../../../backend/post-links.mjs';
 
 // Same floating-control look as VideoFeedView's overlay buttons (back/
@@ -22,51 +24,6 @@ const OVERLAY_BTN_STYLE = {
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
 const DOUBLE_TAP_ZOOM = 2.5;
-
-// Same formatting VideoFeedView's swipe feed uses for its scrub bar.
-function formatTime(sec) {
-  if (!Number.isFinite(sec) || sec < 0) return '0:00';
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
-  return `${m}:${String(s).padStart(2, '0')}`;
-}
-
-// Same scrub tracker as VideoFeedView's swipe feed — click or drag anywhere
-// on the bar to skip to that point. Shared across the hls/file/YouTube
-// branches below instead of tripling the JSX.
-function ScrubBar({ progressBarRef, onPointerDown, progressFraction, seeking, currentTime, duration }) {
-  if (!(duration > 0)) return null;
-  return (
-    <>
-      <div
-        ref={progressBarRef}
-        onPointerDown={onPointerDown}
-        style={{
-          position: 'absolute', left: 10, right: 10, bottom: 10, zIndex: 5,
-          height: seeking ? 10 : 4, borderRadius: 4, background: 'rgba(255,255,255,.28)',
-          cursor: 'pointer', touchAction: 'none', transition: 'height .12s',
-        }}
-      >
-        <div style={{
-          position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 4,
-          width: `${progressFraction * 100}%`, background: '#fff',
-        }} />
-        <div style={{
-          position: 'absolute', top: '50%', left: `${progressFraction * 100}%`,
-          transform: 'translate(-50%, -50%)', width: seeking ? 16 : 11, height: seeking ? 16 : 11,
-          borderRadius: '50%', background: '#fff', boxShadow: '0 1px 4px rgba(0,0,0,.5)',
-          transition: 'width .12s, height .12s',
-        }} />
-      </div>
-      <div style={{
-        position: 'absolute', right: 12, bottom: 20, zIndex: 5, color: '#fff', fontSize: '.65rem',
-        fontWeight: 600, textShadow: '0 1px 4px rgba(0,0,0,.7)', pointerEvents: 'none',
-      }}>
-        {formatTime(currentTime)} / {formatTime(duration)}
-      </div>
-    </>
-  );
-}
 
 // Full-screen media viewer with next/prev navigation across every
 // image- OR video-bearing post currently on screen. Photos and videos used
@@ -113,6 +70,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
   // iframe (still autoplays on its own, just without this app's own
   // pause/mute control layer) instead of leaving the mount blank.
   const [ytFailed, setYtFailed] = useState(false);
+  const [ytReady, setYtReady] = useState(false);
   const fileVideoRef = useRef(null);
   const hlsVideoRef = useRef(null);
   // React owns this host; YouTube may replace only the imperative child we
@@ -125,9 +83,6 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
   // Scrub tracker state — same shape as VideoFeedView's swipe feed.
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
-  const [seeking, setSeeking] = useState(false);
-  const seekingRef = useRef(false);
-  const progressBarRef = useRef(null);
 
   // Photo zoom/pan — pinch, double-tap, wheel, or the +/− buttons below all
   // funnel into the same zoom/pan state. Scoped to plain photos only (not
@@ -215,6 +170,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
   useEffect(() => {
     function handleKey(e) {
       if (e.key === 'Escape') onClose();
+      else if (e.target.closest?.('input, textarea, select, button, a, [role="slider"], [contenteditable="true"]')) return;
       else if (e.key === 'ArrowRight') goNext();
       else if (e.key === 'ArrowLeft') goPrev();
     }
@@ -298,8 +254,6 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
     setPaused(false);
     setDuration(0);
     setCurrentTime(0);
-    setSeeking(false);
-    seekingRef.current = false;
   }, [index]);
 
   // youtube: the real IFrame Player API, same as VideoFeedView's swipe
@@ -324,10 +278,11 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
     let player = null;
     const startUnmuted = !muted;
     setYtFailed(false);
+    setYtReady(false);
     ytPlayerRef.current = null;
 
     host.replaceChildren();
-    const mount = createYouTubePlayerFrame(host, youtubeId, { autoplay: 1, mute: 1 }, post.title || 'YouTube video');
+    const mount = createYouTubePlayerFrame(host, youtubeId, { autoplay: 1, mute: 1, controls: 0 }, post.title || 'YouTube video');
 
     const isCurrent = () => !cancelled && ytLifecycleRef.current === lifecycle;
     const readyTimeout = setTimeout(() => { if (isCurrent()) setYtFailed(true); }, 6000);
@@ -339,7 +294,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
         // back to this page can silently fail ("Unable to post message to
         // https://www.youtube.com...") — see VideoFeedView's identical fix
         // for the full explanation; same underlying player construction.
-        playerVars: { autoplay: 1, mute: 1, playsinline: 1, controls: 1, rel: 0, origin: window.location.origin },
+        playerVars: { autoplay: 1, mute: 1, playsinline: 1, controls: 0, rel: 0, origin: window.location.origin },
         events: {
           onReady: (e) => {
             if (!isCurrent()) {
@@ -348,6 +303,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
             }
             clearTimeout(readyTimeout);
             ytPlayerRef.current = e.target;
+            setYtReady(true);
             setYtFailed(false);
             try { e.target.getIframe().style.pointerEvents = 'auto'; } catch {}
             try { setDuration(e.target.getDuration() || 0); } catch {}
@@ -375,7 +331,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
       // fires on play/pause/seek/end, not continuously — so the scrub bar's
       // moving playhead needs its own poll, same as VideoFeedView's.
       pollId = setInterval(() => {
-        if (ytPlayerRef.current && !seekingRef.current) {
+        if (ytPlayerRef.current) {
           try { setCurrentTime(ytPlayerRef.current.getCurrentTime() || 0); } catch {}
         }
       }, 250);
@@ -414,14 +370,6 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
     if (v.paused) v.play().catch(() => {}); else v.pause();
   }
 
-  function computeFraction(clientX) {
-    const el = progressBarRef.current;
-    if (!el) return 0;
-    const rect = el.getBoundingClientRect();
-    if (!rect.width) return 0;
-    return Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-  }
-
   function seekToFraction(fraction) {
     const time = fraction * (duration || 0);
     setCurrentTime(time);
@@ -433,28 +381,10 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
     }
   }
 
-  function handleBarPointerDown(e) {
-    e.stopPropagation();
-    if (!duration) return;
-    seekingRef.current = true;
-    setSeeking(true);
-    seekToFraction(computeFraction(e.clientX));
-    const handleMove = (ev) => seekToFraction(computeFraction(ev.clientX));
-    const handleUp = () => {
-      seekingRef.current = false;
-      setSeeking(false);
-      document.removeEventListener('pointermove', handleMove);
-      document.removeEventListener('pointerup', handleUp);
-    };
-    document.addEventListener('pointermove', handleMove);
-    document.addEventListener('pointerup', handleUp);
-  }
-
-  const progressFraction = duration > 0 ? Math.min(1, currentTime / duration) : 0;
-
   if (!item) return null;
 
   function handleTouchStart(e) {
+    if (e.target.closest?.('.media-playback-controls')) { touchStartX.current = null; return; }
     if (!isVideo && e.touches.length === 2) {
       pinchRef.current = { startDist: touchDist(e.touches[0], e.touches[1]), startZoom: zoom };
       touchStartX.current = null;
@@ -517,19 +447,19 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
         display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'clamp(10px, 2vw, 28px)',
       }}
     >
-      <button className="media-lightbox-close" onClick={onClose} aria-label="Close" style={{
+      {!isVideo && <button className="media-lightbox-close" onClick={onClose} aria-label="Close" style={{
         position: 'absolute', top: 16, right: 16, zIndex: 10, width: 38, height: 38, borderRadius: '50%',
         background: 'rgba(255,255,255,.12)', border: 'none', color: '#fff', fontSize: '1.3rem', cursor: 'pointer',
-      }}>×</button>
+      }}>×</button>}
 
-      {mediaItems.length > 1 && index > 0 && (
+      {!isVideo && mediaItems.length > 1 && index > 0 && (
         <button className="media-lightbox-nav media-lightbox-nav--prev" onClick={e => { e.stopPropagation(); goPrev(); }} aria-label="Previous" style={{
           position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', zIndex: 10,
           width: 42, height: 42, borderRadius: '50%', background: 'rgba(255,255,255,.12)',
           border: 'none', color: '#fff', fontSize: '1.4rem', cursor: 'pointer',
         }}>‹</button>
       )}
-      {mediaItems.length > 1 && index < mediaItems.length - 1 && (
+      {!isVideo && mediaItems.length > 1 && index < mediaItems.length - 1 && (
         <button className="media-lightbox-nav media-lightbox-nav--next" onClick={e => { e.stopPropagation(); goNext(); }} aria-label="Next" style={{
           position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', zIndex: 10,
           width: 42, height: 42, borderRadius: '50%', background: 'rgba(255,255,255,.12)',
@@ -541,13 +471,6 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
           device — the native <video controls> this replaced rendered its
           own browser/OS-specific chrome per platform, which is what made
           mute/pause behave differently on mobile and tablet than desktop. */}
-      {playableVideo && (
-        <button
-          onClick={e => { e.stopPropagation(); toggleMuted(); }}
-          aria-label={muted ? 'Unmute' : 'Mute'}
-          style={{ position: 'absolute', top: 16, right: 64, ...OVERLAY_BTN_STYLE, fontSize: '1.05rem' }}
-        >{muted ? 'M' : 'S'}</button>
-      )}
 
       {/* Zoom controls — photos only. Pinch/double-tap/wheel all drive the
           same zoom state; these buttons just make it discoverable. */}
@@ -575,90 +498,51 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
         </div>
       )}
 
-      <div className="media-lightbox-content" onClick={e => e.stopPropagation()}>
+      <div className="media-lightbox-content" onClick={e => e.stopPropagation()}
+        style={isVideo ? { gridTemplateRows: playableVideo && (!youtubeId || !ytFailed) ? 'auto minmax(0, 1fr) auto auto' : 'auto minmax(0, 1fr) auto' } : undefined}>
+        {isVideo && <div className="media-lightbox-video-navigation" style={{ display: 'flex', alignItems: 'center', gap: 10, paddingBottom: 8 }}>
+          <button type="button" aria-label="Previous" onClick={goPrev} disabled={index === 0} style={OVERLAY_BTN_STYLE}>‹</button>
+          <button type="button" aria-label="Next" onClick={goNext} disabled={index >= mediaItems.length - 1} style={OVERLAY_BTN_STYLE}>›</button>
+          <button type="button" aria-label="Close" onClick={onClose} style={{ ...OVERLAY_BTN_STYLE, marginLeft: 'auto' }}>×</button>
+        </div>}
         <div className={`media-lightbox-stage${isVideo ? ' media-lightbox-stage--video' : ''}`}>
         {isVideo ? (
           playlistUrl ? (
             <div className="media-lightbox-video-shell">
-              <HlsVideoPlayer key={item.url} src={playlistUrl} poster={item.url} autoPlay muted={muted}
+              <HlsVideoPlayer key={item.url} src={playlistUrl} poster={item.url} autoPlay muted={muted} controls={false}
                 videoRef={hlsVideoRef} onClick={togglePlay}
                 onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
-                onTimeUpdate={(e) => { if (!seekingRef.current) setCurrentTime(e.target.currentTime); }}
+                onTimeUpdate={(e) => setCurrentTime(e.target.currentTime)}
                 onLoadedMetadata={(e) => setDuration(e.target.duration || 0)}
                 style={{ width: '100%', height: '100%', maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 10 }} />
-              {paused && (
-                <button onClick={e => { e.stopPropagation(); togglePlay(); }} aria-label="Play" style={{
-                  position: 'absolute', inset: 0, margin: 'auto', width: 60, height: 60,
-                  borderRadius: '50%', background: 'rgba(0,0,0,.5)', border: 'none',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: '#fff', fontSize: '1.5rem', cursor: 'pointer',
-                }}>▶</button>
-              )}
-              <ScrubBar progressBarRef={progressBarRef} onPointerDown={handleBarPointerDown}
-                progressFraction={progressFraction} seeking={seeking} currentTime={currentTime} duration={duration} />
             </div>
           ) : directVideoUrl ? (
             <div className="media-lightbox-video-shell">
-              <video key={item.url} ref={fileVideoRef} src={directVideoUrl} muted={muted} playsInline
+              <video key={item.url} ref={fileVideoRef} src={directVideoUrl} muted={muted} playsInline controls={false}
                 onClick={togglePlay}
                 onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
-                onTimeUpdate={(e) => { if (!seekingRef.current) setCurrentTime(e.target.currentTime); }}
+                onTimeUpdate={(e) => setCurrentTime(e.target.currentTime)}
                 onLoadedMetadata={(e) => setDuration(e.target.duration || 0)}
                 style={{ width: '100%', height: '100%', maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 10, display: 'block', background: '#000' }} />
-              {paused && (
-                <button onClick={e => { e.stopPropagation(); togglePlay(); }} aria-label="Play" style={{
-                  position: 'absolute', inset: 0, margin: 'auto', width: 60, height: 60,
-                  borderRadius: '50%', background: 'rgba(0,0,0,.5)', border: 'none',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: '#fff', fontSize: '1.5rem', cursor: 'pointer',
-                }}>▶</button>
-              )}
-              <ScrubBar progressBarRef={progressBarRef} onPointerDown={handleBarPointerDown}
-                progressFraction={progressFraction} seeking={seeking} currentTime={currentTime} duration={duration} />
             </div>
           ) : youtubeId ? (
             <div className="media-lightbox-youtube" style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', background: '#000' }}>
               <div
                 ref={ytHostRef}
-                style={{ width: '100%', height: '100%', pointerEvents: 'none', visibility: ytFailed ? 'hidden' : 'visible' }}
+                style={{ width: '100%', height: '100%', visibility: ytFailed ? 'hidden' : 'visible' }}
               />
-              {ytFailed && (
+              {ytFailed && !isNativeRuntime() && (
                 // See VideoFeedView's identical fallback — a plain embed
                 // iframe doesn't depend on the IFrame Player API script at
                 // all and still autoplays muted on its own, so real
                 // playback survives even where that script doesn't load.
                 <iframe
-                  src={youTubeEmbedUrl(youtubeId, { autoplay: 1, mute: userWantsSound() ? 0 : 1 })}
+                  src={youTubeEmbedUrl(youtubeId, { autoplay: 1, mute: userWantsSound() ? 0 : 1, controls: 0 })}
                   referrerPolicy="strict-origin-when-cross-origin"
-                  style={{ width: '100%', height: '100%', border: 'none', display: 'block', pointerEvents: 'auto' }}
+                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', display: 'block', pointerEvents: 'auto' }}
                   allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
                   title={post.title}
                 />
-              )}
-              {!ytFailed && (
-                <>
-                  {/* Cross-origin iframe — the parent page can't see clicks
-                      that land inside it, so pointer-events are disabled on
-                      the mount itself and this wrapper's onClick drives
-                      play/pause instead (same technique VideoFeedView's
-                      YouTube slide uses). */}
-                  <div
-                    onClick={e => { e.stopPropagation(); togglePlay(); }}
-                    style={{ position: 'absolute', inset: 0 }}
-                    role="button"
-                    aria-label="Play or pause video"
-                  />
-                  {paused && (
-                    <button onClick={e => { e.stopPropagation(); togglePlay(); }} aria-label="Play" style={{
-                      position: 'absolute', inset: 0, margin: 'auto', width: 60, height: 60,
-                      borderRadius: '50%', background: 'rgba(0,0,0,.5)', border: 'none',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      color: '#fff', fontSize: '1.5rem', cursor: 'pointer',
-                    }}>▶</button>
-                  )}
-                  <ScrubBar progressBarRef={progressBarRef} onPointerDown={handleBarPointerDown}
-                    progressFraction={progressFraction} seeking={seeking} currentTime={currentTime} duration={duration} />
-                </>
               )}
             </div>
           ) : (
@@ -695,10 +579,14 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
           </div>
         )}
         </div>
+        {playableVideo && (!youtubeId || !ytFailed) && <MediaPlaybackControls paused={paused} muted={muted} currentTime={currentTime} duration={duration}
+          onTogglePlay={togglePlay} onToggleMute={toggleMuted} onSeek={seconds => seekToFraction(duration > 0 ? seconds / duration : 0)}
+          disabled={Boolean(youtubeId && !ytReady)} />}
         <div className="media-lightbox-info"
           onTouchStart={event => event.stopPropagation()} onTouchMove={event => event.stopPropagation()}
           onTouchEnd={event => event.stopPropagation()} onTouchCancel={event => event.stopPropagation()}
           style={{ color: '#fff', marginTop: 14, textAlign: 'center', maxWidth: 560, padding: '0 12px' }}>
+          {youtubeId && ytFailed && <p role="status">Playback is unavailable here. <a href={`https://www.youtube.com/watch?v=${youtubeId}`} target="_blank" rel="noopener noreferrer">Open on YouTube</a></p>}
           {post.title && <div className="media-lightbox-title" style={{ fontWeight: 700, fontSize: '.92rem', marginBottom: 4 }}><PostInlineText text={post.title} /></div>}
           {post.content && (
             <div style={{ fontSize: '.82rem', opacity: 0.8, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>

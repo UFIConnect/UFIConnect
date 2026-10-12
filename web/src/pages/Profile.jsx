@@ -1,3 +1,5 @@
+import PostPagesNavigation from '../components/PostPagesNavigation';
+import usePostPages from '../hooks/usePostPages';
 import ProfilePhoto from '../components/ProfilePhoto';
 import useTabMetrics from '../analytics/useTabMetrics';
 ﻿import { useState, useEffect } from 'react';
@@ -70,10 +72,9 @@ export default function Profile() {
   const [skills,        setSkills]        = useState([]);
   const [skillSaving,   setSkillSaving]   = useState(false);
   // Posts
-  const [posts,        setPosts]        = useState([]);
-  const [postsLoading, setPostsLoading] = useState(false);
-  const [postsHasMore, setPostsHasMore] = useState(false);
-  const [postsLoadingMore, setPostsLoadingMore] = useState(false);
+  const postPages = usePostPages({ endpoint: profile?.id ? `/users/${profile.id}/posts` : '', viewerId: profile?.id });
+  const { items: posts, updateItems: setPosts } = postPages;
+  const postsLoading = postPages.loading && !posts.length;
   const [activeProfileTab, setActiveProfileTab] = useState(() => {
     const requested = searchParams.get('tab');
     return ['posts', 'about', 'more'].includes(requested) ? requested : 'posts';
@@ -138,40 +139,6 @@ export default function Profile() {
       .then(({ data }) => setFollowStats({ followersCount: data.followersCount, followingCount: data.followingCount }))
       .catch(() => {});
   }, [profile?.id]);
-
-  async function fetchProfilePosts(offset = 0) {
-    if (!profile?.id) return;
-    const appending = offset > 0;
-    if (appending) setPostsLoadingMore(true);
-    else setPostsLoading(true);
-    try {
-      const { data } = await client.get(`/users/${profile.id}/posts`, { params: { limit: 50, offset } });
-      const incoming = data.posts || [];
-      setPosts(current => {
-        if (!appending) return incoming;
-        const seen = new Set(current.map(post => post.id));
-        return [...current, ...incoming.filter(post => !seen.has(post.id))];
-      });
-      setPostsHasMore(!!data.hasMore);
-    } catch {
-      if (!appending) setPosts([]);
-      setPostsHasMore(false);
-    } finally {
-      if (appending) setPostsLoadingMore(false);
-      else setPostsLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    setPosts([]);
-    setPostsHasMore(false);
-    fetchProfilePosts();
-  }, [profile?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  function loadMorePosts() {
-    if (postsLoadingMore || !postsHasMore) return;
-    fetchProfilePosts(posts.length);
-  }
 
   function selectProfileTab(tab) {
     if (tab === 'more') return;
@@ -636,7 +603,7 @@ export default function Profile() {
             </div>
           ) : (
             <>
-              <div style={{ marginTop: 18 }}>
+              <div id="profile-post-results" style={{ marginTop: 18, scrollMarginTop: 80 }}>
                 <div className="profile-posts-heading">
                   <div>
                     <h2 style={{ fontSize: '1rem', margin: 0 }}>Your UFIconnect posts</h2>
@@ -654,10 +621,9 @@ export default function Profile() {
                   maxWidth={null}
                   currentUserId={profile?.id}
                   onPostUpdated={(updated) => setPosts(current => current.map(post => post.id === updated.id ? { ...post, ...updated } : post))}
-                  onPostDeleted={(id) => setPosts(current => current.filter(post => post.id !== id))}
-                  onNearEnd={loadMorePosts}
+                  onPostDeleted={() => postPages.refresh()}
                 />
-                {postsLoadingMore && <div style={{ textAlign: 'center', padding: '12px 0' }}><span className="spinner spinner-primary" /></div>}
+                <PostPagesNavigation results={postPages} targetId="profile-post-results" label="Your profile post pages" />
               </div>
             </>
           )}
@@ -955,8 +921,7 @@ export default function Profile() {
             emptyDesc="Write your first community post and it will appear on your profile."
             emptyAction={<Link to="/post" className="btn btn-primary btn-sm" style={{ textDecoration:'none' }}>Write a post</Link>}
             currentUserId={profile?.id}
-            onPostDeleted={(id) => setPosts((prev) => prev.filter((p) => p.id !== id))}
-            onNearEnd={loadMorePosts}
+            onPostDeleted={() => postPages.refresh()}
           />
         </div>
       )}

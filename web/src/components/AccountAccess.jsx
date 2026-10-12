@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { normalizedPhoneNumber, PHONE_COUNTRIES, providerAuthorizationUrl, SIGNIN_ERRORS } from '../auth/accountAccess.mjs';
 import { safeReturnPath } from '../auth/returnPath';
 import './AccountAccess.css';
+import { isNativeRuntime } from '../nativeRuntime.mjs';
 
 function ProviderMark({ provider }) {
   if (provider === 'google') return <img src="/brand/google-signin.png" width="20" height="20" alt="" aria-hidden="true" />;
@@ -13,7 +14,7 @@ function ProviderMark({ provider }) {
 }
 
 export default function AccountAccess({ mode = 'login', returnTo = '/', onSignedIn, disabled = false, onBusyChange, allowPhoneReplacement = false }) {
-  const { verifyPhoneSignIn, completePhoneSignup, token } = useAuth();
+  const { verifyPhoneSignIn, completePhoneSignup, signInWithNativeProvider, token } = useAuth();
   const location = useLocation();
   const id = useId();
   const [providers, setProviders] = useState(null);
@@ -74,6 +75,15 @@ export default function AccountAccess({ mode = 'login', returnTo = '/', onSigned
     if (locked.current || unavailable || connected(provider) || !providerReady(provider)) return;
     const controller = begin();
     try {
+      if (isNativeRuntime()) {
+        const profile = await signInWithNativeProvider(provider, mode);
+        if (current(controller)) {
+          if (linking) setRevision(value => value + 1);
+          onSignedIn?.(profile);
+        }
+        finish(controller);
+        return;
+      }
       const { data } = await client.post(`/auth/providers/${provider}/${linking ? 'link' : 'start'}`, linking ? { client: 'web' } : { client: 'web', mode, returnTo: safeReturnPath(returnTo) }, publicOAuthRequestConfig({ signal: controller.signal }));
       if (current(controller)) window.location.assign(providerAuthorizationUrl(provider, data.authorizationUrl || data.url));
     } catch (failure) { if (current(controller)) setError(failure.response?.data?.message || failure.message || 'Sign-in could not start.'); finish(controller); }

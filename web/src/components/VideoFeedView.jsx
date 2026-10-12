@@ -5,7 +5,7 @@ import { useToast } from '../contexts/ToastContext';
 import { feedLocationKey } from '../utils/feedLocation.mjs';
 import { directMediaPlaybackAllowed } from '../utils/sourceMediaPolicy.mjs';
 import { sourcePostMenuItems } from '../utils/sourcePostMenu.mjs';
-import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, isYouTubeShortsUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, rememberSoundPreference, useGlobalMuted, fetchVimeoMetadata, youTubePosterUrl, createYouTubePlayerFrame, youTubeEmbedUrl } from './videoMedia';
+import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, isYouTubeShortsUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, rememberSoundPreference, useGlobalMuted, fetchVimeoMetadata, youTubePosterUrl, createYouTubePlayerFrame, youTubeEmbedUrl, vimeoEmbedUrl, createVimeoController } from './videoMedia';
 import MediaPlaybackControls from './MediaPlaybackControls';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
@@ -23,7 +23,8 @@ import PostInlineText from './PostInlineText';
 import PostLinkPreviews from './PostLinkPreviews';
 import useTabMetrics, { useSelectedTabMetrics } from '../analytics/useTabMetrics';
 import YouTubeSettingsDialog from './YouTubeSettingsDialog';
-import { PostHeader, PostOptionsMenu, OpenOnSource, CommentIcon, HeartIcon } from './PostCardChrome';
+import { isNativeRuntime } from '../nativeRuntime.mjs';
+import { PostHeader, PostOptionsMenu, OpenOnSource, CommentIcon, HeartIcon, postSource } from './PostCardChrome';
 import { isMemberPost, safePostLink } from '../../../backend/post-links.mjs';
 import { Search, SlidersHorizontal, RotateCw } from 'lucide-react';
 import { videoDurationSeconds, isShortFeedVideo, videoSourceKey, safeMediaUrl, fitVideoFrame } from '../utils/videoFeedPolicy.mjs';
@@ -233,6 +234,10 @@ function VideoSlide({ post, active, muted, isScrolling, onOpenComments, sharedYt
   const vimeoIframeRef = useRef(null);
   const vimeoStartMuted = useRef(!userWantsSound());
   const vimeoVolume = useRef(1);
+  const vimeoController = useRef(null);
+  const vimeoSettingsDiscovery = useRef(null);
+  const vimeoPost = useRef({ post, onDurationResolved });
+  vimeoPost.current = { post, onDurationResolved };
   // Caption starts clamped (see the overlay below) — the video is the point
   // of this view, a wall of text over it isn't. "more" only shows up when
   // there's actually more than the clamp already reveals: a long title, or
@@ -276,6 +281,8 @@ function VideoSlide({ post, active, muted, isScrolling, onOpenComments, sharedYt
   const [currentTime, setCurrentTime] = useState(0);
   const [playerMuted, setPlayerMuted] = useState(true);
   const [vimeoReady, setVimeoReady] = useState(false);
+  const [vimeoNotice, setVimeoNotice] = useState('');
+  const [vimeoSettings, setVimeoSettings] = useState({ ready: false, rates: [], captionTracks: [], qualities: [] });
   const scrollResumeRef = useRef(false);
   const hiddenResumeRef = useRef(false);
   const pausedRef = useRef(paused);
@@ -313,7 +320,7 @@ function VideoSlide({ post, active, muted, isScrolling, onOpenComments, sharedYt
   useEffect(() => {
     if (!active || src?.kind === 'youtube') return;
     const video = getNativeEl();
-    const sendVimeo = method => vimeoIframeRef.current?.contentWindow?.postMessage(JSON.stringify({ method }), 'https://player.vimeo.com');
+    const sendVimeo = method => vimeoController.current?.call(method).catch(() => {});
     const guardBackgroundPlay = () => {
       if (!document.hidden) return;
       hiddenResumeRef.current = true;
@@ -430,74 +437,158 @@ function VideoSlide({ post, active, muted, isScrolling, onOpenComments, sharedYt
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [muted, active, getNativeEl, src?.kind]);
 
-  // Vimeo: a cross-origin iframe with no DOM <video> to attach onPlay/
-  // onPause/onTimeUpdate to, so paused/duration/currentTime — and with
-  // them the scrub bar, time readout, and "tap to play" affordance every
-  // other kind here already gets — previously never updated for this kind
-  // at all. paused's useState(false) default meant a silently-blocked
-  // autoplay just looked like a frozen video with nothing tappable, and
-  // togglePlay() had no element to act on either.
-  // Vimeo's embed exposes its own postMessage event protocol instead: it
-  // pushes an unprompted {event:'ready'} once loaded, then after
-  // subscribing with {method:'addEventListener', value:'play'|'pause'|
-  // 'timeupdate'} it pushes {event:'play'|'pause'|'timeupdate', data} on
-  // every change — wiring that into the exact same paused/duration/
-  // currentTime state file/hls populate via real DOM events means the
-  // rest of this component needs no further kind-specific branching for
-  // any of that UI to also work correctly here.
+  // Only the active, identity-checked Vimeo iframe can update these controls.
   useEffect(() => {
     if (!active || src?.kind !== 'vimeo') return;
-    setVimeoReady(false);
-    let ready = false;
-    function sendToVimeo(msg) {
-      try { vimeoIframeRef.current?.contentWindow?.postMessage(JSON.stringify(msg), 'https://player.vimeo.com'); } catch {}
+    const frame = vimeoIframeRef.current;
+    let cancelled = false;
+    setVimeoReady(false); setVimeoNotice(''); setPaused(true); setCurrentTime(0);
+    setVimeoSettings({ ready: false, rates: [], captionTracks: [], qualities: [] });
+    const acceptDuration = seconds => {
+      if (!Number.isFinite(seconds) || seconds <= 0) return;
+      setDuration(seconds);
+      vimeoPost.current.onDurationResolved(vimeoPost.current.post, seconds);
+    };
+    const controller = createVimeoController(frame, src.id, {
+      isCurrent: () => !cancelled && vimeoIframeRef.current === frame,
+      onEvent: (event, data) => {
+        if (event === 'play') {
+          if (document.hidden) { hiddenResumeRef.current = true; controller.call('pause').catch(() => {}); }
+          setPaused(false); setVimeoNotice('');
+        } else if (event === 'pause' || event === 'ended') setPaused(true);
+        else if (event === 'timeupdate') {
+          if (Number.isFinite(data.seconds) && data.seconds >= 0) setCurrentTime(data.seconds);
+          acceptDuration(data.duration);
+        } else if (event === 'volumechange') {
+          if (Number.isFinite(data.volume)) vimeoVolume.current = data.volume;
+          if (typeof data.muted === 'boolean') setPlayerMuted(data.muted || vimeoVolume.current === 0);
+          else controller.call('getMuted').then(value => {
+            if (!cancelled && typeof value === 'boolean') setPlayerMuted(value || vimeoVolume.current === 0);
+          }).catch(() => {});
+        } else if (event === 'playbackratechange' && Number.isFinite(data.playbackRate)) {
+          setVimeoSettings(previous => ({ ...previous, rate: data.playbackRate }));
+        } else if (event === 'qualitychange' && typeof data.quality === 'string') {
+          setVimeoSettings(previous => ({ ...previous, quality: data.quality }));
+        } else if (event === 'texttrackchange') {
+          setVimeoSettings(previous => ({ ...previous, captionTrack: data.language ? `${data.language}:${data.kind}` : 'off' }));
+        } else if (event === 'error') {
+          setVimeoNotice('Vimeo could not play this video. Try the controls again or open it on Vimeo.');
+          setPaused(true);
+          if (data.name === 'VideoChangedError') {
+            setVimeoReady(false);
+            setVimeoSettings({ ready: false, rates: [], captionTracks: [], qualities: [] });
+          }
+        }
+      },
+    });
+    vimeoController.current = controller;
+    controller.ready.then(async () => {
+      if (cancelled) return;
+      setVimeoReady(true); setVimeoSettings(previous => ({ ...previous, ready: true }));
+      if (document.hidden) { hiddenResumeRef.current = true; controller.call('pause').catch(() => {}); }
+      const read = (method, accept) => controller.call(method).then(value => { if (!cancelled) accept(value); }).catch(() => {});
+      // Apply each reply immediately; a slow optional getter must not roll
+      // playback back to a snapshot taken before a subsequent play event.
+      read('getDuration', acceptDuration);
+      read('getCurrentTime', value => { if (Number.isFinite(value)) setCurrentTime(value); });
+      read('getPaused', value => { if (typeof value === 'boolean') setPaused(value); });
+      read('getVolume', volume => {
+        if (Number.isFinite(volume)) vimeoVolume.current = volume;
+        read('getMuted', value => { if (typeof value === 'boolean') setPlayerMuted(value || vimeoVolume.current === 0); });
+      });
+    }).catch(() => {
+      if (cancelled) return;
+      setVimeoReady(false); setPaused(true);
+      setVimeoNotice('Vimeo playback controls are unavailable. Open this video on Vimeo.');
+      controller.destroy();
+    });
+    return () => {
+      cancelled = true; controller.destroy();
+      if (vimeoController.current === controller) vimeoController.current = null;
+    };
+  }, [active, src?.kind, src?.id]);
+
+  // Vimeo has no available-rates getter. Only offer its documented rate
+  // range after the owner permits a no-change rate request. Discover these
+  // optional capabilities when the settings dialog is actually opened.
+  useEffect(() => {
+    if (!settingsOpen || !vimeoReady || src?.kind !== 'vimeo') return;
+    const controller = vimeoController.current;
+    let cancelled = false;
+    if (!controller) return;
+    // Reopening the dialog subscribes to the same in-flight discovery.
+    // Repeating a method before its first reply would be ambiguous in
+    // Vimeo's protocol, which has no per-request correlation identifier.
+    if (vimeoSettingsDiscovery.current?.controller !== controller) {
+      const rates = (async () => {
+        try {
+          const rate = await controller.call('getPlaybackRate');
+          if (!Number.isFinite(rate) || rate <= 0 || rate > 2) return { rates: [] };
+          const confirmed = await controller.call('setPlaybackRate', rate);
+          return confirmed === rate ? { rate, rates: [...new Set([0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, rate])].sort((a, b) => a - b) } : { rates: [] };
+        } catch { return { rates: [] }; }
+      })();
+      const tracks = controller.call('getTextTracks').then(available => {
+        const valid = (Array.isArray(available) ? available : []).filter(track => typeof track.language === 'string'
+          && /^[a-zA-Z0-9-]{1,80}$/.test(track.language) && ['captions', 'subtitles'].includes(track.kind)).slice(0, 80);
+        const showing = valid.find(track => track.mode === 'showing');
+        return { captionTracks: valid.map(track => ({ value: `${track.language}:${track.kind}`, label: String(track.label || track.language).slice(0, 160) })),
+          captionTrack: showing ? `${showing.language}:${showing.kind}` : 'off' };
+      }).catch(() => ({ captionTracks: [] }));
+      const qualities = (async () => {
+        try {
+          const [available, quality] = await Promise.all([controller.call('getQualities'), controller.call('getQuality')]);
+          const choices = (Array.isArray(available) ? available : []).filter(item => typeof item.id === 'string' && /^[a-zA-Z0-9_-]{1,30}$/.test(item.id))
+            .slice(0, 30).map(item => ({ value: item.id, label: String(item.label || item.id).slice(0, 80) }));
+          if (!choices.some(item => item.value === quality)) return { qualities: [] };
+          const confirmed = await controller.call('setQuality', quality);
+          return confirmed === quality ? { qualities: choices, quality } : { qualities: [] };
+        } catch { return { qualities: [] }; }
+      })();
+      vimeoSettingsDiscovery.current = { controller, jobs: [rates, tracks, qualities].map(promise => ({ promise, applied: false })) };
     }
-    function handleMessage(event) {
-      if (event.origin !== 'https://player.vimeo.com') return;
-      if (event.source !== vimeoIframeRef.current?.contentWindow) return;
-      let msg;
-      try { msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data; } catch { return; }
-      if ((msg?.event === 'ready' || msg?.method === 'ping') && !ready) {
-        ready = true;
-        setVimeoReady(true);
-        sendToVimeo({ method: 'addEventListener', value: 'play' });
-        sendToVimeo({ method: 'addEventListener', value: 'pause' });
-        sendToVimeo({ method: 'addEventListener', value: 'timeupdate' });
-        sendToVimeo({ method: 'addEventListener', value: 'volumechange' });
-        sendToVimeo({ method: 'getDuration' });
-        sendToVimeo({ method: 'getPaused' });
-        sendToVimeo({ method: 'getMuted' });
-        sendToVimeo({ method: 'getVolume' });
-        if (document.hidden) { hiddenResumeRef.current = true; sendToVimeo({ method: 'pause' }); }
-      } else if (msg?.method === 'getDuration') {
-        setDuration(Number(msg.value) || 0);
-        onDurationResolved(post, Number(msg.value));
-      } else if (msg?.method === 'getPaused' && typeof msg.value === 'boolean') {
-        setPaused(msg.value);
-      } else if ((msg?.method === 'getMuted' || msg?.method === 'setMuted') && typeof msg.value === 'boolean') {
-        setPlayerMuted(msg.value || vimeoVolume.current === 0);
-      } else if ((msg?.method === 'getVolume' || msg?.method === 'setVolume') && Number.isFinite(msg.value)) {
-        vimeoVolume.current = msg.value;
-        sendToVimeo({ method: 'getMuted' });
-      } else if (msg?.event === 'volumechange' && msg.data) {
-        vimeoVolume.current = Number(msg.data.volume);
-        setPlayerMuted(Boolean(msg.data.muted) || Number(msg.data.volume) === 0);
-      } else if (msg?.event === 'play') {
-        if (document.hidden) { hiddenResumeRef.current = true; sendToVimeo({ method: 'pause' }); }
-        setPaused(false);
-      } else if (msg?.event === 'pause' || msg?.event === 'finish') {
-        setPaused(true);
-      } else if (msg?.method === 'setCurrentTime' && Number.isFinite(msg.value)) {
-        setCurrentTime(msg.value);
-      } else if (msg?.event === 'timeupdate' && msg.data) {
-        setCurrentTime(msg.data.seconds || 0);
-        if (msg.data.duration) { setDuration(msg.data.duration); onDurationResolved(post, msg.data.duration); }
+    vimeoSettingsDiscovery.current.jobs.forEach(job => {
+      job.promise.then(update => {
+        if (cancelled || vimeoController.current !== controller || job.applied) return;
+        job.applied = true;
+        setVimeoSettings(previous => ({ ...previous, ...update }));
+      });
+    });
+    return () => { cancelled = true; };
+  }, [settingsOpen, vimeoReady, src?.kind]);
+
+  async function callVimeo(method, value) {
+    const controller = vimeoController.current;
+    if (!active || !vimeoReady || !controller) throw new Error('Vimeo is unavailable.');
+    try {
+      const result = await controller.call(method, value);
+      if (vimeoController.current !== controller) throw new Error('Vimeo video changed.');
+      setVimeoNotice('');
+      return result;
+    } catch (error) {
+      if (vimeoController.current === controller) setVimeoNotice('Vimeo could not change this setting. Try again or open the video on Vimeo.');
+      throw error;
+    }
+  }
+
+  async function changeVimeoSetting(method, value, field, choices) {
+    const controller = vimeoController.current;
+    try {
+      const confirmed = await callVimeo(method, value);
+      if (method === 'disableTextTrack') setVimeoSettings(previous => ({ ...previous, captionTrack: 'off' }));
+      else if (method === 'enableTextTrack') {
+        if (confirmed?.language !== value.language || confirmed?.kind !== value.kind) throw new Error('Caption change was not confirmed.');
+        setVimeoSettings(previous => ({ ...previous, captionTrack: `${confirmed.language}:${confirmed.kind}` }));
+      } else {
+        if (confirmed !== value) throw new Error('Setting change was not confirmed.');
+        setVimeoSettings(previous => ({ ...previous, [field]: confirmed }));
       }
+      return true;
+    } catch {
+      if (vimeoController.current === controller) setVimeoSettings(previous => ({ ...previous, [choices]: [] }));
+      return false;
     }
-    window.addEventListener('message', handleMessage);
-    sendToVimeo({ method: 'ping' });
-    return () => window.removeEventListener('message', handleMessage);
-  }, [active, src?.kind, post, onDurationResolved]);
+  }
 
   // Same "every slide starts fresh" reset file/hls gets on becoming
   // inactive (above) — the iframe itself already fully unmounts when
@@ -544,10 +635,10 @@ function VideoSlide({ post, active, muted, isScrolling, onOpenComments, sharedYt
       try {
         if (isScrolling) {
           scrollResumeRef.current = scrollResumeRef.current || !pausedRef.current;
-          vimeoIframeRef.current?.contentWindow?.postMessage(JSON.stringify({ method: 'pause' }), 'https://player.vimeo.com');
+          vimeoController.current?.call('pause').catch(() => {});
         } else if (scrollResumeRef.current) {
           scrollResumeRef.current = false;
-          vimeoIframeRef.current?.contentWindow?.postMessage(JSON.stringify({ method: 'play' }), 'https://player.vimeo.com');
+          vimeoController.current?.call('play').catch(() => {});
         }
       } catch {}
       return;
@@ -568,11 +659,7 @@ function VideoSlide({ post, active, muted, isScrolling, onOpenComments, sharedYt
       sharedYt?.togglePlay?.();
     } else if (src?.kind === 'vimeo') {
       if (!vimeoReady) return;
-      try {
-        vimeoIframeRef.current?.contentWindow?.postMessage(
-          JSON.stringify({ method: paused ? 'play' : 'pause' }), 'https://player.vimeo.com'
-        );
-      } catch {}
+      callVimeo(paused ? 'play' : 'pause').catch(() => {});
     } else {
       const v = getNativeEl();
       if (!v) return;
@@ -584,10 +671,18 @@ function VideoSlide({ post, active, muted, isScrolling, onOpenComments, sharedYt
     if (isYoutube) { sharedYt?.toggleMute?.(); return; }
     if (src?.kind === 'vimeo') {
       if (!vimeoReady) return;
-      if (playerMuted && vimeoVolume.current === 0) vimeoIframeRef.current?.contentWindow?.postMessage(JSON.stringify({ method: 'setVolume', value: 1 }), 'https://player.vimeo.com');
-      vimeoIframeRef.current?.contentWindow?.postMessage(JSON.stringify({ method: 'setMuted', value: !playerMuted }), 'https://player.vimeo.com');
-      // Wait for Vimeo's response before changing the visible state.
-      rememberSoundPreference(playerMuted);
+      const nextMuted = !playerMuted;
+      (async () => {
+        if (!nextMuted && vimeoVolume.current === 0) {
+          const volume = await callVimeo('setVolume', 1);
+          if (Number.isFinite(volume)) vimeoVolume.current = volume;
+        }
+        const confirmed = await callVimeo('setMuted', nextMuted);
+        if (typeof confirmed !== 'boolean') return;
+        const silent = confirmed || vimeoVolume.current === 0;
+        setPlayerMuted(silent);
+        rememberSoundPreference(!silent);
+      })().catch(() => {});
       return;
     }
     const video = getNativeEl();
@@ -604,7 +699,9 @@ function VideoSlide({ post, active, muted, isScrolling, onOpenComments, sharedYt
     const target = Math.max(0, Math.min(effectiveDuration, seconds));
     if (isYoutube) { sharedYt?.seekTo?.(target); return; }
     if (src?.kind === 'vimeo') {
-      if (vimeoReady) vimeoIframeRef.current?.contentWindow?.postMessage(JSON.stringify({ method: 'setCurrentTime', value: target }), 'https://player.vimeo.com');
+      if (vimeoReady) callVimeo('setCurrentTime', target).then(confirmed => {
+        if (Number.isFinite(confirmed)) setCurrentTime(confirmed);
+      }).catch(() => {});
       return;
     }
     const video = getNativeEl();
@@ -621,12 +718,16 @@ function VideoSlide({ post, active, muted, isScrolling, onOpenComments, sharedYt
   }
 
   const validSourceActions = post.source !== 'youtube' || isYoutube;
+  const nativeSettingsTitle = isMemberPost(post) || post.source === 'youtube' ? 'Player settings' : `${postSource(post).label} settings`;
   const sourceItems = sourcePostMenuItems(post).filter(item => validSourceActions || item.key === 'original')
     .map(item => validSourceActions ? item : { ...item, label: 'Open original post' });
   const options = [
-    { label: fullScreen ? 'Exit full screen' : 'Full screen', onSelect: () => onFullScreen(getNativeEl()) },
-    isYoutube && { label: 'YouTube settings', detail: 'Playback speed, quality and captions', onSelect: () => setSettingsOpen(true) },
-    isNative && { label: 'Player settings', detail: 'Playback speed and available captions', onSelect: () => setSettingsOpen(true) },
+    (fullScreen || (document.fullscreenEnabled && document.documentElement.requestFullscreen)
+      || (isNative && typeof HTMLVideoElement.prototype.webkitEnterFullscreen === 'function'))
+      && { label: fullScreen ? 'Exit full screen' : 'Full screen', onSelect: () => onFullScreen(getNativeEl()) },
+    isYoutube && { label: 'YouTube settings', detail: 'Available playback and caption options', onSelect: () => setSettingsOpen(true) },
+    src?.kind === 'vimeo' && { label: 'Vimeo settings', detail: 'Available speed, captions and quality', onSelect: () => setSettingsOpen(true) },
+    isNative && { label: nativeSettingsTitle, detail: 'Playback speed and available captions', onSelect: () => setSettingsOpen(true) },
   ].filter(Boolean);
   return (
     <article ref={slideRef} className="video-feed-slide" data-cursor-idle={cursorIdle}>
@@ -634,9 +735,9 @@ function VideoSlide({ post, active, muted, isScrolling, onOpenComments, sharedYt
         if (!event.target.closest('iframe, button, video')) togglePlay();
       }}>
         {!src ? <p>Video unavailable</p> : src.kind === 'youtube' ? null : src.kind === 'vimeo' ? (
-          active ? <iframe ref={vimeoIframeRef}
+          active ? <iframe key={src.id} ref={vimeoIframeRef}
             onLoad={() => vimeoIframeRef.current?.contentWindow?.postMessage(JSON.stringify({ method: 'ping' }), 'https://player.vimeo.com')}
-            src={`https://player.vimeo.com/video/${src.id}?autoplay=1&muted=${vimeoStartMuted.current ? 1 : 0}&loop=1&api=1&title=0&byline=0&portrait=0&controls=1`}
+            src={vimeoEmbedUrl(src.id, { muted: vimeoStartMuted.current })}
             referrerPolicy="strict-origin-when-cross-origin"
             allow="autoplay; fullscreen; picture-in-picture" allowFullScreen title={post.title || 'Vimeo video'} />
           : vimeoPoster ? <img src={vimeoPoster} alt="" draggable={false} /> : null
@@ -658,7 +759,7 @@ function VideoSlide({ post, active, muted, isScrolling, onOpenComments, sharedYt
             onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id, context: { surface: 'videos' } })} />}
       </div>
       <div className="video-feed-playback-status">
-        <MediaPlaybackControls paused={isYoutube ? sharedYt?.paused !== false : paused}
+        <MediaPlaybackControls mediaKey={`${post.id}:${src?.id || src?.src || ''}`} paused={isYoutube ? sharedYt?.paused !== false : paused}
           muted={isYoutube ? sharedYt?.muted !== false : playerMuted}
           currentTime={effectiveCurrentTime} duration={effectiveDuration}
           onTogglePlay={togglePlay} onToggleMute={toggleSound} onSeek={seekTo}
@@ -666,7 +767,11 @@ function VideoSlide({ post, active, muted, isScrolling, onOpenComments, sharedYt
       </div>
       <div className="video-feed-details video-caption-scroll" data-video-details>
         <PostHeader post={post} member={isMemberPost(post)} />
-        {isYoutube && sharedYt?.failed && <p className="video-feed-playback-note" role="status">The embedded player could not start. Try its play button.</p>}
+        {isYoutube && sharedYt?.failed && <p className="video-feed-playback-note" role="status">Playback controls are unavailable. Open this video on YouTube using its source link.</p>}
+        {((isYoutube && post.source !== 'youtube') || (src?.kind === 'vimeo' && post.source !== 'vimeo')) && <div className="video-feed-provider-credit">
+          <a href={isYoutube ? `https://www.youtube.com/watch?v=${src.id}` : `https://vimeo.com/${src.id}`} target="_blank" rel="noopener noreferrer">Video on {isYoutube ? 'YouTube' : 'Vimeo'}</a>
+        </div>}
+        {src?.kind === 'vimeo' && vimeoNotice && <p className="video-feed-playback-note" role="status">{vimeoNotice}</p>}
         <div className="video-feed-caption" data-video-caption data-expanded={captionExpanded}>
           <div className="video-feed-caption-summary">
             {post.title && <h2>{post.title}</h2>}
@@ -694,10 +799,20 @@ function VideoSlide({ post, active, muted, isScrolling, onOpenComments, sharedYt
       </div>
       {settingsOpen && isYoutube && <YouTubeSettingsDialog settings={sharedYt?.settings}
         onRateChange={sharedYt?.setPlaybackRate} onCaptionSizeChange={sharedYt?.setCaptionFontSize}
-        onClose={() => setSettingsOpen(false)} onPlayerControls={() => { setSettingsOpen(false); sharedYt?.focusControls?.(); }} />}
-      {settingsOpen && isNative && <YouTubeSettingsDialog title="Player settings" settings={nativeSettings.settings}
+        onClose={() => setSettingsOpen(false)} onOpenYouTube={() => { setSettingsOpen(false); sharedYt?.openYouTube?.(); }} />}
+      {settingsOpen && src?.kind === 'vimeo' && <YouTubeSettingsDialog provider="vimeo" title="Vimeo settings" sourceLabel="Vimeo" settings={vimeoSettings}
+        onRateChange={rate => vimeoSettings.rates.includes(rate) ? changeVimeoSetting('setPlaybackRate', rate, 'rate', 'rates') : false}
+        onQualityChange={quality => vimeoSettings.qualities.some(item => item.value === quality) ? changeVimeoSetting('setQuality', quality, 'quality', 'qualities') : false}
+        onCaptionTrackChange={track => {
+          if (track === 'off') return changeVimeoSetting('disableTextTrack', undefined, 'captionTrack', 'captionTracks');
+          if (!vimeoSettings.captionTracks.some(item => item.value === track)) return false;
+          const [language, kind] = track.split(':');
+          return changeVimeoSetting('enableTextTrack', { language, kind, showing: true }, 'captionTrack', 'captionTracks');
+        }} onClose={() => setSettingsOpen(false)} onOpenSource={() => { setSettingsOpen(false); window.open(`https://vimeo.com/${src.id}`, '_blank', 'noopener,noreferrer'); }} />}
+      {settingsOpen && isNative && <YouTubeSettingsDialog provider="native" title={nativeSettingsTitle} sourceLabel={postSource(post).label} settings={nativeSettings.settings}
         onRateChange={nativeSettings.setRate} onCaptionTrackChange={nativeSettings.setCaptionTrack}
-        onClose={() => setSettingsOpen(false)} />}
+        onClose={() => setSettingsOpen(false)} onOpenSource={!isMemberPost(post) && safePostLink(post.sourceUrl)
+          ? () => { setSettingsOpen(false); window.open(safePostLink(post.sourceUrl), '_blank', 'noopener,noreferrer'); } : undefined} />}
     </article>
   );
 }
@@ -950,8 +1065,8 @@ export default function VideoFeedView({ onExit, music = false }) {
         enteredFullScreen.current = true;
       }
       else if (nativeVideo?.webkitEnterFullscreen) nativeVideo.webkitEnterFullscreen();
-      else showToast('Use the player’s full screen button.', 'info');
-    } catch { if (fullScreenView.current.mounted) showToast('Full screen could not open. Try the player’s full screen button.', 'error'); }
+      else showToast('Full screen is not available on this device.', 'info');
+    } catch { if (fullScreenView.current.mounted) showToast('Full screen could not open. You can keep watching here.', 'error'); }
   };
   const exitFeed = useCallback(() => {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
@@ -1849,15 +1964,7 @@ export default function VideoFeedView({ onExit, music = false }) {
     return () => links.forEach(l => l.remove());
   }, []);
 
-  // Vimeo is a plain iframe with no postMessage control layer (see
-  // VideoSlide's own vimeo render branch) — this shared button can't
-  // actually change its audio once mounted, only the `muted` state
-  // file/hls/youtube slides read. Toggling it while looking at a Vimeo
-  // slide would silently do nothing but still look like it worked, which
-  // is worse than being upfront that it's not controllable here — dimmed
-  // and inert instead, rather than a false control. Computed here (moved
-  // up from just above the render) since the shared YouTube player effect
-  // below needs it too.
+  // YouTube uses the shared player; Vimeo and native media keep slide-local controls.
   const resolvedActiveSrc = resolveVideoSource(videoPosts[activeIndex] || {});
   const activeYoutubeOrientation = resolvedActiveSrc?.kind === 'youtube'
     ? youtubeFrameOrientations[resolvedActiveSrc.id]
@@ -1868,7 +1975,6 @@ export default function VideoFeedView({ onExit, music = false }) {
         vertical: resolvedActiveSrc.vertical === true || activeYoutubeOrientation === 'portrait',
       }
     : resolvedActiveSrc;
-  const muteControllable = activeSrc?.kind !== 'vimeo';
   // Landscape (16:9) YouTube/Vimeo content — the norm for DEV Community's
   // own tutorial videos, most Reddit clips, and any design-blog Vimeo
   // showcase reel, none of which are ever tagged vertical:true (that flag
@@ -2078,7 +2184,7 @@ export default function VideoFeedView({ onExit, music = false }) {
       const isCurrent = () => sharedYtMountedRef.current && sharedYtLifecycleRef.current === lifecycle;
       sharedYtCreatingRef.current = true;
       host.replaceChildren();
-      const mount = createYouTubePlayerFrame(host, videoId, { autoplay: document.hidden ? 0 : 1, mute: 1, loop: 0, controls: 1 }, queueRef.current[activeIndexRef.current]?.title);
+      const mount = createYouTubePlayerFrame(host, videoId, { autoplay: document.hidden ? 0 : 1, mute: 1, loop: 0, controls: 0 }, queueRef.current[activeIndexRef.current]?.title);
 
       clearTimeout(sharedYtReadyTimeoutRef.current);
       sharedYtReadyTimeoutRef.current = setTimeout(() => {
@@ -2094,7 +2200,7 @@ export default function VideoFeedView({ onExit, music = false }) {
           videoId: initialId,
           playerVars: {
             autoplay: document.hidden ? 0 : 1, mute: 1, playsinline: 1, loop: 0,
-            controls: 1, rel: 0,
+            controls: 0, rel: 0,
             origin: window.location.origin,
           },
           events: {
@@ -2303,12 +2409,10 @@ export default function VideoFeedView({ onExit, music = false }) {
       setSharedYt(state => ({ ...state, settings: readYouTubeSettings(player) }));
     } catch { showToast('Caption size could not change. Try the YouTube player settings.', 'error'); }
   };
-  const focusYouTubeControls = () => {
-    requestAnimationFrame(() => {
-      const frame = sharedYtWrapperRef.current?.querySelector('iframe');
-      frame?.focus();
-      showToast('Use YouTube’s settings gear for quality and its CC button for captions.', 'info');
-    });
+  const openYouTubeSettings = () => {
+    const videoId = sharedYtDesiredIdRef.current;
+    if (!/^[\w-]{11}$/.test(String(videoId || ''))) return;
+    window.open(`https://www.youtube.com/watch?v=${videoId}`, '_blank', 'noopener,noreferrer');
   };
 
   // Safety net for the page background showing through as a light strip
@@ -2607,7 +2711,7 @@ export default function VideoFeedView({ onExit, music = false }) {
                 onDurationResolved={onDurationResolved}
                 sharedYt={idx === activeIndex ? { ...sharedYt, ready: Boolean(currentSettingsPlayer()),
                   togglePlay: sharedYtTogglePlay, toggleMute: toggleYouTubeMute, seekTo: seekYouTube,
-                  setPlaybackRate: setYouTubePlaybackRate, setCaptionFontSize: setYouTubeCaptionFontSize, focusControls: focusYouTubeControls } : undefined} />
+                  setPlaybackRate: setYouTubePlaybackRate, setCaptionFontSize: setYouTubeCaptionFontSize, openYouTube: openYouTubeSettings } : undefined} />
                 : <div className="video-feed-placeholder" />}
             </div>)}
         {/* Keep the iframe alive inside the scrolling region across filters
@@ -2620,8 +2724,8 @@ export default function VideoFeedView({ onExit, music = false }) {
             ...(activeSrc?.kind === 'youtube' ? ytBoxSize : { left: 0, top: 0, width: 0, height: 0 }),
             visibility: activeSrc?.kind === 'youtube' && !isScrolling ? 'visible' : 'hidden' }}>
           <div ref={sharedYtHostRef} style={{ width: '100%', height: '100%', display: sharedYt.failed ? 'none' : 'block' }} />
-          {sharedYt.failed && activeSrc?.kind === 'youtube' && <iframe
-            src={youTubeEmbedUrl(activeSrc.id, { autoplay: 1, mute: muted ? 1 : 0, controls: 1 })}
+          {sharedYt.failed && activeSrc?.kind === 'youtube' && !isNativeRuntime() && <iframe
+            src={youTubeEmbedUrl(activeSrc.id, { autoplay: 1, mute: muted ? 1 : 0, controls: 0 })}
             referrerPolicy="strict-origin-when-cross-origin"
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }}
             allow="autoplay; encrypted-media; fullscreen; picture-in-picture" allowFullScreen title={videoPosts[activeIndex]?.title || 'YouTube video'} />}

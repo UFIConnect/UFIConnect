@@ -262,7 +262,7 @@ input, textarea, select { font-family: inherit; }
 .guest-feed-banner-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .guest-action { white-space: nowrap; }
 .guest-join-short { display: none; }
-.guest-feed-main { width: 100%; max-width: 640px; margin: 0 auto; padding: 20px 16px 60px; }
+.guest-feed-main { width: 100%; max-width: none; margin: 0 auto; padding: 20px 16px 60px; }
 .guest-feed-banner {
   display: flex;
   align-items: center;
@@ -287,6 +287,18 @@ input, textarea, select { font-family: inherit; }
 }
 .home-feed-layout--single { display: block; }
 .home-feed-content { min-width: 0; max-width: none; }
+.shell:has(.home-feed-layout, .search-page-shell--full, .paginated-feed-page, .jobs-page-layout, #profile-post-results, #member-post-results, #group-posts, #ufi-community-posts, #ufi-shop-posts) { max-width: none; }
+.shell .main:has(.home-feed-layout, .search-page-shell--full, .paginated-feed-page, .jobs-page-layout, #profile-post-results, #member-post-results, #group-posts, #ufi-community-posts, #ufi-shop-posts) { width: 100%; max-width: none; }
+.shell:has(.home-feed-layout, .search-page-shell--full, .paginated-feed-page, .jobs-page-layout, #profile-post-results, #member-post-results, #group-posts, #ufi-community-posts, #ufi-shop-posts) .global-app-header { max-width: none; }
+.paginated-feed-page,
+.feed-paginated-results { display: flex; flex-direction: column; width: 100%; min-width: 0; }
+.feed-page-message { width: 100%; margin: 12px 0; color: var(--muted); }
+.search-tab-strip,
+.jobs-page-layout,
+.jobs-page-content--embedded,
+.feed-paginated-results,
+.paginated-feed-page > .page-title,
+#global-feed-title { scroll-margin-top: 80px; }
 .home-feed-search-input,
 .feed-toolbar-control {
   height: 40px;
@@ -1786,6 +1798,7 @@ input, textarea, select { font-family: inherit; }
   width: 100%;
   max-width: 760px;
 }
+.search-page-shell--full { display: flex; flex-direction: column; min-width: 0; max-width: none; }
 .search-jobs-panel {
   width: 100%;
   min-width: 0;
@@ -3364,6 +3377,7 @@ input, textarea, select { font-family: inherit; }
   align-items: start;
 }
 .profile-workspace--details { grid-template-columns: minmax(0, 760px); }
+.profile-workspace:has(#profile-post-results) { grid-template-columns: minmax(0, 1fr); }
 .profile-posts-column { min-width: 0; }
 .profile-content-tabs {
   display: flex;
@@ -3444,6 +3458,7 @@ input, textarea, select { font-family: inherit; }
 .feed-save-post-button.saved { color: var(--primary) !important; }
 .save-item-button.error,
 .feed-save-post-button.error { color: var(--danger) !important; }
+.save-item-button.btn-primary:is(.saved, .error) { color: var(--on-primary, #fff) !important; }
 .profile-side-panels {
   display: flex;
   flex-direction: column;
@@ -5528,6 +5543,7 @@ html, body { overscroll-behavior: none; }
 .profile-more-options a { display: block; padding: 16px; color: var(--text); text-decoration: none; }
 .profile-more-options span { display: block; margin-top: 4px; color: var(--muted); font-size: .85rem; }
 .saved-page { max-width: 760px; margin: 0 auto; }
+.saved-page.paginated-feed-page { max-width: none; }
 .saved-page h1 { margin: 0 0 8px; }
 .saved-page > p { color: var(--muted); margin-bottom: 24px; }
 

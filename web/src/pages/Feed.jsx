@@ -1,4 +1,5 @@
 import { postDiscussionUrl, safePostLink } from '../../../backend/post-links.mjs';
+import { publicSiteUrl } from '../utils/publicSiteUrl.mjs';
 import JobPostContent from '../components/JobPostContent';
 import { isCareerPost } from '../utils/jobSummary.mjs';
 import ArticleIllustration from '../components/ArticleIllustration';
@@ -20,7 +21,7 @@ import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
 import { markApiOriginFailure, resolveApiBaseUrl } from '../api/apiOrigin';
-import { extractYouTubeId, extractVimeoId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, createYouTubePlayerFrame, youTubeEmbedUrl, InlineAutoplayVideo, userWantsSound, useGlobalMuted, usePointerPlaybackGate, useSoloVideoPlayback, SoundIcon } from '../components/videoMedia';
+import { extractYouTubeId, extractVimeoId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, createYouTubePlayerFrame, youTubeEmbedUrl, InlineAutoplayVideo, userWantsSound, useGlobalMuted, usePointerPlaybackGate, useSoloVideoPlayback } from '../components/videoMedia';
 import {
   SOURCE_META,
   HOME_FEED_SOURCE_IDS,
@@ -41,7 +42,11 @@ import TravelViewerDialog from '../components/TravelViewerDialog';
 import DiscoveryCategoryBar from '../components/DiscoveryCategoryBar';
 import { DISCOVERY_CATEGORIES, discoveryPostContext, discoveryQuery } from '../components/discoveryCategories';
 import { TIERS } from '../components/PricingModal';
+import { isNativeRuntime } from '../nativeRuntime.mjs';
 import ImageLightbox from '../components/ImageLightbox';
+import MediaPlaybackControls from '../components/MediaPlaybackControls';
+import ResultsPagination from '../components/ResultsPagination';
+import { availableFeedPage, feedPagePosts, nextFeedPage } from '../utils/feedPagination.mjs';
 import { useEngagementTracking } from '../hooks/useEngagementTracking';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { normalizeSourceFavorites } from '../components/sourceFavorites';
@@ -62,8 +67,6 @@ import { normalizeFeedLocation, savedFeedLocation, regionalFeedLocation, feedLoc
 const COMMAND_CENTER_PRO_TIER = TIERS.find((tier) => tier.tier === 'pro');
 const HOME_VIEW_MODES = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants', 'bars']);
 const EMBEDDED_HOME_MODES = new Set(['ufi']);
-const CONTINUOUS_FEED_MODES = new Set(['feed', 'following', 'groups', 'restaurants', 'bars']);
-const FEED_POSITION_PREFETCH_POSTS = 8;
 
 function timeAgo(iso) {
   if (!iso) return '';
@@ -801,16 +804,15 @@ function SocialConnectGate({ platform, onConnect }) {
 // ImageLightbox ("max mode") itself — wrapping the whole embed in a button
 // like every other media type would nest an interactive iframe inside a
 // button and fight it for clicks (see the comment where this is used). This
-// sits in its own corner instead, a plain sibling overlay that only opens
-// the lightbox — it never touches the iframe's own click-to-play handling.
+// sits below the player so it leaves provider branding and video untouched.
 function MaximizeButton({ onClick }) {
   return (
     <button
       onClick={e => { e.stopPropagation(); onClick(); }}
       aria-label="View fullscreen"
       style={{
-        position: 'absolute', top: 10, right: 10, zIndex: 2,
-        width: 32, height: 32, borderRadius: '50%',
+        marginTop: 8, marginLeft: 'auto',
+        width: 40, height: 40, borderRadius: '50%',
         background: 'rgba(0,0,0,.5)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
         border: '1px solid rgba(255,255,255,.25)', color: '#fff', cursor: 'pointer',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -856,6 +858,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
   const ytReadyRef = useRef(false);
   const ytReadyTimeoutRef = useRef(null);
   const ytShouldPlayRef = useRef(false);
+  const [ytPlayback, setYtPlayback] = useState({ paused: true, currentTime: 0, duration: 0 });
   // Toggles both ways with real scroll position — was one-directional
   // (isIntersecting=true set playing, nothing ever set it back false), so a
   // video that autoplayed into view kept playing, decoding, and (if
@@ -940,7 +943,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
     ytInitializedRef.current = true;
 
     host.replaceChildren();
-    const playerVars = { autoplay: 1, mute: 1, playsinline: 1, controls: 1, rel: 0, origin: window.location.origin };
+    const playerVars = { autoplay: 1, mute: 1, playsinline: 1, controls: 0, rel: 0, origin: window.location.origin };
     const mount = createYouTubePlayerFrame(host, embedId, playerVars, title || 'YouTube video');
 
     const isCurrent = () => ytLifecycleRef.current === lifecycle;
@@ -1016,9 +1019,25 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
     } catch {}
   }, [muted, playerReady]);
 
+  useEffect(() => {
+    if (!playerReady) return;
+    const read = () => {
+      const player = ytPlayerRef.current;
+      try {
+        if (player?.getVideoData?.()?.video_id !== embedId) return;
+        const state = player.getPlayerState();
+        setYtPlayback({ paused: state !== 1 && state !== 3, currentTime: player.getCurrentTime() || 0, duration: player.getDuration() || 0 });
+      } catch {}
+    };
+    read();
+    const timer = setInterval(read, 250);
+    return () => clearInterval(timer);
+  }, [embedId, playerReady]);
+
   const showPlayerHint = !effectivelyPlaying;
 
   return (
+    <div>
     <div
       ref={containerRef}
       {...pointerHandlers}
@@ -1046,9 +1065,9 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
         ref={ytHostRef}
         style={{ position: 'relative', width: '100%', aspectRatio: '16/9', display: 'block', maxHeight, minHeight, visibility: playerFailed ? 'hidden' : 'visible' }}
       />
-      {playerFailed && effectivelyPlaying && !onPlaybackStatus && (
+      {playerFailed && effectivelyPlaying && !onPlaybackStatus && !isNativeRuntime() && (
         <iframe
-          src={youTubeEmbedUrl(embedId, { autoplay: 1, mute: userWantsSound() ? 0 : 1 })}
+          src={youTubeEmbedUrl(embedId, { autoplay: 1, mute: userWantsSound() ? 0 : 1, controls: 0 })}
           referrerPolicy="strict-origin-when-cross-origin"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', display: 'block' }}
           allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
@@ -1062,10 +1081,11 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
           <a href={`https://www.youtube.com/watch?v=${embedId}`} target="_blank" rel="noopener noreferrer">Open on YouTube</a>
         </div>
       )}
-      {showPlayerHint && (
+    </div>
+      {showPlayerHint && !playerReady && (
         <button type="button" aria-label="Play feed video preview" onClick={() => { setManuallyStarted(true); setInView(true); }} style={{
-          position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
-          justifyContent: 'center', color: '#fff', background: 'linear-gradient(135deg, #111827, #020617)',
+          display: 'flex', alignItems: 'center', minHeight: 44,
+          justifyContent: 'center', color: '#fff', background: '#080c12',
           border: 0, width: '100%', cursor: 'pointer',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontWeight: 800, fontSize: '.85rem' }}>
@@ -1078,22 +1098,12 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
           </div>
         </button>
       )}
-      {playerReady && (
-        <button
-          onClick={e => { e.stopPropagation(); toggleMuted(); }}
-          aria-label={muted ? 'Unmute' : 'Mute'}
-          style={{
-            // Bottom-left — bottom-right is already the source-label badge
-            // in the "article embeds a YouTube video" call site, and
-            // top-right is the maximize button in both call sites.
-            position: 'absolute', bottom: 10, left: 10, zIndex: 2,
-            width: 32, height: 32, borderRadius: '50%',
-            background: 'rgba(0,0,0,.55)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
-            border: '1px solid rgba(255,255,255,.25)', color: '#fff', cursor: 'pointer', fontSize: '.9rem',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}
-        ><SoundIcon muted={muted} size={15} /></button>
-      )}
+      {playerReady && <MediaPlaybackControls paused={ytPlayback.paused} muted={muted}
+        currentTime={ytPlayback.currentTime} duration={ytPlayback.duration} onToggleMute={toggleMuted}
+        onTogglePlay={() => { try { const p = ytPlayerRef.current; if (p?.getVideoData?.()?.video_id !== embedId) return;
+          const state = p.getPlayerState(); if (state === 1 || state === 3) p.pauseVideo(); else p.playVideo(); } catch {} }}
+        onSeek={seconds => { try { const p = ytPlayerRef.current; if (p?.getVideoData?.()?.video_id === embedId) p.seekTo(seconds, true); } catch {} }} />}
+      {playerFailed && !onPlaybackStatus && <a href={`https://www.youtube.com/watch?v=${embedId}`} target="_blank" rel="noopener noreferrer">Open on YouTube</a>}
     </div>
   );
 }
@@ -1621,7 +1631,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
 
   const ownPost = !isExternal && !!profile?.id && post.author?.id === profile.id && isCommunityPost;
   async function copyPostLink() {
-    const url = isExternal && safePostLink(post.sourceUrl) ? safePostLink(post.sourceUrl) : `${window.location.origin}/p/${encodeURIComponent(post.id)}`;
+    const url = isExternal && safePostLink(post.sourceUrl) ? safePostLink(post.sourceUrl) : publicSiteUrl(`/p/${encodeURIComponent(post.id)}`);
     try { await navigator.clipboard.writeText(url); showToast('Link copied.', 'success'); }
     catch { showToast('Could not copy the link. Open the post to share it.', 'error'); }
   }
@@ -1702,10 +1712,6 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
             maxHeight={360}
             forcePause={isMediaOpen}
           />
-          <span style={{ position: 'absolute', bottom: 10, right: 12, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: '.68rem', fontWeight: 700, padding: '3px 8px', borderRadius: 4, pointerEvents: 'none' }}>
-            <SourceMark source={post.source} label={src.icon} size={12} />
-            {src.label}
-          </span>
           <MaximizeButton onClick={() => onMediaOpen?.(post)} />
         </div>
       ) : hasVideo && videoVimeoId ? (
@@ -1721,10 +1727,6 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
             title={post.title}
             forcePause={isMediaOpen}
           />
-          <span style={{ position: 'absolute', bottom: 10, right: 12, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: '.68rem', fontWeight: 700, padding: '3px 8px', borderRadius: 4, pointerEvents: 'none' }}>
-            <SourceMark source={post.source} label={src.icon} size={12} />
-            {src.label}
-          </span>
           <MaximizeButton onClick={() => onMediaOpen?.(post)} />
         </div>
       ) : hasVideo && videoIsPlayable ? (
@@ -1741,10 +1743,6 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
               style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 360 }}
               forcePause={isMediaOpen}
             />
-            <span style={{ position: 'absolute', bottom: 10, right: 12, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: '.68rem', fontWeight: 700, padding: '3px 8px', borderRadius: 4 }}>
-              <SourceMark source={post.source} label={src.icon} size={12} />
-              {src.label}
-            </span>
           </div>
         </button>
         ) : null}
@@ -2017,7 +2015,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const [posts,         setPosts]        = useState(_cache?.posts || []);
   const [travelLiveFeeds, setTravelLiveFeeds] = useState([]);
   const [travelStatus, setTravelStatus] = useState(null);
-  const [travelPaginationError, setTravelPaginationError] = useState('');
   // Following mode's per-source fetch failures (bad scope, API not
   // enabled, expired token) — see getFollowingFeedPosts's own comment
   // server-side. Surfaced in the empty state below instead of a real
@@ -2029,7 +2026,18 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const [refreshing,    setRefreshing]   = useState(false);
   const [queuedRefresh, setQueuedRefresh] = useState(null);
   const [loadingMore,   setLoadingMore]  = useState(false);
-  const [remotePage,    setRemotePage]   = useState(2);
+  const remotePageRef = useRef(2);
+  const [pageRevision, setPageRevision] = useState(0);
+  const [pageState, setPageState] = useState({ key: '', page: 1, pages: [] });
+  const [pageLoading, setPageLoading] = useState(false);
+  const [pageError, setPageError] = useState('');
+  const [pageNotice, setPageNotice] = useState('');
+  const [newPostsAvailable, setNewPostsAvailable] = useState(false);
+  const pageNavigationRef = useRef(0);
+  const pageLoadingRef = useRef(false);
+  const paginationContextRef = useRef('');
+  const pageListRef = useRef(null);
+  const visiblePostsSelectorRef = useRef(list => list);
   const [remoteHasMore, setRemoteHasMoreState] = useState(true);
   const remoteHasMoreRef = useRef(true);
   const setRemoteHasMore = useCallback((value) => {
@@ -2091,8 +2099,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     if (!id || knownIds.current.has(id)) return;
     knownIds.current.add(id);
   }, []);
-  const sentinelRef   = useRef(null);
-  const prefetchAnchorRef = useRef(null);
   // Synchronous guard for loadMoreRemote — see its own comment. The
   // loadingMore *state* the UI spinner reads isn't visible synchronously
   // (React batches/defers the re-render), so a fast scroll firing the
@@ -2146,6 +2152,13 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       // the 10-min auto-refresh) keep their current behavior unchanged.
       bust = manual,
     } = options || {};
+    if (silent && pageLoadingRef.current) return;
+    if (manual || replace) {
+      pageNavigationRef.current += 1;
+      pageLoadingRef.current = false;
+      setPageLoading(false); setPageError(''); setPageNotice(''); setNewPostsAvailable(false);
+      setPageRevision(value => value + 1);
+    }
     // manual is specifically what every explicit user refresh action passes
     // (tab click, Refresh now, scroll-to-refresh) — background silent syncs
     // and filter/search changes call this with manual:false, so gating on
@@ -2168,7 +2181,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       paginationRequestIdRef.current += 1;
       loadingMoreRef.current = false;
       setPosts([]);
-      setRemotePage(2);
+      remotePageRef.current = 2;
       setLoadingMore(false);
       setLoading(true);
       setLockedPlatform(null);
@@ -2248,7 +2261,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       if (activeMode === 'countries' && viewModeRef.current === 'countries') {
         setTravelLiveFeeds(Array.isArray(data.liveFeeds) ? data.liveFeeds : []);
         setTravelStatus(data.travel || null);
-        setTravelPaginationError('');
       } else if (viewModeRef.current !== 'countries') {
         setTravelLiveFeeds([]);
       }
@@ -2273,6 +2285,14 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         const first = mergeFeedPosts(incoming, activeFilters.sort, preserveEqualizer);
         const incomingIds = new Set(first.map(post => post.id));
         nextPosts = [...first, ...nextPosts.filter(post => !incomingIds.has(post.id))];
+      }
+      if (silent && live && !replace) {
+        const refreshed = new Map(incoming.map(post => [post.id, post]));
+        const previousIds = new Set(previous.map(post => post.id));
+        if (incoming.some(post => !previousIds.has(post.id))) setNewPostsAvailable(true);
+        // Background updates may refresh counts, but never insert cards into
+        // a page the member is reading. Explicit Refresh accepts new posts.
+        nextPosts = previous.map(post => refreshed.has(post.id) ? { ...post, ...refreshed.get(post.id) } : post);
       }
 
       if (shouldMerge) {
@@ -2305,17 +2325,16 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       postsRef.current = nextPosts;
       setPosts(nextPosts);
       if (activeMode === 'feed' && !activeSearch) writeFeedCache(profileRef.current?.id, nextPosts, profileRef.current?.roleSettings);
-      // Only reset pagination state (page counter AND cursor) on a genuine
-      // context reset, same condition as the existing remotePage reset —
-      // a merge (silent background top-up) must NOT rewind the cursor,
-      // since loadMoreRemote may already be paginated well past what this
-      // small merge batch's own cursor would imply, and rewinding it would
-      // re-fetch (and re-show) content already scrolled past.
-      if (!shouldMerge || previous.length === 0 || replace) {
-        setRemotePage(2);
+      // Explicit refreshes restart server paging; a quiet update must keep
+      // the cursor already reached by the member's Next actions.
+      if (manual || !shouldMerge || previous.length === 0 || replace) {
+        remotePageRef.current = 2;
         remoteCursorRef.current = data.cursor || null;
+      } else if (!remoteCursorRef.current && data.cursor) {
+        // A restored first-page cache has no cursor until its refresh returns.
+        remoteCursorRef.current = data.cursor;
       }
-      setRemoteHasMore(CONTINUOUS_FEED_MODES.has(activeMode) || data.hasMore !== false);
+      if (!shouldMerge || manual) setRemoteHasMore(data.hasMore !== false && incoming.length > 0);
       setSourceErrors(data.sourceErrors || {});
       if (['countries', 'restaurants', 'bars'].includes(activeMode)) {
         setLocationMessage(data.locationRequired || data.providerError || '');
@@ -2388,7 +2407,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     filtersRef.current = nextFilters;
     setActiveTabs(nextTabs);
     setFilters(nextFilters);
-    setRemotePage(2);
+    remotePageRef.current = 2;
     setRemoteHasMore(true);
     loadFeed(false, nextTabs, { filters: nextFilters, replace: true });
   }, [disabledSourceKey, loadFeed, profile?.id]);
@@ -2422,7 +2441,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     setSearch(nextSearch);
     setViewMode(nextMode);
     setLocationFilters(nextLocation);
-    setRemotePage(2);
+    remotePageRef.current = 2;
     setRemoteHasMore(true);
     remoteCursorRef.current = null;
   }, [forcedMode, profile?.id, routeInitialMode]);
@@ -2484,7 +2503,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     setFilterOpen(false);
     setTopicFilterOpen(false);
     setSourceMenuOpen(false);
-    setRemotePage(2);
+    remotePageRef.current = 2;
     setRemoteHasMore(true);
     if (nextMode !== 'countries') setTravelLiveFeeds([]);
     // Countries and restaurant feeds are location-first. Clear source controls
@@ -2567,7 +2586,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     }
     filtersRef.current = next;
     setFilters(next);
-    setRemotePage(2);
+    remotePageRef.current = 2;
     setRemoteHasMore(true);
     loadFeed(false, activeTabsRef.current, {
       filters: next,
@@ -2580,7 +2599,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     const nextSearch = String(query || '').trim().slice(0, 500);
     searchRef.current = nextSearch;
     setSearch(nextSearch);
-    setRemotePage(2);
+    remotePageRef.current = 2;
     setRemoteHasMore(true);
     // Search narrows the current feed without changing its sources, topics,
     // category, location, or the member's equalizer preferences.
@@ -2619,7 +2638,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     setActiveTabs([]);
     setFilters(DEFAULT_FILTERS);
     setSearch('');
-    setRemotePage(2);
+    remotePageRef.current = 2;
     setRemoteHasMore(true);
     loadFeed(false, [], { filters: DEFAULT_FILTERS, q: '', replace: true });
   }, [loadFeed]);
@@ -2659,7 +2678,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         locationSavingRef.current = false;
         setLocationSaving(false);
         if (saved && viewModeRef.current === scope) {
-          setRemotePage(2);
+          remotePageRef.current = 2;
           setRemoteHasMore(true);
           await loadFeed(false, activeTabsRef.current, { replace: true, preserveScroll: true, bust: false });
         }
@@ -2765,16 +2784,9 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   }, [profile, sourceFavoriteDraft, sourceFavorites, updateProfileLocally]);
 
   const loadMoreRemote = useCallback(async () => {
-    // Confirmed live as a real crash: fast scrolling could fire this many
-    // times in the window before loadingMore's *state* update actually
-    // took effect (see loadingMoreRef's own comment), stacking up dozens of
-    // concurrent fetches — each appending up to FEED_PAGE_SIZE posts and
-    // triggering its own re-render/reflow, which moved the sentinel and
-    // re-triggered the observer again before the flood had a chance to
-    // subside. loadingMoreRef is checked and set synchronously, in the same
-    // tick, so only the very first call in a burst ever gets past this line.
-    if (loadingMoreRef.current || !remoteHasMoreRef.current) return;
-    if (viewModeRef.current === 'countries' && (locationSavingRef.current || loadStateRef.current.loading || loadStateRef.current.refreshing)) return;
+    // Lock synchronously so rapid Next actions cannot duplicate requests.
+    if (loadingMoreRef.current || !remoteHasMoreRef.current) return { skipped: true };
+    if (locationSavingRef.current || loadStateRef.current.loading || loadStateRef.current.refreshing) return { skipped: true };
     const paginationRequestId = ++paginationRequestIdRef.current;
     loadingMoreRef.current = true;
     setLoadingMore(true);
@@ -2815,7 +2827,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         // reshuffling and repeating.
         if (remoteCursorRef.current) params.set('cursor', remoteCursorRef.current);
       } else {
-        params.set('page', `${remotePage}`);
+        params.set('page', `${remotePageRef.current}`);
         // Same seed as the last refresh (see refreshSeedRef) — pagination
         // must keep slicing the same rotated view a refresh landed on,
         // otherwise page 2 wouldn't logically follow from page 1.
@@ -2828,37 +2840,13 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       else if (requestedSources.length > 1) params.set('sources', requestedSources.join(','));
       if (viewModeRef.current === 'groups' && publicGroupsFeed) params.set('groupScope', 'public');
       const data = await requestFeedPage(params, profileRef.current, controller.signal);
-      if (requestIdAtStart !== feedRequestIdRef.current || controller.signal.aborted || memberAtStart !== profileRef.current?.id || locationAtStart !== feedLocationKey(profileRef.current?.roleSettings, viewModeRef.current)) return;
+      if (requestIdAtStart !== feedRequestIdRef.current || controller.signal.aborted || memberAtStart !== profileRef.current?.id || locationAtStart !== feedLocationKey(profileRef.current?.roleSettings, viewModeRef.current)) return { stale: true };
       if (viewModeRef.current === 'countries' && Array.isArray(data.liveFeeds)) {
         setTravelLiveFeeds(data.liveFeeds);
         setTravelStatus(data.travel || null);
       }
-      // A flat all-time dedup here used to make infinite scroll dead-end
-      // (once a user had paged through the whole shared pool once, every
-      // later page was "all already seen" and got filtered to nothing) —
-      // but no dedup at all made the opposite mistake: the server's
-      // snapshot pool gets rebuilt every few minutes, so two page requests
-      // straddling a rebuild can hand back overlapping content well before
-      // a user has scrolled anywhere near the full pool, which read as
-      // "duplicate posts" appearing in quick succession. A bounded rolling
-      // window (see FEED_DEDUP_WINDOW) filters near-term repeats from
-      // either cause while still admitting a genuine repeat once a user has
-      // scrolled far enough that it's fallen out of the window. (Cursor
-      // mode shouldn't produce near-term repeats in the first place, but
-      // the same dedup is harmless insurance against a straddled request.)
-      //
-      // Following mode skips this window entirely — it was built for the
-      // main feed's periodic snapshot-rebuild straddling, which doesn't
-      // apply here (Following is computed fresh per request, not from a
-      // rebuilt-every-few-minutes shared snapshot). It also deliberately
-      // wraps around and re-serves reshuffled content once a small
-      // connected-account pool is exhausted (see the server's own
-      // sliceCircular/filterUnseen there, which already does real seen-
-      // tracking correctly) — a 600-item client window is often bigger
-      // than that whole pool, so every wrapped-around repeat landed inside
-      // it and got silently dropped, making the feed look stuck at a
-      // fixed, limited amount of content even while the server kept
-      // reporting hasMore:true. Confirmed live as exactly that complaint.
+      // Server snapshots may overlap. Keep shared-pool duplicates out of
+      // the fetched collection; committed display pages also retain IDs.
       const incoming = (data.posts || []).filter(p => (
         p?.id
         && !knownIds.current.has(p.id)
@@ -2866,18 +2854,22 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       ));
       incoming.forEach(p => markKnownId(p.id));
       if (incoming.length > 0) {
-        setPosts(prev => sortPostsForView([...prev, ...incoming], activeFilters.sort, usesMemberEqualizer(viewModeRef.current, q)));
+        const nextPosts = sortPostsForView([...postsRef.current, ...incoming], activeFilters.sort, usesMemberEqualizer(viewModeRef.current, q));
+        postsRef.current = nextPosts;
+        setPosts(nextPosts);
       }
+      const cursorDidNotAdvance = useCursor && remoteCursorRef.current && data.cursor === remoteCursorRef.current;
       if (useCursor) remoteCursorRef.current = data.cursor || remoteCursorRef.current;
-      else setRemotePage(p => p + 1);
-      setRemoteHasMore(CONTINUOUS_FEED_MODES.has(viewModeRef.current) || data.hasMore !== false);
+      else remotePageRef.current += 1;
+      // Overlapping server batches can contain only known IDs but still lead
+      // to older cards. A bounded Next action may continue past that overlap.
+      const exhausted = data.hasMore === false || !data.posts?.length || cursorDidNotAdvance;
+      setRemoteHasMore(!exhausted);
+      return { exhausted };
     } catch (error) {
-      if (controller.signal.aborted || memberAtStart !== profileRef.current?.id) return;
+      if (controller.signal.aborted || memberAtStart !== profileRef.current?.id || requestIdAtStart !== feedRequestIdRef.current) return { stale: true };
       console.error('[feed] position cursor request failed', error);
-      if (viewModeRef.current === 'countries' && requestIdAtStart === feedRequestIdRef.current) {
-        setTravelPaginationError('More destinations could not load.');
-        setRemoteHasMore(false);
-      }
+      return { error: 'The next page could not load. Please try again.' };
     }
     finally {
       if (paginationRequestId === paginationRequestIdRef.current) {
@@ -2885,7 +2877,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         setLoadingMore(false);
       }
     }
-  }, [profile?.id, publicGroupsFeed, remotePage]);
+  }, [profile?.id, publicGroupsFeed]);
 
   const updateFeedPost = useCallback((updatedPost) => {
     if (!updatedPost?.id) return;
@@ -2906,7 +2898,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     remoteCursorRef.current = null;
     paginationRequestIdRef.current += 1;
     loadingMoreRef.current = false;
-    setRemotePage(2);
+    remotePageRef.current = 2;
     setLoadingMore(false);
     setPosts(postsRef.current);
     setTravelLiveFeeds([]);
@@ -2969,7 +2961,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   }, [queuedRefresh, loading, refreshing, loadingMore, profile?.id, viewMode, publicGroupsFeed, refreshCurrentFeed]);
 
   const scrollRefresh = useScrollToRefresh(refreshCurrentFeed, {
-    enabled: Boolean(profile?.id) && !EMBEDDED_HOME_MODES.has(viewMode),
+    enabled: Boolean(profile?.id) && !EMBEDDED_HOME_MODES.has(viewMode) && pageState.page === 1 && !pageLoading,
   });
 
   useEffect(() => {
@@ -3016,10 +3008,9 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             }
             let sawFresh = false;
             relevantIncoming.forEach(p => {
-              if (!p?.id) return;
-              if (!knownIds.current.has(p.id)) sawFresh = true;
-              markKnownId(p.id);
+              if (p?.id && !knownIds.current.has(p.id)) sawFresh = true;
             });
+            if (sawFresh) setNewPostsAvailable(true);
             if (!sawFresh || liveRefreshTimeoutRef.current) return;
             liveRefreshTimeoutRef.current = window.setTimeout(() => {
               liveRefreshTimeoutRef.current = null;
@@ -3083,9 +3074,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     return 0;
   }
 
-  // Must be declared before the IntersectionObserver useEffect that reads processed.length
-  const processed = useMemo(() => {
-    let result = [...posts];
+  const selectProcessedPosts = useCallback((sourcePosts) => {
+    let result = [...sourcePosts];
 
     // Source controls are stored on this member's profile, not in shared
     // browser storage, so different accounts and devices keep their own feed.
@@ -3125,41 +3115,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     }
 
     return sortPostsForView(result, filters.sort, usesMemberEqualizer(viewMode, search));
-  }, [posts, search, filters, activeTabs, viewMode, profile?.roleSettings?.disabledSources]);
-
-  useEffect(() => {
-    const hasNarrowFilter = !!search.trim() || filters.sources.length > 0 || filters.timeRange !== 'all';
-    if (!hasNarrowFilter || loading || loadingMore || !remoteHasMore) return;
-    if (processed.length < 20) loadMoreRemote();
-  }, [filters, search, processed.length, loading, loadingMore, remoteHasMore, loadMoreRemote]);
-
-  // Infinite scroll: fetch next remote page when sentinel enters the viewport.
-  // The sentinel <div> only renders once loading is false and there's at
-  // least one post (see the loading/empty/displayed branches below) — on a
-  // fresh page load (no cache, loading starts true) this effect's first run
-  // captured sentinelRef.current as null and bailed out before the sentinel
-  // ever mounted. Depending only on [loadMoreRemote] meant nothing ever
-  // re-ran that capture once loading actually finished, so the observer was
-  // silently never attached for the rest of the session — confirmed live
-  // via an instrumented IntersectionObserver that no observer with this
-  // effect's rootMargin was ever constructed on a fresh session, and
-  // scrolling to the true bottom of the page never fired a single
-  // follow-up /feed request. Re-running whenever loading finishes or the
-  // rendered list's length changes (covers both "sentinel just mounted"
-  // and "sentinel's position moved because more content loaded") re-reads
-  // the current ref each time instead of relying on a one-time capture.
-  const travelPageBusy = viewMode === 'countries' && (loading || refreshing || locationSaving || loadingMore);
-  useEffect(() => {
-    if (travelPageBusy) return undefined;
-    const el = sentinelRef.current;
-    if (!el) return;
-    const obs = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) loadMoreRemote(); },
-      { rootMargin: '400px' }
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [loadMoreRemote, loading, processed.length, travelPageBusy]);
+  }, [search, filters, activeTabs, viewMode, profile?.roleSettings?.disabledSources]);
+  const processed = useMemo(() => selectProcessedPosts(posts), [posts, selectProcessedPosts]);
 
   // Close any feed-filter popover on an outside click.
   useEffect(() => {
@@ -3190,7 +3147,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     [posts]
   );
 
-  const displayed = processed; // render all locally-held posts — no artificial cap
+  const displayed = processed; // Retain fetched data for previously visited pages.
   // Live cameras have a dedicated carousel in Travel. Keeping them out of
   // the long-form list means its cards stay focused on guides, openings,
   // and current travel stories instead of repeating the same camera feeds.
@@ -3212,64 +3169,52 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       && !(!post?.isExternal && blockedMembers.has(post?.author?.id))),
     [displayed, viewMode, blockedAccounts, blockedMembers, removedPosts]
   );
-  const requestNextPageAtPosition = useCallback((index) => {
-    if (index >= Math.max(0, contentPosts.length - FEED_POSITION_PREFETCH_POSTS)) loadMoreRemote();
-  }, [contentPosts.length, loadMoreRemote]);
-
-  const handleFeedPointerPosition = useCallback((event) => {
-    const positionedPost = event.target.closest?.('[data-feed-position]');
-    if (!positionedPost) return;
-    const index = Number(positionedPost.dataset.feedPosition);
-    if (Number.isInteger(index)) requestNextPageAtPosition(index);
-  }, [requestNextPageAtPosition]);
-
-  // Start the next opaque-cursor request from the reader's actual position,
-  // not only after they hit the final pixel of the current page. The bottom
-  // sentinel remains as a fallback for keyboard jumps and unusual layouts.
-  useEffect(() => {
-    const anchor = prefetchAnchorRef.current;
-    if (!anchor || !remoteHasMore) return undefined;
-    let scrollRoot = anchor.parentElement;
-    while (scrollRoot && scrollRoot !== document.body) {
-      const overflowY = window.getComputedStyle(scrollRoot).overflowY;
-      if (/(auto|scroll)/.test(overflowY) && scrollRoot.scrollHeight > scrollRoot.clientHeight) break;
-      scrollRoot = scrollRoot.parentElement;
-    }
-    const scrollTarget = scrollRoot && scrollRoot !== document.body ? scrollRoot : window;
-    let frame = 0;
-    const requestIfNear = () => {
-      window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(() => {
-        const rect = anchor.getBoundingClientRect();
-        const viewport = scrollTarget === window
-          ? { top: 0, bottom: window.innerHeight }
-          : scrollTarget.getBoundingClientRect();
-        if (rect.top <= viewport.bottom + 700 && rect.bottom >= viewport.top - 700) loadMoreRemote();
-      });
-    };
-    if (!('IntersectionObserver' in window)) {
-      requestIfNear();
-      scrollTarget.addEventListener('scroll', requestIfNear, { passive: true });
-      return () => {
-        window.cancelAnimationFrame(frame);
-        scrollTarget.removeEventListener('scroll', requestIfNear);
-      };
-    }
-    const observer = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) loadMoreRemote(); },
-      { root: scrollTarget === window ? null : scrollTarget, rootMargin: '700px 0px' },
-    );
-    observer.observe(anchor);
-    requestIfNear();
-    scrollTarget.addEventListener('scroll', requestIfNear, { passive: true });
-    return () => {
-      window.cancelAnimationFrame(frame);
-      scrollTarget.removeEventListener('scroll', requestIfNear);
-      observer.disconnect();
-    };
-  }, [contentPosts.length, loadMoreRemote, remoteHasMore]);
+  visiblePostsSelectorRef.current = list => selectProcessedPosts(list).filter(post => !(viewMode === 'countries' && post?.isLiveCamera)
+    && !removedPosts.has(post?.id)
+    && !(post?.isExternal && blockedAccounts.has(feedAccountKey(post)))
+    && !(!post?.isExternal && blockedMembers.has(post?.author?.id)));
+  const paginationKey = JSON.stringify([profile?.id, viewMode, publicGroupsFeed, search, filters, activeTabs,
+    feedLocationKey(profile?.roleSettings, viewMode), disabledSourceKey, pageRevision]);
+  paginationContextRef.current = paginationKey;
+  const activePage = pageState.key === paginationKey ? pageState : { page: 1, pages: [] };
+  const visitedPages = activePage.pages.length ? activePage.pages : [availableFeedPage(contentPosts)];
+  const visiblePagePosts = feedPagePosts(contentPosts, visitedPages[activePage.page - 1]);
+  const pageHasNext = activePage.page < visitedPages.length || availableFeedPage(contentPosts, visitedPages).length > 0 || remoteHasMore;
   const hasTravelLiveFeeds = viewMode === 'countries' && travelLiveFeeds.length > 0;
-  const hasMore   = remoteHasMore;
+
+  useEffect(() => {
+    if (loading || refreshing) return;
+    setPageState(current => current.key === paginationKey && current.pages.length
+      ? current : { key: paginationKey, page: 1, pages: [availableFeedPage(contentPosts)] });
+  }, [paginationKey, loading, refreshing, contentPosts]);
+
+  const changeFeedPage = async (next) => {
+    if (!Number.isInteger(next) || next < 1 || next > activePage.page + 1 || pageLoadingRef.current || loading || refreshing || locationSaving) return;
+    const key = paginationKey, navigation = ++pageNavigationRef.current;
+    const current = () => paginationContextRef.current === key && pageNavigationRef.current === navigation;
+    const showPage = (page, pages) => {
+      if (!current()) return;
+      setPageState({ key, page, pages }); setPageError(''); setPageNotice('');
+      window.requestAnimationFrame(() => { if (current()) pageListRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }); });
+    };
+    if (next <= visitedPages.length) { showPage(next, visitedPages); return; }
+    pageLoadingRef.current = true; setPageLoading(true); setPageError(''); setPageNotice('');
+    try {
+      const result = await nextFeedPage({ pages: visitedPages,
+        getPosts: () => visiblePostsSelectorRef.current(postsRef.current),
+        canLoad: () => remoteHasMoreRef.current,
+        loadMore: loadMoreRemote, isCurrent: current });
+      if (!current() || !result) return;
+      if (result.empty) setPageNotice(remoteHasMoreRef.current
+        ? 'No additional matching posts in this batch. Select Next to check more.'
+        : 'No more posts are available in this feed right now.');
+      else showPage(result.page, result.pages);
+    } catch (error) {
+      if (current()) setPageError(error.message || 'The next page could not load. Please try again.');
+    } finally {
+      if (pageNavigationRef.current === navigation) { pageLoadingRef.current = false; setPageLoading(false); }
+    }
+  };
 
   // Every photo- or video-bearing post currently on screen, in the same
   // order shown — what ImageLightbox's next/prev navigation browses across.
@@ -3280,7 +3225,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const mediaPosts = useMemo(() => {
     const candidates = [
       ...(viewMode === 'countries' ? travelLiveFeeds : []),
-      ...displayed,
+      ...visiblePagePosts,
     ];
     const seen = new Set();
     return candidates.filter((post) => {
@@ -3290,7 +3235,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       seen.add(key);
       return true;
     });
-  }, [displayed, travelLiveFeeds, viewMode]);
+  }, [visiblePagePosts, travelLiveFeeds, viewMode]);
   const mediaLightboxIndex = mediaLightboxPostId
     ? mediaPosts.findIndex(p => p.id === mediaLightboxPostId)
     : -1;
@@ -3693,6 +3638,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         </div>
       )}
 
+      {newPostsAvailable && !loading && <div className="feed-page-message" role="status"><span>New posts are available.</span>{' '}<button type="button" className="btn btn-ghost btn-sm" onClick={refreshCurrentFeed} disabled={refreshing || pageLoading}>Refresh feed</button></div>}
       {viewMode === 'following' && !loading && <FollowingConnectionNotice errors={sourceErrors} />}
 
       {lockedPlatform ? (
@@ -3833,23 +3779,19 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           {contentPosts.length > 0 && (
             <FeedErrorBoundary>
             <div
+              className="feed-paginated-results"
+              ref={pageListRef}
+              data-feed-page={activePage.page}
               data-feed-has-more={remoteHasMore ? 'true' : 'false'}
               data-feed-ref-has-more={remoteHasMoreRef.current ? 'true' : 'false'}
               data-feed-loading-more={loadingMore ? 'true' : 'false'}
               data-feed-cursor-ready={remoteCursorRef.current ? 'true' : 'false'}
-              onPointerMove={handleFeedPointerPosition}
-              onMouseOver={handleFeedPointerPosition}
             >
-              {contentPosts.map((post, idx) => {
-                const isPrefetchAnchor = idx === Math.max(0, contentPosts.length - FEED_POSITION_PREFETCH_POSTS);
-                const isInPrefetchRange = idx >= Math.max(0, contentPosts.length - FEED_POSITION_PREFETCH_POSTS);
+              {visiblePagePosts.map((post, idx) => {
                 return (
                   <div
                     key={`${post.id || `temp-${post.createdAt}`}-${idx}`}
-                    ref={isPrefetchAnchor ? prefetchAnchorRef : null}
                     data-feed-position={idx}
-                    onPointerEnter={isInPrefetchRange ? loadMoreRemote : undefined}
-                    onFocusCapture={isInPrefetchRange ? loadMoreRemote : undefined}
                   >
                     <PostCard
                       post={post}
@@ -3867,27 +3809,16 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             </FeedErrorBoundary>
           )}
 
-          {/* Infinite scroll sentinel */}
-          <div ref={sentinelRef} style={{ height: 1 }} />
-
-          {viewMode === 'countries' && travelPaginationError && (
-            <div className="travel-camera-empty" role="status">
-              <span>{travelPaginationError}</span>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => {
-                setTravelPaginationError('');
-                setRemoteHasMore(true);
-                loadMoreRemote();
-              }}><RotateCw size={14} aria-hidden="true" />Retry more destinations</button>
-            </div>
-          )}
-
-          {loadingMore && (
-            <div style={{ textAlign: 'center', padding: '16px 0 24px' }}>
-              <span className="spinner spinner-primary" />
-            </div>
-          )}
         </>
       )}
+
+      {!loading && !lockedPlatform && !EMBEDDED_HOME_MODES.has(viewMode) && (contentPosts.length > 0 || remoteHasMore || activePage.page > 1 || pageError || pageNotice) && <>
+        {contentPosts.length > 0 && visiblePagePosts.length === 0 && <p role="status">No posts remain on this page. Choose another page to continue.</p>}
+        {pageError && <div className="feed-page-message" role="alert"><span>{pageError}</span>{' '}<button type="button" className="btn btn-ghost btn-sm" onClick={() => changeFeedPage(activePage.page + 1)} disabled={pageLoading}>Retry page</button></div>}
+        {pageNotice && <p className="feed-page-message" role="status">{pageNotice}</p>}
+        <ResultsPagination page={activePage.page} hasNext={pageHasNext} loading={pageLoading || loadingMore || refreshing || locationSaving}
+          onPageChange={changeFeedPage} ariaLabel="Feed pages" />
+      </>}
 
       {/* Padding to prevent sticky banner from covering content */}
       {!profile && <div style={{ height: 70 }} />}
@@ -3924,7 +3855,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           items={mediaPosts.map(p => ({ url: p.mediaUrl, type: p.mediaType, post: p }))}
           startIndex={mediaLightboxIndex}
           onClose={() => setMediaLightboxPostId(null)}
-          onNearEnd={loadMoreRemote}
         />
       )}
       </>
@@ -3963,7 +3893,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
               <span>
                 <span className="home-feed-command-center-title">Command Center</span>
                 <span className="home-feed-command-center-summary">
-                  {hasCommandCenterMembership
+                  {hasCommandCenterMembership || isNativeRuntime()
                     ? 'Tools and automation'
                     : `Tools and automation - Pro $${COMMAND_CENTER_PRO_TIER?.price}/mo`}
                 </span>

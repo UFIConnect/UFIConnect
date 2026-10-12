@@ -1,4 +1,5 @@
 import { validateApiBaseUrl } from './apiEndpointPolicy';
+import { isNativeRuntime, NATIVE_API_ORIGIN } from '../nativeRuntime.mjs';
 
 // Keep the public API hostname and the Render hostname separate. The public
 // hostname is the stable, dual-stack route users should see; the Render URL
@@ -84,16 +85,19 @@ async function probe(origin) {
 }
 
 export function getApiBaseUrl() {
+  if (isNativeRuntime()) return NATIVE_API_ORIGIN;
   return activeApiOrigin;
 }
 
 export function isConfiguredApiBaseUrl(value) {
+  if (isNativeRuntime()) return value === NATIVE_API_ORIGIN;
   return apiOrigins.includes(value);
 }
 
 // OAuth redirect URIs are registered with providers as an exact public URL.
 // Never let a fast transport fallback select a different host for that flow.
 export function getCanonicalApiBaseUrl() {
+  if (isNativeRuntime()) return NATIVE_API_ORIGIN;
   return apiOrigins[0] || '/api';
 }
 
@@ -102,12 +106,14 @@ export function getAlternateApiBaseUrl(origin = activeApiOrigin) {
 }
 
 export function markApiOriginHealthy(origin) {
+  if (isNativeRuntime()) return;
   if (!apiOrigins.includes(origin)) return;
   activeApiOrigin = origin;
   nextProbeAt = Date.now() + RECHECK_INTERVAL_MS;
 }
 
 export function markApiOriginFailure(origin) {
+  if (isNativeRuntime()) return null;
   // Only promote the fallback when the public primary failed. If the fallback
   // itself has one dropped request, do not bounce the client back to a public
   // hostname that may still be the DNS problem we just escaped.
@@ -120,6 +126,7 @@ export function markApiOriginFailure(origin) {
 }
 
 export async function resolveApiBaseUrl({ force = false } = {}) {
+  if (isNativeRuntime()) return NATIVE_API_ORIGIN;
   if (apiOrigins.length < 2 || (!force && Date.now() < nextProbeAt)) return activeApiOrigin;
   if (resolvingOrigin) return resolvingOrigin;
 

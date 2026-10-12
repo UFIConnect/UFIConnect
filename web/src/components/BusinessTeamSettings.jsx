@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import client from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
+import { publicSiteUrl } from '../utils/publicSiteUrl.mjs';
 
 export default function BusinessTeamSettings() {
   const { profile, refreshProfile } = useAuth();
@@ -48,7 +49,7 @@ export default function BusinessTeamSettings() {
       const result = await operation();
       if (request !== generation.current) return;
       if (result?.data?.invitePath) {
-        setInviteLink(new URL(result.data.invitePath, window.location.origin).href);
+        setInviteLink(publicSiteUrl(result.data.invitePath));
         setEmail('');
       }
       if (refreshAccount) await refreshProfile();

@@ -1,4 +1,6 @@
 import axios from 'axios';
+import { isNativeRuntime, NATIVE_API_ORIGIN } from '../nativeRuntime.mjs';
+import { nativeAxiosAdapter } from './nativeAdapter.mjs';
 import { clearSession, getAccessToken } from '../auth/session';
 import { deviceFeedRequestHeader } from '../utils/deviceFeedLocation.mjs';
 import { allowFeedLocation, requireFeedLocation } from '../utils/requiredFeedLocation.mjs';
@@ -26,7 +28,7 @@ function canRetry(config) {
 }
 
 function canFailover(config) {
-  return !config._ufiCanonicalOAuth && canRetry(config);
+  return !config._ufiNative && !config._ufiCanonicalOAuth && canRetry(config);
 }
 
 // OAuth providers validate a single, pre-registered callback host. Pinning the
@@ -50,14 +52,16 @@ function pause(ms) {
 client.interceptors.request.use(async (config) => {
   if (!isRelativeApiRequest(config.url)) throw new Error('API requests must use a relative path.');
   const token = config.headers.Authorization ? null : getAccessToken();
-  const origin = config._ufiApiOrigin || await resolveApiBaseUrl();
+  const native = isNativeRuntime();
+  const origin = native ? NATIVE_API_ORIGIN : config._ufiApiOrigin || await resolveApiBaseUrl();
   if (!isConfiguredApiBaseUrl(origin)) throw new Error('API endpoint is not configured.');
   config.baseURL = origin;
   config._ufiApiOrigin = origin;
-  config.adapter = 'fetch';
+  config.adapter = native ? nativeAxiosAdapter : 'fetch';
+  config._ufiNative = native;
   // The API's HttpOnly, SameSite session cookie restores a member on the
   // same saved browser. JavaScript never reads or persists that credential.
-  config.withCredentials = true;
+  config.withCredentials = !native;
   config.fetchOptions = { ...config.fetchOptions, redirect: 'error', cache: 'no-store', referrerPolicy: 'no-referrer' };
   if (token && token === getAccessToken()) config.headers.Authorization = `Bearer ${token}`;
   // Send location only to authenticated feeds and local account discovery.
