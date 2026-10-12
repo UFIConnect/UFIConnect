@@ -94,7 +94,7 @@ try {
     await page.getByRole('button', { name: 'Create invitation link', exact: true }).click();
     const link = page.getByLabel('Invitation link', { exact: true });
     await link.waitFor();
-    check((await link.inputValue()).startsWith(server.origin + '/recruiting#invite='), 'Invitation uses an account-bound fragment link');
+    check((await link.inputValue()) === 'https://uficonnect.org/recruiting#invite=' + 'A'.repeat(43), 'Invitation uses the public HTTPS origin with its account-bound token only in the fragment');
     check(await page.getByRole('button', { name: 'Copy invitation link', exact: true }).isVisible(), 'Owner can copy a link without sending an email');
     await page.getByRole('button', { name: 'Revoke', exact: true }).waitFor();
     check(await page.locator('.business-team-settings li').filter({ hasText: 'alice@example.invalid' }).count() === 1, 'Owner sees the pending intended recipient');
@@ -104,7 +104,11 @@ try {
     await email.fill('alice@example.invalid');
     await page.getByRole('button', { name: 'Create invitation link', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('#business-team-link')?.value.includes('BBBB'));
-    const invitationUrl = await link.inputValue();
+    const publicInvitation = new URL(await link.inputValue());
+    check(publicInvitation.href === 'https://uficonnect.org/recruiting#invite=' + 'B'.repeat(43), 'Replacement invitation has a new fragment token on the public website');
+    // Exercise the copied public destination against this isolated local fixture;
+    // do not navigate to or mutate the public website during the audit.
+    const invitationUrl = new URL(publicInvitation.pathname + publicInvitation.search + publicInvitation.hash, server.origin).href;
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Owner team controls fit ${width}px`);
     await page.screenshot({ path: `.cache/audit-ui/business-team-owner-${width}.png`, fullPage: true });
 

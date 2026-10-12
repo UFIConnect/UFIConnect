@@ -333,25 +333,35 @@ try {
     assert.equal(await cityChoice('GB:London').getAttribute('aria-pressed'), 'true');
     assert.equal(await cities.getByRole('button').count(), 91, 'city choices remain available without live cameras');
     assert.equal(await rail.locator('iframe').count(), 0);
-    await page.locator('[data-feed-has-more]').first().evaluate(element => element.scrollIntoView({ block: 'end' }));
-    await page.getByText('More destinations could not load.').waitFor();
+    const feedPagination = page.getByRole('navigation', { name: 'Feed pages', exact: true });
+    const nextFeedPage = feedPagination.getByRole('button', { name: 'Next', exact: true });
+    const retryPage = page.getByRole('button', { name: 'Retry page', exact: true });
+    // Cached display pages can precede the next server request. Navigate each
+    // page explicitly until that real request reaches the failing fixture.
+    for (let attempt = 0; attempt < 15 && !await retryPage.count(); attempt++) {
+      await nextFeedPage.click();
+      await page.waitForFunction(() => document.querySelector('nav[aria-label="Feed pages"]')?.getAttribute('aria-busy') === 'false');
+    }
+    await page.getByText('The next page could not load. Please try again.', { exact: true }).waitFor();
     const failedPageRequests = feedRequests;
     await page.waitForTimeout(700);
     assert.equal(feedRequests, failedPageRequests, 'paging failures do not cause an automatic retry loop');
     assert.ok(await page.locator('.post-card').count() > 0, 'loaded posts survive a paging outage');
     failPagination = false;
-    await page.getByRole('button', { name: 'Retry more destinations', exact: true }).click();
+    await retryPage.click();
+    await retryPage.waitFor({ state: 'detached' });
+    await page.waitForFunction(() => document.querySelector('nav[aria-label="Feed pages"]')?.getAttribute('aria-busy') === 'false');
     // Exhaust the actual API pagination and make sure the UI stops asking.
     for (let attempt = 0; attempt < 15; attempt++) {
-      const feed = page.locator('[data-feed-has-more]').first();
-      if (await feed.getAttribute('data-feed-has-more') === 'false') break;
-      await feed.evaluate(element => element.scrollIntoView({ block: 'end' }));
-      await page.waitForTimeout(500);
+      if (await nextFeedPage.isDisabled()) break;
+      await nextFeedPage.click();
+      await page.waitForFunction(() => document.querySelector('nav[aria-label="Feed pages"]')?.getAttribute('aria-busy') === 'false');
     }
     if (await page.locator('[data-feed-has-more]').first().getAttribute('data-feed-has-more') !== 'false') {
       console.log(JSON.stringify({ feedPages, state: await page.locator('[data-feed-has-more]').evaluate(el => ({ dataset: { ...el.dataset }, rect: el.getBoundingClientRect().toJSON(), scroll: document.scrollingElement.scrollTop, height: document.scrollingElement.scrollHeight, innerHeight })) }));
     }
     assert.equal(await page.locator('[data-feed-has-more]').first().getAttribute('data-feed-has-more'), 'false');
+    assert.ok(await nextFeedPage.isDisabled(), 'Next stops at the last loaded destination page');
     const before = feedRequests;
     await page.waitForTimeout(700);
     assert.equal(feedRequests, before, 'no repeated exhausted-page requests');

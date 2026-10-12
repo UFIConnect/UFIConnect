@@ -43,6 +43,10 @@ async function signIn(page, origin, state) {
   await page.locator('input[name="password"]').fill('UI audit passphrase only');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await page.waitForURL((url) => url.pathname !== '/login');
+  // React Router can update the URL before its route transition commits.
+  // Wait for Login to unmount so its auth effect cannot replace the audit's
+  // next navigation after the fixture changes browser history.
+  await page.locator('#login-email').waitFor({ state: 'detached' });
   state.authenticated = true;
 }
 
