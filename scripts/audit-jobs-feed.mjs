@@ -25,13 +25,15 @@ try {
     const context = await browser.newContext({ viewport: { width, height: 850 }, timezoneId: 'America/Los_Angeles', hasTouch: width < 1000, isMobile: width < 600 });
     const page = await context.newPage();
     const requests = [];
+    let freshJobs = false;
     const jobs = Array.from({ length: 65 }, (_, i) => ({ id: `job-${i}`, title: `Engineer ${i}`, org: 'Example', source: 'Remotive', sourceUrl: `https://example.com/jobs/${i}`, content: 'Build and maintain products with an experienced team. Review the role and requirements.', fullDescription: '<p>Join our engineering team to build reliable products.</p><h2>Main responsibilities</h2><p>Build and maintain products with an experienced team.</p><h2>Required qualifications</h2><p>Experience delivering accessible web applications.</p><h2>Benefits</h2><p>Paid leave as described by the employer.</p><script>window.untrustedListing = true</script>', remote: i % 2 === 1, location: i % 2 ? 'Remote' : 'San Diego', posted: i === 0 ? null : '2025-02-03T00:00:00Z', isLive: true, tags: [] }));
     jobs[2].sourceUrl = 'javascript:window.untrustedJobLink=true';
     await page.route('**/api/opportunities?*', async route => {
       const p = new URL(route.request().url()).searchParams;
       const offset = Number(p.get('offset') || 0);
       requests.push({ offset, bust: p.get('bust'), postedWithin: p.get('postedWithin'), refresh: p.get('refresh'), exclude: p.get('exclude'), search: p.get('search') });
-      const rows = p.get('refresh') ? jobs.map(job => ({ ...job, id: job.id + '-fresh', title: job.title + ' refreshed' })) : jobs;
+      if (p.get('bust') === '1') freshJobs = true;
+      const rows = freshJobs ? jobs.map(job => ({ ...job, id: job.id + '-fresh', title: job.title + ' refreshed' })) : jobs;
       await route.fulfill({ json: { opportunities: rows.slice(offset, offset + 20).map(job => p.get('postedWithin') ? { ...job, id: `${job.id}-date-${p.get('postedWithin')}` } : job), hasMore: offset + 20 < jobs.length, totalCount: jobs.length, availableSources: ['Remotive'], refreshMode: p.get('refresh') ? 'unseen' : null } });
     });
     await auditNavigate(page, server.resolvedUrls.local[0]);
@@ -56,29 +58,70 @@ try {
     assert.match(await page.locator('.job-result-tab').first().textContent(), /Posting date unavailable/);
     assert.match(await page.locator('.job-result-tab').nth(1).textContent(), /Feb 3, 2025/);
     assert.match(await page.locator('.job-result-tab').first().textContent(), /Engineer 0/);
-    for (let i = 0; i < 12 && await page.locator('.job-result-tab').count() < 65; i++) {
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      await page.waitForTimeout(250);
+    const pager = page.getByRole('navigation', { name: 'Job results pages', exact: true });
+    const readyPage = async number => {
+      await page.waitForFunction(number => {
+        const nav = document.querySelector('nav[aria-label="Job results pages"]');
+        return nav?.getAttribute('aria-busy') === 'false' && nav.querySelector('[aria-current="page"]')?.textContent.startsWith(`Page ${number} `);
+      }, number);
+    };
+    await readyPage(1);
+    assert.equal(await page.locator('.job-result-tab').count(), 20, 'The first page is bounded to 20 jobs');
+    assert.ok(await pager.getByRole('button', { name: 'Previous', exact: true }).isDisabled());
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.waitForTimeout(250);
+    assert.equal(await page.locator('.job-result-tab').count(), 20, 'Scrolling does not append another page');
+    for (const number of [2, 3, 4]) {
+      await pager.getByRole('button', { name: 'Next', exact: true }).click();
+      await readyPage(number);
+      assert.equal(await page.locator('.job-result-tab').count(), number === 4 ? 5 : 20, `Page ${number} replaces the previous jobs`);
+      assert.equal(await page.locator('.job-result-tab-title').first().textContent(), `Engineer ${(number - 1) * 20}`);
     }
-    assert.equal(await page.locator('.job-result-tab').count(), 65);
+    assert.ok(await pager.getByRole('button', { name: 'Next', exact: true }).isDisabled(), 'The final page cannot advance');
     assert.deepEqual([...new Set(requests.map(r => r.offset))], [0, 20, 40, 60]);
+    const beforePrevious = requests.length;
+    for (const number of [3, 2]) {
+      await pager.getByRole('button', { name: 'Previous', exact: true }).click();
+      await readyPage(number);
+      assert.equal(await page.locator('.job-result-tab').count(), 20);
+      assert.equal(await page.locator('.job-result-tab-title').first().textContent(), `Engineer ${(number - 1) * 20}`);
+    }
+    assert.equal(requests.length, beforePrevious, 'Previous restores successful cached middle pages without extra API requests');
+    await pager.getByRole('button', { name: 'Previous', exact: true }).click();
+    await readyPage(1);
+    assert.equal(await page.locator('.job-result-tab').count(), 20);
+    // Returning to page 1 can itself reach the document top on mobile and
+    // trigger its refresh gesture. Wait out that gesture's 1500ms cooldown
+    // before checking a separate gradual return-to-top refresh below.
+    await page.waitForTimeout(1600);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
     // Real trackpads return gradually; no single final scroll delta exceeds
     // the old refresh threshold. Remember the excursion until reaching top.
+    const refreshed = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname.endsWith('/opportunities') && url.searchParams.get('bust') === '1' && url.searchParams.get('offset') === '0';
+    });
     await page.evaluate(async () => {
       for (const y of [600, 180, 50, 35, 20, 8, 0]) {
         window.scrollTo(0, y);
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       }
     });
-    await page.waitForFunction(() => document.querySelectorAll('.job-result-tab').length === 20);
+    await refreshed;
+    await page.waitForFunction(() => document.querySelector('.job-result-tab')?.textContent.includes('Engineer 0 refreshed'));
+    await readyPage(1);
+    assert.equal(await page.locator('.job-result-tab').count(), 20);
     assert.ok(requests.some(r => r.bust === '1' && r.offset === 0));
     assert.match(await page.locator('.job-result-tab').first().textContent(), /Engineer 0 refreshed/);
-    const freshRequest = requests.find(r => r.refresh && r.offset === 0);
-    assert.ok(freshRequest.exclude.includes('job-0'), 'Refresh excludes the previously shown jobs');
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await page.waitForFunction(() => document.querySelectorAll('.job-result-tab').length > 20);
-    assert.ok(requests.some(r => r.offset === 20 && r.refresh === freshRequest.refresh && r.exclude === freshRequest.exclude), 'Pagination keeps the refresh cohort');
+    const afterRefresh = requests.length;
+    await pager.getByRole('button', { name: 'Next', exact: true }).click();
+    await readyPage(2);
+    assert.equal(await page.locator('.job-result-tab').count(), 20);
+    assert.match(await page.locator('.job-result-tab').first().textContent(), /Engineer 20 refreshed/);
+    assert.ok(requests.slice(afterRefresh).some(r => r.offset === 20), 'Refresh invalidates the cached next page');
+    assert.equal(await page.getByRole('button', { name: 'Open Engineer 1 at Example', exact: true }).count(), 0, 'A refreshed page does not mix old rows');
+    await pager.getByRole('button', { name: 'Previous', exact: true }).click();
+    await readyPage(1);
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/jobs-feed-${width}.png`) });
     await page.getByRole('button', { name: 'Open Engineer 1 refreshed at Example', exact: true }).click();
     await page.getByRole('heading', { name: 'Engineer 1 refreshed', exact: true }).waitFor();
@@ -122,6 +165,7 @@ try {
     await listing.getByRole('button', { name: 'Close listing', exact: true }).click();
     await listing.waitFor({ state: 'detached' });
     assert.equal(await listingOpener.evaluate(element => document.activeElement === element), true);
+    freshJobs = false;
     await page.getByRole('link', { name: /Back to jobs/ }).click();
     await page.getByRole('button', { name: 'Open Engineer 2 at Example', exact: true }).click();
     await listingOpener.click();

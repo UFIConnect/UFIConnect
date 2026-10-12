@@ -69,10 +69,10 @@ try {
     await sources.getByRole('button', { name: 'Hacker News', exact: true }).click();
     await checkStart('reddit-hackernews');
     assert.ok(requests.some(params => params.get('sources')?.split(',').length === 2));
-    // Trigger the same next-page path used by scrolling near the feed tail.
+    // Explicit pagination loads another balanced batch; a refresh during that
+    // request must still queue and promote its newer batch when loading ends.
     holdNextPage = true;
-    await page.locator('[data-feed-position]').last().dispatchEvent('pointerenter');
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.getByRole('navigation', { name: 'Feed pages', exact: true }).getByRole('button', { name: 'Next', exact: true }).click();
     await Promise.race([paginationHeld, new Promise((_, reject) => setTimeout(() => reject(new Error('Pagination never started')), 10000))]);
     revision = 1;
     await page.evaluate(() => window.dispatchEvent(new Event('ufi:refresh-selected-feed')));
