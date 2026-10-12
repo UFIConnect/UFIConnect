@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { continueSourceConnectionInBrowser, subscribeNativeForeground } from '../nativeRuntime.mjs';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '../contexts/ToastContext';
 import client, { publicOAuthRequestConfig } from '../api/client';
@@ -83,6 +84,7 @@ export default function HomeFeedTools({
   const [sourceCategory, setSourceCategory] = useState('social');
   const [accountPlatforms, setAccountPlatforms] = useState(null);
   const [accountOwner, setAccountOwner] = useState(null);
+  const [nativeAccountRevision, setNativeAccountRevision] = useState(0);
   const [accountConnected, setAccountConnected] = useState({});
   const [accountError, setAccountError] = useState('');
   const [accountAction, setAccountAction] = useState(null);
@@ -127,6 +129,11 @@ export default function HomeFeedTools({
     setAccountAction(null); setBlueskyHandle(null); setAccountCategory('social');
   }, [profile?.id, profile?.plan]);
 
+  useEffect(() => subscribeNativeForeground(() => {
+    setAccountPlatforms(null); setAccountOwner(null); setAccountConnected({});
+    setAccountError(''); setNativeAccountRevision(value => value + 1);
+  }), []);
+
   useEffect(() => {
     if (!profile?.id || openPanel !== 'accounts' || accountPlatforms !== null) return;
     let cancelled = false;
@@ -147,7 +154,7 @@ export default function HomeFeedTools({
         }
       });
     return () => { cancelled = true; };
-  }, [openPanel, accountPlatforms, profile?.id, profile?.plan]);
+  }, [openPanel, accountPlatforms, profile?.id, profile?.plan, nativeAccountRevision]);
 
   const toggle = (key) => {
     const next = openPanel === key ? null : key;
@@ -229,6 +236,7 @@ export default function HomeFeedTools({
   }
 
   async function startAccountConnection(platform, handle = '') {
+    if (await continueSourceConnectionInBrowser(platform)) return;
     const state = sourceAuthorizationState(accountOwner === profile?.id ? accountPlatforms?.[platform] : null, { isConnected: accountConnected[platform] === true });
     if (!state.ready) { setAccountError(state.reason); return; }
     const owner = currentAccount.current;

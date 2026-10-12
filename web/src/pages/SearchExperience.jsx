@@ -18,6 +18,8 @@ import { PostCard } from './Feed';
 import Opportunities from './Opportunities';
 import { CreateGroupModal, GroupDirectoryTab } from './Groups';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
+import usePagedResults from '../hooks/usePagedResults';
+import ResultsPagination from '../components/ResultsPagination';
 
 const SEARCH_TABS = [
   { key: 'posts', label: 'Posts' },
@@ -34,9 +36,8 @@ function initials(name = '') {
   return name.split(' ').map((word) => word[0]).join('').slice(0, 2).toUpperCase();
 }
 
-function initialSearchTab() {
-  if (typeof window === 'undefined') return 'posts';
-  const requested = new URLSearchParams(window.location.search).get('tab');
+function initialSearchTab(search) {
+  const requested = new URLSearchParams(search).get('tab');
   if (requested === 'communities') return 'groups';
   return SEARCH_TABS.some((tab) => tab.key === requested) ? requested : 'posts';
 }
@@ -96,21 +97,13 @@ function mergePosts(current, incoming) {
   });
 }
 
-function initialSearchQuery() {
-  if (typeof window === 'undefined') return '';
-  return String(new URLSearchParams(window.location.search).get('q') || '').trim().slice(0, 200);
+function initialSearchQuery(search) {
+  return String(new URLSearchParams(search).get('q') || '').trim().slice(0, 200);
 }
 
 function mergeById(current, incoming) {
   const seen = new Set(current.map((item) => item.id));
   return [...current, ...incoming.filter((item) => item?.id && !seen.has(item.id))];
-}
-
-function emptyPostState() {
-  return {
-    items: [], loading: false, loadingMore: false, error: '',
-    page: 1, cursor: '', hasMore: false, total: null,
-  };
 }
 
 const ROLE_META = {
@@ -221,8 +214,8 @@ export default function SearchExperience({ initialTab = null, initialQuery = nul
   const navigate = useNavigate();
   const location = useLocation();
   const [routeSeed] = useState(() => ({
-    tab: SEARCH_TABS.some((tab) => tab.key === initialTab) ? initialTab : initialSearchTab(),
-    query: initialQuery === null ? initialSearchQuery() : String(initialQuery).slice(0, 200),
+    tab: SEARCH_TABS.some((tab) => tab.key === initialTab) ? initialTab : initialSearchTab(location.search),
+    query: initialQuery === null ? initialSearchQuery(location.search) : String(initialQuery).slice(0, 200),
   }));
   const [activeTab, setActiveTab] = useState(routeSeed.tab);
   useTabMetrics('search', activeTab);
@@ -232,36 +225,16 @@ export default function SearchExperience({ initialTab = null, initialQuery = nul
   }));
   const [roleFilter, setRoleFilter] = useState('All');
   const [sortBy, setSortBy] = useState('interests');
-  const [results, setResults] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [peopleLoadingMore, setPeopleLoadingMore] = useState(false);
-  const [peopleHasMore, setPeopleHasMore] = useState(false);
-  const [peopleTotal, setPeopleTotal] = useState(0);
-  const [peopleError, setPeopleError] = useState('');
-  const [registeredCount, setRegisteredCount] = useState(null);
-  const [countSource, setCountSource] = useState(null);
-  const [allGroups, setAllGroups] = useState([]);
-  const [groupsLoading, setGroupsLoading] = useState(false);
-  const [groupsLoadingMore, setGroupsLoadingMore] = useState(false);
-  const [groupsHasMore, setGroupsHasMore] = useState(false);
-  const [groupsTotal, setGroupsTotal] = useState(0);
-  const [groupsError, setGroupsError] = useState('');
   const [groupCategories, setGroupCategories] = useState([]);
   const [groupCategory, setGroupCategory] = useState('all');
   const [showCreateGroup, setShowCreateGroup] = useState(() => (
-    !embedded && new URLSearchParams(window.location.search).get('create') === '1'
+    !embedded && new URLSearchParams(location.search).get('create') === '1'
   ));
-  const [postStates, setPostStates] = useState({ posts: emptyPostState(), following: emptyPostState() });
   const [postSources, setPostSources] = useState({ posts: [], following: [] });
   const [postTopics, setPostTopics] = useState({ posts: [], following: [] });
   const [historyFound, setHistoryFound] = useState({ posts: false, following: false });
   const [suggestionsReady, setSuggestionsReady] = useState(false);
-  const peopleRequestRef = useRef(0);
-  const groupRequestRef = useRef(0);
-  const postRequestRef = useRef({ posts: 0, following: 0 });
-  const peopleLoadingMoreRef = useRef(false);
-  const groupsLoadingMoreRef = useRef(false);
-  const searchSentinelRef = useRef(null);
+  const resultsStartRef = useRef(null);
   const hydratedProfileRef = useRef(null);
   const query = queries[activeTab] || '';
 
@@ -312,184 +285,57 @@ export default function SearchExperience({ initialTab = null, initialQuery = nul
     setSuggestionsReady(true);
   }, [disabledSources, profile?.id]);
 
-  const searchPeople = useCallback(async (value, role, order, { offset = 0, append = false } = {}) => {
-    if (append && peopleLoadingMoreRef.current) return;
-    const requestId = ++peopleRequestRef.current;
-    if (append) {
-      peopleLoadingMoreRef.current = true;
-      setPeopleLoadingMore(true);
-    } else {
-      peopleLoadingMoreRef.current = false;
-      setPeopleLoadingMore(false);
-      setLoading(true);
-      setResults([]);
-    }
-    setPeopleError('');
-    try {
-      const params = new URLSearchParams();
-      if (value) params.set('q', value);
-      if (role && role !== 'All') params.set('role', role);
-      params.set('sort', ['followers', 'interests'].includes(order) ? order : 'relevance');
-      params.set('limit', String(DIRECTORY_PAGE_SIZE));
-      params.set('offset', String(offset));
-      const { data } = await client.get(`/users/search?${params}`);
-      if (requestId !== peopleRequestRef.current) return;
-      const incoming = data.users || [];
-      setResults((current) => append ? mergeById(current, incoming) : incoming);
-      setPeopleTotal(Number.isFinite(Number(data.totalCount)) ? Number(data.totalCount) : incoming.length);
-      setPeopleHasMore(data.hasMore === true);
-      setRegisteredCount(data.registeredCount != null && Number.isFinite(Number(data.registeredCount))
-        ? Number(data.registeredCount)
-        : null);
-      setCountSource(data.countSource || null);
-    } catch {
-      if (requestId !== peopleRequestRef.current) return;
-      if (!append) {
-        setResults([]);
-        setPeopleTotal(0);
-      }
-      setPeopleHasMore(false);
-      setPeopleError('People could not be loaded right now. Please try again.');
-      if (!append) {
-        setRegisteredCount(null);
-        setCountSource(null);
-      }
-    } finally {
-      if (requestId === peopleRequestRef.current) {
-        setLoading(false);
-        setPeopleLoadingMore(false);
-        peopleLoadingMoreRef.current = false;
-      }
-    }
-  }, []);
-
-  const loadPostResults = useCallback(async ({ tab, value, sources, topics, page = 1, cursor = '', append = false }) => {
-    const requestId = ++postRequestRef.current[tab];
-    setPostStates((current) => ({
-      ...current,
-      [tab]: { ...current[tab], loading: !append, loadingMore: append, error: '' },
-    }));
-    try {
-      const params = new URLSearchParams({
-        mode: tab === 'following' ? 'following' : 'feed',
-        limit: String(POST_PAGE_SIZE),
-        page: String(page),
-        sort: 'newest',
-        passive: '1',
-      });
-      if (append && cursor) params.set('cursor', cursor);
-      if (value.trim()) params.set('q', value.trim());
-      if (topics.length) params.set('topics', topics.join(','));
-      if (sources.length === 1) params.set('source', sources[0]);
-      else if (sources.length > 1) params.set('sources', sources.join(','));
-      const { data } = await client.get(`/feed?${params}`);
-      if (requestId !== postRequestRef.current[tab]) return;
-      const incoming = Array.isArray(data.posts) ? data.posts : [];
-      setPostStates((current) => {
-        const items = mergePosts(append ? current[tab].items : [], incoming);
-        const added = append ? items.length - current[tab].items.length : items.length;
-        const nextCursor = typeof data.cursor === 'string' ? data.cursor : '';
-        const cursorAdvanced = Boolean(nextCursor && nextCursor !== cursor);
-        return {
-          ...current,
-          [tab]: {
-            items,
-            loading: false,
-            loadingMore: false,
-            error: '',
-            page,
-            cursor: nextCursor,
-            hasMore: data.hasMore === true
-              && (incoming.length > 0 ? (!append || added > 0 || cursorAdvanced) : cursorAdvanced),
-            total: data.totalAvailable != null && Number.isFinite(Number(data.totalAvailable))
-              ? Number(data.totalAvailable)
-              : null,
-          },
-        };
-      });
-    } catch {
-      if (requestId !== postRequestRef.current[tab]) return;
-      setPostStates((current) => ({
-        ...current,
-        [tab]: {
-          ...current[tab], loading: false, loadingMore: false,
-          error: 'Posts could not be loaded right now. Please try again.',
-        },
-      }));
-    }
-  }, []);
-
-  useEffect(() => {
-    if (activeTab !== 'people') return undefined;
-    const timer = window.setTimeout(() => searchPeople(queries.people.trim(), roleFilter, sortBy), 280);
-    return () => window.clearTimeout(timer);
-  }, [activeTab, queries.people, roleFilter, searchPeople, sortBy]);
-
-  const activeSourceKey = POST_TABS.has(activeTab) ? postSources[activeTab].join(',') : '';
-  const activeTopicKey = POST_TABS.has(activeTab) ? postTopics[activeTab].join(',') : '';
-  useEffect(() => {
-    if (!suggestionsReady || !POST_TABS.has(activeTab)) return undefined;
-    const timer = window.setTimeout(() => {
-      loadPostResults({
-        tab: activeTab,
-        value: queries[activeTab],
-        sources: postSources[activeTab],
-        topics: postTopics[activeTab],
-      });
-    }, queries[activeTab].trim() ? 300 : 0);
-    return () => window.clearTimeout(timer);
-  }, [activeTab, activeSourceKey, activeTopicKey, loadPostResults, queries, suggestionsReady]);
-
+  const peoplePage = usePagedResults({
+    enabled: activeTab === 'people', queryKey: JSON.stringify([profile?.id, queries.people, roleFilter, sortBy]), delay: 280,
+    errorMessage: 'People could not be loaded right now. Please try again.',
+    loadPage: async ({ page, signal }) => {
+      const params = new URLSearchParams({ limit: String(DIRECTORY_PAGE_SIZE), offset: String((page - 1) * DIRECTORY_PAGE_SIZE), sort: ['followers', 'interests'].includes(sortBy) ? sortBy : 'relevance' });
+      if (queries.people.trim()) params.set('q', queries.people.trim());
+      if (roleFilter !== 'All') params.set('role', roleFilter);
+      const { data } = await client.get('/users/search?' + params, { signal });
+      return { items: data.users, hasNext: data.hasMore, total: data.totalCount, data };
+    },
+  });
+  const groupsPage = usePagedResults({
+    enabled: activeTab === 'groups', queryKey: JSON.stringify([profile?.id, queries.groups, groupCategory]), delay: queries.groups.trim() ? 280 : 0,
+    errorMessage: 'Groups could not be loaded right now. Please try again.',
+    loadPage: async ({ page, signal }) => {
+      const params = new URLSearchParams({ limit: String(DIRECTORY_PAGE_SIZE), offset: String((page - 1) * DIRECTORY_PAGE_SIZE), scope: 'public' });
+      if (queries.groups.trim()) params.set('q', queries.groups.trim());
+      if (groupCategory !== 'all') params.set('category', groupCategory);
+      const { data } = await client.get('/groups?' + params, { signal });
+      return { items: data.groups, hasNext: data.hasMore, total: data.totalCount, data };
+    },
+  });
+  const postPageOptions = tab => ({
+    enabled: suggestionsReady && activeTab === tab,
+    queryKey: JSON.stringify([profile?.id, queries[tab], postSources[tab], postTopics[tab]]), delay: queries[tab].trim() ? 300 : 0,
+    errorMessage: 'Posts could not be loaded right now. Please try again.',
+    loadPage: async ({ page, cursor, signal }) => {
+      const params = new URLSearchParams({ mode: tab === 'following' ? 'following' : 'feed', limit: String(POST_PAGE_SIZE), page: String(page), sort: 'newest', passive: '1' });
+      if (cursor) params.set('cursor', cursor);
+      if (queries[tab].trim()) params.set('q', queries[tab].trim());
+      if (postTopics[tab].length) params.set('topics', postTopics[tab].join(','));
+      if (postSources[tab].length === 1) params.set('source', postSources[tab][0]);
+      else if (postSources[tab].length > 1) params.set('sources', postSources[tab].join(','));
+      const { data } = await client.get('/feed?' + params, { signal });
+      const items = mergePosts([], Array.isArray(data.posts) ? data.posts : []);
+      const nextCursor = typeof data.cursor === 'string' ? data.cursor : '';
+      return { items, hasNext: data.hasMore === true && (items.length > 0 || Boolean(nextCursor && nextCursor !== cursor)), nextCursor, total: data.totalAvailable };
+    },
+  });
+  const postsPage = usePagedResults(postPageOptions('posts'));
+  const followingPage = usePagedResults(postPageOptions('following'));
+  const postStates = { posts: { ...postsPage, loading: postsPage.loading && !postsPage.items.length }, following: { ...followingPage, loading: followingPage.loading && !followingPage.items.length } };
+  const results = peoplePage.items, loading = peoplePage.loading && !results.length, peopleTotal = peoplePage.total, peopleError = peoplePage.error;
+  const registeredCount = peoplePage.data?.registeredCount ?? null, countSource = peoplePage.data?.countSource ?? null;
+  const allGroups = groupsPage.items, groupsLoading = groupsPage.loading && !allGroups.length, groupsTotal = groupsPage.total, groupsError = groupsPage.error;
   useEffect(() => {
     if (activeTab !== 'groups' || groupCategories.length) return;
-    client.get('/groups/categories')
-      .then(({ data }) => setGroupCategories(data.categories || []))
-      .catch(() => {});
+    const controller = new AbortController();
+    client.get('/groups/categories', { signal: controller.signal }).then(({ data }) => setGroupCategories(data.categories || [])).catch(() => {});
+    return () => controller.abort();
   }, [activeTab, groupCategories.length]);
-
-  const loadGroups = useCallback(async (value, { offset = 0, append = false } = {}) => {
-    if (append && groupsLoadingMoreRef.current) return;
-    const requestId = ++groupRequestRef.current;
-    if (append) {
-      groupsLoadingMoreRef.current = true;
-      setGroupsLoadingMore(true);
-    } else {
-      groupsLoadingMoreRef.current = false;
-      setGroupsLoadingMore(false);
-      setGroupsLoading(true);
-      setAllGroups([]);
-    }
-    setGroupsError('');
-    try {
-      const params = new URLSearchParams({
-        limit: String(DIRECTORY_PAGE_SIZE),
-        offset: String(offset),
-        scope: 'public',
-      });
-      if (value) params.set('q', value);
-      if (groupCategory !== 'all') params.set('category', groupCategory);
-      const { data } = await client.get(`/groups?${params}`);
-      if (requestId !== groupRequestRef.current) return;
-      const incoming = data.groups || [];
-      setAllGroups((current) => append ? mergeById(current, incoming) : incoming);
-      setGroupsTotal(Number.isFinite(Number(data.totalCount)) ? Number(data.totalCount) : incoming.length);
-      setGroupsHasMore(data.hasMore === true);
-    } catch {
-      if (requestId !== groupRequestRef.current) return;
-      if (!append) {
-        setAllGroups([]);
-        setGroupsTotal(0);
-      }
-      setGroupsHasMore(false);
-      setGroupsError('Groups could not be loaded right now. Please try again.');
-    } finally {
-      if (requestId === groupRequestRef.current) {
-        setGroupsLoading(false);
-        setGroupsLoadingMore(false);
-        groupsLoadingMoreRef.current = false;
-      }
-    }
-  }, [groupCategory]);
 
   const closeCreateGroup = useCallback(() => {
     if (embedded) { setShowCreateGroup(false); return; }
@@ -508,32 +354,37 @@ export default function SearchExperience({ initialTab = null, initialQuery = nul
   const createGroup = useCallback(async (group) => {
     const { data } = await client.post('/groups', group);
     if (!data?.group) throw new Error('Group creation did not return a group.');
-    setAllGroups((current) => mergeById([data.group], current));
-    setGroupsTotal((current) => current + 1);
+    groupsPage.updateItems((current) => mergeById([data.group], current));
     setShowCreateGroup(false);
     navigate(`/groups/${data.group.id}`);
   }, [navigate]);
 
-  useEffect(() => {
-    if (activeTab !== 'groups') return undefined;
-    const timer = window.setTimeout(() => loadGroups(queries.groups.trim()), queries.groups.trim() ? 280 : 0);
-    return () => window.clearTimeout(timer);
-  }, [activeTab, loadGroups, queries.groups]);
-
   function selectTab(tab) {
     setActiveTab(tab);
     if (embedded) setQueries(current => ({ ...current, [tab]: current[tab] || query }));
-    else navigate({ pathname: '/search', search: `?tab=${tab}` }, { replace: true });
+    else navigate({ pathname: '/search', search: `?${new URLSearchParams({ tab, q: queries[tab] || '' })}` }, { replace: true });
   }
 
   function handleQueryChange(event) {
-    const value = event.target.value;
+    setSearchQuery(event.target.value);
+  }
+
+  function setSearchQuery(value) {
     if (value.trim() && POST_TABS.has(activeTab) && historyFound[activeTab]) {
       setPostSources(current => ({ ...current, [activeTab]: [] }));
       setPostTopics(current => ({ ...current, [activeTab]: [] }));
       setHistoryFound(current => ({ ...current, [activeTab]: false }));
     }
     setQueries((current) => ({ ...current, [activeTab]: value }));
+  }
+
+  function submitHeaderSearch(value) {
+    const nextQuery = String(value || '').trim().slice(0, 200);
+    setSearchQuery(nextQuery);
+    const params = new URLSearchParams(location.search);
+    params.set('tab', activeTab);
+    params.set('q', nextQuery);
+    navigate({ pathname: '/search', search: `?${params}`, hash: location.hash }, { replace: true });
   }
 
   function clearSearch() {
@@ -547,7 +398,7 @@ export default function SearchExperience({ initialTab = null, initialQuery = nul
       const { data } = nowFollowing
         ? await client.post(`/users/${user.id}/follow`)
         : await client.delete(`/users/${user.id}/follow`);
-      setResults((current) => current.map((item) => item.id === user.id
+      peoplePage.updateItems((current) => current.map((item) => item.id === user.id
         ? { ...item, isFollowing: nowFollowing, followersCount: data.followersCount ?? item.followersCount }
         : item));
     } catch {}
@@ -558,89 +409,24 @@ export default function SearchExperience({ initialTab = null, initialQuery = nul
   )), [results, sortBy]);
   const filteredGroups = allGroups;
   const activePostState = POST_TABS.has(activeTab) ? postStates[activeTab] : null;
-  const activeLoading = activePostState?.loading || (activeTab === 'people' && loading) || (activeTab === 'groups' && groupsLoading);
-  const activeLoadingMore = activePostState?.loadingMore
-    || (activeTab === 'people' && peopleLoadingMore)
-    || (activeTab === 'groups' && groupsLoadingMore);
-  const activeHasMore = POST_TABS.has(activeTab)
-    ? activePostState?.hasMore
-    : activeTab === 'people'
-      ? peopleHasMore
-      : activeTab === 'groups' && groupsHasMore;
+  const activePage = activeTab === 'people' ? peoplePage : activeTab === 'groups' ? groupsPage : activeTab === 'following' ? followingPage : postsPage;
   const hasQuery = query.trim().length > 0;
-
-  const loadMoreSearchResults = useCallback(() => {
-    if (activeLoading || activeLoadingMore || !activeHasMore) return;
-    if (POST_TABS.has(activeTab)) {
-      loadPostResults({
-        tab: activeTab,
-        value: queries[activeTab],
-        sources: postSources[activeTab],
-        topics: postTopics[activeTab],
-        page: postStates[activeTab].page + 1,
-        cursor: postStates[activeTab].cursor,
-        append: true,
-      });
-      return;
-    }
-    if (activeTab === 'people') {
-      searchPeople(queries.people.trim(), roleFilter, sortBy, {
-        offset: results.length,
-        append: true,
-      });
-      return;
-    }
-    if (activeTab === 'groups') {
-      loadGroups(queries.groups.trim(), { offset: allGroups.length, append: true });
-    }
-  }, [
-    activeHasMore, activeLoading, activeLoadingMore, activeTab, allGroups.length,
-    loadGroups, loadPostResults, postSources, postStates, postTopics, queries,
-    results.length, roleFilter, searchPeople, sortBy,
-  ]);
-
-  useEffect(() => {
-    const sentinel = searchSentinelRef.current;
-    if (!sentinel || !activeHasMore || activeLoading || activeLoadingMore || activeTab === 'jobs') return undefined;
-    const observer = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) loadMoreSearchResults(); },
-      { rootMargin: '500px 0px' }
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [activeHasMore, activeLoading, activeLoadingMore, activeTab, loadMoreSearchResults]);
-
-  const refreshActiveSearch = useCallback(() => {
-    if (POST_TABS.has(activeTab)) {
-      return loadPostResults({
-        tab: activeTab,
-        value: queries[activeTab],
-        sources: postSources[activeTab],
-        topics: postTopics[activeTab],
-      });
-    }
-    if (activeTab === 'people') return searchPeople(queries.people.trim(), roleFilter, sortBy);
-    if (activeTab === 'groups') return loadGroups(queries.groups.trim());
-    return undefined;
-  }, [activeTab, loadGroups, loadPostResults, postSources, postTopics, queries, roleFilter, searchPeople, sortBy]);
-
-  useScrollToRefresh(refreshActiveSearch, {
-    enabled: !embedded && activeTab !== 'jobs' && !activeLoading && !activeLoadingMore,
-  });
+  const refreshActiveSearch = useCallback(() => activePage.refresh(), [activePage.refresh]);
+  const scrollRefresh = useScrollToRefresh(refreshActiveSearch, { enabled: !embedded && activeTab !== 'jobs' && activePage.page === 1 && !activePage.loading });
+  async function changeResultsPage(page) {
+    if (await activePage.goToPage(page)) requestAnimationFrame(() => resultsStartRef.current?.scrollIntoView({ block: 'start' }));
+  }
 
   function updatePost(tab, updatedPost) {
-    setPostStates((current) => ({
-      ...current,
-      [tab]: {
-        ...current[tab],
-        items: current[tab].items.map((post) => post.id === updatedPost.id ? { ...post, ...updatedPost } : post),
-      },
-    }));
+    (tab === 'following' ? followingPage : postsPage).updateItems(current => current.map(post => post.id === updatedPost.id ? { ...post, ...updatedPost } : post));
   }
 
   const SearchWrapper = embedded ? Fragment : Layout;
+  const hasHeaderSearch = !embedded && profile?.plan !== 'business';
   return (
-    <SearchWrapper>
+    <SearchWrapper {...(hasHeaderSearch ? { feedSearch: {
+      query, label: `Search ${activeTab === 'following' ? 'following posts' : activeTab}`, onSubmit: submitHeaderSearch,
+    } } : {})}>
       {!embedded && <Helmet>
         <title>Search Posts, People, Groups & Jobs | UFIconnect</title>
         <meta name="description" content="Search personalized posts, professionals, groups, and live job listings." />
@@ -661,10 +447,10 @@ export default function SearchExperience({ initialTab = null, initialQuery = nul
         />
       )}
 
-      <div className="search-page-shell">
+      <div className={`search-page-shell${embedded ? '' : ' search-page-shell--full'}`}>
         {!embedded && <div className="page-header"><h1 className="page-title">{activeTab === 'people' ? 'People' : 'Search'}</h1></div>}
 
-        <div className="search-tab-strip" role="tablist" aria-label="Search sections">
+        <div ref={resultsStartRef} className="search-tab-strip" role="tablist" aria-label="Search sections">
           {SEARCH_TABS.map((tab) => (
             <button
               key={tab.key}
@@ -677,7 +463,7 @@ export default function SearchExperience({ initialTab = null, initialQuery = nul
           ))}
         </div>
 
-        <div className="search-query-wrap">
+        {!hasHeaderSearch && <div className="search-query-wrap">
           <SearchIcon className="search-query-icon" size={19} aria-hidden="true" />
           <input
             className="form-input search-query-input"
@@ -696,11 +482,11 @@ export default function SearchExperience({ initialTab = null, initialQuery = nul
             onChange={handleQueryChange}
             autoFocus
           />
-          {activeLoading && <span className="search-query-spinner"><span className="spinner" /></span>}
-          {query && !activeLoading && (
+          {activePage.loading && <span className="search-query-spinner"><span className="spinner" /></span>}
+          {query && !activePage.loading && (
             <button type="button" className="search-query-clear" aria-label="Clear search" onClick={clearSearch}><X size={17} /></button>
           )}
-        </div>
+        </div>}
 
         {POST_TABS.has(activeTab) && (
           <>
@@ -740,12 +526,7 @@ export default function SearchExperience({ initialTab = null, initialQuery = nul
                 <button
                   type="button"
                   className="btn btn-primary btn-sm"
-                  onClick={() => loadPostResults({
-                    tab: activeTab,
-                    value: query,
-                    sources: postSources[activeTab],
-                    topics: postTopics[activeTab],
-                  })}
+                  onClick={activePage.retry}
                 >Try again</button>
               </div>
             )}
@@ -814,13 +595,13 @@ export default function SearchExperience({ initialTab = null, initialQuery = nul
               <div className="card search-empty-state">
                 <strong>People search is unavailable</strong>
                 <p>{peopleError}</p>
-                <button type="button" className="btn btn-primary btn-sm" onClick={() => searchPeople(queries.people.trim(), roleFilter, sortBy)}>Try again</button>
+                <button type="button" className="btn btn-primary btn-sm" onClick={peoplePage.retry}>Try again</button>
               </div>
             )}
             {!loading && !peopleError && registeredCount !== null && (
               <div className="search-result-summary">
                 {registeredCount.toLocaleString()} registered member{registeredCount === 1 ? '' : 's'}
-                {` | ${peopleTotal.toLocaleString()} ${hasQuery ? 'result' : 'available to connect'}${peopleTotal === 1 ? '' : 's'}`}
+                {` | ${(peopleTotal ?? results.length).toLocaleString()} ${hasQuery ? 'result' : 'available to connect'}${peopleTotal === 1 ? '' : 's'}`}
                 {countSource === 'memory' ? ' | count reconnecting' : ''}
               </div>
             )}
@@ -918,10 +699,10 @@ export default function SearchExperience({ initialTab = null, initialQuery = nul
               <div className="card search-empty-state">
                 <strong>Group search is unavailable</strong>
                 <p>{groupsError}</p>
-                <button type="button" className="btn btn-primary btn-sm" onClick={() => loadGroups(queries.groups.trim())}>Try again</button>
+                <button type="button" className="btn btn-primary btn-sm" onClick={groupsPage.retry}>Try again</button>
               </div>
             )}
-            {!groupsLoading && !groupsError && <div className="search-result-summary">{groupsTotal.toLocaleString()} public group{groupsTotal === 1 ? '' : 's'}{hasQuery ? ` matching "${query}"` : ''}</div>}
+            {!groupsLoading && !groupsError && <div className="search-result-summary">{(groupsTotal ?? allGroups.length).toLocaleString()} public group{groupsTotal === 1 ? '' : 's'}{hasQuery ? ` matching "${query}"` : ''}</div>}
             {!groupsLoading && !groupsError && filteredGroups.length === 0 && (
               <div className="card search-empty-state"><strong>No groups found</strong><p>Try a different keyword or browse without a filter.</p></div>
             )}
@@ -929,7 +710,7 @@ export default function SearchExperience({ initialTab = null, initialQuery = nul
               <div className="group-directory-list group-live-list search-group-browser">
                   <div className="group-directory-list-heading">
                     <strong>Live group list</strong>
-                    <span>{groupsTotal.toLocaleString()}</span>
+                    <span>{(groupsTotal ?? allGroups.length).toLocaleString()}</span>
                   </div>
                   <div className="group-directory-tabs" role="group" aria-label="Live groups">
                     {filteredGroups.map((group, index) => (
@@ -940,24 +721,16 @@ export default function SearchExperience({ initialTab = null, initialQuery = nul
                         onSelect={() => navigate(`/groups/${group.id}`)}
                       />
                     ))}
-                    {groupsHasMore && (
-                      <div ref={searchSentinelRef} className="search-results-sentinel" aria-hidden="true">
-                        {groupsLoadingMore && <span className="spinner spinner-primary" />}
-                      </div>
-                    )}
                   </div>
               </div>
             )}
           </>
         )}
 
-        {activeTab === 'jobs' && <Opportunities embedded searchQuery={queries.jobs} />}
-
-        {activeTab !== 'jobs' && activeTab !== 'groups' && activeHasMore && (
-          <div ref={searchSentinelRef} className="search-results-sentinel" aria-hidden="true">
-            {activeLoadingMore && <span className="spinner spinner-primary" />}
-          </div>
-        )}
+        {activeTab === 'jobs' && <Opportunities embedded paginated searchQuery={queries.jobs} />}
+        {activeTab !== 'jobs' && <ResultsPagination page={activePage.page} hasNext={activePage.hasNext} loading={activePage.loading}
+          onPageChange={changeResultsPage} ariaLabel="Search results pages"
+          totalPages={!POST_TABS.has(activeTab) && activePage.total !== null ? Math.max(1, Math.ceil(activePage.total / DIRECTORY_PAGE_SIZE)) : undefined} />}
       </div>
     </SearchWrapper>
   );

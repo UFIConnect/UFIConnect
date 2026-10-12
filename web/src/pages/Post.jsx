@@ -5,6 +5,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { Link, useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import PostList from '../components/PostList';
+import PostPagesNavigation from '../components/PostPagesNavigation';
+import usePostPages from '../hooks/usePostPages';
 import client from '../api/client';
 import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
 import { useToast } from '../contexts/ToastContext';
@@ -53,13 +55,7 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
   const [shopCurrency, setShopCurrency] = useState('USD');
   const [composing, setComposing] = useState(initiallyOpen);
   const [loading,  setLoading]  = useState(false);
-  const [posted,   setPosted]   = useState(false);
   const [error,    setError]    = useState('');
-  const [feed,     setFeed]     = useState([]);
-  const [feedLoading, setFeedLoading] = useState(true);
-  const [feedHasMore, setFeedHasMore] = useState(false);
-  const [feedLoadingMore, setFeedLoadingMore] = useState(false);
-  const FEED_PAGE_SIZE = 40;
 
   // Photo/video attachment — uploads straight to Cloudinary the moment a
   // file is picked (see api/upload.js), not on submit, so the compose
@@ -107,59 +103,21 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
   }, [topicFilterOpen, selectedTopicIds]);
 
   const selectedTopicKey = selectedTopicIds.join(',');
-  const loadRecentFeed = useCallback(async ({ silent = false } = {}) => {
-    if (composeOnly) return;
-    if (!silent) setFeedLoading(true);
-    try {
-      const params = { limit: FEED_PAGE_SIZE };
-      if (selectedTopicKey) params.groupIds = selectedTopicKey;
-      const { data } = await client.get('/posts', { params: { ...params, scope: initialShop ? undefined : 'ufi' } });
-      setFeed(orderNewestFeedCohorts(data.posts || []));
-      setFeedHasMore(!!data.hasMore);
-    } catch {
-      // Keep the last successful page visible during a refresh failure.
-    } finally {
-      setFeedLoading(false);
-    }
-  }, [selectedTopicKey, initialShop, composeOnly]);
+  const feedParams = new URLSearchParams();
+  if (selectedTopicKey) feedParams.set('groupIds', selectedTopicKey);
+  if (!initialShop) feedParams.set('scope', 'ufi');
+  const feedPages = usePostPages({ endpoint: `/posts?${feedParams}`, viewerId: profile?.id,
+    enabled: !composeOnly, orderPosts: orderNewestFeedCohorts });
+  const feedTargetId = initialShop ? 'ufi-shop-posts' : 'ufi-community-posts';
+  const scrollRefresh = useScrollToRefresh(feedPages.refresh,
+    { enabled: !composeOnly && !feedPages.loading && feedPages.page === 1 });
 
   useEffect(() => {
-    loadRecentFeed();
-  }, [posted, loadRecentFeed]);
-
-  const scrollRefresh = useScrollToRefresh(
-    () => loadRecentFeed({ silent: true }),
-    { enabled: !composeOnly && !feedLoading && !feedLoadingMore }
-  );
-
-  useEffect(() => {
-    const refreshSelectedFeed = () => loadRecentFeed({ silent: true });
+    if (composeOnly) return undefined;
+    const refreshSelectedFeed = () => feedPages.refresh();
     window.addEventListener('ufi:refresh-selected-feed', refreshSelectedFeed);
     return () => window.removeEventListener('ufi:refresh-selected-feed', refreshSelectedFeed);
-  }, [loadRecentFeed]);
-
-  // Lets ImageLightbox's "max view" (opened from a post's photo/video) keep
-  // pulling in more posts as the viewer scrolls near the end of what's
-  // already loaded — see PostList's onNearEnd. Offset by feed.length rather
-  // than a separate page counter since this list only ever grows by
-  // appending here (a real refresh — `posted` toggling — replaces it
-  // wholesale via the effect above, not through this path).
-  async function loadMoreFeed() {
-    if (feedLoadingMore || !feedHasMore) return;
-    setFeedLoadingMore(true);
-    try {
-      const params = { limit: FEED_PAGE_SIZE, offset: feed.length };
-      if (selectedTopicKey) params.groupIds = selectedTopicKey;
-      const { data } = await client.get('/posts', { params: { ...params, scope: initialShop ? undefined : 'ufi' } });
-      const incoming = data.posts || [];
-      setFeed(prev => {
-        const knownIds = new Set(prev.map(p => p.id));
-        return orderNewestFeedCohorts([...prev, ...incoming.filter(p => !knownIds.has(p.id))]);
-      });
-      setFeedHasMore(!!data.hasMore);
-    } catch {}
-    finally { setFeedLoadingMore(false); }
-  }
+  }, [composeOnly, feedPages.refresh]);
 
   const openCompose = useCallback(() => {
     setComposing(true);
@@ -254,7 +212,7 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
       setShopTitle(''); setShopPrice('');
       resetMedia();
       setComposing(false);
-      setPosted(p => !p); // trigger feed reload
+      void feedPages.refresh();
       showToast('Post published!', 'success');
     } catch (failure) {
       setError(failure.message || 'Failed to publish. Please try again.');
@@ -453,18 +411,20 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
       )}
 
       {/* ── Community feed ── */}
-      {!composeOnly && <div style={{ maxWidth: embedded ? 'none' : 640 }}>
+      {!composeOnly && <div id={feedTargetId} style={{ width: '100%', minWidth: 0, scrollMarginTop: 80 }}>
         <PostList
-          posts={feed}
+          posts={feedPages.items}
           shopMode={initialShop}
-          loading={feedLoading}
+          loading={feedPages.loading && feedPages.items.length === 0}
           emptyTitle={shopActive ? 'No Shop posts yet' : 'Nothing here yet'}
           emptyDesc={shopActive ? 'Be the first member to share something in Shop.' : 'Be the first to post to the UFIconnect community.'}
           emptyAction={<button className="btn btn-primary btn-sm ufi-post-action" onClick={openCompose}>{shopActive ? 'Create a Shop post' : 'Write a post'}</button>}
           currentUserId={profile?.id}
-          onNearEnd={loadMoreFeed}
-          maxWidth={embedded ? 'none' : 640}
+          onPostUpdated={updated => feedPages.updateItems(posts => posts.map(post => post.id === updated.id ? { ...post, ...updated } : post))}
+          onPostDeleted={() => feedPages.refresh()}
+          maxWidth={null}
         />
+        <PostPagesNavigation results={feedPages} targetId={feedTargetId} label={initialShop ? 'Shop post pages' : 'Community post pages'} />
       </div>}
     </ContentShell>
   );

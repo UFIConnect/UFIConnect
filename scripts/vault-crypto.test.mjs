@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { configureNativeRuntime } from '../web/src/nativeRuntime.mjs';
 import { exportPasswordCsv } from '../web/src/vault/localVault.mjs';
 import { createVault, unlockVault, saveEntries, hasVault, parsePasswordImport, exportEncryptedVault, restoreEncryptedVault,
   enableDeviceUnlock, unlockWithDevice, hasDeviceUnlock, VAULT_STORAGE_KEY } from '../web/src/vault/localVault.mjs';
@@ -7,6 +8,33 @@ import { createVault, unlockVault, saveEntries, hasVault, parsePasswordImport, e
 const memory = () => { const values = new Map(); return { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) }; };
 const phrase = 'Local review long passphrase';
 const entry = { id: 'one', name: 'Private service', url: 'https://private.example/', username: 'private-user', password: 'private-password-42', notes: 'private-note', appUrl: 'https://private.example/app', favorite: true, launchCount: 3 };
+
+test('native vault retains passphrase recovery and never invokes browser WebAuthn', async () => {
+  const descriptors = Object.fromEntries(['navigator', 'isSecureContext', 'PublicKeyCredential'].map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
+  let credentialCalls = 0, storageReads = 0;
+  Object.defineProperty(globalThis, 'isSecureContext', { configurable: true, value: true });
+  Object.defineProperty(globalThis, 'PublicKeyCredential', { configurable: true, value: class {} });
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { credentials: {
+    create: async () => { credentialCalls++; }, get: async () => { credentialCalls++; },
+  } } });
+  configureNativeRuntime({ nativePlatform: 'ios', onApiRequest: async () => { throw new Error('Vault data must stay local'); } });
+  try {
+    const inaccessible = { getItem() { storageReads++; throw new Error('Must not read device credentials'); } };
+    assert.equal(hasDeviceUnlock(inaccessible), false);
+    await assert.rejects(enableDeviceUnlock(phrase, inaccessible), /passphrase.*unavailable/);
+    await assert.rejects(unlockWithDevice(inaccessible), /passphrase.*unavailable/);
+    assert.equal(credentialCalls, 0); assert.equal(storageReads, 0);
+    const storage = memory(); const session = await createVault(phrase, storage);
+    await saveEntries(session, [entry], storage);
+    const restored = memory(); await restoreEncryptedVault(exportEncryptedVault(storage), phrase, restored);
+    assert.deepEqual((await unlockVault(phrase, restored)).entries, [entry]);
+  } finally {
+    configureNativeRuntime(null);
+    for (const [name, descriptor] of Object.entries(descriptors)) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor); else delete globalThis[name];
+    }
+  }
+});
 
 test('vault persists authenticated ciphertext only, locks key export, and round-trips entries and backups', async () => {
   const storage = memory();

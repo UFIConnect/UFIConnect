@@ -1,4 +1,5 @@
 import { resolveApiBaseUrl } from './apiOrigin';
+import { isNativeRuntime, nativeFetch } from '../nativeRuntime.mjs';
 import { canonicalPage } from '../analytics/googleAnalytics.mjs';
 import { getDataPreferences, subscribeDataPreferences } from '../preferences/dataPreferences';
 import { subscribeTelemetryPrivacy, telemetrySuppressed } from '../analytics/telemetryPrivacy.mjs';
@@ -33,7 +34,7 @@ export function reportClientError({ code = 'render_error', urlPath } = {}) {
   pending.add(controller);
   void resolveApiBaseUrl().then(apiBase => {
     if (controller.signal.aborted || telemetrySuppressed(urlPath) || !getDataPreferences().performanceInsights) return;
-    return fetch(apiBase + '/analytics/performance', {
+    return (isNativeRuntime() ? nativeFetch : fetch)(apiBase + '/analytics/performance', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ category, kind: 'client_error', code }),
       credentials: 'omit', referrerPolicy: 'no-referrer', redirect: 'error', cache: 'no-store', signal: controller.signal,

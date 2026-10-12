@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import client from '../api/client';
 import { billingReturnPath, billingReturnState, hostedBillingUrl } from '../api/hostedBilling.mjs';
 import PricingModal from './PricingModal';
+import { isNativeRuntime } from '../nativeRuntime.mjs';
 
 export default function BillingSettings({ profile, onProfileUpdate }) {
   const navigate = useNavigate();
@@ -49,6 +50,7 @@ export default function BillingSettings({ profile, onProfileUpdate }) {
   }, [refresh, navigate]);
 
   async function openBilling(tier, quantity = 1) {
+    if (isNativeRuntime()) return;
     if (opening) return;
     setOpening(tier); setNotice('');
     try {
@@ -69,7 +71,7 @@ export default function BillingSettings({ profile, onProfileUpdate }) {
   return <section className="card" aria-labelledby="membership-settings-title" style={{ padding: '18px', display: 'grid', gap: 12 }}>
     <div>
       <h2 id="membership-settings-title" style={{ margin: 0, fontSize: '1rem' }}>{teamMember ? 'Business team membership' : plan === 'business' ? 'Business plan' : plan === 'pro' ? 'Pro plan' : 'Free plan'}</h2>
-      <p style={{ fontSize: '.85rem', margin: '6px 0 0', color: 'var(--muted)' }}>Review your membership, payment methods, invoices, and cancellation options.</p>
+      <p style={{ fontSize: '.85rem', margin: '6px 0 0', color: 'var(--muted)' }}>{isNativeRuntime() ? 'Review your existing membership and subscription status.' : 'Review your membership, payment methods, invoices, and cancellation options.'}</p>
     </div>
     {teamMember && <p style={{ margin: 0, fontSize: '.85rem' }}>Your company manages this Business membership. Any personal subscriptions below are billed separately. <Link to="/recruiting">Open recruiting workspace</Link></p>}
     {plan === 'business' && <p style={{ margin: 0, fontSize: '.85rem' }}>{status?.businessSeats || profile.businessSeats || 1} {Number(status?.businessSeats || profile.businessSeats || 1) === 1 ? 'person' : 'people'} in your recruiting membership. <Link to="/recruiting">Open recruiting workspace</Link></p>}
@@ -80,11 +82,11 @@ export default function BillingSettings({ profile, onProfileUpdate }) {
     </div>)}
     {notice && !pricingOpen && <p role="status" style={{ margin: 0, fontSize: '.85rem', lineHeight: 1.6 }}>{notice}</p>}
     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-      {hasBillingAccount && <button type="button" onClick={() => openBilling('portal')} disabled={Boolean(opening)} className="btn btn-ghost btn-sm">{opening === 'portal' ? 'Opening…' : 'Manage billing'}</button>}
-      {plan === 'free' && !pending && !profile.businessTeam && <button type="button" onClick={() => { setNotice(''); setPricingOpen(true); }} disabled={Boolean(opening) || checking || !status} className="btn btn-primary btn-sm">Upgrade</button>}
+      {!isNativeRuntime() && hasBillingAccount && <button type="button" onClick={() => openBilling('portal')} disabled={Boolean(opening)} className="btn btn-ghost btn-sm">{opening === 'portal' ? 'Opening…' : 'Manage billing'}</button>}
+      {!isNativeRuntime() && plan === 'free' && !pending && !profile.businessTeam && <button type="button" onClick={() => { setNotice(''); setPricingOpen(true); }} disabled={Boolean(opening) || checking || !status} className="btn btn-primary btn-sm">Upgrade</button>}
       <button type="button" className="btn btn-ghost btn-sm" disabled={checking || Boolean(opening)} onClick={() => setRefresh(value => value + 1)}>{checking ? 'Checking billing…' : 'Check billing status'}</button>
     </div>
-    <p style={{ margin: 0, color: 'var(--muted)', fontSize: '.75rem' }}>Payment details are entered and managed on Stripe’s secure website.</p>
+    {!isNativeRuntime() && <p style={{ margin: 0, color: 'var(--muted)', fontSize: '.75rem' }}>Payment details are entered and managed on Stripe’s secure website.</p>}
     {pricingOpen && <PricingModal onClose={() => setPricingOpen(false)} onSelectTier={openBilling} loadingTier={opening} error={notice} />}
   </section>;
 }

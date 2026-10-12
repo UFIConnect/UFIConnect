@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
-import { MoreHorizontal, X, ExternalLink, Trash2, Flag, Globe2, Users } from 'lucide-react';
+import { MoreHorizontal, X, ChevronLeft, ChevronRight, Trash2, Flag, Globe2, Users } from 'lucide-react';
 import { postProfileLink, safePostLink } from '../../../backend/post-links.mjs';
 import { SOURCE_META } from './sourceMeta';
 import { isExternalSnap, snapAvailabilityLabel, snapPlaybackInfo } from './snapRanking.mjs';
@@ -21,15 +21,16 @@ import MediaPlaybackControls from './MediaPlaybackControls';
 
 const EMPTY_NATIVE_PLAYBACK = { ready: false, paused: true, muted: true, currentTime: 0, duration: 0 };
 
-function useSnapNativePlayback({ getVideo, enabled, mediaKey }) {
+function useSnapNativePlayback({ getVideo, enabled, mediaKey, forcePause = false }) {
   const identity = useRef(null), binding = useRef(null);
   const [snapshot, setSnapshot] = useState(null);
-  identity.current = { getVideo, enabled, mediaKey };
+  identity.current = { getVideo, enabled, mediaKey, forcePause };
   const owns = owner => Boolean(owner && binding.current === owner && identity.current.enabled
     && identity.current.mediaKey === owner.mediaKey && identity.current.getVideo() === owner.video && owner.video.isConnected);
   function read(owner) {
     if (!owns(owner)) return;
     const video = owner.video;
+    if ((document.hidden || identity.current.forcePause) && !video.paused) { video.pause(); return; }
     const playback = { ready: true, paused: video.paused || video.ended, muted: video.muted || video.volume === 0,
       currentTime: Number.isFinite(video.currentTime) && video.currentTime >= 0 ? video.currentTime : 0,
       duration: Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0 };
@@ -50,16 +51,25 @@ function useSnapNativePlayback({ getVideo, enabled, mediaKey }) {
     read(owner);
   });
   useEffect(() => () => { binding.current?.cleanup(); binding.current = null; }, []);
+  useEffect(() => {
+    const pauseBlocked = () => {
+      const owner = binding.current;
+      if (owns(owner) && (document.hidden || identity.current.forcePause)) { owner.video.pause(); read(owner); }
+    };
+    pauseBlocked();
+    document.addEventListener('visibilitychange', pauseBlocked);
+    return () => document.removeEventListener('visibilitychange', pauseBlocked);
+  }, [forcePause, enabled, mediaKey]);
   const togglePlay = () => {
     const owner = binding.current;
-    if (!owns(owner)) return;
+    if (!owns(owner) || owner.mediaKey !== mediaKey || document.hidden || identity.current.forcePause) return;
     if (owner.video.paused || owner.video.ended) {
       owner.video.play().then(() => read(owner)).catch(() => read(owner));
     } else owner.video.pause();
   };
   const toggleMute = () => {
     const owner = binding.current;
-    if (!owns(owner)) return;
+    if (!owns(owner) || owner.mediaKey !== mediaKey) return;
     const silent = owner.video.muted || owner.video.volume === 0;
     if (silent && owner.video.volume === 0) owner.video.volume = 1;
     owner.video.muted = !silent;
@@ -67,7 +77,7 @@ function useSnapNativePlayback({ getVideo, enabled, mediaKey }) {
   };
   const seek = seconds => {
     const owner = binding.current;
-    if (!owns(owner) || !Number.isFinite(seconds)) return;
+    if (!owns(owner) || owner.mediaKey !== mediaKey || document.hidden || identity.current.forcePause || !Number.isFinite(seconds)) return;
     const video = owner.video;
     if (!Number.isFinite(video.duration) || video.duration <= 0) return;
     let target = Math.max(0, Math.min(video.duration, seconds));
@@ -90,9 +100,9 @@ function useSnapNativePlayback({ getVideo, enabled, mediaKey }) {
 function SnapCaption({ caption }) {
   const [expanded, setExpanded] = useState(false);
   const captionId = useId();
-  const hasMore = caption.length > 200;
-  const preview = hasMore ? `${caption.slice(0, 200).replace(/\s+\S*$/, '').trimEnd()}…` : caption;
-  return <div className="snap-viewer-caption-wrap">
+  const hasMore = caption.length > 50;
+  const preview = caption.length > 200 ? `${caption.slice(0, 200).replace(/\s+\S*$/, '').trimEnd()}…` : caption;
+  return <div className="snap-viewer-caption-wrap" data-expanded={expanded ? 'true' : 'false'}>
     <p id={captionId} className="snap-viewer-caption">{expanded ? caption : preview}</p>
     {hasMore && <button type="button" className="snap-viewer-read-more" aria-expanded={expanded} aria-controls={captionId}
       onClick={() => setExpanded(value => !value)}>{expanded ? 'Show less' : 'Read more'}</button>}
@@ -112,6 +122,10 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState(null);
   const [playerSettingsOpen, setPlayerSettingsOpen] = useState(false);
+  const [sourceControlsTarget, setSourceControlsTarget] = useState(null);
+  const [sourceVisible, setSourceVisible] = useState(() => !document.hidden);
+  const [sourceSuspendedKey, setSourceSuspendedKey] = useState(null);
+  const activePlaybackKey = useRef(null);
   const snap = items[index], author = snap.author?.name || 'UFIConnect member';
   const profileLink = postProfileLink(snap, profile?.id), original = safePostLink(snap.sourceUrl);
   const source = SOURCE_META[snap.source]?.label || snap.source;
@@ -125,14 +139,28 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
   const mediaKey = `${snap.source}:${snap.id}`;
   const identity = String(profile?.id || 'guest');
   const playbackKey = `${identity}:${mediaKey}:${playback.id || playback.mediaUrl || ''}`;
+  activePlaybackKey.current = playbackKey;
+  const failCurrentMedia = () => { if (activePlaybackKey.current === playbackKey) setFailed(true); };
   const getNativeVideo = useCallback(() => nativeVideo.current, []);
   const nativePlayback = playback.kind === 'file' || playback.kind === 'hls';
   const nativeSettings = useNativePlayerSettings({ getVideo: getNativeVideo, enabled: nativePlayback, mediaKey: `${identity}:${mediaKey}` });
-  const nativeControls = useSnapNativePlayback({ getVideo: getNativeVideo, enabled: nativePlayback && !failed, mediaKey: playbackKey });
+  const pauseForChrome = optionsOpen || playerSettingsOpen || deleting;
+  const nativeControls = useSnapNativePlayback({ getVideo: getNativeVideo, enabled: nativePlayback && !failed, mediaKey: playbackKey, forcePause: pauseForChrome });
   const youtubeControls = useYouTubeSnapPlayback({ enabled: playback.kind === 'youtube' && !failed, mediaKey: playbackKey,
-    videoId: playback.id, title: `${source} clip by ${author}` });
+    videoId: playback.id, title: `${source} clip by ${author}`, forcePause: pauseForChrome });
   const hasPlayback = nativePlayback || playback.kind === 'youtube';
   const controls = nativePlayback ? nativeControls : youtubeControls;
+  const settingsProvider = nativePlayback ? 'native' : playback.kind === 'youtube' ? 'youtube' : 'source';
+  const settingsTitle = nativePlayback && snap.source === 'uficonnect' ? 'Player settings' : `${source} settings`;
+  const sourceOriginal = playback.original || original;
+  const sourcePlayerVisible = Boolean(sourceEmbed && sourceVisible && !playerSettingsOpen && !deleting && sourceSuspendedKey !== playbackKey);
+  const canOpenSettings = snap.mediaType === 'video' && (hasPlayback || Boolean(sourceOriginal));
+  const playbackNotice = failed ? 'This snap’s media could not load.'
+    : playback.kind === 'youtube' && youtubeControls.failed ? 'Playback controls are unavailable. Open this clip on YouTube using its source link.'
+      : playback.kind === 'source' && !twitchClip ? sourceEmbed
+        ? `This ${source} player uses its own controls. Additional settings are available on the source.`
+        : sourceOriginal ? `Watch this clip on ${source} using its source link.` : `This clip is unavailable. Its source link was not supplied.`
+      : !playback.mediaUrl && playback.kind === 'image' ? 'This snap’s media is unavailable.' : '';
   const activeTransition = transition?.identity === identity && transition.to === mediaKey ? transition : null;
   const canDelete = onDelete && snap.source === 'uficonnect' && profile?.id && (snap.owned || String(snap.author?.id || snap.authorId) === String(profile.id));
   const sourceItems = snap.source === 'uficonnect' ? [] : sourcePostMenuItems(snap).filter(item => item.key !== 'original'
@@ -148,6 +176,18 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
     setFailed(false); setConfirmDelete(false); setError(''); setPlayerSettingsOpen(false);
     gesture.current.touch = null; gesture.current.pointer = null; gesture.current.wheelDelta = 0;
   }, [snap.id, snap.source, identity]);
+  useEffect(() => {
+    // Widgets without a playback API stop only when their official frame is
+    // removed. Restoring visibility must not resume media without a new click.
+    const visibility = () => {
+      setSourceVisible(!document.hidden);
+      if (document.hidden) setSourceSuspendedKey(playbackKey);
+    };
+    visibility();
+    if (playerSettingsOpen || deleting) setSourceSuspendedKey(playbackKey);
+    document.addEventListener('visibilitychange', visibility);
+    return () => document.removeEventListener('visibilitychange', visibility);
+  }, [playbackKey, playerSettingsOpen, deleting]);
   useEffect(() => {
     // A non-passive listener consumes viewer scrolling before the browser can
     // move the page or history. Player/control input stays native.
@@ -227,7 +267,7 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
     return goTo((index + direction + items.length) % items.length, direction);
   }
   function canGesture(target) {
-    return !optionsOpen && !deleting && !confirmDelete
+    return !optionsOpen && !playerSettingsOpen && !deleting && !confirmDelete
       && !target.closest?.('video, iframe, .twitch-clip-player, .snap-viewer-media-twitch, .snap-viewer-menu, .snap-viewer-details, a, button, input, textarea, select, [contenteditable="true"]');
   }
   function scrollSnap(event) {
@@ -245,7 +285,7 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
   }
   function startSwipe(event) {
     gesture.current.touch = null;
-    if (optionsOpen || deleting || confirmDelete || event.touches.length !== 1
+    if (optionsOpen || playerSettingsOpen || deleting || confirmDelete || event.touches.length !== 1
       || event.target.closest?.('iframe, .twitch-clip-player, .snap-viewer-media-twitch, .snap-viewer-menu, .snap-viewer-playback, a, button, input, textarea, select, [contenteditable="true"]')) return;
     const touch = event.touches[0];
     const video = event.target.closest?.('video');
@@ -255,7 +295,7 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
   function endSwipe(event) {
     const start = gesture.current.touch;
     gesture.current.touch = null;
-    if (!start || optionsOpen || deleting || confirmDelete || event.touches.length || Date.now() - start.time > 900 || Date.now() - gesture.current.movedAt < 500) return;
+    if (!start || optionsOpen || playerSettingsOpen || deleting || confirmDelete || event.touches.length || Date.now() - start.time > 900 || Date.now() - gesture.current.movedAt < 500) return;
     const touch = Array.from(event.changedTouches).find(item => item.identifier === start.id);
     if (!touch) return;
     const vertical = start.y - touch.clientY, horizontal = start.x - touch.clientX;
@@ -324,19 +364,27 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
       <div className={`snap-viewer-media${twitchClip ? ' snap-viewer-media-twitch' : ''}`} tabIndex={0} role="region" aria-label="Snap media"
         aria-description="Scroll up or down, swipe left or right, or use the left and right arrow keys to view snaps."
         aria-keyshortcuts="ArrowLeft ArrowRight">
-        {failed ? <p role="status">This snap’s media could not load.{original && <a href={original} target="_blank" rel="noopener noreferrer">Open on {source}</a>}</p>
-        : twitchClip ? <TwitchClipPlayer key={mediaKey} post={snap} title={`${source} clip by ${author}`} />
+        {failed ? null
+        : twitchClip ? <TwitchClipPlayer key={playbackKey} post={snap} title={`${source} clip by ${author}`} controlsTarget={sourceControlsTarget} forcePause={pauseForChrome} />
         : playback.kind === 'youtube' ? <div ref={youtubeControls.hostRef} className="snap-viewer-youtube-player" style={{ width: '100%', height: '100%' }} />
-        : playback.kind === 'source' && sourceEmbed ? <iframe key={mediaKey} src={sourceEmbed} title={`${source} post by ${author}`} referrerPolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-presentation" allow="encrypted-media; fullscreen; picture-in-picture" allowFullScreen onError={() => setFailed(true)} />
-        : playback.kind === 'source' ? <div key={mediaKey} className="snap-viewer-source-preview">{playback.poster && <img src={playback.poster} alt={snap.caption || `${author}'s source clip`} referrerPolicy="no-referrer" onError={event => { event.currentTarget.hidden = true; }} />}{playback.original ? <a href={playback.original} target="_blank" rel="noopener noreferrer"><ExternalLink size={16} />Watch on {source}</a> : <p role="status">Open this clip on its original source.</p>}</div>
-        : playback.kind === 'hls' ? <HlsVideoPlayer key={playbackKey} videoRef={nativeVideo} src={playback.mediaUrl} poster={playback.poster} controls={false} controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture disableRemotePlayback autoPlay={!isExternalSnap(snap)} muted={nativeControls.muted} loop={false} onError={() => setFailed(true)} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-        : playback.kind === 'file' ? <video key={playbackKey} ref={nativeVideo} src={playback.mediaUrl} poster={playback.poster || undefined} controls={false} controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture disableRemotePlayback autoPlay={!isExternalSnap(snap)} muted={nativeControls.muted} playsInline preload="metadata" onError={() => setFailed(true)} />
-        : playback.mediaUrl ? <img key={mediaKey} src={playback.mediaUrl} alt={snap.caption || `${author}'s snap`} referrerPolicy="no-referrer" onError={() => setFailed(true)} /> : <p role="status">This snap’s media could not load.</p>}
+        : playback.kind === 'source' && sourcePlayerVisible ? <iframe key={playbackKey} src={sourceEmbed} title={`${source} post by ${author}`} referrerPolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-presentation" allow="encrypted-media; fullscreen; picture-in-picture" allowFullScreen onError={failCurrentMedia} />
+        : playback.kind === 'source' ? <div key={mediaKey} className="snap-viewer-source-preview">{playback.poster && <img src={playback.poster} alt={snap.caption || `${author}'s source clip`} referrerPolicy="no-referrer" onError={event => { event.currentTarget.hidden = true; }} />}</div>
+        : playback.kind === 'hls' ? <HlsVideoPlayer key={playbackKey} videoRef={nativeVideo} src={playback.mediaUrl} poster={playback.poster} controls={false} controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture disableRemotePlayback autoPlay={!isExternalSnap(snap)} muted={nativeControls.muted} loop={false} onError={failCurrentMedia} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+        : playback.kind === 'file' ? <video key={playbackKey} ref={nativeVideo} src={playback.mediaUrl} poster={playback.poster || undefined} controls={false} controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture disableRemotePlayback autoPlay={!isExternalSnap(snap)} muted={nativeControls.muted} playsInline preload="metadata" onError={failCurrentMedia} />
+        : playback.mediaUrl ? <img key={playbackKey} src={playback.mediaUrl} alt={snap.caption || `${author}'s snap`} referrerPolicy="no-referrer" onError={failCurrentMedia} /> : null}
       </div>
-      {hasPlayback && <div className="snap-viewer-playback"><MediaPlaybackControls key={playbackKey} paused={controls.paused} muted={controls.muted}
+      <div className="snap-viewer-playback">
+      {hasPlayback && <MediaPlaybackControls key={playbackKey} mediaKey={playbackKey} paused={controls.paused} muted={controls.muted}
         currentTime={controls.currentTime} duration={controls.duration} onTogglePlay={controls.togglePlay} onToggleMute={controls.toggleMute}
-        onSeek={controls.seek} disabled={!controls.ready || failed || deleting} /></div>}
+        onSeek={controls.seek} disabled={!controls.ready || failed || pauseForChrome} />}
+      <div ref={setSourceControlsTarget} className="snap-viewer-source-controls" />
+      {playback.kind === 'source' && sourceEmbed && !twitchClip && !failed && <div className="snap-viewer-widget-controls" role="group" aria-label={`${source} player controls`}>
+        <button type="button" className="snap-viewer-source-toggle" disabled={!sourceVisible || playerSettingsOpen || deleting}
+          onClick={() => setSourceSuspendedKey(sourcePlayerVisible ? playbackKey : null)}>{sourcePlayerVisible ? `Close ${source} player` : `Load ${source} player`}</button>
+      </div>}
+      </div>
       <section className="snap-viewer-details" aria-label="Snap details">
+        {playbackNotice && <p className="snap-viewer-playback-note" role="status">{playbackNotice}</p>}
         <header><div className="snap-social-header">
           <SnapAvatar urls={authorPhotos} source={snap.source} member={snap.source === 'uficonnect'} badge className="post-chrome-avatar" />
           <div className="snap-viewer-author snap-social-identity"><strong id={titleId} className="snap-social-name post-chrome-name">{profileLink?.to ? <Link to={profileLink.to} onClick={onClose}>{author}</Link> : profileLink?.href && !profileLink.fallback ? <a href={profileLink.href} target="_blank" rel="noopener noreferrer">{author}</a> : author}</strong>
@@ -348,6 +396,11 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
       {snap.source === 'uficonnect' && <p className="snap-viewer-audience">{snap.visibility === 'followers' ? <><Users size={13} />Followers only</> : <><Globe2 size={13} />Public</>}</p>}
       </section>
       <div className="snap-viewer-post-actions post-chrome-actions" role="group" aria-label="Snap commands">
+        {items.length > 1 && <div className="snap-viewer-navigation" role="group" aria-label="Snap navigation">
+          <button type="button" className="post-chrome-action" aria-label="Previous snap" disabled={deleting || confirmDelete || optionsOpen || playerSettingsOpen} onClick={() => move(-1)}><ChevronLeft size={20} aria-hidden="true" /></button>
+          <span className="snap-viewer-count" role="status" aria-live="polite" aria-atomic="true">{index + 1} / {items.length}</span>
+          <button type="button" className="post-chrome-action" aria-label="Next snap" disabled={deleting || confirmDelete || optionsOpen || playerSettingsOpen} onClick={() => move(1)}><ChevronRight size={20} aria-hidden="true" /></button>
+        </div>}
         <div ref={menuWrap} className="snap-viewer-menu-wrap post-chrome-more"><button ref={menuButton} type="button" className="post-chrome-action"
           aria-label="Snap options" title="Snap options" aria-expanded={optionsOpen} aria-controls={menuId} disabled={deleting}
           onClick={() => { if (optionsOpen) closeOptions(); else setOptionsOpen(true); }}
@@ -359,14 +412,20 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
       style={{ ...menuPosition, right: 'auto', visibility: menuPosition ? undefined : 'hidden' }}
       onKeyDown={event => event.stopPropagation()}>
       {sourceItems.map(item => <a key={item.key} href={safePostLink(item.href)} target="_blank" rel="noopener noreferrer" onClick={() => closeOptions(false)}>{item.label}{item.detail && <small>{item.detail}</small>}</a>)}
-      {nativePlayback && <button type="button" disabled={deleting} onClick={() => { closeOptions(); setPlayerSettingsOpen(true); }}>Player settings<small>Playback speed and captions</small></button>}
+      {canOpenSettings && <button type="button" disabled={deleting} onClick={() => { closeOptions(); setPlayerSettingsOpen(true); }}>{settingsTitle}<small>{nativePlayback ? 'Playback speed and available captions' : playback.kind === 'youtube' ? 'Playback speed and source playback options' : `Available playback settings on ${source}`}</small></button>}
       {onReport && <button type="button" disabled={deleting} onClick={() => { closeOptions(false); onReport(snap); }} aria-label="Report this snap"><Flag size={16} aria-hidden="true" />Report</button>}
       {canDelete && (confirmDelete ? <div className="snap-viewer-delete-confirm"><p>Delete this snap?</p><button type="button" className="post-chrome-menu-danger" disabled={deleting} onClick={remove} autoFocus>{deleting ? 'Deleting…' : 'Delete snap'}</button><button type="button" disabled={deleting} onClick={() => { setConfirmDelete(false); setError(''); window.requestAnimationFrame(() => menuPanel.current?.querySelector('[aria-label="Delete this snap"]')?.focus({ preventScroll: true })); }}>Cancel</button></div>
         : <button type="button" className="post-chrome-menu-danger" onClick={() => setConfirmDelete(true)} aria-label="Delete this snap"><Trash2 size={16} aria-hidden="true" />Delete</button>)}
       {error && <p className="snap-viewer-error" role="alert">{error}</p>}
     </div>, dialog.current)}
-    {playerSettingsOpen && nativePlayback && <YouTubeSettingsDialog title="Player settings" settings={nativeSettings.settings}
-      onRateChange={nativeSettings.setRate} onCaptionTrackChange={nativeSettings.setCaptionTrack} onClose={() => setPlayerSettingsOpen(false)} />}
+    {playerSettingsOpen && canOpenSettings && <YouTubeSettingsDialog key={playbackKey} title={settingsTitle} provider={settingsProvider} sourceLabel={source}
+      settings={nativePlayback ? nativeSettings.settings : playback.kind === 'youtube' ? youtubeControls.settings : undefined}
+      onRateChange={nativePlayback ? nativeSettings.setRate : playback.kind === 'youtube' ? youtubeControls.setPlaybackRate : undefined}
+      onCaptionSizeChange={playback.kind === 'youtube' ? youtubeControls.setCaptionFontSize : undefined}
+      onCaptionTrackChange={nativePlayback ? nativeSettings.setCaptionTrack : undefined}
+      onOpenSource={sourceOriginal ? () => { window.open(sourceOriginal, '_blank', 'noopener,noreferrer'); } : undefined}
+      sourceNotice={settingsProvider === 'source' ? `This clip uses the official ${source} player or source page. Change supported playback options there.` : undefined}
+      onClose={() => setPlayerSettingsOpen(false)} />}
       </div>
     </div>
   </dialog>, document.body);

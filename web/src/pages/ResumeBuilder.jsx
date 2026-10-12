@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import useTabMetrics from '../analytics/useTabMetrics';
+import { isNativeRuntime } from '../nativeRuntime.mjs';
 import { Helmet } from 'react-helmet-async';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -134,6 +135,7 @@ function resumePlanReady(config, tier) {
 }
 
 function LockedState({ onUnlock, unlocking, billingReady, price, billingConfig, selectedTier, onSelectTier, billingError, onRefreshBilling }) {
+  if (isNativeRuntime()) return <div className="card" style={{ padding: 24 }}><h2>Resume Builder</h2><p>Your existing membership must include Resume Builder to use these tools.</p></div>;
   const priceLabel = price?.active && price?.matchesRequiredPrice && price?.display ? price.display + priceCadence(price) : null;
   return (
     <div className="card" style={{ textAlign: 'center', padding: '52px 24px' }}>
@@ -587,6 +589,7 @@ function PreparationLibrary({ watchedIds, onToggleWatched, saving }) {
 
 export default function ResumeBuilder() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { profile, refreshProfile } = useAuth();
   const { showToast } = useToast();
   const [loaded, setLoaded] = useState(false);
@@ -604,7 +607,7 @@ export default function ResumeBuilder() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [drafting, setDrafting] = useState(null);
   const [activeBuilderTab, setActiveBuilderTab] = useState(() => {
-    const requested = new URLSearchParams(window.location.search).get('tab');
+    const requested = new URLSearchParams(location.search).get('tab');
     return ['preparation', 'resume', 'cover-letter', 'outreach', 'jobs'].includes(requested) ? requested : 'preparation';
   });
   const [writingPreviewType, setWritingPreviewType] = useState(null);
@@ -613,6 +616,11 @@ export default function ResumeBuilder() {
   const [trackedJobs, setTrackedJobs] = useState([]);
   const [liveJobs, setLiveJobs] = useState([]);
   const [trackedJobsLoading, setTrackedJobsLoading] = useState(false);
+
+  useEffect(() => {
+    const requested = new URLSearchParams(location.search).get('tab');
+    setActiveBuilderTab(['preparation', 'resume', 'cover-letter', 'outreach', 'jobs'].includes(requested) ? requested : 'preparation');
+  }, [location.search]);
 
   const unlocked = !!profile?.resumeBuilderAddon;
   const { usage, loading: usageLoading, error: usageError, acceptUsage, refreshUsage } = useResumeGenerationUsage(profile?.id, unlocked);
@@ -705,6 +713,7 @@ export default function ResumeBuilder() {
   }, [unlocked]);
 
   async function unlockResumeBuilder() {
+    if (isNativeRuntime()) return;
     if (unlocking || billingReady !== true) return;
     setUnlocking(true);
     try {
@@ -749,9 +758,9 @@ export default function ResumeBuilder() {
 
   function selectBuilderTab(tab) {
     setActiveBuilderTab(tab);
-    const url = new URL(window.location.href);
-    url.searchParams.set('tab', tab);
-    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+    const params = new URLSearchParams(location.search);
+    params.set('tab', tab);
+    navigate({ pathname: location.pathname, search: `?${params}`, hash: location.hash }, { replace: true });
   }
 
   async function handleExport() {

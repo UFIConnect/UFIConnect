@@ -1,3 +1,5 @@
+import PostPagesNavigation from '../components/PostPagesNavigation';
+import usePostPages from '../hooks/usePostPages';
 import PublishingTargets, { usePublishingTargets } from '../components/PublishingTargets';
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -31,10 +33,9 @@ function GroupPostArea({ id }) {
   const [joining, setJoining] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  const [groupPosts,    setGroupPosts]    = useState([]);
-  const [postsLoading,  setPostsLoading]  = useState(true);
-  const [postsHasMore,  setPostsHasMore]  = useState(false);
-  const [postsLoadingMore, setPostsLoadingMore] = useState(false);
+  const postPages = usePostPages({ endpoint: `/groups/${id}/posts`, viewerId: profile?.id, orderPosts: orderNewestFeedCohorts });
+  const groupPosts = postPages.items;
+  const postsLoading = postPages.loading && !groupPosts.length;
   const [composing,     setComposing]     = useState(false);
   const [content,       setContent]       = useState('');
   const [posting,       setPosting]       = useState(false);
@@ -70,38 +71,7 @@ function GroupPostArea({ id }) {
     }).catch(console.error).finally(() => setLoading(false));
   }, [id]);
 
-  function loadGroupPosts(opts = {}) {
-    if (!opts.silent) setPostsLoading(true);
-    client.get(`/groups/${id}/posts`)
-      .then(({ data }) => { setGroupPosts(orderNewestFeedCohorts(data.posts || [])); setPostsHasMore(!!data.hasMore); })
-      .catch(() => { setGroupPosts([]); setPostsHasMore(false); })
-      .finally(() => setPostsLoading(false));
-  }
-
-  useEffect(() => { loadGroupPosts(); }, [id]); // eslint-disable-line
-
-  // See PostList's onNearEnd / ImageLightbox's "max view" — without this,
-  // scrolling through a group's photos/videos in the fullscreen viewer
-  // dead-ended at whatever this initial fetch happened to return, no matter
-  // how much more the group actually had.
-  async function loadMoreGroupPosts() {
-    if (postsLoadingMore || !postsHasMore) return;
-    setPostsLoadingMore(true);
-    try {
-      const { data } = await client.get(`/groups/${id}/posts`, { params: { offset: groupPosts.length } });
-      const incoming = data.posts || [];
-      setGroupPosts(prev => {
-        const knownIds = new Set(prev.map(p => p.id));
-        return orderNewestFeedCohorts([...prev, ...incoming.filter(p => !knownIds.has(p.id))]);
-      });
-      setPostsHasMore(!!data.hasMore);
-    } catch {}
-    finally { setPostsLoadingMore(false); }
-  }
-
-  // Scrolling back up to the top acts as pull-to-refresh, same as every
-  // other list page on the site.
-  useScrollToRefresh(() => loadGroupPosts({ silent: true }), { enabled: !postsLoading });
+  useScrollToRefresh(postPages.refresh, { enabled: postPages.page === 1 && !postPages.loading });
 
   async function handleJoin() {
     if (joining || group?.isExternal || group?.canJoin === false) return;
@@ -183,7 +153,7 @@ function GroupPostArea({ id }) {
     try {
       const payload = { content: content.trim(), mediaUrl: uploadedMedia?.url, mediaType: uploadedMedia?.type };
       const result = await targets.publish(() => client.post(`/groups/${id}/posts`, payload), payload);
-      if (result?.data?.post) setGroupPosts(prev => [result.data.post, ...prev]);
+      if (result?.data?.post) await postPages.refresh();
       setContent('');
       resetMedia();
       setComposing(false);
@@ -328,7 +298,7 @@ function GroupPostArea({ id }) {
       )}
 
       {/* Group posts */}
-      <div id="group-posts" style={{ marginBottom: 16, scrollMarginTop: 16 }}>
+      <div id="group-posts" style={{ marginBottom: 16, scrollMarginTop: 80 }}>
         <PostList
           posts={groupPosts}
           loading={postsLoading}
@@ -338,9 +308,10 @@ function GroupPostArea({ id }) {
             : joined ? 'Be the first to post in this group.' : 'Join the group to start the conversation.'}
           emptyAction={joined && !group.isExternal ? <button className="btn btn-primary btn-sm ufi-post-action" onClick={openCompose}>Write a post</button> : null}
           currentUserId={profile?.id}
-          onPostDeleted={(id) => setGroupPosts((prev) => prev.filter((p) => p.id !== id))}
-          onNearEnd={loadMoreGroupPosts}
+          onPostDeleted={() => postPages.refresh()}
+          maxWidth={null}
         />
+        <PostPagesNavigation results={postPages} targetId="group-posts" label="Group post pages" />
       </div>
 
       {/* Members */}

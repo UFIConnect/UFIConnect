@@ -3,7 +3,7 @@ import PasswordInput from '../components/PasswordInput';
 import useTabMetrics from '../analytics/useTabMetrics';
 import { privateSessionStorage } from '../auth/session';
 ﻿import { useState, useEffect, useMemo } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -20,6 +20,7 @@ import LegalLinks from '../components/LegalLinks';
 import AccountAccess from '../components/AccountAccess';
 import WebProtectionPanel from '../components/WebProtectionPanel';
 import SettingsEmailAddress from '../components/SettingsEmailAddress';
+import { isNativeRuntime } from '../nativeRuntime.mjs';
 
 // ── Shared preference constants ───────────────────────────────────────────────
 const GOALS = [
@@ -179,10 +180,10 @@ function PushNotificationsCard() {
         <SectionHeading>Push Notifications</SectionHeading>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
         <div>
-          <div style={{ fontWeight: 600, fontSize: '.875rem' }}>Browser notifications</div>
+          <div style={{ fontWeight: 600, fontSize: '.875rem' }}>{isNativeRuntime() ? 'Device notifications' : 'Browser notifications'}</div>
           <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>
             {!state.supported
-              ? "This browser doesn't support push notifications."
+              ? isNativeRuntime() ? 'Push notifications are not available in this app yet.' : "This browser doesn't support push notifications."
               : state.permission === 'denied'
               ? 'Blocked in your browser settings — re-enable it there to turn this back on.'
               : 'Get a real-time alert for new messages, likes, comments, follows, and connection requests, even when UFIconnect isn\'t open.'}
@@ -202,11 +203,12 @@ function PushNotificationsCard() {
 export default function Settings() {
   const { profile, updateProfileLocally, logout, logoutAll } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const { showToast } = useToast();
   const role = profile?.preferences?.role || '';
   const meta = ROLE_META[role] || DEFAULT_META;
   const [activeTab, setActiveTab] = useState(() => {
-    const requested = new URLSearchParams(window.location.search).get('tab');
+    const requested = new URLSearchParams(location.search).get('tab');
     return ['account', 'security', 'privacy', 'notifications', 'preferences', 'data'].includes(requested)
       && !(profile?.plan === 'business' && requested === 'preferences') ? requested : 'account';
   });
@@ -215,10 +217,11 @@ export default function Settings() {
   const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(location.search);
     const tab = params.get('tab');
-    if (['account', 'security', 'privacy', 'notifications', 'preferences'].includes(tab) && !(profile?.plan === 'business' && tab === 'preferences')) setActiveTab(tab);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    setActiveTab(['account', 'security', 'privacy', 'notifications', 'preferences', 'data'].includes(tab)
+      && !(profile?.plan === 'business' && tab === 'preferences') ? tab : 'account');
+  }, [location.search, profile?.plan]);
 
   const [form, setForm] = useState({
     name:         profile?.name         || '',
@@ -464,8 +467,9 @@ export default function Settings() {
 
   const filteredRoles = useMemo(() => {
     const q = roleSearch.trim().toLowerCase();
-    if (!q) return ALL_ROLES;
-    return ALL_ROLES.filter(r => r.value.toLowerCase().includes(q) || r.desc.toLowerCase().includes(q));
+    const roles = ALL_ROLES.filter((role, index) => ALL_ROLES.findIndex(item => item.value === role.value) === index);
+    if (!q) return roles;
+    return roles.filter(r => r.value.toLowerCase().includes(q) || r.desc.toLowerCase().includes(q));
   }, [roleSearch]);
 
   const filteredInterests = useMemo(() => {

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { hasNativeYouTubePlayer, createNativeYouTubeFrame, nativeYouTubeApi } from '../nativeYouTubePlayer.mjs';
 import { useDataPreferences, previewPlaybackAllowed } from '../preferences';
 import { directMediaPlaybackAllowed, officialYouTubeId, officialVimeoId } from '../utils/sourceMediaPolicy.mjs';
 
@@ -190,6 +191,109 @@ export function extractVimeoId(url) {
   return officialVimeoId(url);
 }
 
+export function vimeoEmbedUrl(videoId, { muted = true } = {}) {
+  if (!/^\d{1,20}$/.test(String(videoId || ''))) return '';
+  // These are Vimeo's supported embed preferences. The owner's plan and
+  // settings decide which preferences the player can honor.
+  const params = new URLSearchParams({ autoplay: '1', muted: muted ? '1' : '0', loop: '1',
+    playsinline: '1', title: '0', byline: '0', portrait: '0', controls: '0', unmute_button: '0', speed: '1' });
+  return `https://player.vimeo.com/video/${videoId}?${params}`;
+}
+
+// Vimeo's official Player SDK uses this message protocol. Keep it confined
+// to the particular iframe and verify its video identity before accepting
+// state. No provider script needs access to the containing app's session.
+export function createVimeoController(frame, videoId, { onEvent = () => {}, isCurrent = () => true,
+  target = window, timeoutMs = 8000 } = {}) {
+  const origin = 'https://player.vimeo.com';
+  const sender = frame?.contentWindow;
+  const methods = new Set(['getVideoId', 'getDuration', 'getCurrentTime', 'getPaused', 'getMuted', 'getVolume',
+    'play', 'pause', 'setCurrentTime', 'setMuted', 'setVolume', 'getPlaybackRate', 'setPlaybackRate',
+    'getTextTracks', 'enableTextTrack', 'disableTextTrack', 'getQualities', 'getQuality', 'setQuality']);
+  const events = ['play', 'pause', 'ended', 'timeupdate', 'volumechange', 'playbackratechange', 'texttrackchange', 'qualitychange', 'loaded', 'error'];
+  const pending = new Map(), unavailable = new Set();
+  let disposed = false, verified = false, checking = false;
+  let resolveReady, rejectReady;
+  const ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+  const current = () => !disposed && isCurrent() && frame?.contentWindow === sender;
+  const send = (method, value) => {
+    if (!current() || !sender) throw new Error('Vimeo player changed.');
+    sender.postMessage(JSON.stringify({ method, ...(value === undefined ? {} : { value }) }), origin);
+  };
+  const settle = (method, error, value) => {
+    const request = pending.get(method);
+    if (!request) return;
+    clearTimeout(request.timer); pending.delete(method);
+    if (error) request.reject(error); else request.resolve(value);
+  };
+  const request = (method, value) => new Promise((resolve, reject) => {
+    if (!current() || !methods.has(method) || unavailable.has(method) || pending.has(method)) {
+      reject(new Error('This Vimeo control is unavailable.')); return;
+    }
+    const timer = setTimeout(() => {
+      // Replies have no request ID. After a timeout, do not let a delayed
+      // reply satisfy a later request for the same method.
+      unavailable.add(method);
+      settle(method, new Error('Vimeo did not respond.'));
+    }, timeoutMs);
+    pending.set(method, { resolve, reject, timer });
+    try { send(method, value); } catch (error) { settle(method, error); }
+  });
+  const readyTimer = setTimeout(() => rejectReady(new Error('Vimeo did not become ready.')), timeoutMs);
+  async function verify() {
+    if (checking || !current()) return;
+    checking = true;
+    try {
+      const id = await request('getVideoId');
+      if (!current() || String(id) !== String(videoId)) throw new Error('Vimeo video changed.');
+      verified = true; clearTimeout(readyTimer);
+      events.forEach(event => send('addEventListener', event));
+      resolveReady();
+    } catch (error) { clearTimeout(readyTimer); rejectReady(error); }
+  }
+  function message(event) {
+    if (!current() || event.origin !== origin || event.source !== sender) return;
+    if (typeof event.data === 'string' && event.data.length > 131072) return;
+    let data;
+    try { data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data; } catch { return; }
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return;
+    if (data.event === 'ready' || data.method === 'ping') { void verify(); return; }
+    if (verified && data.event === 'loaded' && String(data.data?.id) !== String(videoId)) {
+      try { send('pause'); } catch {}
+      verified = false;
+      [...pending.keys()].forEach(method => settle(method, new Error('Vimeo video changed.')));
+      onEvent('error', { name: 'VideoChangedError' });
+      return;
+    }
+    if (data.event === 'error') {
+      const error = new Error('Vimeo could not perform this action.');
+      error.name = typeof data.data?.name === 'string' ? data.data.name : 'Error';
+      if (pending.has(data.data?.method)) settle(data.data.method, error);
+      else if (verified) onEvent('error', data.data || {});
+      return;
+    }
+    if (typeof data.method === 'string') settle(data.method, null, data.value);
+    if (verified && events.includes(data.event)) onEvent(data.event, data.data || {});
+  }
+  target.addEventListener('message', message);
+  try { send('ping'); } catch (error) { clearTimeout(readyTimer); rejectReady(error); }
+  return {
+    ready,
+    async call(method, value) {
+      await ready;
+      if (!verified) throw new Error('Vimeo video changed.');
+      return request(method, value);
+    },
+    destroy() {
+      if (disposed) return;
+      try { send('pause'); } catch {}
+      disposed = true; clearTimeout(readyTimer); target.removeEventListener('message', message);
+      rejectReady(new Error('Vimeo player closed.'));
+      [...pending.keys()].forEach(method => settle(method, new Error('Vimeo player closed.')));
+    },
+  };
+}
+
 // Retain the helper contract while disabling guessed media endpoints.
 export function deriveBlueskyPlaylistUrl() {
   // Deriving a media endpoint from a thumbnail bypasses the source player.
@@ -246,13 +350,14 @@ let youtubeApiPromise = null;
 export function youTubeEmbedUrl(videoId, playerVars = {}) {
   if (!/^[\w-]{11}$/.test(String(videoId || ''))) return '';
   const params = new URLSearchParams({
-    playsinline: '1', rel: '0', controls: '1', ...playerVars,
+    playsinline: '1', rel: '0', controls: '0', ...playerVars,
     enablejsapi: '1', origin: window.location.origin,
   });
   return `https://www.youtube.com/embed/${videoId}?${params}`;
 }
 
 export function createYouTubePlayerFrame(host, videoId, playerVars = {}, title = 'YouTube video') {
+  if (hasNativeYouTubePlayer()) return createNativeYouTubeFrame(host, videoId, playerVars, title);
   const frame = document.createElement('iframe');
   frame.referrerPolicy = 'strict-origin-when-cross-origin';
   frame.title = title || 'YouTube video';
@@ -265,6 +370,7 @@ export function createYouTubePlayerFrame(host, videoId, playerVars = {}, title =
 }
 
 export function loadYouTubeIframeApi() {
+  if (hasNativeYouTubePlayer()) return Promise.resolve(nativeYouTubeApi);
   if (youtubeApiPromise) return youtubeApiPromise;
   youtubeApiPromise = new Promise((resolve) => {
     if (window.YT && window.YT.Player) { resolve(window.YT); return; }
@@ -466,7 +572,7 @@ export function InlineAutoplayVideo({ kind, src, post, videoKey, poster, style, 
         </div>
       ) : kind === 'hls' ? (
         shouldPlay ? (
-          <HlsVideoPlayer src={src} poster={null} autoPlay muted loop style={style} />
+          <HlsVideoPlayer src={src} poster={null} autoPlay muted loop controls={false} style={style} />
         ) : (
           <div style={{ minHeight: 220, background: '#000', color: '#fff', display: 'grid', placeItems: 'center', ...style }}>
             {!automaticPlayback && <span style={{ padding: 16 }}>Open video to play</span>}

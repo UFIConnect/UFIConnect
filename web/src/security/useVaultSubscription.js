@@ -3,6 +3,7 @@ import client from '../api/client';
 import { billingReturnPath, hostedBillingUrl } from '../api/hostedBilling.mjs';
 import { getAccessToken, subscribeToSession } from '../auth/session';
 import { paidVpnAccess } from '../lib/vpnAccess';
+import { isNativeRuntime } from '../nativeRuntime.mjs';
 
 export default function useVaultSubscription(accountId, preview, enabled = true) {
   const [token, setToken] = useState(getAccessToken);
@@ -76,6 +77,7 @@ export default function useVaultSubscription(accountId, preview, enabled = true)
     return () => { window.clearInterval(timer); window.removeEventListener('focus', update); document.removeEventListener('visibilitychange', update); };
   }, [enabled, preview, accountId, token, refresh]);
   async function open(portal = false) {
+    if (isNativeRuntime()) return;
     if (openingRef.current || currentChecking || preview || !currentSession) return;
     openingRef.current = true;
     const request = operation.current;

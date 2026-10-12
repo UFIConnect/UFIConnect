@@ -4,6 +4,7 @@ import { useLocation } from 'react-router-dom';
 import { Globe2, LockKeyhole, Power, RefreshCw, ShieldCheck } from 'lucide-react';
 import './VaultVpnPanel.css';
 import client from '../api/client';
+import { nativeExternalOpen } from '../nativeRuntime.mjs';
 import { getAccessToken } from '../auth/session';
 import VaultVpnSubscription from './VaultVpnSubscription';
 import VaultWireGuardProfile from './VaultWireGuardProfile';
@@ -29,7 +30,8 @@ function launchUrl(data) {
 // The browser issues a bounded action ticket. Only the signed-in native app
 // can redeem it and start a tunnel; opening its link is never proof of a VPN.
 export function ManagedVpnPanel({ accountId, activityTarget, subscriptionTarget, billing,
-  openApp = url => window.location.assign(url), downloadProfile }) {
+  openApp = nativeExternalOpen, downloadProfile }) {
+  const location = useLocation();
   const [config, setConfig] = useState(null);
   const [checking, setChecking] = useState(true);
   const [opening, setOpening] = useState(false);
@@ -43,11 +45,10 @@ export function ManagedVpnPanel({ accountId, activityTarget, subscriptionTarget,
   const paid = paidVpnAccess(billing);
   const platform = managedPlatform();
   useEffect(() => {
-    const scroll = () => { if (window.location.hash === '#vpn') document.getElementById('vpn')?.scrollIntoView({ block: 'start' }); };
-    const frame = requestAnimationFrame(scroll);
-    window.addEventListener('hashchange', scroll);
-    return () => { cancelAnimationFrame(frame); window.removeEventListener('hashchange', scroll); };
-  }, []);
+    if (location.hash !== '#vpn') return undefined;
+    const frame = requestAnimationFrame(() => document.getElementById('vpn')?.scrollIntoView({ block: 'start' }));
+    return () => cancelAnimationFrame(frame);
+  }, [location.hash]);
   const refresh = useCallback(async () => {
     const request = ++sequence.current, account = accountId, revision = generation.current, token = getAccessToken();
     if (!account || !token || !paidVpnAccess(currentBilling.current)) { setConfig(null); setChecking(false); return; }
@@ -83,7 +84,7 @@ export function ManagedVpnPanel({ accountId, activityTarget, subscriptionTarget,
       const { data } = await client.post('/vpn/launch', { platform }, { headers: { Authorization: `Bearer ${operation.token}` } });
       if (!current()) return;
       const url = launchUrl(data);
-      openApp(url);
+      await openApp(url);
       setOpened(true); setHelp(true);
     } catch (failure) {
       if (!current()) return;

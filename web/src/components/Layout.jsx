@@ -233,17 +233,19 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
   }, []);
 
   useEffect(() => {
-    if (!mobileAccountOpen) return undefined;
+    if (!mobileAccountOpen && !mobileMenuOpen) return undefined;
     const mobile = window.matchMedia('(max-width: 768px)');
-    if (!mobile.matches) { setMobileAccountOpen(false); return undefined; }
-    const drawer = document.getElementById('mobile-account-drawer');
+    if (!mobile.matches) { setMobileAccountOpen(false); setMobileMenuOpen(false); return undefined; }
+    const drawer = document.getElementById(mobileAccountOpen ? 'mobile-account-drawer' : 'mobile-feed-drawer');
     const previousFocus = document.activeElement;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     const frame = window.requestAnimationFrame(() => drawer?.querySelector('button')?.focus({ preventScroll: true }));
     function trapFocus(event) {
       if (event.key !== 'Tab' || !drawer) return;
-      const items = [...drawer.querySelectorAll('a[href], button:not(:disabled)')];
+      const items = [...drawer.querySelectorAll('a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]')]
+        .filter(element => element.getClientRects().length && !element.closest('[hidden]'));
+      if (!items.length) { event.preventDefault(); return; }
       const first = items[0];
       const last = items[items.length - 1];
       if (event.shiftKey && (document.activeElement === first || !drawer.contains(document.activeElement))) {
@@ -254,7 +256,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
         first?.focus();
       }
     }
-    const closeOnDesktop = event => { if (!event.matches) setMobileAccountOpen(false); };
+    const closeOnDesktop = event => { if (!event.matches) { setMobileAccountOpen(false); setMobileMenuOpen(false); } };
     document.addEventListener('keydown', trapFocus);
     mobile.addEventListener('change', closeOnDesktop);
     return () => {
@@ -264,7 +266,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
       mobile.removeEventListener('change', closeOnDesktop);
       if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus({ preventScroll: true });
     };
-  }, [mobileAccountOpen]);
+  }, [mobileAccountOpen, mobileMenuOpen]);
 
   // Edge-only swipes keep source rails and media gestures separate from drawers.
   useEffect(() => {
@@ -414,6 +416,9 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
   }
 
   const mobileFeedParams = new URLSearchParams(location.search);
+  const isCreateGroupRoute = location.pathname === '/search' && mobileFeedParams.get('tab') === 'groups' && mobileFeedParams.get('create') === '1';
+  const isSearchRoute = location.pathname === '/search' && !isCreateGroupRoute;
+  const isCrossPostRoute = location.pathname === '/command-center' && mobileFeedParams.get('tab') === 'crosspost';
   const requestedFeed = mobileFeedParams.get('feed');
   const mobileGroupScope = mobileFeedParams.get('groupScope') === 'public' ? 'public' : 'joined';
   const mobileFeedMode = requestedFeed === 'local' ? 'countries' : (requestedFeed || 'feed');
@@ -433,6 +438,10 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
         </Link>
 
         <nav className="sidebar-nav">
+          <Link to="/search" className={`nav-link${isSearchRoute ? ' active' : ''}`} aria-current={isSearchRoute ? 'page' : undefined} aria-label="Search" title="Search" onClick={closeMobileOverlays}>
+            <span className="nav-icon"><ShellIcon name="search" size={20} /></span>
+            <span className="nav-label">Search</span>
+          </Link>
           <Link to="/people" className={"nav-link" + (location.pathname === "/people" ? " active" : "")} aria-current={location.pathname === "/people" ? "page" : undefined} aria-label="People" title="People">
             <span className="nav-icon"><UsersRound size={20} aria-hidden="true" /></span>
             <span className="nav-label">People</span>
@@ -452,25 +461,24 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
             <span className="nav-label">Post to {label}</span>
           </Link>)}
           {[
-            { to: '/search?tab=groups&create=1', icon: 'groups', label: 'Create a group' },
-            { to: '/groups/post', icon: 'groups', label: 'Post to a group' },
-            { to: '/command-center?tab=crosspost', icon: 'crosspost', label: 'Cross post' },
-          ].map(({ to, icon, label }) => (
-            <NavLink
+            { to: '/search?tab=groups&create=1', icon: 'groups', label: 'Create a group', active: isCreateGroupRoute },
+            { to: '/groups/post', icon: 'groups', label: 'Post to a group', active: location.pathname === '/groups/post' },
+            { to: '/command-center?tab=crosspost', icon: 'crosspost', label: 'Cross post', active: isCrossPostRoute },
+          ].map(({ to, icon, label, active }) => (
+            <Link
               key={to}
               to={to}
-              end={icon === 'home'}
+              aria-current={active ? 'page' : undefined}
               aria-label={label}
               title={label}
-              onClick={icon === 'home' ? handleAllFeedHomeClick : undefined}
-              className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
+              className={`nav-link${active ? ' active' : ''}`}
             >
               <span className="nav-icon" style={{ position: 'relative' }}>
                 <ShellIcon name={icon} size={17} />
                 {to === '/notifications' && <NavBadge count={notifBadge} />}
               </span>
               <span className="nav-label">{label}</span>
-            </NavLink>
+            </Link>
           ))}
           <SavedNavigation expanded={savedExpanded} onToggle={toggleSavedNavigation} />
         </nav>
@@ -560,7 +568,6 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
               <input type="search" value={mobileSearchQuery} aria-label="Search UFIconnect" placeholder={feedSearch?.label || 'Search'} title={feedSearch?.label || 'Search UFIconnect'} enterKeyHint="search"
                 onFocus={closeMobileOverlays} onChange={event => setMobileSearchQuery(event.target.value)} />
               {mobileSearchQuery && <button type="button" className="global-search-clear" aria-label="Clear feed search" title="Clear search" onClick={() => { setMobileSearchQuery(''); feedSearch?.onSubmit(''); }}><ShellIcon name="close" size={14} /></button>}
-              <button type="button" className="global-search-open" aria-label="Open search" title="Search posts, people, groups and jobs" aria-haspopup="dialog" aria-expanded={searchPopupOpen} onClick={openSearchPopup}><ChevronDown size={16} aria-hidden="true" /></button>
             </form>}
           <NavLink to="/notifications" className="global-desktop-alerts" aria-label="Alerts" title="Alerts">
             <ShellIcon name="notifications" size={19} /><NavBadge count={notifBadge} />
@@ -654,7 +661,10 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
             </button>
           </div>
           <div className="mobile-feed-drawer-content">
-            <Link to="/people" className={"mobile-command-menu-item" + (location.pathname === "/people" ? " active" : "")} onClick={closeMobileOverlays}>
+            <Link to="/search" className={`mobile-command-menu-item${isSearchRoute ? ' active' : ''}`} aria-current={isSearchRoute ? 'page' : undefined} aria-label="Search" title="Search" onClick={closeMobileOverlays}>
+              <ShellIcon name="search" size={20} />Search
+            </Link>
+            <Link to="/people" className={"mobile-command-menu-item" + (location.pathname === "/people" ? " active" : "")} aria-current={location.pathname === '/people' ? 'page' : undefined} onClick={closeMobileOverlays}>
               <UsersRound size={20} aria-hidden="true" />People
             </Link>
             <Link to="/?feed=ufi&compose=1" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
@@ -670,15 +680,15 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
               className="mobile-command-menu-item" onClick={closeMobileOverlays}>
               <ShellIcon name={icon} size={18} />Post to {label}
             </Link>)}
-            <Link to="/search?tab=groups&create=1" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
+            <Link to="/search?tab=groups&create=1" className={`mobile-command-menu-item${isCreateGroupRoute ? ' active' : ''}`} aria-current={isCreateGroupRoute ? 'page' : undefined} onClick={closeMobileOverlays}>
               <UsersRound size={20} aria-hidden="true" />
               Create a group
             </Link>
-            <Link to="/groups/post" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
+            <Link to="/groups/post" className={`mobile-command-menu-item${location.pathname === '/groups/post' ? ' active' : ''}`} aria-current={location.pathname === '/groups/post' ? 'page' : undefined} onClick={closeMobileOverlays}>
               <SquarePen size={20} aria-hidden="true" />
               Post to a group
             </Link>
-            <Link to="/command-center?tab=crosspost" className="mobile-command-menu-item" onClick={closeMobileOverlays}>
+            <Link to="/command-center?tab=crosspost" className={`mobile-command-menu-item${isCrossPostRoute ? ' active' : ''}`} aria-current={isCrossPostRoute ? 'page' : undefined} onClick={closeMobileOverlays}>
               <ShellIcon name="crosspost" size={18} />
               Cross post
             </Link>

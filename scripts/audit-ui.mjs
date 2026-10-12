@@ -236,7 +236,7 @@ try {
     assert.equal(await firstSlide.getByRole('button', { name: 'Show video controls', exact: true }).count(), 0, 'Core video commands do not require a reveal button');
     assert.ok(await firstSlide.getByRole('group', { name: 'Post actions', exact: true }).isVisible());
     assert.ok(await firstSlide.getByLabel('Playback time', { exact: true }).isVisible());
-    assert.ok(await page.evaluate(() => window.__auditYouTubePlayers.some(player => player.options.playerVars.controls === 1)), 'YouTube keeps its own playback controls');
+    assert.ok(await page.evaluate(() => window.__auditYouTubePlayers.some(player => player.options.playerVars.controls === 0)), 'The shared playback row replaces the duplicate YouTube toolbar');
     assert.equal(await firstSlide.getByRole('button', { name: /^(?:Play|Pause) video$/ }).count(), 1, 'Play/pause stays visible beside the video cursor');
     assert.equal(await firstSlide.getByRole('button', { name: /^(?:Mute|Unmute) video$/ }).count(), 1, 'Mute/unmute stays visible beside the video cursor');
     assert.equal(await firstSlide.locator('.post-chrome-identity').getAttribute('href'), 'https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv');
@@ -292,7 +292,7 @@ try {
     const nativeMenu = page.getByRole('menu', { name: 'Post options on Mastodon', exact: true });
     await nativeMenu.waitFor({ state: 'visible' });
     assert.equal(await nativeMenu.getByRole('menuitem', { name: /^(?:Show|Hide) player controls$/ }).count(), 0, 'Native controls do not require an overflow toggle');
-    await nativeMenu.getByRole('menuitem', { name: /^Player settings\b/ }).waitFor({ state: 'visible' });
+    await nativeMenu.getByRole('menuitem', { name: /^Mastodon settings\b/ }).waitFor({ state: 'visible' });
     await page.keyboard.press('Escape');
     assert.equal(await native.evaluate(el => el.controls), false, 'The shared controls replace duplicate native controls');
     const nativeSlide = page.locator('[data-post-id="audit-video-1"]');

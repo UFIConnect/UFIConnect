@@ -15,6 +15,7 @@ import { changesVaultContent } from '../vault/vaultEntitlement.mjs';
 import { readImportText } from '../utils/importText.mjs';
 import './Vault.css';
 import { safeLaunchUrl, cleanVaultPreferences, VAULT_COMMANDS } from '../vault/vaultLaunchers.mjs';
+import { isNativeRuntime } from '../nativeRuntime.mjs';
 
 const EMPTY_ENTRY = { name: '', url: '', appUrl: '', username: '', password: '', notes: '', favorite: false, launchCount: 0 };
 const COMMAND_LABELS = { add: 'Add password', import: 'Import from this device', backup: 'Encrypted backup', web: 'Open website', app: 'Open app', copy: 'Copy password' };
@@ -87,11 +88,12 @@ function HardwareVerification({ accountId }) {
     <p>UFI Vault is designed to keep device keys inside its secure element. Each approval must confirm the account and action, expire quickly, and work only once.</p>
     <p>Secure hardware pairing and recovery are pending. Hardware verification is not active for your browser vault.</p>
     {configured && status.lastVerifiedAt && <p className="vault-helper">Last server device check: <time dateTime={status.lastVerifiedAt}>{dateLabel(status.lastVerifiedAt)}</time></p>}
-    <p className="vault-footnote">Your browser vault uses its passphrase and optional device unlock. Its contents stay outside analytics and learning features.</p>
+    <p className="vault-footnote">{isNativeRuntime() ? 'Your app vault uses its passphrase. Keep an encrypted backup and its passphrase for recovery.' : 'Your browser vault uses its passphrase and optional device unlock.'} Its contents stay outside analytics and learning features.</p>
   </section>;
 }
 
 export default function Vault({ accountId }) {
+  const native = isNativeRuntime();
   const [searchParams, setSearchParams] = useSearchParams();
   const billing = useVpnSubscription(accountId, LOCAL_PREVIEW);
   const canWrite = LOCAL_PREVIEW || billing.active;
@@ -374,7 +376,7 @@ export default function Vault({ accountId }) {
       const next = await changePassphrase(session, newPassphrase, { signal: operation.signal });
       if (request === epoch.current && !document.hidden) {
         setSession(next); setDeviceReady(false); setRecoveryOpen(false); setNewPassphrase(''); setNewConfirmation('');
-        setNotice('Vault passphrase updated. Your items are preserved. Download a new encrypted backup and set up device unlock again. Older backups still need their original passphrase.');
+        setNotice(native ? 'Vault passphrase updated. Your items are preserved. Download a new encrypted backup. Older backups still need their original passphrase.' : 'Vault passphrase updated. Your items are preserved. Download a new encrypted backup and set up device unlock again. Older backups still need their original passphrase.');
       }
     } catch (failure) { if (request === epoch.current) setError(failure.message || 'The passphrase could not be changed. Your vault is unchanged.'); }
     finally { if (recoveryOperation.current === operation) recoveryOperation.current = null; if (request === epoch.current) setBusy(false); }
@@ -382,7 +384,7 @@ export default function Vault({ accountId }) {
 
   async function setupDevice(event) {
     event.preventDefault();
-    if (!session) return;
+    if (!session || native) return;
     const request = epoch.current;
     setBusy(true); setError('');
     try {
@@ -446,14 +448,14 @@ export default function Vault({ accountId }) {
           <div className="vault-lock-art" aria-hidden="true"><div className="vault-lock-orbit" /><span className="vault-orbit-app vault-orbit-app--one">@</span><span className="vault-orbit-app vault-orbit-app--two"><KeyRound size={19} /></span><span className="vault-orbit-app vault-orbit-app--three"><Globe2 size={20} /></span><div className="vault-lock-core"><ShieldCheck size={59} strokeWidth={1.1} /></div><span className="vault-art-label"><LockKeyhole size={12} />ONLY YOU HOLD THE KEY</span></div>
           <div className="vault-unlock-content"><span className="vault-eyebrow">A SPACE THAT’S YOURS</span><h2 id="vault-unlock-title">{exists ? 'Welcome back.' : 'Start with your key.'}</h2><p>{exists ? 'Unlock your passwords, documents, and keys with your vault passphrase.' : 'Create a passphrase to keep your private items encrypted on this browser.'}</p>
             <div ref={setSubscriptionTarget} className="vault-subscription-slot" />
-            {!exists && !canWrite && <p role="status">{billing.checking ? 'Checking your Vault membership…' : 'Subscribe above to activate your Vault, then create your passphrase below. Already subscribed? Choose Check subscription status.'}</p>}
+            {!exists && !canWrite && <p role="status">{billing.checking ? 'Checking your Vault membership…' : native ? 'An active Vault membership is required to create a vault. If you already have one, choose Check membership status above.' : 'Subscribe above to activate your Vault, then create your passphrase below. Already subscribed? Choose Check subscription status.'}</p>}
             <form onSubmit={openVault}><label className="vault-field">Vault passphrase<input type="password" name="vault-passphrase" autoComplete={exists ? 'current-password' : 'new-password'} value={passphrase} onChange={event => setPassphrase(event.target.value)} required minLength={12} maxLength={1024} placeholder={exists ? 'Enter your passphrase' : 'At least 12 characters'} /></label>
               {!exists && <label className="vault-field">Confirm passphrase<input type="password" autoComplete="new-password" value={confirmation} onChange={event => setConfirmation(event.target.value)} required minLength={12} maxLength={1024} placeholder="Enter it again" /></label>}
               <button className="vault-button vault-button--primary vault-button--full" disabled={busy || (!exists && !canWrite)}><LockKeyhole size={17} />{busy ? 'Opening vault…' : exists ? 'Unlock vault' : 'Create vault'}<ChevronRight size={17} /></button>
-              {deviceReady && <button type="button" className="vault-button vault-button--secondary vault-button--full" disabled={busy} onClick={useDeviceUnlock}><FaceScan size={18} />Unlock with device</button>}
+              {!native && deviceReady && <button type="button" className="vault-button vault-button--secondary vault-button--full" disabled={busy} onClick={useDeviceUnlock}><FaceScan size={18} />Unlock with device</button>}
             </form>
             {exists && <button className="vault-text-button vault-recovery-link" type="button" disabled={busy} onClick={() => { setError(''); setPassphrase(''); setRecoveryOpen(true); }}>Forgot vault password?</button>}
-            <p className="vault-footnote">Saved only in this browser for this account, with no cloud sync. Recovery needs previously configured device unlock or an encrypted backup with its passphrase. Keep a backup before clearing browser data or changing devices.</p>
+            <p className="vault-footnote">{native ? 'Saved only in this app on this device for this account, with no cloud sync. Recovery needs an encrypted backup and its passphrase. Keep a backup before removing the app or changing devices.' : 'Saved only in this browser for this account, with no cloud sync. Recovery needs previously configured device unlock or an encrypted backup with its passphrase. Keep a backup before clearing browser data or changing devices.'}</p>
             {!exists && <button className="vault-text-button" type="button" onClick={() => { setError(''); setRestoreOpen(true); }}>Already have a backup? Restore it <ArrowUpRight size={14} /></button>}
           </div>
         </section> : selectedApp ? <VaultSourceApp key={selectedApp.id} entry={selectedApp} busy={busy} onBack={() => setSearchParams({})} onCopy={copyPassword} launchLinks={sourceLaunchLinks} /> : <section className="vault-panel vault-password-panel" aria-labelledby="vault-password-title">
@@ -481,7 +483,7 @@ export default function Vault({ accountId }) {
         </section>}
 
         <div className="vault-device-grid"><section className="vault-panel vault-device-panel" aria-labelledby="vault-device-title"><div className="vault-panel-heading"><span className="vault-eyebrow">UFI DEVICE</span><span className="vault-pending">Awaiting hardware</span></div><div className="vault-device-body"><VaultCardDesign compact /><div><h2 id="vault-device-title">Your physical connection.</h2><p>Explore the UFI Vault Card design. Device pairing and orders are not open yet.</p></div></div><Link className="vault-text-button" to="/vault/device">View device <ArrowUpRight size={14} /></Link><button className="vault-button vault-button--secondary vault-button--full" disabled><Plus size={16} />Connect device · pending</button></section>
-          <section className="vault-panel vault-face-panel" aria-labelledby="vault-face-title"><div className="vault-panel-heading"><span className="vault-eyebrow">QUICK ACCESS</span><span className="vault-pending">{deviceReady ? 'Configured' : 'Not configured'}</span></div><div className="vault-face-art"><FaceScan size={40} /></div><h2 id="vault-face-title">Face ID / device unlock</h2><p>Face ID on supported Apple devices; your browser controls device verification.</p>{deviceReady ? <button className="vault-button vault-button--secondary vault-button--full" disabled={busy || !!session} onClick={useDeviceUnlock}><FaceScan size={17} />{session ? 'Device unlock is ready' : 'Unlock with device'}</button> : <button className="vault-button vault-button--secondary vault-button--full" disabled={!session || busy} onClick={() => { setError(''); setDeviceSetupOpen(true); }}><FaceScan size={17} />{session ? 'Set up device unlock' : 'Unlock vault to set up'}</button>}</section></div>
+          {native ? <section className="vault-panel vault-face-panel" aria-labelledby="vault-recovery-title"><div className="vault-panel-heading"><span className="vault-eyebrow">RECOVERY</span></div><div className="vault-face-art"><KeyRound size={40} /></div><h2 id="vault-recovery-title">Keep your vault recoverable</h2><p>Unlock this app's vault with its passphrase. Keep an encrypted backup and the backup's passphrase somewhere safe.</p><p>Browser device unlock is unavailable in this app.</p></section> : <section className="vault-panel vault-face-panel" aria-labelledby="vault-face-title"><div className="vault-panel-heading"><span className="vault-eyebrow">QUICK ACCESS</span><span className="vault-pending">{deviceReady ? 'Configured' : 'Not configured'}</span></div><div className="vault-face-art"><FaceScan size={40} /></div><h2 id="vault-face-title">Face ID / device unlock</h2><p>Face ID on supported Apple devices; your browser controls device verification.</p>{deviceReady ? <button className="vault-button vault-button--secondary vault-button--full" disabled={busy || !!session} onClick={useDeviceUnlock}><FaceScan size={17} />{session ? 'Device unlock is ready' : 'Unlock with device'}</button> : <button className="vault-button vault-button--secondary vault-button--full" disabled={!session || busy} onClick={() => { setError(''); setDeviceSetupOpen(true); }}><FaceScan size={17} />{session ? 'Set up device unlock' : 'Unlock vault to set up'}</button>}</section>}</div>
         <p className="vault-local-note"><LockKeyhole size={14} />{LOCAL_PREVIEW ? 'Local preview. ' : 'Browser vault beta. '}Passwords, documents, and keys are saved encrypted in this browser; they do not sync with your account or other devices. Keep an encrypted backup and its passphrase for recovery. Independent security review and UFI hardware integration are pending.</p>
       </div><aside className="vault-secondary-column" aria-label="Web protection and verification"><VaultVpnPanel accountId={accountId} activityTarget={activityTarget} subscriptionTarget={subscriptionTarget} billing={billing} /><div ref={setActivityTarget} className="vault-activity-slot" /><HardwareVerification accountId={accountId} /></aside></div>
     </section>
@@ -535,14 +537,14 @@ export default function Vault({ accountId }) {
         <p className="vault-helper">Your vault is unlocked. Choose a new passphrase to protect the same passwords, documents and keys. Your UFIConnect account password stays the same.</p>
         <label className="vault-field">New vault passphrase<input type="password" autoComplete="new-password" required minLength={12} maxLength={1024} value={newPassphrase} onChange={event => setNewPassphrase(event.target.value)} placeholder="At least 12 characters" /></label>
         <label className="vault-field">Confirm new vault passphrase<input type="password" autoComplete="new-password" required minLength={12} maxLength={1024} value={newConfirmation} onChange={event => setNewConfirmation(event.target.value)} /></label>
-        <p className="vault-helper">After saving, download a new encrypted backup and set up device unlock again. Older backups still require the passphrase they were created with.</p>
+        <p className="vault-helper">{native ? 'After saving, download a new encrypted backup. Older backups still require the passphrase they were created with.' : 'After saving, download a new encrypted backup and set up device unlock again. Older backups still require the passphrase they were created with.'}</p>
         {error && <p className="vault-form-error" role="alert">{error}</p>}
         <button className="vault-button vault-button--primary vault-button--full" disabled={busy}>{busy ? 'Securing your vault…' : 'Save new passphrase'}</button>
       </form> : <div className="vault-entry-form vault-recovery-options">
         <p>Your vault passphrase is separate from your UFIConnect sign-in password. It encrypts your items on this browser, so UFIConnect cannot email or recover it.</p>
-        <section><h3>Use device unlock</h3><p>{deviceReady ? 'Verify with the device unlock you already set up, then choose a new vault passphrase. Your browser may use Face ID, a fingerprint or another device verification method.' : 'Device unlock was not set up for this vault. It must be configured while the vault is unlocked before it can help with recovery.'}</p><button type="button" className="vault-button vault-button--secondary vault-button--full" disabled={busy || !deviceReady} onClick={recoverWithDevice}><FaceScan size={18} />{busy ? 'Waiting for your device…' : 'Recover with device unlock'}</button></section>
+        {!native && <section><h3>Use device unlock</h3><p>{deviceReady ? 'Verify with the device unlock you already set up, then choose a new vault passphrase. Your browser may use Face ID, a fingerprint or another device verification method.' : 'Device unlock was not set up for this vault. It must be configured while the vault is unlocked before it can help with recovery.'}</p><button type="button" className="vault-button vault-button--secondary vault-button--full" disabled={busy || !deviceReady} onClick={recoverWithDevice}><FaceScan size={18} />{busy ? 'Waiting for your device…' : 'Recover with device unlock'}</button></section>}
         <section><h3>Restore an encrypted backup</h3><p>Use a backup whose passphrase you still know. You will save an encrypted copy of this locked vault before replacing it with the backup.</p><button type="button" className="vault-button vault-button--secondary vault-button--full" disabled={busy} onClick={() => { setRecoveryOpen(false); setRestoreFromRecovery(true); setRecoveryBackup(''); setRestoreConfirmed(false); setError(''); setRestoreOpen(true); }}>Restore a known backup</button></section>
-        <p className="vault-helper">Without device unlock or a backup passphrase, these encrypted items cannot be recovered. Keep your browser data and save an encrypted copy in case you remember the passphrase later.</p>
+        <p className="vault-helper">{native ? 'Without your vault passphrase or a backup whose passphrase you know, these encrypted items cannot be recovered. Keep the app data and save an encrypted copy in case you remember the passphrase later.' : 'Without device unlock or a backup passphrase, these encrypted items cannot be recovered. Keep your browser data and save an encrypted copy in case you remember the passphrase later.'}</p>
         <button type="button" className="vault-text-button" disabled={busy} onClick={downloadBackup}><Download size={16} />Save encrypted copy</button>
         <Link className="vault-text-button" to="/forgot-password">Reset UFIConnect sign-in password <ArrowUpRight size={14} /></Link>
         {error && <p className="vault-form-error" role="alert">{error}</p>}

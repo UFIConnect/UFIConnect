@@ -6,6 +6,7 @@ import PostLinkPreviews from '../components/PostLinkPreviews';
 import PostImage from '../components/PostImage';
 import SourceMediaFallback from '../components/SourceMediaFallback';
 import VimeoPreview from '../components/VimeoPreview';
+import MediaPlaybackControls from '../components/MediaPlaybackControls';
 import { extractVimeoId } from '../components/videoMedia';
 ﻿import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
@@ -19,7 +20,7 @@ import { OpenOnSource, PostHeader, PostOptionsMenu } from '../components/PostCar
 import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
-import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, loadYouTubeIframeApi, useGlobalMuted } from '../components/videoMedia';
+import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, loadYouTubeIframeApi, createYouTubePlayerFrame, useGlobalMuted } from '../components/videoMedia';
 import { SavePostButton } from '../components/SaveButtons';
 
 function timeAgo(iso) {
@@ -86,36 +87,103 @@ export default function PostDetail() {
   const ytMountRef = useRef(null);
   const ytPlayerRef = useRef(null);
   const fileVideoRef = useRef(null);
+  const [ytReady, setYtReady] = useState(false);
+  const [ytFailed, setYtFailed] = useState(false);
+  const [playback, setPlayback] = useState({ paused: true, currentTime: 0, duration: 0 });
 
   // Real IFrame Player API, not a raw <iframe src="..."> — needed so the
   // mute button here can imperatively call mute()/unMute(), and so this
   // player can react when muted changes because of a click on some other
   // video elsewhere. Same pattern as ImageLightbox/VideoFeedView.
   useEffect(() => {
-    if (!youtubeId) return;
+    setYtReady(false);
+    setYtFailed(false);
+    if (!youtubeId || loading) return;
+    const host = ytMountRef.current;
+    if (!host) return;
     let cancelled = false;
+    let player;
     const startUnmuted = !muted;
+    host.replaceChildren();
+    const playerVars = { autoplay: 1, mute: 1, playsinline: 1, controls: 0, rel: 0, origin: window.location.origin };
+    const mount = createYouTubePlayerFrame(host, youtubeId, playerVars, post?.title || 'YouTube video');
+    const readyTimeout = setTimeout(() => { if (!cancelled) setYtFailed(true); }, 6000);
     loadYouTubeIframeApi().then((YT) => {
-      if (cancelled || !ytMountRef.current) return;
-      const player = new YT.Player(ytMountRef.current, {
+      if (cancelled || !mount.isConnected) return;
+      player = new YT.Player(mount, {
         videoId: youtubeId,
-        playerVars: { autoplay: 1, mute: 1, playsinline: 1, modestbranding: 1, rel: 0, origin: window.location.origin },
+        playerVars,
         events: {
           onReady: (e) => {
-            if (cancelled) return;
+            if (cancelled) { try { e.target.destroy(); } catch {} return; }
+            clearTimeout(readyTimeout);
             ytPlayerRef.current = e.target;
-            if (startUnmuted) e.target.unMute();
-            e.target.playVideo();
+            setYtReady(true);
+            setYtFailed(false);
+            try {
+              if (startUnmuted) e.target.unMute();
+              e.target.playVideo();
+            } catch { setYtFailed(true); }
           },
+          onError: () => { if (!cancelled) { clearTimeout(readyTimeout); setYtReady(false); setYtFailed(true); } },
         },
       });
-    }).catch(() => {});
+      ytPlayerRef.current = player;
+    }).catch(() => { if (!cancelled) setYtFailed(true); });
     return () => {
       cancelled = true;
-      try { ytPlayerRef.current?.destroy(); } catch {}
-      ytPlayerRef.current = null;
+      clearTimeout(readyTimeout);
+      try { player?.destroy(); } catch {}
+      if (ytPlayerRef.current === player) ytPlayerRef.current = null;
+      try { host.replaceChildren(); } catch {}
     };
-  }, [youtubeId]);
+  }, [youtubeId, loading]);
+
+  useEffect(() => {
+    setPlayback({ paused: true, currentTime: 0, duration: 0 });
+    if (loading) return;
+    const readPlayback = () => {
+      try {
+        if (youtubeId) {
+          const player = ytPlayerRef.current;
+          if (!ytReady || player?.getVideoData?.()?.video_id !== youtubeId) return;
+          const state = player.getPlayerState();
+          setPlayback({ paused: state !== 1 && state !== 3, currentTime: player.getCurrentTime() || 0, duration: player.getDuration() || 0 });
+        } else if (fileVideoRef.current) {
+          const video = fileVideoRef.current;
+          setPlayback({ paused: video.paused, currentTime: video.currentTime || 0, duration: video.duration || 0 });
+        }
+      } catch {}
+    };
+    readPlayback();
+    const interval = setInterval(readPlayback, 250);
+    return () => clearInterval(interval);
+  }, [loading, post?.id, youtubeId, ytReady]);
+
+  function togglePlayback() {
+    try {
+      if (youtubeId) {
+        const player = ytPlayerRef.current;
+        if (!ytReady || player?.getVideoData?.()?.video_id !== youtubeId) return;
+        const state = player.getPlayerState();
+        if (state === 1 || state === 3) player.pauseVideo(); else player.playVideo();
+      } else {
+        const video = fileVideoRef.current;
+        if (!video) return;
+        if (video.paused) video.play().catch(() => {}); else video.pause();
+      }
+    } catch {}
+  }
+
+  function seekPlayback(seconds) {
+    if (!Number.isFinite(seconds)) return;
+    try {
+      if (youtubeId) {
+        const player = ytPlayerRef.current;
+        if (ytReady && player?.getVideoData?.()?.video_id === youtubeId) player.seekTo(seconds, true);
+      } else if (fileVideoRef.current) fileVideoRef.current.currentTime = seconds;
+    } catch {}
+  }
 
   useEffect(() => {
     if (!youtubeId || !ytPlayerRef.current) return;
@@ -252,41 +320,26 @@ export default function PostDetail() {
           {vimeoId && <VimeoPreview id={vimeoId} title={post.title} />}
           {isVideo && !youtubeId && !vimeoId && !playlistUrl && !directVideoUrl && <SourceMediaFallback post={post} />}
           {youtubeId && (
-            // Real IFrame Player API (see the effects above), not a raw
-            // <iframe src="...">, so this button can actually mute/unmute
-            // it, and so an unmute anywhere else in the app (Feed, Videos,
-            // the lightbox) is reflected here live too.
             <div style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', aspectRatio: '16/9', marginBottom: 12, background: '#000' }}>
               <div ref={ytMountRef} style={{ width: '100%', height: '100%' }} />
-              <button
-                onClick={() => toggleMuted()}
-                aria-label={muted ? 'Unmute' : 'Mute'}
-                style={{ position: 'absolute', top: 12, right: 12, width: 38, height: 38, borderRadius: '50%', background: 'rgba(0,0,0,.55)', border: 'none', color: '#fff', fontSize: '1.05rem', cursor: 'pointer' }}
-              >{muted ? 'M' : 'S'}</button>
             </div>
           )}
           {!youtubeId && (playlistUrl || directVideoUrl) && (
-            // This is the single dedicated post page, not a scrolling
-            // preview, so native controls stay on for seek/fullscreen — but
-            // mute now goes through the same shared toggle every other
-            // video surface uses (see useGlobalMuted above), not a one-time
-            // read of the stored preference, so it both reacts to an
-            // unmute elsewhere and broadcasts its own.
             <div style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', marginBottom: 12, background: '#000' }}>
               {playlistUrl ? (
-                <HlsVideoPlayer src={playlistUrl} poster={post.mediaPoster} autoPlay muted={muted}
+                <HlsVideoPlayer videoRef={fileVideoRef} src={playlistUrl} poster={post.mediaPoster} autoPlay muted={muted} controls={false} onClick={togglePlayback}
                   style={{ width: '100%', display: 'block', maxHeight: 480 }} />
               ) : (
-                <video ref={fileVideoRef} src={directVideoUrl} poster={post.mediaPoster} controls autoPlay playsInline
+                <video ref={fileVideoRef} src={directVideoUrl} poster={post.mediaPoster} controls={false} autoPlay playsInline onClick={togglePlayback}
                   muted={muted} style={{ width: '100%', display: 'block', maxHeight: 480, background: '#000' }} />
               )}
-              <button
-                onClick={() => toggleMuted()}
-                aria-label={muted ? 'Unmute' : 'Mute'}
-                style={{ position: 'absolute', top: 12, right: 12, width: 38, height: 38, borderRadius: '50%', background: 'rgba(0,0,0,.55)', border: 'none', color: '#fff', fontSize: '1.05rem', cursor: 'pointer' }}
-              >{muted ? 'M' : 'S'}</button>
             </div>
           )}
+          {(youtubeId || playlistUrl || directVideoUrl) && !ytFailed && <MediaPlaybackControls
+            paused={playback.paused} muted={muted} currentTime={playback.currentTime} duration={playback.duration}
+            onTogglePlay={togglePlayback} onToggleMute={toggleMuted} onSeek={seekPlayback}
+            disabled={Boolean(youtubeId && !ytReady)} />}
+          {youtubeId && ytFailed && <p role="status">Playback is unavailable here. <a href={`https://www.youtube.com/watch?v=${youtubeId}`} target="_blank" rel="noopener noreferrer">Open on YouTube</a></p>}
           {!youtubeId && !playlistUrl && !directVideoUrl && isImage && post.mediaUrl && (
             <div style={{ borderRadius: 14, overflow: 'hidden', marginBottom: 12 }}>
               <PostImage post={post} style={{ width: '100%', display: 'block', maxHeight: 480, objectFit: 'contain', background: 'var(--surface)' }} />

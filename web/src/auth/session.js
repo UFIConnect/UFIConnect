@@ -1,6 +1,7 @@
 // Bearer credentials and member caches live only in this page's memory.
 // The API may restore the bearer from its HttpOnly session cookie; JavaScript
 // never writes credentials to localStorage, sessionStorage, or Cache Storage.
+import { persistNativeSession, reportNativeError } from '../nativeRuntime.mjs';
 let accessToken = null;
 const sessionValues = new Map();
 const listeners = new Set();
@@ -36,11 +37,21 @@ export function clearLegacyPrivateStorage() {
   }
 }
 
-export function clearSession() {
+export function clearSessionCaches() {
   sessionValues.clear();
   clearLegacyPrivateStorage();
-  setAccessToken(null);
   if (typeof window !== 'undefined') window.dispatchEvent(new Event('ufi-session-cleared'));
+}
+
+export function clearSession() {
+  clearSessionCaches();
+  setAccessToken(null);
+  // The native host also forgets its secure credential on explicit logout,
+  // expiry, account deletion, and every other shared session-clear path.
+  return persistNativeSession(null).then(() => true).catch(() => {
+    reportNativeError('Your local account session could not be removed. Please close the app and try again.');
+    return false;
+  });
 }
 
 // Runs before the provider mounts, including when upgrading an existing tab.

@@ -59,6 +59,8 @@
 .video-feed-view .video-feed-loading { position: absolute; z-index: 5; inset: 0; display: grid; place-content: center; color: #fff; background: #0008; pointer-events: none; }
 .video-feed-view .video-feed-placeholder { height: 100%; background: var(--video-chrome); }
 .video-feed-view .video-feed-playback-note { color: #edc581; font-size: .7rem; line-height: 1.4; margin: 3px 0; }
+.video-feed-view .video-feed-provider-credit { margin: 4px 0; color: var(--video-muted); font-size: .7rem; }
+.video-feed-view .video-feed-provider-credit a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
 @media (min-width: 769px) { .video-feed-view .video-feed-top-controls, .video-feed-view .video-feed-details, .video-feed-view .video-feed-playback-status { padding-inline: 24px; } }
 @media (max-width: 400px) {
   .video-feed-view .video-feed-top-controls { gap: 3px; padding-inline: 5px; }

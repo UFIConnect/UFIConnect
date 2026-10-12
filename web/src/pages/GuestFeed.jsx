@@ -11,6 +11,7 @@ import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import GuestShell from '../components/GuestShell';
 import PublicFooter from '../components/PublicFooter';
+import ResultsPagination from '../components/ResultsPagination';
 import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
 import { OpenOnSource, PostHeader, PostOptionsMenu } from '../components/PostCardChrome';
@@ -18,10 +19,9 @@ import PostLikes from '../components/PostLikes';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, youTubeEmbedUrl, HlsVideoPlayer, useGlobalMuted, SoundIcon } from '../components/videoMedia';
+import { isNativeRuntime } from '../nativeRuntime.mjs';
 
 const GUEST_FEED_AUTO_REFRESH_MS = 2 * 60 * 1000;
-const GUEST_DEDUP_WINDOW = 500;
-const GUEST_EMPTY_STREAK_LIMIT = 6;
 
 function guestPostIdentity(post) {
   return post?.id || `${post?.source || 'feed'}:${post?.sourceUrl || post?.title || ''}:${post?.createdAt || ''}`;
@@ -70,10 +70,13 @@ function GuestVideoPlayer({ post, active, muted }) {
   if (youtubeId) {
     return (
       <div style={{ width: '100%', aspectRatio: '16/9', background: '#000', position: 'relative' }}>
-        {active ? (
+        {active && isNativeRuntime() ? (
+          <a href={`https://www.youtube.com/watch?v=${youtubeId}`} target="_blank" rel="noopener noreferrer"
+            style={{ display: 'grid', placeItems: 'center', width: '100%', height: '100%', color: '#fff' }}>Open on YouTube</a>
+        ) : active ? (
           <iframe
             key={muted ? 'muted' : 'unmuted'}
-            src={youTubeEmbedUrl(youtubeId, { autoplay: 1, mute: muted ? 1 : 0 })}
+            src={youTubeEmbedUrl(youtubeId, { autoplay: 1, mute: muted ? 1 : 0, controls: 0 })}
             referrerPolicy="strict-origin-when-cross-origin"
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', pointerEvents: 'auto' }}
             allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
@@ -90,7 +93,7 @@ function GuestVideoPlayer({ post, active, muted }) {
   }
   if (playlistUrl) {
     return active ? (
-      <HlsVideoPlayer src={playlistUrl} poster={null} autoPlay muted={muted} loop
+      <HlsVideoPlayer src={playlistUrl} poster={null} autoPlay muted={muted} loop controls={false}
         style={{ width: '100%', display: 'block', maxHeight: 400 }} />
     ) : (
       <div style={{ height: 240, background: '#000', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.82rem', fontWeight: 800 }}>
@@ -182,88 +185,101 @@ function GuestPostCard({ post, active, muted, registerRef }) {
 export default function GuestFeed() {
   const [posts, setPosts] = useState([]);
   const [locationContext, setLocationContext] = useState(null);
-  const [cursor, setCursor] = useState(null);
+  const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [failedPage, setFailedPage] = useState(null);
   const [activePostId, setActivePostId] = useState(null);
   const [muted, toggleMuted] = useGlobalMuted();
-  const loadingMoreRef = useRef(false);
   const pendingRequest = useRef(null);
-  const knownIds = useRef(new Set());
-  const knownIdsQueue = useRef([]);
-  const emptyStreakRef = useRef(0);
-  const sentinelRef = useRef(null);
+  const pageRef = useRef(1);
+  const pageCursors = useRef(new Map([[1, null]]));
+  const pageCache = useRef(new Map());
+  const headingRef = useRef(null);
   const cardRefs = useRef(new Map());
 
-  const markKnownId = useCallback((id) => {
-    if (!id || knownIds.current.has(id)) return;
-    knownIds.current.add(id);
-    knownIdsQueue.current.push(id);
-    if (knownIdsQueue.current.length > GUEST_DEDUP_WINDOW) {
-      knownIds.current.delete(knownIdsQueue.current.shift());
+  const loadPage = useCallback(async (pageNo = 1, { reset = false, force = false } = {}) => {
+    if (!Number.isSafeInteger(pageNo) || pageNo < 1 || (!reset && !pageCursors.current.has(pageNo))) return false;
+    pendingRequest.current?.abort();
+    pendingRequest.current = null;
+    if (reset) {
+      pageNo = 1;
+      pageCursors.current = new Map([[1, null]]);
+      pageCache.current.clear();
+      pageRef.current = 1;
+      setPage(1);
+      setPosts([]);
+      setHasMore(false);
+      setActivePostId(null);
     }
-  }, []);
-
-  const loadPage = useCallback(async (reset = false, options = {}) => {
-    const { merge = false } = options || {};
-    if (loadingMoreRef.current) return;
-    loadingMoreRef.current = true;
+    setError('');
+    setFailedPage(null);
+    const cached = !force && pageCache.current.get(pageNo);
+    if (cached) {
+      pageRef.current = pageNo;
+      setPage(pageNo);
+      setActivePostId(null);
+      setPosts(cached.posts);
+      setHasMore(cached.hasMore);
+      setLocationContext(cached.locationContext);
+      setLoading(false);
+      setRefreshing(false);
+      return true;
+    }
+    setLoading(true);
+    setRefreshing(reset);
     const controller = new AbortController();
     pendingRequest.current = controller;
     try {
       const params = { limit: 20 };
-      if (!reset && cursor) params.cursor = cursor;
+      const cursor = pageCursors.current.get(pageNo);
+      if (cursor) params.cursor = cursor;
       const { data } = await client.get('/feed/guest', { params, signal: controller.signal });
-      if (controller.signal.aborted) return;
-      setLocationContext(data.locationContext || null);
-      setError('');
-      if (reset && !merge) {
-        knownIds.current = new Set();
-        knownIdsQueue.current = [];
-        emptyStreakRef.current = 0;
+      if (controller.signal.aborted || pendingRequest.current !== controller) return false;
+      const nextCursor = typeof data.cursor === 'string' && data.cursor ? data.cursor : null;
+      const cursorAdvanced = nextCursor && ![...pageCursors.current].some(([number, value]) => number <= pageNo && value === nextCursor);
+      const next = { posts: mergeGuestPosts((data.posts || []).filter(post => post?.id)),
+        hasMore: data.hasMore === true && Boolean(cursorAdvanced), locationContext: data.locationContext || null };
+      const visiblePage = pageCache.current.get(pageRef.current);
+      if (!next.posts.length && pageNo > 1 && visiblePage?.posts.length) {
+        pageCache.current.set(pageRef.current, { ...visiblePage, hasMore: false });
+        setHasMore(false);
+        return false;
       }
-      const rawIncoming = (data.posts || []).filter(p => p?.id);
-      const incoming = reset && merge
-        ? rawIncoming
-        : rawIncoming.filter(p => !knownIds.current.has(p.id));
-      incoming.forEach(p => markKnownId(p.id));
-      setPosts(prev => {
-        if (reset) return merge ? mergeGuestPosts(incoming, prev).slice(0, 120) : mergeGuestPosts(incoming, []);
-        return mergeGuestPosts(prev, incoming);
-      });
-      setCursor(data.cursor || null);
-      if (reset) {
-        if (rawIncoming.length > 0) emptyStreakRef.current = 0;
-      } else {
-        emptyStreakRef.current = incoming.length > 0 ? 0 : emptyStreakRef.current + 1;
-      }
-      setHasMore(data.hasMore !== false && emptyStreakRef.current < GUEST_EMPTY_STREAK_LIMIT);
+      if (next.hasMore) pageCursors.current.set(pageNo + 1, nextCursor);
+      pageCache.current.set(pageNo, next);
+      // Keep cursor history for Previous while bounding retained media/cards.
+      if (pageCache.current.size > 10) pageCache.current.delete(pageCache.current.keys().next().value);
+      pageRef.current = pageNo;
+      setPage(pageNo);
+      setActivePostId(null);
+      setPosts(next.posts);
+      setHasMore(next.hasMore);
+      setLocationContext(next.locationContext);
+      return true;
     } catch {
-      if (controller.signal.aborted) return;
-      setError('Public posts could not load. Refresh to try again.');
-      setHasMore(false);
+      if (controller.signal.aborted || pendingRequest.current !== controller) return false;
+      setError('This page of public posts could not load. Please try again.');
+      setFailedPage(pageNo);
+      return false;
     } finally {
       if (pendingRequest.current === controller) {
         setLoading(false);
-        setLoadingMore(false);
-        loadingMoreRef.current = false;
+        setRefreshing(false);
         pendingRequest.current = null;
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cursor, markKnownId]);
+  }, []);
 
   useEffect(() => {
-    loadPage(true);
+    loadPage(1);
     return () => {
       pendingRequest.current?.abort();
       pendingRequest.current = null;
-      loadingMoreRef.current = false;
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [loadPage]);
 
   // Full reset back to the freshest page 1 rather than merging, same as the
   // authenticated Feed's own manual refresh, so it actually reads as "live"
@@ -273,23 +289,16 @@ export default function GuestFeed() {
   // and scrolling back to the top, same convention every other list-style
   // page in the app uses (see useScrollToRefresh's own comment).
   const handleRefresh = useCallback(async () => {
-    if (refreshing) return;
-    setRefreshing(true);
-    knownIds.current = new Set();
-    knownIdsQueue.current = [];
-    emptyStreakRef.current = 0;
-    setCursor(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    await loadPage(true);
-    setRefreshing(false);
-  }, [refreshing, loadPage]);
-  useScrollToRefresh(handleRefresh, { enabled: !loading });
+    await loadPage(1, { reset: true });
+  }, [loadPage]);
+  useScrollToRefresh(handleRefresh, { enabled: page === 1 && !loading && !refreshing });
 
   useEffect(() => {
     const refreshQuietly = () => {
-      if (document.hidden || loading || refreshing || loadingMoreRef.current) return;
+      if (document.hidden || pageRef.current !== 1 || pendingRequest.current) return;
       if (window.scrollY > 900) return;
-      loadPage(true, { merge: true });
+      loadPage(1, { reset: true });
     };
     const interval = window.setInterval(refreshQuietly, GUEST_FEED_AUTO_REFRESH_MS);
     window.addEventListener('focus', refreshQuietly);
@@ -299,20 +308,7 @@ export default function GuestFeed() {
       window.removeEventListener('focus', refreshQuietly);
       document.removeEventListener('visibilitychange', refreshQuietly);
     };
-  }, [loading, refreshing, loadPage]);
-
-  useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el || !hasMore) return;
-    const observer = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting && hasMore && !loadingMoreRef.current) {
-        setLoadingMore(true);
-        loadPage(false);
-      }
-    }, { rootMargin: '400px' });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [hasMore, loadPage]);
+  }, [loadPage]);
 
   // Which video card is "active" (the only one that actually plays) — the
   // one nearest 60% in view, same threshold VideoFeedView's own swipe feed
@@ -343,9 +339,9 @@ export default function GuestFeed() {
         <meta name="description" content="Browse public posts and videos from across UFIconnect's supported sources. Explore the global feed before creating an account." />
         <link rel="canonical" href="https://uficonnect.org/global" />
       </Helmet>
-      <main className="guest-feed-main">
+      <main className="guest-feed-main paginated-feed-page">
         <section className="public-feed-intro" aria-labelledby="global-feed-title">
-          <h1 id="global-feed-title">Explore the global feed</h1>
+          <h1 id="global-feed-title" ref={headingRef}>Explore the global feed</h1>
           <p>Browse public posts and videos from across UFIconnect's supported sources, without creating an account. Open a post to read more and see where it came from.</p>
           <p>{locationContext?.available ? `Approximate area: ${[locationContext.city, locationContext.countryName || locationContext.country].filter(Boolean).join(', ')}. Public recommendations may use this area.` : 'Showing global public posts.'}</p>
           <p><Link to="/register">Create an account</Link> to personalize your feed, follow communities, and join conversations. Already a member? <Link to="/login">Sign in</Link>.</p>
@@ -374,11 +370,11 @@ export default function GuestFeed() {
         </div>
         <style>{'@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }'}</style>
 
-        {loading && (
+        {loading && posts.length === 0 && (
           <div role="status" style={{ textAlign: 'center', padding: 40 }}><span className="spinner spinner-primary" aria-hidden="true" /><span style={{ marginLeft: 8 }}>Loading public posts</span></div>
         )}
 
-        {!loading && posts.map((p, i) => (
+        {posts.map((p, i) => (
           <GuestPostCard
             key={`${p.id}-${i}`}
             post={p}
@@ -391,17 +387,15 @@ export default function GuestFeed() {
           />
         ))}
 
-        {error && <p role="alert" style={{ textAlign: 'center', padding: 20 }}>{error}</p>}
+        {error && <p role="alert" style={{ textAlign: 'center', padding: 20 }}>{error} <button type="button" className="btn btn-ghost btn-sm" disabled={loading} onClick={() => loadPage(failedPage || page, { force: true })}>Try again</button></p>}
         {!loading && !error && !posts.length && (
           <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)' }}>
             No public posts are available right now. Use Refresh to try again.
           </div>
         )}
 
-        <div ref={sentinelRef} style={{ height: 1 }} />
-        {loadingMore && (
-          <div style={{ textAlign: 'center', padding: 20 }}><span className="spinner spinner-primary" /></div>
-        )}
+        <ResultsPagination page={page} hasNext={hasMore} loading={loading || refreshing} ariaLabel="Public feed pages"
+          onPageChange={async next => { if (await loadPage(next)) headingRef.current?.scrollIntoView({ block: 'start' }); }} />
       </main>
       <PublicFooter />
     </GuestShell>
