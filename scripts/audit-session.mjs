@@ -6,6 +6,9 @@ export async function installAuditMember(page, app, userId) {
   // General UI/security audits opt out of optional analytics. Analytics has a
   // separate browser audit that exercises both choices without this fixture.
   await page.addInitScript(() => {
+    // Playwright also runs init scripts in official provider frames, whose
+    // sandbox may deny storage. This consent fixture belongs to the app only.
+    if (window !== window.top) return;
     localStorage.setItem('uficonnect.analytics.consent.v1', 'denied');
     localStorage.setItem('uficonnect.ads.consent.v1', 'denied');
   });

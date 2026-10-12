@@ -2,8 +2,8 @@
 // out of URL logs, history, and monitoring while retaining SSE messages.
 import { isNativeRuntime, nativeApiPath } from '../nativeRuntime.mjs';
 import { createNativeFeedPolling } from './nativePolling.mjs';
-import { getAccessToken } from '../auth/session';
-import client from './client';
+import { getAccessToken } from '../auth/session.js';
+import client from './client.js';
 
 export function createAuthenticatedStream(url, token) {
   if (isNativeRuntime()) {

@@ -108,17 +108,24 @@ try {
         check(await page.locator('.global-desktop-alerts').isVisible(), 'Alerts remain accessible beside search');
         const searchBounds = await page.locator('.global-search-bar').boundingBox();
         const navBounds = await headerNav.boundingBox();
-        const messagesBounds = await page.locator('.global-messages-link').boundingBox();
         const alertsBounds = await page.locator('.global-desktop-alerts').boundingBox();
         check(Math.abs(searchBounds.y - navBounds.y) < 2 && navBounds.x + navBounds.width <= searchBounds.x, 'Main destinations must sit left of search in the same row');
-        check(alertsBounds.x >= searchBounds.x + searchBounds.width && messagesBounds.x >= alertsBounds.x + alertsBounds.width, 'Alerts and Messages must sit right of search');
+        check(alertsBounds.x >= searchBounds.x + searchBounds.width, 'Alerts remain right of search');
+        const homeMessages = page.locator('.home-feed-rail-bottom').getByRole('button', { name: 'Messages', exact: true });
+        check(await homeMessages.isVisible(), 'Messages remains visible in the Home left rail');
+        check(await homeMessages.evaluate(element => element.previousElementSibling?.textContent.trim() === 'Discover groups'), 'Home Messages sits directly under Discover groups');
+        check(await page.locator('.global-search-center').getByRole('button', { name: 'Messages', exact: true }).count() === 0, 'Messages is not duplicated beside search');
         await headerNav.getByRole('link', { name: 'Jobs', exact: true }).click();
         await page.waitForURL('**/opportunities');
         await page.locator('.jobs-page-layout').waitFor();
-        await page.getByRole('button', { name: 'Open search', exact: true }).click();
-        const searchDialog = page.getByRole('dialog', { name: 'Search UFIconnect', exact: true });
-        check(await searchDialog.getByRole('tab', { name: 'Jobs', exact: true }).getAttribute('aria-selected') === 'true', 'Jobs opens the jobs search context');
-        await searchDialog.getByRole('button', { name: 'Close search', exact: true }).click();
+        const jobsMessages = page.locator('.jobs-page-layout .messages-navigation');
+        check(await jobsMessages.isVisible() && await jobsMessages.evaluate(element => element.previousElementSibling?.textContent.trim() === 'Discover groups'), 'Jobs Messages sits directly under Discover groups');
+        const jobsSearch = page.getByRole('search', { name: 'Search UFIconnect', exact: true });
+        await jobsSearch.getByRole('searchbox').fill('community engineer');
+        await jobsSearch.getByRole('button', { name: 'Search jobs', exact: true }).click();
+        await page.waitForURL(url => url.pathname === '/opportunities' && url.searchParams.get('q') === 'community engineer');
+        check(await jobsSearch.getByRole('searchbox').inputValue() === 'community engineer', 'Jobs header search preserves the current job context and query');
+        check(await page.getByRole('dialog', { name: 'Search UFIconnect', exact: true }).count() === 0, 'Jobs header search updates the page without a duplicate search dialog');
       } else {
         await opener.waitFor();
         const openerBounds = await opener.boundingBox();
@@ -128,6 +135,8 @@ try {
         await waitOpen();
         check(await page.evaluate(() => document.body.style.overflow === 'hidden'), 'Background must not scroll behind the drawer');
         const bounds = await drawer.boundingBox();
+        const search = await drawer.getByRole('link', { name: 'Search', exact: true }).boundingBox();
+        const people = await drawer.getByRole('link', { name: 'People', exact: true }).boundingBox();
         const post = await drawer.getByRole('link', { name: 'Post', exact: true }).boundingBox();
         const createGroup = await drawer.getByRole('link', { name: 'Create a group', exact: true }).boundingBox();
         const postToGroup = await drawer.getByRole('link', { name: 'Post to a group', exact: true }).boundingBox();
@@ -136,7 +145,8 @@ try {
         const profile = await drawer.getByRole('link', { name: 'Profile', exact: true }).boundingBox();
         const logout = await drawer.getByRole('button', { name: 'Log out', exact: true }).boundingBox();
         check(Math.abs(bounds.x) < 1 && bounds.width <= viewport.width, 'Drawer must open on the left');
-        check(post.y < 110 && post.y + post.height <= createGroup.y && createGroup.y + createGroup.height <= shop.y, 'The sidebar must start with Post, Create a group, then Shop');
+        check(search.y < 110 && search.y + search.height <= people.y && people.y + people.height <= post.y, 'The sidebar starts with Search directly above People and Post');
+        check(post.y + post.height <= createGroup.y && createGroup.y + createGroup.height <= shop.y, 'Posting and group destinations stay ahead of Shop');
         check(profile.y > viewport.height * 0.55 && logout.y > profile.y, 'Profile and account actions belong at the bottom');
         check(await drawer.locator('.mobile-feed-drawer-content').evaluate(element => element.clientHeight > 0 && getComputedStyle(element).overflowY === 'auto'), 'Long menus must scroll to their bottom actions');
         for (const [label, category] of [['Travel', 'countries'], ['Restaurants', 'restaurants'], ['Bars and clubs', 'bars']]) {
@@ -269,6 +279,9 @@ try {
           await page.waitForFunction(() => document.querySelector('#mobile-feed-drawer').getAttribute('aria-hidden') === 'false');
           check(await right.getByRole('link', { name: 'Settings', exact: true }).count() === 0, 'Settings still duplicated in the right sidebar');
           check(await right.getByRole('button', { name: 'Log out', exact: true }).count() === 0, 'Logout still duplicated in the right sidebar');
+          const messages = right.getByRole('button', { name: 'Messages', exact: true });
+          check(await messages.isVisible() && await messages.evaluate(element => element.previousElementSibling?.textContent.trim() === 'Discover groups'), 'Mobile Messages sits directly under Discover groups in Home and Jobs');
+          check(await messages.getAttribute('aria-haspopup') === 'dialog', 'Mobile Messages opens the shared inbox dialog');
           if (!route) {
             const destinations = ['Travel', 'Restaurants', 'Bars and clubs'];
             const signatures = [];

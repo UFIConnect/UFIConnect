@@ -13,6 +13,7 @@ const exactPages = new Map(Object.values(PAGE_CATEGORIES).map(page => [page.path
 const dynamicPages = [
   [/^\/groups\/[^/]+\/?$/, 'group'], [/^\/opportunities\/[^/]+\/?$/, 'opportunity'],
   [/^\/messages\/[^/]+\/?$/, 'conversation'], [/^\/p\/[^/]+\/?$/, 'post'], [/^\/u\/[^/]+\/?$/, 'member'],
+  [/^\/snaps\/[^/]+\/?$/, 'post'],
   [/^\/centers\/[^/]+\/?$/, 'workspace_center'],
 ];
 

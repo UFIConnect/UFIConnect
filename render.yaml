@@ -888,6 +888,12 @@ services:
       - type: rewrite
         source: /u/:id/
         destination: /app.html
+      - type: rewrite
+        source: /snaps/:id
+        destination: /app.html
+      - type: rewrite
+        source: /snaps/:id/
+        destination: /app.html
     headers:
       - path: /health*
         name: Cache-Control
