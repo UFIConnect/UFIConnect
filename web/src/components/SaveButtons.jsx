@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSavedItems } from '../contexts/SavedItemsContext';
 import { useToast } from '../contexts/ToastContext';
+import { useAuth } from '../contexts/AuthContext';
 
 function BookmarkIcon({ filled = false, size = 16 }) {
   return (
@@ -13,8 +14,14 @@ function BookmarkIcon({ filled = false, size = 16 }) {
 export function SavePostButton({ post, className = 'btn btn-ghost btn-sm', style, showLabel = true, onChange, menuItem = false }) {
   const { isPostSaved, postBusyIds, togglePost } = useSavedItems();
   const { showToast } = useToast();
+  const { profile } = useAuth();
   const [error, setError] = useState(false);
   const id = String(post?.id || '');
+  const identity = `${profile?.id || ''}:${id}`, current = useRef({ identity }), mounted = useRef(false);
+  if (current.current.identity !== identity) current.current = { identity };
+  const scope = current.current;
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => { setError(false); }, [identity]);
   const saved = isPostSaved(id);
   const busy = postBusyIds.has(id);
 
@@ -25,9 +32,11 @@ export function SavePostButton({ post, className = 'btn btn-ghost btn-sm', style
     setError(false);
     try {
       const nextSaved = await togglePost(post);
+      if (!mounted.current || current.current !== scope || typeof nextSaved !== 'boolean') return;
       onChange?.(nextSaved);
       showToast(nextSaved ? 'Post saved' : 'Post removed from saved', 'success');
     } catch {
+      if (!mounted.current || current.current !== scope) return;
       setError(true);
       showToast('Could not update this saved post. Please try again.', 'error');
     }

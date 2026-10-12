@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, useEffect, useRef } from 'react';
+import { createContext, useContext, lazy, Suspense, useState, useEffect, useRef } from 'react';
 import { Link, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -84,6 +84,25 @@ function NavBadge({ count, kind = 'notifications' }) {
   );
 }
 
+const MessagesNavigationContext = createContext(null);
+
+// The feed rail and mobile drawer share the shell's unread count and popup.
+export function MessagesNavigation({ className = 'mobile-command-menu-item' }) {
+  const messages = useContext(MessagesNavigationContext);
+  const content = <>
+    <span className="nav-icon" style={{ position: 'relative', display: 'inline-flex' }}>
+      <ShellIcon name="messages" size={18} />
+      <NavBadge count={messages?.count} kind="messages" />
+    </span>
+    <span className="messages-navigation-label">Messages</span>
+  </>;
+  if (!messages) return <NavLink to="/messages" className={`${className} messages-navigation`}>{content}</NavLink>;
+  return <button type="button" className={`${className} messages-navigation${messages.active ? ' active' : ''}`} aria-label="Messages" title="Messages"
+    aria-haspopup="dialog" aria-expanded={messages.open} aria-controls="messages-popup" onClick={messages.onToggle}>
+    {content}
+  </button>;
+}
+
 function SavedNavigation({ mobile = false, expanded, onToggle, onNavigate }) {
   const childrenId = mobile ? 'mobile-saved-links' : 'sidebar-saved-links';
   const itemClass = mobile ? 'mobile-command-menu-item' : 'nav-link';
@@ -123,6 +142,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
   const [mobileAccountOpen, setMobileAccountOpen] = useState(false);
   const [failedAvatarUrl, setFailedAvatarUrl] = useState(null);
   const [mobileHeaderPopup, setMobileHeaderPopup] = useState(null);
+  const messagesOpenerRef = useRef(null);
   const [mobileSearchQuery, setMobileSearchQuery] = useState('');
   const [mobileSearchTarget, setMobileSearchTarget] = useState('posts');
   const [searchPopupOpen, setSearchPopupOpen] = useState(false);
@@ -343,6 +363,15 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
     setMobileHeaderPopup(opening ? name : null);
   }
 
+  function closeMessages() {
+    setMobileHeaderPopup(null);
+    requestAnimationFrame(() => {
+      const opener = messagesOpenerRef.current;
+      if (opener?.isConnected && opener.getClientRects().length && !opener.closest('[aria-hidden="true"], [hidden], [inert]')) opener.focus({ preventScroll: true });
+      else document.querySelector('button[aria-controls="mobile-feed-drawer"]')?.focus({ preventScroll: true });
+    });
+  }
+
   function submitMobileSearch(event) {
     event.preventDefault();
     const query = mobileSearchQuery.trim();
@@ -429,6 +458,8 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
     : HOME_FEED_SOURCE_IDS;
 
   return (
+    <MessagesNavigationContext.Provider value={profile ? { count: messageBadge, active: mobileHeaderPopup === 'messages' || location.pathname.startsWith('/messages'),
+      open: mobileHeaderPopup === 'messages', onToggle: event => { messagesOpenerRef.current = event.currentTarget; toggleMobileHeaderPopup('messages'); } } : null}>
     <div className={`shell${wide ? ' shell-wide' : ''}`}>
       {/* ── Desktop sidebar ── */}
       <aside className="sidebar">
@@ -572,10 +603,6 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
           <NavLink to="/notifications" className="global-desktop-alerts" aria-label="Alerts" title="Alerts">
             <ShellIcon name="notifications" size={19} /><NavBadge count={notifBadge} />
           </NavLink>
-            <button type="button" className={`global-messages-link${mobileHeaderPopup === 'messages' || location.pathname.startsWith('/messages') ? ' active' : ''}`} aria-label="Messages" title="Messages" aria-haspopup="dialog" aria-expanded={mobileHeaderPopup === 'messages'} aria-controls="messages-popup" onClick={() => toggleMobileHeaderPopup('messages')}>
-              <ShellIcon name="messages" size={20} />
-              <NavBadge count={messageBadge} kind="messages" />
-            </button>
           </div>
           <div className="mobile-command-menu">
             <button
@@ -629,7 +656,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
         </section>
       </div>}
 
-      {profile && mobileHeaderPopup === 'messages' && <MessagesPopup key={profile.id} onClose={() => setMobileHeaderPopup(null)} />}
+      {profile && mobileHeaderPopup === 'messages' && <MessagesPopup key={profile.id} onClose={closeMessages} />}
 
       {profile && mobileHeaderPopup === 'notifications' && (
         <section id="mobile-alerts-popup" className="mobile-header-popup mobile-alerts-popup" role="dialog" aria-label="Alerts">
@@ -757,6 +784,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
                     <ShellIcon name="groups" size={18} />
                     Discover groups
                   </NavLink>
+                  <MessagesNavigation />
                   <HomeFeedTools showSources={false} />
                   <NavLink to="/resume-builder" className="mobile-command-menu-item mobile-command-menu-item--command" onClick={() => setMobileMenuOpen(false)}>
                     <ShellIcon name="files" size={18} />
@@ -803,6 +831,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
                 <ShellIcon name="search" size={18} />
                 Discover groups
               </NavLink>
+              <MessagesNavigation />
               <HomeFeedTools
                 showSources
                 sourceIds={mobileSourceIds}
@@ -863,5 +892,6 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
       </nav>
       </div>
     </div>
+    </MessagesNavigationContext.Provider>
   );
 }

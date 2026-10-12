@@ -4,6 +4,8 @@ import { Helmet } from 'react-helmet-async';
 import { ArrowUpRight, ChartNoAxesCombined, CircleDollarSign, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react';
 import Layout from '../components/Layout';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
+import WatchStatsPanel from '../components/WatchStatsPanel';
+import { useAuth } from '../contexts/AuthContext';
 import client from '../api/client';
 import './Analytics.css';
 import useTabMetrics from '../analytics/useTabMetrics';
@@ -33,7 +35,54 @@ function Metric({ label, value }) {
   return <div className="creator-analytics-metric"><dt>{label}</dt><dd className={unavailable ? 'is-unavailable' : undefined}>{metric(value)}</dd></div>;
 }
 
-const SECTIONS = [['overview', 'Overview'], ['content', 'Content'], ['audience', 'Audience'], ['sources', 'Connected sources'], ['earnings', 'Earnings'], ['tools', 'Tools']];
+const SECTIONS = [['overview', 'Overview'], ['content', 'Content'], ['playback', 'Playback'], ['audience', 'Audience'], ['sources', 'Connected sources'], ['earnings', 'Earnings'], ['tools', 'Tools']];
+
+function sourceRevenueStatus(source) {
+  if (!source.connected || source.status === 'not_connected') return 'Account not connected';
+  if (source.status === 'not_supported' || (source.id !== 'youtube' && source.capabilities?.sourceMonetization === false)) return 'Not supported in UFI';
+  if (source.status === 'disabled' || source.revenue?.status === 'disabled') return 'Revenue access disabled';
+  if (source.status === 'stale') return 'Refresh required';
+  if (source.status === 'requires_permission' || source.revenue?.status === 'requires_permission') return 'Authorization required';
+  if (source.status === 'not_synced') return 'Not synced';
+  return revenueLabel(source.revenue) !== 'Unavailable' ? 'Provider estimate' : 'Not reported';
+}
+
+function SourceEarningsCard({ source }) {
+  const amount = revenueLabel(source.revenue);
+  const available = amount !== 'Unavailable';
+  return <article className="creator-analytics-card creator-analytics-earnings-card">
+    <header><h3>{source.label}</h3><span className="creator-analytics-status">{sourceRevenueStatus(source)}</span></header>
+    <dl className="creator-analytics-money">
+      <div><dt>Estimated source revenue</dt><dd className={available ? undefined : 'is-unavailable'}>{amount}</dd></div>
+      <div><dt>Provider payout balance</dt><dd className="is-unavailable">Unavailable</dd></div>
+    </dl>
+    {available && <p className="creator-analytics-caption">{source.revenue.currency}{source.revenue.startDate && source.revenue.endDate ? ` · Requested period: ${source.revenue.startDate} to ${source.revenue.endDate}` : ' · Reporting dates unavailable'}. Source reporting can be delayed.</p>}
+    <p className="creator-analytics-muted">{available ? source.revenue?.note || 'The source supplied this estimate. Adjustments and payout rules remain with the source.'
+      : sourceRevenueStatus(source) === 'Not supported in UFI' ? 'A revenue connection for this source is not available in UFI yet.'
+        : sourceRevenueStatus(source) === 'Authorization required' ? 'Authorize your creator account to request its available revenue reports.'
+          : source.reason || 'The source has not supplied a revenue report for this account.'}</p>
+    <footer><span>Last sync: {dateLabel(source.lastSyncedAt)}</span><SourceLink url={source.originalUrl}>Open {source.label}</SourceLink></footer>
+  </article>;
+}
+
+function Earnings({ sources, monetization }) {
+  const orderedSources = [...sources].sort((a, b) => Number(Boolean(b.connected)) - Number(Boolean(a.connected)));
+  return <section className="creator-analytics-section" aria-labelledby="analytics-earnings-title">
+    <div className="creator-analytics-section-heading"><div><h2 id="analytics-earnings-title"><CircleDollarSign size={20} aria-hidden="true" />Earnings and payouts</h2><p>Source revenue and UFI-funded payments are kept separate.</p></div></div>
+    <section className="creator-analytics-card creator-analytics-ufi-payments" aria-labelledby="analytics-ufi-payments-title">
+      <header><div><p className="creator-analytics-eyebrow">UFI-funded</p><h3 id="analytics-ufi-payments-title">Creator payments</h3></div><span className="creator-analytics-status">Not configured</span></header>
+      <dl className="creator-analytics-money creator-analytics-ufi-balances"><div><dt>Pending earnings</dt><dd className="is-unavailable">Not configured</dd></div><div><dt>Available balance</dt><dd className="is-unavailable">Not configured</dd></div><div><dt>Paid to you</dt><dd className="is-unavailable">Unavailable</dd></div></dl>
+      <p className="creator-analytics-caption">UFI creator payments need a funded program, earning rates, and verified recipient eligibility. No payout program is active in this app.</p>
+      <p className="creator-analytics-muted">Playback statistics do not create a payable balance. Source earnings stay with the source and cannot be withdrawn through UFI.</p>
+    </section>
+    <div className="creator-analytics-section-heading"><div><h3>Provider-reported revenue</h3><p>Each estimate keeps its source, currency, and reporting period. These amounts are not combined with UFI balances.</p></div></div>
+    <p className="creator-analytics-caption">A provider estimate is not a payout balance. Connected sources do not supply payout balances to UFI yet; unavailable does not mean zero. These reports describe your authorized creator account, not revenue earned from an individual playback in UFI. The source’s own share of revenue is unavailable here.</p>
+    <div className="creator-analytics-source-grid">{orderedSources.map(source => <SourceEarningsCard key={source.id} source={source} />)}</div>
+    {!sources.length && <p className="creator-analytics-card">Source earnings are unavailable. Connect an account and authorize its analytics to see supported estimates.</p>}
+    <div className="creator-analytics-inline-actions creator-analytics-overview-actions"><Link className="btn btn-ghost btn-sm" to="/connected-accounts?analytics=1&monetization=1">Authorize source analytics</Link><Link className="btn btn-ghost btn-sm" to="/centers/monetization">Monetization workspace</Link></div>
+    {monetization?.note && <p className="creator-analytics-caption creator-analytics-membership-note">{monetization.note}</p>}
+  </section>;
+}
 
 function DailyPosts({ native, expanded = false }) {
   const daily = (Array.isArray(native?.daily) ? native.daily : []).filter(day => /^\d{4}-\d{2}-\d{2}$/.test(day.day)
@@ -72,12 +121,17 @@ function SourceCard({ source }) {
 }
 
 export default function Analytics() {
+  const { profile, token } = useAuth();
+  const accountId = token && profile?.id ? String(profile.id) : '';
+  const accountRef = useRef(accountId);
+  accountRef.current = accountId;
   const [section, setSection] = useState('overview');
   useTabMetrics('analytics', section);
   const tabs = useRef(null);
   const [days, setDays] = useState(30);
   const [sourceFilter, setSourceFilter] = useState('all');
-  const [report, setReport] = useState(null);
+  const [reportSnapshot, setReportSnapshot] = useState(null);
+  const report = reportSnapshot?.accountId === accountId && reportSnapshot.days === days ? reportSnapshot.data : null;
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
@@ -88,53 +142,63 @@ export default function Analytics() {
   const requestVersion = useRef(0);
 
   const loadReport = useCallback(async () => {
+    if (!accountId || accountRef.current !== accountId) return false;
     const version = ++requestVersion.current;
     setLoading(true); setError('');
     try {
       const { data } = await client.get('/creator-analytics/report', { params: { days } });
-      if (version === requestVersion.current) setReport(data);
+      if (version !== requestVersion.current || accountRef.current !== accountId) return false;
+      setReportSnapshot({ accountId, days, data });
       return true;
     } catch (err) {
-      if (version === requestVersion.current) setError(err.response?.data?.message || 'Analytics could not be loaded. Try again.');
+      if (version === requestVersion.current && accountRef.current === accountId) setError(err.response?.data?.message || 'Analytics could not be loaded. Try again.');
       return false;
     } finally {
-      if (version === requestVersion.current) setLoading(false);
+      if (version === requestVersion.current && accountRef.current === accountId) setLoading(false);
     }
-  }, [days]);
+  }, [accountId, days]);
 
   useEffect(() => {
-    setReport(null);
+    setReportSnapshot(null);
     loadReport();
     return () => { requestVersion.current += 1; };
   }, [loadReport]);
 
+  useEffect(() => {
+    setNotice(''); setFormError(''); setRefreshing(false); setSubmitting(false);
+    setForm({ source: '', sourceUrl: '', reason: '' });
+  }, [accountId]);
+
   async function refresh() {
+    if (!accountId || accountRef.current !== accountId) return;
     setRefreshing(true); setError(''); setNotice('');
     try {
       await client.post('/creator-analytics/refresh', { days }, { timeout: 30000 });
+      if (accountRef.current !== accountId) return;
       if (await loadReport()) setNotice('Refresh finished. Each source shows its latest sync status.');
     } catch (err) {
-      setError(err.response?.data?.message || 'Source refresh could not finish. Try again.');
-    } finally { setRefreshing(false); }
+      if (accountRef.current === accountId) setError(err.response?.data?.message || 'Source refresh could not finish. Try again.');
+    } finally { if (accountRef.current === accountId) setRefreshing(false); }
   }
 
   async function submitReport(event) {
     event.preventDefault();
-    if (submitting) return;
+    if (submitting || !accountId || accountRef.current !== accountId) return;
     setFormError(''); setNotice('');
     if (!safeUrl(form.sourceUrl) || !form.sourceUrl.trim().startsWith('https://')) { setFormError('Enter the original source URL starting with https://.'); return; }
     setSubmitting(true);
     try {
       await client.post('/creator-analytics/copyright-reports', { source: form.source, sourceUrl: form.sourceUrl.trim(), reason: form.reason.trim() });
+      if (accountRef.current !== accountId) return;
       setForm({ source: '', sourceUrl: '', reason: '' });
       setNotice('Your copyright concern was recorded for review.');
       await loadReport();
     } catch (err) {
-      setFormError(err.response?.data?.message || 'Your concern could not be recorded. Try again.');
-    } finally { setSubmitting(false); }
+      if (accountRef.current === accountId) setFormError(err.response?.data?.message || 'Your concern could not be recorded. Try again.');
+    } finally { if (accountRef.current === accountId) setSubmitting(false); }
   }
 
-  const sources = report?.sources || [];
+  const sources = Array.isArray(report?.sources) ? report.sources : [];
   const shownSources = sources.filter(source => sourceFilter === 'all' || source.id === sourceFilter);
   const native = report?.uficonnect;
   const learning = report?.deepLearning;
@@ -172,8 +236,9 @@ export default function Analytics() {
       {error && <div className="creator-analytics-message is-error" role="alert">{error}<button type="button" className="btn btn-ghost btn-sm" onClick={loadReport} disabled={loading || refreshing}>Try again</button></div>}
       {notice && <p className="creator-analytics-message" role="status">{notice}</p>}
       {report?.localPreview && <p className="creator-analytics-message" role="status">Local preview account. Connected source metrics and production activity are unavailable here.</p>}
-      {loading && !report && <div className="creator-analytics-card creator-analytics-loading" role="status">Loading your analytics…</div>}
-      {report && <div role="tabpanel" id={`analytics-panel-${section}`} aria-labelledby={`analytics-tab-${section}`} tabIndex={0} aria-busy={loading || refreshing}>
+      {loading && !report && !['playback', 'earnings'].includes(section) && <div className="creator-analytics-card creator-analytics-loading" role="status">Loading your analytics…</div>}
+      {(report || ['playback', 'earnings'].includes(section)) && <div role="tabpanel" id={`analytics-panel-${section}`} aria-labelledby={`analytics-tab-${section}`} tabIndex={0} aria-busy={section !== 'playback' && (loading || refreshing)}>
+        {section === 'playback' && <WatchStatsPanel days={days} />}
         {section === 'sources' && <section className="creator-analytics-section" aria-labelledby="source-analytics-title">
           <div className="creator-analytics-section-heading"><div><h2 id="source-analytics-title">Connected sources</h2><p>Review performance reported by each platform, with its own reporting scope.</p></div><label htmlFor="analytics-source-filter">Source<select id="analytics-source-filter" value={sourceFilter} onChange={event => setSourceFilter(event.target.value)}><option value="all">All sources ({sources.length})</option>{sources.map(source => <option key={source.id} value={source.id}>{source.label}</option>)}</select></label></div>
           <p className="creator-analytics-caption">Source totals and selected-period analytics are labeled separately. Unavailable means the source has not supplied that metric. Each platform defines a view; playback here may not count. Counts from different platforms are not a shared measure of reach.</p>
@@ -193,13 +258,7 @@ export default function Analytics() {
 
         {section === 'audience' && <section className="creator-analytics-card creator-analytics-audience" aria-labelledby="analytics-audience-title"><h2 id="analytics-audience-title">Audience</h2><div className="creator-analytics-empty"><h3>Audience data is not available yet</h3><p>This report does not include follower growth, unique reach, or audience demographics. Views, likes, and comments are shown in their own sections.</p><span className="creator-analytics-status">Unavailable</span></div><button type="button" className="btn btn-ghost btn-sm" onClick={openSources}>View connected source metrics</button></section>}
 
-        {section === 'earnings' && <section className="creator-analytics-section" aria-labelledby="analytics-earnings-title">
-          <div className="creator-analytics-section-heading"><div><h2 id="analytics-earnings-title"><CircleDollarSign size={20} aria-hidden="true" />Earnings</h2><p>Estimates supplied by your authorized sources. Each amount keeps its source, currency, and reporting dates.</p></div></div>
-          <p className="creator-analytics-caption">{report.monetization?.note || 'Creator earnings and advertising remain with the original source. An unavailable estimate is not a zero balance.'}</p>
-          <div className="creator-analytics-source-grid">{sources.map(source => <article key={source.id} className="creator-analytics-card creator-analytics-earnings-card"><h3>{source.label}</h3><dl><dt>Estimated source revenue</dt><dd>{revenueLabel(source.revenue)}</dd></dl>{source.revenue?.startDate && <p className="creator-analytics-caption">{source.revenue.startDate} to {source.revenue.endDate}</p>}{source.revenue?.note && <p className="creator-analytics-muted">{source.revenue.note}</p>}<SourceLink url={source.originalUrl}>Open {source.label}</SourceLink></article>)}</div>
-          {!sources.length && <p className="creator-analytics-card">Source earnings are unavailable. Connect an account and authorize its analytics to see supported estimates.</p>}
-          <div className="creator-analytics-inline-actions creator-analytics-overview-actions"><Link className="btn btn-ghost btn-sm" to="/connected-accounts?analytics=1&monetization=1">Authorize source analytics</Link><Link className="btn btn-ghost btn-sm" to="/centers/monetization">Monetization workspace</Link></div>
-        </section>}
+        {section === 'earnings' && <Earnings sources={sources} monetization={report?.monetization} />}
 
         {section === 'tools' && <>
         <div className="creator-analytics-section-heading"><div><h2>Tools and settings</h2><p>Manage reports, permissions, rights, and your analysis workspaces.</p></div></div>

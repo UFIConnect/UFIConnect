@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createYouTubePlayerFrame, loadYouTubeIframeApi } from '../components/videoMedia';
 
 const EMPTY_SETTINGS = { ready: false, rates: [], rate: null, captionFontSize: null };
-const EMPTY_PLAYBACK = { ready: false, failed: false, paused: true, muted: true, currentTime: 0, duration: 0, settings: EMPTY_SETTINGS };
+const EMPTY_PLAYBACK = { ready: false, failed: false, paused: true, playing: false, muted: true, currentTime: 0, duration: 0, settings: EMPTY_SETTINGS };
 
 function readSettings(player) {
   let rates = [], rate = null, captionFontSize = null;
@@ -48,7 +48,7 @@ export default function useYouTubeSnapPlayback({ enabled, mediaKey, videoId, tit
       }
       const currentTime = player.getCurrentTime(), duration = player.getDuration();
       const playback = {
-        ready: true, failed: false, paused: state !== 1 && state !== 3,
+        ready: true, failed: false, paused: state !== 1 && state !== 3, playing: state === 1,
         muted: Boolean(player.isMuted()) || player.getVolume() === 0,
         currentTime: Number.isFinite(currentTime) && currentTime >= 0 ? currentTime : 0,
         duration: Number.isFinite(duration) && duration > 0 ? duration : 0,

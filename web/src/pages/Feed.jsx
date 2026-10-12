@@ -18,7 +18,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { ArrowLeft, ArrowRight, BookOpen, Martini, Plane, RotateCw, Utensils } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import Layout from '../components/Layout';
+import Layout, { MessagesNavigation } from '../components/Layout';
 import client from '../api/client';
 import { markApiOriginFailure, resolveApiBaseUrl } from '../api/apiOrigin';
 import { extractYouTubeId, extractVimeoId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, createYouTubePlayerFrame, youTubeEmbedUrl, InlineAutoplayVideo, userWantsSound, useGlobalMuted, usePointerPlaybackGate, useSoloVideoPlayback } from '../components/videoMedia';
@@ -3882,6 +3882,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           </div>
           <div className="home-feed-rail-bottom">
             <Link to="/groups" className="home-feed-rail-tab">Discover groups</Link>
+            <MessagesNavigation className="home-feed-rail-tab home-feed-rail-tab--icon" />
             <HomeFeedTools
               showSources
               sourceIds={viewMode === 'following' ? FOLLOWING_FILTER_SOURCES : ALL_FILTER_SOURCES}

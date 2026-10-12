@@ -66,6 +66,7 @@ const ConnectedAccounts = lazy(() => import('./pages/ConnectedAccounts'));
 const Analytics      = lazy(() => import('./pages/Analytics'));
 const Post           = lazy(() => import('./pages/Post'));
 const PostDetail     = lazy(() => import('./pages/PostDetail'));
+const SnapPermalink  = lazy(() => import('./pages/SnapPermalink'));
 const Search         = lazy(() => import('./pages/SearchExperience'));
 const People         = lazy(() => import('./pages/People'));
 const Recruiting     = lazy(() => import('./pages/Recruiting'));
@@ -307,6 +308,7 @@ function AppContent() {
           whoever clicks it, logged in or not. PostDetail itself branches on
           whether a session exists for its own chrome/actions. */}
       <Route path="/p/:id" element={<PostDetail />}/>
+      <Route path="/snaps/:id" element={<SnapPermalink />}/>
       <Route path="/search" element={<SearchRoute />}/>
       <Route path="/people" element={<RequireAuth><RequireOnboarding><PeopleRoute /></RequireOnboarding></RequireAuth>} />
       <Route path="/recruiting" element={<RequireAuth><RequireOnboarding><Recruiting /></RequireOnboarding></RequireAuth>} />
