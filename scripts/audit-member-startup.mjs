@@ -158,7 +158,12 @@ try {
         sessionGate.release(); sessionGate = null;
         await ready(target);
         check(currentPath() === target, `${width}px ${target}: successful restoration retains the destination`);
-        if (target.startsWith('/search')) check(await page.getByRole('searchbox', { name: 'Search people', exact: true }).inputValue() === 'design', `${width}px: refreshed search keeps its query`);
+        if (target.startsWith('/search')) {
+          check(await page.getByRole('tab', { name: 'People', exact: true }).getAttribute('aria-selected') === 'true', `${width}px: refreshed search keeps its people tab`);
+          const search = page.getByRole('search', { name: 'Search UFIconnect', exact: true });
+          const input = search.getByRole('searchbox', { name: 'Search UFIconnect', exact: true });
+          check(await input.getAttribute('placeholder') === 'Search people' && await input.inputValue() === 'design', `${width}px: refreshed people search keeps its query in the shared header`);
+        }
         await checkStorage();
       }
     }

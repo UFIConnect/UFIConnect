@@ -3,6 +3,10 @@ name: Deploy Render Services
 on:
   push:
     branches: [main]
+    # Skip audit/workflow-only corrections; any runtime change still deploys.
+    paths-ignore:
+      - scripts/audit-member-startup.mjs
+      - .github/workflows/deploy-render.yml
   workflow_dispatch:
     inputs:
       target:
