@@ -54,6 +54,8 @@ function NativeSite() {
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
   const [providerBusy, setProviderBusy] = useState(false);
+  const [browserOperations, setBrowserOperations] = useState(0);
+  const mounted = useRef(true);
   const [nativeAppActive, setNativeAppActive] = useState(AppState.currentState === 'active');
   const [vpnSession, setVpnSession] = useState(null);
   const [vpnOpen, setVpnOpen] = useState(false);
@@ -69,6 +71,20 @@ function NativeSite() {
   const documentUrl = useRef(null);
   const bridge = useRef(null);
   if (!bridge.current) bridge.current = createNativeApiBridge({ apiBase: API, fetch: nativeFetch, store: sessionStore, multipart });
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  const runBrowserOperation = useCallback(async operation => {
+    // Safari sheets can leave AppState active. iOS resolves these promises
+    // after dismissal; Android browser opening resolves before the tab closes.
+    if (Platform.OS !== 'ios') return operation();
+    if (!mounted.current) throw new Error('Return to UFIConnect to open your browser.');
+    setBrowserOperations(value => value + 1);
+    try { return await operation(); }
+    finally { if (mounted.current) setBrowserOperations(value => Math.max(0, value - 1)); }
+  }, []);
 
   const onApiRequest = useCallback(async input => {
     const result = await bridge.current.request(input);
@@ -143,6 +159,7 @@ function NativeSite() {
   const onProviderSignIn = useCallback(async (provider, mode) => {
     if (!['google', 'apple'].includes(provider) || !['login', 'signup', 'link'].includes(mode)) throw new Error('Choose an available sign-in method.');
     if (activeProvider.current) throw new Error('Finish the current sign-in first.');
+    if (Platform.OS === 'ios' && !mounted.current) throw new Error('Return to UFIConnect to sign in.');
     activeProvider.current = true; setProviderBusy(true);
     const generation = bridge.current.getGeneration();
     try {
@@ -155,21 +172,22 @@ function NativeSite() {
       if (response.status !== 200 || !OPAQUE.test(data?.verifier || '') || !validAuthorizationUrl(data.authorizationUrl || data.url, provider, API)) throw new Error(data?.message || 'This sign-in method is unavailable.');
       if (generation !== bridge.current.getGeneration()) throw new Error('The account changed. Please start again.');
       await SecureStore.setItemAsync(PENDING_KEY, JSON.stringify({ verifier: data.verifier, provider, mode, createdAt: Date.now(), ...(mode === 'link' ? { accountToken: currentToken } : {}) }), KEY_OPTIONS);
-      const result = await WebBrowser.openAuthSessionAsync(data.authorizationUrl || data.url, CALLBACK, { preferEphemeralSession: false });
+      const result = await runBrowserOperation(() => WebBrowser.openAuthSessionAsync(data.authorizationUrl || data.url, CALLBACK, { preferEphemeralSession: false }));
       if (result.type !== 'success') throw new Error('Sign-in was cancelled. You can try again.');
       return await finishProvider(result.url, generation);
     } finally {
       await SecureStore.deleteItemAsync(PENDING_KEY, KEY_OPTIONS).catch(() => {});
-      activeProvider.current = false; setProviderBusy(false);
+      activeProvider.current = false;
+      if (Platform.OS !== 'ios' || mounted.current) setProviderBusy(false);
     }
-  }, [finishProvider]);
+  }, [finishProvider, runBrowserOperation]);
 
   const onOpenExternal = useCallback(async url => {
     if (Platform.OS === 'android' && vpnLaunch.open(url)) return;
     const target = externalUrl(url);
-    if (target.startsWith('https://')) await WebBrowser.openBrowserAsync(target, { presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET });
+    if (target.startsWith('https://')) await runBrowserOperation(() => WebBrowser.openBrowserAsync(target, { presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET }));
     else await Linking.openURL(target);
-  }, []);
+  }, [runBrowserOperation]);
   const onRequestLocation = useCallback(async () => {
     if (AppState.currentState !== 'active') throw new Error('Return to UFIConnect to use location.');
     const permission = await Location.requestForegroundPermissionsAsync();
@@ -201,10 +219,11 @@ function NativeSite() {
   }, [onOpenExternal, bundledDocument]);
 
   if (!ready) return <View style={styles.recovery}><Text style={styles.brand}>UFIConnect</Text>{error ? <><Text style={styles.message}>{error}</Text><Pressable accessibilityRole="button" onPress={() => setAttempt(value => value + 1)} style={styles.retry}><Text style={styles.retryText}>Try again</Text></Pressable></> : <ActivityIndicator color="#102A6B" accessibilityLabel="Opening UFIConnect" />}</View>;
+  const mediaActive = nativeAppActive && !vpnOpen && (Platform.OS !== 'ios' || !providerBusy && browserOperations === 0);
   return <SafeAreaView style={[styles.root, { backgroundColor: chrome.backgroundColor }]} edges={['top', 'bottom']}>
     <StatusBar style={chrome.statusBar} />
     <View style={{ flex: 1 }} onLayout={event => { const { width, height } = event.nativeEvent.layout; setContentSize(previous => previous.width === width && previous.height === height ? previous : { width, height }); }}>
-    <Website nativePlatform={Platform.OS} nativeAppActive={nativeAppActive && !vpnOpen} initialSession={initialSession} nativeCapability={capability.current}
+    <Website nativePlatform={Platform.OS} nativeAppActive={mediaActive} initialSession={initialSession} nativeCapability={capability.current}
       onYouTubePlayer={async (secret, input) => { assertNativeCapability(capability.current, secret); if (!youtubeLayer.current) throw new Error('Video is unavailable.'); return youtubeLayer.current.request(input); }}
       onApiRequest={async (secret, input) => { assertNativeCapability(capability.current, secret); return onApiRequest(input); }}
       onPersistSession={async (secret, token) => { assertNativeCapability(capability.current, secret); return onPersistSession(token); }}
@@ -227,7 +246,7 @@ function NativeSite() {
         onError: event => { setError(documentLoadError(event)); setReady(false); },
         onContentProcessDidTerminate: () => { documentUrl.current = null; capability.current = bytesToBase64(Crypto.getRandomBytes(32)); setAttempt(value => value + 1); },
       }} />
-    <NativeYouTubeLayer key={attempt} ref={youtubeLayer} active={nativeAppActive && !providerBusy && !vpnOpen} containerSize={contentSize} />
+    <NativeYouTubeLayer key={attempt} ref={youtubeLayer} active={mediaActive && !providerBusy} containerSize={contentSize} />
     </View>
     {Platform.OS === 'android' && <AndroidVpnAccess session={vpnSession} ready={ready} onVisibilityChange={setVpnOpen} />}
     {providerBusy && <View style={styles.provider}><Text style={{ color: chrome.statusBar === 'light' ? '#edf1f7' : '#334155' }}>Complete sign-in in your browser.</Text><Pressable accessibilityRole="button" onPress={() => WebBrowser.dismissAuthSession()}><Text style={[styles.link, chrome.statusBar === 'light' && { color: '#abc2ff' }]}>Cancel</Text></Pressable></View>}
