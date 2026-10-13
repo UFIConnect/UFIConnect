@@ -9,7 +9,7 @@ import './TwitchClipPlayer.css';
 // Clips have no interactive Twitch JS API. Removing the official iframe stops
 // playback; returning to a card always requires another deliberate play click.
 export default function TwitchClipPlayer({ post, title, forcePause = false, controlsTarget }) {
-  const host = useRef(null), started = useRef(null), playerId = useId();
+  const host = useRef(null), stage = useRef(null), started = useRef(null), playerId = useId();
   const original = post?.source === 'twitch' ? officialTwitchClipUrl(post.sourceUrl) || officialTwitchClipUrl(post.mediaUrl) : null;
   const embed = original && typeof window !== 'undefined' ? officialTwitchClipEmbedUrl(original, window.location.hostname) : null;
   const poster = officialTwitchPosterUrl(post?.mediaPoster) || officialTwitchPosterUrl(post?.thumbnailUrl);
@@ -18,11 +18,11 @@ export default function TwitchClipPlayer({ post, title, forcePause = false, cont
   const [visible, setVisible] = useState(() => typeof document === 'undefined' || !document.hidden);
   const [modalBlocked, setModalBlocked] = useState(false);
   const eligible = !!embed && requested === original && width >= 400 && inView && visible && !forcePause && !modalBlocked;
-  const solo = useSoloVideoPlayback(`twitch-clip-${playerId}`, eligible);
+  const solo = useSoloVideoPlayback(`twitch-clip-${playerId}`, eligible, stage);
   const playing = eligible && solo && failed !== original;
 
   useEffect(() => {
-    const node = host.current;
+    const node = stage.current;
     if (!node) return undefined;
     const measure = () => {
       const rect = node.getBoundingClientRect();
@@ -69,12 +69,18 @@ export default function TwitchClipPlayer({ post, title, forcePause = false, cont
   const commands = <div className="twitch-clip-commands" role="group" aria-label="Twitch clip controls">
     {playing ? <button type="button" className="twitch-clip-play" onClick={() => setRequested(null)}>
       <Square size={17} aria-hidden="true" />Close Twitch player</button>
-      : embed && width >= 400 && failed !== original && <button type="button" className="twitch-clip-play" disabled={forcePause || modalBlocked || !visible}
-        onClick={() => { setInView(true); setRequested(original); }}><Play size={19} aria-hidden="true" />Load Twitch player</button>}
+      : embed && width >= 400 && failed !== original && <button type="button" className="twitch-clip-play" disabled={forcePause || modalBlocked || !visible || !inView}
+        onClick={() => setRequested(original)}><Play size={19} aria-hidden="true" />Load Twitch player</button>}
     {failed === original && <span className="twitch-clip-error" role="status">This clip could not load. Open it on Twitch.</span>}
+    {(!embed || width > 0 && width < 400) && <span className="twitch-clip-notice">
+      {!embed ? 'Watch this clip in Twitch.' : 'This Twitch clip opens on Twitch at this screen size.'}
+    </span>}
+    {controlsTarget !== undefined && (!embed || width > 0 && width < 400 || failed === original)
+      && <a className="twitch-clip-play" href={original} target="_blank" rel="noopener noreferrer">
+        <ExternalLink size={17} aria-hidden="true" />Watch on Twitch</a>}
   </div>;
   return <div ref={host} className="twitch-clip-player" data-embedding={playing ? 'true' : 'false'}>
-    <div className="twitch-clip-stage">
+    <div ref={stage} className="twitch-clip-stage">
       {playing ? <iframe src={embed} title={title || post.title || 'Twitch clip'} width="400" height="300"
         allow="fullscreen; picture-in-picture" allowFullScreen referrerPolicy="strict-origin-when-cross-origin"
         onError={() => { setFailed(original); setRequested(null); }} />

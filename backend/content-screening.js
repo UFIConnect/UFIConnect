@@ -1,5 +1,6 @@
 'use strict';
 const { importedContentLimit } = require('./job-content');
+const { boundedSourceText } = require('./source-post-content');
 
 // This module intentionally contains only deterministic, cheap checks. It is
 // used on every external-feed item, so it must stay safe to call in a hot path.
@@ -56,8 +57,9 @@ function importedPostTimestamp(rawPost) {
   return Number.isFinite(timestamp) ? timestamp : NaN;
 }
 
-function localTextScreen(text, { maxLength = null, allowEmpty = false } = {}) {
-  const clean = cleanScreeningText(text);
+function localTextScreen(text, { maxLength = null, allowEmpty = false, sourceBody = false, truncate = false } = {}) {
+  const normalized = cleanScreeningText(text);
+  const clean = truncate && maxLength ? boundedSourceText(normalized, maxLength) : normalized;
   if (!allowEmpty && !clean) return { allowed: false, reason: 'empty_content', text: clean };
   if (maxLength && clean.length > maxLength) return { allowed: false, reason: 'too_long', text: clean };
   if (!clean) return { allowed: true, reason: null, text: clean };
@@ -65,7 +67,11 @@ function localTextScreen(text, { maxLength = null, allowEmpty = false } = {}) {
     return { allowed: false, reason: 'repetitive_content', text: clean };
   }
   const urlCount = (clean.match(URL_PATTERN) || []).length;
-  if (urlCount > 4) return { allowed: false, reason: 'link_spam', text: clean };
+  // Long imported articles may legitimately cite many sources. Keep the
+  // member/comment limit and dense-link spam check; permit one reference per
+  // 250 characters of actual prose, capped at 400 links for a full article.
+  const maxLinks = sourceBody ? Math.max(4, Math.min(400, Math.floor(clean.replace(URL_PATTERN, '').length / 250))) : 4;
+  if (urlCount > maxLinks) return { allowed: false, reason: 'link_spam', text: clean };
   if (SCAM_PATTERNS.some(pattern => pattern.test(clean))) {
     return { allowed: false, reason: 'spam_or_solicitation', text: clean };
   }
@@ -86,7 +92,9 @@ function screenImportedFeedPost(rawPost) {
   // long; user-authored content is rejected over its explicit write limit.
   const title = localTextScreen(cleanScreeningText(rawPost.title, 500), { maxLength: 500, allowEmpty: true });
   const contentLimit = importedContentLimit(rawPost);
-  const content = localTextScreen(cleanScreeningText(rawPost.content, contentLimit), { maxLength: contentLimit, allowEmpty: true });
+  const content = localTextScreen(rawPost.content, {
+    maxLength: contentLimit, allowEmpty: true, truncate: true, sourceBody: rawPost.source !== 'uficonnect' && rawPost.isExternal !== false,
+  });
   if (!title.allowed) return { allowed: false, reason: title.reason, post: rawPost };
   if (!content.allowed) return { allowed: false, reason: content.reason, post: rawPost };
   if (!title.text && !content.text) return { allowed: false, reason: 'empty_content', post: rawPost };

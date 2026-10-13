@@ -1,11 +1,11 @@
-import { validateApiBaseUrl } from './apiEndpointPolicy';
+import { validateApiBaseUrl } from './apiEndpointPolicy.js';
 import { isNativeRuntime, NATIVE_API_ORIGIN } from '../nativeRuntime.mjs';
 
 // Keep the public API hostname and the Render hostname separate. The public
 // hostname is the stable, dual-stack route users should see; the Render URL
 // remains a short-lived escape hatch while DNS, TLS, or an edge route recovers.
-const PRIMARY_API_URL = import.meta.env.VITE_API_URL || '/api';
-const FALLBACK_API_URL = import.meta.env.VITE_API_FALLBACK_URL || '';
+const PRIMARY_API_URL = import.meta.env?.VITE_API_URL || '/api';
+const FALLBACK_API_URL = import.meta.env?.VITE_API_FALLBACK_URL || '';
 const PROBE_TIMEOUT_MS = 1500;
 const RECHECK_INTERVAL_MS = 60_000;
 
@@ -17,7 +17,7 @@ function normalizeBaseUrl(value) {
 }
 
 const apiOrigins = [...new Set([PRIMARY_API_URL, FALLBACK_API_URL]
-  .map(value => validateApiBaseUrl(value, { production: import.meta.env.PROD, pageOrigin: typeof window === 'undefined' ? 'https://uficonnect.org' : window.location.origin }))
+  .map(value => validateApiBaseUrl(value, { production: import.meta.env?.PROD, pageOrigin: typeof window === 'undefined' ? 'https://uficonnect.org' : window.location.origin }))
   .filter(Boolean))];
 
 let activeApiOrigin = apiOrigins[0] || '/api';

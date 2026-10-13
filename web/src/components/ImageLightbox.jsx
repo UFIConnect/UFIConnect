@@ -1,6 +1,7 @@
+import { resolveVideoSource } from '../utils/videoSource.mjs';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { deriveBlueskyPlaylistUrl, isDirectVideoUrl, extractYouTubeId, loadYouTubeIframeApi, createYouTubePlayerFrame, youTubeEmbedUrl, HlsVideoPlayer, userWantsSound, useGlobalMuted } from './videoMedia';
+import { loadYouTubeIframeApi, createYouTubePlayerFrame, youTubeEmbedUrl, HlsVideoPlayer, userWantsSound, useGlobalMuted } from './videoMedia';
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll';
 import PostInlineText from './PostInlineText';
 import PostLinkPreviews from './PostLinkPreviews';
@@ -200,18 +201,10 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
   const post = item?.post || {};
   const mastodonPostUrl = post.source === 'mastodon' ? safePostLink(post.sourceUrl) : null;
   const isVideo = item?.type === 'video';
-  // Same precedence as VideoFeedView's resolveVideoSource — a dedicated
-  // YouTube post carries embedId (or a recoverable sourceUrl); any other
-  // source's article can embed a real YouTube video too, in which case
-  // mediaUrl itself is the watch URL.
-  const youtubeId = isVideo
-    ? (post.embedId
-      || extractYouTubeId(post.mediaUrl)
-      || extractYouTubeId(post.sourceUrl)
-      || extractYouTubeId(item?.url))
-    : null;
-  const playlistUrl = isVideo && !youtubeId && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(item.url) : null;
-  const directVideoUrl = isVideo && !youtubeId && !playlistUrl && item?.url && isDirectVideoUrl(item.url, post) ? item.url : null;
+  const videoSource = isVideo ? resolveVideoSource({ ...post, mediaUrl: item?.url || post.mediaUrl }) : null;
+  const youtubeId = videoSource?.kind === 'youtube' ? videoSource.id : null;
+  const playlistUrl = videoSource?.kind === 'hls' ? videoSource.src : null;
+  const directVideoUrl = videoSource?.kind === 'file' ? videoSource.src : null;
   const playableVideo = !!(youtubeId || playlistUrl || directVideoUrl);
 
   const getNativeEl = useCallback(
@@ -579,7 +572,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
           </div>
         )}
         </div>
-        {playableVideo && (!youtubeId || !ytFailed) && <MediaPlaybackControls paused={paused} muted={muted} currentTime={currentTime} duration={duration}
+        {playableVideo && (!youtubeId || !ytFailed) && <MediaPlaybackControls mediaKey={`${post.id || ''}:${videoSource.kind}:${videoSource.id || videoSource.src}`} paused={paused} muted={muted} currentTime={currentTime} duration={duration}
           onTogglePlay={togglePlay} onToggleMute={toggleMuted} onSeek={seconds => seekToFraction(duration > 0 ? seconds / duration : 0)}
           disabled={Boolean(youtubeId && !ytReady)} />}
         <div className="media-lightbox-info"

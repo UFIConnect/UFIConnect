@@ -16,5 +16,5 @@ export const publicRoutes = [
   { path: '/forgot-password', page: 'forgotPassword', title: 'Reset your password | UFIconnect', description: 'Request a password-reset link for your UFIconnect account and learn how to return to sign-in.', index: false },
 ];
 export const memberRoutes = ['/recruiting','/career-posts','/business-posts','/analytics','/vault','/vault/device','/maps','/people','/reset-password','/onboarding','/videos','/you','/music','/groups','/groups/post','/opportunities','/resume-builder','/resume-builder/cover-letter/preview','/messages','/notifications','/profile','/command-center','/connected-accounts','/post','/settings','/sources','/saved/posts','/saved/jobs'];
-export const dynamicRoutes = ['/centers/:kind','/groups/:id','/opportunities/:id','/messages/:userId','/p/:id','/u/:id'];
+export const dynamicRoutes = ['/centers/:kind','/groups/:id','/opportunities/:id','/messages/:userId','/p/:id','/u/:id','/snaps/:id'];
 export const redirectRoutes = [{ source:'/how-office-works', destination:'/how-it-works' },{ source:'/global-scroll', destination:'/global' },{ source:'/hq', destination:'/command-center' },{ source:'/agents', destination:'/command-center' }];

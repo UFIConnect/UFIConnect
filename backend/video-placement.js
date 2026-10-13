@@ -1,8 +1,9 @@
 'use strict';
 
+const { officialVideoReference, suppliedHlsUrl, suppliedVideoFileUrl, openProtocolVideo } = require('./video-media-urls.mjs');
+
 const VIDEO_FEED_MIN_DURATION_SECONDS = 5;
 const VIDEO_FEED_MAX_DURATION_SECONDS = 15 * 60;
-const PLAYABLE_YOUTUBE_URL = /(?:youtube(?:-nocookie)?\.com\/(?:watch\?(?:[^#\s]*?&)?v=|embed\/|shorts\/|live\/)|youtu\.be\/)[\w-]{11}/i;
 
 function normalizeVideoDurationSeconds(value) {
   const seconds = Number(value);
@@ -16,15 +17,11 @@ function meetsVideoMinimumDuration(post) {
 
 function isPlayableVideoPost(post) {
   if (!post || post.mediaType !== 'video') return false;
-  if (post.source === 'bluesky') return Boolean(post.mediaUrl && /\.m3u8(\?|$)/i.test(post.mediaUrl));
   const videoUrls = [post.mediaUrl, post.sourceUrl].filter(Boolean);
-  if (post.source === 'youtube') {
-    return Boolean(post.embedId || videoUrls.some(url => PLAYABLE_YOUTUBE_URL.test(url)));
-  }
-  if (videoUrls.some(url => PLAYABLE_YOUTUBE_URL.test(url))) return true;
-  if (videoUrls.some(url => /vimeo\.com\/(?:video\/)?\d+/i.test(url))) return true;
-  if (videoUrls.some(url => /\.m3u8(\?|$)/i.test(url))) return true;
-  return videoUrls.some(url => /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url));
+  if (videoUrls.some(url => officialVideoReference(url))) return true;
+  if (post.source === 'youtube') return false;
+  if (['mastodon', 'bluesky'].includes(post.source)) return Boolean(openProtocolVideo(post));
+  return videoUrls.some(url => suppliedHlsUrl(url) || suppliedVideoFileUrl(url));
 }
 
 function isVideoSurfacePost(post) {

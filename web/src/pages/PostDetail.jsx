@@ -7,7 +7,7 @@ import PostImage from '../components/PostImage';
 import SourceMediaFallback from '../components/SourceMediaFallback';
 import VimeoPreview from '../components/VimeoPreview';
 import MediaPlaybackControls from '../components/MediaPlaybackControls';
-import { extractVimeoId } from '../components/videoMedia';
+import { resolveVideoSource } from '../utils/videoSource.mjs';
 ﻿import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
@@ -20,7 +20,7 @@ import { OpenOnSource, PostHeader, PostOptionsMenu } from '../components/PostCar
 import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
-import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, loadYouTubeIframeApi, createYouTubePlayerFrame, useGlobalMuted } from '../components/videoMedia';
+import { HlsVideoPlayer, loadYouTubeIframeApi, createYouTubePlayerFrame, useGlobalMuted, rememberSoundPreference } from '../components/videoMedia';
 import { SavePostButton } from '../components/SaveButtons';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { POST_ENGAGEMENT_EVENT, publishPostEngagement } from '../api/postEngagement.mjs';
@@ -107,13 +107,39 @@ export default function PostDetail() {
   // below, same reason youtubeId is computed with optional chaining next:
   // React's hook order can't change between renders.
   const [muted, toggleMuted] = useGlobalMuted();
-  const youtubeId = post?.source === 'youtube' ? (post.embedId || extractYouTubeId(post.sourceUrl)) : post?.mediaType === 'video' ? extractYouTubeId(post.mediaUrl) : null;
+  const videoSource = resolveVideoSource(post);
+  const youtubeId = videoSource?.kind === 'youtube' ? videoSource.id : null;
   const ytMountRef = useRef(null);
   const ytPlayerRef = useRef(null);
   const fileVideoRef = useRef(null);
   const [ytReady, setYtReady] = useState(false);
   const [ytFailed, setYtFailed] = useState(false);
-  const [playback, setPlayback] = useState({ paused: true, currentTime: 0, duration: 0 });
+  const [ytVisible, setYtVisible] = useState(false);
+  const ytAutoplayAttemptedRef = useRef(false);
+  const [playback, setPlayback] = useState({ paused: true, muted: true, currentTime: 0, duration: 0 });
+
+  useEffect(() => {
+    setYtVisible(false);
+    const host = ytMountRef.current;
+    if (!youtubeId || loading || !host) return;
+    let inView = false;
+    const updateVisibility = () => {
+      setYtVisible(inView && !document.hidden);
+      if (document.hidden) {
+        try { ytPlayerRef.current?.pauseVideo(); } catch {}
+      }
+    };
+    const observer = 'IntersectionObserver' in window ? new IntersectionObserver(([entry]) => {
+      inView = entry.isIntersecting && entry.intersectionRatio > 0.5;
+      updateVisibility();
+    }, { threshold: [0, 0.5, 0.500001, 1] }) : null;
+    observer?.observe(host);
+    document.addEventListener('visibilitychange', updateVisibility);
+    return () => {
+      observer?.disconnect();
+      document.removeEventListener('visibilitychange', updateVisibility);
+    };
+  }, [youtubeId, loading]);
 
   // Real IFrame Player API, not a raw <iframe src="..."> — needed so the
   // mute button here can imperatively call mute()/unMute(), and so this
@@ -122,14 +148,14 @@ export default function PostDetail() {
   useEffect(() => {
     setYtReady(false);
     setYtFailed(false);
+    ytAutoplayAttemptedRef.current = false;
     if (!youtubeId || loading) return;
     const host = ytMountRef.current;
     if (!host) return;
     let cancelled = false;
     let player;
-    const startUnmuted = !muted;
     host.replaceChildren();
-    const playerVars = { autoplay: 1, mute: 1, playsinline: 1, controls: 0, rel: 0, origin: window.location.origin };
+    const playerVars = { autoplay: 0, mute: 1, playsinline: 1, controls: 0, rel: 0, origin: window.location.origin };
     const mount = createYouTubePlayerFrame(host, youtubeId, playerVars, post?.title || 'YouTube video');
     const readyTimeout = setTimeout(() => { if (!cancelled) setYtFailed(true); }, 6000);
     loadYouTubeIframeApi().then((YT) => {
@@ -145,8 +171,7 @@ export default function PostDetail() {
             setYtReady(true);
             setYtFailed(false);
             try {
-              if (startUnmuted) e.target.unMute();
-              e.target.playVideo();
+              e.target.mute();
             } catch { setYtFailed(true); }
           },
           onError: () => { if (!cancelled) { clearTimeout(readyTimeout); setYtReady(false); setYtFailed(true); } },
@@ -164,7 +189,20 @@ export default function PostDetail() {
   }, [youtubeId, loading]);
 
   useEffect(() => {
-    setPlayback({ paused: true, currentTime: 0, duration: 0 });
+    const player = ytPlayerRef.current;
+    if (!ytReady || loading || player?.getVideoData?.()?.video_id !== youtubeId) return;
+    try {
+      if (!ytVisible) player.pauseVideo();
+      else if (!ytAutoplayAttemptedRef.current) {
+        ytAutoplayAttemptedRef.current = true;
+        player.mute();
+        player.playVideo();
+      }
+    } catch {}
+  }, [ytReady, ytVisible, youtubeId, loading]);
+
+  useEffect(() => {
+    setPlayback({ paused: true, muted: true, currentTime: 0, duration: 0 });
     if (loading) return;
     const readPlayback = () => {
       try {
@@ -172,7 +210,7 @@ export default function PostDetail() {
           const player = ytPlayerRef.current;
           if (!ytReady || player?.getVideoData?.()?.video_id !== youtubeId) return;
           const state = player.getPlayerState();
-          setPlayback({ paused: state !== 1 && state !== 3, currentTime: player.getCurrentTime() || 0, duration: player.getDuration() || 0 });
+          setPlayback({ paused: state !== 1 && state !== 3, muted: player.isMuted?.() ?? true, currentTime: player.getCurrentTime() || 0, duration: player.getDuration() || 0 });
         } else if (fileVideoRef.current) {
           const video = fileVideoRef.current;
           setPlayback({ paused: video.paused, currentTime: video.currentTime || 0, duration: video.duration || 0 });
@@ -189,8 +227,9 @@ export default function PostDetail() {
       if (youtubeId) {
         const player = ytPlayerRef.current;
         if (!ytReady || player?.getVideoData?.()?.video_id !== youtubeId) return;
+        ytAutoplayAttemptedRef.current = true;
         const state = player.getPlayerState();
-        if (state === 1 || state === 3) player.pauseVideo(); else player.playVideo();
+        if (state === 1 || state === 3) player.pauseVideo(); else if (!document.hidden) player.playVideo();
       } else {
         const video = fileVideoRef.current;
         if (!video) return;
@@ -206,6 +245,18 @@ export default function PostDetail() {
         const player = ytPlayerRef.current;
         if (ytReady && player?.getVideoData?.()?.video_id === youtubeId) player.seekTo(seconds, true);
       } else if (fileVideoRef.current) fileVideoRef.current.currentTime = seconds;
+    } catch {}
+  }
+
+  function togglePlaybackMuted() {
+    if (!youtubeId) { toggleMuted(); return; }
+    const player = ytPlayerRef.current;
+    if (!ytReady || player?.getVideoData?.()?.video_id !== youtubeId) return;
+    try {
+      const nextMuted = !(player.isMuted?.() ?? playback.muted);
+      if (nextMuted) player.mute(); else player.unMute();
+      setPlayback(previous => ({ ...previous, muted: nextMuted }));
+      rememberSoundPreference(!nextMuted);
     } catch {}
   }
 
@@ -395,11 +446,11 @@ export default function PostDetail() {
   }
 
   const src = SOURCE_META[post.source] || SOURCE_META.uficonnect || { icon: 'UFI', label: 'UFIconnect', color: 'var(--primary)' };
-  const isVideo = post.mediaType === 'video';
-  const isImage = post.mediaType === 'image';
-  const vimeoId = isVideo ? extractVimeoId(post.mediaUrl || post.sourceUrl) : null;
-  const playlistUrl = isVideo && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(post.mediaUrl) : null;
-  const directVideoUrl = isVideo && !playlistUrl && !youtubeId && post.mediaUrl && isDirectVideoUrl(post.mediaUrl, post) ? post.mediaUrl : null;
+  const isVideo = Boolean(videoSource) || post.mediaType === 'video';
+  const isImage = !videoSource && post.mediaType === 'image';
+  const vimeoId = videoSource?.kind === 'vimeo' ? videoSource.id : null;
+  const playlistUrl = videoSource?.kind === 'hls' ? videoSource.src : null;
+  const directVideoUrl = videoSource?.kind === 'file' ? videoSource.src : null;
   const canComment = !post.isExternal && !!token;
 
   return (
@@ -443,8 +494,9 @@ export default function PostDetail() {
             </div>
           )}
           {(youtubeId || playlistUrl || directVideoUrl) && !ytFailed && <MediaPlaybackControls
-            paused={playback.paused} muted={muted} currentTime={playback.currentTime} duration={playback.duration}
-            onTogglePlay={togglePlayback} onToggleMute={toggleMuted} onSeek={seekPlayback}
+            mediaKey={`${post.id || ''}:${videoSource.kind}:${videoSource.id || videoSource.src}`}
+            paused={playback.paused} muted={youtubeId ? playback.muted : muted} currentTime={playback.currentTime} duration={playback.duration}
+            onTogglePlay={togglePlayback} onToggleMute={togglePlaybackMuted} onSeek={seekPlayback}
             disabled={Boolean(youtubeId && !ytReady)} />}
           {youtubeId && ytFailed && <p role="status">Playback is unavailable here. <a href={`https://www.youtube.com/watch?v=${youtubeId}`} target="_blank" rel="noopener noreferrer">Open on YouTube</a></p>}
           {!youtubeId && !playlistUrl && !directVideoUrl && isImage && post.mediaUrl && (

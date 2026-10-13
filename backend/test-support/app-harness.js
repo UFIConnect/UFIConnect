@@ -115,7 +115,7 @@ async function createAppHarness({ env = {}, connected = false, query, withClient
       SOURCE_CONFIG, PLATFORMS, AGGREGATE_FEED_SOURCES, sourceRefreshRequests, pollSharedSourceRefreshRequests,
       followingRefreshQueue, refreshFollowingSourceCaches,
       setSourceRefreshWait(handler) { waitMs = handler; },
-      addAndBroadcast, flushFeedPersistenceQueue, ingestPersistenceQueues, transferStagedPosts,
+      addAndBroadcast, addSeenId, pushToEqualizer, importedContentRecovery, sourceContentRecoveryQueue, globalFeedCache, refreshImportedPostBody, stripAndDecodeHTML, decodeAndStripHTML, flushFeedPersistenceQueue, ingestPersistenceQueues, transferStagedPosts,
       COUNTRIES_DESTINATION_GUIDES, LIVE_CAMERA_CATALOG, liveCameraDiscoveryCache,
       fetchYouTubeLiveStates, fetchTravelGuidePosts, fetchSelectedTravelNewsPosts, fetchSelectedTravelEventPosts,
       travelCityMatches, travelCountryMatches, selectedTravelGuideDestinations, selectedTravelNewsEdition,

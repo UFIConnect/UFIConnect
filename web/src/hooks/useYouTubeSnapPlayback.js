@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createYouTubePlayerFrame, loadYouTubeIframeApi } from '../components/videoMedia';
 
 const EMPTY_SETTINGS = { ready: false, rates: [], rate: null, captionFontSize: null };
-const EMPTY_PLAYBACK = { ready: false, failed: false, paused: true, muted: true, currentTime: 0, duration: 0, settings: EMPTY_SETTINGS };
+const EMPTY_PLAYBACK = { ready: false, failed: false, paused: true, playing: false, muted: true, currentTime: 0, duration: 0, settings: EMPTY_SETTINGS };
 
 function readSettings(player) {
   let rates = [], rate = null, captionFontSize = null;
@@ -48,7 +48,7 @@ export default function useYouTubeSnapPlayback({ enabled, mediaKey, videoId, tit
       }
       const currentTime = player.getCurrentTime(), duration = player.getDuration();
       const playback = {
-        ready: true, failed: false, paused: state !== 1 && state !== 3,
+        ready: true, failed: false, paused: state !== 1 && state !== 3, playing: state === 1,
         muted: Boolean(player.isMuted()) || player.getVolume() === 0,
         currentTime: Number.isFinite(currentTime) && currentTime >= 0 ? currentTime : 0,
         duration: Number.isFinite(duration) && duration > 0 ? duration : 0,
@@ -59,13 +59,21 @@ export default function useYouTubeSnapPlayback({ enabled, mediaKey, videoId, tit
     } catch { /* The official iframe remains usable if its API is unavailable. */ }
   }
 
+  function startAutoplay(owner) {
+    const player = currentPlayer(owner);
+    if (!player || owner.autoplayAttempted || document.hidden || identity.current.forcePause) return;
+    owner.autoplayAttempted = true;
+    try { player.mute(); player.playVideo(); } catch { /* UFI Play remains available. */ }
+  }
+
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!enabled || !host || !/^[\w-]{11}$/.test(String(videoId || ''))) return undefined;
-    const owner = { host, mediaKey, videoId, player: null, ready: false, cancelled: false };
+    const owner = { host, mediaKey, videoId, player: null, ready: false, cancelled: false,
+      autoplayAttempted: document.hidden };
     binding.current = owner;
-    // Playback buttons live below the video. Loading the official frame never
-    // starts an external snap; its original-source link remains the fallback.
+    // The confirmed API starts this active clip muted once. The frame itself
+    // cannot independently restart playback after a chrome or visibility pause.
     const frame = createYouTubePlayerFrame(host, videoId, { autoplay: 0, controls: 0, mute: 1 }, identity.current.title);
     let poll;
     loadYouTubeIframeApi().then(YT => {
@@ -77,6 +85,7 @@ export default function useYouTubeSnapPlayback({ enabled, mediaKey, videoId, tit
             onReady: event => {
               if (!owns(owner)) return;
               owner.player = event.target; owner.ready = true;
+              startAutoplay(owner);
               read(owner);
               window.clearInterval(poll);
               poll = window.setInterval(() => { if (!document.hidden) read(owner); }, 250);
@@ -105,10 +114,14 @@ export default function useYouTubeSnapPlayback({ enabled, mediaKey, videoId, tit
 
   useEffect(() => {
     const pauseBlocked = () => {
-      if (!document.hidden && !identity.current.forcePause) return;
       const owner = binding.current, player = currentPlayer(owner);
+      if (owns(owner) && document.hidden) owner.autoplayAttempted = true;
       if (!player) return;
-      try { player.pauseVideo(); read(owner); } catch {}
+      try {
+        if (document.hidden || identity.current.forcePause) player.pauseVideo();
+        else startAutoplay(owner);
+        read(owner);
+      } catch {}
     };
     pauseBlocked();
     document.addEventListener('visibilitychange', pauseBlocked);
@@ -120,6 +133,7 @@ export default function useYouTubeSnapPlayback({ enabled, mediaKey, videoId, tit
       || identity.current.forcePause || document.hidden) return;
     const owner = binding.current, player = currentPlayer(owner);
     if (!player) return;
+    owner.autoplayAttempted = true;
     try {
       const state = player.getPlayerState();
       if (state === 1 || state === 3) player.pauseVideo(); else player.playVideo();
@@ -147,7 +161,7 @@ export default function useYouTubeSnapPlayback({ enabled, mediaKey, videoId, tit
       const duration = player.getDuration();
       if (!Number.isFinite(duration) || duration <= 0) return;
       // seekTo starts unstarted/cued players. Cue the requested position
-      // instead, preserving the external snap's explicit-play requirement.
+      // instead, preserving a paused or blocked autoplay attempt.
       const state = player.getPlayerState();
       const target = Math.max(0, Math.min(duration, seconds));
       if (state === -1 || state === 5) player.cueVideoById?.({ videoId: owner.videoId, startSeconds: target });

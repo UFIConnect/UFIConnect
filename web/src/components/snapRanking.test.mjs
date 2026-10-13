@@ -71,9 +71,10 @@ test('YouTube embeds require a real official URL and matching identity', () => {
   assert.equal(snapPlaybackInfo({ ...clip, mediaUrl: 'javascript:alert(1)' }).kind, 'source');
 });
 
-test('public source videos require recorded authorization for direct or HLS playback', () => {
+test('canonical Mastodon API attachments play while closed providers require authorization', () => {
   const clip = snap('mastodon', 'mastodon', undefined, { isExternal: true, mediaType: 'video', mediaKind: 'file', mediaUrl: 'https://media.example.com/video.mp4', sourceUrl: 'https://mastodon.social/@author/12345' });
-  assert.equal(snapPlaybackInfo(clip).kind, 'source');
+  assert.equal(snapPlaybackInfo(clip).kind, 'file');
+  assert.equal(snapPlaybackInfo({ ...clip, source: 'reddit' }).kind, 'source');
   assert.equal(snapPlaybackInfo({ ...clip, directPlaybackAuthorized: true }).kind, 'file');
   assert.equal(snapPlaybackInfo({ ...clip, mediaKind: 'hls', mediaUrl: 'https://media.example.com/stream.m3u8', directPlaybackAuthorized: true }).kind, 'hls');
   assert.equal(snapPlaybackInfo({ ...clip, mediaUrl: 'http://media.example.com/video.mp4', directPlaybackAuthorized: true }).kind, 'source');

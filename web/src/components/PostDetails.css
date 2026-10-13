@@ -7,6 +7,8 @@
 .job-post-full { padding:12px 0; border-top:1px solid var(--border); }
 .job-post-full button { color:var(--primary); font-weight:650; }
 .job-post-summary { border-left:3px solid var(--primary); padding:12px 14px; border-radius:0 8px 8px 0; background:var(--surface); margin-top:14px; }
+.job-detail-panel .job-detail-actions { flex-wrap:wrap; }
+.job-detail-panel .job-detail-actions .btn { min-width:0; flex:1 1 12rem; min-height:44px; white-space:normal; overflow-wrap:anywhere; }
 .post-topic-illustration { margin:16px 0 4px; border:1px solid var(--border); border-radius:12px; overflow:hidden; background:var(--surface); }
 .post-topic-illustration svg { display:block; width:100%; height:auto; max-height:220px; color:var(--primary); }
 .post-topic-illustration figcaption { padding:10px 14px; font-size:.74rem; color:var(--muted); line-height:1.5; }

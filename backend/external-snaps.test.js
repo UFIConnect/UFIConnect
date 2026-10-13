@@ -21,12 +21,33 @@ test('source clips retain attribution, use trusted length, reject thumbnails and
   const snaps = externalSnapsFromPosts(posts, { now });
   assert.deepEqual(snaps.map(item => item.id), ['1', '2', 'short']);
   assert.equal(snaps[0].sourceUrl, posts[0].sourceUrl); assert.equal(snaps[0].author.name, 'Source creator');
-  assert.equal(snaps[0].mediaKind, 'source'); assert.equal(snaps[0].directPlaybackAuthorized, false);
+  assert.equal(snaps[0].mediaKind, 'file'); assert.equal(snaps[0].directPlaybackAuthorized, false);
   assert.equal(snaps[0].owned, false); assert.equal(snaps[0].isExternal, true);
   assert.equal(Date.parse(snaps[0].expiresAt) - Date.parse(snaps[0].createdAt), CLIP_LOOKBACK_MS);
   assert.equal(snaps[2].mediaKind, 'youtube'); assert.equal(snaps[2].embedId, 'abcdefghijk');
   assert.equal(snaps[2].mediaUrl, 'https://www.youtube.com/watch?v=abcdefghijk');
   assert.equal(externalSnapsFromPosts([clip('1')], { now, env: { SOURCE_MASTODON_ENABLED: 'false' } }).length, 0);
+});
+
+test('canonical API video attachments keep native playback through the actual Snap mapper and frontend policy', async () => {
+  const { snapPlaybackInfo } = await import('../web/src/components/snapRanking.mjs');
+  const bsky = clip('bsky', 'bluesky', { sourceUrl: 'https://bsky.app/profile/creator.bsky.social/post/3ltestvideo',
+    mediaUrl: 'https://video.bsky.app/watch/did%3Aplc%3Acreator/bafysynthetic/playlist.m3u8?quality=high#video', mediaPoster: null });
+  const rows = externalSnapsFromPosts([clip('masto'), bsky, clip('closed', 'twitter')], { now });
+  assert.equal(rows.length, 3);
+  for (const source of ['mastodon', 'bluesky']) {
+    const snap = rows.find(item => item.source === source);
+    const expected = source === 'bluesky' ? 'hls' : 'file';
+    assert.equal(snap.mediaKind, expected); assert.equal(snapPlaybackInfo(snap).kind, expected);
+    assert.equal(snapPlaybackInfo(snap).mediaUrl, snap.mediaUrl);
+    assert.equal(snap.directPlaybackAuthorized, false, 'API attachment support does not invent a rights override');
+  }
+  const closed = rows.find(item => item.source === 'twitter');
+  assert.equal(closed.mediaKind, 'source'); assert.equal(snapPlaybackInfo(closed).kind, 'source');
+  for (const mediaUrl of ['https://localhost/private.mp4', 'https://name:secret@cdn.example/clip.mp4', 'https://files.mastodon.social/poster.jpg']) {
+    const [snap] = externalSnapsFromPosts([clip('invalid', 'mastodon', { mediaUrl })], { now });
+    assert.ok(!snap || snap.mediaKind === 'source');
+  }
 });
 
 test('public Home and authorized Following keep their audiences separate and respect disabled sources', () => {

@@ -115,16 +115,29 @@ try {
         if (forceSoftwareGpu) assert.ok(software, 'The requested software-GPU reproduction must use a software renderer');
         console.log('MAP_AUTOMATIC_GPU ' + JSON.stringify({ width, ...gpu, software }));
         if (!software) return;
-        // Automatic samples a 12-frame/one-second window before adapting. A
-        // paused software renderer never completes that window, so briefly play
-        // through its real controls, observe the measured tier, then pause.
+        // Automatic measures frame cost; a software driver can legitimately
+        // keep physical materials when fast enough. Advance at least 12 real
+        // frames (simulation delta is capped at .05s), then verify rendering
+        // and pause behavior without requiring a hardware-name-based tier.
+        // CI software frames exceeded 4.9s each; retain the .6s simulation
+        // threshold and allow 90s for those real clamped-delta frames.
+        const canvas = page.locator('.map-city-scene canvas');
+        await canvas.scrollIntoViewIfNeeded();
+        const before = await canvas.evaluate(element => ({ ...element.dataset }));
         await page.getByRole('button', { name: 'Play animation', exact: true }).click();
-        await page.waitForFunction(() => ['balanced', 'basic'].includes(document.querySelector('.map-city-scene canvas')?.dataset.renderQuality),
-          undefined, { timeout: 30000 });
+        await canvas.scrollIntoViewIfNeeded();
+        await page.waitForFunction(start => Number(document.querySelector('.map-city-scene canvas')?.dataset.trafficTime) - start >= .6,
+          Number(before.trafficTime), { timeout: 90000 });
         await page.getByRole('button', { name: 'Pause animation', exact: true }).click();
-        const adaptive = await page.locator('.map-city-scene canvas').evaluate(canvas => ({ ...canvas.dataset }));
+        await page.getByRole('button', { name: 'Play animation', exact: true }).waitFor();
+        const adaptive = await canvas.evaluate(element => ({ ...element.dataset }));
+        assert.ok(['physical', 'balanced', 'basic'].includes(adaptive.renderQuality), 'Automatic chooses a supported measured quality tier');
         assert.equal(Number(adaptive.instances), gpu.instances, 'Adaptive software rendering preserves the full instanced city model');
-        console.log('MAP_AUTOMATIC_READY ' + JSON.stringify({ width, ...adaptive }));
+        assert.ok(Number(adaptive.drawCalls) > 0 && Number(adaptive.drawCalls) < gpu.instances, 'Automatic renders the instanced city in fewer calls than model instances');
+        assert.ok(Number(adaptive.pixelRatio) > 0, 'Automatic preserves a positive rendering resolution');
+        await page.waitForTimeout(200);
+        assert.equal(await canvas.getAttribute('data-traffic-time'), adaptive.trafficTime, 'Pause stops the software-rendered animation');
+        console.log('MAP_AUTOMATIC_READY ' + JSON.stringify({ width, fromTrafficTime: before.trafficTime, fromQuality: before.renderQuality, ...adaptive }));
       };
       if (width === 1440) {
         assert.equal(await renderingQuality.inputValue(), 'maximum', 'Desktop opens at Maximum detail');
@@ -304,7 +317,7 @@ try {
         assert.equal(await renderingQuality.inputValue(), 'auto', 'Drive checks use the supported adaptive renderer');
         assert.equal(await renderingQuality.locator('option[value="maximum"]').count(), 1, 'Maximum detail remains selectable');
         await page.getByRole('button', { name: 'Drive mode', exact: true }).click();
-        await page.waitForFunction(() => Number(document.querySelector('.map-city-scene canvas')?.dataset.driveProgress) > .005, { timeout: 30000 });
+        await page.waitForFunction(() => Number(document.querySelector('.map-city-scene canvas')?.dataset.driveProgress) > .005, undefined, { timeout: 30000 });
         const drive = page.getByRole('group', { name: 'Drive between cities', exact: true });
         assert.equal(await drive.getByRole('combobox').locator('option').count(), 18);
         await drive.getByRole('button', { name: 'Pause drive', exact: true }).click();

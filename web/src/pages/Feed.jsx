@@ -23,7 +23,8 @@ import client from '../api/client';
 import { POST_ENGAGEMENT_EVENT, publishPostEngagement } from '../api/postEngagement.mjs';
 import { createEngagementLedger } from '../api/engagementLedger.mjs';
 import { markApiOriginFailure, resolveApiBaseUrl } from '../api/apiOrigin';
-import { extractYouTubeId, extractVimeoId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, createYouTubePlayerFrame, youTubeEmbedUrl, InlineAutoplayVideo, userWantsSound, useGlobalMuted, usePointerPlaybackGate, useSoloVideoPlayback } from '../components/videoMedia';
+import { extractYouTubeId, loadYouTubeIframeApi, createYouTubePlayerFrame, youTubeEmbedUrl, InlineAutoplayVideo, rememberSoundPreference, useGlobalMuted, useSoloVideoPlayback, requestSoloVideoPlayback } from '../components/videoMedia';
+import { resolveVideoSource } from '../utils/videoSource.mjs';
 import {
   SOURCE_META,
   HOME_FEED_SOURCE_IDS,
@@ -826,13 +827,14 @@ function MaximizeButton({ onClick }) {
   );
 }
 
-function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, minHeight = 0, autoPlayOnVisible = true, forcePause = false, onPlaybackStatus, requirePointer = true, liveCamera = false }) {
+function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, minHeight = 0, autoPlayOnVisible = true, forcePause = false, onPlaybackStatus, liveCamera = false }) {
   const preferences = useDataPreferences();
   const automaticPlayback = autoPlayOnVisible && previewPlaybackAllowed(preferences);
   const [manuallyStarted, setManuallyStarted] = useState(false);
+  const [userPaused, setUserPaused] = useState(false);
+  useEffect(() => { setUserPaused(false); }, [embedId]);
   useEffect(() => { setManuallyStarted(false); }, [preferences.dataSaver, preferences.autoplayPreviews, embedId]);
   const [inView, setInView] = useState(false);
-  const { playbackAllowed, pointerHandlers } = usePointerPlaybackGate();
   // Whether the real YT.Player has actually been constructed yet — separate
   // from `playing`/`effectivelyPlaying` (see below) because construction
   // happens at most once per embedId and is never redone just because
@@ -849,7 +851,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
   // Shared across every card in the Feed (and the Videos swipe list, and
   // the lightbox) via useGlobalMuted — muting or unmuting any single video
   // mutes/unmutes all the others too, live, not just future ones.
-  const [muted, toggleMuted] = useGlobalMuted();
+  const [muted] = useGlobalMuted();
   const containerRef = useRef(null);
   const ytHostRef = useRef(null);
   const ytPlayerRef = useRef(null);
@@ -858,26 +860,27 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
   const ytReadyRef = useRef(false);
   const ytReadyTimeoutRef = useRef(null);
   const ytShouldPlayRef = useRef(false);
-  const [ytPlayback, setYtPlayback] = useState({ paused: true, currentTime: 0, duration: 0 });
+  const ytExplicitPlayRef = useRef(false);
+  const [ytPlayback, setYtPlayback] = useState({ paused: true, muted: true, currentTime: 0, duration: 0 });
   // Toggles both ways with real scroll position — was one-directional
   // (isIntersecting=true set playing, nothing ever set it back false), so a
   // video that autoplayed into view kept playing, decoding, and (if
   // unmuted) audible indefinitely after being scrolled past. Mirrors
   // InlineAutoplayVideo's inView pattern for the other video type.
   useEffect(() => {
-    const el = containerRef.current;
+    const el = ytHostRef.current;
+    setInView(false);
     if (!el) return;
     if (!('IntersectionObserver' in window)) {
-      setInView(true);
       return;
     }
     const observer = new IntersectionObserver(
-      ([entry]) => setInView(entry.isIntersecting),
-      { threshold: 0.25 } // was 0.4 — lower bar so autoplay triggers during the scroll transition on small mobile viewports, not just once scrolling has essentially stopped
+      ([entry]) => setInView(entry.isIntersecting && entry.intersectionRatio > 0.5),
+      { threshold: [0, 0.5, 0.500001, 1] }
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [autoPlayOnVisible]);
+  }, [embedId, autoPlayOnVisible]);
 
   // forcePause is for when this exact post's media is open in ImageLightbox
   // (maximized) — the lightbox starts its own player for the same video,
@@ -888,8 +891,8 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
   // doubled if the user has sound on. Excluded from the solo-playback
   // arbiter too (not just gated after it wins) so it can't hold the "now
   // playing" slot hostage while paused for the lightbox.
-  const playbackRequested = manuallyStarted || automaticPlayback;
-  const isSolo = useSoloVideoPlayback(videoKey || embedId, playbackRequested && inView && (manuallyStarted || !requirePointer || playbackAllowed) && !forcePause);
+  const playbackRequested = (manuallyStarted || automaticPlayback) && !userPaused;
+  const isSolo = useSoloVideoPlayback(videoKey || embedId, playbackRequested && inView && !forcePause, ytHostRef);
   const effectivelyPlaying = playbackRequested && isSolo && !forcePause;
   ytShouldPlayRef.current = effectivelyPlaying;
 
@@ -939,11 +942,10 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
     const host = ytHostRef.current;
     if (!host) return;
     const lifecycle = ytLifecycleRef.current;
-    const startUnmuted = !muted;
     ytInitializedRef.current = true;
 
     host.replaceChildren();
-    const playerVars = { autoplay: 1, mute: 1, playsinline: 1, controls: 0, rel: 0, origin: window.location.origin };
+    const playerVars = { autoplay: 0, mute: 1, playsinline: 1, controls: 0, rel: 0, origin: window.location.origin };
     const mount = createYouTubePlayerFrame(host, embedId, playerVars, title || 'YouTube video');
 
     const isCurrent = () => ytLifecycleRef.current === lifecycle;
@@ -975,7 +977,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
               iframe.referrerPolicy = 'strict-origin-when-cross-origin';
             } catch {}
             try {
-              if (startUnmuted) e.target.unMute(); else e.target.mute();
+              e.target.mute();
               if (ytShouldPlayRef.current) e.target.playVideo(); else e.target.pauseVideo();
             } catch {}
           },
@@ -1007,7 +1009,11 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
   useEffect(() => {
     if (!playerReady || !ytPlayerRef.current) return;
     try {
-      if (effectivelyPlaying) ytPlayerRef.current.playVideo();
+      if (effectivelyPlaying) {
+        if (!ytExplicitPlayRef.current) ytPlayerRef.current.mute();
+        ytExplicitPlayRef.current = false;
+        ytPlayerRef.current.playVideo();
+      }
       else ytPlayerRef.current.pauseVideo();
     } catch {}
   }, [effectivelyPlaying, playerReady]);
@@ -1017,7 +1023,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
     try {
       if (muted) ytPlayerRef.current.mute(); else ytPlayerRef.current.unMute();
     } catch {}
-  }, [muted, playerReady]);
+  }, [muted]);
 
   useEffect(() => {
     if (!playerReady) return;
@@ -1026,7 +1032,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
       try {
         if (player?.getVideoData?.()?.video_id !== embedId) return;
         const state = player.getPlayerState();
-        setYtPlayback({ paused: state !== 1 && state !== 3, currentTime: player.getCurrentTime() || 0, duration: player.getDuration() || 0 });
+        setYtPlayback({ paused: state !== 1 && state !== 3, muted: player.isMuted?.() ?? true, currentTime: player.getCurrentTime() || 0, duration: player.getDuration() || 0 });
       } catch {}
     };
     read();
@@ -1040,7 +1046,6 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
     <div>
     <div
       ref={containerRef}
-      {...pointerHandlers}
       style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', background: '#000', cursor: showPlayerHint ? 'pointer' : 'default' }}
     >
       {/* Always in the DOM once rendered, and — critically — always
@@ -1067,7 +1072,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
       />
       {playerFailed && effectivelyPlaying && !onPlaybackStatus && !isNativeRuntime() && (
         <iframe
-          src={youTubeEmbedUrl(embedId, { autoplay: 1, mute: userWantsSound() ? 0 : 1, controls: 0 })}
+          src={youTubeEmbedUrl(embedId, { autoplay: 1, mute: 1, controls: 0 })}
           referrerPolicy="strict-origin-when-cross-origin"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', display: 'block' }}
           allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
@@ -1083,7 +1088,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
       )}
     </div>
       {showPlayerHint && !playerReady && (
-        <button type="button" aria-label="Play feed video preview" onClick={() => { setManuallyStarted(true); setInView(true); }} style={{
+        <button type="button" aria-label="Play feed video preview" onClick={() => { setUserPaused(false); setManuallyStarted(true); requestSoloVideoPlayback(videoKey || embedId); }} style={{
           display: 'flex', alignItems: 'center', minHeight: 44,
           justifyContent: 'center', color: '#fff', background: '#080c12',
           border: 0, width: '100%', cursor: 'pointer',
@@ -1098,10 +1103,18 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
           </div>
         </button>
       )}
-      {playerReady && <MediaPlaybackControls paused={ytPlayback.paused} muted={muted}
-        currentTime={ytPlayback.currentTime} duration={ytPlayback.duration} onToggleMute={toggleMuted}
+      {playerReady && <MediaPlaybackControls mediaKey={`${videoKey || ''}:youtube:${embedId}`} paused={ytPlayback.paused} muted={ytPlayback.muted}
+        currentTime={ytPlayback.currentTime} duration={ytPlayback.duration} onToggleMute={() => { try {
+          const p = ytPlayerRef.current; if (p?.getVideoData?.()?.video_id !== embedId) return;
+          const nextMuted = !(p.isMuted?.() ?? ytPlayback.muted);
+          if (nextMuted) p.mute(); else p.unMute();
+          setYtPlayback(previous => ({ ...previous, muted: nextMuted })); rememberSoundPreference(!nextMuted);
+        } catch {} }}
         onTogglePlay={() => { try { const p = ytPlayerRef.current; if (p?.getVideoData?.()?.video_id !== embedId) return;
-          const state = p.getPlayerState(); if (state === 1 || state === 3) p.pauseVideo(); else p.playVideo(); } catch {} }}
+          const state = p.getPlayerState(); if (state === 1 || state === 3) { setUserPaused(true); p.pauseVideo(); } else {
+            setUserPaused(false); setManuallyStarted(true); ytExplicitPlayRef.current = true;
+            requestSoloVideoPlayback(videoKey || embedId); if (!document.hidden) p.playVideo();
+          } } catch {} }}
         onSeek={seconds => { try { const p = ytPlayerRef.current; if (p?.getVideoData?.()?.video_id === embedId) p.seekTo(seconds, true); } catch {} }} />}
       {playerFailed && !onPlaybackStatus && <a href={`https://www.youtube.com/watch?v=${embedId}`} target="_blank" rel="noopener noreferrer">Open on YouTube</a>}
     </div>
@@ -1245,7 +1258,8 @@ function TravelLiveLoop({ feeds = [], mediaOpenId, location, onLocationSelect, o
 function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen, onPostUpdated }) {
   const src = SOURCE_META.youtube;
   const c   = catStyle(post.group?.category);
-  const embedId = post.embedId || extractYouTubeId(post.sourceUrl || post.mediaUrl);
+  const videoSource = resolveVideoSource(post);
+  const embedId = videoSource?.kind === 'youtube' ? videoSource.id : null;
   const [imageFailed, setImageFailed] = useState(false);
   const [showComments, setShowComments] = useState(false);
   useEffect(() => setImageFailed(false), [post?.id, post?.mediaUrl]);
@@ -1264,7 +1278,7 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen, onPostUpdated })
       {post.content && <PostText text={post.content} accent={src.color} />}
       {embedId ? (
         <div style={{ marginBottom: 10, position: 'relative' }}>
-          <YouTubeEmbedBlock embedId={embedId} videoKey={post.id} poster={post.mediaUrl} title={post.title} maxHeight={280} forcePause={isMediaOpen} />
+          <YouTubeEmbedBlock embedId={embedId} videoKey={post.id} poster={videoSource.poster} title={post.title} maxHeight={280} forcePause={isMediaOpen} />
           {onMediaOpen && <MaximizeButton onClick={() => onMediaOpen(post)} />}
         </div>
       ) : post.mediaUrl && !imageFailed ? (
@@ -1308,13 +1322,11 @@ function VimeoEmbedBlock({ embedId, videoKey, poster, title, forcePause = false 
   useEffect(() => { setManuallyStarted(false); }, [preferences.dataSaver, preferences.autoplayPreviews, embedId]);
   const [inView, setInView] = useState(false);
   const containerRef = useRef(null);
-  const { playbackAllowed, pointerHandlers } = usePointerPlaybackGate();
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     if (!('IntersectionObserver' in window)) {
-      setInView(true);
       return;
     }
     const observer = new IntersectionObserver(
@@ -1328,10 +1340,10 @@ function VimeoEmbedBlock({ embedId, videoKey, poster, title, forcePause = false 
   // See useSoloVideoPlayback — only the most-recently-scrolled-to video
   // across the whole Feed (any embed type) actually plays at once.
   const playbackRequested = automaticPlayback || manuallyStarted;
-  const playing = useSoloVideoPlayback(videoKey || embedId, playbackRequested && inView && (manuallyStarted || playbackAllowed) && !forcePause) && playbackRequested && !forcePause;
+  const playing = useSoloVideoPlayback(videoKey || embedId, playbackRequested && inView && !forcePause, containerRef) && playbackRequested && !forcePause;
 
   return (
-    <div ref={containerRef} {...pointerHandlers} style={{
+    <div ref={containerRef} style={{
       position: 'relative', borderRadius: 14, overflow: 'hidden', background: '#000',
       aspectRatio: '16/9', margin: '0 auto',
     }}>
@@ -1340,13 +1352,10 @@ function VimeoEmbedBlock({ embedId, videoKey, poster, title, forcePause = false 
         // Player API, a plain iframe here has no postMessage control layer
         // — Vimeo's own native player chrome, still visible since only
         // title/byline/portrait are suppressed above, is what handles
-        // further volume changes once mounted). Best-effort respects the
-        // stored preference at mount time instead: if this browser has
-        // already earned "unmuted" elsewhere (a real click, see
-        // userWantsSound), start Vimeo unmuted too rather than forcing
-        // yet another mute cycle the app can't itself unwind.
+        // further volume changes once mounted). Every automatic mount is
+        // muted; a stored preference must not turn scrolling into sound.
         <iframe
-          src={`https://player.vimeo.com/video/${embedId}?autoplay=1&muted=${userWantsSound() ? 0 : 1}&loop=1&title=0&byline=0&portrait=0`}
+          src={`https://player.vimeo.com/video/${embedId}?autoplay=1&muted=1&loop=1&title=0&byline=0&portrait=0`}
           style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
           allow="autoplay; fullscreen; picture-in-picture"
           title={title}
@@ -1358,7 +1367,7 @@ function VimeoEmbedBlock({ embedId, videoKey, poster, title, forcePause = false 
           Vimeo video
         </div>
       )}
-      {!playing && <button type="button" aria-label="Play feed video preview" onClick={() => { setManuallyStarted(true); setInView(true); }}
+      {!playing && <button type="button" aria-label="Play feed video preview" onClick={() => { setManuallyStarted(true); setInView(true); requestSoloVideoPlayback(videoKey || embedId); }}
         style={{ position: 'absolute', inset: 0, border: 0, background: 'rgba(0,0,0,.35)', color: '#fff', width: '100%', cursor: 'pointer' }}>Tap to play</button>}
     </div>
   );
@@ -1550,19 +1559,14 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
   const isCommunityPost = !isExternal && ['uficonnect', 'livecamera'].includes(post.source || 'uficonnect');
   const isRestaurantPost = post.source === 'restaurants' && post.ufiInteractive;
   const isUFIconnectInteractive = isCommunityPost || isRestaurantPost;
-  const hasVideo       = post.mediaUrl && post.mediaType === 'video';
-  const videoPlaylistUrl = hasVideo && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(post.mediaUrl) : null;
-  const videoLinkUrl = post.mediaUrl || post.sourceUrl;
-  // Articles from any RSS source can embed a real YouTube video (see
-  // parseRSSItems' video detection backend-side — mediaUrl is a plain watch
-  // URL in that case, same as a dedicated YouTube post's). Checked before
-  // isDirectVideoUrl since a watch URL is never a direct file.
-  const videoYouTubeId = hasVideo ? extractYouTubeId(videoLinkUrl) : null;
-  // Same idea, for RSS articles embedding a Vimeo player instead (see
-  // parseRSSItems' vimeo detection backend-side).
-  const videoVimeoId = hasVideo && !videoYouTubeId ? extractVimeoId(videoLinkUrl) : null;
-  const videoTwitchId = hasVideo && post.source === 'twitch' ? officialTwitchClipId(post.sourceUrl) || officialTwitchClipId(videoLinkUrl) : null;
-  const videoIsDirectFile = hasVideo && !videoPlaylistUrl && !videoYouTubeId && !videoVimeoId && isDirectVideoUrl(videoLinkUrl, post);
+  const videoSource = resolveVideoSource(post);
+  const hasVideo = Boolean(videoSource) || post.mediaType === 'video';
+  const videoPlaylistUrl = videoSource?.kind === 'hls' ? videoSource.src : null;
+  const videoLinkUrl = videoSource?.kind === 'file' ? videoSource.src : post.mediaUrl || post.sourceUrl;
+  const videoYouTubeId = videoSource?.kind === 'youtube' ? videoSource.id : null;
+  const videoVimeoId = videoSource?.kind === 'vimeo' ? videoSource.id : null;
+  const videoTwitchId = hasVideo && post.source === 'twitch' ? officialTwitchClipId(post.sourceUrl) || officialTwitchClipId(post.mediaUrl) : null;
+  const videoIsDirectFile = videoSource?.kind === 'file';
   const videoIsPlayable = hasVideo && (videoPlaylistUrl || videoIsDirectFile || videoYouTubeId || videoVimeoId || videoTwitchId);
   const commentCount   = post.commentsCount || 0;
   const commUrl        = commentUrl(post);
@@ -1704,7 +1708,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
 
       <>{isCareerPost(post) ? <JobPostContent post={post} /> : <PostText text={post.content} accent={isExternal ? src.color : undefined} />}<ArticleIllustration post={post} /></>
 
-      {post.mediaUrl && post.mediaType === 'image' && (
+      {!hasVideo && post.mediaUrl && post.mediaType === 'image' && (
         <button
           onClick={() => onMediaOpen?.(post)}
           style={{ all: 'unset', display: 'block', width: '100%', cursor: 'pointer', marginTop: 12 }}
@@ -1729,7 +1733,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
           <YouTubeEmbedBlock
             embedId={videoYouTubeId}
             videoKey={post.id}
-            poster={`https://i.ytimg.com/vi/${videoYouTubeId}/hqdefault.jpg`}
+            poster={videoSource.poster}
             title={post.title}
             maxHeight={360}
             forcePause={isMediaOpen}

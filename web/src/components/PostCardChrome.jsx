@@ -12,6 +12,7 @@ import client from '../api/client';
 import { isMemberPost, postProfileLink, safePostLink } from '../../../backend/post-links.mjs';
 import { sourcePostMenuItems } from '../utils/sourcePostMenu.mjs';
 import { publicSiteUrl } from '../utils/publicSiteUrl.mjs';
+import { isNativeRuntime, nativeExternalOpen, reportNativeError } from '../nativeRuntime.mjs';
 import './PostCardChrome.css';
 
 // Shared post-card chrome: author header with the source's own badge, the
@@ -59,6 +60,29 @@ export function postTimes(post) {
 
 const initialsOf = name => String(name || '').trim().split(/\s+/).slice(0, 2).map(part => part[0] || '').join('').toUpperCase() || '·';
 
+const isXPost = post => post?.source === 'twitter' || post?.source === 'x';
+function xAuthorProfile(post) {
+  if (!isXPost(post)) return null;
+  const destination = postProfileLink(post);
+  if (destination?.fallback || !destination?.href) return null;
+  try {
+    const url = new URL(destination.href);
+    const handle = /^\/([A-Za-z0-9_]{1,15})\/?$/.exec(url.pathname)?.[1];
+    if (url.protocol !== 'https:' || !['x.com', 'twitter.com'].includes(url.hostname.replace(/^www\./, '')) || !handle) return null;
+    return { href: `${url.origin}/${handle}`, handle: `@${handle}` };
+  } catch { return null; }
+}
+
+function xPostPermalink(post) {
+  if (!isXPost(post)) return null;
+  const href = safePostLink(post?.sourceUrl);
+  try {
+    const url = new URL(href);
+    return url.protocol === 'https:' && ['x.com', 'twitter.com'].includes(url.hostname.replace(/^www\./, ''))
+      && /^\/(?:[A-Za-z0-9_]{1,15}|i\/web)\/status\/\d+\/?$/.test(url.pathname) ? href : null;
+  } catch { return null; }
+}
+
 function SourceBadge({ source, src }) {
   return (
     <span className="post-chrome-badge" style={{ '--source-color': src.color }} aria-hidden="true">
@@ -72,11 +96,12 @@ function SourceBadge({ source, src }) {
 // source's own mark for publishers. External authors carry the source badge.
 export function PostAvatar({ post, member = false, onView }) {
   const src = postSource(post);
+  const xProfile = !member && xAuthorProfile(post);
   const avatarUrl = post?.author?.avatarUrl;
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [avatarUrl]);
   const publisher = !member && (!post?.author?.name || post.author.name === src.label);
-  if (publisher && !avatarUrl) {
+  if (publisher && !avatarUrl && !xProfile) {
     return (
       <span className="post-chrome-avatar post-chrome-avatar-source" style={{ '--source-color': src.color }} aria-hidden="true">
         {hasBrandIcon(post.source) ? <BrandIcon platform={post.source} size={26} /> : <b>{src.icon}</b>}
@@ -91,6 +116,12 @@ export function PostAvatar({ post, member = false, onView }) {
     </>
   );
   const style = { '--source-color': member ? 'var(--primary)' : src.color };
+  if (xProfile) return (
+    <a href={xProfile.href} target="_blank" rel="noopener noreferrer" className="post-chrome-avatar" style={style}
+      aria-label={`${post?.author?.name || xProfile.handle} on X`}>
+      {content}
+    </a>
+  );
   if (photo && onView) {
     return (
       <button type="button" className="post-chrome-avatar post-chrome-avatar-button" style={style}
@@ -135,6 +166,8 @@ export function ProfilePhotoViewer({ url, name, handle, profileTo, profileHref, 
 export function postHandle(post, member = false) {
   const src = postSource(post);
   if (member) return [post?.author?.title, post?.author?.organization].filter(Boolean).join(' · ');
+  const xProfile = xAuthorProfile(post);
+  if (xProfile) return xProfile.handle;
   const label = String(post?.sourceLabel || '').trim();
   if (label && label !== src.label && label !== post?.author?.name) return label;
   if (post?.author?.name && post.author.name !== src.label) return src.label;
@@ -146,9 +179,9 @@ export function PostTime({ post, live = false }) {
   if (live) return <span className="post-chrome-time"><span className="post-chrome-live">Live feed</span></span>;
   const times = postTimes(post);
   if (!times) return null;
-  const original = post?.source === 'mastodon' && safePostLink(post?.sourceUrl);
+  const original = post?.source === 'mastodon' ? safePostLink(post?.sourceUrl) : xPostPermalink(post);
   if (original) return (
-    <a href={original} target="_blank" rel="noopener noreferrer" className="post-chrome-time" title={times.full} aria-label={`${times.full}. Open post on Mastodon`}>
+    <a href={original} target="_blank" rel="noopener noreferrer" className="post-chrome-time" title={times.full} aria-label={`${times.full}. Open post on ${isXPost(post) ? 'X' : 'Mastodon'}`}>
       <time dateTime={times.iso}><span className="post-chrome-day">{times.edited ? 'Edited · ' : ''}{times.relative}</span></time>
     </a>
   );
@@ -166,7 +199,8 @@ export function PostHeader({ post, member = false, to }) {
   const handle = postHandle(post, member);
   const [viewing, setViewing] = useState('');
   const closeViewer = useCallback(() => setViewing(''), []);
-  const destination = to ? { to } : postProfileLink(post, profile?.id);
+  const xProfile = !member && xAuthorProfile(post);
+  const destination = xProfile || (to ? { to } : postProfileLink(post, profile?.id));
   const profileHref = destination?.fallback ? null : destination?.href;
   const who = (
     <span className="post-chrome-who">
@@ -360,7 +394,15 @@ export function OpenOnSource({ post, label, onClick }) {
   if (internal && !post?.id) return null;
   const name = internal ? 'Open post' : label || sourcePostMenuItems(post).find(item => item.key === 'original')?.label || `Open on ${src.label}`;
   const CategoryIcon = { wikivoyage: Plane, travelnews: Plane, travelevents: Plane, livecamera: Plane, restaurants: Utensils, bars: Martini }[post.source];
-  const props = { className: 'post-chrome-action post-chrome-source-link', onClick,
+  function openSource(event) {
+    onClick?.(event);
+    if (internal || event.defaultPrevented || event.button > 0 || !isNativeRuntime()) return;
+    // Card handlers may stop bubbling before the document's native bridge.
+    // Hand off here; preventDefault also prevents a second document handoff.
+    event.preventDefault();
+    void nativeExternalOpen(href).catch(() => reportNativeError('The source could not be opened. Please try again.'));
+  }
+  const props = { className: 'post-chrome-action post-chrome-source-link', onClick: openSource,
     style: { '--source-color': src.color }, 'aria-label': name, title: name };
   const content = <>
       <span className="post-chrome-open-mark" aria-hidden="true">{CategoryIcon ? <CategoryIcon size={16} /> : hasBrandIcon(post.source || 'uficonnect') ? <BrandIcon platform={post.source || 'uficonnect'} size={16} /> : <b>{src.icon}</b>}</span>

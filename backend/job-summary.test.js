@@ -11,18 +11,18 @@ before(async () => {
 test('all catalog career sources and display names use role summaries and preserve complete descriptions', () => {
   for (const [source, entry] of Object.entries(directory).filter(([, entry]) => entry.category === 'career')) {
     for (const name of [source, entry.name]) {
-      const post = { source: name, content: 'Responsibilities\n- Write code\n- Test APIs\nRequirements\n- JavaScript\nBenefits\n- Paid leave' };
+      const post = { source: name, content: 'About the role\nJoin our engineering team to make account access simpler for customers.\nResponsibilities\n- Write code\n- Test APIs\nRequirements\n- JavaScript\nBenefits\n- Paid leave' };
       assert.equal(isCareerPost(post), true, name);
-      assert.equal(importedContentLimit(post), 60000, name);
+      assert.equal(importedContentLimit(post), 100000, name);
       assert.deepEqual(summarizeJob(post).tasks, ['Write code', 'Test APIs'], name);
-      assert.match(summarizeJob(post).summary, /Write code; Test APIs\./, name);
+      assert.equal(summarizeJob(post).summary, 'Join our engineering team to make account access simpler for customers.', name);
     }
   }
   assert.equal(isCareerPost({ source: 'uficonnect', sourceLabel: 'Hiring' }), true);
   assert.equal(isCareerPost({ type: 'job', source: 'new-provider' }), true);
   for (const source of ['linkedin', 'reuters', 'airbnb', 'github']) {
     assert.equal(isCareerPost({ source, content: 'An ordinary post.' }), false);
-    assert.equal(importedContentLimit({ source }), 2000);
+    assert.equal(importedContentLimit({ source }), source === 'uficonnect' ? 2000 : 100000);
   }
 });
 test('short tasks, curly apostrophes and common site headings remain distinct from requirements and benefits', () => {
@@ -58,25 +58,54 @@ test('imported career HTML preserves bold section headings and inline emphasis p
   assert.doesNotMatch(job.summary,/Paid leave|degree/);
 });
 test('full supplied descriptions and structured responsibilities are read past the introductory excerpt', () => {
-  const job = summarizeJob({ content: 'Short company introduction.', fullDescription: 'About our company\n' + 'Company background. '.repeat(1500) + '\nResponsibilities\n- Investigate incidents\n- Document findings\n- Coordinate releases\nQualifications\n- Relevant experience',
+  const job = summarizeJob({ content: 'Short company introduction.', fullDescription: 'About our company\n' + 'Company background. '.repeat(1500) + '\nAbout the role\nThis role helps our customers keep their accounts secure.\nResponsibilities\n- Investigate incidents\n- Document findings\n- Coordinate releases\nQualifications\n- Relevant experience',
     duties: ['Review logs','Train staff'], requirements: [{ text: 'Communication skills' }] });
   assert.ok(job.fullText.length > 25000);
   assert.deepEqual(job.tasks,['Investigate incidents','Document findings','Coordinate releases','Review logs','Train staff']);
-  assert.match(job.summary,/Train staff/);
+  assert.equal(job.summary,'This role helps our customers keep their accounts secure.');
   assert.doesNotMatch(job.summary,/Company background|Relevant experience|Communication/);
   assert.ok(job.requirements.includes('Communication skills'));
 });
-test('summary deduplicates duties and covers the main tasks rather than repeating only the first two', () => {
+test('duties remain deduplicated and complete without masquerading as a role overview', () => {
   const job = summarizeJob({ content: 'Responsibilities\n- Design APIs\n- Maintain services\n- Review releases\n- Train staff\n- Answer calls\n- Design APIs.' });
   assert.equal(job.tasks.length,5);
-  for(const task of ['Design APIs','Maintain services','Review releases','Train staff','Answer calls']) assert.ok(job.summary.includes(task));
-  assert.equal(job.summary.match(/Design APIs/g).length,1);
+  assert.deepEqual(job.details,['Design APIs','Maintain services','Review releases','Train staff','Answer calls']);
+  assert.equal(job.summary,'');
 });
-test('company descriptions, qualifications and benefits alone cannot become a role task summary', () => {
+test('company sections, qualifications and benefits alone cannot become a role overview', () => {
   for (const content of ['About us\nBuild exceptional software for our customers.\nRequirements\nDesign experience\nBenefits\nPaid leave', 'Qualifications\nMaintain a valid license\nBenefits\nCompetitive salary', 'Engineer at Example company']) {
     const job = summarizeJob({ title:'Engineer at Example company', content });
     assert.equal(job.hasTasks,false);assert.equal(job.summary,'');
   }
+});
+test('a separate source summary survives a longer responsibilities description and takes priority', () => {
+  const summary = 'This role connects patients with the care team throughout their recovery. You will join a small regional service.';
+  const job = summarizeJob({ title: 'Care coordinator', summary, description: 'Responsibilities\n- Schedule patient visits\n- Answer calls\n- Maintain records\n- Review care plans\nRequirements\n- Relevant experience\nBenefits\n- Paid leave' });
+  assert.equal(job.summary,summary);
+  assert.match(job.fullText,/This role connects patients/);
+  assert.deepEqual(job.tasks,['Schedule patient visits','Answer calls','Maintain records','Review care plans']);
+  assert.doesNotMatch(job.summary,/Schedule patient visits|Paid leave|Relevant experience/);
+});
+test('role headings outrank introductory company copy and full listing text is never summary-truncated', () => {
+  const role = 'This position supports a regional service for families. ' + 'The team works with local organizations to make services easier to access. '.repeat(12);
+  const job = summarizeJob({ content: 'A national company with offices around the world.\nAbout this position\n' + role + '\nResponsibilities\n- Review cases\nQualifications\n- Communication skills\nAdditional information\nFINAL SUPPLIED PARAGRAPH', fullDescription: '<p>A separate complete source description.</p>' });
+  assert.ok(job.summary.startsWith('This position supports'));
+  assert.ok(job.summary.length<=641);
+  assert.doesNotMatch(job.summary,/national company|Review cases/);
+  assert.match(job.fullText,/FINAL SUPPLIED PARAGRAPH/);
+  assert.match(job.fullText,/A separate complete source description/);
+});
+test('structured duty lists cannot be promoted to a role overview and repeated excerpts stay single', () => {
+  const job = summarizeJob({ summary:'Responsibilities\n- Write code\n- Test APIs', content:'Responsibilities\n- Write code\n- Test APIs\nRequirements\n- Experience' });
+  assert.equal(job.summary,'');
+  assert.equal(job.fullText.match(/Write code/g).length,1);
+  assert.deepEqual(job.tasks,['Write code','Test APIs']);
+});
+test('raw USAJobs summary and major duties remain available as separate source fields', () => {
+  const job=summarizeJob({ description:'Responsibilities\n- Review reports\n- Maintain records', UserArea:{Details:{JobSummary:'This position supports a public program serving local residents.',MajorDuties:['Coordinate service teams']}},QualificationSummary:'Relevant experience is required.' });
+  assert.equal(job.summary,'This position supports a public program serving local residents.');
+  assert.match(job.fullText,/Coordinate service teams/);
+  assert.deepEqual(job.requirements,['Relevant experience is required.']);
 });
 test('USAJobs keeps major duties separated from qualification text before feed import', () => {
   const content = usaJobsDescription({ PositionTitle:'Program specialist', UserArea:{Details:{JobSummary:'Support the program.',MajorDuties:['Review reports','Maintain records']}}, QualificationSummary:'Experience managing records is required.' });
