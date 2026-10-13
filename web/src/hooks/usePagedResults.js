@@ -4,10 +4,10 @@ const emptyPage = () => ({ items: [], page: 1, hasNext: false, total: null, data
 
 // Offset and cursor APIs share the same visible-page lifecycle. Only successful
 // responses commit a new page; a failed Next keeps the current page for retry.
-export default function usePagedResults({ enabled = true, queryKey, loadPage, delay = 0, errorMessage = 'Results could not be loaded. Please try again.' }) {
+export default function usePagedResults({ enabled = true, queryKey, loadPage, mergeItems, delay = 0, errorMessage = 'Results could not be loaded. Please try again.' }) {
   const [snapshot, setSnapshot] = useState(() => ({ key: queryKey, ...emptyPage() }));
   const latest = useRef({ queryKey, enabled, loadPage, errorMessage });
-  latest.current = { queryKey, enabled, loadPage, errorMessage };
+  latest.current = { queryKey, enabled, loadPage, mergeItems, errorMessage };
   const epoch = useRef(0), controller = useRef(null), pending = useRef(false);
   const cache = useRef(new Map()), visible = useRef(null);
 
@@ -40,6 +40,7 @@ export default function usePagedResults({ enabled = true, queryKey, loadPage, de
         setSnapshot({ ...previous, key, loading: false, error: '', failedPage: null });
         return false;
       }
+      if (page > 1 && typeof config.mergeItems === 'function') value.items = config.mergeItems(visible.current?.items || [], value.items);
       cache.current.set(page, value); visible.current = { ...value, key };
       setSnapshot({ key, ...value, loading: false, error: '', failedPage: null });
       return true;

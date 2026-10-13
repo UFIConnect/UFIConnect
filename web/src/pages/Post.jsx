@@ -107,10 +107,10 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
   if (selectedTopicKey) feedParams.set('groupIds', selectedTopicKey);
   if (!initialShop) feedParams.set('scope', 'ufi');
   const feedPages = usePostPages({ endpoint: `/posts?${feedParams}`, viewerId: profile?.id,
-    enabled: !composeOnly, orderPosts: orderNewestFeedCohorts });
+    enabled: !composeOnly, continuous: true, orderPosts: orderNewestFeedCohorts });
   const feedTargetId = initialShop ? 'ufi-shop-posts' : 'ufi-community-posts';
   const scrollRefresh = useScrollToRefresh(feedPages.refresh,
-    { enabled: !composeOnly && !feedPages.loading && feedPages.page === 1 });
+    { enabled: !composeOnly && !feedPages.loading });
 
   useEffect(() => {
     if (composeOnly) return undefined;
@@ -424,7 +424,7 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
           onPostDeleted={() => feedPages.refresh()}
           maxWidth={null}
         />
-        <PostPagesNavigation results={feedPages} targetId={feedTargetId} label={initialShop ? 'Shop post pages' : 'Community post pages'} />
+        <PostPagesNavigation results={feedPages} continuous targetId={feedTargetId} />
       </div>}
     </ContentShell>
   );
