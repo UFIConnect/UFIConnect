@@ -1,0 +1,445 @@
+{
+  "verification": "Official creator channel pages and public YouTube RSS; no API keys or search.list calls.",
+  "channels": [
+    {
+      "name": "Lex Fridman",
+      "id": "UCSHZKyawb77ixDdsGog4iWA",
+      "officialUrl": "https://www.youtube.com/channel/UCSHZKyawb77ixDdsGog4iWA",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCSHZKyawb77ixDdsGog4iWA",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Lex Fridman",
+      "rssEntries": 15
+    },
+    {
+      "name": "Two Minute Papers",
+      "id": "UCbfYPyITQ-7l4upoX8nvctg",
+      "officialUrl": "https://www.youtube.com/channel/UCbfYPyITQ-7l4upoX8nvctg",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCbfYPyITQ-7l4upoX8nvctg",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Two Minute Papers",
+      "rssEntries": 15
+    },
+    {
+      "name": "AI Explained",
+      "id": "UCNJ1Ymd5yFuUPtn21xtRbbw",
+      "officialUrl": "https://www.youtube.com/@aiexplained-official",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCNJ1Ymd5yFuUPtn21xtRbbw",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "AI Explained",
+      "rssEntries": 15
+    },
+    {
+      "name": "Weights & Biases",
+      "id": "UCBp3w4DCEC64FZr4k9ROxig",
+      "officialUrl": "https://www.youtube.com/@WeightsBiases",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCBp3w4DCEC64FZr4k9ROxig",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "CoreWeave",
+      "rssEntries": 15
+    },
+    {
+      "name": "Yannic Kilcher",
+      "id": "UCZHmQk67mSJgfCCTn7xBfew",
+      "officialUrl": "https://www.youtube.com/channel/UCZHmQk67mSJgfCCTn7xBfew",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCZHmQk67mSJgfCCTn7xBfew",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Yannic Kilcher",
+      "rssEntries": 15
+    },
+    {
+      "name": "Fireship",
+      "id": "UCsBjURrPoezykLs9EqgamOA",
+      "officialUrl": "https://www.youtube.com/@Fireship",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCsBjURrPoezykLs9EqgamOA",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Fireship",
+      "rssEntries": 15
+    },
+    {
+      "name": "Computerphile",
+      "id": "UC9-y-6csu5WGm29I7JiwpnA",
+      "officialUrl": "https://www.youtube.com/channel/UC9-y-6csu5WGm29I7JiwpnA",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UC9-y-6csu5WGm29I7JiwpnA",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Computerphile",
+      "rssEntries": 15
+    },
+    {
+      "name": "Corey Schafer",
+      "id": "UCCezIgC97PvUuR4_gbFUs5g",
+      "officialUrl": "https://www.youtube.com/@coreyms",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCCezIgC97PvUuR4_gbFUs5g",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Corey Schafer",
+      "rssEntries": 15
+    },
+    {
+      "name": "freeCodeCamp",
+      "id": "UC8butISFwT-Wl7EV0hUK0BQ",
+      "officialUrl": "https://www.youtube.com/channel/UC8butISFwT-Wl7EV0hUK0BQ",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UC8butISFwT-Wl7EV0hUK0BQ",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "freeCodeCamp.org",
+      "rssEntries": 15
+    },
+    {
+      "name": "Ken Jee",
+      "id": "UCiT9RITQ9PW6BhXK0y2jaeg",
+      "officialUrl": "https://www.youtube.com/channel/UCiT9RITQ9PW6BhXK0y2jaeg",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCiT9RITQ9PW6BhXK0y2jaeg",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Ken Jee",
+      "rssEntries": 15
+    },
+    {
+      "name": "Web Dev Simplified",
+      "id": "UCFbNIlppjAuEX4znoulh0Cw",
+      "officialUrl": "https://www.youtube.com/@WebDevSimplified",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCFbNIlppjAuEX4znoulh0Cw",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Web Dev Simplified",
+      "rssEntries": 15
+    },
+    {
+      "name": "Theo",
+      "id": "UCbRP3c757lWg9M-U7TyEkXA",
+      "officialUrl": "https://www.youtube.com/@t3dotgg",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCbRP3c757lWg9M-U7TyEkXA",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Theo - t3․gg",
+      "rssEntries": 15
+    },
+    {
+      "name": "Kevin Powell",
+      "id": "UCJZv4d5rbIKd4QHMPkcABCw",
+      "officialUrl": "https://www.youtube.com/@KevinPowell",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCJZv4d5rbIKd4QHMPkcABCw",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Kevin Powell",
+      "rssEntries": 15
+    },
+    {
+      "name": "Traversy Media",
+      "id": "UC29ju8bIPH5as8OGnQzwJyA",
+      "officialUrl": "https://www.youtube.com/@TraversyMedia",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UC29ju8bIPH5as8OGnQzwJyA",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Traversy Media",
+      "rssEntries": 15
+    },
+    {
+      "name": "ThePrimeagen",
+      "id": "UC8ENHE5xdFSwx71u3fDH5Xw",
+      "officialUrl": "https://www.youtube.com/@ThePrimeagen",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UC8ENHE5xdFSwx71u3fDH5Xw",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "ThePrimeagen",
+      "rssEntries": 15
+    },
+    {
+      "name": "Google Cloud Tech",
+      "id": "UCJS9pqu9BzkAMNTmzNMNhvg",
+      "officialUrl": "https://www.youtube.com/channel/UCJS9pqu9BzkAMNTmzNMNhvg",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCJS9pqu9BzkAMNTmzNMNhvg",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Google Cloud Tech",
+      "rssEntries": 15
+    },
+    {
+      "name": "TechWorld with Nana",
+      "id": "UCdngmbVKX1Tgre699-XLlUA",
+      "officialUrl": "https://www.youtube.com/@TechWorldwithNana",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCdngmbVKX1Tgre699-XLlUA",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "TechWorld with Nana",
+      "rssEntries": 15
+    },
+    {
+      "name": "Amazon Web Services",
+      "id": "UCd6MoB9NC6uYN2grvUNT-Zg",
+      "officialUrl": "https://www.youtube.com/@amazonwebservices",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCd6MoB9NC6uYN2grvUNT-Zg",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Amazon Web Services",
+      "rssEntries": 15
+    },
+    {
+      "name": "NetworkChuck",
+      "id": "UC9x0AN7BWHpCDHSm9NiJFJQ",
+      "officialUrl": "https://www.youtube.com/@NetworkChuck",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UC9x0AN7BWHpCDHSm9NiJFJQ",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "NetworkChuck",
+      "rssEntries": 15
+    },
+    {
+      "name": "HackerSploit",
+      "id": "UC0ZTPkdxlAKf-V33tqXwi3Q",
+      "officialUrl": "https://www.youtube.com/@HackerSploit",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UC0ZTPkdxlAKf-V33tqXwi3Q",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "HackerSploit",
+      "rssEntries": 15
+    },
+    {
+      "name": "David Bombal",
+      "id": "UCP7WmQ_U4GB3K51Od9QvM0w",
+      "officialUrl": "https://www.youtube.com/@davidbombal",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCP7WmQ_U4GB3K51Od9QvM0w",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "David Bombal",
+      "rssEntries": 15
+    },
+    {
+      "name": "LiveOverflow",
+      "id": "UClcE-kVhqyiHCcjYwcpfj9w",
+      "officialUrl": "https://www.youtube.com/channel/UClcE-kVhqyiHCcjYwcpfj9w",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UClcE-kVhqyiHCcjYwcpfj9w",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "LiveOverflow",
+      "rssEntries": 15
+    },
+    {
+      "name": "GDC",
+      "id": "UC0JB7TSe49lg56u6qH8y_MQ",
+      "officialUrl": "https://www.youtube.com/channel/UC0JB7TSe49lg56u6qH8y_MQ",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UC0JB7TSe49lg56u6qH8y_MQ",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "GDC Festival of Gaming",
+      "rssEntries": 15
+    },
+    {
+      "name": "Sebastian Lague",
+      "id": "UCmtyQOKKmrMVaKuRXz02jbQ",
+      "officialUrl": "https://www.youtube.com/@SebastianLague",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCmtyQOKKmrMVaKuRXz02jbQ",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Sebastian Lague",
+      "rssEntries": 15
+    },
+    {
+      "name": "Blackthornprod",
+      "id": "UC9Z1XWw1kmnvOOFsj6Bzy2g",
+      "officialUrl": "https://www.youtube.com/@Blackthornprod",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UC9Z1XWw1kmnvOOFsj6Bzy2g",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Blackthornprod",
+      "rssEntries": 15
+    },
+    {
+      "name": "Flutter",
+      "id": "UCwXdFgeE9KYzlDdR7TG9cMw",
+      "officialUrl": "https://www.youtube.com/@FlutterDev",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCwXdFgeE9KYzlDdR7TG9cMw",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Flutter",
+      "rssEntries": 15
+    },
+    {
+      "name": "iOS Academy",
+      "id": "UCnksRRifsSCGUZpQukUKAyg",
+      "officialUrl": "https://www.youtube.com/@iOSAcademy",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCnksRRifsSCGUZpQukUKAyg",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "iOS Academy",
+      "rssEntries": 15
+    },
+    {
+      "name": "Patrick Collins",
+      "id": "UCn-3f8tw_E1jZvhuHatROwA",
+      "officialUrl": "https://www.youtube.com/@PatrickAlphaC",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCn-3f8tw_E1jZvhuHatROwA",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Patrick Collins",
+      "rssEntries": 15
+    },
+    {
+      "name": "DesignCourse",
+      "id": "UCVyRiMvfUNMA1UPlDPzG5Ow",
+      "officialUrl": "https://www.youtube.com/@DesignCourse",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCVyRiMvfUNMA1UPlDPzG5Ow",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "DesignCourse",
+      "rssEntries": 15
+    },
+    {
+      "name": "Figma",
+      "id": "UCQsVmhSa4X-G3lHlUtejzLA",
+      "officialUrl": "https://www.youtube.com/@Figma",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCQsVmhSa4X-G3lHlUtejzLA",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Figma",
+      "rssEntries": 15
+    },
+    {
+      "name": "Thomas Frank",
+      "id": "UCG-KntY7aVnIGXYEBQvmBAQ",
+      "officialUrl": "https://www.youtube.com/channel/UCG-KntY7aVnIGXYEBQvmBAQ",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCG-KntY7aVnIGXYEBQvmBAQ",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Thomas Frank",
+      "rssEntries": 15
+    },
+    {
+      "name": "Ali Abdaal",
+      "id": "UCoOae5nYA7VqaXzerajD0lg",
+      "officialUrl": "https://www.youtube.com/@aliabdaal",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCoOae5nYA7VqaXzerajD0lg",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Ali Abdaal",
+      "rssEntries": 15
+    },
+    {
+      "name": "Patrick Boyle",
+      "id": "UCASM0cgfkJxQ1ICmRilfHLw",
+      "officialUrl": "https://www.youtube.com/@PBoyle",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCASM0cgfkJxQ1ICmRilfHLw",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Patrick Boyle",
+      "rssEntries": 15
+    },
+    {
+      "name": "Ben Felix",
+      "id": "UCDXTQ8nWmx_EhZ2v-kp7QxA",
+      "officialUrl": "https://www.youtube.com/@BenFelixCSI",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCDXTQ8nWmx_EhZ2v-kp7QxA",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Ben Felix",
+      "rssEntries": 15
+    },
+    {
+      "name": "Veritasium",
+      "id": "UCHnyfMqiRRG1u-2MsSQLbXA",
+      "officialUrl": "https://www.youtube.com/channel/UCHnyfMqiRRG1u-2MsSQLbXA",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCHnyfMqiRRG1u-2MsSQLbXA",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Veritasium",
+      "rssEntries": 15
+    },
+    {
+      "name": "Real Engineering",
+      "id": "UCR1IuLEqb6UEA_zQ81kwXfg",
+      "officialUrl": "https://www.youtube.com/@RealEngineering",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCR1IuLEqb6UEA_zQ81kwXfg",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Real Engineering",
+      "rssEntries": 15
+    },
+    {
+      "name": "Webflow",
+      "id": "UCELSb-IYi_d5rYFOxWeOz5g",
+      "officialUrl": "https://www.youtube.com/@Webflow",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCELSb-IYi_d5rYFOxWeOz5g",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Webflow",
+      "rssEntries": 15
+    },
+    {
+      "name": "HubSpot Marketing",
+      "id": "UCVeuau7DLrg7zlAjxxDbdww",
+      "officialUrl": "https://www.youtube.com/@HubSpotMarketing",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCVeuau7DLrg7zlAjxxDbdww",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "HubSpot Marketing",
+      "rssEntries": 15
+    },
+    {
+      "name": "GaryVee",
+      "id": "UCctXZhXmG-kf3tlIXgVZUlw",
+      "officialUrl": "https://www.youtube.com/channel/UCctXZhXmG-kf3tlIXgVZUlw",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCctXZhXmG-kf3tlIXgVZUlw",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "GaryVee",
+      "rssEntries": 15
+    },
+    {
+      "name": "Ahrefs",
+      "id": "UCWquNQV8Y0_defMKnGKrFOQ",
+      "officialUrl": "https://www.youtube.com/@AhrefsCom",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCWquNQV8Y0_defMKnGKrFOQ",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Ahrefs",
+      "rssEntries": 15
+    },
+    {
+      "name": "Simon Sinek",
+      "id": "UCPmfPl-BsCd3wmE8i45LAoA",
+      "officialUrl": "https://www.youtube.com/@simonsinek",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCPmfPl-BsCd3wmE8i45LAoA",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Simon Sinek",
+      "rssEntries": 15
+    },
+    {
+      "name": "Graham Stephan",
+      "id": "UCV6KDgJskWaEckne5aPA0aQ",
+      "officialUrl": "https://www.youtube.com/channel/UCV6KDgJskWaEckne5aPA0aQ",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCV6KDgJskWaEckne5aPA0aQ",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "Graham Stephan",
+      "rssEntries": 15
+    },
+    {
+      "name": "Valuetainment",
+      "id": "UCGX7nGXpz-CmO_Arg-cgJ7A",
+      "officialUrl": "https://www.youtube.com/@Valuetainment",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCGX7nGXpz-CmO_Arg-cgJ7A",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "PBD Podcast",
+      "rssEntries": 15
+    },
+    {
+      "name": "KodeKloud",
+      "id": "UCSWj8mqQCcrcBlXPi4ThRDQ",
+      "officialUrl": "https://www.youtube.com/channel/UCSWj8mqQCcrcBlXPi4ThRDQ",
+      "feedUrl": "https://www.youtube.com/feeds/videos.xml?channel_id=UCSWj8mqQCcrcBlXPi4ThRDQ",
+      "verifiedOn": "2026-10-13",
+      "rssStatus": 200,
+      "rssTitle": "KodeKloud",
+      "rssEntries": 15
+    }
+  ]
+}

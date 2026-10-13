@@ -31,7 +31,10 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
     const source = { id, keys: uniqueKeys, collect, enabled, providerUntil, minSpacingMs: spacing, intervalMs,
       cursor: 0, registeredAt: now(), nextAt: now() + startDelayMs, lastAttemptAt: null, lastSuccessAt: null,
       inFlight: null, failures: 0, backoffUntil: 0, lastError: null, completedKeys: new Set(), keySuccessAt: new Map(),
-      cycleStartedAt: null, lastCycleFinishedAt: null, lastCycleDurationMs: null, lastDurationMs: null,
+      keyFailures: new Map(), attemptedKeys: new Set(), cycleStartedAt: null,
+      lastCycleFinishedAt: null, lastCycleDurationMs: null, lastDurationMs: null,
+      lastAttemptCycleFinishedAt: null, lastAttemptCycleDurationMs: null,
+      lastAttemptCycleSuccessfulKeys: 0, lastAttemptCycleFailedKeys: 0,
       totalRuns: 0, waiters: [] };
     sources.set(id, source);
     return source;
@@ -49,9 +52,24 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
     for (const resolve of waiters) resolve(result);
   }
 
+  function availableKey(source, at = now()) {
+    for (let offset = 0; offset < source.keys.length; offset++) {
+      const index = (source.cursor + offset) % source.keys.length;
+      const key = source.keys[index];
+      if ((source.keyFailures.get(String(key))?.retryAt || 0) <= at) return { key, index };
+    }
+    return null;
+  }
+
+  function nextKeyRetryAt(source) {
+    return Math.min(...source.keys.map(key => source.keyFailures.get(String(key))?.retryAt || now()));
+  }
+
   function launch(source) {
-    const started = now(), key = source.keys[source.cursor];
-    source.cursor = (source.cursor + 1) % source.keys.length;
+    const started = now(), selected = availableKey(source, started);
+    if (!selected) { source.nextAt = Math.max(source.nextAt, nextKeyRetryAt(source)); return null; }
+    const key = selected.key;
+    source.cursor = (selected.index + 1) % source.keys.length;
     source.lastAttemptAt = started;
     source.cycleStartedAt ??= started;
     source.nextAt = started + source.intervalMs;
@@ -70,21 +88,41 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
       source.totalRuns++;
       source.completedKeys.add(String(key));
       source.keySuccessAt.set(String(key), now());
-      if (source.completedKeys.size === source.keys.length) {
-        source.lastCycleFinishedAt = now();
-        source.lastCycleDurationMs = now() - source.cycleStartedAt;
-        source.cycleStartedAt = null;
-        source.completedKeys.clear();
-      }
+      source.keyFailures.delete(String(key));
       outcome = { ...result, scannedTopics: 1, deferred: false };
     }, error => {
-      source.failures++;
+      source.completedKeys.delete(String(key));
       source.lastError = String(error?.message || error).slice(0, 500);
-      source.backoffUntil = retryUntil(error, now(), source.failures);
-      source.nextAt = Math.max(source.nextAt, source.backoffUntil);
+      if (error?.collectionKeyFailure === true && [404, 410].includes(error.status)) {
+        // A missing channel is not a provider outage. Preserve its failure
+        // evidence, retry it after a normal cycle, and keep other keys moving.
+        const previous = source.keyFailures.get(String(key));
+        source.keyFailures.set(String(key), { key: String(key), status: error.status,
+          error: source.lastError, failedAt: now(), retryAt: now() + TARGET_CYCLE_MS,
+          attempts: (previous?.attempts || 0) + 1 });
+      } else {
+        source.failures++;
+        source.backoffUntil = retryUntil(error, now(), source.failures);
+        source.nextAt = Math.max(source.nextAt, source.backoffUntil);
+      }
       onError(source.id, error);
-      outcome = { deferred: true, error: source.lastError, retryAt: source.backoffUntil };
+      outcome = { deferred: true, error: source.lastError,
+        retryAt: source.keyFailures.get(String(key))?.retryAt || source.backoffUntil };
     }).finally(() => {
+      if (!outcome?.deferred || outcome?.error) source.attemptedKeys.add(String(key));
+      if (source.attemptedKeys.size === source.keys.length) {
+        source.lastAttemptCycleFinishedAt = now();
+        source.lastAttemptCycleDurationMs = now() - source.cycleStartedAt;
+        source.lastAttemptCycleSuccessfulKeys = source.completedKeys.size;
+        source.lastAttemptCycleFailedKeys = source.keys.length - source.completedKeys.size;
+        if (source.completedKeys.size === source.keys.length) {
+          source.lastCycleFinishedAt = now();
+          source.lastCycleDurationMs = source.lastAttemptCycleDurationMs;
+        }
+        source.cycleStartedAt = null;
+        source.attemptedKeys.clear();
+        source.completedKeys.clear();
+      }
       source.lastDurationMs = now() - started;
       source.inFlight = null;
       active--;
@@ -101,7 +139,8 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
     const tasks = [];
     for (const source of due) {
       if (active >= slotLimit()) break;
-      tasks.push(launch(source));
+      const task = launch(source);
+      if (task) tasks.push(task);
     }
     return tasks;
   }
@@ -112,6 +151,8 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
     const blocked = gate(source);
     if (blocked) return Promise.resolve({ deferred: true, reason: blocked,
       retryAt: Math.max(source.backoffUntil, source.providerUntil() || 0) || null });
+    if (!source.inFlight && !availableKey(source)) return Promise.resolve({ deferred: true,
+      reason: 'key_backoff', retryAt: nextKeyRetryAt(source) });
     const result = new Promise(resolve => source.waiters.push(resolve));
     // Repeated refreshes share the running request; manual requests never bypass
     // provider spacing or start a parallel all-topic sweep.
@@ -141,6 +182,8 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
       const ageMs = source.lastSuccessAt == null ? null : sampledAt - source.lastSuccessAt;
       const keyAges = source.keys.map(key => sampledAt - (source.keySuccessAt.get(String(key)) ?? source.registeredAt));
       return { id: source.id, enabled, keyCount: source.keys.length, completedKeys: source.completedKeys.size,
+        attemptedKeys: source.attemptedKeys.size, failedKeyCount: source.keyFailures.size,
+        failedKeys: [...source.keyFailures.values()],
         intervalMs: source.intervalMs, expectedCycleMs: Math.ceil(source.keys.length * source.intervalMs),
         coverageLimited: source.keys.length * source.intervalMs > MAX_CYCLE_MS,
         staleKeyCount: keyAges.filter(age => age > MAX_CYCLE_MS).length,
@@ -149,9 +192,11 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
         lastAttemptAt: source.lastAttemptAt, lastSuccessAt: source.lastSuccessAt, ageMs,
         overdue: enabled && (ageMs == null ? sampledAt - source.registeredAt > MAX_CYCLE_MS : ageMs > MAX_CYCLE_MS),
         inFlight: Boolean(source.inFlight), inFlightMs: source.inFlight ? sampledAt - source.lastAttemptAt : 0,
-        nextAt: Math.max(source.nextAt, blockedUntil), backoffUntil: blockedUntil || null,
+        nextAt: Math.max(source.nextAt, blockedUntil, availableKey(source, sampledAt) ? 0 : nextKeyRetryAt(source)), backoffUntil: blockedUntil || null,
         lastError: source.lastError, failures: source.failures, totalRuns: source.totalRuns,
         lastCycleFinishedAt: source.lastCycleFinishedAt, lastCycleDurationMs: source.lastCycleDurationMs,
+        lastAttemptCycleFinishedAt: source.lastAttemptCycleFinishedAt, lastAttemptCycleDurationMs: source.lastAttemptCycleDurationMs,
+        lastAttemptCycleSuccessfulKeys: source.lastAttemptCycleSuccessfulKeys, lastAttemptCycleFailedKeys: source.lastAttemptCycleFailedKeys,
         lastDurationMs: source.lastDurationMs };
     });
     return { targetCycleMs: TARGET_CYCLE_MS, maxCycleMs: MAX_CYCLE_MS, maxConcurrency: concurrency, effectiveConcurrency: slotLimit(), active,

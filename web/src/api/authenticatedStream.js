@@ -2,13 +2,18 @@
 // out of URL logs, history, and monitoring while retaining SSE messages.
 import { isNativeRuntime, nativeApiPath } from '../nativeRuntime.mjs';
 import { createNativeFeedPolling } from './nativePolling.mjs';
-import { getAccessToken } from '../auth/session';
-import client from './client';
+import { getAccessToken } from '../auth/session.js';
 
 export function createAuthenticatedStream(url, token) {
   if (isNativeRuntime()) {
     if (nativeApiPath(url) !== '/feed/stream') throw new Error('Live updates are unavailable for this request.');
-    return createNativeFeedPolling(token, { request: (path, config) => client.get(path, config), currentToken: getAccessToken });
+    return createNativeFeedPolling(token, {
+      request: async (path, config) => {
+        const { default: client } = await import('./client.js');
+        return client.get(path, config);
+      },
+      currentToken: getAccessToken,
+    });
   }
   const controller = new AbortController();
   const stream = { onopen: null, onmessage: null, onerror: null, close: () => controller.abort() };
