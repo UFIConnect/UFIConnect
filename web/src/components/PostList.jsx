@@ -10,6 +10,7 @@ import ShopPostDetails from './ShopPostDetails';
 import PostInlineText from './PostInlineText';
 import PostLinkPreviews from './PostLinkPreviews';
 import { postTextPreview } from '../../../backend/post-text.mjs';
+import { POST_ENGAGEMENT_EVENT, publishPostEngagement } from '../api/postEngagement.mjs';
 
 function timeAgo(iso) {
   const diff = (Date.now() - new Date(iso)) / 1000;
@@ -21,6 +22,15 @@ function timeAgo(iso) {
 
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+}
+
+function mergeComments(...lists) {
+  const seen = new Set();
+  return lists.flat().filter(comment => {
+    if (!comment?.id || seen.has(comment.id)) return false;
+    seen.add(comment.id);
+    return true;
+  });
 }
 
 // Card view is a preview, not the full read — long posts (the backend keeps
@@ -61,11 +71,34 @@ export default function PostList({
   const [commentsLoading, setCommentsLoading] = useState({});
   const [commentsHasMoreByPost, setCommentsHasMoreByPost] = useState({});
   const [commentsLoadingMore, setCommentsLoadingMore] = useState({});
+  const [commentsErrors, setCommentsErrors] = useState({});
   const [commentDrafts, setCommentDrafts] = useState({});
   const [commentBusy, setCommentBusy] = useState({});
   const [mediaLightboxPostId, setMediaLightboxPostId] = useState(null);
   const [expandedPosts, setExpandedPosts] = useState({});
   const sentinelRef = useRef(null);
+  const mountedRef = useRef(false);
+  const commentRequestsRef = useRef(new Map());
+  const commentWritesRef = useRef(new Set());
+  const viewRef = useRef(null);
+  viewRef.current = { currentUserId, localPosts, openComments, commentsByPost, onPostUpdated };
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; commentRequestsRef.current.clear(); };
+  }, []);
+
+  useEffect(() => {
+    commentRequestsRef.current.clear();
+    commentWritesRef.current.clear();
+    setOpenComments({});
+    setCommentsByPost({});
+    setCommentsLoading({});
+    setCommentsLoadingMore({});
+    setCommentsErrors({});
+    setCommentDrafts({});
+    setCommentBusy({});
+  }, [currentUserId]);
 
   useEffect(() => {
     setLocalPosts(posts);
@@ -109,59 +142,104 @@ export default function PostList({
     onPostUpdated?.(updatedPost);
   }
 
-  async function toggleComments(post) {
+  const fetchPostComments = useCallback(async (post, { append = false } = {}) => {
+    const id = post.id;
+    if (commentRequestsRef.current.has(id) || commentWritesRef.current.has(id)) return;
+    const request = { currentUserId: viewRef.current.currentUserId };
+    commentRequestsRef.current.set(id, request);
+    const current = viewRef.current.commentsByPost[id] || [];
+    const isCurrent = () => mountedRef.current && viewRef.current.currentUserId === request.currentUserId
+      && commentRequestsRef.current.get(id) === request && viewRef.current.localPosts.some(item => item.id === id);
+    const setPending = append ? setCommentsLoadingMore : setCommentsLoading;
+    setPending(prev => ({ ...prev, [id]: true }));
+    setCommentsErrors(prev => ({ ...prev, [id]: false }));
+    try {
+      const { data } = await client.get(`/posts/${encodeURIComponent(id)}/comments`, {
+        params: { limit: append ? 50 : Math.min(100, Math.max(50, current.length)), ...(append ? { offset: current.length } : {}) },
+      });
+      if (!isCurrent()) return;
+      setCommentsByPost(prev => ({ ...prev, [id]: append ? mergeComments(prev[id] || [], data.comments || []) : mergeComments(data.comments || []) }));
+      setCommentsHasMoreByPost(prev => ({ ...prev, [id]: !!data.hasMore }));
+      if (Number.isFinite(data.commentsCount)) {
+        const patch = { id, commentsCount: data.commentsCount };
+        setLocalPosts(prev => prev.map(item => item.id === id ? { ...item, ...patch } : item));
+        viewRef.current.onPostUpdated?.(patch);
+      }
+    } catch {
+      if (isCurrent()) setCommentsErrors(prev => ({ ...prev, [id]: true }));
+    } finally {
+      if (commentRequestsRef.current.get(id) === request) {
+        commentRequestsRef.current.delete(id);
+        if (mountedRef.current && viewRef.current.currentUserId === request.currentUserId) setPending(prev => ({ ...prev, [id]: false }));
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!interactive) return undefined;
+    const refreshOpen = () => {
+      if (document.hidden) return;
+      for (const post of viewRef.current.localPosts) {
+        if (viewRef.current.openComments[post.id]) fetchPostComments(post);
+      }
+    };
+    const refreshConfirmed = ({ detail }) => {
+      if (detail?.action !== 'comment') return;
+      const post = viewRef.current.localPosts.find(item => item.id === detail.postId
+        && (item.source || 'uficonnect') === detail.source);
+      if (post && viewRef.current.openComments[post.id]) fetchPostComments(post);
+    };
+    window.addEventListener('focus', refreshOpen);
+    document.addEventListener('visibilitychange', refreshOpen);
+    window.addEventListener(POST_ENGAGEMENT_EVENT, refreshConfirmed);
+    return () => {
+      window.removeEventListener('focus', refreshOpen);
+      document.removeEventListener('visibilitychange', refreshOpen);
+      window.removeEventListener(POST_ENGAGEMENT_EVENT, refreshConfirmed);
+    };
+  }, [interactive, fetchPostComments]);
+
+  function toggleComments(post) {
     if (!interactive) return;
     const isOpen = !!openComments[post.id];
     setOpenComments(prev => ({ ...prev, [post.id]: !isOpen }));
-    if (isOpen || commentsByPost[post.id]) return;
-
-    setCommentsLoading(prev => ({ ...prev, [post.id]: true }));
-    try {
-      const { data } = await client.get(`/posts/${encodeURIComponent(post.id)}/comments`, { params: { limit: 50 } });
-      setCommentsByPost(prev => ({ ...prev, [post.id]: data.comments || [] }));
-      setCommentsHasMoreByPost(prev => ({ ...prev, [post.id]: !!data.hasMore }));
-    } catch {
-      setCommentsByPost(prev => ({ ...prev, [post.id]: [] }));
-    } finally {
-      setCommentsLoading(prev => ({ ...prev, [post.id]: false }));
-    }
+    if (!isOpen) fetchPostComments(post);
   }
 
-  async function loadMoreComments(post) {
-    if (commentsLoadingMore[post.id]) return;
-    const current = commentsByPost[post.id] || [];
-    setCommentsLoadingMore(prev => ({ ...prev, [post.id]: true }));
-    try {
-      const { data } = await client.get(`/posts/${encodeURIComponent(post.id)}/comments`, {
-        params: { limit: 50, offset: current.length },
-      });
-      setCommentsByPost(prev => ({ ...prev, [post.id]: [...current, ...(data.comments || [])] }));
-      setCommentsHasMoreByPost(prev => ({ ...prev, [post.id]: !!data.hasMore }));
-    } catch {
-      // Leave existing comments in place — button stays clickable to retry.
-    } finally {
-      setCommentsLoadingMore(prev => ({ ...prev, [post.id]: false }));
-    }
+  function loadMoreComments(post) {
+    fetchPostComments(post, { append: true });
   }
 
   async function submitComment(e, post) {
     e.preventDefault();
     const content = (commentDrafts[post.id] || '').trim();
-    if (!content || commentBusy[post.id]) return;
+    if (!content || commentWritesRef.current.has(post.id)) return;
 
+    const currentUser = currentUserId;
+    commentWritesRef.current.add(post.id);
+    // A read started before this write cannot erase its confirmed comment/count.
+    commentRequestsRef.current.delete(post.id);
+    setCommentsLoading(prev => ({ ...prev, [post.id]: false }));
+    setCommentsLoadingMore(prev => ({ ...prev, [post.id]: false }));
     setCommentBusy(prev => ({ ...prev, [post.id]: true }));
     try {
       const { data } = await client.post(`/posts/${encodeURIComponent(post.id)}/comments`, { content });
+      if (!mountedRef.current || viewRef.current.currentUserId !== currentUser) return;
       setCommentsByPost(prev => ({
         ...prev,
-        [post.id]: [...(prev[post.id] || []), data.comment],
+        [post.id]: mergeComments(prev[post.id] || [], data.comment || []),
       }));
       setCommentDrafts(prev => ({ ...prev, [post.id]: '' }));
-      updatePost(data.post || { ...post, commentsCount: data.commentsCount });
+      const commentsCount = data.commentsCount ?? data.post?.commentsCount;
+      if (Number.isFinite(commentsCount)) updatePost({ id: post.id, commentsCount });
+      publishPostEngagement(post, { action: 'comment', commentId: data.comment?.id, commentsCount });
     } catch {
       // Leave the draft in place so the user can retry.
     } finally {
-      setCommentBusy(prev => ({ ...prev, [post.id]: false }));
+      if (mountedRef.current && viewRef.current.currentUserId === currentUser) {
+        commentWritesRef.current.delete(post.id);
+        setCommentBusy(prev => ({ ...prev, [post.id]: false }));
+      }
     }
   }
 
@@ -311,7 +389,10 @@ export default function PostList({
 
             {commentsOpen && (
               <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-                {commentsLoading[post.id] ? (
+                {commentsErrors[post.id] && <p role="alert" style={{ color: 'var(--danger)', fontSize: '.82rem' }}>
+                  Comments could not be refreshed. <button type="button" className="btn btn-ghost btn-sm" onClick={() => fetchPostComments(post)}>Retry</button>
+                </p>}
+                {commentsLoading[post.id] && !comments.length ? (
                   <div style={{ textAlign: 'center', padding: '12px 0' }}>
                     <span className="spinner spinner-primary" />
                   </div>

@@ -69,19 +69,17 @@ async function hydratePostLikes(db, posts, viewerId = null) {
   let available = db.isConnected();
   if (available) {
     try {
-      const [external, restaurants] = await Promise.all([
+      const [external, restaurants, native] = await Promise.all([
         readTableLikes(db, 'external_post_likes', externalIds, viewerId),
         readTableLikes(db, 'restaurant_post_likes', restaurantIds, viewerId),
-      ]);
-      for (const [id, value] of [...external, ...restaurants]) stats.set(id, value);
-      if (nativeIds.length) {
-        const { rows } = await db.query(
+        nativeIds.length ? db.query(
           `SELECT id AS post_id, COALESCE(cardinality(likes),0) AS likes_count,
                   COALESCE($2::text = ANY(likes),FALSE) AS liked_by_me
            FROM community_posts WHERE id = ANY($1::text[])`, [nativeIds, viewerId],
-        );
-        for (const row of rows) stats.set(row.post_id, { likesCount: Number(row.likes_count || 0), likedByMe: Boolean(row.liked_by_me) });
-      }
+        ) : Promise.resolve({ rows: [] }),
+      ]);
+      for (const [id, value] of [...external, ...restaurants]) stats.set(id, value);
+      for (const row of native.rows) stats.set(row.post_id, { likesCount: Number(row.likes_count || 0), likedByMe: Boolean(row.liked_by_me) });
     } catch (error) {
       available = false;
       console.warn('Post likes lookup unavailable:', error.code || 'database_error');

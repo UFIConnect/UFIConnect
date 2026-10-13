@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import client from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
+import { publishPostEngagement } from '../api/postEngagement.mjs';
 
 const requests = new Map();
 if (typeof window !== 'undefined') window.addEventListener('ufi-session-cleared', () => requests.clear());
@@ -111,9 +112,10 @@ export default function ConnectedPostActions({ post, active = true, showFallback
     inFlight.current = request;
     setState({ identity, draft, lastRequest: request, busy: true, error: '' });
     try {
-      await sendSourceInteraction(post, 'comment', { content, requestId });
+      const result = await sendSourceInteraction(post, 'comment', { content, requestId });
       if (!isCurrent()) return;
       setState({ identity, draft: '', lastRequest: null, busy: false, error: '' });
+      publishPostEngagement(post, { action: 'comment', commentId: result.commentId, commentsCount: result.commentsCount });
       showToast('Comment published on ' + label + '. Source counts update when the source supplies them.', 'success');
     } catch (err) {
       if (!isCurrent()) return;

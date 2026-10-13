@@ -202,7 +202,7 @@ function createSourceInteractions({ fetchImpl = fetch, atprotoGet, atprotoPostJS
   return { perform };
 }
 
-function registerSourceInteractionRoutes(app, { authenticate, limiter, getUser, screenMemberContent, auditInteraction, reserveInteraction, completeInteraction, policyEnv = process.env, ...transport }) {
+function registerSourceInteractionRoutes(app, { authenticate, limiter, getUser, screenMemberContent, auditInteraction, reserveInteraction, completeInteraction, onPublished, policyEnv = process.env, ...transport }) {
   if ((typeof reserveInteraction === 'function') !== (typeof completeInteraction === 'function')) throw new Error('Source reservations require both reserveInteraction and completeInteraction.');
   const { perform } = createSourceInteractions({ ...transport, policyEnv });
   const requests = new Map();
@@ -250,6 +250,9 @@ function registerSourceInteractionRoutes(app, { authenticate, limiter, getUser, 
           text = screened.content;
         }
         result = { status: 200, body: { source, action, published: true, ...await perform({ user, source, sourceUrl, action, content: text, liked, requestId }) } };
+        // The upstream write is already confirmed. Cache maintenance cannot
+        // turn it into a retryable provider write if local invalidation fails.
+        try { await onPublished?.({ source, sourceUrl, action, result: result.body }); } catch {}
       } catch (error) {
         const originalUrl = validateOriginalUrl(source, sourceUrl, { env: policyEnv });
         const policy = getSourcePolicy(source, { env: policyEnv });

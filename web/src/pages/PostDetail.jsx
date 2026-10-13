@@ -22,6 +22,18 @@ import { SOURCE_META } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, loadYouTubeIframeApi, createYouTubePlayerFrame, useGlobalMuted } from '../components/videoMedia';
 import { SavePostButton } from '../components/SaveButtons';
+import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
+import { POST_ENGAGEMENT_EVENT, publishPostEngagement } from '../api/postEngagement.mjs';
+
+const ENGAGEMENT_FIELDS = ['likesCount', 'sourceLikesCount', 'likedByMe', 'sourceLikedByMe', 'commentsCount'];
+function mergePostComments(...lists) {
+  const seen = new Set();
+  return lists.flat().filter(comment => {
+    if (!comment?.id || seen.has(comment.id)) return false;
+    seen.add(comment.id);
+    return true;
+  });
+}
 
 function timeAgo(iso) {
   if (!iso) return '';
@@ -75,6 +87,18 @@ export default function PostDetail() {
   const [commentsLoadingMore, setCommentsLoadingMore] = useState(false);
   const [commentDraft, setCommentDraft] = useState('');
   const [commentSending, setCommentSending] = useState(false);
+  const [commentsError, setCommentsError] = useState(false);
+  const scope = `${profile?.id || ''}:${id}`;
+  const scopeRef = useRef(scope); scopeRef.current = scope;
+  const mountedRef = useRef(false);
+  const postReadRef = useRef(null);
+  const commentsReadRef = useRef(null);
+  const commentWriteRef = useRef(null);
+  const engagementRevisionRef = useRef(0);
+  const commentsRevisionRef = useRef(0);
+  const commentsCountRef = useRef(null);
+  const detailRef = useRef(null);
+  detailRef.current = { post, comments };
 
   // Shared across every video surface in the app (Feed, the Videos swipe
   // list, the lightbox) via useGlobalMuted — muting/unmuting here also
@@ -198,72 +222,154 @@ export default function PostDetail() {
     if (fileVideoRef.current) fileVideoRef.current.muted = muted;
   }, [muted]);
 
-  const loadPost = useCallback(async () => {
-    setLoading(true);
-    setNotFound(false);
-    try {
-      const { data } = await client.get(`/feed/${encodeURIComponent(id)}`);
-      setPost(data.post || null);
-      if (!data.post) setNotFound(true);
-    } catch {
-      setNotFound(true);
-    } finally {
-      setLoading(false);
-    }
+  const updatePost = useCallback(updated => {
+    if (!updated?.id || updated.id !== id || !mountedRef.current) return;
+    engagementRevisionRef.current += 1;
+    setPost(previous => previous?.id === id ? { ...previous, ...updated } : previous);
   }, [id]);
 
-  const loadComments = useCallback(async () => {
-    setCommentsLoading(true);
-    try {
-      const { data } = await client.get(`/feed/${encodeURIComponent(id)}/comments`);
-      setComments(data.comments || []);
-      setCommentsHasMore(!!data.hasMore);
-    } catch {
-      setComments([]);
-    } finally {
-      setCommentsLoading(false);
-    }
-  }, [id]);
+  const loadPost = useCallback(({ background = true } = {}) => {
+    if (postReadRef.current?.scope === scope) return postReadRef.current.promise;
+    const request = { scope, revision: engagementRevisionRef.current, commentsRevision: commentsRevisionRef.current, controller: new AbortController() };
+    postReadRef.current = request;
+    if (!background) { setLoading(true); setNotFound(false); }
+    const isCurrent = () => mountedRef.current && scopeRef.current === scope && postReadRef.current === request;
+    request.promise = (async () => {
+      try {
+        const { data } = await client.get(`/feed/${encodeURIComponent(id)}`, { signal: request.controller.signal });
+        if (!isCurrent()) return;
+        if (!data.post) { if (!background) setNotFound(true); return; }
+        setPost(previous => {
+          const latest = { ...data.post };
+          if (previous?.id === id && latest.sourceLikedByMe === undefined && previous.sourceLikedByMe !== undefined) latest.sourceLikedByMe = previous.sourceLikedByMe;
+          if (previous?.id === id && request.revision !== engagementRevisionRef.current) {
+            for (const field of ENGAGEMENT_FIELDS) if (previous[field] !== undefined) latest[field] = previous[field];
+          } else if (request.commentsRevision !== commentsRevisionRef.current && commentsCountRef.current?.scope === scope) latest.commentsCount = commentsCountRef.current.count;
+          return latest;
+        });
+        setNotFound(false);
+      } catch {
+        if (isCurrent() && !background) setNotFound(true);
+      } finally {
+        if (isCurrent()) { postReadRef.current = null; setLoading(false); }
+      }
+    })();
+    return request.promise;
+  }, [id, scope]);
 
-  async function loadMoreComments() {
-    if (commentsLoadingMore || !comments) return;
-    setCommentsLoadingMore(true);
-    try {
-      const { data } = await client.get(`/feed/${encodeURIComponent(id)}/comments`, {
-        params: { offset: comments.length },
-      });
-      setComments(prev => [...(prev || []), ...(data.comments || [])]);
-      setCommentsHasMore(!!data.hasMore);
-    } catch {
-      // Leave existing comments in place — button stays clickable to retry.
-    } finally {
-      setCommentsLoadingMore(false);
-    }
-  }
+  const loadComments = useCallback(({ background = true, append = false } = {}) => {
+    if (commentWriteRef.current?.scope === scope) return Promise.resolve();
+    if (commentsReadRef.current?.scope === scope) return commentsReadRef.current.promise;
+    const current = detailRef.current.comments || [];
+    const limit = Math.min(50, Math.max(20, current.length));
+    const request = { scope, revision: engagementRevisionRef.current, controller: new AbortController() };
+    commentsReadRef.current = request;
+    if (append) setCommentsLoadingMore(true);
+    else if (!background || !current.length) setCommentsLoading(true);
+    const isCurrent = () => mountedRef.current && scopeRef.current === scope && commentsReadRef.current === request;
+    request.promise = (async () => {
+      try {
+        const { data } = await client.get(`/feed/${encodeURIComponent(id)}/comments`, {
+          signal: request.controller.signal, params: { limit, ...(append ? { offset: current.length } : {}) },
+        });
+        if (!isCurrent() || request.revision !== engagementRevisionRef.current) return;
+        if (data.unavailable) throw new Error('Comments are temporarily unavailable.');
+        const incoming = data.comments || [];
+        setComments(previous => append ? mergePostComments(previous || [], incoming) : mergePostComments(incoming, (previous || []).slice(limit)));
+        setCommentsHasMore(!!data.hasMore);
+        setCommentsError(false);
+        const count = Number.isFinite(data.commentsCount) ? data.commentsCount : Number.isFinite(data.total) ? data.total : null;
+        if (count !== null) {
+          commentsRevisionRef.current += 1;
+          commentsCountRef.current = { scope, count };
+          setPost(previous => previous?.id === id ? { ...previous, commentsCount: count } : previous);
+        }
+      } catch {
+        if (isCurrent()) setCommentsError(true);
+      } finally {
+        if (isCurrent()) { commentsReadRef.current = null; setCommentsLoading(false); setCommentsLoadingMore(false); }
+      }
+    })();
+    return request.promise;
+  }, [id, scope]);
 
-  useEffect(() => { loadPost(); loadComments(); }, [loadPost, loadComments]);
+  const refreshDetail = useCallback(() => Promise.all([loadPost(), loadComments()]), [loadPost, loadComments]);
+  const scrollRefresh = useScrollToRefresh(refreshDetail, { enabled: !loading && !commentSending });
+
+  useEffect(() => {
+    mountedRef.current = true;
+    setPost(null); setComments(null); setCommentsError(false); setCommentDraft(''); setCommentSending(false);
+    setCommentsHasMore(false); setCommentsLoadingMore(false);
+    loadPost({ background: false }); loadComments({ background: false });
+    return () => {
+      mountedRef.current = false;
+      postReadRef.current?.controller.abort(); postReadRef.current = null;
+      commentsReadRef.current?.controller.abort(); commentsReadRef.current = null;
+      commentWriteRef.current = null;
+    };
+  }, [loadPost, loadComments]);
+
+  useEffect(() => {
+    const refreshVisible = () => { if (!document.hidden && detailRef.current.post?.id === id && !commentWriteRef.current) refreshDetail(); };
+    const onConfirmed = ({ detail }) => {
+      const current = detailRef.current.post;
+      if (!current || detail?.postId !== id || detail.source !== (current.source || 'uficonnect')) return;
+      const patch = { id };
+      for (const field of ENGAGEMENT_FIELDS) if (detail[field] !== undefined) patch[field] = detail[field];
+      updatePost(patch);
+      if (detail.action === 'comment' && !commentWriteRef.current) {
+        commentsReadRef.current?.controller.abort(); commentsReadRef.current = null;
+        loadComments();
+      }
+    };
+    const timer = window.setInterval(refreshVisible, 15000);
+    window.addEventListener('focus', refreshVisible);
+    document.addEventListener('visibilitychange', refreshVisible);
+    window.addEventListener(POST_ENGAGEMENT_EVENT, onConfirmed);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refreshVisible);
+      document.removeEventListener('visibilitychange', refreshVisible);
+      window.removeEventListener(POST_ENGAGEMENT_EVENT, onConfirmed);
+    };
+  }, [id, refreshDetail, updatePost, loadComments]);
+
+  function loadMoreComments() { return loadComments({ append: true }); }
 
   async function submitComment(e) {
     e.preventDefault();
     const content = commentDraft.trim();
-    if (!content || commentSending || post?.isExternal) return;
+    if (!content || commentWriteRef.current || post?.isExternal) return;
+    const request = { scope };
+    commentWriteRef.current = request;
+    engagementRevisionRef.current += 1;
+    commentsReadRef.current?.controller.abort(); commentsReadRef.current = null;
+    setCommentsLoading(false); setCommentsLoadingMore(false);
     setCommentSending(true);
     try {
       const { data } = await client.post(`/posts/${encodeURIComponent(post.id)}/comments`, { content });
-      setComments(prev => [...(prev || []), {
+      if (!mountedRef.current || scopeRef.current !== scope || commentWriteRef.current !== request) return;
+      setComments(prev => mergePostComments(prev || [], {
         id: data.comment?.id || `local_${Date.now()}`,
         author: data.comment?.author?.name || profile?.name || 'You',
         body: content,
         score: 0,
         created: new Date().toISOString(),
-      }]);
+      }));
       setCommentDraft('');
-      setPost(prev => ({ ...prev, commentsCount: data.commentsCount ?? (prev.commentsCount || 0) + 1 }));
+      setCommentsError(false);
+      const commentsCount = data.commentsCount ?? data.post?.commentsCount ?? (detailRef.current.post?.commentsCount || 0) + 1;
+      updatePost({ id, commentsCount });
+      publishPostEngagement(post, { action: 'comment', commentsCount, commentId: data.comment?.id });
     } catch { /* leave draft in place so the user can retry */ }
-    finally { setCommentSending(false); }
+    finally {
+      if (mountedRef.current && scopeRef.current === scope && commentWriteRef.current === request) {
+        commentWriteRef.current = null; setCommentSending(false);
+      }
+    }
   }
 
-  if (loading) {
+  if (loading || (post && post.id !== id)) {
     return (
       <Shell>
         <div style={{ maxWidth: 640, margin: '40px auto', textAlign: 'center', color: 'var(--muted)' }}>
@@ -302,6 +408,7 @@ export default function PostDetail() {
         <title>{post.title ? `${post.title} | UFIconnect` : 'Post | UFIconnect'}</title>
       </Helmet>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px' }}>
+        {scrollRefresh.refreshing && <p role="status" style={{ color: 'var(--muted)', fontSize: '.82rem' }}>Refreshing post and comments…</p>}
         <button onClick={() => navigate(-1)} className="btn btn-ghost btn-sm" style={{ marginBottom: 16 }}>
           ‹ Back
         </button>
@@ -348,16 +455,16 @@ export default function PostDetail() {
 
           <PostLinkPreviews post={post} />
           <div className="post-chrome-actions" style={{ paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-            <PostLikes post={post} onPostUpdated={updated => setPost(current => ({ ...current, ...updated }))} />
+            <PostLikes post={post} onPostUpdated={updatePost} />
             {token && <SavePostButton post={post} className="btn btn-ghost btn-sm save-item-button" />}
-            <PostOptionsMenu post={post} onPostUpdated={updated => setPost(previous => ({ ...previous, ...updated }))} onRemoved={() => navigate('/')} />
+            <PostOptionsMenu post={post} onPostUpdated={updatePost} onRemoved={() => navigate('/')} />
             <OpenOnSource post={post} />
           </div>
         </div>
 
         <div className="card" style={{ marginTop: 12 }}>
           <div style={{ fontSize: '.82rem', fontWeight: 700, marginBottom: 12 }}>
-            Comments {comments?.length > 0 ? `(${comments.length})` : ''}
+            Comments {Number.isFinite(post.commentsCount) ? `(${post.commentsCount})` : comments?.length > 0 ? `(${comments.length})` : ''}
           </div>
           {post.isExternal && <ConnectedPostActions post={post} />}
 
@@ -391,7 +498,10 @@ export default function PostDetail() {
             </div>
           )}
 
-          {!commentsLoading && (!comments || comments.length === 0) && (
+          {commentsError && <p role="alert" style={{ color: 'var(--danger)', fontSize: '.82rem' }}>
+            Comments could not be refreshed. <button type="button" className="btn btn-ghost btn-sm" onClick={() => loadComments()}>Retry</button>
+          </p>}
+          {!commentsLoading && !commentsError && (!comments || comments.length === 0) && (
             <p style={{ fontSize: '.82rem', color: 'var(--muted)', margin: 0 }}>No comments yet.</p>
           )}
 

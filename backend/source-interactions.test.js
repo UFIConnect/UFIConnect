@@ -101,10 +101,12 @@ test('provider errors never become local success or expose provider bodies', asy
 test('route authenticates, screens, deduplicates and isolates member requests', async t => {
   const app = express(); app.use(express.json());
   const mock = transport(Array.from({ length: 4 }, () => ({ status: 201, body: { id: 900 } })));
+  const publications = [];
   registerSourceInteractionRoutes(app, { ...mock,
     authenticate: (req, res, next) => { if (!req.headers['x-member']) return res.sendStatus(401); req.user = { id: req.headers['x-member'] }; next(); },
     limiter: (_req, _res, next) => next(), getUser: async id => ({ ...user, id }),
     screenMemberContent: async ({ content }) => ({ allowed: content !== 'blocked', content }),
+    onPublished: async event => { publications.push(event); },
   });
   const server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve)); t.after(() => new Promise(resolve => server.close(resolve)));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -112,10 +114,12 @@ test('route authenticates, screens, deduplicates and isolates member requests', 
   const send = (id, body = payload) => fetch(base + '/social/interactions', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(id ? { 'x-member': id } : {}) }, body: JSON.stringify(body) });
   assert.equal((await send(null)).status, 401);
   assert.equal((await send('a', { ...payload, content: 'blocked' })).status, 422);
+  assert.equal(publications.length, 0, 'Rejected writes cannot invalidate cached source comments');
   assert.equal(mock.calls.length, 0);
   const allowed = { ...payload, requestId: '22345678-1234-1234-1234-123456789012' };
   const results = await Promise.all([send('a', allowed), send('a', allowed)]);
   assert.ok(results.every(result => result.status === 200)); assert.equal(mock.calls.length, 1);
+  assert.equal(publications.length, 1, 'Coalesced/replayed confirmed writes invalidate exactly once');
   assert.equal((await send('a', { ...allowed, content: 'Different content' })).status, 409);
   assert.equal((await send('b', allowed)).status, 200); assert.equal(mock.calls.length, 2);
   const capabilities = await fetch(base + '/social/interaction-capabilities', { headers: { 'x-member': 'a' } });
@@ -165,6 +169,7 @@ test('policy is checked again after comment screening and confirmed writes survi
     limiter: (_req, _res, next) => next(), getUser: async () => user,
     screenMemberContent: async ({ content }) => { if (content === 'revoke') env.SOURCE_GITHUB_COMMENT_ENABLED = 'false'; return { allowed: true, content }; },
     auditInteraction: async () => { throw new Error('database unavailable'); },
+    onPublished: async () => { throw new Error('cache unavailable'); },
   });
   const server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve)); t.after(() => new Promise(resolve => server.close(resolve)));
   const send = body => fetch(`http://127.0.0.1:${server.address().port}/social/interactions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

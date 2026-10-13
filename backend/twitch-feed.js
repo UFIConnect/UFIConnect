@@ -173,13 +173,14 @@ function createTwitchFeed({ fetcher = fetch, now = Date.now, getConfig = () => (
     }));
     return [...new Map(results.flat().map(post => [post.id, post])).values()];
   }
-  async function publicPosts() {
+  async function publicPosts({ bust = false } = {}) {
     const config = settings();
     // Public ingestion uses only this app's client-credentials token. It never
     // borrows a connected member's token, follow graph, or private inventory.
     if (!config.clientId || !config.clientSecret) return [];
     const key = 'public:' + fingerprint(config.clientId + '\0' + config.clientSecret);
-    return inventory(key, 60 * 60000, async () => {
+    if (bust) cache.delete(key);
+    return inventory(key, 5 * 60000, async () => {
       const token = await appAccess(config);
       try {
         const streams = await helix('streams', { first: 6 }, config, token);
