@@ -3,14 +3,22 @@ export const ADS_CONVERSION = `${ADS_ID}/s7sWCK_AsI4dEImPivFE`;
 export const ADS_CONSENT_KEY = 'uficonnect.ads.consent.v1';
 export const TAG_MANAGER_ID = 'GTM-PXQR5386';
 
-// Keep only Google's attribution identifiers. Never give the SDK arbitrary
-// query parameters, account links, or fragments from a shared homepage URL.
+// Keep only Google's attribution identifiers and bounded Tag Assistant flags.
+// Never give the SDK arbitrary query parameters, account links, or fragments.
 export function advertisingHomepageUrl(value) {
   const url = new URL(value);
   const safe = new URL('/', url.origin);
   for (const key of ['gclid', 'gbraid', 'wbraid', 'gclsrc']) {
     const values = url.searchParams.getAll(key);
     if (values.length === 1 && /^[a-zA-Z0-9_.-]{1,512}$/.test(values[0])) safe.searchParams.set(key, values[0]);
+  }
+  // These flags allow preview attachment; they never grant advertising consent.
+  for (const key of ['gtm_debug', '_dbg']) {
+    const values = url.searchParams.getAll(key);
+    if (values.length !== 1) continue;
+    const flag = values[0];
+    const valid = key === '_dbg' ? flag === '1' : flag.length >= 1 && flag.length <= 20 && !/[^0-9]/.test(flag);
+    if (valid) safe.searchParams.set(key, flag);
   }
   if (url.hash === '#analytics') safe.hash = '#analytics';
   return safe.href;
