@@ -244,14 +244,14 @@ function createCreatorAnalytics({ db, getUser, fetchImpl = fetch, env = process.
   return {report,refresh,copyrightReport,auditInteraction,reserveInteraction,completeInteraction,prune,playbackStatus};
 }
 
-function registerCreatorAnalyticsRoutes(app,{service,authenticate,limiter}) {
+function registerCreatorAnalyticsRoutes(app,{service,authenticate,limiter,playbackLimiter=limiter}) {
   const route = fn => async (req,res) => {
     res.set('Cache-Control','private, no-store');
     try {const result = await fn(req); res.json(result);}
     catch(error) {res.status(error.status || 503).json({message:error.status ? error.message:'Analytics are temporarily unavailable.'});}
   };
   app.get('/creator-analytics/report',authenticate,limiter,route(req=>service.report(req.user.id,req.query.days)));
-  app.get('/creator-analytics/playback-status',authenticate,limiter,route(req=>service.playbackStatus(req.user.id,req.query.videoId)));
+  app.get('/creator-analytics/playback-status',authenticate,playbackLimiter,route(req=>service.playbackStatus(req.user.id,req.query.videoId)));
   app.post('/creator-analytics/refresh',authenticate,limiter,route(req=>service.refresh(req.user.id,req.body?.days)));
   app.post('/creator-analytics/copyright-reports',authenticate,limiter,route(req=>service.copyrightReport(req.user.id,req.body)));
 }

@@ -25,6 +25,7 @@ const { ANALYTICS_SCHEMA, ANALYTICS_MIGRATIONS, createAggregateAnalytics } = req
 const { OFFICE_MEMBERS_SCHEMA, registerOfficeMemberRoutes } = require('./office-members');
 const { SIGNIN_SCHEMA, registerSignInRoutes, isDeliverableEmail } = require('./auth-signin');
 const { createOAuthFrontend } = require('./oauth-frontend');
+const { feedUpdateFrames } = require('./feed-stream-events');
 const { PHONE_EMAIL_SCHEMA, registerPhoneEmailSettingsRoutes } = require('./phone-email-settings');
 const { SNAP_SCHEMA, createSnaps, registerSnapRoutes } = require('./snaps');
 const { createExternalSnapLoader, PUBLIC_CLIP_QUERY } = require('./external-snaps');
@@ -477,6 +478,14 @@ const contentSubmissionLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: rateLimitKey,
   message: { message: 'Please slow down before posting again.' },
+});
+const playbackStatusLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: req => String(req.user.id),
+  message: { message: 'Please wait before checking another video.' },
 });
 // General floor, applied to every route below — distinct from the
 // abuse-specific limiters above (which stay tight and route-scoped; the
@@ -6663,7 +6672,8 @@ let sseBatchTimer  = null;
 async function flushSSEBatch() {
   sseBatchTimer = null;
   if (!sseBatchBuffer.length || !sseClients.size) { sseBatchBuffer = []; return; }
-  // Send in chunks of SSE_BATCH_MAX so no single message is too large
+  // Visibility checks stay bounded; notification frames also have a UTF-8
+  // byte ceiling independent of source-body length and JSON escaping.
   while (sseBatchBuffer.length > 0) {
     let posts;
     try { posts = await visibleReportContent(sseBatchBuffer.splice(0, SSE_BATCH_MAX)); }
@@ -6672,7 +6682,7 @@ async function flushSSEBatch() {
     for (const [id, res] of sseClients) {
       try {
         const visible = await visibleNativeGroupContent(posts, res.feedViewerId || null);
-        if (visible.length) res.write(`data: ${JSON.stringify({ posts: visible })}\n\n`);
+        for (const frame of feedUpdateFrames(visible)) res.write(frame);
       }
       catch { sseClients.delete(id); try { res.end?.(); } catch {} }
     }
@@ -23960,10 +23970,10 @@ app.get('/feed/stream', authenticateSSE, async (req, res) => {
   let hb = null;
   function cleanup() { if (hb) clearInterval(hb); sseClients.delete(clientId); }
 
-  // Send the most recent posts immediately so the client has something to show
+  // Recent identities wake an authorized feed read without repeating bodies.
   try {
     const initial = await visibleNativeGroupContent(await getInitialSSEPosts(200), req.user.id);
-    if (initial.length) res.write(`data: ${JSON.stringify({ init: true, posts: initial })}\n\n`);
+    for (const frame of feedUpdateFrames(initial, { init: true })) res.write(frame);
   } catch { cleanup(); return; }
 
   // Heartbeat every 20 s to keep the connection alive through proxies
@@ -27768,7 +27778,7 @@ const ufiVault = createUfiVault({ db, enabled: process.env.UFI_VAULT_ENABLED ===
 const creatorAnalytics = createCreatorAnalytics({ db, getUser: getPublicTargetUser, env: process.env,
   localPreview: process.env.NODE_ENV === 'test' && process.env.CREATOR_ANALYTICS_LOCAL_PREVIEW === 'true',
   getLocalPosts: () => posts, getLocalComments: () => postComments, vaultStatus: id => ufiVault.status(id) });
-registerCreatorAnalyticsRoutes(app, {service:creatorAnalytics,authenticate,limiter:contentSubmissionLimiter});
+registerCreatorAnalyticsRoutes(app, {service:creatorAnalytics,authenticate,limiter:contentSubmissionLimiter,playbackLimiter:playbackStatusLimiter});
 scheduleRecurring(() => creatorAnalytics.prune().catch(() => {}), 60 * 60 * 1000);
 registerUfiVaultRoutes(app, {vault:ufiVault,authenticate,limiter:contentSubmissionLimiter});
 const publicSnapCache = new Map();

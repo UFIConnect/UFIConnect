@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createYouTubePlaybackStatus, KNOWN_TTL_MS, UNKNOWN_TTL_MS, MAX_CACHE_ENTRIES, MAX_IN_FLIGHT, REQUEST_TIMEOUT_MS } = require('./youtube-playback-status');
 const { createCreatorAnalytics, registerCreatorAnalyticsRoutes } = require('./creator-analytics');
+const { createAppHarness, member } = require('./test-support/app-harness');
 const ID = 'abcdefghijk', OTHER = '01234567890';
 const NOW = Date.parse('2026-10-11T12:00:00Z');
 const env = () => ({ YOUTUBE_API_KEY: 'synthetic-private-key' });
@@ -125,14 +126,27 @@ test('service rejects missing members before lookup and route uses authenticatio
   await assert.rejects(service.playbackStatus('other', ID), error => error.status === 401);
   assert.equal(calls, 0);
   const routes = [];
-  const authenticate = () => {}, limiter = () => {};
-  registerCreatorAnalyticsRoutes({ get: (...args) => routes.push(args), post: () => {} }, { service, authenticate, limiter });
+  const authenticate = () => {}, limiter = () => {}, playbackLimiter = () => {};
+  registerCreatorAnalyticsRoutes({ get: (...args) => routes.push(args), post: () => {} }, { service, authenticate, limiter, playbackLimiter });
   const route = routes.find(args => args[0] === '/creator-analytics/playback-status');
-  assert.equal(route[1], authenticate); assert.equal(route[2], limiter);
+  assert.equal(route[1], authenticate); assert.equal(route[2], playbackLimiter);
   const response = { headers: {}, statusCode: 200, set(k, v) { this.headers[k] = v; return this; }, json(data) { this.data = data; return this; }, status(code) { this.statusCode = code; return this; } };
   await route[3]({ user: { id: 'member' }, query: { videoId: ID } }, response);
   assert.equal(response.headers['Cache-Control'], 'private, no-store');
   assert.equal(response.data.madeForKids, false);
   await route[3]({ user: { id: 'member' }, query: { videoId: [ID, OTHER] } }, response);
   assert.equal(response.statusCode, 400);
+});
+
+test('ordinary playback browsing and content submissions have independent rate-limit quotas', async t => {
+  const app = await createAppHarness({ env: { CONTENT_SUBMISSION_RATE_LIMIT: '5', CREATOR_ANALYTICS_LOCAL_PREVIEW: 'true' } });
+  t.after(() => app.close()); app.seedUser(member('playback-quota'));
+  assert.equal((await app.request('/creator-analytics/playback-status?videoId=' + ID)).status, 401);
+  const browse = () => app.request('/creator-analytics/playback-status?videoId=' + ID, { userId: 'playback-quota' });
+  for (let index = 0; index < 31; index++) assert.equal((await browse()).status, 200, 'Normal browsing must not spend posting quota');
+  const submit = () => app.request('/creator-analytics/copyright-reports', { userId: 'playback-quota', method: 'POST',
+    body: { source: 'youtube', sourceUrl: 'https://www.youtube.com/watch?v=' + ID, reason: 'Review this original source content.' } });
+  for (let index = 0; index < 5; index++) assert.equal((await submit()).status, 200);
+  assert.equal((await submit()).status, 429, 'The existing content submission quota still applies to writes');
+  assert.equal((await browse()).status, 200, 'Exhausting the write quota cannot stop playback-status reads');
 });
