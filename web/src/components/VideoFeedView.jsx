@@ -15,6 +15,7 @@ import useNativePlayerSettings from '../hooks/useNativePlayerSettings';
 import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { reportConsumed, reportEngaged, reportEngagementSignal } from '../api/engagement';
 import { reportNegativeSignal } from '../api/errorReporting';
+import { POST_ENGAGEMENT_EVENT } from '../api/postEngagement.mjs';
 import { ALL_INTERESTS } from '../pages/Onboarding';
 import ConnectedPostActions from './ConnectedPostActions';
 import { SavePostButton } from './SaveButtons';
@@ -848,13 +849,15 @@ function mergeVideoCommentLists(primary = [], secondary = []) {
   return merged;
 }
 
-function CommentsSheet({ post, onClose }) {
+function CommentsSheet({ post, onClose, onPostUpdated }) {
+  const { profile } = useAuth();
   const originalUrl = safePostLink(post.sourceUrl);
   const [comments, setComments] = useState(null);
   const [live, setLive] = useState(false);
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState(false);
   const closeButton = useRef(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -890,38 +893,75 @@ function CommentsSheet({ post, onClose }) {
 
   const commentsRef = useRef(comments);
   const commentsRequestRef = useRef(0);
+  const inFlightRef = useRef(null);
+  const scope = `${profile?.id || ''}:${post.source || ''}:${post.id}`;
+  const scopeRef = useRef(scope); scopeRef.current = scope;
+  const updatePostRef = useRef(onPostUpdated); updatePostRef.current = onPostUpdated;
   useEffect(() => {
     commentsRef.current = comments;
   }, [comments]);
 
-  const fetchCommentsPage = useCallback(async ({ background = false } = {}) => {
+  const fetchCommentsPage = useCallback(({ background = false, append = false } = {}) => {
+    if (inFlightRef.current?.scope === scope) return inFlightRef.current.promise;
     const requestId = ++commentsRequestRef.current;
-    if (!background) {
-      setLoading(true);
-      setComments(null);
-    }
-    try {
+    const request = { scope, controller: new AbortController() };
+    inFlightRef.current = request;
+    if (append) setLoadingMore(true);
+    else if (!background || !commentsRef.current?.length) setLoading(true);
+    const isCurrent = () => scopeRef.current === scope && requestId === commentsRequestRef.current && inFlightRef.current === request;
+    request.promise = (async () => { try {
       const currentCount = Array.isArray(commentsRef.current) ? commentsRef.current.length : 0;
       const limit = Math.min(50, Math.max(20, currentCount || 20));
       const { data } = await client.get(`/feed/${encodeURIComponent(post.id)}/comments`, {
-        params: { limit },
+        signal: request.controller.signal, params: { limit, ...(append ? { offset: currentCount } : {}) },
       });
-      if (requestId !== commentsRequestRef.current) return;
+      if (!isCurrent()) return;
+      if (data.unavailable) throw new Error('Comments are temporarily unavailable.');
       const incoming = data.comments || [];
-      setComments(prev => background ? mergeVideoCommentLists(incoming, prev || []) : incoming);
+      setComments(prev => append ? mergeVideoCommentLists(prev || [], incoming) : mergeVideoCommentLists(incoming, (prev || []).slice(limit)));
       setLive(!!data.live);
       setHasMore(!!data.hasMore);
+      setError(false);
+      const count = Number.isFinite(data.commentsCount) ? data.commentsCount : Number.isFinite(data.total) ? data.total : null;
+      if (count !== null) updatePostRef.current?.({ id: post.id, commentsCount: count });
     } catch {
-      if (requestId === commentsRequestRef.current && !background) setComments([]);
+      if (isCurrent()) setError(true);
     } finally {
-      if (requestId === commentsRequestRef.current && !background) setLoading(false);
-    }
-  }, [post.id]);
+      if (isCurrent()) { inFlightRef.current = null; setLoading(false); setLoadingMore(false); }
+    } })();
+    return request.promise;
+  }, [post.id, scope]);
 
   useEffect(() => {
     fetchCommentsPage({ background: false });
-    return () => { commentsRequestRef.current += 1; };
+    return () => {
+      commentsRequestRef.current += 1;
+      inFlightRef.current?.controller.abort(); inFlightRef.current = null;
+    };
   }, [fetchCommentsPage]);
+
+  useEffect(() => {
+    const refreshVisible = () => { if (!document.hidden) fetchCommentsPage({ background: true }); };
+    const refreshConfirmed = ({ detail }) => {
+      if (detail?.postId !== post.id || detail.source !== (post.source || 'uficonnect')) return;
+      const patch = { id: post.id };
+      for (const field of ['likesCount', 'sourceLikesCount', 'likedByMe', 'sourceLikedByMe', 'commentsCount']) if (detail[field] !== undefined) patch[field] = detail[field];
+      updatePostRef.current?.(patch);
+      if (detail.action === 'comment') {
+        commentsRequestRef.current += 1;
+        inFlightRef.current?.controller.abort(); inFlightRef.current = null;
+        fetchCommentsPage({ background: true });
+      }
+    };
+    window.addEventListener('focus', refreshVisible);
+    document.addEventListener('visibilitychange', refreshVisible);
+    window.addEventListener(POST_ENGAGEMENT_EVENT, refreshConfirmed);
+    return () => {
+      window.removeEventListener('focus', refreshVisible);
+      document.removeEventListener('visibilitychange', refreshVisible);
+      window.removeEventListener(POST_ENGAGEMENT_EVENT, refreshConfirmed);
+    };
+  }, [post.id, post.source, fetchCommentsPage]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -931,21 +971,7 @@ function CommentsSheet({ post, onClose }) {
     return () => window.clearInterval(interval);
   }, [fetchCommentsPage, live, loading, loadingMore]);
 
-  async function loadMore() {
-    if (loadingMore || !comments) return;
-    setLoadingMore(true);
-    try {
-      const { data } = await client.get(`/feed/${encodeURIComponent(post.id)}/comments`, {
-        params: { offset: comments.length },
-      });
-      setComments(prev => mergeVideoCommentLists([...(prev || []), ...(data.comments || [])]));
-      setHasMore(!!data.hasMore);
-    } catch {
-      // Leave existing comments in place — button stays clickable to retry.
-    } finally {
-      setLoadingMore(false);
-    }
-  }
+  function loadMore() { return fetchCommentsPage({ background: true, append: true }); }
 
   return (
     <div
@@ -970,7 +996,7 @@ function CommentsSheet({ post, onClose }) {
           padding: '14px 16px', borderBottom: '1px solid var(--border)', flexShrink: 0,
         }}>
           <div style={{ color: 'var(--text)', fontWeight: 700, fontSize: '.92rem' }}>
-            Comments {comments?.length > 0 ? `(${comments.length})` : ''}
+            Comments {Number.isFinite(post.commentsCount) ? `(${post.commentsCount})` : comments?.length > 0 ? `(${comments.length})` : ''}
           </div>
           <button
             ref={closeButton}
@@ -985,7 +1011,10 @@ function CommentsSheet({ post, onClose }) {
               <span className="spinner spinner-primary" />
             </div>
           )}
-          {!loading && comments?.length === 0 && (
+          {error && <p role="alert" style={{ color: 'var(--danger)', fontSize: '.82rem' }}>
+            Comments could not be refreshed. <button type="button" className="btn btn-ghost btn-sm" onClick={() => fetchCommentsPage({ background: true })}>Retry</button>
+          </p>}
+          {!loading && !error && (!comments || comments.length === 0) && (
             <div style={{ textAlign: 'center', padding: '20px 8px', color: 'var(--muted)', fontSize: '.85rem' }}>
               {live === false && originalUrl
                 ? <>No comments loaded from {post.sourceLabel || post.source} yet.<br />
@@ -2733,7 +2762,7 @@ export default function VideoFeedView({ onExit, music = false }) {
         </div>
       </div>
       </div>
-      {commentsPost && <CommentsSheet post={commentsPost} onClose={() => setCommentsPost(null)} />}
+      {commentsPost && <CommentsSheet key={commentsPost.id} post={videoPosts.find(post => post.id === commentsPost.id) || commentsPost} onPostUpdated={updatePost} onClose={() => setCommentsPost(null)} />}
     </div>
   );
 }

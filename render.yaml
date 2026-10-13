@@ -438,6 +438,8 @@ services:
         value: '5000'
       - key: SOURCE_REFRESH_WORKER_COUNT
         value: '1'
+      - key: SOURCE_COLLECTION_CONCURRENCY
+        value: '4'
       - key: DB_SIZE_LIMIT_MB
         value: '5120'
       - key: RENDER_DB_PLAN

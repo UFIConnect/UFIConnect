@@ -70,6 +70,7 @@ const {
 } = require('./content-screening');
 const { paginateEqualizedPool: paginateEqualizedPoolCore } = require('./feed-pagination');
 const { createFeedReadAdmission } = require('./feed-read-admission');
+const { createResponseTiming } = require('./response-timing');
 const { PUBLIC_GROUP_LEGACY_SOURCES, inferPublicGroupId } = require('./group-feed');
 const { GENERAL_UFI_GROUP_ID, isGeneralUfiFollowingPost, isFollowingSourceAllowed } = require('./following-scope');
 const FEED_SOURCE_CATALOG = require('../shared/feed-source-catalog.json');
@@ -148,7 +149,6 @@ const postPipelineReader = createPostPipelineReader(db);
 // declaration (fully hoisted), so calling it this early is safe regardless
 // of where it's textually defined.
 const AUTOFIX_CHECK_INTERVAL_MS = envNumber('AUTOFIX_CHECK_INTERVAL_MS', 10 * 60 * 1000, 60 * 1000, 60 * 60 * 1000);
-const JOB_BOARD_SWEEP_INTERVAL_MS = 20 * 1000;
 
 // Same "idle until configured, never crash" pattern as every other
 // credential-gated integration in this file (USAJobs, Reddit OAuth,
@@ -177,6 +177,8 @@ process.on('unhandledRejection', (reason, promise) => {
 const app = express();
 // Preserve nested-value validation after Express 5 changed its default parser.
 app.set('query parser', 'extended');
+const responseTiming = createResponseTiming({ targetMs: 45 });
+app.use(responseTiming.middleware);
 const aggregateAnalytics = createAggregateAnalytics({ db, schedule: setInterval, onPageview: () => recordRealUserActivity(null, 'pageview') });
 app.use(aggregateAnalytics.serviceMiddleware);
 // Trust only an explicitly configured proxy range/hop count. Untrusted clients
@@ -362,7 +364,7 @@ app.get('/analytics-bridge.html', createAnalyticsBridgeHandler());
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
   : process.env.NODE_ENV !== 'production';
-app.use(cors({ origin: allowedOrigins, credentials: true }));
+app.use(cors({ origin: allowedOrigins, credentials: true, exposedHeaders: ['Server-Timing'] }));
 // Metrics are parsed before general authentication and never receive user IDs.
 const analyticsRouter = express.Router();
 analyticsRouter.use(rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: true, legacyHeaders: false,
@@ -412,6 +414,7 @@ app.get('/health', (_req, res) => res.status(securityStorageReady ? 200 : 503).s
 // Render and the public uptime monitors stay on the constant-size probe above.
 app.get('/health/details', requireOfficeToken, (req, res) => res.status(200).set('Cache-Control', 'no-store').json({
   ...buildHealthPayload(), network: require('./proxy-diagnostics').proxyDiagnostics(req),
+  responseTiming: responseTiming.snapshot(),
 }));
 
 // Rate limits are independent of dashboard runtime metrics. Express resolves
@@ -2219,7 +2222,9 @@ const POST_CACHE_MAX = envNumber('POST_CACHE_MAX_ENTRIES', 200, 50, 500);
 
 function getCached(key)           { const c = postCache.get(key); return (c && Date.now() - c.t < (c.ttl ?? CACHE_TTL)) ? c.v : null; }
 function setCached(key, val, ttl) {
-  postCache.set(key, { v: val, t: Date.now(), ttl: ttl ?? CACHE_TTL });
+  const sourceKey = Object.entries(CACHE_KEY_PREFIX).find(([, prefix]) => key.startsWith(prefix))?.[0];
+  const freshness = sourceKey ? Math.min(ttl ?? CACHE_TTL, SOURCE_CONFIG[sourceKey]?.ttl || CACHE_TTL) : ttl ?? CACHE_TTL;
+  postCache.set(key, { v: val, t: Date.now(), ttl: freshness });
   if (postCache.size > POST_CACHE_MAX) postCache.delete(postCache.keys().next().value);
 }
 function bustCache(key)           { postCache.delete(key); }
@@ -2228,135 +2233,23 @@ function bustCachePrefix(prefix)  { for (const k of postCache.keys()) if (k.star
 // Expired entries are removed by the shared runtime-cache maintenance pass.
 // Keeping one sweep for every cache avoids a growing collection of timers.
 
-// --- Per-source freshness config ----------------------------------------------
-// TTL:    real freshness window — worker busts cache and re-fetches from API after this time
-// DELAY:  ms between fetching successive topics in the continuous cycler, within one shard
-// SHARDS: parallel topic-shard workers per source — with N shards the 69-topic list is split
-// into N non-overlapping slices; all slices run simultaneously so every topic is covered N×
-// faster without raising any single shard's fetch rate (the TTL still gates the real network
-// fetch per topic).
-//   fetches/min          = shards × (60 / delay_seconds)
-//   full cycle (per topic) = ceil(69 / shards) × delay
-//
-// Every source is rated into one of 5 cadence tiers by the NATURE of its content, not tuned
-// per-platform:
-//   [BREAKING]  breaking/trending topics       ? every  15-30 sec
-//   [HIGH-VOL]  high-volume accounts/pages     ? every   1-2 min
-//   [ACTIVE]    normal active accounts/pages   ? every       3 min
-//   [LOW-ACT]   low-activity sources           ? every       4 min
-//   [ARCHIVAL]  inactive/archival sources      ? every       5 min   (system-wide ceiling)
-// Shard counts below were raised from their original values (kept as
-// comments alongside the new ones) to shrink full-topic-cycle time — how
-// long a source's own shard loop takes to work through all of FEED_TOPICS
-// (69 topics) once — without changing delay (the actual per-request pace,
-// which is what a source's real rate limit cares about). More shards means
-// more of these delay-paced loops running in parallel, each still spaced
-// exactly as before; it does NOT mean requests fire any faster than a
-// source was already individually rated safe for. Left untouched entirely
-// for the four sources with a real, documented external ceiling (github,
-// arxiv, usajobs, stackoverflow — see their own comments below) since
-// shrinking their cycle time would mean proportionally more parallel
-// requests against a fixed hourly/daily budget; those four also get the
-// separate RATE_LIMITED_MANUAL_SWEEP cap so a manual/auto full-sweep
-// trigger can't blow through that same budget in a single burst either
-// (see that constant's own comment for the incident this fixes).
-// shards is how many independent, permanently-running async loops
-// makeTopicCycler spins up for that one source (see its own definition) —
-// NOT a free lever. A previous pass in this file's history pushed every
-// tier's shard count up 4-16x to force a uniform =5min cycle through all of
-// FEED_TOPICS (203 entries), which looked reasonable per-source in
-// isolation but summed to ~2,100 concurrent shard loops across the whole
-// app (was ~220) — confirmed live as the actual cause of both external
-// sources getting rate-limited/circuit-paused (real APIs correctly
-// reacting to a sudden burst) and the app itself becoming unstable under
-// concurrent real user traffic (that many permanent background loops, each
-// firing that much more often, competing with request handling for the
-// same single Node process's event loop, memory, and network stack). That
-// pass was fully reverted to the original counts, then reapplied here at a
-// deliberately smaller step — roughly 2x the original shard count, not
-// 4-16x — to still meaningfully shorten cycle times while keeping total
-// concurrent load well under whatever threshold actually caused the crash
-// (total went from ~220 to ~2,100 last time; this step lands around ~440).
-// Watch real behavior at this level before pushing any further. Delay (the
-// pacing between successive requests within one shard) stays untouched.
-const SOURCE_CONFIG = {
-  weworkremotely: { ttl: 60*60000, delay: 300000, shards: 1 },
-  cntraveler: { ttl: 60*60000, delay: 300000, shards: 1 },
-  twitch: { ttl: 60*60000, delay: 300000, shards: 1 }, // bounded public clips, app credentials only
-  //               TTL (ms)           DELAY/topic     shards
-  // -- [BREAKING] 15-30s - live social/news firehose ---------------------------
-  reddit:        { ttl:  8*60000, delay: 15000, shards: 8 },  // r/new firehose, many subreddits — was 4
-  hn:            { ttl:  8*60000, delay: 20000, shards: 10 },  // Algolia — front page churns constantly — was 5
-  mastodon:      { ttl:  8*60000, delay: 20000, shards: 10 },  // public federated timelines, live chatter — was 5
-  // Was the fastest tier by itself (8min/10s/4 shards) and, combined with its
-  // per-fetch limit, made it the single biggest contributor to the shared
-  // cache while Twitter/LinkedIn/Instagram/Facebook sat at 0 posts with no
-  // app-level API token configured. Composition dominance is now capped
-  // independently by diversifyBySource's maxSharePct (see addAndBroadcast),
-  // so it's rated with its breaking-news peers, just at the slow end of the tier.
-  bluesky:       { ttl: 10*60000, delay: 30000, shards: 12 },  // public ATP API, live social posts — was 6
-
-  // -- [HIGH-VOL] 60s - high-frequency, freshness-sensitive --------------------
-  devto:         { ttl: 20*60000, delay: 60000,  shards: 12 },  // dev blogging platform, constant new posts — was 6
-  indeed:        { ttl: 20*60000, delay: 60000,  shards: 12 },  // job RSS feeds, new listings continuously — was 6
-  techcrunch:    { ttl: 20*60000, delay: 60000,  shards: 12 },  // tech news RSS, several stories/day — was 6
-  theverge:      { ttl: 20*60000, delay: 60000,  shards: 12 },  // tech news RSS, several stories/day — was 6
-  // -- [HIGH-VOL] 90s -----------------------------------------------------------
-  medium:        { ttl: 25*60000, delay: 90000,  shards: 14 },  // CDN RSS, huge publishing platform — was 7
-  youtube:       { ttl: 25*60000, delay: 90000,  shards: 14 },  // channel RSS across many creators — was 7
-  hashnode:      { ttl: 25*60000, delay: 90000,  shards: 14 },  // freeCodeCamp RSS — was 7
-  producthunt:   { ttl: 25*60000, delay: 90000,  shards: 14 },  // daily launches, steady submission stream — was 7
-  arstechnica:   { ttl: 25*60000, delay: 90000,  shards: 14 },  // tech news RSS — was 7
-  wired:         { ttl: 25*60000, delay: 90000,  shards: 14 },  // tech/culture news RSS — was 7
-  venturebeat:   { ttl: 25*60000, delay: 90000,  shards: 14 },  // AI/startup news RSS — was 7
-  phoronix:      { ttl: 25*60000, delay: 90000,  shards: 14 },  // Linux/hardware news, multiple posts/day — was 7
-  // -- [HIGH-VOL] 120s ----------------------------------------------------------
-  theregister:   { ttl: 30*60000, delay: 120000, shards: 18 },  // enterprise IT/security RSS — was 9
-  remoteok:      { ttl: 30*60000, delay: 120000, shards: 18 },  // remote jobs API — was 9
-  behance:       { ttl: 30*60000, delay: 120000, shards: 18 },  // creative portfolios RSS — was 9
-
-  // -- [ACTIVE] flat 3min - steady content, not minute-by-minute --------------
-  indiehackers:  { ttl: 45*60000, delay: 180000, shards: 20 }, // community posts — was 10
-  smashing:      { ttl: 45*60000, delay: 180000, shards: 20 }, // web dev/design RSS, long-form articles — was 10
-  infoq:         { ttl: 45*60000, delay: 180000, shards: 20 }, // enterprise/cloud RSS, moderate cadence — was 10
-  mittr:         { ttl: 45*60000, delay: 180000, shards: 20 }, // deep tech RSS, moderate cadence — was 10
-  gitlab:        { ttl: 45*60000, delay: 180000, shards: 20 }, // public project API — was 10
-  yc:            { ttl: 45*60000, delay: 180000, shards: 20 }, // startup/professional RSS — was 10
-  crunchbase:    { ttl: 45*60000, delay: 180000, shards: 20 }, // business/funding RSS — deals aren't continuous — was 10
-  designweb:     { ttl: 45*60000, delay: 180000, shards: 20 }, // design/web industry RSS aggregator — was 10
-
-  // -- [LOW-ACT] no hard external limit, but a small/low-traffic site - still
-  // only a modest step up, same reasoning as the rest of this pass.
-  lobsters:      { ttl: 20*60000, delay: 240000,  shards: 16 },  // small, low-traffic site — genuinely low activity, but no rate ceiling to respect either — was 8
-
-  // -- [LOW-ACT] flat 4min, 1 shard - real external ceiling, left as-is -------
-  // These four keep both their original 1-shard cadence AND get capped in
-  // RATE_LIMITED_MANUAL_SWEEP — see that constant's comment. Reverted back
-  // to the original delay values along with the shard-count revert above —
-  // see this block's own history comment for why: under active production
-  // instability, restoring the fully known-stable baseline took priority
-  // over incremental per-source tuning, even for changes (these four are
-  // single-shard, so don't add to the concurrent-loop count that was the
-  // main problem) that weren't confirmed to be part of the actual cause.
-  github:        { ttl: 20*60000, delay: 240000,  shards: 1 },  // 60 req/hr unauthed — 15 fetch/hr worst case, still under the cap
-  arxiv:         { ttl: 40*60000, delay: 240000,  shards: 1 },  // OAI-PMH requires =20s between requests - 4min is a wide courtesy margin
-  usajobs:       { ttl: 40*60000, delay: 240000,  shards: 1 },  // federal Search API — free self-serve key, stay conservative as a courtesy
-  // 48 mapped topics × 1 fetch/full-cycle would land ~250/day at the same
-  // 4min the rest of this tier uses — too close to the Stack Exchange
-  // unauthenticated 300/day quota. Held at the tier-5 (5min) ceiling instead,
-  // which keeps it ~200/day with real headroom.
-  stackoverflow: { ttl: 40*60000, delay: 300000,  shards: 1 },  // 300/day API budget — kept at the archival ceiling for quota headroom
-
-  // -- [ARCHIVAL] flat 5min, 1 shard - system-wide ceiling ---------------------
-  // No free public API — requires a genuine app-level public token
-  // (TWITTER_BEARER_TOKEN / LINKEDIN_TOKEN / INSTAGRAM_TOKEN / FACEBOOK_TOKEN
-  // env vars), never a member's personal connected-account token. Idles at
-  // 0 posts, no error, until one is configured — shard count is moot until
-  // then, so left untouched rather than guessed at ahead of real traffic.
-  twitter:       { ttl: 90*60000, delay: 300000, shards: 1 },
-  linkedin:      { ttl: 90*60000, delay: 300000, shards: 1 },
-  facebook:      { ttl: 90*60000, delay: 300000, shards: 1 },
-};
+// Public inventories are checked every five minutes. Query-only adapters rotate
+// their distinct mapped keys; provider spacing and cooldowns can limit keyword
+// coverage and are reported separately from a source's last successful check.
+const SOURCE_COLLECTION_TARGET_MS = 5 * 60 * 1000;
+const SOURCE_CONFIG = Object.fromEntries([
+  'weworkremotely', 'cntraveler', 'twitch', 'reddit', 'hn', 'mastodon', 'bluesky',
+  'devto', 'indeed', 'techcrunch', 'theverge', 'medium', 'youtube', 'hashnode',
+  'producthunt', 'arstechnica', 'wired', 'venturebeat', 'phoronix', 'theregister',
+  'remoteok', 'behance', 'indiehackers', 'smashing', 'infoq', 'mittr', 'gitlab',
+  'yc', 'crunchbase', 'designweb', 'lobsters', 'github', 'arxiv', 'usajobs',
+  'stackoverflow', 'twitter', 'linkedin', 'facebook',
+].map(id => [id, { ttl: SOURCE_COLLECTION_TARGET_MS, delay: SOURCE_COLLECTION_TARGET_MS, shards: 1,
+  inventory: !['reddit', 'medium', 'bluesky', 'youtube', 'twitter', 'linkedin', 'facebook'].includes(id),
+  minSpacingMs: ['twitter', 'linkedin', 'facebook', 'stackoverflow'].includes(id) ? SOURCE_COLLECTION_TARGET_MS
+    : ['github', 'arxiv', 'usajobs'].includes(id) ? 60000
+      : ['reddit', 'medium', 'bluesky'].includes(id) ? 2000 : 60000,
+}]));
 
 // Cache key prefix per source — used by makeTopicCycler to bust cache when TTL elapses
 const CACHE_KEY_PREFIX = {
@@ -3036,7 +2929,7 @@ async function fetchDevToByTag(tag) {
     // per_page was 1000 — every fetch could dump up to a thousand posts into
     // the shared 300-cap global cache in one shot, instantly displacing
     // almost everything else in it. 25 is still generous for one tag.
-    const url = `https://dev.to/api/articles?tag=${encodeURIComponent(tag)}&per_page=25&state=fresh`;
+    const url = `https://dev.to/api/articles?${tag ? `tag=${encodeURIComponent(tag)}&` : ''}per_page=100&state=fresh`;
     const data = await fetchJSON(url);
     const posts = (data || [])
       .filter(a => a.title && a.url)
@@ -4091,6 +3984,17 @@ async function fetchYouTubeByKeyword(keyword) {
   }
 }
 
+// Background collection visits each configured official channel RSS once per
+// cycle. Repeated topic mappings never multiply search.list quota or RSS reads.
+async function fetchYouTubeCollectionChannel(channelId) {
+  const channel = [...Object.values(TOPIC_YT_CHANNELS).flat(), ...DEFAULT_YT_CHANNELS]
+    .find(item => item.id === channelId);
+  if (!channel) throw new Error('Unknown configured YouTube channel');
+  const xml = await fetchText(`https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(channelId)}`);
+  if (!/<feed[\s>]/i.test(xml)) throw new Error('YouTube returned an invalid channel feed');
+  return parseYouTubeChannelRSS(xml, '', channel.name);
+}
+
 // --- Stack Overflow: questions by tag ----------------------------------------
 const INTEREST_TO_SO_TAG = {
   'AI & Machine Learning': 'machine-learning', 'Data Science': 'pandas',
@@ -4200,7 +4104,7 @@ async function fetchStackOverflowByTag(tag) {
     return stale || [];
   }
   try {
-    const url = `https://api.stackexchange.com/2.3/questions?tagged=${encodeURIComponent(tag)}&order=desc&sort=creation&site=stackoverflow&pagesize=100&filter=default`;
+    const url = `https://api.stackexchange.com/2.3/questions?${tag ? `tagged=${encodeURIComponent(tag)}&` : ''}order=desc&sort=creation&site=stackoverflow&pagesize=100&filter=default`;
     const data = await fetchJSON(url);
     recordStackExchangeResponse(data);
     const posts = (data?.items || [])
@@ -4352,7 +4256,9 @@ async function fetchMastodonByTag(tag) {
   let lastError = null;
   for (const instance of MASTODON_INSTANCES) {
     try {
-      const url = `${instance}/api/v1/timelines/tag/${encodeURIComponent(tag)}?limit=25&local=false&only_media=false`;
+      const url = tag
+        ? `${instance}/api/v1/timelines/tag/${encodeURIComponent(tag)}?limit=25&local=false&only_media=false`
+        : `${instance}/api/v1/timelines/public?limit=40&local=false&only_media=false`;
       const data = await fetchJSON(url);
       const posts = mapMastodonPosts(data, tag);
       lastError = null; // this instance answered, even if with zero matching posts
@@ -4414,7 +4320,7 @@ async function fetchLobstersByTag(tag) {
   const cached = getCached(key);
   if (cached) return cached;
   try {
-    const url = `https://lobste.rs/t/${encodeURIComponent(tag)}.json`;
+    const url = tag ? `https://lobste.rs/t/${encodeURIComponent(tag)}.json` : 'https://lobste.rs/newest.json';
     const data = await fetchJSON(url);
     const posts = (data || [])
       .filter(s => s.title && s.short_id)
@@ -4514,7 +4420,8 @@ async function fetchArxivByKeyword(keyword) {
   const cached = getCached(key);
   if (cached) return cached;
   try {
-    const url = `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(keyword)}&max_results=200&sortBy=submittedDate&sortOrder=descending`;
+    const query = keyword ? 'all:' + keyword : 'cat:cs.* OR cat:stat.* OR cat:math.* OR cat:physics.* OR cat:econ.* OR cat:q-bio.* OR cat:q-fin.* OR cat:astro-ph.*';
+    const url = `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(query)}&max_results=200&sortBy=submittedDate&sortOrder=descending`;
     const xml  = await fetchText(url);
     const entries = parseArxivAtom(xml);
     const posts = entries.map(e => ({
@@ -5363,8 +5270,8 @@ const twitchFeed = createTwitchFeed({ fetcher: fetch,
   getConfig: () => ({ clientId: process.env.TWITCH_CLIENT_ID, clientSecret: process.env.TWITCH_CLIENT_SECRET }) });
 // Public stream cards and clips use the app's client-credentials token. Followed live streams
 // and clips use only the current member's authorized user:read:follows token.
-async function fetchTwitchPublicPosts() {
-  return isSourceDisplayAllowed('twitch', { env: process.env }) ? twitchFeed.publicPosts() : [];
+async function fetchTwitchPublicPosts(options = {}) {
+  return isSourceDisplayAllowed('twitch', { env: process.env }) ? twitchFeed.publicPosts(options) : [];
 }
 async function fetchTwitchFollowedStreams(token, options = {}) {
   return twitchFeed.following(token, options);
@@ -7054,322 +6961,78 @@ const FEED_TOPICS = [
   'Privacy', 'AI Ethics', 'Digital Nomad', 'Networking',
 ];
 
-// Each source agent continuously cycles through FEED_TOPICS one at a time.
-// Circuit breaker: after 2 full empty cycles (no new posts from any topic) the worker
-// pauses for CIRCUIT_PAUSE_MS before automatically resuming.
-// Individual fetchers catch their own errors internally; we detect problems via sustained
-// absence of fresh posts across all topics rather than exception tracking.
-const CIRCUIT_EMPTY_CYCLES = 5;  // empty full-cycles before pausing (increased from 2 — Reddit/GitHub often fail transiently)
-const CIRCUIT_PAUSE_MS     = 3 * 60 * 1000; // 3 minutes (shorter so agents auto-recover faster)
-
-// SOURCE_FETCHERS[agentId]() (the full-sweep path — triggered by a self-
-// healing event (sort-distrib refill, optimizer healing), a bust=1 request,
-// or a manual office refresh — no longer a fixed schedule, see
-// AUTO_TRANSFER_INTERVAL_MS's own comment on why the automatic full sweep
-// was removed) used to pace every source at a flat 60ms/150ms regardless of
-// which API it was hitting, completely bypassing the per-source delay
-// tiers SOURCE_CONFIG above carefully documents. For a source with a real
-// external quota that's a genuine problem, not just a missed optimization:
-// arxiv's OAI-PMH endpoint requires >=20s between *any* two requests
-// (see its SOURCE_CONFIG comment) and was getting 69 requests ~60ms apart
-// every single automatic sweep — a real, ongoing violation, not a one-off.
-// github's unauthenticated 60/hr cap and stackoverflow's 300/day quota
-// were similarly getting blown through in a few seconds. Capping the topic
-// count AND using each source's own real minimum spacing for exactly these
-// four keeps a full sweep fast for everything else while keeping these four
-// inside budget even if a sweep happens to fire around the same time as the
-// continuous worker — github/arxiv's own SOURCE_CONFIG delay already
-// reserves headroom for that overlap (see their comments there); this sweep
-// path isn't on a predictable schedule anymore, so treat these caps as a
-// ceiling on the damage one sweep could do, not a precisely-budgeted addend.
-const RATE_LIMITED_MANUAL_SWEEP = {
-  github:        { topicCap: 7,  delayMs: 4000 },  // 60/hr unauth hard cap — one sweep tops out at 7 requests, well inside the ~15/hr headroom SOURCE_CONFIG's continuous rate already reserves
-  arxiv:         { topicCap: 5,  delayMs: 20000 }, // OAI-PMH hard requirement — 20s is the floor, not a courtesy margin, for every request this makes
-  stackoverflow: { topicCap: 10, delayMs: 4000 },  // 300/day quota — a full topic sweep alone would still be a meaningful chunk of the day's budget
-  usajobs:       { topicCap: 10, delayMs: 4000 },  // free self-serve key — stay conservative per the source's own existing comment
-};
-
-function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
-  const approvedFetcher = fetchFn;
-  fetchFn = (...args) => isSourceDisplayAllowed(agentId, { env: process.env }) ? approvedFetcher(...args) : Promise.resolve([]);
-  const sourceTtl   = SOURCE_CONFIG[agentId]?.ttl ?? 5 * 60 * 1000;
-  const cachePrefix = CACHE_KEY_PREFIX[agentId];
-  const topicFetchedAt = new Map(); // mappedKey ? timestamp of last real API fetch
-  const numShards = Math.max(1, Math.min(SOURCE_CONFIG[agentId]?.shards ?? 1, FEED_TOPICS.length));
-  const sliceSize = Math.ceil(FEED_TOPICS.length / numShards);
-  const shardResetFns = []; // per-shard circuit-state reset — called by the manual trigger
-  let manualTopicIndex = 0;
-
-  // Shared health tracking for all shards of this agent
-  workerHealth.set(agentId, {
-    consecutiveErrors: 0, totalErrors: 0, fetchCount: 0,
-    lastSuccess: null, paused: false, pauseUntil: 0,
-    skippedForStability: 0, skippedForInactivity: 0, lastAttempt: null, lastError: null,
+let sourceCollectionScheduler = null;
+function getSourceCollectionScheduler() {
+  if (!sourceCollectionScheduler) sourceCollectionScheduler = require('./source-collection-scheduler').createSourceCollectionScheduler({
+    concurrency: envNumber('SOURCE_COLLECTION_CONCURRENCY', 4, 1, 4),
+    effectiveConcurrency: () => refreshControl.mode === 'pressure' ? 1 : 4,
+    canRun: () => !isStabilityCritical() && !isAppIdle(),
   });
+  return sourceCollectionScheduler;
+}
 
-  // Build one independent shard loop over a slice of FEED_TOPICS
-  function buildShard(shardTopics) {
-    let topicIdx = 0;
-    let emptyTopicsThisCycle = 0;
-    let fullCyclesEmpty      = 0;
-    let lastEmptyCycleLog    = 0;
+function sourceProviderCooldown(id) {
+  if (id === 'github') return githubBackoffUntil;
+  if (id === 'stackoverflow') return stackExchangeBackoffUntil;
+  if (id === 'reddit') return redditAnonOutageUntil;
+  return 0;
+}
 
-    shardResetFns.push(() => { fullCyclesEmpty = 0; emptyTopicsThisCycle = 0; });
-
-    async function fetchNextTopic() {
-      const health = workerHealth.get(agentId);
-
-      if (isStabilityCritical()) {
-        health.skippedForStability = (health.skippedForStability || 0) + 1;
-        refreshControl.skippedFetches += 1;
-        scheduleNext();
-        return;
-      }
-
-      // See isAppIdle's own comment — this is the automatic continuous loop
-      // only; a manual "Refresh now" trigger from the office dashboard
-      // (SOURCE_FETCHERS[agentId] below) is explicit intent and stays
-      // exempt regardless of user activity.
-      if (isAppIdle()) {
-        health.skippedForInactivity = (health.skippedForInactivity || 0) + 1;
-        scheduleNext();
-        return;
-      }
-
-      // Circuit breaker — shared health.paused applies to all shards
-      if (health.paused) {
-        if (Date.now() < health.pauseUntil) { scheduleNext(); return; }
-        health.paused = false;
-        health.consecutiveErrors = 0;
-        fullCyclesEmpty = 0;
-        logAgentAction(agentId, emoji, `Circuit breaker reset — ${agentId} resumed`, color);
-        // Without this, agentStatusMap (what the office dashboard actually
-        // reads — see updateAgentStatus) stays stuck on the stale "paused"
-        // entry until the *next* fetch happens to find genuinely new
-        // content, since a "no new posts this cycle" result doesn't call
-        // updateAgentStatus either. Confirmed live: a source sitting at
-        // health.paused=false (accurate) while the dashboard still showed
-        // status:"paused" — resumed and functioning, but reported as if it
-        // wasn't. Every other status transition already calls this
-        // immediately; resuming from a pause was the one gap.
-        updateAgentStatus(agentId);
-      }
-
-      const topic = shardTopics[topicIdx];
-      const isLastTopic = topicIdx === shardTopics.length - 1;
-      topicIdx = (topicIdx + 1) % shardTopics.length;
-
-      const mappedKey = keyMapper(topic);
-      if (!mappedKey) {
-        emptyTopicsThisCycle++;
-      } else {
-        health.fetchCount++;
-        const lastFetched = topicFetchedAt.get(mappedKey) || 0;
-        if (Date.now() - lastFetched >= sourceTtl && cachePrefix) {
-          bustCache(`${cachePrefix}${mappedKey}`);
-        }
-
-        try {
-          health.lastAttempt = Date.now();
-          const posts = await fetchFn(mappedKey);
-          topicFetchedAt.set(mappedKey, Date.now());
-          health.lastSuccess = Date.now();
-          health.lastError = null;
-          // A completed provider request is a successful health check even
-          // when this particular topic has no matching posts. Empty cycles
-          // have their own circuit-breaker counters below; retaining an old
-          // error streak here falsely marks an otherwise-live source as
-          // degraded after another shard has already recovered.
-          health.consecutiveErrors = 0;
-          const fresh = realFeedPosts(posts).map(p => trimPostContent(normalizeFeedPost(p)));
-          if (fresh.length) {
-            indexPostUrls(fresh);
-            // Queued for the Equalizer's next drain (see its own comment)
-            // instead of calling addAndBroadcast directly — real dedup
-            // (and the "how many were actually new" count the old log line
-            // here used to report) now happens there, fairly interleaved
-            // with whatever else arrived in the same short window, rather
-            // than immediately in whichever order fetches happened to
-            // resolve in. Health/cache tracking below is untouched —
-            // still immediate, still per-fetch, so none of that behavior
-            // changes.
-            pushToEqualizer(agentId, fresh);
-            const prev = agentSourceCache.get(agentId) || { posts: [], totalSeen: 0 };
-            agentSourceCache.set(agentId, {
-              posts: sortFeedBatch([...fresh, ...prev.posts], `${agentId}-source-cache`, {
-                limit: SOURCE_FEED_CACHE_LIMIT,
-              }),
-              lastFetch: Date.now(),
-              totalSeen: prev.totalSeen + fresh.length,
-              emoji, color,
-            });
-            logAgentAction(agentId, emoji, `+${fresh.length} queued — topic: ${topic}`, color);
-            fullCyclesEmpty = 0;
-            emptyTopicsThisCycle = 0;
-            health.consecutiveErrors = 0;
-            updateAgentStatus(agentId);
-          } else {
-            emptyTopicsThisCycle++;
-          }
-        } catch (err) {
-          health.consecutiveErrors++;
-          health.totalErrors++;
-          health.lastError = err?.message || String(err);
-          emptyTopicsThisCycle++;
-          updateAgentStatus(agentId);
-          console.warn(`[${agentId}] Error fetching ${topic}: ${health.lastError}`);
-        }
-      }
-
-      if (isLastTopic) {
-        if (emptyTopicsThisCycle >= shardTopics.length) {
-          fullCyclesEmpty++;
-          if (Date.now() - lastEmptyCycleLog > 15 * 60 * 1000) {
-            lastEmptyCycleLog = Date.now();
-            logAgentAction(agentId, emoji, 'Active - no new live posts this cycle', color);
-          }
-          if (fullCyclesEmpty >= CIRCUIT_EMPTY_CYCLES && !health.paused) {
-            health.paused    = true;
-            health.pauseUntil = Date.now() + CIRCUIT_PAUSE_MS;
-            updateAgentStatus(agentId);
-            const fallbacks = getFallbackAgents(agentId);
-            logAgentAction(agentId, '??',
-              `Circuit breaker tripped — paused 5min (${fullCyclesEmpty} empty cycles). Fallback: ${fallbacks.slice(0, 2).join(', ')}`, '#F87171');
-          }
-        } else {
-          fullCyclesEmpty = 0;
-        }
-        emptyTopicsThisCycle = 0;
-      }
-
-      scheduleNext();
-    }
-
-    function scheduleNext() {
-      const baseDelay = adaptiveDelay(SOURCE_CONFIG[agentId]?.delay ?? 10000);
-      const delay = isInCatchUpBurst() ? Math.max(2000, Math.round(baseDelay / CATCH_UP_BURST_DIVISOR)) : baseDelay;
-      setTimeout(fetchNextTopic, delay);
-    }
-
-    return fetchNextTopic;
-  }
-
-  // One-shot manual trigger: runs all topics sequentially and resets circuit breaker
-  SOURCE_FETCHERS[agentId] = async () => {
-    const health = workerHealth.get(agentId);
-    if (isStabilityCritical()) {
-      if (health) health.skippedForStability = (health.skippedForStability || 0) + 1;
-      refreshControl.skippedFetches += 1;
-      logAgentAction('stability', '??', `Skipped manual ${agentId} refresh while stability guard is critical`, '#FBBF24');
-      return { deferred: true };
-    }
-    if (health) { health.paused = false; health.consecutiveErrors = 0; updateAgentStatus(agentId); }
-    shardResetFns.forEach(fn => fn()); // reset all shard circuit state
-    const rateLimitedSweep = RATE_LIMITED_MANUAL_SWEEP[agentId];
-    let scannedTopics = 0;
-    const pressureLimit = refreshControl.mode === 'pressure' ? PRESSURE_MANUAL_TOPIC_LIMIT : FEED_TOPICS.length;
-    // Whichever constraint is tighter wins — a rate-limited source stays
-    // capped even outside pressure mode (see RATE_LIMITED_MANUAL_SWEEP),
-    // and pressure mode can still cut an already-uncapped source shorter.
-    const topicLimit = Math.min(FEED_TOPICS.length, pressureLimit, rateLimitedSweep?.topicCap ?? FEED_TOPICS.length);
-    for (let attempted = 0; attempted < FEED_TOPICS.length; attempted++) {
-      if (isStabilityCritical() || scannedTopics >= topicLimit) break;
-      const topic = FEED_TOPICS[manualTopicIndex];
-      manualTopicIndex = (manualTopicIndex + 1) % FEED_TOPICS.length;
-      scannedTopics++;
-      const key = keyMapper(topic);
-      if (!key) continue;
-      if (health) health.fetchCount++;
-      // Unlike the continuous cycler above (which only busts once its own
-      // TTL has actually elapsed), a Transfer sweep's whole point is to
-      // force a fresh pull right now — without this, fetchFn's own
-      // getCached() check at the top of every fetch function would just
-      // hand back whatever's already cached (up to 30min stale, or fresher
-      // still if the continuous worker or the last Transfer run happened
-      // to touch this exact topic recently), so "Transfer" could silently
-      // do nothing but re-confirm old data — confirmed live as Transfer
-      // running successfully with zero new posts most cycles.
-      if (cachePrefix) bustCache(`${cachePrefix}${key}`);
-      const posts = await fetchFn(key).catch(() => []);
-      if (health) {
-        health.lastAttempt = Date.now();
+function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper, options = {}) {
+  const cfg = SOURCE_CONFIG[agentId] || {};
+  const keys = options.keys || (cfg.inventory ? [''] : FEED_TOPICS.map(keyMapper).filter(key => key != null));
+  const scheduler = getSourceCollectionScheduler();
+  const health = { consecutiveErrors: 0, totalErrors: 0, fetchCount: 0,
+    lastSuccess: null, paused: false, pauseUntil: 0,
+    skippedForStability: 0, skippedForInactivity: 0, lastAttempt: null, lastError: null };
+  workerHealth.set(agentId, health);
+  const ready = () => agentId !== 'linkedin'
+    && isSourceDisplayAllowed(agentId, { env: process.env })
+    && require('./office-agent-activation').officeSourceReady(agentId, process.env);
+  scheduler.register({ id: agentId, keys, enabled: ready,
+    minSpacingMs: options.minSpacingMs || cfg.minSpacingMs || 1000,
+    startDelayMs: options.startDelayMs || 0,
+    providerUntil: () => sourceProviderCooldown(agentId),
+    collect: async key => {
+      health.lastAttempt = Date.now();
+      health.fetchCount++;
+      // The job is due for fresh provider data. All triggers share this lock;
+      // clearing only this key leaves unrelated member-owned caches intact.
+      if (CACHE_KEY_PREFIX[agentId]) bustCache(CACHE_KEY_PREFIX[agentId] + key);
+      try {
+        const posts = await fetchFn(key);
+        const fresh = realFeedPosts(posts).map(post => trimPostContent(normalizeFeedPost(post)));
         health.lastSuccess = Date.now();
         health.lastError = null;
-      }
-      if (posts.length) {
-        const trimmed = realFeedPosts(posts).map(p => trimPostContent(normalizeFeedPost(p)));
-        pushToEqualizer(agentId, trimmed);
-        const prev = agentSourceCache.get(agentId) || { posts: [], totalSeen: 0 };
-        agentSourceCache.set(agentId, {
-          posts: sortFeedBatch([...trimmed, ...prev.posts], `${agentId}-manual-cache`, {
+        health.consecutiveErrors = 0;
+        health.paused = false;
+        health.pauseUntil = 0;
+        if (fresh.length) {
+          indexPostUrls(fresh);
+          pushToEqualizer(agentId, fresh);
+          const previous = agentSourceCache.get(agentId) || { posts: [], totalSeen: 0 };
+          agentSourceCache.set(agentId, { posts: sortFeedBatch([...fresh, ...previous.posts], agentId + '-source-cache', {
             limit: SOURCE_FEED_CACHE_LIMIT,
-          }),
-          lastFetch: Date.now(),
-          totalSeen: prev.totalSeen + trimmed.length,
-          emoji, color,
-        });
-        if (health) { health.consecutiveErrors = 0; health.lastSuccess = Date.now(); }
+          }), lastFetch: Date.now(), totalSeen: previous.totalSeen + fresh.length, emoji, color });
+        }
+        updateAgentStatus(agentId);
+        return { posts: fresh.length };
+      } catch (error) {
+        health.consecutiveErrors++;
+        health.totalErrors++;
+        health.lastError = error?.message || String(error);
+        updateAgentStatus(agentId);
+        throw error;
       }
-      // Was only paced under pressure/critical — in normal mode a manual
-      // trigger fired up to 69 topic fetches for this one source back to
-      // back with zero delay. Always pace it now (still fast, just not an
-      // unthrottled burst); heavier under pressure as before. A rate-limited
-      // source's own real minimum spacing always wins over both — see
-      // RATE_LIMITED_MANUAL_SWEEP's own comment for why 60ms was a real
-      // problem for these specific sources, not just an inefficiency.
-      await waitMs(rateLimitedSweep?.delayMs ?? (refreshControl.mode === 'normal' ? 60 : 150));
-    }
-    return { deferred: isStabilityCritical(), scannedTopics, nextTopic: manualTopicIndex };
-  };
-
-  // Return start function — launches all shards staggered within one delay window
-  return function start() {
-    const baseDelay = SOURCE_CONFIG[agentId]?.delay ?? 10000;
-    const stagger = Math.max(200, Math.floor(baseDelay / numShards));
-    for (let s = 0; s < numShards; s++) {
-      const slice = FEED_TOPICS.slice(s * sliceSize, Math.min((s + 1) * sliceSize, FEED_TOPICS.length));
-      if (!slice.length) continue;
-      const shardFetch = buildShard(slice);
-      // Stagger shard starts so they don't all hit the API at t=0
-      setTimeout(shardFetch, s * stagger);
-    }
-  };
+    },
+  });
+  SOURCE_FETCHERS[agentId] = () => scheduler.request(agentId);
+  return () => scheduler.start();
 }
 
 function calculateExpectedLoad() {
-  let totalDailyApiCalls = 0;
-  const lines = [];
-  for (const [src, cfg] of Object.entries(SOURCE_CONFIG)) {
-    // How many topics does this source have a mapping for?
-    const kw  = t => interestKeyword(t);
-    const dev = t => INTEREST_TO_DEVTO_TAG[t];
-    const med = t => INTEREST_TO_MEDIUM_TAG[t];
-    const so  = t => INTEREST_TO_SO_TAG[t];
-    const mas = t => INTEREST_TO_MASTODON_TAG[t];
-    const lob = t => LOBSTERS_TAGS[t];
-    const arx = t => INTEREST_TO_ARXIV[t];
-    const mappers = { reddit: kw, hn: kw, github: kw, devto: dev, medium: med,
-      youtube: kw, stackoverflow: so, mastodon: mas, lobsters: lob, arxiv: arx,
-      indeed: kw, producthunt: kw, techcrunch: kw, theverge: kw, indiehackers: kw,
-      hashnode: kw, bluesky: kw, arstechnica: kw, wired: kw,
-      theregister: kw, venturebeat: kw, smashing: kw, phoronix: kw, infoq: kw, mittr: kw };
-    const mapper = mappers[src] || kw;
-    const mappedTopics = FEED_TOPICS.filter(t => mapper(t));
-    // Time to complete one full topic cycle = delay * all topics
-    const effectiveDelay = cfg.delay * currentRefreshMultiplier();
-    const cycleMs   = effectiveDelay * FEED_TOPICS.length;
-    const cyclesDay = (24 * 60 * 60 * 1000) / cycleMs;
-    // But each topic only re-fetches once per TTL window
-    const ttlCycles = Math.max(1, cfg.ttl / effectiveDelay);
-    const effectiveCallsPerCycle = Math.ceil(mappedTopics.length / ttlCycles);
-    const dailyCalls = Math.round(effectiveCallsPerCycle * cyclesDay);
-    totalDailyApiCalls += dailyCalls;
-    const risk = dailyCalls > 2000 ? '?? HIGH' : dailyCalls > 500 ? '?? MED' : '? LOW';
-    lines.push(`  ${src.padEnd(14)} delay=${cfg.delay/1000}s x${currentRefreshMultiplier()} ttl=${cfg.ttl/60000}min ? ~${dailyCalls}/day ${risk}`);
-  }
-  lines.push(`  TOTAL estimated daily API calls: ~${totalDailyApiCalls}`);
-  if (totalDailyApiCalls > 50000) lines.push('  ? WARNING: total may exceed free-tier limits - increase TTLs or reduce topics');
-  console.log('[Load Calculator]\n' + lines.join('\n'));
+  const state = getSourceCollectionScheduler().status();
+  console.log(`[Collection] ${state.enabled}/${state.total} configured source inventories; max ${state.maxConcurrency} concurrent jobs; target 5min, stale alert 10min. Provider cooldowns remain enforced.`);
 }
 
 function startContinuousWorkers() {
@@ -7392,15 +7055,15 @@ function startContinuousWorkers() {
   // Start times are staggered so the initial burst is spread out.
   const SOURCES = [
     //  id               emoji   color       fetchFn                  keyMapper  startDelay
-    ['weworkremotely', 'WWR', '#EF4444', expandedFeedSources.weworkremotely, () => 'jobs', 36000],
-    ['cntraveler', 'LM', '#026B9C', expandedFeedSources.cntraveler, () => 'Travel', 38000],
-    ['twitch', 'Tw', '#9146FF', fetchTwitchPublicPosts, () => 'Streaming', 40000],
+    ['weworkremotely', 'WWR', '#EF4444', () => expandedFeedSources.weworkremotely({ bust: true }), () => 'jobs', 36000],
+    ['cntraveler', 'LM', '#026B9C', () => expandedFeedSources.cntraveler({ bust: true }), () => 'Travel', 38000],
+    ['twitch', 'Tw', '#9146FF', () => fetchTwitchPublicPosts({ bust: true }), () => 'Streaming', 40000],
     ['reddit',        '??', '#FF6347', fetchRedditByKeyword,     t => t,  0],  // pass topic name directly for TOPIC_SUBREDDITS lookup
     ['hn',            '??', '#FF6600', fetchHNByKeyword,         kw,   1000],
     ['github',        '??', '#94A3B8', fetchGitHubByKeyword,     kw,   2000],
     ['devto',         '??', '#8B5CF6', fetchDevToByTag,          dev,  3000],
     ['medium',        '??', '#10B981', fetchMediumByTag,         med,  4000],
-    ['youtube',       '??', '#EF4444', fetchYouTubeByKeyword,    kw,   5000],
+    ['youtube',       '??', '#EF4444', fetchYouTubeCollectionChannel, kw, 5000],
     ['stackoverflow', '??', '#F59E0B', fetchStackOverflowByTag,  so,   6000],
     ['mastodon',      '??', '#6366F1', fetchMastodonByTag,       mas,  7000],
     ['lobsters',      '??', '#DC2626', fetchLobstersByTag,       lob,  8000],
@@ -7434,12 +7097,16 @@ function startContinuousWorkers() {
   ];
 
   for (const [id, emoji, color, fetchFn, keyMapper, startDelay] of SOURCES) {
-    const start = makeTopicCycler(id, emoji, color, fetchFn, keyMapper);
-    setTimeout(start, startDelay);
+    const youtubeKeys = id === 'youtube'
+      ? [...new Set([...Object.values(TOPIC_YT_CHANNELS).flat(), ...DEFAULT_YT_CHANNELS].map(channel => channel.id))]
+      : null;
+    makeTopicCycler(id, emoji, color, fetchFn, keyMapper, {
+      startDelayMs: startDelay, ...(youtubeKeys ? { keys: youtubeKeys, minSpacingMs: 1000 } : {}),
+    });
   }
-
+  getSourceCollectionScheduler().start();
   calculateExpectedLoad();
-  logAgentAction('feed', '??', `All ${SOURCES.length} source agents started - parallel sharded topic cycling active`, '#4ADE80');
+  logAgentAction('feed', '??', `${SOURCES.length} source inventories registered with the bounded collection scheduler`, '#4ADE80');
 }
 
 // --- Background feed refresh (kept for /feed/refresh endpoint and initial load) -
@@ -12860,7 +12527,9 @@ async function refreshDbFeedPostCount() {
 // of indirection to notice it.
 function enqueueSourceRefresh(ids, reason = 'manual') {
   if (!IS_PIPELINE_ROLE) return;
-  const requestedIds = [...new Set(Array.isArray(ids) ? ids : [ids])].filter(id => typeof SOURCE_FETCHERS[id] === 'function');
+  const enabledSources = new Map((sourceCollectionScheduler?.status().sources || []).map(source => [source.id, source.enabled]));
+  const requestedIds = [...new Set(Array.isArray(ids) ? ids : [ids])]
+    .filter(id => typeof SOURCE_FETCHERS[id] === 'function' && enabledSources.get(id) !== false);
   if (!requestedIds.length) return;
 
   const newlyQueued = requestedIds.filter(id => !sourceRefreshQueue.pendingIds.has(id) && !sourceRefreshQueue.currentIds.includes(id));
@@ -14370,7 +14039,7 @@ if (process.env.AUTOFIX_SMOKE_TEST !== '1' && IS_PIPELINE_ROLE) {
   // startContinuousWorkers' own FEED_TOPICS-keyed SOURCES array (see
   // startJobBoardSweeps' own comment), so they're started separately here,
   // same pipeline-only gate.
-  startJobBoardSweeps();
+  setImmediate(startJobBoardSweeps);
 }
 
 // Pre-seed agentSourceCache with curated posts so office cards and health status
@@ -14868,6 +14537,28 @@ const AGGREGATE_FEED_SOURCES = [...new Set([
   .filter(source => !MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(source));
 const AGGREGATE_FEED_SOURCE_SET = new Set(AGGREGATE_FEED_SOURCES);
 const isAggregateFeedSource = (source) => AGGREGATE_FEED_SOURCE_SET.has(canonicalFeedSourceId(source));
+const sourceRefreshRequests = require('./source-refresh-requests').createSourceRefreshRequests({
+  db, sourceIds: [...Object.keys(SOURCE_CONFIG).filter(source => !MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(source)), ...PIPELINE_ONLY_FEED_SOURCES],
+});
+const sourceRefreshCoordinationHealth = { lastCheckedAt: null, lastError: null, lastRequestedSources: [] };
+let sourceRefreshRequestsInFlight = false;
+async function pollSharedSourceRefreshRequests() {
+  if (!IS_PIPELINE_ROLE || sourceRefreshRequestsInFlight || isStabilityCritical() || !db.isConnected()) return;
+  sourceRefreshRequestsInFlight = true;
+  try {
+    const ids = await sourceRefreshRequests.take();
+    sourceCollectionScheduler?.nudge(ids);
+    sourceRefreshCoordinationHealth.lastCheckedAt = Date.now();
+    sourceRefreshCoordinationHealth.lastError = null;
+    if (ids.length) sourceRefreshCoordinationHealth.lastRequestedSources = ids;
+  } catch (error) {
+    sourceRefreshCoordinationHealth.lastError = error?.message || String(error);
+  } finally { sourceRefreshRequestsInFlight = false; }
+}
+if (IS_PIPELINE_ROLE && process.env.AUTOFIX_SMOKE_TEST !== '1') {
+  const timer = setInterval(pollSharedSourceRefreshRequests, 5000);
+  timer.unref?.();
+}
 const FOLLOWING_FAVORITE_FEED_SOURCE_SET = new Set([
   'uficonnect',
   ...[...CONNECTED_SOCIAL_PLATFORMS].filter(isFollowingSourceAllowed),
@@ -16009,13 +15700,25 @@ const downloadSourceImage = createSourceImageDownloader({ isAllowedUrl: isAllowe
 // whenever they last happened to load their Following tab.
 const followingSourceCache = new Map(); // "userId::source" ? { posts, fetchedAt }
 const FOLLOWING_SOURCE_REFRESH_MS = 5 * 60 * 1000;
-const FOLLOWING_SOURCE_CACHE_MAX_AGE_MS = FOLLOWING_SOURCE_REFRESH_MS * 2; // stale past 2 missed cycles — getFollowingFeedPosts falls back to a live call rather than serve something this old
+const FOLLOWING_SOURCE_CACHE_MAX_AGE_MS = FOLLOWING_SOURCE_REFRESH_MS; // expired after one five-minute collection interval
 
-async function fetchConnectedFollowingSource(source, userId, { bust = false } = {}) {
+const followingRefreshQueue = require('./following-refresh-queue').createFollowingRefreshQueue();
+let followingWarmInFlight = null;
+let followingWarmCursor = 0;
+async function fetchConnectedFollowingSource(source, userId, options = {}) {
+  return followingRefreshQueue.run(userId + '::' + source, async () => {
+    const fresh = await fetchConnectedFollowingSourceUnqueued(source, userId, options);
+    followingSourceCache.set(userId + '::' + source, { posts: fresh, fetchedAt: Date.now() });
+    return fresh;
+  }, { priority: !options.background });
+}
+
+async function fetchConnectedFollowingSourceUnqueued(source, userId, { bust = false } = {}) {
   // Other API workers and OAuth callbacks may have renewed these credentials.
   const user = isDBId(userId) ? await getAuthUser(userId) : await getUser(userId);
   const token = user?.socialTokens?.[source];
   if (!token) return [];
+  const connectionVersion = String(user.socialConnectedAt?.[source] || user.createdAt || 'legacy');
   const window = connectedSourceWindow(user, source);
   // Bootstrap new connections with recent followed content. Own-content
   // history keeps its existing connection-day boundary.
@@ -16030,36 +15733,38 @@ async function fetchConnectedFollowingSource(source, userId, { bust = false } = 
     if (!renewed) throw new Error(`${PLATFORMS[source]?.name || source} access could not be renewed. Reconnect this account in Connected accounts.`);
     raw = await FOLLOWING_SOURCE_FETCHERS[source](renewed, { ...options, bust: true });
   }
+  const currentUser = isDBId(userId) ? await getAuthUser(userId) : await getUser(userId);
+  if (!currentUser?.socialTokens?.[source] || String(currentUser.socialConnectedAt?.[source] || currentUser.createdAt || 'legacy') !== connectionVersion) {
+    throw new Error('This source connection changed. Refresh to load the current account.');
+  }
   return capFollowingPosts(realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source })), {
     sinceMs: startMs, untilMs: window.untilMs, limit: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS,
   });
 }
 
 async function refreshFollowingSourceCaches() {
-  if (!Object.keys(FOLLOWING_SOURCE_FETCHERS).length) return;
-  for (const user of users) {
-    const tokens = user?.socialTokens;
-    if (!tokens) continue;
-    for (const [source, fetcher] of Object.entries(FOLLOWING_SOURCE_FETCHERS)) {
-      if (!isSourceDisplayAllowed(source, { env: process.env })) continue;
-      const token = tokens[source];
-      if (!token) continue;
-      try {
-        const fresh = await fetchConnectedFollowingSource(source, user.id);
-        followingSourceCache.set(`${user.id}::${source}`, {
-          posts: fresh,
-          fetchedAt: Date.now(),
-        });
-      } catch (e) {
-        console.warn(`following source refresh ${source} (user ${user.id}):`, e.message);
-      }
-      // Paced per-fetch, not just per-user — a member could have several of
-      // these connected at once. Modest since each fetcher already caches
-      // its own result internally, this loop's own concern is spreading
-      // requests out, not the primary rate-limit guard.
-      await waitMs(300);
+  if (followingWarmInFlight) return followingWarmInFlight;
+  const run = (async () => {
+    const sources = Object.keys(FOLLOWING_SOURCE_FETCHERS).filter(source => isSourceDisplayAllowed(source, { env: process.env }));
+    const candidates = users.flatMap(user => sources.filter(source => Boolean(user?.socialTokens?.[source]))
+      .map(source => ({ source, userId: user.id })));
+    if (!candidates.length) return;
+    const tasks = [];
+    // Rotate over the full inventory, enqueueing at most 32 stale pairs per
+    // pass. Foreground reads share these jobs and never start another copy.
+    for (let tried = 0; tried < candidates.length && tasks.length < 32; tried++) {
+      const candidate = candidates[followingWarmCursor % candidates.length];
+      followingWarmCursor = (followingWarmCursor + 1) % candidates.length;
+      const cached = followingSourceCache.get(candidate.userId + '::' + candidate.source);
+      if (cached && Date.now() - cached.fetchedAt < FOLLOWING_SOURCE_REFRESH_MS) continue;
+      tasks.push(fetchConnectedFollowingSource(candidate.source, candidate.userId, { bust: true, background: true }).catch(error => {
+        console.warn('following source refresh ' + candidate.source + ':', error.message);
+      }));
     }
-  }
+    await Promise.all(tasks);
+  })();
+  followingWarmInFlight = run;
+  try { return await run; } finally { if (followingWarmInFlight === run) followingWarmInFlight = null; }
 }
 
 // Following contains native followed authors and authorized source timelines.
@@ -16126,15 +15831,15 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
   const sourceErrors = {};
 
   if (Object.keys(FOLLOWING_SOURCE_FETCHERS).length) {
-    for (const [source, fetcher] of Object.entries(FOLLOWING_SOURCE_FETCHERS)) {
-      if (!wantsSource(source)) continue;
+    await Promise.all(Object.keys(FOLLOWING_SOURCE_FETCHERS).map(async source => {
+      if (!wantsSource(source)) return;
       const token = user?.socialTokens?.[source];
-      if (!token) continue;
+      if (!token) return;
       // Prefer the background-refreshed cache (see refreshFollowingSourceCaches,
       // same 5-minute rate as the app-level continuous workers) over a live
       // call on every single request — falls back to fetching live only when
       // the cache hasn't been warmed yet (e.g. right after connecting, before
-      // the next refresh cycle) or has gone stale past two missed cycles.
+      // the next refresh cycle) or has passed its five-minute freshness window.
       // bust (the same manual-refresh signal the main Feed's "Refresh now"
       // already sends as ?bust=1) skips this outer cache entirely — without
       // it, a manual refresh had no way to ever get past either this cache
@@ -16148,7 +15853,7 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
       if (cached && Date.now() - cached.fetchedAt < FOLLOWING_SOURCE_CACHE_MAX_AGE_MS
           && !cached.posts.some(post => post?.matchedByInterest === true)) {
         externalPosts.push(...cached.posts);
-        continue;
+        return;
       }
       try {
         const fresh = await fetchConnectedFollowingSource(source, userId, { bust });
@@ -16158,7 +15863,7 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
         console.warn(`following feed ${source}:`, e.message);
         sourceErrors[source] = e.message;
       }
-    }
+    }));
   }
 
   let merged = interleaveByAuthor([...internalPosts, ...externalPosts]);
@@ -24314,13 +24019,22 @@ app.get('/feed/stream', authenticateSSE, async (req, res) => {
 });
 
 // --- Manual feed refresh trigger ---------------------------------------------
-app.post('/feed/refresh', authenticate, (req, res) => {
-  res.json({ ok: true, message: 'Feed refresh queued', refreshedAt: new Date().toISOString() });
-  setImmediate(() => {
-    postCache.clear();
-    enqueueSourceRefresh(Object.keys(SOURCE_FETCHERS), 'feed refresh endpoint');
-    setTimeout(runCacheHelperCheck, 5000);
-  });
+app.post('/feed/refresh', authenticate, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  try {
+    const selected = parseFeedSourceList(req.body?.sources).slice(0, 104);
+    if (selected.some(source => !isAggregateFeedSource(source))) {
+      return res.status(400).json({ ok: false, message: 'Select a public feed source to refresh.' });
+    }
+    const result = await sourceRefreshRequests.enqueue((selected.length ? selected : AGGREGATE_FEED_SOURCES).map(feedWorkerKey));
+    if (!result.queued) return res.status(503).json({ ok: false, queued: false, message: 'Source refresh is temporarily unavailable. Existing posts remain available.' });
+    // The Pipeline reads the shared queue. User gestures never clear every
+    // member's caches or bypass source quotas, backoff, or concurrency limits.
+    return res.status(202).json({ ok: true, ...result, message: 'Source collection requested. New posts appear as they arrive.' });
+  } catch (error) {
+    console.warn('[feed-refresh] shared queue unavailable');
+    return res.status(503).json({ ok: false, queued: false, message: 'Source refresh is temporarily unavailable. Please try again.' });
+  }
 });
 
 // Genuine engagement ("seen"), distinct from the automatic "returned to the
@@ -24740,39 +24454,30 @@ function findKnownFeedPost(postId) {
   ]).find(p => p?.id === postId) || null;
 }
 
-const COMMENT_CACHE_TTL_MS = envNumber('COMMENT_CACHE_TTL_MS', 2 * 60 * 1000, 30 * 1000, 10 * 60 * 1000);
+const COMMENT_CACHE_TTL_MS = envNumber('COMMENT_CACHE_TTL_MS', 30 * 1000, 5 * 1000, 2 * 60 * 1000);
+const sourceCommentCache = require('./comment-cache').createCommentCache({
+  getCached, setCached, deleteCached: key => postCache.delete(key),
+  screenComment: screenExternalComment, ttlMs: COMMENT_CACHE_TTL_MS,
+});
 
 // Every source below used to fetch once and hard-slice to whatever fit on
 // screen (8-15 comments), with no way to see the rest even though most of
 // these APIs hand back far more in that same single call. Caches the full
 // processed list per post (short TTL) and paginates off of it, so "load more" is just a slice of
 // what's already fetched instead of a new upstream call every click.
-async function paginateComments(cacheKey, fetchFullList, offset, limit) {
-  let full = getCached(cacheKey);
-  if (!full) {
-    const fetched = await fetchFullList();
-    // Third-party replies are not trusted simply because the parent post was
-    // accepted. Screen the complete fetched list before it is cached, then
-    // paginate the screened result so counts and "load more" stay truthful.
-    full = (Array.isArray(fetched) ? fetched : []).flatMap(comment => {
-      const screened = screenExternalComment(comment);
-      return screened.allowed ? [screened.comment] : [];
-    });
-    setCached(cacheKey, full, COMMENT_CACHE_TTL_MS);
-  }
-  return {
-    comments: full.slice(offset, offset + limit),
-    hasMore: offset + limit < full.length,
-    total: full.length,
-  };
+async function paginateComments(cacheKey, fetchFullList, offset, limit, metadata) {
+  return sourceCommentCache.read(cacheKey, fetchFullList, offset, limit, metadata);
 }
 
 // --- Unified comments endpoint - live for Reddit/HN/DEV.to/GitHub/SO/Bluesky/Mastodon/Lobsters -
 // authenticateOptional — same reasoning as GET /feed/:postId above, comments
 // are read-only viewing and shouldn't require an account either.
 app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  let commentPost;
   try {
     const stored = await findStoredPostByIdWithDbFallback(req.params.postId);
+    commentPost = stored;
     if (!(await visibleReportContent([stored || { id: req.params.postId }])).length) return res.status(404).json({ message: 'Post not found.' });
   } catch { return res.status(503).json({ message: 'Content moderation checks are temporarily unavailable.' }); }
 
@@ -24858,7 +24563,7 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
           }
         }
         throw new Error('Authorized Reddit comments are unavailable.');
-      }, offset, limit);
+      }, offset, limit, { source: commentPost?.source, sourceUrl: commentPost?.sourceUrl, viewerId: req.user?.id });
       return res.json({ comments, hasMore, total, source: 'reddit', live: true });
     } catch (e) {
       console.warn('Reddit comments fetch:', e.message);
@@ -24880,7 +24585,7 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
           score:   c.points || 0,
           created: c.created_at,
         }));
-      }, offset, limit);
+      }, offset, limit, { source: commentPost?.source, sourceUrl: commentPost?.sourceUrl, viewerId: req.user?.id });
       return res.json({ comments, hasMore, total, source: 'hackernews', live: true });
     } catch (e) {
       console.warn('HN comments fetch:', e.message);
@@ -24901,7 +24606,7 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
           score:   c.positive_reactions_count || 0,
           created: c.created_at,
         }));
-      }, offset, limit);
+      }, offset, limit, { source: commentPost?.source, sourceUrl: commentPost?.sourceUrl, viewerId: req.user?.id });
       return res.json({ comments, hasMore, total, source: 'devto', live: true });
     } catch (e) {
       console.warn('DEV.to comments fetch:', e.message);
@@ -24948,7 +24653,7 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
             type:    'issue',
           }));
         return [...commitComments, ...issueComments];
-      }, offset, limit);
+      }, offset, limit, { source: commentPost?.source, sourceUrl: commentPost?.sourceUrl, viewerId: req.user?.id });
       if (!total && !comments.length) return res.json({ comments: [], hasMore: false, source: 'github', live: false });
       return res.json({ comments, hasMore, total, source: 'github', live: true });
     } catch (e) {
@@ -24985,7 +24690,7 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
             url:     `https://www.youtube.com/watch?v=${videoId}&lc=${t.id}`,
           };
         });
-      }, offset, limit);
+      }, offset, limit, { source: commentPost?.source, sourceUrl: commentPost?.sourceUrl, viewerId: req.user?.id });
       return res.json({ comments, hasMore, total, source: 'youtube', live: true });
     } catch (e) {
       // Comments disabled on the video is the common, expected case here
@@ -25020,7 +24725,7 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
           created: normalizeTimestamp(a.creation_date),
           url:     a.link,
         }));
-      }, offset, limit);
+      }, offset, limit, { source: commentPost?.source, sourceUrl: commentPost?.sourceUrl, viewerId: req.user?.id });
       return res.json({ comments, hasMore, total, source: 'stackoverflow', live: true });
     } catch (e) {
       recordStackExchangeErrorMessage(e.message);
@@ -25048,7 +24753,7 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
           if (!top?.record?.text) return [];
           return [{ id: top.cid?.slice(-12) || `r_${Date.now()}`, author: `@${top.author?.handle || 'unknown'}`, body: truncateWithEllipsis(top.record.text, 400), score: top.likeCount || 0, created: top.record.createdAt }];
         });
-      }, offset, limit);
+      }, offset, limit, { source: commentPost?.source, sourceUrl: commentPost?.sourceUrl, viewerId: req.user?.id });
       if (!total && !comments.length) return res.json({ comments: [], hasMore: false, source: 'bluesky', live: false });
       return res.json({ comments, hasMore, total, source: 'bluesky', live: true });
     } catch (e) {
@@ -25075,7 +24780,7 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
           created: s.created_at,
           url:     mastodonPostUrl(s.url || s.uri),
         }));
-      }, offset, limit);
+      }, offset, limit, { source: commentPost?.source, sourceUrl: commentPost?.sourceUrl, viewerId: req.user?.id });
       if (!total && !comments.length) return res.json({ comments: [], hasMore: false, source: 'mastodon', live: false });
       return res.json({ comments, hasMore, total, source: 'mastodon', live: true });
     } catch (e) {
@@ -25098,7 +24803,7 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
           created: c.created_at,
           url:     `https://lobste.rs/s/${shortId}#c_${c.short_id}`,
         }));
-      }, offset, limit);
+      }, offset, limit, { source: commentPost?.source, sourceUrl: commentPost?.sourceUrl, viewerId: req.user?.id });
       return res.json({ comments, hasMore, total, source: 'lobsters', live: true });
     } catch (e) {
       console.warn('Lobsters comments fetch:', e.message);
@@ -25425,9 +25130,12 @@ const AGENT_DEFS = {
 // it from the real config instead so it can't drift again.
 for (const [id, cfg] of Object.entries(SOURCE_CONFIG)) {
   if (!AGENT_DEFS[id]) continue;
-  const cycleMin = (cfg.delay * FEED_TOPICS.length / cfg.shards / 60000).toFixed(1).replace(/\.0$/, '');
-  AGENT_DEFS[id].interval = `${cfg.delay / 1000}s / ${cfg.shards} shard${cfg.shards > 1 ? 's' : ''}`;
-  AGENT_DEFS[id].cycleMinutes = Number(cycleMin);
+  const scheduled = sourceCollectionScheduler?.status().sources.find(source => source.id === id);
+  AGENT_DEFS[id].interval = scheduled ? `${Math.round(scheduled.intervalMs / 1000)}s / shared scheduler` : '5min / shared scheduler';
+  AGENT_DEFS[id].cycleMinutes = scheduled ? Math.round(scheduled.expectedCycleMs / 6000) / 10 : 5;
+  AGENT_DEFS[id].description = cfg.inventory
+    ? 'Checks the complete public inventory every five minutes using the shared, bounded collector. Provider failures and quota cooldowns are reported separately.'
+    : 'Cycles distinct configured queries or channels through the shared collector. Provider spacing and quota cooldowns can limit complete query coverage.';
 }
 
 function getRuntimeHealthForAgent(id) {
@@ -26100,6 +25808,8 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
   // Build per-source health snapshot. The aggregate source catalog includes
   // the dedicated Remotive and Muse sweeps too; they are not topic-cycler
   // workers, but they do pull live listings into the same feed cache.
+  const collectionStatus = sourceCollectionScheduler?.status() || null;
+  const collectionById = new Map((collectionStatus?.sources || []).map(source => [source.id, source]));
   const sourceHealthArr = AGGREGATE_FEED_SOURCES.map((id) => {
     const workerId = feedWorkerKey(id);
     const h = workerHealth.get(workerId);
@@ -26107,8 +25817,11 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
     const cachedPosts = cache?.posts || [];
     const globalPostCount = statusGlobalBySource.get(id) || 0;
     const liveCount = cache?.totalSeen ?? (cachedPosts.length || globalPostCount);
+    const collection = collectionById.get(workerId);
     const status = !IS_PIPELINE_ROLE ? 'unavailable'
-      : !require('./office-agent-activation').officeSourceReady(workerId, process.env) ? 'disabled'
+      : collection?.enabled === false || !require('./office-agent-activation').officeSourceReady(workerId, process.env) ? 'disabled'
+      : collection?.overdue ? 'degraded'
+      : collection?.backoffUntil > Date.now() ? 'paused'
       : h
       ? (h.paused ? 'paused' : h.consecutiveErrors >= 3 ? 'degraded' : 'healthy')
       : 'starting';
@@ -26123,6 +25836,7 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       refreshTtlMinutes: SOURCE_CONFIG[workerId]?.ttl
         ? Math.round(SOURCE_CONFIG[workerId].ttl / 60000)
         : null,
+      collection: collection || null,
       consecutiveErrors: h?.consecutiveErrors ?? 0,
       totalErrors: h?.totalErrors ?? 0,
       fetchCount: h?.fetchCount ?? 0,
@@ -26504,6 +26218,11 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       officeConnections: officeClients.size,
     },
     sources: {
+      collection: collectionStatus,
+      refreshRequests: sourceRefreshCoordinationHealth,
+      providerCatalog: { total: Object.keys(PLATFORMS).length, publicCollectors: AGGREGATE_FEED_SOURCES.length,
+        followingAdapters: Object.keys(FOLLOWING_SOURCE_FETCHERS).length,
+        websiteOnly: Object.keys(ACCOUNT_DIRECTORY).length },
       total: sourceHealthArr.length, healthy: healthyCount,
       degraded: degradedCount, paused: pausedCount, starting: startingCount,
       workers: sourceHealthArr,
@@ -26527,11 +26246,13 @@ function getOfficeAgentObservation(id, observedAt = new Date().toISOString()) {
   let metrics = {};
   if (sourceWorker) {
     const health = workerHealth.get(id);
+    const collection = sourceCollectionScheduler?.status().sources.find(source => source.id === id);
     if (SERVICE_ROLE !== 'pipeline') status = 'unavailable';
-    else if (!require('./office-agent-activation').officeSourceReady(id, process.env)) status = 'disabled';
+    else if (collection?.enabled === false || !require('./office-agent-activation').officeSourceReady(id, process.env)) status = 'disabled';
     else if (health) {
-      metrics = health;
-      status = health.paused ? 'paused' : health.consecutiveErrors > 0 ? 'degraded' : health.lastSuccess ? 'healthy' : 'unknown';
+      metrics = { ...health, enabled: collection?.enabled, lastDurationMs: collection?.lastDurationMs };
+      status = collection?.overdue ? 'degraded' : collection?.backoffUntil > Date.now() || health.paused ? 'paused'
+        : health.consecutiveErrors > 0 ? 'degraded' : health.lastSuccess ? 'healthy' : 'unknown';
     }
   } else if (hasRuntimeMetrics) {
     const stageState = { equalizer: equalizerState, filter: filterAgentState, topic_filter: topicFilterAgentState,
@@ -27009,7 +26730,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
 // not just theoretical. A bounded query (LIMIT 5000 in transferStagedPosts)
 // run once a minute is trivial DB load next to the ~30 fetchers already
 // running continuously on the pipeline side.
-const AUTO_TRANSFER_INTERVAL_MS = 60 * 1000;
+const AUTO_TRANSFER_INTERVAL_MS = IS_PIPELINE_ROLE ? 60 * 1000 : envNumber('FEED_TRANSFER_INTERVAL_MS', 15 * 1000, 10 * 1000, 60 * 1000);
 setInterval(() => {
   if (IS_PIPELINE_ROLE) {
     runSortAgentCheck();
@@ -27053,7 +26774,7 @@ if (!IS_PIPELINE_ROLE) {
 if (!IS_PIPELINE_ROLE) {
   setInterval(() => {
     refreshFollowingSourceCaches().catch(e => console.warn('refreshFollowingSourceCaches:', e.message));
-  }, FOLLOWING_SOURCE_REFRESH_MS);
+  }, 60 * 1000); // Inspect expiry each minute; individual providers retain the five-minute freshness budget.
 }
 
 // Trigger a Render deploy hook — set RENDER_HOOK_API / RENDER_HOOK_WEB / RENDER_HOOK_OFFICE
@@ -27922,12 +27643,26 @@ async function sendFeedResponse(req, res, payload) {
   res.set?.('Cache-Control', viewerId || req.feedLocationContext ? 'private, no-store' : 'no-cache');
   const result = { ...payload };
   if (req.feedLocationContext) result.locationContext = publicFeedLocationContext(req.feedLocationContext);
-  if (Array.isArray(payload.posts)) result.posts = await hydratePostLikes(db, await visibleNativeGroupContent(await visibleReportContent(payload.posts), viewerId), viewerId);
-  if (Array.isArray(payload.liveFeeds)) result.liveFeeds = await hydratePostLikes(db, await visibleNativeGroupContent(await visibleReportContent(payload.liveFeeds), viewerId), viewerId);
+  const requestedPosts = [...(Array.isArray(payload.posts) ? payload.posts : []),
+    ...(Array.isArray(payload.liveFeeds) ? payload.liveFeeds : []), ...(payload.post ? [payload.post] : [])];
+  // These reads are independent. Both visibility filters retain original
+  // references; intersect their allow sets before exposing hydrated content.
+  // Batch every response slot so a mixed page performs one pass per table.
+  const [reportedVisible, groupVisible, likedPosts] = await Promise.all([
+    visibleReportContent(requestedPosts),
+    visibleNativeGroupContent(requestedPosts, viewerId),
+    hydratePostLikes(db, requestedPosts, viewerId),
+  ]);
+  const reportedAllowed = new Set(reportedVisible);
+  const groupAllowed = new Set(groupVisible);
+  const allowed = post => reportedAllowed.has(post) && groupAllowed.has(post);
+  const hydrated = new Map(requestedPosts.map((post, index) => [post, likedPosts[index]]));
+  const visiblePosts = list => list.filter(allowed).map(post => hydrated.get(post));
+  if (Array.isArray(payload.posts)) result.posts = visiblePosts(payload.posts);
+  if (Array.isArray(payload.liveFeeds)) result.liveFeeds = visiblePosts(payload.liveFeeds);
   if (payload.post) {
-    const visible = await visibleNativeGroupContent(await visibleReportContent([payload.post]), viewerId);
-    if (!visible.length) return res.status(404).json({ message: 'Post not found.' });
-    [result.post] = await hydratePostLikes(db, visible, viewerId);
+    if (!allowed(payload.post)) return res.status(404).json({ message: 'Post not found.' });
+    result.post = hydrated.get(payload.post);
   }
   const nativePosts = [...(result.posts || []), ...(result.liveFeeds || []), ...(result.post ? [result.post] : [])]
     .filter(post => post.source === 'uficonnect');
@@ -27964,6 +27699,7 @@ async function toggleCommunityPostLike(req, res) {
     post.likes = state.likes;
     const cached = posts.find(candidate => candidate.id === post.id);
     if (cached) cached.likes = state.likes;
+    broadcastSSE([serializeCommunityPost(post, null)]);
 
     // Only on a genuine like, not an unlike — nobody wants a notification
     // for someone changing their mind back to nothing.
@@ -28134,6 +27870,9 @@ require('./source-interactions').registerSourceInteractionRoutes(app, {
   authenticate, limiter: contentSubmissionLimiter, getUser: getPublicTargetUser, screenMemberContent,
   fetchImpl: fetch, atprotoGet, atprotoPostJSON, mastodonService, policyEnv: process.env,
   auditInteraction: creatorAnalytics.auditInteraction, reserveInteraction: creatorAnalytics.reserveInteraction, completeInteraction: creatorAnalytics.completeInteraction,
+  onPublished({ source, sourceUrl, action }) {
+    if (action === 'comment') sourceCommentCache.invalidate({ source, sourceUrl });
+  },
 });
 
 app.post('/restaurants/:postId/like', authenticate, toggleRestaurantPostLike);
@@ -28220,9 +27959,6 @@ app.post('/posts/:postId/comments', authenticate, contentSubmissionLimiter, asyn
       content: screening.content,
       createdAt: new Date().toISOString(),
     };
-    postComments.push(comment);
-    post.commentsCount = (post.commentsCount || 0) + 1;
-
     // The comment itself is the part that matters — await it so a DB
     // failure here actually surfaces as an error instead of a lost
     // comment reported as posted. The counter is a denormalized cache of
@@ -28233,10 +27969,19 @@ app.post('/posts/:postId/comments', authenticate, contentSubmissionLimiter, asyn
        VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
       [comment.id, comment.postId, comment.authorId, comment.content, comment.createdAt]
     );
-    db.query(
-      `UPDATE community_posts SET comments_count=comments_count+1 WHERE id=$1`,
-      [post.id]
-    ).catch(e => console.error('post comment count DB:', e.message));
+    // Publish to memory only after durable insertion. A failed insert must
+    // never leave a phantom comment or increment visible counts.
+    postComments.push(comment);
+    try {
+      const { rows } = await db.query(
+        `UPDATE community_posts SET comments_count=comments_count+1 WHERE id=$1 RETURNING comments_count`, [post.id]
+      );
+      post.commentsCount = Number(rows[0]?.comments_count ?? ((post.commentsCount || 0) + 1));
+    } catch (error) {
+      const { rows } = await db.query('SELECT COUNT(*)::int AS count FROM post_comments WHERE post_id=$1', [post.id]).catch(() => ({ rows: [] }));
+      post.commentsCount = Number(rows[0]?.count ?? ((post.commentsCount || 0) + 1));
+      console.warn('post comment counter reconciliation required');
+    }
 
     if (post.authorId) getUser(req.user.id).then(commenter => {
       if (!commenter) return;
@@ -28247,6 +27992,7 @@ app.post('/posts/:postId/comments', authenticate, contentSubmissionLimiter, asyn
       });
     }).catch(() => {});
 
+    broadcastSSE([serializeCommunityPost(post, null)]);
     res.status(201).json({
       comment: serializePostComment(comment),
       commentsCount: post.commentsCount,
@@ -29655,7 +29401,7 @@ async function fetchRemotiveByCategory(category) {
       }));
   } catch (e) {
     console.warn(`Remotive [${category}]:`, e.message);
-    return [];
+    throw e;
   }
 }
 
@@ -29711,81 +29457,20 @@ async function fetchMuseByCategoryLevel(category, level) {
       }));
   } catch (e) {
     console.warn(`Muse [${category}/${level}]:`, e.message);
-    return [];
+    throw e;
   }
 }
 
-// One category (Remotive) or category+level pair (Muse) per tick — same
-// isStabilityCritical/isAppIdle courtesy checks the shared topic-cycling
-// shards already apply, just without the circuit-breaker/shard machinery
-// built for a 203-topic list, since 16 and 39 items respectively are small
-// enough a full sweep finishes in minutes without it. Registered directly
-// as its own pair of intervals (not through startContinuousWorkers'
-// SOURCES array/makeTopicCycler) since there's no per-topic keyword here to
-// cycle through — see this function's own call site for the SERVICE_ROLE
-// gate. JOB_BOARD_SWEEP_INTERVAL_MS lives near the top of the file now, not
-// here — see that declaration's own comment for why (this function is
-// called synchronously from the startup sequence, so the same
-// before-initialization hazard applied here as it did for autofix's
-// interval constant).
-let remotiveSweepIdx = 0;
-let museSweepIdx = 0;
-// Lightweight health entries (not the full circuit-breaker/shard state
-// makeTopicCycler seeds — these two sweeps are simple enough not to need
-// it) so /office/agents and getRuntimeHealthForAgent's default branch have
-// something real to report against, same as every other agent card.
+// Category inventories share the same four collection slots and provider locks.
 workerHealth.set('remotive', { consecutiveErrors: 0, totalErrors: 0, fetchCount: 0, lastSuccess: null, paused: false, pauseUntil: 0 });
-workerHealth.set('muse',     { consecutiveErrors: 0, totalErrors: 0, fetchCount: 0, lastSuccess: null, paused: false, pauseUntil: 0 });
+workerHealth.set('muse', { consecutiveErrors: 0, totalErrors: 0, fetchCount: 0, lastSuccess: null, paused: false, pauseUntil: 0 });
 function startJobBoardSweeps() {
-  setInterval(async () => {
-    if (isStabilityCritical() || isAppIdle()) return;
-    const category = REMOTIVE_CATEGORIES[remotiveSweepIdx % REMOTIVE_CATEGORIES.length];
-    remotiveSweepIdx++;
-    const health = workerHealth.get('remotive');
-    health.fetchCount++;
-    // Was a bare await with no try/catch — unlike every other source's own
-    // fetchNextTopic, a thrown error here never reached workerHealth at
-    // all: the global unhandledRejection handler swallowed it (no crash),
-    // but lastError/consecutiveErrors stayed frozen at whatever they were
-    // last time this source happened to succeed, so a persistently-failing
-    // Remotive/Muse looked "healthy" (or just silently stale) on the office
-    // dashboard indefinitely.
-    try {
-      const posts = await fetchRemotiveByCategory(category);
-      if (posts.length) {
-        health.lastSuccess = Date.now();
-        health.consecutiveErrors = 0;
-        pushToEqualizer('remotive', posts);
-        logAgentAction('remotive', '???', `${category}: ${posts.length} listing(s)`, '#00A876');
-      }
-    } catch (err) {
-      health.consecutiveErrors = (health.consecutiveErrors || 0) + 1;
-      health.totalErrors = (health.totalErrors || 0) + 1;
-      health.lastError = err?.message || String(err);
-      console.warn(`[remotive] ${category}:`, health.lastError);
-    }
-  }, JOB_BOARD_SWEEP_INTERVAL_MS);
-  setInterval(async () => {
-    if (isStabilityCritical() || isAppIdle()) return;
-    const [category, level] = MUSE_SWEEP_PAIRS[museSweepIdx % MUSE_SWEEP_PAIRS.length];
-    museSweepIdx++;
-    const health = workerHealth.get('muse');
-    health.fetchCount++;
-    try {
-      const posts = await fetchMuseByCategoryLevel(category, level);
-      if (posts.length) {
-        health.lastSuccess = Date.now();
-        health.consecutiveErrors = 0;
-        pushToEqualizer('muse', posts);
-        logAgentAction('muse', '??', `${category} / ${level}: ${posts.length} listing(s)`, '#8A2BE2');
-      }
-    } catch (err) {
-      health.consecutiveErrors = (health.consecutiveErrors || 0) + 1;
-      health.totalErrors = (health.totalErrors || 0) + 1;
-      health.lastError = err?.message || String(err);
-      console.warn(`[muse] ${category}/${level}:`, health.lastError);
-    }
-  }, JOB_BOARD_SWEEP_INTERVAL_MS);
+  makeTopicCycler('remotive', 'RM', '#00A876', fetchRemotiveByCategory, value => value, {
+    keys: REMOTIVE_CATEGORIES, minSpacingMs: 1000, startDelayMs: 42000,
+  });
+  makeTopicCycler('muse', 'MU', '#8A2BE2', key => fetchMuseByCategoryLevel(...JSON.parse(key)), value => value, {
+    keys: MUSE_SWEEP_PAIRS.map(pair => JSON.stringify(pair)), minSpacingMs: 1000, startDelayMs: 44000,
+  });
 }
 
 // RemoteOK/Indeed/USAJobs used to each run their OWN separate live query

@@ -1,10 +1,11 @@
-import { cloneElement, useRef, useState } from 'react';
+import { cloneElement, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import client from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { HeartIcon, postSource } from './PostCardChrome';
 import { originalSourceUrl, sendSourceInteraction, useSourceCapability, useSourceInteractionIdentity } from './ConnectedPostActions';
+import { publishPostEngagement } from '../api/postEngagement.mjs';
 
 export default function PostLikes({ post, onPostUpdated, menuItem = false }) {
   const { profile } = useAuth();
@@ -17,10 +18,12 @@ export default function PostLikes({ post, onPostUpdated, menuItem = false }) {
   const retry = useRef(null);
   const [state, setState] = useState(null);
   const own = state?.identity === identity ? state : null;
+  const suppliedLiked = external ? Boolean(post.sourceLikedByMe) : Boolean(post.likedByMe);
   // A local UFI reaction is never used as a provider's viewer state or metric.
-  const liked = own?.liked ?? (external ? Boolean(post.sourceLikedByMe) : Boolean(post.likedByMe));
+  const liked = own?.liked ?? suppliedLiked;
   const sourceCount = post.sourceLikesCount ?? (post.likesScope !== 'uficonnect' ? post.likesCount : null);
-  const value = external ? own?.count ?? sourceCount : own?.count ?? (post.likesAvailable === false ? null : post.likesCount);
+  const suppliedCount = external ? sourceCount : (post.likesAvailable === false ? null : post.likesCount);
+  const value = own?.count ?? suppliedCount;
   const count = value == null || !Number.isFinite(Number(value)) ? null : Math.max(0, Math.floor(Number(value)));
   const label = external && ['github', 'gitlab'].includes(post.source) ? 'stars' : 'likes';
   const provider = external ? (capability?.label || postSource(post).label) : 'UFIConnect';
@@ -28,6 +31,13 @@ export default function PostLikes({ post, onPostUpdated, menuItem = false }) {
   const action = external ? (capability?.likeLabel || 'Like') : 'Like';
   const actionLabel = liked ? (label === 'stars' ? 'Remove star' : post.source === 'reddit' ? 'Remove upvote' : 'Unlike') : action;
   const canLike = Boolean(profile?.id && (!external || (sourceUrl && capability?.connected && capability?.like)));
+
+  // A confirmed response bridges the parent update. Once acknowledged, fresh
+  // feed metrics become authoritative again instead of being shadowed forever.
+  useEffect(() => {
+    if (own && !own.busy && own.liked === suppliedLiked
+      && (own.count == null || Number(own.count) === Number(suppliedCount))) setState(null);
+  }, [own, suppliedLiked, suppliedCount]);
 
   async function toggle(event) {
     event.stopPropagation();
@@ -37,21 +47,30 @@ export default function PostLikes({ post, onPostUpdated, menuItem = false }) {
     retry.current = { identity, liked: desired, requestId };
     const request = { identity, requestId };
     inFlight.current = request;
-    setState({ ...own, identity, liked, busy: true });
+    // Native likes can respond immediately. Provider reactions remain unchanged
+    // until the provider confirms them, and never manufacture source counts.
+    setState({ ...own, identity, liked: external ? liked : desired,
+      count: external ? own?.count : count == null ? undefined : Math.max(0, count + (desired ? 1 : -1)), busy: true });
     try {
       if (external) {
         const result = await sendSourceInteraction(post, 'like', { liked: desired, requestId });
         if (result.liked !== desired) throw new Error('The source did not confirm this like.');
         if (!isCurrent()) return;
         const confirmedCount = result.likesCount != null && Number.isFinite(Number(result.likesCount)) ? Math.max(0, Math.floor(Number(result.likesCount))) : undefined;
-        setState({ identity, liked: desired, count: confirmedCount ?? own?.count });
-        onPostUpdated?.({ id: post.id, sourceLikedByMe: desired, ...(confirmedCount !== undefined ? { sourceLikesCount: confirmedCount } : {}) });
+        setState({ identity, liked: desired, count: confirmedCount });
+        const patch = { id: post.id, sourceLikedByMe: desired, ...(confirmedCount !== undefined ? { sourceLikesCount: confirmedCount } : {}) };
+        onPostUpdated?.(patch);
+        publishPostEngagement(post, { action: 'like', ...patch });
         showToast(`${desired ? action : actionLabel} confirmed on ${provider}.`, 'success');
       } else {
         const { data } = await client.post(`/feed/${encodeURIComponent(post.id)}/like`, { liked: desired });
         if (!isCurrent()) return;
-        setState({ identity, liked: Boolean(data.likedByMe), count: data.likesCount });
-        onPostUpdated?.(data.post || { id: post.id, likesCount: data.likesCount, likedByMe: data.likedByMe });
+        const confirmedLiked = Boolean(data.likedByMe ?? data.post?.likedByMe);
+        const confirmedCount = data.likesCount ?? data.post?.likesCount;
+        setState({ identity, liked: confirmedLiked, count: confirmedCount });
+        const patch = { id: post.id, likesCount: confirmedCount, likedByMe: confirmedLiked };
+        onPostUpdated?.(patch);
+        publishPostEngagement(post, { action: 'like', ...patch });
       }
       retry.current = null;
     } catch (error) {

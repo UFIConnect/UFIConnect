@@ -20,6 +20,8 @@ import { ArrowLeft, ArrowRight, BookOpen, Martini, Plane, RotateCw, Utensils } f
 import { useAuth } from '../contexts/AuthContext';
 import Layout, { MessagesNavigation } from '../components/Layout';
 import client from '../api/client';
+import { POST_ENGAGEMENT_EVENT, publishPostEngagement } from '../api/postEngagement.mjs';
+import { createEngagementLedger } from '../api/engagementLedger.mjs';
 import { markApiOriginFailure, resolveApiBaseUrl } from '../api/apiOrigin';
 import { extractYouTubeId, extractVimeoId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, createYouTubePlayerFrame, youTubeEmbedUrl, InlineAutoplayVideo, userWantsSound, useGlobalMuted, usePointerPlaybackGate, useSoloVideoPlayback } from '../components/videoMedia';
 import {
@@ -451,7 +453,7 @@ const FOLLOWING_SOURCE_TABS = [
 ];
 const DEFAULT_FILTERS = { sort: 'newest', sources: [], timeRange: 'all', topics: [] };
 const FEED_PAGE_SIZE = 50;
-const FEED_AUTO_REFRESH_MS = 2 * 60 * 1000;
+const FEED_AUTO_REFRESH_MS = 30 * 1000;
 const FEED_STATE_KEY = 'ufi_feed_state';
 
 function memberStorageKey(baseKey, userId) {
@@ -1455,55 +1457,82 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const commentsRef = useRef(comments);
+  commentsRef.current = comments;
+  const commentsScope = `${profile?.id || ''}:${post?.source || ''}:${post?.id || ''}`;
+  const commentsViewRef = useRef(null);
+  commentsViewRef.current = { scope: commentsScope, post, showComments, onPostUpdated };
+  const commentsMountedRef = useRef(false);
+  const commentsReadRef = useRef(null);
+  const commentWriteRef = useRef(null);
   useEffect(() => {
-    commentsRef.current = comments;
-  }, [comments]);
+    commentsMountedRef.current = true;
+    setComments(null); setShowComments(false); setCommentsError(false); setCommentDraft('');
+    setCommentsLoading(false); setCommentsLoadingMore(false); setCommentSending(false);
+    return () => {
+      commentsMountedRef.current = false;
+      commentsReadRef.current?.controller.abort(); commentsReadRef.current = null;
+      commentWriteRef.current = null;
+    };
+  }, [commentsScope]);
   useEffect(() => setImageFailed(false), [post?.id, post?.mediaUrl]);
 
-  const fetchComments = useCallback(async ({ background = false } = {}) => {
-    if (!post?.id) return;
-    if (!background) {
-      setCommentsLoading(true);
-      setCommentsError(false);
-    }
-    try {
+  const fetchComments = useCallback(({ background = false, append = false } = {}) => {
+    if (!post?.id || commentWriteRef.current) return Promise.resolve();
+    if (commentsReadRef.current?.scope === commentsScope) return commentsReadRef.current.promise;
+    const request = { scope: commentsScope, controller: new AbortController() };
+    commentsReadRef.current = request;
+    if (append) setCommentsLoadingMore(true);
+    else if (!background || !commentsRef.current?.length) setCommentsLoading(true);
+    const isCurrent = () => commentsMountedRef.current && commentsViewRef.current.scope === commentsScope && commentsReadRef.current === request;
+    request.promise = (async () => { try {
       const currentCount = Array.isArray(commentsRef.current) ? commentsRef.current.length : 0;
       const limit = Math.min(50, Math.max(20, currentCount || 20));
       const { data } = await client.get(`/feed/${encodeURIComponent(post.id)}/comments`, {
-        params: { limit },
+        signal: request.controller.signal, params: { limit, ...(append ? { offset: currentCount } : {}) },
       });
+      if (!isCurrent()) return;
       // The source could not be reached: say so rather than showing "no comments".
-      if (data.unavailable) {
-        if (!background) { setCommentsError(true); setComments([]); }
-        return;
-      }
+      if (data.unavailable) throw new Error('Comments are temporarily unavailable.');
       const incoming = data.comments || [];
-      setComments(prev => background ? mergeCommentLists(incoming, prev || []) : incoming);
+      setComments(prev => append ? mergeCommentLists([...(prev || []), ...incoming]) : mergeCommentLists(incoming, (prev || []).slice(limit)));
       setCommentsLive(!!data.live);
       setCommentsHasMore(!!data.hasMore);
+      setCommentsError(false);
       const nextCount = Number.isFinite(data.commentsCount)
         ? data.commentsCount
         : (Number.isFinite(data.total) ? data.total : null);
-      if (nextCount != null && nextCount !== post.commentsCount) {
-        onPostUpdated?.({ id: post.id, commentsCount: nextCount });
+      if (nextCount != null && nextCount !== commentsViewRef.current.post?.commentsCount) {
+        commentsViewRef.current.onPostUpdated?.({ id: post.id, commentsCount: nextCount });
       }
     } catch {
-      if (!background) {
-        setCommentsError(true);
-        setComments([]);
-      }
+      if (isCurrent()) setCommentsError(true);
     } finally {
-      if (!background) setCommentsLoading(false);
-    }
-  }, [post?.id, post?.commentsCount, onPostUpdated]);
+      if (isCurrent()) { commentsReadRef.current = null; setCommentsLoading(false); setCommentsLoadingMore(false); }
+    } })();
+    return request.promise;
+  }, [post?.id, commentsScope]);
 
   useEffect(() => {
     if (!showComments || !post?.id) return;
-    const interval = window.setInterval(() => {
+    const refreshVisible = () => {
       if (document.hidden || commentsLoading || commentsLoadingMore || commentSending) return;
       fetchComments({ background: true });
-    }, commentsLive ? COMMENTS_LIVE_REFRESH_MS : COMMENTS_PASSIVE_REFRESH_MS);
-    return () => window.clearInterval(interval);
+    };
+    const refreshConfirmed = ({ detail }) => {
+      if (detail?.action !== 'comment' || detail.postId !== post.id || detail.source !== (post.source || 'uficonnect') || commentWriteRef.current) return;
+      commentsReadRef.current?.controller.abort(); commentsReadRef.current = null;
+      fetchComments({ background: true });
+    };
+    const interval = window.setInterval(refreshVisible, commentsLive ? COMMENTS_LIVE_REFRESH_MS : COMMENTS_PASSIVE_REFRESH_MS);
+    window.addEventListener('focus', refreshVisible);
+    document.addEventListener('visibilitychange', refreshVisible);
+    window.addEventListener(POST_ENGAGEMENT_EVENT, refreshConfirmed);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refreshVisible);
+      document.removeEventListener('visibilitychange', refreshVisible);
+      window.removeEventListener(POST_ENGAGEMENT_EVENT, refreshConfirmed);
+    };
   }, [showComments, post?.id, commentsLive, commentsLoading, commentsLoadingMore, commentSending, fetchComments]);
 
   const sourceCapability = useSourceCapability(post?.isExternal ? post : null);
@@ -1542,21 +1571,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
   const isArticle      = ARTICLE_SOURCES.has(post.source);
   const canWriteComment = isUFIconnectInteractive && !!token;
 
-  async function loadMoreComments() {
-    if (commentsLoadingMore || !comments) return;
-    setCommentsLoadingMore(true);
-    try {
-      const { data } = await client.get(`/feed/${encodeURIComponent(post.id)}/comments`, {
-        params: { offset: comments.length },
-      });
-      setComments(prev => mergeCommentLists([...(prev || []), ...(data.comments || [])]));
-      setCommentsHasMore(!!data.hasMore);
-    } catch {
-      // Leave existing comments in place — the button just stays clickable to retry.
-    } finally {
-      setCommentsLoadingMore(false);
-    }
-  }
+  function loadMoreComments() { return fetchComments({ background: true, append: true }); }
 
   function toggleComments() {
     if (showComments) {
@@ -1569,29 +1584,38 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
     }
     setShowComments(true);
     commentsOpenedAtRef.current = Date.now();
-    if (comments !== null && !commentsError) return;
-    fetchComments();
+    fetchComments({ background: comments !== null });
   }
 
   async function submitComment(e) {
     e.preventDefault();
-    if (!canWriteComment || commentSending) return;
+    if (!canWriteComment || commentWriteRef.current) return;
     const content = commentDraft.trim();
     if (!content) return;
 
+    const request = { scope: commentsScope };
+    commentWriteRef.current = request;
+    commentsReadRef.current?.controller.abort(); commentsReadRef.current = null;
+    setCommentsLoading(false); setCommentsLoadingMore(false);
     setCommentSending(true);
     setCommentPostError(false);
     try {
       const interactionPath = isRestaurantPost ? 'restaurants' : 'posts';
       const { data } = await client.post(`/${interactionPath}/${encodeURIComponent(post.id)}/comments`, { content });
+      if (!commentsMountedRef.current || commentsViewRef.current.scope !== commentsScope || commentWriteRef.current !== request) return;
       setComments(prev => mergeCommentLists([...(prev || []), commentToFeedComment(data.comment)]));
       setCommentsLive(true);
       setCommentDraft('');
-      onPostUpdated?.(data.post || { ...post, commentsCount: data.commentsCount });
+      setCommentsError(false);
+      const commentsCount = data.commentsCount ?? data.post?.commentsCount;
+      onPostUpdated?.({ id: post.id, ...(commentsCount != null ? { commentsCount } : {}) });
+      publishPostEngagement(post, { action: 'comment', commentsCount, commentId: data.comment?.id });
     } catch {
-      setCommentPostError(true);
+      if (commentsMountedRef.current && commentsViewRef.current.scope === commentsScope && commentWriteRef.current === request) setCommentPostError(true);
     } finally {
-      setCommentSending(false);
+      if (commentsMountedRef.current && commentsViewRef.current.scope === commentsScope && commentWriteRef.current === request) {
+        commentWriteRef.current = null; setCommentSending(false);
+      }
     }
   }
 
@@ -2022,7 +2046,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const [loading,       setLoading]      = useState(!_cache);
   const [feedError,     setFeedError]    = useState(null);
   const [refreshing,    setRefreshing]   = useState(false);
-  const [queuedRefresh, setQueuedRefresh] = useState(null);
+  const refreshPromiseRef = useRef(null);
   const [loadingMore,   setLoadingMore]  = useState(false);
   const remotePageRef = useRef(2);
   const [newPostsAvailable, setNewPostsAvailable] = useState(false);
@@ -2104,6 +2128,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const locationFiltersRef = useRef(savedFeedLocation(profile?.roleSettings, initialViewMode));
   const searchRef     = useRef(_saved?.search || '');
   const postsRef      = useRef([]);
+  const engagementLedgerRef = useRef(createEngagementLedger());
   const loadStateRef  = useRef({ loading: false, refreshing: false, loadingMore: false });
   // Feed view changes can overlap an already-running request (for example,
   // Following finishing just after Home is selected). Only the most recently
@@ -2202,6 +2227,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     const controller = new AbortController();
     feedControllerRef.current = controller;
     const requestId = ++feedRequestIdRef.current;
+    const engagementRevision = engagementLedgerRef.current.revision();
     const isCurrentRequest = () => requestId === feedRequestIdRef.current && !controller.signal.aborted && profileRef.current?.id === currentProfile?.id && feedLocationKey(profileRef.current?.roleSettings, activeMode) === requestLocationKey;
     if (!silent) {
       if (manual) setRefreshing(true);
@@ -2243,7 +2269,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       }
       setLockedPlatform(null);
       setFeedError(null);
-      const incoming = (data.posts || []).filter(post => (
+      const incoming = (data.posts || []).map(post => engagementLedgerRef.current.apply(post, engagementRevision)).filter(post => (
         activeMode !== 'following' || (isFollowingFeedSource(post?.source) && post?.matchedByInterest !== true)
       ));
       if (activeMode === 'countries' && viewModeRef.current === 'countries') {
@@ -2264,13 +2290,17 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       // reason counts never appeared to update no matter how long a post
       // sat in the feed. This order makes the fresh copy win instead.
       const preserveEqualizer = usesMemberEqualizer(activeMode, activeSearch);
+      const refreshedById = new Map(incoming.map(post => [post.id, post]));
+      const refreshedPrevious = previous.map(post => refreshedById.has(post.id) ? { ...post, ...refreshedById.get(post.id) } : post);
+      const previousIds = new Set(previous.map(post => post.id));
       let nextPosts = shouldMerge
-        ? mergeFeedPosts([...previous, ...incoming], activeFilters.sort, preserveEqualizer)
+        ? mergeFeedPosts([...refreshedPrevious, ...incoming.filter(post => !previousIds.has(post.id))], activeFilters.sort, preserveEqualizer)
         : mergeFeedPosts(incoming, activeFilters.sort, preserveEqualizer);
       if (shouldMerge && promoteIncoming && incoming.length) {
         // An explicit refresh brings the new balanced cohort to the top.
         // Keep older cards underneath and retain refreshed engagement data.
-        const first = mergeFeedPosts(incoming, activeFilters.sort, preserveEqualizer);
+        const previousById = new Map(previous.map(post => [post.id, post]));
+        const first = mergeFeedPosts(incoming.map(post => ({ ...previousById.get(post.id), ...post })), activeFilters.sort, preserveEqualizer);
         const incomingIds = new Set(first.map(post => post.id));
         nextPosts = [...first, ...nextPosts.filter(post => !incomingIds.has(post.id))];
       }
@@ -2873,10 +2903,32 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
 
   const updateFeedPost = useCallback((updatedPost) => {
     if (!updatedPost?.id) return;
-    setPosts(prev => prev.map(post =>
+    const next = postsRef.current.map(post =>
       post.id === updatedPost.id ? { ...post, ...updatedPost } : post
-    ));
+    );
+    postsRef.current = next;
+    setPosts(next);
   }, []);
+
+  useEffect(() => {
+    engagementLedgerRef.current.clear();
+    const onEngagement = ({ detail }) => {
+      if (!detail?.postId || !['like', 'comment'].includes(detail.action)) return;
+      const match = postsRef.current.find(post => post.id === detail.postId);
+      if (!match || (match.source || 'uficonnect') !== detail.source) return;
+      const patch = {};
+      for (const key of ['likedByMe', 'sourceLikedByMe']) {
+        if (typeof detail[key] === 'boolean') patch[key] = detail[key];
+      }
+      for (const key of ['likesCount', 'sourceLikesCount', 'commentsCount']) {
+        if (Number.isFinite(detail[key]) && detail[key] >= 0) patch[key] = Math.floor(detail[key]);
+      }
+      engagementLedgerRef.current.record(match.id, patch);
+      updateFeedPost({ id: match.id, ...patch });
+    };
+    window.addEventListener(POST_ENGAGEMENT_EVENT, onEngagement);
+    return () => window.removeEventListener(POST_ENGAGEMENT_EVENT, onEngagement);
+  }, [profile?.id, updateFeedPost]);
 
   // Saving a Travel city updates the profile; the selection handler already
   // reloads that feed. Do not also reset its player and cursor here.
@@ -2906,7 +2958,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   useEffect(() => {
     const refreshQuietly = () => {
       const state = loadStateRef.current;
-      if (!['feed', 'groups', 'countries', 'restaurants', 'bars'].includes(viewModeRef.current)) return;
+      if (!['feed', 'following', 'groups', 'countries', 'restaurants', 'bars'].includes(viewModeRef.current)) return;
       if (document.hidden || state.loading || state.refreshing || state.loadingMore) return;
       loadFeed(false, activeTabsRef.current, { silent: true, live: true, preserveScroll: true });
     };
@@ -2923,37 +2975,34 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
 
   const refreshCurrentFeed = useCallback(() => {
     if (!['feed', 'following', 'groups', 'countries', 'restaurants', 'bars'].includes(viewModeRef.current)) return undefined;
-    const state = loadStateRef.current;
-    if (state.loading || state.refreshing || state.loadingMore || loadingMoreRef.current) {
-      // Coalesce refresh requests until pagination finishes without carrying
-      // a member's refresh into a different account, feed, or group scope.
-      setQueuedRefresh(`${profile?.id}:${viewModeRef.current}:${viewModeRef.current === 'groups' && publicGroupsFeed}`);
-      return undefined;
-    }
-    if (viewModeRef.current === 'groups' && publicGroupsFeed) {
-      window.dispatchEvent(new Event('ufi:refresh-group-directory'));
-    }
-    return loadFeed(true, activeTabsRef.current, {
-      preserveScroll: true,
-      promoteIncoming: true,
-      bust: activeTabsRef.current.length === 1,
+    const mode = viewModeRef.current;
+    const sources = filtersRef.current.sources?.length ? filtersRef.current.sources : activeTabsRef.current;
+    const context = JSON.stringify([profile?.id, mode, publicGroupsFeed, sources,
+      filtersRef.current.topics, searchRef.current, feedLocationKey(profileRef.current?.roleSettings, mode)]);
+    if (refreshPromiseRef.current?.context === context) return refreshPromiseRef.current.promise;
+    // Explicit refresh supersedes pagination and older reads. The returned
+    // promise keeps every refresh control active until the real work finishes.
+    pageControllerRef.current?.abort();
+    paginationRequestIdRef.current += 1;
+    loadingMoreRef.current = false;
+    setLoadingMore(false);
+    const promise = Promise.resolve().then(async () => {
+      if (mode === 'groups' && publicGroupsFeed) window.dispatchEvent(new Event('ufi:refresh-group-directory'));
+      const requestCollection = mode === 'feed'
+        ? client.post('/feed/refresh', { sources }).catch(() => null)
+        : Promise.resolve();
+      await Promise.all([requestCollection, loadFeed(true, activeTabsRef.current, {
+        preserveScroll: true, promoteIncoming: true, bust: mode === 'following',
+      })]);
+    }).finally(() => {
+      if (refreshPromiseRef.current?.promise === promise) refreshPromiseRef.current = null;
     });
+    refreshPromiseRef.current = { context, promise };
+    return promise;
   }, [loadFeed, profile?.id, publicGroupsFeed]);
 
-  useEffect(() => {
-    if (!queuedRefresh) return;
-    const context = `${profile?.id}:${viewMode}:${viewMode === 'groups' && publicGroupsFeed}`;
-    if (queuedRefresh !== context) {
-      setQueuedRefresh(null);
-      return;
-    }
-    if (loading || refreshing || loadingMore || loadingMoreRef.current) return;
-    setQueuedRefresh(null);
-    refreshCurrentFeed();
-  }, [queuedRefresh, loading, refreshing, loadingMore, profile?.id, viewMode, publicGroupsFeed, refreshCurrentFeed]);
-
   const scrollRefresh = useScrollToRefresh(refreshCurrentFeed, {
-    enabled: Boolean(profile?.id) && !EMBEDDED_HOME_MODES.has(viewMode) && !loadingMore,
+    enabled: Boolean(profile?.id) && !EMBEDDED_HOME_MODES.has(viewMode),
   });
 
   useEffect(() => {
@@ -2989,10 +3038,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           try {
             const { posts: incoming } = JSON.parse(e.data);
             if (!incoming?.length) return;
-            // Native posts belong in Following and joined Groups, while
-            // Home remains the external/public-source feed.
+            // Native posts already displayed in Home need fresh counts too.
+            // Shared events only wake an authorized read; they never insert
+            // private group posts or another viewer's like state.
             const relevantIncoming = viewModeRef.current === 'feed'
-              ? incoming.filter(post => post?.source !== 'uficonnect')
+              ? incoming.filter(post => post?.source !== 'uficonnect' || knownIds.current.has(post.id))
               : incoming;
             if (!relevantIncoming.length) return;
             if (profile?.id && relevantIncoming.some(post => (post?.source || 'uficonnect') === 'uficonnect')) {
@@ -3003,7 +3053,9 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
               if (p?.id && !knownIds.current.has(p.id)) sawFresh = true;
             });
             if (sawFresh) setNewPostsAvailable(true);
-            if (!sawFresh || liveRefreshTimeoutRef.current) return;
+            // Existing posts can also carry changed engagement. Re-read the
+            // authorized feed rather than applying a shared SSE payload.
+            if (liveRefreshTimeoutRef.current) return;
             liveRefreshTimeoutRef.current = window.setTimeout(() => {
               liveRefreshTimeoutRef.current = null;
               const state = loadStateRef.current;
@@ -3686,7 +3738,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                 <p style={{ marginBottom: 12 }}>No posts from {selectedSourceLabel} yet. Check back soon or try the wider mix while this source makes coffee.</p>
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
                   <button className="btn btn-primary btn-sm" onClick={() => toggleTab('all')}>Explore all sources</button>
-                  <button className="btn btn-ghost btn-sm" onClick={() => loadFeed(true, activeTabsRef.current, { replace: true, bust: activeTabsRef.current.length === 1 })}>Refresh now</button>
+                  <button className="btn btn-ghost btn-sm" onClick={refreshCurrentFeed}>Refresh now</button>
                 </div>
               </>
             ) : viewMode === 'groups' ? (
@@ -3711,7 +3763,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                       ? `No travel picks are available for ${travelLocationLabel} yet. Choose another city in Live Travel or refresh.`
                       : 'Choose a city in Live Travel to see its guides and current stories.')}
                 </p>
-                <button className="btn btn-ghost btn-sm" onClick={() => loadFeed(true, activeTabsRef.current, { replace: true, bust: false })}>Refresh now</button>
+                <button className="btn btn-ghost btn-sm" onClick={refreshCurrentFeed}>Refresh now</button>
               </>
             ) : viewMode === 'following' ? (
               <>

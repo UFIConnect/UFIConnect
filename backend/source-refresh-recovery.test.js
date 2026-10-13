@@ -26,7 +26,7 @@ test('critical pressure retains and deduplicates requested sources without infla
   } finally { await app.close(); }
 });
 
-test('interrupted manual collection continues with the next topic instead of replaying the first', async () => {
+test('manual collection runs one bounded query and reports protection before attempting another', async () => {
   const app = await createAppHarness({ env: { SERVICE_ROLE: 'pipeline', PRESSURE_MANUAL_TOPIC_LIMIT: '2' } });
   try {
     app.setSourceRefreshWait(async () => {});
@@ -37,14 +37,57 @@ test('interrupted manual collection continues with the next topic instead of rep
       return [];
     }, topic => topic);
     const interrupted = await app.SOURCE_FETCHERS.cursor_fixture();
-    assert.equal(interrupted.deferred, true);
+    assert.equal(interrupted.deferred, false, 'A provider request that finished was actually checked');
     assert.equal(interrupted.scannedTopics, 1);
-    app.refreshControl.mode = 'pressure';
-    const resumed = await app.SOURCE_FETCHERS.cursor_fixture();
-    assert.equal(resumed.deferred, false);
-    assert.equal(resumed.scannedTopics, 2);
-    assert.deepEqual(topics, Array.from(app.FEED_TOPICS).slice(0, 3));
+    const protectedRequest = await app.SOURCE_FETCHERS.cursor_fixture();
+    assert.equal(protectedRequest.deferred, true);
+    assert.equal(protectedRequest.reason, 'protected');
+    assert.deepEqual(topics, Array.from(app.FEED_TOPICS).slice(0, 1));
   } finally { await app.close(); }
+});
+
+test('all public collectors share one scheduler; website and member-only sources are not treated as public feeds', async () => {
+  const app = await createAppHarness({ env: { SERVICE_ROLE: 'pipeline' } });
+  try {
+    app.refreshControl.mode = 'critical'; // Inspect registrations without contacting providers.
+    app.startContinuousWorkers();
+    app.startJobBoardSweeps();
+    const state = app.getSourceCollectionScheduler().status();
+    assert.equal(Object.keys(app.PLATFORMS).length, 102, 'Count the installed account catalog rather than inventing unsupported adapters');
+    assert.equal(state.total, 40, '38 original source configurations plus two category job collectors');
+    assert.equal(state.maxConcurrency, 4);
+    assert.equal(state.active, 0);
+    for (const source of app.AGGREGATE_FEED_SOURCES) {
+      const workerId = source === 'hackernews' ? 'hn' : source;
+      assert.ok(state.sources.some(worker => worker.id === workerId), source + ' has a registered collector');
+      assert.equal(typeof app.SOURCE_FETCHERS[workerId], 'function');
+    }
+    assert.ok(!app.AGGREGATE_FEED_SOURCES.includes('linkedin'), 'Member-only LinkedIn access stays private');
+    assert.ok(!app.SOURCE_FETCHERS.airbnb, 'An account website does not invent a feed adapter');
+    for (const id of ['weworkremotely', 'cntraveler', 'twitch', 'techcrunch', 'github', 'hn', 'remoteok', 'stackoverflow']) {
+      const worker = state.sources.find(source => source.id === id);
+      assert.equal(worker.keyCount, 1, id + ' collects a whole inventory once');
+      assert.equal(worker.expectedCycleMs, 300000);
+    }
+    const youtube = state.sources.find(source => source.id === 'youtube');
+    assert.ok(youtube.keyCount > 1 && youtube.keyCount < app.FEED_TOPICS.length);
+    assert.ok(youtube.expectedCycleMs <= 600000, 'YouTube channels are deduplicated without expensive keyword searches');
+  } finally { app.getSourceCollectionScheduler().stop(); await app.close(); }
+});
+
+test('real pipeline startup registers later-declared job inventories without a cold-start initialization error', async () => {
+  // The real startup branch runs; the harness blocks all external network,
+  // database initialization and deployment-secret loading.
+  const app = await createAppHarness({ env: { SERVICE_ROLE: 'pipeline', AUTOFIX_SMOKE_TEST: '0' } });
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    const state = app.getSourceCollectionScheduler().status();
+    assert.equal(state.total, 40);
+    assert.ok(state.sources.some(source => source.id === 'remotive'));
+    assert.ok(state.sources.some(source => source.id === 'muse'));
+    assert.equal(state.active, 0, 'Staggered requests have not contacted providers during startup');
+    assert.deepEqual(app.errors, []);
+  } finally { app.getSourceCollectionScheduler().stop(); await app.close(); }
 });
 
 test('a source interrupted by pressure remains queued and is not reported as completed', async () => {

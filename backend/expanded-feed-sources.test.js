@@ -41,12 +41,14 @@ test('jobs retain full descriptions, posting dates and canonical source attribut
  assert.equal(post.createdAt,'2025-06-15T15:06:40.000Z');assert.equal(post.group.category,'Opportunities');
 });
 
-test('provider failures remain retryable and successful inventory is cached for one hour',async()=>{
+test('provider failures remain retryable and successful inventory refreshes within five minutes',async()=>{
  let now=0,calls=0;
  const sources=createExpandedFeedSources({now:()=>now,fetchText:async()=>{calls++;if(calls===1)throw Error('temporary outage');return '<rss><channel/></rss>';},parseRSSItems:()=>[],rssPost:()=>{throw Error('No items expected');}});
  await assert.rejects(sources.weworkremotely(),/temporary/);
  await sources.weworkremotely();await sources.weworkremotely();assert.equal(calls,2);
- now=3600001;await sources.weworkremotely();assert.equal(calls,3);
+ now=300001;await sources.weworkremotely();assert.equal(calls,3);
+ await Promise.all([sources.weworkremotely({bust:true}),sources.weworkremotely({bust:true})]);
+ assert.equal(calls,4,'Explicit scheduled refresh shares one real inventory request');
 });
 
 test('travel RSS preserves attribution and media with a short excerpt; HTML errors are rejected',async t=>{
