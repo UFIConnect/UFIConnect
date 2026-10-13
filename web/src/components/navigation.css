@@ -254,3 +254,6 @@
 .sidebar-maps-link { margin: 8px 10px 10px; flex-shrink: 0; justify-content: center; }
 .shell .mobile-command-menu-item.mobile-maps-link { justify-content: center; }
 @media (min-width: 701px) and (max-width: 1100px) { .sidebar-maps-link { margin-inline: 8px; } }
+.messages-navigation > .nav-icon { overflow: visible; flex-shrink: 0; }
+.jobs-page-tool.messages-navigation { flex-direction: row; align-items: center; justify-content: flex-start; gap: 9px; cursor: pointer; }
+.jobs-page-tool.messages-navigation .messages-navigation-label { color: inherit; font: inherit; font-size: .82rem; font-weight: 750; }

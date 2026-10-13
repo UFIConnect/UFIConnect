@@ -89,7 +89,7 @@ try {
       assert.equal(await postToGroup.getAttribute('href'), '/groups/post');
       const createBounds = await createGroup.boundingBox();
       const postBounds = await postToGroup.boundingBox();
-      assert.ok(Math.abs(createBounds.y - postBounds.y) < 2 && postBounds.x > createBounds.x, 'Post to your group belongs beside Create a group');
+      assert.ok(Math.abs(createBounds.y - postBounds.y) < 2 && postBounds.x < createBounds.x, 'Post to your group appears before Create a group');
       const actionsRow = groupToolbar.locator('.feed-group-primary-actions');
       const rowBounds = await actionsRow.boundingBox();
       assert.ok(rowBounds.x >= 0 && rowBounds.x + rowBounds.width <= viewport.width, 'The group action row stays inside the viewport');

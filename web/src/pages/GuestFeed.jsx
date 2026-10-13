@@ -11,7 +11,7 @@ import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import GuestShell from '../components/GuestShell';
 import PublicFooter from '../components/PublicFooter';
-import ResultsPagination from '../components/ResultsPagination';
+import useInfiniteScroll from '../hooks/useInfiniteScroll';
 import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
 import { OpenOnSource, PostHeader, PostOptionsMenu } from '../components/PostCardChrome';
@@ -255,7 +255,7 @@ export default function GuestFeed() {
       pageRef.current = pageNo;
       setPage(pageNo);
       setActivePostId(null);
-      setPosts(next.posts);
+      setPosts(previous => pageNo > 1 ? mergeGuestPosts(previous, next.posts) : next.posts);
       setHasMore(next.hasMore);
       setLocationContext(next.locationContext);
       return true;
@@ -281,6 +281,9 @@ export default function GuestFeed() {
     };
   }, [loadPage]);
 
+  const scrollSentinel = useInfiniteScroll({ enabled: hasMore && !loading && !refreshing && !error,
+    onLoadMore: () => loadPage(page + 1), revision: page });
+
   // Full reset back to the freshest page 1 rather than merging, same as the
   // authenticated Feed's own manual refresh, so it actually reads as "live"
   // instead of old and new content interleaving. Two ways in: the explicit
@@ -292,7 +295,7 @@ export default function GuestFeed() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
     await loadPage(1, { reset: true });
   }, [loadPage]);
-  useScrollToRefresh(handleRefresh, { enabled: page === 1 && !loading && !refreshing });
+  useScrollToRefresh(handleRefresh, { enabled: !loading && !refreshing });
 
   useEffect(() => {
     const refreshQuietly = () => {
@@ -394,8 +397,8 @@ export default function GuestFeed() {
           </div>
         )}
 
-        <ResultsPagination page={page} hasNext={hasMore} loading={loading || refreshing} ariaLabel="Public feed pages"
-          onPageChange={async next => { if (await loadPage(next)) headingRef.current?.scrollIntoView({ block: 'start' }); }} />
+        <div ref={scrollSentinel} data-feed-scroll-sentinel aria-hidden="true" style={{ height: 1 }} />
+        {loading && posts.length > 0 && <p role="status">Loading more posts…</p>}
       </main>
       <PublicFooter />
     </GuestShell>

@@ -5,7 +5,7 @@ import { privateSessionStorage } from '../auth/session';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
-import Layout from '../components/Layout';
+import Layout, { MessagesNavigation } from '../components/Layout';
 import JobsSidebarControls, { JOB_CAREER_SITES, JOB_SORT_OPTIONS } from '../components/JobsSidebarControls';
 import HomeFeedTools from '../components/HomeFeedTools';
 import client from '../api/client';
@@ -748,11 +748,9 @@ export default function Opportunities({ embedded = false, searchQuery = null, pa
               </Link>
             </div>
             <div className="jobs-page-rail-bottom">
+              <MessagesNavigation className="jobs-page-tool jobs-page-tool--compact" />
               <Link to="/groups" className="jobs-page-tool jobs-page-tool--compact">
                 <strong>Discover groups</strong>
-              </Link>
-              <Link to="/messages" className="jobs-page-tool jobs-page-tool--compact">
-                <strong>Messages</strong>
               </Link>
               <HomeFeedTools showSources={false} />
               <Link to="/resume-builder" className="jobs-page-tool jobs-page-tool--primary jobs-page-resume-builder">

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
-import ResultsPagination from '../components/ResultsPagination';
+import PostPagesNavigation from '../components/PostPagesNavigation';
 import { useAuth } from '../contexts/AuthContext';
 import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
@@ -121,6 +121,7 @@ export default function YourPostsFeed() {
     enabled: !!profile?.id,
     queryKey: JSON.stringify(['your-connected-posts', profile?.id]),
     errorMessage: 'Could not load your connected posts right now. Please try again.',
+    mergeItems: mergePosts,
     loadPage: async ({ page, signal }) => {
       const bust = bustNextRequest.current;
       bustNextRequest.current = false;
@@ -147,7 +148,7 @@ export default function YourPostsFeed() {
     bustNextRequest.current = true;
     return results.refresh();
   }, [results.refresh]);
-  useScrollToRefresh(refreshFeed, { enabled: page === 1 && !loading });
+  useScrollToRefresh(refreshFeed, { enabled: !loading });
 
   const activeSources = useMemo(
     () => Object.entries(meta.sources || {}).filter(([, count]) => count > 0),
@@ -222,19 +223,14 @@ export default function YourPostsFeed() {
         ) : (
           <>
             {posts.map(post => <OwnPostCard key={post.id} post={post} />)}
-            {error && <p role="alert">{error} <button type="button" className="btn btn-ghost btn-sm" disabled={loading} onClick={results.retry}>Try again</button></p>}
             {!hasMore && !error && (
               <div style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '.8rem', padding: '12px 16px', marginBottom: 24 }}>
-                You have reached the last page. Refresh to check for new connected posts.
+                You’re caught up. Refresh to check for new connected posts.
               </div>
             )}
           </>
         )}
-        <ResultsPagination page={page} hasNext={hasMore} loading={loading}
-          totalPages={results.total > 0 ? Math.ceil(results.total / PAGE_SIZE) : undefined}
-          ariaLabel="Your connected posts pages" onPageChange={async next => {
-            if (await results.goToPage(next)) headingRef.current?.scrollIntoView({ block: 'start' });
-          }} />
+        {posts.length > 0 && <PostPagesNavigation results={results} continuous />}
         </div>
       </Layout>
     </>

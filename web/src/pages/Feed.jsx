@@ -18,7 +18,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { ArrowLeft, ArrowRight, BookOpen, Martini, Plane, RotateCw, Utensils } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import Layout from '../components/Layout';
+import Layout, { MessagesNavigation } from '../components/Layout';
 import client from '../api/client';
 import { markApiOriginFailure, resolveApiBaseUrl } from '../api/apiOrigin';
 import { extractYouTubeId, extractVimeoId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, createYouTubePlayerFrame, youTubeEmbedUrl, InlineAutoplayVideo, userWantsSound, useGlobalMuted, usePointerPlaybackGate, useSoloVideoPlayback } from '../components/videoMedia';
@@ -45,8 +45,6 @@ import { TIERS } from '../components/PricingModal';
 import { isNativeRuntime } from '../nativeRuntime.mjs';
 import ImageLightbox from '../components/ImageLightbox';
 import MediaPlaybackControls from '../components/MediaPlaybackControls';
-import ResultsPagination from '../components/ResultsPagination';
-import { availableFeedPage, feedPagePosts, nextFeedPage } from '../utils/feedPagination.mjs';
 import { useEngagementTracking } from '../hooks/useEngagementTracking';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { normalizeSourceFavorites } from '../components/sourceFavorites';
@@ -2027,17 +2025,10 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const [queuedRefresh, setQueuedRefresh] = useState(null);
   const [loadingMore,   setLoadingMore]  = useState(false);
   const remotePageRef = useRef(2);
-  const [pageRevision, setPageRevision] = useState(0);
-  const [pageState, setPageState] = useState({ key: '', page: 1, pages: [] });
-  const [pageLoading, setPageLoading] = useState(false);
-  const [pageError, setPageError] = useState('');
-  const [pageNotice, setPageNotice] = useState('');
   const [newPostsAvailable, setNewPostsAvailable] = useState(false);
-  const pageNavigationRef = useRef(0);
-  const pageLoadingRef = useRef(false);
-  const paginationContextRef = useRef('');
-  const pageListRef = useRef(null);
-  const visiblePostsSelectorRef = useRef(list => list);
+  const [loadMoreError, setLoadMoreError] = useState('');
+  const sentinelRef = useRef(null);
+  const emptyBatchesRef = useRef(0);
   const [remoteHasMore, setRemoteHasMoreState] = useState(true);
   const remoteHasMoreRef = useRef(true);
   const setRemoteHasMore = useCallback((value) => {
@@ -2152,13 +2143,10 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       // the 10-min auto-refresh) keep their current behavior unchanged.
       bust = manual,
     } = options || {};
-    if (silent && pageLoadingRef.current) return;
-    if (manual || replace) {
-      pageNavigationRef.current += 1;
-      pageLoadingRef.current = false;
-      setPageLoading(false); setPageError(''); setPageNotice(''); setNewPostsAvailable(false);
-      setPageRevision(value => value + 1);
-    }
+    if (silent && loadingMoreRef.current) return;
+    setLoadMoreError('');
+    emptyBatchesRef.current = 0;
+    if (manual || replace) setNewPostsAvailable(false);
     // manual is specifically what every explicit user refresh action passes
     // (tab click, Refresh now, scroll-to-refresh) — background silent syncs
     // and filter/search changes call this with manual:false, so gating on
@@ -2326,7 +2314,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       setPosts(nextPosts);
       if (activeMode === 'feed' && !activeSearch) writeFeedCache(profileRef.current?.id, nextPosts, profileRef.current?.roleSettings);
       // Explicit refreshes restart server paging; a quiet update must keep
-      // the cursor already reached by the member's Next actions.
+      // the cursor already reached while the member scrolls.
       if (manual || !shouldMerge || previous.length === 0 || replace) {
         remotePageRef.current = 2;
         remoteCursorRef.current = data.cursor || null;
@@ -2784,7 +2772,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   }, [profile, sourceFavoriteDraft, sourceFavorites, updateProfileLocally]);
 
   const loadMoreRemote = useCallback(async () => {
-    // Lock synchronously so rapid Next actions cannot duplicate requests.
+    // Lock synchronously so overlapping scroll events cannot duplicate requests.
     if (loadingMoreRef.current || !remoteHasMoreRef.current) return { skipped: true };
     if (locationSavingRef.current || loadStateRef.current.loading || loadStateRef.current.refreshing) return { skipped: true };
     const paginationRequestId = ++paginationRequestIdRef.current;
@@ -2846,7 +2834,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         setTravelStatus(data.travel || null);
       }
       // Server snapshots may overlap. Keep shared-pool duplicates out of
-      // the fetched collection; committed display pages also retain IDs.
+      // the fetched collection while earlier posts remain visible.
       const incoming = (data.posts || []).filter(p => (
         p?.id
         && !knownIds.current.has(p.id)
@@ -2862,14 +2850,18 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       if (useCursor) remoteCursorRef.current = data.cursor || remoteCursorRef.current;
       else remotePageRef.current += 1;
       // Overlapping server batches can contain only known IDs but still lead
-      // to older cards. A bounded Next action may continue past that overlap.
+      // to older cards. Stop automatic retries after repeated empty batches.
       const exhausted = data.hasMore === false || !data.posts?.length || cursorDidNotAdvance;
       setRemoteHasMore(!exhausted);
+      emptyBatchesRef.current = incoming.length ? 0 : emptyBatchesRef.current + 1;
+      if (!exhausted && emptyBatchesRef.current >= 3) setLoadMoreError('No additional posts arrived. Try again to check for more.');
       return { exhausted };
     } catch (error) {
       if (controller.signal.aborted || memberAtStart !== profileRef.current?.id || requestIdAtStart !== feedRequestIdRef.current) return { stale: true };
       console.error('[feed] position cursor request failed', error);
-      return { error: 'The next page could not load. Please try again.' };
+      const message = 'More posts could not load. Please try again.';
+      setLoadMoreError(message);
+      return { error: message };
     }
     finally {
       if (paginationRequestId === paginationRequestIdRef.current) {
@@ -2961,7 +2953,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   }, [queuedRefresh, loading, refreshing, loadingMore, profile?.id, viewMode, publicGroupsFeed, refreshCurrentFeed]);
 
   const scrollRefresh = useScrollToRefresh(refreshCurrentFeed, {
-    enabled: Boolean(profile?.id) && !EMBEDDED_HOME_MODES.has(viewMode) && pageState.page === 1 && !pageLoading,
+    enabled: Boolean(profile?.id) && !EMBEDDED_HOME_MODES.has(viewMode) && !loadingMore,
   });
 
   useEffect(() => {
@@ -3169,52 +3161,32 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       && !(!post?.isExternal && blockedMembers.has(post?.author?.id))),
     [displayed, viewMode, blockedAccounts, blockedMembers, removedPosts]
   );
-  visiblePostsSelectorRef.current = list => selectProcessedPosts(list).filter(post => !(viewMode === 'countries' && post?.isLiveCamera)
-    && !removedPosts.has(post?.id)
-    && !(post?.isExternal && blockedAccounts.has(feedAccountKey(post)))
-    && !(!post?.isExternal && blockedMembers.has(post?.author?.id)));
-  const paginationKey = JSON.stringify([profile?.id, viewMode, publicGroupsFeed, search, filters, activeTabs,
-    feedLocationKey(profile?.roleSettings, viewMode), disabledSourceKey, pageRevision]);
-  paginationContextRef.current = paginationKey;
-  const activePage = pageState.key === paginationKey ? pageState : { page: 1, pages: [] };
-  const visitedPages = activePage.pages.length ? activePage.pages : [availableFeedPage(contentPosts)];
-  const visiblePagePosts = feedPagePosts(contentPosts, visitedPages[activePage.page - 1]);
-  const pageHasNext = activePage.page < visitedPages.length || availableFeedPage(contentPosts, visitedPages).length > 0 || remoteHasMore;
   const hasTravelLiveFeeds = viewMode === 'countries' && travelLiveFeeds.length > 0;
 
   useEffect(() => {
-    if (loading || refreshing) return;
-    setPageState(current => current.key === paginationKey && current.pages.length
-      ? current : { key: paginationKey, page: 1, pages: [availableFeedPage(contentPosts)] });
-  }, [paginationKey, loading, refreshing, contentPosts]);
-
-  const changeFeedPage = async (next) => {
-    if (!Number.isInteger(next) || next < 1 || next > activePage.page + 1 || pageLoadingRef.current || loading || refreshing || locationSaving) return;
-    const key = paginationKey, navigation = ++pageNavigationRef.current;
-    const current = () => paginationContextRef.current === key && pageNavigationRef.current === navigation;
-    const showPage = (page, pages) => {
-      if (!current()) return;
-      setPageState({ key, page, pages }); setPageError(''); setPageNotice('');
-      window.requestAnimationFrame(() => { if (current()) pageListRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }); });
+    if (loading || refreshing || locationSaving || loadingMore || !remoteHasMore || loadMoreError || EMBEDDED_HOME_MODES.has(viewMode)) return;
+    const anchor = sentinelRef.current;
+    if (!anchor) return;
+    let scrollRoot = anchor.parentElement;
+    while (scrollRoot && scrollRoot !== document.body && !/(auto|scroll)/.test(getComputedStyle(scrollRoot).overflowY)) scrollRoot = scrollRoot.parentElement;
+    const target = scrollRoot && scrollRoot !== document.body ? scrollRoot : window;
+    let frame = 0;
+    const requestIfNear = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const rect = anchor.getBoundingClientRect();
+        const viewport = target === window ? { top: 0, bottom: window.innerHeight } : target.getBoundingClientRect();
+        if (rect.top <= viewport.bottom + 500 && rect.bottom >= viewport.top - 500) void loadMoreRemote();
+      });
     };
-    if (next <= visitedPages.length) { showPage(next, visitedPages); return; }
-    pageLoadingRef.current = true; setPageLoading(true); setPageError(''); setPageNotice('');
-    try {
-      const result = await nextFeedPage({ pages: visitedPages,
-        getPosts: () => visiblePostsSelectorRef.current(postsRef.current),
-        canLoad: () => remoteHasMoreRef.current,
-        loadMore: loadMoreRemote, isCurrent: current });
-      if (!current() || !result) return;
-      if (result.empty) setPageNotice(remoteHasMoreRef.current
-        ? 'No additional matching posts in this batch. Select Next to check more.'
-        : 'No more posts are available in this feed right now.');
-      else showPage(result.page, result.pages);
-    } catch (error) {
-      if (current()) setPageError(error.message || 'The next page could not load. Please try again.');
-    } finally {
-      if (pageNavigationRef.current === navigation) { pageLoadingRef.current = false; setPageLoading(false); }
-    }
-  };
+    const observer = 'IntersectionObserver' in window ? new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) void loadMoreRemote(); },
+      { root: target === window ? null : target, rootMargin: '500px 0px' },
+    ) : null;
+    observer?.observe(anchor);
+    requestIfNear(); target.addEventListener('scroll', requestIfNear, { passive: true });
+    return () => { cancelAnimationFrame(frame); observer?.disconnect(); target.removeEventListener('scroll', requestIfNear); };
+  }, [loading, refreshing, locationSaving, loadingMore, remoteHasMore, loadMoreError, viewMode, contentPosts.length, loadMoreRemote]);
 
   // Every photo- or video-bearing post currently on screen, in the same
   // order shown — what ImageLightbox's next/prev navigation browses across.
@@ -3225,7 +3197,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const mediaPosts = useMemo(() => {
     const candidates = [
       ...(viewMode === 'countries' ? travelLiveFeeds : []),
-      ...visiblePagePosts,
+      ...contentPosts,
     ];
     const seen = new Set();
     return candidates.filter((post) => {
@@ -3235,7 +3207,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       seen.add(key);
       return true;
     });
-  }, [visiblePagePosts, travelLiveFeeds, viewMode]);
+  }, [contentPosts, travelLiveFeeds, viewMode]);
   const mediaLightboxIndex = mediaLightboxPostId
     ? mediaPosts.findIndex(p => p.id === mediaLightboxPostId)
     : -1;
@@ -3558,10 +3530,10 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
               Public posts
             </button>
           </div>
+          <Link to="/groups/post" className="btn btn-ghost btn-sm feed-toolbar-control group-post-button ufi-post-action">Post to your group</Link>
           <Link to="/search?tab=groups&create=1" className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action group-create-button">
             Create a group
           </Link>
-          <Link to="/groups/post" className="btn btn-ghost btn-sm feed-toolbar-control group-post-button ufi-post-action">Post to your group</Link>
           </div>
           <TopicFilterControl
             topics={filters.topics}
@@ -3638,7 +3610,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         </div>
       )}
 
-      {newPostsAvailable && !loading && <div className="feed-page-message" role="status"><span>New posts are available.</span>{' '}<button type="button" className="btn btn-ghost btn-sm" onClick={refreshCurrentFeed} disabled={refreshing || pageLoading}>Refresh feed</button></div>}
+      {newPostsAvailable && !loading && <div className="feed-page-message" role="status"><span>New posts are available.</span>{' '}<button type="button" className="btn btn-ghost btn-sm" onClick={refreshCurrentFeed} disabled={refreshing || loadingMore}>Refresh feed</button></div>}
       {viewMode === 'following' && !loading && <FollowingConnectionNotice errors={sourceErrors} />}
 
       {lockedPlatform ? (
@@ -3779,15 +3751,13 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
           {contentPosts.length > 0 && (
             <FeedErrorBoundary>
             <div
-              className="feed-paginated-results"
-              ref={pageListRef}
-              data-feed-page={activePage.page}
+              className="feed-continuous-results"
               data-feed-has-more={remoteHasMore ? 'true' : 'false'}
               data-feed-ref-has-more={remoteHasMoreRef.current ? 'true' : 'false'}
               data-feed-loading-more={loadingMore ? 'true' : 'false'}
               data-feed-cursor-ready={remoteCursorRef.current ? 'true' : 'false'}
             >
-              {visiblePagePosts.map((post, idx) => {
+              {contentPosts.map((post, idx) => {
                 return (
                   <div
                     key={`${post.id || `temp-${post.createdAt}`}-${idx}`}
@@ -3812,12 +3782,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         </>
       )}
 
-      {!loading && !lockedPlatform && !EMBEDDED_HOME_MODES.has(viewMode) && (contentPosts.length > 0 || remoteHasMore || activePage.page > 1 || pageError || pageNotice) && <>
-        {contentPosts.length > 0 && visiblePagePosts.length === 0 && <p role="status">No posts remain on this page. Choose another page to continue.</p>}
-        {pageError && <div className="feed-page-message" role="alert"><span>{pageError}</span>{' '}<button type="button" className="btn btn-ghost btn-sm" onClick={() => changeFeedPage(activePage.page + 1)} disabled={pageLoading}>Retry page</button></div>}
-        {pageNotice && <p className="feed-page-message" role="status">{pageNotice}</p>}
-        <ResultsPagination page={activePage.page} hasNext={pageHasNext} loading={pageLoading || loadingMore || refreshing || locationSaving}
-          onPageChange={changeFeedPage} ariaLabel="Feed pages" />
+      {!loading && !lockedPlatform && !EMBEDDED_HOME_MODES.has(viewMode) && <>
+        {remoteHasMore && !loadMoreError && <div ref={sentinelRef} data-feed-scroll-sentinel aria-hidden="true" style={{ height: 1 }} />}
+        {loadingMore && <p role="status" className="feed-page-message">Loading more posts…</p>}
+        {loadMoreError && <div className="feed-page-message" role="alert"><span>{loadMoreError}</span>{' '}<button type="button" className="btn btn-ghost btn-sm"
+          onClick={() => { emptyBatchesRef.current = 0; setLoadMoreError(''); void loadMoreRemote(); }} disabled={loadingMore}>Try again</button></div>}
       </>}
 
       {/* Padding to prevent sticky banner from covering content */}
@@ -3881,6 +3850,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             <Link to="/vault" className="home-feed-rail-tab">Your Vault</Link>
           </div>
           <div className="home-feed-rail-bottom">
+            <MessagesNavigation className="home-feed-rail-tab home-feed-rail-tab--icon" />
             <Link to="/groups" className="home-feed-rail-tab">Discover groups</Link>
             <HomeFeedTools
               showSources

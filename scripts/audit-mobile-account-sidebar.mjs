@@ -97,8 +97,8 @@ try {
         check(await page.locator('.sidebar').getByRole('link', { name: 'Post to a group', exact: true }).getAttribute('href') === '/groups/post', 'Desktop group posting opens the group composer');
         check(await page.locator('.sidebar nav').evaluate(nav => {
           const labels = [...nav.querySelectorAll('a')].map(link => link.getAttribute('aria-label'));
-          return labels.indexOf('Post to a group') === labels.indexOf('Create a group') + 1;
-        }), 'Post to a group sits directly under Create a group');
+          return labels.indexOf('Create a group') === labels.indexOf('Post to a group') + 1;
+        }), 'Create a group sits directly under Post to a group');
         const headerNav = page.getByRole('navigation', { name: 'Main navigation', exact: true });
         for (const label of ['Home', 'Videos', 'Jobs', 'Profile']) {
           check(await headerNav.getByRole('link', { name: label, exact: true }).isVisible(), `${label} must appear beside desktop search`);
@@ -108,17 +108,15 @@ try {
         check(await page.locator('.global-desktop-alerts').isVisible(), 'Alerts remain accessible beside search');
         const searchBounds = await page.locator('.global-search-bar').boundingBox();
         const navBounds = await headerNav.boundingBox();
-        const messagesBounds = await page.locator('.global-messages-link').boundingBox();
         const alertsBounds = await page.locator('.global-desktop-alerts').boundingBox();
         check(Math.abs(searchBounds.y - navBounds.y) < 2 && navBounds.x + navBounds.width <= searchBounds.x, 'Main destinations must sit left of search in the same row');
-        check(alertsBounds.x >= searchBounds.x + searchBounds.width && messagesBounds.x >= alertsBounds.x + alertsBounds.width, 'Alerts and Messages must sit right of search');
+        check(alertsBounds.x >= searchBounds.x + searchBounds.width, 'Alerts remain right of search');
+        check(await page.locator('.home-feed-rail-bottom .messages-navigation').evaluate(element => element.nextElementSibling?.textContent.includes('Discover groups')), 'Messages sits above Discover groups');
         await headerNav.getByRole('link', { name: 'Jobs', exact: true }).click();
         await page.waitForURL('**/opportunities');
         await page.locator('.jobs-page-layout').waitFor();
-        await page.getByRole('button', { name: 'Open search', exact: true }).click();
-        const searchDialog = page.getByRole('dialog', { name: 'Search UFIconnect', exact: true });
-        check(await searchDialog.getByRole('tab', { name: 'Jobs', exact: true }).getAttribute('aria-selected') === 'true', 'Jobs opens the jobs search context');
-        await searchDialog.getByRole('button', { name: 'Close search', exact: true }).click();
+        check(await page.getByRole('search', { name: 'Search UFIconnect', exact: true }).getByRole('button', { name: 'Search jobs', exact: true }).count() === 1,
+          'Jobs uses the header job search');
       } else {
         await opener.waitFor();
         const openerBounds = await opener.boundingBox();
@@ -131,12 +129,13 @@ try {
         const post = await drawer.getByRole('link', { name: 'Post', exact: true }).boundingBox();
         const createGroup = await drawer.getByRole('link', { name: 'Create a group', exact: true }).boundingBox();
         const postToGroup = await drawer.getByRole('link', { name: 'Post to a group', exact: true }).boundingBox();
-        check(Math.abs(postToGroup.y - (createGroup.y + createGroup.height)) < 12, 'The mobile menu lists Post to a group directly under Create a group');
+        check(Math.abs(createGroup.y - (postToGroup.y + postToGroup.height)) < 12, 'The mobile menu lists Create a group directly under Post to a group');
         const shop = await drawer.getByRole('link', { name: 'Shop', exact: true }).boundingBox();
         const profile = await drawer.getByRole('link', { name: 'Profile', exact: true }).boundingBox();
         const logout = await drawer.getByRole('button', { name: 'Log out', exact: true }).boundingBox();
         check(Math.abs(bounds.x) < 1 && bounds.width <= viewport.width, 'Drawer must open on the left');
-        check(post.y < 110 && post.y + post.height <= createGroup.y && createGroup.y + createGroup.height <= shop.y, 'The sidebar must start with Post, Create a group, then Shop');
+        check(post.y + post.height <= postToGroup.y && postToGroup.y + postToGroup.height <= createGroup.y && createGroup.y + createGroup.height <= shop.y,
+          'The sidebar orders Post, Post to a group, Create a group, then Shop');
         check(profile.y > viewport.height * 0.55 && logout.y > profile.y, 'Profile and account actions belong at the bottom');
         check(await drawer.locator('.mobile-feed-drawer-content').evaluate(element => element.clientHeight > 0 && getComputedStyle(element).overflowY === 'auto'), 'Long menus must scroll to their bottom actions');
         for (const [label, category] of [['Travel', 'countries'], ['Restaurants', 'restaurants'], ['Bars and clubs', 'bars']]) {

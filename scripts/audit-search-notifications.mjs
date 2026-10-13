@@ -13,6 +13,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const app = await createAppHarness();
 app.seedUser(member('social-audit'));
 const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
+  cacheDir: path.join(root, '.cache/vite-search-notifications'),
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api') },
   server: { host: '127.0.0.1', port: 5207, strictPort: false, proxy: { '/api': { target: app.base, rewrite: p => p.replace(/^\/api/, '') } } },
 });
@@ -119,64 +120,29 @@ try {
       for (const source of ['Reddit', 'GitHub']) assert.equal(await sources.getByRole('button', { name: source, exact: true }).getAttribute('aria-pressed'), 'true');
 
       if (mode === 'feed') {
-        const opener = globalSearch.getByRole('button', { name: 'Open search', exact: true });
-        await opener.click();
-        await dialog.waitFor({ state: 'visible' });
-        assert.equal(await dialog.getAttribute('aria-modal'), 'true');
-        await dialog.getByRole('tab', { name: 'People', exact: true }).click();
-        const peopleInput = dialog.getByRole('searchbox', { name: 'Search people', exact: true });
-        await Promise.all([
-          page.waitForResponse(response => {
-            const url = new URL(response.url());
-            return url.pathname.endsWith('/users/search') && url.searchParams.get('q') === 'product designer';
-          }),
-          peopleInput.fill('product designer'),
-        ]);
-        await dialog.getByText('Maya Chen', { exact: true }).waitFor();
-        assert.ok(searches.includes('product designer'));
-        assert.equal(page.url(), feedUrl, 'Broader search results stay in the popup');
-        await page.screenshot({ path: path.join(root, `.cache/audit-ui/search-${width}.png`) });
-        await dialog.getByRole('button', { name: 'Close search', exact: true }).click();
-        await dialog.waitFor({ state: 'detached' });
-        assert.equal(await opener.evaluate(element => document.activeElement === element), true, 'Closing search restores focus to its opener');
-        assert.equal(await headerInput.inputValue(), 'software engineer', 'Closing broader search leaves the feed query intact');
-        await opener.click();
-        await dialog.waitFor({ state: 'visible' });
-        await page.keyboard.press('Escape');
-        await dialog.waitFor({ state: 'detached' });
-        assert.equal(await opener.evaluate(element => document.activeElement === element), true, 'Escape closes search and restores focus');
-        assert.equal(page.url(), feedUrl);
-
-        await opener.click();
-        await dialog.getByRole('tab', { name: 'People', exact: true }).click();
-        await dialog.getByRole('searchbox', { name: 'Search people', exact: true }).fill('systems engineer');
-        const [updatedFeed] = await Promise.all([
-          feedResponse(mode, 'systems engineer'),
-          dialog.getByRole('button', { name: 'Update feed', exact: true }).click(),
-        ]);
-        assert.ok(updatedFeed.ok(), 'Update feed applies the popup query with existing sources and topics');
-        await dialog.waitFor({ state: 'detached' });
-        assert.equal(await headerInput.inputValue(), 'systems engineer');
-        assert.equal(page.url(), feedUrl);
+        const searchNavigation = page.locator(width <= 768 ? '#mobile-account-drawer' : '.sidebar-nav').getByRole('link', { name: 'Search', exact: true, includeHidden: true });
+        assert.equal(await searchNavigation.getAttribute('href'), '/search', 'Broader search opens the dedicated Search page');
+        assert.equal(await headerInput.inputValue(), 'software engineer', 'The feed retains its own query');
       }
       const [clearedFeed] = await Promise.all([feedResponse(mode, ''), globalSearch.getByRole('button', { name: 'Clear feed search', exact: true }).click()]);
       assert.ok(clearedFeed.ok(), 'Clearing feed search removes only the query');
       assert.equal(await headerInput.inputValue(), '');
       assert.equal(page.url(), feedUrl);
     }
-    const messages = page.locator('.global-search-center').getByRole('button', { name: 'Messages', exact: true });
-    await messages.waitFor({ state: 'visible' });
-    const searchBounds = await globalSearch.boundingBox();
-    const messageBounds = await messages.boundingBox();
-    assert.ok(searchBounds && messageBounds, 'Search and Messages remain visible in the header');
-    assert.ok(searchBounds.x + searchBounds.width <= messageBounds.x + 1 || messageBounds.x + messageBounds.width <= searchBounds.x + 1,
-      'Messages sits beside search without overlapping the input');
-    assert.ok(Math.abs((searchBounds.y + searchBounds.height / 2) - (messageBounds.y + messageBounds.height / 2)) <= 20,
-      'Messages shares the search row');
+    const messages = page.locator(width <= 768 ? '#mobile-feed-drawer' : '.home-feed-rail-bottom').getByRole('button', { name: 'Messages', exact: true, includeHidden: true });
+    const feedMenu = page.locator('button[aria-controls="mobile-feed-drawer"]');
+    async function showMessagesButton() {
+      if (width <= 768 && !await messages.isVisible()) await feedMenu.click();
+      await messages.scrollIntoViewIfNeeded();
+    }
+    async function openMessages() { await showMessagesButton(); await messages.click(); }
+    await showMessagesButton();
+    assert.ok(await messages.evaluate(element => element.nextElementSibling?.textContent.includes('Discover groups')),
+      'Messages appears immediately above Discover groups');
     assert.equal(await messages.getByLabel('3 unread messages').count(), 1);
     const originalUrl = page.url();
     const messagePopup = page.getByRole('dialog', { name: 'Messages', exact: true });
-    await messages.click();
+    await openMessages();
     await messagePopup.getByText('Native inbox preview', { exact: true }).waitFor();
     await messagePopup.getByText('Connected inbox preview', { exact: true }).waitFor();
     assert.equal(page.url(), originalUrl, 'Opening Messages preserves the current page');
@@ -212,23 +178,23 @@ try {
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/messages-popup-${width}.png`) });
     await messagePopup.getByRole('button', { name: 'Close messages', exact: true }).click();
     await messagePopup.waitFor({ state: 'detached' });
-    assert.equal(await messages.evaluate(element => document.activeElement === element), true, 'Closing Messages returns focus to its button');
-    await messages.click();
+    assert.equal(await (width <= 768 ? feedMenu : messages).evaluate(element => document.activeElement === element), true, 'Closing Messages returns focus to the visible opener');
+    await openMessages();
     await messagePopup.waitFor({ state: 'visible' });
     await page.keyboard.press('Escape');
     await messagePopup.waitFor({ state: 'detached' });
-    assert.equal(await messages.evaluate(element => document.activeElement === element), true, 'Escape returns focus to Messages');
-    await messages.click();
+    assert.equal(await (width <= 768 ? feedMenu : messages).evaluate(element => document.activeElement === element), true, 'Escape returns focus to the visible Messages opener');
+    await openMessages();
     await messagePopup.waitFor({ state: 'visible' });
     await page.locator('.messages-popup-backdrop').click({ position: { x: 1, y: 1 } });
     await messagePopup.waitFor({ state: 'detached' });
     assert.equal(page.url(), originalUrl, 'Dismissing Messages never changes the page');
-    await messages.click();
+    await openMessages();
     await messagePopup.getByRole('button', { name: /Maya Chen/ }).click();
     await page.waitForURL(url => url.pathname === '/messages/maya');
     await page.getByText('Native message body', { exact: true }).waitFor();
     await auditNavigate(page, originalUrl);
-    await messages.click();
+    await openMessages();
     await messagePopup.getByRole('link', { name: 'Open inbox', exact: true }).click();
     await page.waitForURL(url => url.pathname === '/messages');
     await page.getByRole('heading', { name: 'Messages', exact: true }).waitFor();
