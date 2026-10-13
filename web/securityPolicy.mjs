@@ -17,7 +17,7 @@ export function analyticsBridgeSecurityPolicy(html) {
 export function browserSecurityPolicy(html, { meta = false, advertising = false, video = false } = {}) {
   const hashes = inlineScriptHashes(html);
   const scripts = [...hashes, ...(video ? ['https://www.youtube.com', 'https://s.ytimg.com'] : []),
-    ...(advertising ? ['https://www.googletagmanager.com', 'https://tagmanager.google.com', 'https://www.googleadservices.com', 'https://www.google.com'] : [])];
+    ...(advertising ? ['https://www.googletagmanager.com', 'https://tagmanager.google.com', 'https://www.googleadservices.com', 'https://www.google.com', 'https://googleads.g.doubleclick.net'] : [])];
   const styles = ['https://fonts.googleapis.com',
     ...(advertising ? ['https://www.googletagmanager.com', 'https://tagmanager.google.com'] : [])];
   return ["default-src 'self'", `script-src 'self' ${scripts.join(' ')}`.trim(),
