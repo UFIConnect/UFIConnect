@@ -1,6 +1,6 @@
 # Google Tag Manager
 
-Container **GTM-PXQR5386** is installed in the website's existing advertising
+Container **GTM-KMZ7ZH5B** is installed in the website's existing advertising
 controller, `web/src/analytics/googleAds.mjs`. It loads once in the document
 head after the visitor permits advertising measurement and the session check
 confirms a signed-out public homepage. Google Analytics consent alone does not
@@ -51,10 +51,8 @@ load in those states. Tag Assistant also offers an option to omit its URL debug
 signal. Verify the expected container and preview connection after consent;
 successful installation does not confirm any tags have been published.
 
-On October 13, 2026, a real Google Tag Assistant session detected
-`GTM-PXQR5386` and the existing Ads tag after the homepage's advertising consent
-was granted. It reported that this container had not been published. In the
-container's Google account, review the workspace through **Preview**, then use
+The active container ID matches the installation snippet supplied on
+October 13, 2026. In the container's Google account, review the workspace through **Preview**, then use
 **Submit > Publish and Create Version > Publish** when the configuration is
 ready. Website deployment does not publish the Google account's container.
 

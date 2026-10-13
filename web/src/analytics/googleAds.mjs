@@ -1,7 +1,7 @@
 export const ADS_ID = 'AW-18490754953';
 export const ADS_CONVERSION = `${ADS_ID}/s7sWCK_AsI4dEImPivFE`;
 export const ADS_CONSENT_KEY = 'uficonnect.ads.consent.v1';
-export const TAG_MANAGER_ID = 'GTM-PXQR5386';
+export const TAG_MANAGER_ID = 'GTM-KMZ7ZH5B';
 
 // Keep only Google's attribution identifiers and bounded Tag Assistant flags.
 // Never give the SDK arbitrary query parameters, account links, or fragments.
