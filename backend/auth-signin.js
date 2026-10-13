@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const express = require('express');
 const { SESSION_TTL_SECONDS } = require('./auth-security');
 const { createSessionCookie } = require('./web-connection-security');
+const { createOAuthFrontend } = require('./oauth-frontend');
 
 const PREFIX = 'ufi_signin_';
 const PHONE_ALIAS_DOMAIN = 'identity.uficonnect.invalid';
@@ -103,6 +104,7 @@ async function verifyIdentityToken(provider, token, { audience, nonce, keySet } 
 function createSignIn({ db, env = process.env, vault, callbackBase, frontendBase, issueSession, profileFor, onUser, onCreated = () => {}, recordSignIn = () => {}, fetcher = fetch, keySets = {}, phoneProvider,
   reportFailure = diagnostic => console.warn('[signin] callback failure', JSON.stringify(diagnostic)) } = {}) {
   const settings = providerSettings(env);
+  const frontend = createOAuthFrontend({ frontendBase, allowedOrigins: env.ALLOWED_ORIGINS });
   const callback = provider => `${callbackBase}${provider === 'google' ? settings.google.callbackPath : `/auth/providers/${provider}/callback`}`;
   const storageReady = () => db.isConnected() && encryptionKeyConfigured(env.OAUTH_TOKEN_ENCRYPTION_KEY);
   const publicProviders = () => ({ providers: Object.fromEntries(Object.entries(settings).map(([id, value]) => [id, { configured: value.configured, enabled: value.configured && storageReady() }])) });
@@ -224,14 +226,14 @@ function createSignIn({ db, env = process.env, vault, callbackBase, frontendBase
     const match = String(req.headers?.cookie || '').split(';').map(v => v.trim()).find(v => v.startsWith('ufi_signin='));
     return match ? match.slice('ufi_signin='.length) : '';
   }
-  async function start(provider, input = {}, res, authenticatedLinkUser) {
+  async function start(provider, input = {}, res, authenticatedLinkUser, req) {
     ensure(provider);
     if (!['google','apple'].includes(provider)) throw fail('Choose an available sign-in provider.');
     const client = input.client === 'native' ? 'native' : 'web';
     const mode = authenticatedLinkUser ? 'link' : input.mode === 'signup' ? 'signup' : 'login';
     const state = PREFIX + random();
     const id = digest(state), binding = random(), nonce = random(), codeVerifier = random();
-    const payload = { nonce, codeVerifier, returnTo: safeReturnTo(input.returnTo), ...(authenticatedLinkUser ? {linkContext:linkContext(authenticatedLinkUser)} : {}) };
+    const payload = { nonce, codeVerifier, returnTo: safeReturnTo(input.returnTo), ...(client === 'web' ? frontend.capture(req) : {}), ...(authenticatedLinkUser ? {linkContext:linkContext(authenticatedLinkUser)} : {}) };
     await prune();
     await db.query(`INSERT INTO auth_signin_flows (id,provider,client,mode,binding_hash,payload,expires_at)
       VALUES ($1,$2,$3,$4,$5,$6,NOW()+INTERVAL '10 minutes')`, [id, provider, client, mode, digest(binding), seal(id, payload)]);
@@ -256,7 +258,7 @@ function createSignIn({ db, env = process.env, vault, callbackBase, frontendBase
   async function complete(provider, req, res) {
     const params = req.method === 'POST' ? req.body : req.query;
     const state = params?.state;
-    let row, stage = 'flow';
+    let row, stage = 'flow', returnBase = frontendBase;
     try {
       ensure(provider);
       if (typeof state !== 'string' || !state.startsWith(PREFIX) || !validOpaque(state.slice(PREFIX.length))) throw fail('This sign-in request has expired. Start again.', 400, 'expired');
@@ -271,6 +273,7 @@ function createSignIn({ db, env = process.env, vault, callbackBase, frontendBase
       const consumed = await db.query('DELETE FROM auth_signin_flows WHERE id=$1 AND phase=$2 AND expires_at>NOW() RETURNING *', [id,'pending']);
       if (!consumed.rows[0]) throw fail('This sign-in request has expired. Start again.', 400, 'expired');
       const payload = open(row);
+      if (row.client === 'web') returnBase = frontend.resolve(payload.returnOrigin);
       if (params.error) {
         const error = fail('Sign-in was cancelled.', 400, 'cancelled');
         if (PROVIDER_FAILURE_CODES.has(params.error)) error.providerCode = params.error;
@@ -298,7 +301,7 @@ function createSignIn({ db, env = process.env, vault, callbackBase, frontendBase
       const result = await session(identity, { mode: row.mode, linkContext:payload.linkContext }, req, value => { stage = value; });
       res.append('Set-Cookie', flowCookie('', 0));
       res.append('Set-Cookie', createSessionCookie(result.token, SESSION_TTL_SECONDS, env));
-      const target = new URL(row.mode==='link'?'/settings':'/login', frontendBase);
+      const target = new URL(row.mode==='link'?'/settings':'/login', returnBase);
       if(row.mode==='link') { target.searchParams.set('tab','security'); target.searchParams.set('linked',provider); }
       else { target.searchParams.set('provider', provider); if (payload.returnTo) target.searchParams.set('returnTo', payload.returnTo); }
       return res.redirect(target.toString());
@@ -311,7 +314,7 @@ function createSignIn({ db, env = process.env, vault, callbackBase, frontendBase
       if (IDENTITY_FAILURE_CODES.has(error?.code)) diagnostic.identityCode = error.code;
       try { reportFailure(diagnostic); } catch {}
       if (row?.client === 'native') return res.redirect(`uficonnect://auth/callback#error=${encodeURIComponent(code)}`);
-      const target = new URL(row?.mode==='link'?'/settings':'/login', frontendBase);
+      const target = new URL(row?.mode==='link'?'/settings':'/login', returnBase);
       if(row?.mode==='link') target.searchParams.set('tab','security');
       target.searchParams.set('auth_error', code);
       return res.redirect(target.toString());
@@ -424,10 +427,10 @@ function registerSignInRoutes(app, options) {
   };
   app.get('/auth/providers', (_req,res) => res.json(service.publicProviders()));
   app.get('/auth/providers/linked', options.authenticate, guarded(req=>service.linked(req.user)));
-  app.post('/auth/providers/:provider/link', options.authenticate, limiter, guarded((req,res)=>service.start(req.params.provider,req.body,res,req.user)));
+  app.post('/auth/providers/:provider/link', options.authenticate, limiter, guarded((req,res)=>service.start(req.params.provider,req.body,res,req.user,req)));
   app.post('/auth/phone/link', options.authenticate, limiter, guarded(req=>service.requestPhone(req.body,req.user)));
-  app.get('/auth/providers/:provider/start', limiter, guarded(async(req,res) => res.redirect((await service.start(req.params.provider, { ...req.query, client:'web' }, res)).url)));
-  app.post('/auth/providers/:provider/start', limiter, guarded((req,res) => service.start(req.params.provider, req.body, res)));
+  app.get('/auth/providers/:provider/start', limiter, guarded(async(req,res) => res.redirect((await service.start(req.params.provider, { ...req.query, client:'web' }, res,undefined,req)).url)));
+  app.post('/auth/providers/:provider/start', limiter, guarded((req,res) => service.start(req.params.provider, req.body, res,undefined,req)));
   app.get('/auth/providers/google/callback', limiter, (req,res) => service.complete('google', req,res));
   app.get('/auth/social/youtube/callback', limiter, (req,res,next) => typeof req.query.state === 'string' && req.query.state.startsWith(PREFIX) ? service.complete('google',req,res) : next());
   app.post('/auth/providers/apple/callback', limiter, express.urlencoded({ extended:false, limit:'12kb', parameterLimit:10 }), (req,res) => service.complete('apple',req,res));

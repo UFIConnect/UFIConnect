@@ -12,6 +12,9 @@ import { auth0AuthorizationParams, auth0Config, isAuth0Configured } from './auth
 import './index.css';
 import { reportClientError } from './api/errorReporting';
 import AppRecoveryBoundary from './components/AppRecoveryBoundary';
+import { isAppHost } from './appHost.mjs';
+
+const BrowserApp = React.lazy(() => import('../../mobile/current-site/Website.jsx'));
 
 // Optional diagnostics report a broad category only after this browser opts
 // in. Error messages, rejected values and stack traces are never submitted.
@@ -66,7 +69,7 @@ function OptionalAuth0Provider({ children }) {
 // React 19 owns route metadata after boot. Remove only the build's marked
 // copies, preserving CSP, icons, verification tags, and structured data.
 document.querySelectorAll('[data-prerender-meta]').forEach(node => node.remove());
-ReactDOM.createRoot(document.getElementById('root')).render(
+const publicWebsite = (
   <React.StrictMode>
     <AppRecoveryBoundary>
     <HelmetProvider>
@@ -86,4 +89,13 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     </HelmetProvider>
     </AppRecoveryBoundary>
   </React.StrictMode>
+);
+ReactDOM.createRoot(document.getElementById('root')).render(
+  isAppHost(window.location.hostname)
+    ? <React.StrictMode><AppRecoveryBoundary>
+      <React.Suspense fallback={<div role="status">Opening UFIConnect…</div>}>
+        <BrowserApp nativePlatform={null} initialSession={null} />
+      </React.Suspense>
+    </AppRecoveryBoundary></React.StrictMode>
+    : publicWebsite
 );

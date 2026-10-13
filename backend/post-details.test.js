@@ -6,20 +6,22 @@ const {extractFeedMedia} = require('./rss-media');
 const {normalizePostMedia} = require('./post-media');
 test('job responsibilities after lengthy company copy survive screening and summarization',async()=>{
  const {summarizeJob,isCareerPost}=await import('../web/src/utils/jobSummary.mjs');
- const html='<h2>About us</h2><p>'+('Our company serves customers around the world with practical products. '.repeat(60))+'</p><h2>Responsibilities</h2><ul><li>Design resilient services for customer accounts.</li><li>Maintain incident response and test recovery procedures.</li></ul><h2>Requirements</h2><p>Experience with distributed systems is required.</p>';
+ const html='<h2>About us</h2><p>'+('Our company serves customers around the world with practical products. '.repeat(60))+'</p><h2>About the role</h2><p>This role helps customers keep their accounts secure and available.</p><h2>Responsibilities</h2><ul><li>Design resilient services for customer accounts.</li><li>Maintain incident response and test recovery procedures.</li></ul><h2>Requirements</h2><p>Experience with distributed systems is required.</p>';
  for(const source of ['indeed','remoteok','remotive','muse','usajobs']){
   const post={id:source+'-full',source,sourceUrl:'https://example.com/job',title:'Platform engineer',content:jobDescriptionText(html)};
   const result=screenImportedFeedPost(post);assert.equal(result.allowed,true);assert.ok(result.post.content.length>2000);
-  const summary=summarizeJob(result.post);assert.match(summary.summary,/Design resilient services/);assert.match(summary.details.join(' '),/Maintain incident response/);assert.ok(isCareerPost(post));
+  const summary=summarizeJob(result.post);assert.match(summary.summary,/This role helps customers/);assert.match(summary.details.join(' '),/Design resilient services/);assert.match(summary.details.join(' '),/Maintain incident response/);assert.ok(isCareerPost(post));
   assert.doesNotMatch(summary.details.join(' '),/Experience with distributed/);
  }
- assert.equal(importedContentLimit({source:'news'}),2000);
+ assert.equal(importedContentLimit({source:'news'}),100000);
 });
 test('missing descriptions never invent role tasks',async()=>{
  const {summarizeJob}=await import('../web/src/utils/jobSummary.mjs');
  assert.equal(summarizeJob({title:'Doctor'}).summary,'');
  assert.equal(summarizeJob({content:'An employer with offices worldwide.'}).hasTasks,false);
- assert.match(summarizeJob({description:'Short teaser',content:'Responsibilities\nBuild secure systems for customer accounts.'}).summary,/Build secure systems/);
+ const job=summarizeJob({description:'This position protects customer accounts.',content:'Responsibilities\nBuild secure systems for customer accounts.'});
+ assert.equal(job.summary,'This position protects customer accounts.');
+ assert.match(job.details.join(' '),/Build secure systems/);
 });
 test('RSS media handles all enclosures, entities, relative URLs and lazy images',()=>{
  const block='<media:content url="https://cdn.test/logo.png" type="image/png"/><media:content TYPE = "video/mp4" url="https://cdn.test/film.mp4?x=1&amp;y=2"/>';

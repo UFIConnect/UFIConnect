@@ -8,6 +8,9 @@ const localPath = relative => fileURLToPath(new URL(relative, import.meta.url));
 export default defineConfig({
   // On GitHub Pages the app lives at /UFIConnect/; locally it's at /
   base: process.env.GH_PAGES === 'true' ? '/UFIConnect/' : '/',
+  // The shared Expo browser entry also runs on the public web build. Replace
+  // only its public asset base; never expose the server environment.
+  define: { 'process.env.EXPO_BASE_URL': JSON.stringify(process.env.GH_PAGES === 'true' ? '/UFIConnect/' : '/') },
   plugins: [react(), {
     name: 'production-browser-security',
     apply: 'build',
@@ -22,10 +25,11 @@ export default defineConfig({
     },
   }],
   // Shared city geometry resolves this application's own React and Three dependencies.
-  resolve: { dedupe: ['react', 'react-dom', 'lucide-react', 'three'] },
+  resolve: { dedupe: ['react', 'react-dom', 'react-router', 'react-router-dom',
+    'react-helmet-async', '@auth0/auth0-react', 'lucide-react', 'three'] },
   server: {
     port: 5173,
-    fs: { allow: [searchForWorkspaceRoot(localPath('.')), localPath('../shared')] },
+    fs: { allow: [searchForWorkspaceRoot(localPath('.')), localPath('../shared'), localPath('../mobile/current-site')] },
     // Applies before Vite's injected client module can request a reset URL
     // as its referrer. Production hosts must send the same policy.
     headers: { 'Referrer-Policy': 'no-referrer' },

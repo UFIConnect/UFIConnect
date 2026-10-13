@@ -3,6 +3,7 @@
 const { randomUUID, createHash } = require('node:crypto');
 const { listSourcePolicies, getSourcePolicy, validateOriginalUrl, normalizeSource } = require('./source-policy');
 const { analyzeActivity } = require('./activity-learning');
+const { createYouTubePlaybackStatus } = require('./youtube-playback-status');
 const DAY = 86400000;
 const CREATOR_ANALYTICS_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS creator_source_snapshots (
@@ -93,6 +94,7 @@ function createCreatorAnalytics({ db, getUser, fetchImpl = fetch, env = process.
   localPreview = false, getLocalPosts = () => [], getLocalComments = () => [], vaultStatus = async () => null }) {
   const localReports = [];
   const inFlight = new Map();
+  const lookupPlaybackStatus = createYouTubePlaybackStatus({ env, fetchImpl, now });
   const preview = localPreview && env.NODE_ENV !== 'production';
   let lastPrune = 0;
   async function prune() {
@@ -106,6 +108,10 @@ function createCreatorAnalytics({ db, getUser, fetchImpl = fetch, env = process.
     lastPrune = now();
   }
   async function member(id) { const user = await getUser(id); if (!user) throw failure(401, 'Sign in to view analytics.'); return user; }
+  async function playbackStatus(id, videoId) {
+    await member(id);
+    return lookupPlaybackStatus(videoId);
+  }
   async function reserveInteraction({memberId,requestId,fingerprint}) {
     if (!db.isConnected()) throw failure(503,'Source action storage is unavailable.');
     const digest = createHash('sha256').update(fingerprint).digest('hex');
@@ -235,16 +241,17 @@ function createCreatorAnalytics({ db, getUser, fetchImpl = fetch, env = process.
     }
     const {userId,...publicRecord} = record; return publicRecord;
   }
-  return {report,refresh,copyrightReport,auditInteraction,reserveInteraction,completeInteraction,prune};
+  return {report,refresh,copyrightReport,auditInteraction,reserveInteraction,completeInteraction,prune,playbackStatus};
 }
 
-function registerCreatorAnalyticsRoutes(app,{service,authenticate,limiter}) {
+function registerCreatorAnalyticsRoutes(app,{service,authenticate,limiter,playbackLimiter=limiter}) {
   const route = fn => async (req,res) => {
     res.set('Cache-Control','private, no-store');
     try {const result = await fn(req); res.json(result);}
     catch(error) {res.status(error.status || 503).json({message:error.status ? error.message:'Analytics are temporarily unavailable.'});}
   };
   app.get('/creator-analytics/report',authenticate,limiter,route(req=>service.report(req.user.id,req.query.days)));
+  app.get('/creator-analytics/playback-status',authenticate,playbackLimiter,route(req=>service.playbackStatus(req.user.id,req.query.videoId)));
   app.post('/creator-analytics/refresh',authenticate,limiter,route(req=>service.refresh(req.user.id,req.body?.days)));
   app.post('/creator-analytics/copyright-reports',authenticate,limiter,route(req=>service.copyrightReport(req.user.id,req.body)));
 }

@@ -1,3 +1,5 @@
+const { officialVideoReference, suppliedVideoFileUrl, suppliedHlsUrl } = require('./video-media-urls.mjs');
+
 function normalizePostMedia(post) {
   const url = value => {
     if (typeof value !== 'string') return null;
@@ -9,9 +11,12 @@ function normalizePostMedia(post) {
   const mediaUrl = url(post.mediaUrl || post.imageUrl || post.thumbnailUrl);
   const mediaPoster = url(post.mediaPoster);
   let mediaType = post.mediaType;
+  // Recover actual video references even when a legacy cache row called its
+  // thumbnail an image. Provider labels and bare embed IDs are not evidence.
+  if ([mediaUrl, post.sourceUrl].some(value => officialVideoReference(value))
+      || suppliedVideoFileUrl(mediaUrl) || suppliedHlsUrl(mediaUrl)) mediaType = 'video';
   if (mediaUrl && !mediaType) {
-    const parsed = new URL(mediaUrl);
-    if (/\.(?:mp4|webm|m4v|mov|m3u8)(?:[?#]|$)/i.test(mediaUrl) || ['youtube.com','www.youtube.com','youtu.be','vimeo.com','player.vimeo.com'].includes(parsed.hostname)) mediaType='video';
+    if (/\.(?:mp4|webm|m4v|mov|ogv|m3u8)(?:[?#]|$)/i.test(mediaUrl)) mediaType='video';
     else if (/\.(?:png|jpe?g|gif|webp|avif)(?:[?#]|$)/i.test(mediaUrl) || post.imageUrl || post.thumbnailUrl) mediaType='image';
   }
   return { ...post, mediaUrl, mediaPoster, mediaType };

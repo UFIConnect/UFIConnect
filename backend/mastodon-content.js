@@ -1,5 +1,5 @@
 const { safePostLink } = require('./post-links.mjs');
-const { postTextPreview } = require('./post-text.mjs');
+const { SOURCE_CONTENT_MAX_CHARS, boundedSourceText } = require('./source-post-content');
 
 function decodeEntities(value) {
   const named = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', ndash: '–', mdash: '—', hellip: '…', lsquo: '‘', rsquo: '’', ldquo: '“', rdquo: '”', copy: '©', reg: '®' };
@@ -11,14 +11,14 @@ function decodeEntities(value) {
 }
 
 function plainText(html) {
-  return decodeEntities(html.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(?:p|div|li|blockquote|h[1-6])\s*>/gi, '\n\n').replace(/<[^>]*>/g, ''));
+  return decodeEntities(html.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(?:p|div|li|blockquote|h[1-6])\s*>/gi, '\n\n').replace(/<\/?[a-zA-Z][^<>]*>/g, ''));
 }
 
 // Mastodon renders links using nested spans, including visually shortened
 // URLs. Keep the actual destination before removing markup. The result is
 // plain text throughout the storage pipeline and is escaped by React.
-function mastodonContentText(value, maxChars = 1500) {
-  const html = String(value || '').slice(0, 100_000)
+function mastodonContentText(value, maxChars = SOURCE_CONTENT_MAX_CHARS) {
+  const html = String(value || '').slice(0, 1_000_000)
     .replace(/<!--[^]*?-->/g, '')
     .replace(/<(script|style|iframe|template)\b[^>]*>[^]*?<\/\1\s*>/gi, '');
   const withLinks = html.replace(/<a\b((?:[^>"']|"[^"]*"|'[^']*')*)>([^]*?)<\/a\s*>/gi, (_, attributes, inner) => {
@@ -35,7 +35,7 @@ function mastodonContentText(value, maxChars = 1500) {
     return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   });
   const text = plainText(withLinks).replace(/[\t\r ]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
-  return text.length > maxChars ? `${postTextPreview(text, Math.max(0, maxChars - 1))}…` : text;
+  return boundedSourceText(text, maxChars);
 }
 
 module.exports = { mastodonContentText };

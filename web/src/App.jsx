@@ -66,6 +66,7 @@ const ConnectedAccounts = lazy(() => import('./pages/ConnectedAccounts'));
 const Analytics      = lazy(() => import('./pages/Analytics'));
 const Post           = lazy(() => import('./pages/Post'));
 const PostDetail     = lazy(() => import('./pages/PostDetail'));
+const SnapPermalink  = lazy(() => import('./pages/SnapPermalink'));
 const Search         = lazy(() => import('./pages/SearchExperience'));
 const People         = lazy(() => import('./pages/People'));
 const Recruiting     = lazy(() => import('./pages/Recruiting'));
@@ -157,12 +158,12 @@ function PageviewTracker() {
   return null;
 }
 
-function HomeRoute() {
+function HomeRoute({ guestHome }) {
   const { token, profile, loading, sessionError } = useAuth();
   if (loading) return <SessionLoading />;
   if (sessionError) return <SessionRecovery />;
   if (!token) {
-    return <Landing />;
+    return guestHome || <Landing />;
   }
   if (profile && !profile.onboardingComplete) return <Navigate to="/onboarding" replace />;
   return <RequireFeedLocation><Feed key={profile?.id} /></RequireFeedLocation>;
@@ -201,17 +202,17 @@ function RouteLoading() {
   </main>;
 }
 
-export default function App() {
+export default function App({ guestHome } = {}) {
   const { token, loading, sessionError } = useAuth();
   const { pathname } = useLocation();
   const ads = getGoogleAds();
   const guestHomepage = pathname === '/' && !token && !loading && !sessionError && !MAINTENANCE;
   useLayoutEffect(() => { ads.setHomepageEligible(guestHomepage); }, [ads, guestHomepage]);
   if (ads.mustLeave(guestHomepage)) return <SessionLoading />;
-  return <AppContent />;
+  return <AppContent guestHome={guestHome} />;
 }
 
-function AppContent() {
+function AppContent({ guestHome }) {
   useLayoutEffect(() => {
     // Reveal React's committed route, not a pre-rendered guest page while
     // the member's saved session is still being restored.
@@ -247,7 +248,7 @@ function AppContent() {
       }/>
 
       {/* Home: Landing for public, Feed for authenticated */}
-      <Route path="/" element={<HomeRoute />} />
+      <Route path="/" element={<HomeRoute guestHome={guestHome} />} />
       <Route path="/global" element={<GlobalFeedRoute />} />
       <Route path="/global-scroll" element={<Navigate to="/global" replace />} />
       <Route path="/videos" element={
@@ -307,6 +308,7 @@ function AppContent() {
           whoever clicks it, logged in or not. PostDetail itself branches on
           whether a session exists for its own chrome/actions. */}
       <Route path="/p/:id" element={<PostDetail />}/>
+      <Route path="/snaps/:id" element={<SnapPermalink />}/>
       <Route path="/search" element={<SearchRoute />}/>
       <Route path="/people" element={<RequireAuth><RequireOnboarding><PeopleRoute /></RequireOnboarding></RequireAuth>} />
       <Route path="/recruiting" element={<RequireAuth><RequireOnboarding><Recruiting /></RequireOnboarding></RequireAuth>} />

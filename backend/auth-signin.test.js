@@ -156,6 +156,56 @@ test('web OAuth binds browser cookie, keeps secrets encrypted and consumes callb
   assert.equal(f.counts().exchanges,1);
 });
 
+test('web sign-in captures trusted app Origin in encrypted durable state and preserves main/native returns', async t => {
+  const f=await fixture(t), appOrigin='https://app.uficonnect.org';
+  const options={...f.options,env:{...f.env,ALLOWED_ORIGINS:`https://uficonnect.org,${appOrigin},https://untrusted.example`}};
+  for(const origin of [appOrigin,'https://uficonnect.org','https://untrusted.example',undefined]) {
+    const service=createSignIn(options), started=response();
+    const input={mode:'signup',returnTo:'/jobs?view=saved',returnOrigin:'https://untrusted.example'};
+    const start=await service.start('google',input,started,undefined,{headers:{origin}});
+    const url=new URL(start.url); f.setNonce(url.searchParams.get('nonce'));
+    assert.equal(url.searchParams.get('redirect_uri'),'https://api.uficonnect.org/auth/social/youtube/callback');
+    const row=(await f.pg.query('SELECT * FROM auth_signin_flows')).rows[0];
+    assert.ok(!row.payload.includes(appOrigin),'Return origin remains encrypted');
+    const completed=response();
+    await createSignIn(options).complete('google',{method:'GET',query:{state:url.searchParams.get('state'),code:'code',returnOrigin:'https://untrusted.example'},
+      headers:{origin:'https://untrusted.example',cookie:started.headers['Set-Cookie'][0].split(';')[0]}},completed);
+    const destination=new URL(completed.location);
+    assert.equal(destination.origin,origin===appOrigin?appOrigin:'https://uficonnect.org');
+    assert.equal(destination.pathname,'/login'); assert.equal(destination.searchParams.get('returnTo'),'/jobs?view=saved');
+    assert.equal(completed.headers['Set-Cookie'].length,2);
+  }
+  const started=response(), native=await createSignIn(options).start('google',{client:'native',returnOrigin:appOrigin},started,undefined,{headers:{origin:appOrigin}});
+  const nativeUrl=new URL(native.url), completed=response(); f.setNonce(nativeUrl.searchParams.get('nonce'));
+  await createSignIn(options).complete('google',{method:'GET',query:{state:nativeUrl.searchParams.get('state'),code:'code'},headers:{origin:appOrigin}},completed);
+  assert.match(completed.location,/^uficonnect:\/\/auth\/callback#code=/); assert.equal(started.headers['Set-Cookie'],undefined);
+});
+
+test('sign-in app errors return through bound state and revoked app origins fall back to main', async t => {
+  const f=await fixture(t), appOrigin='https://app.uficonnect.org';
+  const options={...f.options,env:{...f.env,ALLOWED_ORIGINS:appOrigin}};
+  for(const revoked of [false,true]) {
+    const started=response(), start=await createSignIn(options).start('google',{},started,undefined,{headers:{origin:appOrigin}});
+    const state=new URL(start.url).searchParams.get('state'), completed=response();
+    const callbackOptions=revoked?{...options,env:{...options.env,ALLOWED_ORIGINS:'https://uficonnect.org'}}:options;
+    await createSignIn(callbackOptions).complete('google',{method:'GET',query:{state,error:'access_denied',returnOrigin:'https://untrusted.example'},
+      headers:{cookie:started.headers['Set-Cookie'][0].split(';')[0]}},completed);
+    assert.equal(completed.location,`${revoked?'https://uficonnect.org':appOrigin}/login?auth_error=cancelled`);
+  }
+});
+
+test('authenticated web login-method links return to the trusted app settings and preserve the password account', async t => {
+  const f=await fixture(t), user=await linkUser(f), appOrigin='https://app.uficonnect.org';
+  const service=createSignIn({...f.options,env:{...f.env,ALLOWED_ORIGINS:appOrigin}}), started=response();
+  const start=await service.start('google',{client:'web'},started,user,{headers:{origin:appOrigin}});
+  const url=new URL(start.url), completed=response(); f.setNonce(url.searchParams.get('nonce'));
+  await service.complete('google',{method:'GET',query:{state:url.searchParams.get('state'),code:'code'},
+    headers:{cookie:started.headers['Set-Cookie'][0].split(';')[0]}},completed);
+  assert.equal(completed.location,appOrigin+'/settings?tab=security&linked=google');
+  const stored=(await f.pg.query('SELECT * FROM users WHERE id=$1',[user.id])).rows[0];
+  assert.equal(stored.password_hash,'preserved-password-hash'); assert.equal(stored.auth_provider,'local');
+});
+
 test('OAuth callback diagnostics contain only bounded classifications and never provider or identity payloads', async t => {
   const f=await fixture(t);
   let latestNonce;
@@ -518,6 +568,8 @@ test('real phone signup routes issue no session before completion, restore the p
 });
 test('real application routes restore Google sessions while Apple and phone remain unavailable', async t => {
   const f=await fixture(t);
+  f.env.ALLOWED_ORIGINS='https://uficonnect.org,https://app.uficonnect.org';
+  f.env.FRONTEND_URL='https://uficonnect.org';
   for(const sql of BUSINESS_TEAM_SCHEMA) await f.pg.exec(sql);
   const signin=require('./auth-signin');
   const app=await createAppHarness({env:f.env,connected:true,query:(sql,params)=>f.pg.query(sql,params.map(value=>Object.prototype.toString.call(value)==='[object Date]'?new Date(value.getTime()):value)),withClient:fn=>f.db.withClient(fn),
@@ -535,6 +587,7 @@ test('real application routes restore Google sessions while Apple and phone rema
   // Prevent fetch from following the external frontend redirect.
   const callback=await fetch(app.base+'/auth/social/youtube/callback?'+new URLSearchParams({state:url.searchParams.get('state'),code:'code'}),{headers:{cookie:cookies},redirect:'manual'});
   assert.equal(callback.status,302);
+  assert.equal(callback.headers.get('location'),'https://uficonnect.org/login?provider=google');
   const sessionCookie=callback.headers.getSetCookie().find(v=>v.startsWith('ufi_session=')).split(';')[0];
   const session=await app.request('/auth/session',{headers:{cookie:sessionCookie}});
   assert.equal(session.status,200);
@@ -561,4 +614,12 @@ test('real application routes restore Google sessions while Apple and phone rema
   assert.equal(localLogin.status,401);
   const reset=await app.request('/auth/reset-password',{method:'POST',body:{token:app.createPasswordResetToken(app.users.find(v=>v.id===session.data.profile.id)),password:'Cloud lantern maps winter'} });
   assert.equal(reset.status,400);
+  const appStart=await app.request('/auth/providers/google/start',{method:'POST',headers:{origin:'https://app.uficonnect.org'},body:{client:'web',returnTo:'/feed'}});
+  assert.equal(appStart.status,200); const appUrl=new URL(appStart.data.url); f.setNonce(appUrl.searchParams.get('nonce'));
+  const appCallback=await fetch(app.base+'/auth/social/youtube/callback?'+new URLSearchParams({state:appUrl.searchParams.get('state'),code:'app-code',returnOrigin:'https://untrusted.example'}),
+    {redirect:'manual',headers:{cookie:appStart.headers.get('set-cookie').split(';')[0],origin:'https://untrusted.example'}});
+  assert.equal(appCallback.headers.get('location'),'https://app.uficonnect.org/login?provider=google&returnTo=%2Ffeed');
+  const appCookie=appCallback.headers.getSetCookie().find(value=>value.startsWith('ufi_session=')).split(';')[0];
+  const appSession=await app.request('/auth/session',{headers:{cookie:appCookie}});
+  assert.equal(appSession.status,200); assert.equal(appSession.data.profile.id,session.data.profile.id);
 });

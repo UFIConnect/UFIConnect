@@ -3,15 +3,16 @@ import client from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { feedLocationKey } from '../utils/feedLocation.mjs';
-import { directMediaPlaybackAllowed } from '../utils/sourceMediaPolicy.mjs';
 import { sourcePostMenuItems } from '../utils/sourcePostMenu.mjs';
-import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, isYouTubeShortsUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, rememberSoundPreference, useGlobalMuted, fetchVimeoMetadata, youTubePosterUrl, createYouTubePlayerFrame, youTubeEmbedUrl, vimeoEmbedUrl, createVimeoController } from './videoMedia';
+import { HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, rememberSoundPreference, useGlobalMuted, fetchVimeoMetadata, createYouTubePlayerFrame, youTubeEmbedUrl, vimeoEmbedUrl, createVimeoController } from './videoMedia';
+import { resolveVideoSource } from '../utils/videoSource.mjs';
 import MediaPlaybackControls from './MediaPlaybackControls';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import FollowingConnectionNotice from './FollowingConnectionNotice';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import useNativePlayerSettings from '../hooks/useNativePlayerSettings';
+import useMediaWatchSession from '../hooks/useMediaWatchSession';
 import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { reportConsumed, reportEngaged, reportEngagementSignal } from '../api/engagement';
 import { reportNegativeSignal } from '../api/errorReporting';
@@ -27,8 +28,8 @@ import YouTubeSettingsDialog from './YouTubeSettingsDialog';
 import { isNativeRuntime } from '../nativeRuntime.mjs';
 import { PostHeader, PostOptionsMenu, OpenOnSource, CommentIcon, HeartIcon, postSource } from './PostCardChrome';
 import { isMemberPost, safePostLink } from '../../../backend/post-links.mjs';
-import { Search, SlidersHorizontal, RotateCw } from 'lucide-react';
-import { videoDurationSeconds, isShortFeedVideo, videoSourceKey, safeMediaUrl, fitVideoFrame } from '../utils/videoFeedPolicy.mjs';
+import { Search, SlidersHorizontal, RotateCw, Info } from 'lucide-react';
+import { videoDurationSeconds, isShortFeedVideo, videoSourceKey, fitVideoFrame } from '../utils/videoFeedPolicy.mjs';
 import './VideoFeedView.css';
 import './navigation.css';
 
@@ -123,70 +124,6 @@ function SourceMark({ source, label, size = 14, active = false }) {
   );
 }
 
-// Figures out how a given post's video can actually be played in-app, per
-// platform — the same Bluesky-playlist/direct-file detection ImageLightbox
-// uses for a single item, but centralized here since this view needs it for
-// every slide, not just one at a time.
-function resolveVideoSource(post) {
-  if (!post || typeof post !== 'object') return null;
-  // Dedicated YouTube posts carry a playable sourceUrl; any
-  // other source's article can embed a real YouTube video too (see
-  // parseRSSItems' video detection backend-side), in which case either URL
-  // can carry the player. Do not prefer one field blindly: a source article
-  // often keeps its original article URL in sourceUrl and a YouTube URL in
-  // mediaUrl, while persisted YouTube rows do the inverse.
-  const youtubeUrls = [post.mediaUrl, post.sourceUrl].filter(url => {
-    const parsed = safeMediaUrl(url);
-    return parsed && /^(?:www\.|m\.)?(?:youtube(?:-nocookie)?\.com|youtu\.be)$/.test(parsed.hostname);
-  });
-  const youtubeUrl = youtubeUrls.find(url => extractYouTubeId(url));
-  // Persisted provider labels and embedId can be stale. Only an actual
-  // official video URL identifies the player and its YouTube settings.
-  const ytId = extractYouTubeId(youtubeUrl);
-  if (ytId) {
-    // Real Shorts are persisted with a /shorts/ sourceUrl specifically so
-    // this survives the DB round-trip (see isYouTubeShortsUrl's own
-    // comment) — a vertical (9:16) video forced into VideoSlide's default
-    // 16:9 container renders squeezed, with the video's own thumbnail/
-    // title cropped, confirmed live as a Short looking visibly cut off.
-    // A watched Short is sometimes stored as a regular /watch URL by a
-    // channel RSS feed. Leave that shape unknown here so VideoFeedView can
-    // confirm it from YouTube's portrait frame image before sizing the
-    // shared player; known /shorts/ URLs remain vertical immediately.
-    const vertical = youtubeUrls.some(isYouTubeShortsUrl) ? true : null;
-    return { kind: 'youtube', id: ytId, poster: post.mediaPoster || youTubePosterUrl(ytId), vertical };
-  }
-  // Same idea for an article embedding a Vimeo player instead (see
-  // parseRSSItems' vimeo detection backend-side) — mediaUrl is the
-  // vimeo.com/{id} watch URL. No public thumbnail CDN pattern to borrow
-  // like YouTube's i.ytimg.com, so poster stays null.
-  const vimeoUrl = [post.mediaUrl, post.sourceUrl].find(url => {
-    const parsed = safeMediaUrl(url);
-    return parsed && /^(?:www\.|player\.)?vimeo\.com$/.test(parsed.hostname);
-  });
-  const vimeoId = extractVimeoId(vimeoUrl);
-  if (vimeoId) return { kind: 'vimeo', id: vimeoId, poster: null };
-  if (!directMediaPlaybackAllowed(post)) return null;
-  if (post.source === 'bluesky' && safeMediaUrl(post.mediaUrl)) {
-    const playlist = deriveBlueskyPlaylistUrl(post.mediaUrl);
-    return playlist ? { kind: 'hls', src: playlist, poster: post.mediaPoster || null } : null;
-  }
-  const hlsUrl = [post.mediaUrl, post.sourceUrl].find(url => safeMediaUrl(url) && /\.m3u8(\?|$)/i.test(String(url || '')));
-  if (hlsUrl) return { kind: 'hls', src: hlsUrl, poster: post.mediaPoster || null };
-  if (safeMediaUrl(post.mediaUrl) && isDirectVideoUrl(post.mediaUrl, post)) {
-    // mediaPoster is a real static preview frame server-side extracts
-    // alongside the video itself where the source actually has one (Reddit's
-    // own preview image, Mastodon's preview_url, Threads' thumbnail_url, an
-    // RSS article's own image) — see mediaPoster in backend/index.js. Same
-    // style treatment Bluesky gets below (kind:'hls', poster:post.mediaUrl),
-    // just sourced from a dedicated field instead of a URL-pattern rewrite,
-    // since the video and its poster are two genuinely distinct URLs here
-    // rather than one derived from the other.
-    return { kind: 'file', src: post.mediaUrl, poster: post.mediaPoster || null };
-  }
-  return null;
-}
-
 // Rolling dedup window for pagination — see the identical constant/reasoning
 // in Feed.jsx. Bounded (not all-time) so pagination doesn't dead-end once a
 // user has genuinely scrolled past everything the server has, but large
@@ -227,7 +164,8 @@ function readYouTubeSettings(player) {
 // its own top comment) instead of each slide owning/destroying its own.
 // Only meaningful when src.kind === 'youtube'; file/hls/vimeo keep their
 // existing fully-local state below, untouched.
-function VideoSlide({ post, active, muted, isScrolling, onOpenComments, sharedYt, onDurationResolved, onPostUpdated, onRemoved, fullScreen, onFullScreen }) {
+function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface, onOpenComments, sharedYt, onDurationResolved, onPostUpdated, onRemoved, fullScreen, onFullScreen }) {
+  const { profile } = useAuth();
   const slideRef = useRef(null);
   const src = resolveVideoSource(post);
   const fileVideoRef = useRef(null);
@@ -239,11 +177,31 @@ function VideoSlide({ post, active, muted, isScrolling, onOpenComments, sharedYt
   const vimeoSettingsDiscovery = useRef(null);
   const vimeoPost = useRef({ post, onDurationResolved });
   vimeoPost.current = { post, onDurationResolved };
-  // Caption starts clamped (see the overlay below) — the video is the point
-  // of this view, a wall of text over it isn't. "more" only shows up when
-  // there's actually more than the clamp already reveals: a long title, or
-  // real content beyond just the title repeated.
+  // Keep metadata in an explicit disclosure below the picture. Source links
+  // and real interaction controls stay available without a second title band.
   const [captionExpanded, setCaptionExpanded] = useState(false);
+  const showCaption = captionExpanded || post.source === 'twitter';
+  const captionScrollAnchor = useRef(null);
+  function toggleCaption() {
+    const container = slideRef.current?.closest('[data-video-feed-scroll]');
+    captionScrollAnchor.current = container ? { container, top: container.scrollTop } : null;
+    setCaptionExpanded(value => !value);
+  }
+  useLayoutEffect(() => {
+    const anchor = captionScrollAnchor.current;
+    captionScrollAnchor.current = null;
+    if (!anchor?.container.isConnected) return undefined;
+    // A resized detail panel must not reuse the browser's previous snap target.
+    // Keep this slide pinned through layout, then restore ordinary feed swipes.
+    const previousSnap = anchor.container.style.scrollSnapType;
+    anchor.container.style.scrollSnapType = 'none';
+    anchor.container.scrollTop = anchor.top;
+    const frame = requestAnimationFrame(() => {
+      anchor.container.scrollTop = anchor.top;
+      anchor.container.style.scrollSnapType = previousSnap;
+    });
+    return () => { cancelAnimationFrame(frame); anchor.container.style.scrollSnapType = previousSnap; };
+  }, [captionExpanded]);
   const captionId = useId();
   const [settingsOpen, setSettingsOpen] = useState(false);
   useEffect(() => { if (!active) setSettingsOpen(false); }, [active]);
@@ -272,7 +230,6 @@ function VideoSlide({ post, active, muted, isScrolling, onOpenComments, sharedYt
   const captionBody = post.content?.trim() && post.content.trim() !== post.title?.trim()
     ? post.content.trim()
     : '';
-  const hasExtraCaption = (post.title?.length || 0) > 80 || Boolean(captionBody);
 
   // file/hls/vimeo's own fully-local playback state — youtube reads
   // sharedYt instead (see effectiveDuration/
@@ -288,20 +245,12 @@ function VideoSlide({ post, active, muted, isScrolling, onOpenComments, sharedYt
   const hiddenResumeRef = useRef(false);
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
-  // Vimeo-only: resolveVideoSource always hands back poster:null for it
-  // (mediaUrl there is the watch URL, needed as-is, so it can't double as
-  // a thumbnail source) — fetched separately via Vimeo's own oEmbed
-  // endpoint (see fetchVimeoThumbnail) instead. Not gated on `active`:
-  // useful for the inactive-state preview image too (see the render
-  // below), and the module-level cache in fetchVimeoThumbnail means an
-  // already-fetched video's poster resolves instantly here regardless.
-  const [vimeoPoster, setVimeoPoster] = useState(null);
+  // Keep duration metadata for UFI controls without a duplicate poster layer.
   useEffect(() => {
     if (src?.kind !== 'vimeo') return;
     let cancelled = false;
     fetchVimeoMetadata(src.id).then(metadata => {
       if (cancelled) return;
-      setVimeoPoster(metadata?.thumbnailUrl || null);
       if (metadata?.durationSeconds) {
         setDuration(metadata.durationSeconds);
         onDurationResolved(post, metadata.durationSeconds);
@@ -353,6 +302,20 @@ function VideoSlide({ post, active, muted, isScrolling, onOpenComments, sharedYt
   const isYoutube = src?.kind === 'youtube';
   const effectiveDuration = isYoutube ? (sharedYt?.duration || 0) : duration;
   const effectiveCurrentTime = isYoutube ? (sharedYt?.currentTime || 0) : currentTime;
+  const playbackReady = isYoutube ? sharedYt?.ready && !sharedYt?.failed
+    : src?.kind === 'vimeo' ? vimeoReady : isNative && getNativeEl()?.readyState >= 2;
+  const { watchedMs } = useMediaWatchSession({
+    accountId: profile?.id, mediaId: `${src?.kind || ''}:${src?.id || src?.src || ''}`, providerMediaId: src?.id,
+    mediaTitle: post.title || post.content, postId: post.id, hostSource: post.source,
+    playbackSource: isYoutube ? 'youtube' : src?.kind === 'vimeo' ? 'vimeo' : post.source || 'uficonnect',
+    surface, enabled: Boolean(active && !isScrolling && trackingVisible && !settingsOpen && playbackReady),
+    currentTime: effectiveCurrentTime, duration: effectiveDuration,
+    playing: isYoutube ? sharedYt?.paused === false : !paused,
+    seeking: isNative ? Boolean(getNativeEl()?.seeking) : false,
+    rate: isYoutube ? sharedYt?.settings?.rate : src?.kind === 'vimeo' ? vimeoSettings.rate : nativeSettings.settings.rate,
+    trackingAllowed: !isYoutube || post.madeForKids !== true,
+    privacyClassification: !isYoutube ? 'not_applicable' : post.madeForKids === false ? 'not_made_for_kids' : post.madeForKids === true ? 'made_for_kids' : 'unknown',
+  });
   const acceptNativeMetadata = (event) => {
     const seconds = event.currentTarget.duration;
     setDuration(Number.isFinite(seconds) ? seconds : 0);
@@ -362,41 +325,15 @@ function VideoSlide({ post, active, muted, isScrolling, onOpenComments, sharedYt
     setPlayerMuted(event.currentTarget.muted || event.currentTarget.volume === 0);
   };
 
-  // Genuine-watch engagement signal (see api/engagement.js) — currentTime
-  // already updates continuously during real playback (onTimeUpdate/the
-  // YouTube poll below), so this just watches for it crossing the
-  // threshold rather than needing its own timer. Only reachable while
-  // active (a background/inactive slide's currentTime is reset, not
-  // advancing) so a fast scroll-by can't cross the seconds threshold by
-  // accident.
+  // Accepted playback progress drives engagement; seeking ahead or leaving a
+  // paused slide open must not count as watching it.
   useEffect(() => {
     if (!active || !post?.id) return;
-    if (effectiveCurrentTime >= VIDEO_ENGAGED_SECONDS || (effectiveDuration > 0 && effectiveCurrentTime / effectiveDuration >= VIDEO_ENGAGED_FRACTION)) {
+    const watchedSeconds = watchedMs / 1000;
+    if (watchedSeconds >= VIDEO_ENGAGED_SECONDS || (effectiveDuration > 0 && watchedSeconds / effectiveDuration >= VIDEO_ENGAGED_FRACTION)) {
       reportEngaged(post.id, 'videos');
     }
-  }, [active, post?.id, effectiveCurrentTime, effectiveDuration]);
-
-  // Feeds the feed's own ranking (see recordEngagementSignal server-side),
-  // separate from the yes/no reportEngaged above — wall-clock time this
-  // slide was the one on screen, not just whether a threshold was crossed.
-  // Wall-clock rather than summed currentTime deltas: a paused or scrubbed
-  // video the user is still looking at is still real attention, and this
-  // doesn't need to be more precise than "roughly how long were they here."
-  useEffect(() => {
-    if (!active) return;
-    let startedAt = document.hidden ? null : Date.now();
-    let watchMs = 0;
-    const updateVisibility = () => {
-      if (startedAt !== null) watchMs += Date.now() - startedAt;
-      startedAt = document.hidden ? null : Date.now();
-    };
-    document.addEventListener('visibilitychange', updateVisibility);
-    return () => {
-      document.removeEventListener('visibilitychange', updateVisibility);
-      if (startedAt !== null) watchMs += Date.now() - startedAt;
-      if (watchMs > 0) reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, watchMs });
-    };
-  }, [active, post.id, post.source, post.topic]);
+  }, [active, post?.id, watchedMs, effectiveDuration]);
 
   // file/hls: play on becoming active, pause + rewind on becoming inactive
   // (leaving a video mid-scrub-progress for the next viewer would be
@@ -719,9 +656,17 @@ function VideoSlide({ post, active, muted, isScrolling, onOpenComments, sharedYt
   }
 
   const validSourceActions = post.source !== 'youtube' || isYoutube;
-  const nativeSettingsTitle = isMemberPost(post) || post.source === 'youtube' ? 'Player settings' : `${postSource(post).label} settings`;
+  const nativeSettingsTitle = isMemberPost(post) ? 'Player settings' : `${postSource(post).label} settings`;
   const sourceItems = sourcePostMenuItems(post).filter(item => validSourceActions || item.key === 'original')
-    .map(item => validSourceActions ? item : { ...item, label: 'Open original post' });
+    .map(item => ({ ...item, ...(item.key === 'original' ? { key: 'source-page' } : {}),
+      ...(!validSourceActions ? { label: 'Open original post' } : {}) }));
+  const playbackSourcePost = isYoutube && post.source !== 'youtube'
+    ? { ...post, source: 'youtube', sourceUrl: `https://www.youtube.com/watch?v=${src.id}` }
+    : src?.kind === 'vimeo' && post.source !== 'vimeo'
+      ? { ...post, source: 'vimeo', sourceUrl: `https://vimeo.com/${src.id}` }
+      : post;
+  if (playbackSourcePost !== post) sourceItems.unshift({ key: 'player-source',
+    label: `Watch on ${isYoutube ? 'YouTube' : 'Vimeo'}`, href: playbackSourcePost.sourceUrl });
   const options = [
     (fullScreen || (document.fullscreenEnabled && document.documentElement.requestFullscreen)
       || (isNative && typeof HTMLVideoElement.prototype.webkitEnterFullscreen === 'function'))
@@ -741,16 +686,16 @@ function VideoSlide({ post, active, muted, isScrolling, onOpenComments, sharedYt
             src={vimeoEmbedUrl(src.id, { muted: vimeoStartMuted.current })}
             referrerPolicy="strict-origin-when-cross-origin"
             allow="autoplay; fullscreen; picture-in-picture" allowFullScreen title={post.title || 'Vimeo video'} />
-          : vimeoPoster ? <img src={vimeoPoster} alt="" draggable={false} /> : null
+          : null
         ) : src.kind === 'hls' ? (
-          active ? <HlsVideoPlayer src={src.src} poster={src.poster} autoPlay muted={muted} loop controls={false}
+          active ? <HlsVideoPlayer src={src.src} autoPlay muted={muted} loop controls={false}
             controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture disableRemotePlayback
             videoRef={hlsVideoRef} onTimeUpdate={event => setCurrentTime(event.target.currentTime)}
             onLoadedMetadata={acceptNativeMetadata} onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
             onVolumeChange={event => setPlayerMuted(event.currentTarget.muted || event.currentTarget.volume === 0)}
             onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id, context: { surface: 'videos' } })}
             style={{ height: '100%', width: '100%', objectFit: 'contain' }} /> : null
-        ) : <video ref={fileVideoRef} src={src.src} poster={src.poster || undefined}
+        ) : <video ref={fileVideoRef} src={src.src}
             preload={active ? 'auto' : 'metadata'} muted={muted} loop playsInline controls={false} draggable={false}
             controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture disableRemotePlayback
             onTimeUpdate={event => setCurrentTime(event.target.currentTime)}
@@ -767,35 +712,29 @@ function VideoSlide({ post, active, muted, isScrolling, onOpenComments, sharedYt
           disabled={!active || !src || (isYoutube ? !sharedYt?.ready || sharedYt?.failed : src.kind === 'vimeo' && !vimeoReady)} />
       </div>
       <div className="video-feed-details video-caption-scroll" data-video-details>
-        <PostHeader post={post} member={isMemberPost(post)} />
+        <div className="video-feed-source-attribution"><PostHeader post={post} member={isMemberPost(post)} /></div>
         {isYoutube && sharedYt?.failed && <p className="video-feed-playback-note" role="status">Playback controls are unavailable. Open this video on YouTube using its source link.</p>}
-        {((isYoutube && post.source !== 'youtube') || (src?.kind === 'vimeo' && post.source !== 'vimeo')) && <div className="video-feed-provider-credit">
-          <a href={isYoutube ? `https://www.youtube.com/watch?v=${src.id}` : `https://vimeo.com/${src.id}`} target="_blank" rel="noopener noreferrer">Video on {isYoutube ? 'YouTube' : 'Vimeo'}</a>
-        </div>}
         {src?.kind === 'vimeo' && vimeoNotice && <p className="video-feed-playback-note" role="status">{vimeoNotice}</p>}
-        <div className="video-feed-caption" data-video-caption data-expanded={captionExpanded}>
-          <div className="video-feed-caption-summary">
-            {post.title && <h2>{post.title}</h2>}
-            {(post.title || hasExtraCaption || post.author?.name) && <button type="button" className="video-feed-caption-toggle"
-              aria-expanded={captionExpanded} aria-controls={captionId} onClick={() => setCaptionExpanded(value => !value)}>
-              {captionExpanded ? 'Show less' : 'Read more'}
-            </button>}
-          </div>
-          {captionExpanded && <div id={captionId} className="video-feed-caption-expanded">
-            {post.matchedByLocation && <span>{post.locationMatchLabel || 'Near you'}</span>}
-            {post.title && <p className="video-feed-expanded-title">{post.title}</p>}
-            {captionBody && <p><PostInlineText text={captionBody} /></p>}
-            <PostLinkPreviews post={post} variant="dark" />
-          </div>}
-        </div>
         <div className="post-chrome-actions video-feed-post-actions" data-video-actions role="group" aria-label="Post actions">
-          {validSourceActions ? <PostLikes post={post} onPostUpdated={onPostUpdated} /> : <button type="button" className="post-chrome-action" disabled aria-label="Likes unavailable" title="A playable source video is required"><HeartIcon /></button>}
+          {validSourceActions ? <PostLikes post={post} compact onPostUpdated={onPostUpdated} /> : <button type="button" className="post-chrome-action" disabled aria-label="Likes unavailable" title="A playable source video is required"><HeartIcon /></button>}
           <button type="button" className="post-chrome-action" aria-label={`Comments${Number.isFinite(post.commentsCount) ? ` ${post.commentsCount.toLocaleString()}` : ''}`} title="Comments" onClick={() => onOpenComments?.(post)}>
             <CommentIcon />{Number.isFinite(post.commentsCount) && <span>{post.commentsCount.toLocaleString()}</span>}
           </button>
           <SavePostButton post={post} className="post-chrome-action" showLabel={false} />
+          {post.source !== 'twitter' && <button type="button" className="post-chrome-action video-feed-caption-toggle" aria-label={captionExpanded ? 'Hide video details' : 'Video details'} title="Video details"
+            aria-expanded={captionExpanded} aria-controls={captionId} onClick={toggleCaption}>
+            <Info size={18} aria-hidden="true" />
+          </button>}
           <PostOptionsMenu post={post} items={options} sourceItems={sourceItems} onOpenComments={() => onOpenComments?.(post)} onPostUpdated={onPostUpdated} onRemoved={onRemoved} />
-          <OpenOnSource post={post} label={validSourceActions ? undefined : 'Open original post'} />
+          <OpenOnSource post={playbackSourcePost} label={validSourceActions ? undefined : 'Open original post'} />
+        </div>
+        <div id={captionId} className="video-feed-caption video-caption-scroll" data-video-caption data-expanded={showCaption} hidden={!showCaption}>
+          <div className="video-feed-caption-expanded">
+            {post.matchedByLocation && <span>{post.locationMatchLabel || 'Near you'}</span>}
+            {post.title && <p className="video-feed-expanded-title">{post.title}</p>}
+            {captionBody && <p><PostInlineText text={captionBody} /></p>}
+            <PostLinkPreviews post={post} variant="dark" />
+          </div>
         </div>
       </div>
       {settingsOpen && isYoutube && <YouTubeSettingsDialog settings={sharedYt?.settings}
@@ -2735,6 +2674,7 @@ export default function VideoFeedView({ onExit, music = false }) {
             {videoPosts.map((post, idx) => <div key={post.id || idx} ref={element => { slideRefs.current[idx] = element; }}
               data-idx={idx} data-post-id={post.id || ''} data-source={post.source || ''} className="video-feed-snap-item">
               {Math.abs(idx - activeIndex) <= VIDEO_MOUNT_RADIUS ? <VideoSlide post={post} onPostUpdated={updatePost} onRemoved={removed => setVideoPosts(previous => previous.filter(item => item.id !== removed.id))} active={idx === activeIndex}
+                surface={music ? 'music' : 'videos'} trackingVisible={!commentsPost && !filterOpen && !searchOpen}
                 fullScreen={fullScreen} onFullScreen={onFullScreen}
                 muted={muted} isScrolling={isScrolling} onOpenComments={setCommentsPost}
                 onDurationResolved={onDurationResolved}

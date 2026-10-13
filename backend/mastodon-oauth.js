@@ -102,7 +102,7 @@ function createMastodonService({ resolveAddress, pinnedLookup, request = https.r
   return { json, application };
 }
 
-function registerMastodonRoutes(app, { authenticate, limit, getUser, callbackUrl, frontendUrl, createState, verifyState, saveToken, service }) {
+function registerMastodonRoutes(app, { authenticate, limit, getUser, callbackUrl, frontendUrl, frontendPolicy, createState, verifyState, saveToken, service }) {
   const cookieName = 'ufi_mastodon_oauth';
   const cookieOptions = { httpOnly: true, secure: new URL(callbackUrl).protocol === 'https:', sameSite: 'lax', path: '/auth/social/mastodon' };
   app.get('/auth/social/mastodon/start', authenticate, limit, async (req, res) => {
@@ -119,6 +119,7 @@ function registerMastodonRoutes(app, { authenticate, limit, getUser, callbackUrl
       const browserNonce = crypto.randomBytes(32).toString('base64url');
       const browserHash = crypto.createHash('sha256').update(browserNonce).digest('hex');
       const state = createState(user.id, 'mastodon', verifier, { origin, clientId: credentials.client_id, clientSecret: credentials.client_secret, browserHash,
+        ...(frontendPolicy?.capture(req) || {}),
         ...(req.query.returnTo === 'command-center' ? { returnTo: 'command-center' } : {}) });
       res.cookie(cookieName, browserNonce, { ...cookieOptions, maxAge: 600000 });
       res.json({ url: `${origin}/oauth/authorize?${new URLSearchParams({
@@ -131,8 +132,9 @@ function registerMastodonRoutes(app, { authenticate, limit, getUser, callbackUrl
     res.set('Cache-Control', 'no-store');
     res.set('Referrer-Policy', 'no-referrer');
     const entry = verifyState(req.query.state, 'mastodon');
+    const frontendBase = frontendPolicy ? frontendPolicy.resolve(entry?.extra?.returnOrigin) : frontendUrl;
     const destination = entry?.extra?.returnTo === 'command-center'
-      ? `${frontendUrl}/command-center?tab=accounts&` : `${frontendUrl}/connected-accounts?`;
+      ? `${frontendBase}/command-center?tab=accounts&` : `${frontendBase}/connected-accounts?`;
     const fail = reason => res.redirect(`${destination}social_error=mastodon&reason=${reason}`);
     if (!entry?.extra) return fail('invalid_state');
     const browserNonce = String(req.headers.cookie || '').split(';').map(part => part.trim()).find(part => part.startsWith(cookieName + '='))?.slice(cookieName.length + 1);

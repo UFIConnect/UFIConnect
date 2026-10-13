@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { hasNativeYouTubePlayer, createNativeYouTubeFrame, nativeYouTubeApi } from '../nativeYouTubePlayer.mjs';
 import { useDataPreferences, previewPlaybackAllowed } from '../preferences';
 import { directMediaPlaybackAllowed, officialYouTubeId, officialVimeoId } from '../utils/sourceMediaPolicy.mjs';
+export { deriveBlueskyPlaylistUrl, isDirectVideoUrl } from '../utils/videoSource.mjs';
 
 // Every video surface (the Videos swipe feed, the photo/video lightbox, and
 // each inline YouTube card in the Feed) starts muted by default and only
@@ -127,29 +128,73 @@ export function SoundIcon({ muted, size = 16 }) {
 // arrive wins, so scrolling to a new video pauses whatever was playing
 // before it the same way the Videos feed's single activeIndex does.
 const soloPlaybackOrder = [];
+const soloPlaybackNodes = new Map();
+const modalSuspendedPlayback = new Set();
+let soloModalObserver = null;
+let soloSubscribers = 0;
+let soloWinner;
 const SOLO_PLAYBACK_EVENT = 'ufc-solo-video-change';
 function broadcastSoloWinner() {
-  const winner = soloPlaybackOrder.length ? soloPlaybackOrder[soloPlaybackOrder.length - 1] : null;
+  const modals = [...document.querySelectorAll('dialog[open], [role="dialog"][aria-modal="true"]')]
+    // Layout keeps its closed mobile drawers mounted for their transition.
+    // They remain role=dialog, but aria-hidden marks them as inactive.
+    .filter(modal => !modal.closest('[aria-hidden="true"], [hidden], [inert]') && modal.getClientRects().length);
+  for (const id of soloPlaybackOrder) {
+    const node = soloPlaybackNodes.get(id)?.current;
+    if (document.hidden || modals.some(modal => !node || !modal.contains(node))) modalSuspendedPlayback.add(id);
+  }
+  // IntersectionObserver still sees Feed cards underneath a modal. Keep
+  // those candidates paused after it closes; a fresh visibility/pointer
+  // eligibility change or an explicit Play is needed to start them again.
+  const winner = [...soloPlaybackOrder].reverse().find(id => !modalSuspendedPlayback.has(id)) ?? null;
+  if (winner === soloWinner) return;
+  soloWinner = winner;
   window.dispatchEvent(new CustomEvent(SOLO_PLAYBACK_EVENT, { detail: winner }));
 }
-export function useSoloVideoPlayback(id, inView) {
+export function requestSoloVideoPlayback(id) {
+  const index = soloPlaybackOrder.indexOf(id);
+  if (index === -1) return;
+  modalSuspendedPlayback.delete(id);
+  soloPlaybackOrder.splice(index, 1);
+  soloPlaybackOrder.push(id);
+  broadcastSoloWinner();
+}
+export function useSoloVideoPlayback(id, inView, mediaRef) {
   const [isSolo, setIsSolo] = useState(false);
   useEffect(() => {
     const onChange = (e) => setIsSolo(e.detail === id);
     window.addEventListener(SOLO_PLAYBACK_EVENT, onChange);
-    return () => window.removeEventListener(SOLO_PLAYBACK_EVENT, onChange);
+    soloSubscribers++;
+    if (!soloModalObserver && typeof MutationObserver !== 'undefined') {
+      soloModalObserver = new MutationObserver(broadcastSoloWinner);
+      soloModalObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['open', 'aria-modal', 'aria-hidden', 'hidden', 'inert'] });
+    }
+    if (soloSubscribers === 1) document.addEventListener('visibilitychange', broadcastSoloWinner);
+    return () => {
+      window.removeEventListener(SOLO_PLAYBACK_EVENT, onChange);
+      if (--soloSubscribers === 0) {
+        soloModalObserver?.disconnect(); soloModalObserver = null; soloWinner = undefined;
+        document.removeEventListener('visibilitychange', broadcastSoloWinner);
+      }
+    };
   }, [id]);
 
   useEffect(() => {
     const existingIdx = soloPlaybackOrder.indexOf(id);
     if (existingIdx !== -1) soloPlaybackOrder.splice(existingIdx, 1);
-    if (inView) soloPlaybackOrder.push(id);
+    modalSuspendedPlayback.delete(id);
+    if (inView) {
+      soloPlaybackNodes.set(id, mediaRef);
+      soloPlaybackOrder.push(id);
+    }
     broadcastSoloWinner();
     return () => {
       const idx = soloPlaybackOrder.indexOf(id);
+      soloPlaybackNodes.delete(id);
+      modalSuspendedPlayback.delete(id);
       if (idx !== -1) { soloPlaybackOrder.splice(idx, 1); broadcastSoloWinner(); }
     };
-  }, [id, inView]);
+  }, [id, inView, mediaRef]);
 
   return isSolo;
 }
@@ -294,13 +339,6 @@ export function createVimeoController(frame, videoId, { onEvent = () => {}, isCu
   };
 }
 
-// Retain the helper contract while disabling guessed media endpoints.
-export function deriveBlueskyPlaylistUrl() {
-  // Deriving a media endpoint from a thumbnail bypasses the source player.
-  // Until an approved embed is installed, callers offer the original link.
-  return null;
-}
-
 // Vimeo posts (see resolveVideoSource's own 'vimeo' branch in
 // VideoFeedView.jsx) always have poster:null — mediaUrl there is the
 // vimeo.com/{id} *watch* URL, needed as-is for extractVimeoId, so it can't
@@ -332,11 +370,6 @@ export async function fetchVimeoMetadata(vimeoId) {
 
 export async function fetchVimeoThumbnail(vimeoId) {
   return (await fetchVimeoMetadata(vimeoId))?.thumbnailUrl || null;
-}
-
-// Direct file playback requires native media or an explicit backend rights flag.
-export function isDirectVideoUrl(url, post) {
-  return directMediaPlaybackAllowed(post) && !!url && /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url);
 }
 
 // A raw <iframe src="youtube.com/embed/..."> has no programmatic control at
@@ -507,13 +540,13 @@ export function InlineAutoplayVideo({ kind, src, post, videoKey, poster, style, 
   const containerRef = useRef(null);
   const fileRef = useRef(null);
   const [inView, setInView] = useState(false);
-  const { playbackAllowed, pointerHandlers } = usePointerPlaybackGate();
+  const [hlsAspectRatio, setHlsAspectRatio] = useState(16 / 9);
+  useEffect(() => { setHlsAspectRatio(16 / 9); }, [src]);
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     if (!('IntersectionObserver' in window)) {
-      setInView(true);
       return;
     }
     // Was 0.4 — on a small mobile viewport a video box scrolling in doesn't
@@ -539,7 +572,7 @@ export function InlineAutoplayVideo({ kind, src, post, videoKey, poster, style, 
   // right now" stay independent, composable signals. Also gated through the
   // shared solo-playback arbiter (see useSoloVideoPlayback) so only the
   // most-recently-scrolled-to video across the whole Feed plays at once.
-  const isSolo = useSoloVideoPlayback(videoKey || src, automaticPlayback && inView && playbackAllowed && !forcePause);
+  const isSolo = useSoloVideoPlayback(videoKey || src, automaticPlayback && inView && !forcePause, containerRef);
   const sourceAllowed = directMediaPlaybackAllowed(post);
   const shouldPlay = sourceAllowed && automaticPlayback && isSolo && !forcePause;
 
@@ -564,20 +597,30 @@ export function InlineAutoplayVideo({ kind, src, post, videoKey, poster, style, 
 
   if (!sourceAllowed) return <span style={{ display: 'block', padding: 24, color: '#fff', background: '#111827' }}>Open the original source to watch</span>;
   return (
-    <div ref={containerRef} {...pointerHandlers}>
+    <div ref={containerRef}>
       {preferences.dataSaver ? (
         <div style={{ minHeight: 220, background: '#000', color: '#fff', display: 'grid', placeItems: 'center', ...style }}>
           {poster && <img src={poster} alt="" loading="lazy" style={{ width: '100%', maxHeight: 220, objectFit: 'cover' }} />}
           <span style={{ padding: 16 }}>Open video to play · Data saver is on</span>
         </div>
       ) : kind === 'hls' ? (
-        shouldPlay ? (
-          <HlsVideoPlayer src={src} poster={null} autoPlay muted loop controls={false} style={style} />
-        ) : (
-          <div style={{ minHeight: 220, background: '#000', color: '#fff', display: 'grid', placeItems: 'center', ...style }}>
-            {!automaticPlayback && <span style={{ padding: 16 }}>Open video to play</span>}
-          </div>
-        )
+        // Keep the measured stage when its decoder stops. Switching between
+        // a 220px placeholder and an unmeasured 150px video moved adjacent
+        // cards across the visibility boundary and repeatedly remounted HLS.
+        <div style={{ width: '100%', aspectRatio: hlsAspectRatio, maxHeight: style?.maxHeight ?? 360, background: '#000', overflow: 'hidden' }}>
+          {shouldPlay ? (
+            <HlsVideoPlayer src={src} poster={null} autoPlay muted loop controls={false}
+              onLoadedMetadata={event => {
+                const { videoWidth, videoHeight } = event.currentTarget;
+                if (videoWidth > 0 && videoHeight > 0) setHlsAspectRatio(videoWidth / videoHeight);
+              }}
+              style={{ ...style, height: '100%', maxHeight: '100%' }} />
+          ) : (
+            <div style={{ height: '100%', background: '#000', color: '#fff', display: 'grid', placeItems: 'center' }}>
+              {!automaticPlayback && <span style={{ padding: 16 }}>Open video to play</span>}
+            </div>
+          )}
+        </div>
       ) : (
         <video ref={fileRef} src={src} muted loop playsInline preload="metadata" style={style} />
       )}

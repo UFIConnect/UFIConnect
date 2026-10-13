@@ -25,7 +25,7 @@ function Detail({ post, own = false }) {
     <h4>Role description</h4><p>{own ? details.description : summary.intro || 'No role description was supplied.'}</p>
     <h4>Responsibilities</h4>{duties.length ? <ul>{duties.slice(0, 8).map((duty, i) => <li key={i}>{duty}</li>)}</ul> : <p className="business-post-muted">See the full description for role tasks.</p>}
     <h4>Requirements</h4>{requirements.length ? <ul>{requirements.slice(0, 8).map((item, i) => <li key={i}>{item}</li>)}</ul> : <p className="business-post-muted">No separate requirements section was provided.</p>}
-    <h4>Role task summary</h4><p>{summary.summary || 'Specific tasks were not supplied in this listing.'}</p>
+    <h4>Role overview</h4><p>{summary.summary || 'A role overview was not supplied. The available responsibilities and complete post are shown here.'}</p>
     {details.mediaUrl && <img className="business-post-photo" src={details.mediaUrl} alt={`Photo for ${details.title}`} loading="lazy" />}
     <h4>Engagement</h4><Metrics post={post} />
     <details className="business-post-full"><summary>Read complete post</summary><pre>{post.content}</pre></details>

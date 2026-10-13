@@ -6,7 +6,9 @@
     "autolinking": {
       "nativeModulesDir": "./native-vpn",
       "ios": {
-        "exclude": ["@uficonnect/native-vpn"]
+        "exclude": [
+          "@uficonnect/native-vpn"
+        ]
       }
     }
   },
@@ -15,49 +17,65 @@
     "node": "^22.13.0 || >=24.3.0"
   },
   "scripts": {
-    "eas-build-post-install": "node native-vpn/prepare-go.mjs",
+    "eas-build-post-install": "npm run prepare:analytics && npm run prepare:website && node native-vpn/prepare-go.mjs",
     "test:vpn": "node --test native-vpn/controller.test.cjs native-vpn/plugin.test.cjs native-vpn/session.test.cjs native-vpn/prepare-go.test.mjs native-vpn/launch.test.cjs native-vpn/launchConnection.test.cjs native-vpn/action.test.cjs native-vpn/officialWireGuard.test.cjs",
     "postinstall": "node security/dependencyPatches.cjs",
     "audit:security": "node --test security/dependencyBackports.test.js && node security/dependencyAudit.cjs",
     "prepare:analytics": "node scripts/prepare-analytics.mjs",
-    "prestart": "npm run prepare:analytics",
-    "preandroid": "npm run prepare:analytics",
-    "preios": "npm run prepare:analytics",
-    "preweb": "npm run prepare:analytics",
-    "preexport": "npm run prepare:analytics",
+    "prestart": "npm run prepare:analytics && npm run prepare:website",
+    "preandroid": "npm run prepare:analytics && npm run prepare:website",
+    "preios": "npm run prepare:analytics && npm run prepare:website",
+    "preweb": "npm run prepare:analytics && npm run prepare:website",
+    "preexport": "npm run prepare:analytics && npm run prepare:website",
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "export": "expo export --platform all",
+    "export": "node scripts/export-current-site.mjs",
     "doctor": "expo-doctor",
-    "test:export": "node scripts/audit-export.mjs && node scripts/audit-signin.mjs",
+    "test:export": "node scripts/audit-app-shell.mjs && node scripts/audit-current-site.mjs",
     "test:moderation": "node scripts/audit-moderation.mjs",
-    "test:security": "node --test security/security.test.js security/dependencyCompatibility.test.js security/dependencyBackports.test.js security/accountDeletion.test.js security/moderation.test.js security/providerSignIn.test.js analytics/screenPolicy.test.js analytics/serviceMetrics.test.js && npm run test:vpn",
-    "test:analytics": "node scripts/audit-analytics.mjs && node scripts/audit-preferences.mjs"
+    "test:security": "node --test security/security.test.js security/dependencyCompatibility.test.js security/dependencyBackports.test.js security/accountDeletion.test.js security/moderation.test.js security/providerSignIn.test.js analytics/screenPolicy.test.js analytics/serviceMetrics.test.js && npm run test:vpn && npm run test:current-site",
+    "test:current-site": "node --test current-site/documentLoader.test.cjs current-site/NativeSiteApp.test.cjs current-site/vpnSessionStore.test.cjs current-site/nativeBridge.test.cjs current-site/nativeYouTube.test.cjs current-site/nativeAppearance.test.cjs current-site/website-transform.test.cjs",
+    "test:analytics": "node scripts/audit-shared-privacy.mjs",
+    "prepare:website": "node scripts/prepare-website.mjs"
   },
   "dependencies": {
+    "@auth0/auth0-react": "2.27.0",
     "@expo/metro-runtime": "~57.0.16",
+    "@noble/curves": "2.4.0",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-navigation/bottom-tabs": "^7.19.2",
     "@react-navigation/native": "^7.4.1",
     "@react-navigation/native-stack": "^7.19.2",
     "axios": "^1.5.0",
-    "expo": "~57.0.27",
+    "expo": "~57.0.28",
     "expo-clipboard": "~57.0.2",
     "expo-constants": "~57.0.21",
-    "expo-dev-client": "~57.0.19",
+    "expo-crypto": "~57.0.4",
+    "expo-dev-client": "~57.0.20",
     "expo-document-picker": "~57.0.3",
+    "expo-file-system": "~57.0.7",
+    "expo-location": "~57.0.21",
     "expo-secure-store": "~57.0.4",
-    "expo-splash-screen": "~57.0.9",
+    "expo-sharing": "~57.0.23",
+    "expo-splash-screen": "~57.0.10",
     "expo-status-bar": "~57.0.1",
     "expo-system-ui": "~57.0.4",
+    "expo-web-browser": "~57.0.3",
+    "hls.js": "1.7.3",
+    "libphonenumber-js": "1.13.15",
+    "lucide-react": "1.48.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "react-helmet-async": "3.0.0",
     "react-native": "0.86.3",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
-    "react-native-web": "~0.21.0"
+    "react-native-web": "~0.21.0",
+    "react-native-webview": "13.16.1",
+    "react-router-dom": "7.18.4",
+    "three": "0.186.1"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",
