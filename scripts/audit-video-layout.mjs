@@ -258,11 +258,21 @@ try {
         return link.left >= more.right && Math.abs(link.top - more.top) < 1;
       }), 'The source link sits to the right of three dots in the same row');
       const details = actions.locator('.video-feed-caption-toggle');
-      assert.equal(await details.getAttribute('aria-expanded'), 'false', 'Creator details start collapsed');
-      assert.equal(await slide.locator('.post-chrome-identity').isVisible(), false, 'Creator details do not duplicate the compact playback layout');
+      const identity = slide.locator('.post-chrome-identity');
+      const caption = slide.locator('[data-video-caption]');
+      assert.equal(await details.getAttribute('aria-expanded'), 'false', 'The video description starts collapsed');
+      assert.equal(await caption.isVisible(), false, 'The collapsed description does not duplicate the compact layout');
+      assert.ok(await identity.isVisible(), 'Creator attribution stays visible with the description collapsed');
+      assert.equal(await identity.getAttribute('href'), profileHref, 'The compact creator links to its original profile');
+      const creator = await identity.boundingBox();
+      assert.ok(creator.y >= picture.y + picture.height - 1, 'Creator attribution sits below the video picture');
       const detailsScroll = await page.locator('[data-video-feed-scroll]').evaluate(el => el.scrollTop);
       await details.click();
+      await caption.waitFor({ state: 'visible' });
       assert.equal(await details.getAttribute('aria-expanded'), 'true');
+      assert.equal((await caption.locator('.video-feed-caption-expanded > p').last().textContent()).trim(),
+        'Details belong below the video.', 'Details reveals the available video description');
+      assert.ok(await identity.isVisible(), 'Expanded details preserve visible creator attribution');
       assert.equal(await page.locator('[data-video-feed-scroll]').evaluate(el => el.scrollTop), detailsScroll,
         'Opening details does not advance the video');
       assert.equal(await slide.locator('.post-chrome-identity').getAttribute('href'), profileHref,
@@ -315,7 +325,10 @@ try {
       await viewer.waitFor({ state: 'detached' });
       assert.equal(page.url(), routeBefore, 'Escape dismisses the photo without leaving the video route');
       await actions.getByRole('button', { name: /^Hide (?:video|music) details$/ }).click();
-      assert.equal(await slide.locator('.post-chrome-identity').isVisible(), false, 'Details collapse after source profile review');
+      await caption.waitFor({ state: 'hidden' });
+      assert.equal(await details.getAttribute('aria-expanded'), 'false', 'The description collapses after source profile review');
+      assert.ok(await identity.isVisible(), 'Collapsing details keeps creator attribution visible');
+      assert.equal(await identity.getAttribute('href'), profileHref, 'Collapsing details preserves the original creator destination');
     };
     const hnAuthor = { id: 'hn_audit_creator', name: 'audit_creator', avatarUrl };
     const hnProfile = 'https://news.ycombinator.com/user?id=audit_creator';
