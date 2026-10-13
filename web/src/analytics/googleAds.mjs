@@ -1,6 +1,7 @@
 export const ADS_ID = 'AW-18490754953';
 export const ADS_CONVERSION = `${ADS_ID}/s7sWCK_AsI4dEImPivFE`;
 export const ADS_CONSENT_KEY = 'uficonnect.ads.consent.v1';
+export const TAG_MANAGER_ID = 'GTM-PXQR5386';
 
 // Keep only Google's attribution identifiers. Never give the SDK arbitrary
 // query parameters, account links, or fragments from a shared homepage URL.
@@ -86,6 +87,15 @@ export function createAdsController({ window, document }) {
     script.src = `https://www.googletagmanager.com/gtag/js?id=${ADS_ID}`;
     script.referrerPolicy = 'no-referrer';
     document.head.appendChild(script);
+    // Tag Manager shares the existing consented homepage boundary. Starting
+    // it here keeps private URLs and unverified sessions out of the container.
+    // The loaded guard also prevents duplicate containers during React mounts.
+    window.dataLayer.push({ 'gtm.start': Date.now(), event: 'gtm.js' });
+    const container = document.createElement('script');
+    container.async = true;
+    container.src = `https://www.googletagmanager.com/gtm.js?id=${TAG_MANAGER_ID}`;
+    container.referrerPolicy = 'no-referrer';
+    document.head.appendChild(container);
   }
   function navigate(method, state, title, value) {
     if (!loaded || value == null) return method(state, title, value);

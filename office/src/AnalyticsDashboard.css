@@ -26,6 +26,7 @@
 .office-analytics details { margin-top: 15px; }
 .office-analytics summary { cursor: pointer; color: #93c5fd; font-size: 13px; padding: 6px 0; }
 .office-analytics-table-wrap { overflow-x: auto; margin-top: 12px; max-width: 100%; }
+.office-analytics-geography-table { max-height: 380px; overflow-y: auto; }
 .office-analytics table { width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; }
 .office-analytics th, .office-analytics td { padding: 12px 10px; border-bottom: 1px solid #26364c; vertical-align: top; }
 .office-analytics thead th { color: #aebcd0; font-weight: 550; white-space: nowrap; }

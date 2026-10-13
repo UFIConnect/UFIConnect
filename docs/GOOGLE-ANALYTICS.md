@@ -55,8 +55,8 @@ for persistence, retention, data-saving behavior and rollout checks.
    streams**, select the web stream, and confirm its measurement ID is
    **G-F68DRQ6CC5**. Turn **Enhanced measurement off** for this integration: the
    app supplies manual page views and intentionally excludes automatic form,
-   search, link and history measurement. Do not add a second Google tag snippet
-   or Tag Manager container to the application pages.
+   search, link and history measurement. Do not duplicate this stream's page
+   views in the [separate advertising Tag Manager container](GOOGLE-TAG-MANAGER.md).
 5. Keep Google signals, advertising personalization, and user-provided data
    collection disabled in the property. Review its data retention and sharing
    settings for your published privacy policy. The code's browser identifier
@@ -79,7 +79,8 @@ Browser content blockers or cookie restrictions can prevent measurement.
   keeps the app usable. The saved choice can be changed from every page.
 - Google runs in a sandboxed iframe on the API origin. Browser origin isolation
   prevents it reading the parent app's DOM, storage, title, URL, or form fields.
-  The main app's Content Security Policy still blocks Google scripts entirely.
+  The main app's Content Security Policy blocks Google scripts outside the
+  separately consented signed-out advertising homepage.
 - Only allowlisted page categories and a random analytics identifier cross to
   the iframe. No passwords, messages, account IDs, profile names, search text,
   dynamic route IDs, query strings, fragments or referrer are forwarded.

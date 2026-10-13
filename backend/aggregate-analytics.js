@@ -1,5 +1,8 @@
 'use strict';
 
+const { analyticsGeography, createGeographyReportHandler } = require('./analytics-geography');
+const { ISO_COUNTRY_CODES } = require('./feed-location');
+
 // Keep the API runtime copy inside backend's Render root. Its equality with the
 // authoritative shared catalog is covered by the analytics contract test.
 const CATEGORY_CATALOG = Object.freeze(Object.fromEntries(Object.entries(require('./analytics-categories.json'))
@@ -32,6 +35,15 @@ CREATE TABLE IF NOT EXISTS analytics_history_daily_counts (
   event_count BIGINT NOT NULL CHECK (event_count > 0),
   restored_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (source, day, category)
+);
+CREATE TABLE IF NOT EXISTS analytics_geography_daily_counts (
+  day DATE NOT NULL,
+  category TEXT NOT NULL CONSTRAINT analytics_geography_daily_counts_category_check ${categoryConstraint},
+  country TEXT NOT NULL CHECK (country IN (${sqlList(ISO_COUNTRY_CODES)})),
+  city TEXT NOT NULL DEFAULT '' CHECK (length(city) <= 80),
+  region TEXT NOT NULL DEFAULT '' CHECK (length(region) <= 80),
+  event_count BIGINT NOT NULL CHECK (event_count > 0),
+  PRIMARY KEY (day, category, country, city, region)
 )`;
 // CREATE TABLE IF NOT EXISTS cannot expand an existing CHECK. Replace the old
 // constraint in one atomic ALTER so every previous category/count survives and
@@ -41,11 +53,14 @@ const ANALYTICS_MIGRATIONS = Object.freeze([`ALTER TABLE analytics_daily_counts
   ADD CONSTRAINT analytics_daily_counts_category_check ${categoryConstraint}`,
 `ALTER TABLE analytics_history_daily_counts
   DROP CONSTRAINT IF EXISTS analytics_history_daily_counts_category_check,
-  ADD CONSTRAINT analytics_history_daily_counts_category_check ${categoryConstraint}`]);
+  ADD CONSTRAINT analytics_history_daily_counts_category_check ${categoryConstraint}`,
+`ALTER TABLE analytics_geography_daily_counts
+  DROP CONSTRAINT IF EXISTS analytics_geography_daily_counts_category_check,
+  ADD CONSTRAINT analytics_geography_daily_counts_category_check ${categoryConstraint}`]);
 const cappedAdd = (value, addition) => Math.min(Number.MAX_SAFE_INTEGER, value + addition);
 const ANALYTICS_HISTORY_START = '2026-05-01';
 
-function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, schedule = setInterval }) {
+function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, schedule = setInterval, env = process.env }) {
   let windowStart = now();
   let windowCount = 0;
   let prunedDay = '';
@@ -78,9 +93,22 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
         while (pending.size) {
           const batch = pending; pending = new Map();
           try {
-            await db.query(`INSERT INTO analytics_daily_counts (day, category, kind, code, event_count)
-              SELECT day, category, kind, code, event_count FROM jsonb_to_recordset($1::jsonb)
-              AS incoming(day DATE, category TEXT, kind TEXT, code TEXT, event_count BIGINT)
+            // Both sets of counts commit together. A geography failure cannot
+            // commit the main count and then duplicate it on the retry.
+            await db.query(`WITH incoming AS (
+              SELECT * FROM jsonb_to_recordset($1::jsonb)
+              AS event(day DATE, category TEXT, kind TEXT, code TEXT, event_count BIGINT, country TEXT, city TEXT, region TEXT)
+            ), saved_geography AS (
+              INSERT INTO analytics_geography_daily_counts (day, category, country, city, region, event_count)
+              SELECT day, category, country, city, region, LEAST(9007199254740991, SUM(event_count))::bigint
+              FROM incoming WHERE kind='page_view' AND country <> '' GROUP BY day, category, country, city, region
+              ON CONFLICT (day, category, country, city, region) DO UPDATE
+              SET event_count = LEAST(9007199254740991, analytics_geography_daily_counts.event_count + EXCLUDED.event_count)
+              RETURNING day
+            )
+              INSERT INTO analytics_daily_counts (day, category, kind, code, event_count)
+              SELECT day, category, kind, code, LEAST(9007199254740991, SUM(event_count))::bigint
+              FROM incoming GROUP BY day, category, kind, code
               ON CONFLICT (day, category, kind, code) DO UPDATE
               SET event_count = LEAST(9007199254740991, analytics_daily_counts.event_count + EXCLUDED.event_count)`,
             [JSON.stringify([...batch.values()])]);
@@ -106,6 +134,7 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
             // Anonymous daily totals are the history, rather than a rolling
             // cache. Keep every recorded day from the requested May launch.
             await db.query('DELETE FROM analytics_daily_counts WHERE day < $1::date', [ANALYTICS_HISTORY_START]);
+            await db.query('DELETE FROM analytics_geography_daily_counts WHERE day < $1::date', [ANALYTICS_HISTORY_START]);
             prunedDay = day; lastRetentionAt = new Date(now()).toISOString();
           } catch { /* The durable increments committed; retry retention later. */ }
         }
@@ -128,8 +157,9 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
     return async (req, res) => {
       res.set('Cache-Control', 'no-store');
       // Query strings and extra fields are rejected before any persistence.
-      // Only constants are stored; no identity, request headers, raw path,
-      // searches, errors, content, credentials or route parameters enter rows.
+      // The body contains only constants. Coarse location comes separately
+      // from verified network headers; no identity, raw headers, IPs, paths,
+      // searches, error text, content, credentials or route parameters enter rows.
       if ((req.originalUrl || req.url || '').includes('?') || !validBody(req.body, kind)) {
         collector.invalid++; return res.status(400).json({ error: 'Invalid aggregate event.' });
       }
@@ -139,13 +169,14 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
       if (now() - windowStart >= 60_000) { windowStart = now(); windowCount = 0; }
       const day = new Date(now()).toISOString().slice(0, 10);
       const code = kind === 'client_error' ? req.body.code : '';
-      const key = [day, req.body.category, kind, code].join(':');
+      const location = kind === 'page_view' ? analyticsGeography(req, env) : { country: '', city: '', region: '' };
+      const key = JSON.stringify([day, req.body.category, kind, code, location.country, location.city, location.region]);
       if (windowCount >= 6000 || (!pending.has(key) && pending.size >= maximumPendingKeys)) {
         collector.rateLimited++; return res.status(429).json({ error: 'Metrics rate limit reached.' });
       }
       windowCount++;
       pending.set(key, { day, category: req.body.category, kind, code,
-        event_count: cappedAdd(pending.get(key)?.event_count || 0, 1) });
+        ...location, event_count: cappedAdd(pending.get(key)?.event_count || 0, 1) });
       // Synchronous bursts share one insert instead of one insert per event.
       await Promise.resolve();
       if (!await flush()) {
@@ -212,7 +243,7 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
         today: 0, last7: 0, last30: 0, topPaths: [], daily: [], categories: [],
         platforms: { web: emptyCounts(), mobile: emptyCounts() },
         viewTypes: { page: emptyCounts(), screen: emptyCounts(), tab: emptyCounts() },
-        performance: { ...emptyCounts(), byCode: [], byCategory: [] },
+        performance: { ...emptyCounts(), byCode: [], byCategory: [], details: [] },
         excludedCategories: EXCLUDED_CATEGORIES, storage: storageSnapshot(), service: serviceSnapshot() };
       const increment = (target, day, count) => {
         if (day >= dayAt(29)) target.last30 = cappedAdd(target.last30, count);
@@ -234,6 +265,7 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
           daily.get(row.day)[category.platform] = cappedAdd(daily.get(row.day)[category.platform], count);
           categoryDay.views = cappedAdd(categoryDay.views, count);
         } else if (row.kind === 'client_error' && codeSet.has(row.code)) {
+          result.performance.details.push({ day: row.day, category: row.category, code: row.code, count });
           increment(result.performance, row.day, count);
           increment(category.errors, row.day, count);
           const errorCode = errorCodes.get(row.code);
@@ -265,7 +297,8 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
       return res.json(result);
     } catch { return res.status(503).json(unavailable()); }
   }
-  return { pageview: handler('page_view'), performance: handler('client_error'), serviceMiddleware, report, flush };
+  return { pageview: handler('page_view'), performance: handler('client_error'), serviceMiddleware, report, flush,
+    geography: createGeographyReportHandler({ db, catalog: CATEGORY_CATALOG, now, env }) };
 }
 
 module.exports = { PAGE_CATEGORIES, CATEGORY_CATALOG, EXCLUDED_CATEGORIES, CLIENT_ERROR_CODES, ANALYTICS_SCHEMA, ANALYTICS_MIGRATIONS, ANALYTICS_HISTORY_START, createAggregateAnalytics };

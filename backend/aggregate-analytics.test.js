@@ -91,6 +91,10 @@ test('detailed report includes every page, screen and tab, zero-filled days, cor
   assert.equal(result.storage.acknowledgement, 'after-durable-write');
   assert.equal(result.storage.status, 'ready');
   assert.equal(result.performance.byCode.find(row => row.code === 'request_failed').last7, 0);
+  assert.deepEqual(result.performance.details, [
+    { day: '2026-10-01', category: 'app_feed', code: 'request_failed', count: 3 },
+    { day: '2026-10-08', category: 'command_center_media', code: 'render_error', count: 2 },
+  ]);
   assert.equal((await pg.query("SELECT count(*)::int AS count FROM analytics_daily_counts WHERE day='2026-09-08'")).rows[0].count, 1);
   assert.equal((await pg.query("SELECT count(*)::int AS count FROM analytics_daily_counts WHERE day='2026-04-30'")).rows[0].count, 0);
 });
@@ -102,7 +106,7 @@ test('successful collector receipts are durable across restart, including arriva
   const retentionGate = new Promise(resolve => { releaseRetention = resolve; });
   let inserts = 0;
   const db = { isConnected: () => true, async query(sql, params) {
-    if (sql.startsWith('INSERT')) inserts++;
+    if (sql.includes('INSERT INTO analytics_daily_counts')) inserts++;
     if (sql.startsWith('DELETE')) { reachedRetention(); await retentionGate; }
     return pg.query(sql, params);
   } };
@@ -179,6 +183,12 @@ test('real analytics endpoints aggregate fixed categories without accepting or p
   assert.equal((await app.request('/analytics/pageview?userId=private', { method: 'POST', body: { category: 'home' } })).status, 400);
   assert.equal((await app.request('/analytics/pageview', { method: 'POST', body: { category: 'home', padding: 'x'.repeat(600) } })).status, 413);
   assert.equal((await app.request('/office/analytics/pageviews')).status, 401);
+  assert.equal((await app.request('/office/analytics/geography')).status, 401);
+  const geography = await app.request('/office/analytics/geography', { headers: { 'x-office-token': 'analytics-test' } });
+  assert.equal(geography.status, 200);
+  assert.match(geography.headers.get('cache-control'), /private, no-store/);
+  assert.equal(geography.data.total, 3); assert.equal(geography.data.unknownCountry, 3);
+  assert.equal((await app.request('/office/analytics/geography?category=private-account', { headers: { 'x-office-token': 'analytics-test' } })).status, 400);
   await app.request('/synthetic-private-path?email=private@example.invalid');
   const report = await app.request('/office/analytics/pageviews', { headers: { 'x-office-token': 'analytics-test' } });
   assert.equal(report.status, 200);
@@ -204,7 +214,7 @@ test('aggregate batching retries safely, bounds counts, and preserves May onward
   const pg = new PGlite(); await pg.exec(analytics.ANALYTICS_SCHEMA); t.after(() => pg.close());
   let fail = true; let inserts = 0; let clock = Date.parse('2026-09-20T10:00:00Z'); let timer;
   const db = { isConnected: () => true, async query(sql, params) {
-    if (sql.startsWith('INSERT')) { inserts++; if (fail) throw new Error('private connection information'); }
+    if (sql.includes('INSERT INTO analytics_daily_counts')) { inserts++; if (fail) throw new Error('private connection information'); }
     return pg.query(sql, params);
   } };
   const metrics = analytics.createAggregateAnalytics({ db, now: () => clock, schedule(fn) { timer = fn; } });

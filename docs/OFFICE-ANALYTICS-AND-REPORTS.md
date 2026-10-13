@@ -12,12 +12,35 @@ tab does not add another view. Fixed categories never contain account IDs, full
 URLs, query strings, credentials, searches or message text. Private Vault, VPN
 and authorization callback activity remain excluded.
 
-The database retains 30 UTC calendar days of counts. Office shows all categories,
-including zeros, date/platform/category filters, daily trends, optional diagnostic
-counts and collector storage status. New categories collect from this release;
+The database retains recorded UTC counts from May 1, 2026 onward. Office shows
+all categories, including zeros, date/platform/category/view-type filters, daily
+trends, optional diagnostic counts and collector storage status. Dates before
+the first retained event are shown as unavailable rather than zero. Historical
+recovery restores only counts backed by retained records. New categories collect
+from their release;
 earlier tab history cannot be reconstructed. Native screen changes require the
 updated mobile app. A successful collector response follows a committed database
 write. Optional Google Analytics and Google Ads remain separate services.
+
+Country and city tables show approximate network location for opens, not user or
+account location. They follow the selected activity filters and include unknown
+counts so the breakdown reconciles with total opens. City rows include their
+country and region, keeping same-named cities separate. A searchable, paginated
+city table limits rendering costs. `GET /office/analytics/geography` uses
+parameterized date/platform/category/view-type filters and one database
+snapshot. It returns complete country counts and the 1,000 busiest cities, with
+exact additional-city counts kept separate from unknown location. Geographic
+history is aggregated in PostgreSQL rather than loaded into the API process.
+The tables refresh independently from the general activity report. Older views
+have no geographic backfill.
+Only verified Cloudflare network location is used; city data additionally needs
+the visitor-location transform and `CF_VISITOR_LOCATION_HEADERS=true`. No IP
+address, device coordinate, account or visitor identifier is retained.
+
+`performance.details` and the Diagnostic history table show recorded UTC day,
+category, fixed error type and occurrence count. Historical counts remain after
+code is fixed. The table helps locate a recurring issue without treating past
+occurrences as a current list of unresolved problems or retaining raw errors.
 
 ## Registered accounts and cache checks
 
@@ -25,8 +48,9 @@ write. Optional Google Analytics and Google Ads remain separate services.
 from one statement snapshot. Search accepts a name, email or exact account ID.
 Hidden profiles remain registered accounts. Incomplete onboarding also remains a
 registered account. Today, seven-day and thirty-day totals use UTC calendar days.
-Office includes a 120-day registration window and incomplete-onboarding count;
-select All registrations to include older accounts. Account reports open their
+Office includes a Since May 2026 registration window, a 120-day window and an
+incomplete-onboarding count; select All registrations to include older accounts.
+Account reports open their
 verified account directly, even when that account is older than 120 days. This
 lookback reads existing account records and does not extend analytics retention.
 
@@ -40,7 +64,7 @@ a temporary account that disappears after deployment.
 
 Signup request diagnostics count fixed response outcomes from this release:
 created, invalid, duplicate, rate limited, unavailable and failed. These counts
-contain no submitted personal fields and expire after 30 days. A rejected request
+contain no submitted personal fields and retain recorded days from May 2026. A rejected request
 does not become an account. Historical attempts cannot be recovered from these
 new counters.
 

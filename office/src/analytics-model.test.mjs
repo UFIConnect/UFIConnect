@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { filterAnalytics, reportDays } from './analytics-model.mjs';
+import { filterAnalytics, filterDiagnostics, reportDays } from './analytics-model.mjs';
 const report = {
   daily: [{ day: '2026-10-07' }, { day: '2026-10-08' }],
   categories: [
@@ -47,4 +47,17 @@ test('dates before the earliest retained event are unavailable rather than zero 
   assert.deepEqual(result.daily[0], { day:'2026-05-01',available:false,views:null,tabs:null,errors:null });
   assert.deepEqual(result.daily.find(row => row.day === '2026-08-11'), { day:'2026-08-11',available:true,views:0,tabs:0,errors:0 });
   assert.equal(result.views,14);
+});
+
+const diagnosticReport = { ...report, performance: { details: [
+  { day: '2026-10-07', category: 'home', code: 'request_failed', count: 1 },
+  { day: '2026-10-08', category: 'app_feed', code: 'render_error', count: 2 },
+] } };
+
+test('diagnostic breakdowns respect the same date, platform, category and view filters', () => {
+  assert.deepEqual(filterDiagnostics(diagnosticReport, { platform: 'web', end: '2026-10-07' }).map(row => [row.category, row.count]), [['home', 1]]);
+  assert.equal(filterDiagnostics(diagnosticReport, { viewType: 'tab' }).length, 0);
+  assert.equal(filterDiagnostics(diagnosticReport, { category: 'app_feed' })[0].count, 2);
+  assert.equal(filterDiagnostics(diagnosticReport, { start: '2026-10-09' }).length, 0);
+  assert.equal(filterDiagnostics(report), null);
 });

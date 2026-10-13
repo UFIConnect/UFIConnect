@@ -37,3 +37,22 @@ export function filterAnalytics(report, { platform = 'all', category = 'all', vi
   return { rows, daily: days, views: days.reduce((total, row) => total + row.views, 0), tabs: days.reduce((total, row) => total + row.tabs, 0),
     errors: days.reduce((total, row) => total + row.errors, 0), activeCategories: rows.filter(row => row.selectedViews > 0).length };
 }
+
+function selectedRows(report, rows, { platform = 'all', category = 'all', viewType = 'all', start, end } = {}) {
+  const categories = new Map((report?.categories || []).map(row => [row.category, row]));
+  return rows.filter(row => {
+    const meta = categories.get(row.category);
+    return meta && (!start || row.day >= start) && (!end || row.day <= end)
+      && (platform === 'all' || meta.platform === platform) && (category === 'all' || row.category === category)
+      && (viewType === 'all' || meta.viewType === viewType);
+  });
+}
+
+export function filterDiagnostics(report, filters = {}) {
+  if (!Array.isArray(report?.performance?.details)) return null;
+  const categories = new Map((report?.categories || []).map(row => [row.category, row]));
+  return selectedRows(report, report.performance.details, filters)
+    .filter(row => count(row.count) > 0)
+    .map(row => ({ ...row, count: count(row.count), label: categories.get(row.category).label }))
+    .sort((a, b) => b.day.localeCompare(a.day) || b.count - a.count || a.label.localeCompare(b.label));
+}

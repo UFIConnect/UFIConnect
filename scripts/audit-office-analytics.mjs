@@ -12,8 +12,36 @@ function report(empty = false) {
     history: { firstRecordedDay: empty ? null : '2026-08-11',lastRecordedDay: empty ? null : '2026-10-08',restoredViews: empty ? 0 : 7 }, daily: days.map(day => ({ day })),
     categories: Object.values(catalog).map(meta => {
       const views = empty ? 0 : meta.category === 'home' ? 3 : meta.category === 'app_feed' ? 4 : meta.category === 'command_center_accounts' ? 2 : 0;
-      return { ...meta, today: views, last7: views, last30: views, errors: { today: 0, last7: 0, last30: 0 }, daily: days.map(day => ({ day, views: day === days.at(-1) ? views : !empty && day === '2026-08-11' && meta.category === 'home' ? 7 : 0, errors: 0 })) };
-    }), performance: { byCode: [] }, storage: { connected: true, status: 'ready', pendingEvents: 0, collector: { rateLimited: 0, writeFailures: 0 } }, service: { total: 0, since: '2026-10-08T00:00:00Z', responses: [] } };
+      const errors = empty ? 0 : meta.category === 'home' ? 2 : meta.category === 'app_feed' ? 8 : 0;
+      return { ...meta, today: views, last7: views, last30: views, errors: { today: errors, last7: errors, last30: errors }, daily: days.map(day => ({ day, views: day === days.at(-1) ? views : !empty && day === '2026-08-11' && meta.category === 'home' ? 7 : 0, errors: day === days.at(-1) ? errors : 0 })) };
+    }), performance: { byCode: [], details: empty ? [] : [
+      { day: '2026-10-08', category: 'home', code: 'script_error', count: 2 },
+      { day: '2026-10-08', category: 'app_feed', code: 'request_failed', count: 8 },
+    ] }, geography: { available: true, cityHeadersEnabled: true, firstRecordedDay: empty ? null : '2026-10-08', daily: empty ? [] : [
+      { day: '2026-10-08', category: 'home', country: 'US', countryName: 'United States', city: 'Portland', region: 'Oregon', views: 2 },
+      { day: '2026-10-08', category: 'home', country: 'GB', countryName: 'United Kingdom', city: 'London', region: 'England', views: 1 },
+      { day: '2026-10-08', category: 'app_feed', country: 'US', countryName: 'United States', city: 'Portland', region: 'Maine', views: 4 },
+      { day: '2026-10-08', category: 'command_center_accounts', country: 'US', countryName: 'United States', city: null, region: null, views: 2 },
+    ] }, storage: { connected: true, status: 'ready', pendingEvents: 0, collector: { rateLimited: 0, writeFailures: 0 } }, service: { total: 0, since: '2026-10-08T00:00:00Z', responses: [] } };
+}
+function geographyReport(params, empty = false) {
+  const source = report(empty), platform = params.get('platform'), category = params.get('category'), viewType = params.get('viewType');
+  const start = params.get('from'), end = params.get('to'), countries = new Map(), cities = new Map();
+  const matches = row => {
+    const meta = catalog[row.category];
+    return (!platform || platform === 'all' || meta.platform === platform) && (!category || category === 'all' || row.category === category)
+      && (!viewType || viewType === 'all' || meta.viewType === viewType);
+  };
+  const total = source.categories.filter(matches).reduce((sum, row) => sum + row.daily.filter(day => day.day >= start && day.day <= end).reduce((sum, day) => sum + day.views, 0), 0);
+  for (const row of source.geography.daily.filter(row => matches(row) && row.day >= start && row.day <= end)) {
+    const country = countries.get(row.country) || { country: row.country, label: row.countryName, views: 0 };
+    country.views += row.views; countries.set(row.country, country);
+    if (row.city) { const key = JSON.stringify([row.country, row.region, row.city]); const city = cities.get(key) || { ...row, key, views: 0 }; city.views += row.views; cities.set(key, city); }
+  }
+  const knownCountry = [...countries.values()].reduce((sum, row) => sum + row.views, 0), knownCity = [...cities.values()].reduce((sum, row) => sum + row.views, 0);
+  return { available: true, total, knownCountry, knownCity, unknownCountry: total - knownCountry, unknownCity: total - knownCity,
+    countries: [...countries.values()], cities: [...cities.values()], cityLimit: 1000, cityCount: cities.size, otherCityViews: 0,
+    firstRecordedDay: source.geography.firstRecordedDay, cityHeadersEnabled: true };
 }
 const server = await createServer({ root: path.join(root, 'office'), configFile: path.join(root, 'office/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify(API), 'import.meta.env.VITE_PIPELINE_API_URL': JSON.stringify(API) },
@@ -24,7 +52,7 @@ try {
   for (const width of [1440, 390]) {
     const page = await browser.newPage({ viewport: { width, height: 900 } }); page.setDefaultTimeout(15000);
     const errors = []; page.on('pageerror', error => errors.push(error.message));
-    let mode = 'normal', held = null;
+    let mode = 'normal', held = null, heldGeography = null;
     await page.route(`${API}/**`, async route => {
       const req = route.request(), url = new URL(req.url());
       const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'x-office-token,content-type', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS' };
@@ -37,6 +65,11 @@ try {
         if (mode === 'unauthorized') return route.fulfill({ status: 401, headers, json: { error: 'Unauthorized' } });
         return route.fulfill({ headers, json: report(mode === 'empty') });
       }
+      if (url.pathname === '/office/analytics/geography') {
+        if (mode === 'hold') { heldGeography = route; return; }
+        if (mode === 'error') return route.fulfill({ status: 503, headers, json: { error: 'Synthetic geography outage' } });
+        return route.fulfill({ headers, json: geographyReport(url.searchParams, mode === 'empty') });
+      }
       if (url.pathname === '/office/users') return route.fulfill({ headers, json: { available: true,
         recent: [{ id:'00000000-0000-4000-8000-000000000001',name:'Recovered May member',email:'member@example.invalid',registeredDay:'2026-05-31',createdAt:'2026-10-08T00:00:00Z',onboarded:false }],
         total:1,onboarded:0,incomplete:1,today:1,last7:1,last30:1,sinceMay:1,incompleteSinceMay:1,knownRegistrationsSinceMay:15,recoveredRegistrations:14,
@@ -47,7 +80,7 @@ try {
       if (url.pathname.endsWith('/stream')) return route.fulfill({ headers, contentType: 'text/event-stream', body: 'data: {"backlog":[]}\n\n' });
       return route.fulfill({ headers, json: { ok: true, server: {}, agents: {}, users: [], records: [], cache: {} } });
     });
-    await page.goto(`${server.resolvedUrls.local[0]}#analytics`);
+    await page.goto(`${server.resolvedUrls.local[0]}#analytics`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.getByLabel('Access token', { exact: true }).fill(TOKEN);
     await page.getByRole('button', { name: 'Unlock Office', exact: true }).click();
     const dashboard = page.locator('.office-analytics');
@@ -57,6 +90,20 @@ try {
     const metric = label => dashboard.locator('.office-analytics-metrics > div').filter({ has: page.getByText(label, { exact: true }) }).locator('dd');
     assert.equal(await metric('Page / screen views').innerText(), '14');
     assert.equal(await metric('Tab opens').innerText(), '2');
+    assert.equal(await metric('Optional diagnostics').innerText(), '10');
+    const countryTable = dashboard.getByRole('region', { name: 'Country activity table', exact: true });
+    const cityTable = dashboard.getByRole('region', { name: 'City activity table', exact: true });
+    const diagnostics = dashboard.getByRole('region', { name: 'Diagnostic history table', exact: true });
+    await countryTable.waitFor();
+    assert.equal(await countryTable.locator('tbody tr').filter({ hasText: 'United States' }).locator('td').first().innerText(), '8');
+    assert.equal(await countryTable.locator('tbody tr').filter({ hasText: 'Unknown country' }).locator('td').first().innerText(), '7');
+    assert.equal(await cityTable.locator('tbody tr').filter({ hasText: 'Portland' }).count(), 2);
+    assert.equal(await diagnostics.locator('tbody tr').count(), 2);
+    assert.ok((await diagnostics.innerText()).includes('Failed requests'));
+    await dashboard.getByLabel('Find a city', { exact: true }).fill('oregon');
+    assert.equal(await cityTable.locator('tbody tr').count(), 1);
+    assert.equal(await cityTable.locator('tbody td').first().innerText(), '2');
+    await dashboard.getByLabel('Find a city', { exact: true }).fill('');
     assert.equal(await dashboard.getByLabel('Period', { exact:true }).inputValue(),'history');
     assert.equal(await dashboard.getByLabel('From (UTC)', { exact:true }).inputValue(),'2026-05-01');
     assert.equal(await dashboard.locator('.office-analytics-bar.unavailable').count(),102);
@@ -78,6 +125,12 @@ try {
     await accounts.getByText('Daily registration history since May', { exact:true }).click();
     await dashboard.getByLabel('Platform', { exact: true }).selectOption('mobile');
     assert.equal(await metric('Page / screen views').innerText(), '4');
+    await countryTable.getByText('4', { exact: true }).first().waitFor();
+    assert.equal(await countryTable.locator('tbody tr').filter({ hasText: 'United States' }).locator('td').first().innerText(), '4');
+    assert.equal(await cityTable.locator('tbody tr').filter({ hasText: 'Portland' }).count(), 1);
+    assert.ok((await cityTable.innerText()).includes('Maine'));
+    assert.equal(await diagnostics.locator('tbody tr').count(), 1);
+    assert.equal(await metric('Optional diagnostics').innerText(), '8');
     await dashboard.getByLabel('Category', { exact: true }).selectOption('app_feed');
     assert.equal(await table.locator('tbody tr').count(), 1);
     await dashboard.getByLabel('Period', { exact: true }).selectOption('custom');
@@ -85,26 +138,31 @@ try {
     assert.equal(await metric('Page / screen views').innerText(), '0');
     await dashboard.getByLabel('Period', { exact: true }).selectOption('30');
     await dashboard.getByLabel('Platform', { exact: true }).selectOption('all');
-    await dashboard.getByLabel('Find a category', { exact: true }).fill('maps');
-    assert.equal(await table.locator('tbody tr').count(), 1);
+    const categorySearch = catalog.maps.label;
+    await dashboard.getByLabel('Find a category', { exact: true }).fill(categorySearch);
+    await table.locator('tbody tr').first().waitFor();
+    assert.equal(await table.locator('tbody tr').count(), Object.values(catalog).filter(row => `${row.label} ${row.group}`.toLowerCase().includes(categorySearch.toLowerCase())).length);
     assert.ok((await table.innerText()).includes('0'));
     await dashboard.getByLabel('Find a category', { exact: true }).fill('');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     mode = 'error'; await dashboard.getByRole('button', { name: 'Refresh analytics', exact: true }).click();
     await dashboard.getByRole('alert').filter({ hasText: 'Synthetic storage outage' }).waitFor();
+    await dashboard.getByRole('alert').filter({ hasText: 'Synthetic geography outage' }).waitFor();
     assert.equal(await metric('Page / screen views').innerText(), '7');
     mode = 'normal'; await dashboard.getByRole('button', { name: 'Retry analytics', exact: true }).click();
     await dashboard.getByRole('button', { name: 'Refresh analytics', exact: true }).waitFor();
     mode = 'hold'; await dashboard.getByRole('button', { name: 'Refresh analytics', exact: true }).click();
-    for (let i = 0; i < 100 && !held; i++) await page.waitForTimeout(10);
-    assert.ok(held);
+    for (let i = 0; i < 100 && (!held || !heldGeography); i++) await page.waitForTimeout(10);
+    assert.ok(held); assert.ok(heldGeography);
     mode = 'empty'; await page.evaluate(() => window.dispatchEvent(new Event('office-token-changed')));
     await dashboard.getByRole('button', { name: 'Refresh analytics', exact: true }).waitFor();
     await held.fulfill({ json: report(), headers: { 'Access-Control-Allow-Origin': '*' } }).catch(() => {});
+    await heldGeography.fulfill({ json: geographyReport(new URL(heldGeography.request().url()).searchParams), headers: { 'Access-Control-Allow-Origin': '*' } }).catch(() => {});
     assert.equal(await metric('Page / screen views').innerText(), '0', 'Old credential request cannot restore stale data');
     assert.equal(await metric('Tab opens').innerText(), '0');
+    assert.equal(await countryTable.locator('tfoot td').first().innerText(), '0');
     assert.deepEqual(errors, []);
-    console.log(`PASS Office May date range, recovered analytics, unavailable dates, registration recovery, filters, errors and stale token protection ${width}`);
+    console.log(`PASS Office country/city counts, diagnostic history, May date range, recovery, filters, errors and stale token protection ${width}`);
     await page.close();
   }
 } finally { await browser?.close(); await server.close(); }

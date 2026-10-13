@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { startBuiltServer } from '../web/scripts/serve-built.mjs';
-import { ADS_CONSENT_KEY, ADS_CONVERSION } from '../web/src/analytics/googleAds.mjs';
+import { ADS_CONSENT_KEY, ADS_CONVERSION, TAG_MANAGER_ID } from '../web/src/analytics/googleAds.mjs';
 const server = await startBuiltServer({ port: 0 });
 const browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
 try {
@@ -14,9 +14,14 @@ try {
       if (config.gpc) Object.defineProperty(navigator, 'globalPrivacyControl', { value: true });
     }, { config, key: ADS_CONSENT_KEY });
     let scripts = 0;
+    let containers = 0;
     await context.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url());
       if (url.hostname === 'www.googletagmanager.com') {
+        if (url.pathname === '/gtm.js' && url.searchParams.get('id') === TAG_MANAGER_ID) {
+          containers++;
+          return route.fulfill({ contentType: 'text/javascript', body: 'window.__tagManager = true;' });
+        }
         if (url.searchParams.get('id') === 'AW-18490754953') {
           scripts++;
           return route.fulfill({ contentType: 'text/javascript', body: 'window.__adsSdk = true;' });
@@ -37,7 +42,9 @@ try {
     await page.goto(server.origin + (config.path || '/') + '?gclid=A_test-click-123&email=private%40example.invalid#private-value');
     await page.waitForFunction(() => !document.querySelector('#root[data-session-shell]') && !document.querySelector('.splash'));
     if (config.ads && !config.gpc && !config.path && !config.member) {
-      await page.waitForFunction(() => window.__adsSdk === true);
+      await page.waitForFunction(() => window.__adsSdk === true && window.__tagManager === true);
+      assert.equal(containers, 1, 'The requested Tag Manager container loads once after advertising consent');
+      assert.equal(await page.evaluate(() => window.dataLayer.filter(value => value.event === 'gtm.js').length), 1);
       const events = await page.evaluate(() => window.dataLayer.map(value => Array.from(value)));
       const conversions = events.filter(value => value[0] === 'event' && value[1] === 'conversion');
       assert.equal(conversions.length, 1);
@@ -50,16 +57,20 @@ try {
       await page.waitForURL('**/login');
       await page.locator('#login-password').waitFor();
       assert.equal(await page.evaluate(() => window.__adsSdk), undefined, 'Leaving the homepage destroys the SDK document');
+      assert.equal(await page.evaluate(() => window.__tagManager), undefined, 'Private routes unload Tag Manager');
       assert.equal(scripts, 1);
+      assert.equal(containers, 1);
       await page.goto(server.origin + '/#analytics');
-      await page.waitForFunction(() => window.__adsSdk === true);
+      await page.waitForFunction(() => window.__adsSdk === true && window.__tagManager === true);
       await page.getByRole('checkbox', { name: 'Allow Google Ads measurement (optional)' }).uncheck();
       await page.getByRole('button', { name: 'Decline analytics', exact: true }).click();
-      await page.waitForFunction(key => localStorage.getItem(key) === 'denied' && !window.__adsSdk, ADS_CONSENT_KEY);
+      await page.waitForFunction(key => localStorage.getItem(key) === 'denied' && !window.__adsSdk && !window.__tagManager, ADS_CONSENT_KEY);
       assert.equal(scripts, 2, 'Withdrawing consent unloads the SDK without loading it again');
+      assert.equal(containers, 2, 'Withdrawing consent unloads Tag Manager without loading it again');
     } else {
       await page.waitForTimeout(300);
       assert.equal(scripts, 0, JSON.stringify(config));
+      assert.equal(containers, 0, `Tag Manager stays off: ${JSON.stringify(config)}`);
     }
     await context.close();
     console.log('PASS Ads consent and document boundary', JSON.stringify(config));

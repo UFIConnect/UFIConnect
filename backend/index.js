@@ -19981,6 +19981,7 @@ registerContentReportRoutes(app, { db, authenticate, requireOfficeToken, notifyC
 });
 
 app.get('/office/analytics/pageviews', requireOfficeToken, aggregateAnalytics.report);
+app.get('/office/analytics/geography', requireOfficeToken, aggregateAnalytics.geography);
 
 // Real per-topic volume, straight from the DB rather than the capped
 // 300-post in-memory global cache (feed_posts_cache holds far more, and is
