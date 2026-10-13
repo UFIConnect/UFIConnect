@@ -14,6 +14,12 @@ const browser = await chromium.launch({ channel: process.platform === 'win32' ? 
 await fs.mkdir('.cache/audit-ui', { recursive: true });
 let checks = 0;
 const check = (value, message) => { assert.ok(value, message); checks++; };
+function localInvitationUrl(publicLink, token) {
+  check(publicLink === `https://uficonnect.org/recruiting#invite=${token}`, 'Invitation uses the canonical public origin and exact account-bound fragment');
+  const destination = new URL(publicLink);
+  // Exercise the invitation against intercepted fixtures, keeping production untouched.
+  return new URL(destination.pathname + destination.search + destination.hash, server.origin).href;
+}
 
 try {
   for (const width of [1440, 390]) {
@@ -22,7 +28,7 @@ try {
     await page.addInitScript(() => {
       if (location.protocol === 'http:' || location.protocol === 'https:') localStorage.setItem('uficonnect.analytics.consent.v1', 'denied');
     });
-    const errors = []; const mutations = [];
+    const errors = []; const mutations = []; const requestUrls = [];
     let current = 'team-owner'; let invitation = null; let joined = false; let generation = 0; let rejectInvite = false;
     let authenticated = true; let onboardingComplete = true;
     const owner = { id: 'team-owner', name: 'Team owner', organization: 'Talent Company' };
@@ -42,6 +48,7 @@ try {
     page.on('dialog', dialog => dialog.accept());
     await context.route('**/*', async route => {
       const request = route.request(); const url = new URL(request.url());
+      requestUrls.push(url.href);
       const headers = { 'Access-Control-Allow-Origin': server.origin, 'Access-Control-Allow-Credentials': 'true', 'Access-Control-Allow-Headers': '*' };
       if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
       if (!['fetch', 'xhr'].includes(request.resourceType())) return url.origin === server.origin ? route.continue() : route.abort();
@@ -94,7 +101,7 @@ try {
     await page.getByRole('button', { name: 'Create invitation link', exact: true }).click();
     const link = page.getByLabel('Invitation link', { exact: true });
     await link.waitFor();
-    check((await link.inputValue()).startsWith(server.origin + '/recruiting#invite='), 'Invitation uses an account-bound fragment link');
+    localInvitationUrl(await link.inputValue(), invitation.token);
     check(await page.getByRole('button', { name: 'Copy invitation link', exact: true }).isVisible(), 'Owner can copy a link without sending an email');
     await page.getByRole('button', { name: 'Revoke', exact: true }).waitFor();
     check(await page.locator('.business-team-settings li').filter({ hasText: 'alice@example.invalid' }).count() === 1, 'Owner sees the pending intended recipient');
@@ -104,10 +111,13 @@ try {
     await email.fill('alice@example.invalid');
     await page.getByRole('button', { name: 'Create invitation link', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('#business-team-link')?.value.includes('BBBB'));
-    const invitationUrl = await link.inputValue();
+    const invitationUrl = localInvitationUrl(await link.inputValue(), invitation.token);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Owner team controls fit ${width}px`);
     await page.screenshot({ path: `.cache/audit-ui/business-team-owner-${width}.png`, fullPage: true });
 
+    await page.goto(invitationUrl);
+    await page.getByText('This invitation is unavailable for your signed-in account.', { exact: true }).waitFor();
+    check(await page.getByRole('button', { name: 'Accept invitation', exact: true }).count() === 0, 'The valid invitation cannot be accepted by the wrong account');
     current = 'team-alice';
     await page.goto(server.origin + '/settings');
     await page.getByRole('heading', { name: 'Settings', exact: true }).waitFor();
@@ -167,6 +177,7 @@ try {
     await page.getByText('Team member removed.', { exact: true }).waitFor();
     check(!joined, 'Owner can remove an assigned team member');
     check(mutations.filter(item => item.endpoint === '/business/team/accept').length === 1, 'Acceptance occurs only on the explicit button click');
+    check(!requestUrls.some(url => ['A', 'B', 'X'].some(character => url.includes(character.repeat(43)))), 'Invitation tokens stay in fragments and never enter request URLs');
     check(errors.length === 0, `No team browser errors at ${width}px: ${errors.join('; ')}`);
     await context.close();
   }
