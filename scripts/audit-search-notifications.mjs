@@ -132,7 +132,10 @@ try {
     const messages = page.locator(width <= 768 ? '#mobile-feed-drawer' : '.home-feed-rail-bottom').getByRole('button', { name: 'Messages', exact: true, includeHidden: true });
     const feedMenu = page.locator('button[aria-controls="mobile-feed-drawer"]');
     async function showMessagesButton() {
-      if (width <= 768 && !await messages.isVisible()) await feedMenu.click();
+      if (width <= 768) {
+        if (await page.locator('#mobile-feed-drawer').getAttribute('aria-hidden') !== 'false') await feedMenu.click();
+        await page.waitForFunction(() => document.querySelector('#mobile-feed-drawer')?.getAttribute('aria-hidden') === 'false');
+      }
       await messages.scrollIntoViewIfNeeded();
     }
     async function openMessages() { await showMessagesButton(); await messages.click(); }
