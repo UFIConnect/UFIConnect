@@ -172,6 +172,20 @@ test('backgrounding pauses a ready player and destruction rejects stale player c
   assert.equal(f.registry.entries.size, 0);
 });
 
+test('native background/foreground transitions preserve an explicit pause before or during inactivity', () => {
+  for (const when of ['before', 'during']) {
+    const f = fixture(); f.ready(); f.sync({ commands: [command('playVideo')] });
+    if (when === 'before') f.sync({ commands: [command('pauseVideo')] });
+    f.registry.setActive(false);
+    assert.equal(f.sent.at(-1).active, false);
+    if (when === 'during') f.sync({ commands: [command('pauseVideo')] });
+    f.registry.setActive(true);
+    assert.equal(f.sent.at(-1).active, true);
+    assert.ok(!f.sent.at(-1).commands.some(item => item.name === 'playVideo'), when + ' inactive pause must not resume');
+    f.registry.dispose();
+  }
+});
+
 test('player registry bounds active instances and events and validates full requests before mutation', () => {
   const f = fixture();
   for (let index = 1; index < MAX_PLAYERS; index += 1) f.registry.request({ op: 'mount', key: `other_${index}`, videoId: ID, rect: bounds() });

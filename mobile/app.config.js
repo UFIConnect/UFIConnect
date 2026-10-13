@@ -39,7 +39,7 @@ export default ({ config }) => ({
       backgroundColor: '#102A6B',
     },
     package: 'org.uficonnect.app',
-    versionCode: 6,
+    versionCode: 7,
     allowBackup: false,
     blockedPermissions: [
       'READ_EXTERNAL_STORAGE',

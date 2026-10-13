@@ -83,8 +83,10 @@ export default function Website(props) {
     return () => { cleanup(); window.removeEventListener('ufi-native-error', onError); };
   }, [native]);
   useEffect(() => {
-    if (!native || props.nativeAppActive === false) return;
-    window.dispatchEvent(new Event('focus'));
+    if (!native) return;
+    // A native browser sheet can leave the actual WebView foregrounded.
+    // Notify media listeners for both transitions after updating hidden state.
+    if (props.nativeAppActive !== false) window.dispatchEvent(new Event('focus'));
     document.dispatchEvent(new Event('visibilitychange'));
   }, [native, props.nativeAppActive]);
   useEffect(() => {

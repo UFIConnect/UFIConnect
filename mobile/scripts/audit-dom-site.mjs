@@ -33,12 +33,27 @@ const server = http.createServer(async (request, response) => {
       assert.ok(pathname.startsWith('/www.bundle/'));
       body = await fs.readFile(path.resolve(exportRoot, '.' + pathname.slice('/www.bundle'.length)));
     }
+    if (path.extname(filename) === '.mp4' && request.headers.range) {
+      const range = /^bytes=(\d+)-(\d*)$/.exec(request.headers.range);
+      assert.ok(range, 'Valid media byte range');
+      const start = Number(range[1]), end = Math.min(range[2] ? Number(range[2]) : body.length - 1, body.length - 1);
+      assert.ok(start <= end && end < body.length, 'Media range stays in the file');
+      response.writeHead(206, { 'content-type': 'video/mp4', 'accept-ranges': 'bytes',
+        'content-range': `bytes ${start}-${end}/${body.length}`, 'content-length': end - start + 1 });
+      response.end(body.subarray(start, end + 1)); return;
+    }
     response.writeHead(200, { 'content-type': mime[path.extname(filename)] || 'application/octet-stream' });
     response.end(body);
   } catch { response.writeHead(404); response.end('Not found'); }
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const origin = `http://127.0.0.1:${server.address().port}`;
+const video = { id: 'native-dom-media-fixture', source: 'uficonnect', isExternal: false,
+  author: { id: 'native-dom-fixture-author', name: 'Fixture member' }, title: 'Native media playback fixture',
+  mediaType: 'video', directPlaybackAuthorized: true, videoDurationSeconds: 158,
+  mediaUrl: origin + '/www.bundle/media/preparation/professional-introduction.mp4',
+  thumbnailUrl: origin + '/www.bundle/media/preparation/professional-introduction.png',
+  createdAt: new Date().toISOString(), likesCount: 0, commentsCount: 0 };
 const app = await createAppHarness();
 const userId = 'native-dom-fixture';
 const profile = member(userId, { name: 'Alex Morgan', title: 'Product Designer', plan: 'pro', onboardingComplete: true });
@@ -57,7 +72,7 @@ try {
     page.setDefaultTimeout(25000);
     const errors = [], assetFailures = [];
     page.on('pageerror', error => errors.push(error.message));
-    page.on('response', response => { if (response.url().startsWith(origin) && response.status() !== 200) assetFailures.push(new URL(response.url()).pathname); });
+    page.on('response', response => { if (response.url().startsWith(origin) && !response.ok()) assetFailures.push(new URL(response.url()).pathname); });
     await context.route('**/*', route => route.request().url().startsWith(origin + '/') ? route.continue() : route.abort());
     await page.exposeFunction('__ufiFixtureNativeAction', async (actionId, args) => {
       assert.equal(args[0], 'fixture-capability-only', 'Each action includes its native capability');
@@ -72,7 +87,8 @@ try {
       if (url.pathname === '/auth/providers') return { status: 200, data: { providers: { google: { enabled: true, configured: true }, apple: { enabled: true, configured: true }, phone: { enabled: true, configured: true } } } };
       if (url.pathname.startsWith('/analytics/') || url.pathname === '/errors/client') return { status: 200, data: { ok: true } };
       if (!['GET', 'HEAD'].includes(request.method || 'GET')) return { status: 409, data: { error: 'Member writes are disabled.' } };
-      if (['/office/feed', '/feed', '/office/feed/videos'].includes(url.pathname)) return { status: 200, data: { posts: [], hasMore: false, waitingForNew: true, nativeUficonnectIncluded: true } };
+      if (url.pathname === '/office/feed/videos') return { status: 200, data: { posts: [video], hasMore: false, waitingForNew: true } };
+      if (['/office/feed', '/feed'].includes(url.pathname)) return { status: 200, data: { posts: [], hasMore: false, waitingForNew: true, nativeUficonnectIncluded: true } };
       if (url.pathname === '/feed/location') return { status: 200, data: { automaticLocationAvailable: true, countryCode: 'US' } };
       const result = await app.request(url.pathname + url.search, { userId: signedIn ? userId : undefined });
       return { status: result.status, data: result.data ?? {}, headers: {} };
@@ -115,15 +131,42 @@ try {
       for (const label of ['Home', 'Videos', 'Groups', 'Jobs', 'Profile']) check(await page.locator('.bottom-nav').getByRole('link', { name: label, exact: true }).isVisible(), `Native DOM shows current ${label} navigation`);
       await page.locator('.bottom-nav').getByRole('link', { name: 'Videos', exact: true }).click();
       await page.locator('.video-feed-view').waitFor();
+      const media = page.locator('.video-feed-slide video').first();
+      await media.waitFor({ state: 'attached' });
+      await media.evaluate(async element => { element.muted = true; await element.play(); });
+      check(await media.evaluate(element => !element.paused && element.readyState >= 2), 'A real local HTML video is playing through the compiled app');
       check(page.url() === documentUrl, 'Member navigation stays inside the bundled native document');
-      for (const active of [false, true]) {
-        await page.evaluate(active => {
+      await page.evaluate(() => {
+        window.__ufiFixtureVisibilityEvents = [];
+        document.addEventListener('visibilitychange', () => window.__ufiFixtureVisibilityEvents.push(document.hidden));
+      });
+      async function setNativeActive(active) {
+        const before = await page.evaluate(active => {
+          const previous = window.__ufiFixtureVisibilityEvents.length;
           const value = window.$$EXPO_INITIAL_PROPS;
           window.dispatchEvent(new CustomEvent('$$dom_event', { detail: { type: '$$props', data: {
             ...value, props: { ...value.props, nativeAppActive: active },
           } } }));
+          return previous;
         }, active);
-        await page.waitForFunction(active => document.hidden === !active, active);
+        await page.waitForFunction(({ active, before }) => document.hidden === !active
+          && window.__ufiFixtureVisibilityEvents.slice(before).includes(!active), { active, before }, { timeout: 5000 });
+      }
+      for (const active of [false, true]) {
+        await setNativeActive(active);
+        await page.waitForFunction(active => {
+          const element = document.querySelector('.video-feed-slide video');
+          return element && element.paused === !active;
+        }, active, { timeout: 5000 });
+        check(await media.evaluate((element, active) => element.paused === !active, active), active
+          ? 'Foreground restores the real HTML video playback intent'
+          : 'The inactive native prop pauses the real HTML video while the browser document stays open');
+      }
+      await page.getByRole('button', { name: 'Pause video', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('.video-feed-slide video')?.paused === true);
+      for (const active of [false, true]) {
+        await setNativeActive(active);
+        check(await media.evaluate(element => element.paused), 'A manually paused HTML video stays paused across native visibility changes');
       }
       check(true, 'Native background/foreground props update document visibility without reloading the member session');
     }
