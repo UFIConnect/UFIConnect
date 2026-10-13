@@ -100,6 +100,8 @@ jobs:
         with:
           node-version: '24'
       - run: npm ci
+      # Compiled app audits use the real API fixture harness.
+      - run: npm ci --prefix backend
       - run: npm ci --prefix mobile
       - run: npm run test:security --prefix mobile
       - run: npm run audit:security --prefix mobile
