@@ -52,6 +52,7 @@ try {
     window.YT = { PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 }, Player: class {
       constructor(frame, config) {
         this.frame = frame; this.config = config; this.state = 1; this.rate = 1; this.captionFontSize = 0; this.captionModule = false;
+        this.muted = true; this.volume = 100;
         this.id = new URL(frame.src).pathname.split('/').pop(); audit.players.add(this);
         setTimeout(() => { if (frame.isConnected) config.events?.onReady?.({ target: this }); }, 20);
       }
@@ -76,7 +77,10 @@ try {
       cueVideoById(id) { this.loadVideoById(id); this.pauseVideo(); }
       playVideo() { this.state = 1; this.config.events?.onStateChange?.({ target: this, data: 1 }); }
       pauseVideo() { this.state = 2; this.config.events?.onStateChange?.({ target: this, data: 2 }); }
-      mute() {} unMute() {} seekTo() {}
+      isMuted() { return this.muted; }
+      getVolume() { return this.volume; }
+      setVolume(value) { this.volume = Number(value); }
+      mute() { this.muted = true; } unMute() { this.muted = false; } seekTo() {}
       destroy() { audit.players.delete(this); this.frame.remove(); }
     } };
   });
@@ -187,10 +191,13 @@ try {
     const slide = document.querySelector('[data-post-id="native-0"]');
     return slide && Math.abs(slide.getBoundingClientRect().top - container.getBoundingClientRect().top) <= 2;
   });
-  assert.ok(await native.evaluate(video => {
-    const rect = video.getBoundingClientRect(), container = video.closest('[data-video-feed-scroll]').getBoundingClientRect();
-    return video.controls && rect.bottom - 20 > container.top && rect.bottom <= Math.min(container.bottom, innerHeight);
-  }), 'The native control band is inside the visible feed before the gesture');
+  assert.equal(await native.evaluate(video => video.controls), false, 'The native picture has no duplicate browser controls');
+  const nativeProgress = nativeSlide.getByRole('slider', { name: 'Video progress', exact: true });
+  assert.ok(await nativeProgress.evaluate(control => {
+    const rect = control.getBoundingClientRect(), container = control.closest('[data-video-feed-scroll]').getBoundingClientRect();
+    const video = control.closest('.video-feed-slide').querySelector('video').getBoundingClientRect();
+    return rect.top >= video.bottom && rect.top >= container.top && rect.bottom <= Math.min(container.bottom, innerHeight);
+  }), 'The app progress control sits below the native picture inside the visible feed');
   await scroll.evaluate(container => {
     container.focus({ preventScroll: true });
     const original = container.scrollTo.bind(container);
@@ -198,22 +205,22 @@ try {
     container.scrollTo = (...args) => { window.__videoSettingsAudit.controlScrollCalls.push(args); return original(...args); };
   });
   const beforeTouch = await scroll.evaluate(el => el.scrollTop);
-  await native.evaluate(video => {
-    const rect = video.getBoundingClientRect(), startY = rect.bottom - 20;
+  await nativeProgress.evaluate(control => {
+    const rect = control.getBoundingClientRect(), startY = rect.y + rect.height / 2;
     const dispatch = (name, y) => {
       const event = new Event(name, { bubbles: true });
       const touch = { clientX: rect.x + rect.width / 2, clientY: y };
       Object.defineProperties(event, { touches: { value: name === 'touchstart' ? [touch] : [] }, changedTouches: { value: [touch] } });
-      video.dispatchEvent(event);
+      control.dispatchEvent(event);
     };
     dispatch('touchstart', startY); dispatch('touchend', startY - 120);
   });
   await page.waitForTimeout(450);
   const afterTouch = await scroll.evaluate(el => el.scrollTop);
   assert.ok(Math.abs(afterTouch - beforeTouch) <= 1,
-    `A gesture on the native control band does not activate the feed swipe fallback (${beforeTouch} -> ${afterTouch})`);
+    `A gesture on the app progress control does not activate the feed swipe fallback (${beforeTouch} -> ${afterTouch})`);
   assert.deepEqual(await page.evaluate(() => window.__videoSettingsAudit.controlScrollCalls), [],
-    'Native control touches never schedule fallback scrolling');
+    'App progress-control touches never schedule fallback scrolling');
   await scroll.evaluate(container => { delete container.scrollTo; });
 
   await nativeSlide.getByRole('button', { name: 'More options', exact: true }).click();

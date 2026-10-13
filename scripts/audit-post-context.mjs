@@ -20,15 +20,22 @@ await pg.exec(`CREATE TABLE community_posts (
   source TEXT DEFAULT 'uficonnect', source_label TEXT, media_url TEXT, media_type TEXT,
   likes TEXT[] DEFAULT '{}', comments_count INTEGER DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW()
-)`);
+);
+CREATE TABLE community_groups (id TEXT PRIMARY KEY, is_private BOOLEAN DEFAULT false, created_by TEXT);
+CREATE TABLE users (id TEXT PRIMARY KEY, joined_groups TEXT[] DEFAULT '{}');
+INSERT INTO community_groups (id) VALUES ('ufi-general'), ('ufi-tech'), ('ufi-shop');
+INSERT INTO users (id, joined_groups) VALUES ('post-context', ARRAY['ufi-general', 'ufi-tech']);
+`);
 const app = await createAppHarness({ connected: true,
-  query: (sql, params) => /\bcommunity_posts\b/.test(sql) ? pg.query(sql, params) : { rows: [], rowCount: 0 },
+  // Both the post query and the subsequent group-visibility filter use the
+  // same persisted membership fixture as production's permission predicates.
+  query: (sql, params) => /\b(?:community_posts|community_groups)\b/.test(sql) ? pg.query(sql, params) : { rows: [], rowCount: 0 },
 });
 app.seedUser(member('post-context', { joinedGroups: ['ufi-general', 'ufi-tech'] }));
 await app.db.query(`INSERT INTO community_posts (id, group_id, author_id, content)
   VALUES ($1, $2, $3, $4)`, ['joined-tech-post', 'ufi-tech', 'post-context', 'A useful technology update from our joined community.']);
 const seededFeed = await app.request('/posts?scope=ufi', { userId: 'post-context' });
-assert.equal(seededFeed.status, 200);
+assert.equal(seededFeed.status, 200, `Seeded community feed must load: ${app.errors.join('; ')}`);
 assert.deepEqual(seededFeed.data.posts.map(post => post.id), ['joined-tech-post'], 'UFI includes persisted posts from joined communities');
 const server = await createServer({ root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api') },

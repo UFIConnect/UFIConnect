@@ -10,6 +10,7 @@ const API = 'https://api.city.invalid';
 const PIPELINE = 'https://pipeline.city.invalid';
 const TOKEN = 'synthetic-city-audit-token';
 const server = await createServer({ root: path.join(root, 'office'), configFile: path.join(root, 'office/vite.config.js'), envDir: false,
+  cacheDir: path.join(root, '.cache/vite-office-city'),
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify(API), 'import.meta.env.VITE_PIPELINE_API_URL': JSON.stringify(PIPELINE) },
   server: { host: '127.0.0.1', port: 5218, strictPort: false },
 });
@@ -315,7 +316,9 @@ let browser;
 try {
   await server.listen();
   await fs.mkdir(path.join(root,'.cache/audit-ui'),{recursive:true});
-  browser=await chromium.launch({channel:process.platform==='win32'?'msedge':undefined});
+  const forceSoftwareGpu = process.argv.includes('--software-gpu');
+  browser=await chromium.launch({channel:process.platform==='win32'?'msedge':undefined,
+    ...(forceSoftwareGpu ? { args: ['--use-angle=swiftshader'] } : {})});
   for (const width of [1440,390]) {
     const context=await browser.newContext({viewport:{width,height:950},isMobile:width<600,hasTouch:width<600});
     const fixture=await installFixture(context); fixture.fullRoster=true;
@@ -325,16 +328,39 @@ try {
     await page.getByRole('button',{name:'Unlock Office',exact:true}).click();
     const scene=page.locator('.lc-3d-scene canvas[data-rendered="true"]');
     await scene.waitFor();
+    if (forceSoftwareGpu) {
+      const renderer = await scene.evaluate(canvas => {
+        const gl = canvas.getContext('webgl2'), debug = gl?.getExtension('WEBGL_debug_renderer_info');
+        return gl ? String(gl.getParameter(debug ? debug.UNMASKED_RENDERER_WEBGL : gl.RENDERER)) : '';
+      });
+      check(/swiftshader|llvmpipe|softpipe|software|microsoft basic render/i.test(renderer), 'The requested software-GPU audit uses a software renderer');
+      console.log('OFFICE_CITY_SOFTWARE_GPU ' + JSON.stringify({ width, renderer }));
+    }
     await eventually(async()=>await scene.getAttribute('data-homes')==='71','All 71 registered homes render in 3D');
     await eventually(async()=>await scene.getAttribute('data-visible-homes')==='71'&&await scene.getAttribute('data-framed-homes')==='71','Every home fits inside the default 3D camera on desktop and mobile');
     check(Number(await scene.getAttribute('data-parked-cars')) > 0, 'Workplace cars enter indoor parking instead of crowding building entrances');
     const firstTime=Number(await scene.getAttribute('data-motion-time'));
     await eventually(async()=>Number(await scene.getAttribute('data-motion-time'))>firstTime,'Cars and lunch trips advance in 3D');
     await page.getByRole('button',{name:'Pause motion',exact:true}).click();
-    await page.waitForTimeout(100);
-    const pausedTime=await scene.getAttribute('data-motion-time');
-    await page.waitForTimeout(200);
-    check(await scene.getAttribute('data-motion-time')===pausedTime,'Pause freezes the 3D simulation clock');
+    await page.getByRole('button',{name:'Resume motion',exact:true}).waitFor();
+    // The renderer can intentionally space paints beyond a fixed delay on a
+    // slow GPU. Compare two actual post-pause paints, including unchanged
+    // attribute writes, instead of sampling an older painted clock value.
+    const pausedPaints = await scene.evaluateHandle(canvas => {
+      const samples = [];
+      const observer = new MutationObserver(() => samples.push(canvas.dataset.motionTime));
+      observer.observe(canvas, { attributes: true, attributeFilter: ['data-motion-time'] });
+      return { samples, observer };
+    });
+    try {
+      await page.waitForFunction(state => state.samples.length >= 2, pausedPaints);
+      const samples = await pausedPaints.evaluate(state => state.samples.slice(0, 2));
+      check(samples[0] === samples[1], 'Pause freezes the 3D simulation clock across actual paints');
+      console.log('OFFICE_CITY_PAUSED_PAINTS ' + JSON.stringify({ width, samples }));
+    } finally {
+      await pausedPaints.evaluate(state => state.observer.disconnect());
+      await pausedPaints.dispose();
+    }
     await page.getByRole('button',{name:'Resume motion',exact:true}).click();
     await page.getByRole('button',{name:'Rotate city right',exact:true}).click();
     await page.getByRole('button',{name:'Reset view',exact:true}).click();

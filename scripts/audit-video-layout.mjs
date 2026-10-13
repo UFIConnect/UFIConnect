@@ -150,7 +150,8 @@ try {
           likesCount: 0, likedByMe: false, videoDurationSeconds: 30 })]);
         const slide = page.locator(`[data-post-id="${id}"]`); await slide.waitFor();
         const actions = slide.getByRole('group', { name: 'Post actions', exact: true });
-        assert.equal(await actions.getByRole('button').count(), 4);
+        assert.equal(await actions.getByRole('button').count(), 5, 'Like, Comments, Save, Details and More stay in the layout');
+        assert.ok(await actions.getByRole('button', { name: /^(?:Video|Music) details$/ }).isVisible());
         assert.equal(await actions.getByRole('link', { name: 'Open post', exact: true }).getAttribute('href'), `/p/${id}`);
         const more = slide.getByRole('button', { name: 'More options', exact: true });
         await actions.getByRole('button', { name: 'Like, 0 likes', exact: true }).click();
@@ -241,7 +242,10 @@ try {
       assert.equal(await actions.locator('.post-chrome-like').count(), invalidSource ? 0 : 1);
       assert.equal(await slide.locator('.video-feed-action-rail, .video-feed-scrubber, .video-feed-progress').count(), 0,
         'Obsolete playback rails do not duplicate the shared control row');
-      await slide.locator('[data-video-media]').hover({ position: { x: 12, y: 12 } });
+      // The shared official iframe intentionally receives pointer events above
+      // this geometry placeholder. Move the real pointer over the picture.
+      const picture = await slide.locator('[data-video-media]').boundingBox();
+      await page.mouse.move(picture.x + 12, picture.y + 12);
       await checkPlaybackControls(slide);
       assert.equal(await actions.locator('.post-chrome-source-link').count(), 1, 'The post link stays visible');
       const more = actions.getByRole('button', { name: 'More options', exact: true });
@@ -253,6 +257,24 @@ try {
         const link = element.querySelector('.post-chrome-source-link').getBoundingClientRect();
         return link.left >= more.right && Math.abs(link.top - more.top) < 1;
       }), 'The source link sits to the right of three dots in the same row');
+      const details = actions.locator('.video-feed-caption-toggle');
+      const identity = slide.locator('.post-chrome-identity');
+      const caption = slide.locator('[data-video-caption]');
+      assert.equal(await details.getAttribute('aria-expanded'), 'false', 'The video description starts collapsed');
+      assert.equal(await caption.isVisible(), false, 'The collapsed description does not duplicate the compact layout');
+      assert.ok(await identity.isVisible(), 'Creator attribution stays visible with the description collapsed');
+      assert.equal(await identity.getAttribute('href'), profileHref, 'The compact creator links to its original profile');
+      const creator = await identity.boundingBox();
+      assert.ok(creator.y >= picture.y + picture.height - 1, 'Creator attribution sits below the video picture');
+      const detailsScroll = await page.locator('[data-video-feed-scroll]').evaluate(el => el.scrollTop);
+      await details.click();
+      await caption.waitFor({ state: 'visible' });
+      assert.equal(await details.getAttribute('aria-expanded'), 'true');
+      assert.equal((await caption.locator('.video-feed-caption-expanded > p').last().textContent()).trim(),
+        'Details belong below the video.', 'Details reveals the available video description');
+      assert.ok(await identity.isVisible(), 'Expanded details preserve visible creator attribution');
+      assert.equal(await page.locator('[data-video-feed-scroll]').evaluate(el => el.scrollTop), detailsScroll,
+        'Opening details does not advance the video');
       assert.equal(await slide.locator('.post-chrome-identity').getAttribute('href'), profileHref,
         'The author name links to its real source profile');
       const routeBefore = page.url();
@@ -269,11 +291,24 @@ try {
         'The source menu does not duplicate visible playback controls');
       assert.equal(await menu.getByRole('menuitem', { name: /^(?:Show|Hide) player controls$|^Read more$|^Show less$/ }).count(), 0,
         'Player controls and caption expansion remain outside overflow');
-      assert.equal(await menu.getByRole('menuitem', { name: /^(?:Open on |Open original post|Open (?:Reddit|Hacker News) discussion|Watch on )/ }).count(), 0,
-        'The original-post link stays beside More options and is not duplicated in the menu');
+      const originalSource = await slide.getAttribute('data-source');
+      const originalLink = menu.getByRole('menuitem', { name: originalSource === 'youtube' && !invalidSource
+        ? 'Watch on YouTube' : /^(?:Open on |Open original post|Open (?:Reddit|Hacker News) discussion)/ });
+      assert.equal(await originalLink.count(), 1, 'The source menu retains one canonical original-post destination');
+      const expectedOriginal = originalSource === 'hackernews'
+        ? (youtube ? 'https://news.ycombinator.com/item?id=123457' : 'https://news.ycombinator.com/item?id=123456')
+        : originalSource === 'reddit' ? 'https://www.reddit.com/r/audit/comments/abcd/fixture/' : null;
+      if (expectedOriginal) assert.equal(await originalLink.getAttribute('href'), expectedOriginal);
+      if (youtube && originalSource !== 'youtube') {
+        assert.equal(await menu.getByRole('menuitem', { name: 'Watch on YouTube', exact: true }).count(), 1,
+          'Embedded YouTube keeps a distinct playback-source destination');
+        assert.match(await actions.locator('.post-chrome-source-link').getAttribute('href'), /^https:\/\/www\.youtube\.com\/watch\?v=/,
+          'The visible source badge identifies the actual YouTube player');
+      }
       assert.equal(await menu.locator('.video-feed-menu-action').count(), 0, 'Like and Save are visible in the layout');
-      if (!youtube) assert.equal(await menu.getByRole('menuitem', { name: /YouTube/i }).count(), 0,
-        'Videos without a playable YouTube URL have no YouTube options: ' + JSON.stringify(await menu.getByRole('menuitem').allTextContents()));
+      if (!youtube) assert.equal(await menu.getByRole('menuitem', { name: invalidSource
+        ? /Likes on YouTube|Watch later on YouTube|channel playlists on YouTube/ : /YouTube/i }).count(), 0,
+        'Videos without a playable YouTube URL have no YouTube API actions: ' + JSON.stringify(await menu.getByRole('menuitem').allTextContents()));
       await page.keyboard.press('Escape');
       await menu.waitFor({ state: 'detached' });
       assert.equal(page.url(), routeBefore, 'Escape closes the menu without leaving the video route');
@@ -289,6 +324,11 @@ try {
       await page.keyboard.press('Escape');
       await viewer.waitFor({ state: 'detached' });
       assert.equal(page.url(), routeBefore, 'Escape dismisses the photo without leaving the video route');
+      await actions.getByRole('button', { name: /^Hide (?:video|music) details$/ }).click();
+      await caption.waitFor({ state: 'hidden' });
+      assert.equal(await details.getAttribute('aria-expanded'), 'false', 'The description collapses after source profile review');
+      assert.ok(await identity.isVisible(), 'Collapsing details keeps creator attribution visible');
+      assert.equal(await identity.getAttribute('href'), profileHref, 'Collapsing details preserves the original creator destination');
     };
     const hnAuthor = { id: 'hn_audit_creator', name: 'audit_creator', avatarUrl };
     const hnProfile = 'https://news.ycombinator.com/user?id=audit_creator';
@@ -383,6 +423,21 @@ try {
     assert.equal(await page.locator('.video-feed-youtube-player iframe').count(), 0,
       'A YouTube label and stale embedId do not turn a direct file into a YouTube video');
     await checkPostActions(labelledNative, `https://www.youtube.com/channel/${channelId}`, false, true);
+    await labelledNative.locator('video').evaluate(video => {
+      Object.defineProperty(video, 'duration', { configurable: true, value: 30 });
+      video.dispatchEvent(new Event('loadedmetadata'));
+    });
+    await labelledNative.getByRole('button', { name: 'More options', exact: true }).click();
+    await page.getByRole('menuitem', { name: /^YouTube settings/ }).click();
+    const nativeSourceSettings = page.getByRole('dialog', { name: 'YouTube settings', exact: true });
+    assert.ok(await nativeSourceSettings.getByText('Caption tracks are unavailable for this video.', { exact: true }).isVisible(),
+      'Source-labelled native settings expose native caption support');
+    assert.equal(await nativeSourceSettings.getByRole('heading', { name: 'Quality and captions', exact: true }).count(), 0,
+      'A source label cannot switch the native dialog into YouTube API settings');
+    await nativeSourceSettings.getByRole('radiogroup', { name: 'Playback speed' }).getByRole('radio', { name: '1.5\u00d7', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('[data-post-id="youtube-labelled-native"] video')?.playbackRate === 1.5);
+    assert.equal(await page.locator('.video-feed-youtube-player iframe').count(), 0);
+    await page.keyboard.press('Escape'); await nativeSourceSettings.waitFor({ state: 'detached' });
 
     await visit('videos', [post('youtube-short', { source: 'youtube', embedId: 'short000001' }),
       post('youtube-long', { source: 'youtube', embedId: 'stale000003', sourceUrl: 'https://www.youtube.com/watch?v=long0000001' })]);

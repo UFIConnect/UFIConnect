@@ -111,12 +111,20 @@ try {
         const alertsBounds = await page.locator('.global-desktop-alerts').boundingBox();
         check(Math.abs(searchBounds.y - navBounds.y) < 2 && navBounds.x + navBounds.width <= searchBounds.x, 'Main destinations must sit left of search in the same row');
         check(alertsBounds.x >= searchBounds.x + searchBounds.width, 'Alerts remain right of search');
+        check(await page.locator('.home-feed-rail-bottom').getByRole('button', { name: 'Messages', exact: true }).isVisible(), 'Messages remains visible in the Home left rail');
         check(await page.locator('.home-feed-rail-bottom .messages-navigation').evaluate(element => element.nextElementSibling?.textContent.includes('Discover groups')), 'Messages sits above Discover groups');
+        check(await page.locator('.global-search-center').getByRole('button', { name: 'Messages', exact: true }).count() === 0, 'Messages is not duplicated beside search');
         await headerNav.getByRole('link', { name: 'Jobs', exact: true }).click();
         await page.waitForURL('**/opportunities');
         await page.locator('.jobs-page-layout').waitFor();
-        check(await page.getByRole('search', { name: 'Search UFIconnect', exact: true }).getByRole('button', { name: 'Search jobs', exact: true }).count() === 1,
-          'Jobs uses the header job search');
+        const jobsMessages = page.locator('.jobs-page-layout .messages-navigation');
+        check(await jobsMessages.isVisible() && await jobsMessages.evaluate(element => element.nextElementSibling?.textContent.trim() === 'Discover groups'), 'Jobs Messages sits directly above Discover groups');
+        const jobsSearch = page.getByRole('search', { name: 'Search UFIconnect', exact: true });
+        await jobsSearch.getByRole('searchbox').fill('community engineer');
+        await jobsSearch.getByRole('button', { name: 'Search jobs', exact: true }).click();
+        await page.waitForURL(url => url.pathname === '/opportunities' && url.searchParams.get('q') === 'community engineer');
+        check(await jobsSearch.getByRole('searchbox').inputValue() === 'community engineer', 'Jobs header search preserves the current job context and query');
+        check(await page.getByRole('dialog', { name: 'Search UFIconnect', exact: true }).count() === 0, 'Jobs header search updates the page without a duplicate search dialog');
       } else {
         await opener.waitFor();
         const openerBounds = await opener.boundingBox();
@@ -126,6 +134,8 @@ try {
         await waitOpen();
         check(await page.evaluate(() => document.body.style.overflow === 'hidden'), 'Background must not scroll behind the drawer');
         const bounds = await drawer.boundingBox();
+        const search = await drawer.getByRole('link', { name: 'Search', exact: true }).boundingBox();
+        const people = await drawer.getByRole('link', { name: 'People', exact: true }).boundingBox();
         const post = await drawer.getByRole('link', { name: 'Post', exact: true }).boundingBox();
         const createGroup = await drawer.getByRole('link', { name: 'Create a group', exact: true }).boundingBox();
         const postToGroup = await drawer.getByRole('link', { name: 'Post to a group', exact: true }).boundingBox();
@@ -134,6 +144,7 @@ try {
         const profile = await drawer.getByRole('link', { name: 'Profile', exact: true }).boundingBox();
         const logout = await drawer.getByRole('button', { name: 'Log out', exact: true }).boundingBox();
         check(Math.abs(bounds.x) < 1 && bounds.width <= viewport.width, 'Drawer must open on the left');
+        check(search.y < 110 && search.y + search.height <= people.y && people.y + people.height <= post.y, 'The sidebar starts with Search directly above People and Post');
         check(post.y + post.height <= postToGroup.y && postToGroup.y + postToGroup.height <= createGroup.y && createGroup.y + createGroup.height <= shop.y,
           'The sidebar orders Post, Post to a group, Create a group, then Shop');
         check(profile.y > viewport.height * 0.55 && logout.y > profile.y, 'Profile and account actions belong at the bottom');
@@ -268,6 +279,9 @@ try {
           await page.waitForFunction(() => document.querySelector('#mobile-feed-drawer').getAttribute('aria-hidden') === 'false');
           check(await right.getByRole('link', { name: 'Settings', exact: true }).count() === 0, 'Settings still duplicated in the right sidebar');
           check(await right.getByRole('button', { name: 'Log out', exact: true }).count() === 0, 'Logout still duplicated in the right sidebar');
+          const messages = right.getByRole('button', { name: 'Messages', exact: true });
+          check(await messages.isVisible() && await messages.evaluate(element => element.nextElementSibling?.textContent.trim() === 'Discover groups'), 'Mobile Messages sits directly above Discover groups in Home and Jobs');
+          check(await messages.getAttribute('aria-haspopup') === 'dialog', 'Mobile Messages opens the shared inbox dialog');
           if (!route) {
             const destinations = ['Travel', 'Restaurants', 'Bars and clubs'];
             const signatures = [];
@@ -323,13 +337,13 @@ try {
         check(await page.evaluate(() => !localStorage.getItem('pc_token')), 'Logout did not clear the synthetic member session');
         await waitClosed();
       }
-      check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Page overflows horizontally');
+      check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 2), 'Page overflows horizontally');
       check(errors.length === 0, `Browser errors: ${errors.join(', ')}`);
       console.log(`PASS: account sidebar at ${viewport.width}px`);
     } catch (error) {
       console.error('Account sidebar failure state:', await page.evaluate(() => ({
         path: location.pathname + location.search,
-        width: innerWidth,
+        width: window.innerWidth,
         mobile: matchMedia('(max-width: 768px)').matches,
         drawerHidden: document.querySelector('#mobile-account-drawer')?.getAttribute('aria-hidden'),
         pageWidth: document.documentElement.scrollWidth,

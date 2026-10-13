@@ -66,13 +66,16 @@ try {
     const sources = page.getByRole('group', { name: 'Home sources', exact: true });
     await sources.getByRole('button', { name: 'Reddit', exact: true }).click();
     await checkStart('reddit');
+    // Arm before rendering the selected feed: the endless-feed observer may
+    // prefetch immediately when the first batch fits near the viewport tail.
+    holdNextPage = true;
     await sources.getByRole('button', { name: 'Hacker News', exact: true }).click();
     await checkStart('reddit-hackernews');
     assert.ok(requests.some(params => params.get('sources')?.split(',').length === 2));
-    // Trigger the same next-page path used by scrolling near the feed tail.
-    holdNextPage = true;
-    await page.locator('[data-feed-position]').last().dispatchEvent('pointerenter');
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    // The real endless-feed tail loads another balanced batch. A refresh
+    // during that request must queue and promote its newer batch afterward.
+    assert.equal(await page.getByRole('navigation', { name: 'Feed pages', exact: true }).count(), 0);
+    await page.locator('[data-feed-scroll-sentinel]').scrollIntoViewIfNeeded();
     await Promise.race([paginationHeld, new Promise((_, reject) => setTimeout(() => reject(new Error('Pagination never started')), 10000))]);
     revision = 1;
     await page.evaluate(() => window.dispatchEvent(new Event('ufi:refresh-selected-feed')));
