@@ -121,3 +121,64 @@ test('a refresh immediately after completion cannot join an already-settled sour
   assert.equal((await scheduler.request('successive')).posts, 2);
   assert.equal(scheduler.status().active, 0);
 });
+
+for (const status of [404, 410]) test(`a missing YouTube channel (${status}) cannot pause healthy channels or count as fresh`, async () => {
+  const { scheduler, advance } = fixture();
+  const calls = [];
+  scheduler.register({ id: 'youtube', keys: ['live-a', 'missing', 'live-b'], collect: async key => {
+    calls.push(key);
+    if (key === 'missing') throw Object.assign(new Error('HTTP ' + status + ' channel missing'), { status, collectionKeyFailure: true });
+    return { posts: 15 };
+  } });
+  await Promise.all(scheduler.pump());
+  advance(100000); await Promise.all(scheduler.pump());
+  let source = scheduler.status().sources[0];
+  assert.equal(source.backoffUntil, null, 'The missing channel does not stop the provider');
+  assert.equal(source.failedKeyCount, 1);
+  assert.equal(source.failedKeys[0].key, 'missing');
+  assert.equal(source.failedKeys[0].retryAt, 400000);
+  assert.equal(source.lastSuccessAt, 0, 'Failure does not move successful freshness forward');
+  advance(100000); await Promise.all(scheduler.pump());
+  source = scheduler.status().sources[0];
+  assert.deepEqual(calls, ['live-a', 'missing', 'live-b']);
+  assert.equal(source.lastAttemptCycleFinishedAt, 200000);
+  assert.equal(source.lastAttemptCycleSuccessfulKeys, 2);
+  assert.equal(source.lastAttemptCycleFailedKeys, 1);
+  assert.equal(source.lastCycleFinishedAt, null, 'Attempting every channel is not a successful full cycle');
+  advance(100000); await Promise.all(scheduler.pump());
+  advance(1000); scheduler.nudge(['youtube']); await Promise.all(scheduler.pump());
+  assert.equal(calls.filter(key => key === 'missing').length, 1, 'Manual refresh respects the per-channel five-minute cooldown');
+  advance(300000); await Promise.all(scheduler.pump());
+  source = scheduler.status().sources[0];
+  assert.ok(source.staleKeyCount >= 1);
+  assert.equal(source.cycleOverdue, true, 'An unavailable channel remains visible in incomplete coverage');
+});
+
+test('an entirely missing channel inventory reports a key cooldown without holding a manual refresh open', async () => {
+  const { scheduler, advance } = fixture();
+  let calls = 0;
+  scheduler.register({ id: 'youtube', keys: ['missing'], collect: async () => {
+    calls++; throw Object.assign(new Error('HTTP 404'), { status: 404, collectionKeyFailure: true });
+  } });
+  await Promise.all(scheduler.pump());
+  assert.equal((await scheduler.request('youtube')).reason, 'key_backoff');
+  advance(299999); assert.equal(scheduler.pump().length, 0); assert.equal(calls, 1);
+  advance(1); await Promise.all(scheduler.pump()); assert.equal(calls, 2);
+  assert.equal(scheduler.status().sources[0].lastSuccessAt, null);
+});
+
+for (const status of [403, 429, 503]) test(`provider failure ${status} still pauses all channel jobs`, async () => {
+  const { scheduler, advance } = fixture();
+  const calls = [];
+  scheduler.register({ id: 'youtube', keys: ['first', 'second'], collect: async key => {
+    calls.push(key);
+    throw Object.assign(new Error('HTTP ' + status), { status, collectionKeyFailure: true });
+  } });
+  await Promise.all(scheduler.pump());
+  const source = scheduler.status().sources[0];
+  assert.equal(source.backoffUntil, 30000);
+  assert.equal(source.failedKeyCount, 0);
+  assert.equal((await scheduler.request('youtube')).reason, 'backoff');
+  scheduler.nudge(['youtube']); advance(29999); assert.equal(scheduler.pump().length, 0);
+  assert.deepEqual(calls, ['first']);
+});

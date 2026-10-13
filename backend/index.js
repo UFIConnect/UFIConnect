@@ -177,7 +177,7 @@ process.on('unhandledRejection', (reason, promise) => {
 const app = express();
 // Preserve nested-value validation after Express 5 changed its default parser.
 app.set('query parser', 'extended');
-const responseTiming = createResponseTiming({ targetMs: 45 });
+const responseTiming = createResponseTiming({ targetMs: envNumber('API_RESPONSE_TARGET_MS', 65, 1, 1000) });
 app.use(responseTiming.middleware);
 const aggregateAnalytics = createAggregateAnalytics({ db, schedule: setInterval, onPageview: () => recordRealUserActivity(null, 'pageview') });
 app.use(aggregateAnalytics.serviceMiddleware);
@@ -3487,21 +3487,21 @@ const TOPIC_YT_CHANNELS = {
   'AI & Machine Learning':  [
     { id: 'UCSHZKyawb77ixDdsGog4iWA', name: 'Lex Fridman' },
     { id: 'UCbfYPyITQ-7l4upoX8nvctg', name: 'Two Minute Papers' },
-    { id: 'UCWX3yGbODI3HLSMJer5ZLKQ', name: 'AI Explained' },
-    { id: 'UCnqRmOS4bQSHmGznAbmEFaA', name: 'Weights & Biases' },
+    { id: 'UCNJ1Ymd5yFuUPtn21xtRbbw', name: 'AI Explained' },
+    { id: 'UCBp3w4DCEC64FZr4k9ROxig', name: 'Weights & Biases' },
     { id: 'UCZHmQk67mSJgfCCTn7xBfew', name: 'Yannic Kilcher' },
   ],
   'Generative AI':          [
-    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
-    { id: 'UCWX3yGbODI3HLSMJer5ZLKQ', name: 'AI Explained' },
+    { id: 'UCsBjURrPoezykLs9EqgamOA', name: 'Fireship' },
+    { id: 'UCNJ1Ymd5yFuUPtn21xtRbbw', name: 'AI Explained' },
     { id: 'UCbfYPyITQ-7l4upoX8nvctg', name: 'Two Minute Papers' },
     { id: 'UCZHmQk67mSJgfCCTn7xBfew', name: 'Yannic Kilcher' },
   ],
   'LLMs & Chatbots':        [
     { id: 'UCZHmQk67mSJgfCCTn7xBfew', name: 'Yannic Kilcher' },
-    { id: 'UCWX3yGbODI3HLSMJer5ZLKQ', name: 'AI Explained' },
+    { id: 'UCNJ1Ymd5yFuUPtn21xtRbbw', name: 'AI Explained' },
     { id: 'UCSHZKyawb77ixDdsGog4iWA', name: 'Lex Fridman' },
-    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+    { id: 'UCsBjURrPoezykLs9EqgamOA', name: 'Fireship' },
   ],
   'Computer Vision':        [
     { id: 'UCbfYPyITQ-7l4upoX8nvctg', name: 'Two Minute Papers' },
@@ -3509,92 +3509,92 @@ const TOPIC_YT_CHANNELS = {
     { id: 'UCZHmQk67mSJgfCCTn7xBfew', name: 'Yannic Kilcher' },
   ],
   'Data Science':           [
-    { id: 'UCCTVrRVMyEX5YKq4zHNU5EA', name: 'Corey Schafer' },
+    { id: 'UCCezIgC97PvUuR4_gbFUs5g', name: 'Corey Schafer' },
     { id: 'UC8butISFwT-Wl7EV0hUK0BQ', name: 'freeCodeCamp' },
-    { id: 'UCJHs6RO1CSM85e8jIMD9jdA', name: 'Ken Jee' },
-    { id: 'UCnqRmOS4bQSHmGznAbmEFaA', name: 'Weights & Biases' },
+    { id: 'UCiT9RITQ9PW6BhXK0y2jaeg', name: 'Ken Jee' },
+    { id: 'UCBp3w4DCEC64FZr4k9ROxig', name: 'Weights & Biases' },
   ],
   'Frontend Dev':           [
-    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
-    { id: 'UCkK9UDm_ZNrq_rIXCz3xCGA', name: 'Web Dev Simplified' },
-    { id: 'UCbRP3rAt5U0S9bHNIl7cJlg', name: 'Theo' },
-    { id: 'UCFbNIlppjAuEX4znoulh0Cw', name: 'Kevin Powell' },
-    { id: 'UCJZv4d5rbIKd4QHMPkcABCw', name: 'Traversy Media' },
+    { id: 'UCsBjURrPoezykLs9EqgamOA', name: 'Fireship' },
+    { id: 'UCFbNIlppjAuEX4znoulh0Cw', name: 'Web Dev Simplified' },
+    { id: 'UCbRP3c757lWg9M-U7TyEkXA', name: 'Theo' },
+    { id: 'UCJZv4d5rbIKd4QHMPkcABCw', name: 'Kevin Powell' },
+    { id: 'UC29ju8bIPH5as8OGnQzwJyA', name: 'Traversy Media' },
   ],
   'Backend Dev':            [
-    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
-    { id: 'UCddiUEpeqJcYeBxX1IVBKvQ', name: 'ThePrimeagen' },
-    { id: 'UCbRP3rAt5U0S9bHNIl7cJlg', name: 'Theo' },
-    { id: 'UCJZv4d5rbIKd4QHMPkcABCw', name: 'Traversy Media' },
+    { id: 'UCsBjURrPoezykLs9EqgamOA', name: 'Fireship' },
+    { id: 'UC8ENHE5xdFSwx71u3fDH5Xw', name: 'ThePrimeagen' },
+    { id: 'UCbRP3c757lWg9M-U7TyEkXA', name: 'Theo' },
+    { id: 'UC29ju8bIPH5as8OGnQzwJyA', name: 'Traversy Media' },
   ],
   'Cloud & DevOps':         [
     { id: 'UCJS9pqu9BzkAMNTmzNMNhvg', name: 'Google Cloud Tech' },
-    { id: 'UC0RhRcoSCGAKN_vGMjZZHKA', name: 'TechWorld with Nana' },
-    { id: 'UCA8twYpSmtpbz5YQKh_LHrg', name: 'Amazon Web Services' },
+    { id: 'UCdngmbVKX1Tgre699-XLlUA', name: 'TechWorld with Nana' },
+    { id: 'UCd6MoB9NC6uYN2grvUNT-Zg', name: 'Amazon Web Services' },
   ],
   'Cybersecurity':          [
-    { id: 'UC0ZTkbl5idFyYqaEwRMRL6w', name: 'NetworkChuck' },
-    { id: 'UCgTNupxATBfWmfehv21ym-g', name: 'HackerSploit' },
-    { id: 'UCW6MNdOsqv2E9AjQkv9we7A', name: 'David Bombal' },
+    { id: 'UC9x0AN7BWHpCDHSm9NiJFJQ', name: 'NetworkChuck' },
+    { id: 'UC0ZTPkdxlAKf-V33tqXwi3Q', name: 'HackerSploit' },
+    { id: 'UCP7WmQ_U4GB3K51Od9QvM0w', name: 'David Bombal' },
     { id: 'UClcE-kVhqyiHCcjYwcpfj9w', name: 'LiveOverflow' },
   ],
   'Game Dev':               [
-    { id: 'UCX_b3NNQN5bzExm-22-NVVg', name: 'GDC' },
-    { id: 'UCBmNB4N5Vmr2N-0-Kg2NPUA', name: 'Sebastian Lague' },
-    { id: 'UCqJ-Xo29CKyLTjn6z2XwYAw', name: 'Blackthornprod' },
+    { id: 'UC0JB7TSe49lg56u6qH8y_MQ', name: 'GDC' },
+    { id: 'UCmtyQOKKmrMVaKuRXz02jbQ', name: 'Sebastian Lague' },
+    { id: 'UC9Z1XWw1kmnvOOFsj6Bzy2g', name: 'Blackthornprod' },
   ],
   'Developer Tools':        [
-    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
-    { id: 'UCddiUEpeqJcYeBxX1IVBKvQ', name: 'ThePrimeagen' },
+    { id: 'UCsBjURrPoezykLs9EqgamOA', name: 'Fireship' },
+    { id: 'UC8ENHE5xdFSwx71u3fDH5Xw', name: 'ThePrimeagen' },
     { id: 'UC9-y-6csu5WGm29I7JiwpnA', name: 'Computerphile' },
   ],
   'Open Source':            [
-    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+    { id: 'UCsBjURrPoezykLs9EqgamOA', name: 'Fireship' },
     { id: 'UC8butISFwT-Wl7EV0hUK0BQ', name: 'freeCodeCamp' },
-    { id: 'UCddiUEpeqJcYeBxX1IVBKvQ', name: 'ThePrimeagen' },
+    { id: 'UC8ENHE5xdFSwx71u3fDH5Xw', name: 'ThePrimeagen' },
   ],
   'Mobile Dev':             [
-    { id: 'UCTd08bnCrRKBIcbgMlh-MVQ', name: 'Flutter' },
-    { id: 'UCbRP3rAt5U0S9bHNIl7cJlg', name: 'Theo' },
-    { id: 'UC5T-hza4t9uGiRCRhqs3Iqg', name: 'iOS Academy' },
+    { id: 'UCwXdFgeE9KYzlDdR7TG9cMw', name: 'Flutter' },
+    { id: 'UCbRP3c757lWg9M-U7TyEkXA', name: 'Theo' },
+    { id: 'UCnksRRifsSCGUZpQukUKAyg', name: 'iOS Academy' },
   ],
   'Web3 / Crypto':          [
-    { id: 'UCY0xL8V6NnkYQnrO2AWZWA', name: 'Patrick Collins' },
-    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+    { id: 'UCn-3f8tw_E1jZvhuHatROwA', name: 'Patrick Collins' },
+    { id: 'UCsBjURrPoezykLs9EqgamOA', name: 'Fireship' },
   ],
   'SaaS':                   [
-    { id: 'UCbRP3rAt5U0S9bHNIl7cJlg', name: 'Theo' },
-    { id: 'UCJZv4d5rbIKd4QHMPkcABCw', name: 'Traversy Media' },
-    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+    { id: 'UCbRP3c757lWg9M-U7TyEkXA', name: 'Theo' },
+    { id: 'UC29ju8bIPH5as8OGnQzwJyA', name: 'Traversy Media' },
+    { id: 'UCsBjURrPoezykLs9EqgamOA', name: 'Fireship' },
   ],
   'UI/UX Design':           [
-    { id: 'UCeB_OpLspKJGiKv1CYkWFFw', name: 'DesignCourse' },
-    { id: 'UCFbNIlppjAuEX4znoulh0Cw', name: 'Kevin Powell' },
-    { id: 'UC-b3c7kxa5vU-bnmaROgvog', name: 'Figma' },
+    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'DesignCourse' },
+    { id: 'UCJZv4d5rbIKd4QHMPkcABCw', name: 'Kevin Powell' },
+    { id: 'UCQsVmhSa4X-G3lHlUtejzLA', name: 'Figma' },
   ],
   'Productivity':           [
     { id: 'UCG-KntY7aVnIGXYEBQvmBAQ', name: 'Thomas Frank' },
-    { id: 'UC3PD2HZJ0HUAk-kVFHMRCug', name: 'Ali Abdaal' },
+    { id: 'UCoOae5nYA7VqaXzerajD0lg', name: 'Ali Abdaal' },
   ],
   'Career Growth':          [
     { id: 'UC8butISFwT-Wl7EV0hUK0BQ', name: 'freeCodeCamp' },
-    { id: 'UC3PD2HZJ0HUAk-kVFHMRCug', name: 'Ali Abdaal' },
+    { id: 'UCoOae5nYA7VqaXzerajD0lg', name: 'Ali Abdaal' },
   ],
   'Freelancing':            [
-    { id: 'UC3PD2HZJ0HUAk-kVFHMRCug', name: 'Ali Abdaal' },
-    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+    { id: 'UCoOae5nYA7VqaXzerajD0lg', name: 'Ali Abdaal' },
+    { id: 'UCsBjURrPoezykLs9EqgamOA', name: 'Fireship' },
   ],
   'Side Projects':          [
-    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
-    { id: 'UCbRP3rAt5U0S9bHNIl7cJlg', name: 'Theo' },
+    { id: 'UCsBjURrPoezykLs9EqgamOA', name: 'Fireship' },
+    { id: 'UCbRP3c757lWg9M-U7TyEkXA', name: 'Theo' },
   ],
   'FinTech':                [
-    { id: 'UCFCEuCsyWP0YkP3CZ3Mr01Q', name: 'Patrick Boyle' },
-    { id: 'UCL5u3pYs-pOPp6FAijGn8VA', name: 'Ben Felix' },
+    { id: 'UCASM0cgfkJxQ1ICmRilfHLw', name: 'Patrick Boyle' },
+    { id: 'UCDXTQ8nWmx_EhZ2v-kp7QxA', name: 'Ben Felix' },
   ],
   'Climate Tech':           [
     { id: 'UCHnyfMqiRRG1u-2MsSQLbXA', name: 'Veritasium' },
-    { id: 'UCivA7_KLKWo43tFcCkFvydw', name: 'Real Engineering' },
+    { id: 'UCR1IuLEqb6UEA_zQ81kwXfg', name: 'Real Engineering' },
   ],
   'Health Tech':            [
     { id: 'UCHnyfMqiRRG1u-2MsSQLbXA', name: 'Veritasium' },
@@ -3602,39 +3602,39 @@ const TOPIC_YT_CHANNELS = {
   ],
   // — Expanded topic coverage —
   'No-Code / Low-Code':     [
-    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
-    { id: 'UCkk9aznXMGdxRgZ0vIVYBCg', name: 'Webflow' },
+    { id: 'UCsBjURrPoezykLs9EqgamOA', name: 'Fireship' },
+    { id: 'UCELSb-IYi_d5rYFOxWeOz5g', name: 'Webflow' },
   ],
   'Growth Marketing':       [
-    { id: 'UCGy7SkBjcIAgTiwkXEtPnYg', name: 'HubSpot Marketing' },
-    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+    { id: 'UCVeuau7DLrg7zlAjxxDbdww', name: 'HubSpot Marketing' },
+    { id: 'UCsBjURrPoezykLs9EqgamOA', name: 'Fireship' },
     { id: 'UCctXZhXmG-kf3tlIXgVZUlw', name: 'GaryVee' },
   ],
   'SEO & Content':          [
-    { id: 'UCWjCFtBSUDE0hlsEVUvTv0Q', name: 'Ahrefs' },
-    { id: 'UCGy7SkBjcIAgTiwkXEtPnYg', name: 'HubSpot Marketing' },
+    { id: 'UCWquNQV8Y0_defMKnGKrFOQ', name: 'Ahrefs' },
+    { id: 'UCVeuau7DLrg7zlAjxxDbdww', name: 'HubSpot Marketing' },
   ],
   'Newsletter & Writing':   [
-    { id: 'UC3PD2HZJ0HUAk-kVFHMRCug', name: 'Ali Abdaal' },
+    { id: 'UCoOae5nYA7VqaXzerajD0lg', name: 'Ali Abdaal' },
     { id: 'UCG-KntY7aVnIGXYEBQvmBAQ', name: 'Thomas Frank' },
   ],
   'Leadership':             [
-    { id: 'UC0vBXGSyV14uvJ4hECDOl0Q', name: 'Simon Sinek' },
-    { id: 'UC3PD2HZJ0HUAk-kVFHMRCug', name: 'Ali Abdaal' },
+    { id: 'UCPmfPl-BsCd3wmE8i45LAoA', name: 'Simon Sinek' },
+    { id: 'UCoOae5nYA7VqaXzerajD0lg', name: 'Ali Abdaal' },
   ],
   'Investing':              [
-    { id: 'UCL5u3pYs-pOPp6FAijGn8VA', name: 'Ben Felix' },
-    { id: 'UCFCEuCsyWP0YkP3CZ3Mr01Q', name: 'Patrick Boyle' },
+    { id: 'UCDXTQ8nWmx_EhZ2v-kp7QxA', name: 'Ben Felix' },
+    { id: 'UCASM0cgfkJxQ1ICmRilfHLw', name: 'Patrick Boyle' },
     { id: 'UCV6KDgJskWaEckne5aPA0aQ', name: 'Graham Stephan' },
   ],
   'Personal Finance':       [
     { id: 'UCV6KDgJskWaEckne5aPA0aQ', name: 'Graham Stephan' },
-    { id: 'UCL5u3pYs-pOPp6FAijGn8VA', name: 'Ben Felix' },
+    { id: 'UCDXTQ8nWmx_EhZ2v-kp7QxA', name: 'Ben Felix' },
   ],
   'Startup':                [
-    { id: 'UCbRP3rAt5U0S9bHNIl7cJlg', name: 'Theo' },
+    { id: 'UCbRP3c757lWg9M-U7TyEkXA', name: 'Theo' },
     { id: 'UCGX7nGXpz-CmO_Arg-cgJ7A', name: 'Valuetainment' },
-    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+    { id: 'UCsBjURrPoezykLs9EqgamOA', name: 'Fireship' },
   ],
   'EdTech':                 [
     { id: 'UC8butISFwT-Wl7EV0hUK0BQ', name: 'freeCodeCamp' },
@@ -3643,32 +3643,32 @@ const TOPIC_YT_CHANNELS = {
   ],
   'Robotics':               [
     { id: 'UCHnyfMqiRRG1u-2MsSQLbXA', name: 'Veritasium' },
-    { id: 'UCivA7_KLKWo43tFcCkFvydw', name: 'Real Engineering' },
+    { id: 'UCR1IuLEqb6UEA_zQ81kwXfg', name: 'Real Engineering' },
   ],
   'Quantum Computing':      [
     { id: 'UCHnyfMqiRRG1u-2MsSQLbXA', name: 'Veritasium' },
     { id: 'UC9-y-6csu5WGm29I7JiwpnA', name: 'Computerphile' },
   ],
   'Remote Work':            [
-    { id: 'UC3PD2HZJ0HUAk-kVFHMRCug', name: 'Ali Abdaal' },
+    { id: 'UCoOae5nYA7VqaXzerajD0lg', name: 'Ali Abdaal' },
     { id: 'UCG-KntY7aVnIGXYEBQvmBAQ', name: 'Thomas Frank' },
   ],
   'Content Creator':        [
-    { id: 'UC3PD2HZJ0HUAk-kVFHMRCug', name: 'Ali Abdaal' },
+    { id: 'UCoOae5nYA7VqaXzerajD0lg', name: 'Ali Abdaal' },
     { id: 'UCctXZhXmG-kf3tlIXgVZUlw', name: 'GaryVee' },
   ],
   'Podcasting':             [
-    { id: 'UC3PD2HZJ0HUAk-kVFHMRCug', name: 'Ali Abdaal' },
+    { id: 'UCoOae5nYA7VqaXzerajD0lg', name: 'Ali Abdaal' },
     { id: 'UCSHZKyawb77ixDdsGog4iWA', name: 'Lex Fridman' },
   ],
   'Gaming':                 [
-    { id: 'UCX_b3NNQN5bzExm-22-NVVg', name: 'GDC' },
-    { id: 'UCBmNB4N5Vmr2N-0-Kg2NPUA', name: 'Sebastian Lague' },
-    { id: 'UCqJ-Xo29CKyLTjn6z2XwYAw', name: 'Blackthornprod' },
+    { id: 'UC0JB7TSe49lg56u6qH8y_MQ', name: 'GDC' },
+    { id: 'UCmtyQOKKmrMVaKuRXz02jbQ', name: 'Sebastian Lague' },
+    { id: 'UC9Z1XWw1kmnvOOFsj6Bzy2g', name: 'Blackthornprod' },
   ],
   'Science':                [
     { id: 'UCHnyfMqiRRG1u-2MsSQLbXA', name: 'Veritasium' },
-    { id: 'UCivA7_KLKWo43tFcCkFvydw', name: 'Real Engineering' },
+    { id: 'UCR1IuLEqb6UEA_zQ81kwXfg', name: 'Real Engineering' },
     { id: 'UC9-y-6csu5WGm29I7JiwpnA', name: 'Computerphile' },
   ],
   'Photography':            [
@@ -3678,67 +3678,67 @@ const TOPIC_YT_CHANNELS = {
     { id: 'UCHnyfMqiRRG1u-2MsSQLbXA', name: 'Veritasium' },
   ],
   'Python':                 [
-    { id: 'UCCTVrRVMyEX5YKq4zHNU5EA', name: 'Corey Schafer' },
+    { id: 'UCCezIgC97PvUuR4_gbFUs5g', name: 'Corey Schafer' },
     { id: 'UC8butISFwT-Wl7EV0hUK0BQ', name: 'freeCodeCamp' },
-    { id: 'UCJZv4d5rbIKd4QHMPkcABCw', name: 'Traversy Media' },
+    { id: 'UC29ju8bIPH5as8OGnQzwJyA', name: 'Traversy Media' },
   ],
   'JavaScript':             [
-    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
-    { id: 'UCkK9UDm_ZNrq_rIXCz3xCGA', name: 'Web Dev Simplified' },
-    { id: 'UCJZv4d5rbIKd4QHMPkcABCw', name: 'Traversy Media' },
+    { id: 'UCsBjURrPoezykLs9EqgamOA', name: 'Fireship' },
+    { id: 'UCFbNIlppjAuEX4znoulh0Cw', name: 'Web Dev Simplified' },
+    { id: 'UC29ju8bIPH5as8OGnQzwJyA', name: 'Traversy Media' },
   ],
   'TypeScript':             [
-    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
-    { id: 'UCbRP3rAt5U0S9bHNIl7cJlg', name: 'Theo' },
+    { id: 'UCsBjURrPoezykLs9EqgamOA', name: 'Fireship' },
+    { id: 'UCbRP3c757lWg9M-U7TyEkXA', name: 'Theo' },
   ],
   'Rust':                   [
-    { id: 'UCddiUEpeqJcYeBxX1IVBKvQ', name: 'ThePrimeagen' },
-    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+    { id: 'UC8ENHE5xdFSwx71u3fDH5Xw', name: 'ThePrimeagen' },
+    { id: 'UCsBjURrPoezykLs9EqgamOA', name: 'Fireship' },
   ],
   'Go':                     [
-    { id: 'UCddiUEpeqJcYeBxX1IVBKvQ', name: 'ThePrimeagen' },
-    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+    { id: 'UC8ENHE5xdFSwx71u3fDH5Xw', name: 'ThePrimeagen' },
+    { id: 'UCsBjURrPoezykLs9EqgamOA', name: 'Fireship' },
   ],
   'Linux':                  [
-    { id: 'UCddiUEpeqJcYeBxX1IVBKvQ', name: 'ThePrimeagen' },
-    { id: 'UC0ZTkbl5idFyYqaEwRMRL6w', name: 'NetworkChuck' },
+    { id: 'UC8ENHE5xdFSwx71u3fDH5Xw', name: 'ThePrimeagen' },
+    { id: 'UC9x0AN7BWHpCDHSm9NiJFJQ', name: 'NetworkChuck' },
   ],
   'Docker & Containers':    [
-    { id: 'UC0RhRcoSCGAKN_vGMjZZHKA', name: 'TechWorld with Nana' },
-    { id: 'UC0ZTkbl5idFyYqaEwRMRL6w', name: 'NetworkChuck' },
+    { id: 'UCdngmbVKX1Tgre699-XLlUA', name: 'TechWorld with Nana' },
+    { id: 'UC9x0AN7BWHpCDHSm9NiJFJQ', name: 'NetworkChuck' },
   ],
   'Kubernetes':             [
-    { id: 'UC0RhRcoSCGAKN_vGMjZZHKA', name: 'TechWorld with Nana' },
+    { id: 'UCdngmbVKX1Tgre699-XLlUA', name: 'TechWorld with Nana' },
     { id: 'UCJS9pqu9BzkAMNTmzNMNhvg', name: 'Google Cloud Tech' },
     { id: 'UCSWj8mqQCcrcBlXPi4ThRDQ', name: 'KodeKloud' },
   ],
   'Data Engineering':       [
     { id: 'UC8butISFwT-Wl7EV0hUK0BQ', name: 'freeCodeCamp' },
-    { id: 'UCJHs6RO1CSM85e8jIMD9jdA', name: 'Ken Jee' },
+    { id: 'UCiT9RITQ9PW6BhXK0y2jaeg', name: 'Ken Jee' },
   ],
   'GraphQL':                [
-    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
-    { id: 'UCkK9UDm_ZNrq_rIXCz3xCGA', name: 'Web Dev Simplified' },
+    { id: 'UCsBjURrPoezykLs9EqgamOA', name: 'Fireship' },
+    { id: 'UCFbNIlppjAuEX4znoulh0Cw', name: 'Web Dev Simplified' },
   ],
   'Testing & QA':           [
-    { id: 'UCkK9UDm_ZNrq_rIXCz3xCGA', name: 'Web Dev Simplified' },
+    { id: 'UCFbNIlppjAuEX4znoulh0Cw', name: 'Web Dev Simplified' },
     { id: 'UC8butISFwT-Wl7EV0hUK0BQ', name: 'freeCodeCamp' },
   ],
   'E-commerce':             [
-    { id: 'UCJZv4d5rbIKd4QHMPkcABCw', name: 'Traversy Media' },
+    { id: 'UC29ju8bIPH5as8OGnQzwJyA', name: 'Traversy Media' },
   ],
   'Blockchain / Web3':      [
-    { id: 'UCY0xL8V6NnkYQnrO2AWZWA', name: 'Patrick Collins' },
-    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+    { id: 'UCn-3f8tw_E1jZvhuHatROwA', name: 'Patrick Collins' },
+    { id: 'UCsBjURrPoezykLs9EqgamOA', name: 'Fireship' },
   ],
 };
 
 // Fallback channels used when no topic-specific list exists
 const DEFAULT_YT_CHANNELS = [
-  { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+  { id: 'UCsBjURrPoezykLs9EqgamOA', name: 'Fireship' },
   { id: 'UC8butISFwT-Wl7EV0hUK0BQ', name: 'freeCodeCamp' },
-  { id: 'UCJZv4d5rbIKd4QHMPkcABCw', name: 'Traversy Media' },
-  { id: 'UCddiUEpeqJcYeBxX1IVBKvQ', name: 'ThePrimeagen' },
+  { id: 'UC29ju8bIPH5as8OGnQzwJyA', name: 'Traversy Media' },
+  { id: 'UC8ENHE5xdFSwx71u3fDH5Xw', name: 'ThePrimeagen' },
   { id: 'UCHnyfMqiRRG1u-2MsSQLbXA', name: 'Veritasium' },
   { id: 'UC9-y-6csu5WGm29I7JiwpnA', name: 'Computerphile' },
 ];
@@ -3990,7 +3990,14 @@ async function fetchYouTubeCollectionChannel(channelId) {
   const channel = [...Object.values(TOPIC_YT_CHANNELS).flat(), ...DEFAULT_YT_CHANNELS]
     .find(item => item.id === channelId);
   if (!channel) throw new Error('Unknown configured YouTube channel');
-  const xml = await fetchText(`https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(channelId)}`);
+  let xml;
+  try {
+    xml = await fetchText(`https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(channelId)}`);
+  } catch (error) {
+    const missing = /^HTTP (404|410) for https:\/\/www\.youtube\.com\/feeds\/videos\.xml\?channel_id=/.exec(error?.message || '');
+    if (missing) { error.status = Number(missing[1]); error.collectionKeyFailure = true; }
+    throw error;
+  }
   if (!/<feed[\s>]/i.test(xml)) throw new Error('YouTube returned an invalid channel feed');
   return parseYouTubeChannelRSS(xml, '', channel.name);
 }

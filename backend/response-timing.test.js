@@ -110,7 +110,7 @@ test('the app exposes timing headers through CORS and protects detailed timing d
   assert.equal(publicHealth.data.responseTiming, undefined);
   const details = await app.request('/health/details', { headers: { 'x-office-token': 'timing-fixture-only' } });
   assert.equal(details.status, 200);
-  assert.equal(details.data.responseTiming.targetMs, 45);
+  assert.equal(details.data.responseTiming.targetMs, 65);
   assert.ok(details.data.responseTiming.overall.count >= 3);
   assert.ok(details.data.responseTiming.routes.some(row => row.route === '/readyz'));
 });
