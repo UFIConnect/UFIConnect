@@ -16,6 +16,14 @@ are expanded. Homepage URL sanitization preserves only a single numeric
 identifiers; these flags do not grant consent. Other query values and private
 fragments are removed before either advertising SDK loads.
 
+The advertising homepage also permits scripts from the exact
+`https://googleads.g.doubleclick.net` origin reported by Google Tag Diagnostics.
+This permission must be present in both the deployed HTTP policy and the
+generated homepage meta policy. Private pages, Office and the isolated
+Analytics frame do not receive this advertising script permission. The browser
+audit fulfills a harmless script from this host locally to exercise the policy
+without sending conversion events.
+
 The unconditional inline bootstrap and no-JavaScript iframe from Google's
 installation dialog are deliberately not placed in every HTML document: they
 would run before the site's consent and session checks. Browsers without

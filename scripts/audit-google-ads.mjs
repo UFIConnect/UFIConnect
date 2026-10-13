@@ -2,9 +2,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { startBuiltServer } from '../web/scripts/serve-built.mjs';
+import { browserSecurityPolicy } from '../web/securityPolicy.mjs';
 import { ADS_CONSENT_KEY, ADS_CONVERSION, TAG_MANAGER_ID, advertisingHomepageUrl } from '../web/src/analytics/googleAds.mjs';
 
 const homepage = 'https://uficonnect.org/';
+const doubleClickOrigin = 'https://googleads.g.doubleclick.net';
+const doubleClickProbe = doubleClickOrigin + '/pagead/viewthroughconversion/ads-csp-audit.js';
 for (const [query, expected] of [
   ['gtm_debug=12345678901234567890&_dbg=1', '?gtm_debug=12345678901234567890&_dbg=1'],
   ['gtm_debug=0', '?gtm_debug=0'],
@@ -30,12 +33,23 @@ try {
     }, { config, key: ADS_CONSENT_KEY });
     let scripts = 0;
     let containers = 0;
+    let doubleClickScripts = 0;
     await context.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url());
+      if (url.origin === doubleClickOrigin) {
+        assert.equal(request.url(), doubleClickProbe, 'Only the harmless local DoubleClick probe may be requested');
+        assert.equal(request.resourceType(), 'script');
+        doubleClickScripts++;
+        return route.fulfill({ contentType: 'text/javascript', body: 'window.__doubleClickExecutions = (window.__doubleClickExecutions || 0) + 1;' });
+      }
       if (url.hostname === 'www.googletagmanager.com') {
         if (url.pathname === '/gtm.js' && url.searchParams.get('id') === TAG_MANAGER_ID) {
           containers++;
-          return route.fulfill({ contentType: 'text/javascript', body: 'window.__tagManager = true;' });
+          return route.fulfill({ contentType: 'text/javascript', body: `window.__tagManager = true;
+            const child = document.createElement('script');
+            child.src = ${JSON.stringify(doubleClickProbe)};
+            child.onerror = () => { window.__doubleClickScriptBlocked = true; };
+            document.head.appendChild(child);` });
         }
         if (url.searchParams.get('id') === 'AW-18490754953') {
           scripts++;
@@ -58,6 +72,9 @@ try {
     await page.waitForFunction(() => !document.querySelector('#root[data-session-shell]') && !document.querySelector('.splash'));
     if (config.ads && !config.gpc && !config.path && !config.member) {
       await page.waitForFunction(() => window.__adsSdk === true && window.__tagManager === true);
+      await page.waitForFunction(() => window.__doubleClickExecutions || window.__doubleClickScriptBlocked, null, { timeout: 5000 });
+      assert.equal(await page.evaluate(() => window.__doubleClickExecutions), 1, 'The consented homepage CSP allows the exact DoubleClick script origin');
+      assert.equal(doubleClickScripts, 1, 'The harmless DoubleClick child script loads once per eligible homepage document');
       assert.equal(containers, 1, 'The requested Tag Manager container loads once after advertising consent');
       assert.equal(await page.evaluate(() => window.dataLayer.filter(value => value.event === 'gtm.js').length), 1);
       const events = await page.evaluate(() => window.dataLayer.map(value => Array.from(value)));
@@ -73,19 +90,26 @@ try {
       await page.locator('#login-password').waitFor();
       assert.equal(await page.evaluate(() => window.__adsSdk), undefined, 'Leaving the homepage destroys the SDK document');
       assert.equal(await page.evaluate(() => window.__tagManager), undefined, 'Private routes unload Tag Manager');
+      assert.equal(await page.evaluate(() => window.__doubleClickExecutions), undefined, 'Private routes unload DoubleClick scripts');
       assert.equal(scripts, 1);
       assert.equal(containers, 1);
+      assert.equal(doubleClickScripts, 1, 'Private navigation must not request another DoubleClick script');
       await page.goto(server.origin + '/#analytics');
       await page.waitForFunction(() => window.__adsSdk === true && window.__tagManager === true);
+      await page.waitForFunction(() => window.__doubleClickExecutions === 1);
       await page.getByRole('checkbox', { name: 'Allow Google Ads measurement (optional)' }).uncheck();
       await page.getByRole('button', { name: 'Decline analytics', exact: true }).click();
       await page.waitForFunction(key => localStorage.getItem(key) === 'denied' && !window.__adsSdk && !window.__tagManager, ADS_CONSENT_KEY);
       assert.equal(scripts, 2, 'Withdrawing consent unloads the SDK without loading it again');
       assert.equal(containers, 2, 'Withdrawing consent unloads Tag Manager without loading it again');
+      assert.equal(doubleClickScripts, 2, 'Withdrawing consent unloads DoubleClick without loading it again');
+      assert.equal(await page.evaluate(() => window.__doubleClickExecutions), undefined);
     } else {
       await page.waitForTimeout(300);
       assert.equal(scripts, 0, JSON.stringify(config));
       assert.equal(containers, 0, `Debug flags cannot bypass Tag Manager consent or document restrictions: ${JSON.stringify(config)}`);
+      assert.equal(doubleClickScripts, 0, `DoubleClick scripts require an eligible consented homepage: ${JSON.stringify(config)}`);
+      assert.equal(await page.evaluate(() => window.__doubleClickExecutions), undefined);
     }
     await context.close();
     console.log('PASS Ads consent and document boundary', JSON.stringify(config));
@@ -98,10 +122,15 @@ try {
       assert.ok(sources?.includes(origin), `Homepage ${directive} permits Tag Assistant preview origin ${origin}`);
     }
   }
+  const homepageScripts = homepagePolicy.split(';').map(value => value.trim().split(/\s+/)).find(value => value[0] === 'script-src');
+  assert.ok(homepageScripts.includes(doubleClickOrigin), 'Homepage script-src includes the exact DoubleClick origin');
+  assert.ok(!homepageScripts.some(value => value === 'https:' || value === '*' || value.includes('*.doubleclick.net')), 'The advertising script permission must not broaden to arbitrary origins');
+  assert.ok(!browserSecurityPolicy('', { advertising: false }).includes(doubleClickOrigin), 'The non-advertising policy used for private/Office documents excludes DoubleClick scripts');
   for (const file of ['login/index.html', 'vault/index.html', 'app.html']) {
     const html = await fs.readFile(new URL('../web/dist/' + file, import.meta.url), 'utf8');
     const policy = html.match(/http-equiv="Content-Security-Policy" content="([^"]*)/)[1];
     assert.ok(!policy.includes('googletagmanager.com'), file + ' forbids Ads scripts');
     assert.ok(!policy.includes('tagmanager.google.com'), file + ' forbids Tag Assistant preview permissions');
+    assert.ok(!policy.includes(doubleClickOrigin), file + ' forbids DoubleClick scripts');
   }
 } finally { await browser.close(); await server.close(); }
