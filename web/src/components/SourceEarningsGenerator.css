@@ -1,0 +1,18 @@
+.source-earnings-generator { display: grid; gap: 16px; min-width: 0; }
+.source-earnings-generator summary { cursor: pointer; font-weight: 650; min-height: 44px; padding-block: 12px; }
+.source-earnings-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; padding-top: 12px; }
+.source-earnings-form label { display: grid; gap: 6px; min-width: 0; font-size: 13px; }
+.source-earnings-generator .source-earnings-form :is(input, select) { min-width: 0; width: 100%; min-height: 44px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: var(--bg); font: inherit; }
+.source-earnings-reference { grid-column: 1 / -1; }
+.source-earnings-generator small { display: block; font-weight: 400; overflow-wrap: anywhere; }
+.source-earnings-entries { list-style: none; padding: 0; display: grid; gap: 12px; }
+.source-earnings-entries li { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.source-earnings-entries li > span { min-width: 0; overflow-wrap: anywhere; }
+.source-earnings-entries li > button { flex-shrink: 0; }
+@media (max-width: 768px) { .source-earnings-generator .source-earnings-form :is(input, select) { font-size: 16px; } }
+@media (max-width: 520px) {
+  .source-earnings-form { grid-template-columns: minmax(0, 1fr); }
+  .source-earnings-generator .creator-analytics-table-wrap table { table-layout: fixed; white-space: normal; }
+  .source-earnings-generator th:first-child { width: 43%; }
+  .source-earnings-generator .creator-analytics-table-wrap :is(th, td) { padding-inline: 6px; overflow-wrap: anywhere; }
+}

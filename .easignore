@@ -35,3 +35,4 @@ backend/data/
 mobile/android/
 mobile/ios/
 mobile/analytics/generated/
+mobile/public/

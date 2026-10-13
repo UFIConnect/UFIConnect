@@ -22,7 +22,7 @@ const REQUEST_TIMEOUT = 15000;
 const disconnectManagedVpnSession = token => Platform.OS === 'ios'
   ? Promise.resolve({externalManaged:true}) : disconnectVpnSession(token);
 
-const AuthContext = createContext(null);
+export const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [token, setToken] = useState(null);

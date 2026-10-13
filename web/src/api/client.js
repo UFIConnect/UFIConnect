@@ -1,17 +1,17 @@
 import axios from 'axios';
 import { isNativeRuntime, NATIVE_API_ORIGIN } from '../nativeRuntime.mjs';
 import { nativeAxiosAdapter } from './nativeAdapter.mjs';
-import { clearSession, getAccessToken } from '../auth/session';
+import { clearSession, getAccessToken } from '../auth/session.js';
 import { deviceFeedRequestHeader } from '../utils/deviceFeedLocation.mjs';
 import { allowFeedLocation, requireFeedLocation } from '../utils/requiredFeedLocation.mjs';
-import { isRelativeApiRequest } from './apiEndpointPolicy';
+import { isRelativeApiRequest } from './apiEndpointPolicy.js';
 import {
   getCanonicalApiBaseUrl,
   isConfiguredApiBaseUrl,
   markApiOriginFailure,
   markApiOriginHealthy,
   resolveApiBaseUrl,
-} from './apiOrigin';
+} from './apiOrigin.js';
 
 // In dev: Vite proxy rewrites /api/* → http://localhost:3000/*
 // In production: VITE_API_URL points directly to the backend (no /api prefix needed)

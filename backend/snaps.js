@@ -1,6 +1,6 @@
 'use strict';
 
-const { randomUUID } = require('node:crypto');
+const { randomUUID, createHash } = require('node:crypto');
 const sourceCatalog = require('../shared/feed-source-catalog.json');
 const SNAP_LIFETIME_MS = 24 * 60 * 60 * 1000;
 const SNAP_SCHEMA = [
@@ -21,9 +21,45 @@ const SNAP_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS snap_media_cleanup (
     public_id TEXT PRIMARY KEY, media_type TEXT NOT NULL CHECK (media_type IN ('image','video')),
     requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
+  `CREATE TABLE IF NOT EXISTS snap_likes (
+    snap_id TEXT NOT NULL REFERENCES community_snaps(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL, PRIMARY KEY(snap_id,user_id))`,
+  `CREATE TABLE IF NOT EXISTS snap_comments (
+    id UUID PRIMARY KEY, snap_id TEXT NOT NULL REFERENCES community_snaps(id) ON DELETE CASCADE,
+    author_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    request_id UUID NOT NULL, request_hash TEXT NOT NULL,
+    content TEXT NOT NULL CHECK(length(content) > 0 AND length(content) <= 1000),
+    created_at TIMESTAMPTZ NOT NULL, UNIQUE(author_id,request_id))`,
+  `CREATE INDEX IF NOT EXISTS snap_comments_page ON snap_comments(snap_id,created_at,id)`,
 ];
 const failure = (status, message) => Object.assign(new Error(message), { status });
 const uuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+// Every read and write resolves the current ephemeral audience in PostgreSQL.
+// $1 = Snap ID, $2 = viewer, $3 = current time. Never authorize from a client
+// snapshot or the feed cache, which can outlive expiry or a block.
+const visibleSnapSql = `SELECT s.* FROM community_snaps s JOIN users u ON u.id=s.author_id
+  WHERE s.id=$1 AND s.expires_at>$3::timestamptz AND s.deleted_at IS NULL AND s.media_cleaned_at IS NULL
+  AND (s.visibility='public' OR s.author_id=$2::uuid OR EXISTS (
+    SELECT 1 FROM follows f WHERE f.follower_id=$2::text AND f.following_id=s.author_id::text))
+  AND NOT EXISTS (SELECT 1 FROM blocks b WHERE
+    (b.blocker_id=$2::text AND b.blocked_id=s.author_id::text)
+    OR (b.blocked_id=$2::text AND b.blocker_id=s.author_id::text))
+  AND ((u.profile_hidden IS NOT TRUE AND COALESCE(u.role_settings->>'privacy_publicProfile','true')<>'false')
+    OR s.author_id=$2::uuid OR EXISTS (SELECT 1 FROM follows f WHERE
+      (f.follower_id=$2::text AND f.following_id=s.author_id::text)
+      OR (f.following_id=$2::text AND f.follower_id=s.author_id::text))
+    OR EXISTS (SELECT 1 FROM connections c WHERE c.status='accepted' AND
+      ((c.from_id=$2::text AND c.to_id=s.author_id::text) OR (c.to_id=$2::text AND c.from_id=s.author_id::text))))
+  AND NOT EXISTS (SELECT 1 FROM report_content_suppressions r WHERE r.target_type='post' AND r.target_id=s.id)`;
+const visibleCommentSql = `NOT EXISTS (SELECT 1 FROM blocks b WHERE
+  (b.blocker_id=$2::text AND b.blocked_id=c.author_id::text)
+  OR (b.blocked_id=$2::text AND b.blocker_id=c.author_id::text))
+  AND NOT EXISTS (SELECT 1 FROM report_content_suppressions r WHERE r.target_type='comment' AND r.target_id=c.id::text)`;
+function commentFromRow(row) {
+  return { id: row.id, author: { id: row.author_id, name: row.author_name || 'Member' },
+    content: row.content, createdAt: new Date(row.created_at).toISOString() };
+}
 
 function snapMode(value) {
   if (value == null || value === 'home') return 'home';
@@ -125,11 +161,107 @@ function createSnaps({ db, getUser, validateUpload, removeMedia, screenMemberCon
     if (!rows.length) throw failure(404, 'Snap not found.');
     return { deleted: true };
   }
+  function engagementIdentity(id, viewerId, write = false) {
+    if ((write && !viewerId) || (viewerId != null && !uuidPattern.test(viewerId))) throw failure(401, 'Sign in to interact with this Snap.');
+    if (typeof id !== 'string' || !/^snap_[a-f0-9-]{36}$/i.test(id)) throw failure(404, 'Snap not found.');
+    return [id, viewerId || null, new Date(now()).toISOString()];
+  }
+  async function engagement(id, viewerId = null) {
+    const values = engagementIdentity(id, viewerId);
+    const { rows } = await query(`WITH visible AS (${visibleSnapSql})
+      SELECT (SELECT COUNT(*)::int FROM snap_likes l WHERE l.snap_id=v.id) AS likes_count,
+        EXISTS(SELECT 1 FROM snap_likes l WHERE l.snap_id=v.id AND l.user_id=$2::uuid) AS liked_by_me,
+        (SELECT COUNT(*)::int FROM snap_comments c WHERE c.snap_id=v.id AND ${visibleCommentSql}) AS comments_count
+      FROM visible v`, values);
+    if (!rows[0]) throw failure(404, 'Snap not found or no longer available.');
+    return { likesCount: rows[0].likes_count, likedByMe: rows[0].liked_by_me, commentsCount: rows[0].comments_count };
+  }
+  async function get(id, viewerId = null) {
+    const { rows } = await query(`WITH visible AS (${visibleSnapSql})
+      SELECT v.*,u.name AS author_name,u.avatar_url AS author_avatar FROM visible v JOIN users u ON u.id=v.author_id`,
+    engagementIdentity(id, viewerId));
+    if (!rows[0]) throw failure(404, 'Snap not found or no longer available.');
+    return snapFromRow(rows[0], viewerId);
+  }
+  async function like(userId, id, body = {}) {
+    const values = engagementIdentity(id, userId, true);
+    if (!body || typeof body !== 'object' || Array.isArray(body) || typeof body.liked !== 'boolean'
+        || Object.keys(body).some(key => key !== 'liked')) throw failure(400, 'Choose whether to like this Snap.');
+    // Setting the desired state is naturally idempotent, including uncertain
+    // retries. The authorized Snap selection is part of the mutation itself.
+    if (body.liked) await query(`WITH visible AS (${visibleSnapSql})
+      INSERT INTO snap_likes(snap_id,user_id,created_at) SELECT id,$2::uuid,$3::timestamptz FROM visible
+      ON CONFLICT(snap_id,user_id) DO NOTHING`, values);
+    else await query(`WITH visible AS (${visibleSnapSql})
+      DELETE FROM snap_likes l USING visible v WHERE l.snap_id=v.id AND l.user_id=$2::uuid`, values);
+    return engagement(id, userId);
+  }
+  async function comments(id, viewerId = null, { offset = 0, limit = 20 } = {}) {
+    const values = engagementIdentity(id, viewerId);
+    const start = Number(offset), size = Number(limit);
+    if (!Number.isSafeInteger(start) || start < 0 || start > 10000 || !Number.isSafeInteger(size) || size < 1 || size > 50) {
+      throw failure(400, 'Choose a valid comments page.');
+    }
+    // A left join keeps unavailable and empty separate without disclosing
+    // whether an inaccessible private Snap exists.
+    const { rows } = await query(`WITH visible AS (${visibleSnapSql}), eligible AS (
+      SELECT c.*,u.name AS author_name FROM snap_comments c JOIN users u ON u.id=c.author_id
+      JOIN visible v ON v.id=c.snap_id WHERE ${visibleCommentSql}
+    ), page AS (SELECT * FROM eligible ORDER BY created_at,id LIMIT $4 OFFSET $5)
+      SELECT p.*, (SELECT COUNT(*)::int FROM eligible) AS comments_count
+      FROM visible v LEFT JOIN page p ON true ORDER BY p.created_at,p.id`, [...values, size + 1, start]);
+    if (!rows.length) throw failure(404, 'Snap not found or no longer available.');
+    const page = rows.filter(row => row.id);
+    return { comments: page.slice(0, size).map(commentFromRow), commentsCount: rows[0].comments_count,
+      hasMore: page.length > size, live: true, source: 'uficonnect' };
+  }
+  async function comment(userId, id, body = {}) {
+    const values = engagementIdentity(id, userId, true);
+    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => !['content', 'requestId'].includes(key))
+        || typeof body.content !== 'string' || !body.content.trim() || body.content.trim().length > 1000
+        || !uuidPattern.test(body.requestId || '')) throw failure(400, 'Add a comment under 1,001 characters and a valid request ID.');
+    const content = body.content.trim(), hash = createHash('sha256').update(content).digest('hex');
+    const requestId = body.requestId.toLowerCase();
+    async function existing() {
+      const { rows } = await query(`WITH visible AS (${visibleSnapSql})
+        SELECT c.*,u.name AS author_name FROM snap_comments c JOIN users u ON u.id=c.author_id
+        WHERE c.author_id=$2::uuid AND c.request_id=$4::uuid AND EXISTS(SELECT 1 FROM visible)
+          AND ${visibleCommentSql}`,
+      [id, userId, new Date(now()).toISOString(), requestId]);
+      const row = rows[0];
+      if (!row) return null;
+      if (row.snap_id !== id || row.request_hash !== hash) throw failure(409, 'This comment request was already used. Start a new comment.');
+      return row;
+    }
+    await engagement(id, userId);
+    let row = await existing();
+    if (!row) {
+      const screening = await screenMemberContent({ content, kind: 'comment', maxLength: 1000 });
+      if (!screening?.allowed) throw failure(screening?.reason === 'screening_unavailable' ? 503 : 422,
+        screening?.reason === 'screening_unavailable' ? 'Comment screening is temporarily unavailable. Please try again.' : 'This comment cannot be published.');
+      // Recheck audience/expiry after asynchronous screening. A concurrent
+      // duplicate waits on the database uniqueness constraint, then reads the
+      // confirmed row in a fresh statement rather than reporting two writes.
+      await query(`WITH visible AS (${visibleSnapSql})
+        INSERT INTO snap_comments(id,snap_id,author_id,request_id,request_hash,content,created_at)
+        SELECT $4::uuid,id,$2::uuid,$5::uuid,$6,$7,$3::timestamptz FROM visible
+        ON CONFLICT(author_id,request_id) DO NOTHING`,
+      [values[0], values[1], new Date(now()).toISOString(), uuid(), requestId, hash, screening.content]);
+      row = await existing();
+      if (!row) throw failure(404, 'Snap not found or no longer available.');
+    }
+    const state = await engagement(id, userId);
+    return { comment: commentFromRow(row), commentsCount: state.commentsCount, published: true };
+  }
   let cleaning = null;
   async function cleanupBatch() {
     available();
     if (typeof removeMedia !== 'function') throw failure(503, 'Snap media cleanup is unavailable.');
     const timestamp = new Date(now()).toISOString();
+    // Comments and reactions share the Snap's lifetime even if its media
+    // deletion must retry or the upload-reuse tombstone remains for a week.
+    for (const table of ['snap_comments', 'snap_likes']) await query(`DELETE FROM ${table} e
+      USING community_snaps s WHERE e.snap_id=s.id AND (s.expires_at <= $1::timestamptz OR s.deleted_at IS NOT NULL)`, [timestamp]);
     const { rows } = await query(`SELECT id,public_id,media_type FROM community_snaps
       WHERE (expires_at <= $1::timestamptz OR deleted_at IS NOT NULL) AND media_cleaned_at IS NULL
       ORDER BY expires_at,id LIMIT 25`, [timestamp]);
@@ -159,7 +291,7 @@ function createSnaps({ db, getUser, validateUpload, removeMedia, screenMemberCon
     if (!cleaning) cleaning = cleanupBatch().finally(() => { cleaning = null; });
     return cleaning;
   }
-  return { list, create, remove, cleanup };
+  return { list, get, create, remove, cleanup, engagement, like, comments, comment };
 }
 function registerSnapRoutes(app, { service, authenticate, authenticateOptional, limiter, loadExternalSnaps = async () => ({ snaps: [], sourceErrors: {} }) }) {
   const respond = (work, status = 200) => async (req, res) => {
@@ -167,6 +299,12 @@ function registerSnapRoutes(app, { service, authenticate, authenticateOptional, 
     try { res.status(status).json(await work(req)); }
     catch (error) { res.status(error.status || 503).json({ message: error.status ? error.message : 'Snaps are temporarily unavailable. Please try again.' }); }
   };
+  app.get('/snaps/:id/engagement', authenticateOptional, respond(req => service.engagement(req.params.id, req.user?.id || null)));
+  app.get('/snaps/:id', authenticateOptional, respond(async req => ({ snap: await service.get(req.params.id, req.user?.id || null) })));
+  app.get('/snaps/:id/comments', authenticateOptional, respond(req => service.comments(req.params.id, req.user?.id || null,
+    { offset: req.query.offset ?? 0, limit: req.query.limit ?? 20 })));
+  app.post('/snaps/:id/like', authenticate, limiter, respond(req => service.like(req.user.id, req.params.id, req.body)));
+  app.post('/snaps/:id/comments', authenticate, limiter, respond(req => service.comment(req.user.id, req.params.id, req.body), 201));
   app.get('/snaps', authenticateOptional, respond(async req => {
     const mode = snapMode(req.query.mode), viewerId = req.user?.id || null;
     if (mode === 'following' && !viewerId) throw failure(401, 'Sign in to view Following Snaps.');

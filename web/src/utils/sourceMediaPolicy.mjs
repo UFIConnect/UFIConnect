@@ -1,8 +1,11 @@
-// Source social video uses its approved player. Direct playback is reserved
-// for native uploads or rights explicitly recorded by the trusted backend.
+import { openProtocolVideo } from '../../../backend/video-media-urls.mjs';
+
+// Open-protocol APIs supply playable attachments/playlists. Other source
+// videos use an approved embed or an explicit backend playback authorization.
 export function directMediaPlaybackAllowed(post) {
   if (!post || typeof post !== 'object') return false;
   if (post.directPlaybackAuthorized === true) return true;
+  if (openProtocolVideo(post)) return true;
   return post.isExternal !== true && (['uficonnect', 'livecamera'].includes(post.source) || (!post.source && post.isExternal === false));
 }
 

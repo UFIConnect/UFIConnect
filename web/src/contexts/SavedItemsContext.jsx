@@ -22,6 +22,8 @@ export function SavedItemsProvider({ children }) {
   const [ready, setReady] = useState(false);
   const activeUserIdRef = useRef(profile?.id || null);
   activeUserIdRef.current = profile?.id || null;
+  const activeSaveScope = useRef({ userId: activeUserIdRef.current });
+  if (activeSaveScope.current.userId !== activeUserIdRef.current) activeSaveScope.current = { userId: activeUserIdRef.current };
 
   const refreshSavedPosts = useCallback(async () => {
     if (!profile?.id) {
@@ -71,6 +73,9 @@ export function SavedItemsProvider({ children }) {
 
   const togglePost = useCallback(async (post) => {
     const id = String(post?.id || '');
+    const userId = profile?.id || null;
+    const scope = activeSaveScope.current;
+    if (!userId || activeUserIdRef.current !== userId) throw new Error('Sign in to save this post.');
     if (!id || postBusyIds.has(id)) return null;
     const wasSaved = savedPostIds.has(id);
     setPostBusyIds(current => new Set(current).add(id));
@@ -82,22 +87,22 @@ export function SavedItemsProvider({ children }) {
     try {
       if (wasSaved) await client.delete(`/saved/posts/${encodeURIComponent(id)}`);
       else await client.post('/saved/posts', { post });
-      return !wasSaved;
+      return activeSaveScope.current === scope ? !wasSaved : null;
     } catch (error) {
-      setSavedPostIds(current => {
+      if (activeSaveScope.current === scope) setSavedPostIds(current => {
         const next = new Set(current);
         if (wasSaved) next.add(id); else next.delete(id);
         return next;
       });
       throw error;
     } finally {
-      setPostBusyIds(current => {
+      if (activeSaveScope.current === scope) setPostBusyIds(current => {
         const next = new Set(current);
         next.delete(id);
         return next;
       });
     }
-  }, [postBusyIds, savedPostIds]);
+  }, [postBusyIds, savedPostIds, profile?.id]);
 
   const saveJob = useCallback(async (job, status = 'saved') => {
     const normalized = normalizeJob(job, status);

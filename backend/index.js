@@ -3,8 +3,11 @@ const { mastodonOrigin, mastodonPostUrl, mastodonCanReadStatuses, mastodonCanInt
 const { mastodonContentText } = require('./mastodon-content');
 const { BLUESKY_OAUTH_SCOPE, pushBlueskyAuthorization } = require('./bluesky-oauth');
 const { importedContentLimit, jobDescriptionText, usaJobsDescription, JOB_CONTENT_MAX_CHARS } = require('./job-content');
+const { SOURCE_CONTENT_MAX_CHARS, boundedSourceText, createImportedContentRecovery } = require('./source-post-content');
+const { createSourceContentRecoveryQueue } = require('./source-content-recovery');
 const { extractFeedMedia } = require('./rss-media');
 const { normalizePostMedia } = require('./post-media');
+const { mastodonMedia, blueskyMedia } = require('./provider-video-media');
 const { verifiedCityAlternates } = require('./travel-live-cameras');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -21,6 +24,7 @@ const { createAnalyticsBridgeHandler } = require('./analytics-bridge');
 const { ANALYTICS_SCHEMA, ANALYTICS_MIGRATIONS, createAggregateAnalytics } = require('./aggregate-analytics');
 const { OFFICE_MEMBERS_SCHEMA, registerOfficeMemberRoutes } = require('./office-members');
 const { SIGNIN_SCHEMA, registerSignInRoutes, isDeliverableEmail } = require('./auth-signin');
+const { createOAuthFrontend } = require('./oauth-frontend');
 const { PHONE_EMAIL_SCHEMA, registerPhoneEmailSettingsRoutes } = require('./phone-email-settings');
 const { SNAP_SCHEMA, createSnaps, registerSnapRoutes } = require('./snaps');
 const { createExternalSnapLoader, PUBLIC_CLIP_QUERY } = require('./external-snaps');
@@ -920,6 +924,7 @@ function redditDefaultAvatar(author) {
 // --- Social OAuth config -----------------------------------------------------
 const API_BASE      = process.env.API_BASE_URL  || 'http://localhost:3000';
 const FRONTEND_BASE = process.env.FRONTEND_URL  || 'http://localhost:5173';
+const oauthFrontend = createOAuthFrontend({ frontendBase: FRONTEND_BASE, allowedOrigins: process.env.ALLOWED_ORIGINS });
 const PUBLIC_API_BASE = process.env.PUBLIC_API_URL || 'https://api.uficonnect.org';
 const OAUTH_CALLBACK_BASE = process.env.OAUTH_CALLBACK_BASE_URL || PUBLIC_API_BASE;
 
@@ -1211,6 +1216,7 @@ function pkceChallenge(v) { return crypto.createHash('sha256').update(v).digest(
 const mastodonService = createMastodonService({ resolveAddress: resolvePublicSourceCheckAddress, pinnedLookup: pinnedPublicLookup });
 registerMastodonRoutes(app, { authenticate, limit: rateLimit({ windowMs: 3600000, limit: 20 }),
   getUser: getEffectiveUser, callbackUrl: oauthCallbackUrl('mastodon'), frontendUrl: FRONTEND_BASE,
+  frontendPolicy: oauthFrontend,
   createState: createOAuthState, verifyState: verifyOAuthState, saveToken: saveSocialToken, service: mastodonService });
 
 // --- Bluesky (AT Protocol) OAuth -----------------------------------------------
@@ -1602,6 +1608,7 @@ app.get('/auth/social/bluesky/start', authenticate, async (req, res) => {
       tokenEndpoint: authServerMeta.token_endpoint,
       issuer: authServerMeta.issuer,
       did, pdsUrl,
+      ...oauthFrontend.capture(req),
       ...(req.query.returnTo === 'command-center' ? { returnTo: 'command-center' } : {}),
     });
 
@@ -1638,8 +1645,9 @@ app.get('/auth/social/bluesky/start', authenticate, async (req, res) => {
 app.get('/auth/social/bluesky/callback', async (req, res) => {
   const { code, state, error: oauthError, iss } = req.query;
   const entry = verifyOAuthState(state, 'bluesky');
+  const frontendBase = oauthFrontend.resolve(entry?.extra?.returnOrigin);
   const destination = entry?.extra?.returnTo === 'command-center'
-    ? `${FRONTEND_BASE}/command-center?tab=accounts&` : `${FRONTEND_BASE}/connected-accounts?`;
+    ? `${frontendBase}/command-center?tab=accounts&` : `${frontendBase}/connected-accounts?`;
   if (oauthError) return res.redirect(`${destination}social_error=bluesky&reason=${encodeURIComponent(String(oauthError))}`);
   if (!entry || !entry.extra) return res.redirect(`${destination}social_error=bluesky&reason=invalid_state`);
   const { tokenEndpoint, issuer, did, pdsUrl } = entry.extra;
@@ -2937,7 +2945,7 @@ async function fetchDevToByTag(tag) {
         id:            `devto_${a.id}`,
         authorId:      `devto_${a.user?.username}`,
         groupId:       'ext_devto',
-        content:       a.description || a.title,
+        content:       a.body_html ? stripAndDecodeHTML(a.body_html) : boundedSourceText(a.body_markdown || a.description || a.title),
         title:         a.title,
         source:        'devto',
         sourceLabel:   'DEV Community',
@@ -3155,7 +3163,7 @@ async function fetchGitHubFollowingActivity(token, { bust = false, connectedAt =
           case 'PushEvent': {
             const commits = e.payload?.commits || [];
             title = `${actor} pushed to ${repoName}`;
-            content = commits.map(c => c.message?.split('\n')[0]).filter(Boolean).slice(0, 3).join(' · ') || `${commits.length} commit${commits.length !== 1 ? 's' : ''}`;
+            content = boundedSourceText(commits.map(c => c.message).filter(Boolean).join('\n\n')) || `${commits.length} commit${commits.length !== 1 ? 's' : ''}`;
             break;
           }
           case 'WatchEvent':
@@ -3224,10 +3232,9 @@ function truncateWithEllipsis(text, maxLen) {
   return text.length > maxLen ? text.slice(0, maxLen).trim() + '…' : text;
 }
 
-// Ordinary feed excerpts are bounded at 2,000 characters. Job listings use
-// the larger shared limit in job-content so their responsibilities survive
-// parsing, screening, caching and database persistence.
-const POST_CONTENT_MAX_CHARS = 2000;
+// Preserve the full body actually supplied by each provider, under one generous
+// safety ceiling. A provider-supplied excerpt remains an excerpt.
+const POST_CONTENT_MAX_CHARS = SOURCE_CONTENT_MAX_CHARS;
 
 // --- Medium: fetch articles by tag via RSS feed -------------------------------
 function decodeHTMLEntities(str) {
@@ -3277,22 +3284,7 @@ const HTML_BLOCK_BOUNDARY_RE = /<\/(p|div|li|tr|h[1-6])>|<br\s*\/?>/gi;
 // plain-prose "<3" or "5 > 2" isn't misread as a tag before there's even a
 // real one to find).
 function stripAndDecodeHTML(html) {
-  const withBoundaries = html.replace(HTML_BLOCK_BOUNDARY_RE, ' ');
-  const firstPass = decodeHTMLEntities(withBoundaries.replace(/<[^>]+>/g, ''));
-  // Deliberately narrower than the first pass's <[^>]+> — that one only ever
-  // runs against genuinely-real markup, where matching anything in angle
-  // brackets is correct. This one runs against text that's already been
-  // through entity-decoding, where the same broad pattern turns "x &lt; y
-  // and 5 &gt; 2" into "x 2" — decoding revealed real '<'/'>' characters
-  // that were never a tag at all, just escaped comparison operators, and
-  // the broad pattern greedily treats everything between them as one tag's
-  // contents. Requiring a letter (or '/' for a closing tag) immediately
-  // after '<' is what real tags look like and prose comparisons don't:
-  // "<iframe>" matches and gets stripped, "< y and 5 >" doesn't. Empty
-  // string, not a space, for the same reason as the block-boundary comment
-  // above — an inline tag revealed by decoding shouldn't inject a space
-  // any more than a real one should.
-  return firstPass.replace(/<\/?[a-zA-Z][^<>]*>/g, '').replace(/\s+/g, ' ').trim();
+  return mastodonContentText(html, POST_CONTENT_MAX_CHARS).replace(/<\/?[a-zA-Z][^<>]*>/g, '');
 }
 
 // Reddit's Atom <content> is the inverse case from stripAndDecodeHTML above —
@@ -3304,28 +3296,7 @@ function stripAndDecodeHTML(html) {
 // confirmed live that broad version was quietly eating everything between
 // two comparison operators in any post that used them.
 function decodeAndStripHTML(escapedHtml) {
-  // Reddit's Atom <content> is HTML that's been through two layers of
-  // entity-escaping: Reddit's own selftext_html render already uses
-  // numeric entities (apostrophes as &#39;, etc.), and that whole rendered
-  // HTML is then escaped *again* as the XML text content of <content>.
-  // A single decodeHTMLEntities pass only unwraps the outer XML layer
-  // (&amp;#39; ? &#39;) - its own numeric-entity replace already ran
-  // earlier in that same pass and doesn't re-scan its own output —
-  // confirmed live as literal "&#39;"/"&gt;" text showing up in rendered
-  // Reddit post content instead of real apostrophes/angle brackets.
-  // Decoding twice is a safe no-op for content that was only escaped once
-  // (nothing left to match on the second pass).
-  const decoded = decodeHTMLEntities(decodeHTMLEntities(escapedHtml)).replace(HTML_BLOCK_BOUNDARY_RE, ' ');
-  return decoded
-    // Reddit always wraps rendered selftext_html in <!-- SC_OFF -->...
-    // <!-- SC_ON --> (old Reddit's syntax-coloring CSS hook, present on
-    // every self-post, not just spoiler-tagged ones) — the tag-strip regex
-    // below only matches real elements (<tag>), never HTML comments, so
-    // these leaked straight through as literal visible text.
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<\/?[a-zA-Z][^<>]*>/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return mastodonContentText(decodeHTMLEntities(decodeHTMLEntities(escapedHtml)), POST_CONTENT_MAX_CHARS);
 }
 
 function fetchText(url, extraHeaders = {}) {
@@ -3754,7 +3725,7 @@ function parseYouTubeChannelRSS(xml, keyword, channelName) {
     const updated   = get(/<updated>(.*?)<\/updated>/);
     // No real tags in a video description, but titles just above already get
     // entity-decoded and this didn't — an inconsistency, not by design.
-    const desc      = decodeHTMLEntities(get(/<media:description>([\s\S]*?)<\/media:description>/)).slice(0, 300);
+    const desc      = boundedSourceText(decodeHTMLEntities(get(/<media:description>([\s\S]*?)<\/media:description>/)));
     const thumb     = (/<media:thumbnail url="([^"]+)"/.exec(s) || [])[1] || null;
     const author    = get(/<name>(.*?)<\/name>/) || channelName;
     const channelId = get(/<yt:channelId>(.*?)<\/yt:channelId>/) || (/<yt:channelId>(.*?)<\/yt:channelId>/.exec(xml) || [])[1] || '';
@@ -4234,26 +4205,10 @@ function mapMastodonPosts(data, tag, connected = false) {
         ...(connected && typeof t.favourited === 'boolean' ? { sourceLikedByMe: t.favourited } : {}),
         createdAt:   t.created_at,
         isExternal:  true,
-        ...mastodonMedia(t.media_attachments?.[0]),
+        ...mastodonMedia(t.media_attachments, t.card),
         group:       { id: 'ext_mastodon', name: 'Mastodon', category: 'Social', externalUrl: new URL(sourceUrl).origin },
       };
     });
-}
-
-function mastodonMedia(media) {
-  if (!media) return { mediaType: null, mediaUrl: null };
-  if (media.type === 'image') return { mediaType: 'image', mediaUrl: media.preview_url || media.url || null };
-  // 'video' and 'gifv' (a looping mp4, not an actual GIF) both resolve to a
-  // directly-playable file URL — Mastodon's Attachment object carries a
-  // separate static preview_url alongside the real video url (unlike
-  // Reddit's v.redd.it, which genuinely has no distinct poster field), so
-  // it's captured here instead of being left unused.
-  if (media.type === 'video' || media.type === 'gifv') {
-    return { mediaType: 'video', mediaUrl: media.url || null, mediaPoster: media.preview_url || null,
-      videoDurationSeconds: normalizeVideoDurationSeconds(media.meta?.original?.duration),
-      ...(media.type === 'gifv' ? { videoPresentation: 'gif' } : {}) };
-  }
-  return { mediaType: null, mediaUrl: null };
 }
 
 async function fetchMastodonByTag(tag) {
@@ -5636,16 +5591,8 @@ async function fetchBlueskyByKeyword(keyword) {
   const mapPost = (p) => {
     const text   = truncateWithEllipsis(p.record?.text || '', POST_CONTENT_MAX_CHARS);
     const handle = p.author?.handle || p.author?.did || 'unknown';
-    // Bluesky (AT Protocol) video posts stream via HLS — embed.video#view
-    // gives a .m3u8 playlist plus a thumbnail, and they always share the
-    // same path (.../thumbnail.jpg vs .../playlist.m3u8). Persisting the
-    // playlist URL directly would need a new DB column (media_url already
-    // holds the thumbnail), so mediaUrl stores the thumbnail and the
-    // frontend derives the stream URL by swapping the filename — same
-    // "recover it from what's already persisted" approach as the YouTube
-    // embedId fix.
-    const isVideo = p.embed?.$type === 'app.bsky.embed.video#view' && p.embed?.thumbnail;
-    const isImage = p.embed?.$type === 'app.bsky.embed.images#view' && p.embed?.images?.length;
+    // Keep the API playlist and optional poster separately, including a
+    // record-with-media embed. No stream URL is guessed from a thumbnail.
     return {
       id:          `bluesky_${(p.cid || p.uri || Date.now().toString(36)).replace(/[^a-z0-9]/gi,'').slice(-16)}`,
       authorId:    `bluesky_${p.author?.did || 'anon'}`,
@@ -5660,9 +5607,7 @@ async function fetchBlueskyByKeyword(keyword) {
       likes: [], likesCount: p.likeCount || 0, commentsCount: p.replyCount || 0,
       createdAt:   normalizeTimestamp(p.record?.createdAt || p.indexedAt),
       isExternal:  true,
-      mediaUrl:    isVideo ? (p.embed.playlist || null) : (isImage ? p.embed.images[0].thumb : null),
-      mediaType:   isVideo ? 'video' : (isImage ? 'image' : null),
-      mediaPoster: isVideo ? p.embed.thumbnail : null,
+      ...blueskyMedia(p),
       group:       { id: 'ext_bluesky', name: 'Bluesky', category: 'Social', externalUrl: 'https://bsky.app' },
     };
   };
@@ -5803,8 +5748,6 @@ async function fetchBlueskyFollowingTimeline(token, { bust = false, connectedAt 
       .map(({ post: p }) => {
         const text   = truncateWithEllipsis(p.record?.text || '', POST_CONTENT_MAX_CHARS);
         const handle = p.author?.handle || p.author?.did || 'unknown';
-        const isVideo = p.embed?.$type === 'app.bsky.embed.video#view' && p.embed?.thumbnail;
-        const isImage = p.embed?.$type === 'app.bsky.embed.images#view' && p.embed?.images?.length;
         return {
           id:          `bluesky_${(p.cid || p.uri || Date.now().toString(36)).replace(/[^a-z0-9]/gi, '').slice(-16)}`,
           authorId:    `bluesky_${p.author?.did || 'anon'}`,
@@ -5819,9 +5762,7 @@ async function fetchBlueskyFollowingTimeline(token, { bust = false, connectedAt 
           likes: [], likesCount: p.likeCount || 0, commentsCount: p.replyCount || 0,
           createdAt:   normalizeTimestamp(p.record?.createdAt || p.indexedAt),
           isExternal:  true,
-          mediaUrl:    isVideo ? (p.embed.playlist || null) : (isImage ? p.embed.images[0].thumb : null),
-          mediaType:   isVideo ? 'video' : (isImage ? 'image' : null),
-          mediaPoster: isVideo ? p.embed.thumbnail : null,
+          ...blueskyMedia(p),
           group:       { id: 'ext_bluesky', name: 'Bluesky', category: 'Social', externalUrl: 'https://bsky.app' },
         };
       });
@@ -6548,13 +6489,23 @@ const sseClients  = new Map();   // clientId ? res
 const SEEN_IDS_MAX    = envNumber('FEED_SEEN_IDS_MAX', 30000, 6000, 200000);
 const seenPostIds     = new Set();
 const seenPostIdQueue = [];      // insertion-order queue for rolling eviction
+const importedContentRecovery = createImportedContentRecovery();
+const sourceContentRecoveryQueue = createSourceContentRecoveryQueue({ db, schedule: setTimeout,
+  // The pipeline may encounter a historical cache row after its staging copy
+  // was promoted/deleted. Repair existing bodies in both tables, without
+  // inserting into the API cache or bypassing normal new-post ingestion.
+  tables: IS_PIPELINE_ROLE ? ['feed_posts_cache', 'feed_posts_staging'] : ['feed_posts_cache'],
+});
 
-function addSeenId(id) {
+function addSeenId(id, post) {
+  if (post) importedContentRecovery.remember(post);
   if (seenPostIds.has(id)) return;
   seenPostIds.add(id);
   seenPostIdQueue.push(id);
   if (seenPostIdQueue.length > SEEN_IDS_MAX) {
-    seenPostIds.delete(seenPostIdQueue.shift());
+    const expiredId = seenPostIdQueue.shift();
+    seenPostIds.delete(expiredId);
+    importedContentRecovery.forget(expiredId);
   }
 }
 
@@ -6563,7 +6514,7 @@ function trimPostContent(p) {
   if (!p) return p;
   const limit = importedContentLimit(p);
   if (p.content && p.content.length > limit) {
-    return { ...p, content: p.content.slice(0, limit - 1) + '…' };
+    return { ...p, content: boundedSourceText(p.content, limit) };
   }
   return p;
 }
@@ -6744,6 +6695,13 @@ function broadcastSSE(posts) {
 // Call after every fetch: deduplicates, trims content, updates cache, broadcasts via SSE.
 // `includeAccepted` is used by the Equalizer so its fairness telemetry tracks
 // posts that actually made it through the filter, not just work it attempted.
+function refreshImportedPostBody(post) {
+  const screened = screenFeedPost(post);
+  if (!screened.allowed) return false;
+  const recovery = importedContentRecovery.take(screened.post);
+  return recovery ? sourceContentRecoveryQueue.enqueue(recovery, recovery.cachedPost.author?.profileUrl) : false;
+}
+
 function addAndBroadcast(incoming, { includeAccepted = false } = {}) {
   const started = Date.now();
   const passed = [];
@@ -6756,6 +6714,7 @@ function addAndBroadcast(incoming, { includeAccepted = false } = {}) {
     if (!p?.id || isFallbackFeedPost(p)) { postPipelineTracker.record(p, 'rejected', 'Invalid or fallback post'); bucket.droppedInvalid++; droppedInvalid++; continue; }
     const screened = screenFeedPost(p);
     if (!screened.allowed) { postPipelineTracker.record(p, 'rejected', screened.reason); bucket.droppedScreened++; droppedScreened++; continue; }
+    if (seenPostIds.has(screened.post.id)) refreshImportedPostBody(screened.post);
     if (seenPostIds.has(screened.post.id) || acceptedIds.has(screened.post.id)) { postPipelineTracker.record(p, 'duplicate', 'Previously accepted post ID'); bucket.droppedDuplicate++; droppedDuplicate++; continue; }
     acceptedIds.add(screened.post.id);
     bucket.output++;
@@ -6777,7 +6736,7 @@ function addAndBroadcast(incoming, { includeAccepted = false } = {}) {
   filterAgentState.lastRun = Date.now();
 
   if (!fresh.length) return includeAccepted ? { count: 0, posts: [] } : 0;
-  fresh.forEach(p => addSeenId(p.id));
+  fresh.forEach(p => addSeenId(p.id, p));
   // This is the one call site building the shared cache itself (every other
   // diversify/maxSharePct usage — enforceFeedDiversity, the Jobs filter —
   // only caps what a single *request* sees, downstream of whatever's
@@ -7494,6 +7453,7 @@ function pushToEqualizer(sourceId, posts) {
   const buffer = equalizerBuffer.get(equalizerSourceId);
   let buffered = 0;
   for (const post of posts) {
+    if (post?.id && seenPostIds.has(post.id) && !isFallbackFeedPost(post)) refreshImportedPostBody(post);
     if (!post?.id || isFallbackFeedPost(post) || seenPostIds.has(post.id) || equalizerQueuedPostIds.has(post.id)) {
       postPipelineTracker.record(post, !post?.id || isFallbackFeedPost(post) ? 'rejected' : 'duplicate', 'Equalizer intake: invalid, fallback or already queued post');
       equalizerState.totalQueueDuplicates += 1;
@@ -12318,7 +12278,9 @@ function trimRuntimeCaches(level = 'pressure') {
   pruneExpiredFeedSnapshotCaches();
   // Trim the rolling seenPostIds set + its queue together
   while (seenPostIdQueue.length > seenLimit) {
-    seenPostIds.delete(seenPostIdQueue.shift());
+    const expiredId = seenPostIdQueue.shift();
+    seenPostIds.delete(expiredId);
+    importedContentRecovery.forget(expiredId);
   }
 
   refreshControl.trimCount += 1;
@@ -15221,7 +15183,7 @@ async function fetchGitHubOwnActivity(token, { bust = false, connectedAt = null 
           case 'PushEvent': {
             const commits = e.payload?.commits || [];
             title = `Pushed to ${repoName}`;
-            content = commits.map(c => c.message?.split('\n')[0]).filter(Boolean).slice(0, 3).join(' · ') || `${commits.length} commit(s)`;
+            content = boundedSourceText(commits.map(c => c.message).filter(Boolean).join('\n\n')) || `${commits.length} commit(s)`;
             break;
           }
           case 'CreateEvent':
@@ -15626,16 +15588,12 @@ async function fetchBlueskyOwnPosts(token, { bust = false, connectedAt = null } 
       .map(({ post: p }) => {
         const text = truncateWithEllipsis(p.record?.text || '', POST_CONTENT_MAX_CHARS);
         const handle = p.author?.handle || p.author?.did || 'unknown';
-        const isVideo = p.embed?.$type === 'app.bsky.embed.video#view' && p.embed?.thumbnail;
-        const isImage = p.embed?.$type === 'app.bsky.embed.images#view' && p.embed?.images?.length;
         return {
           id: `bluesky_own_${(p.cid || p.uri || Date.now().toString(36)).replace(/[^a-z0-9]/gi, '').slice(-16)}`,
           source: 'bluesky', sourceLabel: `@${handle}`,
           title: text.slice(0, 120), content: text,
           sourceUrl: `https://bsky.app/profile/${handle}/post/${(p.uri || '').split('/').pop()}`,
-          mediaUrl: isVideo ? (p.embed.playlist || null) : (isImage ? p.embed.images[0].fullsize : null),
-          mediaType: isVideo ? 'video' : (isImage ? 'image' : null),
-          mediaPoster: isVideo ? p.embed.thumbnail : null,
+          ...blueskyMedia(p, { fullsize: true }),
           createdAt: normalizeTimestamp(p.record?.createdAt || p.indexedAt),
         };
       });
@@ -18777,7 +18735,7 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
           p.id, p.source,
           p.groupId || p.group?.id || null,
           (p.title || '').slice(0, 500),
-          (p.content || '').slice(0, importedContentLimit(p)),
+          boundedSourceText(p.content, importedContentLimit(p)),
           p.author?.name || null,
           p.sourceUrl || null,
           p.mediaUrl || null,
@@ -18809,7 +18767,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
     const text = (value ?? '').toString()
       .replace(/\u0000/g, '')
       .replace(/\\u0000/gi, '')
-      .replace(/[\uD800-\uDFFF]/g, '');
+      .replace(/[\uD800-\uDFFF]/gu, '');
     return max ? text.slice(0, max) : text;
   };
   const seen = new Set();
@@ -18823,7 +18781,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
       source: clean(p.source || 'unknown'),
       group_id: p.groupId || p.group?.id ? clean(p.groupId || p.group.id) : null,
       title: clean(p.title, 500),
-      content: clean(p.content, importedContentLimit(p)),
+      content: clean(boundedSourceText(p.content, importedContentLimit(p))),
       author_name: p.author?.name ? clean(p.author.name) : null,
       source_url: p.sourceUrl ? clean(p.sourceUrl) : null,
       media_url: p.mediaUrl ? clean(p.mediaUrl) : null,
@@ -20501,7 +20459,7 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
     req.user.id,
     platform,
     codeVerifier,
-    { browserHash: pkceChallenge(browserNonce), ...(returnToCommandCenter ? { returnTo: 'command-center' } : {}) },
+    { browserHash: pkceChallenge(browserNonce), ...oauthFrontend.capture(req), ...(returnToCommandCenter ? { returnTo: 'command-center' } : {}) },
   ));
 
   res.json({ url: `${cfg.authUrl}?${params.toString()}` });
@@ -20514,10 +20472,11 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
   const { platform } = req.params;
   const { code, state, error: oauthError } = req.query;
   const entry = verifyOAuthState(state, platform);
+  const frontendBase = oauthFrontend.resolve(entry?.extra?.returnOrigin);
   const frontendProfile = entry?.extra?.returnTo === 'command-center'
     && ACCOUNT_PLATFORM_CATALOG.has(platform)
-    ? `${FRONTEND_BASE}/command-center?tab=accounts`
-    : `${FRONTEND_BASE}/connected-accounts`;
+    ? `${frontendBase}/command-center?tab=accounts`
+    : `${frontendBase}/connected-accounts`;
   const resultSeparator = frontendProfile.includes('?') ? '&' : '?';
 
   if (!entry) {
@@ -30271,7 +30230,7 @@ function buildSavedPostSnapshot(rawPost) {
     source: savedPostString(post.source, 80) || 'uficonnect',
     sourceLabel: savedPostString(post.sourceLabel, 160),
     title: savedPostString(post.title, 1000),
-    content: savedPostString(post.content, 12000),
+    content: typeof post.content === 'string' ? boundedSourceText(post.content.trim(), post.source === 'uficonnect' || post.isExternal === false ? 12000 : SOURCE_CONTENT_MAX_CHARS) : '',
     authorId: savedPostString(post.authorId || author.id, 700),
     author: {
       id: savedPostString(author.id || post.authorId, 700),
@@ -33365,7 +33324,7 @@ db.initDB().then(async () => {
     getVideoCapableSources().catch(e => console.warn('[getVideoCapableSources] Startup warm failed:', e.message));
     // Pre-populate seenPostIds so workers don't re-broadcast historical posts
     globalFeedCache.posts = realFeedPosts(globalFeedCache.posts);
-    globalFeedCache.posts.forEach(p => p?.id && addSeenId(p.id));
+    globalFeedCache.posts.forEach(p => p?.id && addSeenId(p.id, p));
     console.log('[startup] Background initialization complete');
   } catch (err) {
     console.warn('[startup] Background initialization error:', err.message);

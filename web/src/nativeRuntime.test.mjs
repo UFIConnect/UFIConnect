@@ -232,6 +232,47 @@ test('native social linking starts on website in system browser without a cookie
   assert.equal(apiCalls, 0);
 });
 
+test('native creator-revenue handoff preserves explicit YouTube permissions without starting OAuth', async () => {
+  const urls = []; let apiCalls = 0;
+  configureNativeRuntime(host({ onApiRequest: async () => { apiCalls++; }, onOpenExternal: async url => urls.push(url) }));
+  await continueSourceConnectionInBrowser('youtube', { analytics: true, monetization: true });
+  await continueSourceConnectionInBrowser('youtube', { monetization: true });
+  for (const value of urls) {
+    const url = new URL(value);
+    assert.equal(url.origin, 'https://uficonnect.org');
+    assert.equal(url.pathname, '/connected-accounts');
+    assert.equal(url.searchParams.get('analytics'), '1');
+    assert.equal(url.searchParams.get('monetization'), '1');
+    assert.equal(url.searchParams.size, 2);
+  }
+  assert.equal(apiCalls, 0, 'The browser must ask for authorization using its own cookie-bound flow');
+});
+
+test('native source connection does not add revenue permission to an ordinary or analytics-only connection', async () => {
+  const urls = [];
+  configureNativeRuntime(host({ onOpenExternal: async url => urls.push(url) }));
+  await continueSourceConnectionInBrowser('youtube');
+  await continueSourceConnectionInBrowser('youtube', { analytics: true });
+  await continueSourceConnectionInBrowser('youtube', { analytics: '1', monetization: '1', interactions: '1' });
+  assert.equal(new URL(urls[0]).search, '');
+  assert.equal(new URL(urls[1]).search, '?analytics=1');
+  assert.equal(new URL(urls[2]).search, '');
+});
+
+test('native handoff confines permission intent and never copies credentials or arbitrary return destinations', async () => {
+  const urls = [];
+  configureNativeRuntime(host({ onOpenExternal: async url => urls.push(url) }));
+  await continueSourceConnectionInBrowser('mastodon', { analytics: true, monetization: true, interactions: true,
+    returnTo: 'command-center', access_token: 'private-sentinel', server: 'https://private.example', scope: 'extra' });
+  const url = new URL(urls[0]);
+  assert.deepEqual(Object.fromEntries(url.searchParams), { connect: 'mastodon', interactions: '1', returnTo: 'command-center' });
+  await continueSourceConnectionInBrowser('youtube', { returnTo: 'https://external.invalid/' });
+  assert.equal(new URL(urls[1]).search, '');
+  configureNativeRuntime(null);
+  assert.equal(await continueSourceConnectionInBrowser('youtube', { monetization: true }), false, 'Website keeps its existing OAuth flow');
+  assert.equal(urls.length, 2);
+});
+
 test('native visibility follows AppState and coalesces refresh signals without background work', async () => {
   const window = new EventTarget(); window.fetch = async () => new Response(''); window.open = () => {};
   const document = new EventTarget();

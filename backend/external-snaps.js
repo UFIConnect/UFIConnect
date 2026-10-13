@@ -2,6 +2,7 @@
 const { isSourceDisplayAllowed, validateOriginalUrl, getSourcePolicy } = require('./source-policy');
 const catalog = require('../shared/feed-source-catalog.json');
 const { authorProfilePhoto } = require('./source-profile-photos');
+const { openProtocolVideo } = require('./video-media-urls.mjs');
 
 const CLIP_MAX_SECONDS = 180;
 const CLIP_LOOKBACK_MS = 7 * 86400000;
@@ -60,7 +61,8 @@ function externalSnapsFromPosts(posts, { mode = 'home', now = Date.now(), disabl
     const seconds = Number(post.videoDurationSeconds ?? post.video_duration_seconds ?? post.durationSeconds);
     const knownDuration = Number.isFinite(seconds) && seconds > 0;
     if (knownDuration ? seconds > CLIP_MAX_SECONDS : !youtube?.short) continue;
-    const mediaUrl = youtube ? `https://www.youtube.com/watch?v=${youtube.id}` : httpsUrl(post.mediaUrl);
+    const openMedia = openProtocolVideo({ ...post, sourceUrl });
+    const mediaUrl = youtube ? `https://www.youtube.com/watch?v=${youtube.id}` : openMedia?.src || httpsUrl(post.mediaUrl);
     if (!mediaUrl) continue;
     const key = `${post.source}:${post.id}`;
     if (seen.has(key)) continue;
@@ -80,7 +82,7 @@ function externalSnapsFromPosts(posts, { mode = 'home', now = Date.now(), disabl
         ...(post.author?.channelId ? { channelId: post.author.channelId } : {}) },
       caption: String(post.title || post.content || '').replace(/<[^>]*>/g, '').slice(0, 500),
       mediaType: 'video', mediaUrl, thumbnailUrl,
-      mediaKind: youtube ? 'youtube' : trustedDirect ? /\.m3u8(?:\?|$)/i.test(mediaUrl) ? 'hls' : 'file' : 'source',
+      mediaKind: youtube ? 'youtube' : openMedia?.kind || (trustedDirect ? /\.m3u8(?:[?#]|$)/i.test(mediaUrl) ? 'hls' : 'file' : 'source'),
       ...(youtube ? { embedId: youtube.id } : {}), directPlaybackAuthorized: trustedDirect,
       videoDurationSeconds: knownDuration ? seconds : null,
       createdAt: new Date(timestamp).toISOString(), expiresAt: new Date(timestamp + CLIP_LOOKBACK_MS).toISOString(),

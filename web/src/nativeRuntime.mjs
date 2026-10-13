@@ -15,10 +15,18 @@ export function configureNativeRuntime(value) {
   runtime = value;
 }
 export function getNativeRuntime() { return runtime; }
-export async function continueSourceConnectionInBrowser(platform) {
+export async function continueSourceConnectionInBrowser(platform, intent = {}) {
   if (!runtime) return false;
   // Provider callbacks bind to a browser cookie: start and finish there.
-  const query = ['mastodon', 'bluesky'].includes(platform) ? `?connect=${platform}` : '';
+  // Keep only explicitly requested permission intent. No credentials, handles,
+  // arbitrary return URLs, or provider authorization parameters cross here.
+  const params = new URLSearchParams();
+  if (['mastodon', 'bluesky'].includes(platform)) params.set('connect', platform);
+  if (intent?.interactions === true) params.set('interactions', '1');
+  if (platform === 'youtube' && (intent?.analytics === true || intent?.monetization === true)) params.set('analytics', '1');
+  if (platform === 'youtube' && intent?.monetization === true) params.set('monetization', '1');
+  if (intent?.returnTo === 'command-center') params.set('returnTo', 'command-center');
+  const query = params.size ? `?${params}` : '';
   try {
     if (typeof runtime.onOpenExternal !== 'function') throw new Error('Unavailable');
     reportNativeError('Complete the connection in your browser, then return here to check its status.');

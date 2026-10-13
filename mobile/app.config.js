@@ -20,8 +20,12 @@ export default ({ config }) => ({
   ios: {
     supportsTablet: true,
     bundleIdentifier: 'org.uficonnect.app',
-    buildNumber: '2',
+    buildNumber: '10',
     infoPlist: {
+      NSLocationWhenInUseUsageDescription: 'UFIConnect uses your location to show nearby feed posts, places, and account recommendations when you use location features.',
+      NSPhotoLibraryUsageDescription: 'Choose photos and videos to share in posts, messages, or your profile.',
+      NSCameraUsageDescription: 'Take a photo or video when you choose to attach one to a post, message, or your profile.',
+      NSMicrophoneUsageDescription: 'Record audio when you choose to capture a video or audio attachment.',
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: false,
         NSAllowsLocalNetworking: development,
@@ -35,7 +39,7 @@ export default ({ config }) => ({
       backgroundColor: '#102A6B',
     },
     package: 'org.uficonnect.app',
-    versionCode: 1,
+    versionCode: 6,
     allowBackup: false,
     blockedPermissions: [
       'READ_EXTERNAL_STORAGE',

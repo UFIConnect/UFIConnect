@@ -20,6 +20,15 @@
         "APP_ENV": "preview"
       }
     },
+    "production-android": {
+      "extends": "production",
+      "distribution": "store",
+      "buildArtifactPaths": ["android/app/build/outputs/apk/release/*.apk"],
+      "android": {
+        "gradleCommand": ":app:bundleRelease :app:assembleRelease",
+        "applicationArchivePath": "android/app/build/outputs/bundle/release/*.aab"
+      }
+    },
     "production": {
       "node": "24.21.0",
       "ios": {
@@ -30,11 +39,16 @@
       },
       "env": {
         "APP_ENV": "production",
+        "EXPO_NO_BUNDLE_SPLITTING": "1",
         "API_URL": "https://api.uficonnect.org"
       }
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "ios": {
+        "ascAppId": "6810521346"
+      }
+    }
   }
 }

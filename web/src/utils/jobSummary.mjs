@@ -54,7 +54,19 @@ function suppliedText(value) {
 }
 function fullDescription(post = {}) {
   const fields = ['fullDescription', 'full_description', 'jobDescription', 'job_description', 'description', 'content', 'contents', 'body'];
-  const base = fields.map(key => suppliedText(post[key])).sort((a, b) => b.length - a.length)[0] || suppliedText(post.UserArea?.Details?.JobSummary);
+  const descriptions = fields.map(key => suppliedText(post[key])).filter(Boolean).sort((a, b) => b.length - a.length);
+  const summaries = ['jobSummary', 'job_summary', 'roleSummary', 'role_summary', 'summary'].map(key => suppliedText(post[key]))
+    .concat(suppliedText(post.UserArea?.Details?.JobSummary)).filter(Boolean);
+  // A longer duties field must not discard a separately supplied role overview.
+  // Keep distinct source text, while avoiding copies of the same short excerpt.
+  const parts = [];
+  const normalized = value => value.replace(/\s+/g, ' ').trim();
+  for (const value of [...descriptions, ...summaries]) {
+    const excerpt = normalized(value).replace(/(?:\.{3}|\u2026)$/, '').trim();
+    if (parts.some(part => normalized(part).includes(excerpt))) continue;
+    parts.push(value);
+  }
+  const base = parts.map((part, index) => index ? `Job description\n${part}` : part).join('\n\n');
   const tasks = unique(['responsibilities', 'duties', 'tasks', 'roleTasks', 'role_tasks'].map(key => suppliedText(post[key])).concat(suppliedText(post.UserArea?.Details?.MajorDuties)).filter(Boolean).flatMap(items));
   const requirements = unique(['requirements', 'qualifications', 'QualificationSummary'].map(key => suppliedText(post[key])).filter(Boolean).flatMap(items));
   const additions = [['Responsibilities', tasks], ['Requirements', requirements]].flatMap(([heading, values]) => {
@@ -73,7 +85,6 @@ export function summarizeJob(post) {
     else if (['intro', 'role', 'tasks'].includes(section.kind)) {
       for (const value of values) {
         if (value.toLowerCase() === String(post?.title || '').trim().toLowerCase()) continue;
-        if (section.kind !== 'tasks' && (!notTask.test(value) || /\b(?:seeking|looking for|hiring|this role|this position|join our)\b/i.test(value))) overview.push(value);
         if (notTask.test(value)) continue;
         if (section.kind === 'tasks' || startsWithTask(value)) duties.push(value);
       }
@@ -81,8 +92,30 @@ export function summarizeJob(post) {
   }
   const tasks = unique(duties);
   const requirements = unique(qualifications);
-  const intro = short(overview.find(value => /\b(?:seeking|looking for|this role|this position|join our|you will|you['’]ll)\b/i.test(value)) || overview[0] || tasks[0] || '', 360);
-  const details = (tasks.length ? tasks : unique(overview.filter(value => value !== intro))).slice(0, 5).map(value => short(value, 240));
-  const summary = tasks.slice(0, 5).map(value => short(value.replace(/[.!;]+$/, ''), 95)).join('; ');
-  return { fullText, intro, details, tasks, requirements, summary: summary ? `${summary}.` : '', hasTasks: tasks.length > 0 };
+  const roleSignal = /\b(?:seeking|looking for|hiring|this role|this position|join (?:our|the)|you will|you['’]ll|the (?:successful )?(?:candidate|incumbent))\b/i;
+  const structured = ['jobSummary', 'job_summary', 'roleSummary', 'role_summary', 'summary'].map(key => suppliedText(post?.[key]))
+    .concat(suppliedText(post?.UserArea?.Details?.JobSummary)).filter(Boolean);
+  // Overview prose is distinct from responsibility bullets. Prefer the source's
+  // explicit summary/role sections over an earlier company introduction.
+  const candidates = [
+    ...structured.flatMap(text => splitCareerSections(text)).filter(section => ['intro', 'role'].includes(section.kind)),
+    ...sections.filter(section => section.kind === 'role'),
+    ...sections.filter(section => section.kind === 'intro'),
+  ];
+  for (const section of candidates) {
+    const paragraphs = section.text.split(/\n\s*\n|\n/).map(value => value.trim()).filter(Boolean);
+    for (const paragraph of paragraphs) {
+      if (bullet.test(paragraph) || paragraph.toLowerCase() === String(post?.title || '').trim().toLowerCase()) continue;
+      if (notTask.test(paragraph) && !roleSignal.test(paragraph)) continue;
+      // An unheaded list of imperative duties is not an overview either.
+      if (section.kind === 'intro' && startsWithTask(paragraph) && !roleSignal.test(paragraph) && paragraphs.length > 1) continue;
+      overview.push(paragraph);
+    }
+    if (overview.length) break;
+  }
+  const distinctOverview = unique(overview);
+  const summary = short(distinctOverview.slice(0, 2).join(' '), 640);
+  const intro = short(distinctOverview[0] || '', 360);
+  const details = tasks.slice(0, 5).map(value => short(value, 240));
+  return { fullText, intro, details, tasks, requirements, summary, hasTasks: tasks.length > 0 };
 }

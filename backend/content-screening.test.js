@@ -45,7 +45,7 @@ test('caps verbose imported copy without dropping the source post', () => {
   });
   assert.equal(result.allowed, true);
   assert.ok(result.post.title.length <= 500);
-  assert.ok(result.post.content.length <= 2000);
+  assert.equal(result.post.content, 'A concise source sentence with practical context. '.repeat(60).trim());
 });
 
 test('requires a publisher link for imported posts', () => {

@@ -183,15 +183,21 @@ export default function ConnectedAccounts() {
   }
 
   async function startConnect(platform, handle) {
-    if (await continueSourceConnectionInBrowser(platform)) return;
+    const permissionIntent = {
+      analytics: platform === 'youtube' && searchParams.get('analytics') === '1',
+      monetization: platform === 'youtube' && searchParams.get('monetization') === '1',
+      interactions: searchParams.get('interactions') === '1',
+      returnTo: searchParams.get('returnTo') === 'command-center' ? 'command-center' : undefined,
+    };
+    if (await continueSourceConnectionInBrowser(platform, permissionIntent)) return;
     const state = sourceAuthorizationState(platforms.find(([key]) => key === platform)?.[1], { isConnected: !!connected[platform] });
     if (!state.ready) { flash_('error', state.reason); return; }
     const connectParams = new URLSearchParams();
-    if (searchParams.get('returnTo') === 'command-center') connectParams.set('returnTo', 'command-center');
+    if (permissionIntent.returnTo) connectParams.set('returnTo', permissionIntent.returnTo);
     if (handle) connectParams.set(platform === 'mastodon' ? 'server' : 'handle', handle.trim());
-    if (searchParams.get('interactions') === '1') connectParams.set('interactions', '1');
-    if (platform === 'youtube' && searchParams.get('analytics') === '1') connectParams.set('analytics', '1');
-    if (platform === 'youtube' && searchParams.get('monetization') === '1') connectParams.set('monetization', '1');
+    if (permissionIntent.interactions) connectParams.set('interactions', '1');
+    if (permissionIntent.analytics || permissionIntent.monetization) connectParams.set('analytics', '1');
+    if (permissionIntent.monetization) connectParams.set('monetization', '1');
     const handleParam = connectParams.size ? `?${connectParams}` : '';
     setConnecting(platform);
     try {

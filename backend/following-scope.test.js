@@ -92,7 +92,10 @@ test('Following uses every supported personal adapter without shared public or o
   app.seedUser(member('other-capability-reader',{socialTokens:{youtube:'other-account'}}));
   let unsupportedCalls=0;
   for(const source of excluded) app.setFollowingFetcher(source,async()=>{unsupportedCalls++;throw Error('Unsupported Following adapter called');});
-  const post=(id,source,seconds=1200)=>({id,source,sourceUrl:source==='youtube'?'https://www.youtube.com/watch?v=abcdefghijk':'https://example.invalid/posts/'+id,authorId:'followed-'+source,
+  const post=(id,source,seconds=1200)=>({id,source,sourceUrl:source==='youtube'?'https://www.youtube.com/watch?v=abcdefghijk'
+    :source==='mastodon'?`https://social.example/@creator/${123000+seconds}`
+    :source==='bluesky'?`https://bsky.app/profile/creator.bsky.social/post/3lvideo${seconds}`
+    :'https://example.invalid/posts/'+id,authorId:'followed-'+source,
     title:'A followed account update',content:'A synthetic fixture for audience isolation.',createdAt:new Date(Date.now()-60000).toISOString(),
     mediaType:'video',mediaUrl:'https://example.invalid/media/'+id+(source==='bluesky'?'.m3u8':'.mp4'),videoDurationSeconds:seconds,isExternal:true});
   for(const source of sources) app.setFollowingFetcher(source,async(_token,options)=>[
