@@ -4,15 +4,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
-import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 
 const mobile = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const exportRoot = path.resolve(process.env.EXPO_EXPORT_DIR || process.env.EXPO_AUDIT_EXPORT_DIR || path.join(mobile, '.cache/export-sdk57'));
 const output = path.resolve(process.env.SHARED_PRIVACY_AUDIT_DIR || path.join(mobile, '.cache/shared-privacy-qa'));
-const require = createRequire(import.meta.url);
-const { createAppHarness, member } = require('../../backend/test-support/app-harness');
 const mime = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.woff2': 'font/woff2', '.ttf': 'font/ttf' };
 await fs.access(path.join(exportRoot, 'index.html'));
@@ -34,7 +31,6 @@ const server = http.createServer(async (request, response) => {
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
-const app = await createAppHarness();
 const report = { checkedAt: new Date().toISOString(), exportRoot, fixturesOnly: true, realAccountActions: 0, checks: 0, results: [] };
 const check = (condition, message) => { assert.ok(condition, message); report.checks++; };
 const preferenceKey = 'uficonnect.data-preferences.v1';
@@ -43,8 +39,10 @@ try {
   browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined, headless: true });
   for (const width of [390, 1280]) {
     const userId = `privacy-private-member-${width}`;
-    app.seedUser(member(userId, { name: 'Private Synthetic Name', email: 'private-synthetic@example.invalid', onboardingComplete: true }));
-    const profile = (await app.request('/profile', { userId })).data;
+    const profile = { id: userId, name: 'Private Synthetic Name', email: 'private-synthetic@example.invalid',
+      onboardingComplete: true, joinedGroups: [], skills: [], connectedPlatforms: [], plan: 'pro' };
+    const token = [Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url'),
+      Buffer.from(JSON.stringify({ sub: userId, exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url'), 'synthetic-fixture'].join('.');
     const context = await browser.newContext({ viewport: { width, height: 844 }, serviceWorkers: 'block' });
     const requests = [], google = [], errors = [], failedAssets = [], deniedWrites = [];
     // A real cookie in the API jar proves the collectors use credentials:omit.
@@ -58,22 +56,24 @@ try {
     await context.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url());
       if (/google-analytics|googletagmanager|analytics\.google/.test(url.hostname)) { google.push(url.href); return route.abort(); }
-      if (url.origin === base && ['GET', 'HEAD'].includes(request.method())) return route.continue();
-      if (url.hostname !== 'api.uficonnect.org') return route.abort();
+      const isApi = url.hostname === 'api.uficonnect.org' || url.origin === base && /^\/api\//.test(url.pathname);
+      if (!isApi) return url.origin === base && ['GET', 'HEAD'].includes(request.method()) ? route.continue() : route.abort();
+      const endpoint = url.pathname.replace(/^\/api(?=\/)/, '');
       if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
       const fulfill = options => route.fulfill({ headers: cors, ...options });
-      if (url.pathname.startsWith('/analytics/')) {
-        requests.push({ path: url.pathname, body: request.postDataJSON(), headers: await request.allHeaders() });
+      if (endpoint.startsWith('/analytics/')) {
+        requests.push({ origin: url.origin, path: endpoint, body: request.postDataJSON(), headers: await request.allHeaders() });
         return fulfill({ status: 204 });
       }
-      if (url.pathname === '/auth/session') return fulfill({ json: { token: app.token(userId), profile } });
+      if (endpoint === '/auth/session') return fulfill({ json: { token, profile } });
       if (!['GET', 'HEAD'].includes(request.method())) {
-        deniedWrites.push(url.pathname); return fulfill({ status: 409, json: { error: 'Member writes disabled.' } });
+        deniedWrites.push(endpoint); return fulfill({ status: 409, json: { error: 'Member writes disabled.' } });
       }
-      if (/events|stream/.test(url.pathname)) return route.abort();
-      if (url.pathname === '/feed/location') return fulfill({ json: { automaticLocationAvailable: true, countryCode: 'US' } });
-      const result = await app.request(url.pathname + url.search, { userId });
-      return fulfill({ status: result.status, json: result.data ?? {} });
+      if (/events|stream/.test(endpoint)) return route.abort();
+      if (endpoint === '/feed/location') return fulfill({ json: { automaticLocationAvailable: true, countryCode: 'US' } });
+      if (endpoint === '/profile') return fulfill({ json: profile });
+      if (endpoint === '/auth/me') return fulfill({ json: { profile } });
+      return fulfill({ json: { providers: {}, notifications: [], groups: [], platforms: [], posts: [], users: [] } });
     });
     async function pageAtSettings() {
       const page = await context.newPage();
@@ -83,7 +83,12 @@ try {
         if (response.url().startsWith(base) && /\.(?:js|css|woff2?|ttf)(?:\?|$)/.test(response.url()) && response.status() !== 200) failedAssets.push(response.url());
       });
       await page.goto(base + '/settings?tab=data&private-query=do-not-send', { waitUntil: 'domcontentloaded' });
-      await page.getByRole('switch', { name: 'Optional performance diagnostics', exact: true }).waitFor();
+      try { await page.getByRole('switch', { name: 'Optional performance diagnostics', exact: true }).waitFor(); }
+      catch (error) {
+        await page.screenshot({ path: path.join(output, `startup-failure-${width}.png`) }).catch(() => {});
+        report.results.push({ width, passed: false, error: error.message, url: page.url(), body: (await page.locator('body').innerText()).slice(0, 2000), errors, failedAssets });
+        throw error;
+      }
       return page;
     }
     const page = await pageAtSettings();
@@ -93,7 +98,7 @@ try {
     const required = () => requests.filter(request => request.path === '/analytics/pageview');
     const optional = () => requests.filter(request => request.path === '/analytics/performance');
     const emitError = target => target.evaluate(async () => {
-      window.dispatchEvent(new ErrorEvent('error', { message: 'PRIVATE ERROR NAME private-synthetic@example.invalid', filename: 'https://private.example.invalid/?token=private-token', error: new Error('private stack sentinel') }));
+      window.dispatchEvent(new window.ErrorEvent('error', { message: 'PRIVATE ERROR NAME private-synthetic@example.invalid', filename: 'https://private.example.invalid/?token=private-token', error: new Error('private stack sentinel') }));
       await new Promise(resolve => requestAnimationFrame(resolve));
     });
     try {
@@ -131,6 +136,7 @@ try {
         check(Object.keys(request.body).length === 1 && typeof request.body.category === 'string', 'Core metrics contain only a fixed category');
       }
       for (const request of requests) {
+        check(request.origin === 'https://api.uficonnect.org', 'Compiled browser metrics keep the configured HTTPS API origin');
         check(!request.headers.authorization && !request.headers.cookie && !request.headers.referer && !request.headers['x-ufi-device-location'], 'Metrics exclude credentials, referrer and precise location');
         check(!/private|synthetic|@|eyJ|token=|error name/i.test(JSON.stringify(request.body)), 'Metrics exclude identifiers, query strings and error details');
       }
@@ -151,5 +157,5 @@ try {
 } finally {
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2) + '\n');
   await browser?.close(); server.closeAllConnections();
-  await new Promise(resolve => server.close(resolve)); await app.close();
+  await new Promise(resolve => server.close(resolve));
 }

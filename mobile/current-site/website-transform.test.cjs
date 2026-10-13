@@ -18,6 +18,17 @@ test('only explicit public configuration enters shared client code', () => {
   assert.throws(() => compile('const secret = import.meta.env.DATABASE_URL'), /Unsupported public website setting/);
 });
 
+test('optional public settings preserve the pinned API instead of falling back to the browser origin', () => {
+  for (const expression of ['import.meta.env?.VITE_API_URL', 'import.meta.env?.["VITE_API_URL"]', 'import.meta?.env?.VITE_API_URL']) {
+    const code = compile(`globalThis.api = ${expression} || '/api';`);
+    const context = {};
+    vm.runInNewContext(code, context);
+    assert.equal(context.api, plugin.publicEnvironment().VITE_API_URL);
+    assert.doesNotMatch(code, /import\.meta/);
+  }
+  assert.throws(() => compile('const secret = import.meta.env?.DATABASE_URL'), /Unsupported public website setting/);
+});
+
 test('root images and media use the Expo base while application routes stay unchanged', () => {
   const output = compile("const image=<img src='/uficonnect-mark.svg?v=2'/>; const video=`/media/${name}.mp4`; const route='/login';");
   assert.match(output, /ufiPublicAsset\('\/uficonnect-mark\.svg\?v=2'\)/);

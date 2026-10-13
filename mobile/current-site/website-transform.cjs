@@ -51,10 +51,10 @@ module.exports = function websiteTransform({ types: t }) {
         t.stringLiteral(`data:image/svg+xml;base64,${fs.readFileSync(snapAvatarAsset).toString('base64')}`),
       )]));
     },
-    MemberExpression(sourcePath, state) {
+    'MemberExpression|OptionalMemberExpression'(sourcePath, state) {
       if (!isWebsite(state)) return;
       const { object, property, computed } = sourcePath.node;
-      if (!t.isMemberExpression(object) || !t.isMetaProperty(object.object)
+      if (!(t.isMemberExpression(object) || t.isOptionalMemberExpression(object)) || !t.isMetaProperty(object.object)
         || object.object.meta.name !== 'import' || object.object.property.name !== 'meta'
         || object.property.name !== 'env') return;
       const key = computed && t.isStringLiteral(property) ? property.value : property.name;
