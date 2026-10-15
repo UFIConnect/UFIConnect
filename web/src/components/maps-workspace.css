@@ -75,7 +75,7 @@
 .map-mobile-menu { position: absolute; inset: 0 0 0 auto; display: flex; flex-direction: column; width: min(92vw, 380px); height: 100dvh; background: var(--card); color: var(--text); border-left: 1px solid var(--border); box-shadow: -12px 0 40px rgb(12 22 32 / 18%); animation: map-menu-enter .2s ease-out; }
 .map-mobile-menu-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-shrink: 0; padding: calc(14px + env(safe-area-inset-top, 0px)) 16px 14px; border-bottom: 1px solid var(--border); }
 .map-mobile-menu-heading h2 { margin: 0; font-size: 1rem; }
-.map-mobile-menu-content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 12px 10px calc(18px + env(safe-area-inset-bottom, 0px)); }
+.map-mobile-menu-content { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 12px 10px calc(18px + env(safe-area-inset-bottom, 0px)); }
 .map-mobile-menu .map-customization-rail { width: 100%; position: static; max-height: none; overflow: visible; padding: 0; gap: 12px; }
 .map-mobile-menu .map-customization-rail .card { padding: 14px; }
 @keyframes map-menu-enter { from { transform: translateX(100%); } to { transform: translateX(0); } }

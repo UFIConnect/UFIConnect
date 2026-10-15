@@ -39,7 +39,7 @@ import SourceWebsiteDirectory from '../components/SourceWebsiteDirectory';
 import UnavailableFeedSources from '../components/UnavailableFeedSources';
 import SnapFeedRail from '../components/SnapFeedRail';
 import TopicFilterControl, { TopicChoices } from '../components/TopicFilterControl';
-import TravelDestinationPicker, { useTravelDestinations, travelCityMatches } from '../components/TravelDestinationPicker';
+import TravelDestinationPicker, { useTravelDestinations, travelCityMatches, travelCameraSearchUrl } from '../components/TravelDestinationPicker';
 import TravelGuideDialog from '../components/TravelGuideDialog';
 import TravelViewerDialog from '../components/TravelViewerDialog';
 import DiscoveryCategoryBar from '../components/DiscoveryCategoryBar';
@@ -1242,6 +1242,10 @@ function TravelLiveLoop({ feeds = [], mediaOpenId, location, onLocationSelect, o
         <Plane size={30} aria-hidden="true" />
         <h3>{!allPlaybackFailed && status?.camerasChecking ? 'Checking live cameras' : 'Live cameras unavailable'}</h3>
         <p role="status">{cameraStatus}</p>
+        {selected && <a className="btn btn-primary" href={travelCameraSearchUrl(selected)} target="_blank" rel="noopener noreferrer">
+          Find live cameras in {selected.city}
+        </a>}
+        {selected && <p>Search current camera broadcasts on YouTube.</p>}
         <button type="button" className="btn btn-ghost" onClick={refreshCameras} disabled={busy} aria-label="Refresh live cameras"><RotateCw size={16} />Check cameras</button>
       </div>}
       {destinations.length > 0 && <div className="travel-city-navigation" role="group" aria-label="City navigation">

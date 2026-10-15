@@ -688,6 +688,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
             </button>
           </div>
           <div className="mobile-feed-drawer-content">
+            <div className="mobile-account-drawer-links">
             <Link to="/search" className={`mobile-command-menu-item${isSearchRoute ? ' active' : ''}`} aria-current={isSearchRoute ? 'page' : undefined} aria-label="Search" title="Search" onClick={closeMobileOverlays}>
               <ShellIcon name="search" size={20} />Search
             </Link>
@@ -728,6 +729,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
               Shop
             </Link>
             <SavedNavigation mobile expanded={savedExpanded} onToggle={toggleSavedNavigation} onNavigate={closeMobileOverlays} />
+            </div>
             <div className="mobile-feed-drawer-bottom mobile-account-drawer-bottom">
               <NavLink to="/maps" className="mobile-command-menu-item mobile-maps-link" onClick={closeMobileOverlays}><MapIcon size={18} aria-hidden="true" />Map</NavLink>
               <NavLink to="/profile" className="mobile-command-menu-item mobile-account-profile" aria-label="Profile" onClick={closeMobileOverlays}>
@@ -772,12 +774,14 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
           <div className={`mobile-feed-drawer-content${isJobsRoute ? ' mobile-feed-drawer-content--jobs' : ''}`}>
             {isJobsRoute ? (
               <>
+                <div className="mobile-feed-drawer-options">
                 <JobsSidebarControls onNavigate={() => setMobileMenuOpen(false)} />
                 <div className="mobile-jobs-role-links">
                   <NavLink to="/settings?tab=preferences" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
                     <ShellIcon name="profile" size={18} />
                     Roles
                   </NavLink>
+                </div>
                 </div>
                 <div className="mobile-feed-drawer-bottom mobile-jobs-drawer-bottom">
                   <MessagesNavigation />

@@ -31,7 +31,8 @@ html[data-ufi-app] .shell .global-app-header {
 }
 html[data-ufi-app] .shell .main { max-width: none; padding: 16px; }
 html[data-ufi-app] .shell-content:has(> .global-app-header) .home-feed-right-tabs {
-  margin-top: 0; top: calc(var(--app-header-height) + var(--app-safe-top) + 16px);
+  --feed-rail-top: calc(var(--app-header-height) + var(--app-safe-top) + 16px);
+  margin-top: 0; top: var(--feed-rail-top);
 }
 @media (max-width: 768px) {
   html[data-ufi-app] .shell .global-app-header { padding-inline: 6px; }
@@ -44,37 +45,11 @@ html[data-ufi-app] .shell-content:has(> .global-app-header) .home-feed-right-tab
   }
 }
 .app-welcome {
-  position: relative; isolation: isolate; overflow: hidden;
   display: flex; flex-direction: column; min-height: 100dvh;
-  padding: calc(24px + var(--app-safe-top)) 24px calc(8px + var(--app-safe-bottom));
+  padding: calc(24px + var(--app-safe-top, 0px)) 24px calc(24px + var(--app-safe-bottom, 0px));
   color: #fff; background: #06265f;
 }
-.app-welcome::before,
-.app-welcome::after {
-  content: ''; position: absolute; inset: -25%; z-index: 0; pointer-events: none;
-  will-change: transform; transform: translate3d(0, 0, 0);
-}
-.app-welcome::before {
-  background: radial-gradient(ellipse at 18% 18%, #006eea 0%, transparent 48%),
-    radial-gradient(ellipse at 90% 85%, #0071cf 0%, transparent 48%),
-    linear-gradient(145deg, #07347a, #052155 56%, #034fa1);
-  animation: app-welcome-flow 22s ease-in-out infinite alternate;
-}
-.app-welcome::after {
-  background: radial-gradient(ellipse at 10% 75%, #11cdf02b 0%, transparent 43%),
-    radial-gradient(ellipse at 90% 20%, #43a5ff33 0%, transparent 38%);
-  animation: app-welcome-glow 18s ease-in-out infinite alternate;
-}
-@keyframes app-welcome-flow {
-  from { transform: translate3d(-3%, -2%, 0) scale(1); }
-  to { transform: translate3d(4%, 3%, 0) scale(1.08); }
-}
-@keyframes app-welcome-glow {
-  from { transform: translate3d(5%, -4%, 0) rotate(-6deg); }
-  to { transform: translate3d(-5%, 4%, 0) rotate(6deg); }
-}
 .app-welcome-main {
-  position: relative; z-index: 1;
   flex: 1; display: flex; flex-direction: column; align-items: center;
   justify-content: center; width: 100%; max-width: 380px; margin-inline: auto;
   padding-block: 20px; text-align: center;
@@ -94,15 +69,11 @@ html[data-ufi-app] .shell-content:has(> .global-app-header) .home-feed-right-tab
 .app-welcome-primary { background: #fff; color: #08357c; border: 1px solid #fff; box-shadow: 0 8px 24px #00133c26; }
 .app-welcome-secondary { background: #ffffff14; color: #fff; border: 1px solid #ffffffa3; }
 .app-welcome-actions a:focus-visible,
-.app-welcome-footer a:focus-visible { outline: 2px solid #92edff; outline-offset: 3px; }
-.app-welcome-footer { position: relative; z-index: 1; flex-shrink: 0; }
-.app-welcome-footer nav { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; }
-.app-welcome-footer a {
+.app-welcome-policies a:focus-visible { outline: 2px solid #92edff; outline-offset: 3px; }
+.app-welcome-policies { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin-top: 20px; }
+.app-welcome-policies a {
   display: inline-flex; align-items: center; justify-content: center;
   min-height: 44px; padding: 8px; color: #e4edff; font-size: .78rem;
-}
-@media (prefers-reduced-motion: reduce) {
-  .app-welcome::before, .app-welcome::after { animation: none; transform: none; will-change: auto; }
 }
 @media (max-height: 620px) {
   .app-welcome { padding-top: calc(12px + var(--app-safe-top)); }

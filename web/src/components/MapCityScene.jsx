@@ -476,7 +476,7 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
         });
       }
       for (let i = 0; i < 2; i++) {
-        const ripple = form(parent, 'ring', '#def7f8', x, .426, z, 1, 1, 1, null, true);
+        const ripple = form(parent, 'ring', '#def7f8', x, .426 + i * .012, z, 1, 1, 1, null, true);
         ripple.rotation.x = -Math.PI / 2;
         animations.push(time => { const size = radius * (.18 + ((time * .25 + i / 2) % 1) * .65); ripple.scale.set(size, size, 1); });
       }
@@ -498,7 +498,8 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       }
       for (const side of [-1, 1]) box(parent, '#d9d8ca', side * 1.93, .075, mid, .48, .1, depth + 2);
       box(parent, '#e6e4db', 0, .05, -3, 24, .1, 4.2);
-      for (let z = -5; z < depth - 2; z += 2.8) box(parent, '#f4f0d3', 0, .065, z, .1, .025, 1.25);
+      // The asphalt top is .08; markings must sit above it, including at crossings.
+      for (let z = -5; z < depth - 2; z += 2.8) box(parent, '#f4f0d3', 0, .115, z, .1, .015, 1.25);
       if (!compact) {
         [['Sources', -10], ['Your city', -4.5], ['Collection', 7.7]].forEach(([name, x], i) => {
           const pick = { civic: i === 0 ? 'sources' : i === 1 ? 'topics' : 'collection' };
@@ -1159,7 +1160,7 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       if (!grouped.has(key)) grouped.set(key, []);
       grouped.get(key).push(record);
     }
-    const pickMeshes = [];
+    const pickMeshes = [], depthBounds = new THREE.Box3();
     for (const members of grouped.values()) {
       const instanced = new THREE.InstancedMesh(members[0].geometry, members[0].material, members.length);
       const moving = members.map((item, index) => ({ ...item, index })).filter(item => item.moving);
@@ -1168,9 +1169,17 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       instanced.castShadow = !members[0].moving && members.some(item => item.shadow);
       instanced.receiveShadow = members[0].material.type !== 'MeshBasicMaterial';
       if (moving.length) { instanced.instanceMatrix.setUsage(THREE.DynamicDrawUsage); instanced.frustumCulled = false; }
+      else { instanced.computeBoundingBox(); depthBounds.union(instanced.boundingBox); }
       if (members.some(item => item.pick)) pickMeshes.push(instanced);
       scene.add(instanced); batches.push({ instanced, moving, originalMaterial: instanced.material, originalGeometry: instanced.geometry, originalShadow: instanced.castShadow });
     }
+    // Include animated canopies, birds and clouds, but exclude hidden vehicles
+    // parked below the scene. A fitted near plane preserves thin road surfaces
+    // when the camera is high above the city instead of letting them flicker.
+    depthBounds.expandByScalar(20);
+    const depthCorners = [0, 1].flatMap(x => [0, 1].flatMap(y => [0, 1].map(z => new THREE.Vector3(
+      x ? depthBounds.max.x : depthBounds.min.x, y ? depthBounds.max.y : depthBounds.min.y, z ? depthBounds.max.z : depthBounds.min.z))));
+    const depthPoint = new THREE.Vector3();
     let lightweight = false, illustrated = false;
     function useResponsiveMaterials() {
       if (lightweight) return;
@@ -1242,6 +1251,20 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       aoPass.kernelRadius = 5; aoPass.minDistance = .002; aoPass.maxDistance = .04;
       composer.addPass(aoPass); outputPass = new OutputPass(); composer.addPass(outputPass);
     }
+    function updateDepthRange() {
+      camera.updateMatrixWorld();
+      const nearest = Math.min(...depthCorners.map(point => -depthPoint.copy(point).applyMatrix4(camera.matrixWorldInverse).z));
+      const near = Math.max(.1, Math.min(100, nearest * .5));
+      if (Math.abs(camera.near - near) < .001) return;
+      camera.near = near; camera.updateProjectionMatrix();
+      if (aoPass) {
+        aoPass.ssaoMaterial.uniforms.cameraNear.value = near;
+        aoPass.depthRenderMaterial.uniforms.cameraNear.value = near;
+        aoPass.ssaoMaterial.uniforms.cameraProjectionMatrix.value.copy(camera.projectionMatrix);
+        aoPass.ssaoMaterial.uniforms.cameraInverseProjectionMatrix.value.copy(camera.projectionMatrixInverse);
+      }
+      renderer.domElement.dataset.cameraNear = near.toFixed(3);
+    }
     const movingRoots = world.children.filter(item => item.userData.moving);
     let frameId = 0, time = 0, last = 0, lastPaint = 0, inView = true, disposed = false;
     let sampledFrames = 0, sampledTime = 0, fastWindows = 0, recoveryWindows = 0;
@@ -1307,6 +1330,7 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       }
       if (!current.current.driving) controls.update();
       updateAltitude();
+      updateDepthRange();
       updateLabels();
       if (composer) composer.render(delta); else renderer.render(scene, camera);
       adaptResolution(Math.max(performance.now() - renderStarted, playing ? Math.min(elapsed, current.current.motion === 'calm' ? 22 : 100) : 0));
@@ -1334,7 +1358,8 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
         framing = nextFraming;
         controls.maxDistance = Math.max(controls.maxDistance, camera.position.distanceTo(controls.target) * 1.3);
       }
-      renderer.setSize(w, h); composer?.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix(); requestFrame();
+      camera.aspect = w / h; camera.updateProjectionMatrix();
+      renderer.setSize(w, h); composer?.setSize(w, h); requestFrame();
     }
     // Match framing to the canvas aspect, including narrow phone screens.
     const width = element.clientWidth || 680, height = element.clientHeight || 580;
@@ -1387,7 +1412,11 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       geometries.forEach(item => item.dispose()); materials.forEach(item => item.dispose()); textures.forEach(item => item.dispose());
       sun.shadow.map?.dispose(); sun.shadow.mapPass?.dispose(); environmentTarget?.dispose(); scene.environment = null;
       aoPass?.ssaoMaterial.dispose(); aoPass?.noiseTexture.dispose(); aoPass?.dispose(); outputPass?.dispose(); composer?.dispose(); sky.geometry.dispose(); sky.material.dispose();
-      scene.clear(); world.clear(); renderer.dispose(); renderer.domElement.remove();
+      scene.clear(); world.clear();
+      // A context-loss fallback already released its context; querying its
+      // extensions again can warn or fail on device WebViews.
+      if (!renderer.getContext().isContextLost()) renderer.forceContextLoss();
+      renderer.dispose(); renderer.domElement.remove();
     };
   }, [shape, overview, viewMode, timeOfDay, focusLandmark, theme, title, cityId, selected, resetKey, quality]);
   useEffect(() => { wake.current?.(); }, [motion, altitude, driving, drivePaused, driveDestination]);

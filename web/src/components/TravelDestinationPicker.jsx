@@ -29,6 +29,11 @@ export const travelCityMatches = (destination, place) => Boolean(destination?.ci
   && [destination.country, destination.countryCode].filter(Boolean).some(value =>
     [place.country, place.countryCode].filter(Boolean).some(country => normalizeCountry(value) === normalizeCountry(country)));
 
+export const travelCameraSearchUrl = destination => `https://www.youtube.com/results?${new URLSearchParams({
+  search_query: `${destination.city} ${destination.country || destination.countryCode || ''} live webcam`,
+  sp: 'EgJAAQ==',
+})}`;
+
 export default function TravelDestinationPicker({ destinations, selected, disabled, onSelect, query, onQueryChange, feeds = [], activeCameraId, error, retry }) {
   const terms = normalize(query).split(/\s+/).filter(Boolean);
   const matches = destinations.filter(city => terms.every(term => normalize([city.city, city.country, city.countryCode].join(' ')).includes(term)));

@@ -20,6 +20,14 @@ test('Travel adds 50 unique guide cities and exposes all 91 destinations', async
   assert.equal(list.length, 91);
   assert.equal(new Set(list.map(d => `${d.countryCode}:${d.city}`)).size, 91);
   assert.ok(list.every(d => d.guideUrl.startsWith('https://en.wikivoyage.org/wiki/')));
+  for (const destination of list) {
+    assert.ok(app.LIVE_CAMERA_CATALOG.some(camera => app.travelCityMatches(camera, destination)),
+      `${destination.city} must participate in live-camera discovery`);
+    const search = new URL(destination.liveCameraSearchUrl);
+    assert.equal(search.origin, 'https://www.youtube.com');
+    assert.equal(search.searchParams.get('search_query'), `${destination.city} ${destination.country} live webcam`);
+    assert.equal(search.searchParams.get('sp'), 'EgJAAQ==');
+  }
   assert.match(list.find(d => d.city === 'Queenstown').guideUrl, /Queenstown_\(New_Zealand\)/);
   assert.match(list.find(d => d.city === 'Oaxaca').guideUrl, /Oaxaca_\(city\)/);
   for (const stream of require('./travel-camera-streams.json')) {
@@ -39,6 +47,35 @@ test('city matching is exact, accent-insensitive, and country-aware', async t =>
   assert.equal(app.travelCityMatches(paris, { city: 'Par' }), false);
   assert.equal(app.travelCityMatches({ city: 'San Jose', countryCode: 'CR' }, { city: 'San Jos\u00e9', country: 'CR' }), true);
   assert.equal(app.selectedTravelGuideDestinations({ city: 'London', country: 'CA', countryName: 'Canada' })[0].searchOnly, true);
+});
+
+test('every published city can return its own verified feed without search quota', async t => {
+  const candidates = [];
+  let app;
+  app = await harness(t, { env: { YOUTUBE_API_KEY: 'test-key' }, modules: {
+    './travel-camera-streams.json': candidates,
+    './travel-providers': { ...providers, fetchTravelResource: async url => {
+      assert.ok(url.includes('/videos?'), 'catalog coverage does not require discovery searches');
+      app.setYouTubeCallReady();
+      const ids = new URL(url).searchParams.get('id').split(',');
+      return { items: ids.filter(id => candidates.some(camera => camera.videoId === id)).map(id => ({
+        id, liveStreamingDetails: { actualStartTime: '2026-09-01' },
+        status: { privacyStatus: 'public', embeddable: true },
+      })) };
+    } },
+  } });
+  const destinations = (await app.request('/travel/destinations')).data.destinations;
+  candidates.push(...destinations.map((destination, index) => ({
+    ...destination, videoId: `cam${String(index).padStart(8, '0')}`, title: `${destination.city} camera`,
+  })));
+  app.exhaustCameraDiscoveryBudget();
+  const result = await app.getCountriesCameraFeed(null);
+  assert.equal(result.liveFeeds.length, 91);
+  for (const destination of destinations) {
+    const feeds = result.liveFeeds.filter(camera => app.travelCityMatches(camera, destination));
+    assert.equal(feeds.length, 1, `${destination.city} has one city-specific feed`);
+    assert.equal(feeds[0].liveVerified, true);
+  }
 });
 
 test('every catalog city has an in-app guide endpoint; unknown IDs cannot fetch a URL', async t => {

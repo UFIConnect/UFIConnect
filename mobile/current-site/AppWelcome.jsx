@@ -14,13 +14,11 @@ export default function AppWelcome() {
         <Link className="app-welcome-primary" to="/login">Sign in</Link>
         <Link className="app-welcome-secondary" to="/register">Create account</Link>
       </nav>
-    </main>
-    <footer className="app-welcome-footer">
-      <nav aria-label="Policies">
+      <nav className="app-welcome-policies" aria-label="Policies">
         <Link to="/terms">Terms</Link>
         <Link to="/privacy">Privacy</Link>
         <Link to="/child-safety">Safety</Link>
       </nav>
-    </footer>
+    </main>
   </div>;
 }
