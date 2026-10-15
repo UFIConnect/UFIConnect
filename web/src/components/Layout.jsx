@@ -1,3 +1,4 @@
+import PagedList from './PagedList';
 import { createContext, useContext, lazy, Suspense, useState, useEffect, useRef } from 'react';
 import { Link, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -460,7 +461,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
   return (
     <MessagesNavigationContext.Provider value={profile ? { count: messageBadge, active: mobileHeaderPopup === 'messages' || location.pathname.startsWith('/messages'),
       open: mobileHeaderPopup === 'messages', onToggle: event => { messagesOpenerRef.current = event.currentTarget; toggleMobileHeaderPopup('messages'); } } : null}>
-    <div className={`shell${wide ? ' shell-wide' : ''}`}>
+    <div className={`shell${wide ? ' shell-wide' : ''}${['/videos', '/music'].includes(location.pathname) ? ' shell-media-scroll' : ''}`}>
       {/* ── Desktop sidebar ── */}
       <aside className="sidebar">
         <Link to={HOME_FEED_PATH} className="sidebar-logo" onClick={handleAllFeedHomeClick} style={{ textDecoration: 'none', color: 'inherit' }}>
@@ -784,11 +785,11 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
                 </div>
                 </div>
                 <div className="mobile-feed-drawer-bottom mobile-jobs-drawer-bottom">
-                  <MessagesNavigation />
                   <NavLink to="/groups" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
                     <ShellIcon name="groups" size={18} />
                     Discover groups
                   </NavLink>
+                  <MessagesNavigation />
                   <HomeFeedTools showSources={false} />
                   <NavLink to="/resume-builder" className="mobile-command-menu-item mobile-command-menu-item--command" onClick={() => setMobileMenuOpen(false)}>
                     <ShellIcon name="files" size={18} />
@@ -798,7 +799,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
               </>
             ) : (
               <>
-                <div className="mobile-feed-drawer-feeds">
+                <PagedList key={String(mobileMenuOpen)} className="mobile-feed-drawer-feeds" pageSize={4} label="Feeds">
               <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'ufi' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'ufi'} onClick={() => selectMobileFeed('ufi')}>
                 <ShellIcon name="posts" size={18} />
                 UFI
@@ -829,13 +830,13 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
               <NavLink to="/vault" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
                 <ShieldCheck size={18} aria-hidden="true" />Your Vault
               </NavLink>
-                </div>
+                </PagedList>
                 <div className="mobile-feed-drawer-bottom">
-              <MessagesNavigation />
               <NavLink to="/groups" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
                 <ShellIcon name="search" size={18} />
                 Discover groups
               </NavLink>
+              <MessagesNavigation />
               <HomeFeedTools
                 showSources
                 sourceIds={mobileSourceIds}

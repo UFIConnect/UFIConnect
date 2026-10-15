@@ -337,25 +337,32 @@ try {
     assert.equal(await cityChoice('GB:London').getAttribute('aria-pressed'), 'true');
     assert.equal(await cities.getByRole('button').count(), 91, 'city choices remain available without live cameras');
     assert.equal(await rail.locator('iframe').count(), 0);
+    assert.equal(await page.getByRole('navigation', { name: 'Feed pages', exact: true }).count(), 0);
+    const retryPage = page.getByRole('alert').filter({ hasText: 'More posts could not load.' }).getByRole('button', { name: 'Try again', exact: true });
+    // Exercise the actual endless-feed observer and keep its failed batch
+    // available for manual retry without losing the already displayed posts.
     await page.locator('[data-feed-has-more]').first().evaluate(element => element.scrollIntoView({ block: 'end' }));
-    await page.getByText(/More (?:destinations|posts) could not load\./).waitFor();
+    await page.getByText('More posts could not load. Please try again.', { exact: true }).waitFor();
     const failedPageRequests = feedRequests;
     await page.waitForTimeout(700);
     assert.equal(feedRequests, failedPageRequests, 'paging failures do not cause an automatic retry loop');
     assert.ok(await page.locator('.post-card').count() > 0, 'loaded posts survive a paging outage');
     failPagination = false;
-    await page.getByRole('button', { name: /^(?:Retry more destinations|Try again)$/ }).last().click();
+    await retryPage.click();
+    await retryPage.waitFor({ state: 'detached' });
+    await page.locator('[data-feed-loading-more="false"]').waitFor();
     // Exhaust the actual API pagination and make sure the UI stops asking.
     for (let attempt = 0; attempt < 15; attempt++) {
-      const feed = page.locator('[data-feed-has-more]').first();
-      if (await feed.getAttribute('data-feed-has-more') === 'false') break;
-      await feed.evaluate(element => element.scrollIntoView({ block: 'end' }));
+      if (await page.locator('[data-feed-has-more]').first().getAttribute('data-feed-has-more') === 'false') break;
+      await page.locator('[data-feed-has-more]').first().evaluate(element => element.scrollIntoView({ block: 'end' }));
       await page.waitForTimeout(500);
+      await page.locator('[data-feed-loading-more="false"]').waitFor();
     }
     if (await page.locator('[data-feed-has-more]').first().getAttribute('data-feed-has-more') !== 'false') {
       console.log(JSON.stringify({ feedPages, state: await page.locator('[data-feed-has-more]').evaluate(el => ({ dataset: { ...el.dataset }, rect: el.getBoundingClientRect().toJSON(), scroll: document.scrollingElement.scrollTop, height: document.scrollingElement.scrollHeight, innerHeight })) }));
     }
     assert.equal(await page.locator('[data-feed-has-more]').first().getAttribute('data-feed-has-more'), 'false');
+    assert.equal(await page.locator('[data-feed-scroll-sentinel]').count(), 0, 'Endless loading stops after exhausting the destination feed');
     const before = feedRequests;
     await page.waitForTimeout(700);
     assert.equal(feedRequests, before, 'no repeated exhausted-page requests');

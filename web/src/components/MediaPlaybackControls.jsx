@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Pause, Play } from 'lucide-react';
+import { Maximize, Minimize, Pause, Play } from 'lucide-react';
 import { SoundIcon } from './videoMedia';
 import './MediaPlaybackControls.css';
 
@@ -13,7 +13,40 @@ export function playbackTime(seconds) {
 
 // This row stays outside the scrolling caption and never fades on idle.
 // Each surface supplies its actual player state and supported operations.
-export default function MediaPlaybackControls({ paused, muted, currentTime, duration, onTogglePlay, onToggleMute, onSeek, disabled = false, label = 'video', mediaKey }) {
+export default function MediaPlaybackControls({ paused, muted, currentTime, duration, onTogglePlay, onToggleMute, onSeek, onFullScreen, fullScreen, disabled = false, label = 'video', mediaKey }) {
+  const row = useRef(null);
+  const expandedTarget = useRef(null);
+  const [expanded, setExpanded] = useState(false), [fullscreenError, setFullscreenError] = useState('');
+  useEffect(() => {
+    const changed = () => setExpanded(Boolean(document.fullscreenElement?.contains(row.current)));
+    document.addEventListener('fullscreenchange', changed);
+    const escape = event => {
+      if (event.key === 'Escape' && expandedTarget.current) {
+        expandedTarget.current.removeAttribute('data-ufi-fullscreen'); expandedTarget.current = null; setExpanded(false);
+      }
+    };
+    document.addEventListener('keydown', escape);
+    return () => {
+      document.removeEventListener('fullscreenchange', changed); document.removeEventListener('keydown', escape);
+      expandedTarget.current?.removeAttribute('data-ufi-fullscreen');
+    };
+  }, []);
+  async function toggleFullscreen() {
+    setFullscreenError('');
+    if (onFullScreen) { await onFullScreen(); return; }
+    let target = row.current?.parentElement;
+    while (target && target !== document.body && !target.querySelector('video, iframe')) target = target.parentElement;
+    if (!target || target === document.body) return;
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else if (expandedTarget.current) {
+        expandedTarget.current.removeAttribute('data-ufi-fullscreen'); expandedTarget.current = null; setExpanded(false);
+      }
+      else if (target.requestFullscreen && document.fullscreenEnabled) await target.requestFullscreen();
+      else if (target.querySelector('video')?.webkitEnterFullscreen) target.querySelector('video').webkitEnterFullscreen();
+      else { target.setAttribute('data-ufi-fullscreen', 'true'); expandedTarget.current = target; setExpanded(true); }
+    } catch { setFullscreenError('Fullscreen could not open. Please try again.'); }
+  }
   const end = Number.isFinite(duration) && duration > 0 ? duration : 0;
   const position = Math.max(0, Math.min(end, Number.isFinite(currentTime) ? currentTime : 0));
   const [seekState, setSeekState] = useState(null);
@@ -61,7 +94,7 @@ export default function MediaPlaybackControls({ paused, muted, currentTime, dura
   };
   const playLabel = `${paused ? 'Play' : 'Pause'} ${label}`;
   const soundLabel = `${muted ? 'Unmute' : 'Mute'} ${label}`;
-  return <div className="media-playback-controls" role="group" aria-label="Playback controls">
+  return <div ref={row} className="media-playback-controls" role="group" aria-label="Playback controls">
     <button type="button" aria-label={playLabel} title={playLabel} onClick={onTogglePlay} disabled={disabled || !onTogglePlay}>
       {paused ? <Play size={19} aria-hidden="true" /> : <Pause size={19} aria-hidden="true" />}
     </button>
@@ -73,5 +106,9 @@ export default function MediaPlaybackControls({ paused, muted, currentTime, dura
       disabled={disabled || !end || !onSeek} onChange={seek} onPointerDown={beginSeek}
       onPointerUp={finishSeek} onPointerCancel={event => finishSeek(event, true)} onLostPointerCapture={event => finishSeek(event, true)} />
     <span className="media-playback-time" aria-label="Playback time">{playbackTime(seekDraft ? cursor : currentTime)} / {playbackTime(end || NaN)}</span>
+    <button type="button" aria-label={(fullScreen ?? expanded) ? 'Exit full screen' : 'Full screen'} title={(fullScreen ?? expanded) ? 'Exit full screen' : 'Full screen'} onClick={toggleFullscreen} disabled={disabled}>
+      {(fullScreen ?? expanded) ? <Minimize size={19} aria-hidden="true" /> : <Maximize size={19} aria-hidden="true" />}
+    </button>
+    {fullscreenError && <span className="media-fullscreen-error" role="status">{fullscreenError}</span>}
   </div>;
 }

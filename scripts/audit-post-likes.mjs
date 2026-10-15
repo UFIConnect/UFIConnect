@@ -151,7 +151,8 @@ try {
     const videoLike = video.getByRole('group', { name: 'Post actions', exact: true }).getByRole('link', { name: 'Connect Reddit to like, 47 likes', exact: true });
     await videoLike.waitFor();
     assert.equal(await videoLike.getAttribute('href'), '/connected-accounts?interactions=1');
-    assert.equal(await videoLike.locator('.post-chrome-like-count').innerText(), '47 likes');
+    assert.equal(await videoLike.locator('.post-chrome-like-count').innerText(), '47', 'Videos uses a compact visible count');
+    assert.match(await videoLike.getAttribute('title'), /47 likes$/, 'Compact count retains its full label in the tooltip and accessible name');
     assert.equal(writes, 4);
     post.source = 'uficonnect'; post.isExternal = false; post.author.id = 'likes-reader';
     await auditNavigate(page, base + 'p/audit-likes');

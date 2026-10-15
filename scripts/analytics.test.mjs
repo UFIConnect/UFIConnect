@@ -189,6 +189,8 @@ test('all page categories are constants; secret dynamic route values, queries an
     ['/messages/private-email@example.invalid?token=secret#passphrase', 'conversation'],
     ['/groups/private-membership', 'group'], ['/opportunities/private-id', 'opportunity'],
     ['/p/private-post', 'post'], ['/u/private-member', 'member'],
+    ['/snaps/private-snap?token=secret#private-fragment', 'post'],
+    ['/snaps/private-snap/?audience=secret#private-fragment', 'post'],
     ['/reset-password?token=reset-secret#secret', 'reset_password'],
     ['/search?q=private-search', 'search'], ['/unknown/private', 'other'],
     ['https://example.org/private', 'other'], ['//evil.example/private', 'other'],

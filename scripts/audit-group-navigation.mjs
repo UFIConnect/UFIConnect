@@ -51,10 +51,13 @@ try {
       if (endpoint === '/office/feed') {
         const mode = url.searchParams.get('mode');
         const scope = mode === 'groups' ? (url.searchParams.get('groupScope') || 'joined') : 'home';
+        const nextPage = url.searchParams.has('cursor') || Number(url.searchParams.get('page')) > 1;
+        const empty = emptyJoined && scope === 'joined';
         if (heldScope === scope) await new Promise(resolve => pending.push({ scope, resolve }));
         return route.fulfill({ json: {
-          mode, nativeUficonnectIncluded: true, hasMore: false,
-          posts: emptyJoined && scope === 'joined' ? [] : Array.from({ length: 30 }, (_, i) => post(scope, i)),
+          mode, nativeUficonnectIncluded: true, hasMore: !empty && !nextPage,
+          cursor: !empty && !nextPage ? `${scope}:next` : '',
+          posts: empty ? [] : Array.from({ length: 20 }, (_, i) => post(scope, i + (nextPage ? 20 : 0))),
         } });
       }
       if (/events|stream/.test(endpoint)) return route.abort();
@@ -145,12 +148,12 @@ try {
       checks += 2;
 
       heldScope = 'joined';
-      await page.locator('[data-feed-position]').last().dispatchEvent('mouseover');
+      await page.locator('[data-feed-scroll-sentinel]').scrollIntoViewIfNeeded();
       await waitForHeldRequest();
       await groupTab('Public posts').click();
       await visiblePost('public').waitFor();
       heldScope = 'public';
-      await page.locator('[data-feed-position]').last().dispatchEvent('mouseover');
+      await page.locator('[data-feed-scroll-sentinel]').scrollIntoViewIfNeeded();
       await waitForHeldRequest();
       pending.splice(pending.findIndex(item => item.scope === 'joined'), 1)[0].resolve();
       await page.waitForTimeout(100);
@@ -160,16 +163,19 @@ try {
       await page.locator('[data-feed-loading-more="false"]').waitFor();
       checks += 3;
 
-      await groupTab('Public posts').click();
-      await visiblePost('public').waitFor();
+      await page.getByText('PUBLIC_POST_20', { exact: true }).waitFor();
+      assert.equal(await visiblePost('public').count(), 1, 'The first public batch remains alongside appended posts');
+      assert.equal(await page.locator('[data-feed-position]').count(), 40, 'Only the two public batches remain after the older joined response');
+      checks++;
       emptyJoined = true;
       await groupTab('Your groups').click();
       await page.getByText('No group posts yet', { exact: true }).waitFor();
       assert.equal(await visiblePost('public').count(), 0);
+      assert.equal(await page.getByText('PUBLIC_POST_20', { exact: true }).count(), 0, 'The last public page does not leak into the empty joined scope');
       assert.equal(await visiblePost('home').count(), 0);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
       assert.deepEqual(errors, []);
-      checks += 4;
+      checks += 5;
       await page.screenshot({ path: path.join(output, `group-navigation-${viewport.width}.png`) });
       console.log(`PASS: group navigation at ${viewport.width}px`);
     } catch (error) {

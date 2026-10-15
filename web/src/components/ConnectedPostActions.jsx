@@ -115,8 +115,10 @@ export default function ConnectedPostActions({ post, active = true, showFallback
       const result = await sendSourceInteraction(post, 'comment', { content, requestId });
       if (!isCurrent()) return;
       setState({ identity, draft: '', lastRequest: null, busy: false, error: '' });
-      publishPostEngagement(post, { action: 'comment', commentId: result.commentId, commentsCount: result.commentsCount });
-      showToast('Comment published on ' + label + '. Source counts update when the source supplies them.', 'success');
+      publishPostEngagement(post, { action: 'comment', commentId: String(result.commentId || ''), commentsCount: result.commentsCount,
+        comment: result.commentId ? { id: String(result.commentId), author: 'You', body: content, content,
+          created: new Date().toISOString(), createdAt: new Date().toISOString(), url: result.commentUrl || '' } : null });
+      showToast('Comment published on ' + label + '.', 'success');
     } catch (err) {
       if (!isCurrent()) return;
       setState({ identity, draft, lastRequest: request, busy: false,
