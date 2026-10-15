@@ -1,0 +1,21 @@
+:root { color-scheme: dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0e0e10; color: #efeff1; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 400px; }
+main { width: 100%; max-width: 1100px; margin: 0 auto; }
+header, footer, .no-script { padding: 16px 20px; }
+header { border-bottom: 1px solid #343438; }
+a { color: #c9a5ff; text-underline-offset: 3px; }
+a:focus-visible, button:focus-visible { outline: 3px solid #bf94ff; outline-offset: 4px; }
+.back { font-size: 15px; }
+.eyebrow { color: #b8b8c0; font-size: 14px; margin: 18px 0 6px; }
+h1 { font-size: 22px; margin: 0; overflow-wrap: anywhere; }
+#creator { margin: 8px 0 0; overflow-wrap: anywhere; }
+#player { width: 100%; min-width: 400px; min-height: 300px; background: #000; }
+#player iframe { display: block; width: 100%; min-width: 400px; height: max(300px, min(56.25vw, 619px)); border: 0; }
+footer { border-top: 1px solid #343438; line-height: 1.5; }
+#status { margin: 0 0 12px; }
+.credit { margin: 16px 0 4px; color: #b8b8c0; }
+.credit strong { color: #bf94ff; }
+button { min-height: 44px; border: 1px solid #bf94ff; border-radius: 7px; background: #9146ff; color: #fff; font: inherit; padding: 10px 16px; cursor: pointer; }
+[hidden] { display: none !important; }
+@media (prefers-reduced-motion: no-preference) { a, button { transition: outline-color 120ms; } }
