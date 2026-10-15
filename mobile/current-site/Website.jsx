@@ -65,7 +65,7 @@ export default function Website(props) {
     // Keep this capability inside the DOM closure, never in URLs, storage,
     // events or rendered markup. Every native host action validates it.
     for (const name of ['onApiRequest', 'onPersistSession', 'onProviderSignIn', 'onOpenExternal',
-      'onRequestLocation', 'onShareFile', 'onCopyText', 'onAppearanceChange', 'onYouTubePlayer']) {
+      'onRequestLocation', 'onShareFile', 'onCopyText', 'onAppearanceChange', 'onYouTubePlayer', 'onTwitchPlayer']) {
       if (typeof props[name] === 'function') value[name] = (...args) => latestProps.current[name](capability, ...args);
     }
     return value;
@@ -89,6 +89,10 @@ export default function Website(props) {
     if (props.nativeAppActive !== false) window.dispatchEvent(new Event('focus'));
     document.dispatchEvent(new Event('visibilitychange'));
   }, [native, props.nativeAppActive]);
+  useEffect(() => {
+    if (!native) return;
+    window.dispatchEvent(new CustomEvent('ufi-native-twitch-state', { detail: { active: props.nativeTwitchActive === true } }));
+  }, [native, props.nativeTwitchActive]);
   useEffect(() => {
     if (!native || !runtime?.onAppearanceChange) return undefined;
     return observeNativeAppearance({ document, window, onChange: runtime.onAppearanceChange });

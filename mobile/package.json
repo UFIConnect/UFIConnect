@@ -36,7 +36,7 @@
     "test:export": "node scripts/audit-app-shell.mjs && node scripts/audit-current-site.mjs",
     "test:moderation": "node scripts/audit-moderation.mjs",
     "test:security": "node --test security/security.test.js security/dependencyCompatibility.test.js security/dependencyBackports.test.js security/accountDeletion.test.js security/moderation.test.js security/providerSignIn.test.js analytics/screenPolicy.test.js analytics/serviceMetrics.test.js && npm run test:vpn && npm run test:current-site",
-    "test:current-site": "node --test current-site/documentLoader.test.cjs current-site/NativeSiteApp.test.cjs current-site/vpnSessionStore.test.cjs current-site/nativeBridge.test.cjs current-site/nativeYouTube.test.cjs current-site/nativeAppearance.test.cjs current-site/website-transform.test.cjs",
+    "test:current-site": "node --test current-site/documentLoader.test.cjs current-site/NativeSiteApp.test.cjs current-site/vpnSessionStore.test.cjs current-site/nativeBridge.test.cjs current-site/nativeYouTube.test.cjs current-site/nativeTwitch.test.cjs current-site/NativeTwitchPlayer.test.cjs current-site/nativeAppearance.test.cjs current-site/website-transform.test.cjs",
     "test:analytics": "node scripts/audit-shared-privacy.mjs",
     "prepare:website": "node scripts/prepare-website.mjs"
   },
