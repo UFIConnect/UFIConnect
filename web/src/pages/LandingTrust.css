@@ -1,4 +1,14 @@
 @import '../PublicTheme.css';
+/* One uninterrupted opening-page surface, including the closing invitation. */
+:root .landing-shell,
+:root .landing-shell .landing-hero-refined,
+:root .landing-shell .landing-final-cta {
+  background: var(--bg);
+  color: var(--text);
+}
+.landing-shell > main { padding-bottom: 32px; }
+.landing-shell .landing-final-cta p { color: var(--muted); }
+.landing-policy-links { margin-top: 24px; }
 .landing-identity{display:block;width:180px;height:auto}
 .landing-shell .landing-nav-actions{flex-wrap:wrap;gap:16px}
 .landing-shell .landing-header-inner{gap:16px;min-height:68px;height:auto;padding-top:12px;padding-bottom:12px}

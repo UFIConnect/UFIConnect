@@ -241,6 +241,10 @@ try {
     await cityChoice('US:Seattle').click();
     await waitForCitySave();
     await rail.getByText('No live camera is available in Seattle right now. Check again shortly.').waitFor();
+    const cityCameraSearch = new URL(await rail.getByRole('link', { name: 'Find live cameras in Seattle', exact: true }).getAttribute('href'));
+    assert.equal(cityCameraSearch.origin, 'https://www.youtube.com');
+    assert.equal(cityCameraSearch.searchParams.get('search_query'), 'Seattle United States live webcam');
+    assert.equal(cityCameraSearch.searchParams.get('sp'), 'EgJAAQ==', 'the fallback searches current live broadcasts');
     assert.equal(await rail.locator('iframe').count(), 0, 'Other live cities cannot replace the selected city');
     await rail.getByRole('button', { name: 'City guide', exact: true }).click();
     const guide = page.getByRole('dialog', { name: 'Seattle city guide', exact: true });
@@ -334,13 +338,13 @@ try {
     assert.equal(await cities.getByRole('button').count(), 91, 'city choices remain available without live cameras');
     assert.equal(await rail.locator('iframe').count(), 0);
     await page.locator('[data-feed-has-more]').first().evaluate(element => element.scrollIntoView({ block: 'end' }));
-    await page.getByText('More destinations could not load.').waitFor();
+    await page.getByText(/More (?:destinations|posts) could not load\./).waitFor();
     const failedPageRequests = feedRequests;
     await page.waitForTimeout(700);
     assert.equal(feedRequests, failedPageRequests, 'paging failures do not cause an automatic retry loop');
     assert.ok(await page.locator('.post-card').count() > 0, 'loaded posts survive a paging outage');
     failPagination = false;
-    await page.getByRole('button', { name: 'Retry more destinations', exact: true }).click();
+    await page.getByRole('button', { name: /^(?:Retry more destinations|Try again)$/ }).last().click();
     // Exhaust the actual API pagination and make sure the UI stops asking.
     for (let attempt = 0; attempt < 15; attempt++) {
       const feed = page.locator('[data-feed-has-more]').first();

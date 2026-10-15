@@ -220,5 +220,308 @@
       "method": "YouTube Data API videos.list"
     },
     "channelTitle": "ANNnewsCH"
+  },
+  {
+    "destinationId": "IT:Rome",
+    "city": "Rome",
+    "country": "Italy",
+    "countryCode": "IT",
+    "videoId": "VfH8gQJQnBE",
+    "operator": "Roma Five Suites",
+    "channelId": "UCDL2IVxAgPI7wybiUlQKrWg",
+    "sourceUrl": "https://www.youtube.com/watch?v=VfH8gQJQnBE",
+    "operatorUrl": "https://www.youtube.com/channel/UCDL2IVxAgPI7wybiUlQKrWg",
+    "title": "Roma Five Suites - Piazza Venezia - Live Webcam from Rome",
+    "checkedAt": "2026-10-15T22:03:09.671Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "Roma Five Suites"
+  },
+  {
+    "destinationId": "ES:Barcelona",
+    "city": "Barcelona",
+    "country": "Spain",
+    "countryCode": "ES",
+    "videoId": "d1Hqy8eNi9w",
+    "operator": "NicusNicusNicus(mil_house23)",
+    "channelId": "UC2ne-RCxu_3zf0DrW4uWP9w",
+    "sourceUrl": "https://www.youtube.com/watch?v=d1Hqy8eNi9w",
+    "operatorUrl": "https://www.youtube.com/channel/UC2ne-RCxu_3zf0DrW4uWP9w",
+    "title": "Barcelona Spain live cam from Baix Guinardo skyline internet eye",
+    "checkedAt": "2026-10-15T22:03:10.099Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "NicusNicusNicus(mil_house23)"
+  },
+  {
+    "destinationId": "TH:Bangkok",
+    "city": "Bangkok",
+    "country": "Thailand",
+    "countryCode": "TH",
+    "videoId": "X1l_sV4-1kQ",
+    "operator": "Randomly Entertained",
+    "channelId": "UCbXiHnFTVZmnp2IspH2OPTw",
+    "sourceUrl": "https://www.youtube.com/watch?v=X1l_sV4-1kQ",
+    "operatorUrl": "https://www.youtube.com/channel/UCbXiHnFTVZmnp2IspH2OPTw",
+    "title": "Chao Phraya River, Bangkok, Thailand | Live Camera Stream",
+    "checkedAt": "2026-10-15T22:03:10.723Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "Randomly Entertained"
+  },
+  {
+    "destinationId": "AU:Sydney",
+    "city": "Sydney",
+    "country": "Australia",
+    "countryCode": "AU",
+    "videoId": "4JS4vSkTS7I",
+    "operator": "Sydney Harbour LIVE",
+    "channelId": "UCS03bU2sY5_zu2j7LoSjAVA",
+    "sourceUrl": "https://www.youtube.com/watch?v=4JS4vSkTS7I",
+    "operatorUrl": "https://www.youtube.com/channel/UCS03bU2sY5_zu2j7LoSjAVA",
+    "title": "Sydney Harbour LIVE 🇦🇺 Bridge & Opera House 24/7 — McMahons Point, Australia",
+    "checkedAt": "2026-10-15T22:03:11.397Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "Sydney Harbour LIVE"
+  },
+  {
+    "destinationId": "HK:Hong_Kong",
+    "city": "Hong Kong",
+    "country": "Hong Kong",
+    "countryCode": "HK",
+    "videoId": "ScBtCcGZMDk",
+    "operator": "World Live Cam 24",
+    "channelId": "UCXot04MO0C8-csVPqFOjAtQ",
+    "sourceUrl": "https://www.youtube.com/watch?v=ScBtCcGZMDk",
+    "operatorUrl": "https://www.youtube.com/channel/UCXot04MO0C8-csVPqFOjAtQ",
+    "title": "🔴 HONGKONG LIVE 24/7 | 香港即時直播",
+    "checkedAt": "2026-10-15T22:03:12.936Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "World Live Cam 24",
+    "note": "Rotates between live camera views within Hong Kong; do not label it as one fixed viewpoint."
+  },
+  {
+    "destinationId": "IS:Reykjavik",
+    "city": "Reykjavik",
+    "country": "Iceland",
+    "countryCode": "IS",
+    "videoId": "tYgGEC-ESTw",
+    "operator": "Our World Live",
+    "channelId": "UCuVVqZu5AuRf3jaKHRy5-Sw",
+    "sourceUrl": "https://www.youtube.com/watch?v=tYgGEC-ESTw",
+    "operatorUrl": "https://www.youtube.com/channel/UCuVVqZu5AuRf3jaKHRy5-Sw",
+    "title": "Reykjavik, Iceland LIVE",
+    "checkedAt": "2026-10-15T22:03:18.757Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "Our World Live"
+  },
+  {
+    "destinationId": "ZA:Cape Town",
+    "city": "Cape Town",
+    "country": "South Africa",
+    "countryCode": "ZA",
+    "videoId": "1QH44L9PsAo",
+    "operator": "Cape Ocean Adventures",
+    "channelId": "UCLwTi-vM5zaadH1ytPo-rTg",
+    "sourceUrl": "https://www.youtube.com/watch?v=1QH44L9PsAo",
+    "operatorUrl": "https://www.youtube.com/channel/UCLwTi-vM5zaadH1ytPo-rTg",
+    "title": "LIVE Patrolling Webcam: Bikini Beach, GBYC & Gordon’s Bay Harbour (Cape Town, South Africa)",
+    "checkedAt": "2026-10-15T22:03:19.754Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "Cape Ocean Adventures",
+    "note": "Coastal district view; retain the actual beach or harbour name in the player title."
+  },
+  {
+    "destinationId": "ZA:Cape Town",
+    "city": "Cape Town",
+    "country": "South Africa",
+    "countryCode": "ZA",
+    "videoId": "zGlGodTfncQ",
+    "operator": "Cape Ocean Adventures",
+    "channelId": "UCLwTi-vM5zaadH1ytPo-rTg",
+    "sourceUrl": "https://www.youtube.com/watch?v=zGlGodTfncQ",
+    "operatorUrl": "https://www.youtube.com/channel/UCLwTi-vM5zaadH1ytPo-rTg",
+    "title": "Strand Bodyboard Collective Live, False Bay, Cape Town - Strand beach cam",
+    "checkedAt": "2026-10-15T22:03:19.754Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "Cape Ocean Adventures",
+    "note": "Coastal district view; retain the actual beach or harbour name in the player title."
+  },
+  {
+    "destinationId": "AR:Buenos_Aires",
+    "city": "Buenos Aires",
+    "country": "Argentina",
+    "countryCode": "AR",
+    "videoId": "xoyKM6BQceM",
+    "operator": "Paseos y Turismo",
+    "channelId": "UCsXOwro8CHI2FWotcTw1U2w",
+    "sourceUrl": "https://www.youtube.com/watch?v=xoyKM6BQceM",
+    "operatorUrl": "https://www.youtube.com/channel/UCsXOwro8CHI2FWotcTw1U2w",
+    "title": "BUENOS AIRES LIVE 24/7 🇦🇷 City Street Cam, Traffic & Weather - Argentina",
+    "checkedAt": "2026-10-15T22:03:20.105Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "Paseos y Turismo"
+  },
+  {
+    "destinationId": "SG:Singapore",
+    "city": "Singapore",
+    "country": "Singapore",
+    "countryCode": "SG",
+    "videoId": "w9PFn2beeFw",
+    "operator": "Christoph Burgdorfer",
+    "channelId": "UCeh-xpdolXxtC7ey15ccW-g",
+    "sourceUrl": "https://www.youtube.com/watch?v=w9PFn2beeFw",
+    "operatorUrl": "https://www.youtube.com/channel/UCeh-xpdolXxtC7ey15ccW-g",
+    "title": "Singapore Haze CBD Live Stream 4K Webcam (Heavy Smog)",
+    "checkedAt": "2026-10-15T22:03:20.722Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "Christoph Burgdorfer"
+  },
+  {
+    "destinationId": "US:New_Orleans",
+    "city": "New Orleans",
+    "country": "United States",
+    "countryCode": "US",
+    "videoId": "QxFFjXu_zqs",
+    "operator": "EarthCam",
+    "channelId": "UC6qrG3W8SMK0jior2olka3g",
+    "sourceUrl": "https://www.youtube.com/watch?v=QxFFjXu_zqs",
+    "operatorUrl": "https://www.youtube.com/channel/UC6qrG3W8SMK0jior2olka3g",
+    "title": "EarthCam Live: New Orleans Balcony View",
+    "checkedAt": "2026-10-15T22:02:22.693Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "EarthCam"
+  },
+  {
+    "destinationId": "US:Chicago",
+    "city": "Chicago",
+    "country": "United States",
+    "countryCode": "US",
+    "videoId": "EiUyBIcG4fQ",
+    "operator": "EarthCam",
+    "channelId": "UC6qrG3W8SMK0jior2olka3g",
+    "sourceUrl": "https://www.youtube.com/watch?v=EiUyBIcG4fQ",
+    "operatorUrl": "https://www.youtube.com/channel/UC6qrG3W8SMK0jior2olka3g",
+    "title": "EarthCam Live:  Midway Airport (Chicago, IL)",
+    "checkedAt": "2026-10-15T22:02:22.693Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "EarthCam"
+  },
+  {
+    "destinationId": "US:New_York_City",
+    "city": "New York",
+    "country": "United States",
+    "countryCode": "US",
+    "videoId": "H67j7H-7QD0",
+    "operator": "EarthCam",
+    "channelId": "UC6qrG3W8SMK0jior2olka3g",
+    "sourceUrl": "https://www.youtube.com/watch?v=H67j7H-7QD0",
+    "operatorUrl": "https://www.youtube.com/channel/UC6qrG3W8SMK0jior2olka3g",
+    "title": "EarthCam Live:  Coney Island (New York City)",
+    "checkedAt": "2026-10-15T22:02:22.693Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "EarthCam"
+  },
+  {
+    "destinationId": "US:Las_Vegas",
+    "city": "Las Vegas",
+    "country": "United States",
+    "countryCode": "US",
+    "videoId": "KJuGU7v5oYw",
+    "operator": "EarthCam",
+    "channelId": "UC6qrG3W8SMK0jior2olka3g",
+    "sourceUrl": "https://www.youtube.com/watch?v=KJuGU7v5oYw",
+    "operatorUrl": "https://www.youtube.com/channel/UC6qrG3W8SMK0jior2olka3g",
+    "title": "EarthCam Live: Bellagio Conservatory & Botanical Gardens (Las Vegas, NV)",
+    "checkedAt": "2026-10-15T22:02:22.693Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "EarthCam"
+  },
+  {
+    "destinationId": "US:New_York_City",
+    "city": "New York",
+    "country": "United States",
+    "countryCode": "US",
+    "videoId": "2_PDaUJbfuI",
+    "operator": "EarthCam",
+    "channelId": "UC6qrG3W8SMK0jior2olka3g",
+    "sourceUrl": "https://www.youtube.com/watch?v=2_PDaUJbfuI",
+    "operatorUrl": "https://www.youtube.com/channel/UC6qrG3W8SMK0jior2olka3g",
+    "title": "EarthCam Live:  SUMMIT One Vanderbilt (New York City, NY)",
+    "checkedAt": "2026-10-15T22:02:22.693Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "EarthCam"
   }
 ]

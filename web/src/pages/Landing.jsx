@@ -1,4 +1,3 @@
-import PublicBrand from '../components/PublicBrand';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
@@ -161,21 +160,6 @@ export default function Landing() {
       </Helmet>
 
       <div className="landing-shell">
-        <header className="landing-header landing-header-refined">
-          <div className="landing-header-inner">
-            <Link to="/" className="landing-brand" aria-label="UFIconnect home">
-              <PublicBrand />
-            </Link>
-            <nav className="landing-nav-actions" aria-label="Homepage">
-              <Link to="/global">Global Feed</Link>
-              <Link to="/vault-device">Vault device</Link>
-              <Link to="/how-it-works">How UFI works</Link>
-              <Link to="/login">Sign in</Link>
-              <Link to="/register" className="landing-nav-primary">Join free</Link>
-            </nav>
-          </div>
-        </header>
-
         <main>
           <section className="landing-hero-refined">
             <div className="landing-hero-inner">
@@ -191,6 +175,7 @@ export default function Landing() {
                 <div className="landing-actions">
                   <Link to="/register" className="landing-primary-action">Join free</Link>
                   <Link to="/global" className="landing-secondary-action">Explore the feed</Link>
+                  <Link to="/login" className="landing-secondary-action">Sign in</Link>
                 </div>
                 <p className="landing-trust-intro">Operated as UFIConnect in California, United States. <Link to="/privacy">Privacy policy</Link> · <Link to="/terms">Terms of service</Link> · <a href="mailto:support@uficonnect.org">Contact support</a></p>
               </div>
@@ -250,6 +235,7 @@ export default function Landing() {
               <article><h3>Safety is part of using UFIConnect</h3><p>Non-consensual intimate imagery, including AI-generated content, is prohibited. UFIConnect does not use Google APIs to create or enable AI-generated non-consensual intimate imagery.</p><p>Report a post through its menu or use our <Link to="/copyright">copyright reporting process</Link>. <Link to="/policies#community">Community guidelines</Link> also cover harassment, exploitation, impersonation and other abuse.</p></article>
               <article><h3>Your privacy choices</h3><p>Optional analytics and homepage ad measurement have separate consent controls. You can review or withdraw consent, disconnect supported accounts, and request access to or deletion of your information.</p><p><Link to="/#analytics">Cookie and tracking choices</Link> · <Link to="/policies#retention">Retention and deletion</Link> · <Link to="/policies">All policies</Link></p></article>
             </div>
+            <div className="landing-policy-links"><LegalLinks /></div>
           </section>
 
           <section className="landing-section landing-explainers" aria-label="Explore UFIConnect products">
@@ -345,10 +331,6 @@ export default function Landing() {
           </section>
         </main>
 
-        <footer className="landing-footer">
-          <p>&copy; {new Date().getFullYear()} UFIconnect</p>
-          <LegalLinks />
-        </footer>
       </div>
     </>
   );

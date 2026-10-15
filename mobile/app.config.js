@@ -20,7 +20,7 @@ export default ({ config }) => ({
   ios: {
     supportsTablet: true,
     bundleIdentifier: 'org.uficonnect.app',
-    buildNumber: '11',
+    buildNumber: '12',
     infoPlist: {
       NSLocationWhenInUseUsageDescription: 'UFIConnect uses your location to show nearby feed posts, places, and account recommendations when you use location features.',
       NSPhotoLibraryUsageDescription: 'Choose photos and videos to share in posts, messages, or your profile.',
@@ -39,7 +39,7 @@ export default ({ config }) => ({
       backgroundColor: '#102A6B',
     },
     package: 'org.uficonnect.app',
-    versionCode: 7,
+    versionCode: 8,
     allowBackup: false,
     blockedPermissions: [
       'READ_EXTERNAL_STORAGE',

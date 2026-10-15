@@ -234,8 +234,9 @@
     margin-right: 0;
   }
   .shell-content:has(> .global-app-header) .home-feed-right-tabs {
+    --feed-rail-top: 19px;
     margin-top: calc(-58px - var(--feed-page-top) + 9px);
-    top: 19px;
+    top: var(--feed-rail-top);
   }
   .shell-content:has(.home-feed-right-tabs) .home-feed-layout {
     grid-template-columns: minmax(0, 1fr) var(--feed-rail-width);

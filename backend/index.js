@@ -8,7 +8,7 @@ const { createSourceContentRecoveryQueue } = require('./source-content-recovery'
 const { extractFeedMedia } = require('./rss-media');
 const { normalizePostMedia } = require('./post-media');
 const { mastodonMedia, blueskyMedia } = require('./provider-video-media');
-const { verifiedCityAlternates } = require('./travel-live-cameras');
+const { verifiedCityAlternates, completeTravelCameraCatalog, travelCameraSearchUrl, queueCameraDiscoveries, nextCameraDiscovery } = require('./travel-live-cameras');
 const cors = require('cors');
 const helmet = require('helmet');
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
@@ -9515,6 +9515,7 @@ app.get('/travel/destinations', (_req, res) => {
   res.json({ destinations: COUNTRIES_DESTINATION_GUIDES.map(({ slug, city, country, countryCode }) => ({
     id: `${countryCode}:${slug}`, city, country, countryCode,
     guideUrl: countryGuideUrl({ slug }),
+    liveCameraSearchUrl: travelCameraSearchUrl({ city, country, countryCode }),
   })).sort((a, b) => a.city.localeCompare(b.city) || a.country.localeCompare(b.country)) });
 });
 
@@ -9733,7 +9734,7 @@ const LIVE_CAMERA_DISCOVERY_CITIES = Object.freeze([
   ['suva', 'Suva', 'Fiji', 'FJ'],
   ['papeete', 'Papeete', 'French Polynesia', 'PF'],
 ]);
-const LIVE_CAMERA_CATALOG = Object.freeze([
+const LIVE_CAMERA_CATALOG = completeTravelCameraCatalog([
   {
     id: 'camera_times_square_ny',
     title: 'Times Square, New York',
@@ -10061,7 +10062,7 @@ const LIVE_CAMERA_CATALOG = Object.freeze([
     createdAt: '2026-09-02T00:00:00.000Z',
     discoveryOnly: true,
   })),
-]);
+], COUNTRIES_DESTINATION_GUIDES);
 const LIVE_CAMERA_BY_ID = new Map(LIVE_CAMERA_CATALOG.map(camera => [camera.id, camera]));
 // Operator-published streams avoid spending a search request to rediscover
 // known cameras. These are candidates only: every playback still requires
@@ -10084,6 +10085,7 @@ let liveCameraVerificationExpiresAt = 0;
 let liveCameraDiscoveryWindowStartedAt = 0;
 let liveCameraDiscoveryCount = 0;
 let liveCameraDiscoveryBackgroundPromise = null;
+const liveCameraDiscoveryQueue = new Map();
 const liveCameraLocationRefreshes = new Map();
 const liveCameraVerificationState = {
   status: 'idle',
@@ -10406,18 +10408,36 @@ async function resolveLiveCameraDiscoveries(cameraPosts, maxLookups) {
 }
 
 function scheduleLiveCameraDiscovery(cameraPosts, requested = false) {
-  if (IS_PIPELINE_ROLE || !process.env.YOUTUBE_API_KEY || !cameraPosts.length || liveCameraDiscoveryBackgroundPromise) return;
-  const budget = Math.min(LIVE_CAMERA_DISCOVERY_BACKGROUND_MAX,
-    Math.max(0, liveCameraDiscoverySlotsRemaining() - (requested ? 0 : LIVE_CAMERA_DISCOVERY_RESERVED_SLOTS)));
-  if (!budget) return;
+  if (IS_PIPELINE_ROLE || !process.env.YOUTUBE_API_KEY) return;
+  // Rotation covers the published Travel catalog. Selected-city requests are
+  // queued even during an active run, so the first visitor cannot monopolize it.
+  const candidates = cameraPosts.filter(post => requested
+    || COUNTRIES_DESTINATION_GUIDES.some(destination => travelCityMatches(destination, post)));
+  queueCameraDiscoveries(liveCameraDiscoveryQueue, uniqueLiveCameraCities(candidates), requested);
+  if (liveCameraDiscoveryBackgroundPromise || !liveCameraDiscoveryQueue.size) return;
+  const requestedPending = [...liveCameraDiscoveryQueue.values()].some(entry => entry.requested);
+  if (liveCameraDiscoverySlotsRemaining() <= (requestedPending ? 0 : LIVE_CAMERA_DISCOVERY_RESERVED_SLOTS)) {
+    liveCameraDiscoveryQueue.clear();
+    return;
+  }
   liveCameraVerificationState.backgroundStatus = 'queued';
   liveCameraDiscoveryBackgroundPromise = new Promise(resolve => setTimeout(resolve, 0))
     .then(async () => {
       liveCameraVerificationState.backgroundStatus = 'running';
-      const resolved = await resolveLiveCameraDiscoveries(cameraPosts, budget);
+      const resolved = [];
+      let processed = 0;
+      while (processed < LIVE_CAMERA_DISCOVERY_BACKGROUND_MAX
+        || [...liveCameraDiscoveryQueue.values()].some(entry => entry.requested)) {
+        const camera = nextCameraDiscovery(liveCameraDiscoveryQueue,
+          liveCameraDiscoverySlotsRemaining(), LIVE_CAMERA_DISCOVERY_RESERVED_SLOTS);
+        if (!camera) break;
+        processed += 1;
+        const results = await resolveLiveCameraDiscoveries([camera], 1);
+        resolved.push(...results);
+        if (results.length) liveCameraVerificationExpiresAt = 0;
+      }
       liveCameraVerificationState.backgroundLastRun = Date.now();
       liveCameraVerificationState.backgroundResolved = resolved.length;
-      if (resolved.length) liveCameraVerificationExpiresAt = 0;
       return resolved;
     })
     .catch((error) => {
@@ -10486,7 +10506,10 @@ async function refreshVerifiedLiveCameraPosts(location = null) {
   const discoveryCandidates = prioritizeLiveCameraDiscovery(unresolved, location);
   // Expensive searches run off the feed request path. Reserve capacity for
   // cities members actually select instead of spending it all on rotation.
-  scheduleLiveCameraDiscovery(discoveryCandidates, Boolean(location?.available));
+  const selectedDiscoveryCandidates = location?.available ? discoveryCandidates.filter(post =>
+    location.city ? travelCityMatches(post, location) : travelCountryMatches(post, location)) : [];
+  scheduleLiveCameraDiscovery(selectedDiscoveryCandidates.length ? selectedDiscoveryCandidates : discoveryCandidates,
+    selectedDiscoveryCandidates.length > 0);
 
   const verifiedStreams = [...verified.map(post => ({
     ...post,
@@ -10530,7 +10553,8 @@ async function verifiedLiveCameraPosts(location = null) {
     const snapshot = await liveCameraVerificationPromise;
     if (locationKey && !snapshot.some(post => liveCameraLocationScore(post, location) === (location.city ? 2 : 1))) {
       scheduleLiveCameraDiscovery(prioritizeLiveCameraDiscovery(currentLiveCameraPosts()
-        .filter(post => !snapshot.some(camera => camera.id === post.id)), location), true);
+        .filter(post => !snapshot.some(camera => camera.id === post.id))
+        .filter(post => location.city ? travelCityMatches(post, location) : travelCountryMatches(post, location)), location), true);
     }
     return snapshot;
   }
