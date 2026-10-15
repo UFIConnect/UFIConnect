@@ -4,7 +4,7 @@
   position: relative; width: 100%; height: min(820px, calc(100dvh - 150px)); min-height: 420px; display: flex; align-items: center; justify-content: center;
   background: var(--video-chrome); color: var(--video-ink); touch-action: pan-y;
 }
-.video-feed-view .video-feed-frame { position: relative; display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0; background: var(--video-chrome); }
+.video-feed-view .video-feed-frame { position: relative; display: flex; flex-direction: column; width: 100%; height: 100%; max-height: 100%; min-height: 0; background: var(--video-chrome); }
 /* Keep command targets fixed when an official player reports a new aspect
    ratio. Animating the scroll viewport can move focus to another snap. */
 .video-feed-view .video-feed-frame { transition: none; }

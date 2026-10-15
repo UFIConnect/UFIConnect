@@ -1032,9 +1032,10 @@ export default function VideoFeedView({ onExit, music = false }) {
       if (document.fullscreenElement) await document.exitFullscreen();
       else if (fullScreen) setFullScreen(false);
       else if (document.fullscreenEnabled && viewRef.current?.requestFullscreen) {
-        await viewRef.current?.requestFullscreen();
+        const fullscreenTarget = viewRef.current;
+        await fullscreenTarget.requestFullscreen();
         if (!fullScreenView.current.mounted || generation !== fullScreenView.current.generation) {
-          if (document.fullscreenElement === viewRef.current) await document.exitFullscreen();
+          if (document.fullscreenElement === fullscreenTarget) await document.exitFullscreen();
           return;
         }
         enteredFullScreen.current = true;
