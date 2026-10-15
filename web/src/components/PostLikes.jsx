@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { HeartIcon, postSource } from './PostCardChrome';
 import { originalSourceUrl, sendSourceInteraction, useSourceCapability, useSourceInteractionIdentity } from './ConnectedPostActions';
-import { publishPostEngagement } from '../api/postEngagement.mjs';
+import { POST_ENGAGEMENT_EVENT, publishPostEngagement } from '../api/postEngagement.mjs';
 
 export default function PostLikes({ post, onPostUpdated, menuItem = false, compact = false }) {
   const { profile } = useAuth();
@@ -31,6 +31,16 @@ export default function PostLikes({ post, onPostUpdated, menuItem = false, compa
   const action = external ? (capability?.likeLabel || 'Like') : 'Like';
   const actionLabel = liked ? (label === 'stars' ? 'Remove star' : post.source === 'reddit' ? 'Remove upvote' : 'Unlike') : action;
   const canLike = Boolean(profile?.id && (!external || (sourceUrl && capability?.connected && capability?.like)));
+  useEffect(() => {
+    const changed = ({ detail }) => {
+      if (!isCurrent() || detail?.action !== 'like' || detail.postId !== post.id || detail.source !== (post.source || 'uficonnect')) return;
+      const nextLiked = external ? detail.sourceLikedByMe : detail.likedByMe;
+      const nextCount = external ? detail.sourceLikesCount : detail.likesCount;
+      if (typeof nextLiked === 'boolean') setState({ identity, liked: nextLiked, count: nextCount });
+    };
+    window.addEventListener(POST_ENGAGEMENT_EVENT, changed);
+    return () => window.removeEventListener(POST_ENGAGEMENT_EVENT, changed);
+  }, [identity, isCurrent, post.id, post.source, external]);
 
   // A confirmed response bridges the parent update. Once acknowledged, fresh
   // feed metrics become authoritative again instead of being shadowed forever.

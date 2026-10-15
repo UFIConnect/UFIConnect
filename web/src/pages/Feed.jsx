@@ -20,7 +20,7 @@ import { ArrowLeft, ArrowRight, BookOpen, Martini, Plane, RotateCw, Utensils } f
 import { useAuth } from '../contexts/AuthContext';
 import Layout, { MessagesNavigation } from '../components/Layout';
 import client from '../api/client';
-import { POST_ENGAGEMENT_EVENT, publishPostEngagement } from '../api/postEngagement.mjs';
+import { POST_ENGAGEMENT_EVENT, publishPostEngagement, sourceComment } from '../api/postEngagement.mjs';
 import { createEngagementLedger } from '../api/engagementLedger.mjs';
 import { markApiOriginFailure, resolveApiBaseUrl } from '../api/apiOrigin';
 import { extractYouTubeId, loadYouTubeIframeApi, createYouTubePlayerFrame, youTubeEmbedUrl, InlineAutoplayVideo, rememberSoundPreference, useGlobalMuted, useSoloVideoPlayback, requestSoloVideoPlayback } from '../components/videoMedia';
@@ -1498,7 +1498,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
     else if (!background || !commentsRef.current?.length) setCommentsLoading(true);
     const isCurrent = () => commentsMountedRef.current && commentsViewRef.current.scope === commentsScope && commentsReadRef.current === request;
     request.promise = (async () => { try {
-      const currentCount = Array.isArray(commentsRef.current) ? commentsRef.current.length : 0;
+      const currentCount = Array.isArray(commentsRef.current) ? commentsRef.current.filter(comment => !comment.ufiConfirmed).length : 0;
       const limit = Math.min(50, Math.max(20, currentCount || 20));
       const { data } = await client.get(`/feed/${encodeURIComponent(post.id)}/comments`, {
         signal: request.controller.signal, params: { limit, ...(append ? { offset: currentCount } : {}) },
@@ -1533,6 +1533,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
     };
     const refreshConfirmed = ({ detail }) => {
       if (detail?.action !== 'comment' || detail.postId !== post.id || detail.source !== (post.source || 'uficonnect') || commentWriteRef.current) return;
+      if (detail.comment) setComments(previous => mergeCommentLists(previous || [], [sourceComment(detail.comment)]));
       commentsReadRef.current?.controller.abort(); commentsReadRef.current = null;
       fetchComments({ background: true });
     };
@@ -1617,7 +1618,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
       setCommentsError(false);
       const commentsCount = data.commentsCount ?? data.post?.commentsCount;
       onPostUpdated?.({ id: post.id, ...(commentsCount != null ? { commentsCount } : {}) });
-      publishPostEngagement(post, { action: 'comment', commentsCount, commentId: data.comment?.id });
+      publishPostEngagement(post, { action: 'comment', commentsCount, commentId: data.comment?.id, comment: data.comment });
     } catch {
       if (commentsMountedRef.current && commentsViewRef.current.scope === commentsScope && commentWriteRef.current === request) setCommentPostError(true);
     } finally {
@@ -3910,8 +3911,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             <Link to="/vault" className="home-feed-rail-tab">Your Vault</Link>
           </div>
           <div className="home-feed-rail-bottom">
-            <MessagesNavigation className="home-feed-rail-tab home-feed-rail-tab--icon" />
             <Link to="/groups" className="home-feed-rail-tab">Discover groups</Link>
+            <MessagesNavigation className="home-feed-rail-tab home-feed-rail-tab--icon" />
             <HomeFeedTools
               showSources
               sourceIds={viewMode === 'following' ? FOLLOWING_FILTER_SOURCES : ALL_FILTER_SOURCES}

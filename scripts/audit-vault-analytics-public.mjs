@@ -217,7 +217,7 @@ try {
         check(await table.getByRole('row').count() === 3, 'Daily chart table contains only the reported dates');
       }
       await selectedTab('Overview').waitFor();
-      check(await tabs.getByRole('tab').allTextContents().then(names => names.join('|') === 'Overview|Content|Audience|Connected sources|Earnings|Tools'), 'Analytics provides the six named sections in order');
+      check(await tabs.getByRole('tab').allTextContents().then(names => names.join('|') === 'Overview|Content|Playback|Audience|Connected sources|Earnings|Tools'), 'Analytics provides the seven named sections in order');
       check(await panel.count() === 1, 'Overview mounts only one panel');
       check(await panel.locator('.creator-analytics-metric').count() === 3, 'Overview shows the three first-party metric cards');
       for (const [label, value] of [['Your posts', '3'], ['Likes received', '5'], ['Comments received', '2']]) {
@@ -234,6 +234,16 @@ try {
       await selectedTab('Content').waitFor();
       check(await selectedTab('Content').evaluate(element => element === document.activeElement), 'ArrowRight focuses and activates the next tab');
       await checkDailyPosts();
+      await tabs.getByRole('tab', { name: 'Content', exact: true }).focus();
+      await page.keyboard.press('ArrowRight');
+      await selectedTab('Playback').waitFor();
+      check(await selectedTab('Playback').evaluate(element => element === document.activeElement), 'ArrowRight reaches the new Playback tab in order');
+      await panel.getByRole('heading', { name: 'Your playback', exact: true }).waitFor();
+      check(await panel.getByRole('heading', { name: 'No measured playback yet', exact: true }).isVisible(), 'Playback does not infer viewing history from creator reports');
+      const historyPreference = panel.getByRole('checkbox', { name: 'Save playback history on this device', exact: true });
+      await historyPreference.uncheck();
+      check(await historyPreference.isChecked() === false, 'Playback history can be paused independently of provider reports');
+      check((await panel.textContent()).includes('These measurements are not provider views or earnings'), 'Playback distinguishes observed time from provider metrics and money');
       await tabs.getByRole('tab', { name: 'Content', exact: true }).focus();
       await page.keyboard.press('End');
       await selectedTab('Tools').waitFor();
@@ -265,6 +275,10 @@ try {
       await selectTab('Earnings');
       check(await panel.getByText('Unavailable', { exact: true }).count() >= 2, 'Unreported revenue remains unavailable for each source');
       check(await panel.getByText('1,800,000', { exact: true }).count() === 0, 'Earnings does not present source views as revenue');
+      const ufiPayments = panel.getByRole('region', { name: 'Creator payments', exact: true });
+      check(await ufiPayments.locator('dd').allTextContents().then(values => values.join('|') === 'Not configured|Not configured|Unavailable'), 'Unfunded UFI payments never invent balances');
+      check(await ufiPayments.getByRole('button').count() === 0, 'No withdrawal is offered without a configured payout program');
+      check(await panel.getByText('Provider payout balance', { exact: true }).count() === 2, 'Provider payout balances remain separate from source revenue estimates');
       await selectTab('Tools');
       await page.locator('#copyright-source').selectOption('youtube');
       await page.getByLabel('Original post URL', { exact: true }).fill('https://www.youtube.com/watch?v=abcdefghijk');

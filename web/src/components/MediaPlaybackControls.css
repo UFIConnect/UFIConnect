@@ -5,3 +5,8 @@
 .media-playback-controls .media-playback-time { flex: 0 0 auto; color: #9eacbe; font-size: .72rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .media-playback-controls button:disabled, .media-playback-controls input:disabled { opacity: .45; cursor: default; }
 .media-playback-controls button:focus-visible, .media-playback-controls input:focus-visible { outline: 2px solid #a7c7ff; outline-offset: -2px; }
+.media-playback-controls { position: relative; }
+.media-fullscreen-error { position: absolute; bottom: 100%; right: 0; padding: 8px; background: #101722; color: #fff; font-size: .8rem; }
+[data-ufi-fullscreen="true"] { position: fixed !important; inset: 0 !important; z-index: 10000 !important; width: 100vw !important; max-width: none !important; height: 100dvh !important; max-height: none !important; margin: 0 !important; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left) !important; box-sizing: border-box; background: #080c12; overflow: auto; }
+[data-ufi-fullscreen="true"] video, [data-ufi-fullscreen="true"] iframe { max-height: calc(100dvh - 90px); object-fit: contain; }
+@media (max-width: 360px) { .media-playback-controls { gap: 1px; } .media-playback-controls input[type="range"] { min-width: 20px; margin-inline: 1px; } .media-playback-controls .media-playback-time { font-size: .65rem; } }

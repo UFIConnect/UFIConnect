@@ -108,7 +108,11 @@ try {
     assert.equal(publications[0].mediaType, 'image');
     assert.match(await listing.locator('.shop-post-price').innerText(), /EUR\s*125[.,]50/);
     await listing.getByText('Recently serviced bicycle. Collection near the city library.', { exact: true }).waitFor();
-    assert.equal(await listing.locator('img').last().getAttribute('src'), mediaUrl);
+    const listingPhoto = listing.locator('button > img');
+    assert.equal(await listingPhoto.count(), 1, 'The listing has one interactive item photo');
+    assert.equal(await listingPhoto.getAttribute('src'), mediaUrl);
+    await listingPhoto.evaluate(image => image.decode());
+    assert.ok(await listingPhoto.evaluate(image => image.naturalWidth > 0), 'The uploaded photo loads independently of source icons');
     const likeControl = listing.getByRole('button', { name: 'Like, 0 likes', exact: true });
     await likeControl.waitFor();
     assert.equal(await listing.locator('.post-chrome-like > .post-chrome-action').count(), 1, 'One Shop control combines like and count');

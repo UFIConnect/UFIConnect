@@ -88,6 +88,35 @@ try {
     const globalSearch = page.getByRole('search', { name: 'Search UFIconnect', exact: true });
     const headerInput = globalSearch.getByRole('searchbox', { name: 'Search UFIconnect', exact: true });
     const dialog = page.getByRole('dialog', { name: 'Search UFIconnect', exact: true });
+    // On pages without an in-place feed query, submitting the header opens
+    // broader search. The removed dropdown arrow is no longer an entry point.
+    const popupOpener = globalSearch.getByRole('button', { name: 'Search', exact: true });
+    const notificationsUrl = page.url();
+    await popupOpener.click();
+    await dialog.waitFor({ state: 'visible' });
+    assert.equal(await dialog.getAttribute('aria-modal'), 'true');
+    await dialog.getByRole('tab', { name: 'People', exact: true }).click();
+    await Promise.all([
+      page.waitForResponse(response => {
+        const url = new URL(response.url());
+        return url.pathname.endsWith('/users/search') && url.searchParams.get('q') === 'product designer';
+      }),
+      dialog.getByRole('searchbox', { name: 'Search people', exact: true }).fill('product designer'),
+    ]);
+    await dialog.getByText('Maya Chen', { exact: true }).waitFor();
+    assert.ok(searches.includes('product designer'));
+    assert.equal(page.url(), notificationsUrl, 'Broader search preserves its host page');
+    await dialog.getByRole('button', { name: 'Close search', exact: true }).click();
+    await dialog.waitFor({ state: 'detached' });
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Search');
+    assert.equal(await popupOpener.evaluate(element => document.activeElement === element), true, 'Closing search restores focus to its submit button');
+    await popupOpener.click();
+    await dialog.waitFor({ state: 'visible' });
+    await page.keyboard.press('Escape');
+    await dialog.waitFor({ state: 'detached' });
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Search');
+    assert.equal(await popupOpener.evaluate(element => document.activeElement === element), true, 'Escape closes broader search and restores focus');
+    assert.equal(page.url(), notificationsUrl);
     const sourceIds = params => (params.get('sources') || params.get('source') || '').split(',').filter(Boolean).sort();
     const feedResponse = (mode, query, expectedSources = ['github', 'reddit'], topics = 'Open Source') => page.waitForResponse(response => {
       const url = new URL(response.url());
@@ -124,24 +153,58 @@ try {
         assert.equal(await searchNavigation.getAttribute('href'), '/search', 'Broader search opens the dedicated Search page');
         assert.equal(await headerInput.inputValue(), 'software engineer', 'The feed retains its own query');
       }
+      assert.equal(await globalSearch.getByRole('button', { name: 'Open search', exact: true }).count(), 0, 'Feed search has no duplicate dropdown entry');
+      await headerInput.fill('systems engineer');
+      const [updatedFeed] = await Promise.all([feedResponse(mode, 'systems engineer'), headerInput.press('Enter')]);
+      assert.ok(updatedFeed.ok(), 'A replacement header query keeps existing sources and topics');
+      assert.equal(await headerInput.inputValue(), 'systems engineer');
+      assert.equal(page.url(), feedUrl);
       const [clearedFeed] = await Promise.all([feedResponse(mode, ''), globalSearch.getByRole('button', { name: 'Clear feed search', exact: true }).click()]);
       assert.ok(clearedFeed.ok(), 'Clearing feed search removes only the query');
       assert.equal(await headerInput.inputValue(), '');
       assert.equal(page.url(), feedUrl);
     }
-    const messages = page.locator(width <= 768 ? '#mobile-feed-drawer' : '.home-feed-rail-bottom').getByRole('button', { name: 'Messages', exact: true, includeHidden: true });
-    const feedMenu = page.locator('button[aria-controls="mobile-feed-drawer"]');
-    async function showMessagesButton() {
-      if (width <= 768) {
-        if (await page.locator('#mobile-feed-drawer').getAttribute('aria-hidden') !== 'false') await feedMenu.click();
+    const feedReturnUrl = page.url();
+    if (width <= 768) await page.getByRole('button', { name: 'Open account menu', exact: true }).click();
+    const accountNavigation = page.locator(width <= 768 ? '#mobile-account-drawer' : '.sidebar');
+    const searchLink = accountNavigation.getByRole('link', { name: 'Search', exact: true });
+    assert.equal(await searchLink.evaluate(element => element.nextElementSibling?.textContent.trim()), 'People', 'Search sits directly above People');
+    await searchLink.click();
+    await page.waitForURL(url => url.pathname === '/search');
+    await page.getByRole('tab', { name: 'People', exact: true }).click();
+    await headerInput.fill('product designer');
+    await headerInput.press('Enter');
+    await page.locator('.search-page-shell').getByText('Maya Chen', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('searchbox').count(), 1, 'Search results use only the header search field');
+    assert.equal(await dialog.count(), 0, 'The dedicated Search page does not duplicate the search dialog');
+    await page.screenshot({ path: path.join(root, `.cache/audit-ui/search-${width}.png`) });
+    await auditNavigate(page, feedReturnUrl);
+    await page.locator('.home-feed-layout').waitFor();
+    const mobileMessages = width <= 768;
+    const menuOpener = page.getByRole('button', { name: 'Open menu', exact: true });
+    const messagesNavigation = page.locator(mobileMessages ? '#mobile-feed-drawer' : '.home-feed-rail-bottom');
+    // The mobile opener remains mounted in its aria-hidden drawer while the
+    // inbox is open, so keep it addressable for expanded-state assertions.
+    const messages = messagesNavigation.getByRole('button', { name: 'Messages', exact: true, includeHidden: true });
+    const showMessagesNavigation = async () => {
+      if (mobileMessages && await messagesNavigation.getAttribute('aria-hidden') !== 'false') {
+        await menuOpener.click();
         await page.waitForFunction(() => document.querySelector('#mobile-feed-drawer')?.getAttribute('aria-hidden') === 'false');
+        await page.waitForFunction(() => {
+          const bounds = document.querySelector('#mobile-feed-drawer')?.getBoundingClientRect();
+          return bounds && bounds.left >= -1 && bounds.right <= window.innerWidth + 1;
+        });
       }
-      await messages.scrollIntoViewIfNeeded();
-    }
-    async function openMessages() { await showMessagesButton(); await messages.click(); }
-    await showMessagesButton();
-    assert.ok(await messages.evaluate(element => element.nextElementSibling?.textContent.includes('Discover groups')),
-      'Messages appears immediately above Discover groups');
+    };
+    const openMessages = async () => { await showMessagesNavigation(); await messages.scrollIntoViewIfNeeded(); await messages.click(); };
+    const focusAfterMessages = mobileMessages ? menuOpener : messages;
+    await showMessagesNavigation();
+    await messages.waitFor({ state: 'visible' });
+    const messageBounds = await messages.boundingBox();
+    assert.ok(messageBounds && messageBounds.width > 0 && messageBounds.height > 0 && messageBounds.x >= 0
+      && messageBounds.x + messageBounds.width <= width + 1, 'Messages fits inside the visible navigation rail');
+    assert.equal(await messages.evaluate(element => element.previousElementSibling?.textContent.trim()), 'Discover groups', 'Messages sits directly below Discover groups');
+    assert.equal(await page.locator('.global-search-center').getByRole('button', { name: 'Messages', exact: true }).count(), 0, 'Messages is not duplicated in the search row');
     assert.equal(await messages.getByLabel('3 unread messages').count(), 1);
     const originalUrl = page.url();
     const messagePopup = page.getByRole('dialog', { name: 'Messages', exact: true });
@@ -181,12 +244,16 @@ try {
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/messages-popup-${width}.png`) });
     await messagePopup.getByRole('button', { name: 'Close messages', exact: true }).click();
     await messagePopup.waitFor({ state: 'detached' });
-    assert.equal(await (width <= 768 ? feedMenu : messages).evaluate(element => document.activeElement === element), true, 'Closing Messages returns focus to the visible opener');
+    await page.waitForFunction(mobile => document.activeElement?.matches(mobile
+      ? 'button[aria-controls="mobile-feed-drawer"]' : '.home-feed-rail-bottom .messages-navigation'), mobileMessages);
+    assert.equal(await focusAfterMessages.evaluate(element => document.activeElement === element), true, 'Closing Messages returns focus to its visible navigation opener');
     await openMessages();
     await messagePopup.waitFor({ state: 'visible' });
     await page.keyboard.press('Escape');
     await messagePopup.waitFor({ state: 'detached' });
-    assert.equal(await (width <= 768 ? feedMenu : messages).evaluate(element => document.activeElement === element), true, 'Escape returns focus to the visible Messages opener');
+    await page.waitForFunction(mobile => document.activeElement?.matches(mobile
+      ? 'button[aria-controls="mobile-feed-drawer"]' : '.home-feed-rail-bottom .messages-navigation'), mobileMessages);
+    assert.equal(await focusAfterMessages.evaluate(element => document.activeElement === element), true, 'Escape returns focus to the visible Messages navigation opener');
     await openMessages();
     await messagePopup.waitFor({ state: 'visible' });
     await page.locator('.messages-popup-backdrop').click({ position: { x: 1, y: 1 } });
@@ -201,7 +268,7 @@ try {
     await messagePopup.getByRole('link', { name: 'Open inbox', exact: true }).click();
     await page.waitForURL(url => url.pathname === '/messages');
     await page.getByRole('heading', { name: 'Messages', exact: true }).waitFor();
-    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 2));
     assert.deepEqual(errors, []);
     console.log(`PASS: in-place Home/Following search, search and Messages popup keyboard/dismissal, native/connected inbox and notification actions at ${width}px`);
     await context.close();

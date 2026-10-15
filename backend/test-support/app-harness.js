@@ -14,6 +14,11 @@ async function createAppHarness({ env = {}, connected = false, query, withClient
   // Cold SDK loading can exceed the route VM's execution limit on Windows.
   // Load the storage module before entering the timed application context.
   localRequire('./generated-media');
+  // PDF, push and upload SDK imports also take several seconds on cold disks.
+  // Keep their loading outside the 10s route deadline; explicit mocks still win.
+  for (const dependency of ['pdfkit', 'web-push', 'multer']) {
+    if (!Object.prototype.hasOwnProperty.call(modules, dependency)) localRequire(dependency);
+  }
   const queries = [];
   const errors = [];
   const db = {

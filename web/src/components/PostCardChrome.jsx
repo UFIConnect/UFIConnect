@@ -293,9 +293,9 @@ export function PostOptionsMenu({ post, items = [], sourceItems, onOpenComments,
     post?.id && !ownPost && !items.some(item => item?.label === 'Report post') && { label: 'Report post', onSelect: () => setReportOpen(true) },
   ].filter(item => item && item.key !== 'original' && item.label !== 'Open post')
     .flatMap(item => item.href ? safePostLink(item.href) ? [{ ...item, href: safePostLink(item.href) }] : [] : [item]);
-  const pageCount = Math.max(1, Math.ceil(visible.length / 6));
+  const pageCount = Math.max(1, Math.ceil(visible.length / 4));
   const activePage = Math.min(optionsPage, pageCount - 1);
-  const pageItems = visible.slice(activePage * 6, (activePage + 1) * 6);
+  const pageItems = visible.slice(activePage * 4, (activePage + 1) * 4);
   useLayoutEffect(() => {
     if (!open) { setPosition(null); return undefined; }
     function updatePosition() {
@@ -358,7 +358,7 @@ export function PostOptionsMenu({ post, items = [], sourceItems, onOpenComments,
             <button type="button" role="menuitem" aria-label="Next options" disabled={activePage + 1 === pageCount}
               onClick={() => { initialFocus.current = 'first'; setOptionsPage(activePage + 1); }}>Next</button>
           </div>}
-        </div>, document.body
+        </div>, document.fullscreenElement || document.body
       )}
       {reportOpen && <ReportModal targetType="post" targetId={String(post.id)} targetLabel="post" source={post.source}
         sourceUrl={original || undefined} signInRequired={!token} onClose={() => { setReportOpen(false); button.current?.focus({ preventScroll: true }); }} />}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Share2, X } from 'lucide-react';
 import client from '../api/client';
+import { POST_ENGAGEMENT_EVENT, publishPostEngagement } from '../api/postEngagement.mjs';
 import { useToast } from '../contexts/ToastContext';
 import { HeartIcon } from './PostCardChrome';
 import ConnectedPostActions from './ConnectedPostActions';
@@ -54,12 +55,15 @@ export function useNativeSnapEngagement({ snap, profile }) {
     if (!isCurrent() || !native || !profile?.id || !own || own.loading || own.error || inFlight.current?.identity === identity) return;
     const request = { identity }, desired = !own.likedByMe;
     inFlight.current = request;
-    setState({ ...own, busy: true, actionError: '' });
+    setState({ ...own, likedByMe: desired, likesCount: Math.max(0, own.likesCount + (desired ? 1 : -1)), busy: true, actionError: '' });
     try {
       const { data } = await client.post(`/snaps/${encodeURIComponent(snap.id)}/like`, { liked: desired });
       const result = confirmedEngagement(data);
       if (result.likedByMe !== desired) throw new Error('Like was not confirmed.');
-      if (isCurrent()) setState({ identity, ...result });
+      if (isCurrent()) {
+        setState({ identity, ...result });
+        publishPostEngagement(snap, { action: 'like', ...result });
+      }
     } catch (error) {
       if (isCurrent()) setState({ ...own, busy: false, actionError: error.response?.data?.message || 'The like was not confirmed. Please try again.' });
     } finally { if (inFlight.current === request) inFlight.current = null; }
@@ -124,7 +128,7 @@ export function SnapComments({ snap, profile, active, id, onClose, onCountChange
       if (!Array.isArray(data?.comments)) throw new Error('No confirmed comments response.');
       if (!isCurrent() || reading.current !== request || !activeRef.current) return;
       setState(previous => ({ identity, comments: mergeComments(offset ? previous?.comments || [] : [], data.comments),
-        offset: offset + data.comments.length, hasMore: data.hasMore === true, live: data.live === true || native, loading: false }));
+        offset: offset + (data.commentsReceived ?? data.comments.length), hasMore: data.hasMore === true, live: data.live === true || native, loading: false }));
       if (native) onCount.current?.(data.commentsCount);
     } catch (error) {
       if (isCurrent() && reading.current === request && activeRef.current) setState(previous => ({ ...previous,
@@ -136,6 +140,16 @@ export function SnapComments({ snap, profile, active, id, onClose, onCountChange
     if (active) { read(); section.current?.focus({ preventScroll: true }); }
     return () => { reading.current = null; };
   }, [active, read]);
+  useEffect(() => {
+    const changed = ({ detail }) => {
+      if (!activeRef.current || !isCurrent() || detail?.action !== 'comment' || detail.postId !== snap.id || detail.source !== (snap.source || 'uficonnect')) return;
+      if (detail.comment) setState(previous => ({ ...previous, identity, comments: mergeComments(previous?.identity === identity ? previous.comments || [] : [], [detail.comment]) }));
+      if (Number.isFinite(detail.commentsCount)) onCount.current?.(detail.commentsCount);
+      void read();
+    };
+    window.addEventListener(POST_ENGAGEMENT_EVENT, changed);
+    return () => window.removeEventListener(POST_ENGAGEMENT_EVENT, changed);
+  }, [identity, isCurrent, snap.id, snap.source, read]);
   async function publish(event) {
     event.preventDefault();
     const content = draft.text.trim();
@@ -150,9 +164,9 @@ export function SnapComments({ snap, profile, active, id, onClose, onCountChange
       if (!isCurrent()) return;
       setDraftState({ identity, text: '', notice: 'Comment published on UFIConnect.' });
       onCount.current?.(data.commentsCount);
-      // Refresh the authorized page after the write; do not append potentially
-      // hidden or expired content from an old response to the visible list.
-      if (activeRef.current) read();
+      setState(previous => ({ ...previous, identity, comments: mergeComments(previous?.identity === identity ? previous.comments || [] : [], [data.comment]) }));
+      publishPostEngagement(snap, { action: 'comment', comment: data.comment, commentsCount: data.commentsCount });
+      // The engagement event refreshes the authorized page for this identity.
     } catch (error) {
       if (isCurrent()) setDraftState({ identity, text: draft.text, lastRequest: error.response?.status === 409 ? null : request,
         error: error.response?.data?.message || 'The comment was not confirmed. Retry to check the same request.' });

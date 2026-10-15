@@ -1,0 +1,7 @@
+.paged-list { min-width: 0; width: 100%; }
+.paged-list-items > [hidden] { display: none !important; }
+.paged-list-navigation { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-block: 8px; }
+.paged-list-navigation button { min-height: 44px; padding: 6px 12px; border: 1px solid var(--border, #394353); border-radius: 6px; color: inherit; background: transparent; font: inherit; cursor: pointer; }
+.paged-list-navigation button:disabled { opacity: .45; cursor: default; }
+.paged-list-navigation button:focus-visible { outline: 2px solid var(--primary, #a7c7ff); outline-offset: 2px; }
+.paged-list-navigation span { font-size: .8rem; white-space: nowrap; }

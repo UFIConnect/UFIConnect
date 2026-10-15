@@ -16,7 +16,7 @@ import useMediaWatchSession from '../hooks/useMediaWatchSession';
 import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { reportConsumed, reportEngaged, reportEngagementSignal } from '../api/engagement';
 import { reportNegativeSignal } from '../api/errorReporting';
-import { POST_ENGAGEMENT_EVENT } from '../api/postEngagement.mjs';
+import { POST_ENGAGEMENT_EVENT, sourceComment } from '../api/postEngagement.mjs';
 import { ALL_INTERESTS } from '../pages/Onboarding';
 import ConnectedPostActions from './ConnectedPostActions';
 import { SavePostButton } from './SaveButtons';
@@ -668,9 +668,6 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
   if (playbackSourcePost !== post) sourceItems.unshift({ key: 'player-source',
     label: `Watch on ${isYoutube ? 'YouTube' : 'Vimeo'}`, href: playbackSourcePost.sourceUrl });
   const options = [
-    (fullScreen || (document.fullscreenEnabled && document.documentElement.requestFullscreen)
-      || (isNative && typeof HTMLVideoElement.prototype.webkitEnterFullscreen === 'function'))
-      && { label: fullScreen ? 'Exit full screen' : 'Full screen', onSelect: () => onFullScreen(getNativeEl()) },
     isYoutube && { label: 'YouTube settings', detail: 'Available playback and caption options', onSelect: () => setSettingsOpen(true) },
     src?.kind === 'vimeo' && { label: 'Vimeo settings', detail: 'Available speed, captions and quality', onSelect: () => setSettingsOpen(true) },
     isNative && { label: nativeSettingsTitle, detail: 'Playback speed and available captions', onSelect: () => setSettingsOpen(true) },
@@ -708,6 +705,7 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
         <MediaPlaybackControls mediaKey={`${post.id}:${src?.id || src?.src || ''}`} paused={isYoutube ? sharedYt?.paused !== false : paused}
           muted={isYoutube ? sharedYt?.muted !== false : playerMuted}
           currentTime={effectiveCurrentTime} duration={effectiveDuration}
+          fullScreen={fullScreen} onFullScreen={() => onFullScreen(getNativeEl())}
           onTogglePlay={togglePlay} onToggleMute={toggleSound} onSeek={seekTo}
           disabled={!active || !src || (isYoutube ? !sharedYt?.ready || sharedYt?.failed : src.kind === 'vimeo' && !vimeoReady)} />
       </div>
@@ -726,7 +724,7 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
             <Info size={18} aria-hidden="true" />
           </button>}
           <PostOptionsMenu post={post} items={options} sourceItems={sourceItems} onOpenComments={() => onOpenComments?.(post)} onPostUpdated={onPostUpdated} onRemoved={onRemoved} />
-          <OpenOnSource post={playbackSourcePost} label={validSourceActions ? undefined : 'Open original post'} />
+          <OpenOnSource post={post} label={validSourceActions ? undefined : 'Open original post'} />
         </div>
         <div id={captionId} className="video-feed-caption video-caption-scroll" data-video-caption data-expanded={showCaption} hidden={!showCaption}>
           <div className="video-feed-caption-expanded">
@@ -849,7 +847,7 @@ function CommentsSheet({ post, onClose, onPostUpdated }) {
     else if (!background || !commentsRef.current?.length) setLoading(true);
     const isCurrent = () => scopeRef.current === scope && requestId === commentsRequestRef.current && inFlightRef.current === request;
     request.promise = (async () => { try {
-      const currentCount = Array.isArray(commentsRef.current) ? commentsRef.current.length : 0;
+      const currentCount = Array.isArray(commentsRef.current) ? commentsRef.current.filter(comment => !comment.ufiConfirmed).length : 0;
       const limit = Math.min(50, Math.max(20, currentCount || 20));
       const { data } = await client.get(`/feed/${encodeURIComponent(post.id)}/comments`, {
         signal: request.controller.signal, params: { limit, ...(append ? { offset: currentCount } : {}) },
@@ -887,6 +885,7 @@ function CommentsSheet({ post, onClose, onPostUpdated }) {
       for (const field of ['likesCount', 'sourceLikesCount', 'likedByMe', 'sourceLikedByMe', 'commentsCount']) if (detail[field] !== undefined) patch[field] = detail[field];
       updatePostRef.current?.(patch);
       if (detail.action === 'comment') {
+        if (detail.comment) setComments(previous => mergeVideoCommentLists(previous || [], [sourceComment(detail.comment)]));
         commentsRequestRef.current += 1;
         inFlightRef.current?.controller.abort(); inFlightRef.current = null;
         fetchCommentsPage({ background: true });
@@ -1008,7 +1007,14 @@ export default function VideoFeedView({ onExit, music = false }) {
   const { showToast } = useToast();
   const [fullScreen, setFullScreen] = useState(Boolean(document.fullscreenElement));
   const enteredFullScreen = useRef(false);
+  const viewRef = useRef(null);
   const fullScreenView = useRef({ mounted: true, generation: 0 });
+  useEffect(() => {
+    if (!fullScreen) return undefined;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = previous; };
+  }, [fullScreen]);
   useEffect(() => {
     fullScreenView.current.mounted = true;
     const update = () => { setFullScreen(Boolean(document.fullscreenElement)); if (!document.fullscreenElement) enteredFullScreen.current = false; };
@@ -1024,16 +1030,17 @@ export default function VideoFeedView({ onExit, music = false }) {
     const generation = fullScreenView.current.generation;
     try {
       if (document.fullscreenElement) await document.exitFullscreen();
-      else if (document.documentElement.requestFullscreen) {
-        await document.documentElement.requestFullscreen();
+      else if (fullScreen) setFullScreen(false);
+      else if (document.fullscreenEnabled && viewRef.current?.requestFullscreen) {
+        await viewRef.current?.requestFullscreen();
         if (!fullScreenView.current.mounted || generation !== fullScreenView.current.generation) {
-          if (document.fullscreenElement === document.documentElement) await document.exitFullscreen();
+          if (document.fullscreenElement === viewRef.current) await document.exitFullscreen();
           return;
         }
         enteredFullScreen.current = true;
       }
       else if (nativeVideo?.webkitEnterFullscreen) nativeVideo.webkitEnterFullscreen();
-      else showToast('Full screen is not available on this device.', 'info');
+      else setFullScreen(true);
     } catch { if (fullScreenView.current.mounted) showToast('Full screen could not open. You can keep watching here.', 'error'); }
   };
   const exitFeed = useCallback(() => {
@@ -2383,40 +2390,20 @@ export default function VideoFeedView({ onExit, music = false }) {
     window.open(`https://www.youtube.com/watch?v=${videoId}`, '_blank', 'noopener,noreferrer');
   };
 
-  // Safety net for the page background showing through as a light strip
-  // anywhere this full-bleed view doesn't perfectly cover the real
-  // viewport (confirmed live as a persistent white/grey gap on some mobile
-  // browsers even after fixing the slide-height mismatch that was one
-  // known cause of it — belt and suspenders against any other, harder-to-
-  // pin-down geometric cause behind the same symptom). The root view here
-  // already paints black itself; this only guards the page *underneath*
-  // it, restored to whatever it was on unmount.
-  useEffect(() => {
-    const html = document.documentElement;
-    const body = document.body;
-    const prevHtmlBg = html.style.background;
-    const prevBodyBg = body.style.background;
-    html.style.background = '#000';
-    body.style.background = '#000';
-    return () => {
-      html.style.background = prevHtmlBg;
-      body.style.background = prevBodyBg;
-    };
-  }, []);
-
   useEffect(() => {
     const handleKey = event => {
       if (event.key !== 'Escape' || event.defaultPrevented) return;
       if (document.fullscreenElement) return;
+      if (fullScreen) { setFullScreen(false); return; }
       if (document.querySelector('[role="menu"], [role="dialog"], dialog[open], .video-comments-sheet')) return;
       exitFeed();
     };
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
-  }, [exitFeed]);
+  }, [exitFeed, fullScreen]);
 
   return (
-    <div className="video-feed-view">
+    <div ref={viewRef} className={`video-feed-view${fullScreen ? ' video-feed-view--expanded' : ''}`}>
       <div className="video-feed-frame" data-orientation={activeIsWideVideo ? 'landscape' : 'portrait'}>
       <header className="video-feed-top-controls" aria-label={music ? 'Music feed' : 'Video feed'}>
         <button type="button" className="video-feed-header-button" onPointerDown={event => event.stopPropagation()} onClick={exitFeed} aria-label="Back to Home" title="Back to Home">

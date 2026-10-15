@@ -129,7 +129,18 @@ try {
       await page.getByRole('button', { name: 'Close alerts', exact: true }).click();
     }
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/connected-notifications-${width}.png`) });
-    await page.locator('.global-messages-link').click();
+    await page.getByRole('link', { name: 'Home', exact: true }).click();
+    await page.locator('.home-feed-layout').waitFor();
+    if (width <= 768) {
+      await page.getByRole('button', { name: 'Open menu', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('#mobile-feed-drawer')?.getAttribute('aria-hidden') === 'false');
+    }
+    const messages = page.locator(width <= 768 ? '#mobile-feed-drawer' : '.home-feed-rail-bottom')
+      .getByRole('button', { name: 'Messages', exact: true });
+    await messages.scrollIntoViewIfNeeded();
+    assert.equal(await messages.evaluate(element => element.previousElementSibling?.textContent.trim()), 'Discover groups',
+      'Messages remains directly below Discover groups');
+    await messages.click();
     await page.getByRole('dialog', { name: 'Messages', exact: true }).getByRole('link', { name: 'Open inbox', exact: true }).click();
     await page.getByLabel('Message source', { exact: true }).waitFor();
     await page.getByLabel('Message source', { exact: true }).selectOption('reddit');
