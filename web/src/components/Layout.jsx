@@ -461,7 +461,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
   return (
     <MessagesNavigationContext.Provider value={profile ? { count: messageBadge, active: mobileHeaderPopup === 'messages' || location.pathname.startsWith('/messages'),
       open: mobileHeaderPopup === 'messages', onToggle: event => { messagesOpenerRef.current = event.currentTarget; toggleMobileHeaderPopup('messages'); } } : null}>
-    <div className={`shell${wide ? ' shell-wide' : ''}`}>
+    <div className={`shell${wide ? ' shell-wide' : ''}${['/videos', '/music'].includes(location.pathname) ? ' shell-media-scroll' : ''}`}>
       {/* ── Desktop sidebar ── */}
       <aside className="sidebar">
         <Link to={HOME_FEED_PATH} className="sidebar-logo" onClick={handleAllFeedHomeClick} style={{ textDecoration: 'none', color: 'inherit' }}>

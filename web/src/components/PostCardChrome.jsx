@@ -384,8 +384,7 @@ export function SharePostButton({ post }) {
   return <button type="button" className="post-chrome-action" aria-label="Share post" title="Share post" onClick={share}><ShareIcon /></button>;
 }
 
-// Compact source link placed after More options in the action row: the source's own mark and
-// an arrow, named for screen readers ("Open on Reddit", "Apply on Indeed").
+// The source mark is the link after More options, with a descriptive accessible name.
 export function OpenOnSource({ post, label, onClick }) {
   const src = postSource(post);
   const native = isMemberPost(post);
@@ -404,10 +403,7 @@ export function OpenOnSource({ post, label, onClick }) {
   }
   const props = { className: 'post-chrome-action post-chrome-source-link', onClick: openSource,
     style: { '--source-color': src.color }, 'aria-label': name, title: name };
-  const content = <>
-      <span className="post-chrome-open-mark" aria-hidden="true">{CategoryIcon ? <CategoryIcon size={16} /> : hasBrandIcon(post.source || 'uficonnect') ? <BrandIcon platform={post.source || 'uficonnect'} size={16} /> : <b>{src.icon}</b>}</span>
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></svg>
-    </>;
+  const content = <span className="post-chrome-open-mark" aria-hidden="true">{CategoryIcon ? <CategoryIcon size={16} /> : hasBrandIcon(post.source || 'uficonnect') ? <BrandIcon platform={post.source || 'uficonnect'} size={16} /> : <b>{src.icon}</b>}</span>;
   return internal ? <Link to={`/p/${encodeURIComponent(post.id)}`} {...props}>{content}</Link>
     : <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{content}</a>;
 }

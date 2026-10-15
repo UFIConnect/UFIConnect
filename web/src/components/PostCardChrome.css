@@ -61,7 +61,7 @@
 .post-chrome-actions > .post-chrome-more { margin-left: auto; flex-shrink: 0; }
 .post-chrome-actions > .post-chrome-source-link { margin-left: 0; flex-shrink: 0; }
 .post-chrome-actions > .post-chrome-source-link:only-child { margin-left: auto; }
-.post-chrome-source-link { gap: 4px; color: var(--source-color); background: color-mix(in srgb, var(--source-color) 10%, var(--card, #fff)); text-decoration: none; }
+.post-chrome-source-link { position: relative; width: 44px; min-width: 44px; min-height: 44px; padding: 0; box-sizing: border-box; color: var(--source-color); background: color-mix(in srgb, var(--source-color) 10%, var(--card, #fff)); text-decoration: none; }
 .post-chrome-open-mark { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; background: var(--card, #fff); flex-shrink: 0; }
 .post-chrome-open-mark b { font-size: .58rem; color: var(--source-color); }
 .post-chrome-action:focus-visible, .post-chrome-time:focus-visible { outline: 3px solid #2563eb; outline-offset: 2px; }
@@ -71,10 +71,5 @@
   /* One row on phones: tighter buttons, and the source link keeps just its mark. */
   .post-chrome-actions { gap: 4px; }
   .post-chrome-action { padding: 0 9px; min-width: 38px; }
-  .post-chrome-source-link > svg { display: block; }
-  .post-chrome-source-link .post-chrome-open-mark { display: none; }
-  /* Reserve the following source mark on More so flex wrapping keeps the pair
-     together, with the existing button sizes and full engagement labels. */
-  .post-chrome-actions:not(.video-feed-post-actions):not(.snap-viewer-post-actions) > .post-chrome-more:has(+ .post-chrome-source-link) { padding-right: 44px; }
-  .post-chrome-actions:not(.video-feed-post-actions):not(.snap-viewer-post-actions) > .post-chrome-more + .post-chrome-source-link { width: 40px; min-width: 40px; box-sizing: border-box; margin-left: -44px; }
+  .post-chrome-actions > .post-chrome-source-link { min-width: 44px; padding: 0; }
 }

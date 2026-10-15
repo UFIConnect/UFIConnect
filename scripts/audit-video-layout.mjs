@@ -527,6 +527,7 @@ try {
       }));
       await visit(surface, nextPosts);
       const scroll = page.locator('[data-video-feed-scroll]');
+      assert.equal(await scroll.evaluate(element => getComputedStyle(element).scrollSnapType), 'none', 'Videos and Music allow free vertical scrolling');
       const sharedFrame = page.locator('.video-feed-youtube-player iframe');
       await sharedFrame.waitFor({ state: 'visible' });
       assert.equal(await sharedFrame.evaluate(element => Boolean(element.closest('[data-video-feed-scroll]'))), true,
@@ -552,7 +553,7 @@ try {
       }
       await page.waitForFunction(() => {
         const scroll = document.querySelector('[data-video-feed-scroll]');
-        return scroll && scroll.scrollTop >= scroll.clientHeight * .9;
+        return scroll && scroll.scrollTop > 20;
       });
       await page.waitForFunction(() => document.querySelector('.video-feed-youtube-player')?.getAttribute('aria-hidden') === 'false');
       assert.equal(await sharedFrame.getAttribute('data-stable-player'), 'true', 'Scrolling reuses the original provider iframe');

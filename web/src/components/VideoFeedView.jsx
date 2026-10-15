@@ -136,7 +136,7 @@ const VIDEO_COMMENTS_PASSIVE_REFRESH_MS = 30 * 1000;
 // How many slides on either side of the active one actually mount a real
 // VideoSlide (video/iframe element, engagement tracking, comments wiring,
 // etc.) — every other loaded post still gets a same-height placeholder div
-// so scroll-snap geometry and the IntersectionObserver below stay correct,
+// so scrolling geometry and active-slide tracking stay correct,
 // it just doesn't cost anything until scrolled near. Without this, a long
 // scroll session (pagination keeps appending to videoPosts, uncapped) meant
 // every single video ever scrolled past stayed fully mounted — a real
@@ -1718,9 +1718,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   // drag starts on a real control (button/link) or the expanded caption
   // text (its own overflowY:auto needs to own drags that start on it — see
   // the caption's pointerEvents/className below) so those keep working
-  // normally. scroll-snap (already on the container) takes over on release
-  // exactly like it does after a wheel scroll, settling on the nearest
-  // slide without any extra code here.
+  // normally. Releasing a drag keeps its ordinary scroll position.
   //
   // The shared YouTube frame lives inside this scrolling region. Its own
   // controls handle their input; the browser chains wheel/touch scrolling
@@ -1763,21 +1761,15 @@ export default function VideoFeedView({ onExit, music = false }) {
     };
   }, [videoPosts.length]);
 
-  // Horizontal swipes browse the same queue as vertical scrolling. Native
-  // controls and cross-origin players keep their own gestures; no overlay
-  // intercepts them. The delayed vertical fallback only handles a clear
-  // swipe that did not move the nested snap container on its own.
+  // Horizontal swipes browse the queue. Vertical gestures use ordinary
+  // scrolling without a forced jump when the gesture ends.
   const activeSwipePostId = videoPosts[activeIndex]?.id;
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     let gesture = null;
-    let fallbackTimer = null;
-    let pendingSwipe = null;
     const cancelTouch = () => {
       gesture = null;
-      pendingSwipe = null;
-      clearTimeout(fallbackTimer);
     };
     const handleTouchStart = event => {
       cancelTouch();
@@ -1796,16 +1788,13 @@ export default function VideoFeedView({ onExit, music = false }) {
         startedAt: performance.now(),
         scrollTop: container.scrollTop,
         scrollMoved: false,
-        nestedScroller: event.target instanceof Element
-          ? event.target.closest('.video-caption-scroll')
-          : null,
       };
     };
     const handleTouchMove = event => {
       if (event.touches.length !== 1) cancelTouch();
     };
     const handleGestureScroll = () => {
-      const start = gesture || pendingSwipe;
+      const start = gesture;
       if (start && Math.abs(container.scrollTop - start.scrollTop) > 16) start.scrollMoved = true;
     };
     const handleTouchEnd = event => {
@@ -1818,23 +1807,13 @@ export default function VideoFeedView({ onExit, music = false }) {
       const deltaX = start.x - event.changedTouches[0].clientX;
       const deltaY = start.y - event.changedTouches[0].clientY;
       const horizontal = Math.abs(deltaX) >= 56 && Math.abs(deltaX) >= Math.abs(deltaY) * 1.4;
-      const vertical = Math.abs(deltaY) >= 56 && Math.abs(deltaY) >= Math.abs(deltaX) * 1.4;
-      if (!horizontal && !vertical) return;
-      if (vertical && start.nestedScroller) {
-        const maxScroll = start.nestedScroller.scrollHeight - start.nestedScroller.clientHeight;
-        const canContinueInside = deltaY > 0
-          ? start.nestedScroller.scrollTop < maxScroll - 1
-          : start.nestedScroller.scrollTop > 1;
-        if (canContinueInside) return;
-      }
-      clearTimeout(fallbackTimer);
+      if (!horizontal) return;
       const advance = () => {
-        pendingSwipe = null;
         if (start.scrollMoved || Math.abs(container.scrollTop - start.scrollTop) > 16
           || performance.now() - lastSwipeAtRef.current < 500) return;
         const height = container.clientHeight || 1;
         const startIndex = Math.round(start.scrollTop / height);
-        const direction = (horizontal ? deltaX : deltaY) > 0 ? 1 : -1;
+        const direction = deltaX > 0 ? 1 : -1;
         const targetIndex = Math.min(
           Math.max(startIndex + direction, 0),
           Math.max(videoPosts.length - 1, 0),
@@ -1846,11 +1825,7 @@ export default function VideoFeedView({ onExit, music = false }) {
           behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
         });
       };
-      if (horizontal) advance();
-      else {
-        pendingSwipe = start;
-        fallbackTimer = setTimeout(advance, 120);
-      }
+      advance();
     };
     container.addEventListener('touchstart', handleTouchStart, { passive: true });
     container.addEventListener('touchmove', handleTouchMove, { passive: true });
