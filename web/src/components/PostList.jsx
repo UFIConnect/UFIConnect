@@ -155,7 +155,7 @@ export default function PostList({
     setCommentsErrors(prev => ({ ...prev, [id]: false }));
     try {
       const { data } = await client.get(`/posts/${encodeURIComponent(id)}/comments`, {
-        params: { limit: append ? 50 : Math.min(100, Math.max(50, current.length)), ...(append ? { offset: current.length } : {}) },
+        params: { limit: append ? 50 : Math.min(100, Math.max(50, current.length)), ...(append ? { offset: current.filter(comment => !comment.ufiConfirmed).length } : {}) },
       });
       if (!isCurrent()) return;
       setCommentsByPost(prev => ({ ...prev, [id]: append ? mergeComments(prev[id] || [], data.comments || []) : mergeComments(data.comments || []) }));
@@ -187,7 +187,10 @@ export default function PostList({
       if (detail?.action !== 'comment') return;
       const post = viewRef.current.localPosts.find(item => item.id === detail.postId
         && (item.source || 'uficonnect') === detail.source);
-      if (post && viewRef.current.openComments[post.id]) fetchPostComments(post);
+      if (post && viewRef.current.openComments[post.id]) {
+        if (detail.comment) setCommentsByPost(previous => ({ ...previous, [post.id]: mergeComments(previous[post.id] || [], detail.comment) }));
+        fetchPostComments(post);
+      }
     };
     window.addEventListener('focus', refreshOpen);
     document.addEventListener('visibilitychange', refreshOpen);
@@ -232,7 +235,7 @@ export default function PostList({
       setCommentDrafts(prev => ({ ...prev, [post.id]: '' }));
       const commentsCount = data.commentsCount ?? data.post?.commentsCount;
       if (Number.isFinite(commentsCount)) updatePost({ id: post.id, commentsCount });
-      publishPostEngagement(post, { action: 'comment', commentId: data.comment?.id, commentsCount });
+      publishPostEngagement(post, { action: 'comment', commentId: data.comment?.id, comment: data.comment, commentsCount });
     } catch {
       // Leave the draft in place so the user can retry.
     } finally {

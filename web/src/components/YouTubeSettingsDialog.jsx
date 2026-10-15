@@ -1,3 +1,4 @@
+import PagedList from './PagedList';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import './YouTubeSettingsDialog.css';
@@ -91,6 +92,7 @@ export default function YouTubeSettingsDialog({ settings, title = 'YouTube setti
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
         </button>
       </header>
+      <PagedList pageSize={2} label="Player settings">
       {kind !== 'source' && <section>
         <h3>Playback speed</h3>
         {hasRate ? <SettingsChoices label="Playback speed" options={rates.map(rate => ({ value: rate, label: `${rate}\u00d7` }))}
@@ -118,6 +120,7 @@ export default function YouTubeSettingsDialog({ settings, title = 'YouTube setti
             : `Open the original video for any additional options offered by ${label}.`)}</p>
         <button type="button" className="btn btn-primary" onClick={openSource}>Open on {label}</button>
       </section>}
+      </PagedList>
       {error && <p className="youtube-settings-error" role="alert">{error}</p>}
     </div>
   </dialog>, document.body);

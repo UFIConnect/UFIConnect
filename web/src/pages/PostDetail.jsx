@@ -23,7 +23,7 @@ import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { HlsVideoPlayer, loadYouTubeIframeApi, createYouTubePlayerFrame, useGlobalMuted, rememberSoundPreference } from '../components/videoMedia';
 import { SavePostButton } from '../components/SaveButtons';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
-import { POST_ENGAGEMENT_EVENT, publishPostEngagement } from '../api/postEngagement.mjs';
+import { POST_ENGAGEMENT_EVENT, publishPostEngagement, sourceComment } from '../api/postEngagement.mjs';
 
 const ENGAGEMENT_FIELDS = ['likesCount', 'sourceLikesCount', 'likedByMe', 'sourceLikedByMe', 'commentsCount'];
 function mergePostComments(...lists) {
@@ -321,7 +321,7 @@ export default function PostDetail() {
     request.promise = (async () => {
       try {
         const { data } = await client.get(`/feed/${encodeURIComponent(id)}/comments`, {
-          signal: request.controller.signal, params: { limit, ...(append ? { offset: current.length } : {}) },
+          signal: request.controller.signal, params: { limit, ...(append ? { offset: current.filter(comment => !comment.ufiConfirmed).length } : {}) },
         });
         if (!isCurrent() || request.revision !== engagementRevisionRef.current) return;
         if (data.unavailable) throw new Error('Comments are temporarily unavailable.');
@@ -369,6 +369,7 @@ export default function PostDetail() {
       for (const field of ENGAGEMENT_FIELDS) if (detail[field] !== undefined) patch[field] = detail[field];
       updatePost(patch);
       if (detail.action === 'comment' && !commentWriteRef.current) {
+        if (detail.comment) setComments(previous => mergePostComments(previous || [], sourceComment(detail.comment)));
         commentsReadRef.current?.controller.abort(); commentsReadRef.current = null;
         loadComments();
       }
@@ -411,7 +412,7 @@ export default function PostDetail() {
       setCommentsError(false);
       const commentsCount = data.commentsCount ?? data.post?.commentsCount ?? (detailRef.current.post?.commentsCount || 0) + 1;
       updatePost({ id, commentsCount });
-      publishPostEngagement(post, { action: 'comment', commentsCount, commentId: data.comment?.id });
+      publishPostEngagement(post, { action: 'comment', commentsCount, commentId: data.comment?.id, comment: data.comment });
     } catch { /* leave draft in place so the user can retry */ }
     finally {
       if (mountedRef.current && scopeRef.current === scope && commentWriteRef.current === request) {

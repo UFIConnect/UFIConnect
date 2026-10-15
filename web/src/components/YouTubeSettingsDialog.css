@@ -7,6 +7,7 @@
 .youtube-settings-content h3 { margin: 0 0 10px; font-size: .9rem; }
 .youtube-settings-close { display: grid; place-items: center; flex: 0 0 40px; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 10px; background: var(--bg, #f1f5f9); color: inherit; cursor: pointer; }
 .youtube-settings-content section + section { margin-top: 24px; }
+.youtube-settings-content .paged-list-items > div + div:not([hidden]) { margin-top: 24px; }
 .youtube-settings-choices { display: flex; flex-wrap: wrap; gap: 8px; }
 .youtube-settings-choices button { flex: 1 0 60px; min-height: 44px; padding: 8px 12px; border: 1px solid var(--border, #cbd5e1); border-radius: 10px; background: var(--bg, #f1f5f9); color: inherit; font: inherit; font-size: .88rem; white-space: nowrap; cursor: pointer; }
 .youtube-settings-choices button[aria-checked="true"] { color: var(--primary, #2563eb); background: var(--primary-light, #eff6ff); border-color: var(--primary, #2563eb); font-weight: 700; }

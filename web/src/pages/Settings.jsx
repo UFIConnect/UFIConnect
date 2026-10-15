@@ -1,3 +1,4 @@
+import PagedList from '../components/PagedList';
 import { PASSWORD_GUIDANCE, validateNewPassword } from '../auth/passwordPolicy';
 import PasswordInput from '../components/PasswordInput';
 import useTabMetrics from '../analytics/useTabMetrics';
@@ -553,14 +554,14 @@ export default function Settings() {
 
       {activeTab === 'account' && <BusinessTeamSettings />}
       {/* Tab bar */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid var(--border)', paddingBottom: 0, overflowX: 'auto' }}>
+      <PagedList pageSize={3} label="Settings" className="settings-pages" selectedIndex={TABS.filter(tab => profile?.plan !== 'business' || tab.key !== 'preferences').findIndex(tab => tab.key === activeTab)}>
         {TABS.filter(tab => profile?.plan !== 'business' || tab.key !== 'preferences').map(tab => (
           <button key={tab.key} type="button" onClick={() => setActiveTab(tab.key)}
             style={{ padding: '8px 16px', border: 'none', background: 'none', cursor: 'pointer', fontWeight: activeTab === tab.key ? 700 : 500, fontSize: '.875rem', color: activeTab === tab.key ? 'var(--primary)' : 'var(--muted)', borderBottom: activeTab === tab.key ? '2px solid var(--primary)' : '2px solid transparent', marginBottom: -1, display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
             {tab.label}
           </button>
         ))}
-      </div>
+      </PagedList>
 
       {/* ── Preferences tab ──────────────────────────────────────────────────── */}
       {activeTab === 'preferences' && (

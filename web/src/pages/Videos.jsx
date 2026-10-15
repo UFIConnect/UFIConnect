@@ -1,3 +1,4 @@
+import Layout from '../components/Layout';
 ﻿import { useNavigate } from 'react-router-dom';
 import { Component } from 'react';
 import { Helmet } from 'react-helmet-async';
@@ -26,7 +27,7 @@ class VideoFeedErrorBoundary extends Component {
   render() {
     if (this.state.error) {
       return (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 3000, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, padding: 24, background: '#000', color: '#fff', textAlign: 'center' }}>
+        <div style={{ minHeight: 400, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, padding: 24, background: '#000', color: '#fff', textAlign: 'center' }}>
           <strong style={{ fontSize: '1.15rem' }}>That video needs another try.</strong>
           <span style={{ maxWidth: 310, color: 'rgba(255,255,255,.72)', fontSize: '.9rem' }}>Your place is safe. Reload the video feed or return home.</span>
           <div style={{ display: 'flex', gap: 10 }}>
@@ -40,10 +41,6 @@ class VideoFeedErrorBoundary extends Component {
   }
 }
 
-// A top-level route (not nested inside Feed's own view-mode tabs) so it
-// shows up as its own item in the main nav, next to Feed/Search/etc. — a
-// TikTok-style full-screen takeover, deliberately not wrapped in the usual
-// Layout sidebar/content shell.
 export default function Videos({ music = false }) {
   const navigate = useNavigate();
   return (
@@ -51,7 +48,7 @@ export default function Videos({ music = false }) {
       <Helmet>
         <title>{music ? 'Music' : 'Videos'} | UFIconnect</title>
       </Helmet>
-      <VideoFeedErrorBoundary music={music} onExit={() => navigate('/?feed=feed&all=1')} />
+      <Layout><VideoFeedErrorBoundary music={music} onExit={() => navigate('/?feed=feed&all=1')} /></Layout>
     </>
   );
 }

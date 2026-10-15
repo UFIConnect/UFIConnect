@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { engagementLedger, mergeConfirmedComments } from './postEngagement.mjs';
 import { isNativeRuntime, NATIVE_API_ORIGIN } from '../nativeRuntime.mjs';
 import { nativeAxiosAdapter } from './nativeAdapter.mjs';
 import { clearSession, getAccessToken } from '../auth/session.js';
@@ -50,6 +51,7 @@ function pause(ms) {
 
 // Keep credentials in memory and attach them only to our relative API paths.
 client.interceptors.request.use(async (config) => {
+  config._ufiEngagementRevision ??= engagementLedger.revision();
   if (!isRelativeApiRequest(config.url)) throw new Error('API requests must use a relative path.');
   const token = config.headers.Authorization ? null : getAccessToken();
   const native = isNativeRuntime();
@@ -81,6 +83,20 @@ client.interceptors.request.use(async (config) => {
 // immediately.
 client.interceptors.response.use(
   (res) => {
+    if (String(res.config?.method || 'get').toLowerCase() === 'get') {
+      const revision = res.config?._ufiEngagementRevision ?? engagementLedger.revision();
+      if (Array.isArray(res.data?.posts)) res.data.posts = res.data.posts.map(post => engagementLedger.apply(post, revision));
+      if (res.data?.post) res.data.post = engagementLedger.apply(res.data.post, revision);
+      const match = /^\/(?:feed|posts|snaps)\/([^/]+)\/comments$/.exec(String(res.config?.url || '').split('?')[0]);
+      if (match && res.data && typeof res.data === 'object') {
+        const patch = engagementLedger.apply({ id: decodeURIComponent(match[1]), commentsCount: res.data.commentsCount }, revision);
+        if (patch.commentsCount !== undefined) res.data.commentsCount = patch.commentsCount;
+      }
+      if (match && !Number(res.config?.params?.offset) && !res.data?.unavailable && Array.isArray(res.data?.comments)) {
+        res.data.commentsReceived = res.data.comments.length;
+        res.data.comments = mergeConfirmedComments(decodeURIComponent(match[1]), res.data.comments, Date.now(), res.config.url.startsWith('/feed/'));
+      }
+    }
     markApiOriginHealthy(res.config?._ufiApiOrigin);
     const token = getAccessToken();
     const path = String(res.config?.url || '').split('?')[0];
