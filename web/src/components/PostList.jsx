@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
+import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import client from '../api/client';
 import PostLikes from './PostLikes';

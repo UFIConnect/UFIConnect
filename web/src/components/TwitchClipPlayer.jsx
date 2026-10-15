@@ -2,7 +2,8 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ExternalLink, Play, Square } from 'lucide-react';
 import BrandIcon from './BrandIcon';
-import { isNativeRuntime, nativeExternalOpen } from '../nativeRuntime.mjs';
+import { isNativeRuntime } from '../nativeRuntime.mjs';
+import { openNativeTwitchPlayer } from '../nativeTwitchPlayer.mjs';
 import { useSoloVideoPlayback } from './videoMedia';
 import { officialTwitchClipEmbedUrl, officialTwitchClipUrl, officialTwitchPosterUrl } from '../utils/sourceMediaPolicy.mjs';
 import './TwitchClipPlayer.css';
@@ -12,12 +13,15 @@ import './TwitchClipPlayer.css';
 export default function TwitchClipPlayer({ post, title, forcePause = false, controlsTarget }) {
   const host = useRef(null), stage = useRef(null), started = useRef(null), playerId = useId();
   const original = post?.source === 'twitch' ? officialTwitchClipUrl(post.sourceUrl) || officialTwitchClipUrl(post.mediaUrl) : null;
+  const hostedPlayer = original ? `https://uficonnect.org/twitch-player.html?clip=${encodeURIComponent(new URL(original).pathname.slice(1))}` : null;
   const embed = original && !isNativeRuntime() && typeof window !== 'undefined' ? officialTwitchClipEmbedUrl(original, window.location.hostname) : null;
   const poster = officialTwitchPosterUrl(post?.mediaPoster) || officialTwitchPosterUrl(post?.thumbnailUrl);
   const [width, setWidth] = useState(0), [inView, setInView] = useState(false);
   const [requested, setRequested] = useState(null), [failed, setFailed] = useState(null), [failedPoster, setFailedPoster] = useState(null);
   const [visible, setVisible] = useState(() => typeof document === 'undefined' || !document.hidden);
   const [modalBlocked, setModalBlocked] = useState(false);
+  const [nativeOpening, setNativeOpening] = useState(false), [nativeError, setNativeError] = useState('');
+  const native = isNativeRuntime();
   const eligible = !!embed && requested === original && width >= 400 && inView && visible && !forcePause && !modalBlocked;
   const solo = useSoloVideoPlayback(`twitch-clip-${playerId}`, eligible, stage);
   const playing = eligible && solo && failed !== original;
@@ -67,23 +71,31 @@ export default function TwitchClipPlayer({ post, title, forcePause = false, cont
   }, [eligible, solo, original]);
 
   if (!original) return null;
-  const openOriginal = event => {
-    if (!isNativeRuntime()) return;
+  const openInApp = async event => {
     event.preventDefault(); event.stopPropagation();
-    void nativeExternalOpen(original).catch(() => setFailed(original));
+    if (nativeOpening) return;
+    setNativeOpening(true); setNativeError('');
+    try { await openNativeTwitchPlayer({ url: original, title: title || post.title,
+      creator: post.author?.name || post.author?.username || post.authorName || post.sourceAccountName }); }
+    catch (error) { setNativeError(error.message || 'The Twitch player could not open. Please try again.'); }
+    finally { setNativeOpening(false); }
   };
   const commands = <div className="twitch-clip-commands" role="group" aria-label="Twitch clip controls">
+    {native && <button type="button" className="twitch-clip-play" onClick={openInApp}
+      disabled={nativeOpening || forcePause || modalBlocked || !visible || !inView}>
+      <BrandIcon platform="twitch" size={17} />{nativeOpening ? 'Opening Twitch player…' : 'Play Twitch clip'}</button>}
+    {nativeError && <span className="twitch-clip-error" role="status">{nativeError}</span>}
     {playing ? <button type="button" className="twitch-clip-play" onClick={() => setRequested(null)}>
       <Square size={17} aria-hidden="true" />Close Twitch player</button>
       : embed && width >= 400 && failed !== original && <button type="button" className="twitch-clip-play" disabled={forcePause || modalBlocked || !visible || !inView}
         onClick={() => setRequested(original)}><Play size={19} aria-hidden="true" />Play Twitch clip</button>}
-    {failed === original && <span className="twitch-clip-error" role="status">This clip could not load. Open it on Twitch.</span>}
+    {failed === original && <span className="twitch-clip-error" role="status">This clip could not load. Open its UFIconnect player to try again.</span>}
     {(!embed || width > 0 && width < 400) && <span className="twitch-clip-notice">
-      {isNativeRuntime() ? 'Play in the Twitch viewer, then tap Done to return.' : 'Play on Twitch, or use a wider window for the embedded player.'}
+      Watch here in UFIconnect with Twitch’s player.
     </span>}
-    {(!embed || width > 0 && width < 400 || failed === original)
-      && <a className="twitch-clip-play" href={original} onClick={openOriginal} target="_blank" rel="noopener noreferrer">
-        <Play size={17} aria-hidden="true" />Play on Twitch</a>}
+    {!native && (!embed || width > 0 && width < 400 || failed === original)
+      && <a className="twitch-clip-play" href={hostedPlayer} onClick={event => event.stopPropagation()}>
+        <Play size={17} aria-hidden="true" />Play Twitch clip</a>}
   </div>;
   return <div ref={host} className="twitch-clip-player" data-embedding={playing ? 'true' : 'false'}>
     <div ref={stage} className="twitch-clip-stage">
