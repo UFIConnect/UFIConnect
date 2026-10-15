@@ -7,6 +7,7 @@ on:
     paths-ignore:
       - scripts/audit-member-startup.mjs
       - scripts/audit-business-team.mjs
+      - backend/test-support/app-harness.js
       - scripts/analytics.test.mjs
       - scripts/audit-feed-equalizer.mjs
       - scripts/audit-full-post-text.mjs
