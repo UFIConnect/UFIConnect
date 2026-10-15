@@ -148,19 +148,24 @@ try {
       const welcomeMetrics = await page.locator('.app-welcome').evaluate(el => ({ height: el.getBoundingClientRect().height, viewport: window.innerHeight, scroll: document.documentElement.scrollHeight }));
       check(Math.abs(welcomeMetrics.height - welcomeMetrics.viewport) <= 1 && welcomeMetrics.scroll <= welcomeMetrics.viewport + 1, 'Compact welcome fits the entire viewport');
       check(await page.getByRole('link', { name: 'Explore the public feed', exact: true }).count() === 0, 'App welcome omits the public-feed shortcut');
-      const backdrop = await page.locator('.app-welcome').evaluate(el => ({
-        animation: getComputedStyle(el, '::before').animationName, pointerEvents: getComputedStyle(el, '::before').pointerEvents,
+      const readBackdrop = () => page.locator('.app-welcome').evaluate(el => ({
+        layers: ['::before', '::after'].map(pseudo => ({ content: getComputedStyle(el, pseudo).content, animation: getComputedStyle(el, pseudo).animationName })),
+        animation: getComputedStyle(el).animationName,
         background: getComputedStyle(el).backgroundColor, heading: getComputedStyle(el.querySelector('h1')).color,
       }));
-      check(backdrop.animation === 'none' && backdrop.pointerEvents === 'none', 'Reduced-motion welcome keeps its decorative background static and noninteractive');
+      const backdrop = await readBackdrop();
+      check(backdrop.animation === 'none' && backdrop.layers.every(layer => ['none', 'normal'].includes(layer.content) && layer.animation === 'none'),
+        'Reduced-motion welcome has no generated decorative layers or background animation');
       check(backdrop.background === 'rgb(6, 38, 95)' && backdrop.heading === 'rgb(255, 255, 255)', 'Welcome uses the bold blue background with white heading');
       if (width === 390) {
         await page.emulateMedia({ reducedMotion: 'no-preference' });
-        const first = await page.locator('.app-welcome').evaluate(el => getComputedStyle(el, '::before').transform);
-        await page.waitForFunction(previous => getComputedStyle(document.querySelector('.app-welcome'), '::before').transform !== previous, first);
-        check(await page.locator('.app-welcome').evaluate(el => getComputedStyle(el, '::before').animationName === 'app-welcome-flow'), 'Normal-motion welcome animates the gradient using transforms');
+        const normalMotion = await readBackdrop();
+        check(normalMotion.animation === 'none' && normalMotion.layers.every(layer => ['none', 'normal'].includes(layer.content) && layer.animation === 'none'),
+          'Normal-motion welcome retains the clean static background without decorative layers');
         await page.emulateMedia({ reducedMotion: 'reduce' });
-        check(await page.locator('.app-welcome').evaluate(el => getComputedStyle(el, '::after').animationName === 'none'), 'Changing motion preference stops both background layers');
+        const reducedAgain = await readBackdrop();
+        check(reducedAgain.animation === 'none' && reducedAgain.layers.every(layer => ['none', 'normal'].includes(layer.content) && layer.animation === 'none'),
+          'Changing back to reduced motion preserves the static layer-free welcome');
       }
       for (const [name, href] of [['Sign in', '/login'], ['Create account', '/register'], ['Terms', '/terms'], ['Privacy', '/privacy'], ['Safety', '/child-safety']]) {
         const link = page.getByRole('link', { name, exact: true });
