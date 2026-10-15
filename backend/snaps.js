@@ -1,13 +1,17 @@
 'use strict';
 
 const { randomUUID, createHash } = require('node:crypto');
+const { cleanScreeningText } = require('./content-screening');
 const sourceCatalog = require('../shared/feed-source-catalog.json');
 const SNAP_LIFETIME_MS = 24 * 60 * 60 * 1000;
+const SNAP_FILTERS = Object.freeze(['original', 'vivid', 'warm', 'cool', 'mono']);
 const SNAP_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS community_snaps (
     id TEXT PRIMARY KEY,
     author_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     caption TEXT NOT NULL DEFAULT '' CHECK (length(caption) <= 500),
+    filter TEXT NOT NULL DEFAULT 'original' CHECK (filter IN ('original','vivid','warm','cool','mono')),
+    text_overlay TEXT NOT NULL DEFAULT '' CHECK (length(text_overlay) <= 80),
     media_url TEXT NOT NULL, media_type TEXT NOT NULL CHECK (media_type IN ('image','video')),
     thumbnail_url TEXT NOT NULL, public_id TEXT NOT NULL UNIQUE,
     media_bytes INTEGER NOT NULL CHECK (media_bytes > 0),
@@ -16,6 +20,10 @@ const SNAP_SCHEMA = [
     created_at TIMESTAMPTZ NOT NULL, expires_at TIMESTAMPTZ NOT NULL,
     deleted_at TIMESTAMPTZ, media_cleaned_at TIMESTAMPTZ,
     CHECK (expires_at > created_at AND expires_at <= created_at + INTERVAL '24 hours'))`,
+  `ALTER TABLE community_snaps ADD COLUMN IF NOT EXISTS filter TEXT NOT NULL DEFAULT 'original'
+    CHECK (filter IN ('original','vivid','warm','cool','mono'))`,
+  `ALTER TABLE community_snaps ADD COLUMN IF NOT EXISTS text_overlay TEXT NOT NULL DEFAULT ''
+    CHECK (length(text_overlay) <= 80)`,
   `CREATE INDEX IF NOT EXISTS community_snaps_active ON community_snaps(expires_at,created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS community_snaps_author ON community_snaps(author_id,created_at DESC)`,
   `CREATE TABLE IF NOT EXISTS snap_media_cleanup (
@@ -83,6 +91,8 @@ function snapFromRow(row, viewerId) {
       profileUrl: `/u/${encodeURIComponent(row.author_id)}` },
     mediaUrl: row.media_url, mediaType: row.media_type, thumbnailUrl: row.thumbnail_url,
     caption: row.caption, visibility: row.visibility,
+    filter: SNAP_FILTERS.includes(row.filter) ? row.filter : 'original',
+    overlayText: typeof row.text_overlay === 'string' ? row.text_overlay : '',
     createdAt: new Date(row.created_at).toISOString(), expiresAt: new Date(row.expires_at).toISOString(),
     owned: row.author_id === viewerId, isExternal: false };
 }
@@ -127,30 +137,41 @@ function createSnaps({ db, getUser, validateUpload, removeMedia, screenMemberCon
     if (!uuidPattern.test(userId || '')) throw failure(401, 'Sign in to post a Snap.');
     available();
     if (!body || typeof body !== 'object' || Array.isArray(body)
-        || Object.keys(body).some(key => !['caption', 'mediaUrl', 'mediaType', 'visibility', 'upload'].includes(key))
+        || Object.keys(body).some(key => !['caption', 'mediaUrl', 'mediaType', 'visibility', 'upload', 'filter', 'overlayText'].includes(key))
         || (body.caption != null && typeof body.caption !== 'string')
+        || (body.filter != null && !SNAP_FILTERS.includes(body.filter))
+        || (body.overlayText != null && typeof body.overlayText !== 'string')
         || !['public', 'followers'].includes(body.visibility || 'public')) {
       throw failure(400, 'Choose a photo or video, caption, and Snap audience.');
     }
-    const caption = (body.caption || '').trim();
-    if (caption.length > 500) throw failure(400, 'Keep the Snap caption under 500 characters.');
+    const rawCaption = (body.caption || '').trim(), rawOverlay = (body.overlayText || '').trim();
+    const caption = cleanScreeningText(rawCaption), overlayText = cleanScreeningText(rawOverlay);
+    const filter = body.filter ?? 'original';
+    if (rawCaption.length > 500 || caption.length > 500) throw failure(400, 'Keep the Snap caption under 500 characters.');
+    if (rawOverlay.length > 80 || overlayText.length > 80) throw failure(400, 'Keep the Snap overlay under 80 characters.');
     if (body.mediaType === 'video' && !caption) throw failure(400, 'Add a caption to your video Snap.');
     const user = await getUser(userId);
     if (!user) throw failure(401, 'Sign in again to post a Snap.');
     const media = await validateUpload(userId, body);
-    const screening = await screenMemberContent({ content: caption, mediaUrl: media.mediaUrl,
-      mediaType: media.mediaType, kind: 'snap', maxLength: 500 });
-    if (!screening.allowed) throw failure(screening.reason === 'screening_unavailable' ? 503 : 422,
-      screening.reason === 'screening_unavailable' ? 'Snap screening is temporarily unavailable. Please try again.' : 'This Snap cannot be published.');
+    // Screen all visible text together with the media. Keeping the boundary a
+    // space also prevents prohibited phrases being split across the two fields.
+    const content = cleanScreeningText([caption, overlayText].filter(Boolean).join(' '));
+    const screening = await screenMemberContent({ content, mediaUrl: media.mediaUrl,
+      mediaType: media.mediaType, kind: 'snap', maxLength: 581 });
+    if (!screening?.allowed) throw failure(!screening || screening.reason === 'screening_unavailable' ? 503 : 422,
+      !screening || screening.reason === 'screening_unavailable' ? 'Snap screening is temporarily unavailable. Please try again.' : 'This Snap cannot be published.');
+    // Persist precisely the normalized fields that were reviewed; never guess
+    // how to split a transformed or incomplete moderation response.
+    if (screening.content !== content) throw failure(503, 'Snap screening is temporarily unavailable. Please try again.');
     const createdTime = now();
     const createdAt = new Date(createdTime).toISOString();
     const expiresAt = new Date(createdTime + SNAP_LIFETIME_MS).toISOString();
     const { rows } = await query(`INSERT INTO community_snaps
-      (id,author_id,caption,media_url,media_type,thumbnail_url,public_id,media_bytes,video_duration_seconds,visibility,created_at,expires_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      (id,author_id,caption,media_url,media_type,thumbnail_url,public_id,media_bytes,video_duration_seconds,visibility,created_at,expires_at,filter,text_overlay)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
       ON CONFLICT (public_id) DO NOTHING RETURNING *`,
-    [`snap_${uuid()}`, userId, screening.content, media.mediaUrl, media.mediaType, media.thumbnailUrl,
-      media.publicId, media.bytes, media.duration, body.visibility || 'public', createdAt, expiresAt]);
+    [`snap_${uuid()}`, userId, caption, media.mediaUrl, media.mediaType, media.thumbnailUrl,
+      media.publicId, media.bytes, media.duration, body.visibility || 'public', createdAt, expiresAt, filter, overlayText]);
     if (!rows[0]) throw failure(409, 'This upload has already been published as a Snap.');
     return snapFromRow({ ...rows[0], author_name: user.name, author_avatar: user.avatarUrl }, userId);
   }
@@ -262,6 +283,9 @@ function createSnaps({ db, getUser, validateUpload, removeMedia, screenMemberCon
     // deletion must retry or the upload-reuse tombstone remains for a week.
     for (const table of ['snap_comments', 'snap_likes']) await query(`DELETE FROM ${table} e
       USING community_snaps s WHERE e.snap_id=s.id AND (s.expires_at <= $1::timestamptz OR s.deleted_at IS NOT NULL)`, [timestamp]);
+    await query(`UPDATE community_snaps SET text_overlay='',filter='original'
+      WHERE (expires_at <= $1::timestamptz OR deleted_at IS NOT NULL)
+      AND (text_overlay<>'' OR filter<>'original')`, [timestamp]);
     const { rows } = await query(`SELECT id,public_id,media_type FROM community_snaps
       WHERE (expires_at <= $1::timestamptz OR deleted_at IS NOT NULL) AND media_cleaned_at IS NULL
       ORDER BY expires_at,id LIMIT 25`, [timestamp]);
@@ -269,7 +293,7 @@ function createSnaps({ db, getUser, validateUpload, removeMedia, screenMemberCon
     for (const row of rows) {
       try {
         await removeMedia(row.public_id, row.media_type);
-        await query(`UPDATE community_snaps SET media_cleaned_at=$2::timestamptz,caption='',media_url='',thumbnail_url=''
+        await query(`UPDATE community_snaps SET media_cleaned_at=$2::timestamptz,caption='',text_overlay='',filter='original',media_url='',thumbnail_url=''
           WHERE id=$1 AND media_cleaned_at IS NULL`, [row.id, timestamp]);
         cleaned++;
       } catch { retrying++; }
@@ -326,4 +350,4 @@ function registerSnapRoutes(app, { service, authenticate, authenticateOptional, 
   app.delete('/snaps/:id', authenticate, limiter, respond(req => service.remove(req.user.id, req.params.id)));
 }
 
-module.exports = { SNAP_SCHEMA, SNAP_LIFETIME_MS, snapMode, snapSource, snapFromRow, createSnaps, registerSnapRoutes };
+module.exports = { SNAP_SCHEMA, SNAP_LIFETIME_MS, SNAP_FILTERS, snapMode, snapSource, snapFromRow, createSnaps, registerSnapRoutes };
