@@ -7,6 +7,27 @@ on:
     paths-ignore:
       - scripts/audit-member-startup.mjs
       - scripts/audit-business-team.mjs
+      - scripts/analytics.test.mjs
+      - scripts/audit-feed-equalizer.mjs
+      - scripts/audit-full-post-text.mjs
+      - scripts/audit-group-navigation.mjs
+      - scripts/audit-job-overview.mjs
+      - scripts/audit-jobs-feed.mjs
+      - scripts/audit-map-settings.mjs
+      - scripts/audit-mobile-account-sidebar.mjs
+      - scripts/audit-native-source-links.mjs
+      - scripts/audit-office-city.mjs
+      - scripts/audit-post-context.mjs
+      - scripts/audit-post-likes.mjs
+      - scripts/audit-search-notifications.mjs
+      - scripts/audit-session.mjs
+      - scripts/audit-shop-posts.mjs
+      - scripts/audit-travel.mjs
+      - scripts/audit-ui.mjs
+      - scripts/audit-vault-analytics-public.mjs
+      - scripts/audit-video-layout.mjs
+      - scripts/audit-video-settings.mjs
+      - scripts/audit-x-identity.mjs
       - .github/workflows/deploy-render.yml
   workflow_dispatch:
     inputs:
