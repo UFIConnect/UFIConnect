@@ -375,7 +375,7 @@ try {
       const box = image.getBoundingClientRect();
       return { rendered: box.width / box.height, original: image.naturalWidth / image.naturalHeight };
     });
-    assert.ok(Math.abs(dimensions.rendered - dimensions.original) < 0.01, `Homepage hero artwork stretched at ${viewport.width}`);
+    assert.ok(Math.abs(dimensions.rendered - dimensions.original) < 0.01, `Homepage illustration stretched at ${viewport.width}`);
     await page.locator('.landing-product-shot').scrollIntoViewIfNeeded();
     await page.locator('.landing-product-shot img').evaluate(image => image.decode());
     assert.equal(await page.locator('.landing-product-shot img').getAttribute('src'), '/homepage-feed-2026-09.png');

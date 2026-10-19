@@ -22,7 +22,7 @@ export default function MediaPermissionPrompt({ accountId }) {
   useEffect(() => {
     const ask = event => {
       const input = event.target;
-      if (!(input instanceof HTMLInputElement) || input.type !== 'file' || input.disabled) return;
+      if (!(input instanceof window.HTMLInputElement) || input.type !== 'file' || input.disabled) return;
       if (permittedClick.current.delete(input)) return;
       if (!input.hasAttribute('capture') && !/(?:image|video)\/|\.(?:jpe?g|png|gif|webp|heic|mp4|mov)\b/i.test(input.accept)) return;
       const camera = input.hasAttribute('capture');
