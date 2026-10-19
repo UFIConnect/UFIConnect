@@ -14,6 +14,7 @@ import { SaveJobButton } from '../components/SaveButtons';
 import { postedDate } from '../utils/jobDates';
 import usePagedResults from '../hooks/usePagedResults';
 import ResultsPagination from '../components/ResultsPagination';
+import './JobCompose.css';
 
 const PAGE_SIZE = 20;
 
@@ -55,6 +56,7 @@ function SourceBadge({ opp }) {
     'Remote OK': { icon: 'RO', label: 'Live · Remote OK', color: '#10B981', bg: '#ECFDF5' },
     'USAJobs':   { icon: 'US', label: 'Live · USAJobs',   color: '#005EA8', bg: '#E8F1FA' },
     'Indeed':    { icon: 'IN', label: 'Live · Indeed',    color: '#2557A7', bg: '#EEF2FB' },
+    'UFIConnect': { icon: 'UFI', label: 'UFIConnect', color: '#2563EB', bg: '#EFF6FF' },
   };
   const badge = badges[opp.source];
   return (
@@ -111,6 +113,7 @@ export function JobDetail({ job }) {
         <div>
           <h2>{job.title}</h2>
           <p>{job.org}</p>
+          {job.nativeJob && job.author?.id && <Link className="job-publisher" to={`/u/${encodeURIComponent(job.author.id)}`}>Posted by {job.author.name || 'UFIConnect member'}</Link>}
         </div>
       </div>
 
@@ -151,9 +154,10 @@ export function JobDetail({ job }) {
 
       <div className="job-detail-actions">
         <SaveJobButton job={job} className="btn btn-ghost save-item-button" />
-        <a className="btn btn-primary" href={job.sourceUrl} target="_blank" rel="noopener noreferrer">
-          View full position on {job.source}
-        </a>
+        {job.nativeJob ? (job.applyUrl
+          ? <a className="btn btn-primary" href={job.applyUrl} target="_blank" rel="noopener noreferrer">Open application link</a>
+          : <p className="muted">No external application link was supplied. Review the listing or contact its publisher.</p>)
+          : <a className="btn btn-primary" href={job.sourceUrl} target="_blank" rel="noopener noreferrer">View full position on {job.source}</a>}
       </div>
     </article>
   );
@@ -179,6 +183,7 @@ function requestedWorkSetting(searchParams) {
 }
 
 function isRemoteJob(job) {
+  if (job?.nativeJob) return job.remote === true;
   if (job?.remote) return true;
   return /\bremote\b/i.test([
     job?.location,
@@ -205,9 +210,11 @@ export default function Opportunities({ embedded = false, searchQuery = null, pa
   const [availableSources, setAvailableSources] = useState([]);
   const [sourceFilter, setSourceFilter] = useState([]);
   const [search,    setSearch]    = useState(initialRouteQuery);
+  const [businessSearch, setBusinessSearch] = useState(initialRouteQuery);
   const [streamLoading,   setLoading]   = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [streamError,     setError]     = useState(false);
+  const [nativeJobsWarning, setNativeJobsWarning] = useState('');
   const [streamTotalCount, setTotalCount] = useState(0);
   const [streamHasMore,   setHasMore]   = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
@@ -225,6 +232,7 @@ export default function Opportunities({ embedded = false, searchQuery = null, pa
   // ordinary infinite-scroll requests remain cacheable.
   const bustOnNextFetchRef = useRef(false);
   const resultsStartRef = useRef(null);
+  const businessFiltersRef = useRef(null);
   const pagedQuery = initialRouteQuery;
   const pagedJobs = usePagedResults({
     enabled: paginated, queryKey: JSON.stringify([profile?.id, sort, workSetting, liveOnly, pagedQuery, sourceFilter, postedWithin]),
@@ -251,10 +259,15 @@ export default function Opportunities({ embedded = false, searchQuery = null, pa
     if (!paginated || !pagedJobs.data) return;
     setAvailableSources(pagedJobs.data.availableSources || []);
     setLiveCount(pagedJobs.data.liveCount || 0);
+    setNativeJobsWarning(pagedJobs.data.nativeJobsWarning || '');
   }, [paginated, pagedJobs.data]);
   async function changeJobsPage(page) {
     if (await pagedJobs.goToPage(page)) requestAnimationFrame(() => resultsStartRef.current?.scrollIntoView({ block: 'start' }));
   }
+
+  useEffect(() => {
+    setBusinessSearch(initialRouteQuery);
+  }, [initialRouteQuery]);
 
   useEffect(() => {
     const nextQuery = String((embedded ? searchQuery : null) ?? searchParams.get('q') ?? '').trim().slice(0, 200);
@@ -339,6 +352,7 @@ export default function Opportunities({ embedded = false, searchQuery = null, pa
         setHasMore(!!data.hasMore);
         setLiveCount(data.liveCount || 0);
         setAvailableSources(data.availableSources || []);
+        setNativeJobsWarning(data.nativeJobsWarning || '');
       })
       .catch(err => {
         if (requestGeneration !== requestGenerationRef.current) return;
@@ -438,6 +452,12 @@ export default function Opportunities({ embedded = false, searchQuery = null, pa
       ? allOpps.filter(isRemoteJob)
       : allOpps;
 
+  function updateSearch(query) {
+    const next = new URLSearchParams(searchParams);
+    if (query.trim()) next.set('q', query.trim().slice(0, 200)); else next.delete('q');
+    setSearchParams(next, { replace: true });
+  }
+
   return (
     <>
       {!embedded && <Helmet>
@@ -448,14 +468,22 @@ export default function Opportunities({ embedded = false, searchQuery = null, pa
       </Helmet>}
       <OpportunityFrame embedded={embedded} feedSearch={{
         query: search, label: 'Search jobs', target: 'jobs', actionLabel: 'Update jobs',
-        onSubmit: query => {
-          const next = new URLSearchParams(searchParams);
-          if (query.trim()) next.set('q', query.trim().slice(0, 200)); else next.delete('q');
-          setSearchParams(next, { replace: true });
-        },
+        onSubmit: updateSearch,
       }}>
         <div ref={resultsStartRef} className={embedded ? 'jobs-page-content jobs-page-content--embedded' : 'jobs-page-layout'}>
         <div className={embedded ? undefined : 'jobs-page-content'}>
+        {!embedded && profile?.plan === 'business' && <>
+          <form className="jobs-business-search" role="search" aria-label="Search jobs" onSubmit={event => { event.preventDefault(); updateSearch(businessSearch); }}>
+            <label>Job keywords<input type="search" value={businessSearch} onChange={event => setBusinessSearch(event.target.value)} maxLength={200} placeholder="Role, employer or skill" /></label>
+            <button type="submit" className="btn btn-outline">Search jobs</button>
+          </form>
+          <details className="jobs-business-mobile-controls card" ref={businessFiltersRef}>
+            <summary>Job filters</summary>
+            <JobsSidebarControls onNavigate={() => { if (businessFiltersRef.current) businessFiltersRef.current.open = false; }} />
+          </details>
+        </>}
+        {!embedded && <div className="jobs-post-entry"><Link className="btn btn-primary btn-sm" to="/jobs/new">Post a job</Link></div>}
+        {nativeJobsWarning && <p role="status" className="muted">{nativeJobsWarning}</p>}
         {(scrollRefresh.pulling || refreshing) && <div className="scroll-refresh-status" role="status" aria-live="polite">
           <span>{refreshing ? 'Refreshing jobs' : scrollRefresh.progress >= 1 ? 'Release to refresh jobs' : 'Pull to refresh jobs'}</span>
         </div>}

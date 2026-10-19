@@ -196,6 +196,36 @@
   },
   {
     "type": "rewrite",
+    "source": "/business/industries",
+    "destination": "/business/industries/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/business/industries/",
+    "destination": "/business/industries/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/business/cross-post",
+    "destination": "/business/cross-post/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/business/cross-post/",
+    "destination": "/business/cross-post/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/jobs/new",
+    "destination": "/jobs/new/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/jobs/new/",
+    "destination": "/jobs/new/index.html"
+  },
+  {
+    "type": "rewrite",
     "source": "/analytics",
     "destination": "/analytics/index.html"
   },

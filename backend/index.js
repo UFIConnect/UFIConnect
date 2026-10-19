@@ -47,6 +47,8 @@ const { MANAGED_VPN_SCHEMA, createManagedVpn, registerManagedVpnRoutes, gatewayR
 const { mutateAccountAndRevokeVpn } = require('./vpn-auth-revocation');
 const { BUSINESS_TEAM_SCHEMA, createBusinessTeams, registerBusinessTeamRoutes } = require('./business-teams');
 const { BUSINESS_POST_SCHEMA, createBusinessPosts, registerBusinessPostRoutes } = require('./business-posts');
+const { createJobPosts, registerJobPostRoutes } = require('./job-posts');
+const { BUSINESS_INDUSTRY_SCHEMA, createBusinessIndustries, registerBusinessIndustryRoutes } = require('./business-industries');
 const dotenv = require('dotenv');
 const http   = require('http');
 const https  = require('https');
@@ -17025,6 +17027,7 @@ async function migrateDB() {
     `);
     await db.query(`CREATE INDEX IF NOT EXISTS cross_posts_user_idx ON cross_posts(user_id, created_at DESC)`);
     for (const statement of BUSINESS_POST_SCHEMA) await db.query(statement);
+    for (const statement of BUSINESS_INDUSTRY_SCHEMA) await db.query(statement);
     await db.query(HISTORY_SCHEMA);
     for (const statement of GENERATION_USAGE_SCHEMA) await db.query(statement);
 
@@ -29904,7 +29907,14 @@ app.get('/opportunities', authenticate, async (req, res) => {
     ]);
   } catch (e) { /* silently skip */ }
 
-  // Combine curated list + live jobs
+  let nativeJobs = [];
+  let nativeJobsWarning = null;
+  if ((!type || type === 'all' || type === 'job') && (!sourceSet || sourceSet.has('UFIConnect'))) {
+    try { nativeJobs = await jobPosts.list(req.user.id); }
+    catch { nativeJobsWarning = 'UFIConnect job listings are temporarily unavailable. Refresh to try again.'; }
+  }
+
+  // Combine curated opportunities with live source and member job listings.
   const seenIds = new Set();
   // Curated "job" entries are illustrative sample data with links to
   // platform homepages/search pages, not a specific posting — that fails
@@ -29912,7 +29922,7 @@ app.get('/opportunities', authenticate, async (req, res) => {
   // (Remotive, The Muse, Remote OK) whose sourceUrl is the actual listing.
   // Non-job types (gigs, grants, events, etc.) don't have a live API yet,
   // so the curated list still fills those in.
-  const allOps = [...OPPORTUNITIES.filter(o => o.type !== 'job'), ...liveJobs].filter((o) => {
+  const allOps = [...OPPORTUNITIES.filter(o => o.type !== 'job'), ...liveJobs, ...nativeJobs].filter((o) => {
     if (seenIds.has(o.id)) return false;
     seenIds.add(o.id);
     return true;
@@ -29954,7 +29964,10 @@ app.get('/opportunities', authenticate, async (req, res) => {
   // — even on a search/day where its live results happen to come back
   // empty (or USAJOBS_API_KEY isn't configured yet). Scoped to when jobs
   // are actually in view so it doesn't show up while filtering to Grants.
-  if (!type || type === 'all' || type === 'job') availableSources.add('USAJobs');
+  if (!type || type === 'all' || type === 'job') {
+    availableSources.add('USAJobs');
+    availableSources.add('UFIConnect');
+  }
   if (sourceSet) results = results.filter((o) => sourceSet.has(o.source));
 
   results = results.map((o) => {
@@ -30145,7 +30158,8 @@ app.get('/opportunities', authenticate, async (req, res) => {
     totalCount,
     hasMore: limit > 0 ? (offset + limit) < totalCount : false,
     meta: OP_TYPE_META,
-    liveCount: liveJobs.length,
+    liveCount: liveJobs.length + nativeJobs.length,
+    nativeJobsWarning,
     userRole: role,
     userTitle: userTitle || null,
     sort: sortMode,
@@ -32898,6 +32912,33 @@ const businessPosts = createBusinessPosts({
   },
 });
 registerBusinessPostRoutes(app, { service: businessPosts, authenticate, limiter: contentSubmissionLimiter });
+const jobPosts = createJobPosts({
+  db, businessPosts,
+  visibilitySql: nativeGroupVisibilityPredicate('p', '$1'),
+  suppressionSql: reportSuppressionPredicate('p'),
+});
+registerJobPostRoutes(app, { service: jobPosts, authenticate, limiter: contentSubmissionLimiter });
+
+const businessIndustries = createBusinessIndustries({
+  db,
+  getUser: getEffectiveUser,
+  getMembership: id => businessTeams.effectiveMembership(id),
+  validatePhoto: isCloudinaryCrossPostImageUrl,
+  screenContent: options => screenMemberContent(options),
+  publishLinkedIn: (user, options) => publishCrossPostTarget(user, 'linkedin', options),
+  async publishNative(user, { id, title, content, mediaUrl = null, mediaType = null }) {
+    const createdAt = new Date().toISOString();
+    await db.query(`INSERT INTO community_posts(id,group_id,author_id,author_name,title,content,source,source_label,created_at,media_url,media_type)
+      VALUES($1,'ufi-general',$2,$3,$4,$5,'uficonnect','Business',$6,$7,$8) ON CONFLICT(id) DO NOTHING`,
+      [id, user.id, user.name, title, content, createdAt, mediaUrl, mediaType]);
+    const post = { id, groupId: 'ufi-general', authorId: user.id, title, content, createdAt,
+      source: 'uficonnect', sourceLabel: 'Business', likes: [], commentsCount: 0, mediaUrl, mediaType };
+    if (!posts.some(existing => existing.id === id)) posts.unshift(post);
+    broadcastSSE([serializeCommunityPost(post, user.id)]);
+    return { status: 'posted', postedUrl: `https://uficonnect.org/p/${encodeURIComponent(id)}` };
+  },
+});
+registerBusinessIndustryRoutes(app, { service: businessIndustries, authenticate, limiter: contentSubmissionLimiter });
 
 app.get('/command-center/cross-post/history', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);

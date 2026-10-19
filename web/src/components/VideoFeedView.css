@@ -19,7 +19,7 @@
 .video-feed-view .video-feed-filter-dot { position: absolute; top: 5px; right: 4px; width: 5px; height: 5px; border-radius: 50%; background: #3567bc; }
 .video-feed-view .video-feed-refreshing { animation: spin 1s linear infinite; }
 .video-feed-view .video-feed-body { position: relative; flex: 1; min-height: 0; width: 100%; }
-.video-feed-view .video-feed-scroll { position: relative; height: 100%; overflow-y: auto; overflow-anchor: none; scroll-snap-type: none; overscroll-behavior-y: auto; -webkit-overflow-scrolling: touch; }
+.video-feed-view .video-feed-scroll { position: relative; height: 100%; overflow-y: auto; overflow-anchor: none; scroll-snap-type: none; scroll-behavior: auto; overscroll-behavior-y: auto; -webkit-overflow-scrolling: touch; }
 .video-feed-view .video-feed-snap-item { height: 100%; }
 .video-feed-view .video-feed-slide { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto auto; background: var(--video-chrome); }
 .video-feed-view .video-feed-media { grid-column: 1; grid-row: 1; position: relative; min-height: 0; min-width: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; background: var(--video-chrome); color: #e8edf5; }

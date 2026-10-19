@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { chromium } from 'playwright';
 import { createServer } from '../web/node_modules/vite/dist/node/index.js';
-import { installAuditMember, auditNavigate, auditReload } from './audit-session.mjs';
+import { installAuditMember, auditNavigate, auditReload, auditPageTo } from './audit-session.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
@@ -40,6 +40,7 @@ try {
     };
     const context = await browser.newContext({ viewport });
     const page = await context.newPage();
+    await page.clock.setFixedTime(new Date(post.createdAt).getTime() + 5 * 60_000);
     currentPage = page;
     page.setDefaultTimeout(15000);
     const errors = [];
@@ -93,7 +94,7 @@ try {
     await page.getByRole('button', { name: 'More options', exact: true }).click();
     assert.equal(await page.getByRole('menuitem', { name: /^Likes on GitHub/ }).getAttribute('href'), post.sourceUrl);
     assert.equal(await page.getByRole('menuitem', { name: /^Go to profile/ }).getAttribute('href'), post.author.profileUrl);
-    await page.getByRole('menuitem', { name: 'Report post', exact: true }).click();
+    await (await auditPageTo(page.getByRole('menu'), 'menuitem', 'Report post')).click();
     await page.getByRole('dialog').waitFor();
     await page.keyboard.press('Escape');
     await page.getByRole('dialog').waitFor({ state: 'hidden' });

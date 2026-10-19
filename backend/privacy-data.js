@@ -124,6 +124,10 @@ async function exportAccountData(db, userId) {
       resumeDrafts: `SELECT id,template,data,updated_at AS "updatedAt" FROM resume_drafts WHERE user_id=$1 ORDER BY id`,
       crossPosts: `SELECT id,content,media_url AS "mediaUrl",targets,created_at AS "createdAt" FROM cross_posts WHERE user_id=$1 ORDER BY created_at,id`,
       businessPosts: `SELECT id,details,content,targets,status,native_post_id AS "nativePostId",created_at AS "createdAt" FROM business_posts WHERE user_id=$1 ORDER BY created_at,id`,
+      businessIndustryWorkspaces: `SELECT id,industry_id AS "industryId",name,source_ids AS "sourceIds",created_at AS "createdAt",updated_at AS "updatedAt"
+        FROM business_industry_workspaces WHERE owner_id=$1 ORDER BY created_at,id`,
+      businessIndustryPosts: `SELECT id,workspace_id AS "workspaceId",title,content,media_url AS "mediaUrl",targets,status,created_at AS "createdAt"
+        FROM business_industry_posts WHERE author_id=$1 ORDER BY created_at,id`,
       ownedGroups: `SELECT id,name,category,description,is_private AS "isPrivate",created_at AS "createdAt"
         FROM community_groups WHERE created_by=$1 ORDER BY created_at,id`,
       notifications: `SELECT id,type,actor_id AS "actorId",target_type AS "targetType",target_id AS "targetId",

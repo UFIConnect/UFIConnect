@@ -3240,7 +3240,7 @@ export default function App() {
             apiBase={API} pipelineBase={PIPELINE_API} onNavigate={navigateOffice} onActivate={activateConfiguredAgents}
             activating={activating} activationResult={activationResult} activationError={activationError} /></Suspense>}
           {view === 'post-pipeline' && <PostPipeline apiBase={API} request={officeFetch} pipelineStatus={pipelineStatus} />}
-          {view === 'local-web' && <LocalWeb apiBase={API} request={officeFetch} />}
+          {view === 'local-web' && <LocalWeb apiBase={API} request={officeFetch} onNavigate={navigateOffice} />}
           {view === 'overview' && <OverviewView status={status} pipelineStatus={pipelineStatus} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'controls' && <Controls apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} />}
           {/* Source health (workerHealth/agentSourceCache) only has real

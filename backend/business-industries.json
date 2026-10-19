@@ -1,0 +1,302 @@
+[
+  {
+    "id": "technology",
+    "name": "Technology & software",
+    "description": "Software, developer communities and technology research.",
+    "sources": [
+      {
+        "id": "github",
+        "name": "GitHub",
+        "url": "https://github.com/",
+        "description": "Projects and developer collaboration.",
+        "kind": "resource",
+        "publishing": false,
+        "verifiedAt": "2026-10-15"
+      },
+      {
+        "id": "stackoverflow",
+        "name": "Stack Overflow",
+        "url": "https://stackoverflow.com/questions",
+        "description": "Programming questions and technical discussions.",
+        "kind": "resource",
+        "publishing": false,
+        "verifiedAt": "2026-10-15"
+      }
+    ]
+  },
+  {
+    "id": "healthcare",
+    "name": "Healthcare & life sciences",
+    "description": "Health research and public health resources.",
+    "sources": [
+      {
+        "id": "nih",
+        "name": "National Institutes of Health",
+        "url": "https://www.nih.gov/",
+        "description": "Biomedical research and institute updates.",
+        "kind": "resource",
+        "publishing": false,
+        "verifiedAt": "2026-10-15"
+      },
+      {
+        "id": "who",
+        "name": "World Health Organization",
+        "url": "https://www.who.int/",
+        "description": "Global public health information.",
+        "kind": "resource",
+        "publishing": false,
+        "verifiedAt": "2026-10-15"
+      }
+    ]
+  },
+  {
+    "id": "finance",
+    "name": "Finance & accounting",
+    "description": "Financial market and professional resources.",
+    "sources": [
+      {
+        "id": "sec",
+        "name": "U.S. Securities and Exchange Commission",
+        "url": "https://www.sec.gov/",
+        "description": "Filings, market information and agency updates.",
+        "kind": "resource",
+        "publishing": false,
+        "verifiedAt": "2026-10-15"
+      },
+      {
+        "id": "finra",
+        "name": "FINRA",
+        "url": "https://www.finra.org/",
+        "description": "Securities industry information and education.",
+        "kind": "resource",
+        "publishing": false,
+        "verifiedAt": "2026-10-15"
+      }
+    ]
+  },
+  {
+    "id": "engineering",
+    "name": "Engineering",
+    "description": "Engineering practice and professional communities.",
+    "sources": [
+      {
+        "id": "ieee",
+        "name": "IEEE",
+        "url": "https://www.ieee.org/",
+        "description": "Engineering and technology publications and communities.",
+        "kind": "resource",
+        "publishing": false,
+        "verifiedAt": "2026-10-15"
+      },
+      {
+        "id": "asme",
+        "name": "ASME",
+        "url": "https://www.asme.org/",
+        "description": "Mechanical engineering resources and professional development.",
+        "kind": "resource",
+        "publishing": false,
+        "verifiedAt": "2026-10-15"
+      }
+    ]
+  },
+  {
+    "id": "education",
+    "name": "Education & research",
+    "description": "Education information and research discovery.",
+    "sources": [
+      {
+        "id": "ed",
+        "name": "U.S. Department of Education",
+        "url": "https://www.ed.gov/about-us",
+        "description": "Education programs, offices and official updates.",
+        "kind": "resource",
+        "publishing": false,
+        "verifiedAt": "2026-10-15"
+      },
+      {
+        "id": "eric",
+        "name": "ERIC",
+        "url": "https://eric.ed.gov/",
+        "description": "Searchable education research library.",
+        "kind": "resource",
+        "publishing": false,
+        "verifiedAt": "2026-10-15"
+      }
+    ]
+  },
+  {
+    "id": "construction",
+    "name": "Construction & real estate",
+    "description": "Construction, housing and building industry resources.",
+    "sources": [
+      {
+        "id": "agc",
+        "name": "Associated General Contractors of America",
+        "url": "https://www.agc.org/",
+        "description": "Construction industry news and professional resources.",
+        "kind": "resource",
+        "publishing": false,
+        "verifiedAt": "2026-10-15"
+      },
+      {
+        "id": "nahb",
+        "name": "National Association of Home Builders",
+        "url": "https://www.nahb.org/",
+        "description": "Housing industry research, education and news.",
+        "kind": "resource",
+        "publishing": false,
+        "verifiedAt": "2026-10-15"
+      }
+    ]
+  },
+  {
+    "id": "manufacturing",
+    "name": "Manufacturing & logistics",
+    "description": "Manufacturing operations and industry research.",
+    "sources": [
+      {
+        "id": "nam",
+        "name": "National Association of Manufacturers",
+        "url": "https://nam.org/",
+        "description": "Manufacturing industry news and resources.",
+        "kind": "resource",
+        "publishing": false,
+        "verifiedAt": "2026-10-15"
+      },
+      {
+        "id": "nist-manufacturing",
+        "name": "NIST Manufacturing",
+        "url": "https://www.nist.gov/manufacturing",
+        "description": "Manufacturing research and technical resources.",
+        "kind": "resource",
+        "publishing": false,
+        "verifiedAt": "2026-10-15"
+      }
+    ]
+  },
+  {
+    "id": "energy",
+    "name": "Energy & environment",
+    "description": "Energy research, technology and industry data.",
+    "sources": [
+      {
+        "id": "doe",
+        "name": "U.S. Department of Energy",
+        "url": "https://www.energy.gov/",
+        "description": "Energy research, programs and updates.",
+        "kind": "resource",
+        "publishing": false,
+        "verifiedAt": "2026-10-15"
+      },
+      {
+        "id": "iea",
+        "name": "International Energy Agency",
+        "url": "https://www.iea.org/",
+        "description": "Energy data, analysis and reports.",
+        "kind": "resource",
+        "publishing": false,
+        "verifiedAt": "2026-10-15"
+      }
+    ]
+  },
+  {
+    "id": "hospitality",
+    "name": "Hospitality & tourism",
+    "description": "Hospitality operations and tourism information.",
+    "sources": [
+      {
+        "id": "ahla",
+        "name": "American Hotel & Lodging Association",
+        "url": "https://www.ahla.com/",
+        "description": "Hotel industry resources and professional programs.",
+        "kind": "resource",
+        "publishing": false,
+        "verifiedAt": "2026-10-15"
+      },
+      {
+        "id": "un-tourism",
+        "name": "UN Tourism",
+        "url": "https://www.untourism.int/",
+        "description": "Tourism research, data and international programs.",
+        "kind": "resource",
+        "publishing": false,
+        "verifiedAt": "2026-10-15"
+      }
+    ]
+  },
+  {
+    "id": "retail",
+    "name": "Retail & small business",
+    "description": "Retail industry and small business resources.",
+    "sources": [
+      {
+        "id": "nrf",
+        "name": "National Retail Federation",
+        "url": "https://nrf.com/about-us",
+        "description": "Retail industry research, events and resources.",
+        "kind": "resource",
+        "publishing": false,
+        "verifiedAt": "2026-10-15"
+      },
+      {
+        "id": "sba",
+        "name": "U.S. Small Business Administration",
+        "url": "https://www.sba.gov/",
+        "description": "Small business programs and business guidance.",
+        "kind": "resource",
+        "publishing": false,
+        "verifiedAt": "2026-10-15"
+      }
+    ]
+  },
+  {
+    "id": "creative",
+    "name": "Design, media & marketing",
+    "description": "Creative practice and marketing communities.",
+    "sources": [
+      {
+        "id": "aiga",
+        "name": "AIGA",
+        "url": "https://designcareers.aiga.org/",
+        "description": "Design career and professional resources.",
+        "kind": "resource",
+        "publishing": false,
+        "verifiedAt": "2026-10-15"
+      },
+      {
+        "id": "ama",
+        "name": "American Marketing Association",
+        "url": "https://www.ama.org/",
+        "description": "Marketing research and professional development.",
+        "kind": "resource",
+        "publishing": false,
+        "verifiedAt": "2026-10-15"
+      }
+    ]
+  },
+  {
+    "id": "public-service",
+    "name": "Government & public service",
+    "description": "Public service careers and workforce information.",
+    "sources": [
+      {
+        "id": "usajobs",
+        "name": "USAJOBS",
+        "url": "https://www.usajobs.gov/",
+        "description": "Official U.S. federal employment listings.",
+        "kind": "resource",
+        "publishing": false,
+        "verifiedAt": "2026-10-15"
+      },
+      {
+        "id": "opm",
+        "name": "U.S. Office of Personnel Management",
+        "url": "https://www.opm.gov/",
+        "description": "Federal workforce programs and information.",
+        "kind": "resource",
+        "publishing": false,
+        "verifiedAt": "2026-10-15"
+      }
+    ]
+  }
+]

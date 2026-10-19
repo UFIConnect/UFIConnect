@@ -96,7 +96,7 @@ try {
       if (phase === 'native' && backgroundClip && offset === 0) return route.fulfill({ json: { posts: [{ ...makePost(500), id: 'new-background-clip' }], hasMore: false, waitingForNew: true } });
       if (phase === 'overload' && offset === 10 && !params.get('source') && !overloadFailureAt) {
         overloadFailureAt = Date.now();
-        return route.fulfill({ status: 503, headers: { 'Retry-After': '2' }, json: { message: 'Controlled temporary overload.' } });
+        return route.fulfill({ status: 503, headers: { 'Retry-After': '5' }, json: { message: 'Controlled temporary overload.' } });
       }
       if (phase === 'overload' && params.get('source') === 'youtube') {
         return route.fulfill({ json: { posts: [{ ...makePost(1000), id: 'overload-filtered' }], hasMore: false, waitingForNew: true } });
@@ -179,15 +179,32 @@ try {
     await page.keyboard.press('ArrowUp');
     await awaitActive('native-0');
     const cdp = await context.newCDPSession(page);
-    const bounds = await page.locator('[data-post-id="native-0"] [data-video-media]').boundingBox();
-    const x = bounds.x + bounds.width / 2, startY = bounds.y + bounds.height * .8, endY = bounds.y + bounds.height * .2;
+    const swipe = await page.evaluate(() => {
+      const media = document.querySelector('[data-post-id="native-0"] [data-video-media]');
+      const scroll = document.querySelector('[data-video-feed-scroll]');
+      const frame = media.getBoundingClientRect(), viewport = scroll.getBoundingClientRect();
+      const left = Math.max(0, frame.left, viewport.left), right = Math.min(innerWidth, frame.right, viewport.right);
+      const top = Math.max(0, frame.top, viewport.top), bottom = Math.min(innerHeight, frame.bottom, viewport.bottom);
+      const x = (left + right) / 2, startY = bottom - 12, endY = top + 12;
+      return { x, startY, endY, visibleWidth: right - left, slideHeight: scroll.clientHeight,
+        startsOnMedia: media.contains(document.elementFromPoint(x, startY)),
+        endsOnMedia: media.contains(document.elementFromPoint(x, endY)) };
+    });
+    assert.ok(swipe.visibleWidth > 100 && swipe.slideHeight > 0, 'The touch target is a visible video inside its scroller');
+    assert.ok(swipe.startsOnMedia && swipe.endsOnMedia, 'Both touch endpoints hit the visible video media');
+    // The normal page layout has a taller slide than its video. A short
+    // media-relative drag can leave the same slide nearest the viewport center.
+    assert.ok(swipe.startY - swipe.endY > swipe.slideHeight * .55, 'The real swipe crosses the slide midpoint');
+    const { x, startY, endY } = swipe;
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y: startY }] });
     for (let i = 1; i <= 6; i += 1) {
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: startY + (endY - startY) * i / 6 }] });
       await page.waitForTimeout(25);
     }
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-    await page.waitForFunction(() => { const scroll = document.querySelector('[data-video-feed-scroll]'); return scroll.scrollTop >= scroll.clientHeight * .9; });
+    // Free scrolling can stop between slides. Crossing the midpoint selects
+    // the next video without requiring a snap to its top edge.
+    await page.waitForFunction(() => { const scroll = document.querySelector('[data-video-feed-scroll]'); return scroll.scrollTop > scroll.clientHeight / 2; });
     await cdp.detach();
     assert.notEqual(await activeId(), 'native-0', 'A real touch swipe advances the video');
 
@@ -211,9 +228,13 @@ try {
     for (let pageNumber = 1; pageNumber < 24; pageNumber += 1) {
       const target = `provider-${pageNumber * 10 - 3}`;
       await page.locator(`[data-post-id="${target}"]`).waitFor();
-      await page.locator(`[data-post-id="${target}"]`).evaluate(el => el.scrollIntoView({ block: 'start', behavior: 'instant' }));
-      await awaitActive(target);
+      await page.locator(`[data-post-id="${target}"]`).evaluate(el => {
+        const scroll = el.closest('[data-video-feed-scroll]');
+        scroll.scrollTo({ top: scroll.scrollTop + el.getBoundingClientRect().top - scroll.getBoundingClientRect().top + 137, behavior: 'instant' });
+      });
       await page.locator(`[data-post-id="provider-${pageNumber * 10}"]`).waitFor();
+      const offset = await page.locator(`[data-post-id="${target}"]`).evaluate(el => el.getBoundingClientRect().top - el.closest('[data-video-feed-scroll]').getBoundingClientRect().top);
+      assert.ok(Math.abs(offset + 137) <= 2, `Pagination preserves the partial scroll position after queue trimming (${offset}px)`);
       const state = await page.evaluate(() => ({ posts: document.querySelectorAll('[data-video-feed-scroll] [data-post-id]').length,
         slides: document.querySelectorAll('.video-feed-slide').length, frames: document.querySelectorAll('.video-feed-youtube-player iframe').length,
         players: [...window.__videoAuditPlayers].filter(player => player.state === 1).length }));
@@ -247,16 +268,17 @@ try {
     const failedPage = page.waitForResponse(response => response.url().includes(`/office/feed/${surface}?`) && response.status() === 503);
     await page.locator('[data-post-id="overload-7"]').evaluate(el => el.scrollIntoView({ block: 'start', behavior: 'instant' }));
     await failedPage;
+    assert.ok(await page.locator('[data-post-id="overload-0"]').count(), 'Existing playable queue stays available during overload');
     await page.getByRole('button', { name: 'Filter videos', exact: true }).click();
     await page.getByRole('button', { name: 'YouTube', exact: true }).click();
     await page.getByRole('button', { name: 'Done', exact: true }).first().click();
     await page.waitForTimeout(800);
-    assert.equal(calls.filter(call => call.phase === 'overload').length, 2, 'Backoff suppresses generic retries and immediate filter retries');
-    assert.ok(await page.locator('[data-post-id="overload-0"]').count(), 'Existing playable queue stays available during overload');
+    assert.equal(calls.filter(call => call.phase === 'overload' && call.at - overloadFailureAt < 4950).length, 2,
+      'Backoff suppresses requests throughout the Retry-After window even if UI interaction takes longer');
     await page.locator('[data-post-id="overload-filtered"]').waitFor();
     const overloadCalls = calls.filter(call => call.phase === 'overload');
     assert.equal(overloadCalls.length, 3, 'Exactly one recovery request follows the initial page and failure');
-    assert.ok(overloadCalls[2].at - overloadFailureAt >= 1950, 'Recovery honors the two-second Retry-After window');
+    assert.ok(overloadCalls[2].at - overloadFailureAt >= 4950, 'Recovery honors the five-second Retry-After window');
     assert.equal(overloadCalls[2].source, 'youtube', 'Recovery honors the latest source filter');
     assert.equal(overloadCalls[2].offset, 0, 'A filter change resets the prior pagination cursor');
     assert.equal(await page.locator('[data-post-id^="overload-"]:not([data-post-id="overload-filtered"])').count(), 0, 'Recovery replaces the old filter queue');

@@ -3,14 +3,14 @@ import { test } from 'node:test';
 import { isBusinessRouteAllowed } from './businessRoutes.mjs';
 
 test('Business membership keeps work, billing and account routes available', () => {
-  for (const path of ['/recruiting', '/career-posts', '/business-posts', '/people', '/connected-accounts', '/messages', '/messages/candidate-123', '/settings', '/privacy', '/terms', '/login']) {
+  for (const path of ['/recruiting', '/career-posts', '/business-posts', '/business/industries', '/business/cross-post', '/jobs/new', '/opportunities', '/opportunities/bp-job-123', '/p/bi-business-post', '/people', '/connected-accounts', '/messages', '/messages/candidate-123', '/settings', '/privacy', '/terms', '/login']) {
     assert.equal(isBusinessRouteAllowed(path), true, path);
     assert.equal(isBusinessRouteAllowed(path + '/'), true, path + '/');
   }
 });
 
 test('Business direct links cannot open personal feeds, entertainment or social tools', () => {
-  for (const path of ['/', '/global', '/videos', '/music', '/groups', '/groups/group-1', '/p/social-post', '/profile', '/search', '/saved/posts', '/maps', '/command-center', '/you', '/opportunities']) {
+  for (const path of ['/', '/global', '/videos', '/music', '/groups', '/groups/group-1', '/profile', '/search', '/saved/posts', '/maps', '/command-center', '/you', '/business/industries/unknown', '/jobs/unknown', '/opportunities/job-123/edit', '/p/post-123/edit']) {
     assert.equal(isBusinessRouteAllowed(path), false, path);
   }
 });

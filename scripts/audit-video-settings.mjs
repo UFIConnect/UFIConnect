@@ -44,10 +44,13 @@ try {
     // succeeds after the view which requested it has already unmounted.
     let fullscreenElement = null;
     Object.defineProperty(document, 'fullscreenElement', { configurable: true, get: () => fullscreenElement });
-    Element.prototype.requestFullscreen = () => new Promise(resolve => {
-      audit.fullscreenRequests++;
-      audit.resolveFullscreen = () => { fullscreenElement = document.documentElement; document.dispatchEvent(new Event('fullscreenchange')); resolve(); };
-    });
+    Element.prototype.requestFullscreen = function () {
+      const target = this;
+      return new Promise(resolve => {
+        audit.fullscreenRequests++;
+        audit.resolveFullscreen = () => { fullscreenElement = target; document.dispatchEvent(new Event('fullscreenchange')); resolve(); };
+      });
+    };
     document.exitFullscreen = async () => { audit.fullscreenExits++; fullscreenElement = null; document.dispatchEvent(new Event('fullscreenchange')); };
     window.YT = { PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 }, Player: class {
       constructor(frame, config) {
@@ -70,7 +73,8 @@ try {
         audit.captionWrites.push({ module, option, value });
         audit.confirmCaption = () => { this.captionFontSize = value; this.config.events?.onApiChange?.({ target: this }); };
       }
-      loadVideoById(id) {
+      loadVideoById(value) {
+        const id = typeof value === 'string' ? value : value.videoId;
         this.id = id; this.rate = 1; this.captionFontSize = 0; this.captionModule = false;
         const url = new URL(this.frame.src); url.pathname = `/embed/${id}`; this.frame.src = url.href;
       }
@@ -223,8 +227,7 @@ try {
     'App progress-control touches never schedule fallback scrolling');
   await scroll.evaluate(container => { delete container.scrollTo; });
 
-  await nativeSlide.getByRole('button', { name: 'More options', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Full screen', exact: true }).click();
+  await nativeSlide.locator('.media-playback-controls').getByRole('button', { name: 'Full screen', exact: true }).click();
   await page.waitForFunction(() => window.__videoSettingsAudit.fullscreenRequests === 1);
   assert.equal(await page.evaluate(() => Boolean(document.fullscreenElement)), false, 'Fullscreen request remains pending');
   await page.getByRole('button', { name: 'Back to Home', exact: true }).click();

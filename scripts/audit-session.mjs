@@ -79,3 +79,15 @@ export async function auditReload(page, options) {
   // A saved browser session now restores through the API's HttpOnly cookie.
   return auditNavigate(page, target);
 }
+
+// Exercise the actual pagination controls when an action is on a later page.
+export async function auditPageTo(scope, role, name, { nextRole = 'menuitem', nextLabel = 'Next options' } = {}) {
+  for (let index = 0; index < 12; index++) {
+    const option = scope.getByRole(role, { name, exact: true });
+    if (await option.isVisible()) return option;
+    const next = scope.getByRole(nextRole, { name: nextLabel, exact: true });
+    if (!await next.isVisible() || await next.isDisabled()) break;
+    await next.click();
+  }
+  throw new Error(`The paginated ${role} option was not reachable: ${name}`);
+}

@@ -144,8 +144,8 @@ const VIDEO_COMMENTS_PASSIVE_REFRESH_MS = 30 * 1000;
 // unconditionally mounted regardless of active state (see its own render
 // branch) — competing for decode/paint/memory for the rest of the session
 // and getting slower to scroll the longer it went on. 2 covers a normal
-// swipe-by-one and the occasional hard-flick-skips-two case (see the
-// scrollSnapStop comment below) without a visible gap.
+// swipe-by-one and the occasional hard-flick-skips-two case without a
+// visible gap.
 const VIDEO_MOUNT_RADIUS = 2;
 
 function readYouTubeSettings(player) {
@@ -181,27 +181,9 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
   // and real interaction controls stay available without a second title band.
   const [captionExpanded, setCaptionExpanded] = useState(false);
   const showCaption = captionExpanded || post.source === 'twitter';
-  const captionScrollAnchor = useRef(null);
   function toggleCaption() {
-    const container = slideRef.current?.closest('[data-video-feed-scroll]');
-    captionScrollAnchor.current = container ? { container, top: container.scrollTop } : null;
     setCaptionExpanded(value => !value);
   }
-  useLayoutEffect(() => {
-    const anchor = captionScrollAnchor.current;
-    captionScrollAnchor.current = null;
-    if (!anchor?.container.isConnected) return undefined;
-    // A resized detail panel must not reuse the browser's previous snap target.
-    // Keep this slide pinned through layout, then restore ordinary feed swipes.
-    const previousSnap = anchor.container.style.scrollSnapType;
-    anchor.container.style.scrollSnapType = 'none';
-    anchor.container.scrollTop = anchor.top;
-    const frame = requestAnimationFrame(() => {
-      anchor.container.scrollTop = anchor.top;
-      anchor.container.style.scrollSnapType = previousSnap;
-    });
-    return () => { cancelAnimationFrame(frame); anchor.container.style.scrollSnapType = previousSnap; };
-  }, [captionExpanded]);
   const captionId = useId();
   const [settingsOpen, setSettingsOpen] = useState(false);
   useEffect(() => { if (!active) setSettingsOpen(false); }, [active]);
@@ -656,7 +638,7 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
   }
 
   const validSourceActions = post.source !== 'youtube' || isYoutube;
-  const nativeSettingsTitle = isMemberPost(post) ? 'Player settings' : `${postSource(post).label} settings`;
+  const nativeSettingsTitle = isMemberPost(post) || !validSourceActions ? 'Player settings' : `${postSource(post).label} settings`;
   const sourceItems = sourcePostMenuItems(post).filter(item => validSourceActions || item.key === 'original')
     .map(item => ({ ...item, ...(item.key === 'original' ? { key: 'source-page' } : {}),
       ...(!validSourceActions ? { label: 'Open original post' } : {}) }));
@@ -1032,9 +1014,10 @@ export default function VideoFeedView({ onExit, music = false }) {
       if (document.fullscreenElement) await document.exitFullscreen();
       else if (fullScreen) setFullScreen(false);
       else if (document.fullscreenEnabled && viewRef.current?.requestFullscreen) {
-        await viewRef.current?.requestFullscreen();
+        const target = viewRef.current;
+        await target.requestFullscreen();
         if (!fullScreenView.current.mounted || generation !== fullScreenView.current.generation) {
-          if (document.fullscreenElement === viewRef.current) await document.exitFullscreen();
+          if (document.fullscreenElement === target) await document.exitFullscreen();
           return;
         }
         enteredFullScreen.current = true;
@@ -1060,7 +1043,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   const queueRef = useRef(videoPosts);
   const activeIndexRef = useRef(activeIndex);
   const lastSwipeAtRef = useRef(-Infinity);
-  const pendingScrollIndexRef = useRef(null);
+  const pendingScrollTopRef = useRef(null);
   queueRef.current = videoPosts;
   activeIndexRef.current = activeIndex;
   const onDurationResolved = useCallback((post, seconds) => {
@@ -1071,14 +1054,19 @@ export default function VideoFeedView({ onExit, music = false }) {
     trimOldest(durationCacheRef.current);
     if (!isShortFeedVideo(seconds)) return;
     const previous = queueRef.current;
-    const activePost = previous[activeIndexRef.current];
+    const previousIndex = activeIndexRef.current;
+    const activePost = previous[previousIndex];
     const next = previous.filter(item => videoSourceKey(resolveVideoSource(item)) !== key);
     if (next.length === previous.length) return;
+    const removedBefore = previous.slice(0, previousIndex).filter(item => videoSourceKey(resolveVideoSource(item)) === key).length;
     const keptIndex = next.findIndex(item => item === activePost);
-    const nextIndex = keptIndex >= 0 ? keptIndex : Math.min(activeIndexRef.current, Math.max(next.length - 1, 0));
+    const nextIndex = keptIndex >= 0 ? keptIndex : Math.min(previousIndex - removedBefore, Math.max(next.length - 1, 0));
     queueRef.current = next;
     activeIndexRef.current = nextIndex;
-    pendingScrollIndexRef.current = nextIndex;
+    if (removedBefore && containerRef.current) {
+      pendingScrollTopRef.current = Math.max(0, (pendingScrollTopRef.current ?? containerRef.current.scrollTop)
+        - removedBefore * containerRef.current.clientHeight);
+    }
     setVideoPosts(next);
     setActiveIndex(nextIndex);
   }, []);
@@ -1342,7 +1330,10 @@ export default function VideoFeedView({ onExit, music = false }) {
       queueRef.current = retained;
       if (removeBefore) {
         activeIndexRef.current -= removeBefore;
-        pendingScrollIndexRef.current = activeIndexRef.current;
+        if (containerRef.current) {
+          pendingScrollTopRef.current = Math.max(0, (pendingScrollTopRef.current ?? containerRef.current.scrollTop)
+            - removeBefore * containerRef.current.clientHeight);
+        }
         setActiveIndex(activeIndexRef.current);
       }
       setVideoPosts(retained);
@@ -1459,9 +1450,11 @@ export default function VideoFeedView({ onExit, music = false }) {
   }, [videoPosts.length]);
 
   useLayoutEffect(() => {
-    if (pendingScrollIndexRef.current === null || !containerRef.current) return;
-    containerRef.current.scrollTop = pendingScrollIndexRef.current * containerRef.current.clientHeight;
-    pendingScrollIndexRef.current = null;
+    if (pendingScrollTopRef.current === null || !containerRef.current) return;
+    // Removing offscreen items changes the coordinate origin, not the user's
+    // position within a video. Preserve partial scrolling instead of snapping.
+    containerRef.current.scrollTop = pendingScrollTopRef.current;
+    pendingScrollTopRef.current = null;
   }, [videoPosts]);
 
   const videoLiveStateRef = useRef({ loading: false, refreshing: false, activeIndex: 0 });
@@ -1623,7 +1616,7 @@ export default function VideoFeedView({ onExit, music = false }) {
 
   // Scrolling back up to video 1 after having scrolled further in acts as
   // pull-to-refresh, same mechanism as every other list on the site — no
-  // separate touch-drag handling needed since the snap-scroll container
+  // separate touch-drag handling needed since the feed's scroll container
   // already reports scrollTop the same way a normal list would.
   useScrollToRefresh(handleRefresh, { containerRef, enabled: !loading });
 
@@ -1704,7 +1697,7 @@ export default function VideoFeedView({ onExit, music = false }) {
       event.preventDefault();
       const direction = ['ArrowDown', 'ArrowRight', 'PageDown'].includes(event.key) ? 1 : -1;
       const next = Math.max(0, Math.min(queueRef.current.length - 1, activeIndexRef.current + direction));
-      container.scrollTo({ top: next * container.clientHeight, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+      container.scrollTo({ top: next * container.clientHeight, behavior: 'instant' });
     };
     container.addEventListener('keydown', handleKey);
     return () => container.removeEventListener('keydown', handleKey);
@@ -1822,7 +1815,7 @@ export default function VideoFeedView({ onExit, music = false }) {
         lastSwipeAtRef.current = performance.now();
         container.scrollTo({
           top: targetIndex * height,
-          behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+          behavior: 'instant',
         });
       };
       advance();

@@ -1,0 +1,24 @@
+.job-compose-page { width:100%; max-width:1100px; margin:0 auto; padding:1.25rem; }
+.job-compose-heading { display:flex; align-items:center; gap:1rem; margin:1.25rem 0; }
+.job-compose-heading h1 { margin:0 0 .4rem; font-size:1.6rem; }
+.job-compose-heading p,.job-compose-note { color:var(--muted); line-height:1.6; }
+.job-compose-grid { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(0,1fr); align-items:start; gap:1.25rem; }
+.job-compose-form,.job-compose-gate,.job-compose-result { padding:1.25rem; }
+.job-compose-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; }
+.job-compose-field { display:flex; flex-direction:column; gap:.45rem; margin-bottom:1rem; font-size:.9rem; font-weight:600; min-width:0; }
+.job-compose-field input { width:100%; min-width:0; padding:.7rem; background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:8px; font:inherit; }
+.job-compose-form .publish-writing { margin-bottom:1rem; }
+.job-compose-actions { display:flex; flex-wrap:wrap; align-items:center; gap:.75rem; margin:1rem 0; }
+.job-compose-error { color:#b91c1c; background:#fef2f2; padding:.85rem; border-radius:8px; }
+.job-compose-result { margin-bottom:1rem; }
+.jobs-post-entry { display:flex; justify-content:flex-end; margin-bottom:1rem; }
+.job-publisher { display:block; color:var(--muted); font-size:.85rem; margin-top:.4rem; }
+.jobs-business-search { display:flex; align-items:flex-end; flex-wrap:wrap; gap:.75rem; margin-bottom:1rem; }
+.jobs-business-search label { display:flex; flex:1 1 180px; min-width:0; flex-direction:column; gap:.4rem; font-size:.85rem; font-weight:600; }
+.jobs-business-search input { width:100%; min-width:0; padding:.7rem; border:1px solid var(--border); border-radius:8px; background:var(--card); color:var(--text); font:inherit; }
+.jobs-business-mobile-controls { display:none; margin-bottom:1rem; padding:.75rem; }
+.jobs-business-mobile-controls summary { cursor:pointer; font-weight:600; }
+.jobs-business-mobile-controls[open] summary { margin-bottom:1rem; }
+.jobs-business-mobile-controls .jobs-sidebar-controls { max-height:65vh; overflow-y:auto; }
+@media(max-width:768px) { .jobs-business-mobile-controls { display:block; } }
+@media(max-width:760px) { .job-compose-page { padding:1rem .75rem; } .job-compose-grid,.job-compose-fields { grid-template-columns:minmax(0,1fr); } .job-compose-heading h1 { font-size:1.4rem; } }

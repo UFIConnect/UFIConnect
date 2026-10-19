@@ -47,6 +47,7 @@ jobs:
       - run: node scripts/audit-memberships.mjs
       - run: node scripts/audit-business.mjs
       - run: node scripts/audit-business-team.mjs
+      - run: node scripts/audit-business-industries.mjs
       - run: node scripts/audit-post-likes.mjs
       - run: node scripts/audit-confirmations.mjs
       - run: node scripts/audit-analytics.mjs
@@ -60,6 +61,7 @@ jobs:
       - run: node scripts/audit-mobile-account-sidebar.mjs
       - run: node scripts/audit-homepage-preparation.mjs
       - run: node scripts/audit-jobs-feed.mjs
+      - run: node scripts/audit-job-posting.mjs
       - run: node scripts/audit-music-feed.mjs
       - run: node scripts/audit-global-member-feed.mjs
       - run: node scripts/audit-video-layout.mjs
