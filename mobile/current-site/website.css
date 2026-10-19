@@ -39,6 +39,8 @@ html[data-ufi-app] .shell-content:has(> .global-app-header) .home-feed-right-tab
   html[data-ufi-app] .shell .main {
     padding: 10px 8px calc(var(--app-bottom-height) + var(--app-safe-bottom) + 8px);
   }
+  /* Media navigation is in normal flow, so it needs no fixed-bar allowance. */
+  html[data-ufi-app] .shell.shell-media-scroll .main { padding-bottom: 24px; }
   html[data-ufi-app] .shell .bottom-nav {
     bottom: 0; min-height: calc(var(--app-bottom-height) + var(--app-safe-bottom));
     padding-bottom: var(--app-safe-bottom);

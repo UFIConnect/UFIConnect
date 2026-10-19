@@ -14,6 +14,8 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { fetch as nativeFetch } from 'expo/fetch';
 import Website from './Website';
 import NativeYouTubeLayer from './NativeYouTubeLayer';
+import NativeTwitchPlayer from './NativeTwitchPlayer';
+import { clipRequest } from './nativeTwitch.cjs';
 import { createSessionStorage } from '../security/sessionStorage';
 import { parseProviderCallback, validAuthorizationUrl } from '../security/providerSignIn';
 import { MAX_BYTES, bytesToBase64, base64Bytes, safeFileName, createNativeApiBridge, allowDocumentNavigation, externalUrl, assertNativeCapability } from './nativeBridge.cjs';
@@ -60,6 +62,7 @@ function NativeSite() {
   const [vpnSession, setVpnSession] = useState(null);
   const [vpnOpen, setVpnOpen] = useState(false);
   const issuedVpnSession = useRef(null);
+  const [twitchPlayer, setTwitchPlayer] = useState(null);
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
   const youtubeLayer = useRef(null);
   const [appearance, setAppearance] = useState(useColorScheme() === 'dark' ? 'dark' : 'light');
@@ -94,6 +97,7 @@ function NativeSite() {
     return result;
   }, []);
   const onPersistSession = useCallback(async token => {
+    if (token === null) setTwitchPlayer(null);
     if (Platform.OS === 'android') setVpnSession(null);
     await bridge.current.persistSession(token);
     if (Platform.OS !== 'android' || !token || bridge.current.getToken() !== token) return;
@@ -110,7 +114,7 @@ function NativeSite() {
     } catch { /* The shared account remains usable; a new VPN link can retry. */ }
   }, []);
   useEffect(() => {
-    const subscription = AppState.addEventListener('change', state => setNativeAppActive(state === 'active'));
+    const subscription = AppState.addEventListener('change', state => { setNativeAppActive(state === 'active'); if (state !== 'active') setTwitchPlayer(null); });
     return () => subscription.remove();
   }, []);
 
@@ -139,7 +143,7 @@ function NativeSite() {
     let active = true;
     capability.current = bytesToBase64(Crypto.getRandomBytes(32));
     documentUrl.current = null;
-    setError(''); setReady(false);
+    setError(''); setReady(false); setTwitchPlayer(null);
     (async () => {
       const document = resolveBundledDocument({ development: __DEV__, platform: Platform.OS,
         openDirectory: () => new Directory(Paths.bundle, 'www.bundle'), isFile: entry => entry instanceof File });
@@ -188,6 +192,11 @@ function NativeSite() {
     if (target.startsWith('https://')) await runBrowserOperation(() => WebBrowser.openBrowserAsync(target, { presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET }));
     else await Linking.openURL(target);
   }, [runBrowserOperation]);
+  const onTwitchPlayer = useCallback(async input => {
+    if (AppState.currentState !== 'active' || activeProvider.current) throw new Error('Return to UFIConnect to watch this clip.');
+    setTwitchPlayer(clipRequest(input));
+    return { opened: true };
+  }, []);
   const onRequestLocation = useCallback(async () => {
     if (AppState.currentState !== 'active') throw new Error('Return to UFIConnect to use location.');
     const permission = await Location.requestForegroundPermissionsAsync();
@@ -223,8 +232,9 @@ function NativeSite() {
   return <SafeAreaView style={[styles.root, { backgroundColor: chrome.backgroundColor }]} edges={['top', 'bottom']}>
     <StatusBar style={chrome.statusBar} />
     <View style={{ flex: 1 }} onLayout={event => { const { width, height } = event.nativeEvent.layout; setContentSize(previous => previous.width === width && previous.height === height ? previous : { width, height }); }}>
-    <Website nativePlatform={Platform.OS} nativeAppActive={mediaActive} initialSession={initialSession} nativeCapability={capability.current}
+    <Website nativePlatform={Platform.OS} nativeAppActive={mediaActive && !twitchPlayer} nativeTwitchActive={!!twitchPlayer} initialSession={initialSession} nativeCapability={capability.current}
       onYouTubePlayer={async (secret, input) => { assertNativeCapability(capability.current, secret); if (!youtubeLayer.current) throw new Error('Video is unavailable.'); return youtubeLayer.current.request(input); }}
+      onTwitchPlayer={async (secret, input) => { assertNativeCapability(capability.current, secret); return onTwitchPlayer(input); }}
       onApiRequest={async (secret, input) => { assertNativeCapability(capability.current, secret); return onApiRequest(input); }}
       onPersistSession={async (secret, token) => { assertNativeCapability(capability.current, secret); return onPersistSession(token); }}
       onProviderSignIn={async (secret, provider, mode) => { assertNativeCapability(capability.current, secret); return onProviderSignIn(provider, mode); }}
@@ -243,12 +253,13 @@ function NativeSite() {
         onShouldStartLoadWithRequest: shouldNavigate, allowFileAccessFromFileURLs: true, allowUniversalAccessFromFileURLs: false,
         javaScriptCanOpenWindowsAutomatically: false, injectedJavaScriptForMainFrameOnly: true, injectedJavaScriptBeforeContentLoadedForMainFrameOnly: true,
         mediaPlaybackRequiresUserAction: true, sharedCookiesEnabled: false, thirdPartyCookiesEnabled: false,
-        onError: event => { setError(documentLoadError(event)); setReady(false); },
-        onContentProcessDidTerminate: () => { documentUrl.current = null; capability.current = bytesToBase64(Crypto.getRandomBytes(32)); setAttempt(value => value + 1); },
+        onError: event => { setTwitchPlayer(null); setError(documentLoadError(event)); setReady(false); },
+        onContentProcessDidTerminate: () => { setTwitchPlayer(null); documentUrl.current = null; capability.current = bytesToBase64(Crypto.getRandomBytes(32)); setAttempt(value => value + 1); },
       }} />
-    <NativeYouTubeLayer key={attempt} ref={youtubeLayer} active={mediaActive && !providerBusy} containerSize={contentSize} />
+    <NativeYouTubeLayer key={attempt} ref={youtubeLayer} active={mediaActive && !providerBusy && !twitchPlayer} containerSize={contentSize} />
     </View>
     {Platform.OS === 'android' && <AndroidVpnAccess session={vpnSession} ready={ready} onVisibilityChange={setVpnOpen} />}
+    {twitchPlayer && <NativeTwitchPlayer key={twitchPlayer.originalUrl} player={twitchPlayer} onClose={() => setTwitchPlayer(null)} />}
     {providerBusy && <View style={styles.provider}><Text style={{ color: chrome.statusBar === 'light' ? '#edf1f7' : '#334155' }}>Complete sign-in in your browser.</Text><Pressable accessibilityRole="button" onPress={() => WebBrowser.dismissAuthSession()}><Text style={[styles.link, chrome.statusBar === 'light' && { color: '#abc2ff' }]}>Cancel</Text></Pressable></View>}
   </SafeAreaView>;
 }

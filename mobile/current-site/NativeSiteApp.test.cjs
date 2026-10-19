@@ -32,11 +32,13 @@ function harness({ development = false, present = true, platform = 'ios', provid
   }
   const bundle = { uri: platform === 'android' ? 'asset://' : ROOT.replace('www.bundle/', '') };
   const Website = function WebsiteFixture() {};
+  const AndroidVpnAccess = function AndroidVpnAccessFixture() {};
   const NativeYouTubeLayer = function NativeYouTubeLayerFixture() {};
   const AppState = { currentState: 'active', addEventListener: (_name, listener) => {
     appStateListeners.add(listener); return { remove: () => appStateListeners.delete(listener) };
   } };
   const browserOperation = (calls, url) => new Promise((resolve, reject) => calls.push({ url, resolve, reject }));
+  const NativeTwitchPlayer = function NativeTwitchPlayerFixture() {};
   const imports = {
     react: React,
     'react-native': { ActivityIndicator: 'ActivityIndicator', Alert: { alert() {} }, AppState,
@@ -59,9 +61,10 @@ function harness({ development = false, present = true, platform = 'ios', provid
     } },
     './Website': Website,
     './NativeYouTubeLayer': NativeYouTubeLayer,
-    './AndroidVpnAccess': function AndroidVpnAccessFixture() {},
+    './AndroidVpnAccess': AndroidVpnAccess,
     '../native-vpn/client': { disconnectVpnSession: async () => ({ stopped: true, revoked: true }) },
     '../native-vpn/launchClient': { vpnLaunch: { open: () => false } },
+    './NativeTwitchPlayer': NativeTwitchPlayer,
   };
   const module = { exports: {} };
   new Function('require', 'module', 'exports', '__DEV__', compiled)(name => Object.hasOwn(imports, name) ? imports[name] : require(path.resolve(__dirname, name)), module, module.exports, development);
@@ -83,7 +86,7 @@ function harness({ development = false, present = true, platform = 'ios', provid
     if (typeof tree === 'string' || typeof tree === 'number') return String(tree);
     return [tree?.props?.children].flat().map(child => child && typeof child === 'object' ? text(child) : typeof child === 'string' ? child : '').join(' ');
   }
-  return { startup, render, find, text, Website, NativeYouTubeLayer, directoryCalls, storageCalls, browserCalls, authBrowserCalls,
+  return { startup, render, find, text, Website, NativeTwitchPlayer, NativeYouTubeLayer, AndroidVpnAccess, directoryCalls, storageCalls, browserCalls, authBrowserCalls,
     networkCalls: () => networkCalls, stateWrites: () => stateWrites,
     appState(state) { AppState.currentState = state; for (const listener of appStateListeners) listener(state); },
     unmount() { for (const slot of slots) slot?.cleanup?.(); },
@@ -161,7 +164,7 @@ test('native safe area is applied once and media/theme chrome updates require th
   assert.equal(dom.contentInsetAdjustmentBehavior, 'never');
   assert.equal(dom.automaticallyAdjustContentInsets, false);
   assert.equal(dom.automaticallyAdjustsScrollIndicatorInsets, false);
-  for (const [mode, color, status] of [['video', '#080c12', 'light'], ['snap', '#080c12', 'light'], ['lightbox', '#000000', 'light'], ['dark', '#111d30', 'light'], ['light', '#ffffff', 'dark']]) {
+  for (const [mode, color, status] of [['welcome', '#06265f', 'light'], ['video', '#080c12', 'light'], ['snap', '#080c12', 'light'], ['lightbox', '#000000', 'light'], ['dark', '#111d30', 'light'], ['light', '#ffffff', 'dark']]) {
     await onAppearanceChange(nativeCapability, mode);
     const tree = h.render(), surface = h.find(tree, 'SafeAreaView'), current = h.find(tree, h.Website);
     assert.deepEqual(surface.props.edges, ['top', 'bottom']);
@@ -256,5 +259,62 @@ test('Android auth keeps its existing website and isolated-player lifecycle', as
   h.authBrowserCalls[0].resolve({ type: 'cancel' }); await canceled;
   assert.deepEqual(h.media(), { website: false, youtube: false });
   h.appState('active');
+  assert.deepEqual(h.media(), { website: true, youtube: true });
+});
+
+test('Twitch opens inside the native shell, pauses other surfaces and closes without losing the app document', async () => {
+  const h = harness(), website = h.find(await h.startup(), h.Website);
+  const input = { url: 'https://clips.twitch.tv/ExampleClip', title: 'Example', creator: 'Creator' };
+  await assert.rejects(website.props.onTwitchPlayer('untrusted-frame', input));
+  await assert.rejects(website.props.onTwitchPlayer(website.props.nativeCapability, { url: 'https://evil.example/' }));
+  assert.equal(h.find(h.render(), h.NativeTwitchPlayer), null);
+  assert.deepEqual(await website.props.onTwitchPlayer(website.props.nativeCapability, input), { opened: true });
+  const tree = h.render(), viewer = h.find(tree, h.NativeTwitchPlayer), current = h.find(tree, h.Website);
+  assert.equal(viewer.props.player.wrapperUrl, 'https://uficonnect.org/twitch-player.html?clip=ExampleClip');
+  assert.equal(viewer.props.player.creator, 'Creator');
+  assert.equal(current.props.nativeAppActive, false);
+  assert.equal(current.props.nativeTwitchActive, true);
+  assert.equal(h.find(tree, h.NativeYouTubeLayer).props.active, false);
+  assert.equal(current.props.dom.overrideUri, website.props.dom.overrideUri);
+  viewer.props.onClose();
+  assert.equal(h.find(h.render(), h.NativeTwitchPlayer), null);
+  assert.equal(h.find(h.render(), h.Website).props.nativeAppActive, true);
+  assert.equal(h.networkCalls(), 0);
+});
+
+test('background, logout and native host recovery unmount Twitch instead of continuing playback', async () => {
+  const h = harness();
+  const website = h.find(await h.startup(), h.Website);
+  const open = () => website.props.onTwitchPlayer(website.props.nativeCapability, { url: 'https://clips.twitch.tv/ExampleClip' });
+  await open(); h.appState('background');
+  assert.equal(h.find(h.render(), h.NativeTwitchPlayer), null);
+  await assert.rejects(open(), /Return to UFIConnect/);
+  h.appState('active');
+  assert.equal(h.find(h.render(), h.NativeTwitchPlayer), null);
+  await open(); await website.props.onPersistSession(website.props.nativeCapability, null);
+  assert.equal(h.find(h.render(), h.NativeTwitchPlayer), null);
+  await open(); website.props.dom.onContentProcessDidTerminate();
+  assert.equal(h.find(h.render(), h.NativeTwitchPlayer), null);
+});
+
+test('closing Twitch cannot resume website or YouTube while an iOS browser sheet remains open', async () => {
+  const h = harness(), website = h.find(await h.startup(), h.Website);
+  await website.props.onTwitchPlayer(website.props.nativeCapability, { url: 'https://clips.twitch.tv/ExampleClip' });
+  const operation = website.props.onOpenExternal(website.props.nativeCapability, 'https://example.invalid/post');
+  h.find(h.render(), h.NativeTwitchPlayer).props.onClose();
+  assert.deepEqual(h.media(), { website: false, youtube: false });
+  assert.equal(h.find(h.render(), h.Website).props.nativeTwitchActive, false);
+  h.browserCalls[0].resolve({ type: 'dismiss' }); await operation;
+  assert.deepEqual(h.media(), { website: true, youtube: true });
+});
+
+test('closing Twitch preserves Android VPN visibility as an independent media pause', async () => {
+  const h = harness({ platform: 'android' }), website = h.find(await h.startup(), h.Website);
+  await website.props.onTwitchPlayer(website.props.nativeCapability, { url: 'https://clips.twitch.tv/ExampleClip' });
+  const vpn = h.find(h.render(), h.AndroidVpnAccess);
+  vpn.props.onVisibilityChange(true);
+  h.find(h.render(), h.NativeTwitchPlayer).props.onClose();
+  assert.deepEqual(h.media(), { website: false, youtube: false });
+  vpn.props.onVisibilityChange(false);
   assert.deepEqual(h.media(), { website: true, youtube: true });
 });
