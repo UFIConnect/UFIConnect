@@ -40,7 +40,9 @@ test('category CHECK migration preserves existing totals and enables new categor
   await pg.exec(analytics.ANALYTICS_SCHEMA);
   await assert.rejects(pg.query("INSERT INTO analytics_daily_counts VALUES ('2026-10-08','command_center_media','page_view','',1)"));
   for (const statement of analytics.ANALYTICS_MIGRATIONS) await pg.exec(statement);
-  await pg.query("INSERT INTO analytics_daily_counts VALUES ('2026-10-08','command_center_media','page_view','',1)");
+  for (const category of ['command_center_media', 'job_compose', 'business_industries', 'business_cross_post']) {
+    await pg.query("INSERT INTO analytics_daily_counts VALUES ('2026-10-08',$1,'page_view','',1)", [category]);
+  }
   for (const statement of analytics.ANALYTICS_MIGRATIONS) await pg.exec(statement); // Restart safe.
   assert.equal(Number((await pg.query("SELECT event_count FROM analytics_daily_counts WHERE category='home'")).rows[0].event_count), 19);
   for (const category of ['/messages/private-id', 'private_account_id', 'vault', 'vault_device', 'app_vpn']) {
