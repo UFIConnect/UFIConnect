@@ -8,6 +8,7 @@ import { getGoogleAds } from './analytics/browserAds';
 import { publicRoutes } from './seo-routes.mjs';
 import { isBusinessRouteAllowed } from './businessRoutes.mjs';
 import RequireFeedLocation from './components/RequireFeedLocation';
+import MediaPermissionPrompt from './components/MediaPermissionPrompt';
 
 // Privacy controls load independently so their UI and styles never hold up
 // route content. The consent controller still prevents optional collection
@@ -203,16 +204,16 @@ function RouteLoading() {
 }
 
 export default function App({ guestHome } = {}) {
-  const { token, loading, sessionError } = useAuth();
+  const { token, loading, sessionError, profile } = useAuth();
   const { pathname } = useLocation();
   const ads = getGoogleAds();
   const guestHomepage = pathname === '/' && !token && !loading && !sessionError && !MAINTENANCE;
   useLayoutEffect(() => { ads.setHomepageEligible(guestHomepage); }, [ads, guestHomepage]);
   if (ads.mustLeave(guestHomepage)) return <SessionLoading />;
-  return <AppContent guestHome={guestHome} />;
+  return <AppContent guestHome={guestHome} mediaAccountId={profile?.id} />;
 }
 
-function AppContent({ guestHome }) {
+function AppContent({ guestHome, mediaAccountId }) {
   useLayoutEffect(() => {
     // Reveal React's committed route, not a pre-rendered guest page while
     // the member's saved session is still being restored.
@@ -353,6 +354,7 @@ function AppContent({ guestHome }) {
     </BusinessRoutes>
     </Suspense>
     <AnalyticsPrivacyControls />
+    <MediaPermissionPrompt accountId={mediaAccountId} />
     <Suspense fallback={null}><PhoneEmailReminder /></Suspense>
     </>
   );
