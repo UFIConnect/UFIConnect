@@ -1,6 +1,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { nativeAppearance, documentAppearance, observeNativeAppearance } = require('./nativeAppearance.cjs');
+const { nativeAppearance, documentAppearance, observeNativeAppearance, localTimeAppearance } = require('./nativeAppearance.cjs');
+
+test('native startup follows local daytime boundaries before the DOM supplies the saved choice', () => {
+  for (const [hour, minute, second, expected] of [
+    [0, 0, 0, 'dark'], [5, 59, 59, 'dark'], [6, 0, 0, 'light'], [12, 0, 0, 'light'],
+    [19, 59, 59, 'light'], [20, 0, 0, 'dark'], [23, 59, 59, 'dark'],
+  ]) assert.equal(localTimeAppearance(new Date(2026, 9, 18, hour, minute, second)), expected);
+  assert.equal(localTimeAppearance(new Date(NaN)), 'light', 'An invalid clock must not force a dark fallback');
+});
 
 function fixture() {
   const surfaces = new Set(), listeners = new Map(), frames = new Map();
@@ -96,4 +104,20 @@ test('observer teardown prevents a queued bridge call after WebView replacement'
   cleanup();
   await Promise.resolve();
   assert.deepEqual(changes, []);
+});
+
+test('native chrome keeps the explicit DOM appearance across foreground events and restores it after media', async () => {
+  const f = fixture(), changes = [];
+  f.document.documentElement.dataset.theme = 'dark';
+  const cleanup = observeNativeAppearance({ ...f, onChange: mode => changes.push(mode) });
+  await Promise.resolve();
+  f.listeners.get('ufi:appearance')(); await f.flush();
+  assert.deepEqual(changes, ['dark'], 'A manual dark choice must not follow the startup clock');
+  f.surfaces.add('.snap-viewer-feed[open]'); f.mutate(); await f.flush();
+  assert.equal(changes.at(-1), 'snap');
+  f.document.documentElement.dataset.theme = 'light'; f.listeners.get('ufi:appearance')(); await f.flush();
+  assert.equal(changes.at(-1), 'snap', 'Open media keeps its own native palette');
+  f.surfaces.clear(); f.mutate(); await f.flush();
+  assert.equal(changes.at(-1), 'light', 'Closing media restores the newly selected manual appearance');
+  cleanup();
 });

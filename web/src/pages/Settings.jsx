@@ -16,6 +16,7 @@ import { pushSupported, getPushSubscriptionState, enablePush, disablePush } from
 import BillingSettings from '../components/BillingSettings';
 import BusinessTeamSettings from '../components/BusinessTeamSettings';
 import DataPrivacySettings from '../components/DataPrivacySettings';
+import MediaPermissionSettings from '../components/MediaPermissionSettings';
 import ConfirmActionDialog from '../components/ConfirmActionDialog';
 import LegalLinks from '../components/LegalLinks';
 import AccountAccess from '../components/AccountAccess';
@@ -942,6 +943,7 @@ export default function Settings() {
         <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div className="card">
             <SectionHeading>Privacy</SectionHeading>
+            <MediaPermissionSettings accountId={profile?.id} />
             {[
               { key: 'publicProfile',   label: 'Public profile',      desc: 'Allow anyone on UFIconnect to view your profile.' },
               { key: 'showEmail',       label: 'Show email address',  desc: 'Display your email on your public profile.' },

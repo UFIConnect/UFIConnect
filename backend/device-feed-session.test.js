@@ -71,3 +71,34 @@ test('logout and account changes invalidate late callbacks; hidden pages do not 
   const lateBob = f.callback; f.module.clearDeviceFeedLocation(); lateBob(f.position());
   assert.equal(f.module.deviceFeedLocationHeader('bob-token'), null);
 });
+
+test('clock changes and invalid clock values cannot revive an expired or future cached location', async t => {
+  const f = await fixture(t); const stop = f.start('alice-token'); t.after(stop); await f.settle(); f.success();
+  const timestamp = f.position().timestamp;
+  assert.ok(f.module.deviceFeedLocationHeader('alice-token', timestamp));
+  assert.ok(f.module.deviceFeedLocationKey(timestamp));
+  for (const now of [timestamp - 60001, timestamp + 15 * 60000 + 1, NaN, Infinity, 'invalid']) {
+    assert.equal(f.module.deviceFeedLocationHeader('alice-token', now), null);
+    assert.equal(f.module.deviceFeedLocationKey(now), '');
+    assert.equal(f.module.deviceFeedRequestHeader({url: '/feed/location', headers: {Authorization: 'Bearer alice-token'}}, 'alice-token', now), null);
+  }
+  assert.ok(f.module.deviceFeedLocationHeader('alice-token', timestamp - 60000), 'Small device clock skew remains tolerated');
+  assert.ok(f.module.deviceFeedLocationHeader('alice-token', timestamp + 15 * 60000), 'The documented cache age boundary remains valid');
+});
+
+test('malformed, inaccurate, future and stale device positions fall back without retaining an earlier location', async t => {
+  const f = await fixture(t); const stop = f.start('alice-token'); t.after(stop); await f.settle();
+  const valid = f.position();
+  const invalid = [
+    {...valid, coords: {...valid.coords, latitude: NaN}}, {...valid, coords: {...valid.coords, latitude: 91}},
+    {...valid, coords: {...valid.coords, longitude: -181}}, {...valid, coords: {...valid.coords, accuracy: -1}},
+    {...valid, coords: {...valid.coords, accuracy: 9921}}, {...valid, timestamp: valid.timestamp + 60001},
+    {...valid, timestamp: valid.timestamp - 15 * 60000 - 1}, {...valid, timestamp: NaN},
+  ];
+  for (const position of invalid) {
+    f.success(valid); assert.ok(f.module.deviceFeedLocationHeader('alice-token'));
+    f.success(position);
+    assert.equal(f.module.deviceFeedLocationHeader('alice-token'), null);
+    assert.equal(f.module.deviceFeedLocationKey(), '');
+  }
+});

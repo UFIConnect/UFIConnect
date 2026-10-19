@@ -1,3 +1,4 @@
+import { timeAgo } from '../utils/postTime.mjs';
 import { postDiscussionUrl, safePostLink } from '../../../backend/post-links.mjs';
 import { publicSiteUrl } from '../utils/publicSiteUrl.mjs';
 import JobPostContent from '../components/JobPostContent';
@@ -69,16 +70,6 @@ const COMMAND_CENTER_PRO_TIER = TIERS.find((tier) => tier.tier === 'pro');
 const HOME_VIEW_MODES = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants', 'bars']);
 const EMBEDDED_HOME_MODES = new Set(['ufi']);
 
-function timeAgo(iso) {
-  if (!iso) return '';
-  const t = new Date(iso).getTime();
-  if (!Number.isFinite(t) || t <= 0) return '';
-  const diff = (Date.now() - t) / 1000;
-  if (diff < 60)    return 'just now';
-  if (diff < 3600)  return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
 
 function initials(name = '') {
   return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();

@@ -1,3 +1,4 @@
+import { narrowPostAge as age } from '../utils/postTime.mjs';
 ﻿import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Bell, CheckCheck, Heart, MessageCircle, RefreshCw, UserPlus, ExternalLink } from 'lucide-react';
@@ -9,11 +10,6 @@ import useTabMetrics from '../analytics/useTabMetrics';
 
 const actions = { like: 'liked your post', comment: 'commented on your post', new_follower: 'started following you', connection_request: 'wants to connect' };
 const readFailureMessage = 'Could not save read status. Your unread updates are still available.';
-function age(value) {
-  const minutes = Math.max(0, Math.floor((Date.now() - Date.parse(value)) / 60000));
-  if (!Number.isFinite(minutes)) return '';
-  return minutes < 1 ? 'Now' : minutes < 60 ? `${minutes}m` : minutes < 1440 ? `${Math.floor(minutes / 60)}h` : `${Math.floor(minutes / 1440)}d`;
-}
 
 export default function NotificationInbox({ compact = false, onNavigate }) {
   const [items, setItems] = useState([]);

@@ -1,13 +1,19 @@
 const MAX_AGE_MS = 15 * 60 * 1000;
 let location = null, generation = 0;
 
+function freshLocation(now) {
+  if (!location || !Number.isFinite(now)) return false;
+  const age = now - location.timestamp;
+  return age >= -60000 && age <= MAX_AGE_MS;
+}
+
 export function clearDeviceFeedLocation() { generation++; location = null; }
 export function deviceFeedLocationHeader(token, now = Date.now()) {
-  if (!token || location?.token !== token || now - location.timestamp > MAX_AGE_MS) return null;
+  if (!token || location?.token !== token || !freshLocation(now)) return null;
   return JSON.stringify([location.lat, location.lon, location.accuracy, location.timestamp]);
 }
 export function deviceFeedLocationKey(now = Date.now()) {
-  return location && now - location.timestamp <= MAX_AGE_MS ? `${Math.round(location.lat * 100)}:${Math.round(location.lon * 100)}` : '';
+  return freshLocation(now) ? `${Math.round(location.lat * 100)}:${Math.round(location.lon * 100)}` : '';
 }
 
 export function deviceFeedRequestHeader(config, token, now = Date.now()) {
@@ -50,8 +56,9 @@ export function startDeviceFeedLocation({ token, onChange, navigator: browser, d
         if (permission?.state === 'denied') { clear(); return; }
         const { latitude: lat, longitude: lon, accuracy } = position.coords || {};
         const timestamp = position.timestamp;
-        if (![lat, lon, accuracy, timestamp].every(Number.isFinite) || Math.abs(lat) > 90 || Math.abs(lon) > 180
-          || accuracy < 0 || accuracy > 9920 || timestamp > now() + 60000 || now() - timestamp > MAX_AGE_MS) { clear(); return; }
+        const observedAt = now();
+        if (![lat, lon, accuracy, timestamp, observedAt].every(Number.isFinite) || Math.abs(lat) > 90 || Math.abs(lon) > 180
+          || accuracy < 0 || accuracy > 9920 || timestamp > observedAt + 60000 || observedAt - timestamp > MAX_AGE_MS) { clear(); return; }
         // About 100 m precision is enough for a 100-mile recommendation area.
         // Include rounding uncertainty in the boundary test on the server.
         location = { token, lat: Math.round(lat * 1000) / 1000, lon: Math.round(lon * 1000) / 1000,

@@ -9,6 +9,13 @@ const PALETTES = Object.freeze({
   lightbox: Object.freeze({ backgroundColor: '#000000', statusBar: 'light' }),
 });
 
+// Match the shared Auto schedule until the DOM reports the saved preference.
+// Media and welcome surfaces keep their dedicated palettes after startup.
+function localTimeAppearance(now = new Date()) {
+  const hour = now.getHours();
+  return hour < 6 || hour >= 20 ? 'dark' : 'light';
+}
+
 function nativeAppearance(mode) {
   if (typeof mode !== 'string' || !Object.hasOwn(PALETTES, mode)) throw new Error('Invalid app appearance.');
   return PALETTES[mode];
@@ -50,4 +57,4 @@ function observeNativeAppearance({ document, window, onChange }) {
   };
 }
 
-module.exports = { nativeAppearance, documentAppearance, observeNativeAppearance };
+module.exports = { nativeAppearance, documentAppearance, observeNativeAppearance, localTimeAppearance };

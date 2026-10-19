@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, AppState, Linking, Platform, Pressable, StyleSheet, Text, View, useColorScheme } from 'react-native';
+import { ActivityIndicator, Alert, AppState, Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import * as SecureStore from 'expo-secure-store';
@@ -20,7 +20,7 @@ import { createSessionStorage } from '../security/sessionStorage';
 import { parseProviderCallback, validAuthorizationUrl } from '../security/providerSignIn';
 import { MAX_BYTES, bytesToBase64, base64Bytes, safeFileName, createNativeApiBridge, allowDocumentNavigation, externalUrl, assertNativeCapability } from './nativeBridge.cjs';
 import { resolveBundledDocument, documentLoadError } from './documentLoader.cjs';
-import { nativeAppearance } from './nativeAppearance.cjs';
+import { nativeAppearance, localTimeAppearance } from './nativeAppearance.cjs';
 import { createVpnSessionStore } from './vpnSessionStore.cjs';
 import { disconnectVpnSession } from '../native-vpn/client';
 import { vpnLaunch } from '../native-vpn/launchClient';
@@ -65,7 +65,7 @@ function NativeSite() {
   const [twitchPlayer, setTwitchPlayer] = useState(null);
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
   const youtubeLayer = useRef(null);
-  const [appearance, setAppearance] = useState(useColorScheme() === 'dark' ? 'dark' : 'light');
+  const [appearance, setAppearance] = useState(localTimeAppearance());
   const chrome = nativeAppearance(appearance);
   const activeProvider = useRef(false);
   const initialUrlRead = useRef(false);

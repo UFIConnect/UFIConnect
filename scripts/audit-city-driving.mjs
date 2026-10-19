@@ -84,7 +84,11 @@ try {
       await page.evaluate(() => window.__ufiAppearance.setPreference('light'));
       await page.waitForFunction(() => document.querySelector('.map-city-scene canvas')?.dataset.timeOfDay === 'day');
       await page.emulateMedia({ colorScheme: 'dark' });
+      await page.clock.setFixedTime(await page.evaluate(() => new Date(2026, 9, 18, 12, 0, 0).getTime()));
       await page.evaluate(() => window.__ufiAppearance.setPreference('system'));
+      await page.waitForFunction(() => document.querySelector('.map-city-scene canvas')?.dataset.timeOfDay === 'day');
+      await page.clock.setFixedTime(await page.evaluate(() => new Date(2026, 9, 18, 20, 0, 0).getTime()));
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')));
       await page.waitForFunction(() => document.querySelector('.map-city-scene canvas')?.dataset.timeOfDay === 'night');
       await page.getByRole('button', { name: 'Drive mode', exact: true }).click();
       const drive = page.getByRole('group', { name: 'Drive between cities', exact: true });

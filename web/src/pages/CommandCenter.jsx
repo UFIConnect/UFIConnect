@@ -1,3 +1,4 @@
+import { timeAgo } from '../utils/postTime.mjs';
 import { privateSessionStorage } from '../auth/session';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -78,14 +79,6 @@ function commandCenterSection(search) {
   return SECTION_KEYS.has(requested) ? requested : 'automation';
 }
 
-function timeAgo(iso) {
-  if (!iso) return '';
-  const diff = (Date.now() - new Date(iso)) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
 
 function StatChip({ label, value }) {
   return (

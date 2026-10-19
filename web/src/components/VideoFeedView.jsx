@@ -1,3 +1,4 @@
+import { timeAgo } from '../utils/postTime.mjs';
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useId } from 'react';
 import client from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
@@ -755,14 +756,6 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
   );
 }
 
-function timeAgo(iso) {
-  if (!iso) return '';
-  const diff = (Date.now() - new Date(iso)) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
 
 // Bottom-sheet popup — GET /feed/:postId/comments already exists (used by
 // Feed.jsx's card view) and returns real, live comments for Reddit/HN/

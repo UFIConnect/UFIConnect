@@ -58,6 +58,8 @@ try {
     const errors = [];
     const requests = [];
     await context.addInitScript(() => {
+      // This suite asserts exact Light palette colors; Auto has separate clock-boundary tests.
+      localStorage.setItem('ufi:appearance', 'light');
       window.__auditYouTubePlayers = [];
       window.YT = { PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 }, Player: class {
         constructor(host, options) {

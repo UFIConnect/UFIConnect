@@ -1,0 +1,14 @@
+.media-permission-dialog { width: min(420px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); margin: auto; padding: 0; overflow-y: auto; border: 1px solid var(--border); border-radius: 16px; background: var(--card, #fff); color: var(--text, #0f172a); box-shadow: 0 20px 70px #0004; }
+.media-permission-dialog:not([open]) { display: none; }
+.media-permission-dialog::backdrop { background: #071324aa; }
+.media-permission-content { padding: 24px; }
+.media-permission-content > svg { color: var(--primary, #102a6b); }
+.media-permission-content h2 { margin: 14px 0 10px; font-size: 1.2rem; }
+.media-permission-content p { line-height: 1.55; overflow-wrap: anywhere; color: var(--muted, #475569); }
+.media-permission-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+.media-permission-actions .btn { min-height: 44px; }
+.media-permission-content .media-permission-error { color: var(--danger, #b42318); }
+.media-permission-settings { margin-block: 20px; }
+.media-permission-settings > p { color: var(--muted); font-size: .85rem; line-height: 1.5; }
+.media-permission-settings > label { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-block: 12px; }
+.media-permission-settings .form-select { width: auto; min-width: 150px; }
