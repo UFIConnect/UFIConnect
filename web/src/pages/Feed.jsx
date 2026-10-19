@@ -1812,7 +1812,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
 
       {/* Inline comments / replies / answers / reviews */}
       {showComments && (
-        <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+        <div className="post-comments">
 
           {/* Section header */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
@@ -1840,7 +1840,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
 
           {/* Comment list */}
           {!commentsLoading && comments?.length > 0 && comments.map(c => (
-            <div key={c.id} style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
+            <div key={c.id} className="post-comment" style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
               <div style={{
                 width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
                 background: `${src.color}18`, border: `1.5px solid ${src.color}33`,
@@ -1849,7 +1849,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
               }}>
                 {(c.author?.replace(/^(?:u\/|@)/, '') || '?')[0]?.toUpperCase()}
               </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="post-comment-body" style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
                   <span style={{ fontWeight: 700, fontSize: '.78rem' }}>{c.author}</span>
                   {c.type === 'commit' && <span style={{ fontSize: '.62rem', background: '#1e293b', color: '#94a3b8', borderRadius: 4, padding: '1px 5px' }}>commit</span>}
@@ -1907,7 +1907,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
 
           {/* Read-more link — always shown at bottom */}
           {canWriteComment && (
-            <form onSubmit={submitComment} style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 10 }}>
+            <form className="post-comment-form" onSubmit={submitComment} style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 10 }}>
               <input
                 className="form-input"
                 value={commentDraft}
@@ -1916,6 +1916,7 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onGuideOpen,
                   if (commentPostError) setCommentPostError(false);
                 }}
                 placeholder="Write a comment..."
+                aria-label="Write a comment"
                 maxLength={1000}
                 style={{ flex: 1, fontSize: '.86rem' }}
               />

@@ -5,6 +5,7 @@ import { MoreHorizontal, X, ChevronLeft, ChevronRight, Trash2, Flag, Globe2, Use
 import { postProfileLink, safePostLink } from '../../../backend/post-links.mjs';
 import { SOURCE_META } from './sourceMeta';
 import { isExternalSnap, snapAvailabilityLabel, snapPlaybackInfo } from './snapRanking.mjs';
+import { snapFilterStyle, SNAP_MAX_OVERLAY } from './snapEffects.mjs';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { OpenOnSource, postTimes, CommentIcon } from './PostCardChrome';
 import PostLikes from './PostLikes';
@@ -290,6 +291,8 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
       poster: snap.source === 'uficonnect' && !profile?.id ? null : poster,
       author, avatars: authorPhotos, source, availability: snapAvailabilityLabel(snap, now),
       caption: snap.caption || '', posted: posted?.relative || '',
+      filter: snap.source === 'uficonnect' ? snap.filter : 'original',
+      overlayText: snap.source === 'uficonnect' && typeof snap.overlayText === 'string' ? snap.overlayText.slice(0, SNAP_MAX_OVERLAY) : '',
       audience: snap.source === 'uficonnect' ? snap.visibility === 'followers' ? 'Followers only' : 'Public' : '',
     });
     gesture.current.movedAt = Date.now();
@@ -384,7 +387,7 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
       {activeTransition && <div className="snap-viewer-cube-outgoing" aria-hidden="true" inert>
         <div className="snap-viewer-preview-shell">
           <div className="snap-viewer-preview-topbar"><strong>Snaps</strong><span>Swipe left or right</span></div>
-          <div className="snap-viewer-preview-media">{activeTransition.poster && <img src={activeTransition.poster} alt="" referrerPolicy="no-referrer" onError={event => { event.currentTarget.hidden = true; }} />}</div>
+          <div className="snap-viewer-preview-media">{activeTransition.poster && <img src={activeTransition.poster} alt="" referrerPolicy="no-referrer" onError={event => { event.currentTarget.hidden = true; }} style={snapFilterStyle(activeTransition.filter)} />}{activeTransition.overlayText && <span className="snap-text-overlay">{activeTransition.overlayText}</span>}</div>
           <div className="snap-viewer-preview-details">
             <div className="snap-viewer-preview-author"><SnapAvatar urls={activeTransition.avatars} className="snap-viewer-preview-avatar" /><div><strong className="snap-viewer-preview-name">{activeTransition.author}</strong><span className="snap-viewer-preview-source">{activeTransition.source} · {activeTransition.availability}</span>{activeTransition.posted && <span className="snap-viewer-preview-time">{activeTransition.posted}</span>}</div></div>
             {activeTransition.caption && <p className="snap-viewer-preview-caption">{activeTransition.caption}</p>}
@@ -411,8 +414,9 @@ export default function SnapViewer({ items, index, profile, now, onChange, onClo
         : playback.kind === 'source' && sourcePlayerVisible ? <iframe key={playbackKey} src={sourceEmbed} title={`${source} post by ${author}`} referrerPolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-presentation" allow="encrypted-media; fullscreen; picture-in-picture" allowFullScreen onError={failCurrentMedia} />
         : playback.kind === 'source' ? <div key={mediaKey} className="snap-viewer-source-preview">{playback.poster && <img src={playback.poster} alt={snap.caption || `${author}'s source clip`} referrerPolicy="no-referrer" onError={event => { event.currentTarget.hidden = true; }} />}</div>
         : playback.kind === 'hls' ? <HlsVideoPlayer key={playbackKey} videoRef={nativeVideo} src={playback.mediaUrl} controls={false} controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture disableRemotePlayback autoPlay={false} muted={nativeControls.muted} loop={false} onError={failCurrentMedia} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-        : playback.kind === 'file' ? <video key={playbackKey} ref={nativeVideo} src={playback.mediaUrl} controls={false} controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture disableRemotePlayback muted={nativeControls.muted} playsInline preload="metadata" onError={failCurrentMedia} />
-        : playback.mediaUrl ? <img key={playbackKey} src={playback.mediaUrl} alt={snap.caption || `${author}'s snap`} referrerPolicy="no-referrer" onError={failCurrentMedia} /> : null}
+        : playback.kind === 'file' ? <video key={playbackKey} ref={nativeVideo} src={playback.mediaUrl} controls={false} controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture disableRemotePlayback muted={nativeControls.muted} playsInline preload="metadata" onError={failCurrentMedia} style={snap.source === 'uficonnect' ? snapFilterStyle(snap.filter) : undefined} />
+        : playback.mediaUrl ? <img key={playbackKey} src={playback.mediaUrl} alt={snap.caption || `${author}'s snap`} referrerPolicy="no-referrer" onError={failCurrentMedia} style={snap.source === 'uficonnect' ? snapFilterStyle(snap.filter) : undefined} /> : null}
+        {!failed && snap.source === 'uficonnect' && typeof snap.overlayText === 'string' && snap.overlayText.trim() && <span className="snap-text-overlay">{snap.overlayText.slice(0, SNAP_MAX_OVERLAY)}</span>}
       </div>
       <div className="snap-viewer-playback">
       {hasPlayback && <MediaPlaybackControls key={playbackKey} mediaKey={playbackKey} paused={controls.paused} muted={controls.muted}

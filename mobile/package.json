@@ -19,7 +19,7 @@
   "scripts": {
     "eas-build-post-install": "npm run prepare:analytics && npm run prepare:website && node native-vpn/prepare-go.mjs",
     "test:vpn": "node --test native-vpn/controller.test.cjs native-vpn/plugin.test.cjs native-vpn/session.test.cjs native-vpn/prepare-go.test.mjs native-vpn/launch.test.cjs native-vpn/launchConnection.test.cjs native-vpn/action.test.cjs native-vpn/officialWireGuard.test.cjs",
-    "postinstall": "node security/dependencyPatches.cjs",
+    "postinstall": "node security/dependencyPatches.cjs && node scripts/prepare-snap-camera.cjs",
     "audit:security": "node --test security/dependencyBackports.test.js && node security/dependencyAudit.cjs",
     "prepare:analytics": "node scripts/prepare-analytics.mjs",
     "prestart": "npm run prepare:analytics && npm run prepare:website",
@@ -35,7 +35,7 @@
     "doctor": "expo-doctor",
     "test:export": "node scripts/audit-app-shell.mjs && node scripts/audit-current-site.mjs",
     "test:moderation": "node scripts/audit-moderation.mjs",
-    "test:security": "node --test security/security.test.js security/dependencyCompatibility.test.js security/dependencyBackports.test.js security/accountDeletion.test.js security/moderation.test.js security/providerSignIn.test.js analytics/screenPolicy.test.js analytics/serviceMetrics.test.js && npm run test:vpn && npm run test:current-site",
+    "test:security": "node --test scripts/prepare-snap-camera.test.cjs security/security.test.js security/dependencyCompatibility.test.js security/dependencyBackports.test.js security/accountDeletion.test.js security/moderation.test.js security/providerSignIn.test.js analytics/screenPolicy.test.js analytics/serviceMetrics.test.js && npm run test:vpn && npm run test:current-site",
     "test:current-site": "node --test current-site/documentLoader.test.cjs current-site/NativeSiteApp.test.cjs current-site/vpnSessionStore.test.cjs current-site/nativeBridge.test.cjs current-site/nativeYouTube.test.cjs current-site/nativeTwitch.test.cjs current-site/NativeTwitchPlayer.test.cjs current-site/nativeAppearance.test.cjs current-site/website-transform.test.cjs",
     "test:analytics": "node scripts/audit-shared-privacy.mjs",
     "prepare:website": "node scripts/prepare-website.mjs"
@@ -88,5 +88,8 @@
     "xcode": {
       "uuid": "11.1.1"
     }
+  },
+  "allowScripts": {
+    "browser-tabs-lock": false
   }
 }

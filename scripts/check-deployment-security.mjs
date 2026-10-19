@@ -19,7 +19,7 @@ for (const service of blueprint.services) {
     assert.doesNotMatch(header('Content-Security-Policy'), /google-analytics|analytics\.google/, 'Analytics collection remains in the separate API bridge');
     if (service.name === 'uficonnect-web') {
       assert.match(header('Content-Security-Policy'), /https:\/\/www\.googletagmanager\.com/, 'The web app loads the site-wide Google Ads tag');
-      assert.equal(header('Permissions-Policy'), 'camera=(), microphone=(), geolocation=(self)', 'Only the app itself may request member device location');
+      assert.equal(header('Permissions-Policy'), 'camera=(self), microphone=(self), geolocation=(self)', 'Only the app itself may request camera, microphone and member device location');
     } else assert.doesNotMatch(header('Content-Security-Policy'), /googletagmanager|googleadservices/, 'Office does not load advertising');
     assert.match(header('Content-Security-Policy'), /(?:^|;\s*)script-src-attr 'none'(?:;|$)/, 'Inline event handlers must remain blocked');
     assert.equal(header('X-XSS-Protection'), '0', 'Use CSP and explicitly disable the obsolete, unsafe browser XSS filter');
@@ -75,7 +75,7 @@ for (const required of ['npm ci', 'npm run test:security', 'npm run audit:securi
   assert.ok(precedingSteps.includes(required), `Mobile build must first pass: ${required}`);
 }
 const mobilePackage = JSON.parse(fs.readFileSync(path.join(root, 'mobile/package.json'), 'utf8'));
-assert.equal(mobilePackage.scripts.postinstall, 'node security/dependencyPatches.cjs', 'Locked installs must apply reviewed security backports');
+assert.equal(mobilePackage.scripts.postinstall, 'node security/dependencyPatches.cjs && node scripts/prepare-snap-camera.cjs', 'Locked installs must apply reviewed security and camera fixes');
 assert.equal(mobilePackage.scripts['audit:security'], 'node --test security/dependencyBackports.test.js && node security/dependencyAudit.cjs', 'Audit must require attack regressions before scoped advisory evaluation');
 load('.github/dependabot.yml');
 for (const file of ['docker-compose.yml', 'docker-compose.lb.yml']) {
