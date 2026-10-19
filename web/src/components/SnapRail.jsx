@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { Camera, RefreshCw, Star } from 'lucide-react';
 import { sourceAuthorProfileUrl } from '../../../backend/post-links.mjs';
@@ -45,6 +46,7 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
   const [now, setNow] = useState(Date.now);
   const [selectedId, setSelectedId] = useState(null);
   const [composing, setComposing] = useState(false);
+  const composer = useRef(null);
   const [reportSnap, setReportSnap] = useState(null);
   const [photoRevisions, setPhotoRevisions] = useState({});
   const maxProfileRows = mode === 'home' || mode === 'following' ? 2 : 3;
@@ -74,6 +76,12 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
     setNow(Date.now());
     return result;
   }
+  function openCamera() {
+    // Mount the native file input within this same user gesture so iOS/Android
+    // can launch the camera directly from the square tile.
+    flushSync(() => setComposing(true));
+    composer.current?.openCamera('photo');
+  }
   async function refreshSource(source) {
     await onRefresh(source);
     // A deliberate refresh retries a transient photo failure once, even when
@@ -100,14 +108,14 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
               {group.favorite && <Star className="snap-source-favorite" size={15} fill="currentColor" aria-label="Favorite source" />}
               <button type="button" className="snap-refresh-button" disabled={loading || !onRefresh} onClick={() => refreshSource(group.source)} aria-label={refreshLabel} title={refreshLabel} aria-busy={isRefreshing}><RefreshCw size={16} className={isRefreshing ? 'snap-refresh-spinning' : ''} /></button>
             </header>
-            {group.items.length > 0
-              ? <ul className="snap-source-items" role="list" aria-label={`${source.label} snap profiles`} style={{ '--snap-profile-rows': Math.min(maxProfileRows, group.profiles.length) }}>{group.profiles.map(author => <li key={author.key} className="snap-profile-item"><SnapProfile group={author} refreshKey={photoRevisions[group.source]} onOpen={() => setSelectedId(`${author.items[0].source}:${author.items[0].id}`)} /></li>)}</ul>
-              : <div className="snap-source-empty" role="status" aria-live="polite"><Camera size={22} aria-hidden="true" /><span>{isRefreshing ? 'Loading UFI snaps...' : error || sourceErrors.uficonnect ? 'UFI snaps could not load. Try refreshing.' : 'No UFI snaps yet.'}</span></div>}
-            {isNative && <div className="snap-source-compose">
-              {profile?.id && onPostSnap
-                ? <button type="button" className="snap-post-button" onClick={() => setComposing(true)}><Camera size={16} />Post snap</button>
-                : !profile?.id && <Link to="/login" className="snap-post-button"><Camera size={16} />Post snap</Link>}
-            </div>}
+            <ul className="snap-source-items" role="list" aria-label={`${source.label} snap profiles`} style={{ '--snap-profile-rows': Math.min(maxProfileRows, Math.max(1, Math.ceil((group.profiles.length + (isNative ? 1 : 0)) / 3))) }}>
+              {isNative && (profile?.id && onPostSnap || !profile?.id) && <li className="snap-profile-item snap-create-item">
+                {profile?.id ? <button type="button" className="snap-profile-button snap-create-button" onClick={openCamera} aria-label="Post snap — open camera"><span className="snap-profile-ring"><Camera size={26} aria-hidden="true" /></span><span className="snap-profile-name">Your snap</span></button>
+                  : <Link to="/login" className="snap-profile-button snap-create-button" aria-label="Sign in to post a snap"><span className="snap-profile-ring"><Camera size={26} aria-hidden="true" /></span><span className="snap-profile-name">Your snap</span></Link>}
+              </li>}
+              {group.profiles.map(author => <li key={author.key} className="snap-profile-item"><SnapProfile group={author} refreshKey={photoRevisions[group.source]} onOpen={() => setSelectedId(`${author.items[0].source}:${author.items[0].id}`)} /></li>)}
+            </ul>
+            {!group.items.length && <p className="snap-source-empty" role="status" aria-live="polite">{isRefreshing ? 'Loading UFI snaps...' : error || sourceErrors.uficonnect ? 'UFI snaps could not load. Try refreshing.' : 'Share your first moment.'}</p>}
           </article>;
         })}
       </div>
@@ -115,7 +123,7 @@ export default function SnapRail({ mode = 'home', items = [], favorites = [], pr
     {selectedIndex >= 0 && <SnapViewer items={activeItems} index={selectedIndex} profile={profile} now={now}
       onChange={snap => setSelectedId(`${snap.source}:${snap.id}`)} onClose={() => setSelectedId(null)} onDelete={onDeleteSnap}
       onReport={profile?.id ? snap => { setSelectedId(null); setReportSnap(snap); } : undefined} />}
-    {composing && onPostSnap && <SnapComposer profile={profile} onClose={() => setComposing(false)} onPublish={publish} />}
+    {composing && onPostSnap && <SnapComposer ref={composer} profile={profile} onClose={() => setComposing(false)} onPublish={publish} />}
     {reportSnap && <ReportModal targetType="post" targetId={reportSnap.id} targetLabel="snap" source={reportSnap.source}
       sourceUrl={reportSnap.sourceUrl} signInRequired={!profile?.id} onClose={() => setReportSnap(null)} />}
   </section>;

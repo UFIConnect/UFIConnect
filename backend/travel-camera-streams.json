@@ -523,5 +523,65 @@
       "method": "YouTube Data API videos.list"
     },
     "channelTitle": "EarthCam"
+  },
+  {
+    "destinationId": "JP:Sapporo",
+    "city": "Sapporo",
+    "country": "Japan",
+    "countryCode": "JP",
+    "videoId": "z3OUPSoABJk",
+    "operator": "STV Sapporo Television",
+    "channelId": "UCGrZAL2OKyKHj5flMIVU72A",
+    "sourceUrl": "https://www.youtube.com/watch?v=z3OUPSoABJk",
+    "operatorUrl": "https://www.stv.jp/webcam/live/sapporo.html",
+    "title": "いまの札幌 ライブカメラ（STV札幌テレビ放送）北海道札幌市中央区 /Live Camera Sapporo , Hokkaido",
+    "checkedAt": "2026-10-15T23:27:43.692Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "STV札幌テレビ放送 公式"
+  },
+  {
+    "destinationId": "JP:Osaka",
+    "city": "Osaka",
+    "country": "Japan",
+    "countryCode": "JP",
+    "videoId": "kwUAeYZKjLM",
+    "operator": "Radical Video Jockey RVJJP",
+    "channelId": "UCQ2mmGKtrBp6rL8tSMJCCwA",
+    "sourceUrl": "https://www.youtube.com/watch?v=kwUAeYZKjLM",
+    "operatorUrl": "https://www.youtube.com/channel/UCQ2mmGKtrBp6rL8tSMJCCwA",
+    "title": "【テスト配信】道頓堀ライブカメラ ２",
+    "checkedAt": "2026-10-15T23:27:43.692Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "ラジカルビデオジョッキー RVJJP"
+  },
+  {
+    "destinationId": "KR:Seoul",
+    "city": "Seoul",
+    "country": "South Korea",
+    "countryCode": "KR",
+    "videoId": "RVvYQghFCXk",
+    "operator": "Daily Seoul Live Camera",
+    "channelId": "UCQKQTgZJo3PlxA-9V1Z51XA",
+    "sourceUrl": "https://www.youtube.com/watch?v=RVvYQghFCXk",
+    "operatorUrl": "https://www.youtube.com/channel/UCQKQTgZJo3PlxA-9V1Z51XA",
+    "title": "[4K] 실시간 서울 한강 라이브캠 - 반포대교 재즈 & 로파이 라디오 (since 2020) Seoul Korea Live Cam Jazz & Lofi radio",
+    "checkedAt": "2026-10-15T23:27:43.692Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "데일리서울 한강 라이브캠"
   }
 ]
