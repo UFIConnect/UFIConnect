@@ -10143,7 +10143,9 @@ function rememberResolvedLiveCameraStream(cameraId, stream, ttl = LIVE_CAMERA_VE
 function liveCameraPost(camera) {
   const resolved = getResolvedLiveCameraStream(camera.id);
   const discovery = liveCameraDiscoveryCache.get(camera.id);
-  const candidate = resolved || (discovery?.expiresAt > Date.now() ? discovery.stream : null);
+  // Retain a known URL as a candidate across idle periods. Only the short
+  // resolved cache and a fresh provider check grant liveVerified status.
+  const candidate = resolved || discovery?.stream || null;
   const sourceUrl = candidate?.sourceUrl || camera.sourceUrl;
   return {
     id: camera.id,
@@ -10311,7 +10313,7 @@ async function discoverLiveCameraReplacement(camera) {
   const now = Date.now();
   let cached = liveCameraDiscoveryCache.get(camera.id);
   if (cached?.pending) return cached.pending;
-  if (cached?.expiresAt > now) {
+  if (cached?.stream?.videoId || cached?.expiresAt > now) {
     if (!cached.stream?.videoId) return null;
     // A search result can end before the discovery cache does. Re-check the
     // candidate before reusing it; a stale cached replacement must never
@@ -10319,6 +10321,9 @@ async function discoverLiveCameraReplacement(camera) {
     const states = await fetchYouTubeLiveStates([cached.stream.videoId]);
     const state = states?.get(cached.stream.videoId);
     if (state?.live && state.embeddable) return cached.stream;
+    // An outage says nothing about this known URL. Keep it unverified for the
+    // next cheap status check instead of spending another discovery request.
+    if (!states) return null;
     liveCameraDiscoveryCache.delete(camera.id);
     cached = null;
   }
@@ -17847,7 +17852,7 @@ function pruneExpiredRuntimeCaches(now = Date.now()) {
       !entry || expiredAt(entry.expiresAt)
     )),
     liveCameraDiscoveries: pruneCacheEntries(liveCameraDiscoveryCache, entry => (
-      !entry?.pending && (!entry || expiredAt(entry.expiresAt))
+      !entry?.pending && (!entry || (!entry.stream?.videoId && expiredAt(entry.expiresAt)))
     )),
     liveCameraLocationRefreshes: pruneCacheEntries(liveCameraLocationRefreshes, expiresAt => expiredAt(expiresAt)),
     stripePrices: pruneCacheEntries(stripePriceSummaryCache, entry => (
