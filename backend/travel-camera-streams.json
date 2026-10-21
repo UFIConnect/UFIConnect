@@ -583,5 +583,265 @@
       "method": "YouTube Data API videos.list"
     },
     "channelTitle": "데일리서울 한강 라이브캠"
+  },
+  {
+    "destinationId": "EE:Tallinn",
+    "city": "Tallinn",
+    "country": "Estonia",
+    "countryCode": "EE",
+    "videoId": "VhVgZi2lGv0",
+    "operator": "360PANO",
+    "channelId": "UCQVre66peaZxhdvfIE1Ahxw",
+    "sourceUrl": "https://www.youtube.com/watch?v=VhVgZi2lGv0",
+    "operatorUrl": "https://tallinn.info/citycam/",
+    "title": "24/7 Live Stream 4K - Digital.Tallinn CityCam",
+    "checkedAt": "2026-10-21T00:52:20.856Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "360PANO"
+  },
+  {
+    "destinationId": "DE:Berlin",
+    "city": "Berlin",
+    "country": "Germany",
+    "countryCode": "DE",
+    "videoId": "61b3Jty73Zo",
+    "operator": "Turmfalken im Corbusierhaus",
+    "channelId": "UCR2CLso5tZOHwkFDXPuuKHw",
+    "sourceUrl": "https://www.youtube.com/watch?v=61b3Jty73Zo",
+    "operatorUrl": "https://haustechnik-corbusierhaus.info/Blick-auf-das-Olympiastadion/",
+    "title": "Live - Blick vom Corbusierhaus Berlin auf das Olympiastadion",
+    "checkedAt": "2026-10-21T00:52:20.856Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "Turmfalken im Corbusierhaus"
+  },
+  {
+    "destinationId": "IT:Milan",
+    "city": "Milan",
+    "country": "Italy",
+    "countryCode": "IT",
+    "videoId": "dsoM6TYIkOI",
+    "operator": "Espansione Tv",
+    "channelId": "UCkIrfcrdlS7lwUcWClUbhow",
+    "sourceUrl": "https://www.youtube.com/watch?v=dsoM6TYIkOI",
+    "operatorUrl": "https://www.youtube.com/channel/UCkIrfcrdlS7lwUcWClUbhow",
+    "title": "Milan Skyline Live",
+    "checkedAt": "2026-10-21T00:52:20.856Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "Espansione Tv"
+  },
+  {
+    "destinationId": "FI:Helsinki",
+    "city": "Helsinki",
+    "country": "Finland",
+    "countryCode": "FI",
+    "videoId": "6hPWq2IG08M",
+    "operator": "Port of Helsinki",
+    "channelId": "UCuaFFNhZkcEg2JjEPvzjzzw",
+    "sourceUrl": "https://www.youtube.com/watch?v=6hPWq2IG08M",
+    "operatorUrl": "https://www.portofhelsinki.fi/en/about-us/port-of-helsinki/web-camera-west-harbour/",
+    "title": "Port of Helsinki - West harbour - south cam",
+    "checkedAt": "2026-10-21T00:52:20.856Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "Port of Helsinki"
+  },
+  {
+    "destinationId": "SE:Stockholm",
+    "city": "Stockholm",
+    "country": "Sweden",
+    "countryCode": "SE",
+    "videoId": "agY6ZaM1G_o",
+    "operator": "MED - Mediateknik",
+    "channelId": "UCdCuDRxgLpYAu3Mi-0GJYZQ",
+    "sourceUrl": "https://www.youtube.com/watch?v=agY6ZaM1G_o",
+    "operatorUrl": "https://www.youtube.com/@MEDMediateknik/streams",
+    "title": "MEDview: DN-Skrapan, Stockholm",
+    "checkedAt": "2026-10-21T00:52:20.856Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "MED - Mediateknik"
+  },
+  {
+    "destinationId": "PL:Warsaw",
+    "city": "Warsaw",
+    "country": "Poland",
+    "countryCode": "PL",
+    "videoId": "-Z4mxcqFEnI",
+    "operator": "Warsaw Livestream",
+    "channelId": "UCPQH7Qez-TIVJv5cmquVFyg",
+    "sourceUrl": "https://www.youtube.com/watch?v=-Z4mxcqFEnI",
+    "operatorUrl": "https://www.youtube.com/@warsawlivestream/streams",
+    "title": "Warszawa na żywo 🇵🇱 | Warsaw LIVE – panorama i Stadion Narodowy / City Skyline & National Stadium",
+    "checkedAt": "2026-10-21T00:52:20.856Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "Warsaw Livestream"
+  },
+  {
+    "destinationId": "GB:Edinburgh",
+    "city": "Edinburgh",
+    "country": "United Kingdom",
+    "countryCode": "GB",
+    "videoId": "d2Ii5ybhbQY",
+    "operator": "woollyjumperfilms",
+    "channelId": "UCLqR7wwudU-KtpBQO8gf2Rg",
+    "sourceUrl": "https://www.youtube.com/watch?v=d2Ii5ybhbQY",
+    "operatorUrl": "https://www.youtube.com/@woollyjumperfilms/streams",
+    "title": "🔴 Scotland Edinburgh UK LIVE Cam Webcam Stream 4K HD Arthur's Seat. Salisbury Crags. 12hr Rewind.",
+    "checkedAt": "2026-10-21T00:52:20.856Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "woollyjumperfilms"
+  },
+  {
+    "destinationId": "IT:Florence",
+    "city": "Florence",
+    "country": "Italy",
+    "countryCode": "IT",
+    "videoId": "qBtMuRnf7BY",
+    "operator": "webcamfirenze",
+    "channelId": "UCBPKvG4NWSvNDgWsbYJADcw",
+    "sourceUrl": "https://www.youtube.com/watch?v=qBtMuRnf7BY",
+    "operatorUrl": "https://webcamfirenze.altervista.org/",
+    "title": "Webcam Live Firenze - in diretta",
+    "checkedAt": "2026-10-21T00:52:20.856Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "webcamfirenze"
+  },
+  {
+    "destinationId": "CA:Calgary",
+    "city": "Calgary",
+    "country": "Canada",
+    "countryCode": "CA",
+    "videoId": "MwcqP3ta6RI",
+    "operator": "DELTATECH Calgary",
+    "channelId": "UCXab5AWv4FVoGCoVqDTq36w",
+    "sourceUrl": "https://www.youtube.com/watch?v=MwcqP3ta6RI",
+    "operatorUrl": "https://www.youtube.com/channel/UCXab5AWv4FVoGCoVqDTq36w",
+    "title": "Calgary Live Camera",
+    "checkedAt": "2026-10-21T00:52:20.856Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "DELTATECH Calgary"
+  },
+  {
+    "destinationId": "JP:Kyoto",
+    "city": "Kyoto",
+    "country": "Japan",
+    "countryCode": "JP",
+    "videoId": "Qm4X_oY-9YM",
+    "operator": "Kyoto City Tourism Association",
+    "channelId": "UCFyohCp_Vx6WC82DiJ0l88w",
+    "sourceUrl": "https://www.youtube.com/watch?v=Qm4X_oY-9YM",
+    "operatorUrl": "https://global.kyoto.travel/en/faq/detail.php?faq_id=1024",
+    "title": "【LIVE】京都 嵯峨鳥居本伝統的建造物群保存地区（京都市観光協会公式）／Saga-Toriimoto Preserved Street District, Kyoto Live camera",
+    "checkedAt": "2026-10-21T00:52:20.856Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "京都市観光協会Kyoto City Tourism Association"
+  },
+  {
+    "destinationId": "JP:Kyoto",
+    "city": "Kyoto",
+    "country": "Japan",
+    "countryCode": "JP",
+    "videoId": "4Za-6AXfu4w",
+    "operator": "Kyoto City Tourism Association",
+    "channelId": "UCFyohCp_Vx6WC82DiJ0l88w",
+    "sourceUrl": "https://www.youtube.com/watch?v=4Za-6AXfu4w",
+    "operatorUrl": "https://global.kyoto.travel/en/faq/detail.php?faq_id=1024",
+    "title": "【LIVE】京都 清凉寺 嵯峨釈迦堂（京都市観光協会公式）／Seiryoji Temple(Saga Shaka-do) Kyoto Live camera",
+    "checkedAt": "2026-10-21T00:52:20.856Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "京都市観光協会Kyoto City Tourism Association"
+  },
+  {
+    "destinationId": "JP:Kyoto",
+    "city": "Kyoto",
+    "country": "Japan",
+    "countryCode": "JP",
+    "videoId": "ldO0Eqoomms",
+    "operator": "Kyoto City Tourism Association",
+    "channelId": "UCFyohCp_Vx6WC82DiJ0l88w",
+    "sourceUrl": "https://www.youtube.com/watch?v=ldO0Eqoomms",
+    "operatorUrl": "https://global.kyoto.travel/en/faq/detail.php?faq_id=1024",
+    "title": "【LIVE】京都 大覚寺（京都市観光協会公式）／Daikakuji Temple, Kyoto Live camera",
+    "checkedAt": "2026-10-21T00:52:20.856Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "京都市観光協会Kyoto City Tourism Association"
+  },
+  {
+    "destinationId": "AU:Sydney",
+    "city": "Sydney",
+    "country": "Australia",
+    "countryCode": "AU",
+    "videoId": "U2UfQH4lHAY",
+    "operator": "Sydney Harbour LIVE",
+    "channelId": "UCS03bU2sY5_zu2j7LoSjAVA",
+    "sourceUrl": "https://www.youtube.com/watch?v=U2UfQH4lHAY",
+    "operatorUrl": "https://www.youtube.com/@SydneyHarbourLIVE/streams",
+    "title": "Sydney Harbour LIVE 🇦🇺 Bridge & Opera House 24/7 — McMahons Point, Australia",
+    "checkedAt": "2026-10-21T00:52:20.856Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "channelTitle": "Sydney Harbour LIVE"
   }
 ]

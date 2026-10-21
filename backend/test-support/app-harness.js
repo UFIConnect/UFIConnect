@@ -126,6 +126,7 @@ async function createAppHarness({ env = {}, connected = false, query, withClient
       fetchYouTubeLiveStates, fetchTravelGuidePosts, fetchSelectedTravelNewsPosts, fetchSelectedTravelEventPosts,
       travelCityMatches, travelCountryMatches, selectedTravelGuideDestinations, selectedTravelNewsEdition,
       getCountriesCameraFeed, discoverLiveCameraReplacement, resolveLiveCameraDiscoveries, currentLiveCameraPosts,
+      refreshVerifiedLiveCameraPosts, pruneExpiredRuntimeCaches,
       liveCameraVerificationState, liveCameraLocationRefreshes, locationLiveFeedCache,
       setYouTubeCallReady() { youtubeApiLastCallAt = 0; },
       setContentScreening(handler) { screenMemberContent = handler; },
