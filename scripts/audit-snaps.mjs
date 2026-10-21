@@ -19,6 +19,7 @@ const nextOwner = 'snap-next-member';
 const favorites = { feed: ['facebook', 'twitter'], following: ['uficonnect', 'facebook'] };
 const avatarUrl = 'https://profiles.snaps.invalid/profile-photo.png';
 const brokenAvatarUrl = 'https://profiles.snaps.invalid/missing-photo.png';
+const cameraTileName = 'Post snap \u2014 open camera';
 for (const [id, name] of [[owner, 'Snap owner'], [author, 'Snap author'], [nextOwner, 'Next member']]) {
   app.seedUser(member(id, { name, avatarUrl, plan: 'pro', roleSettings: { feedSourceFavorites: favorites } }));
 }
@@ -29,7 +30,7 @@ const server = await createServer({ root: path.join(root, 'web'), configFile: pa
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api') },
   server: { host: '127.0.0.1', port: 5274, strictPort: false, proxy: { '/api': { target: app.base, rewrite: value => value.replace(/^\/api/, '') } } },
 });
-let browser, checks = 0;
+let browser, activePage, checks = 0;
 const fixtureTime = Date.now();
 function check(condition, message) { assert.ok(condition, message); checks++; }
 function snap(id, source = 'uficonnect', extra = {}) {
@@ -46,7 +47,17 @@ try {
   assert.ok(widths.length, 'SNAP_AUDIT_WIDTH must be 1440, 390 or 320');
   for (const width of widths) {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, hasTouch: width < 600, isMobile: width < 600, serviceWorkers: 'block' });
+    // Exercise the gallery flow after deterministic camera denial. Camera
+    // capture/recording permissions have their own focused browser audit.
+    await context.addInitScript(() => {
+      window.__snapAuditCameraRequests = 0;
+      if (navigator.mediaDevices) navigator.mediaDevices.getUserMedia = async () => { window.__snapAuditCameraRequests++; throw new DOMException('Camera denied by fixture', 'NotAllowedError'); };
+    });
     const page = await context.newPage(); page.setDefaultTimeout(16000);
+    activePage = page;
+    // A cold Vite dependency scan may outlast the interaction deadline on
+    // Windows. Keep assertions bounded while allowing initial page loading.
+    page.setDefaultNavigationTimeout(60000);
     const errors = [], writes = [], reads = [], imageRequests = [];
     let viewerId = owner, uploadCount = 0, uploadedForm = '', held = null, holdMode = null, sourceFailures = {}, recoverImage = false;
     let heldRequestResolve;
@@ -106,6 +117,12 @@ try {
         const item = snap('posted-native', 'uficonnect', { ...body, owned: true, author: { id: viewerId, name: 'Snap owner', avatarUrl }, createdAt: new Date().toISOString() });
         rows.unshift(item); return fulfill({ snap: item });
       }
+      // These synthetic Snap/member IDs are browser fixtures. Their real API
+      // audience and UUID authorization are covered by the backend suite;
+      // do not send fixture engagement reads to those authenticated routes.
+      if (/^\/snaps\/[^/]+\/engagement$/.test(endpoint) && method === 'GET') {
+        return fulfill({ likesCount: 0, commentsCount: 0, likedByMe: false });
+      }
       if (endpoint.startsWith('/snaps/') && method === 'DELETE') {
         writes.push({ endpoint, method }); rows = rows.filter(item => item.id !== endpoint.slice('/snaps/'.length));
         return fulfill({ deleted: true });
@@ -155,7 +172,7 @@ try {
     await profileForSnap('facebook-fixture').waitFor();
     check((await rail.getAttribute('data-snap-mode')) === 'home', 'Home reads its own Snap mode');
     await page.waitForFunction(() => { const image = document.querySelector('.snap-profile-avatar img'); return image?.complete && image.naturalWidth > 0; });
-    check(await profileForSnap('facebook-fixture').locator('img').getAttribute('src') === avatarUrl, 'Snap profile circles use the author photo instead of the snap image');
+    check(await profileForSnap('facebook-fixture').locator('img').getAttribute('src') === avatarUrl, 'Snap profile tiles use the author photo instead of the snap image');
     check(!imageRequests.includes(photoUrl), 'The rail does not request snap media or thumbnails before a viewer opens');
     check(await rail.locator('.snap-thumbnail').count() === 0, 'Rectangular snap thumbnails are removed');
     await profileForSnap('twitter-fixture').scrollIntoViewIfNeeded();
@@ -164,14 +181,14 @@ try {
     await profileForSnap('facebook-profile-8').scrollIntoViewIfNeeded();
     check(await profileForSnap('facebook-profile-8').locator('img[data-snap-avatar="default"]').count() === 1, 'An author without a photo has a local profile image instead of media artwork');
     const facebookProfiles = rail.locator('[data-snap-source="facebook"] .snap-source-items');
-    check(await facebookProfiles.getAttribute('aria-label') === 'Facebook snap profiles' && await facebookProfiles.locator(':scope > li.snap-profile-item').count() === 10, 'Snaps form a semantic profile list with one circle per distinct author');
+    check(await facebookProfiles.getAttribute('aria-label') === 'Facebook snap profiles' && await facebookProfiles.locator(':scope > li.snap-profile-item').count() === 10, 'Snaps form a semantic profile list with one tile per distinct author');
     const facebookIds = JSON.parse(await profileForSnap('facebook-fixture').getAttribute('data-snap-ids'));
     assert.deepEqual(facebookIds, ['facebook-fixture', 'facebook-fixture-older']); checks++;
     check(await profileForSnap('facebook-fixture').getAttribute('aria-label') === "View Facebook fixture's 2 snaps"
-      && await profileForSnap('facebook-fixture').locator('.snap-profile-count').innerText() === '2', 'Same-author snaps share one circle with their actual snap count');
+      && await profileForSnap('facebook-fixture').locator('.snap-profile-count').innerText() === '2', 'Same-author snaps share one tile with their actual snap count');
     const profilePositions = await facebookProfiles.locator('.snap-profile-button').evaluateAll(elements => elements.map(element => ({ x: element.getBoundingClientRect().x, y: element.getBoundingClientRect().y })));
     check(new Set(profilePositions.map(position => Math.round(position.x))).size === 3
-      && new Set(profilePositions.map(position => Math.round(position.y))).size === 4, 'Ten author circles form three columns with more rows below');
+      && new Set(profilePositions.map(position => Math.round(position.y))).size === 4, 'Ten author tiles form three columns with more rows below');
     check(await facebookProfiles.evaluate(element => element.scrollHeight > element.clientHeight && element.scrollWidth <= element.clientWidth
       && element.clientHeight <= 182), 'Only two compact profile rows fit in Home source boxes and extra rows scroll vertically');
     await facebookProfiles.evaluate(element => { element.scrollTop = 0; });
@@ -186,24 +203,25 @@ try {
       const bounds = element.getBoundingClientRect(), parent = element.closest('.snap-source-items').getBoundingClientRect();
       return bounds.y >= parent.y && bounds.bottom <= parent.bottom;
     }), 'Scrolling down reveals the last profile without opening a snap or scrolling sideways');
-    check(await rail.locator('.snap-profile-button').evaluateAll(elements => elements.every(element => element.querySelectorAll('.snap-profile-avatar img').length === 1)), 'Every author circle contains a profile image');
+    check(await rail.locator('.snap-profile-button').evaluateAll(elements => elements.every(element => element.querySelectorAll('.snap-profile-avatar img').length === 1)), 'Every author tile contains a profile image');
     check(await rail.locator('.snap-profile-ring, .snap-profile-avatar').evaluateAll(elements => elements.every(element => {
-      const bounds = element.getBoundingClientRect(); return bounds.width <= 54 && Math.abs(bounds.width - bounds.height) < 2 && getComputedStyle(element).borderRadius === '50%';
-    })), 'Compact profile rings and photos remain circular and at most 54 pixels wide');
+      const bounds = element.getBoundingClientRect(), radius = Number.parseFloat(getComputedStyle(element).borderRadius);
+      return bounds.width <= 54 && Math.abs(bounds.width - bounds.height) < 2 && radius > 0 && radius < bounds.width / 2;
+    })), 'Compact profile frames and photos are square with rounded corners and at most 54 pixels wide');
     await openSnap('facebook-fixture-older');
     check(await page.locator('dialog.snap-viewer').getByRole('link', { name: 'Facebook fixture', exact: true }).getAttribute('href') === 'https://www.facebook.com/example', 'Grouped snaps retain their actual posting profile');
     await closeViewer();
     assert.deepEqual(await rail.locator('.snap-source-box').evaluateAll(elements => elements.map(element => element.dataset.snapSource)), ['facebook', 'twitter']); checks++;
     const nativeBox = rail.locator('[data-snap-source="uficonnect"]');
-    check(await nativeBox.count() === 0 && await rail.getByRole('button', { name: 'Post snap', exact: true }).count() === 0
+    check(await nativeBox.count() === 0 && await rail.getByRole('button', { name: cameraTileName, exact: true }).count() === 0
       && await profileForSnap('native-public').count() === 0 && await profileForSnap('native-private').count() === 0 && await profileForSnap('other-native').count() === 0, 'Home excludes native snaps and native posting, including rows from a stale response');
     check(await rail.getByRole('heading', { name: 'Snaps', exact: true }).count() === 0
       && await rail.locator('.snap-rail-heading, .snap-rail-description').count() === 0, 'The rail has no visible Snaps title or subtitle');
     check(await rail.getByRole('button', { name: /previous|next|scroll|earlier|later/i }).count() === 0, 'The source row has no navigation arrows');
     check(await profileForSnap('expired-fixture').count() === 0, 'Expired snaps are removed before rendering');
     const cardBoxes = await rail.locator('.snap-source-box').evaluateAll(elements => elements.map(element => ({ x: element.getBoundingClientRect().x, y: element.getBoundingClientRect().y, background: getComputedStyle(element).backgroundColor })));
-    check(cardBoxes.every(box => box.background === 'rgb(8, 8, 8)'), 'Profile rows remain inside black source boxes');
-    check(cardBoxes[1].x > cardBoxes[0].x && Math.abs(cardBoxes[1].y - cardBoxes[0].y) < 2, 'Black source boxes stay next to each other horizontally at every width');
+    check(await themedCards(rail.locator('.snap-source-box')), 'Source boxes use the current page card theme');
+    check(cardBoxes[1].x > cardBoxes[0].x && Math.abs(cardBoxes[1].y - cardBoxes[0].y) < 2, 'Themed source boxes stay next to each other horizontally at every width');
     const sources = page.getByRole('group', { name: 'Home sources', exact: true }); await sources.waitFor();
     check((await rail.boundingBox()).y + (await rail.boundingBox()).height <= (await sources.boundingBox()).y + 2, 'Snaps appear above Home source selection');
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Home has no page overflow');
@@ -246,16 +264,24 @@ try {
     check(await nativeBox.count() === 0, 'Refreshing a Home source never adds the UFI box');
     await auditNavigate(page, origin + '?feed=following');
     await profileForSnap('native-public').waitFor();
-    check(await nativeBox.getByRole('button', { name: 'Post snap', exact: true }).count() === 1
-      && await rail.getByRole('button', { name: 'Post snap', exact: true }).count() === 1, 'Following retains posting only inside its UFI box');
+    check(await nativeBox.getByRole('button', { name: cameraTileName, exact: true }).count() === 1
+      && await rail.getByRole('button', { name: cameraTileName, exact: true }).count() === 1, 'Following retains one camera tile only inside its UFI section');
+    check(await nativeBox.evaluate(element => getComputedStyle(element).backgroundColor === 'rgba(0, 0, 0, 0)'
+      && getComputedStyle(element).borderTopColor === 'rgba(0, 0, 0, 0)'), 'The native UFI section blends into the page without a separate box');
+    check(await nativeBox.locator('.snap-source-items').evaluate(element => {
+      const tiles = [...element.querySelectorAll('.snap-profile-button')];
+      const top = tiles[0]?.getBoundingClientRect().top;
+      return tiles[0]?.classList.contains('snap-create-button') && tiles.every(tile => Math.abs(tile.getBoundingClientRect().top - top) < 2)
+        && element.scrollHeight <= element.clientHeight + 2;
+    }), 'Following keeps the camera first and all UFI profile tiles on one horizontal row');
     await refreshSource('UFI', 'uficonnect');
 
     const populatedRows = [...rows];
     rows = rows.filter(item => item.source !== 'uficonnect');
     await refreshSource('UFI', 'uficonnect');
-    await nativeBox.getByText('No UFI snaps yet.', { exact: true }).waitFor();
+    await nativeBox.getByText('Share your first moment.', { exact: true }).waitFor();
     assert.deepEqual(await rail.locator('.snap-source-box').evaluateAll(elements => elements.map(element => element.dataset.snapSource)), ['uficonnect', 'facebook', 'twitter']); checks++;
-    check(await nativeBox.locator('.snap-profile-button').count() === 0 && await nativeBox.getByRole('button', { name: 'Post snap', exact: true }).isEnabled(), 'An empty UFI box stays first and permits posting without fabricated snaps');
+    check(await nativeBox.locator('.snap-profile-button:not(.snap-create-button)').count() === 0 && await nativeBox.getByRole('button', { name: cameraTileName, exact: true }).isEnabled(), 'An empty UFI section stays first with an enabled camera tile and no fabricated snaps');
     check(await profileForSnap('facebook-fixture').count() === 1 && await profileForSnap('twitter-fixture').count() === 1, 'An empty UFI refresh preserves other source content');
     rows = populatedRows;
     await refreshSource('UFI', 'uficonnect');
@@ -283,7 +309,7 @@ try {
     check(await rail.locator('[data-snap-source="twitch"]').count() === 0, 'Source failures leave other clips visible');
     check(await rail.getByText(/last 24 hours/i).count() === 0, 'Public source clips are not described as expiring stories');
     const expandedBoxes = await rail.locator('.snap-source-box').evaluateAll(elements => elements.map(element => ({ y: element.getBoundingClientRect().y })));
-    check(expandedBoxes.every(box => Math.abs(box.y - expandedBoxes[0].y) < 2), 'Additional black source boxes stay on the horizontal rail');
+    check(expandedBoxes.every(box => Math.abs(box.y - expandedBoxes[0].y) < 2), 'Additional source sections stay on the horizontal rail');
 
     const beforeScopedRows = [...rows];
     rows = rows.map(item => item.id === 'twitter-fixture' ? { ...item, caption: 'Updated X snap' }
@@ -317,13 +343,16 @@ try {
       const sourceLabel = await sourceViewer.locator('.snap-viewer-source-details').innerText();
       check(sourceLabel.includes('Recent source clip') && sourceLabel.includes('42s') && !/left|Expired|24 hours/i.test(sourceLabel), 'Source viewer labels show source/date/duration without native expiry claims');
       check(await sourceViewer.locator('.snap-source-mark').count() === 1, 'Source identity is present in the viewer watermark');
-      check(await sourceViewer.getByRole('link', { name: /^Open on / }).count() === 1, 'Every source player keeps its original post link');
+      const originalLink = sourceViewer.locator('a.post-chrome-source-link');
+      check(await originalLink.count() === 1
+        && await originalLink.getAttribute('href') === rows.find(item => item.id === id).sourceUrl
+        && Boolean(await originalLink.getAttribute('aria-label')), 'Every source player keeps its exact original post link and accessible label');
       await sourceViewer.getByRole('button', { name: 'Close snap', exact: true }).click();
     }
     await openSnap('x-clip-fixture');
     const fallbackViewer = page.locator('dialog.snap-viewer'); await fallbackViewer.waitFor();
     check(await fallbackViewer.locator('iframe, video').count() === 0, 'X retains source playback instead of inventing a direct video player');
-    check(await fallbackViewer.getByRole('link', { name: /^Watch on / }).getAttribute('href') === 'https://x.com/clipper/status/98765', 'Unsupported inline playback has its exact Watch on source route');
+    check(await fallbackViewer.locator('a.post-chrome-source-link').getAttribute('href') === 'https://x.com/clipper/status/98765', 'Unsupported inline playback retains its exact source route');
     await fallbackViewer.getByRole('button', { name: 'Close snap', exact: true }).click();
     for (const id of ['authorized-file-fixture', 'authorized-hls-fixture']) {
       await openSnap(id);
@@ -368,8 +397,8 @@ try {
     await openSnap('other-native');
     let viewer = page.locator('dialog.snap-viewer'); await viewer.waitFor();
     check(await viewer.locator('.snap-viewer-details footer').count() === 0
-      && await viewer.getByRole('button', { name: 'Previous snap', exact: true }).count() === 0
-      && await viewer.getByRole('button', { name: 'Next snap', exact: true }).count() === 0, 'The bottom command toolbar and navigation buttons are removed');
+      && await viewer.getByRole('group', { name: 'Snap navigation', exact: true }).getByRole('button', { name: 'Previous snap', exact: true }).isEnabled()
+      && await viewer.getByRole('group', { name: 'Snap navigation', exact: true }).getByRole('button', { name: 'Next snap', exact: true }).isEnabled(), 'Accessible previous/next navigation stays in the top bar without a duplicate bottom toolbar');
     await page.waitForFunction(() => { const image = document.querySelector('.snap-viewer-media img'); return image?.complete && image.naturalWidth > 0; });
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/snaps-viewer-${width}.png`) });
     check(await viewer.getByRole('link', { name: 'Snap author', exact: true }).getAttribute('href') === `/u/${author}`, 'Snap author routes to the posting profile');
@@ -441,6 +470,9 @@ try {
       });
       check(await viewer.locator('.snap-viewer-caption').innerText() !== 'other-native', 'Swiping left advances the full-screen snap on phones');
       await settleCube();
+      if (await viewer.getByRole('button', { name: 'Snap details', exact: true }).getAttribute('aria-expanded') !== 'true') {
+        await viewer.getByRole('button', { name: 'Snap details', exact: true }).click();
+      }
       await viewer.locator('.snap-viewer-caption').evaluate(element => {
         const bounds = element.getBoundingClientRect(), x = bounds.x + bounds.width / 2, y = bounds.y + bounds.height / 2;
         const touch = clientX => new Touch({ identifier: 3, target: element, clientX, clientY: y });
@@ -486,24 +518,43 @@ try {
     await auditNavigate(page, origin + '?feed=following');
     await profileForSnap('native-public').waitFor();
 
-    await rail.getByRole('button', { name: 'Post snap', exact: true }).click();
+    await rail.getByRole('button', { name: cameraTileName, exact: true }).click();
     const composer = page.getByRole('dialog', { name: 'Post a snap', exact: true }); await composer.waitFor();
+    await page.getByRole('heading', { name: 'Allow camera access?', exact: true }).waitFor();
+    check(await page.evaluate(() => window.__snapAuditCameraRequests) === 0, 'The account camera choice is requested before browser device access');
+    await page.getByRole('button', { name: 'Allow camera', exact: true }).click();
     check(await themedCards(composer) && await composer.locator('.snap-composer-owner .post-chrome-name').innerText() === 'Snap owner'
       && await composer.locator('.snap-composer-owner .post-chrome-avatar img').getAttribute('src') === avatarUrl, 'Posting uses the social card theme and the signed-in profile');
-    await composer.locator('input[type="file"]').first().setInputFiles({ name: 'snap-photo.png', mimeType: 'image/png', buffer: photo });
-    await composer.getByLabel('Caption (optional)').fill('Fresh photo snap');
+    await composer.getByRole('alert').waitFor();
+    check(uploadCount === 0, 'Opening a denied camera does not upload media');
+    const galleryChooser = page.waitForEvent('filechooser');
+    await composer.getByRole('button', { name: 'Gallery', exact: true }).click();
+    await page.getByRole('heading', { name: 'Allow photos and videos?', exact: true }).waitFor();
+    check(uploadCount === 0, 'The account photo choice is requested before gallery selection or upload');
+    await page.getByRole('button', { name: 'Choose photos', exact: true }).click();
+    await (await galleryChooser).setFiles({ name: 'snap-photo.png', mimeType: 'image/png', buffer: photo });
+    await composer.getByLabel('Description (optional)').fill('Fresh photo snap');
+    await composer.getByRole('button', { name: 'Vivid', exact: true }).click();
+    await composer.getByLabel('Text on your snap', { exact: true }).fill('Fresh moment');
     await composer.getByRole('radio', { name: /Followers/ }).check();
     check((await composer.locator('.snap-composer-owner').innerText()).includes('Followers'), 'Posting identity reflects the selected audience');
     await composer.getByRole('button', { name: 'Post snap', exact: true }).waitFor();
     await page.waitForFunction(() => !document.querySelector('dialog.snap-composer button[type="submit"]')?.disabled);
+    check(uploadCount === 0 && writes.filter(write => write.endpoint === '/snaps' && write.method === 'POST').length === 0,
+      'Selecting and editing a gallery draft keeps media local until Post snap');
+    check(await composer.locator('.snap-text-overlay').innerText() === 'Fresh moment'
+      && await composer.locator('img[alt="Your snap preview"]').evaluate(element => getComputedStyle(element).filter.includes('saturate')),
+      'The draft preview displays its selected filter and overlay text');
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/snaps-composer-${width}.png`) });
     await composer.getByRole('button', { name: 'Post snap', exact: true }).click();
     await profileForSnap('posted-native').waitFor();
     const published = writes.find(write => write.endpoint === '/snaps' && write.method === 'POST');
-    assert.deepEqual(published.body, { mediaUrl: photoUrl, mediaType: 'image', caption: 'Fresh photo snap', visibility: 'followers', upload: proof }); checks++;
+    assert.deepEqual(published.body, { mediaUrl: photoUrl, mediaType: 'image', caption: 'Fresh photo snap', visibility: 'followers', upload: proof, filter: 'vivid', overlayText: 'Fresh moment' }); checks++;
     check(uploadCount === 1 && uploadedForm.includes('name="public_id"') && uploadedForm.includes(proof.publicId.split('/').at(-1)), 'Signed upload identity reaches Cloudinary before publication');
     await openSnap('posted-native');
     viewer = page.locator('dialog.snap-viewer');
+    check(await viewer.locator('.snap-text-overlay').innerText() === 'Fresh moment', 'Published native Snaps retain their saved text overlay');
+    await viewer.getByRole('button', { name: 'Snap details', exact: true }).click();
     await viewer.getByText('Followers only', { exact: true }).waitFor();
     await viewer.getByRole('button', { name: 'Snap options', exact: true }).click();
     await viewer.getByRole('button', { name: 'Delete this snap', exact: true }).click();
@@ -511,13 +562,31 @@ try {
     await viewer.getByRole('button', { name: 'Delete snap', exact: true }).click();
     await page.locator('dialog.snap-viewer').waitFor({ state: 'detached' });
     check(await profileForSnap('posted-native').count() === 0 && await profileForSnap('native-public').count() === 1
-      && writes.filter(write => write.method === 'DELETE').length === 1, 'Owner deletion removes only that snap and preserves the profile circle with remaining snaps');
+      && writes.filter(write => write.method === 'DELETE').length === 1, 'Owner deletion removes only that snap and preserves the profile tile with remaining snaps');
 
     await auditNavigate(page, origin + '?feed=ufi');
     await page.locator('.snap-rail[data-snap-mode="ufi"]').waitFor();
     await profileForSnap('native-public').waitFor();
     assert.deepEqual(await rail.locator('.snap-source-box').evaluateAll(elements => elements.map(element => element.dataset.snapSource)), ['uficonnect']); checks++;
     check((await rail.boundingBox()).y + (await rail.boundingBox()).height <= (await page.locator('.ufi-feed-toolbar').boundingBox()).y + 2, 'UFI snaps appear above its posting/topic toolbar');
+    const beforeHorizontalRows = rows;
+    rows = [...rows, ...Array.from({ length: 12 }, (_, index) => snap(`ufi-horizontal-${index}`, 'uficonnect', {
+      author: { id: `ufi-horizontal-author-${index}`, name: `Horizontal member ${index + 1}`, avatarUrl },
+    }))];
+    await refreshSource('UFI', 'uficonnect');
+    const nativeProfiles = nativeBox.locator('.snap-source-items');
+    check(await nativeProfiles.evaluate(element => {
+      const tiles = [...element.querySelectorAll('.snap-profile-button')], top = tiles[0].getBoundingClientRect().top;
+      return tiles[0].classList.contains('snap-create-button') && tiles.every(tile => Math.abs(tile.getBoundingClientRect().top - top) < 2)
+        && element.scrollWidth > element.clientWidth && element.scrollHeight <= element.clientHeight + 2;
+    }), 'A crowded UFI rail stays on one horizontal row and scrolls sideways without wrapping');
+    await profileForSnap('ufi-horizontal-11').scrollIntoViewIfNeeded();
+    check(await profileForSnap('ufi-horizontal-11').evaluate(element => {
+      const tile = element.getBoundingClientRect(), list = element.closest('.snap-source-items').getBoundingClientRect();
+      return tile.left >= list.left - 2 && tile.right <= list.right + 2;
+    }) && await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'The last UFI tile is reachable horizontally without widening the page');
+    rows = beforeHorizontalRows;
+    await refreshSource('UFI', 'uficonnect');
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/snaps-ufi-${width}.png`) });
     await auditNavigate(page, origin + 'post');
     await profileForSnap('native-public').waitFor();
@@ -555,7 +624,7 @@ try {
     await auditNavigate(page, origin + 'global?audit-public=1');
     await profileForSnap('facebook-fixture').waitFor();
     check(await profileForSnap('native-private').count() === 0, 'Public Snap discovery excludes followers-only snaps');
-    check(await nativeBox.count() === 0 && await rail.getByRole('link', { name: 'Post snap', exact: true }).count() === 0, 'Guest Home excludes UFI snaps and native posting');
+    check(await nativeBox.count() === 0 && await rail.locator('.snap-create-button').count() === 0, 'Guest Home excludes UFI snaps and native posting');
     await refreshSource('X (Twitter)', 'twitter');
     check(await rail.locator('.snap-source-favorite').count() === 0, 'Guests have no invented favorite sources');
     await openSnap('facebook-fixture');
@@ -584,8 +653,10 @@ try {
       const stage = landscape.locator('.snap-viewer-media');
       check((await frame.boundingBox()).height >= 300 && await stage.evaluate(element => element.scrollHeight > element.clientHeight), 'The Twitch landscape player keeps its required height and scrolls instead of clipping');
       await stage.evaluate(element => { element.scrollTop = element.scrollHeight; });
-      const controls = await landscape.locator('.twitch-clip-source').boundingBox(), stageBounds = await stage.boundingBox();
-      check(controls.y + controls.height <= stageBounds.y + stageBounds.height + 2, `Twitch source controls are reachable at the bottom of the short landscape stage: ${JSON.stringify({ controls, stage: stageBounds, scroll: await stage.evaluate(element => ({ top: element.scrollTop, height: element.scrollHeight, client: element.clientHeight })) })}`);
+      const controlGroup = landscape.getByRole('group', { name: 'Twitch clip controls', exact: true });
+      const controls = await controlGroup.boundingBox(), dialogBounds = await landscape.boundingBox();
+      check(await controlGroup.getByRole('button').isVisible() && controls.y >= dialogBounds.y && controls.y + controls.height <= dialogBounds.y + dialogBounds.height + 2,
+        `Twitch controls stay reachable in the viewer toolbar after scrolling the short landscape stage: ${JSON.stringify({ controls, dialog: dialogBounds, scroll: await stage.evaluate(element => ({ top: element.scrollTop, height: element.scrollHeight, client: element.clientHeight })) })}`);
       const selected = await landscape.locator('.snap-viewer-caption').innerText();
       await page.waitForTimeout(550);
       await landscape.locator('.snap-viewer-topbar').dispatchEvent('wheel', { deltaY: 120, deltaX: 0, bubbles: true, cancelable: true });
@@ -596,8 +667,15 @@ try {
       await closeViewer();
     }
     assert.deepEqual(errors, []); checks++;
-    console.log(`PASS: grouped profile circles, horizontal black source boxes, full-screen cube navigation, external-only Home Snaps, UFI/Following posting, scoped refresh/error isolation, source favorites, signed upload, audience, profile/report/delete, expiry and session isolation at ${width}px`);
-    await context.close();
+    console.log(`PASS: grouped square profile tiles, themed source sections, full-screen cube navigation, external-only Home Snaps, UFI/Following camera tile and local drafts, scoped refresh/error isolation, source favorites, signed upload, saved effects, audience, profile/report/delete, expiry and session isolation at ${width}px`);
+    await context.close(); activePage = null;
   }
   console.log(`PASS: ${checks} Snap browser checks.`);
+} catch (error) {
+  if (activePage && !activePage.isClosed()) {
+    await activePage.screenshot({ path: path.join(root, '.cache/audit-ui/snaps-failure.png'), fullPage: true }).catch(() => {});
+    await fs.writeFile(path.join(root, '.cache/audit-ui/snaps-failure.json'), JSON.stringify({ url: activePage.url(), checks, error: error.message,
+      visibleText: await activePage.locator('body').innerText().catch(() => '') }, null, 2) + '\n');
+  }
+  throw error;
 } finally { await browser?.close(); await server.close(); await app.close(); }

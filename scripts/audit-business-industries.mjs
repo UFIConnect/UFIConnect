@@ -18,7 +18,8 @@ try{
   for(const width of [320,1440]){
     const context=await browser.newContext({viewport:{width,height:width===320?568:900},serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(20000);
     const errors=[],unexpectedMutations=[];page.on('pageerror',error=>errors.push(error.message));
-    const workspaces=[],posts=[],requests=[];let canManage=true,linkedIn=true,failFirst=true;
+    const workspaces=[],posts=[],requests=[];let canManage=true,linkedIn=true,failFirst=true,releaseSecondPage;
+    const secondPageResponse=new Promise(resolve=>{releaseSecondPage=resolve;});
     await context.route('**/*',async route=>{
       const request=route.request(),url=new URL(request.url());
       const headers={'Access-Control-Allow-Origin':server.origin,'Access-Control-Allow-Credentials':'true','Access-Control-Allow-Headers':'*'};
@@ -36,7 +37,11 @@ try{
         return fulfill({workspace});
       }
       if(/^\/business\/industries\/[^/]+\/posts$/.test(endpoint)){
-        if(route.request().method()==='GET'){const currentPage=Number(url.searchParams.get('page')||1);return fulfill({posts:posts.slice((currentPage-1)*12,currentPage*12),page:currentPage,hasMore:posts.length>currentPage*12});}
+        if(route.request().method()==='GET'){
+          const currentPage=Number(url.searchParams.get('page')||1);
+          if(currentPage===2)await secondPageResponse;
+          return fulfill({posts:posts.slice((currentPage-1)*12,currentPage*12),page:currentPage,hasMore:posts.length>currentPage*12});
+        }
         const body=route.request().postDataJSON();requests.push(body);
         let post=posts.find(item=>item.requestId===body.requestId);
         if(!post){post={id:'bi_'+body.requestId,requestId:body.requestId,title:body.title,content:body.title+'\n\n'+body.content,status:body.targets.length?'published':'draft',targets:body.targets.map(platform=>({platform,status:'posted',postedUrl:platform==='uficonnect'?'https://uficonnect.org/p/synthetic':'https://www.linkedin.com/feed/update/synthetic'})),createdAt:new Date().toISOString()};posts.unshift(post);}
@@ -50,7 +55,9 @@ try{
       const response=await app.request(endpoint+url.search,{userId:'industry-audit'});
       return fulfill(response.data,response.status);
     });
-    await installAuditMember(page,app,'industry-audit');await auditNavigate(page,origin+'business/industries');
+    await installAuditMember(page,app,'industry-audit');await auditNavigate(page,origin+'recruiting');
+    await page.getByRole('heading',{name:'Audit company recruiting',exact:true}).waitFor();
+    await page.getByRole('navigation',{name:'Business workspace',exact:true}).getByRole('link',{name:'Industry spaces',exact:true}).click();
     await page.getByRole('heading',{name:'Industry spaces',exact:true}).waitFor();
     await page.getByLabel('Industry',{exact:true}).selectOption('technology');
     await page.getByLabel('Space name',{exact:true}).fill('Product team');
@@ -95,8 +102,15 @@ try{
     for(let i=0;i<13;i++)posts.push({id:'history-'+i,title:'History '+i,content:'Synthetic published update '+i,status:'published',targets:[],createdAt:new Date().toISOString()});
     await auditReload(page);const history=page.getByRole('region',{name:'Industry post history'});await history.locator('.industry-history-card').first().waitFor();
     check(await history.locator('.industry-history-card').count()===12,'History shows twelve posts per page');
-    await history.getByRole('button',{name:'Next',exact:true}).click();await history.getByText('Page 2',{exact:true}).waitFor();
+    await history.getByRole('button',{name:'Next',exact:true}).click();
+    await history.getByRole('status').filter({hasText:'Loading posts…'}).waitFor();
+    check(await history.locator('.industry-history-card').count()===0,'Loading the next history page clears the previous rows');
+    releaseSecondPage();
+    const expectedSecondPage=posts.slice(12).map(post=>post.title);
+    await history.getByRole('heading',{name:expectedSecondPage[0],exact:true}).waitFor();
+    await history.getByText('Page 2',{exact:true}).waitFor();
     check(await history.locator('.industry-history-card').count()===posts.length-12,'History next page shows remaining posts');
+    check(JSON.stringify(await history.locator('.industry-history-card h3').allTextContents())===JSON.stringify(expectedSecondPage),'History next page contains exactly the remaining post titles');
     check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Industry publishing has no horizontal overflow');
     linkedIn=false;await auditReload(page);check(await page.getByRole('checkbox',{name:/^LinkedIn/}).isDisabled(),'Unavailable LinkedIn cannot be activated by the composer');
     await auditNavigate(page,origin+'business/cross-post?workspace=unowned');await page.getByText('This space is not available to your Business membership.',{exact:true}).waitFor();

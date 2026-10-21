@@ -182,13 +182,13 @@ export function SnapComments({ snap, profile, active, id, onClose, onCountChange
       <p>{item.content || item.body || ''}</p>
     </li>)}</ol>
     {own?.hasMore && <button type="button" className="snap-comments-more" disabled={own.loading} onClick={() => read(own.offset)}>Load more comments</button>}
-    {native ? profile?.id ? <form onSubmit={publish}>
+    {native ? profile?.id ? <form className="post-comment-form" onSubmit={publish}>
       <label htmlFor={inputId}>Write a comment on UFIConnect</label>
       <textarea ref={input} id={inputId} rows={2} value={draft.text} maxLength={1000} disabled={draft.busy}
         onChange={event => setDraftState({ ...draft, identity, text: event.target.value, error: '', notice: '' })} required />
       {draft.error && <p className="snap-interaction-error" role="alert">{draft.error}</p>}
       {draft.notice && <p role="status">{draft.notice}</p>}
-      <button type="submit" disabled={draft.busy || !draft.text.trim()}>{draft.busy ? 'Publishing…' : 'Publish comment'}</button>
+      <button type="submit" className="btn btn-primary" disabled={draft.busy || !draft.text.trim()}>{draft.busy ? 'Publishing…' : 'Publish comment'}</button>
     </form> : <Link to="/login">Sign in to comment</Link>
       : <ConnectedPostActions key={identity} post={snap} active={active} />}
     {original && <a className="snap-comments-original" href={original} target="_blank" rel="noopener noreferrer">Open original discussion</a>}

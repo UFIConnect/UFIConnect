@@ -90,9 +90,12 @@
 /* Search stays visible in the middle of the shell, beside direct messages. */
 .shell .shell-content { flex: 1; min-width: 0; }
 .shell .shell-content > .main { width: 100%; }
-.shell.shell-media-scroll .global-app-header,
-.shell.shell-media-scroll .bottom-nav { position: static; }
-.shell.shell-media-scroll .main { padding-bottom: 24px; }
+/* Videos and Music use their own controls without outer navigation bands. */
+.shell.shell-media-page .shell-content > .main { max-width: none; padding: 0; }
+.shell.shell-media-page .video-feed-view { height: 100dvh; min-height: 0; }
+.shell.shell-media-page .video-feed-frame {
+  padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
+}
 .shell .global-app-header {
   display: flex; position: sticky; top: 0; z-index: 221;
   align-items: center; justify-content: center; gap: 12px;

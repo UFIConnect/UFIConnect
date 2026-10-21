@@ -161,6 +161,11 @@ try {
     assert.equal(await listing.getByRole('tab', { name: 'Required qualifications', exact: true }).evaluate(element => document.activeElement === element), true);
     assert.match(await panel.textContent(), /Experience delivering accessible web applications\./);
     await page.keyboard.press('End');
+    await listing.getByRole('tab', { name: 'Job description', exact: true, selected: true }).waitFor();
+    assert.equal(await listing.getByRole('tab', { name: 'Job description', exact: true }).getAttribute('aria-selected'), 'true');
+    assert.equal(await listing.getByRole('tab', { name: 'Job description', exact: true }).evaluate(element => document.activeElement === element), true);
+    assert.match(await panel.textContent(), /Review the role and requirements\./);
+    await listing.getByRole('tab', { name: 'Benefits', exact: true }).click();
     await listing.getByRole('tab', { name: 'Benefits', exact: true, selected: true }).waitFor();
     assert.equal(await listing.getByRole('tab', { name: 'Benefits', exact: true }).getAttribute('aria-selected'), 'true');
     assert.equal(await listing.getByRole('tab', { name: 'Benefits', exact: true }).evaluate(element => document.activeElement === element), true);

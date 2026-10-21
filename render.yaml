@@ -972,7 +972,7 @@ services:
         value: no-referrer
       - path: /*
         name: Permissions-Policy
-        value: camera=(), microphone=(), geolocation=(self)
+        value: camera=(self), microphone=(self), geolocation=(self)
     envVars:
       - key: NODE_VERSION
         value: '24'

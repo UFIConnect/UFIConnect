@@ -778,17 +778,15 @@ input, textarea, select { font-family: inherit; }
   top: var(--feed-rail-top);
   height: calc(100dvh - var(--feed-rail-top));
   max-height: calc(100dvh - var(--feed-rail-top));
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior-y: contain;
-  scrollbar-gutter: stable;
+  overflow: hidden;
   padding-bottom: max(12px, var(--app-safe-bottom, env(safe-area-inset-bottom, 0px)));
   padding-right: 2px;
 }
 .home-feed-view-tabs {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   min-height: 64px;
-  overflow: visible;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -796,6 +794,7 @@ input, textarea, select { font-family: inherit; }
 }
 .home-feed-rail-bottom {
   flex: 0 0 auto;
+  max-height: calc(100% - 64px);
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -807,7 +806,8 @@ input, textarea, select { font-family: inherit; }
 .home-feed-rail-bottom > :not(.home-feed-side-tools) { flex-shrink: 0; }
 .home-feed-rail-bottom > .home-feed-side-tools {
   min-height: 0;
-  overflow: visible;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .home-feed-rail-bottom > .home-feed-side-tools > * { flex-shrink: 0; }
 .home-feed-rail-bottom .home-feed-command-center-link { margin-top: 0; }

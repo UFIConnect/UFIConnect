@@ -130,11 +130,12 @@ export default function Layout(props) {
   return profile?.plan === 'business' ? <BusinessLayout>{props.children}</BusinessLayout> : <PersonalLayout {...props} />;
 }
 
-function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false, discoveryPost, mobileRightMenu }) {
+function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false, discoveryPost, mobileRightMenu, mediaPage = false }) {
   const { profile, logout, updateProfileLocally } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
+  const overlayRouteRef = useRef(location);
   const { canInstall, installed, triggerInstall } = useInstallPrompt();
   // A pending request is not an unread update once the member has viewed it.
   const [notifBadge, setNotifBadge] = useState(0);
@@ -192,6 +193,18 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
   }, [profile]);
 
   useEffect(() => {
+    const previous = overlayRouteRef.current;
+    overlayRouteRef.current = location;
+    if (previous.pathname === location.pathname) {
+      const before = new URLSearchParams(previous.search);
+      const after = new URLSearchParams(location.search);
+      // Consuming the linked composer command is internal URL cleanup, not a new
+      // navigation. It may commit after the member has reopened an account menu.
+      if (before.get('compose') === '1' && !after.has('compose')) {
+        before.delete('compose');
+        if (before.toString() === after.toString()) return;
+      }
+    }
     setMobileMenuOpen(false);
     setMobileAccountOpen(false);
     setMobileHeaderPopup(null);
@@ -461,7 +474,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
   return (
     <MessagesNavigationContext.Provider value={profile ? { count: messageBadge, active: mobileHeaderPopup === 'messages' || location.pathname.startsWith('/messages'),
       open: mobileHeaderPopup === 'messages', onToggle: event => { messagesOpenerRef.current = event.currentTarget; toggleMobileHeaderPopup('messages'); } } : null}>
-    <div className={`shell${wide ? ' shell-wide' : ''}${['/videos', '/music'].includes(location.pathname) ? ' shell-media-scroll' : ''}`}>
+    <div className={`shell${wide ? ' shell-wide' : ''}${mediaPage ? ' shell-media-page' : ''}`}>
       {/* ── Desktop sidebar ── */}
       <aside className="sidebar">
         <Link to={HOME_FEED_PATH} className="sidebar-logo" onClick={handleAllFeedHomeClick} style={{ textDecoration: 'none', color: 'inherit' }}>
@@ -566,7 +579,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
       </aside>
 
       <div className="shell-content">
-      {profile && (
+      {profile && !mediaPage && (
         <header className="mobile-app-header global-app-header">
           <div className="mobile-app-header-start">
             <button
@@ -867,7 +880,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
         />
       )}
       {/* ── Mobile bottom tab bar ── */}
-      <nav className="bottom-nav">
+      {!mediaPage && <nav className="bottom-nav">
         {MOBILE_BOTTOM_NAV.map(({ to, feed, icon, label, shortLabel }) => (
           <NavLink
             key={to}
@@ -894,7 +907,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
             {shortLabel || label}
           </NavLink>
         ))}
-      </nav>
+      </nav>}
       </div>
     </div>
     </MessagesNavigationContext.Provider>
