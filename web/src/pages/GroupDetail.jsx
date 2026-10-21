@@ -180,7 +180,7 @@ function GroupPostArea({ id }) {
           isJoined={joined}
           joining={joining}
           onJoin={handleJoin}
-          onOpen={() => document.getElementById('group-posts')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          onOpen={() => document.getElementById('group-posts')?.scrollIntoView({ behavior: 'instant', block: 'start' })}
           standalone
         />
       </div>

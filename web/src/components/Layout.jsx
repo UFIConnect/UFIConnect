@@ -127,10 +127,12 @@ function SavedNavigation({ mobile = false, expanded, onToggle, onNavigate }) {
 
 export default function Layout(props) {
   const { profile } = useAuth();
+  // Media owns its viewport and exit control for every account type.
+  if (props.mediaPage) return <div className="shell shell-media-page"><div className="shell-content"><main className="main">{props.children}</main></div></div>;
   return profile?.plan === 'business' ? <BusinessLayout>{props.children}</BusinessLayout> : <PersonalLayout {...props} />;
 }
 
-function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false, discoveryPost, mobileRightMenu }) {
+function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false, discoveryPost, mobileRightMenu, mediaPage = false }) {
   const { profile, logout, updateProfileLocally } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
@@ -407,7 +409,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
   function handleAllFeedHomeClick(event) {
     event.preventDefault();
     closeMobileOverlays();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'instant' });
     navigate(HOME_FEED_PATH, {
       replace: location.pathname === '/',
       state: { refreshHomeAt: Date.now() },
@@ -417,7 +419,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
   function navigateToMobileFeed(feed) {
     const next = MOBILE_FEED_OPTIONS.has(feed) ? feed : 'feed';
     setMobileMenuOpen(false);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'instant' });
     navigate(next === 'feed' ? HOME_FEED_PATH : `/?feed=${encodeURIComponent(next)}`, {
       state: { refreshHomeAt: Date.now() },
     });
@@ -438,7 +440,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
     const next = MOBILE_FEED_OPTIONS.has(feed) ? feed : 'feed';
     if (isHomeFeedRoute && mobileFeedMode === next && (next !== 'groups' || mobileGroupScope === 'joined')) {
       setMobileMenuOpen(false);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      window.scrollTo({ top: 0, behavior: 'instant' });
       window.dispatchEvent(new Event('ufi:refresh-selected-feed'));
       return;
     }
@@ -461,7 +463,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
   return (
     <MessagesNavigationContext.Provider value={profile ? { count: messageBadge, active: mobileHeaderPopup === 'messages' || location.pathname.startsWith('/messages'),
       open: mobileHeaderPopup === 'messages', onToggle: event => { messagesOpenerRef.current = event.currentTarget; toggleMobileHeaderPopup('messages'); } } : null}>
-    <div className={`shell${wide ? ' shell-wide' : ''}${['/videos', '/music'].includes(location.pathname) ? ' shell-media-scroll' : ''}`}>
+    <div className={`shell${wide ? ' shell-wide' : ''}${mediaPage ? ' shell-media-page' : ''}`}>
       {/* ── Desktop sidebar ── */}
       <aside className="sidebar">
         <Link to={HOME_FEED_PATH} className="sidebar-logo" onClick={handleAllFeedHomeClick} style={{ textDecoration: 'none', color: 'inherit' }}>
@@ -566,7 +568,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
       </aside>
 
       <div className="shell-content">
-      {profile && (
+      {profile && !mediaPage && (
         <header className="mobile-app-header global-app-header">
           <div className="mobile-app-header-start">
             <button
@@ -867,7 +869,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
         />
       )}
       {/* ── Mobile bottom tab bar ── */}
-      <nav className="bottom-nav">
+      {!mediaPage && <nav className="bottom-nav">
         {MOBILE_BOTTOM_NAV.map(({ to, feed, icon, label, shortLabel }) => (
           <NavLink
             key={to}
@@ -894,7 +896,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
             {shortLabel || label}
           </NavLink>
         ))}
-      </nav>
+      </nav>}
       </div>
     </div>
     </MessagesNavigationContext.Provider>

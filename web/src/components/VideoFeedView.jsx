@@ -1698,7 +1698,7 @@ export default function VideoFeedView({ onExit, music = false }) {
       event.preventDefault();
       const direction = ['ArrowDown', 'ArrowRight', 'PageDown'].includes(event.key) ? 1 : -1;
       const next = Math.max(0, Math.min(queueRef.current.length - 1, activeIndexRef.current + direction));
-      container.scrollTo({ top: next * container.clientHeight, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+      container.scrollTo({ top: next * container.clientHeight, behavior: 'instant' });
     };
     container.addEventListener('keydown', handleKey);
     return () => container.removeEventListener('keydown', handleKey);
@@ -1816,7 +1816,7 @@ export default function VideoFeedView({ onExit, music = false }) {
         lastSwipeAtRef.current = performance.now();
         container.scrollTo({
           top: targetIndex * height,
-          behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+          behavior: 'instant',
         });
       };
       advance();

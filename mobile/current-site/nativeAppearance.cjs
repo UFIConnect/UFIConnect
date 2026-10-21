@@ -23,6 +23,7 @@ function nativeAppearance(mode) {
 
 function documentAppearance(document) {
   // An open modal dialog occupies the top layer, including above Videos.
+  if (document.querySelector('.snap-composer.snap-composer-camera[open]')) return 'snap';
   if (document.querySelector('.snap-viewer-feed[open]')) return 'snap';
   if (document.querySelector('.media-lightbox[aria-modal="true"]')) return 'lightbox';
   if (document.querySelector('.video-feed-view')) return 'video';

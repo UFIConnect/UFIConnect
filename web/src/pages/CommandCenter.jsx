@@ -321,7 +321,7 @@ function ContentHubSection({ readOnly = false }) {
           setTopic(item.prompt); setPlatform(item.input.platform || 'general'); setTone(item.input.tone || '');
           setDrafts(item.output.drafts || null);
         }
-        formTop.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        formTop.current?.scrollIntoView({ behavior: 'instant', block: 'start' });
       }} />
     </div>
   );
@@ -622,7 +622,7 @@ function MediaStudioSection({ onOpenCrossPost, readOnly = false }) {
         onReuse={readOnly || generating ? undefined : item => {
           setType(item.kind); setPrompt(item.prompt); setVideoSeconds(item.input.durationSeconds || 12);
           setAsset(item.output.mediaUrl ? { url: item.output.mediaUrl, type: item.kind } : null);
-          setError(''); formTop.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          setError(''); formTop.current?.scrollIntoView({ behavior: 'instant', block: 'start' });
         }} />
     </div>
   );

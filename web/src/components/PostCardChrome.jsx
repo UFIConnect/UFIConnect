@@ -16,6 +16,7 @@ import { sourcePostMenuItems } from '../utils/sourcePostMenu.mjs';
 import { publicSiteUrl } from '../utils/publicSiteUrl.mjs';
 import { isNativeRuntime, nativeExternalOpen, reportNativeError } from '../nativeRuntime.mjs';
 import './PostCardChrome.css';
+import './PostEngagement.css';
 
 // Shared post-card chrome: author header with the source's own badge, the
 // original post time, compact actions and an "Open on <source>" link. Every

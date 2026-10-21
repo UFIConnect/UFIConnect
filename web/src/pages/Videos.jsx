@@ -48,7 +48,7 @@ export default function Videos({ music = false }) {
       <Helmet>
         <title>{music ? 'Music' : 'Videos'} | UFIconnect</title>
       </Helmet>
-      <Layout><VideoFeedErrorBoundary music={music} onExit={() => navigate('/?feed=feed&all=1')} /></Layout>
+      <Layout mediaPage><VideoFeedErrorBoundary music={music} onExit={() => navigate('/?feed=feed&all=1')} /></Layout>
     </>
   );
 }

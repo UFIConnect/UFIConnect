@@ -121,3 +121,32 @@ test('native chrome keeps the explicit DOM appearance across foreground events a
   assert.equal(changes.at(-1), 'light', 'Closing media restores the newly selected manual appearance');
   cleanup();
 });
+
+test('fullscreen Snap camera uses the Snap palette and restores the underlying feed or manual choice', async () => {
+  const camera = '.snap-composer.snap-composer-camera[open]';
+  for (const theme of ['light', 'dark']) {
+    const f = fixture(), changes = [];
+    f.document.documentElement.dataset.theme = theme;
+    f.surfaces.add('.snap-composer[open]');
+    f.surfaces.add('.snap-composer.snap-composer-camera');
+    const cleanup = observeNativeAppearance({ ...f, onChange: mode => changes.push(mode) });
+    await Promise.resolve();
+    assert.equal(changes.at(-1), theme, 'A normal composer or closed camera must preserve the selected theme');
+    f.surfaces.add('.video-feed-view'); f.mutate(); await f.flush();
+    assert.equal(changes.at(-1), 'video');
+    f.surfaces.add(camera); f.mutate(); await f.flush();
+    assert.equal(changes.at(-1), 'snap', 'The open camera occupies the top layer above its underlying feed');
+    assert.deepEqual(nativeAppearance(changes.at(-1)), { backgroundColor: '#080c12', statusBar: 'light' });
+    f.surfaces.delete(camera); f.mutate(); await f.flush();
+    assert.equal(changes.at(-1), 'video', 'Closing camera restores the video surface');
+    f.surfaces.delete('.video-feed-view'); f.surfaces.add(camera); f.mutate(); await f.flush();
+    assert.equal(changes.at(-1), 'snap');
+    const nextTheme = theme === 'light' ? 'dark' : 'light';
+    f.document.documentElement.dataset.theme = nextTheme;
+    f.listeners.get('ufi:appearance')(); await f.flush();
+    assert.equal(changes.at(-1), 'snap', 'Camera keeps its palette while the underlying theme changes');
+    f.surfaces.delete(camera); f.mutate(); await f.flush();
+    assert.equal(changes.at(-1), nextTheme, 'Closing camera restores the current manual choice');
+    cleanup();
+  }
+});

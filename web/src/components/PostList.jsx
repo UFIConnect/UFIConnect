@@ -3,7 +3,7 @@ import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import client from '../api/client';
 import PostLikes from './PostLikes';
-import { PostTime, PostOptionsMenu, OpenOnSource } from './PostCardChrome';
+import { CommentIcon, PostTime, PostOptionsMenu, OpenOnSource } from './PostCardChrome';
 import ImageLightbox from './ImageLightbox';
 import { InlineAutoplayVideo } from './videoMedia';
 import { SavePostButton } from './SaveButtons';
@@ -357,16 +357,18 @@ export default function PostList({
                 type="button"
                 onClick={() => toggleComments(post)}
                 disabled={!interactive}
-                className="btn btn-ghost btn-sm"
-                style={{ minWidth: 110 }}
+                className="post-chrome-action"
+                aria-label={`${commentsOpen ? 'Hide' : 'Show'} comments (${post.commentsCount || 0})`}
+                aria-expanded={commentsOpen}
+                title={commentsOpen ? 'Hide comments' : 'Comments'}
               >
-                {commentsOpen ? 'Hide' : 'Comment'} {post.commentsCount || 0}
+                <CommentIcon /><span aria-hidden="true">{(post.commentsCount || 0).toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 0 })}</span>
               </button>
 
               <SavePostButton
                 post={post}
-                className="btn btn-ghost btn-sm save-item-button"
-                style={{ minWidth: 92 }}
+                className="post-chrome-action save-item-button"
+                showLabel={false}
               />
               {post.group && (
                 <span style={{
@@ -385,7 +387,7 @@ export default function PostList({
             </div>
 
             {commentsOpen && (
-              <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+              <div className="post-comments">
                 {commentsErrors[post.id] && <p role="alert" style={{ color: 'var(--danger)', fontSize: '.82rem' }}>
                   Comments could not be refreshed. <button type="button" className="btn btn-ghost btn-sm" onClick={() => fetchPostComments(post)}>Retry</button>
                 </p>}
@@ -396,7 +398,7 @@ export default function PostList({
                 ) : comments.length > 0 ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 12 }}>
                     {comments.map(comment => (
-                      <div key={comment.id} style={{ display: 'flex', gap: 10 }}>
+                      <div key={comment.id} className="post-comment" style={{ display: 'flex', gap: 10 }}>
                         <Link
                           to={comment.author?.id && comment.author.id === currentUserId ? '/profile' : `/u/${comment.author?.id}`}
                           className="avatar avatar-sm"
@@ -404,7 +406,7 @@ export default function PostList({
                         >
                           {initials(comment.author?.name)}
                         </Link>
-                        <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="post-comment-body" style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 3 }}>
                             <Link
                               to={comment.author?.id && comment.author.id === currentUserId ? '/profile' : `/u/${comment.author?.id}`}
@@ -441,12 +443,13 @@ export default function PostList({
                   </button>
                 )}
 
-                <form onSubmit={(e) => submitComment(e, post)} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <form className="post-comment-form" onSubmit={(e) => submitComment(e, post)} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <input
                     className="form-input"
                     value={commentDrafts[post.id] || ''}
                     onChange={e => setCommentDrafts(prev => ({ ...prev, [post.id]: e.target.value }))}
                     placeholder="Write a comment..."
+                    aria-label="Write a comment"
                     maxLength={1000}
                     style={{ flex: 1, fontSize: '.86rem' }}
                   />

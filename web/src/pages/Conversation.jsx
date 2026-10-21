@@ -95,7 +95,7 @@ function ConversationThread({ userId, profile, token }) {
   }, []); // The parent remounts this thread whenever the member, session or recipient changes.
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    bottomRef.current?.scrollIntoView({ behavior: 'instant' });
   }, [messages]);
 
   async function handleFileChosen(e) {

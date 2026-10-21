@@ -7,7 +7,7 @@ import { HeartIcon, postSource } from './PostCardChrome';
 import { originalSourceUrl, sendSourceInteraction, useSourceCapability, useSourceInteractionIdentity } from './ConnectedPostActions';
 import { POST_ENGAGEMENT_EVENT, publishPostEngagement } from '../api/postEngagement.mjs';
 
-export default function PostLikes({ post, onPostUpdated, menuItem = false, compact = false }) {
+export default function PostLikes({ post, onPostUpdated, menuItem = false, compact = true }) {
   const { profile } = useAuth();
   const { showToast } = useToast();
   const discovery = ['restaurants', 'bars'].includes(post.source) || /^osm:(node|way|relation):\d+$/.test(post.id || '');
