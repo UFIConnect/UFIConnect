@@ -38,12 +38,12 @@ try {
       assert.match(await page.locator('.landing-hero-copy > p').first().textContent(), /social and professional workspace/);
       await page.locator('.landing-network-art img').evaluate(image => image.decode());
       assert.equal(await page.locator('.landing-network-art img').getAttribute('src'), '/homepage-app-network-2026-10.jpg');
-      const dimensions = await page.locator('.landing-brand img').evaluate(async image => {
+      const dimensions = await page.locator('.landing-network-art img').evaluate(async image => {
         await image.decode();
         const box = image.getBoundingClientRect();
         return { rendered: box.width / box.height, original: image.naturalWidth / image.naturalHeight };
       });
-      assert.ok(Math.abs(dimensions.rendered - dimensions.original) < 0.01, `Brand image stretched at ${width}px`);
+      assert.ok(Math.abs(dimensions.rendered - dimensions.original) < 0.01, `Hero artwork stretched at ${width}px`);
       assert.equal(await page.getByRole('link', { name: 'Explore the feed', exact: true }).first().getAttribute('href'), '/global');
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
       await page.locator('.landing-product-shot img').evaluate(image => image.decode());

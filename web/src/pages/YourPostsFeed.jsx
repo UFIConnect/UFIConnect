@@ -1,3 +1,4 @@
+import { timeAgo } from '../utils/postTime.mjs';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
@@ -19,16 +20,6 @@ import { postTextPreview } from '../../../backend/post-text.mjs';
 const PAGE_SIZE = 12;
 const AUTO_REFRESH_MS = 45 * 1000;
 
-function timeAgo(iso) {
-  if (!iso) return '';
-  const t = new Date(iso).getTime();
-  if (!Number.isFinite(t) || t <= 0) return '';
-  const diff = (Date.now() - t) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
 
 function mergePosts(existing, incoming) {
   const byId = new Map();

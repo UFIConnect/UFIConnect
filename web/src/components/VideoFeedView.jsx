@@ -1,3 +1,4 @@
+import { timeAgo } from '../utils/postTime.mjs';
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useId } from 'react';
 import client from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
@@ -755,14 +756,6 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
   );
 }
 
-function timeAgo(iso) {
-  if (!iso) return '';
-  const diff = (Date.now() - new Date(iso)) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
 
 // Bottom-sheet popup — GET /feed/:postId/comments already exists (used by
 // Feed.jsx's card view) and returns real, live comments for Reddit/HN/
@@ -1032,9 +1025,10 @@ export default function VideoFeedView({ onExit, music = false }) {
       if (document.fullscreenElement) await document.exitFullscreen();
       else if (fullScreen) setFullScreen(false);
       else if (document.fullscreenEnabled && viewRef.current?.requestFullscreen) {
-        await viewRef.current?.requestFullscreen();
+        const fullscreenTarget = viewRef.current;
+        await fullscreenTarget.requestFullscreen();
         if (!fullScreenView.current.mounted || generation !== fullScreenView.current.generation) {
-          if (document.fullscreenElement === viewRef.current) await document.exitFullscreen();
+          if (document.fullscreenElement === fullscreenTarget) await document.exitFullscreen();
           return;
         }
         enteredFullScreen.current = true;
@@ -1704,7 +1698,7 @@ export default function VideoFeedView({ onExit, music = false }) {
       event.preventDefault();
       const direction = ['ArrowDown', 'ArrowRight', 'PageDown'].includes(event.key) ? 1 : -1;
       const next = Math.max(0, Math.min(queueRef.current.length - 1, activeIndexRef.current + direction));
-      container.scrollTo({ top: next * container.clientHeight, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+      container.scrollTo({ top: next * container.clientHeight, behavior: 'instant' });
     };
     container.addEventListener('keydown', handleKey);
     return () => container.removeEventListener('keydown', handleKey);
@@ -1822,7 +1816,7 @@ export default function VideoFeedView({ onExit, music = false }) {
         lastSwipeAtRef.current = performance.now();
         container.scrollTo({
           top: targetIndex * height,
-          behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+          behavior: 'instant',
         });
       };
       advance();

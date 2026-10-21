@@ -109,25 +109,27 @@ try {
     const checkPlaybackControls = async slide => {
       const playback = slide.locator('.media-playback-controls');
       assert.equal(await playback.count(), 1, 'Each slide has one app playback row');
-      assert.equal(await playback.getByRole('button').count(), 2, 'Play/Pause and Mute/Unmute are visible app buttons');
+      assert.equal(await playback.getByRole('button').count(), 3, 'Play/Pause, Mute/Unmute and Full screen are visible app buttons');
       assert.ok(await playback.getByRole('button', { name: /^(?:Play|Pause) video$/ }).isVisible());
       assert.ok(await playback.getByRole('button', { name: /^(?:Mute|Unmute) video$/ }).isVisible());
+      assert.ok(await playback.getByRole('button', { name: /^(?:Full screen|Exit full screen)$/ }).isVisible());
       assert.equal(await slide.locator('input[type="range"]').count(), 1, 'Each slide has one app progress control');
       assert.ok(await playback.getByRole('slider', { name: 'Video progress', exact: true }).isVisible());
       assert.ok(await playback.locator('.media-playback-time').isVisible());
       assert.ok(await playback.evaluate(element => {
-        const [play, sound, progress, time] = [...element.children];
+        const [play, sound, progress, time, fullscreen] = [...element.children];
         if (play?.tagName !== 'BUTTON' || sound?.tagName !== 'BUTTON' || progress?.type !== 'range'
-          || !time?.classList.contains('media-playback-time') || element.children.length !== 4) return false;
+          || !time?.classList.contains('media-playback-time') || fullscreen?.tagName !== 'BUTTON' || element.children.length !== 5) return false;
         const row = element.getBoundingClientRect();
         const media = element.closest('.video-feed-slide').querySelector('[data-video-media]').getBoundingClientRect();
-        const rects = [play, sound, progress, time].map(child => child.getBoundingClientRect());
+        const rects = [play, sound, progress, time, fullscreen].map(child => child.getBoundingClientRect());
         return row.top >= media.bottom - 1 && row.left <= media.left + 25 && row.right <= media.right + 1
           && getComputedStyle(element).position === 'static'
           && rects.every(rect => rect.top >= row.top - 1 && rect.bottom <= row.bottom + 1 && rect.width > 0)
           && rects[0].left >= row.left - 1 && rects[0].right <= rects[1].left + 1
-          && rects[1].right <= rects[2].left + 1 && rects[2].right <= rects[3].left + 1;
-      }), 'Play/Pause and Mute/Unmute sit left of progress and time in one row below the video');
+          && rects[1].right <= rects[2].left + 1 && rects[2].right <= rects[3].left + 1
+          && rects[3].right <= rects[4].left + 1 && rects[4].right <= row.right + 1;
+      }), 'Play/Pause and Mute/Unmute sit left of progress, time and Full screen in one row below the video');
       return playback;
     };
     if (!hnOnly) {
@@ -212,21 +214,53 @@ try {
       console.log(`PASS persistent Play/Pause + Mute left of progress/time, visible Like/Comments/Save and post link in Videos + Music at ${width}px`);
       if (menusOnly) { assert.deepEqual(errors, []); await context.close(); continue; }
     }
+    const readMenuPages = async menu => {
+      const rows = [], id = await menu.getAttribute('id');
+      const pager = menu.getByRole('group', { name: 'Post options pages', exact: true });
+      const paged = await pager.count();
+      let pageNumber = 1;
+      if (paged) assert.ok(await pager.getByRole('menuitem', { name: 'Previous options', exact: true }).isDisabled(), 'Options start on page one');
+      while (true) {
+        await assertInViewport(menu, 'Every options page fits the viewport');
+        const visible = await menu.locator(':scope > [role="menuitem"]').evaluateAll(items => items.map(item => ({
+          label: item.getAttribute('aria-label') || [...item.childNodes].filter(node => node.nodeType === window.Node.TEXT_NODE).map(node => node.textContent).join('').trim(),
+          href: item.getAttribute('href'),
+        })));
+        assert.ok(visible.length > 0 && visible.length <= 4, 'Each source menu page contains at most four actual options');
+        assert.equal(await menu.locator('.video-feed-menu-action').count(), 0, 'Visible engagement actions are not duplicated on any menu page');
+        rows.push(...visible);
+        if (!paged || await pager.getByRole('menuitem', { name: 'Next options', exact: true }).isDisabled()) break;
+        assert.ok(pageNumber < 20, 'Options pagination must terminate');
+        await pager.getByRole('menuitem', { name: 'Next options', exact: true }).click();
+        pageNumber++;
+        await page.waitForFunction(({ id, pageNumber }) => document.getElementById(id)?.querySelector('[aria-live]')?.textContent.trim().startsWith(pageNumber + ' /'), { id, pageNumber });
+      }
+      while (paged && !await pager.getByRole('menuitem', { name: 'Previous options', exact: true }).isDisabled()) {
+        await pager.getByRole('menuitem', { name: 'Previous options', exact: true }).click();
+        pageNumber--;
+        await page.waitForFunction(({ id, pageNumber }) => document.getElementById(id)?.querySelector('[aria-live]')?.textContent.trim().startsWith(pageNumber + ' /'), { id, pageNumber });
+      }
+      return rows;
+    };
     const checkFullScreen = async slide => {
       const routeBefore = page.url();
       const more = slide.getByRole('button', { name: 'More options', exact: true });
-      await more.click();
-      await page.getByRole('menuitem', { name: 'Full screen', exact: true }).click();
-      await page.waitForFunction(() => document.fullscreenElement === document.documentElement);
+      const playback = slide.locator('.media-playback-controls');
+      await playback.getByRole('button', { name: 'Full screen', exact: true }).click();
+      await page.waitForFunction(() => document.fullscreenElement === document.querySelector('.video-feed-view'));
       await checkPlaybackControls(slide);
       await more.click();
-      await assertInViewport(page.getByRole('menu'), 'The menu remains reachable in full screen');
-      await page.getByRole('menuitem', { name: 'Exit full screen', exact: true }).click();
+      const fullscreenMenu = page.getByRole('menu');
+      await assertInViewport(fullscreenMenu, 'The menu remains reachable in full screen');
+      assert.ok(await fullscreenMenu.evaluate(element => element.parentElement === document.fullscreenElement), 'The options portal stays inside the active fullscreen view');
+      await more.click();
+      await fullscreenMenu.waitFor({ state: 'detached' });
+      assert.ok(await more.evaluate(element => document.activeElement === element), 'Closing the fullscreen menu restores its button focus');
+      await playback.getByRole('button', { name: 'Exit full screen', exact: true }).click();
       await page.waitForFunction(() => !document.fullscreenElement);
       assert.equal(page.url(), routeBefore, 'Exiting full screen keeps the feed route');
-      await more.click();
-      await page.getByRole('menuitem', { name: 'Full screen', exact: true }).click();
-      await page.waitForFunction(() => document.fullscreenElement === document.documentElement);
+      await playback.getByRole('button', { name: 'Full screen', exact: true }).click();
+      await page.waitForFunction(() => document.fullscreenElement === document.querySelector('.video-feed-view'));
       await page.keyboard.press('Escape');
       assert.equal(page.url(), routeBefore, 'Escape in full screen does not navigate away from the video');
       // Some headless browsers leave native full-screen dismissal to browser
@@ -285,30 +319,32 @@ try {
       assert.equal(await menu.evaluate(el => el.parentElement === document.body), true,
         'The menu escapes the caption scroll container');
       await assertInViewport(menu, 'The complete menu stays inside the viewport');
-      assert.equal(await menu.getByRole('menuitem', { name: 'Full screen', exact: true }).count(), 1,
-        'Full screen is available from the source menu');
-      assert.equal(await menu.getByRole('menuitem', { name: /^(?:Play|Pause|Mute|Unmute) video$/ }).count(), 0,
-        'The source menu does not duplicate visible playback controls');
-      assert.equal(await menu.getByRole('menuitem', { name: /^(?:Show|Hide) player controls$|^Read more$|^Show less$/ }).count(), 0,
+      const menuItems = await readMenuPages(menu);
+      assert.equal(menuItems.filter(item => /^(?:Exit full screen|Full screen)$/.test(item.label)).length, 0,
+        'Full screen belongs to the visible shared playback controls');
+      assert.equal(await slide.locator('.media-playback-controls').getByRole('button', { name: 'Full screen', exact: true }).count(), 1);
+      assert.equal(menuItems.filter(item => /^(?:Play|Pause|Mute|Unmute) video$/.test(item.label)).length, 0,
+        'No source menu page duplicates visible playback controls');
+      assert.equal(menuItems.filter(item => /^(?:Show|Hide) player controls$|^Read more$|^Show less$/.test(item.label)).length, 0,
         'Player controls and caption expansion remain outside overflow');
       const originalSource = await slide.getAttribute('data-source');
-      const originalLink = menu.getByRole('menuitem', { name: originalSource === 'youtube' && !invalidSource
-        ? 'Watch on YouTube' : /^(?:Open on |Open original post|Open (?:Reddit|Hacker News) discussion)/ });
-      assert.equal(await originalLink.count(), 1, 'The source menu retains one canonical original-post destination');
+      const originalLinks = menuItems.filter(item => originalSource === 'youtube' && !invalidSource
+        ? item.label === 'Watch on YouTube' : /^(?:Open on |Open original post|Open (?:Reddit|Hacker News) discussion)/.test(item.label));
+      assert.equal(originalLinks.length, 1, 'The paginated source menu retains one canonical original-post destination');
       const expectedOriginal = originalSource === 'hackernews'
         ? (youtube ? 'https://news.ycombinator.com/item?id=123457' : 'https://news.ycombinator.com/item?id=123456')
         : originalSource === 'reddit' ? 'https://www.reddit.com/r/audit/comments/abcd/fixture/' : null;
-      if (expectedOriginal) assert.equal(await originalLink.getAttribute('href'), expectedOriginal);
+      if (expectedOriginal) assert.equal(originalLinks[0].href, expectedOriginal);
       if (youtube && originalSource !== 'youtube') {
-        assert.equal(await menu.getByRole('menuitem', { name: 'Watch on YouTube', exact: true }).count(), 1,
+        assert.equal(menuItems.filter(item => item.label === 'Watch on YouTube').length, 1,
           'Embedded YouTube keeps a distinct playback-source destination');
         assert.match(await actions.locator('.post-chrome-source-link').getAttribute('href'), /^https:\/\/www\.youtube\.com\/watch\?v=/,
           'The visible source badge identifies the actual YouTube player');
       }
       assert.equal(await menu.locator('.video-feed-menu-action').count(), 0, 'Like and Save are visible in the layout');
-      if (!youtube) assert.equal(await menu.getByRole('menuitem', { name: invalidSource
-        ? /Likes on YouTube|Watch later on YouTube|channel playlists on YouTube/ : /YouTube/i }).count(), 0,
-        'Videos without a playable YouTube URL have no YouTube API actions: ' + JSON.stringify(await menu.getByRole('menuitem').allTextContents()));
+      if (!youtube) assert.equal(menuItems.filter(item => (invalidSource
+        ? /Likes on YouTube|Watch later on YouTube|channel playlists on YouTube/ : /YouTube/i).test(item.label)).length, 0,
+        'Videos without a playable YouTube URL have no YouTube API actions on any page: ' + JSON.stringify(menuItems.map(item => item.label)));
       await page.keyboard.press('Escape');
       await menu.waitFor({ state: 'detached' });
       assert.equal(page.url(), routeBefore, 'Escape closes the menu without leaving the video route');

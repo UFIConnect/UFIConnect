@@ -1,3 +1,4 @@
+import { timeAgo } from '../utils/postTime.mjs';
 import { postDiscussionUrl, safePostLink } from '../../../backend/post-links.mjs';
 import { publicSiteUrl } from '../utils/publicSiteUrl.mjs';
 import JobPostContent from '../components/JobPostContent';
@@ -69,16 +70,6 @@ const COMMAND_CENTER_PRO_TIER = TIERS.find((tier) => tier.tier === 'pro');
 const HOME_VIEW_MODES = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants', 'bars']);
 const EMBEDDED_HOME_MODES = new Set(['ufi']);
 
-function timeAgo(iso) {
-  if (!iso) return '';
-  const t = new Date(iso).getTime();
-  if (!Number.isFinite(t) || t <= 0) return '';
-  const diff = (Date.now() - t) / 1000;
-  if (diff < 60)    return 'just now';
-  if (diff < 3600)  return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
 
 function initials(name = '') {
   return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
@@ -2326,7 +2317,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       if (shouldMerge) {
         const prevIds = new Set(previous.map(p => p.id).filter(Boolean));
         const fresh = nextPosts.filter(p => p?.id && !prevIds.has(p.id)).length;
-        if (fresh > 0 && manual && !preserveScroll) window.scrollTo({ top: 0, behavior: 'smooth' });
+        if (fresh > 0 && manual && !preserveScroll) window.scrollTo({ top: 0, behavior: 'instant' });
       } else if (manual && replace && !preserveScroll && previous.length > FEED_PAGE_SIZE) {
         // A user-initiated refresh with replace:true (tab-click refresh, the
         // Feed/Following toggle) swaps the whole list for a short fresh
@@ -2336,7 +2327,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         // shorter list — looking exactly like the refresh emptied the feed.
         // Only jumps when the old list was actually long enough for this to
         // matter, so a routine top-of-page refresh doesn't visibly "jump".
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+        window.scrollTo({ top: 0, behavior: 'instant' });
       }
 
       // Only for same-view refreshes (merge, not replace) — a refresh that
@@ -2559,7 +2550,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
 
   const activateHomeView = useCallback((mode) => {
     if (viewModeRef.current === mode) {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      window.scrollTo({ top: 0, behavior: 'instant' });
       window.dispatchEvent(new Event('ufi:refresh-selected-feed'));
       return;
     }
@@ -2573,7 +2564,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     if (scope === 'public') params.set('groupScope', 'public');
     else params.delete('groupScope');
     navigate({ pathname: '/', search: `?${params.toString()}` }, { replace: true });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'instant' });
   }, [navigate, routeLocation.search]);
 
   const setHomeToolPanel = useCallback((panel) => {

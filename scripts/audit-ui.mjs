@@ -58,6 +58,8 @@ try {
     const errors = [];
     const requests = [];
     await context.addInitScript(() => {
+      // This suite asserts exact Light palette colors; Auto has separate clock-boundary tests.
+      localStorage.setItem('ufi:appearance', 'light');
       window.__auditYouTubePlayers = [];
       window.YT = { PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 }, Player: class {
         constructor(host, options) {
@@ -367,6 +369,7 @@ try {
     await page.locator('.landing-network-art img').waitFor();
     assert.match(await page.locator('.landing-hero-copy > p').first().textContent(), /social and professional workspace/);
     assert.equal(await page.locator('.landing-network-art img').getAttribute('src'), '/homepage-app-network-2026-10.jpg');
+    assert.ok(await page.getByRole('heading', { level: 1, name: 'UFIconnect', exact: true }).isVisible(), 'The homepage name remains visible');
     const dimensions = await page.locator('.landing-network-art img').evaluate(async image => {
       await image.decode();
       const box = image.getBoundingClientRect();
@@ -378,7 +381,7 @@ try {
     assert.equal(await page.locator('.landing-product-shot img').getAttribute('src'), '/homepage-feed-2026-09.png');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
     await page.screenshot({ path: path.join(output, `landing-${viewport.width}.png`) });
-    checks += 6;
+    checks += 7;
     assert.deepEqual(errors, [], `${viewport.width}: browser runtime errors`);
     await context.close();
     console.log(`PASS: responsive flows at ${viewport.width}px`);

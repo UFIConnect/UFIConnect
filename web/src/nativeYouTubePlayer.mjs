@@ -82,7 +82,7 @@ function forwardSwipe(frame, data) {
     && Math.abs(data.dy) > Math.abs(data.dx)) {
     let node = frame.parentElement;
     while (node && !(node.scrollHeight > node.clientHeight && /auto|scroll/.test(win.getComputedStyle(node).overflowY))) node = node.parentElement;
-    (node || doc.scrollingElement)?.scrollBy({ top: -data.dy, behavior: 'smooth' });
+    (node || doc.scrollingElement)?.scrollBy({ top: -data.dy, behavior: 'instant' });
   }
 }
 

@@ -292,7 +292,7 @@ export default function GuestFeed() {
   // and scrolling back to the top, same convention every other list-style
   // page in the app uses (see useScrollToRefresh's own comment).
   const handleRefresh = useCallback(async () => {
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'instant' });
     await loadPage(1, { reset: true });
   }, [loadPage]);
   useScrollToRefresh(handleRefresh, { enabled: !loading && !refreshing });

@@ -99,52 +99,79 @@ try {
       const bounds = await menu.boundingBox();
       assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= width + 1 && bounds.y + bounds.height <= 851,
         `${fixture.source} menu fits ${width}px viewport`);
-      const allCommands = [];
-      const nextPage = menu.getByRole('menuitem', { name: 'Next options', exact: true });
-      do {
-        const commands = menu.locator(':scope > [role="menuitem"]');
-        assert.ok(await commands.count() <= 4, 'Options show at most four commands per page');
-        allCommands.push(...await commands.evaluateAll(items => items.map(item => ({
-          name: item.textContent.trim(), href: item.getAttribute('href'), target: item.getAttribute('target'),
-          rel: item.getAttribute('rel'), disabled: item.disabled === true,
-        }))));
-        if (!(await nextPage.count()) || await nextPage.isDisabled()) break;
-        await nextPage.click();
-      } while (true);
-      const previousPage = menu.getByRole('menuitem', { name: 'Previous options', exact: true });
-      while (await previousPage.count() && !(await previousPage.isDisabled())) await previousPage.click();
-      for (const [name, href] of Object.entries(fixture.links)) {
-        const direct = href === fixture.sourceUrl || name === 'Open post';
-        const item = direct ? await page.locator('.post-chrome-source-link').evaluate(link => ({ href: link.getAttribute('href'), target: link.getAttribute('target'), rel: link.getAttribute('rel') })) : allCommands.find(item => item.name === name);
-        assert.ok(item, `${name} remains reachable through the options pages`);
-        assert.equal(item.href, href, `${name} keeps its real destination`);
+      assert.equal(await menu.locator('[role="menuitem"]:not(:disabled)').first().evaluate(el => document.activeElement === el), true,
+        'ArrowDown opens at the first menu item');
+      async function checkDestination(item, name, href) {
+        assert.equal(await item.getAttribute('href'), href, `${name} keeps its real destination`);
         if (href.startsWith('https:')) {
-          assert.equal(item.target, '_blank');
-          assert.match(item.rel, /noopener/);
+          assert.equal(await item.getAttribute('target'), '_blank');
+          assert.match(await item.getAttribute('rel'), /noopener/);
         }
       }
-      assert.equal(await menu.getByRole('menuitem', { name: /^(?:Open post|Open on |Open original post|Open Reddit discussion|Watch on |Read original city guide)/ }).count(), 0,
-        'Original post navigation stays outside the options menu');
-      assert.equal(allCommands.filter(item => item.name === 'Report post').length, 1, 'Report remains reachable on the options pages');
-      if (fixture.profile) {
-        assert.equal(await menu.getByRole('menuitem', { name: /^Go to profile/ }).getAttribute('href'), fixture.profile,
-          'Existing profile action retains the author destination');
-      } else {
-        const profile = menu.getByRole('menuitem', { name: /^Go to profile/ });
-        if (await profile.count()) assert.equal(await profile.isDisabled(), true, 'No profile action invents a channel or links to the post');
+      const sourceCommands = Object.entries(fixture.links).filter(([name, href]) => href !== fixture.sourceUrl && name !== 'Open post');
+      for (const [name, href] of Object.entries(fixture.links).filter(([name, href]) => href === fixture.sourceUrl || name === 'Open post')) {
+        await checkDestination(page.locator('.post-chrome-source-link'), name, href);
       }
-      for (const name of fixture.forbidden) assert.equal(allCommands.filter(item => item.name === name).length, 0,
-        `${fixture.source} omits unrelated or unavailable command: ${name}`);
-      assert.equal(allCommands.filter(item => item.name === 'Edit post').length, 0);
-      assert.equal(allCommands.filter(item => item.name === 'Delete post').length, 0);
-      if (!(await nextPage.count())) assert.equal(await menu.getByRole('menuitem', { name: 'Report post', exact: true }).count(), 1);
-      assert.ok(allCommands.filter(item => item.href).every(item => {
-        const url = new URL(item.href, origin);
-        return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password;
-      }), 'All menu pages reject executable schemes and credential-bearing URLs');
-      if (fixture.unsafe) assert.equal(allCommands.filter(item => item.href).length, 0, 'Unsafe source data creates no menu links');
+      const reached = new Set(), firstPageLabels = await menu.locator(':scope > [role="menuitem"]').allTextContents();
+      const nextPage = menu.getByRole('menuitem', { name: 'Next options', exact: true });
+      const previousPage = menu.getByRole('menuitem', { name: 'Previous options', exact: true });
+      const pages = menu.getByRole('group', { name: 'Post options pages', exact: true });
+      const paginated = await nextPage.count() > 0;
+      const pageCount = paginated ? Number((await pages.locator('[role="presentation"]').innerText()).split('/')[1].trim()) : 1;
+      assert.ok(Number.isInteger(pageCount) && pageCount > 0 && pageCount <= 10, 'The actual menu has a bounded number of command pages');
+      let profiles = 0, reports = 0;
+      for (let pageIndex = 0; pageIndex < pageCount; pageIndex++) {
+        const commands = menu.locator(':scope > [role="menuitem"]');
+        const commandCount = await commands.count();
+        assert.ok(commandCount > 0 && commandCount <= 4, 'Each page contains at most four commands');
+        if (pageIndex + 1 < pageCount) assert.equal(commandCount, 4, 'Non-final pages contain four commands');
+        if (paginated) {
+          assert.equal(await previousPage.isDisabled(), pageIndex === 0, 'Previous is disabled only at the first page');
+          assert.equal(await nextPage.isDisabled(), pageIndex + 1 === pageCount, 'Next is disabled only at the last page');
+          assert.equal(await pages.locator('[role="presentation"]').innerText(), `${pageIndex + 1} / ${pageCount}`);
+        }
+        const pageBounds = await menu.boundingBox();
+        assert.ok(pageBounds.x >= 0 && pageBounds.y >= 0 && pageBounds.x + pageBounds.width <= width + 1 && pageBounds.y + pageBounds.height <= 851,
+          'Every command page fits the viewport');
+        for (const [name, href] of sourceCommands) {
+          const item = menu.getByRole('menuitem', { name, exact: true });
+          if (!(await item.count())) continue;
+          assert.equal(await item.count(), 1);assert.equal(reached.has(name), false, 'Commands are not duplicated between pages');
+          await checkDestination(item, name, href);reached.add(name);
+        }
+        assert.equal(await menu.getByRole('menuitem', { name: /^(?:Open post|Open on |Open original post|Open Reddit discussion|Watch on |Read original city guide)/ }).count(), 0,
+          'Original post navigation stays outside every options page');
+        const profile = menu.getByRole('menuitem', { name: /^Go to profile/ });
+        profiles += await profile.count();
+        if (await profile.count()) {
+          if (fixture.profile) assert.equal(await profile.getAttribute('href'), fixture.profile, 'Existing profile action retains the author destination');
+          else assert.equal(await profile.isDisabled(), true, 'No profile action invents a channel or links to the post');
+        }
+        reports += await menu.getByRole('menuitem', { name: 'Report post', exact: true }).count();
+        for (const name of fixture.forbidden) assert.equal(await menu.getByRole('menuitem', { name, exact: true }).count(), 0,
+          `${fixture.source} omits unrelated or unavailable commands on every page: ${name}`);
+        assert.equal(await menu.getByRole('menuitem', { name: 'Edit post', exact: true }).count(), 0);
+        assert.equal(await menu.getByRole('menuitem', { name: 'Delete post', exact: true }).count(), 0);
+        assert.ok(await menu.locator('a').evaluateAll(links => links.every(link => {
+          const url = new URL(link.href);
+          return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password;
+        })), 'Every page rejects executable schemes and credential-bearing URLs');
+        if (fixture.unsafe) assert.equal(await menu.locator('a').count(), 0, 'Unsafe source data creates no menu links on any page');
+        if (pageIndex + 1 < pageCount) {
+          await nextPage.click();
+          await pages.getByText(`${pageIndex + 2} / ${pageCount}`, { exact: true }).waitFor();
+        }
+      }
+      assert.deepEqual([...reached].sort(), sourceCommands.map(([name]) => name).sort(), 'Every source command remains reachable through actual page controls');
+      assert.equal(profiles, 1, 'The profile command occurs exactly once');
+      assert.equal(reports, 1, 'Report remains reachable exactly once');
+      for (let pageIndex = pageCount - 1; pageIndex > 0; pageIndex--) {
+        await previousPage.click();
+        await pages.getByText(`${pageIndex} / ${pageCount}`, { exact: true }).waitFor();
+      }
+      assert.deepEqual(await menu.locator(':scope > [role="menuitem"]').allTextContents(), firstPageLabels, 'Previous returns to the original commands');
       const enabled = menu.locator('[role="menuitem"]:not(:disabled)');
-      assert.equal(await enabled.first().evaluate(el => document.activeElement === el), true, 'ArrowDown opens at the first menu item');
+      assert.equal(await enabled.first().evaluate(el => document.activeElement === el), true, 'Returning to the first page focuses its first command');
       await page.keyboard.press('End');
       assert.equal(await enabled.last().evaluate(el => document.activeElement === el), true);
       await page.keyboard.press('Home');
