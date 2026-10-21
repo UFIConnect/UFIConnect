@@ -1,3 +1,4 @@
+import { timeAgo } from '../utils/postTime.mjs';
 import { privateSessionStorage } from '../auth/session';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -78,14 +79,6 @@ function commandCenterSection(search) {
   return SECTION_KEYS.has(requested) ? requested : 'automation';
 }
 
-function timeAgo(iso) {
-  if (!iso) return '';
-  const diff = (Date.now() - new Date(iso)) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
 
 function StatChip({ label, value }) {
   return (
@@ -328,7 +321,7 @@ function ContentHubSection({ readOnly = false }) {
           setTopic(item.prompt); setPlatform(item.input.platform || 'general'); setTone(item.input.tone || '');
           setDrafts(item.output.drafts || null);
         }
-        formTop.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        formTop.current?.scrollIntoView({ behavior: 'instant', block: 'start' });
       }} />
     </div>
   );
@@ -629,7 +622,7 @@ function MediaStudioSection({ onOpenCrossPost, readOnly = false }) {
         onReuse={readOnly || generating ? undefined : item => {
           setType(item.kind); setPrompt(item.prompt); setVideoSeconds(item.input.durationSeconds || 12);
           setAsset(item.output.mediaUrl ? { url: item.output.mediaUrl, type: item.kind } : null);
-          setError(''); formTop.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          setError(''); formTop.current?.scrollIntoView({ behavior: 'instant', block: 'start' });
         }} />
     </div>
   );

@@ -108,7 +108,7 @@ const SnapComposer = forwardRef(function SnapComposer({ profile, onClose, onPubl
       if (mounted.current) setError(failure.response?.data?.message || failure.message || 'Could not publish this snap. Please try again.');
     } finally { if (mounted.current) { setUploading(false); setPublishing(false); } }
   }
-  return createPortal(<dialog ref={dialog} className="snap-composer" aria-labelledby={titleId}
+  return createPortal(<dialog ref={dialog} className={`snap-composer${camera.active ? ' snap-composer-camera' : ''}`} aria-labelledby={titleId}
     onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}
     onClick={event => { if (event.target === event.currentTarget && !busy) onClose(); }}>
     <form onSubmit={publish}>

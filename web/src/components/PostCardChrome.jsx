@@ -1,3 +1,5 @@
+import { postTimes } from '../utils/postTime.mjs';
+export { postTimes } from '../utils/postTime.mjs';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
@@ -25,38 +27,6 @@ export const postSource = post => SOURCE_META[post?.source] || SOURCE_META.ufico
 export function feedAccountKey(post) {
   const account = String(post?.sourceLabel || post?.author?.id || post?.author?.name || '').trim().toLowerCase();
   return post?.source && account ? `${post.source}:${account}`.slice(0, 200) : '';
-}
-
-function validDate(value) {
-  const date = new Date(value || 0);
-  return Number.isFinite(date.getTime()) && date.getTime() > 0 ? date : null;
-}
-
-// Show the age of the latest version the source reports, with an Edited label
-// when the post was edited after publishing. The full date
-// stays in the tooltip and the accessible label.
-export function postTimes(post) {
-  const created = validDate(post?.createdAt || post?.time);
-  if (!created) return null;
-  const editedAt = validDate(post?.editedAt);
-  const edited = Boolean(editedAt && editedAt.getTime() - created.getTime() > 60_000);
-  const latest = edited ? editedAt : created;
-  const now = new Date();
-  const yesterday = new Date(now);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const day = latest.toDateString() === now.toDateString() ? 'Today'
-    : latest.toDateString() === yesterday.toDateString() ? 'Yesterday'
-      : latest.toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(latest.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}) });
-  const time = latest.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-  const full = latest.toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'long' });
-  const seconds = Math.max(0, Math.floor((now.getTime() - latest.getTime()) / 1000));
-  const [unit, size] = seconds >= 31_536_000 ? ['year', 31_536_000]
-    : seconds >= 2_592_000 ? ['month', 2_592_000]
-      : seconds >= 86_400 ? ['day', 86_400]
-        : seconds >= 3600 ? ['hour', 3600] : ['minute', 60];
-  const relative = seconds < 60 ? 'Just now'
-    : new Intl.RelativeTimeFormat('en', { numeric: 'always' }).format(-Math.floor(seconds / size), unit);
-  return { day, time, relative, edited, iso: latest.toISOString(), full: `${edited ? 'Edited' : 'Posted'} ${full}` };
 }
 
 const initialsOf = name => String(name || '').trim().split(/\s+/).slice(0, 2).map(part => part[0] || '').join('').toUpperCase() || '·';

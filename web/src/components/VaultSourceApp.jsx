@@ -64,7 +64,7 @@ export default function VaultSourceApp({ entry, busy, onBack, onCopy, launchLink
   }
   function openFavorites() {
     if (!library) void loadFavorites('', true);
-    document.getElementById('vault-source-library')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    document.getElementById('vault-source-library')?.scrollIntoView({ block: 'start', behavior: 'instant' });
   }
   function forgetLibrary() {
     operation.current?.abort(); setLibrary(null); setPages([]); setPageIndex(0); setLoading(false); setError('');

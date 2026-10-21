@@ -114,10 +114,14 @@ try {
     await page.goto(documentUrl, { waitUntil: 'domcontentloaded' });
     if (!signedIn) {
       await page.locator('.app-welcome').waitFor();
+      const decline = page.getByRole('button', { name: 'Decline analytics', exact: true });
+      await decline.waitFor({ state: 'visible' });
+      check(await page.getByRole('button', { name: 'Accept analytics', exact: true }).isVisible(), 'Native guest welcome exposes the real privacy choices');
+      await decline.click();
+      await page.locator('.analytics-privacy-panel').waitFor({ state: 'detached' });
+      check(await page.evaluate(() => localStorage.getItem('uficonnect.analytics.consent.v1') === 'denied'), 'Native guest privacy choice is recorded before sign-in');
       await page.getByRole('navigation', { name: 'Get started' }).getByRole('link', { name: 'Sign in', exact: true }).click();
       await page.getByRole('heading', { name: 'Welcome back', exact: true }).waitFor();
-      const decline = page.getByRole('button', { name: 'Decline analytics', exact: true });
-      if (await decline.isVisible()) await decline.click();
       const provider = page.getByRole('button', { name: 'Sign in with Google', exact: true });
       await provider.click();
       await page.waitForFunction(() => !document.querySelector('.account-access-provider-google')?.disabled);
@@ -128,6 +132,11 @@ try {
     } else {
       await page.evaluate(() => window.dispatchEvent(new CustomEvent('ufi-native-navigate', { detail: { path: '/?feed=feed&all=1' } })));
       await page.locator('.home-feed-layout').waitFor();
+      const decline = page.getByRole('button', { name: 'Decline analytics', exact: true });
+      await decline.waitFor({ state: 'visible' });
+      await decline.click();
+      await page.locator('.analytics-privacy-panel').waitFor({ state: 'detached' });
+      check(await page.evaluate(() => localStorage.getItem('uficonnect.analytics.consent.v1') === 'denied'), 'Restored-member privacy choice is recorded before navigation');
       for (const label of ['Home', 'Videos', 'Groups', 'Jobs', 'Profile']) check(await page.locator('.bottom-nav').getByRole('link', { name: label, exact: true }).isVisible(), `Native DOM shows current ${label} navigation`);
       await page.locator('.bottom-nav').getByRole('link', { name: 'Videos', exact: true }).click();
       await page.locator('.video-feed-view').waitFor();

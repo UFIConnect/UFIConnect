@@ -127,6 +127,8 @@ function SavedNavigation({ mobile = false, expanded, onToggle, onNavigate }) {
 
 export default function Layout(props) {
   const { profile } = useAuth();
+  // Media owns its viewport and exit control for every account type.
+  if (props.mediaPage) return <div className="shell shell-media-page"><div className="shell-content"><main className="main">{props.children}</main></div></div>;
   return profile?.plan === 'business' ? <BusinessLayout>{props.children}</BusinessLayout> : <PersonalLayout {...props} />;
 }
 
@@ -407,7 +409,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
   function handleAllFeedHomeClick(event) {
     event.preventDefault();
     closeMobileOverlays();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'instant' });
     navigate(HOME_FEED_PATH, {
       replace: location.pathname === '/',
       state: { refreshHomeAt: Date.now() },
@@ -417,7 +419,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
   function navigateToMobileFeed(feed) {
     const next = MOBILE_FEED_OPTIONS.has(feed) ? feed : 'feed';
     setMobileMenuOpen(false);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'instant' });
     navigate(next === 'feed' ? HOME_FEED_PATH : `/?feed=${encodeURIComponent(next)}`, {
       state: { refreshHomeAt: Date.now() },
     });
@@ -438,7 +440,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
     const next = MOBILE_FEED_OPTIONS.has(feed) ? feed : 'feed';
     if (isHomeFeedRoute && mobileFeedMode === next && (next !== 'groups' || mobileGroupScope === 'joined')) {
       setMobileMenuOpen(false);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      window.scrollTo({ top: 0, behavior: 'instant' });
       window.dispatchEvent(new Event('ufi:refresh-selected-feed'));
       return;
     }

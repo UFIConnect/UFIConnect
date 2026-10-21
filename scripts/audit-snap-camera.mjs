@@ -130,9 +130,35 @@ async function openFixture({ width = 390, theme = 'light', native = '', denied =
 }
 const composer = page => page.getByRole('dialog', { name: 'Post a snap', exact: true });
 const button = (page, name) => composer(page).getByRole('button', { name, exact: true });
+async function assertFullscreenCamera(page) {
+  const dimensions = await composer(page).evaluate(element => {
+    const frame = element.querySelector('.snap-composer-media').getBoundingClientRect();
+    const dialog = element.getBoundingClientRect();
+    const controls = element.querySelector('.snap-camera-actions').getBoundingClientRect();
+    return { frame: { x: frame.x, y: frame.y, width: frame.width, height: frame.height },
+      dialog: { x: dialog.x, y: dialog.y, width: dialog.width, height: dialog.height },
+      controls: { top: controls.top, bottom: controls.bottom, left: controls.left, right: controls.right },
+      width: innerWidth, height: innerHeight, fullscreen: Boolean(document.fullscreenElement) };
+  });
+  for (const [name, box] of [['dialog', dimensions.dialog], ['camera preview', dimensions.frame]]) {
+    check(Math.abs(box.x) <= 1 && Math.abs(box.y) <= 1 && Math.abs(box.width - dimensions.width) <= 1
+      && Math.abs(box.height - dimensions.height) <= 1, 'camera fullscreen: ' + name + ' fills the viewport');
+  }
+  check(!dimensions.fullscreen, 'camera fullscreen: opening capture does not require the browser Fullscreen API');
+  check(dimensions.controls.top >= 0 && dimensions.controls.bottom <= dimensions.height + 1
+    && dimensions.controls.left >= 0 && dimensions.controls.right <= dimensions.width + 1,
+  'camera fullscreen: capture and exit controls stay within the viewport');
+  check(await button(page, 'Close camera').isVisible() && await button(page, 'Close snap composer').isVisible(),
+    'camera fullscreen: camera exit and composer close remain available');
+  check(await button(page, 'Photo').isVisible() && await button(page, 'Video').isVisible() && await button(page, 'Gallery').isVisible(),
+    'camera fullscreen: capture mode and gallery remain available');
+  check(!await composer(page).getByLabel('Description (optional)', { exact: true }).isVisible(),
+    'camera fullscreen: draft editing does not shrink the live preview');
+}
 async function openCamera(page) {
   await page.getByRole('button', { name: /Post snap.*open camera/ }).click();
   await page.waitForFunction(() => document.querySelector('.snap-camera-preview')?.readyState >= 2 && ![...document.querySelectorAll('.snap-camera-actions button')][0]?.disabled);
+  await assertFullscreenCamera(page);
 }
 async function allStopped(page) { await page.waitForFunction(() => window.__cameraStreams.length && window.__cameraStreams.every(stream => stream.getTracks().every(track => track.readyState === 'ended'))); }
 async function noLeaks(state, label) {
@@ -296,6 +322,22 @@ try {
     check(await viewer.locator('.snap-viewer-media img').evaluate(element => getComputedStyle(element).filter === 'grayscale(1)'), 'effects: reloaded viewer preserves the filter');
     const file = 'photo-effects-viewer.png'; await page.screenshot({ path: path.join(output, file) }); screenshots.push(file);
     await noLeaks(state, 'photo flow');
+  });
+
+  await scenario('fullscreen camera resizes and returns to the editable draft', async () => {
+    for (const width of [320, 390, 820, 1440]) {
+      const state = await openFixture({ width }), { page } = state;
+      await openCamera(page);
+      await page.setViewportSize({ width: 900, height: 390 });
+      await assertFullscreenCamera(page);
+      await button(page, 'Close camera').click(); await allStopped(page);
+      check(await page.locator('.snap-composer-camera').count() === 0, 'camera exit: immersive capture ends');
+      check(await composer(page).getByLabel('Description (optional)', { exact: true }).isVisible(), 'camera exit: editable draft returns');
+      await button(page, 'Close snap composer').click(); await composer(page).waitFor({ state: 'detached' });
+      check(await page.getByRole('button', { name: /Post snap.*open camera/ }).evaluate(element => element === document.activeElement),
+        'camera exit: closing composer restores the initiating tile focus');
+      await noLeaks(state, 'fullscreen camera at ' + width + 'px');
+    }
   });
 
   await scenario('real browser video recording and draft validation', async () => {
