@@ -55,7 +55,7 @@ export default function TravelDestinationPicker({ destinations, selected, disabl
             data-destination-id={destination.id}
             onClick={() => onSelect(destination)}>
             <span>{destination.city}</span><small>{destination.country}</small>
-            {camera?.liveVerified && <small className="travel-city-live-badge">{activeCameraId === camera.id ? 'Playing live' : 'Live camera'}</small>}
+            {camera?.liveVerified && <small className="travel-city-live-badge">{camera.livePlayback?.kind === 'provider' ? camera.liveMediaKind === 'image' ? 'Live image' : 'Live on provider' : activeCameraId === camera.id ? 'Playing live' : 'Live camera'}</small>}
           </button>;
         })}
         {destinations.length > 0 && matches.length === 0 && <span role="status">No cities match your search.</span>}

@@ -18,6 +18,15 @@ app.seedUser(member(memberId, { name: 'Alexandra Montgomery Washington', avatarU
 const proxy = prefix => ({ target: app.base, rewrite: value => value.replace(prefix, '') });
 const server = await createServer({
   root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
+  // BrowserRouter may publish a URL before its transition commits. The compose
+  // command's removal has no distinct DOM content, so observe the real route
+  // effect in this audit build without changing or bypassing its behavior.
+  plugins: [{ name: 'audit-layout-route-ready', enforce: 'pre', transform(source, id) {
+    if (!id.split('?')[0].replaceAll('\\', '/').endsWith('/components/Layout.jsx')) return;
+    const pattern = /(setSearchPopupOpen\(false\);)(\s*\}, \[location\.pathname, location\.search\]\);)/;
+    assert.ok(pattern.test(source), 'The Layout route-close effect must be instrumented');
+    return source.replace(pattern, '$1\n    window.__sidebarAuditRoute = location.pathname + location.search;$2');
+  } }],
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api'), 'import.meta.env.VITE_API_FALLBACK_URL': JSON.stringify('/fallback') },
   server: { host: '127.0.0.1', port: 5198, strictPort: false,
     proxy: { '/api': proxy(/^\/api/), '/fallback': proxy(/^\/fallback/) } },
@@ -33,8 +42,11 @@ async function checkMessagesPlacement(navigation, label) {
   check(await messages.evaluate(element => element.previousElementSibling?.getAttribute('href') === '/groups'
     && element.previousElementSibling?.textContent.trim() === 'Discover groups'), `${label} places Messages immediately below Discover groups in keyboard order`);
   const [messagesBounds, groupsBounds] = await Promise.all([messages.boundingBox(), groups.boundingBox()]);
-  check(messagesBounds && groupsBounds && messagesBounds.y >= groupsBounds.y + groupsBounds.height - 1,
-    `${label} places Messages below Discover groups on screen`);
+  const paired = await messages.evaluate(element => element.parentElement.classList.contains('jobs-page-tool-pair'));
+  check(messagesBounds && groupsBounds && (paired
+    ? Math.abs(messagesBounds.y - groupsBounds.y) <= 1 && messagesBounds.x >= groupsBounds.x + groupsBounds.width - 1
+    : messagesBounds.y >= groupsBounds.y + groupsBounds.height - 1),
+    `${label} places Messages after Discover groups in its layout`);
   await groups.focus();
   await messages.page().keyboard.press('Tab');
   check(await messages.evaluate(element => document.activeElement === element), `${label} tabs from Discover groups to Messages`);
@@ -44,7 +56,7 @@ try {
   await server.listen();
   const base = server.resolvedUrls.local[0];
   browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined, headless: true });
-  for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 768, height: 1024 }, { width: 820, height: 1180 }, { width: 1440, height: 1000 }]) {
+  for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 768, height: 1024 }, { width: 820, height: 1180 }, { width: 1440, height: 1000 }].filter(viewport => !process.env.ACCOUNT_SIDEBAR_WIDTHS || process.env.ACCOUNT_SIDEBAR_WIDTHS.split(',').includes(String(viewport.width)))) {
     const context = await browser.newContext({ viewport, isMobile: viewport.width <= 768, hasTouch: viewport.width <= 768 });
     const published = [];
     const routeApi = async route => {
@@ -63,6 +75,12 @@ try {
       contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'),
     }));
     const page = await context.newPage();
+    await page.addInitScript(() => {
+      window.__sidebarAuditEvents=[];
+      const record=value=>{window.__sidebarAuditEvents.push({at:performance.now(),path:location.pathname+location.search,...value});window.__sidebarAuditEvents=window.__sidebarAuditEvents.slice(-30);};
+      document.addEventListener('click',event=>{if(event.target.closest?.('[aria-label="Open account menu"]'))record({event:'account-click'});},true);
+      new MutationObserver(records=>{for(const entry of records)if(entry.target.id==='mobile-account-drawer'&&entry.attributeName==='aria-hidden')record({event:'drawer',hidden:entry.target.getAttribute('aria-hidden')});}).observe(document,{subtree:true,attributes:true,attributeFilter:['aria-hidden']});
+    });
     await installAuditMember(page, app, memberId);
     page.setDefaultTimeout(12000);
     const errors = [];
@@ -87,6 +105,8 @@ try {
       await page.waitForFunction(() => Math.abs(document.querySelector('#mobile-account-drawer').getBoundingClientRect().x) < 1);
     };
     const waitClosed = async () => {
+      await page.waitForFunction(() => !document.querySelector('#mobile-account-drawer')
+        || window.__sidebarAuditRoute === location.pathname + location.search);
       await page.waitForFunction(() => !document.querySelector('#mobile-account-drawer') || document.querySelector('#mobile-account-drawer').getAttribute('aria-hidden') === 'true');
       // The closing animation can still cover the next touch target after aria-hidden changes.
       await page.waitForFunction(() => {
@@ -210,6 +230,9 @@ try {
           // Opening a linked composer consumes its command parameter in a second
           // navigation. Wait for that route before the next shared-menu interaction.
           await page.waitForURL(url => url.searchParams.get('feed') === category && !url.searchParams.has('compose'));
+          // The router publishes the URL before Layout's route-change effect
+          // closes old drawers. Let that commit finish before the next tap.
+          await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
           await waitClosed();
         }
 
@@ -284,11 +307,11 @@ try {
         await drawer.getByRole('link', { name: 'Saved posts', exact: true }).click();
         await page.waitForURL('**/saved/posts');
         await waitClosed();
-        await savedTabs.getByRole('link', { name: 'Posts', exact: true }).waitFor();
+        await savedTabs.getByRole('link', { name: 'Posts', exact: true }).and(page.locator('[aria-current="page"]')).waitFor();
         check(await savedTabs.getByRole('link', { name: 'Posts', exact: true }).getAttribute('aria-current') === 'page', 'Posts must open saved posts');
         await page.goBack();
         await page.waitForURL('**/saved/jobs');
-        await savedTabs.getByRole('link', { name: 'Jobs', exact: true }).waitFor();
+        await savedTabs.getByRole('link', { name: 'Jobs', exact: true }).and(page.locator('[aria-current="page"]')).waitFor();
         check(await savedTabs.getByRole('link', { name: 'Jobs', exact: true }).getAttribute('aria-current') === 'page', 'Back must restore saved roles');
         await opener.click();
         await waitOpen();
@@ -317,23 +340,19 @@ try {
           if (!route) {
             const destinations = ['Travel', 'Restaurants', 'Bars and clubs'];
             const signatures = [];
-            const feedPages = right.getByRole('navigation', { name: 'Feeds pages', exact: true });
-            check(await feedPages.getByRole('button', { name: 'Previous feeds', exact: true }).isDisabled(), 'The feed menu starts on its first page');
+            const feedList = right.getByRole('navigation', { name: 'Feeds', exact: true });
+            check(await feedList.locator(':scope > button,:scope > a').count() === 8, 'Every feed destination belongs to one scrollable list');
+            check(await right.locator('.paged-list-navigation').count() === 0, 'Sidebar lists have no Next or Previous page controls');
             for (const name of destinations) {
-              if (name === 'Restaurants') {
-                await feedPages.getByRole('button', { name: 'Next feeds', exact: true }).click();
-                await right.getByRole('button', { name, exact: true }).waitFor();
-                check(await feedPages.getByRole('button', { name: 'Next feeds', exact: true }).isDisabled(), 'The second feed page is the final page');
-                check(await right.getByRole('button', { name: 'Travel', exact: true }).count() === 0, 'The first page is hidden when the second page opens');
-              }
               const icon = right.getByRole('button', { name, exact: true }).locator('svg');
               check(await icon.count() === 1, `${name} must use the same line-icon treatment as the other destinations`);
               signatures.push(await icon.locator('path').evaluateAll(paths => paths.map(path => path.getAttribute('d')).join('|')));
             }
             check(new Set(signatures).size === destinations.length, 'Travel, Restaurants and Bars need distinct destination icons');
-            await feedPages.getByRole('button', { name: 'Previous feeds', exact: true }).click();
-            await right.getByRole('button', { name: 'Travel', exact: true }).waitFor();
-            check(await right.getByRole('button', { name: 'Restaurants', exact: true }).count() === 0, 'Previous restores only the first feed page');
+            await feedList.evaluate(element => { element.scrollTop = element.scrollHeight; });
+            await feedList.getByRole('link', { name: 'Your Vault', exact: true }).focus();
+            check(await feedList.getByRole('link', { name: 'Your Vault', exact: true }).evaluate(element => element === document.activeElement), 'Scrolling reaches the last destination without paging');
+            check(await feedList.locator('[hidden]').count() === 0, 'Scrolling does not hide other feed destinations');
           }
           await page.keyboard.press('Escape');
           await opener.click();
@@ -391,6 +410,7 @@ try {
         drawerHidden: document.querySelector('#mobile-account-drawer')?.getAttribute('aria-hidden'),
         pageWidth: document.documentElement.scrollWidth,
         active: document.activeElement?.getAttribute('aria-label'),
+        events: window.__sidebarAuditEvents,
       })));
       await page.screenshot({ path: path.join(output, `account-sidebar-failure-${viewport.width}.png`) });
       throw error;

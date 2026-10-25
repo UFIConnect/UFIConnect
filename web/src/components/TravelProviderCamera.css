@@ -1,0 +1,13 @@
+.travel-provider-camera { display:flex; flex-direction:column; align-items:center; gap:16px; min-height:260px; padding:32px 22px; text-align:center; color:var(--text); background:var(--primary-light); }
+.travel-provider-camera-icon { display:grid; place-items:center; width:64px; height:64px; border:1px solid var(--border); border-radius:16px; color:var(--primary); background:var(--card-bg, var(--surface)); }
+.travel-provider-camera-copy { display:grid; gap:8px; min-width:0; }
+.travel-provider-camera h3 { margin:0; font-size:1.15rem; overflow-wrap:anywhere; }
+.travel-provider-camera p { margin:0; color:var(--muted); font-size:.86rem; line-height:1.5; }
+.travel-provider-camera .travel-provider-camera-provider { color:var(--primary); font-weight:600; }
+.travel-provider-camera .travel-provider-camera-status { color:var(--text); }
+.travel-provider-camera-link { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:44px; max-width:100%; text-decoration:none; }
+.travel-provider-camera small { color:var(--muted); font-size:.75rem; }
+.travel-provider-camera--compact { min-height:0; gap:12px; padding:18px; border-top:1px solid var(--border); }
+.travel-provider-camera--compact h3 { font-size:.95rem; }
+.travel-provider-camera-options { width:100%; display:grid; gap:0; }
+@media (min-width:600px) { .travel-provider-camera--compact { flex-direction:row; text-align:left; justify-content:space-between; } .travel-provider-camera--compact .travel-provider-camera-link { flex-shrink:0; } }
