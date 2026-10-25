@@ -26,7 +26,7 @@ async function serve(route){
   if(range){const start=Number(range[1]),end=range[2]?Math.min(Number(range[2]),media.length-1):media.length-1;return route.fulfill({status:206,contentType:'video/mp4',headers:{'accept-ranges':'bytes','content-range':`bytes ${start}-${end}/${media.length}`},body:media.subarray(start,end+1)});}
   return route.fulfill({contentType:'video/mp4',headers:{'accept-ranges':'bytes'},body:media});
  }
- if(url.hostname==='api.uficonnect.org'||/^\/(api|fallback)\//.test(url.pathname)){
+ if(['api.uficonnect.org','uficonnect-api-708r.onrender.com'].includes(url.hostname)||/^\/(api|fallback)\//.test(url.pathname)){
   const endpoint=url.pathname.replace(/^\/(api|fallback)/,'');let json={};
   if(endpoint==='/auth/session')return route.fulfill({status:401,json:{message:'No saved fixture session'}});
   if(endpoint==='/profile')json=profile;
@@ -138,10 +138,10 @@ try{
     }
     await capture(page,`${surface}-${viewport.width}`);
    }
-   results.push({...viewport,passed:true});console.log(`PASS sidebar and media scrolling ${viewport.width}x${viewport.height}`);
+   results.push({...viewport,appChrome:await page.evaluate(()=>document.documentElement.getAttribute('data-ufi-app')),passed:true});console.log(`PASS sidebar and media scrolling ${viewport.width}x${viewport.height}`);
   }catch(error){await capture(page,`failure-${viewport.width}`);await fs.writeFile(path.join(output,`failure-${viewport.width}.html`),await page.content());console.error(await page.locator('.jobs-page-right-tabs,.jobs-page-rail-options,.jobs-page-rail-bottom,.jobs-page-resume-builder').evaluateAll(els=>els.map(el=>({className:el.className,rect:el.getBoundingClientRect().toJSON(),scrollHeight:el.scrollHeight,clientHeight:el.clientHeight}))));throw error;}finally{await context.close();}
  }
  check(errors.length===0,'No browser exceptions: '+errors.join('; '));
- const sourceHashes={};for(const file of ['web/src/components/Layout.jsx','web/src/components/VideoFeedView.jsx','web/src/components/VideoFeedView.css','web/src/index.css','web/src/pages/Opportunities.jsx','web/package-lock.json','scripts/audit-sidebar-scroll.mjs'])sourceHashes[file]=crypto.createHash('sha256').update(await fs.readFile(path.join(root,file))).digest('hex');
+ const sourceHashes={};for(const file of ['web/src/components/Layout.jsx','web/src/components/VideoFeedView.jsx','web/src/components/VideoFeedView.css','web/src/index.css','web/src/pages/Opportunities.jsx','web/src/main.jsx','mobile/current-site/Website.jsx','mobile/current-site/website.css','web/package-lock.json','scripts/audit-sidebar-scroll.mjs'])sourceHashes[file]=crypto.createHash('sha256').update(await fs.readFile(path.join(root,file))).digest('hex');
  await fs.writeFile(path.join(output,'verification.json'),JSON.stringify({checkedAt:new Date().toISOString(),sourceRoot:root,origin,liveAssets,passed:true,checks,results,screenshots,sourceHashes},null,2)+'\n');console.log(`PASS ${checks} targeted scrolling checks`);
 }finally{await browser.close();}
