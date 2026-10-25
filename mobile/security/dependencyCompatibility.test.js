@@ -70,7 +70,7 @@ test('patched send preserves local development file serving and range requests',
   }
 });
 
-test('the scoped UUID security update preserves Xcode project identifiers', () => {
+test('Xcode project identifiers remain unique and use secure UUID generation', (t) => {
   const xcode = require('xcode');
   const project = xcode.project('compatibility-fixture.pbxproj');
   project.hash = { project: { objects: {} } };
@@ -78,6 +78,17 @@ test('the scoped UUID security update preserves Xcode project identifiers', () =
   assert.equal(ids.size, 100);
   for (const id of ids) assert.match(id, /^[A-F0-9]{24}$/);
   const fromXcode = createRequire(require.resolve('xcode'));
-  const uuid = fromXcode('uuid');
-  assert.throws(() => uuid.v3('example', uuid.v3.DNS, new Uint8Array(2)), RangeError);
+  const xcodePackage = fromXcode('./package.json');
+  if (xcodePackage.dependencies?.uuid) {
+    const uuid = fromXcode('uuid');
+    assert.throws(() => uuid.v3('example', uuid.v3.DNS, new Uint8Array(2)), RangeError);
+  } else {
+    assert.equal(xcodePackage.version, '4.0.0');
+    const crypto = require('node:crypto');
+    const values = ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'];
+    const randomUUID = t.mock.method(crypto, 'randomUUID', () => values.shift());
+    project.hash.project.objects.PBXGroup = { AAAAAAAAAAAA4AAA8AAAAAAA: {} };
+    assert.equal(project.generateUuid(), 'BBBBBBBBBBBB4BBB8BBBBBBB');
+    assert.equal(randomUUID.mock.callCount(), 2, 'existing project identifiers are regenerated');
+  }
 });
