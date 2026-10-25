@@ -843,5 +843,785 @@
       "method": "YouTube Data API videos.list"
     },
     "channelTitle": "Sydney Harbour LIVE"
+  },
+  {
+    "destinationId": "NZ:Auckland",
+    "city": "Auckland",
+    "country": "New Zealand",
+    "countryCode": "NZ",
+    "videoId": "PaLDpyFxpXE",
+    "operator": "Auckland City Views",
+    "channelId": "UCnuF5fiEc6DdbhDHCQoCAfA",
+    "channelTitle": "Auckland City Views",
+    "sourceUrl": "https://www.youtube.com/watch?v=PaLDpyFxpXE",
+    "operatorUrl": "https://www.youtube.com/@aucklandcityviews/streams",
+    "title": "🔴 LIVE Auckland NOW 🌤️ Harbour, Skyline & Cruise Ships | 4K 24/7 #livecam",
+    "checkedAt": "2026-10-24T16:39:40.090Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "actualStartTime": "2026-05-15T04:00:43Z",
+    "regionRestriction": null,
+    "viewType": "cityscape",
+    "geographicEvidence": "Operator describes Auckland skyline and Waitemata Harbour in real time.",
+    "evidence": "first-half-video-verification.json",
+    "embedding": {
+      "method": "YouTube official iframe",
+      "providerEmbeddable": true,
+      "review": "No contrary restriction identified in the reviewed operator description; provider status may change."
+    }
+  },
+  {
+    "destinationId": "NZ:Auckland",
+    "city": "Auckland",
+    "country": "New Zealand",
+    "countryCode": "NZ",
+    "videoId": "nLCMw_Fh0u0",
+    "operator": "Auckland Viaduct View",
+    "channelId": "UCfNoVlW5-BHsoCKTGs_F0WQ",
+    "channelTitle": "Auckland Viaduct View",
+    "sourceUrl": "https://www.youtube.com/watch?v=nLCMw_Fh0u0",
+    "operatorUrl": "https://www.youtube.com/@aucklandviaduct/streams",
+    "title": "Auckland Live Camera · Viaduct Harbour & Harbour Bridge, New Zealand · 4K 24/7 🔴",
+    "checkedAt": "2026-10-24T16:39:40.090Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "actualStartTime": "2026-07-10T03:48:02Z",
+    "regionRestriction": null,
+    "viewType": "cityscape",
+    "geographicEvidence": "Operator identifies fixed camera above Auckland Viaduct, Tamaki Makaurau.",
+    "evidence": "first-half-video-verification.json",
+    "embedding": {
+      "method": "YouTube official iframe",
+      "providerEmbeddable": true,
+      "review": "No contrary restriction identified in the reviewed operator description; provider status may change."
+    }
+  },
+  {
+    "destinationId": "TH:Bangkok",
+    "city": "Bangkok",
+    "country": "Thailand",
+    "countryCode": "TH",
+    "videoId": "a_bUVExv_Cg",
+    "operator": "Tahug",
+    "channelId": "UC13OHbp8jtFgUgRD2YASQ8g",
+    "channelTitle": "Tahug",
+    "sourceUrl": "https://www.youtube.com/watch?v=a_bUVExv_Cg",
+    "operatorUrl": "https://www.youtube.com/watch?v=a_bUVExv_Cg",
+    "title": "🔴LIVE: Petchaburi Road, Bangkok",
+    "checkedAt": "2026-10-24T16:39:40.090Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "actualStartTime": "2024-02-15T06:25:39Z",
+    "regionRestriction": null,
+    "viewType": "street",
+    "geographicEvidence": "Camera operator metadata identifies Petchaburi Road, Makkasan, Bangkok.",
+    "evidence": "first-half-video-verification.json",
+    "embedding": {
+      "method": "YouTube official iframe",
+      "providerEmbeddable": true,
+      "review": "No contrary restriction identified in the reviewed operator description; provider status may change."
+    }
+  },
+  {
+    "destinationId": "DK:Copenhagen",
+    "city": "Copenhagen",
+    "country": "Denmark",
+    "countryCode": "DK",
+    "videoId": "kpjaT-uMjKo",
+    "operator": "Sydhavnens Windsurfer Club",
+    "channelId": "UCLT-UaMdTBx63fRyMiRT8pA",
+    "channelTitle": "Sydhavnens Windsurfer Club",
+    "sourceUrl": "https://www.youtube.com/watch?v=kpjaT-uMjKo",
+    "operatorUrl": "https://swc.klub-modul.dk/webcam",
+    "title": "SWC webcam",
+    "checkedAt": "2026-10-24T16:43:57.534Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "actualStartTime": "2026-07-10T08:23:44Z",
+    "regionRestriction": null,
+    "viewType": "harbour",
+    "geographicEvidence": "Sydhavnens Windsurfer Club publishes this embed; club address is Copenhagen harbor.",
+    "evidence": "first-half-third-verification.json",
+    "embedding": {
+      "method": "YouTube official iframe",
+      "providerEmbeddable": true,
+      "review": "No contrary restriction identified in the reviewed operator description; provider status may change."
+    }
+  },
+  {
+    "destinationId": "VN:Hanoi",
+    "city": "Hanoi",
+    "country": "Vietnam",
+    "countryCode": "VN",
+    "videoId": "LbvV4avTI5Q",
+    "operator": "Ha Noi Live Cam",
+    "channelId": "UCBVNLnTUkBWfcQuUXvaSEUw",
+    "channelTitle": "Ha Noi Live Cam",
+    "sourceUrl": "https://www.youtube.com/watch?v=LbvV4avTI5Q",
+    "operatorUrl": "https://www.youtube.com/channel/UCBVNLnTUkBWfcQuUXvaSEUw/streams",
+    "title": "🔴 Hanoi Live Camera 24/7 | Trực tiếp Cầu Vĩnh Tuy & Sông Hồng | Chill BGM 2K",
+    "checkedAt": "2026-10-25T18:00:19.608Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "actualStartTime": "2026-10-25T17:28:54Z",
+    "regionRestriction": null,
+    "viewType": "cityscape",
+    "geographicEvidence": "Operator explicitly identifies current Vinh Tuy Bridge traffic and Hanoi skyline; no prerecorded-loop statement.",
+    "evidence": "replacement-verification-20261025.json",
+    "embedding": {
+      "method": "YouTube official iframe",
+      "providerEmbeddable": true,
+      "review": "No contrary restriction identified in the reviewed operator description; provider status may change."
+    }
+  },
+  {
+    "destinationId": "US:Honolulu",
+    "city": "Honolulu",
+    "country": "United States",
+    "countryCode": "US",
+    "videoId": "pv2RBs3PwCs",
+    "operator": "uberjeph",
+    "channelId": "UCgexA0gpQd9I_Y3eHGwJDKw",
+    "channelTitle": "uberjeph",
+    "sourceUrl": "https://www.youtube.com/watch?v=pv2RBs3PwCs",
+    "operatorUrl": "https://www.youtube.com/watch?v=pv2RBs3PwCs",
+    "title": "Waikiki Live Cam",
+    "checkedAt": "2026-10-24T16:39:40.090Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "actualStartTime": "2026-08-18T19:47:47Z",
+    "regionRestriction": null,
+    "viewType": "cityscape",
+    "geographicEvidence": "Operator describes fixed Waikiki camera from their lanai in Honolulu.",
+    "evidence": "first-half-video-verification.json",
+    "embedding": {
+      "method": "YouTube official iframe",
+      "providerEmbeddable": true,
+      "review": "No contrary restriction identified in the reviewed operator description; provider status may change."
+    }
+  },
+  {
+    "destinationId": "PT:Lisbon",
+    "city": "Lisbon",
+    "country": "Portugal",
+    "countryCode": "PT",
+    "videoId": "tKIgNtEgLN0",
+    "operator": "I love Lx",
+    "channelId": "UCjvtkjWwpnhgGv2nutFFr-A",
+    "channelTitle": "I love Lx",
+    "sourceUrl": "https://www.youtube.com/watch?v=tKIgNtEgLN0",
+    "operatorUrl": "https://www.youtube.com/watch?v=tKIgNtEgLN0",
+    "title": "I love Lx Live Stream",
+    "checkedAt": "2026-10-24T16:39:40.090Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "actualStartTime": "2026-09-14T16:49:39Z",
+    "regionRestriction": null,
+    "viewType": "cityscape",
+    "geographicEvidence": "Operator I love Lx identifies live 24/7 cameras in Lisbon.",
+    "evidence": "first-half-video-verification.json",
+    "embedding": {
+      "method": "YouTube official iframe",
+      "providerEmbeddable": true,
+      "review": "No contrary restriction identified in the reviewed operator description; provider status may change."
+    }
+  },
+  {
+    "destinationId": "AU:Melbourne",
+    "city": "Melbourne",
+    "country": "Australia",
+    "countryCode": "AU",
+    "videoId": "l_8DrACHpwY",
+    "operator": "Melbourne Luxury Accommodation",
+    "channelId": "UCLA3Uc4amh-v5eIS6M_r2ow",
+    "channelTitle": "Melbourne Luxury Accommodation",
+    "sourceUrl": "https://www.youtube.com/watch?v=l_8DrACHpwY",
+    "operatorUrl": "https://camstreamer.com/live/stream/43611-melbourne-live-from-platinum-apartments",
+    "title": "MELBOURNE Live from Platinum Apartments",
+    "checkedAt": "2026-10-24T16:41:34.048Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "actualStartTime": "2022-05-16T08:54:48Z",
+    "regionRestriction": null,
+    "viewType": "cityscape",
+    "geographicEvidence": "Platinum Apartments operator identifies its Southbank Melbourne penthouse; CamStreamer publicly offers this embed.",
+    "evidence": "first-half-deep-verification.json",
+    "embedding": {
+      "method": "YouTube official iframe",
+      "providerEmbeddable": true,
+      "review": "No contrary restriction identified in the reviewed operator description; provider status may change."
+    }
+  },
+  {
+    "destinationId": "US:Miami",
+    "city": "Miami",
+    "country": "United States",
+    "countryCode": "US",
+    "videoId": "7i8ARjIeM2k",
+    "operator": "Coral Morphologic",
+    "channelId": "UCtllXAWa3EcfcsL5tvpqGSw",
+    "channelTitle": "Coral Morphologic",
+    "sourceUrl": "https://www.youtube.com/watch?v=7i8ARjIeM2k",
+    "operatorUrl": "https://www.coralcitycamera.com/",
+    "title": "Coral City Camera (Miami's Free-Range Aquarium Underwater Livestream)",
+    "checkedAt": "2026-10-24T16:39:40.090Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "actualStartTime": "2020-04-12T02:45:35Z",
+    "regionRestriction": null,
+    "viewType": "underwater",
+    "geographicEvidence": "Coral Morphologic identifies underwater camera at east end PortMiami shoreline, within Miami.",
+    "evidence": "first-half-video-verification.json",
+    "embedding": {
+      "method": "YouTube official iframe",
+      "providerEmbeddable": true,
+      "review": "No contrary restriction identified in the reviewed operator description; provider status may change."
+    }
+  },
+  {
+    "destinationId": "CA:Montreal",
+    "city": "Montreal",
+    "country": "Canada",
+    "countryCode": "CA",
+    "videoId": "TPpuWYRjU1k",
+    "operator": "Moore Equipment Ltd.",
+    "channelId": "UCmM8fJ5uDl8pqu8nnd8Ixlg",
+    "channelTitle": "Moore Equipment Ltd.",
+    "sourceUrl": "https://www.youtube.com/watch?v=TPpuWYRjU1k",
+    "operatorUrl": "https://dickiemoore.com/",
+    "title": "LIVE Montreal Trudeau Airport CYUL 24/7 Webcam Runway 24R",
+    "checkedAt": "2026-10-24T16:43:57.534Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "actualStartTime": "2026-10-05T17:28:43Z",
+    "regionRestriction": null,
+    "viewType": "airport",
+    "geographicEvidence": "Primary operator Moore Equipment identifies Montreal Trudeau Airport Runway 24R; metro airport view, not downtown.",
+    "evidence": "first-half-third-verification.json",
+    "embedding": {
+      "method": "YouTube official iframe",
+      "providerEmbeddable": true,
+      "review": "No contrary restriction identified in the reviewed operator description; provider status may change."
+    }
+  },
+  {
+    "destinationId": "US:San_Francisco",
+    "city": "San Francisco",
+    "country": "United States",
+    "countryCode": "US",
+    "videoId": "G8RIAgPxaMc",
+    "title": "San Francisco Live Camera | 24/7 Stream",
+    "operator": "ABC7 News Bay Area",
+    "channelTitle": "ABC7 News Bay Area",
+    "channelId": "UCYUbNjkuE4lsr2v1Id2O1oA",
+    "sourceUrl": "https://www.youtube.com/watch?v=G8RIAgPxaMc",
+    "operatorUrl": "https://abc7news.com/post/san-francisco-live-camera-247-stream/16847358/",
+    "checkedAt": "2026-10-24T16:41:22.562Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    }
+  },
+  {
+    "destinationId": "US:Seattle",
+    "city": "Seattle",
+    "country": "United States",
+    "countryCode": "US",
+    "videoId": "NCzKkn0wD30",
+    "title": "UW Lake Washington Cam",
+    "operator": "UW Video",
+    "channelTitle": "UW Video",
+    "channelId": "UCHZoP1Jy-g_h3sqzScrOEwQ",
+    "sourceUrl": "https://www.youtube.com/watch?v=NCzKkn0wD30",
+    "operatorUrl": "https://www.washington.edu/video/campus-webcams/",
+    "checkedAt": "2026-10-24T16:41:22.562Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    }
+  },
+  {
+    "destinationId": "US:Seattle",
+    "city": "Seattle",
+    "country": "United States",
+    "countryCode": "US",
+    "videoId": "9-hGCRgqMMs",
+    "title": "UW Continuum College Cam",
+    "operator": "UW Video",
+    "channelTitle": "UW Video",
+    "channelId": "UCHZoP1Jy-g_h3sqzScrOEwQ",
+    "sourceUrl": "https://www.youtube.com/watch?v=9-hGCRgqMMs",
+    "operatorUrl": "https://www.washington.edu/video/campus-webcams/",
+    "checkedAt": "2026-10-24T16:41:22.562Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    }
+  },
+  {
+    "destinationId": "CR:San_Jose_(Costa_Rica)",
+    "city": "San Jose",
+    "country": "Costa Rica",
+    "countryCode": "CR",
+    "videoId": "irZN3wtk2tY",
+    "title": "San Jose Costa Rica 4K Live Cam",
+    "operator": "San Jose Costa Rica 4K Live Cam",
+    "channelTitle": "San Jose Costa Rica 4K Live Cam",
+    "channelId": "UC2UraCQV_dppGIxtmwe_DLw",
+    "sourceUrl": "https://www.youtube.com/watch?v=irZN3wtk2tY",
+    "operatorUrl": "https://webcamscostarica.com/san-jose/",
+    "checkedAt": "2026-10-24T16:41:22.562Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    }
+  },
+  {
+    "destinationId": "SG:Singapore",
+    "city": "Singapore",
+    "country": "Singapore",
+    "countryCode": "SG",
+    "videoId": "uDdGLd5ML8s",
+    "title": "【LIVE CAMERA】Downtown Singapore Coastal View",
+    "operator": "SingReef",
+    "channelTitle": "SingReef",
+    "channelId": "UCD-Hv0aJkZz0isAwOtFErVg",
+    "sourceUrl": "https://www.youtube.com/watch?v=uDdGLd5ML8s",
+    "operatorUrl": "https://www.youtube.com/@SingReef/streams",
+    "checkedAt": "2026-10-24T16:41:22.562Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    }
+  },
+  {
+    "destinationId": "SG:Singapore",
+    "city": "Singapore",
+    "country": "Singapore",
+    "countryCode": "SG",
+    "videoId": "rQ3VvxadJeo",
+    "title": "【LIVE CAMERA】Downtown Singapore　シンガポール　ライブカメラ",
+    "operator": "SingReef",
+    "channelTitle": "SingReef",
+    "channelId": "UCD-Hv0aJkZz0isAwOtFErVg",
+    "sourceUrl": "https://www.youtube.com/watch?v=rQ3VvxadJeo",
+    "operatorUrl": "https://www.youtube.com/@SingReef/streams",
+    "checkedAt": "2026-10-24T16:41:22.562Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    }
+  },
+  {
+    "destinationId": "CA:Vancouver",
+    "city": "Vancouver",
+    "country": "Canada",
+    "countryCode": "CA",
+    "videoId": "rxyNjFKwzJA",
+    "title": "🔴🚢 Vancouver LIVE Cam | Cruise Ship LiveStream 24/7 | City Views & Canada Place | Alaska Season 2026",
+    "operator": "Vancouver City Views",
+    "channelTitle": "Vancouver City Views",
+    "channelId": "UCYky246qWfKe82NLQ9VXbgQ",
+    "sourceUrl": "https://www.youtube.com/watch?v=rxyNjFKwzJA",
+    "operatorUrl": "https://www.youtube.com/channel/UCYky246qWfKe82NLQ9VXbgQ",
+    "checkedAt": "2026-10-24T16:41:22.562Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    }
+  },
+  {
+    "destinationId": "CA:Vancouver",
+    "city": "Vancouver",
+    "country": "Canada",
+    "countryCode": "CA",
+    "videoId": "GHEmhcWjiTE",
+    "title": "Vancouver LIVE 24/7 | Harbour Action, Seaplanes & Skyline Views",
+    "operator": "Vancouver Port Live",
+    "channelTitle": "Vancouver Port Live",
+    "channelId": "UCNOXlPIEg4nNvCqlInpKcXw",
+    "sourceUrl": "https://www.youtube.com/watch?v=GHEmhcWjiTE",
+    "operatorUrl": "https://www.youtube.com/channel/UCNOXlPIEg4nNvCqlInpKcXw",
+    "checkedAt": "2026-10-24T16:41:22.562Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    }
+  },
+  {
+    "destinationId": "CA:Quebec_City",
+    "city": "Quebec City",
+    "country": "Canada",
+    "countryCode": "CA",
+    "videoId": "h_NkY62h7uM",
+    "title": "Port de Québec",
+    "operator": "Port Quebec",
+    "channelTitle": "Port Quebec",
+    "channelId": "UCZdjU2sWPeLjmh75zOxekUg",
+    "sourceUrl": "https://www.youtube.com/watch?v=h_NkY62h7uM",
+    "operatorUrl": "https://www.youtube.com/channel/UCZdjU2sWPeLjmh75zOxekUg",
+    "checkedAt": "2026-10-24T16:44:29.737Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    }
+  },
+  {
+    "destinationId": "DE:Munich",
+    "city": "Munich",
+    "country": "Germany",
+    "countryCode": "DE",
+    "videoId": "VAS9A0LRGHA",
+    "title": "Webcam am Marienplatz",
+    "operator": "LUDWIG BECK",
+    "channelTitle": "LUDWIG BECK",
+    "channelId": "UCg-GhKaU1CWgN90z4o3Xq4w",
+    "sourceUrl": "https://www.youtube.com/watch?v=VAS9A0LRGHA",
+    "operatorUrl": "https://www.youtube.com/channel/UCg-GhKaU1CWgN90z4o3Xq4w",
+    "checkedAt": "2026-10-24T16:44:29.737Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    }
+  },
+  {
+    "destinationId": "NZ:Wellington",
+    "city": "Wellington",
+    "country": "New Zealand",
+    "countryCode": "NZ",
+    "videoId": "aONM844beGE",
+    "title": "Wellington Waterfront Webcam | Geeks on Wheels",
+    "operator": "GeeksOnWheelsNZ",
+    "channelTitle": "GeeksOnWheelsNZ",
+    "channelId": "UCCC0TDm8G6eIDXwDlfFAfMg",
+    "sourceUrl": "https://www.youtube.com/watch?v=aONM844beGE",
+    "operatorUrl": "https://geeksonwheels.co.nz/about/web-cam/",
+    "checkedAt": "2026-10-24T16:44:29.737Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    }
+  },
+  {
+    "destinationId": "CA:Banff",
+    "city": "Banff",
+    "country": "Canada",
+    "countryCode": "CA",
+    "videoId": "R8hxzxRfJhs",
+    "operator": "Banff Centre for Arts and Creativity",
+    "channelId": "UCFJFUjH4EwdmH7OVfzcy22g",
+    "channelTitle": "Banff Centre for Arts and Creativity",
+    "sourceUrl": "https://www.youtube.com/watch?v=R8hxzxRfJhs",
+    "operatorUrl": "https://www.banffcentre.ca/webcam",
+    "title": "Banff Centre Shaw Amphitheatre",
+    "checkedAt": "2026-10-24T16:47:27.901Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "actualStartTime": "2025-10-21T21:08:11Z",
+    "regionRestriction": null,
+    "viewType": "campus",
+    "geographicEvidence": "Primary Banff Centre website embeds this camera at its campus amphitheatre, 107 Tunnel Mountain Drive in Banff.",
+    "evidence": "first-half-final-verification.json",
+    "embedding": {
+      "method": "YouTube official iframe",
+      "providerEmbeddable": true,
+      "review": "No contrary restriction identified in the reviewed operator description; provider status may change."
+    }
+  },
+  {
+    "destinationId": "CA:Banff",
+    "city": "Banff",
+    "country": "Canada",
+    "countryCode": "CA",
+    "videoId": "HghxOQ12dy4",
+    "operator": "Banff Centre for Arts and Creativity",
+    "channelId": "UCFJFUjH4EwdmH7OVfzcy22g",
+    "channelTitle": "Banff Centre for Arts and Creativity",
+    "sourceUrl": "https://www.youtube.com/watch?v=HghxOQ12dy4",
+    "operatorUrl": "https://www.banffcentre.ca/webcam",
+    "title": "Banff Centre Spray Valley",
+    "checkedAt": "2026-10-24T16:47:27.901Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "actualStartTime": "2020-05-25T19:43:17Z",
+    "regionRestriction": null,
+    "viewType": "landscape",
+    "geographicEvidence": "Primary Banff Centre website embeds this south-facing Spray Valley view from its Banff campus.",
+    "evidence": "first-half-final-verification.json",
+    "embedding": {
+      "method": "YouTube official iframe",
+      "providerEmbeddable": true,
+      "review": "No contrary restriction identified in the reviewed operator description; provider status may change."
+    }
+  },
+  {
+    "destinationId": "HU:Budapest",
+    "city": "Budapest",
+    "country": "Hungary",
+    "countryCode": "HU",
+    "videoId": "wkfL5Dua6gc",
+    "operator": "Budapesti Állatkert",
+    "channelId": "UCzE4PjV4gHoDAsN6BXwsLQw",
+    "channelTitle": "Budapesti Állatkert",
+    "sourceUrl": "https://www.youtube.com/watch?v=wkfL5Dua6gc",
+    "operatorUrl": "https://zoobudapest.com/latogatoknak/webkamerak/",
+    "title": "Állatkert Budapest szívében - Szavanna kifutó ÉLŐ",
+    "checkedAt": "2026-10-24T16:47:48.407Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "actualStartTime": "2026-10-16T20:50:18Z",
+    "regionRestriction": null,
+    "viewType": "zoo",
+    "geographicEvidence": "Primary Budapest Zoo website publishes this Savanna enclosure live camera in central Budapest. Clearly label zoo habitat.",
+    "evidence": "first-half-zoo-verification.json",
+    "embedding": {
+      "method": "YouTube official iframe",
+      "providerEmbeddable": true,
+      "review": "No contrary restriction identified in the reviewed operator description; provider status may change."
+    }
+  },
+  {
+    "destinationId": "HU:Budapest",
+    "city": "Budapest",
+    "country": "Hungary",
+    "countryCode": "HU",
+    "videoId": "i3kmj2b8zkA",
+    "operator": "Budapesti Állatkert",
+    "channelId": "UCzE4PjV4gHoDAsN6BXwsLQw",
+    "channelTitle": "Budapesti Állatkert",
+    "sourceUrl": "https://www.youtube.com/watch?v=i3kmj2b8zkA",
+    "operatorUrl": "https://zoobudapest.com/latogatoknak/webkamerak/",
+    "title": "Állatkert Budapest szívében - Elefánt kifutó ÉLŐ",
+    "checkedAt": "2026-10-24T16:47:48.407Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "actualStartTime": "2026-05-21T12:16:41Z",
+    "regionRestriction": null,
+    "viewType": "zoo",
+    "geographicEvidence": "Primary Budapest Zoo website publishes this elephant enclosure live camera in central Budapest.",
+    "evidence": "first-half-zoo-verification.json",
+    "embedding": {
+      "method": "YouTube official iframe",
+      "providerEmbeddable": true,
+      "review": "No contrary restriction identified in the reviewed operator description; provider status may change."
+    }
+  },
+  {
+    "destinationId": "JP:Tokyo",
+    "city": "Tokyo",
+    "country": "Japan",
+    "countryCode": "JP",
+    "videoId": "d1JuNg7knNo",
+    "title": "Tokyo · Shibuya Center-gai (camera delayed for privacy)",
+    "operator": "渋谷センター商店街",
+    "channelTitle": "渋谷センター商店街",
+    "channelId": "UCfCxyg8waxuAPxa8WmBY49g",
+    "sourceUrl": "https://www.youtube.com/watch?v=d1JuNg7knNo",
+    "operatorUrl": "https://www.youtube.com/channel/UCfCxyg8waxuAPxa8WmBY49g",
+    "checkedAt": "2026-10-24T16:46:48.863Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    }
+  },
+  {
+    "destinationId": "PL:Warsaw",
+    "city": "Warsaw",
+    "country": "Poland",
+    "countryCode": "PL",
+    "videoId": "5RmIIIl8WCo",
+    "title": "Warszawa na żywo 🇵🇱 | Warsaw LIVE – panorama i Stadion Narodowy / City Skyline & National Stadium",
+    "operator": "Warsaw Livestream",
+    "channelTitle": "Warsaw Livestream",
+    "channelId": "UCPQH7Qez-TIVJv5cmquVFyg",
+    "sourceUrl": "https://www.youtube.com/watch?v=5RmIIIl8WCo",
+    "operatorUrl": "https://www.youtube.com/channel/UCPQH7Qez-TIVJv5cmquVFyg",
+    "checkedAt": "2026-10-25T18:00:19.608Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "actualStartTime": "2026-10-25T13:46:28Z"
+  },
+  {
+    "destinationId": "LT:Vilnius",
+    "city": "Vilnius",
+    "country": "Lithuania",
+    "countryCode": "LT",
+    "videoId": "Upqned9fiMg",
+    "title": "Vilnius · Divine Mercy Shrine (interior)",
+    "operator": "Dievo Gailestingumo Sventove Adoration live",
+    "channelTitle": "Dievo Gailestingumo Sventove Adoration live",
+    "channelId": "UCTZSvAhDDrQvNiTZ5c7l1wA",
+    "sourceUrl": "https://www.youtube.com/watch?v=Upqned9fiMg",
+    "operatorUrl": "https://www.youtube.com/channel/UCTZSvAhDDrQvNiTZ5c7l1wA",
+    "checkedAt": "2026-10-24T16:46:05.861Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    }
+  },
+  {
+    "destinationId": "AE:Dubai",
+    "city": "Dubai",
+    "country": "United Arab Emirates",
+    "countryCode": "AE",
+    "videoId": "p65HHME8uk8",
+    "operator": "Mr. Eight Development | The Visionary’s Diary",
+    "channelId": "UCXW20RLRIbDzU1dXKs4fimw",
+    "channelTitle": "Mr. Eight Development | The Visionary’s Diary",
+    "sourceUrl": "https://www.youtube.com/watch?v=p65HHME8uk8",
+    "operatorUrl": "https://mr8.ae/media",
+    "title": "Live from Villa del Brunello | Construction Progress on Dubai Islands",
+    "checkedAt": "2026-10-24T16:50:54.516Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "actualStartTime": "2026-10-24T06:58:14Z",
+    "regionRestriction": null,
+    "viewType": "construction",
+    "geographicEvidence": "Primary developer Mr. Eight publishes its 24/7 Villa del Brunello construction camera on Dubai Islands. Label construction site.",
+    "evidence": "first-half-dubai-verification.json",
+    "embedding": {
+      "method": "YouTube official iframe",
+      "providerEmbeddable": true,
+      "review": "No contrary restriction identified in the reviewed operator description; provider status may change."
+    }
+  },
+  {
+    "destinationId": "AE:Dubai",
+    "city": "Dubai",
+    "country": "United Arab Emirates",
+    "countryCode": "AE",
+    "videoId": "AOwT9rUK8MA",
+    "operator": "Mr. Eight Development | The Visionary’s Diary",
+    "channelId": "UCXW20RLRIbDzU1dXKs4fimw",
+    "channelTitle": "Mr. Eight Development | The Visionary’s Diary",
+    "sourceUrl": "https://www.youtube.com/watch?v=AOwT9rUK8MA",
+    "operatorUrl": "https://mr8.ae/media",
+    "title": "Live from Villa del GAVI | Construction Progress on Dubai Islands",
+    "checkedAt": "2026-10-24T16:50:54.516Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    },
+    "actualStartTime": "2026-09-29T05:17:38Z",
+    "regionRestriction": null,
+    "viewType": "construction",
+    "geographicEvidence": "Primary developer Mr. Eight identifies current Villa del Gavi construction progress on Dubai Islands.",
+    "evidence": "first-half-dubai-verification.json",
+    "embedding": {
+      "method": "YouTube official iframe",
+      "providerEmbeddable": true,
+      "review": "No contrary restriction identified in the reviewed operator description; provider status may change."
+    }
+  },
+  {
+    "destinationId": "BR:Rio_de_Janeiro",
+    "city": "Rio de Janeiro",
+    "country": "Brazil",
+    "countryCode": "BR",
+    "videoId": "wyEi0OPai5g",
+    "title": "Webcam Rio de Janeiro Copacabana Posto 6",
+    "operator": "Homes in Rio",
+    "channelTitle": "Homes in Rio",
+    "sourceUrl": "https://www.youtube.com/watch?v=wyEi0OPai5g",
+    "operatorUrl": "https://www.youtube.com/watch?v=wyEi0OPai5g",
+    "checkedAt": "2026-10-24T16:51:19.326Z",
+    "verification": {
+      "live": true,
+      "public": true,
+      "embeddable": true,
+      "method": "YouTube Data API videos.list"
+    }
   }
 ]

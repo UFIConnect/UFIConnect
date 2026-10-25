@@ -9,6 +9,7 @@ const { extractFeedMedia } = require('./rss-media');
 const { normalizePostMedia } = require('./post-media');
 const { mastodonMedia, blueskyMedia } = require('./provider-video-media');
 const { verifiedCityAlternates, completeTravelCameraCatalog, travelCameraSearchUrl, queueCameraDiscoveries, nextCameraDiscovery } = require('./travel-live-cameras');
+const { validateCameraProviders, createCameraProviderVerifier, providerCameraPost } = require('./travel-camera-providers');
 const cors = require('cors');
 const helmet = require('helmet');
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
@@ -261,7 +262,9 @@ function buildHealthPayload() {
   try {
     payload.liveTravel = {
       catalogCities: uniqueLiveCameraCities(LIVE_CAMERA_CATALOG).length,
-      activeCities: liveCameraVerificationSnapshot.length,
+      activeCities: uniqueLiveCameraCities([...(liveCameraVerificationExpiresAt > Date.now() ? liveCameraVerificationSnapshot : []), ...cameraProviderVerifier.snapshot().filter(camera => camera.liveVerified)])
+        .filter(camera => COUNTRIES_DESTINATION_GUIDES.some(destination => travelCityMatches(destination, camera))).length,
+      providerCameras: cameraProviderVerifier.snapshot(),
       verification: { ...liveCameraVerificationState },
     };
   } catch {
@@ -10068,6 +10071,8 @@ const LIVE_CAMERA_BY_ID = new Map(LIVE_CAMERA_CATALOG.map(camera => [camera.id, 
 // known cameras. These are candidates only: every playback still requires
 // fresh YouTube confirmation that the stream is live, public and embeddable.
 const OPERATOR_CAMERA_STREAMS = require('./travel-camera-streams.json');
+const CAMERA_PROVIDERS = validateCameraProviders(require('./travel-camera-providers.json'), COUNTRIES_DESTINATION_GUIDES);
+const cameraProviderVerifier = createCameraProviderVerifier(CAMERA_PROVIDERS, { fetchImpl: (...args) => fetch(...args) });
 let liveCameraPostsSeeded = false;
 let liveCameraPostsSeedPromise = null;
 const LIVE_CAMERA_VERIFICATION_CACHE_MS = 3 * MIN;
@@ -10279,6 +10284,7 @@ async function fetchYouTubeLiveStates(videoIds) {
         const live = item?.liveStreamingDetails;
         states.set(item.id, {
           live: Boolean(live?.actualStartTime && !live?.actualEndTime),
+          public: item?.status?.privacyStatus === 'public',
           embeddable: item?.status?.embeddable === true && item?.status?.privacyStatus === 'public',
         });
       }
@@ -10463,8 +10469,9 @@ async function refreshVerifiedLiveCameraPosts(location = null) {
   const started = Date.now();
   const candidates = currentLiveCameraPosts();
   const primaryIds = [...candidates.map(post => liveCameraYouTubeId(post.sourceUrl)),
-    ...OPERATOR_CAMERA_STREAMS.map(stream => stream.videoId)].filter(Boolean);
+    ...OPERATOR_CAMERA_STREAMS.map(stream => stream.videoId), ...cameraProviderVerifier.youtubeIds].filter(Boolean);
   const states = primaryIds.length ? await fetchYouTubeLiveStates(primaryIds) : new Map();
+  cameraProviderVerifier.updateYouTubeStates(states);
   if (primaryIds.length && !states) {
     liveCameraVerificationState.status = 'degraded';
     liveCameraVerificationState.lastRun = Date.now();
@@ -10551,7 +10558,7 @@ async function verifiedLiveCameraPosts(location = null) {
     location?.city ? travelCityMatches(post, location) : travelCountryMatches(post, location)
   );
   const locationRefreshUntil = locationKey ? (liveCameraLocationRefreshes.get(locationKey) || 0) : 0;
-  if (liveCameraVerificationExpiresAt > now && (hasLocationCamera || locationRefreshUntil > now)) {
+  if (liveCameraVerificationExpiresAt > now && cameraProviderVerifier.youtubeStatesFresh() && (hasLocationCamera || locationRefreshUntil > now)) {
     return liveCameraVerificationSnapshot;
   }
   if (liveCameraVerificationPromise) {
@@ -11050,6 +11057,9 @@ function readTravelDiscoveryCache(key, ttl, loader, destinations) {
 async function getCountriesCameraFeed(location, viewerId = null) {
   const selectedLocation = travelLocationHasSavedSelection(location)
     || Boolean(location?.available && location?.city);
+  // Operator checks are bounded background work. A slow remote webcam must
+  // never delay the feed; unconfirmed pages remain separate from live feeds.
+  cameraProviderVerifier.read(location);
   // Guides and stories can stay cached for a while. Camera availability cannot:
   // a stream can end at any moment, so its independently verified snapshot has
   // a much shorter lifetime and is never stored in this discovery cache.
@@ -11075,7 +11085,10 @@ async function getCountriesCameraFeed(location, viewerId = null) {
   const savedById = new Map(posts
     .filter(post => post?.source === LIVE_CAMERA_SOURCE)
     .map(post => [post.id, post]));
-  const cameras = (Array.isArray(cameraResult) ? cameraResult : [])
+  const cameraProviders = cameraProviderVerifier.snapshot();
+  const providerCameras = cameraProviders.filter(camera => camera.liveVerified)
+    .map(camera => providerCameraPost(camera, LIVE_CAMERA_SOURCE));
+  const cameras = [...(Array.isArray(cameraResult) ? cameraResult : []), ...providerCameras]
     .map((post) => {
       const saved = savedById.get(post.id);
       const current = saved
@@ -11139,8 +11152,12 @@ async function getCountriesCameraFeed(location, viewerId = null) {
     liveFeeds,
     travel: {
       destinationCount: COUNTRIES_DESTINATION_GUIDES.length,
-      cameraStatus: liveCameraVerificationState.status,
-      camerasChecking: ['queued', 'running'].includes(liveCameraVerificationState.backgroundStatus),
+      cameraStatus: liveFeeds.length ? 'ready' : liveCameraVerificationState.status,
+      camerasChecking: ['queued', 'running'].includes(liveCameraVerificationState.backgroundStatus)
+        || cameraProviders.some(camera => camera.providerStatus === 'checking'),
+      cameraProviders,
+      verifiedCameraCities: uniqueLiveCameraCities(cameras).length,
+      verifiedProviderCameras: providerCameras.length,
       localCameraAvailable: scopedCameras.some(post => location?.city ? travelCityMatches(post, location) : travelCountryMatches(post, location)),
       selectedCameraId: scopedCameras.find(post => location?.city ? travelCityMatches(post, location) : travelCountryMatches(post, location))?.id || null,
       storiesUpdating: Boolean(entry?.pending || selectedEntry?.pending),
@@ -27154,8 +27171,15 @@ async function executeOfficeControl(control, body) {
     }
     case 'location.verify-live-travel': {
       liveCameraVerificationExpiresAt = 0;
+      cameraProviderVerifier.read();
       const cameras = await verifiedLiveCameraPosts();
-      return { liveCameras: cameras.length, status: liveCameraVerificationState.status, unavailable: liveCameraVerificationState.unavailable };
+      const providers = cameraProviderVerifier.snapshot();
+      const verifiedProviders = providers.filter(camera => camera.liveVerified);
+      const cities = uniqueLiveCameraCities([...cameras, ...verifiedProviders])
+        .filter(camera => COUNTRIES_DESTINATION_GUIDES.some(destination => travelCityMatches(destination, camera)));
+      return { liveCameras: cities.length, status: cities.length ? 'ready' : liveCameraVerificationState.status,
+        unavailable: Math.max(0, COUNTRIES_DESTINATION_GUIDES.length - cities.length),
+        verifiedProviderCameras: verifiedProviders.length, checkingProviderCameras: providers.filter(camera => camera.providerStatus === 'checking').length };
     }
     case 'jobs.refresh': {
       const ids = JOB_LISTING_SOURCES.filter((id) => SOURCE_FETCHERS[id]);

@@ -1,0 +1,546 @@
+[
+  {
+    "id": "camera_provider_hr_dubrovnik_ilijina",
+    "destinationId": "HR:Dubrovnik",
+    "city": "Dubrovnik",
+    "country": "Croatia",
+    "countryCode": "HR",
+    "title": "Dubrovnik — Ilijina Glavica",
+    "operator": "City of Dubrovnik",
+    "sourceUrl": "https://www.dubrovnik.hr/web-kamere/ilijina-glavica",
+    "verification": {
+      "kind": "ipcamlive",
+      "alias": "5cdea385284fc"
+    }
+  },
+  {
+    "id": "camera_provider_tz_zanzibar_stone_town",
+    "destinationId": "TZ:Zanzibar_City",
+    "city": "Zanzibar City",
+    "country": "Tanzania",
+    "countryCode": "TZ",
+    "title": "Stone Town waterfront and harbour",
+    "operator": "SkylineWebcams",
+    "sourceUrl": "https://www.skylinewebcams.com/en/webcam/zanzibar/zanzibar-urban-west-region/zanzibar-city/stone-town.html",
+    "verification": {
+      "kind": "skyline"
+    }
+  },
+  {
+    "id": "camera_provider_it_naples_plebiscito",
+    "destinationId": "IT:Naples",
+    "city": "Naples",
+    "country": "Italy",
+    "countryCode": "IT",
+    "title": "Piazza del Plebiscito",
+    "operator": "SkylineWebcams",
+    "sourceUrl": "https://www.skylinewebcams.com/en/webcam/italia/campania/napoli/piazza-del-plebiscito.html",
+    "verification": {
+      "kind": "skyline"
+    }
+  },
+  {
+    "id": "camera_provider_es_seville_weather",
+    "destinationId": "ES:Seville",
+    "city": "Seville",
+    "country": "Spain",
+    "countryCode": "ES",
+    "title": "Seville weather camera",
+    "operator": "Tiempo en Sevilla",
+    "sourceUrl": "https://www.tiempoensevilla.es/wxwebcam.php?lang=es",
+    "verification": {
+      "kind": "fresh-image",
+      "url": "https://www.tiempoensevilla.es/webcam.php",
+      "allowedHosts": [
+        "www.tiempoensevilla.es"
+      ],
+      "updateIntervalSeconds": 60,
+      "maxAgeSeconds": 180
+    }
+  },
+  {
+    "id": "camera_provider_mx_mexico_city_zocalo",
+    "destinationId": "MX:Mexico_City",
+    "city": "Mexico City",
+    "country": "Mexico",
+    "countryCode": "MX",
+    "title": "En vivo Zócalo de la Ciudad de México",
+    "operator": "webcamsdemexico",
+    "sourceUrl": "https://www.youtube.com/watch?v=gj6lXqFzzbQ",
+    "verification": {
+      "kind": "youtube-provider",
+      "videoId": "gj6lXqFzzbQ"
+    },
+    "evidence": {
+      "checkedAt": "2026-10-24T16:39:40.090Z",
+      "playback": "Operator link; Webcams de Mexico restrictions respected"
+    }
+  },
+  {
+    "id": "camera_provider_us_san_diego_operator",
+    "destinationId": "US:San_Diego",
+    "city": "San Diego",
+    "country": "United States",
+    "countryCode": "US",
+    "title": "San Diego Harbor Island Live Web Cam 4K",
+    "operator": "San Diego Web Cam",
+    "sourceUrl": "https://www.youtube.com/watch?v=iaBfYxbmwXA",
+    "verification": {
+      "kind": "youtube-provider",
+      "videoId": "iaBfYxbmwXA"
+    },
+    "evidence": {
+      "checkedAt": "2026-10-24T16:41:22.562Z",
+      "metadata": "root-video-verification.json",
+      "playback": "Official operator link; no embedded video"
+    }
+  },
+  {
+    "id": "camera_provider_pt_porto_operator",
+    "destinationId": "PT:Porto",
+    "city": "Porto",
+    "country": "Portugal",
+    "countryCode": "PT",
+    "title": "LIVE Porto Webcam Ribeira and Vila Nova de Gaia – Oporto, Portugal",
+    "operator": "Webcamtaxi",
+    "sourceUrl": "https://www.youtube.com/watch?v=lfrjNVD10RU",
+    "verification": {
+      "kind": "youtube-provider",
+      "videoId": "lfrjNVD10RU"
+    },
+    "evidence": {
+      "checkedAt": "2026-10-24T16:44:29.737Z",
+      "metadata": "root-followup-verification.json",
+      "playback": "Official operator link; no embedded video"
+    }
+  },
+  {
+    "id": "camera_provider_ca_toronto_operator",
+    "destinationId": "CA:Toronto",
+    "city": "Toronto",
+    "country": "Canada",
+    "countryCode": "CA",
+    "title": "🔴 Toronto 4K UHD LIVE Cam 🇨🇦 CN Tower & Lake Ontario | Chill Lofi 24/7 🍁",
+    "operator": "TorontoLive4k",
+    "sourceUrl": "https://www.youtube.com/watch?v=bbjwotvAvDM",
+    "verification": {
+      "kind": "youtube-provider",
+      "videoId": "bbjwotvAvDM"
+    },
+    "evidence": {
+      "checkedAt": "2026-10-24T16:44:29.737Z",
+      "metadata": "root-followup-verification.json",
+      "playback": "Official operator link; no embedded video"
+    }
+  },
+  {
+    "id": "camera_provider_mx_oaxaca_operator",
+    "destinationId": "MX:Oaxaca_(city)",
+    "city": "Oaxaca",
+    "country": "Mexico",
+    "countryCode": "MX",
+    "title": "Oaxaca en vivo. Vista Exconvento de Santo Domingo",
+    "operator": "Webcams de México TV / Canal 7",
+    "sourceUrl": "https://webcamsdemexico.com/webcam/santo-domingo-oaxaca/",
+    "verification": {
+      "kind": "youtube-provider",
+      "videoId": "37WdDtO7EAQ"
+    },
+    "evidence": {
+      "checkedAt": "2026-10-24T16:44:29.737Z",
+      "metadata": "root-followup-verification.json",
+      "playback": "Official operator link; no embedded video"
+    }
+  },
+  {
+    "id": "camera_provider_tw_taipei_operator",
+    "destinationId": "TW:Taipei",
+    "city": "Taipei",
+    "country": "Taiwan",
+    "countryCode": "TW",
+    "title": "【Taipei Live Cam】象山看台北 - 4K即時影像 | Overlooking Taipei at the top of Xiangshan | 象山から望む台北 | Taipei 101",
+    "operator": "Taipei Travel Live Cam  台北觀光即時影像",
+    "sourceUrl": "https://www.youtube.com/watch?v=z_fY1pj1VBw",
+    "verification": {
+      "kind": "youtube-provider",
+      "videoId": "z_fY1pj1VBw"
+    },
+    "evidence": {
+      "checkedAt": "2026-10-24T16:44:29.737Z",
+      "metadata": "root-followup-verification.json",
+      "playback": "Official operator link; no embedded video"
+    }
+  },
+  {
+    "id": "camera_provider_us_los_angeles_operator",
+    "destinationId": "US:Los_Angeles",
+    "city": "Los Angeles",
+    "country": "United States",
+    "countryCode": "US",
+    "title": "🔴 Los Angeles Live Cam · Venice Beach · Venice V Hotel · Live Camera Stream",
+    "operator": "Teleport.camera",
+    "sourceUrl": "https://www.youtube.com/watch?v=EO_1LWqsCNE",
+    "verification": {
+      "kind": "youtube-provider",
+      "videoId": "EO_1LWqsCNE"
+    },
+    "evidence": {
+      "checkedAt": "2026-10-24T16:39:40.090Z",
+      "metadata": "first-half-video-verification.json",
+      "playback": "Official operator link; no embedded video"
+    }
+  },
+  {
+    "id": "camera_provider_pe_cusco_plaza_mayor",
+    "destinationId": "PE:Cusco",
+    "city": "Cusco",
+    "country": "Peru",
+    "countryCode": "PE",
+    "title": "Cusco Plaza Mayor",
+    "operator": "SkylineWebcams / Cappuccino Cafe",
+    "sourceUrl": "https://www.skylinewebcams.com/en/webcam/peru/cusco/cusco/plaza-mayor.html",
+    "verification": {
+      "kind": "skyline"
+    }
+  },
+  {
+    "id": "camera_provider_es_madrid_callao",
+    "destinationId": "ES:Madrid",
+    "city": "Madrid",
+    "country": "Spain",
+    "countryCode": "ES",
+    "title": "Madrid Plaza del Callao",
+    "operator": "SkylineWebcams / Prensa Palace",
+    "sourceUrl": "https://www.skylinewebcams.com/en/webcam/espana/comunidad-de-madrid/madrid/madrid-plaza-del-callao.html",
+    "verification": {
+      "kind": "skyline"
+    }
+  },
+  {
+    "id": "camera_provider_gr_athens_acropolis",
+    "destinationId": "GR:Athens",
+    "city": "Athens",
+    "country": "Greece",
+    "countryCode": "GR",
+    "title": "Athens Acropolis from Grand Bretagne Hotel",
+    "operator": "SkylineWebcams / Grand Bretagne Hotel",
+    "sourceUrl": "https://www.skylinewebcams.com/en/webcam/ellada/atiki/athina/acropolis.html",
+    "verification": {
+      "kind": "skyline"
+    }
+  },
+  {
+    "id": "camera_provider_pe_lima_miraflores",
+    "destinationId": "PE:Lima",
+    "city": "Lima",
+    "country": "Peru",
+    "countryCode": "PE",
+    "title": "Lima Ovalo de Miraflores",
+    "operator": "SkylineWebcams",
+    "sourceUrl": "https://www.skylinewebcams.com/en/webcam/peru/lima/lima/miraflores.html",
+    "verification": {
+      "kind": "skyline"
+    }
+  },
+  {
+    "id": "camera_provider_jo_petra_treasury",
+    "destinationId": "JO:Petra",
+    "city": "Wadi Musa",
+    "country": "Jordan",
+    "countryCode": "JO",
+    "title": "Petra — the Treasury",
+    "operator": "SkylineWebcams",
+    "sourceUrl": "https://www.skylinewebcams.com/en/webcam/jordan/maan/amman/petra-the-treasury.html",
+    "verification": {
+      "kind": "skyline"
+    }
+  },
+  {
+    "id": "camera_provider_jo_petra_visitor_center",
+    "destinationId": "JO:Petra",
+    "city": "Wadi Musa",
+    "country": "Jordan",
+    "countryCode": "JO",
+    "title": "Petra visitor centre",
+    "operator": "SkylineWebcams",
+    "sourceUrl": "https://www.skylinewebcams.com/en/webcam/jordan/maan/amman/petra-visitor-center.html",
+    "verification": {
+      "kind": "skyline"
+    }
+  },
+  {
+    "id": "camera_provider_nz_queenstown_earthcam",
+    "destinationId": "NZ:Queenstown_(New_Zealand)",
+    "city": "Queenstown",
+    "country": "New Zealand",
+    "countryCode": "NZ",
+    "title": "Queenstown and Lake Wakatipu",
+    "operator": "EarthCam",
+    "sourceUrl": "https://www.earthcam.com/world/newzealand/queenstown/",
+    "verification": {
+      "kind": "earthcam",
+      "cameraKey": "queenstown"
+    }
+  },
+  {
+    "id": "camera_provider_es_seville_triana",
+    "destinationId": "ES:Seville",
+    "city": "Seville",
+    "country": "Spain",
+    "countryCode": "ES",
+    "title": "Seville Triana Bridge",
+    "operator": "SkylineWebcams",
+    "sourceUrl": "https://www.skylinewebcams.com/en/webcam/espana/andalucia/sevilla/siviglia-puente-de-triana.html",
+    "verification": {
+      "kind": "skyline"
+    }
+  },
+  {
+    "id": "camera_provider_us_hollywood_sign_live",
+    "destinationId": "US:Los_Angeles",
+    "city": "Los Angeles",
+    "country": "United States",
+    "countryCode": "US",
+    "title": "Hollywood Sign in Los Angeles",
+    "operator": "Hollywood Sign Trust",
+    "sourceUrl": "https://www.hollywoodsign.org/webcam",
+    "verification": {
+      "kind": "hls",
+      "url": "https://wowza.hollywoodsign.org/hollywoodsignlower/lower.stream/playlist.m3u8",
+      "allowedHosts": [
+        "wowza.hollywoodsign.org"
+      ]
+    },
+    "evidence": {
+      "research": "first-half-hls-additional.json"
+    }
+  },
+  {
+    "id": "camera_provider_pl_webcamera_krakow_main_square",
+    "destinationId": "PL:Krakow",
+    "city": "Krakow",
+    "country": "Poland",
+    "countryCode": "PL",
+    "title": "Krakow Main Market Square",
+    "operator": "WebCamera.pl",
+    "sourceUrl": "https://www.webcamera.pl/kamera/krakow1/",
+    "verification": {
+      "kind": "hls",
+      "url": "https://hoktastream1.webcamera.pl/krakow_cam_da9ab3/krakow_cam_da9ab3.stream/playlist.m3u8",
+      "allowedHosts": [
+        "hoktastream1.webcamera.pl"
+      ]
+    },
+    "evidence": {
+      "research": "first-half-hls-verification.json"
+    }
+  },
+  {
+    "id": "camera_provider_de_livespotting_hamburg_harbour",
+    "destinationId": "DE:Hamburg",
+    "city": "Hamburg",
+    "country": "Germany",
+    "countryCode": "DE",
+    "title": "Hamburg Cruise Center and harbour",
+    "operator": "Livespotting / B&L Real Estate",
+    "sourceUrl": "https://www.livespotting.tv/deutschland/hamburg/8o4b2fw4",
+    "verification": {
+      "kind": "livespotting",
+      "cameraId": "8o4b2fw4"
+    },
+    "evidence": {
+      "research": "first-half-hls-hamburg.json"
+    }
+  },
+  {
+    "id": "camera_provider_ke_nairobi_wilson_airport",
+    "destinationId": "KE:Nairobi",
+    "city": "Nairobi",
+    "country": "Kenya",
+    "countryCode": "KE",
+    "title": "Nairobi Wilson Airport (camera image)",
+    "operator": "Aero Club of East Africa / Kenya Webcams",
+    "sourceUrl": "https://kenyawebcams.com/webcams/Nairobi/nbo_wilsons.html",
+    "verification": {
+      "kind": "fresh-image",
+      "url": "https://kenyawebcam.com/wilsonsouth/pic/upload.jpg",
+      "allowedHosts": [
+        "kenyawebcam.com"
+      ],
+      "maxAgeSeconds": 900
+    },
+    "evidence": {
+      "research": "nairobi-final-probe.json"
+    }
+  },
+  {
+    "id": "camera_provider_ch_viewsurf_geneva_plainpalais",
+    "destinationId": "CH:Geneva",
+    "city": "Geneva",
+    "country": "Switzerland",
+    "countryCode": "CH",
+    "title": "Geneva Plainpalais panorama",
+    "operator": "Geneve Home Informations / Viewsurf",
+    "sourceUrl": "https://ghi.ch/webcam",
+    "verification": {
+      "kind": "hls",
+      "url": "https://ds2-cache.quanteec.com/contents/encodings/live/ce1aadb0-3392-4ed8-3332-3230-6d61-63-8c1d-9f8ec4e71c96d/master.m3u8",
+      "allowedHosts": [
+        "ds2-cache.quanteec.com"
+      ]
+    },
+    "evidence": {
+      "research": "first-half-hls-geneva.json"
+    }
+  },
+  {
+    "id": "camera_provider_lv_riga_dome_square",
+    "destinationId": "LV:Riga",
+    "city": "Riga",
+    "country": "Latvia",
+    "countryCode": "LV",
+    "title": "Riga Dome Square",
+    "operator": "Baltic Live Cam",
+    "sourceUrl": "https://balticlivecam.com/cameras/latvia/riga/domcik/",
+    "verification": {
+      "kind": "balticlivecam",
+      "cameraId": 187,
+      "streamPath": "/blc/Domu/"
+    }
+  },
+  {
+    "id": "camera_provider_br_rio_copacabana",
+    "destinationId": "BR:Rio_de_Janeiro",
+    "city": "Rio de Janeiro",
+    "country": "Brazil",
+    "countryCode": "BR",
+    "title": "Rio de Janeiro Copacabana Beach",
+    "operator": "SkylineWebcams",
+    "sourceUrl": "https://www.skylinewebcams.com/en/webcam/brasil/rio-de-janeiro/rio-de-janeiro/copacabana-beach.html",
+    "verification": {
+      "kind": "skyline"
+    }
+  },
+  {
+    "id": "camera_provider_ch_zurich_stadthaus",
+    "destinationId": "CH:Zurich",
+    "city": "Zurich",
+    "country": "Switzerland",
+    "countryCode": "CH",
+    "title": "Zurich Stadthaus panorama (camera image)",
+    "operator": "Zurich Tourism / Roundshot",
+    "sourceUrl": "https://zuerichtourismus.roundshot.com/stadthaus/",
+    "verification": {
+      "kind": "roundshot",
+      "cameraId": 86,
+      "imageHost": "storage4.roundshot.com"
+    }
+  },
+  {
+    "id": "camera_provider_nz_queenstown_panorama",
+    "destinationId": "NZ:Queenstown_(New_Zealand)",
+    "city": "Queenstown",
+    "country": "New Zealand",
+    "countryCode": "NZ",
+    "title": "Queenstown panorama (camera image)",
+    "operator": "Carl Smiley / Roundshot",
+    "sourceUrl": "https://queenstown.roundshot.com/",
+    "verification": {
+      "kind": "roundshot",
+      "cameraId": 484,
+      "imageHost": "storage2.roundshot.com"
+    }
+  },
+  {
+    "id": "camera_provider_at_salzburg_airport",
+    "destinationId": "AT:Salzburg",
+    "city": "Salzburg",
+    "country": "Austria",
+    "countryCode": "AT",
+    "title": "Salzburg Airport panorama (camera image)",
+    "operator": "Salzburg Airport / Panomax",
+    "sourceUrl": "https://livecam.salzburg-airport.com/",
+    "verification": {
+      "kind": "fresh-image",
+      "url": "https://panodata.panomax.com/cams/966/preview_og.jpg",
+      "allowedHosts": [
+        "panodata.panomax.com"
+      ],
+      "maxAgeSeconds": 900
+    }
+  },
+  {
+    "id": "camera_provider_at_vienna_city_hall",
+    "destinationId": "AT:Vienna",
+    "city": "Vienna",
+    "country": "Austria",
+    "countryCode": "AT",
+    "title": "Vienna City Hall panorama (camera image)",
+    "operator": "Vienna Tourist Board / Feratel",
+    "sourceUrl": "https://www.wien.info/en/see-do/discover-vienna/webcam-379930",
+    "verification": {
+      "kind": "fresh-image",
+      "url": "https://wtvthmb.feratel.com/thumbnails/5970.jpeg",
+      "allowedHosts": [
+        "wtvthmb.feratel.com"
+      ],
+      "maxAgeSeconds": 900
+    }
+  },
+  {
+    "id": "camera_provider_my_kuala_lumpur_city_traffic",
+    "destinationId": "MY:Kuala_Lumpur",
+    "city": "Kuala Lumpur",
+    "country": "Malaysia",
+    "countryCode": "MY",
+    "title": "Kuala Lumpur city traffic cameras",
+    "operator": "Kuala Lumpur City Hall",
+    "sourceUrl": "https://klccc.dbkl.gov.my/cctv-images/",
+    "verification": {
+      "kind": "page"
+    },
+    "evidence": {
+      "research": "first-half-browser-remaining.json",
+      "note": "Live playback confirmed on the public operator page; server-side status is unavailable and must not be marked live."
+    }
+  },
+  {
+    "id": "camera_provider_ca_ottawa_rideau_sussex",
+    "destinationId": "CA:Ottawa",
+    "city": "Ottawa",
+    "country": "Canada",
+    "countryCode": "CA",
+    "title": "Ottawa Rideau and Sussex (camera image)",
+    "operator": "City of Ottawa",
+    "sourceUrl": "https://traffic.ottawa.ca/en/traffic-map-data-lists-and-resources/traffic-camera-locations?camera=33",
+    "verification": {
+      "kind": "fresh-image",
+      "url": "https://traffic.ottawa.ca/camera?id=33",
+      "allowedHosts": [
+        "traffic.ottawa.ca"
+      ],
+      "updateIntervalSeconds": 5,
+      "maxAgeSeconds": 180
+    },
+    "evidence": {
+      "research": "ottawa-verified.json"
+    }
+  },
+  {
+    "id": "camera_provider_au_perth_swan_river",
+    "destinationId": "AU:Perth",
+    "city": "Perth",
+    "country": "Australia",
+    "countryCode": "AU",
+    "title": "Perth Swan River at Burswood",
+    "operator": "Waterski WA",
+    "sourceUrl": "https://www.waterskiwa.com.au/live-water-cameras/",
+    "verification": {
+      "kind": "ipcamlive",
+      "alias": "skisouth"
+    },
+    "evidence": {
+      "research": "perth-water-camera-browser.json"
+    }
+  }
+]
