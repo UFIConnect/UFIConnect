@@ -1387,7 +1387,10 @@ input, textarea, select { font-family: inherit; }
 .jobs-page-rail-options > * { flex-shrink: 0; }
 @media (min-width: 769px) {
   /* Let sticky rails reach the viewport bottom even at the end of a short feed. */
-  .shell .main:has(.home-feed-right-tabs, .jobs-page-right-tabs) { padding-bottom: 0; }
+  .shell .shell-content > .main:has(.home-feed-right-tabs, .jobs-page-right-tabs) { padding-bottom: 0; }
+  html[data-ufi-app] .jobs-page-right-tabs {
+    --jobs-rail-top: calc(var(--app-header-height) + var(--app-safe-top) + 16px);
+  }
 }
 @media (min-width: 769px) and (max-width: 1100px) {
   .jobs-page-right-tabs { --jobs-rail-top: 92px; }
