@@ -41,6 +41,18 @@ const server = await createServer({ root: path.join(root, 'web'), configFile: pa
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api') },
   server: { host: '127.0.0.1', port: 5209, strictPort: false, proxy: { '/api': { target: app.base, rewrite: p => p.replace(/^\/api/, '') } } },
 });
+async function openComposer(page, name) {
+  const [accounts] = await Promise.all([
+    page.waitForResponse(response => response.request().method() === 'GET' && new URL(response.url()).pathname === '/api/social/platforms'),
+    page.getByRole('button', { name: 'Post', exact: true }).click(),
+  ]);
+  assert.equal(accounts.status(), 200, 'Publishing destinations must load before submitting');
+  const form = page.getByRole('form', { name, exact: true });
+  await form.waitFor();
+  // Removing the loading row moves Publish. Submit only after that layout update.
+  await form.getByRole('status').filter({ hasText: 'Loading connected accounts' }).waitFor({ state: 'hidden' });
+  return form;
+}
 let browser;
 try {
   await server.listen();
@@ -61,9 +73,7 @@ try {
       // Wait for the destination area to commit before using its shared Post label.
       await page.getByRole('button', { name: 'Filter UFI posts by topic', exact: true })
         .waitFor({ state: area === 'Shop' ? 'hidden' : 'visible' });
-      await page.getByRole('button', { name: 'Post', exact: true }).click();
-      const form = page.getByRole('form', { name: `Create ${area} post`, exact: true });
-      await form.waitFor();
+      const form = await openComposer(page, `Create ${area} post`);
       assert.equal(await form.getByText('Post to:', { exact: true }).count(), 0);
       const bodyInput = area === 'Shop' ? form.getByLabel('Description', { exact: true }) : form.getByRole('textbox');
       assert.equal(await bodyInput.inputValue(), '');
@@ -88,8 +98,7 @@ try {
       if (area === 'Shop') {
         assert.equal(await page.getByText('A useful technology update from our joined community.', { exact: true }).count(), 0);
       }
-      await page.getByRole('button', { name: 'Post', exact: true }).click();
-      const draftForm = page.getByRole('form', { name: `Create ${area} post`, exact: true });
+      const draftForm = await openComposer(page, `Create ${area} post`);
       const draftInput = area === 'Shop' ? draftForm.getByLabel('Description', { exact: true }) : draftForm.getByRole('textbox');
       await draftInput.fill('Unsubmitted draft stays in its posting area.');
       if (area === 'Shop') {
@@ -104,8 +113,7 @@ try {
     // Wait for this group's content before using a shared button label.
     const groupName = app.groups.find(group => group.id === 'ufi-tech').name;
     await page.getByRole('heading', { name: groupName, exact: true }).waitFor();
-    await page.getByRole('button', { name: 'Post', exact: true }).click();
-    const groupForm = page.getByRole('form', { name: `Create post in ${groupName}`, exact: true });
+    const groupForm = await openComposer(page, `Create post in ${groupName}`);
     assert.equal(await groupForm.getByRole('textbox').inputValue(), '', 'Group composer must not inherit the Shop draft');
     await groupForm.getByRole('textbox').fill(`Technology community update for ${width}.`);
     const groupResponse = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/groups/ufi-tech/posts'));
