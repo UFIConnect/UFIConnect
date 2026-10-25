@@ -135,14 +135,17 @@ try {
     await page.evaluate(() => window.dispatchEvent(new CustomEvent('ufi-post-engagement-updated', { detail: {
       postId: 'mastodon-refresh', source: 'mastodon', sourceUrl: 'https://social.example/@reader/123', action: 'like', sourceLikesCount: 7, sourceLikedByMe: true,
     } })));
-    await card.locator('.post-chrome-like-count').filter({ hasText: '7 likes' }).waitFor();
+    await card.getByRole('button', { name: 'Unlike on Mastodon, 7 likes', exact: true }).waitFor();
+    assert.equal(await card.locator('.post-chrome-like-count').innerText(), '7');
     const oldFeedResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/api/office/feed');
     holdFeed = false; releaseFeed(); await oldFeedResponse;
     await page.waitForTimeout(100);
-    assert.equal(await card.locator('.post-chrome-like-count').innerText(), '7 likes', 'An older feed read cannot undo a confirmed source metric');
+    assert.equal(await card.locator('.post-chrome-like-count').innerText(), '7', 'An older feed read cannot undo a confirmed source metric');
+    assert.match(await card.getByRole('button', { name: 'Unlike on Mastodon, 7 likes', exact: true }).getAttribute('title'), /7 likes$/, 'Confirmed compact count retains its full label');
     external.sourceLikesCount = 9; external.sourceLikedByMe = true;
     await page.evaluate(() => window.dispatchEvent(new Event('ufi:refresh-selected-feed')));
-    await card.locator('.post-chrome-like-count').filter({ hasText: '9 likes' }).waitFor();
+    await card.getByRole('button', { name: 'Unlike on Mastodon, 9 likes', exact: true }).waitFor();
+    assert.equal(await card.locator('.post-chrome-like-count').innerText(), '9');
 
     // Videos: the queue count updates with the comments sheet and failed reads retain replies.
     await auditNavigate(page, base + 'videos');
