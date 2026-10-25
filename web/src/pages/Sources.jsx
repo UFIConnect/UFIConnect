@@ -1,3 +1,4 @@
+import { timeAgo as relativeTime } from '../utils/postTime.mjs';
 ﻿import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { safePostLink } from '../../../backend/post-links.mjs';
@@ -113,15 +114,6 @@ function HealthDot({ postCount, lastFetch }) {
   );
 }
 
-function relativeTime(iso) {
-  if (!iso) return null;
-  const diff = Date.now() - new Date(iso).getTime();
-  const m = Math.floor(diff / 60000);
-  if (m < 60)  return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24)  return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
-}
 
 function SourceRow({ sourceId, health, enabled, onToggle, expanded, onExpand, saving }) {
   const meta = SOURCE_META[sourceId] || { label: sourceId, icon: 'SRC', color: '#6366F1', desc: '' };

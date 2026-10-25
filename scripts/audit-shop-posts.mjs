@@ -116,7 +116,8 @@ try {
     const likeControl = listing.getByRole('button', { name: 'Like, 0 likes', exact: true });
     await likeControl.waitFor();
     assert.equal(await listing.locator('.post-chrome-like > .post-chrome-action').count(), 1, 'One Shop control combines like and count');
-    assert.equal(await likeControl.locator('.post-chrome-like-count').innerText(), '0 likes');
+    assert.equal(await likeControl.locator('.post-chrome-like-count').innerText(), '0');
+    assert.match(await likeControl.getAttribute('title'), /0 likes$/, 'Compact Shop count retains its full label');
     assert.deepEqual(likeWrites, [], 'Viewing the Shop count does not submit a like');
     await auditReload(page);
     await likeControl.waitFor();

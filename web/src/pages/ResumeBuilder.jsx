@@ -482,7 +482,7 @@ function PreparationLibrary({ watchedIds, onToggleWatched, saving }) {
     setSelectedVideoId(video.id);
     setPlayingVideoId(video.id);
     window.requestAnimationFrame(() => {
-      document.getElementById('resume-preparation-player')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      document.getElementById('resume-preparation-player')?.scrollIntoView({ behavior: 'instant', block: 'start' });
     });
   }
 

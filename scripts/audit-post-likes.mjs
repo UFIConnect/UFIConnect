@@ -82,7 +82,8 @@ try {
     const guestLike = page.getByRole('link', { name: 'Sign in to like, 47 stars', exact: true });
     await guestLike.waitFor();
     assert.equal(await guestLike.count(), 1);
-    assert.equal(await guestLike.locator('.post-chrome-like-count').innerText(), '47 stars');
+    assert.equal(await guestLike.locator('.post-chrome-like-count').innerText(), '47');
+    assert.match(await guestLike.getAttribute('title'), /47 stars$/, 'Compact guest count retains its full provider label');
     assert.equal(writes, 0);
     await auditNavigate(page, base + 'p/audit-likes');
     await page.goto(base + 'p/audit-likes', { waitUntil: 'domcontentloaded' });
@@ -107,7 +108,7 @@ try {
     await page.getByRole('button', { name: 'Remove star on GitHub, 47 stars', exact: true }).waitFor();
     assert.equal(writes, 1);
     assert.equal(requests[0].sourceUrl, post.sourceUrl);
-    assert.equal(await page.locator('.post-chrome-like-count').innerText(), '47 stars', 'Provider counts do not use the local reaction count');
+    assert.equal(await page.locator('.post-chrome-like-count').innerText(), '47', 'Provider counts do not use the local reaction count');
     failWrite = true;
     await page.getByRole('button', { name: 'Remove star on GitHub, 47 stars', exact: true }).click();
     await page.getByText('The source did not confirm this action.', { exact: true }).waitFor();
@@ -159,7 +160,8 @@ try {
     await page.getByRole('button', { name: 'Like, 2 likes', exact: true }).click();
     const nativeLike = page.getByRole('button', { name: 'Unlike, 3 likes', exact: true });
     await nativeLike.waitFor();
-    assert.equal(await nativeLike.locator('.post-chrome-like-count').innerText(), '3 likes');
+    assert.equal(await nativeLike.locator('.post-chrome-like-count').innerText(), '3');
+    assert.match(await nativeLike.getAttribute('title'), /3 likes$/, 'Compact native count retains its full label');
     assert.equal(writes, 5, 'Native likes use the persisted UFI endpoint');
     assert.deepEqual(errors, []);
     console.log(`PASS ${viewport.width}px: combined action/count, guest/member gates, provider like/unlike, idempotent failure retry, disconnect, Home and Videos`);

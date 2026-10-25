@@ -128,7 +128,7 @@ services:
       - key: BACKUP_DB_RESET_PCT
         value: '85'
       - key: ALLOWED_ORIGINS
-        value: https://uficonnect.org,https://www.uficonnect.org,https://uficonnect.pro,https://www.uficonnect.pro,https://uficonnect-web.onrender.com,https://office.uficonnect.org,https://uficonnect-office.onrender.com,https://app.uficonnect.org
+        value: https://uficonnect.org,https://www.uficonnect.org,https://uficonnect.pro,https://www.uficonnect.pro,https://uficonnect-web.onrender.com,https://office.uficonnect.org,https://uficonnect-office.onrender.com,https://app.uficonnect.org,https://ufic--review-20261010.expo.app
       # Only these public sites may embed the isolated optional Google tag.
       # Add the Expo web deployment's exact origin when hosting it elsewhere.
       - key: ANALYTICS_PARENT_ORIGINS

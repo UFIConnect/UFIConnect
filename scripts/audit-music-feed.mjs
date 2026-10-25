@@ -61,9 +61,30 @@ try {
       return first?.paused && next && !next.paused && next.currentTime > 0;
     });
     await page.waitForTimeout(250);
+    const beforeReturn = calls.length;
     await scroll.evaluate(el => el.scrollTo(0, 0));
-    await page.waitForTimeout(500);
-    assert.ok(calls.some(p => p.get('bust') === '1'));
+    await page.waitForTimeout(500); // Includes the hook's 120ms native top-arrival guard.
+    assert.equal(calls.length, beforeReturn, 'Ordinary return to the top preserves the loaded Music queue');
+    assert.equal(calls.some(p => p.get('bust') === '1'), false, 'Ordinary scrolling does not refresh Music');
+    const refreshed = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname.endsWith('/office/feed/music') && url.searchParams.get('bust') === '1';
+    });
+    await scroll.evaluate((element, touch) => {
+      if (!touch) {
+        element.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }));
+        return;
+      }
+      const point = y => new Touch({ identifier: 1, target: element, clientX: 120, clientY: y });
+      for (const [type, y] of [['touchstart', 100], ['touchmove', 180], ['touchend', 180]]) {
+        const current = point(y);
+        element.dispatchEvent(new TouchEvent(type, { bubbles: true, touches: type === 'touchend' ? [] : [current], changedTouches: [current] }));
+      }
+    }, width < 1000);
+    await refreshed;
+    await page.waitForFunction(() => !document.querySelector('[aria-label="Refresh videos"]').disabled);
+    assert.equal(calls.length, beforeReturn + 1, 'One deliberate top gesture makes one fresh Music request');
+    assert.equal(calls.filter(p => p.get('bust') === '1').length, 1);
     await page.getByRole('button', { name: 'Filter videos', exact: true }).click();
     await page.getByRole('button', { name: 'Acoustic', exact: true }).click();
     await page.waitForTimeout(300);
