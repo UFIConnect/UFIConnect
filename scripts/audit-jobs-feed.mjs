@@ -160,11 +160,16 @@ try {
     assert.equal(await listing.getByRole('tab', { name: 'Required qualifications', exact: true }).getAttribute('aria-selected'), 'true');
     assert.equal(await listing.getByRole('tab', { name: 'Required qualifications', exact: true }).evaluate(element => document.activeElement === element), true);
     assert.match(await panel.textContent(), /Experience delivering accessible web applications\./);
-    await page.keyboard.press('End');
+    await page.keyboard.press('ArrowRight');
     await listing.getByRole('tab', { name: 'Benefits', exact: true, selected: true }).waitFor();
     assert.equal(await listing.getByRole('tab', { name: 'Benefits', exact: true }).getAttribute('aria-selected'), 'true');
     assert.equal(await listing.getByRole('tab', { name: 'Benefits', exact: true }).evaluate(element => document.activeElement === element), true);
     assert.match(await panel.textContent(), /Paid leave as described by the employer\./);
+    await page.keyboard.press('End');
+    await listing.getByRole('tab', { name: 'Job description', exact: true, selected: true }).waitFor();
+    assert.equal(await listing.getByRole('tab', { name: 'Job description', exact: true }).getAttribute('aria-selected'), 'true');
+    assert.equal(await listing.getByRole('tab', { name: 'Job description', exact: true }).evaluate(element => document.activeElement === element), true);
+    assert.match(await panel.textContent(), /Build and maintain products with an experienced team\. Review the role and requirements\./);
     assert.ok(await listing.evaluate(element => {
       const box = element.getBoundingClientRect();
       return box.left > 0 && box.right < innerWidth && box.top >= 0 && box.bottom <= innerHeight;
