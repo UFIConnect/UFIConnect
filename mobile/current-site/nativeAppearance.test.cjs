@@ -1,6 +1,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { nativeAppearance, documentAppearance, observeNativeAppearance } = require('./nativeAppearance.cjs');
+const { nativeAppearance, documentAppearance, observeNativeAppearance, localTimeAppearance } = require('./nativeAppearance.cjs');
+
+test('native startup follows local daytime boundaries before the DOM supplies the saved choice', () => {
+  for (const [hour, minute, second, expected] of [
+    [0, 0, 0, 'dark'], [5, 59, 59, 'dark'], [6, 0, 0, 'light'], [12, 0, 0, 'light'],
+    [19, 59, 59, 'light'], [20, 0, 0, 'dark'], [23, 59, 59, 'dark'],
+  ]) assert.equal(localTimeAppearance(new Date(2026, 9, 18, hour, minute, second)), expected);
+  assert.equal(localTimeAppearance(new Date(NaN)), 'light', 'An invalid clock must not force a dark fallback');
+});
 
 function fixture() {
   const surfaces = new Set(), listeners = new Map(), frames = new Map();
@@ -96,4 +104,49 @@ test('observer teardown prevents a queued bridge call after WebView replacement'
   cleanup();
   await Promise.resolve();
   assert.deepEqual(changes, []);
+});
+
+test('native chrome keeps the explicit DOM appearance across foreground events and restores it after media', async () => {
+  const f = fixture(), changes = [];
+  f.document.documentElement.dataset.theme = 'dark';
+  const cleanup = observeNativeAppearance({ ...f, onChange: mode => changes.push(mode) });
+  await Promise.resolve();
+  f.listeners.get('ufi:appearance')(); await f.flush();
+  assert.deepEqual(changes, ['dark'], 'A manual dark choice must not follow the startup clock');
+  f.surfaces.add('.snap-viewer-feed[open]'); f.mutate(); await f.flush();
+  assert.equal(changes.at(-1), 'snap');
+  f.document.documentElement.dataset.theme = 'light'; f.listeners.get('ufi:appearance')(); await f.flush();
+  assert.equal(changes.at(-1), 'snap', 'Open media keeps its own native palette');
+  f.surfaces.clear(); f.mutate(); await f.flush();
+  assert.equal(changes.at(-1), 'light', 'Closing media restores the newly selected manual appearance');
+  cleanup();
+});
+
+test('fullscreen Snap camera uses the Snap palette and restores the underlying feed or manual choice', async () => {
+  const camera = '.snap-composer.snap-composer-camera[open]';
+  for (const theme of ['light', 'dark']) {
+    const f = fixture(), changes = [];
+    f.document.documentElement.dataset.theme = theme;
+    f.surfaces.add('.snap-composer[open]');
+    f.surfaces.add('.snap-composer.snap-composer-camera');
+    const cleanup = observeNativeAppearance({ ...f, onChange: mode => changes.push(mode) });
+    await Promise.resolve();
+    assert.equal(changes.at(-1), theme, 'A normal composer or closed camera must preserve the selected theme');
+    f.surfaces.add('.video-feed-view'); f.mutate(); await f.flush();
+    assert.equal(changes.at(-1), 'video');
+    f.surfaces.add(camera); f.mutate(); await f.flush();
+    assert.equal(changes.at(-1), 'snap', 'The open camera occupies the top layer above its underlying feed');
+    assert.deepEqual(nativeAppearance(changes.at(-1)), { backgroundColor: '#080c12', statusBar: 'light' });
+    f.surfaces.delete(camera); f.mutate(); await f.flush();
+    assert.equal(changes.at(-1), 'video', 'Closing camera restores the video surface');
+    f.surfaces.delete('.video-feed-view'); f.surfaces.add(camera); f.mutate(); await f.flush();
+    assert.equal(changes.at(-1), 'snap');
+    const nextTheme = theme === 'light' ? 'dark' : 'light';
+    f.document.documentElement.dataset.theme = nextTheme;
+    f.listeners.get('ufi:appearance')(); await f.flush();
+    assert.equal(changes.at(-1), 'snap', 'Camera keeps its palette while the underlying theme changes');
+    f.surfaces.delete(camera); f.mutate(); await f.flush();
+    assert.equal(changes.at(-1), nextTheme, 'Closing camera restores the current manual choice');
+    cleanup();
+  }
 });

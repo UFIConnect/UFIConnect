@@ -6,12 +6,16 @@ html, body, #root { width: 100%; min-height: 100%; }
 html[data-ufi-app] {
   --app-safe-top: 0px;
   --app-safe-bottom: 0px;
+  --app-safe-left: 0px;
+  --app-safe-right: 0px;
   --app-header-height: 58px;
   --app-bottom-height: 56px;
 }
 html[data-ufi-app="web"] {
   --app-safe-top: env(safe-area-inset-top, 0px);
   --app-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --app-safe-left: env(safe-area-inset-left, 0px);
+  --app-safe-right: env(safe-area-inset-right, 0px);
 }
 html[data-ufi-app] body,
 html[data-ufi-app] #root,
@@ -39,6 +43,8 @@ html[data-ufi-app] .shell-content:has(> .global-app-header) .home-feed-right-tab
   html[data-ufi-app] .shell .main {
     padding: 10px 8px calc(var(--app-bottom-height) + var(--app-safe-bottom) + 8px);
   }
+  /* Media has no outer bars; the native host owns its safe-area space. */
+  html[data-ufi-app] .shell.shell-media-page .main { padding: 0; }
   html[data-ufi-app] .shell .bottom-nav {
     bottom: 0; min-height: calc(var(--app-bottom-height) + var(--app-safe-bottom));
     padding-bottom: var(--app-safe-bottom);
