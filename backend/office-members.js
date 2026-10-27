@@ -1,10 +1,14 @@
 'use strict';
 
-const { createHash } = require('node:crypto');
+const { createHash, createHmac, timingSafeEqual } = require('node:crypto');
 const { rateLimit } = require('express-rate-limit');
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const OUTCOMES = ['created', 'invalid', 'duplicate', 'limited', 'unavailable', 'failed'];
 const REGISTRATION_HISTORY_START = '2026-05-01';
+const EMAIL_PLACEHOLDER = /\[[A-Z][A-Z0-9_]{1,80}\]/;
+const EMAIL_BATCH_SIZE = 5;
+const EMAIL_SELECTION_LIMIT = 1000;
+const EMAIL_SELECTION_TTL_MS = 30 * 60 * 1000;
 const OFFICE_MEMBERS_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS signup_daily_counts (
     day DATE NOT NULL, outcome TEXT NOT NULL CHECK(outcome IN ('created','invalid','duplicate','limited','unavailable','failed')),
@@ -22,6 +26,9 @@ const OFFICE_MEMBERS_SCHEMA = [
     status TEXT NOT NULL CHECK(status IN ('sending','accepted','failed','uncertain')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
   `CREATE INDEX IF NOT EXISTS office_member_email_created ON office_member_email(created_at)`,
+  `CREATE TABLE IF NOT EXISTS office_member_email_campaign (
+    id UUID PRIMARY KEY, payload_hash CHAR(64) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
   `CREATE TABLE IF NOT EXISTS office_user_cache_epoch (id INTEGER PRIMARY KEY CHECK(id=1), version BIGINT NOT NULL DEFAULT 0)`,
   `INSERT INTO office_user_cache_epoch(id,version) VALUES(1,0) ON CONFLICT(id) DO NOTHING`,
 ];
@@ -31,6 +38,27 @@ const deliveryStatusSql = `CASE WHEN status='sending' AND updated_at < NOW() - I
   THEN 'uncertain' ELSE status END`;
 const addressOf = value => typeof value === 'string' ? value.trim().toLowerCase()
   : typeof value?.address === 'string' ? value.address.trim().toLowerCase() : '';
+const digest = value => createHash('sha256').update(value).digest('hex');
+function emailEligibility(value) {
+  const address = addressOf(value);
+  if (!address || /@identity\.uficonnect\.invalid$/i.test(address)) return 'missingEmail';
+  if (address.length > 254 || !/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/i.test(address)) return 'invalidAddress';
+  const domain = address.split('@')[1];
+  if (/(?:^|\.)example\.(?:com|net|org)$|(?:^|\.)(?:invalid|test|localhost|example)$/.test(domain)) return 'reservedAddress';
+  return null;
+}
+function validateEmailText(body) {
+  if (typeof body?.subject !== 'string' || !body.subject.trim() || body.subject.length > 160 || /[\r\n\x00-\x1f]/.test(body.subject)
+    || typeof body?.message !== 'string' || !body.message.trim() || body.message.length > 10000 || body.message.includes('\0')) {
+    throw failure(400, 'Use a subject of up to 160 characters and a message of up to 10,000 characters.');
+  }
+  if (EMAIL_PLACEHOLDER.test(body.subject) || EMAIL_PLACEHOLDER.test(body.message)) throw failure(400, 'Replace every template placeholder before sending.');
+  return { subject: body.subject.trim(), message: body.message.trim() };
+}
+function recipientRequestId(campaign, userId) {
+  const hash = digest(`office-email-recipient-v1:${campaign.toLowerCase()}:${userId.toLowerCase()}`);
+  return `${hash.slice(0,8)}-${hash.slice(8,12)}-5${hash.slice(13,16)}-a${hash.slice(17,20)}-${hash.slice(20,32)}`;
+}
 function explicitMailRejection(error) {
   if (error?.code === 'EAUTH') return true;
   const code = Number(error?.responseCode);
@@ -42,9 +70,11 @@ function explicitMailRejection(error) {
 }
 
 function createOfficeMembers({ db, getCachedUserIds = () => [], clearUserCache = () => 0,
-  mailAvailable = () => false, sendMail = async () => { throw failure(503, 'Email delivery is not configured.'); }, schedule = setInterval }) {
+  mailAvailable = () => false, sendMail = async () => { throw failure(503, 'Email delivery is not configured.'); }, schedule = setInterval,
+  emailPreviewSecret = '', now = Date.now }) {
   let lastPrunedDay = '';
   let cacheVersion = 0;
+  let batchRunning = false;
   async function refreshCacheEpoch() {
     if (!db.isConnected()) return;
     const { rows: [row] } = await db.query('SELECT version FROM office_user_cache_epoch WHERE id=1');
@@ -179,23 +209,58 @@ function createOfficeMembers({ db, getCachedUserIds = () => [], clearUserCache =
   async function email(userId, body) {
     available();
     if (!UUID.test(userId) || !body || Object.keys(body).some(key => !['subject','message','requestId'].includes(key))
-      || typeof body.subject !== 'string' || !body.subject.trim() || body.subject.length > 160 || /[\r\n\x00-\x1f]/.test(body.subject)
-      || typeof body.message !== 'string' || !body.message.trim() || body.message.length > 10000 || body.message.includes('\0')
       || !UUID.test(body.requestId || '')) throw failure(400, 'Use a subject of up to 160 characters and a message of up to 10,000 characters.');
+    validateEmailText(body);
+    return deliverEmail(userId, body);
+  }
+  async function deliverEmail(userId, body, { reviewedAddress = null, bounded = false } = {}) {
     if (!mailAvailable()) throw failure(503, 'Email delivery is not configured.');
+    const subject = body.subject.trim(), message = body.message.trim();
+    const hash = digest(JSON.stringify([userId, subject, message]));
+    // Replay recorded outcomes even if the account/address changed afterwards.
+    const replay = async runner => {
+      const { rows: [existing] } = await runner.query(`SELECT payload_hash,${deliveryStatusSql} AS status FROM office_member_email WHERE id=$1`, [body.requestId]);
+      if (!existing) return null;
+      if (existing.payload_hash !== hash) throw failure(409, 'This request reference belongs to a different message.');
+      return { ok: existing.status === 'accepted', status: existing.status, requestId: body.requestId,
+        message: existing.status === 'accepted' ? 'Accepted by the email provider.' : 'This submission is already recorded. Check its status before sending another message.' };
+    };
+    const previous = await replay(db);
+    if (previous) return previous;
     const { rows: [user] } = await db.query('SELECT email FROM users WHERE id=$1', [userId]);
     if (!user) throw failure(404, 'Account not found.');
     if (!user.email || /@identity\.uficonnect\.invalid$/i.test(user.email)) throw failure(422, 'This account has not added an email address.');
-    const subject = body.subject.trim(), message = body.message.trim();
-    const hash = createHash('sha256').update(JSON.stringify([userId, subject, message])).digest('hex');
-    const { rows: claimed } = await db.query(`INSERT INTO office_member_email(id,user_id,subject,payload_hash,status)
-      VALUES($1,$2,$3,$4,'sending') ON CONFLICT(id) DO NOTHING RETURNING id`, [body.requestId, userId, subject, hash]);
-    if (!claimed.length) {
-      const { rows: [existing] } = await db.query(`SELECT payload_hash,${deliveryStatusSql} AS status FROM office_member_email WHERE id=$1`, [body.requestId]);
-      if (existing?.payload_hash !== hash) throw failure(409, 'This request reference belongs to a different message.');
-      return { ok: existing.status === 'accepted', status: existing.status, requestId: body.requestId,
-        message: existing.status === 'accepted' ? 'Accepted by the email provider.' : 'This submission is already recorded. Check its status before sending another message.' };
+    if (reviewedAddress && (emailEligibility(user.email) || digest(addressOf(user.email)) !== reviewedAddress)) {
+      throw failure(422, 'The recipient address changed or is no longer eligible. Review this account again.');
     }
+    const claim = runner => runner.query(`INSERT INTO office_member_email(id,user_id,subject,payload_hash,status)
+      VALUES($1,$2,$3,$4,'sending') ON CONFLICT(id) DO NOTHING RETURNING id`, [body.requestId, userId, subject, hash]);
+    let claimResult;
+    if (bounded) {
+      if (typeof db.withClient !== 'function') throw failure(503, 'Email coordination is temporarily unavailable.');
+      claimResult = await db.withClient(async client => {
+        await client.query('BEGIN');
+        try {
+          // Serialize short claim transactions across API workers; never hold
+          // the lock while contacting the mail provider.
+          await client.query('LOCK TABLE office_member_email IN SHARE ROW EXCLUSIVE MODE');
+          const recorded = await replay(client);
+          if (recorded) { await client.query('COMMIT'); return { recorded }; }
+          const { rows: [capacity] } = await client.query(`SELECT
+            COUNT(*) FILTER(WHERE created_at >= NOW()-INTERVAL '1 minute')::int AS recent,
+            COUNT(*) FILTER(WHERE status='sending' AND updated_at >= NOW()-INTERVAL '2 minutes')::int AS sending
+            FROM office_member_email WHERE created_at >= NOW()-INTERVAL '2 minutes'`);
+          if (capacity.recent >= 60 || capacity.sending >= 3) {
+            await client.query('COMMIT'); return { limited: true };
+          }
+          const claimed = await claim(client);
+          await client.query('COMMIT'); return claimed;
+        } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
+      });
+    } else claimResult = await claim(db);
+    if (claimResult.recorded) return claimResult.recorded;
+    if (claimResult.limited) return { ok: false, status: 'limited', requestId: body.requestId, message: 'Email capacity is busy. Continue this same campaign later.' };
+    if (!claimResult.rows.length) return await replay(db) || { ok: false, status: 'uncertain', requestId: body.requestId, message: 'Check this submission before sending again.' };
     let status = 'uncertain';
     try {
       const result = await sendMail({ to: user.email, subject, text: message });
@@ -212,6 +277,103 @@ function createOfficeMembers({ db, getCachedUserIds = () => [], clearUserCache =
       message: status === 'accepted' ? 'Accepted by the email provider. Inbox delivery depends on the recipient’s mail service.'
         : status === 'failed' ? 'The email provider rejected this message.' : 'Delivery could not be confirmed. Check the provider before sending again.' };
   }
+  function signSelection(payload) {
+    if (typeof emailPreviewSecret !== 'string' || emailPreviewSecret.length < 24) throw failure(503, 'Email review is not configured.');
+    return createHmac('sha256', emailPreviewSecret).update('office-email-selection-v1.').update(payload).digest('base64url');
+  }
+  function readSelection(token) {
+    if (typeof token !== 'string' || token.length > 180000) throw failure(400, 'Preview and review the recipients before sending.');
+    const parts = token.split('.');
+    if (parts.length !== 2 || !/^[A-Za-z0-9_-]+$/.test(parts[0]) || !/^[A-Za-z0-9_-]{43}$/.test(parts[1])) throw failure(400, 'Invalid recipient review.');
+    const expected = Buffer.from(signSelection(parts[0])), received = Buffer.from(parts[1]);
+    if (expected.length !== received.length || !timingSafeEqual(expected, received)) throw failure(400, 'Invalid recipient review.');
+    let value;
+    try { value = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8')); } catch { throw failure(400, 'Invalid recipient review.'); }
+    if (value.version !== 1 || !Number.isSafeInteger(value.expiresAt) || !Array.isArray(value.recipients)
+      || value.recipients.length > EMAIL_SELECTION_LIMIT || value.recipients.some(row => !UUID.test(row.id) || !/^[a-f0-9]{64}$/.test(row.addressHash))) throw failure(400, 'Invalid recipient review.');
+    return value;
+  }
+  function validIds(value, limit = EMAIL_SELECTION_LIMIT) {
+    if (!Array.isArray(value) || !value.length || value.length > limit || value.some(id => typeof id !== 'string' || !UUID.test(id))) throw failure(400, 'Choose valid account IDs.');
+    const ids = value.map(id => id.toLowerCase());
+    if (new Set(ids).size !== ids.length) throw failure(400, 'Choose each account only once.');
+    return ids;
+  }
+  async function emailPreview(body) {
+    available();
+    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => !['filter','userIds'].includes(key))
+      || (body.filter === undefined) === (body.userIds === undefined)) throw failure(400, 'Choose account IDs or an account filter.');
+    let rows, missingAccount = 0;
+    if (body.userIds !== undefined) {
+      const ids = validIds(body.userIds);
+      ({ rows } = await db.query('SELECT id,name,email FROM users WHERE id=ANY($1::uuid[]) ORDER BY created_at DESC,id', [ids]));
+      missingAccount = ids.length - rows.length;
+    } else {
+      const filter = body.filter;
+      if (!filter || typeof filter !== 'object' || Array.isArray(filter) || Object.keys(filter).some(key => !['q','state','days','excludeUserIds'].includes(key))) throw failure(400, 'Invalid account filter.');
+      const search = filter.q ?? '', state = filter.state ?? 'all';
+      const since = filter.days === 'since_may' ? REGISTRATION_HISTORY_START : null;
+      const days = filter.days == null || filter.days === 'all' || since ? null : Number(filter.days);
+      if (typeof search !== 'string' || search.length > 160 || !['all','complete','incomplete','hidden'].includes(state)
+        || (days !== null && ![30,120].includes(days))) throw failure(400, 'Invalid account filter.');
+      const excluded = filter.excludeUserIds?.length === 0 || filter.excludeUserIds === undefined ? [] : validIds(filter.excludeUserIds);
+      ({ rows } = await db.query(`SELECT id,name,email FROM users
+        WHERE ($1='' OR id::text=$1 OR strpos(lower(name),lower($1))>0 OR strpos(lower(CASE WHEN email LIKE '%@identity.uficonnect.invalid' THEN '' ELSE email END),lower($1))>0)
+        AND ($2='all' OR ($2='complete' AND COALESCE(onboarding_complete,false)) OR ($2='incomplete' AND NOT COALESCE(onboarding_complete,false))
+          OR ($2='hidden' AND (profile_hidden IS TRUE OR COALESCE(role_settings->>'privacy_publicProfile','true')='false')))
+        AND ($3::integer IS NULL OR created_at >= (date_trunc('day',NOW() AT TIME ZONE 'UTC') - ($3::integer-1)*INTERVAL '1 day') AT TIME ZONE 'UTC')
+        AND ($4::date IS NULL OR created_at >= $4::date::timestamp AT TIME ZONE 'UTC')
+        AND NOT(id=ANY($5::uuid[])) ORDER BY created_at DESC,id LIMIT $6`, [search.trim(), state, days, since, excluded, EMAIL_SELECTION_LIMIT + 1]));
+    }
+    if (rows.length > EMAIL_SELECTION_LIMIT) throw failure(413, 'Narrow the account filter before reviewing recipients.');
+    const excluded = { missingEmail: 0, reservedAddress: 0, invalidAddress: 0, duplicateAddress: 0, missingAccount };
+    const addresses = new Set(), recipients = [];
+    for (const row of rows) {
+      const reason = emailEligibility(row.email), address = addressOf(row.email);
+      if (reason) { excluded[reason]++; continue; }
+      if (addresses.has(address)) { excluded.duplicateAddress++; continue; }
+      addresses.add(address); recipients.push({ id: row.id, name: row.name, email: address });
+    }
+    const expiresAt = now() + EMAIL_SELECTION_TTL_MS;
+    const payload = Buffer.from(JSON.stringify({ version: 1, expiresAt,
+      recipients: recipients.map(row => ({ id: row.id, addressHash: digest(row.email) })).sort((a,b) => a.id.localeCompare(b.id)) })).toString('base64url');
+    return { recipients, totalMatched: rows.length + missingAccount, eligibleCount: recipients.length, excluded,
+      emailAvailable: Boolean(mailAvailable()), batchSize: EMAIL_BATCH_SIZE, expiresAt: new Date(expiresAt).toISOString(), selectionToken: `${payload}.${signSelection(payload)}` };
+  }
+  async function emailBatch(body) {
+    available();
+    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => !['requestId','selectionToken','userIds','subject','message','confirmed'].includes(key))
+      || !UUID.test(body.requestId || '') || body.confirmed !== true) throw failure(400, 'Review and confirm the recipients and message before sending.');
+    const { subject, message } = validateEmailText(body), ids = validIds(body.userIds, EMAIL_BATCH_SIZE);
+    const selection = readSelection(body.selectionToken), reviewed = new Map(selection.recipients.map(row => [row.id, row.addressHash]));
+    if (ids.some(id => !reviewed.has(id))) throw failure(400, 'An account was not included in the reviewed recipient selection.');
+    if (!mailAvailable()) throw failure(503, 'Email delivery is not configured.');
+    const campaign = body.requestId.toLowerCase(), hash = digest(JSON.stringify([selection.recipients, subject, message]));
+    const { rows: [existing] } = await db.query('SELECT payload_hash,created_at FROM office_member_email_campaign WHERE id=$1', [campaign]);
+    if (existing && existing.payload_hash !== hash) throw failure(409, 'This campaign reference belongs to different recipients or message text.');
+    // Claims remain for 90 days; a campaign cannot outlive those deduplication
+    // records and accidentally send again after their normal pruning.
+    if (existing && now() - Date.parse(existing.created_at) >= 24 * 60 * 60 * 1000) throw failure(409, 'This campaign has ended. Review recorded delivery before starting another campaign.');
+    if (!existing && selection.expiresAt <= now()) throw Object.assign(failure(409, 'Recipient review expired. Preview and review the recipients again.'), { code: 'selection_expired' });
+    if (batchRunning) return { requestId: campaign, batchSize: EMAIL_BATCH_SIZE,
+      results: ids.map(userId => ({ userId, status: 'limited', message: 'Another email batch is running. Continue this same campaign later.' })) };
+    batchRunning = true;
+    try {
+      await db.query(`INSERT INTO office_member_email_campaign(id,payload_hash) VALUES($1,$2) ON CONFLICT(id) DO NOTHING`, [campaign, hash]);
+      const { rows: [bound] } = await db.query('SELECT payload_hash FROM office_member_email_campaign WHERE id=$1', [campaign]);
+      if (bound?.payload_hash !== hash) throw failure(409, 'This campaign reference belongs to different recipients or message text.');
+      const results = [];
+      for (const userId of ids) {
+        const requestId = recipientRequestId(campaign, userId);
+        try { results.push({ userId, ...(await deliverEmail(userId, { subject, message, requestId }, { reviewedAddress: reviewed.get(userId), bounded: true })) }); }
+        catch (error) {
+          results.push({ userId, requestId, status: [404,422].includes(error.status) ? 'skipped' : 'uncertain',
+            message: [404,422].includes(error.status) ? error.message : 'This recipient could not be confirmed. Recheck this same campaign before sending again.' });
+        }
+      }
+      return { requestId: campaign, batchSize: EMAIL_BATCH_SIZE, results };
+    } finally { batchRunning = false; }
+  }
   async function emailHistory(userId) {
     available();
     if (!UUID.test(userId)) throw failure(400, 'Invalid account.');
@@ -219,7 +381,7 @@ function createOfficeMembers({ db, getCachedUserIds = () => [], clearUserCache =
       FROM office_member_email WHERE user_id=$1 ORDER BY created_at DESC LIMIT 20`, [userId]);
     return { messages: rows };
   }
-  return { list, inspectCache, clearCache, email, emailHistory, signupMiddleware, recordSignup, refreshCacheEpoch };
+  return { list, inspectCache, clearCache, email, emailPreview, emailBatch, emailHistory, signupMiddleware, recordSignup, refreshCacheEpoch };
 }
 
 function registerOfficeMemberRoutes(app, { requireOfficeToken, ...options }) {
@@ -227,15 +389,19 @@ function registerOfficeMemberRoutes(app, { requireOfficeToken, ...options }) {
   const privateResponse = (_req, res, next) => { res.set('Cache-Control', 'private, no-store'); next(); };
   const route = action => async (req, res) => {
     try { res.json(await action(req)); }
-    catch (error) { res.status(error.status || 503).json({ message: error.status ? error.message : 'Account tools are temporarily unavailable.' }); }
+    catch (error) { res.status(error.status || 503).json({ message: error.status ? error.message : 'Account tools are temporarily unavailable.', ...(error.code === 'selection_expired' ? { code: error.code } : {}) }); }
   };
   const emailLimit = rateLimit({ windowMs: 60000, limit: 10, standardHeaders: true, legacyHeaders: false,
     message: { message: 'Wait a minute before sending more messages.' } });
+  const batchLimit = rateLimit({ windowMs: 60000, limit: 12, standardHeaders: true, legacyHeaders: false,
+    message: { message: 'Wait a minute before continuing this email campaign.' } });
   app.get('/office/users', privateResponse, requireOfficeToken, route(req => service.list(req.query)));
   app.get('/office/users/cache', privateResponse, requireOfficeToken, route(() => service.inspectCache()));
   app.post('/office/users/cache/clear', privateResponse, requireOfficeToken, route(req => service.clearCache(req.body)));
+  app.post('/office/users/email/preview', privateResponse, requireOfficeToken, route(req => service.emailPreview(req.body)));
+  app.post('/office/users/email/batch', privateResponse, requireOfficeToken, batchLimit, route(req => service.emailBatch(req.body)));
   app.post('/office/users/:id/email', privateResponse, requireOfficeToken, emailLimit, route(req => service.email(req.params.id, req.body)));
   app.get('/office/users/:id/email', privateResponse, requireOfficeToken, route(req => service.emailHistory(req.params.id)));
   return service;
 }
-module.exports = { OFFICE_MEMBERS_SCHEMA, createOfficeMembers, registerOfficeMemberRoutes };
+module.exports = { OFFICE_MEMBERS_SCHEMA, createOfficeMembers, registerOfficeMemberRoutes, emailEligibility };

@@ -20084,6 +20084,7 @@ app.get('/office/topics', requireOfficeToken, async (req, res) => {
 // Office account records always come from the primary database.
 const officeMembers = registerOfficeMemberRoutes(app, {
   db, requireOfficeToken, schedule: setInterval,
+  emailPreviewSecret: JWT_SECRET,
   getCachedUserIds: () => users.map(user => user.id),
   clearUserCache: () => { const cleared = users.length; users = []; return cleared; },
   mailAvailable: emailConfigured,

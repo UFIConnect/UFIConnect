@@ -26,6 +26,7 @@ jobs:
       - run: npm test --prefix backend
       - run: node --test scripts/office-security.test.mjs scripts/web-security.test.mjs scripts/office-city.test.mjs scripts/office-recovery.test.mjs
       - run: node --test scripts/analytics.test.mjs scripts/data-preferences.test.mjs
+      - run: node --test office/src/office-email-templates.test.mjs
       - run: node --test web/src/businessRoutes.test.mjs
       - run: node --test scripts/local-web-workbench.test.mjs scripts/local-phone-access.test.mjs
       - run: node --test scripts/account-vault.test.mjs scripts/vault-crypto.test.mjs scripts/vault-files.test.mjs scripts/vault-launch-preferences.test.mjs scripts/local-vault-vpn.test.mjs scripts/city-topic-targets.test.mjs
@@ -41,6 +42,7 @@ jobs:
       - run: node scripts/sync-security-headers.mjs --check --built
       - run: npx playwright install --with-deps chromium
       - run: node office/tests/analytics-refresh.browser.mjs
+      - run: node office/tests/email-selection.browser.mjs
       - run: node scripts/audit-security.mjs
       - run: node scripts/audit-csp.mjs
       - run: node scripts/audit-public-seo.mjs
