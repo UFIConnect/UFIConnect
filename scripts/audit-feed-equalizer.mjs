@@ -26,8 +26,9 @@ try {
     const errors = [], requests = [];
     page.on('pageerror', error => errors.push(error.message));
     let revision = 0;
-    let holdNextPage = false, pageHeld, resumePage;
+    let holdNextPage = false, pageHeld, resumePage, pageCompleted;
     const paginationHeld = new Promise(resolve => { pageHeld = resolve; });
+    const paginationCompleted = new Promise(resolve => { pageCompleted = resolve; });
     await context.route('**/api/**', async route => {
       const url = new URL(route.request().url()), endpoint = url.pathname.replace(/^\/api/, '');
       if (/events|stream/.test(endpoint)) return route.abort();
@@ -48,11 +49,16 @@ try {
         author: { id: 'other', name: 'Community developer' },
         sourceUrl: `https://example.org/articles/${key}/${i}`,
       }));
-      if (batch && holdNextPage && params.get('mode') === 'feed' && sources.join(',') === 'reddit,hackernews' && revision === 0) {
+      const held = batch && holdNextPage && params.get('mode') === 'feed' && sources.join(',') === 'reddit,hackernews' && revision === 0;
+      if (held) {
         holdNextPage = false;
         await new Promise(resolve => { resumePage = resolve; pageHeld(); });
       }
-      return route.fulfill({ json: { posts, cursor: 'audit-page-2', hasMore: !batch, nativeUficonnectIncluded: true } });
+      try {
+        return await route.fulfill({ json: { posts, cursor: 'audit-page-2', hasMore: !batch, nativeUficonnectIncluded: true } });
+      } finally {
+        if (held) pageCompleted();
+      }
     });
     const titles = () => page.locator('[data-feed-position]').evaluateAll(elements => elements.map(element => element.textContent.match(/Equalizer story [a-z0-9-]+/)?.[0]).filter(Boolean));
     const expected = (sources, version, batch) => Array.from({ length: 4 }, (_, i) => `Equalizer story ${sources}-${version}-${batch}-${i}`);
@@ -73,19 +79,28 @@ try {
     await checkStart('reddit-hackernews');
     assert.ok(requests.some(params => params.get('sources')?.split(',').length === 2));
     // The real endless-feed tail loads another balanced batch. A refresh
-    // during that request must queue and promote its newer batch afterward.
+    // during that request supersedes the stale page and promotes fresh posts.
     assert.equal(await page.getByRole('navigation', { name: 'Feed pages', exact: true }).count(), 0);
     await page.locator('[data-feed-scroll-sentinel]').scrollIntoViewIfNeeded();
     await Promise.race([paginationHeld, new Promise((_, reject) => setTimeout(() => reject(new Error('Pagination never started')), 10000))]);
     revision = 1;
     await page.evaluate(() => window.dispatchEvent(new Event('ufi:refresh-selected-feed')));
     resumePage();
-    await page.getByText(expected('reddit-hackernews', 0, 1)[3], { exact: true }).waitFor().catch(async error => {
+    await page.getByText(expected('reddit-hackernews', 1, 0)[3], { exact: true }).waitFor().catch(async error => {
       console.log('Equalizer failure context', JSON.stringify({ requests: requests.map(params => params.toString()), titles: await titles(), errors }));
       throw error;
     });
-    await page.getByText(expected('reddit-hackernews', 1, 0)[3], { exact: true }).waitFor();
-    assert.deepEqual((await titles()).slice(0, 12), [...expected('reddit-hackernews', 1, 0), ...expected('reddit-hackernews', 0, 0), ...expected('reddit-hackernews', 0, 1)], 'Refresh promotes the fresh balanced batch ahead of older cards');
+    await paginationCompleted;
+    assert.deepEqual((await titles()).slice(0, 8), [...expected('reddit-hackernews', 1, 0), ...expected('reddit-hackernews', 0, 0)], 'Refresh promotes fresh balanced posts while retaining previously displayed cards');
+    for (const staleTitle of expected('reddit-hackernews', 0, 1)) {
+      assert.equal(await page.getByText(staleTitle, { exact: true }).count(), 0, 'The superseded pending page cannot insert stale cards after refresh');
+    }
+    await page.locator('[data-feed-scroll-sentinel]').scrollIntoViewIfNeeded();
+    await page.getByText(expected('reddit-hackernews', 1, 1)[3], { exact: true }).waitFor();
+    assert.deepEqual((await titles()).slice(0, 12), [...expected('reddit-hackernews', 1, 0), ...expected('reddit-hackernews', 0, 0), ...expected('reddit-hackernews', 1, 1)], 'Endless paging continues with the refreshed balanced batch after superseding an old request');
+    for (const staleTitle of expected('reddit-hackernews', 0, 1)) {
+      assert.equal(await page.getByText(staleTitle, { exact: true }).count(), 0, 'Stale cards stay absent after current pagination completes');
+    }
     await auditReload(page);
     await checkStart('reddit-hackernews');
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/equalizer-${width}.png`) });

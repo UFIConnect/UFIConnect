@@ -116,6 +116,27 @@ try {
       assert.equal(await slide.locator('input[type="range"]').count(), 1, 'Each slide has one app progress control');
       assert.ok(await playback.getByRole('slider', { name: 'Video progress', exact: true }).isVisible());
       assert.ok(await playback.locator('.media-playback-time').isVisible());
+      console.log('PLAYBACK_ROW_GEOMETRY', JSON.stringify(await playback.evaluate(element => {
+        const style = getComputedStyle(element);
+        return { viewport: { width: innerWidth, height: innerHeight }, postId: element.closest('[data-post-id]')?.dataset.postId,
+          position: style.position, offsets: Object.fromEntries(['top', 'right', 'bottom', 'left'].map(property => [property, style.getPropertyValue(property)])),
+          row: element.getBoundingClientRect().toJSON(), media: element.closest('.video-feed-slide').querySelector('[data-video-media]').getBoundingClientRect().toJSON(),
+          children: [...element.children].map(child => ({ tag: child.tagName, label: child.getAttribute('aria-label'), bounds: child.getBoundingClientRect().toJSON() })) };
+      })));
+      const flowProbe = await playback.evaluate(element => {
+        const originalStyle = element.getAttribute('style');
+        const relative = element.getBoundingClientRect().toJSON();
+        try {
+          element.style.setProperty('position', 'static', 'important');
+          return { relative, static: element.getBoundingClientRect().toJSON() };
+        } finally {
+          if (originalStyle === null) element.removeAttribute('style');
+          else element.setAttribute('style', originalStyle);
+        }
+      });
+      console.log('PLAYBACK_FLOW_PROBE', JSON.stringify(flowProbe));
+      assert.ok(['x', 'y', 'width', 'height'].every(key => Math.abs(flowProbe.relative[key] - flowProbe.static[key]) <= 1),
+        'Relative playback row remains at its normal-flow rectangle without inset displacement');
       assert.ok(await playback.evaluate(element => {
         const [play, sound, progress, time, fullscreen] = [...element.children];
         if (play?.tagName !== 'BUTTON' || sound?.tagName !== 'BUTTON' || progress?.type !== 'range'
@@ -124,7 +145,8 @@ try {
         const media = element.closest('.video-feed-slide').querySelector('[data-video-media]').getBoundingClientRect();
         const rects = [play, sound, progress, time, fullscreen].map(child => child.getBoundingClientRect());
         return row.top >= media.bottom - 1 && row.left <= media.left + 25 && row.right <= media.right + 1
-          && getComputedStyle(element).position === 'static'
+          && getComputedStyle(element).position === 'relative'
+          && ['top', 'right', 'bottom', 'left'].every(property => ['auto', '0px'].includes(getComputedStyle(element).getPropertyValue(property)))
           && rects.every(rect => rect.top >= row.top - 1 && rect.bottom <= row.bottom + 1 && rect.width > 0)
           && rects[0].left >= row.left - 1 && rects[0].right <= rects[1].left + 1
           && rects[1].right <= rects[2].left + 1 && rects[2].right <= rects[3].left + 1
@@ -334,12 +356,17 @@ try {
       const expectedOriginal = originalSource === 'hackernews'
         ? (youtube ? 'https://news.ycombinator.com/item?id=123457' : 'https://news.ycombinator.com/item?id=123456')
         : originalSource === 'reddit' ? 'https://www.reddit.com/r/audit/comments/abcd/fixture/' : null;
-      if (expectedOriginal) assert.equal(originalLinks[0].href, expectedOriginal);
+      if (expectedOriginal) {
+        assert.equal(originalLinks[0].href, expectedOriginal);
+        assert.equal(await actions.locator('.post-chrome-source-link').getAttribute('href'), expectedOriginal,
+          'The visible source badge links to the original post');
+      }
       if (youtube && originalSource !== 'youtube') {
         assert.equal(menuItems.filter(item => item.label === 'Watch on YouTube').length, 1,
           'Embedded YouTube keeps a distinct playback-source destination');
-        assert.match(await actions.locator('.post-chrome-source-link').getAttribute('href'), /^https:\/\/www\.youtube\.com\/watch\?v=/,
-          'The visible source badge identifies the actual YouTube player');
+        assert.equal(menuItems.find(item => item.label === 'Watch on YouTube').href,
+          'https://www.youtube.com/watch?v=hnvideo0001',
+          'The separate playback-source action links to the actual embedded YouTube video');
       }
       assert.equal(await menu.locator('.video-feed-menu-action').count(), 0, 'Like and Save are visible in the layout');
       if (!youtube) assert.equal(menuItems.filter(item => (invalidSource

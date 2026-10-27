@@ -66,6 +66,9 @@ try {
       await form.waitFor();
       assert.equal(await form.getByText('Post to:', { exact: true }).count(), 0);
       const bodyInput = area === 'Shop' ? form.getByLabel('Description', { exact: true }) : form.getByRole('textbox');
+      // Opening the composer schedules its initial textarea focus. Wait for
+      // that focus before filling other fields so it cannot steal a fill.
+      await page.waitForFunction(element => document.activeElement === element, await bodyInput.elementHandle());
       assert.equal(await bodyInput.inputValue(), '');
       const content = `A thoughtful ${area} update from our community at ${width}.`;
       let publishedContent = content;
@@ -78,6 +81,11 @@ try {
         publishedContent = `Item: Community item ${width}\nPrice: EUR 24.50\n\n${content}`;
       }
       await bodyInput.fill(content);
+      if (area === 'Shop') {
+        assert.equal(await form.getByLabel('Item title', { exact: true }).inputValue(), `Community item ${width}`);
+        assert.equal(await form.getByLabel('Price', { exact: true }).inputValue(), '24.50');
+      }
+      assert.equal(await form.evaluate(element => element.checkValidity()), true, 'Completed post form must be valid before publishing');
       const response = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith(`/groups/${groupId}/posts`));
       await form.getByRole('button', { name: 'Publish', exact: true }).click();
       assert.equal((await response).status(), 201);
@@ -91,6 +99,7 @@ try {
       await page.getByRole('button', { name: 'Post', exact: true }).click();
       const draftForm = page.getByRole('form', { name: `Create ${area} post`, exact: true });
       const draftInput = area === 'Shop' ? draftForm.getByLabel('Description', { exact: true }) : draftForm.getByRole('textbox');
+      await page.waitForFunction(element => document.activeElement === element, await draftInput.elementHandle());
       await draftInput.fill('Unsubmitted draft stays in its posting area.');
       if (area === 'Shop') {
         await draftForm.getByLabel('Item title', { exact: true }).fill('Unsubmitted Shop item');

@@ -181,15 +181,37 @@ try {
     const cdp = await context.newCDPSession(page);
     const bounds = await page.locator('[data-post-id="native-0"] [data-video-media]').boundingBox();
     const x = bounds.x + bounds.width / 2, startY = bounds.y + bounds.height * .8, endY = bounds.y + bounds.height * .2;
+    const readTouchScroll = () => page.evaluate(() => {
+      const scroll = document.querySelector('[data-video-feed-scroll]'), style = getComputedStyle(scroll);
+      return { top: scroll.scrollTop, height: scroll.clientHeight, snap: style.scrollSnapType, behavior: style.scrollBehavior };
+    });
+    const touchBefore = await readTouchScroll();
+    assert.equal(touchBefore.snap, 'none', 'Vertical feed gestures retain ordinary scrolling without snap points');
+    assert.equal(touchBefore.behavior, 'auto', 'Feed scrolling does not enable smooth animation');
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y: startY }] });
     for (let i = 1; i <= 6; i += 1) {
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: startY + (endY - startY) * i / 6 }] });
       await page.waitForTimeout(25);
     }
+    // Holding the finger still removes release inertia, so this checks the
+    // app's no-jump contract independently of the browser's fling velocity.
+    await page.waitForTimeout(300);
+    const touchHeld = await readTouchScroll(), dragDistance = startY - endY;
+    const moved = touchHeld.top - touchBefore.top;
+    assert.ok(moved >= Math.max(40, dragDistance * .5), 'A real vertical touch drag scrolls a meaningful distance');
+    assert.ok(moved <= dragDistance * 1.25 && moved < touchBefore.height * .85, 'The partial drag remains partial rather than snapping to a full slide');
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-    await page.waitForFunction(() => { const scroll = document.querySelector('[data-video-feed-scroll]'); return scroll.scrollTop >= scroll.clientHeight * .9; });
+    await page.waitForTimeout(500);
+    const touchReleased = await readTouchScroll();
+    assert.ok(Math.abs(touchReleased.top - touchHeld.top) <= Math.max(8, touchBefore.height * .02), 'Releasing a stationary touch does not force a slide jump');
+    const touchActiveId = await activeId();
+    assert.match(touchActiveId, /^native-\d+$/, 'An ordinary partial scroll still has a nearest visible native slide');
+    await page.waitForFunction(id => {
+      const playing = [...document.querySelectorAll('.video-feed-media video')].filter(video => !video.paused);
+      return playing.length === 1 && playing[0].closest('[data-post-id]')?.dataset.postId === id;
+    }, touchActiveId);
+    console.log('TOUCH_SCROLL_PROOF ' + JSON.stringify({ surface, dragDistance, before: touchBefore, held: touchHeld, released: touchReleased, solePlayingVisibleId: touchActiveId }));
     await cdp.detach();
-    assert.notEqual(await activeId(), 'native-0', 'A real touch swipe advances the video');
 
     phase = 'provider';
     await openFeed();
