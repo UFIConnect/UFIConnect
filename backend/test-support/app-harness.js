@@ -8,7 +8,7 @@ const jwt = require('jsonwebtoken');
 
 // Run the real routes without loading deployment secrets, starting workers,
 // writing local account data, or connecting to production services.
-async function createAppHarness({ env = {}, connected = false, query, withClient, generationUsage, modules = {}, automaticLocation = true } = {}) {
+async function createAppHarness({ env = {}, connected = false, query, withClient, generationUsage, modules = {}, automaticLocation = true, clock } = {}) {
   const entry = path.resolve(__dirname, '../index.js');
   const localRequire = createRequire(entry);
   // Cold SDK loading can exceed the route VM's execution limit on Windows.
@@ -53,6 +53,7 @@ async function createAppHarness({ env = {}, connected = false, query, withClient
   const timer = () => ({ unref() {}, ref() {} });
   const blockedRequest = () => { throw new Error('External network disabled in route tests'); };
   const context = vm.createContext({
+    ...(clock ? { Date: class extends Date { static now() { return clock(); } } } : {}),
     require(name) {
       if (Object.prototype.hasOwnProperty.call(modules, name)) return modules[name];
       if (name === 'express') return expressFactory;
@@ -126,12 +127,13 @@ async function createAppHarness({ env = {}, connected = false, query, withClient
       fetchYouTubeLiveStates, fetchTravelGuidePosts, fetchSelectedTravelNewsPosts, fetchSelectedTravelEventPosts,
       travelCityMatches, travelCountryMatches, selectedTravelGuideDestinations, selectedTravelNewsEdition,
       getCountriesCameraFeed, discoverLiveCameraReplacement, resolveLiveCameraDiscoveries, currentLiveCameraPosts,
-      refreshVerifiedLiveCameraPosts, pruneExpiredRuntimeCaches,
-      liveCameraVerificationState, liveCameraLocationRefreshes, locationLiveFeedCache,
+      refreshVerifiedLiveCameraPosts, verifiedLiveCameraPosts, pruneExpiredRuntimeCaches,
+      liveCameraVerificationState, liveCameraLocationRefreshes, liveCameraDiscoveryQueue, locationLiveFeedCache,
       setYouTubeCallReady() { youtubeApiLastCallAt = 0; },
       setContentScreening(handler) { screenMemberContent = handler; },
       setResumeExtraction(handler) { extractResumeText = handler; },
       exhaustCameraDiscoveryBudget() { liveCameraDiscoveryWindowStartedAt = Date.now(); liveCameraDiscoveryCount = LIVE_CAMERA_MAX_DISCOVERIES_PER_WINDOW; },
+      reserveCameraDiscoveryBudget() { liveCameraDiscoveryWindowStartedAt = Date.now(); liveCameraDiscoveryCount = LIVE_CAMERA_MAX_DISCOVERIES_PER_WINDOW - LIVE_CAMERA_DISCOVERY_RESERVED_SLOTS; },
       seedUser(user) { users.push(user); },
     };
   `, context, { filename: entry, timeout: 10000, importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER });
