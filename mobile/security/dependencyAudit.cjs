@@ -7,25 +7,32 @@ function assessAudit(report, verified, now = new Date()) {
   if (report.error || report.auditReportVersion !== 2 || !report.vulnerabilities || !report.metadata?.vulnerabilities) throw new Error('Invalid or unavailable npm audit report');
   if (now >= new Date(manifest.reviewBy + 'T00:00:00Z')) throw new Error('Security backports require upstream review before further release');
   const vulnerabilities = report.vulnerabilities;
-  const covered = (name, seen, causes) => {
+  const covered = (name, seen, causes, highOnly = false) => {
     const item = vulnerabilities[name];
     if (!item || !Array.isArray(item.via) || !item.via.length) return false;
     if (seen.has(name)) return true; // npm's transitive dependency graph contains cycles.
     seen.add(name);
     return item.via.every(cause => {
-      if (typeof cause === 'string') return covered(cause, seen, causes);
+      if (typeof cause === 'string') return covered(cause, seen, causes, highOnly);
+      // npm gives a parent the maximum severity of all its dependency causes.
+      // A verified high-severity backport plus an unrelated low/moderate cause
+      // must not turn that lower-severity advisory into an unpatched high one.
+      // Inspect leaf severities, never trust a transitive package's summary.
+      // Missing/unknown severity remains fail-closed and needs exact proof.
+      if (highOnly && ['low', 'moderate'].includes(cause.severity)) return true;
       const patch = verified.get(name);
       causes.add(cause.url);
       return patch && cause.name === name && cause.url === `https://github.com/advisories/${patch.advisory}` &&
         item.nodes?.length > 0 && item.nodes.every(node => patch.nodes.has(node));
     });
   };
-  const mitigated = name => {
+  const mitigated = (name, highOnly = false) => {
     const causes = new Set();
-    return covered(name, new Set(), causes) && causes.size > 0;
+    return covered(name, new Set(), causes, highOnly) && causes.size > 0;
   };
-  const blocked = Object.entries(vulnerabilities).filter(([name, item]) => ['high', 'critical'].includes(item.severity) && !mitigated(name)).map(([name]) => name);
-  return { blocked, mitigated: Object.keys(vulnerabilities).filter(name => mitigated(name)) };
+  const blocked = Object.entries(vulnerabilities).filter(([name, item]) => ['high', 'critical'].includes(item.severity) && !mitigated(name, true)).map(([name]) => name);
+  return { blocked, mitigated: Object.keys(vulnerabilities).filter(name => mitigated(name)),
+    belowThreshold: Object.entries(vulnerabilities).filter(([name, item]) => ['low', 'moderate'].includes(item.severity) && !mitigated(name)).map(([name]) => name) };
 }
 
 function main() {
@@ -43,6 +50,7 @@ function main() {
   const assessment = assessAudit(report, verified);
   console.log('Raw npm audit report: mobile/.cache/dependency-audit.json');
   console.log('Verified local backports (upstream advisories remain open):', [...verified.keys()].join(', '));
+  if (assessment.belowThreshold.length) console.log('Unpatched advisories below the high/critical gate (retained in the raw report):', assessment.belowThreshold.join(', '));
   if (assessment.blocked.length) throw new Error('Unpatched high/critical advisories: ' + assessment.blocked.join(', '));
   console.log('No unpatched high/critical dependency advisories. Backport review due ' + manifest.reviewBy + '.');
 }

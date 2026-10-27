@@ -102,6 +102,36 @@ test('audit only accepts proven backports and their dependency chains', () => {
   assert.throws(() => assessAudit({ error: 'offline' }, verified, now), /Invalid or unavailable/);
 });
 
+test('mixed severity dependency chains retain lower advisories without hiding unpatched high causes', () => {
+  const verified = new Map([['patched', { advisory: 'GHSA-reviewed', nodes: new Set(['node_modules/patched']) }]]);
+  const report = { auditReportVersion: 2, metadata: { vulnerabilities: {} }, vulnerabilities: {
+    patched: { severity: 'high', nodes: ['node_modules/patched'], via: [{ name: 'patched', severity: 'high', url: 'https://github.com/advisories/GHSA-reviewed' }] },
+    lower: { severity: 'low', nodes: ['node_modules/lower'], via: [{ name: 'lower', severity: 'low', url: 'https://github.com/advisories/GHSA-unpatched' }] },
+    config: { severity: 'low', via: ['lower'] },
+    cli: { severity: 'high', via: ['config', 'patched'] },
+    expo: { severity: 'high', via: ['cli', 'config'] },
+  } };
+  const now = new Date('2026-10-27');
+  const assessment = assessAudit(report, verified, now);
+  assert.deepEqual(assessment.blocked, []);
+  assert.deepEqual(assessment.mitigated, ['patched'], 'Do not label unresolved low findings or their parents as fully patched');
+  assert.deepEqual(assessment.belowThreshold.sort(), ['config', 'lower']);
+  for (const severity of ['high', 'critical', undefined, 'unknown']) {
+    report.vulnerabilities.lower.via[0].severity = severity;
+    assert.deepEqual(assessAudit(report, verified, now).blocked.sort(), ['cli', 'expo'], 'Inspect high/unknown leaves even beneath a low summary');
+  }
+  report.vulnerabilities.lower.via[0].severity = 'moderate';
+  assert.deepEqual(assessAudit(report, verified, now).blocked, []);
+  report.vulnerabilities.patched.nodes.push('node_modules/nested/node_modules/patched');
+  assert.deepEqual(assessAudit(report, verified, now).blocked.sort(), ['cli', 'expo', 'patched']);
+  report.vulnerabilities.patched.nodes.pop();
+  report.vulnerabilities.cli.via.push('missing-package');
+  assert.deepEqual(assessAudit(report, verified, now).blocked.sort(), ['cli', 'expo']);
+  report.vulnerabilities.cli.via.pop();
+  report.vulnerabilities.cli.via = ['config', 'expo'];
+  assert.deepEqual(assessAudit(report, verified, now).blocked.sort(), ['cli', 'expo'], 'Cycles without verified high-advisory evidence stay blocked');
+});
+
 // GHSA-mrhx-c7xc-m3w5: a declared upper bound must stop the element walk.
 const zodEntries = [
   ['root CommonJS', 3, () => require('zod')],
