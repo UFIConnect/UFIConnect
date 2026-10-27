@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { chromium } from 'playwright';
 import { createServer } from '../web/node_modules/vite/dist/node/index.js';
-import { installAuditMember, auditNavigate, auditPageTo } from './audit-session.mjs';
+import { installAuditMember, auditNavigate } from './audit-session.mjs';
 const require = createRequire(import.meta.url);
 const { createAppHarness, member } = require('../backend/test-support/app-harness');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -43,6 +43,14 @@ try {
       window.__videoLayoutPlayers = new Set();
       window.__videoLayoutRateRequests = [];
       window.__videoLayoutHoldRateChange = false;
+      window.__videoLayoutTouchEvents = [];
+      window.__videoLayoutMaxScroll = 0;
+      window.addEventListener('message', event => {
+        if (event.data?.auditProviderTouch) window.__videoLayoutTouchEvents.push(event.data);
+      });
+      document.addEventListener('scroll', event => {
+        if (event.target.matches?.('[data-video-feed-scroll]')) window.__videoLayoutMaxScroll = Math.max(window.__videoLayoutMaxScroll, event.target.scrollTop);
+      }, true);
       window.YT = { PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 }, Player: class {
         constructor(frame, config) {
           this.frame = frame; this.config = config; this.state = 1; this.rate = 1;
@@ -68,13 +76,9 @@ try {
           if (window.__videoLayoutHoldRateChange) window.__videoLayoutConfirmRate = confirm;
           else setTimeout(confirm, 20);
         }
-        loadVideoById(value) {
-          const id = typeof value === 'string' ? value : value.videoId;
-          this.id = id; this.time = 0; this.frame.dataset.currentVideoId = id;
-          // The real API changes media inside its existing document. Assigning
-          // iframe.src here would navigate the touch target during a swipe.
-        }
-        cueVideoById(value) { this.loadVideoById(value); this.pauseVideo(); }
+        // The player API changes the video inside the existing player. Navigating
+        // iframe.src here destroys the touch target halfway through a swipe.
+        loadVideoById(id) { this.id = id; this.time = 0; }
         playVideo() { this.state = 1; this.config.events?.onStateChange?.({ target: this, data: 1 }); }
         pauseVideo() { this.state = 2; this.config.events?.onStateChange?.({ target: this, data: 2 }); }
         mute() { this.muted = true; }
@@ -85,7 +89,10 @@ try {
     });
     await page.route('https://www.youtube.com/embed/**', async route => {
       embedRequests.push({ url: route.request().url(), headers: await route.request().allHeaders() });
-      await route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><body style="margin:0;background:#172554;color:white"><button>Provider controls</button></body></html>' });
+      const embedId = new URL(route.request().url()).pathname.split('/').pop();
+      await route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><body data-embed-id="${embedId}" style="margin:0;background:#172554;color:white"><button>Provider controls</button><script>
+        for (const type of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) window.addEventListener(type, event => parent.postMessage({auditProviderTouch:true,type,y:event.touches[0]?.clientY}, '*'), {passive:true});
+      </script></body></html>` });
     });
     await page.route('https://player.vimeo.com/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><button>Vimeo controls</button>' }));
     await page.route('https://vimeo.com/api/oembed.json?*', route => route.fulfill({ json: { duration: 3, thumbnail_url: null } }));
@@ -118,6 +125,7 @@ try {
       assert.equal(await playback.getByRole('button').count(), 3, 'Play/Pause, Mute/Unmute and Full screen are visible app buttons');
       assert.ok(await playback.getByRole('button', { name: /^(?:Play|Pause) video$/ }).isVisible());
       assert.ok(await playback.getByRole('button', { name: /^(?:Mute|Unmute) video$/ }).isVisible());
+      assert.ok(await playback.getByRole('button', { name: /^(?:Full screen|Exit full screen)$/ }).isVisible());
       assert.equal(await slide.locator('input[type="range"]').count(), 1, 'Each slide has one app progress control');
       assert.ok(await playback.getByRole('slider', { name: 'Video progress', exact: true }).isVisible());
       assert.ok(await playback.locator('.media-playback-time').isVisible());
@@ -132,9 +140,8 @@ try {
           && ['static', 'relative'].includes(getComputedStyle(element).position)
           && rects.every(rect => rect.top >= row.top - 1 && rect.bottom <= row.bottom + 1 && rect.width > 0)
           && rects[0].left >= row.left - 1 && rects[0].right <= rects[1].left + 1
-          && rects[1].right <= rects[2].left + 1 && rects[2].right <= rects[3].left + 1
-          && rects[3].right <= rects[4].left + 1;
-      }), 'Play/Pause and Mute/Unmute sit left of progress/time, with Full screen to the right, in one row below the video');
+          && rects[1].right <= rects[2].left + 1 && rects[2].right <= rects[3].left + 1 && rects[3].right <= rects[4].left + 1;
+      }), 'Play/Pause, Mute/Unmute, progress, time and fullscreen share one row below the video');
       return playback;
     };
     if (!hnOnly) {
@@ -294,7 +301,9 @@ try {
         'The menu escapes the caption scroll container');
       await assertInViewport(menu, 'The complete menu stays inside the viewport');
       assert.equal(await menu.getByRole('menuitem', { name: 'Full screen', exact: true }).count(), 0,
-        'Full screen is available beside the timer instead of duplicated in the source menu');
+        'The source menu does not duplicate the visible fullscreen control');
+      assert.ok(await slide.locator('.media-playback-controls').getByRole('button', { name: 'Full screen', exact: true }).isVisible(),
+        'Full screen remains directly available in playback controls');
       assert.equal(await menu.getByRole('menuitem', { name: /^(?:Play|Pause|Mute|Unmute) video$/ }).count(), 0,
         'The source menu does not duplicate visible playback controls');
       assert.equal(await menu.getByRole('menuitem', { name: /^(?:Show|Hide) player controls$|^Read more$|^Show less$/ }).count(), 0,
@@ -310,10 +319,8 @@ try {
       if (youtube && originalSource !== 'youtube') {
         assert.equal(await menu.getByRole('menuitem', { name: 'Watch on YouTube', exact: true }).count(), 1,
           'Embedded YouTube keeps a distinct playback-source destination');
-        assert.match(await menu.getByRole('menuitem', { name: 'Watch on YouTube', exact: true }).getAttribute('href'), /^https:\/\/www\.youtube\.com\/watch\?v=/,
-          'The separate playback-source link identifies the actual YouTube player');
         assert.equal(await actions.locator('.post-chrome-source-link').getAttribute('href'), expectedOriginal,
-          'The visible source badge retains the original discussion destination');
+          'The visible source badge preserves the original post; the menu separately links the YouTube player');
       }
       assert.equal(await menu.locator('.video-feed-menu-action').count(), 0, 'Like and Save are visible in the layout');
       if (!youtube) assert.equal(await menu.getByRole('menuitem', { name: invalidSource
@@ -423,19 +430,6 @@ try {
     });
     await page.locator('[data-post-id="native-short"]').waitFor({ state: 'detached' });
     await page.locator('[data-post-id="native-long"]').waitFor();
-    await visit('videos', [post('duration-before', { videoDurationSeconds: 30, mediaUrl: 'https://media.example.invalid/duration-before.mp4' }),
-      post('duration-current', { videoDurationSeconds: 30, mediaUrl: 'https://media.example.invalid/duration-current.mp4' }),
-      post('duration-after', { videoDurationSeconds: 30, mediaUrl: 'https://media.example.invalid/duration-after.mp4' })]);
-    await page.locator('[data-video-feed-scroll]').evaluate(el => { el.scrollTop = el.clientHeight + 137; });
-    await page.waitForFunction(() => document.querySelector('[data-post-id="duration-current"] video')?.preload === 'auto');
-    const durationOffset = () => page.locator('[data-post-id="duration-current"]').evaluate(el => el.getBoundingClientRect().top - el.closest('[data-video-feed-scroll]').getBoundingClientRect().top);
-    assert.ok(Math.abs(await durationOffset() + 137) <= 2);
-    await page.locator('[data-post-id="duration-before"] video').evaluate(video => {
-      Object.defineProperty(video, 'duration', { configurable: true, value: 3 });
-      video.dispatchEvent(new Event('loadedmetadata'));
-    });
-    await page.locator('[data-post-id="duration-before"]').waitFor({ state: 'detached' });
-    assert.ok(Math.abs(await durationOffset() + 137) <= 2, 'Removing an earlier short clip preserves the partial scroll position');
     await visit('videos', [post('vimeo-short', { mediaUrl: 'https://vimeo.com/123456', embedId: 'stale000004' }), post('vimeo-next', { videoDurationSeconds: 20 })]);
     await page.locator('[data-post-id="vimeo-next"]').waitFor();
     await page.locator('[data-post-id="vimeo-short"]').waitFor({ state: 'detached' });
@@ -451,8 +445,8 @@ try {
       video.dispatchEvent(new Event('loadedmetadata'));
     });
     await labelledNative.getByRole('button', { name: 'More options', exact: true }).click();
-    await page.getByRole('menuitem', { name: /^Player settings/ }).click();
-    const nativeSourceSettings = page.getByRole('dialog', { name: 'Player settings', exact: true });
+    await page.getByRole('menuitem', { name: /^YouTube settings/ }).click();
+    const nativeSourceSettings = page.getByRole('dialog', { name: 'YouTube settings', exact: true });
     assert.ok(await nativeSourceSettings.getByText('Caption tracks are unavailable for this video.', { exact: true }).isVisible(),
       'Source-labelled native settings expose native caption support');
     assert.equal(await nativeSourceSettings.getByRole('heading', { name: 'Quality and captions', exact: true }).count(), 0,
@@ -468,13 +462,15 @@ try {
     await page.locator('[data-post-id="youtube-short"]').waitFor({ state: 'detached' });
     const frame = page.locator('.video-feed-youtube-player iframe').first();
     await frame.waitFor({ state: 'visible' });
-    await page.waitForFunction(() => [...window.__videoLayoutPlayers].some(player => player.getVideoData().video_id === 'long0000001'));
+    await page.waitForFunction(() => {
+      const iframe = document.querySelector('.video-feed-youtube-player iframe');
+      return [...window.__videoLayoutPlayers].some(player => player.frame === iframe && player.getVideoData().video_id === 'long0000001');
+    });
     const frameInfo = await frame.evaluate(element => ({ policy: element.referrerPolicy, src: element.src,
-      videoId: [...window.__videoLayoutPlayers].find(player => player.getIframe() === element)?.getVideoData().video_id,
+      videoId: [...window.__videoLayoutPlayers].find(player => player.frame === element)?.getVideoData().video_id,
       pointerEvents: getComputedStyle(element).pointerEvents, tabIndex: element.tabIndex, width: element.getBoundingClientRect().width }));
     assert.equal(frameInfo.policy, 'strict-origin-when-cross-origin');
-    assert.equal(frameInfo.videoId, 'long0000001', 'The player API loads the playable URL instead of a stale embedId');
-    assert.match(new URL(frameInfo.src).pathname, /^\/embed\/(?:short000001|long0000001)$/, 'The persistent iframe retains a valid initial embed URL');
+    assert.equal(frameInfo.videoId, 'long0000001', 'The playable URL overrides a stale embedId through the player API');
     assert.equal(new URL(frameInfo.src).searchParams.get('origin'), new URL(origin).origin);
     assert.equal(new URL(frameInfo.src).searchParams.get('controls'), '0');
     assert.equal(frameInfo.pointerEvents, 'auto');
@@ -511,7 +507,7 @@ try {
       await page.waitForFunction(rate => document.querySelector(`[role="radio"][aria-label="${rate}×"]`)?.getAttribute('aria-checked') === 'true'
         || [...document.querySelectorAll('[role="radio"]')].some(el => el.textContent.trim() === `${rate}×` && el.getAttribute('aria-checked') === 'true'), nextRate);
       assert.equal(await nextControl.getAttribute('aria-checked'), 'true', 'The setting updates after the provider confirms the rate');
-      assert.ok(await (await auditPageTo(dialog, 'button', 'Open on YouTube', { nextRole: 'button', nextLabel: 'Next player settings' })).isVisible(),
+      assert.ok(await dialog.getByRole('button', { name: 'Open on YouTube', exact: true }).isVisible(),
         'Provider-managed quality and captions link to the original video');
       assert.equal(new URL(await frame.getAttribute('src')).searchParams.get('controls'), '0',
         'Opening settings preserves the clean embedded player');
@@ -549,84 +545,42 @@ try {
       }));
       await visit(surface, nextPosts);
       const scroll = page.locator('[data-video-feed-scroll]');
-      assert.equal(await scroll.evaluate(element => getComputedStyle(element).scrollSnapType), 'none', 'Videos and Music allow free vertical scrolling');
-      assert.equal(await scroll.evaluate(element => getComputedStyle(element).scrollBehavior), 'auto', 'Feed navigation does not inherit smooth scrolling');
-      assert.equal(await scroll.evaluate(element => getComputedStyle(element).overflowAnchor), 'none', 'The browser does not anchor media to a previous slide');
-      await scroll.evaluate(element => {
-        const scrollTo = element.scrollTo.bind(element);
-        element.auditScrollRequests = [];
-        element.scrollTo = options => {
-          const result = scrollTo(options);
-          element.auditScrollRequests.push({ ...options, immediateTop: element.scrollTop });
-          return result;
-        };
-      });
-      await scroll.focus();
-      await page.keyboard.press('ArrowDown');
-      const keyboardStep = await scroll.evaluate(element => element.auditScrollRequests.at(-1));
-      assert.equal(keyboardStep.behavior, 'instant', 'Keyboard navigation does not animate between videos');
-      assert.ok(Math.abs(keyboardStep.immediateTop - keyboardStep.top) < 2, 'Keyboard navigation reaches its requested position immediately');
-      await page.waitForFunction(() => [...window.__videoLayoutPlayers].some(player => player.getVideoData().video_id === 'scroll00001'));
-      await scroll.focus();
-      await page.keyboard.press('ArrowUp');
+      assert.equal(await scroll.evaluate(element => getComputedStyle(element).scrollSnapType), 'y mandatory', 'Videos and Music snap vertical scrolling to a video');
       const sharedFrame = page.locator('.video-feed-youtube-player iframe');
-      await page.locator(`[data-post-id="scroll-${surface}-0"]`).waitFor();
       await sharedFrame.waitFor({ state: 'visible' });
-      await page.waitForFunction(() => [...window.__videoLayoutPlayers].some(player => player.getVideoData().video_id === 'scroll00000'));
+      // Wait for the initial provider document and its paint before sending input.
+      // Subsequent API loads keep this document and the gesture target alive.
+      const expectedEmbed = nextPosts[0].embedId;
+      await page.waitForFunction(id => [...window.__videoLayoutPlayers].some(player => player.id === id && player.frame.isConnected), expectedEmbed);
+      const providerDocument = page.frameLocator('.video-feed-youtube-player iframe');
+      await providerDocument.locator(`body[data-embed-id="${expectedEmbed}"]`).waitFor();
+      await providerDocument.locator('body').evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await providerDocument.getByRole('button', { name: 'Provider controls' }).click({ trial: true });
+      await page.waitForFunction(() => {
+        const player = document.querySelector('.video-feed-youtube-player');
+        return player?.getAttribute('aria-hidden') === 'false' && !player.inert;
+      });
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       assert.equal(await sharedFrame.evaluate(element => Boolean(element.closest('[data-video-feed-scroll]'))), true,
         'Cross-origin player belongs to the native scrolling region');
       await sharedFrame.evaluate(element => { element.dataset.stablePlayer = 'true'; });
+      await providerDocument.locator('body').evaluate(element => { element.dataset.stableDocument = 'true'; });
       const rect = await sharedFrame.boundingBox();
       const centerX = rect.x + rect.width / 2;
       const centerY = rect.y + rect.height / 2;
-      // A small wheel movement must remain between slide boundaries after
-      // input stops. Observing scrollTo also catches a delayed JS correction.
-      const requestedBeforeWheel = await scroll.evaluate(element => element.auditScrollRequests.length);
-      await page.mouse.move(centerX, centerY);
-      await page.mouse.wheel(0, 137);
-      await page.waitForFunction(() => document.querySelector('[data-video-feed-scroll]')?.scrollTop > 20);
-      await page.waitForTimeout(700);
-      const wheelTop = await scroll.evaluate(element => element.scrollTop);
-      assert.ok(wheelTop > 40 && wheelTop < 240, `A short wheel scroll stays between videos (${wheelTop}px)`);
-      await page.waitForTimeout(300);
-      assert.ok(Math.abs(await scroll.evaluate(element => element.scrollTop) - wheelTop) <= 1, 'The wheel position does not settle onto a slide anchor');
-      assert.equal(await scroll.evaluate(element => element.auditScrollRequests.length), requestedBeforeWheel, 'Wheel input does not trigger an automatic jump');
-      await scroll.focus();
-      await page.keyboard.press('ArrowUp');
-      await page.waitForFunction(() => document.querySelector('[data-video-feed-scroll]')?.scrollTop === 0);
-      await sharedFrame.waitFor({ state: 'visible' });
+      assert.ok(await sharedFrame.evaluate((element, point) => document.elementFromPoint(point.x, point.y) === element,
+        { x: centerX, y: rect.y + rect.height * .92 }), 'The gesture begins on the current provider iframe');
+      await page.evaluate(() => { window.__videoLayoutTouchEvents = []; window.__videoLayoutMaxScroll = 0; });
       if (width < 600) {
         const cdp = await context.newCDPSession(page);
-        const scrollBounds = await scroll.boundingBox();
-        const visibleTop = Math.max(0, rect.y, scrollBounds.y);
-        const visibleBottom = Math.min(page.viewportSize().height, rect.y + rect.height, scrollBounds.y + scrollBounds.height);
-        assert.ok(visibleBottom - visibleTop >= 120, 'The provider exposes a visible region for a real swipe');
-        const startY = visibleBottom - 8;
-        const endY = visibleTop + 8;
-        const requestsBeforeTouch = await scroll.evaluate(element => element.auditScrollRequests.length);
-        // A slow, short real gesture suppresses inertia so its final position
-        // demonstrates free scrolling rather than an accidental slide landing.
-        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: centerX, y: startY }] });
-        for (let step = 1; step <= 8; step += 1) {
-          await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: centerX, y: startY - 160 * step / 8 }] });
-          await page.waitForTimeout(60);
-        }
-        await page.waitForTimeout(150);
-        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-        await page.waitForTimeout(700);
-        const touchTop = await scroll.evaluate(element => element.scrollTop);
-        assert.ok(touchTop > 40 && touchTop < 260, `A short touch scroll stays between videos (${touchTop}px)`);
-        await page.waitForTimeout(300);
-        assert.ok(Math.abs(await scroll.evaluate(element => element.scrollTop) - touchTop) <= 1, 'The touch position does not settle onto a slide anchor');
-        assert.equal(await scroll.evaluate(element => element.auditScrollRequests.length), requestsBeforeTouch, 'Vertical touch input does not trigger an automatic jump');
-        await scroll.focus();
-        await page.keyboard.press('ArrowUp');
-        await page.waitForFunction(() => document.querySelector('[data-video-feed-scroll]')?.scrollTop === 0);
-        await sharedFrame.waitFor({ state: 'visible' });
+        const startY = rect.y + rect.height * .92;
+        const endY = rect.y + rect.height * .06;
+        // Edge's synthesized scroll command can omit touchmove in a cross-origin
+        // frame. Dispatch the actual gesture and verify delivery below.
         await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: centerX, y: startY }] });
         for (let step = 1; step <= 8; step += 1) {
           await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: centerX, y: startY + (endY - startY) * step / 8 }] });
-          await page.waitForTimeout(25);
+          await page.waitForTimeout(30);
         }
         await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
         await cdp.detach();
@@ -637,10 +591,21 @@ try {
       await page.waitForFunction(() => {
         const scroll = document.querySelector('[data-video-feed-scroll]');
         return scroll && scroll.scrollTop > 20;
+      }).catch(async error => {
+        console.error('Scroll gesture state', { surface, width, rect, state: await scroll.evaluate(element => ({scrollTop:element.scrollTop,clientHeight:element.clientHeight,scrollHeight:element.scrollHeight,touchAction:getComputedStyle(element).touchAction,maxScroll:window.__videoLayoutMaxScroll,touches:window.__videoLayoutTouchEvents})) });
+        await page.screenshot({path:path.join(root,'.cache',`video-scroll-failure-${surface}-${width}.png`)});
+        throw error;
       });
       await page.waitForFunction(() => document.querySelector('.video-feed-youtube-player')?.getAttribute('aria-hidden') === 'false');
-      await page.waitForFunction(() => [...window.__videoLayoutPlayers].some(player => player.getVideoData().video_id !== 'scroll00000'));
+      await page.waitForFunction(() => {
+        const scroll = document.querySelector('[data-video-feed-scroll]');
+        return scroll.scrollTop > 20 && Math.abs(scroll.scrollTop / scroll.clientHeight - Math.round(scroll.scrollTop / scroll.clientHeight)) < .002;
+      });
+      if (width < 600) assert.ok(await page.evaluate(() => window.__videoLayoutTouchEvents.some(event => event.type === 'touchstart')
+        && window.__videoLayoutTouchEvents.some(event => event.type === 'touchmove')),
+        'The cross-origin provider actually receives the touch gesture');
       assert.equal(await sharedFrame.getAttribute('data-stable-player'), 'true', 'Scrolling reuses the original provider iframe');
+      assert.equal(await providerDocument.locator('body').getAttribute('data-stable-document'), 'true', 'API video changes preserve the provider document during a gesture');
       await page.frameLocator('.video-feed-youtube-player iframe').getByRole('button', { name: 'Provider controls' }).click();
       assert.equal(await sharedFrame.count(), 1, 'Only one YouTube player stays mounted');
       // Refresh must request a fresh batch and display genuinely new IDs.

@@ -44,13 +44,10 @@ try {
     // succeeds after the view which requested it has already unmounted.
     let fullscreenElement = null;
     Object.defineProperty(document, 'fullscreenElement', { configurable: true, get: () => fullscreenElement });
-    Element.prototype.requestFullscreen = function () {
-      const target = this;
-      return new Promise(resolve => {
-        audit.fullscreenRequests++;
-        audit.resolveFullscreen = () => { fullscreenElement = target; document.dispatchEvent(new Event('fullscreenchange')); resolve(); };
-      });
-    };
+    Element.prototype.requestFullscreen = function () { return new Promise(resolve => {
+      audit.fullscreenRequests++;
+      audit.resolveFullscreen = () => { fullscreenElement = this; document.dispatchEvent(new Event('fullscreenchange')); resolve(); };
+    }); };
     document.exitFullscreen = async () => { audit.fullscreenExits++; fullscreenElement = null; document.dispatchEvent(new Event('fullscreenchange')); };
     window.YT = { PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 }, Player: class {
       constructor(frame, config) {
@@ -73,8 +70,7 @@ try {
         audit.captionWrites.push({ module, option, value });
         audit.confirmCaption = () => { this.captionFontSize = value; this.config.events?.onApiChange?.({ target: this }); };
       }
-      loadVideoById(value) {
-        const id = typeof value === 'string' ? value : value.videoId;
+      loadVideoById(id) {
         this.id = id; this.rate = 1; this.captionFontSize = 0; this.captionModule = false;
         const url = new URL(this.frame.src); url.pathname = `/embed/${id}`; this.frame.src = url.href;
       }

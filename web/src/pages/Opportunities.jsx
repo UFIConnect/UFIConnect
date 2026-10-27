@@ -769,17 +769,21 @@ export default function Opportunities({ embedded = false, searchQuery = null, pa
         </div>
         {!embedded && (
           <aside className="jobs-page-right-tabs" aria-label="Job tools">
+            <div className="jobs-page-rail-options">
             <JobsSidebarControls />
             <div className="jobs-page-role-links">
               <Link to="/settings?tab=preferences" className="jobs-page-tool jobs-page-tool--compact" title={profile?.preferences?.role || 'Choose your target role'}>
                 <strong>Roles</strong>
               </Link>
             </div>
+            </div>
             <div className="jobs-page-rail-bottom">
+              <div className="jobs-page-tool-pair">
               <Link to="/groups" className="jobs-page-tool jobs-page-tool--compact">
                 <strong>Discover groups</strong>
               </Link>
               <MessagesNavigation className="jobs-page-tool jobs-page-tool--compact" />
+              </div>
               <HomeFeedTools showSources={false} />
               <Link to="/resume-builder" className="jobs-page-tool jobs-page-tool--primary jobs-page-resume-builder">
                 <strong>Resume Builder</strong>

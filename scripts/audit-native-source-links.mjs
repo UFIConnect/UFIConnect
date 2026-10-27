@@ -37,12 +37,10 @@ window.renderSource = options => {
     if (options.handler === 'cancel') event.preventDefault();
   };
   root.render(React.createElement(MemoryRouter, { key: options.name, initialEntries: ['/fixture'] },
-    React.createElement('div', { 'data-case': options.name, className: 'shell shell-media-scroll' },
-      React.createElement('header', { className: 'global-app-header' }, 'Navigation'),
+    React.createElement('div', { 'data-case': options.name, className: 'shell shell-media-page' },
       React.createElement('div', { className: 'post-chrome-actions' },
         React.createElement('div', { className: 'post-chrome-more' }, React.createElement('button', { className: 'post-chrome-action' }, 'More')),
         React.createElement(OpenOnSource, { post: { id: 'source-audit', source: 'mastodon', isExternal: true, sourceUrl: options.href, ...options.post }, onClick })),
-      React.createElement('nav', { className: 'bottom-nav' }, 'Navigation'),
       React.createElement(CurrentRoute))));
 };
 `;
@@ -91,7 +89,6 @@ try {
       return link.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
     }), true, 'More options must not cover the source link');
     assert.equal(await ordinary.locator(':scope > svg').count(), 0, 'The source icon is the link without a second arrow');
-    assert.deepEqual(await page.locator('.global-app-header, .bottom-nav').evaluateAll(bars => bars.map(bar => getComputedStyle(bar).position)), ['static', 'static'], 'Media navigation bars scroll with the page');
     assert.equal(await ordinary.getAttribute('href'), href);
     assert.equal(await ordinary.getAttribute('target'), '_blank');
     assert.match(await ordinary.getAttribute('rel'), /noopener/);
@@ -146,26 +143,49 @@ try {
       fixture.innerHTML = '<div class="video-feed-view" style="height:480px;min-height:0"><div class="video-feed-frame"><div class="video-feed-body"><div class="video-feed-scroll"><div class="video-feed-snap-item"></div><div class="video-feed-snap-item"></div><div class="video-feed-snap-item"></div></div></div></div></div>';
       document.body.append(fixture);
       const scroll = fixture.querySelector('.video-feed-scroll');
-      scroll.scrollTop = 117;
-      await new Promise(resolve => setTimeout(resolve, 250));
-      const result = { snap: getComputedStyle(scroll).scrollSnapType, position: scroll.scrollTop };
+      const nextItem = scroll.children[1];
+      const target = nextItem.offsetTop;
+      scroll.scrollTo({ top: target - scroll.clientHeight * 0.2, behavior: 'instant' });
+      const deadline = performance.now() + 2000;
+      while (Math.abs(scroll.scrollTop - target) > 1 && performance.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      const style = getComputedStyle(scroll);
+      const result = { snap: style.scrollSnapType, behavior: style.scrollBehavior, anchor: style.overflowAnchor,
+        alignment: getComputedStyle(nextItem).scrollSnapAlign, position: scroll.scrollTop, target, height: scroll.clientHeight };
       fixture.remove();
       return result;
     });
-    assert.deepEqual(scrolling, { snap: 'none', position: 117 }, 'A partial media scroll remains at the chosen position');
+    assert.deepEqual({ snap: scrolling.snap, behavior: scrolling.behavior, anchor: scrolling.anchor, alignment: scrolling.alignment },
+      { snap: 'y mandatory', behavior: 'auto', anchor: 'none', alignment: 'start' }, 'Media keeps mandatory snapping without smooth scrolling or browser anchoring');
+    assert.ok(scrolling.height > 0 && scrolling.target >= scrolling.height - 1, 'The media fixture contains another full-height item');
+    assert.ok(Math.abs(scrolling.position - scrolling.target) <= 1, 'A partial media scroll snaps to the next item');
     if (width === 1440) {
       const rail = await page.evaluate(() => {
         const aside = document.createElement('aside');
         aside.className = 'home-feed-right-tabs';
-        aside.style.height = '220px';
-        aside.innerHTML = '<div class="home-feed-view-tabs">' + '<button class="home-feed-rail-tab">Navigation</button>'.repeat(8) + '</div><div class="home-feed-rail-bottom"><div class="home-feed-side-tools"><button class="home-feed-rail-tab">Tools</button></div></div>';
+        aside.style.cssText = 'height:320px;width:220px';
+        aside.innerHTML = '<div class="home-feed-view-tabs">' + '<button class="home-feed-rail-tab">Navigation</button>'.repeat(12) + '</div><div class="home-feed-rail-bottom"><div class="home-feed-side-tools">' + '<button class="home-feed-rail-tab">Tools</button>'.repeat(12) + '</div><button class="home-feed-rail-tab fixture-bottom-control">Pinned action</button></div>';
         document.body.append(aside);
-        aside.scrollTop = aside.scrollHeight;
-        const result = { overflow: getComputedStyle(aside).overflowY, moved: aside.scrollTop > 0, tabs: getComputedStyle(aside.firstElementChild).overflowY, tools: getComputedStyle(aside.querySelector('.home-feed-side-tools')).overflowY };
+        const tabs = aside.querySelector('.home-feed-view-tabs'), tools = aside.querySelector('.home-feed-side-tools');
+        const pinned = aside.querySelector('.fixture-bottom-control');
+        const initialPinned = pinned.getBoundingClientRect();
+        tabs.scrollTop = tabs.scrollHeight;
+        const tabsPosition = tabs.scrollTop;
+        const toolsBefore = tools.scrollTop;
+        tools.scrollTop = tools.scrollHeight;
+        const pinnedAfter = pinned.getBoundingClientRect(), bounds = aside.getBoundingClientRect();
+        const result = { overflow: getComputedStyle(aside).overflowY, panelPosition: aside.scrollTop,
+          tabs: getComputedStyle(tabs).overflowY, tools: getComputedStyle(tools).overflowY,
+          tabsMoved: tabsPosition > 0, toolsMoved: tools.scrollTop > 0,
+          independent: toolsBefore === 0 && tabs.scrollTop === tabsPosition,
+          pinned: Math.abs(pinnedAfter.top - initialPinned.top) <= 1 && Math.abs(pinnedAfter.bottom - initialPinned.bottom) <= 1,
+          pinnedWithinPanel: pinnedAfter.top >= bounds.top && pinnedAfter.bottom <= bounds.bottom };
         aside.remove();
         return result;
       });
-      assert.deepEqual(rail, { overflow: 'auto', moved: true, tabs: 'visible', tools: 'visible' }, 'The right sidebar scrolls as one panel');
+      assert.deepEqual(rail, { overflow: 'hidden', panelPosition: 0, tabs: 'auto', tools: 'auto', tabsMoved: true, toolsMoved: true,
+        independent: true, pinned: true, pinnedWithinPanel: true }, 'Sidebar sections scroll independently while bottom actions stay pinned');
     }
     results.push({ width, passed: true, ordinaryBrowser: true, nativeStoppedPropagation: true, singleHandoff: true,
       keyboard: true, cancelledHandlers: true, internalRouting: true, rejectedUnsafeUrls: 4, hostFailureFeedback: true });

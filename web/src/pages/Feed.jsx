@@ -42,6 +42,8 @@ import TopicFilterControl, { TopicChoices } from '../components/TopicFilterContr
 import TravelDestinationPicker, { useTravelDestinations, travelCityMatches, travelCameraSearchUrl } from '../components/TravelDestinationPicker';
 import TravelGuideDialog from '../components/TravelGuideDialog';
 import TravelViewerDialog from '../components/TravelViewerDialog';
+import TravelProviderCamera from '../components/TravelProviderCamera';
+import { providerCameraPlayback } from '../components/travelCameraPlayback.mjs';
 import DiscoveryCategoryBar from '../components/DiscoveryCategoryBar';
 import { DISCOVERY_CATEGORIES, discoveryPostContext, discoveryQuery } from '../components/discoveryCategories';
 import { TIERS } from '../components/PricingModal';
@@ -1142,18 +1144,21 @@ function TravelLiveLoop({ feeds = [], mediaOpenId, location, onLocationSelect, o
       .map(stream => ({ ...feed, sourceUrl: stream.sourceUrl, mediaUrl: stream.sourceUrl,
         title: stream.title || feed.title, liveStreamTitle: stream.title,
         liveStreamChannel: stream.channelTitle, liveReplacement: stream.replacement }))])
-    .filter(feed => feed?.id && feed.liveVerified && extractYouTubeId(feed.sourceUrl || feed.mediaUrl)), [feeds]);
+    .filter(feed => feed?.id && feed.liveVerified && (extractYouTubeId(feed.sourceUrl || feed.mediaUrl) || providerCameraPlayback(feed))), [feeds]);
   const savedIndex = destinations.findIndex(city => travelCityMatches(city, location));
   const defaultCity = destinations.find(city => travelCityMatches(city, { city: city.city, country: location?.country })) || destinations[0];
   const selected = savedIndex >= 0 ? destinations[savedIndex] : location?.city
     ? { city: location.city, country: location.country }
     : defaultCity || null;
   const selectedIndex = selected?.id ? destinations.findIndex(city => city.id === selected.id) : -1;
-  const streamKey = feed => feed.id + ':' + extractYouTubeId(feed.sourceUrl || feed.mediaUrl);
+  const streamKey = feed => feed.id + ':' + (providerCameraPlayback(feed)?.url || extractYouTubeId(feed.sourceUrl || feed.mediaUrl));
   const availableFeeds = liveFeeds.filter(feed => !failedStreams.has(streamKey(feed)));
   const selectedFeeds = liveFeeds.filter(feed => travelCityMatches(selected, feed));
   const active = availableFeeds.find(feed => travelCityMatches(selected, feed));
-  const embedId = extractYouTubeId(active?.sourceUrl || active?.mediaUrl);
+  const providerPlayback = providerCameraPlayback(active);
+  const embedId = providerPlayback ? null : extractYouTubeId(active?.sourceUrl || active?.mediaUrl);
+  const providerOptions = (Array.isArray(status?.cameraProviders) ? status.cameraProviders : [])
+    .filter(camera => camera.id !== active?.id && travelCityMatches(selected, camera) && providerCameraPlayback(camera));
   const busy = disabled || selecting;
   const activeStreamKey = active ? streamKey(active) : null;
   const handlePlaybackStatus = useCallback(failed => {
@@ -1212,10 +1217,10 @@ function TravelLiveLoop({ feeds = [], mediaOpenId, location, onLocationSelect, o
         </div>
         <div className="travel-live-header-actions">
           {selected && onGuideOpen && <button type="button" className="btn btn-ghost btn-sm" onClick={() => onGuideOpen(selected)}><BookOpen size={14} aria-hidden="true" />City guide</button>}
-          {active && <span className="travel-live-loop-status"><span aria-hidden="true" />Live now</span>}
+          {active && <span className="travel-live-loop-status"><span aria-hidden="true" />{providerPlayback ? active.liveMediaKind === 'image' ? 'Live image' : 'Live on provider' : 'Live now'}</span>}
         </div>
       </div>
-      {active && embedId ? <div className="travel-live-loop-stage">
+      {active && providerPlayback ? <TravelProviderCamera camera={active} /> : active && embedId ? <div className="travel-live-loop-stage">
         <YouTubeEmbedBlock
           key={active.id + embedId} embedId={embedId} videoKey={'travel-live-' + active.id}
           poster={'https://i.ytimg.com/vi/' + embedId + '/hqdefault.jpg'}
@@ -1242,11 +1247,14 @@ function TravelLiveLoop({ feeds = [], mediaOpenId, location, onLocationSelect, o
         <Plane size={30} aria-hidden="true" />
         <h3>{!allPlaybackFailed && status?.camerasChecking ? 'Checking live cameras' : 'Live cameras unavailable'}</h3>
         <p role="status">{cameraStatus}</p>
-        {selected && <a className="btn btn-primary" href={travelCameraSearchUrl(selected)} target="_blank" rel="noopener noreferrer">
+        {selected && !providerOptions.length && <a className="btn btn-primary" href={travelCameraSearchUrl(selected)} target="_blank" rel="noopener noreferrer">
           Find live cameras in {selected.city}
         </a>}
-        {selected && <p>Search current camera broadcasts on YouTube.</p>}
+        {selected && !providerOptions.length && <p>Search current camera broadcasts on YouTube.</p>}
         <button type="button" className="btn btn-ghost" onClick={refreshCameras} disabled={busy} aria-label="Refresh live cameras"><RotateCw size={16} />Check cameras</button>
+      </div>}
+      {providerOptions.length > 0 && <div className="travel-provider-camera-options" aria-label="Other camera operators">
+        {providerOptions.map(camera => <TravelProviderCamera key={camera.id} camera={camera} compact />)}
       </div>}
       {destinations.length > 0 && <div className="travel-city-navigation" role="group" aria-label="City navigation">
         <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => moveCity(-1)} aria-label="Previous city"><ArrowLeft size={17} />Previous</button>

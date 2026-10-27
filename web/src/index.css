@@ -1362,16 +1362,38 @@ input, textarea, select { font-family: inherit; }
 .jobs-page-content { min-width: 0; }
 .jobs-page-content--embedded { width: 100%; }
 .jobs-page-right-tabs {
+  --jobs-rail-top: 96px;
   position: sticky;
-  top: 18px;
+  top: var(--jobs-rail-top);
   display: flex;
   flex-direction: column;
   gap: 8px;
   min-width: 0;
-  height: calc(100vh - 36px);
-  max-height: calc(100vh - 36px);
-  overflow-y: auto;
+  height: calc(100dvh - var(--jobs-rail-top));
+  max-height: calc(100dvh - var(--jobs-rail-top));
+  overflow: hidden;
+  padding-bottom: max(12px, var(--app-safe-bottom, env(safe-area-inset-bottom, 0px)));
   padding-right: 2px;
+}
+.jobs-page-rail-options {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-height: 64px;
+  gap: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.jobs-page-rail-options > * { flex-shrink: 0; }
+@media (min-width: 769px) {
+  /* Let sticky rails reach the viewport bottom even at the end of a short feed. */
+  .shell .shell-content > .main:has(.home-feed-right-tabs, .jobs-page-right-tabs) { padding-bottom: 0; }
+  html[data-ufi-app] .jobs-page-right-tabs {
+    --jobs-rail-top: calc(var(--app-header-height) + var(--app-safe-top) + 16px);
+  }
+}
+@media (min-width: 769px) and (max-width: 1100px) {
+  .jobs-page-right-tabs { --jobs-rail-top: 92px; }
 }
 .jobs-sidebar-controls {
   display: flex;
@@ -1483,9 +1505,19 @@ input, textarea, select { font-family: inherit; }
   padding-top: 2px;
 }
 .jobs-page-rail-bottom {
+  flex: 0 0 auto;
+  max-height: calc(100% - 72px);
+  min-height: 0;
   margin-top: auto;
-  padding-top: 18px;
+  padding-top: 8px;
 }
+.jobs-page-rail-bottom > :not(.home-feed-side-tools) { flex-shrink: 0; }
+.jobs-page-rail-bottom > .home-feed-side-tools {
+  min-height: 40px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.jobs-page-rail-bottom > .home-feed-side-tools > * { flex-shrink: 0; }
 .jobs-page-tool {
   display: flex;
   flex-direction: column;

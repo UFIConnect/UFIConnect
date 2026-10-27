@@ -202,8 +202,8 @@ try {
       await page.waitForTimeout(25);
     }
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-    // Free scrolling can stop between slides. Crossing the midpoint selects
-    // the next video without requiring a snap to its top edge.
+    // Crossing the midpoint selects the next video; mandatory snapping then
+    // aligns the selected slide with the viewport.
     await page.waitForFunction(() => { const scroll = document.querySelector('[data-video-feed-scroll]'); return scroll.scrollTop > scroll.clientHeight / 2; });
     await cdp.detach();
     assert.notEqual(await activeId(), 'native-0', 'A real touch swipe advances the video');
@@ -230,11 +230,11 @@ try {
       await page.locator(`[data-post-id="${target}"]`).waitFor();
       await page.locator(`[data-post-id="${target}"]`).evaluate(el => {
         const scroll = el.closest('[data-video-feed-scroll]');
-        scroll.scrollTo({ top: scroll.scrollTop + el.getBoundingClientRect().top - scroll.getBoundingClientRect().top + 137, behavior: 'instant' });
+        scroll.scrollTo({ top: scroll.scrollTop + el.getBoundingClientRect().top - scroll.getBoundingClientRect().top, behavior: 'instant' });
       });
       await page.locator(`[data-post-id="provider-${pageNumber * 10}"]`).waitFor();
       const offset = await page.locator(`[data-post-id="${target}"]`).evaluate(el => el.getBoundingClientRect().top - el.closest('[data-video-feed-scroll]').getBoundingClientRect().top);
-      assert.ok(Math.abs(offset + 137) <= 2, `Pagination preserves the partial scroll position after queue trimming (${offset}px)`);
+      assert.ok(Math.abs(offset) <= 2, `Pagination preserves the snapped target post after queue trimming (${offset}px)`);
       const state = await page.evaluate(() => ({ posts: document.querySelectorAll('[data-video-feed-scroll] [data-post-id]').length,
         slides: document.querySelectorAll('.video-feed-slide').length, frames: document.querySelectorAll('.video-feed-youtube-player iframe').length,
         players: [...window.__videoAuditPlayers].filter(player => player.state === 1).length }));
