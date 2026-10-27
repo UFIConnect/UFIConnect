@@ -10,6 +10,7 @@ const { normalizePostMedia } = require('./post-media');
 const { mastodonMedia, blueskyMedia } = require('./provider-video-media');
 const { verifiedCityAlternates, completeTravelCameraCatalog, travelCameraSearchUrl, queueCameraDiscoveries, nextCameraDiscovery } = require('./travel-live-cameras');
 const { validateCameraProviders, createCameraProviderVerifier, providerCameraPost } = require('./travel-camera-providers');
+const { createYouTubeCameraChannelResolver } = require('./youtube-camera-channels');
 const cors = require('cors');
 const helmet = require('helmet');
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
@@ -10073,6 +10074,7 @@ const LIVE_CAMERA_BY_ID = new Map(LIVE_CAMERA_CATALOG.map(camera => [camera.id, 
 const OPERATOR_CAMERA_STREAMS = require('./travel-camera-streams.json');
 const CAMERA_PROVIDERS = validateCameraProviders(require('./travel-camera-providers.json'), COUNTRIES_DESTINATION_GUIDES);
 const cameraProviderVerifier = createCameraProviderVerifier(CAMERA_PROVIDERS, { fetchImpl: (...args) => fetch(...args) });
+const cameraChannelResolver = createYouTubeCameraChannelResolver(CAMERA_PROVIDERS);
 let liveCameraPostsSeeded = false;
 let liveCameraPostsSeedPromise = null;
 const LIVE_CAMERA_VERIFICATION_CACHE_MS = 3 * MIN;
@@ -10469,9 +10471,25 @@ async function refreshVerifiedLiveCameraPosts(location = null) {
   const started = Date.now();
   const candidates = currentLiveCameraPosts();
   const primaryIds = [...candidates.map(post => liveCameraYouTubeId(post.sourceUrl)),
-    ...OPERATOR_CAMERA_STREAMS.map(stream => stream.videoId), ...cameraProviderVerifier.youtubeIds].filter(Boolean);
-  const states = primaryIds.length ? await fetchYouTubeLiveStates(primaryIds) : new Map();
-  cameraProviderVerifier.updateYouTubeStates(states);
+    ...OPERATOR_CAMERA_STREAMS.map(stream => stream.videoId), ...cameraChannelResolver.videoIds].filter(Boolean);
+  let states = primaryIds.length ? await fetchYouTubeLiveStates(primaryIds) : new Map();
+  states = await cameraChannelResolver.resolve(states, {
+    searchChannel: async (channelId, { maxResults }) => {
+      const selectedChannel = location?.available && CAMERA_PROVIDERS.some(camera =>
+        camera.verification.channelId === channelId
+        && (location.city ? travelCityMatches(camera, location) : travelCountryMatches(camera, location)));
+      if ((!selectedChannel && liveCameraDiscoverySlotsRemaining() <= LIVE_CAMERA_DISCOVERY_RESERVED_SLOTS)
+        || !takeLiveCameraDiscoverySlot()) throw new Error('Live-camera discovery budget is exhausted');
+      await waitForYouTubeDataApiSlot();
+      const params = new URLSearchParams({
+        part: 'snippet', channelId, eventType: 'live', type: 'video',
+        maxResults: String(maxResults), key: process.env.YOUTUBE_API_KEY,
+      });
+      return fetchTravelResource(`https://www.googleapis.com/youtube/v3/search?${params.toString()}`);
+    },
+    fetchStates: fetchYouTubeLiveStates,
+  });
+  cameraProviderVerifier.updateYouTubeStates(states, cameraChannelResolver.resolvedIds);
   if (primaryIds.length && !states) {
     liveCameraVerificationState.status = 'degraded';
     liveCameraVerificationState.lastRun = Date.now();
@@ -10558,12 +10576,17 @@ async function verifiedLiveCameraPosts(location = null) {
     location?.city ? travelCityMatches(post, location) : travelCountryMatches(post, location)
   );
   const locationRefreshUntil = locationKey ? (liveCameraLocationRefreshes.get(locationKey) || 0) : 0;
-  if (liveCameraVerificationExpiresAt > now && cameraProviderVerifier.youtubeStatesFresh() && (hasLocationCamera || locationRefreshUntil > now)) {
+  const verificationFailed = liveCameraVerificationState.status === 'degraded' || liveCameraVerificationState.status === 'error';
+  // A provider-wide failure backs off across city changes. Successful proofs
+  // still require fresh provider states and selected-city prioritization.
+  if (liveCameraVerificationExpiresAt > now && (verificationFailed
+    || (cameraProviderVerifier.youtubeStatesFresh() && (hasLocationCamera || locationRefreshUntil > now)))) {
     return liveCameraVerificationSnapshot;
   }
   if (liveCameraVerificationPromise) {
     const snapshot = await liveCameraVerificationPromise;
-    if (locationKey && !snapshot.some(post => liveCameraLocationScore(post, location) === (location.city ? 2 : 1))) {
+    if (liveCameraVerificationState.status === 'ready' && locationKey
+      && !snapshot.some(post => liveCameraLocationScore(post, location) === (location.city ? 2 : 1))) {
       scheduleLiveCameraDiscovery(prioritizeLiveCameraDiscovery(currentLiveCameraPosts()
         .filter(post => !snapshot.some(camera => camera.id === post.id))
         .filter(post => location.city ? travelCityMatches(post, location) : travelCountryMatches(post, location)), location), true);

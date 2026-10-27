@@ -4,12 +4,226 @@ const http = require('node:http');
 const { createAppHarness, member } = require('./test-support/app-harness');
 const { ADDITIONAL_TRAVEL_DESTINATIONS } = require('./travel-destinations');
 const providers = require('./travel-providers');
+const cameraProviders = require('./travel-camera-providers');
 
 async function harness(t, options) {
   const app = await createAppHarness(options);
   t.after(() => app.close());
   return app;
 }
+
+const verificationProvider = {
+  id: 'camera_provider_gb_london_test', destinationId: 'GB:London', city: 'London',
+  country: 'United Kingdom', countryCode: 'GB', title: 'Test city camera', operator: 'Test operator',
+  sourceUrl: 'https://www.youtube.com/watch?v=oldCamera01',
+  verification: { kind: 'youtube-provider', videoId: 'oldCamera01' },
+};
+
+async function cameraVerificationHarness(t, { clock, fetchResource, failVerifier = false, catalog = [verificationProvider] }) {
+  let app;
+  app = await harness(t, { clock, env: { YOUTUBE_API_KEY: 'test-key' }, modules: {
+    './travel-camera-providers.json': catalog,
+    './travel-providers': { ...providers, fetchTravelResource: async url => {
+      app.setYouTubeCallReady();
+      return fetchResource(new URL(url));
+    } },
+    './travel-camera-providers': { ...cameraProviders, createCameraProviderVerifier(catalog, options) {
+      const verifier = cameraProviders.createCameraProviderVerifier(catalog, { ...options, now: clock });
+      if (failVerifier) verifier.updateYouTubeStates = () => { throw new Error('Verifier unavailable'); };
+      return verifier;
+    } },
+  } });
+  return app;
+}
+
+test('failed camera verification backs off across cities until the exact two-minute expiry, then recovers', async t => {
+  let now = Date.now();
+  let failed = true;
+  let calls = 0;
+  const app = await cameraVerificationHarness(t, { clock: () => now, fetchResource: async url => {
+    assert.equal(url.pathname, '/youtube/v3/videos');
+    calls++;
+    if (failed) throw new Error('Travel provider returned HTTP 403');
+    return { items: [{ id: 'rnXIjl_Rzy4', liveStreamingDetails: { actualStartTime: '2026-09-01' }, status: { privacyStatus: 'public', embeddable: true } }] };
+  } });
+  for (const location of [
+    { city: 'London', country: 'GB', available: true },
+    { city: 'London', country: 'GB', available: true },
+    { city: 'Paris', country: 'FR', available: true },
+    { city: 'Tokyo', country: 'JP', available: true },
+    { country: 'Japan', available: true }, null,
+  ]) {
+    assert.equal((await app.verifiedLiveCameraPosts(location)).length, 0);
+    assert.equal(calls, 1, 'A different city cannot bypass the provider-wide failure backoff');
+  }
+  assert.equal(app.liveCameraVerificationState.status, 'degraded');
+  assert.equal(app.liveCameraDiscoveryQueue.size, 0, 'An upstream failure must not spend discovery quota');
+  now += 119999;
+  await app.verifiedLiveCameraPosts({ city: 'Rome', country: 'IT', available: true });
+  assert.equal(calls, 1, 'The failure snapshot remains valid immediately before expiry');
+  now++;
+  failed = false;
+  const recovered = await app.verifiedLiveCameraPosts({ city: 'New York', country: 'US', available: true });
+  assert.ok(calls > 1, 'Verification retries at the existing failure TTL, without an extra request delay');
+  assert.ok(recovered.some(camera => camera.city === 'New York' && camera.liveVerified));
+  assert.equal(app.liveCameraVerificationState.status, 'ready');
+  const recoveredCalls = calls;
+  await app.verifiedLiveCameraPosts({ city: 'New York', country: 'US', available: true });
+  assert.equal(calls, recoveredCalls, 'Successful recovery uses the ordinary fresh proof cache');
+});
+
+test('a successful camera snapshot is rechecked when provider proofs expire before its three-minute TTL', async t => {
+  let now = Date.now();
+  let ended = false;
+  let calls = 0;
+  const app = await cameraVerificationHarness(t, { clock: () => now, fetchResource: async () => {
+    calls++;
+    return { items: ended ? [] : [{ id: 'rnXIjl_Rzy4', liveStreamingDetails: { actualStartTime: '2026-09-01' }, status: { privacyStatus: 'public', embeddable: true } }] };
+  } });
+  app.exhaustCameraDiscoveryBudget();
+  assert.ok((await app.verifiedLiveCameraPosts()).some(camera => camera.city === 'New York'));
+  const initialCalls = calls;
+  now += 119999;
+  await app.verifiedLiveCameraPosts();
+  assert.equal(calls, initialCalls);
+  now++;
+  ended = true;
+  assert.equal((await app.verifiedLiveCameraPosts()).length, 0, 'Expired provider proofs cannot leave an ended camera live');
+  assert.ok(calls > initialCalls, 'Provider freshness still overrides the longer successful snapshot TTL');
+  assert.equal(app.liveCameraVerificationState.status, 'ready', 'A successful empty result is not a provider outage');
+});
+
+test('successful empty verification still prioritizes each newly selected city', async t => {
+  const now = Date.now();
+  let calls = 0;
+  const app = await cameraVerificationHarness(t, { clock: () => now, fetchResource: async () => {
+    calls++;
+    return { items: [] };
+  } });
+  await app.verifiedLiveCameraPosts({ city: 'London', country: 'GB', available: true });
+  const initialCalls = calls;
+  assert.equal(app.liveCameraVerificationState.status, 'ready');
+  assert.ok([...app.liveCameraDiscoveryQueue.values()].some(entry => entry.camera.city === 'London' && entry.requested));
+  await app.verifiedLiveCameraPosts({ city: 'Paris', country: 'FR', available: true });
+  assert.ok(calls > initialCalls, 'Empty successful results retain selected-city refresh behavior');
+  assert.ok([...app.liveCameraDiscoveryQueue.values()].some(entry => entry.camera.city === 'Paris' && entry.requested));
+});
+
+test('concurrent city requests share a failed verification without queuing discovery', async t => {
+  const now = Date.now();
+  let calls = 0;
+  let started;
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  const entered = new Promise(resolve => { started = resolve; });
+  const app = await cameraVerificationHarness(t, { clock: () => now, fetchResource: async () => {
+    calls++;
+    started();
+    await pending;
+    throw new Error('Travel provider returned HTTP 403');
+  } });
+  const first = app.verifiedLiveCameraPosts({ city: 'London', country: 'GB', available: true });
+  await entered;
+  const second = app.verifiedLiveCameraPosts({ city: 'Paris', country: 'FR', available: true });
+  release();
+  assert.ok((await Promise.all([first, second])).every(posts => posts.length === 0));
+  assert.equal(calls, 1);
+  assert.equal(app.liveCameraVerificationState.status, 'degraded');
+  assert.equal(app.liveCameraVerificationState.backgroundStatus, 'idle');
+  assert.equal(app.liveCameraDiscoveryQueue.size, 0, 'A waiter cannot launch searches after shared verification failed');
+});
+
+test('unexpected verification errors use the same bounded failure backoff', async t => {
+  let now = Date.now();
+  let calls = 0;
+  const app = await cameraVerificationHarness(t, { clock: () => now, failVerifier: true, fetchResource: async () => {
+    calls++;
+    return { items: [] };
+  } });
+  await app.verifiedLiveCameraPosts({ city: 'London', country: 'GB', available: true });
+  const initialCalls = calls;
+  assert.equal(app.liveCameraVerificationState.status, 'error');
+  assert.ok(initialCalls > 0);
+  await app.verifiedLiveCameraPosts({ city: 'Tokyo', country: 'JP', available: true });
+  assert.equal(calls, initialCalls, 'An exception cannot bypass the global failure snapshot');
+  now += 120000;
+  await app.verifiedLiveCameraPosts({ city: 'Tokyo', country: 'JP', available: true });
+  assert.ok(calls > initialCalls, 'Unexpected errors remain retryable after the existing TTL');
+});
+
+test('Travel resolves a restarted operator channel, verifies the replacement, and batches its new ID on refresh', async t => {
+  let now = Date.now();
+  const channelId = 'UCfVBWzBee1rnmR8AhT2Esng';
+  const catalog = [{ ...verificationProvider, id: 'camera_provider_my_kl_test', destinationId: 'MY:Kuala_Lumpur',
+    city: 'Kuala Lumpur', country: 'Malaysia', countryCode: 'MY',
+    sourceUrl: `https://www.youtube.com/channel/${channelId}/live`,
+    verification: { kind: 'youtube-provider', videoId: 'oldCamera01', channelId } }];
+  const requests = [];
+  const app = await cameraVerificationHarness(t, { clock: () => now, catalog, fetchResource: async url => {
+    if (!url.hostname.endsWith('googleapis.com')) throw new Error('Optional provider unavailable');
+    requests.push(url);
+    if (url.pathname.endsWith('/search')) return { items: [
+      { id: { videoId: 'wrongLive01' }, snippet: { channelId: 'UCn4oQ60oxfvq7aesEPYqpKw', liveBroadcastContent: 'live' } },
+      { id: { videoId: 'newCamera02' }, snippet: { channelId, liveBroadcastContent: 'live' } },
+    ] };
+    return { items: url.searchParams.get('id').split(',').filter(id => ['oldCamera01', 'newCamera02'].includes(id)).map(id => ({
+      id, liveStreamingDetails: { actualStartTime: '2026-09-01', ...(id === 'oldCamera01' ? { actualEndTime: '2026-09-02' } : {}) },
+      status: { privacyStatus: 'public', embeddable: false },
+    })) };
+  } });
+  const location = { city: 'Kuala Lumpur', country: 'MY', available: true };
+  const first = await app.getCountriesCameraFeed(location);
+  const camera = first.liveFeeds.find(post => post.id === catalog[0].id);
+  assert.equal(camera?.liveVerified, true, 'The operator provider receives the newly verified ID, not the ended catalog ID');
+  assert.equal(camera.livePlayback.kind, 'provider', 'Non-embeddable public streams remain operator links');
+  assert.equal(camera.livePlayback.url, catalog[0].sourceUrl);
+  const searches = requests.filter(url => url.pathname.endsWith('/search'));
+  assert.equal(searches.length, 1);
+  for (const [key, value] of Object.entries({ part: 'snippet', channelId, eventType: 'live', type: 'video', maxResults: '5', key: 'test-key' })) {
+    assert.equal(searches[0].searchParams.get(key), value);
+  }
+  const searchIndex = requests.indexOf(searches[0]);
+  assert.equal(requests[searchIndex + 1].searchParams.get('id'), 'newCamera02', 'Search snippets alone cannot make a replacement live');
+  const beforeRefresh = requests.length;
+  now += 120000;
+  const refreshed = await app.getCountriesCameraFeed(location);
+  const refreshedIds = requests.slice(beforeRefresh).filter(url => url.pathname.endsWith('/videos')).flatMap(url => url.searchParams.get('id').split(','));
+  assert.ok(refreshedIds.includes('newCamera02'));
+  assert.equal(refreshedIds.includes('oldCamera01'), false, 'The resolved candidate replaces the stale ID in normal status batching');
+  assert.equal(requests.filter(url => url.pathname.endsWith('/search')).length, 1, 'A still-live replacement needs no new discovery');
+  assert.equal(refreshed.liveFeeds.find(post => post.id === catalog[0].id)?.liveVerified, true);
+});
+
+test('Travel never searches an operator channel after the shared status batch fails', async t => {
+  const requests = [];
+  const app = await cameraVerificationHarness(t, { clock: Date.now,
+    catalog: [{ ...verificationProvider, verification: { ...verificationProvider.verification, channelId: 'UCfVBWzBee1rnmR8AhT2Esng' } }],
+    fetchResource: async url => { requests.push(url); throw new Error('Travel provider returned HTTP 403'); },
+  });
+  assert.equal((await app.verifiedLiveCameraPosts()).length, 0);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].pathname, '/youtube/v3/videos');
+  assert.equal(app.liveCameraVerificationState.status, 'degraded');
+});
+
+test('operator channel discovery shares the aggregate search budget and preserves selected-city reserves', async t => {
+  for (const mode of ['exhausted', 'reserved-background', 'reserved-selected']) {
+    let searches = 0;
+    const app = await cameraVerificationHarness(t, { clock: Date.now,
+      catalog: [{ ...verificationProvider, verification: { ...verificationProvider.verification, channelId: 'UCfVBWzBee1rnmR8AhT2Esng' } }],
+      fetchResource: async url => {
+        if (url.pathname.endsWith('/search')) searches++;
+        return { items: [] };
+      },
+    });
+    if (mode === 'exhausted') app.exhaustCameraDiscoveryBudget();
+    else app.reserveCameraDiscoveryBudget();
+    const selected = mode !== 'reserved-background' ? { city: 'London', country: 'GB', available: true } : null;
+    await app.verifiedLiveCameraPosts(selected);
+    assert.equal(searches, mode === 'reserved-selected' ? 1 : 0, mode);
+    assert.equal(app.liveCameraVerificationState.status, 'ready', 'Budget exhaustion must not invalidate a successful status batch');
+  }
+});
 
 test('Travel adds 50 unique guide cities and exposes all 91 destinations', async t => {
   const app = await harness(t);
@@ -54,6 +268,7 @@ test('every published city can return its own verified feed without search quota
   let app;
   app = await harness(t, { env: { YOUTUBE_API_KEY: 'test-key' }, modules: {
     './travel-camera-streams.json': candidates,
+    './travel-camera-providers.json': [],
     './travel-providers': { ...providers, fetchTravelResource: async url => {
       assert.ok(url.includes('/videos?'), 'catalog coverage does not require discovery searches');
       app.setYouTubeCallReady();
@@ -202,7 +417,7 @@ test('selected Travel picks stay in their destination across pagination, member 
 
 test('strict selected picks keep the verified city catalog separate and reject unrelated cached stories', async t => {
   let app;
-  app = await harness(t, { env: { YOUTUBE_API_KEY: 'test-key' }, modules: { './travel-providers': { ...providers, fetchTravelResource: async url => {
+  app = await harness(t, { env: { YOUTUBE_API_KEY: 'test-key' }, modules: { './travel-camera-providers.json': [], './travel-providers': { ...providers, fetchTravelResource: async url => {
     assert.ok(url.includes('/videos?'), 'warm selected picks need no worldwide discovery or search request');
     app.setYouTubeCallReady();
     return { items: [{ id: 'rnXIjl_Rzy4', liveStreamingDetails: { actualStartTime: '2026-09-01' }, status: { privacyStatus: 'public', embeddable: true } }] };
@@ -320,6 +535,7 @@ test('operator cameras stay available without search quota and still require liv
   let app;
   app = await harness(t, {env:{YOUTUBE_API_KEY:'test-key'},modules:{
     './travel-camera-streams.json':candidates,
+    './travel-camera-providers.json':[],
     './travel-providers':{...providers,fetchTravelResource:async url => {
       assert.ok(url.includes('/videos?'),'known operator streams need no search calls');
       app.setYouTubeCallReady();

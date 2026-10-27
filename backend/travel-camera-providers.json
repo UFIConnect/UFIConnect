@@ -542,5 +542,43 @@
     "evidence": {
       "research": "perth-water-camera-browser.json"
     }
+  },
+  {
+    "id": "camera_provider_id_denpasar_sanur_barber_patio",
+    "destinationId": "ID:Denpasar",
+    "city": "Denpasar",
+    "country": "Indonesia",
+    "countryCode": "ID",
+    "title": "Sanur — current Bali Barber patio image",
+    "operator": "Bali Barber / Nest",
+    "sourceUrl": "https://www.balibarber.com/live",
+    "verification": {
+      "kind": "fresh-image",
+      "url": "https://nexusapi-us1.camera.home.nest.com/get_image?uuid=4a34105f28414578a39cc5ceec21724e&width=540&public=AqzLAz2Ozj",
+      "allowedHosts": [
+        "nexusapi-us1.camera.home.nest.com"
+      ],
+      "updateIntervalSeconds": 60,
+      "maxAgeSeconds": 180
+    },
+    "evidence": {
+      "research": "denpasar-image-verification.json",
+      "location": "https://disparda.baliprov.go.id/wp-content/uploads/2025/05/Direktori_2024.pdf"
+    }
+  },
+  {
+    "id": "camera_provider_my_kuala_lumpur_skyline",
+    "destinationId": "MY:Kuala_Lumpur",
+    "city": "Kuala Lumpur",
+    "country": "Malaysia",
+    "countryCode": "MY",
+    "title": "Kuala Lumpur skyline",
+    "operator": "KL Skyline Live",
+    "sourceUrl": "https://www.youtube.com/@KLSkylineLive/live",
+    "verification": {
+      "kind": "youtube-provider",
+      "videoId": "U2sB6Try12M",
+      "channelId": "UCfVBWzBee1rnmR8AhT2Esng"
+    }
   }
 ]

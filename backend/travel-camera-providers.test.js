@@ -229,3 +229,38 @@ test('dynamic camera freshness failures retry promptly when the operator publish
   now += 120001; fresh = true; service.read(); await service.settle();
   assert.equal(calls, 2); assert.equal(service.snapshot()[0].liveVerified, true);
 });
+
+test('YouTube provider channel IDs require their exact format and provider kind', () => {
+  for (const verification of [
+    { kind: 'youtube-provider', videoId: 'retained001', channelId: 'not-a-channel' },
+    { kind: 'youtube-provider', videoId: 'retained001', channelId: `UC${'a'.repeat(21)}` },
+    { kind: 'youtube-provider', videoId: 'retained001', channelId: `UC${'!'.repeat(22)}` },
+    { kind: 'page', channelId: `UC${'a'.repeat(22)}` },
+    { kind: 'youtube-provider', videoId: 'retained001', channelId: [`UC${'a'.repeat(22)}`] },
+  ]) assert.throws(() => validateCameraProviders([fixture(verification)]), /channel ID/);
+  assert.doesNotThrow(() => validateCameraProviders([fixture({ kind: 'youtube-provider', videoId: 'retained001', channelId: `UC${'a'.repeat(22)}` })]));
+});
+
+test('timestamp-less camera images expire and cannot reuse an old hash as current proof', async () => {
+  const entry = fixture({ kind: 'fresh-image', url: 'https://camera.example.com/current.jpg', allowedHosts: ['camera.example.com'], updateIntervalSeconds: 60, maxAgeSeconds: 180 });
+  let now = NOW; let variant = 0;
+  const options = { now: () => now, fetchImpl: async () => ok(Buffer.concat([Buffer.from([255, 216, 255]), Buffer.alloc(200, variant)]), { 'content-type': 'image/jpeg' }) };
+  const initial = await verifyCameraProvider(entry, options); assert.equal(initial.status, 'checking');
+  now += 61000; variant++;
+  const fresh = await verifyCameraProvider(entry, { ...options, previous: initial.probe });
+  assert.equal(fresh.status, 'live'); assert.equal(fresh.mediaKind, 'image');
+  now += 180001; variant++;
+  const expired = await verifyCameraProvider(entry, { ...options, previous: fresh.probe });
+  assert.notEqual(expired.status, 'live'); assert.equal(expired.imageUpdatedAt, null);
+});
+
+test('resolved YouTube video IDs override only their specific provider entry and preserve the default lookup', () => {
+  const first = fixture({ kind: 'youtube-provider', videoId: 'retained001' });
+  const second = fixture({ kind: 'youtube-provider', videoId: 'retained001' }, { id: 'camera_provider_test_other' });
+  const service = createCameraProviderVerifier([first, second], { now: () => NOW });
+  const states = new Map([['retained001', { live: false, public: true }], ['replacement', { live: true, public: true }]]);
+  service.updateYouTubeStates(states, new Map([[first.id, 'replacement']]));
+  assert.deepEqual(service.snapshot().map(row => row.liveVerified), [true, false]);
+  service.updateYouTubeStates(states);
+  assert.deepEqual(service.snapshot().map(row => row.liveVerified), [false, false]);
+});

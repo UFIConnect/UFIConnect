@@ -28,6 +28,7 @@ function validateCameraProviders(catalog, destinations) {
     publicHttpsUrl(entry.sourceUrl);
     const verification = entry.verification || {};
     if (!KINDS.has(verification.kind)) throw new Error('Unsupported camera provider verifier');
+    if (verification.channelId !== undefined && (verification.kind !== 'youtube-provider' || typeof verification.channelId !== 'string' || !/^UC[A-Za-z0-9_-]{22}$/.test(verification.channelId))) throw new Error('Invalid YouTube provider channel ID');
     if (verification.kind === 'youtube-provider' && !/^[\w-]{11}$/.test(verification.videoId || '')) throw new Error('Invalid YouTube provider ID');
     if (verification.kind === 'ipcamlive' && !/^[a-zA-Z0-9_-]{3,80}$/.test(verification.alias || '')) throw new Error('Invalid IPCamLive alias');
     if (verification.kind === 'skyline' && publicHttpsUrl(entry.sourceUrl).hostname !== 'www.skylinewebcams.com') throw new Error('Invalid Skyline operator page');
@@ -248,9 +249,9 @@ function createCameraProviderVerifier(catalog, { fetchImpl = fetch, now = Date.n
       };
     });
   }
-  function updateYouTubeStates(states) {
+  function updateYouTubeStates(states, resolvedIds = new Map()) {
     for (const entry of catalog.filter(camera => camera.verification.kind === 'youtube-provider')) {
-      const state = states?.get(entry.verification.videoId);
+      const state = states?.get(resolvedIds.get(entry.id) || entry.verification.videoId);
       const status = !states ? 'unavailable' : state?.live && state.public ? 'live' : 'offline';
       cache.set(entry.id, { status, checkedAt: now(), expiresAt: now() + (status === 'live' ? LIVE_TTL : FAILURE_TTL), method: 'YouTube live and public status; playback on operator' });
     }
