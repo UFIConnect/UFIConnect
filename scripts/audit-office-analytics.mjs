@@ -48,7 +48,7 @@ const server = await createServer({ root: path.join(root, 'office'), configFile:
   server: { host: '127.0.0.1', port: 5273, strictPort: false } });
 let browser;
 try {
-  await server.listen(); browser = await chromium.launch({ channel: 'msedge' });
+  await server.listen(); browser = await chromium.launch(process.platform === 'win32' ? { channel: 'msedge' } : {});
   for (const width of [1440, 390]) {
     const page = await browser.newPage({ viewport: { width, height: 900 } }); page.setDefaultTimeout(15000);
     const errors = []; page.on('pageerror', error => errors.push(error.message));

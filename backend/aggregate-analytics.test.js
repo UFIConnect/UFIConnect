@@ -92,6 +92,8 @@ test('detailed report includes every page, screen and tab, zero-filled days, cor
   assert.ok(zero.daily.every(day => day.views === 0 && day.errors === 0));
   assert.equal(result.storage.acknowledgement, 'after-durable-write');
   assert.equal(result.storage.status, 'ready');
+  assert.equal(result.verification.status, 'verified');
+  assert.equal(result.verification.mismatchCount, 0);
   assert.equal(result.performance.byCode.find(row => row.code === 'request_failed').last7, 0);
   assert.deepEqual(result.performance.details, [
     { day: '2026-10-01', category: 'app_feed', code: 'request_failed', count: 3 },
@@ -99,6 +101,46 @@ test('detailed report includes every page, screen and tab, zero-filled days, cor
   ]);
   assert.equal((await pg.query("SELECT count(*)::int AS count FROM analytics_daily_counts WHERE day='2026-09-08'")).rows[0].count, 1);
   assert.equal((await pg.query("SELECT count(*)::int AS count FROM analytics_daily_counts WHERE day='2026-04-30'")).rows[0].count, 0);
+});
+
+test('scheduled verification reads canonical snapshots without mutating events or counting buckets as views', async t => {
+  const pg = new PGlite(); await pg.exec(analytics.ANALYTICS_SCHEMA); t.after(() => pg.close());
+  await pg.exec(`INSERT INTO analytics_daily_counts VALUES
+    ('2026-10-27','home','page_view','',45),
+    ('2026-10-27','command_center_media','page_view','',99),
+    ('2026-10-27','home','client_error','script_error',3);
+    INSERT INTO analytics_history_daily_counts(source,day,category,event_count) VALUES
+    ('legacy_page_views_backup','2026-08-12','home',70);
+    CREATE TABLE page_views(path TEXT);
+    INSERT INTO page_views VALUES ('private historical path already represented by recovered totals');`);
+  const queries = [], scheduled = [];
+  const service = analytics.createAggregateAnalytics({ db: { isConnected: () => true, query(sql, params) {
+    queries.push(sql); return pg.query(sql, params);
+  } }, now: () => Date.parse('2026-10-27T12:00:00Z'), schedule(fn, ms) { scheduled.push({ fn, ms }); } });
+  assert.ok(scheduled.some(timer => timer.ms === 60_000));
+  const status = await service.verification.run();
+  assert.equal(status.status, 'verified');
+  assert.deepEqual(status.metrics, { bucketRows: 4, liveBucketRows: 3, historyBucketRows: 1,
+    viewsToday: 144, allViews: 214, pageViewsToday: 45, screenViewsToday: 0, tabViewsToday: 99,
+    restoredViews: 70, invalidRows: 0 });
+  assert.equal(queries.length, 1, 'report input and independent SQL totals use one snapshot');
+  assert.ok(queries.every(sql => !/\b(INSERT|UPDATE|DELETE|ALTER|DROP|CREATE)\b/.test(sql)));
+  assert.ok(queries.every(sql => !/FROM page_views\b/.test(sql)), 'raw legacy views are not counted a second time');
+  assert.equal((await pg.query('SELECT count(*)::int AS count FROM page_views')).rows[0].count, 1);
+});
+
+test('verification exposes unknown stored categories as a mismatch without leaking or repairing the row', async t => {
+  const pg = new PGlite(); await pg.exec(analytics.ANALYTICS_SCHEMA); t.after(() => pg.close());
+  await pg.exec('ALTER TABLE analytics_daily_counts DROP CONSTRAINT analytics_daily_counts_category_check');
+  await pg.query("INSERT INTO analytics_daily_counts VALUES ('2026-10-27',$1,'page_view','',7)", ['private-identity-path']);
+  const service = analytics.createAggregateAnalytics({ db: { isConnected: () => true, query: (...args) => pg.query(...args) },
+    now: () => Date.parse('2026-10-27T12:00:00Z'), schedule() {} });
+  const report = await service.verification.read();
+  assert.equal(report.verification.status, 'mismatch');
+  assert.equal(report.verification.metrics.invalidRows, 1);
+  assert.ok(report.verification.mismatchCount > 0);
+  assert.doesNotMatch(JSON.stringify(report), /private-identity-path/);
+  assert.equal((await pg.query('SELECT event_count FROM analytics_daily_counts')).rows[0].event_count, 7);
 });
 
 test('successful collector receipts are durable across restart, including arrivals during retention', async t => {

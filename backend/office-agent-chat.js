@@ -25,7 +25,8 @@ const NUMBERS = ['postCount', 'fetchCount', 'consecutiveErrors', 'totalErrors', 
   'lastStatus', 'lastTtfbMs', 'lastTotalMs', 'lastBytes', 'sourceCaches', 'totalBuffered', 'totalDrained', 'totalAccepted',
   'totalQueueDuplicates', 'totalBackpressureDropped', 'totalInput', 'totalOutput', 'lastDroppedInvalid',
   'lastDroppedDuplicate', 'lastDroppedScreened', 'totalDroppedScreened', 'totalChecked', 'totalMismatches',
-  'lastChecked', 'lastMismatches', 'totalFixed', 'lastFixed'];
+  'lastChecked', 'lastMismatches', 'totalFixed', 'lastFixed', 'bucketRows', 'viewsToday', 'pageViewsToday',
+  'screenViewsToday', 'tabViewsToday', 'allViews', 'restoredViews', 'invalidRows', 'liveBucketRows', 'historyBucketRows'];
 const TIMES = ['lastSuccess', 'lastAttempt', 'lastFetch', 'lastRun', 'lastStarted', 'lastFinished', 'lastSweep'];
 const PURPOSES = Object.freeze({
   ai: 'Explains sanitized service observations and offers supported Office tasks. Tasks run only after the operator chooses an authorized control.',
@@ -45,6 +46,7 @@ const PURPOSES = Object.freeze({
   opps: 'Reports cached job inventory. It does not verify whether positions remain open.',
   security: 'Summarizes authentication configuration and runtime counters. It is not a vulnerability scanner.',
   data: 'Observes database connectivity and local cache inventory.',
+  analytics_verification: 'Automatically compares Office analytics with retained database totals once a minute on the API service. Page and screen views, tab opens and stored aggregate rows are distinct measurements. It reports completed checks and failures without creating visits, changing counts, or reconstructing unavailable history.',
   deploy: 'Checks service reachability. Reviewed deployment tasks use the existing Office controls and release checks.',
   optimizer: 'Monitors source worker freshness and retry state.',
   cache_helper: 'Merges per-source cached posts into the global feed cache.',
@@ -74,7 +76,7 @@ function sanitizeSnapshot(input) {
     if (typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= Number.MAX_SAFE_INTEGER) metrics[key] = Math.round(n * 1000) / 1000;
   }
   for (const key of TIMES) { const value = iso(input.metrics?.[key]); if (value) metrics[key] = value; }
-  for (const key of ['paused', 'enabled', 'databaseConnected', 'backupConnected']) {
+  for (const key of ['paused', 'enabled', 'databaseConnected', 'backupConnected', 'verified']) {
     if (typeof input.metrics?.[key] === 'boolean') metrics[key] = input.metrics[key];
   }
   return {
