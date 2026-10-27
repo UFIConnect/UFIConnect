@@ -20,7 +20,7 @@ export default ({ config }) => ({
   ios: {
     supportsTablet: true,
     bundleIdentifier: 'org.uficonnect.app',
-    buildNumber: '17',
+    buildNumber: '18',
     infoPlist: {
       NSLocationWhenInUseUsageDescription: 'UFIConnect uses your location to show nearby feed posts, places, and account recommendations when you use location features.',
       NSPhotoLibraryUsageDescription: 'Choose photos and videos to share in posts, messages, or your profile.',
