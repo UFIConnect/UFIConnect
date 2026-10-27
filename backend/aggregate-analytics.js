@@ -2,6 +2,7 @@
 
 const { analyticsGeography, createGeographyReportHandler } = require('./analytics-geography');
 const { ISO_COUNTRY_CODES } = require('./feed-location');
+const { createAnalyticsVerification } = require('./analytics-verification');
 
 // Keep the API runtime copy inside backend's Render root. Its equality with the
 // authoritative shared catalog is covered by the analytics contract test.
@@ -60,7 +61,43 @@ const ANALYTICS_MIGRATIONS = Object.freeze([`ALTER TABLE analytics_daily_counts
 const cappedAdd = (value, addition) => Math.min(Number.MAX_SAFE_INTEGER, value + addition);
 const ANALYTICS_HISTORY_START = '2026-05-01';
 
-function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, schedule = setInterval, env = process.env }) {
+// Both the Office formatter's input and its independently grouped comparison
+// come from one statement snapshot. Concurrent collection cannot cause a false
+// mismatch. Raw legacy page_views are already represented by the history table
+// and must not be added a second time.
+const viewSum = condition => `LEAST(9007199254740991,COALESCE(SUM(event_count) FILTER(WHERE kind='page_view' AND code=''${condition ? ' AND ' + condition : ''}),0))`;
+const errorSum = condition => `LEAST(9007199254740991,COALESCE(SUM(event_count) FILTER(WHERE kind='client_error'${condition ? ' AND ' + condition : ''}),0))`;
+const windowSums = `${viewSum('day=$2::date')} AS today,${viewSum("day >= $2::date - 6")} AS "last7",${viewSum("day >= $2::date - 29")} AS "last30"`;
+const ANALYTICS_VERIFICATION_QUERY = `WITH counts AS MATERIALIZED (
+  SELECT day,category,kind,code,event_count,'anonymous-daily-counts'::text AS source
+  FROM analytics_daily_counts WHERE day >= $1::date AND day <= $2::date
+  UNION ALL
+  SELECT day,category,'page_view'::text AS kind,''::text AS code,event_count,source
+  FROM analytics_history_daily_counts WHERE day >= $1::date AND day <= $2::date
+), catalog AS (
+  SELECT * FROM jsonb_to_recordset($3::jsonb) AS page(category TEXT,platform TEXT,"viewType" TEXT)
+), classified AS (
+  SELECT counts.*,catalog.platform,catalog."viewType",catalog.category IS NULL AS unknown_category
+  FROM counts LEFT JOIN catalog USING(category)
+)
+SELECT COALESCE((SELECT jsonb_agg(to_jsonb(c) ORDER BY day,source) FROM counts c),'[]'::jsonb) AS rows,
+ jsonb_build_object(
+  'rowCount',(SELECT COUNT(*) FROM counts),
+  'anonymousRows',(SELECT COUNT(*) FROM counts WHERE source='anonymous-daily-counts'),
+  'historyRows',(SELECT COUNT(*) FROM counts WHERE source<>'anonymous-daily-counts'),
+  'invalidRows',(SELECT COUNT(*) FROM classified WHERE unknown_category OR event_count<=0 OR event_count>9007199254740991
+    OR kind NOT IN ('page_view','client_error') OR (kind='page_view' AND code<>'')
+    OR (kind='client_error' AND code NOT IN (${sqlList(CLIENT_ERROR_CODES)}))),
+  'totals',(SELECT to_jsonb(t) FROM (SELECT ${viewSum()} AS views,${errorSum()} AS errors,${windowSums},
+    ${errorSum('day=$2::date')} AS "errorsToday",${errorSum('day >= $2::date - 6')} AS "errorsLast7",
+    ${errorSum('day >= $2::date - 29')} AS "errorsLast30",${viewSum("source<>'anonymous-daily-counts'")} AS "restoredViews" FROM counts) t),
+  'categoryDays',COALESCE((SELECT jsonb_agg(to_jsonb(c)) FROM (SELECT day::text,category,${viewSum()} AS views,${errorSum()} AS errors FROM counts GROUP BY day,category) c),'[]'::jsonb),
+  'sources',COALESCE((SELECT jsonb_agg(to_jsonb(s)) FROM (SELECT source,${viewSum()} AS views FROM counts GROUP BY source) s),'[]'::jsonb),
+  'platforms',COALESCE((SELECT jsonb_agg(to_jsonb(p)) FROM (SELECT platform AS key,${windowSums} FROM classified GROUP BY platform) p),'[]'::jsonb),
+  'viewTypes',COALESCE((SELECT jsonb_agg(to_jsonb(v)) FROM (SELECT "viewType" AS key,${windowSums} FROM classified GROUP BY "viewType") v),'[]'::jsonb)
+ ) AS expected`;
+
+function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, schedule = setInterval, env = process.env, verificationEnabled = true }) {
   let windowStart = now();
   let windowCount = 0;
   let prunedDay = '';
@@ -208,23 +245,16 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
         const [statusClass, durationBucket] = key.split(':'); return { statusClass, durationBucket, count };
       }) };
   }
-  async function report(_req, res) {
-    res.set('Cache-Control', 'no-store');
-    const unavailable = () => ({ available: false, mode: 'aggregate', error: 'Metrics storage unavailable.',
-      storage: storageSnapshot(), excludedCategories: EXCLUDED_CATEGORIES, service: serviceSnapshot() });
-    if (!db.isConnected()) return res.json(unavailable());
-    try {
-      if (!await flush()) return res.status(503).json(unavailable());
-      const today = new Date(now()).toISOString().slice(0, 10);
-      const dayAt = offset => new Date(now() - offset * 86400_000).toISOString().slice(0, 10);
+  async function readReport() {
+      if (!db.isConnected()) throw new Error('Metrics storage unavailable.');
+      const timestamp = now();
+      const today = new Date(timestamp).toISOString().slice(0, 10);
+      const dayAt = offset => new Date(timestamp - offset * 86400_000).toISOString().slice(0, 10);
       const from = today >= ANALYTICS_HISTORY_START ? ANALYTICS_HISTORY_START : dayAt(29);
-      const { rows } = await db.query(`SELECT day::text, category, kind, code, event_count, source FROM (
-        SELECT day, category, kind, code, event_count, 'anonymous-daily-counts'::text AS source
-        FROM analytics_daily_counts WHERE day >= $1 AND day <= $2
-        UNION ALL
-        SELECT day, category, 'page_view'::text AS kind, ''::text AS code, event_count, source
-        FROM analytics_history_daily_counts WHERE day >= $1 AND day <= $2
-      ) counts ORDER BY day ASC, source ASC`, [from, today]);
+      const { rows: [snapshot] } = await db.query(ANALYTICS_VERIFICATION_QUERY,
+        [from, today, JSON.stringify(Object.values(CATEGORY_CATALOG))]);
+      if (!snapshot || !Array.isArray(snapshot.rows) || !snapshot.expected) throw new Error('Metrics snapshot unavailable.');
+      const rows = snapshot.rows;
       const emptyCounts = () => ({ today: 0, last7: 0, last30: 0 });
       const dayCount = Math.round((Date.parse(today) - Date.parse(from)) / 86400_000) + 1;
       const days = Array.from({ length: dayCount }, (_, index) => new Date(Date.parse(from) + index * 86400_000).toISOString().slice(0, 10));
@@ -235,7 +265,7 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
           daily: days.map(day => ({ day, views: 0, errors: 0 })) }]));
       const errorCodes = new Map(CLIENT_ERROR_CODES.map(code => [code, { code, count: 0, ...emptyCounts() }]));
       const result = { available: true, mode: 'aggregate', window: 'utc-calendar-days', retentionDays: dayCount,
-        range: { from, to: today }, generatedAt: new Date(now()).toISOString(),
+        range: { from, to: today }, generatedAt: new Date(timestamp).toISOString(),
         history: { requestedFrom: ANALYTICS_HISTORY_START, firstRecordedDay: null, lastRecordedDay: null,
           source: 'anonymous-daily-counts', sources: [], restoredViews: 0,
           missingHistory: 'Only retained events can be reported; unrecorded or previously expired events are unavailable.' },
@@ -294,11 +324,21 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
       result.performance.byCode = [...errorCodes.values()];
       result.performance.byCategory = result.categories.filter(row => row.errors.last30)
         .map(row => ({ category: row.category, label: row.label, platform: row.platform, ...row.errors }));
-      return res.json(result);
+      return { report: result, expected: snapshot.expected };
+  }
+  const verification = createAnalyticsVerification({ readReport, now, schedule, enabled: verificationEnabled });
+  async function report(_req, res) {
+    res.set('Cache-Control', 'no-store');
+    const unavailable = () => ({ available: false, mode: 'aggregate', error: 'Metrics storage unavailable.',
+      storage: storageSnapshot(), excludedCategories: EXCLUDED_CATEGORIES, service: serviceSnapshot(), verification: verification.snapshot() });
+    if (!db.isConnected()) { verification.unavailable(); return res.json(unavailable()); }
+    try {
+      if (!await flush()) { verification.unavailable(); return res.status(503).json(unavailable()); }
+      return res.json(await verification.read());
     } catch { return res.status(503).json(unavailable()); }
   }
-  return { pageview: handler('page_view'), performance: handler('client_error'), serviceMiddleware, report, flush,
+  return { pageview: handler('page_view'), performance: handler('client_error'), serviceMiddleware, report, flush, verification,
     geography: createGeographyReportHandler({ db, catalog: CATEGORY_CATALOG, now, env }) };
 }
 
-module.exports = { PAGE_CATEGORIES, CATEGORY_CATALOG, EXCLUDED_CATEGORIES, CLIENT_ERROR_CODES, ANALYTICS_SCHEMA, ANALYTICS_MIGRATIONS, ANALYTICS_HISTORY_START, createAggregateAnalytics };
+module.exports = { PAGE_CATEGORIES, CATEGORY_CATALOG, EXCLUDED_CATEGORIES, CLIENT_ERROR_CODES, ANALYTICS_SCHEMA, ANALYTICS_MIGRATIONS, ANALYTICS_HISTORY_START, ANALYTICS_VERIFICATION_QUERY, createAggregateAnalytics };

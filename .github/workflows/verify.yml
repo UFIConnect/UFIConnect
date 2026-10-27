@@ -40,6 +40,7 @@ jobs:
       - run: npm run build --prefix office
       - run: node scripts/sync-security-headers.mjs --check --built
       - run: npx playwright install --with-deps chromium
+      - run: node office/tests/analytics-refresh.browser.mjs
       - run: node scripts/audit-security.mjs
       - run: node scripts/audit-csp.mjs
       - run: node scripts/audit-public-seo.mjs

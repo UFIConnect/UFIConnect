@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { count, filterAnalytics, filterDiagnostics, reportDays } from './analytics-model.mjs';
 import AnalyticsGeography from './AnalyticsGeography.jsx';
+import useAnalyticsReport from './useAnalyticsReport.js';
 import './AnalyticsDashboard.css';
 
 const number = value => new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(count(value));
@@ -26,35 +27,10 @@ function DailyTrend({ daily }) {
 }
 
 export default function AnalyticsDashboard({ apiBase, request, usersPanel }) {
-  const [report, setReport] = useState(null), [busy, setBusy] = useState(true), [error, setError] = useState('');
-  const [updatedAt, setUpdatedAt] = useState(null), [revision, setRevision] = useState(0);
+  const { report, busy, error, updatedAt, revision, refresh, stale } = useAnalyticsReport({ apiBase, request });
   const [preset, setPreset] = useState('history'), [customStart, setCustomStart] = useState(''), [customEnd, setCustomEnd] = useState('');
   const [platform, setPlatform] = useState('all'), [category, setCategory] = useState('all'), [viewType, setViewType] = useState('all');
   const [search, setSearch] = useState('');
-  const generation = useRef(0), activeRequest = useRef(null);
-  const refresh = useCallback(() => { generation.current++; activeRequest.current?.abort(); setRevision(value => value + 1); }, []);
-  const invalidate = useCallback(() => { generation.current++; activeRequest.current?.abort(); setReport(null); setUpdatedAt(null); setError(''); setBusy(true); setRevision(value => value + 1); }, []);
-  useEffect(() => {
-    window.addEventListener('office-token-changed', invalidate);
-    return () => { generation.current++; activeRequest.current?.abort(); window.removeEventListener('office-token-changed', invalidate); };
-  }, [invalidate]);
-  useEffect(() => {
-    const controller = new AbortController(), current = ++generation.current;
-    activeRequest.current = controller;
-    setBusy(true); setError('');
-    request(`${apiBase}/office/analytics/pageviews`, { signal: controller.signal, cache: 'no-store' }).then(async response => {
-      const data = await response.json();
-      if (response.status === 401 || response.status === 403) {
-        if (generation.current === current) { setReport(null); setUpdatedAt(null); }
-        throw new Error('Office access is required. Update your Office access and retry.');
-      }
-      if (!response.ok || data.available !== true) throw new Error(data.error || 'Analytics storage is unavailable. Retry when the API is ready.');
-      if (data.mode !== 'aggregate' || !Array.isArray(data.categories) || !Array.isArray(data.daily)) throw new Error('This API release does not include detailed analytics yet. Deploy the matching API and refresh.');
-      if (generation.current === current && !controller.signal.aborted) { setReport(data); setUpdatedAt(new Date()); }
-    }).catch(error => { if (generation.current === current && !controller.signal.aborted) setError(error.message || 'Analytics could not be loaded.'); })
-      .finally(() => { if (generation.current === current && !controller.signal.aborted) setBusy(false); });
-    return () => controller.abort();
-  }, [apiBase, request, revision]);
 
   const days = reportDays(report);
   const end = preset === 'custom' ? customEnd : days.at(-1);
@@ -67,10 +43,25 @@ export default function AnalyticsDashboard({ apiBase, request, usersPanel }) {
   function customDate(which, value) { setCustomStart(start); setCustomEnd(end); setPreset('custom'); (which === 'start' ? setCustomStart : setCustomEnd)(value); }
   const service = report?.service;
   const responses = (service?.responses || []).reduce((result, row) => ({ ...result, [row.statusClass]: (result[row.statusClass] || 0) + count(row.count) }), {});
+  const verification = report?.verification;
+  const verificationNeedsAttention = verification && ['mismatch', 'error', 'stale'].includes(verification.status);
+  const freshnessWarning = Boolean(error || stale || verificationNeedsAttention);
+  const freshnessLabel = error ? 'Refresh failed' : stale ? 'Counts need a fresh check' : busy ? 'Checking latest counts'
+    : verification?.status === 'verified' ? 'Database counts verified'
+      : verification?.status === 'mismatch' ? 'Count verification needs attention'
+        : verification?.status === 'error' ? 'Database verification unavailable'
+          : verification?.status === 'stale' ? 'Database verification is overdue'
+            : verification?.status === 'pending' ? 'Database verification pending' : 'Counts loaded; database verification unavailable';
 
   return <section className="office-analytics">
     <header className="office-analytics-header"><div><h1>Analytics</h1><p>Anonymous counts for website pages, app screens and internal tabs. Counts represent opens, not unique people.</p></div><button type="button" onClick={refresh} disabled={busy}>{busy ? 'Refreshing…' : 'Refresh analytics'}</button></header>
-    <p className="office-analytics-meta">{updatedAt ? `Last refreshed ${updatedAt.toLocaleString()}. ` : ''}UTC history from May 2026. Optional Google Analytics is reported separately.</p>
+    <section className={`office-analytics-freshness${freshnessWarning ? ' warning' : ''}`} aria-label="Analytics freshness">
+      <strong role="status" aria-live="polite">{freshnessLabel}</strong>
+      <p>{updatedAt ? <>Last successful read <time dateTime={updatedAt.toISOString()}>{updatedAt.toLocaleString()}</time>. </> : 'Waiting for the first successful read. '}Checks for updated counts every 30 seconds while this page is visible, and when you return or reconnect.</p>
+      {verification && <p>{verification.checkedAt ? <>Database check <time dateTime={verification.checkedAt}>{new Date(verification.checkedAt).toLocaleString()}</time>. </> : 'Database check has not completed. '}{verification.status === 'verified' ? 'Displayed totals match the stored records.' : verification.status === 'mismatch' ? 'The stored records and reported totals differ. Review the count check before using these totals.' : verification.error || 'A successful database count check is still needed.'}{verification.lastVerifiedAt && verification.status !== 'verified' ? ` Last verified ${new Date(verification.lastVerifiedAt).toLocaleString()}.` : ''}</p>}
+      {(error || stale) && report && <p>The last successful counts remain visible until a fresh read succeeds.</p>}
+    </section>
+    <p className="office-analytics-meta">UTC history from May 2026. Optional Google Analytics is reported separately.</p>
     {error && <div className="office-analytics-error" role="alert"><p>{error}{report ? ' The last successful report remains below.' : ''}</p><button type="button" onClick={refresh} disabled={busy}>Retry analytics</button></div>}
     {busy && <p role="status">Loading analytics…</p>}
     {report && <>
@@ -84,6 +75,7 @@ export default function AnalyticsDashboard({ apiBase, request, usersPanel }) {
       </div>
       {invalidDates ? <p role="alert" className="office-analytics-error">Choose dates between {days[0]} and {days.at(-1)}, with the start before the end.</p> : <>
         <dl className="office-analytics-metrics">{[['Page / screen views', filtered.views], ['Tab opens', filtered.tabs], ['Optional diagnostics', filtered.errors], ['Categories with activity', filtered.activeCategories]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{number(value)}</dd></div>)}</dl>
+        <p className="office-analytics-meta">Page and screen views count navigation. Tab opens are counted separately. Database summary rows group many opens by date and category.</p>
         {report.history && <p className="office-analytics-meta">{report.history.firstRecordedDay ? `Available analytics begins ${report.history.firstRecordedDay}. Earlier dates are unavailable and shaded in the chart. ` : 'Historical analytics is unavailable until an event is recorded. '}{count(report.history.restoredViews) > 0 ? `${number(report.history.restoredViews)} earlier page views were recovered. ` : ''}Selected totals include retained events only.</p>}
         <DailyTrend daily={filtered.daily} />
         <AnalyticsGeography apiBase={apiBase} request={request} filters={{ platform, category, viewType, start, end }} refreshRevision={revision} />

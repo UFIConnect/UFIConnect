@@ -9,6 +9,11 @@
 .office-analytics button:focus-visible, .office-analytics input:focus-visible, .office-analytics select:focus-visible, .office-analytics summary:focus-visible, .office-analytics-table-wrap:focus-visible { outline: 2px solid #93c5fd; outline-offset: 3px; }
 .office-analytics label { display: grid; gap: 7px; font-size: 12px; color: #b6c4d8; min-width: 0; }
 .office-analytics .office-analytics-meta { color: #9aa9c0; font-size: 12px; }
+.office-analytics-freshness { border: 1px solid #2b5266; border-radius: 10px; background: #10232e; padding: 13px 16px; margin: 16px 0; }
+.office-analytics-freshness strong { color: #b2ead9; font-size: 13px; }
+.office-analytics-freshness p { margin: 5px 0 0; font-size: 12px; }
+.office-analytics-freshness.warning { border-color: #927343; background: #2a2418; }
+.office-analytics-freshness.warning strong { color: #fde1a6; }
 .office-analytics-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px; margin: 22px 0; }
 .office-analytics-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0 0 22px; }
 .office-analytics-metrics > div { padding: 18px; border: 1px solid #26364c; border-radius: 12px; background: #101928; }

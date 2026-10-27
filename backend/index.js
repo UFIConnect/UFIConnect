@@ -186,7 +186,8 @@ const app = express();
 app.set('query parser', 'extended');
 const responseTiming = createResponseTiming({ targetMs: envNumber('API_RESPONSE_TARGET_MS', 65, 1, 1000) });
 app.use(responseTiming.middleware);
-const aggregateAnalytics = createAggregateAnalytics({ db, schedule: setInterval, onPageview: () => recordRealUserActivity(null, 'pageview') });
+const aggregateAnalytics = createAggregateAnalytics({ db, schedule: setInterval, verificationEnabled: !IS_PIPELINE_ROLE,
+  onPageview: () => recordRealUserActivity(null, 'pageview') });
 app.use(aggregateAnalytics.serviceMiddleware);
 // Trust only an explicitly configured proxy range/hop count. Untrusted clients
 // must not choose their own rate-limit identity through forwarding headers.
@@ -6423,6 +6424,15 @@ const officeClients = new Map();
 // One-shot fetchers registered by startSourceWorker — used for manual triggers
 const SOURCE_FETCHERS = {};
 const officeAgentChecks = new Map();
+async function runAnalyticsVerificationCheck() {
+  if (IS_PIPELINE_ROLE) return { skipped: true };
+  const verification = await aggregateAnalytics.verification.run();
+  logAgentAction('analytics_verification', 'ANL',
+    `Analytics verification: ${verification.status}. Last completed check: ${verification.checkedAt || 'unavailable'}.`,
+    verification.status === 'verified' ? '#4ADE80' : '#FBBF24');
+  return verification.status === 'verified';
+}
+
 function observeOfficeCheck(id, check) {
   return function (...args) {
     const state = officeAgentChecks.get(id) || { totalRuns: 0 };
@@ -6454,7 +6464,7 @@ const OFFICE_AGENT_BADGES = {
   facebook: 'FB', feed: 'FEED', web_optimizer: 'WEB', web_perf: 'PERF',
   web_seo: 'SEO', web_cache: 'CACHE', web_storage: 'STORE', web_api: 'API',
   web_pipeline: 'PIPE', web_office: 'OFF', web_pwa: 'PWA', security: 'SEC', perf: 'PERF',
-  community: 'COM', seo: 'SEO', opps: 'JOBS', deploy: 'DEP', data: 'DATA',
+  community: 'COM', seo: 'SEO', opps: 'JOBS', deploy: 'DEP', data: 'DATA', analytics_verification: 'ANL',
   refresh_queue: 'RQ', sort_agent: 'SORT', activity: 'ACT',
   stability: 'STAB', crash_guard: 'CG', cache_helper: 'MERGE',
   sort_distrib: 'DIST', mix_optimizer: 'MIX', sort_optimizer: 'RANK',
@@ -13945,6 +13955,13 @@ function logAgentHeartbeat(id) {
   if (!def) return false;
   const health = workerHealth.get(id);
   const cache = agentSourceCache.get(id);
+
+  if (id === 'analytics_verification') {
+    const verification = aggregateAnalytics.verification.snapshot();
+    logAgentAction(id, def.emoji, IS_PIPELINE_ROLE ? 'Verification belongs to the API service.'
+      : `Observed analytics verification: ${verification.status}. Last completed check: ${verification.checkedAt || 'none'}.`, def.color);
+    return true;
+  }
 
   if (health) {
     logAgentAction(id, def.emoji,
@@ -25126,6 +25143,10 @@ const AGENT_DEFS = {
     name: 'Data Agent', emoji: 'DATA', color: '#FB7185', interval: '10min',
     description: 'Checks database connectivity, counts records in key tables, monitors feed cache size, and tracks in-memory data health every 10 minutes.',
   },
+  analytics_verification: {
+    name: 'Analytics Verification Agent', emoji: 'ANL', color: '#38BDF8', interval: '1min',
+    description: 'Automatically compares Office analytics with database totals on the API service. Reports actual completed checks, mismatches, failures and stale results. Checks read retained counts without creating visits or changing records.',
+  },
   refresh_queue: {
     name: 'Refresh Queue Agent', emoji: 'RQ', color: '#38BDF8', interval: 'on-demand',
     description: 'Serializes manual refresh requests across source workers so refresh-all actions update every platform without launching a burst of simultaneous API calls.',
@@ -26282,15 +26303,24 @@ function getOfficeAgentObservation(id, observedAt = new Date().toISOString()) {
   if (!Object.prototype.hasOwnProperty.call(AGENT_DEFS, id)) return null;
   const sourceWorker = Object.prototype.hasOwnProperty.call(SOURCE_CONFIG, id)
     || ['remotive', 'muse'].includes(id) || typeof SOURCE_FETCHERS[id] === 'function';
-  const executionRole = sourceWorker || ['refresh_queue', 'equalizer', 'optimizer', 'cache_helper'].includes(id) ? 'pipeline' : id === 'ai' ? 'api' : id === 'instagram' ? 'on-demand' : 'both';
+  const executionRole = sourceWorker || ['refresh_queue', 'equalizer', 'optimizer', 'cache_helper'].includes(id) ? 'pipeline' : ['ai', 'analytics_verification'].includes(id) ? 'api' : id === 'instagram' ? 'on-demand' : 'both';
   const hasRuntimeMetrics = ['stability', 'crash_guard', 'refresh_queue', 'sort_agent', 'sort_distrib', 'mix_optimizer',
-    'sort_optimizer', 'activity', 'autofix', 'perf', 'equalizer', 'filter', 'topic_filter', 'topic_audit', 'topic_fix'].includes(id) || id.startsWith('web_');
+    'sort_optimizer', 'activity', 'autofix', 'perf', 'equalizer', 'filter', 'topic_filter', 'topic_audit', 'topic_fix', 'analytics_verification'].includes(id) || id.startsWith('web_');
   const diagnosticCapability = sourceWorker ? 'source-worker' : id === 'instagram' ? 'on-demand'
     : hasRuntimeMetrics ? 'runtime-metrics' : 'summary-only';
   const cache = agentSourceCache.get(id);
   let status = 'unknown';
   let metrics = {};
-  if (sourceWorker) {
+  if (id === 'analytics_verification') {
+    const verification = aggregateAnalytics.verification.snapshot();
+    status = IS_PIPELINE_ROLE ? 'unavailable' : ['error', 'mismatch', 'stale'].includes(verification.status) ? 'degraded'
+      : verification.running ? 'running' : ({ verified: 'healthy', mismatch: 'degraded', error: 'degraded',
+      stale: 'degraded', pending: 'idle', running: 'running', disabled: 'unavailable' }[verification.status] || 'unknown');
+    metrics = { ...verification.metrics, totalRuns: verification.totalRuns,
+      lastRun: verification.lastRun, lastFinished: verification.checkedAt, lastSuccess: verification.lastVerifiedAt,
+      lastDurationMs: verification.lastDurationMs, lastMismatches: verification.mismatchCount,
+      enabled: !IS_PIPELINE_ROLE && verification.enabled !== false, verified: !IS_PIPELINE_ROLE && verification.status === 'verified' };
+  } else if (sourceWorker) {
     const health = workerHealth.get(id);
     const collection = sourceCollectionScheduler?.status().sources.find(source => source.id === id);
     if (SERVICE_ROLE !== 'pipeline') status = 'unavailable';
@@ -26357,6 +26387,7 @@ app.post('/office/agents/:id/web-draft', requireOfficeToken, require('./office-w
 }));
 
 app.get('/office/agents', requireOfficeToken, (req, res) => {
+  res.set('Cache-Control', 'no-store');
   const result = {};
   const observedAt = new Date().toISOString();
   for (const [id, def] of Object.entries(AGENT_DEFS)) {
@@ -26365,6 +26396,7 @@ app.get('/office/agents', requireOfficeToken, (req, res) => {
     const observation = getOfficeAgentObservation(id, observedAt);
     result[id] = {
       ...def, id, emoji: officeBadgeCode(id, def.emoji), logs, lastAction: logs[0] || null,
+      ...(id === 'analytics_verification' ? { triggerable: !IS_PIPELINE_ROLE } : {}),
       serviceRole: SERVICE_ROLE, executionRole: observation.executionRole, observedAt,
       diagnosticCapability: observation.diagnosticCapability, observation,
       health: { ...observation.metrics, status: observation.status },
@@ -26391,7 +26423,15 @@ app.get('/office/agents/stream', requireOfficeToken, (req, res) => {
   req.on('close', () => officeClients.delete(cid));
 });
 
-app.post('/office/agents/:id/trigger', requireOfficeToken, (req, res) => {
+app.post('/office/agents/:id/trigger', requireOfficeToken, async (req, res) => {
+  if (req.params.id === 'analytics_verification') {
+    if (IS_PIPELINE_ROLE) return res.status(409).json({ error: 'Analytics verification runs on the API service.' });
+    try {
+      const ok = await runAnalyticsVerificationCheck();
+      const verification = aggregateAnalytics.verification.snapshot();
+      return res.status(verification.status === 'error' ? 503 : 200).json({ ok, triggered: req.params.id, verification });
+    } catch { return res.status(503).json({ error: 'Analytics verification is unavailable.' }); }
+  }
   const sourceFn = SOURCE_FETCHERS[req.params.id];
   const triggers = {
     // Operational agents
@@ -27099,7 +27139,8 @@ async function executeOfficeControl(control, body) {
         critical: isStabilityCritical(), sourceReady: id => officeSourceReady(id, process.env) });
       return activateOfficeAgents({ role: SERVICE_ROLE, plan,
         checks: { security: runSecurityScan, perf: runPerfCheck, community: runCommunityCheck, seo: runSeoCheck,
-          opps: runOppsCheck, data: runDataCheck, stability: runStabilityGuard, activity: () => runAgentActivityCheck(false),
+          opps: runOppsCheck, data: runDataCheck, analytics_verification: runAnalyticsVerificationCheck,
+          stability: runStabilityGuard, activity: () => runAgentActivityCheck(false),
           cache_helper: runCacheHelperCheck, optimizer: runFeedOptimizer, sort_agent: runSortAgentCheck,
           sort_distrib: runSortDistribCheck, mix_optimizer: runMixOptimizerCheck, sort_optimizer: runSortOptimizerCheck,
           topic_audit: runTopicAuditCheck, topic_fix: runTopicFixCheck },
@@ -27613,8 +27654,16 @@ app.get('/office/sources', requireOfficeToken, (_req, res) => {
 // sweep via 'feed'/'refresh_queue'), so anyone who found this URL could
 // force real external-API load against shared rate limits with no token at
 // all. requireOfficeToken matches the sibling route exactly.
-app.post('/hq/trigger/:agentId', requireOfficeToken, (req, res) => {
+app.post('/hq/trigger/:agentId', requireOfficeToken, async (req, res) => {
   const { agentId } = req.params;
+  if (agentId === 'analytics_verification') {
+    if (IS_PIPELINE_ROLE) return res.status(409).json({ error: 'Analytics verification runs on the API service.' });
+    try {
+      const ok = await runAnalyticsVerificationCheck();
+      const verification = aggregateAnalytics.verification.snapshot();
+      return res.status(verification.status === 'error' ? 503 : 200).json({ ok, triggered: agentId, verification });
+    } catch { return res.status(503).json({ error: 'Analytics verification is unavailable.' }); }
+  }
   const sourceFn = SOURCE_FETCHERS[agentId];
   const triggers = {
     feed:      () => {
