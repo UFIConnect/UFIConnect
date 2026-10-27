@@ -110,6 +110,7 @@ try {
     assert.equal(writes, 1);
     assert.equal(requests[0].sourceUrl, post.sourceUrl);
     assert.equal(await page.locator('.post-chrome-like-count').innerText(), '47', 'Provider counts do not use the local reaction count');
+    assert.match(await page.getByRole('button', { name: 'Remove star on GitHub, 47 stars', exact: true }).getAttribute('title'), /47 stars$/, 'Provider compact count retains the provider unit in its tooltip and accessible name');
     failWrite = true;
     await page.getByRole('button', { name: 'Remove star on GitHub, 47 stars', exact: true }).click();
     await page.getByText('The source did not confirm this action.', { exact: true }).waitFor();

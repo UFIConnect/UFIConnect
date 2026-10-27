@@ -1,108 +1,175 @@
 name: Verify UFIconnect
-
 on:
-  workflow_dispatch:
-  pull_request:
+  workflow_dispatch: null
+  pull_request: null
   push:
-    branches: [main]
-
+    branches:
+      - main
 permissions:
   contents: read
-
 jobs:
-  verify:
+  verify_checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        group:
+          - core
+          - media
+          - office
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: "24"
       - run: npm ci
       - run: npm ci --prefix backend
       - run: npm ci --prefix web
       - run: npm ci --prefix office
       - run: node scripts/check-js.cjs
+        if: matrix.group == 'core'
       - run: npm test --prefix backend
+        if: matrix.group == 'core'
       - run: node --test scripts/office-security.test.mjs scripts/web-security.test.mjs scripts/office-city.test.mjs scripts/office-recovery.test.mjs
+        if: matrix.group == 'core'
       - run: node --test scripts/analytics.test.mjs scripts/data-preferences.test.mjs
+        if: matrix.group == 'core'
       - run: node --test web/src/businessRoutes.test.mjs
+        if: matrix.group == 'core'
       - run: node --test scripts/local-web-workbench.test.mjs scripts/local-phone-access.test.mjs
+        if: matrix.group == 'core'
       - run: node --test scripts/account-vault.test.mjs scripts/vault-crypto.test.mjs scripts/vault-files.test.mjs scripts/vault-launch-preferences.test.mjs scripts/local-vault-vpn.test.mjs scripts/city-topic-targets.test.mjs
+        if: matrix.group == 'core'
       - run: node scripts/sync-analytics-bridge.mjs --check
+        if: matrix.group == 'core'
       - run: node scripts/sync-security-headers.mjs --check
+        if: matrix.group == 'core'
       - run: node scripts/check-deployment-security.mjs
+        if: matrix.group == 'core'
       - run: node scripts/sync-web-routes.mjs --check
+        if: matrix.group == 'core'
       - run: npm audit --prefix backend --audit-level=high
+        if: matrix.group == 'core'
       - run: npm audit --prefix web --audit-level=high
+        if: matrix.group == 'core'
       - run: npm audit --prefix office --audit-level=high
+        if: matrix.group == 'core'
       - run: npm run build --prefix web
       - run: npm run build --prefix office
-      - run: node scripts/sync-security-headers.mjs --check --built
       - run: npx playwright install --with-deps chromium
+      - run: node scripts/sync-security-headers.mjs --check --built
+        if: matrix.group == 'core'
       - run: node scripts/audit-security.mjs
+        if: matrix.group == 'core'
       - run: node scripts/audit-csp.mjs
+        if: matrix.group == 'core'
       - run: node scripts/audit-public-seo.mjs
+        if: matrix.group == 'core'
       - run: node scripts/audit-member-startup.mjs
+        if: matrix.group == 'core'
       - run: node scripts/audit-memberships.mjs
+        if: matrix.group == 'core'
       - run: node scripts/audit-business.mjs
+        if: matrix.group == 'core'
       - run: node scripts/audit-business-team.mjs
+        if: matrix.group == 'core'
       - run: node scripts/audit-business-industries.mjs
+        if: matrix.group == 'core'
       - run: node scripts/audit-post-likes.mjs
+        if: matrix.group == 'core'
       - run: node scripts/audit-confirmations.mjs
+        if: matrix.group == 'core'
       - run: node scripts/audit-analytics.mjs
+        if: matrix.group == 'core'
       - run: node scripts/audit-google-ads.mjs
+        if: matrix.group == 'core'
       - run: node scripts/audit-data-preferences.mjs
+        if: matrix.group == 'core'
       - run: node scripts/audit-vault-analytics-public.mjs
+        if: matrix.group == 'core'
       - run: node scripts/audit-vault-files.mjs
+        if: matrix.group == 'core'
       - run: node scripts/audit-ui.mjs
+        if: matrix.group == 'core'
       - run: node scripts/audit-map-settings.mjs
+        if: matrix.group == 'media'
       - run: node scripts/audit-group-navigation.mjs
+        if: matrix.group == 'media'
       - run: node scripts/audit-mobile-account-sidebar.mjs
+        if: matrix.group == 'media'
       - run: node scripts/audit-homepage-preparation.mjs
+        if: matrix.group == 'media'
       - run: node scripts/audit-jobs-feed.mjs
+        if: matrix.group == 'media'
       - run: node scripts/audit-job-posting.mjs
+        if: matrix.group == 'media'
       - run: node scripts/audit-music-feed.mjs
+        if: matrix.group == 'media'
       - run: node scripts/audit-global-member-feed.mjs
+        if: matrix.group == 'media'
       - run: node scripts/audit-video-layout.mjs
+        if: matrix.group == 'media'
       - run: node scripts/audit-video-performance.mjs
+        if: matrix.group == 'media'
       - run: node scripts/audit-travel.mjs
+        if: matrix.group == 'media'
       - run: node scripts/audit-discovery-categories.mjs
+        if: matrix.group == 'media'
       - run: node scripts/audit-search-notifications.mjs
+        if: matrix.group == 'media'
       - run: node scripts/audit-office-pipeline.mjs
+        if: matrix.group == 'office'
       - run: node scripts/audit-office-city.mjs
+        if: matrix.group == 'office'
       - run: node scripts/audit-local-web.mjs
+        if: matrix.group == 'office'
       - run: node scripts/audit-office-setup.mjs
+        if: matrix.group == 'office'
       - run: node scripts/audit-source-favorites.mjs
+        if: matrix.group == 'office'
       - run: node scripts/audit-source-directory.mjs
+        if: matrix.group == 'office'
       - run: node scripts/audit-interface-release.mjs
+        if: matrix.group == 'office'
       - run: node scripts/audit-shop-posts.mjs
+        if: matrix.group == 'office'
       - run: node scripts/audit-feed-equalizer.mjs
+        if: matrix.group == 'office'
       - run: node scripts/audit-following-connections.mjs
+        if: matrix.group == 'office'
       - run: node scripts/audit-post-context.mjs
+        if: matrix.group == 'office'
       - run: node scripts/audit-content-history.mjs
+        if: matrix.group == 'office'
       - run: node scripts/audit-video-duration.mjs
+        if: matrix.group == 'office'
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: responsive-audit-screenshots
+          name: responsive-audit-screenshots-${{ matrix.group }}
           path: .cache/audit-ui/
           include-hidden-files: true
-
+  verify:
+    runs-on: ubuntu-latest
+    needs: verify_checks
+    if: ${{ always() }}
+    steps:
+      - name: Require every verification group to pass
+        run: test "${{ needs.verify_checks.result }}" = "success"
   native:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
       APP_ENV: production
-      CI: '1'
-      EXPO_NO_TELEMETRY: '1'
+      CI: "1"
+      EXPO_NO_TELEMETRY: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: "24"
       - run: npm ci
-      # Compiled app audits use the real API fixture harness.
       - run: npm ci --prefix backend
       - run: npm ci --prefix mobile
       - run: npm run test:security --prefix mobile
