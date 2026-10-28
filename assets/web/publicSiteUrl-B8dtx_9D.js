@@ -1,0 +1,1 @@
+function e(e){let t=new URL(e,`https://uficonnect.org`);if(t.origin!==`https://uficonnect.org`||t.username||t.password)throw TypeError(`Public UFIConnect links must use the public website.`);return t.href}export{e as t};

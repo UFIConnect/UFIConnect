@@ -1,0 +1,1 @@
+var e=`Use at least 12 characters. A unique passphrase works well. Maximum 72 bytes; some characters use more than one byte.`;function t(e){return Array.from(e||``).length<12?`Use at least 12 characters for your new password.`:new TextEncoder().encode(e).length>72?`Password must be 72 UTF-8 bytes or fewer. Some characters use more than one byte.`:``}export{t as n,e as t};

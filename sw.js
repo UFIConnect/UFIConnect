@@ -1,6 +1,6 @@
 // Change this with each web release so installed clients discard obsolete
 // app-shell assets as soon as the updated worker activates.
-const CACHE_NAME = 'uficonnect-v10';
+const CACHE_NAME = 'uficonnect-v12';
 const API_ORIGINS = new Set([
   'https://api.uficonnect.org',
   'https://uficonnect-api-708r.onrender.com',
@@ -9,10 +9,10 @@ const API_ORIGINS = new Set([
 const SHELL_ASSETS = [
   '/',
   '/manifest.json',
-  '/favicon.svg',
-  '/icon.svg',
-  '/icon-192.png',
-  '/icon-512.png',
+  '/uficonnect-mark.svg',
+  '/uficonnect-icon-192.png',
+  '/uficonnect-icon-512.png',
+  '/uficonnect-icon-maskable-512.png',
 ];
 
 self.addEventListener('install', (e) => {
@@ -92,8 +92,8 @@ self.addEventListener('push', (e) => {
   e.waitUntil(
     self.registration.showNotification(title, {
       body: data.body || '',
-      icon: '/icon-192.png',
-      badge: '/icon-192.png',
+      icon: '/uficonnect-icon-192.png',
+      badge: '/uficonnect-icon-192.png',
       data: { url: data.url || '/' },
     })
   );

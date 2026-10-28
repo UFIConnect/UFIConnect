@@ -1,1 +1,0 @@
-function e(e,t=`checkout`){let n=new URL(e),r=t===`portal`?`billing.stripe.com`:`checkout.stripe.com`;if(n.protocol!==`https:`||n.hostname!==r||n.port||n.username||n.password)throw Error(`The secure billing link was not valid. Please try again.`);return n.href}export{e as t};

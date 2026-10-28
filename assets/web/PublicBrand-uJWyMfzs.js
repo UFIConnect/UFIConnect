@@ -1,0 +1,1 @@
+import{t as e}from"./vendor-react-CR5VJ85Q.js";var t=e();function n(){return(0,t.jsxs)(`span`,{className:`public-brand-wordmark`,children:[(0,t.jsx)(`img`,{src:`/uficonnect-mark.svg?v=blue-ufi-20261006`,width:`36`,height:`36`,alt:``}),(0,t.jsx)(`span`,{children:`UFIConnect`})]})}export{n as t};

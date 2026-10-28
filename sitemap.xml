@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://uficonnect.org/policies</loc></url>
+  <url><loc>https://uficonnect.org/copyright</loc></url>
+  <url><loc>https://uficonnect.org/vault-device</loc></url>
+  <url><loc>https://uficonnect.org/how-it-works</loc></url>
   <url><loc>https://uficonnect.org/</loc></url>
   <url><loc>https://uficonnect.org/global</loc></url>
   <url><loc>https://uficonnect.org/register</loc></url>

@@ -1,0 +1,1 @@
+async function e(e,t,n){if(!Number.isSafeInteger(e?.size)||e.size<1||e.size>t||typeof e.text!=`function`)throw Error(n);let r=await e.text();if(typeof r!=`string`||r.length>t||new TextEncoder().encode(r).length>t)throw Error(n);return r}export{e as t};
