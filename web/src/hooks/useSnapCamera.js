@@ -129,7 +129,7 @@ export function useSnapCamera(onCapture, onError, accountId) {
           frame.current = requestAnimationFrame(draw);
         };
         draw(); mirroredStream.current = canvas.captureStream(30);
-        input = new MediaStream([...mirroredStream.current.getVideoTracks(), ...stream.current.getAudioTracks()]);
+        input = new window.MediaStream([...mirroredStream.current.getVideoTracks(), ...stream.current.getAudioTracks()]);
       }
       const capture = new MediaRecorder(input, { mimeType, videoBitsPerSecond: 3_000_000, audioBitsPerSecond: 128_000 });
       const chunks = [], id = request.current;

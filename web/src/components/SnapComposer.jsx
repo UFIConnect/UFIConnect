@@ -47,7 +47,7 @@ const SnapComposer = forwardRef(function SnapComposer({ profile, onClose, onPubl
     wasCameraActive.current = camera.active;
     if (returning && dialog.current?.open) dialog.current.querySelector('header button')?.focus({ preventScroll: true });
   }, [camera.active]);
-  const mirrorSupported = camera.mode === 'photo' || typeof HTMLCanvasElement !== 'undefined' && typeof HTMLCanvasElement.prototype.captureStream === 'function';
+  const mirrorSupported = camera.mode === 'photo' || typeof window !== 'undefined' && typeof window.HTMLCanvasElement?.prototype.captureStream === 'function';
   const mirror = mirrorSupported && (mirrorOverride ?? camera.facing === 'user');
   useLockBodyScroll();
   useImperativeHandle(ref, () => ({ openCamera }));
