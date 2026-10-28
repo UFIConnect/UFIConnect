@@ -9,6 +9,13 @@ const PALETTES = Object.freeze({
   lightbox: Object.freeze({ backgroundColor: '#000000', statusBar: 'light' }),
 });
 
+// Match the shared Auto schedule until the DOM reports the saved preference.
+// Media and welcome surfaces keep their dedicated palettes after startup.
+function localTimeAppearance(now = new Date()) {
+  const hour = now.getHours();
+  return hour < 6 || hour >= 20 ? 'dark' : 'light';
+}
+
 function nativeAppearance(mode) {
   if (typeof mode !== 'string' || !Object.hasOwn(PALETTES, mode)) throw new Error('Invalid app appearance.');
   return PALETTES[mode];
@@ -16,6 +23,7 @@ function nativeAppearance(mode) {
 
 function documentAppearance(document) {
   // An open modal dialog occupies the top layer, including above Videos.
+  if (document.querySelector('.snap-composer.snap-composer-camera[open]')) return 'snap';
   if (document.querySelector('.snap-viewer-feed[open]')) return 'snap';
   if (document.querySelector('.media-lightbox[aria-modal="true"]')) return 'lightbox';
   if (document.querySelector('.video-feed-view')) return 'video';
@@ -50,4 +58,4 @@ function observeNativeAppearance({ document, window, onChange }) {
   };
 }
 
-module.exports = { nativeAppearance, documentAppearance, observeNativeAppearance };
+module.exports = { nativeAppearance, documentAppearance, observeNativeAppearance, localTimeAppearance };

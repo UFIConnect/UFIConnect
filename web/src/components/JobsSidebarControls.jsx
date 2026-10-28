@@ -1,4 +1,5 @@
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useId } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { JOB_FEED_SOURCE_IDS, JOB_WEBSITE_SOURCE_IDS, SOURCE_META } from './sourceMeta';
 import ExternalAccountLogin from './ExternalAccountLogin';
@@ -14,7 +15,7 @@ export const JOB_SORT_OPTIONS = [
   { value: 'source', label: 'Career site A-Z' },
 ];
 
-export const JOB_CAREER_SITES = JOB_FEED_SOURCE_IDS.map(key => ({ key, label: SOURCE_META[key].label }));
+export const JOB_CAREER_SITES = [{ key: 'uficonnect', label: 'UFIConnect' }, ...JOB_FEED_SOURCE_IDS.map(key => ({ key, label: SOURCE_META[key].label }))];
 
 function JobControlIcon({ name }) {
   const common = {
@@ -43,6 +44,7 @@ function SourceIcon({ source }) {
 }
 
 export default function JobsSidebarControls({ onNavigate }) {
+  const controlId = useId();
   const location = useLocation();
   const navigate = useNavigate();
   const params = new URLSearchParams(location.search);
@@ -77,8 +79,9 @@ export default function JobsSidebarControls({ onNavigate }) {
 
   return (
     <div className="jobs-sidebar-controls">
-      <section className="jobs-sidebar-section" aria-labelledby="jobs-sidebar-view-heading">
-        <h2 id="jobs-sidebar-view-heading">Jobs</h2>
+      <Link className="btn btn-primary btn-sm" to="/jobs/new" onClick={onNavigate}>Post a job</Link>
+      <section className="jobs-sidebar-section" aria-labelledby={`${controlId}-view-heading`}>
+        <h2 id={`${controlId}-view-heading`}>Jobs</h2>
         <div className="jobs-sidebar-options" role="radiogroup" aria-label="Job listings">
           <button type="button" className={`jobs-sidebar-option${workSetting === 'all' && !liveOnly ? ' active' : ''}`} role="radio" aria-checked={workSetting === 'all' && !liveOnly} onClick={() => selectJobView('all')}>
             <JobControlIcon name="all" />
@@ -99,8 +102,8 @@ export default function JobsSidebarControls({ onNavigate }) {
         </div>
       </section>
 
-      <section className="jobs-sidebar-section" aria-labelledby="jobs-sidebar-date-heading">
-        <h2 id="jobs-sidebar-date-heading">Date posted</h2>
+      <section className="jobs-sidebar-section" aria-labelledby={`${controlId}-date-heading`}>
+        <h2 id={`${controlId}-date-heading`}>Date posted</h2>
         <div className="jobs-sidebar-options" role="radiogroup" aria-label="Date posted">
           {[['', 'Any time'], ['1', 'Today'], ['7', 'Past week'], ['30', 'Past month']].map(([value, label]) => (
             <button key={value} type="button" role="radio" aria-checked={(params.get('postedWithin') || '') === value}
@@ -110,8 +113,8 @@ export default function JobsSidebarControls({ onNavigate }) {
         </div>
       </section>
 
-      <section className="jobs-sidebar-section" aria-labelledby="jobs-sidebar-sites-heading">
-        <h2 id="jobs-sidebar-sites-heading">Career sites</h2>
+      <section className="jobs-sidebar-section" aria-labelledby={`${controlId}-sites-heading`}>
+        <h2 id={`${controlId}-sites-heading`}>Career sites</h2>
         <div className="jobs-sidebar-options" role="radiogroup" aria-label="Career sites">
           <button type="button" className={`jobs-sidebar-option${!selectedSource ? ' active' : ''}`} role="radio" aria-checked={!selectedSource} onClick={() => updateFilters({ sources: null })}>
             <span className="jobs-sidebar-source-all" aria-hidden="true">All</span>
@@ -146,8 +149,8 @@ export default function JobsSidebarControls({ onNavigate }) {
         </div>
       </details>
 
-      <section className="jobs-sidebar-section" aria-labelledby="jobs-sidebar-sort-heading">
-        <h2 id="jobs-sidebar-sort-heading">Sort options</h2>
+      <section className="jobs-sidebar-section" aria-labelledby={`${controlId}-sort-heading`}>
+        <h2 id={`${controlId}-sort-heading`}>Sort options</h2>
         <div className="jobs-sidebar-options jobs-sidebar-options--sort" role="radiogroup" aria-label="Sort jobs">
           {JOB_SORT_OPTIONS.map((option) => (
             <button

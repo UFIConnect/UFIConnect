@@ -1,6 +1,6 @@
 import PublishingTargets, { usePublishingTargets } from '../components/PublishingTargets';
 import SnapFeedRail from '../components/SnapFeedRail';
-﻿import { useState, useEffect, useRef, useCallback } from 'react';
+﻿import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Link, useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
@@ -119,10 +119,14 @@ function UfiPostArea({ embedded, initialShop, composeOnly, categoryLabel, initia
     return () => window.removeEventListener('ufi:refresh-selected-feed', refreshSelectedFeed);
   }, [composeOnly, feedPages.refresh]);
 
+  useLayoutEffect(() => {
+    if (composing) textareaRef.current?.focus();
+  }, [composing]);
+
   const openCompose = useCallback(() => {
+    textareaRef.current?.focus();
     setComposing(true);
     setTopicFilterOpen(false);
-    setTimeout(() => textareaRef.current?.focus(), 50);
   }, []);
 
   useEffect(() => {

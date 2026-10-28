@@ -23,7 +23,7 @@ const server = await createServer({
   // effect in this audit build without changing or bypassing its behavior.
   plugins: [{ name: 'audit-layout-route-ready', enforce: 'pre', transform(source, id) {
     if (!id.split('?')[0].replaceAll('\\', '/').endsWith('/components/Layout.jsx')) return;
-    const pattern = /(setSearchPopupOpen\(false\);)(\s*\}, \[location\.pathname, location\.search\]\);)/;
+    const pattern = /(useEffect\(\(\) => \{)(\s*const previous = overlayRouteRef\.current;)/;
     assert.ok(pattern.test(source), 'The Layout route-close effect must be instrumented');
     return source.replace(pattern, '$1\n    window.__sidebarAuditRoute = location.pathname + location.search;$2');
   } }],
@@ -221,6 +221,22 @@ try {
         await waitClosed();
         check(await opener.evaluate(el => el === document.activeElement), 'Closing should return focus to the opener');
 
+        // Only the consumed compose=1 command is exempt from route cleanup.
+        // Browser-history query changes still close an already open drawer.
+        for (const compose of ['0', null]) {
+          await opener.click();
+          await waitOpen();
+          await page.evaluate(value => {
+            const next = new URL(location.href);
+            if (value === null) next.searchParams.delete('compose');
+            else next.searchParams.set('compose', value);
+            history.pushState(history.state, '', next);
+            window.dispatchEvent(new PopStateEvent('popstate', { state: history.state }));
+          }, compose);
+          await waitClosed();
+          check(new URL(page.url()).searchParams.get('compose') === compose, 'Ordinary compose query changes retain their navigation behavior');
+        }
+
         for (const [label, category] of [['Travel', 'countries'], ['Restaurants', 'restaurants'], ['Bars and clubs', 'bars']]) {
           await opener.click();
           await waitOpen();
@@ -388,6 +404,7 @@ try {
         await drawer.locator('img').dispatchEvent('error');
         check(await drawer.locator('img').count() === 0, 'Broken avatar should fall back to initials');
         check((await drawer.locator('.mobile-account-avatar').textContent()).trim().length > 0, 'Avatar fallback is empty');
+        check(await drawer.getAttribute('aria-hidden') === 'false', 'An unrelated avatar update must keep the account drawer open');
         await page.setViewportSize({ width: 1024, height: 768 });
         await waitClosed();
         check(!(await drawer.isVisible()), 'Drawer must disappear on desktop resize');

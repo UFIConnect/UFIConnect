@@ -49,6 +49,21 @@ test('all rendered web routes resolve to a fixed category or an explicit private
   for (const path of ['/auth/social/mastodon/callback?code=private', '/oauth/callback', '/vault/device']) assert.equal(isPrivateTelemetryPath(path), true);
 });
 
+test('job and business workflows use distinct fixed page categories without draft or organization metadata', () => {
+  for (const [path, category] of [
+    ['/jobs/new', 'job_compose'],
+    ['/business/industries', 'business_industries'],
+    ['/business/cross-post', 'business_cross_post'],
+  ]) {
+    const page = canonicalPage(`${path}/?org=PRIVATE_ORG&industry=PRIVATE_SELECTION&draft=PRIVATE_DRAFT#PRIVATE_CONTENT`);
+    assert.equal(page, PAGE_CATEGORIES[category]);
+    assert.equal(page.path, path);
+    assert.equal(page.viewType, 'page');
+    assert.ok(!JSON.stringify(page).includes('PRIVATE_'));
+    assert.equal(canonicalPage(`${path}/PRIVATE_DRAFT`).category, 'other', 'Unregistered dynamic paths cannot become category names');
+  }
+});
+
 test('every web and native screen category is accepted by the required aggregate endpoint contract', async () => {
   assert.deepEqual([...BACKEND_CATEGORIES].sort(), Object.keys(PAGE_CATEGORIES).sort());
   const backend = createAggregateAnalytics({ db: { isConnected: () => true, query: async () => ({ rows: [] }) }, schedule() {} });

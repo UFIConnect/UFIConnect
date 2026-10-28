@@ -5,9 +5,13 @@ import './business.css';
 
 const destinations = [
   { to: '/recruiting', label: 'Workspace', Icon: BriefcaseBusiness },
+  { to: '/business/industries', label: 'Industry spaces', Icon: BriefcaseBusiness },
+  { to: '/opportunities', label: 'Jobs', Icon: BriefcaseBusiness },
+  { to: '/jobs/new', label: 'Post a job', Icon: FileText },
   { to: '/people', label: 'Candidates', Icon: UsersRound },
-  { to: '/connected-accounts', label: 'Career sources', Icon: Link2 },
-  { to: '/career-posts', label: 'Cross Post', Icon: Send },
+  { to: '/connected-accounts', label: 'Connected sources', Icon: Link2 },
+  { to: '/business/cross-post', label: 'Cross Post', Icon: Send },
+  { to: '/career-posts', label: 'Hiring cross-post', Icon: Send },
   { to: '/business-posts', label: 'Posts & comparisons', Icon: ChartNoAxesCombined },
   { to: '/messages', label: 'Messages', Icon: MessagesSquare },
   { to: '/settings', label: 'Settings & billing', Icon: Settings },
@@ -26,9 +30,9 @@ export default function BusinessLayout({ children }) {
       <div><span>{profile?.organization || profile?.name}</span><button className="btn btn-ghost btn-sm" onClick={async () => { await logout(); navigate('/login'); }}>Log out</button></div>
     </header>
     <div className="business-body">
-      <nav className="business-nav" aria-label="Recruiting workspace">{availableDestinations.map(({ to, label, Icon }) =>
+      <nav className="business-nav" aria-label="Business workspace">{availableDestinations.map(({ to, label, Icon }) =>
         <NavLink key={to} to={to} className={({ isActive }) => isActive ? 'active' : ''}><Icon size={18} aria-hidden="true" />{label}</NavLink>)}
-        <p>Recruiting tools for your company</p>
+        <p>Industry spaces and publishing for your company</p>
       </nav>
       <main className="business-main">{children}</main>
     </div>

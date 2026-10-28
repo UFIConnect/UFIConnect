@@ -3878,6 +3878,33 @@
     "group": "Cross-post category",
     "viewType": "tab"
   },
+  "job_compose": {
+    "category": "job_compose",
+    "path": "/jobs/new",
+    "title": "Post a job",
+    "label": "Post a job",
+    "platform": "web",
+    "group": "Careers",
+    "viewType": "page"
+  },
+  "business_industries": {
+    "category": "business_industries",
+    "path": "/business/industries",
+    "title": "Business industries",
+    "label": "Business industries",
+    "platform": "web",
+    "group": "Business",
+    "viewType": "page"
+  },
+  "business_cross_post": {
+    "category": "business_cross_post",
+    "path": "/business/cross-post",
+    "title": "Business cross-post",
+    "label": "Business cross-post",
+    "platform": "web",
+    "group": "Business",
+    "viewType": "page"
+  },
   "career_posts": {
     "category": "career_posts",
     "path": "/career-posts",

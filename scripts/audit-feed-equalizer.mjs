@@ -26,7 +26,7 @@ try {
     const errors = [], requests = [];
     page.on('pageerror', error => errors.push(error.message));
     let revision = 0;
-    let holdNextPage = false, pageHeld, resumePage;
+    let holdNextPage = false, pageHeld, resumePage, heldPageRequest;
     const paginationHeld = new Promise(resolve => { pageHeld = resolve; });
     await context.route('**/api/**', async route => {
       const url = new URL(route.request().url()), endpoint = url.pathname.replace(/^\/api/, '');
@@ -50,6 +50,7 @@ try {
       }));
       if (batch && holdNextPage && params.get('mode') === 'feed' && sources.join(',') === 'reddit,hackernews' && revision === 0) {
         holdNextPage = false;
+        heldPageRequest = route.request();
         await new Promise(resolve => { resumePage = resolve; pageHeld(); });
       }
       return route.fulfill({ json: { posts, cursor: 'audit-page-2', hasMore: !batch, nativeUficonnectIncluded: true } });
@@ -72,20 +73,26 @@ try {
     await sources.getByRole('button', { name: 'Hacker News', exact: true }).click();
     await checkStart('reddit-hackernews');
     assert.ok(requests.some(params => params.get('sources')?.split(',').length === 2));
-    // The real endless-feed tail loads another balanced batch. A refresh
-    // during that request must queue and promote its newer batch afterward.
+    // Explicit refresh supersedes a pending cursor page. Already visible
+    // cards stay behind the fresh balanced batch; late cursor rows stay out.
     assert.equal(await page.getByRole('navigation', { name: 'Feed pages', exact: true }).count(), 0);
     await page.locator('[data-feed-scroll-sentinel]').scrollIntoViewIfNeeded();
     await Promise.race([paginationHeld, new Promise((_, reject) => setTimeout(() => reject(new Error('Pagination never started')), 10000))]);
     revision = 1;
+    const supersededPage = page.waitForEvent('requestfailed', request => request === heldPageRequest);
     await page.evaluate(() => window.dispatchEvent(new Event('ufi:refresh-selected-feed')));
+    await supersededPage;
     resumePage();
-    await page.getByText(expected('reddit-hackernews', 0, 1)[3], { exact: true }).waitFor().catch(async error => {
+    await page.getByText(expected('reddit-hackernews', 1, 0)[3], { exact: true }).waitFor().catch(async error => {
       console.log('Equalizer failure context', JSON.stringify({ requests: requests.map(params => params.toString()), titles: await titles(), errors }));
       throw error;
     });
-    await page.getByText(expected('reddit-hackernews', 1, 0)[3], { exact: true }).waitFor();
-    assert.deepEqual((await titles()).slice(0, 12), [...expected('reddit-hackernews', 1, 0), ...expected('reddit-hackernews', 0, 0), ...expected('reddit-hackernews', 0, 1)], 'Refresh promotes the fresh balanced batch ahead of older cards');
+    assert.deepEqual((await titles()).slice(0, 8), [...expected('reddit-hackernews', 1, 0), ...expected('reddit-hackernews', 0, 0)], 'Refresh promotes the fresh balanced batch ahead of already loaded cards');
+    assert.equal(await page.getByText(expected('reddit-hackernews', 0, 1)[3], { exact: true }).count(), 0, 'The superseded cursor page cannot append after refresh');
+    await page.locator('[data-feed-scroll-sentinel]').scrollIntoViewIfNeeded();
+    await page.getByText(expected('reddit-hackernews', 1, 1)[3], { exact: true }).waitFor();
+    assert.deepEqual((await titles()).slice(0, 12), [...expected('reddit-hackernews', 1, 0), ...expected('reddit-hackernews', 0, 0), ...expected('reddit-hackernews', 1, 1)], 'A current cursor can append the next balanced batch after refresh');
+    assert.equal(await page.getByText(expected('reddit-hackernews', 0, 1)[3], { exact: true }).count(), 0, 'Late rows from the cancelled cursor remain absent after new pagination');
     await auditReload(page);
     await checkStart('reddit-hackernews');
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/equalizer-${width}.png`) });

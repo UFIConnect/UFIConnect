@@ -60,7 +60,13 @@ try {
     check(new URL(page.url()).pathname === '/settings', 'Confirmed Business activation keeps the Settings return page');
     await auditNavigate(page, server.origin + '/recruiting');
     await page.getByRole('heading', { name: 'Talent Company recruiting', exact: true }).waitFor();
-    check(await page.getByRole('navigation', { name: 'Recruiting workspace' }).getByRole('link').count() === 7, 'Business shell includes Cross Post and Posts & comparisons');
+    const businessNav = page.getByRole('navigation', { name: 'Business workspace' });
+    for (const [label, destination] of [
+      ['Workspace','/recruiting'], ['Industry spaces','/business/industries'], ['Jobs','/opportunities'],
+      ['Post a job','/jobs/new'], ['Candidates','/people'], ['Connected sources','/connected-accounts'],
+      ['Cross Post','/business/cross-post'], ['Hiring cross-post','/career-posts'],
+      ['Posts & comparisons','/business-posts'], ['Messages','/messages'], ['Settings & billing','/settings'],
+    ]) check(await businessNav.getByRole('link', { name:label,exact:true }).getAttribute('href') === destination, `Business ${label} navigation uses its intended destination`);
     check(await page.getByRole('link', { name: 'Videos', exact: true }).count() === 0, 'Business has no video navigation');
     check(await page.getByRole('link', { name: 'Find candidates', exact: false }).isVisible(), 'Recruiting actions are visible after verified activation');
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Recruiting workspace fits ${width}px`);
@@ -68,7 +74,7 @@ try {
     for (const path of ['/music', '/groups', '/global', '/command-center']) {
       await auditNavigate(page, server.origin + path); await page.waitForURL('**/recruiting'); checks++;
     }
-    await page.getByRole('navigation', { name: 'Recruiting workspace' }).getByRole('link', { name: 'Candidates', exact: true }).click();
+    await page.getByRole('navigation', { name: 'Business workspace' }).getByRole('link', { name: 'Candidates', exact: true }).click();
     await page.getByRole('heading', { name: 'Find people for your next role', exact: true }).waitFor();
     await page.getByRole('heading', { name: 'Candidate Example', exact: true }).waitFor();
     check(await page.getByRole('link', { name: 'Contact about a role', exact: true }).getAttribute('href') === '/messages/candidate-1', 'Candidate contact starts a direct conversation');
@@ -80,7 +86,7 @@ try {
     check(await page.getByRole('link', { name: 'Open Vault and recovery', exact: true }).isVisible(), 'Vault recovery remains reachable without an active add-on');
     addons = { resumeBuilderAddon: true, vpnConnectorAddon: true };
     await page.getByRole('button', { name: 'Check billing status', exact: true }).click();
-    const navigation = page.getByRole('navigation', { name: 'Recruiting workspace' });
+    const navigation = page.getByRole('navigation', { name: 'Business workspace' });
     await navigation.getByRole('link', { name: 'Resume Builder', exact: true }).waitFor();
     await navigation.getByRole('link', { name: 'Resume Builder', exact: true }).click();
     await page.getByRole('heading', { name: 'Resume Builder', exact: true }).waitFor();

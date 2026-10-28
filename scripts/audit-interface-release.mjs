@@ -49,7 +49,7 @@ try {
           rejectNextComment = false;
           return route.fulfill({ status: 503, json: { message: 'Synthetic source timeout. Check the original before retrying.' } });
         }
-        return route.fulfill({ json: { published: true, liked: body.liked, commentId: 'remote-comment' } });
+        return route.fulfill({ json: { published: true, liked: body.liked, commentId: 'remote-comment', ...(body.action === 'comment' ? { commentsCount: 1 } : {}) } });
       }
       if (/^\/feed\/[^/]+\/comments$/.test(endpoint)) return route.fulfill({ json: { comments: [], live: true, hasMore: false } });
       if (endpoint === '/feed/likes') return route.fulfill({ json: { likes: Object.fromEntries((url.searchParams.get('ids') || '').split(',').filter(Boolean).map(id => {
@@ -112,7 +112,8 @@ try {
     assert.equal(await page.getByText('your group', { exact: true }).count(), 0);
     await redditCard.getByRole('button', { name: 'Upvote on Reddit, 31 likes', exact: true }).waitFor();
     assert.equal(await redditCard.locator('.post-chrome-like > .post-chrome-action').count(), 1, 'One source control combines upvote and count');
-    assert.equal(await redditCard.getByRole('button', { name: 'Upvote on Reddit, 31 likes', exact: true }).locator('.post-chrome-like-count').innerText(), '31 likes');
+    assert.equal(await redditCard.getByRole('button', { name: 'Upvote on Reddit, 31 likes', exact: true }).locator('.post-chrome-like-count').innerText(), '31');
+    assert.match(await redditCard.getByRole('button', { name: 'Upvote on Reddit, 31 likes', exact: true }).getAttribute('title'), /31 likes$/, 'Compact counts preserve their source meaning in the tooltip and accessible name');
     assert.deepEqual(interactions, [], 'Viewing a source count does not submit a provider action');
     assert.deepEqual(memberLikes, [], 'Viewing source counts never changes a reaction');
     await auditReload(page);
@@ -131,14 +132,17 @@ try {
     await commentAction.click();
     assert.equal(await redditComment.inputValue(), 'Thank you for the useful update.', 'Closing comments retains an unconfirmed draft');
     await redditCard.getByRole('button', { name: 'Publish on Reddit', exact: true }).click();
-    await page.getByText('Comment published on Reddit. Source counts update when the source supplies them.', { exact: true }).waitFor();
+    await page.getByText('Comment published on Reddit.', { exact: true }).waitFor();
+    assert.equal(await redditComment.inputValue(), '', 'A confirmed source comment clears its draft');
+    await redditCard.getByText('Thank you for the useful update.', { exact: true }).waitFor();
+    assert.equal(await redditCard.getByRole('button', { name: 'Hide Comments', exact: true }).innerText(), '1', 'The comment count updates immediately without a reload');
     assert.deepEqual(interactions.map(item => item.action), ['comment', 'comment']);
     assert.ok(interactions.every(item => item.source === 'reddit' && item.sourceUrl === 'https://www.reddit.com/r/test/comments/abc123/story'), 'Both requests target the original Reddit post');
     assert.ok(interactions.every(item => typeof item.requestId === 'string' && item.requestId.length > 0), 'Each action includes its duplicate-protection request ID');
     assert.equal(interactions[0].requestId, interactions[1].requestId, 'Retry after closing/reopening reuses the original duplicate-protection ID');
     assert.equal(interactions[0].content, 'Thank you for the useful update.');
     assert.equal(memberLikes.length, 0, 'Source comment actions do not change local likes');
-    assert.equal(await redditCard.locator('.post-chrome-like-count').innerText(), '31 likes');
+    assert.equal(await redditCard.locator('.post-chrome-like-count').innerText(), '31');
     assert.equal(await redditCard.locator('.post-chrome-source-count').count(), 0, 'The source count appears once');
     await hnCard.locator('.post-chrome-actions').getByRole('button', { name: 'Show Comments', exact: true }).click();
     assert.equal(await hnCard.locator('.connected-post-actions textarea').count(), 0, 'An unsupported source never displays an API publishing form');

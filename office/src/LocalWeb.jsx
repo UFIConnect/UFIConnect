@@ -7,7 +7,8 @@ const LOCAL_PREVIEW = 'http://127.0.0.1:4173';
 const isLocalConsole = import.meta.env.MODE === 'release-local';
 const STEPS = [['edit', 'Edit'], ['preview', 'Preview'], ['publish', 'Publish']];
 // Maps is the website's 3D source map, served only by the local website.
-const PREVIEW_PAGES = [['/', 'Home'], ['/maps', 'Map']];
+const PREVIEW_PAGES = [['/', 'Home'], ['/maps', 'Map'], ['/opportunities', 'Jobs'], ['/jobs/new', 'Post a job'],
+  ['/business/industries', 'Business industries'], ['/business/cross-post', 'Business cross-post'], ['/connected-accounts', 'Connected accounts']];
 const MAX_CHANGE_ROWS = 400;
 const phoneUrl = value => {
   try { const url = new URL(value); return url.protocol === 'https:' && url.hostname.endsWith('.trycloudflare.com') && !url.username && !url.password ? url.origin : ''; }
@@ -463,9 +464,19 @@ function PhoneConnection() {
   </section>;
 }
 
-export default function LocalWeb({ apiBase = '', request }) {
+export default function LocalWeb({ apiBase = '', request, onNavigate }) {
   return <div className="local-web">
     <h1>Local web</h1>
+    {onNavigate && <section className="local-web-panel" aria-labelledby="local-web-sources-heading">
+      <h2 id="local-web-sources-heading">Sources and publishing</h2>
+      <p>Check every source agent, complete its setup, and activate configured sources. Use the preview to work on Jobs, Business industries, cross-posting, and connected accounts.</p>
+      <div className="local-web-actions">
+        <button type="button" onClick={() => onNavigate('sources')}>Open source agents</button>
+        <button type="button" onClick={() => onNavigate('setup')}>Check setup and activate</button>
+        <button type="button" onClick={() => onNavigate('controls')}>Source controls</button>
+      </div>
+      <p className="local-web-hint">Source controls use your connected Office services. Account connections and publishing in the release preview use your live account.</p>
+    </section>}
     {isLocalConsole ? <LocalEditor apiBase={apiBase} request={request} /> : <>
       <p className="local-web-subtitle">Edit the website on your computer, check the preview, then publish one reviewed file.</p>
       <section className="local-web-panel local-web-desktop-start">

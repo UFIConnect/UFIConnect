@@ -49,3 +49,12 @@ When fixed upstream versions exist, update the lockfile, remove their manifest
 entries and retain behavioral regressions. Retire custom audit handling after
 both backports are replaced. Do not extend the review date or add exceptions
 without reviewing current upstream state and mitigation.
+
+
+## Zod 3.25.76 bounded collection backport
+
+GHSA-mrhx-c7xc-m3w5 was updated on October 23, 2026. Expo SDK57 CLI still requires Zod3; upgrading Expo within SDK57 does not remove the affected dependency. The pinned adaptation follows upstream commit [a0ebf970](https://github.com/colinhacks/zod/commit/a0ebf970f2d752e5f58527cd2942ff48be4f46bd). It returns a size error before walking children when a leading upper size bound is exceeded. It covers v3 arrays and sets, and bundled v4 arrays, sets and maps, through CommonJS, ES modules and TypeScript source exports.
+
+The older v4 executor runs checks after parsing even for aborting size errors. The backport wraps its run function to prevent duplicate size issues and later checks from reading unparsed input. Non-size checks before a bound retain their order, including overwrite operations and conditional checks. V3 maps have no size-bound API. Unbounded collections remain unchanged, matching the scope of the upstream fix. No global input limit or new Zod major version is introduced.
+
+Regression tests exercise all public module entry variants, oversized sync/async input, zero child/later refinement calls, single error reporting, nested paths, valid values, below-bound errors, overwrite order, and audit rejection of unknown or unpatched copies. The existing review deadline remains unchanged.

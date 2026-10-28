@@ -59,6 +59,9 @@ const Videos         = lazy(() => import('./pages/Videos'));
 const Groups         = lazy(() => import('./pages/Groups'));
 const GroupDetail    = lazy(() => import('./pages/GroupDetail'));
 const JobDetail      = lazy(() => import('./pages/JobDetail'));
+const JobCompose     = lazy(() => import('./pages/JobCompose'));
+const BusinessIndustries = lazy(() => import('./pages/BusinessIndustries'));
+const BusinessIndustryCrossPost = lazy(() => import('./pages/BusinessIndustryCrossPost'));
 const Messages       = lazy(() => import('./pages/Messages'));
 const Conversation   = lazy(() => import('./pages/Conversation'));
 const Notifications  = lazy(() => import('./pages/Notifications'));
@@ -315,6 +318,9 @@ function AppContent({ guestHome, mediaAccountId }) {
       <Route path="/recruiting" element={<RequireAuth><RequireOnboarding><Recruiting /></RequireOnboarding></RequireAuth>} />
       <Route path="/business-posts" element={<RequireAuth><RequireOnboarding><BusinessPosts /></RequireOnboarding></RequireAuth>} />
       <Route path="/career-posts" element={<RequireAuth><RequireOnboarding><CareerPublishing /></RequireOnboarding></RequireAuth>} />
+      <Route path="/jobs/new" element={<RequireAuth><RequireOnboarding><JobCompose /></RequireOnboarding></RequireAuth>} />
+      <Route path="/business/industries" element={<RequireAuth><RequireOnboarding><BusinessIndustries /></RequireOnboarding></RequireAuth>} />
+      <Route path="/business/cross-post" element={<RequireAuth><RequireOnboarding><BusinessIndustryCrossPost /></RequireOnboarding></RequireAuth>} />
       <Route path="/u/:id" element={
         <RequireAuth><RequireOnboarding><PublicProfile /></RequireOnboarding></RequireAuth>
       }/>

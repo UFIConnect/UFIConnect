@@ -76,7 +76,9 @@ try {
           if (window.__videoLayoutHoldRateChange) window.__videoLayoutConfirmRate = confirm;
           else setTimeout(confirm, 20);
         }
-        loadVideoById(id) { this.id = id; this.time = 0; const url = new URL(this.frame.src); url.pathname = `/embed/${id}`; this.frame.src = url.href; }
+        // The player API changes the video inside the existing player. Navigating
+        // iframe.src here destroys the touch target halfway through a swipe.
+        loadVideoById(id) { this.id = id; this.time = 0; }
         playVideo() { this.state = 1; this.config.events?.onStateChange?.({ target: this, data: 1 }); }
         pauseVideo() { this.state = 2; this.config.events?.onStateChange?.({ target: this, data: 2 }); }
         mute() { this.muted = true; }
@@ -461,13 +463,14 @@ try {
     const frame = page.locator('.video-feed-youtube-player iframe').first();
     await frame.waitFor({ state: 'visible' });
     await page.waitForFunction(() => {
-      const src = document.querySelector('.video-feed-youtube-player iframe')?.src;
-      return src && new URL(src).pathname === '/embed/long0000001';
+      const iframe = document.querySelector('.video-feed-youtube-player iframe');
+      return [...window.__videoLayoutPlayers].some(player => player.frame === iframe && player.getVideoData().video_id === 'long0000001');
     });
     const frameInfo = await frame.evaluate(element => ({ policy: element.referrerPolicy, src: element.src,
+      videoId: [...window.__videoLayoutPlayers].find(player => player.frame === element)?.getVideoData().video_id,
       pointerEvents: getComputedStyle(element).pointerEvents, tabIndex: element.tabIndex, width: element.getBoundingClientRect().width }));
     assert.equal(frameInfo.policy, 'strict-origin-when-cross-origin');
-    assert.equal(new URL(frameInfo.src).pathname, '/embed/long0000001', 'The playable URL overrides a stale embedId');
+    assert.equal(frameInfo.videoId, 'long0000001', 'The playable URL overrides a stale embedId through the player API');
     assert.equal(new URL(frameInfo.src).searchParams.get('origin'), new URL(origin).origin);
     assert.equal(new URL(frameInfo.src).searchParams.get('controls'), '0');
     assert.equal(frameInfo.pointerEvents, 'auto');
@@ -545,9 +548,8 @@ try {
       assert.equal(await scroll.evaluate(element => getComputedStyle(element).scrollSnapType), 'y mandatory', 'Videos and Music snap vertical scrolling to a video');
       const sharedFrame = page.locator('.video-feed-youtube-player iframe');
       await sharedFrame.waitFor({ state: 'visible' });
-      // The fake provider navigates its child document when loading a video.
-      // A visible old frame/control can precede that navigation: synchronize
-      // the expected child document and its own paint before sending input.
+      // Wait for the initial provider document and its paint before sending input.
+      // Subsequent API loads keep this document and the gesture target alive.
       const expectedEmbed = nextPosts[0].embedId;
       await page.waitForFunction(id => [...window.__videoLayoutPlayers].some(player => player.id === id && player.frame.isConnected), expectedEmbed);
       const providerDocument = page.frameLocator('.video-feed-youtube-player iframe');
@@ -562,6 +564,7 @@ try {
       assert.equal(await sharedFrame.evaluate(element => Boolean(element.closest('[data-video-feed-scroll]'))), true,
         'Cross-origin player belongs to the native scrolling region');
       await sharedFrame.evaluate(element => { element.dataset.stablePlayer = 'true'; });
+      await providerDocument.locator('body').evaluate(element => { element.dataset.stableDocument = 'true'; });
       const rect = await sharedFrame.boundingBox();
       const centerX = rect.x + rect.width / 2;
       const centerY = rect.y + rect.height / 2;
@@ -602,6 +605,7 @@ try {
         && window.__videoLayoutTouchEvents.some(event => event.type === 'touchmove')),
         'The cross-origin provider actually receives the touch gesture');
       assert.equal(await sharedFrame.getAttribute('data-stable-player'), 'true', 'Scrolling reuses the original provider iframe');
+      assert.equal(await providerDocument.locator('body').getAttribute('data-stable-document'), 'true', 'API video changes preserve the provider document during a gesture');
       await page.frameLocator('.video-feed-youtube-player iframe').getByRole('button', { name: 'Provider controls' }).click();
       assert.equal(await sharedFrame.count(), 1, 'Only one YouTube player stays mounted');
       // Refresh must request a fresh batch and display genuinely new IDs.

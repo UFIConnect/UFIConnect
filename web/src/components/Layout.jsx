@@ -134,6 +134,7 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
   const { showToast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
+  const overlayRouteRef = useRef(location);
   const { canInstall, installed, triggerInstall } = useInstallPrompt();
   // A pending request is not an unread update once the member has viewed it.
   const [notifBadge, setNotifBadge] = useState(0);
@@ -191,6 +192,18 @@ function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false
   }, [profile]);
 
   useEffect(() => {
+    const previous = overlayRouteRef.current;
+    overlayRouteRef.current = location;
+    if (previous.pathname === location.pathname) {
+      const before = new URLSearchParams(previous.search);
+      const after = new URLSearchParams(location.search);
+      // Consuming the linked composer command is internal URL cleanup, not a new
+      // navigation. It may commit after the member has reopened an account menu.
+      if (before.get('compose') === '1' && !after.has('compose')) {
+        before.delete('compose');
+        if (before.toString() === after.toString()) return;
+      }
+    }
     setMobileMenuOpen(false);
     setMobileAccountOpen(false);
     setMobileHeaderPopup(null);

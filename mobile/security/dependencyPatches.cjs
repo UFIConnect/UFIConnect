@@ -49,5 +49,5 @@ function processPatches({ apply = false, directory = root } = {}) {
 module.exports = { processPatches, patchText, manifest };
 if (require.main === module) {
   processPatches({ apply: !process.argv.includes('--check') });
-  console.log('Verified pinned braces and node-forge security backports.');
+  console.log('Verified pinned security backports:', manifest.packages.map(entry => entry.name).join(', '));
 }

@@ -101,3 +101,137 @@ test('audit only accepts proven backports and their dependency chains', () => {
   assert.throws(() => assessAudit(report, verified, new Date(manifest.reviewBy)), /require upstream review/);
   assert.throws(() => assessAudit({ error: 'offline' }, verified, now), /Invalid or unavailable/);
 });
+
+test('mixed severity dependency chains retain lower advisories without hiding unpatched high causes', () => {
+  const verified = new Map([['patched', { advisory: 'GHSA-reviewed', nodes: new Set(['node_modules/patched']) }]]);
+  const report = { auditReportVersion: 2, metadata: { vulnerabilities: {} }, vulnerabilities: {
+    patched: { severity: 'high', nodes: ['node_modules/patched'], via: [{ name: 'patched', severity: 'high', url: 'https://github.com/advisories/GHSA-reviewed' }] },
+    lower: { severity: 'low', nodes: ['node_modules/lower'], via: [{ name: 'lower', severity: 'low', url: 'https://github.com/advisories/GHSA-unpatched' }] },
+    config: { severity: 'low', via: ['lower'] },
+    cli: { severity: 'high', via: ['config', 'patched'] },
+    expo: { severity: 'high', via: ['cli', 'config'] },
+  } };
+  const now = new Date('2026-10-27');
+  const assessment = assessAudit(report, verified, now);
+  assert.deepEqual(assessment.blocked, []);
+  assert.deepEqual(assessment.mitigated, ['patched'], 'Do not label unresolved low findings or their parents as fully patched');
+  assert.deepEqual(assessment.belowThreshold.sort(), ['config', 'lower']);
+  for (const severity of ['high', 'critical', undefined, 'unknown']) {
+    report.vulnerabilities.lower.via[0].severity = severity;
+    assert.deepEqual(assessAudit(report, verified, now).blocked.sort(), ['cli', 'expo'], 'Inspect high/unknown leaves even beneath a low summary');
+  }
+  report.vulnerabilities.lower.via[0].severity = 'moderate';
+  assert.deepEqual(assessAudit(report, verified, now).blocked, []);
+  report.vulnerabilities.patched.nodes.push('node_modules/nested/node_modules/patched');
+  assert.deepEqual(assessAudit(report, verified, now).blocked.sort(), ['cli', 'expo', 'patched']);
+  report.vulnerabilities.patched.nodes.pop();
+  report.vulnerabilities.cli.via.push('missing-package');
+  assert.deepEqual(assessAudit(report, verified, now).blocked.sort(), ['cli', 'expo']);
+  report.vulnerabilities.cli.via.pop();
+  report.vulnerabilities.cli.via = ['config', 'expo'];
+  assert.deepEqual(assessAudit(report, verified, now).blocked.sort(), ['cli', 'expo'], 'Cycles without verified high-advisory evidence stay blocked');
+});
+
+// GHSA-mrhx-c7xc-m3w5: a declared upper bound must stop the element walk.
+const zodEntries = [
+  ['root CommonJS', 3, () => require('zod')],
+  ['v3 CommonJS', 3, () => require('zod/v3')],
+  ['v4 CommonJS', 4, () => require('zod/v4')],
+  ['mini CommonJS', 4, () => require('zod/v4/mini')],
+  ['root ES module', 3, () => import('zod')],
+  ['v3 ES module', 3, () => import('zod/v3')],
+  ['v4 ES module', 4, () => import('zod/v4')],
+  ['mini ES module', 4, () => import('zod/v4/mini')],
+];
+for (const [entryName, version, load] of zodEntries) {
+  test(`Zod ${entryName} rejects oversized collections before sync or async child validation`, async () => {
+    const z = await load();
+    let visited = 0, refined = 0;
+    const rejectChild = () => { visited++; return false; };
+    const child = version === 3 ? z.string().refine(rejectChild) : z.string().check(z.refine(rejectChild));
+    const after = () => { refined++; return true; };
+    const cases = version === 3 ? [
+      [z.array(child).max(2, 'cap').refine(after), Array(2000).fill('x')],
+      [z.array(child).length(2, 'cap').refine(after), Array(2000).fill('x')],
+      [z.set(child).max(2, 'cap').refine(after), new Set(Array.from({ length: 2000 }, (_, i) => String(i)))],
+    ] : [
+      [z.array(child).check(z.maxLength(2, { error: 'cap' }), z.refine(after)), Array(2000).fill('x')],
+      [z.array(child).check(z.length(2, { error: 'cap' }), z.refine(after)), Array(2000).fill('x')],
+      [z.set(child).check(z.maxSize(2, { error: 'cap' }), z.refine(after)), new Set(Array.from({ length: 2000 }, (_, i) => String(i)))],
+      [z.map(child, child).check(z.maxSize(2, { error: 'cap' }), z.refine(after)), new Map(Array.from({ length: 2000 }, (_, i) => [String(i), 'x']))],
+    ];
+    for (const [schema, input] of cases) {
+      for (const result of [schema.safeParse(input), await schema.safeParseAsync(input)]) {
+        assert.equal(result.success, false);
+        assert.equal(result.error.issues.length, 1);
+        assert.equal(result.error.issues[0].code, 'too_big');
+        assert.equal(result.error.issues[0].message, 'cap');
+      }
+      assert.equal(visited, 0, 'No child refinement should run after the declared upper bound is exceeded');
+      assert.equal(refined, 0, 'Later collection refinements must not inspect unparsed input');
+    }
+    const asyncChild = async () => { visited++; return false; };
+    const asyncAfter = async () => { refined++; return true; };
+    const asyncSchema = version === 3
+      ? z.array(z.string().refine(asyncChild)).max(2).refine(asyncAfter)
+      : z.array(z.string().check(z.refine(asyncChild))).check(z.maxLength(2), z.refine(asyncAfter));
+    // The bounds reject before either asynchronous callback creates a promise.
+    assert.equal(asyncSchema.safeParse(Array(2000).fill('x')).error.issues.length, 1);
+    assert.equal((await asyncSchema.safeParseAsync(Array(2000).fill('x'))).error.issues.length, 1);
+    assert.equal(visited, 0);
+    assert.equal(refined, 0);
+    assert.equal((await asyncSchema.safeParseAsync(['x'])).success, false);
+    assert.equal(visited, 1, 'An ordinary async input still invokes its child validator');
+  });
+
+  test(`Zod ${entryName} preserves ordinary values, errors, nesting and check order`, async () => {
+    const z = await load();
+    const strings = version === 3 ? z.array(z.string()).max(2) : z.array(z.string()).check(z.maxLength(2));
+    assert.deepEqual(strings.parse(['a', 'b']), ['a', 'b']);
+    assert.deepEqual(await strings.parseAsync(['a']), ['a']);
+    assert.deepEqual(strings.parse([]), []);
+    const invalid = strings.safeParse([1, 2]);
+    assert.equal(invalid.success, false);
+    assert.deepEqual(invalid.error.issues.map(issue => issue.path), [[0], [1]]);
+    assert.equal(strings.safeParse('wrong type').error.issues[0].code, 'invalid_type');
+    const nested = z.object({ items: strings }).safeParse({ items: ['a', 'b', 'c'] });
+    assert.deepEqual(nested.error.issues.map(issue => issue.path), [['items']]);
+    const tooSmall = version === 3 ? z.array(z.string()).min(2) : z.array(z.string()).check(z.minLength(2));
+    assert.equal(tooSmall.safeParse([]).error.issues[0].code, 'too_small');
+    const exact = version === 3 ? z.array(z.string()).length(2) : z.array(z.string()).check(z.length(2));
+    assert.deepEqual(exact.parse(['a', 'b']), ['a', 'b']);
+    assert.equal(exact.safeParse(['a']).error.issues[0].code, 'too_small');
+    const sets = version === 3 ? z.set(z.string()).max(2) : z.set(z.string()).check(z.maxSize(2));
+    assert.deepEqual(sets.parse(new Set(['a', 'b'])), new Set(['a', 'b']));
+    assert.equal(sets.safeParse(new Set([1])).error.issues[0].code, 'invalid_type');
+    // Unbounded collections are intentionally unchanged, matching upstream's scope.
+    assert.equal(z.array(z.string()).parse(Array(2000).fill('a')).length, 2000);
+    if (version === 4) {
+      const maps = z.map(z.string(), z.number()).check(z.maxSize(2));
+      assert.deepEqual(maps.parse(new Map([['a', 1]])), new Map([['a', 1]]));
+      assert.equal(maps.safeParse(new Map([['a', 'wrong type']])).error.issues[0].code, 'invalid_type');
+      const rewritten = z.array(z.number()).check(z.overwrite(values => values.slice(0, 2)), z.maxLength(2));
+      assert.deepEqual(rewritten.parse([1, 2, 3]), [1, 2]);
+      const conditional = z.array(z.string()).check(z.maxLength(1, { when: () => false }));
+      assert.deepEqual(conditional.parse(['a', 'b']), ['a', 'b']);
+    }
+  });
+}
+
+test('Zod audit coverage requires the exact advisory and every installed package copy', () => {
+  const entry = manifest.packages.find(item => item.name === 'zod');
+  assert.ok(entry);
+  const verified = new Map([['zod', { advisory: entry.advisory, nodes: new Set(['node_modules/zod']) }]]);
+  const report = { auditReportVersion: 2, metadata: { vulnerabilities: {} }, vulnerabilities: {
+    zod: { severity: 'high', nodes: ['node_modules/zod'], via: [{ name: 'zod', url: 'https://github.com/advisories/GHSA-mrhx-c7xc-m3w5' }] },
+    '@expo/cli': { severity: 'high', via: ['zod'] }, expo: { severity: 'high', via: ['@expo/cli'] },
+  } };
+  assert.deepEqual(assessAudit(report, verified, new Date('2026-10-24')).blocked, []);
+  assert.deepEqual(assessAudit(report, new Map(), new Date('2026-10-24')).blocked.sort(), ['@expo/cli', 'expo', 'zod']);
+  report.vulnerabilities.zod.nodes.push('node_modules/nested/node_modules/zod');
+  assert.deepEqual(assessAudit(report, verified, new Date('2026-10-24')).blocked.sort(), ['@expo/cli', 'expo', 'zod']);
+  report.vulnerabilities.zod.nodes.pop();
+  report.vulnerabilities.zod.via[0].url = 'https://github.com/advisories/GHSA-unreviewed';
+  assert.deepEqual(assessAudit(report, verified, new Date('2026-10-24')).blocked.sort(), ['@expo/cli', 'expo', 'zod']);
+});
+

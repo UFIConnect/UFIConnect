@@ -135,14 +135,16 @@ try {
     await page.evaluate(() => window.dispatchEvent(new CustomEvent('ufi-post-engagement-updated', { detail: {
       postId: 'mastodon-refresh', source: 'mastodon', sourceUrl: 'https://social.example/@reader/123', action: 'like', sourceLikesCount: 7, sourceLikedByMe: true,
     } })));
-    await card.locator('.post-chrome-like-count').filter({ hasText: '7 likes' }).waitFor();
+    await card.locator('.post-chrome-like-count').filter({ hasText: /^7$/ }).waitFor();
+    assert.match(await card.locator('.post-chrome-like > .post-chrome-action').getAttribute('aria-label'), /7 likes/);
     const oldFeedResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/api/office/feed');
     holdFeed = false; releaseFeed(); await oldFeedResponse;
     await page.waitForTimeout(100);
-    assert.equal(await card.locator('.post-chrome-like-count').innerText(), '7 likes', 'An older feed read cannot undo a confirmed source metric');
+    assert.equal(await card.locator('.post-chrome-like-count').innerText(), '7', 'An older feed read cannot undo a confirmed source metric');
     external.sourceLikesCount = 9; external.sourceLikedByMe = true;
     await page.evaluate(() => window.dispatchEvent(new Event('ufi:refresh-selected-feed')));
-    await card.locator('.post-chrome-like-count').filter({ hasText: '9 likes' }).waitFor();
+    await card.locator('.post-chrome-like-count').filter({ hasText: /^9$/ }).waitFor();
+    assert.match(await card.locator('.post-chrome-like > .post-chrome-action').getAttribute('aria-label'), /9 likes/);
 
     // Videos: the queue count updates with the comments sheet and failed reads retain replies.
     await auditNavigate(page, base + 'videos');

@@ -1,7 +1,7 @@
 import PostPagesNavigation from '../components/PostPagesNavigation';
 import usePostPages from '../hooks/usePostPages';
 import PublishingTargets, { usePublishingTargets } from '../components/PublishingTargets';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
 import PostList from '../components/PostList';
@@ -98,9 +98,13 @@ function GroupPostArea({ id }) {
     navigate('/?feed=groups');
   }
 
+  useLayoutEffect(() => {
+    if (composing) textareaRef.current?.focus();
+  }, [composing]);
+
   function openCompose() {
+    textareaRef.current?.focus();
     setComposing(true);
-    setTimeout(() => textareaRef.current?.focus(), 50);
   }
 
   // Local preview URLs are only ever released explicitly (resetMedia) or on

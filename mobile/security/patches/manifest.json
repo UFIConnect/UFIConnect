@@ -146,6 +146,163 @@
           ]
         }
       ]
+    },
+    {
+      "name": "zod",
+      "version": "3.25.76",
+      "advisory": "GHSA-mrhx-c7xc-m3w5",
+      "source": "https://github.com/colinhacks/zod/commit/a0ebf970f2d752e5f58527cd2942ff48be4f46bd",
+      "diffSha256": "ff9d50e239b53358f97855b86a9efb4f58e2bd4263cad0603fcf70b89945fe2f",
+      "scope": "Adapted upper-bound check before element validation for v3 arrays/sets and bundled v4 arrays/sets/maps; CJS, ESM and source exports. Unbounded schemas retain upstream behavior.",
+      "files": [
+        {
+          "path": "v3/types.cjs",
+          "beforeSha256": "06487cc05ed45c5dd29789bf0aa75734d1ce06592a7f2665ba4ca90a68e8a3e1",
+          "afterSha256": "674e29beb1bafb0ac61ad688431322e9397ab9b91272173f19dcf11e310f8e3a",
+          "hunks": [
+            {
+              "offset": 70039,
+              "before": "message: def.exactLength.message,\n                });\n                status.dirty();",
+              "after": "message: def.exactLength.message,\n                });\n                if (tooBig) return parseUtil_js_1.INVALID;\n                status.dirty();"
+            },
+            {
+              "offset": 71047,
+              "before": "message: def.maxLength.message,\n                });\n                status.dirty();",
+              "after": "message: def.maxLength.message,\n                });\n                return parseUtil_js_1.INVALID;"
+            },
+            {
+              "offset": 106762,
+              "before": "message: def.maxSize.message,\n                });\n                status.dirty();",
+              "after": "message: def.maxSize.message,\n                });\n                return parseUtil_js_1.INVALID;"
+            }
+          ]
+        },
+        {
+          "path": "v3/types.js",
+          "beforeSha256": "9763a2938f0e7f983363ef4bf6530e7583e3f2d54f8a4a6684efad58febc6e8e",
+          "afterSha256": "7b994f7652ae24855e9fe3066de3463f9bfd1083ca7d56d22434942fcddfbffe",
+          "hunks": [
+            {
+              "offset": 64750,
+              "before": "message: def.exactLength.message,\n                });\n                status.dirty();",
+              "after": "message: def.exactLength.message,\n                });\n                if (tooBig) return INVALID;\n                status.dirty();"
+            },
+            {
+              "offset": 65690,
+              "before": "message: def.maxLength.message,\n                });\n                status.dirty();",
+              "after": "message: def.maxLength.message,\n                });\n                return INVALID;"
+            },
+            {
+              "offset": 99866,
+              "before": "message: def.maxSize.message,\n                });\n                status.dirty();",
+              "after": "message: def.maxSize.message,\n                });\n                return INVALID;"
+            }
+          ]
+        },
+        {
+          "path": "src/v3/types.ts",
+          "beforeSha256": "70309a0877c35d036842e291fe7c8a4439d5db49411d233f8a22bf8a59c41419",
+          "afterSha256": "43e7d808270d2521f9969d81fcddce1df165618483454b72d0c19df98f6e61f3",
+          "hunks": [
+            {
+              "offset": 73400,
+              "before": "message: def.exactLength.message,\n        });\n        status.dirty();",
+              "after": "message: def.exactLength.message,\n        });\n        if (tooBig) return INVALID;\n        status.dirty();"
+            },
+            {
+              "offset": 74134,
+              "before": "message: def.maxLength.message,\n        });\n        status.dirty();",
+              "after": "message: def.maxLength.message,\n        });\n        return INVALID;"
+            },
+            {
+              "offset": 117484,
+              "before": "message: def.maxSize.message,\n        });\n        status.dirty();",
+              "after": "message: def.maxSize.message,\n        });\n        return INVALID;"
+            }
+          ]
+        },
+        {
+          "path": "v4/core/schemas.cjs",
+          "beforeSha256": "f5d17a7db487c943c9d07cc624010ebb6d93683eabd14339846f4912cc88b51f",
+          "afterSha256": "237c321f1212e9303b222a65ccbaa37acb439b083b66a6270c8487c0806fb396",
+          "hunks": [
+            {
+              "offset": 23737,
+              "before": "",
+              "after": "// Backport of upstream a0ebf970: reject leading size bounds before child parsing.\n// This bundled v4 runs checks after parse, so wrap run to avoid duplicate issues.\nfunction capSize(inst, size) {\n  const caps = [];\n  for (const ch of inst._zod.def.checks ?? []) {\n    const d = ch._zod.def;\n    // A prior non-size check may rewrite the value; preserve that order.\n    if (!/_(length|size)$|_equals$/.test(d.check)) break;\n    const maximum = d.maximum ?? d.length ?? d.size;\n    if (maximum >= 0) caps.push([maximum, ch]);\n  }\n  if (!caps.length) return;\n  // Classic and mini initialize the base type again; install after all initializers.\n  (inst._zod.deferred ??= []).push(() => {\n  const run = inst._zod.run;\n  inst._zod.run = (payload, ctx) => {\n    const n = size(payload.value);\n    for (const [maximum, ch] of caps) {\n      if (n > maximum && ch._zod.def.when?.(payload)) {\n        const start = payload.issues.length;\n        ch._zod.check(payload);\n        if (payload.issues.length > start) {\n          payload.issues[start].continue = false;\n          return payload;\n        }\n      }\n    }\n    return run(payload, ctx);\n  };\n  });\n}\n\n"
+            },
+            {
+              "offset": 25073,
+              "before": "",
+              "after": "\n    capSize(inst, input => Array.isArray(input) ? input.length : -1);"
+            },
+            {
+              "offset": 47910,
+              "before": "",
+              "after": "\n    capSize(inst, input => input instanceof Map ? input.size : -1);"
+            },
+            {
+              "offset": 49967,
+              "before": "",
+              "after": "\n    capSize(inst, input => input instanceof Set ? input.size : -1);"
+            }
+          ]
+        },
+        {
+          "path": "v4/core/schemas.js",
+          "beforeSha256": "d466582c022b08a3f9eb1a65d5970d8ca25064d73a5a838d76414ae36440a76b",
+          "afterSha256": "093d5d1ced997ded5570b8b89aa36df610842c286208962d0be3edf9582b3495",
+          "hunks": [
+            {
+              "offset": 21288,
+              "before": "",
+              "after": "// Backport of upstream a0ebf970: reject leading size bounds before child parsing.\n// This bundled v4 runs checks after parse, so wrap run to avoid duplicate issues.\nfunction capSize(inst, size) {\n  const caps = [];\n  for (const ch of inst._zod.def.checks ?? []) {\n    const d = ch._zod.def;\n    // A prior non-size check may rewrite the value; preserve that order.\n    if (!/_(length|size)$|_equals$/.test(d.check)) break;\n    const maximum = d.maximum ?? d.length ?? d.size;\n    if (maximum >= 0) caps.push([maximum, ch]);\n  }\n  if (!caps.length) return;\n  // Classic and mini initialize the base type again; install after all initializers.\n  (inst._zod.deferred ??= []).push(() => {\n  const run = inst._zod.run;\n  inst._zod.run = (payload, ctx) => {\n    const n = size(payload.value);\n    for (const [maximum, ch] of caps) {\n      if (n > maximum && ch._zod.def.when?.(payload)) {\n        const start = payload.issues.length;\n        ch._zod.check(payload);\n        if (payload.issues.length > start) {\n          payload.issues[start].continue = false;\n          return payload;\n        }\n      }\n    }\n    return run(payload, ctx);\n  };\n  });\n}\n\n"
+            },
+            {
+              "offset": 22635,
+              "before": "",
+              "after": "\n    capSize(inst, input => Array.isArray(input) ? input.length : -1);"
+            },
+            {
+              "offset": 45518,
+              "before": "",
+              "after": "\n    capSize(inst, input => input instanceof Map ? input.size : -1);"
+            },
+            {
+              "offset": 47586,
+              "before": "",
+              "after": "\n    capSize(inst, input => input instanceof Set ? input.size : -1);"
+            }
+          ]
+        },
+        {
+          "path": "src/v4/core/schemas.ts",
+          "beforeSha256": "5910d2a181b6570189730578df0ff7c90bd7b2cda6ae1064026d236a47fb687d",
+          "afterSha256": "657fce0d0b5d9eb1665a2bd0d259b97ba91074a2369cc86e1e51712bf8057670",
+          "hunks": [
+            {
+              "offset": 44158,
+              "before": "",
+              "after": "// Backport of upstream a0ebf970: reject leading size bounds before child parsing.\n// This bundled v4 runs checks after parse, so wrap run to avoid duplicate issues.\nfunction capSize(inst: $ZodType, size: (input: any) => number): void {\n  const caps: [number, checks.$ZodCheck<any>][] = [];\n  for (const ch of inst._zod.def.checks ?? []) {\n    const d = ch._zod.def as any;\n    // A prior non-size check may rewrite the value; preserve that order.\n    if (!/_(length|size)$|_equals$/.test(d.check)) break;\n    const maximum = d.maximum ?? d.length ?? d.size;\n    if (maximum >= 0) caps.push([maximum, ch]);\n  }\n  if (!caps.length) return;\n  // Classic and mini initialize the base type again; install after all initializers.\n  (inst._zod.deferred ??= []).push(() => {\n  const run = inst._zod.run;\n  inst._zod.run = (payload, ctx) => {\n    const n = size(payload.value);\n    for (const [maximum, ch] of caps) {\n      if (n > maximum && ch._zod.def.when?.(payload)) {\n        const start = payload.issues.length;\n        ch._zod.check(payload as ParsePayload<never>);\n        if (payload.issues.length > start) {\n          (payload.issues[start] as { continue?: boolean }).continue = false;\n          return payload;\n        }\n      }\n    }\n    return run(payload, ctx);\n  };\n  });\n}\n\n"
+            },
+            {
+              "offset": 45444,
+              "before": "",
+              "after": "\n  capSize(inst, input => Array.isArray(input) ? input.length : -1);"
+            },
+            {
+              "offset": 79244,
+              "before": "",
+              "after": "\n  capSize(inst, input => input instanceof Map ? input.size : -1);"
+            },
+            {
+              "offset": 81975,
+              "before": "",
+              "after": "\n  capSize(inst, input => input instanceof Set ? input.size : -1);"
+            }
+          ]
+        }
+      ]
     }
   ]
 }

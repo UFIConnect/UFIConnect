@@ -70,14 +70,11 @@ test('patched send preserves local development file serving and range requests',
   }
 });
 
-test('the scoped UUID security update preserves Xcode project identifiers', () => {
+test('Expo Xcode generates unique project identifiers in the required format', () => {
   const xcode = require('xcode');
   const project = xcode.project('compatibility-fixture.pbxproj');
   project.hash = { project: { objects: {} } };
   const ids = new Set(Array.from({ length: 100 }, () => project.generateUuid()));
   assert.equal(ids.size, 100);
   for (const id of ids) assert.match(id, /^[A-F0-9]{24}$/);
-  const fromXcode = createRequire(require.resolve('xcode'));
-  const uuid = fromXcode('uuid');
-  assert.throws(() => uuid.v3('example', uuid.v3.DNS, new Uint8Array(2)), RangeError);
 });

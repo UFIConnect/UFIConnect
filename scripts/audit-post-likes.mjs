@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { chromium } from 'playwright';
 import { createServer } from '../web/node_modules/vite/dist/node/index.js';
-import { installAuditMember, auditNavigate, auditReload } from './audit-session.mjs';
+import { installAuditMember, auditNavigate, auditReload, auditPageTo } from './audit-session.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
@@ -40,6 +40,7 @@ try {
     };
     const context = await browser.newContext({ viewport });
     const page = await context.newPage();
+    await page.clock.setFixedTime(new Date(post.createdAt).getTime() + 5 * 60_000);
     currentPage = page;
     page.setDefaultTimeout(15000);
     const errors = [];
@@ -82,8 +83,8 @@ try {
     const guestLike = page.getByRole('link', { name: 'Sign in to like, 47 stars', exact: true });
     await guestLike.waitFor();
     assert.equal(await guestLike.count(), 1);
-    assert.equal(await guestLike.locator('.post-chrome-like-count').innerText(), '47', 'Guest posts use a compact visible count');
-    assert.match(await guestLike.getAttribute('title'), /47 stars$/, 'Guest compact count retains the provider unit in its tooltip and accessible name');
+    assert.equal(await guestLike.locator('.post-chrome-like-count').innerText(), '47', 'Compact post actions show the numeric count');
+    assert.match(await guestLike.getAttribute('title'), /47 stars$/, 'The tooltip retains the full source-count label');
     assert.equal(writes, 0);
     await auditNavigate(page, base + 'p/audit-likes');
     await page.goto(base + 'p/audit-likes', { waitUntil: 'domcontentloaded' });
@@ -94,7 +95,7 @@ try {
     await page.getByRole('button', { name: 'More options', exact: true }).click();
     assert.equal(await page.getByRole('menuitem', { name: /^Likes on GitHub/ }).getAttribute('href'), post.sourceUrl);
     assert.equal(await page.getByRole('menuitem', { name: /^Go to profile/ }).getAttribute('href'), post.author.profileUrl);
-    await page.getByRole('menuitem', { name: 'Report post', exact: true }).click();
+    await (await auditPageTo(page.getByRole('menu'), 'menuitem', 'Report post')).click();
     await page.getByRole('dialog').waitFor();
     await page.keyboard.press('Escape');
     await page.getByRole('dialog').waitFor({ state: 'hidden' });
@@ -161,8 +162,8 @@ try {
     await page.getByRole('button', { name: 'Like, 2 likes', exact: true }).click();
     const nativeLike = page.getByRole('button', { name: 'Unlike, 3 likes', exact: true });
     await nativeLike.waitFor();
-    assert.equal(await nativeLike.locator('.post-chrome-like-count').innerText(), '3', 'Native posts use a compact visible count');
-    assert.match(await nativeLike.getAttribute('title'), /3 likes$/, 'Native compact count retains its full label in its tooltip and accessible name');
+    assert.equal(await nativeLike.locator('.post-chrome-like-count').innerText(), '3');
+    assert.match(await nativeLike.getAttribute('title'), /3 likes$/, 'Native compact actions retain a complete count label');
     assert.equal(writes, 5, 'Native likes use the persisted UFI endpoint');
     assert.deepEqual(errors, []);
     console.log(`PASS ${viewport.width}px: combined action/count, guest/member gates, provider like/unlike, idempotent failure retry, disconnect, Home and Videos`);

@@ -63,7 +63,33 @@ try {
     await page.waitForTimeout(250);
     await scroll.evaluate(el => el.scrollTo(0, 0));
     await page.waitForTimeout(500);
-    assert.ok(calls.some(p => p.get('bust') === '1'));
+    assert.equal(calls.some(p => p.get('bust') === '1'), false, 'Returning to the first song does not refresh the queue');
+    // A deliberate wheel pull at the top refreshes. Find visible feed chrome
+    // outside controls, media, and independently scrolling caption panels.
+    const pullPoint = await scroll.evaluate(el => {
+      const bounds = el.getBoundingClientRect();
+      for (let y = bounds.y + 4; y < Math.min(bounds.bottom, innerHeight) - 4; y += 16) {
+        for (const x of [bounds.x + 4, bounds.right - 4, bounds.x + bounds.width / 2]) {
+          const target = document.elementFromPoint(x, y);
+          if (!target || !el.contains(target) || target.closest('button,a,input,textarea,select,video,audio,iframe,[role="slider"],[role="button"]')) continue;
+          let nested = false;
+          for (let node = target; node && node !== el; node = node.parentElement) {
+            if (/^(auto|scroll|overlay)$/.test(getComputedStyle(node).overflowY)) { nested = true; break; }
+          }
+          if (!nested) return { x, y };
+        }
+      }
+      return null;
+    });
+    assert.ok(pullPoint, 'Music exposes feed chrome for an intentional refresh gesture');
+    await page.mouse.move(pullPoint.x, pullPoint.y);
+    const refreshResponse = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname.endsWith('/office/feed/music') && url.searchParams.get('bust') === '1';
+    });
+    await page.mouse.wheel(0, -140);
+    assert.equal((await refreshResponse).status(), 200, 'The explicit refresh receives its new feed page');
+    assert.equal(calls.filter(p => p.get('bust') === '1').length, 1, 'One explicit pull submits one refresh request');
     await page.getByRole('button', { name: 'Filter videos', exact: true }).click();
     await page.getByRole('button', { name: 'Acoustic', exact: true }).click();
     await page.waitForTimeout(300);
@@ -102,7 +128,7 @@ try {
     assert.ok(await page.getByRole('button', { name: 'Clear platforms', exact: true }).isDisabled());
     assert.ok(await page.getByRole('button', { name: 'Clear genres', exact: true }).isDisabled());
     assert.ok(await page.getByRole('button', { name: 'Clear video topics', exact: true }).isDisabled());
-    console.log(`PASS: Music playback without hover, manual pause, filter and scroll refresh at ${width}px`);
+    console.log(`PASS: Music playback without hover, manual pause, filters, ordinary return without refresh and explicit wheel refresh at ${width}px`);
     await context.close();
   }
 } finally { await browser?.close(); await server.close(); await app.close(); }

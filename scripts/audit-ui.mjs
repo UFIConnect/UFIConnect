@@ -18,6 +18,7 @@ app.seedUser(member('preview-member', { name: 'UFIconnect Member', resumeBuilder
 app.seedUser(member('other-member', { roleSettings: { feedSourceFavorites: { feed: ['github'], following: ['reddit'] } } }));
 const server = await createServer({
   root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envDir: false,
+  cacheDir: path.join(root, '.cache/vite-audit-ui'),
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api'), 'import.meta.env.VITE_API_FALLBACK_URL': JSON.stringify('/fallback') },
   server: { host: '127.0.0.1', port: 5190, strictPort: false,
     proxy: {

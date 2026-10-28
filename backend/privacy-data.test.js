@@ -11,6 +11,7 @@ const { HISTORY_SCHEMA } = require('./generated-content');
 const { BILLING_SCHEMA } = require('./billing');
 const { BUSINESS_TEAM_SCHEMA } = require('./business-teams');
 const { BUSINESS_POST_SCHEMA } = require('./business-posts');
+const { BUSINESS_INDUSTRY_SCHEMA } = require('./business-industries');
 const { CREATOR_ANALYTICS_SCHEMA } = require('./creator-analytics');
 const { UFI_VAULT_SCHEMA } = require('./ufi-vault');
 const { REPORT_SCHEMA } = require('./content-reports');
@@ -51,6 +52,7 @@ async function schema(pg) {
   for (const sql of MANAGED_VPN_SCHEMA) await pg.exec(sql);
   for (const sql of BUSINESS_TEAM_SCHEMA) await pg.exec(sql);
   for (const sql of BUSINESS_POST_SCHEMA) await pg.exec(sql);
+  for (const sql of BUSINESS_INDUSTRY_SCHEMA) await pg.exec(sql);
   for (const sql of [...CREATOR_ANALYTICS_SCHEMA, ...UFI_VAULT_SCHEMA, ...REPORT_SCHEMA]) await pg.exec(sql);
   for (const sql of SNAP_SCHEMA) await pg.exec(sql);
   for (const sql of MESSAGE_MEDIA_SCHEMA) await pg.exec(sql);
@@ -95,6 +97,8 @@ async function seed(pg) {
     await insert('resume_drafts', { id: `${prefix}-resume`, user_id: uid, data: JSON.stringify({ summary: `${prefix}-summary` }) });
     await insert('cross_posts', { id: `${prefix}-cross`, user_id: uid, content: `${prefix}-cross-content` });
     await insert('business_posts', { id: `${prefix}-hiring`, user_id: uid, request_id: uid, fingerprint: 'internal-fingerprint', details: JSON.stringify({ title: `${prefix}-hiring-title` }), content: `${prefix}-hiring-content`, status: 'draft' });
+    await insert('business_industry_workspaces', { id: uid, owner_id: uid, industry_id: 'technology', name: `${prefix}-industry-space`, source_ids: JSON.stringify(['github']) });
+    await insert('business_industry_posts', { id: `${prefix}-industry-post`, workspace_id: uid, author_id: uid, request_id: uid, fingerprint: 'secret-industry-fingerprint', title: `${prefix}-industry-title`, content: `${prefix}-industry-draft`, status: 'draft' });
     await insert('seen_posts', { user_id: uid, post_id: `${prefix}-seen` });
     await insert('user_engagement_affinity', { user_id: uid, affinity_key: `topic:${prefix}` });
     await insert('restaurant_post_likes', { user_id: uid, post_id: `${prefix}-restaurant` });
@@ -114,6 +118,7 @@ async function seed(pg) {
     await insert('billing_checkout_attempts', { user_id: uid, slot: 'plan', attempt_id: uid, tier: 'pro', price_id: 'price_pro', customer_id: `cus_${prefix}`, session_id: 'secret-checkout-session', return_base: 'https://uficonnect.org' });
   }
   await insert('follows', { follower_id: alice, following_id: bob });
+  await insert('business_industry_posts', { id: 'teammate-private-industry-post', workspace_id: alice, author_id: bob, request_id: carol, fingerprint: 'secret-team-fingerprint', title: 'Team draft', content: 'teammate-private-industry-draft', status: 'draft' });
   await insert('follows', { follower_id: bob, following_id: carol });
   await insert('connections', { id: 'alice-connection', from_id: alice, to_id: bob, status: 'pending' });
   await insert('connections', { id: 'other-connection', from_id: bob, to_id: carol, status: 'accepted' });
@@ -184,16 +189,19 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
     assert.equal(exported.businessTeamSeats[0].memberId, bob);
     assert.equal(exported.businessTeamInvitations[0].inviteeId, carol);
     assert.equal(Object.hasOwn(exported.businessTeamInvitations[0], 'token_hash'), false);
+    assert.equal(exported.businessIndustryWorkspaces[0].name, 'a-industry-space');
+    assert.deepEqual(exported.businessIndustryWorkspaces[0].sourceIds, ['github']);
+    assert.equal(exported.businessIndustryPosts[0].content, 'a-industry-draft');
     assert.equal(exported.generationUsage[0].used, 1);
     assert.equal(exported.generationRequests[0].state, 'completed');
     assert.equal(Object.hasOwn(exported.generationRequests[0], 'id'), false);
     for (const key of ['posts', 'snaps', 'comments', 'attachments', 'savedPosts', 'trackedJobs', 'generatedContent', 'resumeDrafts',
-      'crossPosts', 'businessPosts', 'ownedGroups', 'notifications', 'inboxReadReceipts', 'reports', 'seenPosts', 'engagementPreferences', 'restaurantLikes', 'externalPostLikes',
+      'crossPosts', 'businessPosts', 'businessIndustryWorkspaces', 'businessIndustryPosts', 'ownedGroups', 'notifications', 'inboxReadReceipts', 'reports', 'seenPosts', 'engagementPreferences', 'restaurantLikes', 'externalPostLikes',
       'pushRegistrations', 'signIns', 'legacyPageViews', 'legacyClientErrors', 'legacyServerErrors', 'legacyUsageSignals', 'billingCheckouts', 'vpnLocations', 'vpnDevices', 'generationUsage', 'generationRequests']) {
       assert.equal(exported[key].length, 1, key);
     }
     const serialized = JSON.stringify(exported);
-    for (const forbidden of ['secret-', 'other-private-conversation', 'b-summary', 'b-report-details', 'b-resume-text', 'b-prompt', 'b-vpn-profile', 'b-vpn-device', 'b-snap-caption']) {
+    for (const forbidden of ['secret-', 'teammate-private-industry-draft', 'b-industry-space', 'b-industry-draft', 'other-private-conversation', 'b-summary', 'b-report-details', 'b-resume-text', 'b-prompt', 'b-vpn-profile', 'b-vpn-device', 'b-snap-caption']) {
       assert.equal(serialized.includes(forbidden), false, forbidden);
     }
   });
@@ -227,6 +235,8 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
     assert.equal((await pg.query('SELECT label FROM managed_vpn_devices WHERE user_id=$1', [bob])).rows[0].label, 'b-vpn-device');
     assert.equal((await pg.query('SELECT * FROM business_team_members')).rows.length, 0);
     assert.equal((await pg.query('SELECT * FROM business_team_invitations')).rows.length, 0);
+    assert.deepEqual((await pg.query('SELECT owner_id FROM business_industry_workspaces')).rows, [{ owner_id: bob }]);
+    assert.deepEqual((await pg.query('SELECT id,author_id FROM business_industry_posts')).rows, [{ id: 'b-industry-post', author_id: bob }]);
     assert.deepEqual((await pg.query('SELECT created_by,member_count FROM community_groups')).rows[0], { created_by: null, member_count: 2 });
     assert.deepEqual((await pg.query('SELECT id,likes FROM community_posts')).rows, [{ id: 'b-post', likes: [bob] }]);
     assert.equal((await pg.query('SELECT comments_count FROM community_posts')).rows[0].comments_count, 1);
