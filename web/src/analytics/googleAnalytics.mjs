@@ -22,6 +22,8 @@ export function canonicalPage(value) {
   const rawPath = typeof value === 'string' ? value.split(/[?#]/, 1)[0] : '';
   const path = rawPath === '/' ? '/' : rawPath.replace(/\/$/, '');
   if (exactPages.has(path)) return exactPages.get(path);
+  if (path === '/business/register') return PAGE_CATEGORIES.register;
+  if (path === '/business/enrollment') return PAGE_CATEGORIES.settings;
   if (path === '/global-scroll') return PAGE_CATEGORIES.global;
   if (path === '/hq' || path === '/agents') return PAGE_CATEGORIES.command_center;
   if (path === '/how-office-works') return PAGE_CATEGORIES.how_it_works;
