@@ -1,3 +1,5 @@
 .cc-draft-platform { display: grid; gap: 6px; font-size: .75rem; font-weight: 700; color: var(--muted); }
 .cc-draft-platform-control { display: flex; align-items: center; gap: 10px; max-width: 380px; }
 .cc-draft-platform-control select { flex: 1; width: 100%; min-width: 0; }
+.command-center-pricing:has(> :only-child) { grid-template-columns: minmax(0, 1fr); max-width: 320px; }
+.command-center-price strong { overflow-wrap: anywhere; }

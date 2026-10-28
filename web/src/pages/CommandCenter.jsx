@@ -7,6 +7,7 @@ import Layout from '../components/Layout';
 import PricingModal, { TIERS } from '../components/PricingModal';
 import { useAuth } from '../contexts/AuthContext';
 import { membershipTiersForAccount } from '../businessAccount.mjs';
+import useBillingConfig from '../hooks/useBillingConfig';
 import { useToast } from '../contexts/ToastContext';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import { billingReturnPath, billingReturnState, hostedBillingUrl } from '../api/hostedBilling.mjs';
@@ -100,6 +101,8 @@ function StatChip({ label, value }) {
 function LockedState({ onUpgrade }) {
   const { profile } = useAuth();
   const allowedTiers = membershipTiersForAccount(profile);
+  const { config, error, checking, refresh } = useBillingConfig();
+  const pricesReady = config?.paymentsReady === true && allowedTiers.some(tier => config.tiers?.[tier] === true && config.pricing?.[tier]?.active === true && config.pricing[tier].display && config.pricing[tier].interval);
   if (isNativeRuntime()) return <div className="card" style={{ padding: 24 }}><h2>Command Center</h2><p>Your existing membership must include Command Center to use these tools.</p></div>;
   return (
     <div className="card" style={{ textAlign: 'center', padding: '52px 24px' }}>
@@ -110,15 +113,21 @@ function LockedState({ onUpgrade }) {
         content with AI, and track your job search with Pro.
       </p>
       <div className="command-center-pricing" aria-label="Command Center plans">
-        {TIERS.filter(tier => allowedTiers.includes(tier.tier)).map((tier) => (
+        {TIERS.filter(tier => allowedTiers.includes(tier.tier)).map((tier) => {
+          const price = config?.pricing?.[tier.tier];
+          const available = config?.paymentsReady === true && config?.tiers?.[tier.tier] === true && price?.active === true && price?.display && price?.interval;
+          const cadence = price?.intervalCount > 1 ? `every ${price.intervalCount} ${price.interval}s` : `per ${price?.interval}`;
+          return (
           <div className="command-center-price" key={tier.tier}>
             <span className="command-center-price-name">
               {tier.name}
             </span>
-            <strong>${tier.price}<small>/mo</small></strong>
+            <strong>{checking ? 'Loading price…' : available ? price.display : 'Price unavailable'}{available && <small> {cadence}</small>}</strong>
           </div>
-        ))}
+          );
+        })}
       </div>
+      {(error || config && !pricesReady) && <p role="status">{error || 'Membership pricing is temporarily unavailable.'} <button type="button" className="btn btn-ghost btn-sm" onClick={refresh}>Retry pricing</button></p>}
       <button className="btn btn-primary" type="button" onClick={onUpgrade}>Upgrade to unlock</button>
     </div>
   );
