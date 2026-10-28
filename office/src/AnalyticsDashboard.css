@@ -6,6 +6,14 @@
 .office-analytics button, .office-analytics select, .office-analytics input { box-sizing: border-box; border: 1px solid #334155; border-radius: 8px; padding: 9px 12px; background: #111c2d; color: #e2e8f0; font: inherit; font-size: 13px; max-width: 100%; }
 .office-analytics button { cursor: pointer; }
 .office-analytics button:disabled { opacity: .55; cursor: default; }
+.office-analytics [hidden] { display: none !important; }
+.office-analytics-tabs { position: sticky; top: 0; z-index: 5; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: thin; overscroll-behavior-x: contain; padding: 10px 3px; margin: 12px -3px 0; background: #0c1421; border-bottom: 1px solid #334155; }
+.office-analytics-tabs [role="tab"] { flex: 0 0 auto; white-space: nowrap; min-height: 44px; border-color: transparent; background: transparent; color: #aebcd0; }
+.office-analytics-tabs [aria-selected="true"] { color: #dbeafe; background: #1e3a5f; border-color: #60a5fa; font-weight: 650; }
+.office-analytics-panel { min-width: 0; padding-top: 4px; }
+.office-analytics-panel:focus-visible { outline: 2px solid #93c5fd; outline-offset: 3px; }
+#office-analytics-panel-pages .office-analytics-table-wrap { max-height: 65vh; overflow-y: auto; }
+#office-analytics-panel-pages thead { position: sticky; top: 0; background: #0c1421; }
 .office-analytics button:focus-visible, .office-analytics input:focus-visible, .office-analytics select:focus-visible, .office-analytics summary:focus-visible, .office-analytics-table-wrap:focus-visible { outline: 2px solid #93c5fd; outline-offset: 3px; }
 .office-analytics label { display: grid; gap: 7px; font-size: 12px; color: #b6c4d8; min-width: 0; }
 .office-analytics .office-analytics-meta { color: #9aa9c0; font-size: 12px; }
@@ -15,6 +23,7 @@
 .office-analytics-freshness.warning { border-color: #927343; background: #2a2418; }
 .office-analytics-freshness.warning strong { color: #fde1a6; }
 .office-analytics-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px; margin: 22px 0; }
+.office-analytics-filters input, .office-analytics-filters select { width: 100%; min-width: 0; }
 .office-analytics-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0 0 22px; }
 .office-analytics-metrics > div { padding: 18px; border: 1px solid #26364c; border-radius: 12px; background: #101928; }
 .office-analytics-metrics dt { color: #b1c0d7; font-size: 12px; }
@@ -45,5 +54,6 @@
 .office-analytics-error { border: 1px solid #8d4750; background: #301923; color: #fecdd3; padding: 15px; border-radius: 10px; margin: 18px 0; }
 .office-analytics .office-analytics-error p { color: #fecdd3; }
 @media (max-width: 800px) { .office-analytics-metrics, .office-analytics-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .office-analytics-two-columns { grid-template-columns: 1fr; gap: 0; } }
-@media (max-width: 460px) { .office-analytics-filters { grid-template-columns: 1fr; } .office-analytics-card { padding: 14px; } .office-analytics-metrics > div { padding: 13px; } .office-analytics-metrics dd { font-size: 25px; } .office-analytics-legend { gap: 10px; font-size: 11px; } }
+@media (max-width: 760px) { .office-analytics-tabs { position: static; } }
+@media (max-width: 460px) { .office-analytics-card { padding: 14px; } .office-analytics-metrics > div { padding: 13px; } .office-analytics-metrics dd { font-size: 25px; } .office-analytics-legend { gap: 10px; font-size: 11px; } }
 .office-analytics-bar.unavailable { background: repeating-linear-gradient(135deg, rgba(148,163,184,.18) 0 3px, transparent 3px 7px); }
