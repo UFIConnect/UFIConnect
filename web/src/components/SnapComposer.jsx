@@ -1,6 +1,7 @@
-import { forwardRef, useEffect, useId, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useEffect, useLayoutEffect, useId, useImperativeHandle, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Camera, X, Globe2, Users, Video, ImagePlus, RotateCcw, Trash2, SwitchCamera, Square } from 'lucide-react';
+import { Camera, X, Globe2, Users, Video, ImagePlus, RotateCcw, Trash2 } from 'lucide-react';
+import SnapCameraControls from './SnapCameraControls';
 import SnapAvatar from './SnapAvatar';
 import { safePostLink } from '../../../backend/post-links.mjs';
 import { uploadMedia } from '../api/upload';
@@ -35,11 +36,19 @@ const SnapComposer = forwardRef(function SnapComposer({ profile, onClose, onPubl
   const [visibility, setVisibility] = useState('public'), [preview, setPreview] = useState(null);
   const [validating, setValidating] = useState(false), [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0), [publishing, setPublishing] = useState(false), [error, setError] = useState('');
-  const [facing, setFacing] = useState('environment');
+  const [facing, setFacing] = useState('user'), [mirrorOverride, setMirrorOverride] = useState(null), [fillCamera, setFillCamera] = useState(true);
   const busy = uploading || publishing;
   const captionRequired = preview?.type === 'video';
   const author = profile?.name || 'UFIConnect member';
   const camera = useSnapCamera(selectFile, setError, profile?.id);
+  const wasCameraActive = useRef(false);
+  useLayoutEffect(() => {
+    const returning = wasCameraActive.current && !camera.active;
+    wasCameraActive.current = camera.active;
+    if (returning && dialog.current?.open) dialog.current.querySelector('header button')?.focus({ preventScroll: true });
+  }, [camera.active]);
+  const mirrorSupported = camera.mode === 'photo' || typeof HTMLCanvasElement !== 'undefined' && typeof HTMLCanvasElement.prototype.captureStream === 'function';
+  const mirror = mirrorSupported && (mirrorOverride ?? camera.facing === 'user');
   useLockBodyScroll();
   useImperativeHandle(ref, () => ({ openCamera }));
   useEffect(() => {
@@ -108,8 +117,8 @@ const SnapComposer = forwardRef(function SnapComposer({ profile, onClose, onPubl
       if (mounted.current) setError(failure.response?.data?.message || failure.message || 'Could not publish this snap. Please try again.');
     } finally { if (mounted.current) { setUploading(false); setPublishing(false); } }
   }
-  return createPortal(<dialog ref={dialog} className="snap-composer" aria-labelledby={titleId}
-    onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}
+  return createPortal(<dialog ref={dialog} className={`snap-composer${camera.active ? ' snap-composer-camera' : ''}`} aria-labelledby={titleId}
+    onCancel={event => { event.preventDefault(); if (camera.active) { if (camera.recording) camera.stopRecording(); else camera.stop(); } else if (!busy) onClose(); }}
     onClick={event => { if (event.target === event.currentTarget && !busy) onClose(); }}>
     <form onSubmit={publish}>
       <header><div><h2 id={titleId}><Camera size={20} />Post a snap</h2><p>Your photo or video disappears after 24 hours.</p></div><button type="button" className="snap-dialog-icon" onClick={onClose} disabled={busy} aria-label="Close snap composer"><X size={20} /></button></header>
@@ -119,21 +128,19 @@ const SnapComposer = forwardRef(function SnapComposer({ profile, onClose, onPubl
           <span className="snap-social-meta">UFIConnect · {visibility === 'followers' ? <><Users size={13} aria-hidden="true" />Followers</> : <><Globe2 size={13} aria-hidden="true" />Public</>}</span>
         </span></div>
       </div>
+      <div className="snap-capture-stage">
       <div className="snap-composer-media">
-        {camera.active ? <video ref={camera.videoRef} className="snap-camera-preview" autoPlay muted playsInline aria-label="Live camera preview" style={snapFilterStyle(filter)} />
+        {camera.active ? <video ref={camera.videoRef} className="snap-camera-preview" autoPlay muted playsInline aria-label="Live camera preview" style={{ ...snapFilterStyle(filter), transform: mirror ? 'scaleX(-1)' : undefined, objectFit: fillCamera ? 'cover' : 'contain' }} />
           : preview ? preview.type === 'video' ? <video src={preview.url} controls playsInline preload="metadata" style={snapFilterStyle(filter)} />
           : <img src={preview.url} alt="Your snap preview" style={snapFilterStyle(filter)} />
           : <div className="snap-composer-placeholder"><Camera size={36} /><strong>Share a moment</strong><span>Take a photo, record a video, or choose from your gallery.</span></div>}
         {overlayText.trim() && (preview || camera.active) && <span className="snap-text-overlay">{overlayText.trim()}</span>}
-        {camera.active && !camera.ready && <span className="snap-camera-status" role="status">Opening camera…</span>}
-        {camera.recording && <span className="snap-camera-status" role="status">Recording · {camera.seconds}s / {SNAP_MAX_VIDEO_SECONDS}s</span>}
       </div>
-      {camera.active && <div className="snap-camera-actions">
-        {camera.mode === 'photo' ? <button type="button" className="btn btn-primary" disabled={!camera.ready} onClick={camera.photo}><Camera size={18} />Take photo</button>
-          : <button type="button" className="btn btn-primary" disabled={!camera.ready} onClick={camera.recording ? camera.stopRecording : camera.record}>{camera.recording ? <><Square size={16} />Stop recording</> : <><Video size={18} />Record video</>}</button>}
-        <button type="button" className="snap-dialog-icon" disabled={!camera.ready || camera.recording} aria-label="Switch camera" onClick={() => { const next = facing === 'environment' ? 'user' : 'environment'; setFacing(next); camera.open(camera.mode, next); }}><SwitchCamera size={20} /></button>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={camera.stop}>Close camera</button>
-      </div>}
+      {camera.active && <SnapCameraControls camera={camera} accountId={profile?.id} mirror={mirror} mirrorSupported={mirrorSupported}
+        onMirror={() => setMirrorOverride(!mirror)} onSwitch={() => { const next = camera.facing === 'user' ? 'environment' : 'user'; setFacing(next); setMirrorOverride(null); camera.open(camera.mode, next); }}
+        onMode={mode => { if (mode !== camera.mode) openCamera(mode); }} onClose={onClose} onGallery={() => { camera.stop(); galleryInput.current?.click(); }}
+        filter={filter} onFilter={setFilter} overlayText={overlayText} onText={setOverlayText} fill={fillCamera} onFill={() => setFillCamera(value => !value)} error={error} />}
+      </div>
       <input ref={photoInput} type="file" accept="image/*" capture="environment" hidden onChange={fileChanged} aria-label="Take a snap photo" />
       <input ref={videoInput} type="file" accept="video/*" capture="environment" hidden onChange={fileChanged} aria-label="Record a snap video" />
       <input ref={galleryInput} type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime" hidden onChange={fileChanged} aria-label="Choose snap media" />

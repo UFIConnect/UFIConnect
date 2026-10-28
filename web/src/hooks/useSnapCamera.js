@@ -7,10 +7,21 @@ export function useSnapCamera(onCapture, onError, accountId) {
   const videoRef = useRef(null), stream = useRef(null), recorder = useRef(null);
   const request = useRef(0), pending = useRef(false), mounted = useRef(true), recordingTimer = useRef(null), clock = useRef(null);
   const permission = useRef(null);
+  const mirroredStream = useRef(null), frame = useRef(null), elapsed = useRef(null), capturingPhoto = useRef(false);
   const callbacks = useRef({ onCapture, onError });
   callbacks.current = { onCapture, onError };
   const [active, setActive] = useState(false), [ready, setReady] = useState(false);
   const [mode, setMode] = useState('photo'), [recording, setRecording] = useState(false), [seconds, setSeconds] = useState(0);
+  const [facing, setFacing] = useState('environment'), [paused, setPaused] = useState(false), [muted, setMuted] = useState(false);
+
+  function recordedSeconds() {
+    const time = elapsed.current;
+    return time ? ((time.pausedAt || performance.now()) - time.started - time.pausedMs) / 1000 : 0;
+  }
+  function clearMirror() {
+    cancelAnimationFrame(frame.current); frame.current = null;
+    mirroredStream.current?.getVideoTracks().forEach(track => track.stop()); mirroredStream.current = null;
+  }
 
   function clearTimers() { clearTimeout(recordingTimer.current); clearInterval(clock.current); }
   function stop() {
@@ -18,6 +29,7 @@ export function useSnapCamera(onCapture, onError, accountId) {
     pending.current = false;
     permission.current?.abort(); permission.current = null;
     clearTimers();
+    clearMirror(); capturingPhoto.current = false;
     if (recorder.current) {
       recorder.current.ondataavailable = recorder.current.onstop = recorder.current.onerror = null;
       if (recorder.current.state !== 'inactive') recorder.current.stop();
@@ -26,7 +38,8 @@ export function useSnapCamera(onCapture, onError, accountId) {
     stream.current?.getTracks().forEach(track => track.stop());
     stream.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
-    if (mounted.current) { setActive(false); setReady(false); setRecording(false); setSeconds(0); }
+    elapsed.current = null;
+    if (mounted.current) { setActive(false); setReady(false); setRecording(false); setPaused(false); setMuted(false); setSeconds(0); }
   }
   async function open(nextMode = 'photo', facingMode = 'environment') {
     stop();
@@ -47,6 +60,7 @@ export function useSnapCamera(onCapture, onError, accountId) {
       if (!mounted.current || request.current !== id) { nextStream.getTracks().forEach(track => track.stop()); return; }
       pending.current = false;
       stream.current = nextStream;
+      setFacing(nextStream.getVideoTracks()[0]?.getSettings?.().facingMode || facingMode);
       nextStream.getTracks().forEach(track => track.addEventListener('ended', () => {
         if (!mounted.current || request.current !== id) return;
         stop(); callbacks.current.onError('The camera connection ended. Open it again or choose from your gallery.');
@@ -67,29 +81,59 @@ export function useSnapCamera(onCapture, onError, accountId) {
         : error.message || 'Could not open the camera. Try again or choose from your gallery.');
     }
   }
-  function photo() {
+  function photo({ mirror = false } = {}) {
     const video = videoRef.current, id = request.current;
-    if (!ready || !video?.videoWidth || !video?.videoHeight) return;
+    if (!ready || capturingPhoto.current || !video?.videoWidth || !video?.videoHeight) return;
+    capturingPhoto.current = true; setReady(false);
     const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-    canvas.getContext('2d').drawImage(video, 0, 0);
+    const context = canvas.getContext('2d');
+    if (mirror) { context.translate(canvas.width, 0); context.scale(-1, 1); }
+    context.drawImage(video, 0, 0);
     canvas.toBlob(blob => {
       if (!mounted.current || id !== request.current) return;
-      if (!blob) { callbacks.current.onError('Could not capture this photo. Please try again.'); return; }
+      if (!blob) { capturingPhoto.current = false; setReady(true); callbacks.current.onError('Could not capture this photo. Please try again.'); return; }
       stop(); callbacks.current.onCapture(new File([blob], `snap-${Date.now()}.jpg`, { type: 'image/jpeg' }));
     }, 'image/jpeg', .9);
   }
   function stopRecording() {
-    if (recorder.current?.state === 'recording') { clearTimers(); recorder.current.stop(); setRecording(false); }
+    if (recorder.current && ['recording', 'paused'].includes(recorder.current.state)) { clearTimers(); recorder.current.stop(); setRecording(false); setPaused(false); }
   }
-  function record() {
+  function pauseRecording() {
+    const capture = recorder.current, time = elapsed.current;
+    if (!capture || !time) return;
+    if (capture.state === 'recording' && typeof capture.pause === 'function') { capture.pause(); time.pausedAt = performance.now(); setSeconds(Math.floor(recordedSeconds())); setPaused(true); }
+    else if (capture.state === 'paused' && typeof capture.resume === 'function') { capture.resume(); time.pausedMs += performance.now() - time.pausedAt; time.pausedAt = 0; setPaused(false); }
+  }
+  function toggleMicrophone() {
+    const tracks = stream.current?.getAudioTracks() || [];
+    if (!tracks.length) return;
+    const enabled = !tracks[0].enabled;
+    tracks.forEach(track => { track.enabled = enabled; }); setMuted(!enabled);
+  }
+  function record({ mirror = false } = {}) {
     if (!ready || !stream.current || recorder.current) return;
     try {
       const mimeType = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/mp4', 'video/webm']
         .find(type => MediaRecorder.isTypeSupported(type));
       if (!mimeType) throw new Error('Video recording is unavailable in this browser. Choose a video from your gallery.');
-      const capture = new MediaRecorder(stream.current, { mimeType, videoBitsPerSecond: 3_000_000, audioBitsPerSecond: 128_000 });
-      const chunks = [], started = performance.now(), id = request.current;
+      let input = stream.current;
+      if (mirror) {
+        const video = videoRef.current, canvas = document.createElement('canvas');
+        if (!canvas.captureStream || !video?.videoWidth) throw new Error('Mirrored video is unavailable here. Turn off Mirror and try again.');
+        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+        const context = canvas.getContext('2d'), id = request.current;
+        const draw = () => {
+          if (request.current !== id) return;
+          context.save(); context.translate(canvas.width, 0); context.scale(-1, 1); context.drawImage(video, 0, 0); context.restore();
+          frame.current = requestAnimationFrame(draw);
+        };
+        draw(); mirroredStream.current = canvas.captureStream(30);
+        input = new MediaStream([...mirroredStream.current.getVideoTracks(), ...stream.current.getAudioTracks()]);
+      }
+      const capture = new MediaRecorder(input, { mimeType, videoBitsPerSecond: 3_000_000, audioBitsPerSecond: 128_000 });
+      const chunks = [], id = request.current;
+      elapsed.current = { started: performance.now(), pausedAt: 0, pausedMs: 0 };
       let bytes = 0;
       recorder.current = capture;
       capture.ondataavailable = event => {
@@ -99,16 +143,18 @@ export function useSnapCamera(onCapture, onError, accountId) {
       capture.onerror = () => { stop(); callbacks.current.onError('Recording failed. Please try again or choose a video from your gallery.'); };
       capture.onstop = () => {
         if (!mounted.current || id !== request.current) return;
-        const duration = (performance.now() - started) / 1000;
+        const duration = recordedSeconds();
         const type = capture.mimeType.split(';')[0], blob = new Blob(chunks, { type });
         stop();
         if (!blob.size) { callbacks.current.onError('The recording was empty. Please try again.'); return; }
         callbacks.current.onCapture(new File([blob], `snap-${Date.now()}.${type === 'video/mp4' ? 'mp4' : 'webm'}`, { type }), duration);
       };
-      capture.start(500); setRecording(true); setSeconds(0);
-      clock.current = setInterval(() => setSeconds(Math.floor((performance.now() - started) / 1000)), 250);
+      capture.start(500); setRecording(true); setPaused(false); setSeconds(0);
+      clock.current = setInterval(() => {
+        const duration = recordedSeconds(); setSeconds(Math.floor(duration));
+        if (duration >= SNAP_MAX_VIDEO_SECONDS - 1) stopRecording();
+      }, 250);
       // Leave room for the encoder to finish within the server's 60-second limit.
-      recordingTimer.current = setTimeout(stopRecording, (SNAP_MAX_VIDEO_SECONDS - 1) * 1000);
     } catch (error) { stop(); callbacks.current.onError(error.message || 'Could not start recording.'); }
   }
   useEffect(() => {
@@ -126,5 +172,5 @@ export function useSnapCamera(onCapture, onError, accountId) {
     window.addEventListener('storage', changed);
     return () => { mounted.current = false; stop(); document.removeEventListener('visibilitychange', pause); window.removeEventListener(MEDIA_PERMISSION_CHANGED, changed); window.removeEventListener('storage', changed); };
   }, [accountId]);
-  return { videoRef, active, ready, mode, recording, seconds, open, stop, photo, record, stopRecording };
+  return { videoRef, active, ready, mode, facing, recording, paused, muted, seconds, open, stop, photo, record, stopRecording, pauseRecording, toggleMicrophone };
 }

@@ -14,7 +14,7 @@ const output = path.resolve(process.env.SNAP_QA_OUTPUT || path.join(root, '.cach
 const photoFile = path.join(root, 'web/public/media/preparation/professional-introduction.png');
 const videoFile = path.join(root, 'web/public/media/preparation/closing-questions.mp4');
 const photo = await fs.readFile(photoFile), video = await fs.readFile(videoFile);
-const sourceHashes = Object.fromEntries(await Promise.all(['web/src/utils/mediaPermissions.mjs', 'web/src/components/MediaPermissionPrompt.jsx', 'web/src/components/MediaPermissionPrompt.css', 'web/src/hooks/useSnapCamera.js', 'web/src/components/SnapComposer.jsx', 'web/src/components/SnapRail.jsx', 'web/src/components/SnapRail.css', 'scripts/audit-snap-camera.mjs'].map(async file => [file, crypto.createHash('sha256').update(await fs.readFile(path.join(root, file))).digest('hex')])));
+const sourceHashes = Object.fromEntries(await Promise.all(['web/src/utils/mediaPermissions.mjs', 'web/src/components/MediaPermissionPrompt.jsx', 'web/src/components/MediaPermissionPrompt.css', 'web/src/hooks/useSnapCamera.js', 'web/src/hooks/useCameraVoiceCommands.js', 'web/src/components/snapCameraCommands.mjs', 'web/src/components/SnapCameraControls.jsx', 'web/src/components/SnapCameraControls.css', 'web/src/components/SnapComposer.jsx', 'web/src/components/SnapRail.jsx', 'web/src/components/SnapRail.css', 'scripts/audit-snap-camera.mjs'].map(async file => [file, crypto.createHash('sha256').update(await fs.readFile(path.join(root, file))).digest('hex')])));
 const fixture = `import React,{useState}from'react';import{createRoot}from'react-dom/client';
 import{BrowserRouter}from'react-router-dom';import{ToastProvider}from'/src/contexts/ToastContext';
 import{SavedItemsProvider}from'/src/contexts/SavedItemsContext';import SnapRail from'/src/components/SnapRail.jsx';
@@ -50,8 +50,8 @@ const checks = [], screenshots = [], failures = [];
 const check = (condition, label) => { assert.ok(condition, label); checks.push(label); };
 let browser, origin;
 
-async function openFixture({ width = 390, theme = 'light', native = '', denied = false, cameraChoice = 'allow', photosChoice = 'allow' } = {}) {
-  const context = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: 'block', colorScheme: theme });
+async function openFixture({ width = 390, height = 900, theme = 'light', native = '', denied = false, cameraChoice = 'allow', photosChoice = 'allow' } = {}) {
+  const context = await browser.newContext({ viewport: { width, height }, serviceWorkers: 'block', colorScheme: theme });
   // Chromium's permission override denies permissions outside this list.
   await context.grantPermissions(denied ? [] : ['camera', 'microphone'], { origin });
   const page = await context.newPage(); page.setDefaultTimeout(20000);
@@ -261,6 +261,97 @@ try {
     chooser = page.waitForEvent('filechooser'); await page.getByRole('button', { name: 'Choose photos', exact: true }).click(); await (await chooser).setFiles(photoFile);
     check(opened === 3 && await page.evaluate(() => window.__nativeClicks.at(-1).trustedClick && window.__cameraRequests.length === 0), `${native} choice: gallery permission is independent and never uses WebView capture`);
     await noLeaks(state, `${native} saved choices`);
+  });
+
+  await scenario('full-screen camera controls and mirrored photo and video pixels', async () => {
+    for (const [width, height] of [[320,568], [1440,900], [844,390]]) {
+      const state = await openFixture({ width, height }), { page } = state;
+      await page.evaluate(() => {
+        const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+        navigator.mediaDevices.getUserMedia = async options => {
+          const stream = await original(options), canvas = document.createElement('canvas');
+          canvas.width = 640; canvas.height = 480; const context = canvas.getContext('2d');
+          const paint = () => { context.fillStyle = '#ff0000'; context.fillRect(0, 0, 320, 480); context.fillStyle = '#0000ff'; context.fillRect(320, 0, 320, 480); };
+          paint(); const colored = canvas.captureStream(30); paint();
+          stream.getVideoTracks().forEach(track => { stream.removeTrack(track); track.stop(); });
+          stream.addTrack(colored.getVideoTracks()[0]); window.__colorCanvas = canvas;
+          return stream;
+        };
+      });
+      await openCamera(page);
+      check(await composer(page).evaluate(element => { const b = element.getBoundingClientRect(); return b.x === 0 && b.y === 0 && Math.abs(b.width - innerWidth) <= 1 && Math.abs(b.height - innerHeight) <= 1; }), `camera fills ${width}px viewport`);
+      check(await page.locator('.snap-camera-preview').evaluate(element => { const b=element.getBoundingClientRect(); return b.x===0 && b.y===0 && Math.abs(b.width-innerWidth)<=1 && Math.abs(b.height-innerHeight)<=1; }), 'Live camera itself fills the screen without composer padding');
+      check(await button(page, 'Mirror camera').getAttribute('aria-pressed') === 'true', 'Front camera starts mirrored');
+      for (const name of ['Switch camera', 'Mirror camera', 'Camera commands', 'Camera effects', 'Gallery', 'Photo', 'Video', 'Close camera']) check(await button(page, name).isVisible(), `${name} is available on camera`);
+      await button(page, 'Fit camera frame').click(); check(await page.locator('.snap-camera-preview').evaluate(v => getComputedStyle(v).objectFit === 'contain'), 'Fit shows the whole frame');
+      await button(page, 'Camera effects').click(); await composer(page).getByLabel('Text on camera', { exact: true }).fill('On-camera text');
+      await composer(page).getByLabel('Text on camera', { exact: true }).press('m');
+      check(await button(page, 'Mirror camera').getAttribute('aria-pressed') === 'true', 'Typing a caption does not run camera shortcuts');
+      await page.keyboard.press('Escape'); await page.getByRole('region', { name: 'Camera effects', exact: true }).waitFor({ state: 'hidden' });
+      check(await page.locator('.snap-camera-preview').isVisible(), 'Escape closes the effects panel before the camera');
+      await page.keyboard.press('m'); check(await button(page, 'Mirror camera').getAttribute('aria-pressed') === 'false', 'Keyboard mirror command works');
+      await page.keyboard.press('m');
+      await page.screenshot({ path: path.join(output, `fullscreen-camera-${width}.png`) });
+      await button(page, 'Take photo').click(); await composer(page).getByAltText('Your snap preview').waitFor();
+      const pixels = await composer(page).getByAltText('Your snap preview').evaluate(async image => { await image.decode(); const c = document.createElement('canvas'); c.width = 64; c.height = 48; const ctx = c.getContext('2d'); ctx.drawImage(image, 0, 0, 64, 48); return { left: [...ctx.getImageData(8, 24, 1, 1).data], right: [...ctx.getImageData(56, 24, 1, 1).data] }; });
+      check(pixels.left[2] > 220 && pixels.left[0] < 30 && pixels.right[0] > 220 && pixels.right[2] < 30, 'Saved photo pixels match mirrored preview');
+      await button(page, 'Retake').click(); await page.waitForFunction(() => document.querySelector('.snap-camera-preview')?.readyState >= 2);
+      await button(page, 'Video').click(); await page.waitForFunction(() => document.querySelector('.snap-shutter') && !document.querySelector('.snap-shutter').disabled);
+      await button(page, 'Record video').click(); await button(page, 'Pause recording').waitFor();
+      await page.waitForTimeout(1100); await button(page, 'Pause recording').click();
+      const pausedText = await page.locator('.snap-camera-status').innerText(); await page.waitForTimeout(1100);
+      check(await page.locator('.snap-camera-status').innerText() === pausedText, 'Pause excludes paused time from the recording clock');
+      await button(page, 'Resume recording').click(); await page.waitForTimeout(1000); await button(page, 'Stop recording').click();
+      const preview = composer(page).locator('.snap-composer-media video'); await preview.waitFor();
+      const videoPixels = await preview.evaluate(async video => { await video.play(); await new Promise(resolve => video.requestVideoFrameCallback ? video.requestVideoFrameCallback(resolve) : setTimeout(resolve, 150)); video.pause(); const c = document.createElement('canvas'); c.width = 64; c.height = 48; const ctx = c.getContext('2d'); ctx.drawImage(video, 0, 0, 64, 48); return { left: [...ctx.getImageData(8, 24, 1, 1).data], right: [...ctx.getImageData(56, 24, 1, 1).data] }; });
+      check(videoPixels.left[2] > 200 && videoPixels.left[0] < 50 && videoPixels.right[0] > 200 && videoPixels.right[2] < 50, 'Saved video pixels match mirrored preview');
+      check(state.uploads.length === 0 && state.writes.length === 0, 'Camera controls keep drafts local'); await noLeaks(state, `fullscreen ${width}`);
+    }
+  });
+
+  await scenario('voice commands require opt-in and stop without stale capture', async () => {
+    const state = await openFixture(), { page } = state;
+    await page.evaluate(() => {
+      window.__speech = [];
+      window.SpeechRecognition = class {
+        constructor() { this.results = []; window.__speech.push(this); }
+        start() { this.started = true; queueMicrotask(() => this.onstart?.()); }
+        abort() { this.aborted = true; this.onend?.(); }
+        say(transcript, isFinal = true) { const result = Object.assign([{ transcript }], { isFinal }); this.results.push(result); this.onresult?.({ resultIndex: this.results.length - 1, results: this.results }); }
+      };
+    });
+    await openCamera(page); check(await page.evaluate(() => window.__speech.length === 0), 'Camera never starts speech recognition automatically');
+    await button(page, 'Voice commands').click(); check(await page.evaluate(() => window.__speech.length === 0), 'Voice button shows disclosure before activation');
+    await button(page, 'Enable voice commands').click(); await page.waitForFunction(() => document.querySelector('[aria-label="Voice commands"]').getAttribute('aria-pressed') === 'true');
+    await page.evaluate(() => { window.__speech.at(-1).say('take photo', false); window.__speech.at(-1).say('do not take photo'); window.__speech.at(-1).say('post snap'); window.__speech.at(-1).say('hide commands'); });
+    check(await page.evaluate(() => window.__createdUrls.length === 0), 'Partial, negative and publishing speech cannot capture or publish');
+    await page.evaluate(() => window.__speech.at(-1).say('three second timer')); await page.evaluate(() => window.__speech.at(-1).say('take photo'));
+    await button(page, 'Cancel timer').waitFor(); await page.evaluate(() => window.__speech.at(-1).say('cancel timer'));
+    check(await page.evaluate(() => window.__createdUrls.length === 0), 'Voice can cancel a pending capture');
+    await page.evaluate(() => { window.__speech.at(-1).say('timer off'); window.__speech.at(-1).say('video mode'); });
+    await page.waitForFunction(() => document.querySelector('.snap-shutter')?.getAttribute('aria-label') === 'Record video' && !document.querySelector('.snap-shutter').disabled);
+    await page.evaluate(() => window.__speech.at(-1).say('start recording')); await button(page, 'Stop recording').waitFor();
+    await page.waitForTimeout(1100); await page.evaluate(() => window.__speech.at(-1).say('pause recording')); await button(page, 'Resume recording').waitFor();
+    await page.evaluate(() => window.__speech.at(-1).say('resume recording')); await button(page, 'Pause recording').waitFor();
+    await page.evaluate(() => { window.__lateSpeech = window.__speech.at(-1).onresult; window.__speech.at(-1).say('stop recording'); });
+    await composer(page).getByLabel('Description (required for videos)', { exact: true }).waitFor();
+    check(await page.evaluate(() => window.__speech.every(item => item.aborted)), 'Completing capture releases speech recognition');
+    const count = await page.evaluate(() => window.__createdUrls.length);
+    await page.evaluate(() => window.__lateSpeech({ resultIndex: 0, results: [Object.assign([{ transcript: 'take photo' }], { isFinal: true })] }));
+    check(await page.evaluate(() => window.__createdUrls.length) === count, 'Late speech callback cannot revive closed camera');
+    await button(page, 'Retake').click(); await page.waitForFunction(() => document.querySelector('.snap-shutter') && !document.querySelector('.snap-shutter').disabled);
+    await button(page, 'Voice commands').click(); await button(page, 'Enable voice commands').click();
+    await page.evaluate(() => window.__speech.at(-1).onerror({ error: 'not-allowed' }));
+    await page.waitForFunction(() => document.querySelector('[aria-label="Voice commands"]').getAttribute('aria-pressed') === 'false');
+    check(await button(page, 'Voice commands').getAttribute('aria-pressed') === 'false' && await button(page, 'Record video').isEnabled(), 'Denied speech permission leaves manual capture usable');
+    await button(page, 'Enable voice commands').click();
+    await page.evaluate(() => window.__setHidden(true));
+    await allStopped(page);
+    check(await page.evaluate(() => window.__speech.every(item => item.aborted)), 'Backgrounding stops the voice microphone');
+    await page.evaluate(() => { window.__setHidden(false); window.SpeechRecognition = undefined; window.webkitSpeechRecognition = undefined; });
+    await button(page, 'Video').click(); await page.waitForFunction(() => document.querySelector('.snap-shutter') && !document.querySelector('.snap-shutter').disabled);
+    check(await button(page, 'Voice commands').isDisabled() && await button(page, 'Record video').isEnabled(), 'Browsers without speech retain all manual camera controls');
+    check(state.writes.length === 0, 'Voice never uploads or publishes'); await noLeaks(state, 'voice commands');
   });
 
   await scenario('browser photo, editing, deferred upload, retry and viewer roundtrip', async () => {
