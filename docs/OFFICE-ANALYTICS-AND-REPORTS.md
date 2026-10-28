@@ -5,6 +5,12 @@ email tools and cache actions use private responses with `Cache-Control: no-stor
 
 ## Analytics
 
+The dashboard is organized into Overview, Pages & tabs, Geography, Diagnostics
+and Users. The tab bar stays available while scrolling on desktop and scrolls
+horizontally on small screens. Use Left/Right arrows or Home/End to navigate it by keyboard.
+Activity filters and searches are preserved when switching tabs; Users retains
+its own registration filters.
+
 The shared category catalog covers website pages, internal tabs and native app
 screens. A view is an open, not a unique person. Page and screen views are counted
 separately from tab opens. Repeated visits count again; clicking an already open

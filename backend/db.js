@@ -168,7 +168,7 @@ async function initializeBackupPool() {
       await previous.end().catch(() => {});
     }
     backup = new Pool({
-      ...databaseConnectionOptions(process.env.DATABASE_URL_BACKUP),
+      ...databaseConnectionOptions(process.env.DATABASE_URL_BACKUP, process.env, { role: 'backup' }),
       max: 10,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 10_000,
