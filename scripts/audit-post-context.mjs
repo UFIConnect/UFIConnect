@@ -42,15 +42,24 @@ const server = await createServer({ root: path.join(root, 'web'), configFile: pa
   server: { host: '127.0.0.1', port: 5209, strictPort: false, proxy: { '/api': { target: app.base, rewrite: p => p.replace(/^\/api/, '') } } },
 });
 async function openComposer(page, name) {
+  const form = page.getByRole('form', { name, exact: true });
+  const loading = form.getByRole('status').filter({ hasText: 'Loading connected accounts' });
+  // Hold the fixture response until loading renders, so a fast response cannot
+  // make a hidden-state wait pass before the effect has committed its layout.
+  await page.route('**/api/social/platforms', async route => {
+    await loading.waitFor({ state: 'visible' });
+    await route.continue();
+  }, { times: 1 });
   const [accounts] = await Promise.all([
     page.waitForResponse(response => response.request().method() === 'GET' && new URL(response.url()).pathname === '/api/social/platforms'),
     page.getByRole('button', { name: 'Post', exact: true }).click(),
   ]);
   assert.equal(accounts.status(), 200, 'Publishing destinations must load before submitting');
-  const form = page.getByRole('form', { name, exact: true });
   await form.waitFor();
   // Removing the loading row moves Publish. Submit only after that layout update.
-  await form.getByRole('status').filter({ hasText: 'Loading connected accounts' }).waitFor({ state: 'hidden' });
+  await loading.waitFor({ state: 'hidden' });
+  assert.ok(await form.locator('textarea').evaluate(input => input === document.activeElement),
+    'Opening the composer focuses its textarea before further interaction');
   return form;
 }
 let browser;
