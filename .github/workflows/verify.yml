@@ -98,6 +98,8 @@ jobs:
         if: matrix.group == 'core'
       - run: node scripts/audit-vault-files.mjs
         if: matrix.group == 'core'
+      - run: node scripts/audit-vault-autofill.mjs
+        if: matrix.group == 'core'
       - run: node scripts/audit-ui.mjs
         if: matrix.group == 'core'
       - run: node scripts/audit-map-settings.mjs
