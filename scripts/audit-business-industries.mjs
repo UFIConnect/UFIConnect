@@ -9,7 +9,7 @@ import { installAuditMember,auditNavigate,auditReload } from './audit-session.mj
 const require=createRequire(import.meta.url);
 const {createAppHarness,member}=require('../backend/test-support/app-harness');
 const catalog=require('../backend/business-industries.json');
-const app=await createAppHarness();app.seedUser(member('industry-audit',{plan:'business',organization:'Audit company'}));
+const app=await createAppHarness();app.seedUser(member('industry-audit',{plan:'business',accountType:'business',businessIndustryId:'technology',businessEnrollment:{industryId:'technology'},organization:'Audit company'}));
 const server=await startBuiltServer({port:0});
 let browser;let checks=0;const check=(condition,message)=>{assert.ok(condition,message);checks++;};
 try{
@@ -36,15 +36,34 @@ try{
         if(existing)workspaces.splice(workspaces.indexOf(existing),1,workspace);else workspaces.push(workspace);
         return fulfill({workspace});
       }
-      if(/^\/business\/industries\/[^/]+\/posts$/.test(endpoint)){
+      const archiveMatch=endpoint.match(/^\/business\/industries\/([^/]+)$/);
+      if(archiveMatch && request.method()==='PATCH'){
+        const workspace=workspaces.find(item=>item.id===archiveMatch[1]);if(!workspace||!canManage)return fulfill({message:'Forbidden'},403);
+        workspace.archivedAt=request.postDataJSON().archived?new Date().toISOString():null;return fulfill({workspace});
+      }
+      const postMatch=endpoint.match(/^\/business\/industries\/([^/]+)\/posts(?:\/([^/]+)(\/publish)?)?$/);
+      if(postMatch){
+        const workspace=workspaces.find(item=>item.id===postMatch[1]);
         if(route.request().method()==='GET'){
           const currentPage=Number(url.searchParams.get('page')||1);
+          const status=url.searchParams.get('status')||'all',filtered=posts.filter(post=>status==='all'||post.status===status);
           if(currentPage===2)await secondPageResponse;
-          return fulfill({posts:posts.slice((currentPage-1)*12,currentPage*12),page:currentPage,hasMore:posts.length>currentPage*12});
+          return fulfill({workspace,posts:filtered.slice((currentPage-1)*12,currentPage*12),page:currentPage,hasMore:filtered.length>currentPage*12});
         }
         const body=route.request().postDataJSON();requests.push(body);
+        if(postMatch[2]){
+          const saved=posts.find(item=>item.id===postMatch[2]);if(!saved)return fulfill({message:'Not found'},404);
+          if(postMatch[3] && saved.publishRequest===body.requestId)return fulfill(saved);
+          if(saved.status!=='draft'||saved.version!==body.version)return fulfill({message:'This draft changed. Refresh history.'},409);
+          if(request.method()==='DELETE'){posts.splice(posts.indexOf(saved),1);return fulfill({deleted:true,id:saved.id});}
+          if(workspace.archivedAt)return fulfill({message:'Space archived'},409);
+          if(request.method()==='PATCH')Object.assign(saved,{title:body.title,content:body.title+'\n\n'+body.content,mediaUrl:body.mediaUrl,version:saved.version+1,updatedAt:new Date().toISOString()});
+          else if(postMatch[3])Object.assign(saved,{status:'published',canEdit:false,publishRequest:body.requestId,version:saved.version+1,targets:body.targets.map(platform=>({platform,status:'posted',postedUrl:'https://uficonnect.org/p/synthetic'}))});
+          else return fulfill({message:'Unexpected mutation'},405);
+          return fulfill(saved);
+        }
         let post=posts.find(item=>item.requestId===body.requestId);
-        if(!post){post={id:'bi_'+body.requestId,requestId:body.requestId,title:body.title,content:body.title+'\n\n'+body.content,status:body.targets.length?'published':'draft',targets:body.targets.map(platform=>({platform,status:'posted',postedUrl:platform==='uficonnect'?'https://uficonnect.org/p/synthetic':'https://www.linkedin.com/feed/update/synthetic'})),createdAt:new Date().toISOString()};posts.unshift(post);}
+        if(!post){post={id:'bi_'+body.requestId,requestId:body.requestId,authorId:'industry-audit',authorName:'Audit company member',version:1,canEdit:!body.targets.length,title:body.title,content:body.title+'\n\n'+body.content,status:body.targets.length?'published':'draft',targets:body.targets.map(platform=>({platform,status:'posted',postedUrl:platform==='uficonnect'?'https://uficonnect.org/p/synthetic':'https://www.linkedin.com/feed/update/synthetic'})),createdAt:new Date().toISOString()};posts.unshift(post);}
         if(failFirst){failFirst=false;return fulfill({message:'Synthetic reply lost. Retry unchanged to check saved delivery.'},503);}
         return fulfill(post);
       }
@@ -59,6 +78,8 @@ try{
     await page.getByRole('heading',{name:'Audit company recruiting',exact:true}).waitFor();
     await page.getByRole('navigation',{name:'Business workspace',exact:true}).getByRole('link',{name:'Industry spaces',exact:true}).click();
     await page.getByRole('heading',{name:'Industry spaces',exact:true}).waitFor();
+    await page.getByLabel('Industry',{exact:true}).waitFor();
+    check(await page.getByLabel('Industry',{exact:true}).inputValue()==='technology','Business signup industry is preselected for the first space');
     await page.getByLabel('Industry',{exact:true}).selectOption('technology');
     await page.getByLabel('Space name',{exact:true}).fill('Product team');
     await page.getByRole('checkbox',{name:'Stack Overflow',exact:true}).uncheck();
@@ -94,11 +115,26 @@ try{
     await page.getByRole('button',{name:'Save private draft',exact:true}).click();
     await page.getByText('Your private draft is saved in this space.',{exact:true}).waitFor();
     check(requests.at(-1).targets.length===0,'Saving a private draft selects no publishing destinations');
-    await auditReload(page);await page.getByRole('button',{name:'Use this draft',exact:true}).click();
+    const savedDraftId=posts.find(post=>post.status==='draft').id;
+    await auditReload(page);await page.getByRole('button',{name:'Edit draft',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('input[placeholder="What’s new with your team?"]')?.value==='Private planning draft');
-    check(await page.getByLabel('Business update text',{exact:true}).inputValue()==='This saved draft is for my private preparation before choosing a public destination.','Use this draft restores its text without duplicating the title');
+    check(await page.getByLabel('Business update text',{exact:true}).inputValue()==='This saved draft is for my private preparation before choosing a public destination.','Editing a draft restores its text without duplicating the title');
     check(!await page.getByRole('checkbox',{name:/UFIconnect — public post/}).isChecked(),'Reusing a private draft requires a fresh public destination selection');
     await page.screenshot({path:`.cache/audit-ui/business-industry-composer-${width}.png`,fullPage:true});
+    await page.getByLabel('Business update text',{exact:true}).fill('An edited private draft remains the same saved record until publication.');
+    await page.getByRole('checkbox',{name:/UFIconnect — public post/}).check();
+    check(await page.getByRole('button',{name:'Publish business update',exact:true}).isDisabled(),'Unsaved draft changes must be saved before publishing');
+    await page.getByRole('button',{name:'Save draft changes',exact:true}).click();await page.getByText('Draft changes saved.',{exact:true}).waitFor();
+    check(posts.length===2&&posts.find(post=>post.id===savedDraftId).version===2,'Editing updates the existing draft and its version');
+    await page.getByRole('button',{name:'Publish business update',exact:true}).click();await page.getByText('Published to every selected destination.',{exact:true}).waitFor();
+    check(posts.length===2&&posts.find(post=>post.id===savedDraftId).status==='published','Publishing a saved draft retains its record and does not create a copy');
+    await page.getByRole('button',{name:'Start a new post',exact:true}).click();
+    await page.getByLabel('Post title',{exact:true}).fill('Disposable private draft');await page.getByLabel('Business update text',{exact:true}).fill('This private draft is only for checking safe author-controlled deletion.');
+    await page.getByRole('button',{name:'Save private draft',exact:true}).click();await page.getByText('Your private draft is saved in this space.',{exact:true}).waitFor();
+    await page.getByLabel('Post status',{exact:true}).selectOption('draft');await page.getByRole('button',{name:'Delete draft',exact:true}).click();
+    await page.getByRole('dialog',{name:'Delete private draft?',exact:true}).getByRole('button',{name:'Delete draft',exact:true}).click();
+    await page.getByText('No private drafts match this filter.',{exact:true}).waitFor();check(posts.length===2,'Delete removes only the selected unpublished draft');
+    await page.getByLabel('Post status',{exact:true}).selectOption('all');
     for(let i=0;i<13;i++)posts.push({id:'history-'+i,title:'History '+i,content:'Synthetic published update '+i,status:'published',targets:[],createdAt:new Date().toISOString()});
     await auditReload(page);const history=page.getByRole('region',{name:'Industry post history'});await history.locator('.industry-history-card').first().waitFor();
     check(await history.locator('.industry-history-card').count()===12,'History shows twelve posts per page');
@@ -113,12 +149,27 @@ try{
     check(JSON.stringify(await history.locator('.industry-history-card h3').allTextContents())===JSON.stringify(expectedSecondPage),'History next page contains exactly the remaining post titles');
     check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Industry publishing has no horizontal overflow');
     linkedIn=false;await auditReload(page);check(await page.getByRole('checkbox',{name:/^LinkedIn/}).isDisabled(),'Unavailable LinkedIn cannot be activated by the composer');
+    posts.unshift({id:'uncertain',title:'Uncertain delivery',content:'Check the destination before creating another copy.',status:'unconfirmed',targets:[{platform:'linkedin',status:'unconfirmed'}],createdAt:new Date().toISOString()});
+    await page.getByLabel('Post status',{exact:true}).selectOption('unconfirmed');await page.getByRole('heading',{name:'Uncertain delivery',exact:true}).waitFor();
+    check(await page.locator('.industry-history-card').count()===1,'Status filters show only matching delivery history');
+    check(await page.locator('.industry-history-card').getByRole('button').count()===0,'Uncertain publication has no resend, edit or delete action');
+    await page.getByRole('button',{name:'Refresh history',exact:true}).click();await page.getByRole('heading',{name:'Uncertain delivery',exact:true}).waitFor();
+    await auditNavigate(page,origin+'business/industries');await page.getByRole('button',{name:'Archive space',exact:true}).click();
+    await page.getByRole('dialog',{name:'Archive industry space?',exact:true}).getByRole('button',{name:'Archive space',exact:true}).click();
+    await page.getByText('Space archived. Its posts and private drafts remain available in history.',{exact:true}).waitFor();
+    const historyCount=posts.length;check(Boolean(workspaces[0].archivedAt),'Owner can archive a space');
+    await page.getByLabel('Show industry spaces',{exact:true}).selectOption('archived');await page.getByRole('link',{name:'View post history',exact:true}).click();
+    await page.getByText(/This space is archived\. Its history is available below/).waitFor();check(await page.getByLabel('Post title',{exact:true}).count()===0,'Archived spaces retain history without a publishing composer');
+    await page.getByRole('link',{name:'Manage industry spaces',exact:true}).click();await page.getByLabel('Show industry spaces',{exact:true}).selectOption('archived');
+    await page.getByRole('button',{name:'Restore space',exact:true}).click();await page.getByRole('dialog',{name:'Restore industry space?',exact:true}).getByRole('button',{name:'Restore space',exact:true}).click();
+    await page.getByText('Space restored. Your team can publish here again.',{exact:true}).waitFor();check(!workspaces[0].archivedAt&&posts.length===historyCount,'Restoring preserves every history record');
     await auditNavigate(page,origin+'business/cross-post?workspace=unowned');await page.getByText('This space is not available to your Business membership.',{exact:true}).waitFor();
     check(await page.getByLabel('Post title',{exact:true}).count()===0,'An unknown space does not silently select a different organization space');
     canManage=false;await auditNavigate(page,origin+'business/industries');await page.getByRole('button',{name:'View resources',exact:true}).click();
     check(await page.getByLabel('Space name',{exact:true}).isDisabled(),'Teammates cannot edit shared space names');
     check(await page.getByRole('checkbox',{name:'GitHub',exact:true}).isDisabled(),'Teammates cannot change shared resource selections');
     check(await page.getByRole('button',{name:'Save space settings',exact:true}).count()===0,'Teammates have no settings write action');
+    check(await page.getByRole('button',{name:'Archive space',exact:true}).count()===0,'Teammates cannot archive shared spaces');
     check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Industry resources have no horizontal overflow');
     await page.screenshot({path:`.cache/audit-ui/business-industries-${width}.png`,fullPage:true});
     check(errors.length===0,'No browser errors: '+errors.join('; '));

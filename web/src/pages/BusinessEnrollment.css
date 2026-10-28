@@ -1,0 +1,19 @@
+.business-enrollment-page{min-height:100vh;background:var(--bg);color:var(--text)}
+.business-enrollment-header{max-width:1120px;margin:auto;padding:24px;display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap}
+.business-registration-grid{max-width:1120px;margin:24px auto 60px;padding:0 24px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:48px;align-items:start}
+.business-registration-intro h1{font-size:clamp(2rem,4vw,3.2rem);line-height:1.12;letter-spacing:-.04em;margin:16px 0 22px}
+.business-registration-intro p,.business-registration-intro li{line-height:1.7;color:var(--muted)}
+.business-registration-intro ul{padding-left:22px;display:grid;gap:10px;margin:24px 0}
+.business-registration-form{padding:28px;display:grid;gap:13px;min-width:0}
+.business-registration-form h2{font-size:1.35rem;margin:0 0 8px}
+.business-registration-form label{display:grid;gap:7px;font-weight:600;font-size:.9rem;min-width:0}
+.business-registration-form input,.business-registration-form select{min-width:0;width:100%;box-sizing:border-box}
+.business-form-help{font-size:.8rem;line-height:1.5;color:var(--muted);margin:0}
+.business-membership-setup{max-width:760px;margin:0 auto;display:grid;gap:20px}
+.business-membership-setup .card{padding:24px;display:grid;gap:14px}
+.business-membership-setup h1,.business-membership-setup h2,.business-membership-setup p{margin:0}
+.business-membership-setup p{line-height:1.6}
+.business-membership-actions{display:flex;gap:12px;flex-wrap:wrap}
+.business-membership-price{font-size:1.8rem;font-weight:750}
+.business-membership-setup input[type=number]{max-width:140px}
+@media(max-width:760px){.business-registration-grid{grid-template-columns:1fr;gap:24px;margin-top:12px;padding:0 16px}.business-enrollment-header{padding:18px 16px}.business-registration-form{padding:20px}.business-membership-setup .card{padding:18px}}

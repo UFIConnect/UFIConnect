@@ -6,7 +6,8 @@ import { trackPageview } from './analytics';
 import { getGoogleAnalytics } from './analytics/browserAnalytics';
 import { getGoogleAds } from './analytics/browserAds';
 import { publicRoutes } from './seo-routes.mjs';
-import { isBusinessRouteAllowed } from './businessRoutes.mjs';
+import { isBusinessRouteAllowed, isBusinessEnrollmentRouteAllowed } from './businessRoutes.mjs';
+import { isBusinessAccount } from './businessAccount.mjs';
 import RequireFeedLocation from './components/RequireFeedLocation';
 import MediaPermissionPrompt from './components/MediaPermissionPrompt';
 
@@ -61,6 +62,8 @@ const GroupDetail    = lazy(() => import('./pages/GroupDetail'));
 const JobDetail      = lazy(() => import('./pages/JobDetail'));
 const JobCompose     = lazy(() => import('./pages/JobCompose'));
 const BusinessIndustries = lazy(() => import('./pages/BusinessIndustries'));
+const BusinessRegister = lazy(() => import('./pages/BusinessRegister'));
+const BusinessEnrollment = lazy(() => import('./pages/BusinessEnrollment'));
 const BusinessIndustryCrossPost = lazy(() => import('./pages/BusinessIndustryCrossPost'));
 const Messages       = lazy(() => import('./pages/Messages'));
 const Conversation   = lazy(() => import('./pages/Conversation'));
@@ -134,16 +137,20 @@ function RequireOnboarding({ children }) {
   const { profile, loading } = useAuth();
   const location = useLocation();
   if (loading) return <div className="splash">Loading...</div>;
-  if (profile && !profile.onboardingComplete) return <Navigate to="/onboarding" state={{ from: location.pathname + location.search + location.hash }} replace />;
+  if (profile && !profile.onboardingComplete && !isBusinessAccount(profile)) return <Navigate to="/onboarding" state={{ from: location.pathname + location.search + location.hash }} replace />;
   return children;
 }
 
 function BusinessRoutes({ children }) {
   const { profile, loading } = useAuth();
-  const { pathname } = useLocation();
+  const { pathname, hash } = useLocation();
   // Each protected route handles restoration. Keep public sign-in and
   // recovery pages usable while an older session lookup is still pending.
   if (loading) return children;
+  if (isBusinessAccount(profile) && profile.plan !== 'business') {
+    const invitation = pathname === '/recruiting' && new URLSearchParams(hash.slice(1)).has('invite');
+    if (!invitation && !isBusinessEnrollmentRouteAllowed(pathname, profile)) return <Navigate to="/business/enrollment" replace />;
+  }
   return profile?.plan === 'business' && !isBusinessRouteAllowed(pathname, profile)
     ? <Navigate to="/recruiting" replace /> : children;
 }
@@ -243,6 +250,8 @@ function AppContent({ guestHome, mediaAccountId }) {
       {/* Public */}
       <Route path="/login"    element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/business/register" element={<BusinessRegister />} />
+      <Route path="/business/enrollment" element={<RequireAuth><BusinessEnrollment /></RequireAuth>} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password"  element={<ResetPassword />} />
 

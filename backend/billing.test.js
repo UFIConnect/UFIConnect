@@ -28,6 +28,7 @@ function setup() {
   const creates = [];
   const portalCustomers = [];
   const portalCreates = [];
+  const portalConfigurations = [];
   let failWrite = false;
   let failProvider = false;
   let tail = Promise.resolve();
@@ -71,7 +72,13 @@ function setup() {
       async *list({ customer }) { for (const value of subscriptions.values()) if (value.customer === customer) yield value; },
       async cancel(id, options) { assert.equal(options.prorate, false); assert.equal(options.invoice_now, false); if (failProvider) throw new Error('provider outage'); subscriptions.get(id).status = 'canceled'; },
     },
-    billingPortal: { sessions: { async create(data) { portalCustomers.push(data.customer); portalCreates.push(data); return { url: 'https://billing.stripe.com/test' }; } } },
+    billingPortal: {
+      configurations: {
+        async *list() { yield* portalConfigurations; },
+        async create(data) { const config = { id: 'bpc_personal', active: true, ...data }; portalConfigurations.push(config); return config; },
+      },
+      sessions: { async create(data) { portalCustomers.push(data.customer); portalCreates.push(data); return { url: 'https://billing.stripe.com/test' }; } },
+    },
   };
   const catalog = { allowedPrices: new Map([['price_pro', 'pro'], ['price_business', 'business'], ['price_business_team', 'business_team'], ['price_resume', 'resume_builder'], ['price_resume_monthly', 'resume_builder_monthly'], ['price_vpn', 'vpn_connector']]),
     tiers: Object.fromEntries([['pro', 'price_pro'], ['business', 'price_business'], ['business_team', 'price_business_team'], ['resume_builder', 'price_resume'], ['resume_builder_monthly', 'price_resume_monthly'], ['vpn_connector', 'price_vpn']].map(([tier, priceId]) => [tier, { available: true, priceId }])) };
@@ -88,10 +95,91 @@ function setup() {
     sessions.set(id, value); return value;
   };
   const event = (id = 'evt_1', type = 'checkout.session.completed', object = { id: 'cs_paid', customer: 'cus_a' }) => ({ id, type, data: { object } });
-  return { service, stripe, db, catalog, sub, session, event, creates, sessions, subscriptions, portalCustomers, portalCreates,
+  return { service, stripe, db, catalog, sub, session, event, creates, sessions, subscriptions, portalCustomers, portalCreates, portalConfigurations,
     failWrite() { failWrite = true; }, providerOutage() { failProvider = true; } };
 }
 async function alice() { return (await pg.query('SELECT * FROM users WHERE id=$1', [A])).rows[0]; }
+async function businessAccount(id = A) { await pg.query("UPDATE users SET account_type='business' WHERE id=$1", [id]); }
+
+test('personal accounts cannot buy Business by selecting its public price or a Business return page', async () => {
+  const f = setup();
+  for (const quantity of [1, 3]) await assert.rejects(f.service.createCheckout(A, 'business', quantity, '/business/enrollment'), { status: 403 });
+  assert.equal(f.creates.length, 0);
+  assert.equal((await pg.query('SELECT * FROM billing_checkout_attempts')).rows.length, 0);
+  assert.equal((await alice()).account_type, 'personal');
+  await f.service.createCheckout(A, 'pro');
+  assert.equal(f.creates.length, 1);
+});
+
+test('free public Business accounts can check out and retain their account track after cancellation', async () => {
+  const f = setup(); await businessAccount();
+  assert.equal((await f.service.status(A)).businessEnrollmentRequired, false);
+  await f.service.createCheckout(A, 'business', 1, '/business/enrollment');
+  f.sub('sub_business', { items: { data: [{ price: { id: 'price_business' }, quantity: 1 }] } });
+  f.session('cs_1', 'sub_business');
+  await f.service.handleEvent(f.event('evt_business_started', 'checkout.session.completed', { id: 'cs_1', customer: 'cus_a' }));
+  f.sub('sub_business', { status: 'canceled', items: { data: [{ price: { id: 'price_business' }, quantity: 1 }] } });
+  await f.service.handleEvent(f.event('evt_business_canceled', 'customer.subscription.deleted', { id: 'sub_business', customer: 'cus_a' }));
+  assert.equal((await alice()).plan, 'free');
+  assert.equal((await alice()).account_type, 'business');
+  f.sessions.clear();
+  await pg.query('DELETE FROM billing_checkout_attempts WHERE user_id=$1', [A]);
+  await f.service.createCheckout(A, 'business');
+  assert.equal(f.creates.length, 2);
+});
+
+test('out-of-policy paid Business events preserve a personal plan and expose a billing review instead of granting access', async () => {
+  const f = setup(); f.sub(); f.session(); await f.service.handleEvent(f.event());
+  f.sub('sub_a', { items: { data: [{ price: { id: 'price_business' }, quantity: 1 }] } });
+  await f.service.handleEvent(f.event('evt_personal_business', 'invoice.paid', { subscription: 'sub_a', customer: 'cus_a' }));
+  const state = await f.service.status(A);
+  assert.equal(state.accountType, 'personal'); assert.equal(state.plan, 'pro');
+  assert.equal(state.businessSeats, 0); assert.equal(state.businessEnrollmentRequired, true);
+  assert.match(state.billingNotice, /support@uficonnect.org/);
+  assert.equal((await pg.query("SELECT outcome FROM billing_webhook_events WHERE event_id='evt_personal_business'")).rows[0].outcome, 'business_registration_required');
+});
+
+test('only an owned, actually paid, approved Business checkout from before the enrollment cutoff restores a legacy account', async () => {
+  const f = setup();
+  await pg.query("UPDATE users SET business_enrollment_cutoff='2026-10-28T00:00:00Z' WHERE id=$1", [A]);
+  const created = Date.parse('2026-10-27T00:00:00Z') / 1000;
+  f.session('cs_legacy', 'sub_legacy', { created, line_items: [{ price: 'price_business', quantity: 1 }], payment_status: 'unpaid' });
+  await assert.rejects(f.service.createCheckout(A, 'business'), { status: 403 });
+  f.sessions.get('cs_legacy').payment_status = 'paid';
+  f.sessions.get('cs_legacy').created = created + 3 * 86400;
+  await assert.rejects(f.service.createCheckout(A, 'business'), { status: 403 });
+  f.sessions.get('cs_legacy').created = created;
+  f.sessions.get('cs_legacy').client_reference_id = B;
+  await assert.rejects(f.service.createCheckout(A, 'business'), { status: 403 });
+  f.sessions.get('cs_legacy').client_reference_id = A;
+  f.sessions.get('cs_legacy').line_items[0].price = 'price_pro';
+  await assert.rejects(f.service.createCheckout(A, 'business'), { status: 403 });
+  f.sessions.get('cs_legacy').line_items[0].price = 'price_business';
+  // A former paid Business member can join again after the old subscription ended.
+  f.sub('sub_legacy', { status: 'canceled', items: { data: [{ price: { id: 'price_business' }, quantity: 1 }] } });
+  const restored = await f.service.status(A);
+  assert.equal(restored.accountType, 'business'); assert.equal(restored.plan, 'free');
+  await f.service.createCheckout(A, 'business');
+  assert.equal((await alice()).account_type, 'business');
+  assert.equal(f.creates.length, 1);
+});
+
+test('personal portals disable subscription switching while preserving invoices, payment methods and cancellation', async () => {
+  const f = setup();
+  await f.service.portal(A); await f.service.portal(B);
+  assert.equal(f.portalConfigurations.length, 1);
+  const config = f.portalConfigurations[0];
+  assert.equal(config.features.subscription_update.enabled, false);
+  assert.equal(config.features.subscription_cancel.mode, 'at_period_end');
+  assert.equal(config.features.invoice_history.enabled, true);
+  assert.equal(config.features.payment_method_update.enabled, true);
+  assert.ok(f.portalCreates.every(session => session.configuration === config.id));
+  await businessAccount(); await f.service.portal(A);
+  assert.equal(Object.hasOwn(f.portalCreates.at(-1), 'configuration'), false, 'Business members retain the existing seat-management portal');
+  config.features.subscription_update.enabled = true;
+  await assert.rejects(f.service.portal(B), { status: 503 });
+  assert.equal(f.portalCreates.length, 3);
+});
 
 test('phone-only account aliases are omitted when creating Stripe customers', async () => {
   const f=setup();
@@ -113,6 +201,7 @@ function rejectedCheckout(replayed = true, overrides = {}) {
 
 for (const [tier, quantity] of [['vpn_connector', 1], ['business', 1], ['business', 3]]) {
   test(`${tier} quantity ${quantity} recovers a cached rejection after configuration repair without duplicate checkout`, async () => {
+    if (tier === 'business') await businessAccount();
     const f = setup();
     const create = f.stripe.checkout.sessions.create;
     const keys = [];
@@ -135,6 +224,7 @@ for (const [tier, quantity] of [['vpn_connector', 1], ['business', 1], ['busines
 }
 
 test('uncertain provider errors preserve the durable checkout key', async () => {
+  await businessAccount();
   const f = setup();
   const keys = [];
   const errors = [rejectedCheckout(false), rejectedCheckout(true, { statusCode: 500 }),
@@ -149,6 +239,7 @@ test('uncertain provider errors preserve the durable checkout key', async () => 
 });
 
 test('cached rejection recovery stops when provider history fails or another checkout remains payable', async () => {
+  await businessAccount();
   const f = setup();
   f.stripe.checkout.sessions.create = async () => { throw rejectedCheckout(false); };
   await assert.rejects(f.service.createCheckout(A, 'business'));
@@ -163,6 +254,7 @@ test('cached rejection recovery stops when provider history fails or another che
 });
 
 test('cached rejection recovery rotates at most once per request', async () => {
+  await businessAccount();
   const f = setup();
   const keys = [];
   f.stripe.checkout.sessions.create = async (data, options) => {
@@ -434,6 +526,7 @@ test('add-on cancellation does not affect an independent Pro membership', async 
 });
 
 test('Business checkout selects its approved price and signed webhooks grant only paid access', async t => {
+  await businessAccount();
   const f = setup();
   await f.service.createCheckout(A, 'business');
   assert.equal(f.creates[0].data.line_items[0].price, 'price_business');
@@ -467,6 +560,7 @@ test('Business checkout selects its approved price and signed webhooks grant onl
 });
 
 test('Business team checkout persists quantities and rejects changed, fractional, and non-Business quantities', async () => {
+  await businessAccount();
   const f = setup();
   for (const quantity of [0, -1, 1.5, 101, '2', null]) await assert.rejects(f.service.createCheckout(A, 'business', quantity), { status: 400 });
   await assert.rejects(f.service.createCheckout(A, 'pro', 2), { status: 400 });
@@ -482,6 +576,7 @@ test('Business team checkout persists quantities and rejects changed, fractional
 });
 
 test('paid Business team quantities control access and invoice failure clears all seats', async () => {
+  await businessAccount();
   const f = setup();
   const business = { metadata: { tier: 'business', quantity: '100', uficonnect_user_id: A },
     items: { data: [{ price: { id: 'price_business_team' }, quantity: 3 }] } };
@@ -520,6 +615,7 @@ test('new Business checkout rejects wrong amount, currency, cadence, or tiered p
 });
 
 test('a portal seat increase keeps paid seats until the proration invoice is paid', async () => {
+  await businessAccount();
   const f = setup();
   const business = { metadata: { tier: 'business', uficonnect_user_id: A },
     items: { data: [{ price: { id: 'price_business_team' }, quantity: 2 }] } };
@@ -550,7 +646,8 @@ test('Pro and Resume Builder have independent durable checkout slots and repeat 
   assert.ok(f.creates.find(call => call.data.metadata.tier === 'resume_builder').data.success_url.endsWith('/resume-builder?upgrade=success'));
 });
 
-test('current approved price upgrades Pro to Business despite stale metadata and preserves the resume add-on', async () => {
+test('an enrolled Business account can change its paid plan despite stale metadata and preserve the resume add-on', async () => {
+  await businessAccount();
   const f = setup(); f.sub(); f.session(); await f.service.handleEvent(f.event());
   const addon = { metadata: { tier: 'resume_builder', uficonnect_user_id: A },
     items: { data: [{ price: { id: 'price_resume' }, quantity: 1 }] } };
@@ -568,6 +665,7 @@ test('current approved price upgrades Pro to Business despite stale metadata and
 });
 
 test('Business payment failure, recovery and cancellation change only the membership slot', async () => {
+  await businessAccount();
   const f = setup();
   const business = { metadata: { tier: 'business', uficonnect_user_id: A },
     items: { data: [{ price: { id: 'price_business' }, quantity: 1 }] } };
@@ -599,6 +697,7 @@ test('failed reconciliation rolls back its event record so Stripe can retry', as
 });
 
 test('simultaneous checkout requests reuse one durable hosted Checkout', async () => {
+  await businessAccount();
   const f = setup();
   const results = await Promise.all([f.service.createCheckout(A, 'pro'), f.service.createCheckout(A, 'pro')]);
   assert.equal(results[0].url, results[1].url); assert.equal(f.creates.length, 1);
@@ -610,6 +709,7 @@ test('simultaneous checkout requests reuse one durable hosted Checkout', async (
 });
 
 test('checkout keeps the launch page, query, and hash for every membership slot', async () => {
+  await businessAccount();
   const f = setup();
   const returnPath = '/command-center?tab=ai-content&topic=Product%20design&upgrade=old&upgrade=stale#draft';
   for (const tier of ['pro', 'business', 'resume_builder_monthly', 'vpn_connector']) {
@@ -640,14 +740,14 @@ test('legacy callers keep tier defaults and portal returns to Settings', async (
   }
   assert.ok((await pg.query('SELECT return_path FROM billing_checkout_attempts')).rows.every(attempt => attempt.return_path === null));
   await f.service.portal(B);
-  assert.deepEqual(f.portalCreates, [{ customer: 'cus_b', return_url: 'https://uficonnect.org/settings' }]);
+  assert.deepEqual(f.portalCreates, [{ customer: 'cus_b', return_url: 'https://uficonnect.org/settings', configuration: 'bpc_personal' }]);
 });
 
 test('portal returns to the exact launch tab and hash using only the authenticated customer', async () => {
   const f = setup();
   const returnPath = '/command-center?tab=accounts&source=github#billing';
   await f.service.portal(B, returnPath);
-  assert.deepEqual(f.portalCreates, [{ customer: 'cus_b', return_url: 'https://uficonnect.org' + returnPath }]);
+  assert.deepEqual(f.portalCreates, [{ customer: 'cus_b', return_url: 'https://uficonnect.org' + returnPath, configuration: 'bpc_personal' }]);
   assert.equal(f.creates.length, 0);
 });
 
@@ -760,6 +860,7 @@ test('expired checkout starts a new attempt; aged unresolved attempts recover th
 });
 
 test('aged checkout without any accepted session rotates only after complete provider history', async () => {
+  await businessAccount();
   const f = setup(); f.failWrite();
   await assert.rejects(f.service.createCheckout(A, 'pro'), /simulated DB/);
   const previous = (await pg.query('SELECT * FROM billing_checkout_attempts WHERE user_id=$1', [A])).rows[0];
@@ -826,6 +927,7 @@ test('switching an uncertain checkout recovers its original request before repla
 });
 
 test('changing checkout stops if expiry fails or payment wins the race', async () => {
+  await businessAccount();
   for (const paid of [false, true]) {
     const f = setup();
     await f.service.createCheckout(A, 'pro');
@@ -943,7 +1045,7 @@ test('actual billing routes forward returnPath while rejecting payment fields an
   const portal = await app.request('/billing/create-portal-session', { method: 'POST', userId: B, body: { returnPath } });
   assert.equal(portal.status, 200, JSON.stringify(portal.data));
   assert.equal(portal.headers.get('cache-control'), 'no-store');
-  assert.deepEqual(f.portalCreates, [{ customer: 'cus_b', return_url: 'https://uficonnect.org' + returnPath }]);
+  assert.deepEqual(f.portalCreates, [{ customer: 'cus_b', return_url: 'https://uficonnect.org' + returnPath, configuration: 'bpc_personal' }]);
   for (const [endpoint, fields] of [['create-checkout-session', { tier: 'pro' }], ['create-portal-session', {}]]) {
     const request = body => app.request('/billing/' + endpoint, { method: 'POST', userId: A, body });
     assert.equal((await request({ ...fields, returnPath: '//outside.example/' })).status, 400);
@@ -1049,6 +1151,7 @@ test('Resume Builder choices replace unpaid checkout across concurrent requests 
 });
 
 test('monthly Resume Builder payment, cadence changes and cancellation preserve Business and Vault memberships', async () => {
+  await businessAccount();
   const f = setup();
   f.sub('sub_business', { metadata: { tier: 'business', uficonnect_user_id: A },
     items: { data: [{ price: { id: 'price_business_team' }, quantity: 3 }] } });

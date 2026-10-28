@@ -23,6 +23,7 @@ try {
     const page = await context.newPage();
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     let status = { plan: 'free', resumeBuilderAddon: false, hasBillingAccount: false, subscriptions: [] };
+    let accountType = 'personal';
     let ready = true; let businessReady = false; let configWait = null; let configHttpStatus = 200;
     let monthlyReady = true; let sixMonthReady = true; let monthlyMatches = true;
     let checkoutUrl = 'https://evil.invalid/checkout'; const requests = [];
@@ -49,7 +50,7 @@ try {
       }
       if (endpoint === '/billing/create-checkout-session') { requests.push(request.postDataJSON()); return fulfill({ url: checkoutUrl }); }
       if (endpoint === '/billing/create-portal-session') return fulfill({ url: 'https://billing.stripe.com/p/session/audit' });
-      if (endpoint === '/profile') return fulfill({ ...app.fullProfile(app.users[0]), plan: status.plan });
+      if (endpoint === '/profile') return fulfill({ ...app.fullProfile(app.users[0]), plan: status.plan, accountType });
       if (endpoint === '/feed') return fulfill({ posts: [], hasMore: false });
       if (endpoint === '/notifications') return fulfill({ notifications: [], unreadCount: 0 });
       return fulfill({ sources: [], posts: [], groups: [], connected: {}, items: [] });
@@ -79,7 +80,8 @@ try {
     check(await dialog.getByText('$19.94', { exact: true }).isVisible(), 'Current Stripe price is visible');
     check(await dialog.getByText('every month', { exact: true }).isVisible(), 'Recurring interval is visible');
     check(await dialog.getByText(/Memberships renew automatically/).isVisible(), 'Recurring payment terms precede checkout');
-    check(await dialog.getByRole('button', { name: 'Unavailable', exact: true }).isDisabled(), 'Unconfigured Business stays unavailable');
+    check(await dialog.getByRole('button', { name: 'Choose Business', exact: true }).count() === 0, 'Personal membership has no Business checkout');
+    check(await dialog.getByText('Business', { exact: true }).count() === 0, 'Personal membership omits Business prices and tier labels');
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Membership modal fits ${width}px`);
     await page.screenshot({ path: `.cache/audit-ui/membership-${width}.png`, fullPage: true });
     await dialog.getByRole('button', { name: 'Choose Pro', exact: true }).click();
@@ -89,13 +91,18 @@ try {
     await dialog.getByRole('button', { name: 'Close', exact: true }).click();
     businessReady = true;
     await upgrade.click();
-    await dialog.getByRole('button', { name: 'Choose Business', exact: true }).waitFor();
-    check(await dialog.getByRole('button', { name: 'Choose Business', exact: true }).isEnabled(), 'Validated Business configuration enables membership checkout');
-    check(await dialog.getByText('$199.94', { exact: true }).isVisible(), 'Business shows its configured recurring price');
-    await dialog.getByRole('button', { name: 'Choose Business', exact: true }).click();
-    await page.getByText('Could not open secure billing. Please try again.', { exact: true }).waitFor();
-    assert.deepEqual(requests.at(-1), { tier: 'business', quantity: 1, returnPath: '/settings' }); checks++;
+    await dialog.getByRole('button', { name: 'Choose Pro', exact: true }).waitFor();
+    check(await dialog.getByRole('button', { name: 'Choose Business', exact: true }).count() === 0, 'Configured Business billing still cannot convert a personal account');
+    check(await dialog.getByText('$199.94', { exact: true }).count() === 0, 'Personal upgrade omits the Business recurring price');
+    check(requests.every(request => request.tier !== 'business'), 'No personal flow requested a Business checkout');
     await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    status = { ...status, accountType: 'personal', billingNotice: 'A Business payment needs support review. Contact support before making another payment.' };
+    await section.getByRole('button', { name: 'Check billing status', exact: true }).click();
+    await section.getByRole('alert').filter({ hasText: status.billingNotice }).waitFor();
+    check(await section.getByRole('link', { name: 'Continue Business membership', exact: true }).count() === 0, 'Unexpected billing activity does not convert a personal account');
+    status = { ...status, billingNotice: null };
+    await section.getByRole('button', { name: 'Check billing status', exact: true }).click();
+    await section.getByRole('alert').waitFor({ state: 'hidden' });
     ready = false;
     await upgrade.click();
     await dialog.getByText('Membership checkout is currently unavailable. Please try again later.').waitFor();
@@ -184,6 +191,13 @@ try {
     await page.getByRole('button', { name: 'Check billing availability', exact: true }).click();
     await resumePurchase.waitFor();
     check(await resumePurchase.isEnabled(), 'Resume Builder checkout recovers on the same page after a billing outage');
+    accountType = 'business';
+    status = { plan: 'free', resumeBuilderAddon: false, hasBillingAccount: false, subscriptions: [] };
+    await page.goto(server.origin + '/settings');
+    const businessSettings = page.getByRole('region', { name: 'Free plan', exact: true });
+    await businessSettings.getByRole('link', { name: 'Continue Business membership', exact: true }).waitFor();
+    check(await businessSettings.getByRole('link', { name: 'Continue Business membership', exact: true }).getAttribute('href') === '/business/enrollment', 'An enrolled Business account can resume its separate membership');
+    check(await businessSettings.getByRole('button', { name: 'Upgrade', exact: true }).count() === 0, 'Business reactivation does not expose personal upgrade choices');
     check(errors.length === 0, `No browser errors at ${width}px: ${errors.join('; ')}`);
     await context.close();
   }

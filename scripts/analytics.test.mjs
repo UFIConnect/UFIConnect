@@ -64,6 +64,17 @@ test('job and business workflows use distinct fixed page categories without draf
   }
 });
 
+test('Business signup and enrollment reuse fixed account categories without registration or payment metadata', () => {
+  for (const [path, category] of [['/business/register', 'register'], ['/business/enrollment', 'settings']]) {
+    for (const suffix of ['', '/']) {
+      const page = canonicalPage(`${path}${suffix}?email=PRIVATE_EMAIL&organization=PRIVATE_ORG&upgrade=PRIVATE_PAYMENT#invite=PRIVATE_TOKEN`);
+      assert.equal(page, PAGE_CATEGORIES[category]);
+      assert.ok(!JSON.stringify(page).includes('PRIVATE_'));
+    }
+    assert.equal(canonicalPage(`${path}/PRIVATE_ACCOUNT`).category, 'other', 'Only the fixed account route is classified');
+  }
+});
+
 test('every web and native screen category is accepted by the required aggregate endpoint contract', async () => {
   assert.deepEqual([...BACKEND_CATEGORIES].sort(), Object.keys(PAGE_CATEGORIES).sort());
   const backend = createAggregateAnalytics({ db: { isConnected: () => true, query: async () => ({ rows: [] }) }, schedule() {} });

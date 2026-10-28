@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { Copy, Send, Save, ArrowRight } from 'lucide-react';
 import Layout from '../components/Layout';
+import BusinessAccessNotice from '../components/BusinessAccessNotice';
+import { isBusinessAccount } from '../businessAccount.mjs';
 import ExternalAccountLogin from '../components/ExternalAccountLogin';
 import BrandIcon from '../components/BrandIcon';
 import { WritingArea, PhotoAttachment, PostPreview, downloadPostText } from '../components/PublishingComposer';
@@ -32,6 +34,11 @@ export function hiringPostText(details) {
 }
 export default function BusinessCrossPost() {
   const { profile } = useAuth();
+  if (!isBusinessAccount(profile) || profile?.plan !== 'business') return <Layout><BusinessAccessNotice title="Hiring Cross Post" /></Layout>;
+  return <BusinessCrossPostContent key={profile.id} profile={profile} />;
+}
+
+function BusinessCrossPostContent({ profile }) {
   const [details, setDetails] = useState(() => initialDraft(profile));
   const [catalog, setCatalog] = useState(null);
   const [selected, setSelected] = useState(['uficonnect']);
@@ -57,7 +64,6 @@ export default function BusinessCrossPost() {
   useEffect(() => () => {
     photoRequest.current++;
   }, [profile?.id]);
-  if (profile?.plan !== 'business') return <Navigate to="/settings" replace />;
   const content = hiringPostText(details);
   const linkedInReady = catalog?.connected?.linkedin && catalog?.platforms?.linkedin?.configured && catalog.platforms.linkedin.crossPost?.supported;
   const photosSupported = catalog?.businessPublishing?.photos === true;

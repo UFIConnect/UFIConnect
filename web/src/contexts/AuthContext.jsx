@@ -154,8 +154,9 @@ export function AuthProvider({ children }) {
     return acceptSession(data);
   }
 
-  async function register(name, email, password, title, phone) {
-    const { data } = await client.post('/auth/register', { name, email, password, title, phone }, publicOAuthRequestConfig());
+  async function register(name, email, password, title, phone, enrollment = {}) {
+    const { accountType, organization, businessIndustryId } = enrollment;
+    const { data } = await client.post('/auth/register', { name, email, password, title, phone, accountType, organization, businessIndustryId }, publicOAuthRequestConfig());
     return acceptSession(data);
   }
 

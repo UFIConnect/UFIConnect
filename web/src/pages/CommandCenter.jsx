@@ -6,6 +6,7 @@ import { Workflow, Link2, BriefcaseBusiness, Sparkles, Clapperboard, Send, Newsp
 import Layout from '../components/Layout';
 import PricingModal, { TIERS } from '../components/PricingModal';
 import { useAuth } from '../contexts/AuthContext';
+import { membershipTiersForAccount } from '../businessAccount.mjs';
 import { useToast } from '../contexts/ToastContext';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import { billingReturnPath, billingReturnState, hostedBillingUrl } from '../api/hostedBilling.mjs';
@@ -97,6 +98,8 @@ function StatChip({ label, value }) {
 }
 
 function LockedState({ onUpgrade }) {
+  const { profile } = useAuth();
+  const allowedTiers = membershipTiersForAccount(profile);
   if (isNativeRuntime()) return <div className="card" style={{ padding: 24 }}><h2>Command Center</h2><p>Your existing membership must include Command Center to use these tools.</p></div>;
   return (
     <div className="card" style={{ textAlign: 'center', padding: '52px 24px' }}>
@@ -104,11 +107,10 @@ function LockedState({ onUpgrade }) {
       <h2 style={{ fontSize: '1.15rem', fontWeight: 800, margin: '0 0 8px' }}>Unlock the Command Center</h2>
       <p style={{ color: 'var(--muted)', fontSize: '.88rem', maxWidth: 440, margin: '0 auto 22px', lineHeight: 1.6 }}>
         See everything from your connected accounts in one place, draft social
-        content with AI, and track your job search with Pro. Business membership
-        provides a workspace for recruiting companies.
+        content with AI, and track your job search with Pro.
       </p>
       <div className="command-center-pricing" aria-label="Command Center plans">
-        {TIERS.map((tier) => (
+        {TIERS.filter(tier => allowedTiers.includes(tier.tier)).map((tier) => (
           <div className="command-center-price" key={tier.tier}>
             <span className="command-center-price-name">
               {tier.name}
@@ -2040,6 +2042,7 @@ export default function CommandCenter() {
 
   async function handleUpgrade(tier, quantity = 1) {
     if (isNativeRuntime()) return;
+    if (!membershipTiersForAccount(profile).includes(tier)) return;
     setUpgrading(tier);
     try {
       const { data } = await client.post('/billing/create-checkout-session', { tier, quantity, returnPath: billingReturnPath() });

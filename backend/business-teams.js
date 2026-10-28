@@ -1,14 +1,16 @@
 'use strict';
 
 const { randomBytes, randomUUID, createHash } = require('node:crypto');
+const { BUSINESS_ACCOUNT_SCHEMA, accountTypeOf, businessRegistrationMessage } = require('./business-enrollment');
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const fault = (status, message) => Object.assign(new Error(message), { status });
 const emailOf = value => String(value || '').trim().toLowerCase();
 const hash = value => createHash('sha256').update(value).digest('hex');
-const capacity = owner => owner?.plan === 'business' && !owner.billing_closed
+const capacity = owner => owner?.plan === 'business' && accountTypeOf(owner) === 'business' && !owner.billing_closed
   ? Math.max(1, Math.min(100, Number(owner.business_seats) || 1)) : 0;
 
 const BUSINESS_TEAM_SCHEMA = [
+  ...BUSINESS_ACCOUNT_SCHEMA,
   `CREATE TABLE IF NOT EXISTS business_team_members (
     owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     member_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
@@ -26,6 +28,8 @@ const BUSINESS_TEAM_SCHEMA = [
     UNIQUE (owner_id, invitee_id), CHECK (owner_id <> invitee_id)
   )`,
   `CREATE INDEX IF NOT EXISTS business_team_invitations_invitee ON business_team_invitations(invitee_id)`,
+  `UPDATE users SET account_type='business' WHERE business_enrollment_cutoff IS NOT NULL
+    AND EXISTS(SELECT 1 FROM business_team_members m WHERE m.member_id=users.id)`,
 ];
 
 function createBusinessTeams({ db, billing, now = Date.now }) {
@@ -45,7 +49,7 @@ function createBusinessTeams({ db, billing, now = Date.now }) {
   }
   async function lockAccounts(client, ids) {
     // Stable lock order also protects account deletion and parallel acceptance.
-    const { rows } = await client.query('SELECT id,name,email,organization,plan,business_seats,billing_closed FROM users WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE', [ids]);
+    const { rows } = await client.query('SELECT id,name,email,organization,plan,account_type,business_seats,billing_closed FROM users WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE', [ids]);
     return rows;
   }
   async function memberRows(client, ownerId) {
@@ -68,7 +72,7 @@ function createBusinessTeams({ db, billing, now = Date.now }) {
     // Recompute the rank against the owner's paid capacity on every check.
     // Reductions/cancellations cannot leave cached team access behind.
     const { rows: [seat] } = await db.query(`SELECT m.owner_id AS "ownerId",u.name AS "ownerName",u.organization,
-      u.plan,u.business_seats,u.billing_closed,
+      u.plan,u.account_type,u.business_seats,u.billing_closed,
       (SELECT COUNT(*)::int FROM business_team_members earlier WHERE earlier.owner_id=m.owner_id
        AND (earlier.joined_at,earlier.member_id) <= (m.joined_at,m.member_id)) AS position
       FROM business_team_members m JOIN users u ON u.id=m.owner_id WHERE m.member_id=$1`, [userId]);
@@ -78,7 +82,7 @@ function createBusinessTeams({ db, billing, now = Date.now }) {
   }
   async function list(userId) {
     ready(userId);
-    const { rows: [self] } = await db.query('SELECT id,name,email,organization,plan,business_seats,billing_closed FROM users WHERE id=$1', [userId]);
+    const { rows: [self] } = await db.query('SELECT id,name,email,organization,plan,account_type,business_seats,billing_closed FROM users WHERE id=$1', [userId]);
     if (!self || self.billing_closed) throw fault(404, 'Account not found.');
     const members = await memberRows(db, userId);
     const invitations = (await db.query(`SELECT i.id,u.name,i.email,i.expires_at AS "expiresAt"
@@ -110,6 +114,7 @@ function createBusinessTeams({ db, billing, now = Date.now }) {
       const invitee = accounts.find(row => row.id === target.id);
       if (capacity(owner) < 2) throw fault(403, 'An active Business membership for two or more people is required to invite teammates.');
       if (!invitee || invitee.billing_closed || emailOf(invitee.email) !== email) throw fault(400, 'This registered account is no longer available.');
+      if (accountTypeOf(invitee) !== 'business') throw fault(403, 'The teammate needs a Business account created from public Business registration. Personal accounts cannot join Business teams.');
       if (invitee.plan === 'business') throw fault(409, 'This person already manages a Business membership.');
       if (await ownsTeamRecords(client, target.id)) throw fault(409, 'This person must remove their team members and revoke pending invitations in Settings before joining another team.');
       const { rows: existingMember } = await client.query('SELECT owner_id FROM business_team_members WHERE member_id=$1', [target.id]);
@@ -143,6 +148,7 @@ function createBusinessTeams({ db, billing, now = Date.now }) {
       if (!invitation || invitation.invitee_id !== userId || new Date(invitation.expires_at).getTime() <= now()
         || !invitee || invitee.billing_closed || emailOf(invitee.email) !== invitation.email) throw fault(404, 'This invitation has expired or is unavailable for your account.');
       if (capacity(owner) < 2) throw fault(403, 'This team does not currently have an active membership for two or more people.');
+      if (accountTypeOf(invitee) !== 'business') throw fault(403, businessRegistrationMessage);
       if (invitee.plan === 'business') throw fault(409, 'Leave or cancel your own Business membership before joining another team.');
       if (await ownsTeamRecords(client, userId)) throw fault(409, 'Remove your team members and revoke pending invitations in Settings before joining another team.');
       const { rows: existing } = await client.query('SELECT owner_id FROM business_team_members WHERE member_id=$1', [userId]);
@@ -158,7 +164,7 @@ function createBusinessTeams({ db, billing, now = Date.now }) {
     ready(userId);
     if (!value || Object.keys(value).some(key => key !== 'token') || !/^[A-Za-z0-9_-]{43}$/.test(value.token || '')) throw fault(400, 'This invitation link is invalid.');
     const { rows: [invitation] } = await db.query(`SELECT i.email,i.expires_at AS "expiresAt",u.id,u.name,u.organization,
-      u.plan,u.business_seats,u.billing_closed
+      u.plan,u.account_type,u.business_seats,u.billing_closed
       FROM business_team_invitations i JOIN users u ON u.id=i.owner_id JOIN users recipient ON recipient.id=i.invitee_id
       WHERE i.token_hash=$1 AND i.invitee_id=$2 AND i.expires_at>$3
         AND LOWER(recipient.email)=i.email AND recipient.billing_closed=false`, [hash(value.token), userId, new Date(now())]);

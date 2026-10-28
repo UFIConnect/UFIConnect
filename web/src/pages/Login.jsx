@@ -9,6 +9,7 @@ import PublicFooter from '../components/PublicFooter';
 import { safeReturnPath } from '../auth/returnPath';
 import AccountAccess from '../components/AccountAccess';
 import { SIGNIN_ERRORS } from '../auth/accountAccess.mjs';
+import { isBusinessAccount } from '../businessAccount.mjs';
 import { LockKeyhole } from 'lucide-react';
 
 export default function Login() {
@@ -24,7 +25,7 @@ export default function Login() {
 
   useEffect(() => {
     if (token && !restoring) {
-      const needsOnboarding = profile && !profile.onboardingComplete;
+      const needsOnboarding = profile && !profile.onboardingComplete && !isBusinessAccount(profile);
       navigate(needsOnboarding ? '/onboarding' : returnTo, { replace: true, state: needsOnboarding ? { from: returnTo } : undefined });
     }
   }, [token, profile, restoring, navigate, returnTo]);
@@ -42,8 +43,9 @@ export default function Login() {
     try {
       const user = await login(form.email, form.password);
       setForm({ email: '', password: '' });
-      navigate(user.onboardingComplete ? returnTo : '/onboarding', {
-        replace: true, state: user.onboardingComplete ? undefined : { from: returnTo },
+      const ready = user.onboardingComplete || isBusinessAccount(user);
+      navigate(ready ? returnTo : '/onboarding', {
+        replace: true, state: ready ? undefined : { from: returnTo },
       });
     } catch (err) {
       if (!err.response) {
@@ -107,7 +109,7 @@ export default function Login() {
           </>
         )}
 
-        <AccountAccess mode="login" returnTo={returnTo} disabled={loading} onBusyChange={setAccessBusy} onSignedIn={user => navigate(user?.onboardingComplete ? returnTo : '/onboarding', { replace: true, state: user?.onboardingComplete ? undefined : { from: returnTo } })} />
+        <AccountAccess mode="login" returnTo={returnTo} disabled={loading} onBusyChange={setAccessBusy} onSignedIn={user => { const ready = user?.onboardingComplete || isBusinessAccount(user); navigate(ready ? returnTo : '/onboarding', { replace: true, state: ready ? undefined : { from: returnTo } }); }} />
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
@@ -145,7 +147,7 @@ export default function Login() {
         </form>
 
         <div className="auth-footer">
-          Don't have an account? <Link to="/register">Create one</Link>
+          Don't have an account? <Link to={returnTo.startsWith('/business/') || returnTo.startsWith('/recruiting') ? '/business/register' : '/register'} state={{ from: returnTo }}>Create one</Link>
         </div>
 
         <section className="public-page-guidance" aria-labelledby="login-guidance-title">

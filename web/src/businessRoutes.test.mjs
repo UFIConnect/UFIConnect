@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { isBusinessRouteAllowed } from './businessRoutes.mjs';
+import { isBusinessRouteAllowed, isBusinessEnrollmentRouteAllowed } from './businessRoutes.mjs';
+
+test('Unpaid Business keeps billing, recovery and separately purchased add-ons without opening the recruiting hub', () => {
+  for (const path of ['/business/enrollment', '/settings', '/vault/device', '/privacy']) assert.equal(isBusinessEnrollmentRouteAllowed(path), true, path);
+  for (const path of ['/recruiting', '/business/industries', '/global', '/videos']) assert.equal(isBusinessEnrollmentRouteAllowed(path), false, path);
+  for (const path of ['/resume-builder', '/resume-builder/cover-letter/preview']) {
+    assert.equal(isBusinessEnrollmentRouteAllowed(path), false);
+    assert.equal(isBusinessEnrollmentRouteAllowed(path + '/', { resumeBuilderAddon: true }), true);
+  }
+});
 
 test('Business membership keeps work, billing and account routes available', () => {
   for (const path of ['/recruiting', '/career-posts', '/business-posts', '/business/industries', '/business/cross-post', '/jobs/new', '/opportunities', '/opportunities/bp-job-123', '/p/bi-business-post', '/people', '/connected-accounts', '/messages', '/messages/candidate-123', '/settings', '/privacy', '/terms', '/login']) {

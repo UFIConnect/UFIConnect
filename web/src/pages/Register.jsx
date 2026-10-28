@@ -613,6 +613,7 @@ export default function Register() {
           {step === 0 && (
             <>
               <h1 className="auth-heading" style={{ marginBottom: 6 }}>Create your account</h1>
+              <p style={{ marginBottom: 16, fontSize: '.85rem' }}>Hiring for a company? <Link to="/business/register">Create a Business account</Link>.</p>
               <p className="auth-sub" style={{ marginBottom: 24 }}>Create a UFIconnect account to connect with people, follow communities, and discover career opportunities.</p>
 
               {error && <div className="auth-error" style={{ marginBottom: 14 }}>{error}</div>}

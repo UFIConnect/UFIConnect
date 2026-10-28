@@ -20,13 +20,14 @@ const destinations = [
 export default function BusinessLayout({ children }) {
   const { profile, logout } = useAuth();
   const navigate = useNavigate();
-  const availableDestinations = [...destinations,
+  const active = profile?.plan === 'business';
+  const availableDestinations = active ? [...destinations,
     ...(profile?.resumeBuilderAddon ? [{ to: '/resume-builder', label: 'Resume Builder', Icon: FileText }] : []),
     ...(profile?.vpnConnectorAddon ? [{ to: '/vault', label: 'Vault', Icon: LockKeyhole }] : []),
-  ];
+  ] : [{ to: '/business/enrollment', label: 'Business membership', Icon: BriefcaseBusiness }, { to: '/settings', label: 'Settings & billing', Icon: Settings }];
   return <div className="business-shell">
     <header className="business-header">
-      <Link to="/recruiting" className="business-brand">UFIconnect <span>Business</span></Link>
+      <Link to={active ? '/recruiting' : '/business/enrollment'} className="business-brand">UFIconnect <span>Business</span></Link>
       <div><span>{profile?.organization || profile?.name}</span><button className="btn btn-ghost btn-sm" onClick={async () => { await logout(); navigate('/login'); }}>Log out</button></div>
     </header>
     <div className="business-body">

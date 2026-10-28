@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { ArrowLeft, BriefcaseBusiness, Send } from 'lucide-react';
 import Layout from '../components/Layout';
+import BusinessAccessNotice from '../components/BusinessAccessNotice';
+import { isBusinessAccount } from '../businessAccount.mjs';
 import { WritingArea, PostPreview } from '../components/PublishingComposer';
 import { useAuth } from '../contexts/AuthContext';
 import { privateSessionStorage } from '../auth/session';
@@ -29,6 +31,7 @@ function postText(details) {
 
 export default function JobCompose() {
   const { profile } = useAuth();
+  if (!isBusinessAccount(profile) || profile?.plan !== 'business') return <Layout><BusinessAccessNotice title="Post a job" /></Layout>;
   return <JobComposePage key={profile?.id || 'signed-out'} profile={profile} />;
 }
 function JobComposePage({ profile }) {
@@ -76,7 +79,7 @@ function JobComposePage({ profile }) {
     <div className="job-compose-page">
       <Link className="btn btn-ghost btn-sm" to="/opportunities"><ArrowLeft size={16} />Back to jobs</Link>
       <header className="job-compose-heading"><BriefcaseBusiness size={28} /><div><h1>Post a job</h1><p>Publish an opening to UFIConnect Jobs and the public UFI feed.</p></div></header>
-      {profile?.plan !== 'business' ? <section className="card job-compose-gate"><h2>Job posting is included with Business</h2><p>Business members can publish hiring posts and manage their recruiting activity. You can keep browsing jobs with your current membership.</p><div className="job-compose-actions"><Link className="btn btn-primary" to="/settings">View Business membership</Link><Link className="btn btn-outline" to="/opportunities">Browse jobs</Link></div></section> : <>
+      <>
         {error && <p className="job-compose-error" role="alert">{error}</p>}
         {result && <section className="card job-compose-result" role="status">
           {result.job ? <><h2>Your job is published</h2><p>It is available in UFIConnect Jobs.</p><Link className="btn btn-primary" to={`/opportunities/${encodeURIComponent(result.job.id)}`} state={{ job: result.job }}>View job listing</Link></>
@@ -94,7 +97,7 @@ function JobComposePage({ profile }) {
             <button type="button" className="btn btn-outline" disabled={pending} onClick={() => { setDetails(empty(profile.organization)); setResult(null); setError(''); request.current = null; }}>Start a new job</button></div>
           <p className="job-compose-note">This publishes to UFIConnect. To choose other destinations, use <Link to="/career-posts">Business Cross Post</Link>.</p>
         </form><PostPreview content={content} name={profile.name || 'You'} subtitle="UFIConnect job listing" destinations={['UFIConnect Jobs']} /></div>
-      </>}
+      </>
     </div>
   </Layout>;
 }

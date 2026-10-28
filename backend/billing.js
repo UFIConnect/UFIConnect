@@ -1,9 +1,11 @@
 const { randomUUID } = require('node:crypto');
 const { isDeliverableEmail } = require('./auth-signin');
+const { BUSINESS_ACCOUNT_SCHEMA, accountTypeOf, businessRegistrationMessage } = require('./business-enrollment');
 
 // Store identifiers and reconciliation outcomes only, never Stripe payloads,
 // payment credentials, card numbers, CVCs, or billing addresses.
 const BILLING_SCHEMA = [
+  ...BUSINESS_ACCOUNT_SCHEMA,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS billing_closed BOOLEAN NOT NULL DEFAULT false`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS business_seats INTEGER NOT NULL DEFAULT 0 CHECK (business_seats BETWEEN 0 AND 100)`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS vpn_connector_addon BOOLEAN NOT NULL DEFAULT false`,
@@ -156,6 +158,32 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
       && ['draft', 'open'].includes(invoice?.status) && RENEWALS.has(invoice?.billing_reason);
     return subscription.status === 'trialing' || invoice?.status === 'paid' || renewing;
   }
+  async function verifyLegacyBusinessEnrollment(client, row, catalog, knownSession) {
+    if (accountTypeOf(row) === 'business') return true;
+    const cutoff = Date.parse(row.business_enrollment_cutoff);
+    if (!Number.isFinite(cutoff) || !row.stripe_customer_id) return false;
+    async function qualifies(session) {
+      if (!session || session.mode !== 'subscription' || session.status !== 'complete' || session.payment_status !== 'paid'
+        || !Number.isInteger(session.created) || session.created <= 0 || session.created * 1000 > cutoff || !checkOwner(session, row, true)) return false;
+      const lines = await stripe.checkout.sessions.listLineItems(session.id, { limit: 2 });
+      if (lines.data?.length !== 1) return false;
+      const item = lines.data[0], tier = catalog.allowedPrices.get(idOf(item.price));
+      return tier === 'business' && item.quantity === 1
+        || tier === 'business_team' && Number.isInteger(item.quantity) && item.quantity >= 2 && item.quantity <= 100;
+    }
+    let eligible = knownSession ? await qualifies(knownSession) : false;
+    if (!eligible && !knownSession) {
+      let inspected = 0;
+      for await (const session of stripe.checkout.sessions.list({ customer: row.stripe_customer_id, status: 'complete', limit: 100 })) {
+        if (++inspected > 100) throw fault(409, 'Previous Business payment history needs review. Contact support before subscribing again.');
+        if (await qualifies(session)) { eligible = true; break; }
+      }
+    }
+    if (!eligible) return false;
+    const result = await client.query("UPDATE users SET account_type='business',business_billing_review=false WHERE id=$1 RETURNING *", [row.id]);
+    Object.assign(row, result.rows[0]);
+    return true;
+  }
   async function applySubscription(client, row, subscription, catalog, { allowLink = false } = {}) {
     if (!checkOwner(subscription, row)) return 'customer_mismatch';
     const tier = tierFor(subscription, catalog);
@@ -167,6 +195,15 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
     // A delayed checkout/cancellation for an old subscription must never
     // replace or revoke the newer subscription in the same membership slot.
     if (current && current !== subscription.id) return 'different_subscription';
+    if (tier === 'business' && !ENDED.has(subscription.status)
+      && !await verifyLegacyBusinessEnrollment(client, row, catalog)) {
+      // An old portal or out-of-policy payment must not silently convert a
+      // personal account. Preserve its existing access and surface the billing
+      // mismatch for customer/support review; never cancel/refund blindly.
+      const result = await client.query('UPDATE users SET business_billing_review=true WHERE id=$1 RETURNING *', [row.id]);
+      Object.assign(row, result.rows[0]);
+      return 'business_registration_required';
+    }
     const paid = await hasPaidInvoice(subscription);
     const active = !row.billing_closed && !!tier && !wrongKind && ACTIVE.has(subscription.status) && paid;
     const linkedId = ENDED.has(subscription.status) ? null : subscription.id;
@@ -197,6 +234,7 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
     const subId = idOf(session.subscription);
     if (!subId) return 'missing_subscription';
     const subscription = await readSubscription(subId);
+    if (tierFor(subscription, catalog) === 'business') await verifyLegacyBusinessEnrollment(client, row, catalog, session);
     return applySubscription(client, row, subscription, catalog, { allowLink: true });
   }
   async function handleEvent(event) {
@@ -325,6 +363,7 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
     // accepts a request reuses this key, including on a different API worker.
     await transaction(async client => {
       const row = await lockUser(client, userId);
+      if (tier === 'business' && row && !await verifyLegacyBusinessEnrollment(client, row, catalog)) throw fault(403, businessRegistrationMessage);
       checkCheckoutAllowed(row, slot);
       const customer = await getOrCreateCustomer(client, row);
       const { rows: priorAttempts } = await client.query('SELECT * FROM billing_checkout_attempts WHERE user_id=$1 AND slot=$2', [userId, slot]);
@@ -367,6 +406,7 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
       let changed;
       const session = await transaction(async client => {
         const row = await lockUser(client, userId);
+        if (tier === 'business' && row && !await verifyLegacyBusinessEnrollment(client, row, catalog)) throw fault(403, businessRegistrationMessage);
         checkCheckoutAllowed(row, slot);
         const { rows: [pending] } = await client.query('SELECT * FROM billing_checkout_attempts WHERE user_id=$1 AND slot=$2 FOR UPDATE', [userId, slot]);
         if (!pending || pending.customer_id !== row.stripe_customer_id) throw fault(409, 'Billing account changed. Please contact support.');
@@ -456,6 +496,9 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
     const result = await transaction(async client => {
       const row = await lockUser(client, userId);
       if (!row) throw fault(404, 'Profile record not found.');
+      // Former paid Business customers need their account track restored even
+      // when every old subscription is canceled and no new checkout is shown.
+      await verifyLegacyBusinessEnrollment(client, row, catalog);
       const { rows: attempts } = await client.query('SELECT * FROM billing_checkout_attempts WHERE user_id=$1', [userId]);
       for (const attempt of attempts) {
         if (attempt.session_id && !row[SLOTS[attempt.slot]]) {
@@ -514,7 +557,9 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
         }
       }
       updated = row;
-      return { plan: row.plan || 'free', businessSeats: row.business_seats || 0, resumeBuilderAddon: !!row.resume_builder_addon, vpnConnectorAddon: !!row.vpn_connector_addon,
+      return { plan: row.plan || 'free', accountType: accountTypeOf(row), businessSeats: row.business_seats || 0, resumeBuilderAddon: !!row.resume_builder_addon, vpnConnectorAddon: !!row.vpn_connector_addon,
+        businessEnrollmentRequired: !!row.business_billing_review,
+        billingNotice: row.business_billing_review ? 'Business billing activity on this personal account needs review. Contact support@uficonnect.org before making another payment. Your account has not been converted.' : null,
         hasBillingAccount: !!row.stripe_customer_id, subscriptions,
         paymentProvider: 'stripe', management: 'hosted_portal' };
     });
@@ -529,7 +574,36 @@ function createBilling({ db, stripe, getCatalog, frontendBase, onUserUpdated = (
     const customer = await stripe.customers.retrieve(row.stripe_customer_id);
     if (customer.deleted || (customer.metadata?.uficonnect_user_id && customer.metadata.uficonnect_user_id !== row.id)) throw fault(409, 'Billing account ownership needs review.');
     const returnUrl = returnPath == null ? `${frontendBase}/settings` : new URL(returnPath, new URL(frontendBase).origin).href;
-    const session = await stripe.billingPortal.sessions.create({ customer: row.stripe_customer_id, return_url: returnUrl });
+    let configuration;
+    if (accountTypeOf(row) !== 'business') {
+      const policy = 'uficonnect-personal-management-v1';
+      const safe = config => config?.active === true && config.features?.subscription_update?.enabled === false
+        && config.features?.payment_method_update?.enabled === true && config.features?.invoice_history?.enabled === true
+        && config.features?.subscription_cancel?.enabled === true && config.features.subscription_cancel.mode === 'at_period_end';
+      if (!stripe.billingPortal.configurations?.list || !stripe.billingPortal.configurations?.create) throw fault(503, 'Personal billing management is temporarily unavailable. Please try again later.');
+      let inspected = 0;
+      for await (const config of stripe.billingPortal.configurations.list({ active: true, limit: 100 })) {
+        if (++inspected > 100) throw fault(503, 'Billing management settings need review. Please contact support.');
+        if (config.metadata?.uficonnect_policy === policy) {
+          if (!safe(config)) throw fault(503, 'Billing management settings need review. Please contact support.');
+          configuration = config.id; break;
+        }
+      }
+      if (!configuration) {
+        const config = await stripe.billingPortal.configurations.create({
+          metadata: { uficonnect_policy: policy },
+          business_profile: { headline: 'Manage your UFIconnect membership', privacy_policy_url: frontendBase + '/privacy', terms_of_service_url: frontendBase + '/terms' },
+          default_return_url: frontendBase + '/settings',
+          features: { customer_update: { enabled: true, allowed_updates: ['email', 'address', 'phone', 'tax_id'] },
+            payment_method_update: { enabled: true }, invoice_history: { enabled: true },
+            subscription_cancel: { enabled: true, mode: 'at_period_end', proration_behavior: 'none' },
+            subscription_update: { enabled: false } },
+        }, { idempotencyKey: policy });
+        if (!safe(config) || typeof config.id !== 'string') throw fault(503, 'Billing management settings could not be verified.');
+        configuration = config.id;
+      }
+    }
+    const session = await stripe.billingPortal.sessions.create({ customer: row.stripe_customer_id, return_url: returnUrl, ...(configuration ? { configuration } : {}) });
     return { url: session.url };
   }
   async function prepareAccountDeletion(userId) {
