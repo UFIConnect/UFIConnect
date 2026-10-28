@@ -46,6 +46,16 @@
   },
   {
     "type": "rewrite",
+    "source": "/business/register",
+    "destination": "/business/register/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/business/register/",
+    "destination": "/business/register/index.html"
+  },
+  {
+    "type": "rewrite",
     "source": "/policies",
     "destination": "/policies/index.html"
   },
@@ -163,6 +173,16 @@
     "type": "rewrite",
     "source": "/forgot-password/",
     "destination": "/forgot-password/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/business/enrollment",
+    "destination": "/business/enrollment/index.html"
+  },
+  {
+    "type": "rewrite",
+    "source": "/business/enrollment/",
+    "destination": "/business/enrollment/index.html"
   },
   {
     "type": "rewrite",

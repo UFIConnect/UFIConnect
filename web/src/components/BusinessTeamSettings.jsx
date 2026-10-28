@@ -3,12 +3,14 @@ import { useLocation, useNavigate, Link } from 'react-router-dom';
 import client from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { publicSiteUrl } from '../utils/publicSiteUrl.mjs';
+import { isBusinessAccount } from '../businessAccount.mjs';
 
 export default function BusinessTeamSettings() {
   const { profile, refreshProfile } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const inviteToken = new URLSearchParams(location.hash.slice(1)).get('invite') || '';
+  const businessAccount = isBusinessAccount(profile);
   const [team, setTeam] = useState(null);
   const [invitation, setInvitation] = useState(null);
   const [email, setEmail] = useState('');
@@ -43,6 +45,10 @@ export default function BusinessTeamSettings() {
 
   async function act(operation, success, { refreshAccount = false, accepted = false } = {}) {
     if (busy) return;
+    if (!businessAccount) {
+      setError('This action requires a Business account created through public registration. Personal accounts cannot be converted.');
+      return;
+    }
     const request = generation.current;
     setBusy(true); setError(''); setNotice('');
     try {
@@ -68,14 +74,15 @@ export default function BusinessTeamSettings() {
     {loading && <p role="status">Checking team membership…</p>}
     {error && <p role="alert" className="auth-error">{error}</p>}
     {notice && <p role="status">{notice}</p>}
+    {inviteToken && !businessAccount && <p role="status">This invitation requires a Business account. Personal accounts cannot be converted. Create a separate account through public Business registration, then ask the team owner to invite that Business account’s email.</p>}
     {inviteToken && invitation && <div>
       <p><strong>{invitation.owner.organization || invitation.owner.name}</strong> invited <strong>{invitation.email}</strong> to its Business recruiting workspace.</p>
-      <p style={{ color: 'var(--muted)', fontSize: '.85rem' }}>Accepting uses one seat paid for by the team owner. Your personal subscription and saved account content stay with your account. You can leave the team at any time.</p>
+      <p style={{ color: 'var(--muted)', fontSize: '.85rem' }}>Accepting uses one seat paid for by the team owner. Your billing and saved account content stay with your account. You can leave the team at any time.</p>
       {!invitation.active && <p role="status">The team owner needs an active membership for two or more people before you can join.</p>}
-      <button type="button" className="btn btn-primary" disabled={busy || loading || !invitation.active}
+      {businessAccount && <button type="button" className="btn btn-primary" disabled={busy || loading || !invitation.active}
         onClick={() => act(() => client.post('/business/team/accept', { token: inviteToken }), 'You joined the Business team.', { refreshAccount: true, accepted: true })}>
         {busy ? 'Joining…' : 'Accept invitation'}
-      </button>
+      </button>}
     </div>}
     {!inviteToken && team?.role === 'owner' && <>
       <p style={{ margin: 0 }}>{team.active ? `${team.used} of ${team.seats} seats assigned. Your own account uses one seat.` : 'Your membership is inactive. Assigned teammates currently have no access through this team.'}</p>
@@ -83,10 +90,10 @@ export default function BusinessTeamSettings() {
         event.preventDefault();
         act(() => client.post('/business/team/invitations', { email }), 'Invitation created. Copy and share the link with your teammate.');
       }} style={{ display: 'grid', gap: 8 }}>
-        <label className="form-label" htmlFor="business-team-email">Teammate’s registered email</label>
+        <label className="form-label" htmlFor="business-team-email">Teammate’s Business account email</label>
         <input id="business-team-email" className="form-input" type="email" required maxLength={254} value={email} onChange={event => setEmail(event.target.value)} placeholder="teammate@company.com" disabled={busy} />
         <button type="submit" className="btn btn-primary btn-sm" disabled={busy || loading || !email.trim()}>{busy ? 'Saving…' : 'Create invitation link'}</button>
-        <p style={{ margin: 0, color: 'var(--muted)', fontSize: '.8rem' }}>Links expire in seven days and can only be accepted by that account. Invitations reserve an available seat. No email is sent automatically.</p>
+        <p style={{ margin: 0, color: 'var(--muted)', fontSize: '.8rem' }}>Your teammate must first create a Business account from public registration. Links expire in seven days and can only be accepted by that account. Invitations reserve an available seat. No email is sent automatically.</p>
       </form> : <p><Link to="/settings">Manage billing</Link> to review your membership and number of people.</p>}
       {inviteLink && <div style={{ display: 'grid', gap: 8 }}>
         <label className="form-label" htmlFor="business-team-link">Invitation link</label>

@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Link, Navigate, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { Plus, ArrowLeft, ArrowRight, Copy, RefreshCw } from 'lucide-react';
 import Layout from '../components/Layout';
+import BusinessAccessNotice from '../components/BusinessAccessNotice';
+import { isBusinessAccount } from '../businessAccount.mjs';
 import api from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { summarizeJob } from '../utils/jobSummary.mjs';
@@ -35,6 +37,11 @@ function Detail({ post, own = false }) {
 }
 export default function BusinessPosts() {
   const { profile } = useAuth();
+  if (!isBusinessAccount(profile) || profile?.plan !== 'business') return <Layout><BusinessAccessNotice title="Posts & comparisons" /></Layout>;
+  return <BusinessPostsContent key={profile.id} profile={profile} />;
+}
+
+function BusinessPostsContent({ profile }) {
   const [params, setParams] = useSearchParams();
   const postId = params.get('post');
   const [page, setPage] = useState(1);
@@ -55,7 +62,6 @@ export default function BusinessPosts() {
       .finally(() => { if (active) setPending(false); });
     return () => { active = false; };
   }, [postId, page, similarPage, refresh]);
-  if (profile?.plan !== 'business') return <Navigate to="/settings" replace />;
   function reuse(post) { privateSessionStorage.setItem(`ufi_business_post_draft:${profile.id}`, JSON.stringify(post.details)); }
   const other = comparison?.posts.find(post => post.id === selected);
   return <Layout>

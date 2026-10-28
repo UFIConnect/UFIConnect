@@ -6,6 +6,7 @@ import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import client from '../api/client';
 import HomeFeedTools from './HomeFeedTools';
 import BusinessLayout from './BusinessLayout';
+import { isBusinessAccount } from '../businessAccount.mjs';
 import JobsSidebarControls from './JobsSidebarControls';
 import NotificationInbox from './NotificationInbox';
 import MessagesPopup from './MessagesPopup';
@@ -126,7 +127,7 @@ function SavedNavigation({ mobile = false, expanded, onToggle, onNavigate }) {
 
 export default function Layout(props) {
   const { profile } = useAuth();
-  return profile?.plan === 'business' ? <BusinessLayout>{props.children}</BusinessLayout> : <PersonalLayout {...props} />;
+  return isBusinessAccount(profile) ? <BusinessLayout>{props.children}</BusinessLayout> : <PersonalLayout {...props} />;
 }
 
 function PersonalLayout({ children, wide = false, feedSearch, hideSearch = false, discoveryPost, mobileRightMenu, mediaPage = false }) {

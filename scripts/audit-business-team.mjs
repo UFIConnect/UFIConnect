@@ -30,11 +30,12 @@ try {
     });
     const errors = []; const mutations = []; const requestUrls = [];
     let current = 'team-owner'; let invitation = null; let joined = false; let generation = 0; let rejectInvite = false;
-    let authenticated = true; let onboardingComplete = true;
+    let authenticated = true; let onboardingComplete = true; let aliceBusinessAccount = false;
     const owner = { id: 'team-owner', name: 'Team owner', organization: 'Talent Company' };
     const borrowed = () => ({ ownerId: owner.id, ownerName: owner.name, organization: owner.organization, seats: 3, active: joined });
     const profile = () => ({ ...app.fullProfile(app.users.find(user => user.id === current)),
       onboardingComplete: current === 'team-owner' || onboardingComplete,
+      accountType: current === 'team-owner' || aliceBusinessAccount ? 'business' : 'personal',
       plan: current === 'team-owner' || joined ? 'business' : 'pro',
       personalPlan: current === 'team-owner' ? 'business' : 'pro',
       businessTeam: current === 'team-alice' && joined ? borrowed() : null,
@@ -91,7 +92,7 @@ try {
 
     await page.goto(server.origin + '/recruiting');
     await page.getByRole('heading', { name: 'Talent Company recruiting', exact: true }).waitFor();
-    const email = page.getByLabel('Teammate’s registered email', { exact: true });
+    const email = page.getByLabel('Teammate’s Business account email', { exact: true });
     await email.fill('alice@example.invalid');
     rejectInvite = true;
     await page.getByRole('button', { name: 'Create invitation link', exact: true }).click();
@@ -124,6 +125,11 @@ try {
     await page.goto(server.origin + '/recruiting#invite=' + 'X'.repeat(43));
     await page.getByText('This invitation is unavailable for your signed-in account.', { exact: true }).waitFor();
     check(await page.getByRole('button', { name: 'Accept invitation', exact: true }).count() === 0, 'Invalid invitations cannot be accepted');
+    await page.goto(invitationUrl);
+    await page.getByText(/This invitation requires a Business account/).waitFor();
+    check(await page.getByRole('button', { name: 'Accept invitation', exact: true }).count() === 0, 'A personal account cannot convert by accepting a Business seat');
+    check(mutations.every(item => item.endpoint !== '/business/team/accept'), 'Viewing an invitation never starts an account conversion');
+    aliceBusinessAccount = true;
     const onboardingInvitation = new URL(invitationUrl);
     onboardingInvitation.search = '?source=team-invite';
     for (const session of ['signed-out', 'restored']) {
@@ -135,20 +141,12 @@ try {
         await page.locator('input[name="password"]').fill('Synthetic test password only');
         await page.getByRole('button', { name: 'Sign in', exact: true }).click();
       }
-      await page.getByRole('heading', { name: 'What best describes you?', exact: true }).waitFor();
-      check(new URL(page.url()).pathname === '/onboarding', `${session} invitee completes onboarding before viewing the invitation`);
-      await page.reload();
-      await page.getByRole('heading', { name: 'What best describes you?', exact: true }).waitFor();
-      await page.getByRole('button', { name: /^Software Engineer / }).click();
-      await page.getByRole('button', { name: 'Continue', exact: true }).click();
-      await page.getByRole('heading', { name: 'What topics interest you?', exact: true }).waitFor();
-      await page.getByRole('region', { name: 'Choose topics', exact: true }).getByRole('button', { name: 'Remove Career Growth', exact: true }).waitFor();
-      await page.getByRole('button', { name: 'Continue', exact: true }).click();
-      await page.getByRole('button', { name: /^Mid-level / }).click();
-      await page.getByRole('button', { name: 'Finish setup', exact: true }).click();
       await page.getByRole('button', { name: 'Accept invitation', exact: true }).waitFor();
-      check(page.url() === onboardingInvitation.href, `${session} onboarding preserves the full invitation path, query, and fragment after reload`);
-      check(!joined, `${session} onboarding does not accept the invitation automatically`);
+      check(await page.getByRole('heading', { name: 'What best describes you?', exact: true }).count() === 0, `${session} Business invitee does not enter the personal onboarding wizard`);
+      await page.reload();
+      await page.getByRole('button', { name: 'Accept invitation', exact: true }).waitFor();
+      check(page.url() === onboardingInvitation.href, `${session} Business sign-in preserves the full invitation path, query, and fragment after reload`);
+      check(!joined, `${session} sign-in does not accept the invitation automatically`);
       check(await page.locator('.business-team-settings').getByText('alice@example.invalid', { exact: true }).isVisible(), `${session} invitee returns to the correct invitation`);
     }
     await page.goto(invitationUrl);
@@ -168,8 +166,11 @@ try {
     check(await page.getByRole('button', { name: 'Upgrade', exact: true }).count() === 0, 'Active teammate is not prompted to buy another membership');
     await page.goto(server.origin + '/recruiting');
     await page.getByRole('button', { name: 'Leave team', exact: true }).click();
-    await page.waitForURL('**/settings');
-    check(!joined, 'Member can leave and return to their personal account');
+    await page.waitForURL('**/business/enrollment');
+    check(!joined, 'Member can leave the team while keeping their separate Business account');
+    await page.getByRole('heading', { name: 'Complete your Business membership', exact: true }).waitFor();
+    check(await page.getByRole('button', { name: 'Manage billing', exact: true }).isVisible(), 'The existing Pro subscription remains manageable after leaving a Business seat');
+    check(await page.getByRole('button', { name: 'Continue to Business checkout', exact: true }).count() === 0, 'An existing personal subscription cannot start a duplicate plan checkout');
 
     joined = true; current = 'team-owner';
     await page.goto(server.origin + '/recruiting');

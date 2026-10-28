@@ -22,7 +22,7 @@ after(async () => { await pg.close(); });
 beforeEach(async () => {
   await pg.exec('TRUNCATE users CASCADE');
   for (const [id, name, plan, seats] of [[OWNER, 'Owner', 'business', 3], [ALICE, 'Alice', 'pro', 0], [BOB, 'Bob', 'free', 0], [OTHER, 'Other', 'business', 2]]) {
-    await pg.query('INSERT INTO users(id,name,email,organization,plan,business_seats) VALUES($1,$2,$3,$4,$5,$6)', [id, name, `${name.toLowerCase()}@example.invalid`, `${name} company`, plan, seats]);
+    await pg.query("INSERT INTO users(id,name,email,organization,plan,business_seats,account_type) VALUES($1,$2,$3,$4,$5,$6,'business')", [id, name, `${name.toLowerCase()}@example.invalid`, `${name} company`, plan, seats]);
   }
 });
 
@@ -210,6 +210,30 @@ test('unavailable storage or billing fails closed and cannot grant a new seat', 
   f.offline();
   await assert.rejects(f.teams.effectiveMembership(ALICE), { status: 503 });
   await assert.rejects(f.teams.list(OWNER), { status: 503 });
+});
+
+test('personal accounts cannot be invited or accept a previously issued Business invitation', async () => {
+  const { teams } = fixture();
+  await pg.query("UPDATE users SET account_type='personal' WHERE id=$1", [ALICE]);
+  await assert.rejects(invite(teams), { status: 403 });
+  assert.equal((await pg.query('SELECT COUNT(*)::int AS n FROM business_team_invitations')).rows[0].n, 0);
+  await pg.query("UPDATE users SET account_type='business' WHERE id=$1", [ALICE]);
+  const invitation = await invite(teams);
+  await pg.query("UPDATE users SET account_type='personal' WHERE id=$1", [ALICE]);
+  assert.equal((await teams.inspectInvitation(ALICE, { token: tokenOf(invitation) })).email, 'alice@example.invalid');
+  await assert.rejects(teams.accept(ALICE, { token: tokenOf(invitation) }), { status: 403 });
+  assert.equal(await teams.effectiveMembership(ALICE), null);
+});
+
+test('schema reruns retain pre-policy accepted teammates without promoting pending personal invitees', async () => {
+  const { teams } = fixture();
+  const joined = await invite(teams); await teams.accept(ALICE, { token: tokenOf(joined) });
+  await invite(teams, BOB);
+  await pg.query("UPDATE users SET account_type='personal',business_enrollment_cutoff=NOW() WHERE id=ANY($1::uuid[])", [[ALICE, BOB]]);
+  for (const sql of BUSINESS_TEAM_SCHEMA) await pg.exec(sql);
+  const { rows } = await pg.query('SELECT id,account_type FROM users WHERE id=ANY($1::uuid[]) ORDER BY id', [[ALICE, BOB]]);
+  assert.deepEqual(rows.map(row => row.account_type), ['business', 'personal']);
+  assert.equal((await teams.effectiveMembership(ALICE)).active, true);
 });
 
 test('authenticated profiles and career catalog derive team access without overwriting personal plan', async t => {

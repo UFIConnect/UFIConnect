@@ -1,6 +1,7 @@
 // Public HTML is rendered from the same components visitors use. Member data
 // is never fetched or embedded during a build.
 export const publicRoutes = [
+  { path: '/business/register', page: 'businessRegister', title: 'Create a Business account | UFIconnect', description: 'Create a company recruiting account for industry spaces, job posting, candidate conversations, and Business cross-posting.', index: true },
   { path: '/policies', page: 'policies', title: 'Policies and safety | UFIConnect', description: 'Read UFIConnect policies for connected services, safety, content reporting, retention, security, and advertising.', index: true },
   { path: '/copyright', page: 'copyright', title: 'Copyright and DMCA policy | UFIConnect', description: 'How to report a copyright concern, submit a counter-notification, and understand UFIConnect copyright procedures.', index: true },
   { path: '/vault-device', page: 'vaultDevice', title: 'Vault device | UFIConnect', description: 'Explore the planned UFI Vault device, its development status, and the password tools available in the browser today.', index: true },
@@ -15,6 +16,6 @@ export const publicRoutes = [
   { path: '/child-safety', page: 'childSafety', title: 'Child safety standards | UFIconnect', description: 'Learn about UFIconnect child safety standards, prohibited content, and how to report a safety concern.', index: true },
   { path: '/forgot-password', page: 'forgotPassword', title: 'Reset your password | UFIconnect', description: 'Request a password-reset link for your UFIconnect account and learn how to return to sign-in.', index: false },
 ];
-export const memberRoutes = ['/recruiting','/career-posts','/business-posts','/business/industries','/business/cross-post','/jobs/new','/analytics','/vault','/vault/device','/maps','/people','/reset-password','/onboarding','/videos','/you','/music','/groups','/groups/post','/opportunities','/resume-builder','/resume-builder/cover-letter/preview','/messages','/notifications','/profile','/command-center','/connected-accounts','/post','/settings','/sources','/saved/posts','/saved/jobs'];
+export const memberRoutes = ['/business/enrollment','/recruiting','/career-posts','/business-posts','/business/industries','/business/cross-post','/jobs/new','/analytics','/vault','/vault/device','/maps','/people','/reset-password','/onboarding','/videos','/you','/music','/groups','/groups/post','/opportunities','/resume-builder','/resume-builder/cover-letter/preview','/messages','/notifications','/profile','/command-center','/connected-accounts','/post','/settings','/sources','/saved/posts','/saved/jobs'];
 export const dynamicRoutes = ['/centers/:kind','/groups/:id','/opportunities/:id','/messages/:userId','/p/:id','/u/:id','/snaps/:id'];
 export const redirectRoutes = [{ source:'/how-office-works', destination:'/how-it-works' },{ source:'/global-scroll', destination:'/global' },{ source:'/hq', destination:'/command-center' },{ source:'/agents', destination:'/command-center' }];

@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import useBillingConfig from '../hooks/useBillingConfig';
 import { isNativeRuntime } from '../nativeRuntime.mjs';
+import { useAuth } from '../contexts/AuthContext';
+import { isBusinessAccount, membershipTiersForAccount } from '../businessAccount.mjs';
 import './PricingModal.css';
 
 export const TIERS = [
@@ -29,6 +31,10 @@ export const TIERS = [
 // backend, so a visible tier cannot be purchased until its Stripe Price is
 // configured in Render.
 export default function PricingModal({ onClose, onSelectTier, loadingTier, error }) {
+  const { profile } = useAuth();
+  const businessAccount = isBusinessAccount(profile);
+  const allowedTiers = membershipTiersForAccount(profile);
+  const visibleTiers = TIERS.filter(tier => allowedTiers.includes(tier.tier));
   const { config: billingConfig, error: configError, refresh: refreshBilling } = useBillingConfig();
   const [businessPeople, setBusinessPeople] = useState('1');
   const closeButton = useRef(null);
@@ -62,7 +68,7 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier, error
         boxShadow: '0 12px 40px rgba(0,0,0,.25)',
       }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 4 }}>
-          <h3 id="membership-title" style={{ margin: 0, fontSize: '1.15rem' }}>Upgrade UFIconnect</h3>
+          <h3 id="membership-title" style={{ margin: 0, fontSize: '1.15rem' }}>{businessAccount ? 'Business membership' : 'Upgrade UFIconnect'}</h3>
           <button
             ref={closeButton}
             onClick={onClose}
@@ -71,11 +77,11 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier, error
           >Close</button>
         </div>
         <p style={{ margin: '0 0 20px', fontSize: '.85rem', color: 'var(--muted)' }}>
-          Choose the membership that fits the work you want to do.
+          {businessAccount ? 'Choose the number of people covered by your Business membership.' : 'Add Pro tools to your personal account.'}
         </p>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {TIERS.map(t => {
+          {visibleTiers.map(t => {
             const quantity = t.tier === 'business' ? Number(businessPeople) : 1;
             const validQuantity = Number.isInteger(quantity) && quantity >= 1 && quantity <= 100;
             const priceTier = t.tier === 'business' && quantity >= 2 ? 'business_team' : t.tier;
@@ -139,13 +145,13 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier, error
         {error && <p role="alert" className="auth-error">{error}</p>}
         {!billingConfig && <p role="status">Loading current membership prices…</p>}
         {configError ? <p role="status">{configError}</p> : billingConfig && !billingConfig.paymentsReady && <p role="status">Membership checkout is currently unavailable. Please try again later.</p>}
-        {billingConfig && (!billingConfig.paymentsReady || ['pro', 'business', 'business_team'].some(tier => !billingConfig.tiers?.[tier])) && <button type="button" className="btn btn-ghost btn-sm" disabled={!!loadingTier} onClick={refreshBilling}>Check billing availability</button>}
-        {TIERS.filter(t => t.note).map(t => (
+        {billingConfig && (!billingConfig.paymentsReady || (businessAccount ? ['business', 'business_team'] : ['pro']).some(tier => !billingConfig.tiers?.[tier])) && <button type="button" className="btn btn-ghost btn-sm" disabled={!!loadingTier} onClick={refreshBilling}>Check billing availability</button>}
+        {visibleTiers.filter(t => t.note).map(t => (
           <p key={t.tier} style={{ margin: '12px 2px 0', fontSize: '.72rem', color: 'var(--muted)', fontStyle: 'italic' }}>
             {t.name}: {t.note}
           </p>
         ))}
-        {billingConfig && !configError && !billingConfig.tiers?.business && (
+        {businessAccount && billingConfig && !configError && !billingConfig.tiers?.business && (
           <p style={{ margin: '8px 2px 0', fontSize: '.72rem', color: 'var(--muted)' }}>
             Business checkout is currently unavailable. Please check again later.
           </p>

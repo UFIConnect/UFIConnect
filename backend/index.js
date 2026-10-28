@@ -51,6 +51,7 @@ const { BUSINESS_TEAM_SCHEMA, createBusinessTeams, registerBusinessTeamRoutes } 
 const { BUSINESS_POST_SCHEMA, createBusinessPosts, registerBusinessPostRoutes } = require('./business-posts');
 const { createJobPosts, registerJobPostRoutes } = require('./job-posts');
 const { BUSINESS_INDUSTRY_SCHEMA, createBusinessIndustries, registerBusinessIndustryRoutes } = require('./business-industries');
+const { accountTypeOf, businessRegistrationMessage, registrationDetails, businessAccountOptions } = require('./business-enrollment');
 const dotenv = require('dotenv');
 const http   = require('http');
 const https  = require('https');
@@ -16417,12 +16418,12 @@ function fullProfile(user) {
     connectedSocial: Object.fromEntries([...CONNECTED_SOCIAL_PLATFORMS].map(platform => [platform, connectedPlatforms.includes(platform)])),
     socialConnectedAt: Object.fromEntries(connectedPlatforms.map(platform => [platform, connectedSourceWindow(user, platform).connectedAt])),
     plan: user.plan || 'free',
+    accountType: accountTypeOf(user),
+    businessEnrollment: accountTypeOf(user) === 'business' ? { industryId: user.businessIndustryId || '' } : null,
     personalPlan: user.personalPlan || user.plan || 'free',
     businessTeam: user.businessTeam || null,
-    // Business is a superset tier, not a separate track — isPro true for
-    // either paid plan so any future Pro-gated feature doesn't also need
-    // its own Business check. isBusiness is the narrower one, for whatever
-    // ends up being Business-only.
+    // Paid feature entitlement remains independent from the signup track.
+    // Business includes Pro features; accountType persists after cancellation.
     isPro: ['pro', 'business'].includes(user.plan),
     isBusiness: user.plan === 'business',
     businessSeats: user.businessSeats || 0,
@@ -16497,6 +16498,8 @@ function dbRowToMemUser(row) {
     socialRefreshTokens: tokenVault.decryptMap(row.social_refresh_tokens, row.id, 'refresh'),
     socialConnectedAt: row.social_connected_at || {},
     plan: row.plan || 'free',
+    accountType: accountTypeOf(row),
+    businessIndustryId: row.business_industry_id || '',
     stripeCustomerId: row.stripe_customer_id || null,
     stripeSubscriptionId: row.stripe_subscription_id || null,
     businessSeats: row.business_seats || 0,
@@ -20148,7 +20151,25 @@ app.get('/auth/session', authenticate, async (req, res) => {
   res.json({ token: req.authToken, profile: await effectiveProfile(user) });
 });
 
+app.get('/auth/business-options', (_req, res) => res.json(businessAccountOptions()));
+
 app.post('/auth/register', officeMembers.signupMiddleware, registerLimiter, async (req, res) => {
+  let enrollment;
+  try { enrollment = registrationDetails(req.body); }
+  catch (error) { return res.status(error.status || 400).json({ message: error.message }); }
+  if (enrollment.accountType === 'business') {
+    const authHeader = req.headers.authorization;
+    const tokens = new Set([/^Bearer ([^\s]+)$/i.exec(authHeader || '')?.[1], cookieSessionToken(req)].filter(Boolean));
+    for (const token of tokens) {
+      let authenticated = false;
+      try { await resolveSession(token); authenticated = true; }
+      catch (error) { if (error.status === 503) return res.status(503).json({ message: error.message }); }
+      if (!authenticated && auth0Enabled) {
+        try { await verifyAuth0Token(token); authenticated = true; } catch { /* An expired session does not block public registration. */ }
+      }
+      if (authenticated) return res.status(409).json({ code: 'business_registration_required', message: businessRegistrationMessage });
+    }
+  }
   const { name, email, password, title, phone: phoneInput } = req.body || {};
   const passwordError = passwordPolicyError(password);
   if (typeof name !== 'string' || !name.trim() || typeof email !== 'string' ||
@@ -20166,8 +20187,9 @@ app.post('/auth/register', officeMembers.signupMiddleware, registerLimiter, asyn
       if (exists.rows.length) return res.status(409).json({ message: 'Email already registered.' });
       const hash = await bcrypt.hash(password, 12);
       const { rows } = await db.query(
-        `INSERT INTO users (name, email, phone, password_hash, title) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-        [name.trim(), emailLc, phone, hash, title || null]
+        `INSERT INTO users (name, email, phone, password_hash, title, account_type, organization, business_industry_id, onboarding_complete)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        [name.trim(), emailLc, phone, hash, title || null, enrollment.accountType, enrollment.organization, enrollment.industryId, enrollment.accountType === 'business']
       );
       const mem = syncToMemory(dbRowToMemUser(rows[0]));
       const token = await issueSession(mem);
@@ -20885,6 +20907,9 @@ app.get('/feed/location', (_req, res, next) => {
 });
 
 app.patch('/profile', authenticate, async (req, res) => {
+  if (Object.keys(req.body || {}).some(key => ['accountType', 'account_type', 'businessEnrollment', 'business_industry_id', 'businessIndustryId'].includes(key))) {
+    return res.status(400).json({ message: 'Account type is chosen at registration and cannot be changed from profile settings.' });
+  }
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
   if (isDBId(user.id) && !db.isConnected()) {

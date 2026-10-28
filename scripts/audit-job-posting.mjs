@@ -59,7 +59,9 @@ try {
       return fulfill({ posts: [], items: [], sources: [], members: [], invitations: [], role: 'owner', active: true, seats: 1, used: 1, owner: { name: 'Audit publisher' } });
     });
     await installAuditMember(page, app, 'job-publisher-audit');
-    await auditNavigate(page, server.origin + '/opportunities');
+    await auditNavigate(page, server.origin + '/recruiting');
+    await page.getByRole('heading', { name: 'Example employer recruiting', exact: true }).waitFor();
+    await page.getByRole('navigation', { name: 'Business workspace' }).getByRole('link', { name: 'Jobs', exact: true }).click();
     await page.getByRole('list', { name: 'Live jobs' }).getByRole('listitem').first().waitFor();
     if (width < 769) await page.locator('.jobs-business-mobile-controls > summary').click();
     const jobTools = page.locator(width < 769 ? '.jobs-business-mobile-controls' : '.jobs-page-right-tabs');
@@ -140,8 +142,10 @@ try {
     currentUser = app.users[1];
     await installAuditMember(page, app, 'job-reader-audit');
     await auditNavigate(page, server.origin + '/jobs/new');
-    await page.getByRole('heading', { name: 'Job posting is included with Business', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Post a job', exact: true }).waitFor();
+    await page.getByText('Business accounts are created through the public Business registration before signing in. Your personal account cannot be converted into a Business account.', { exact: true }).waitFor();
     check(await page.getByRole('button', { name: 'Publish job', exact: true }).count() === 0, 'Non-Business member receives a membership gate');
+    check(await page.getByRole('link', { name: 'Continue Business membership', exact: true }).count() === 0, 'Personal accounts cannot enroll in Business from job posting');
     check(await page.getByRole('link', { name: 'Browse jobs', exact: true }).isVisible(), 'Membership gate retains access to browsing');
     await page.getByRole('link', { name: 'Browse jobs', exact: true }).click();
     await page.getByRole('list', { name: 'Live jobs' }).getByRole('listitem').first().waitFor();

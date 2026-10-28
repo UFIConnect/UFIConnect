@@ -75,9 +75,12 @@ async function exportAccountData(db, userId) {
       onboarding_complete AS "onboardingComplete",profile_hidden AS "profileHidden",
       role,experience,goals,interests,links,role_settings AS "roleSettings",
       auth_provider AS "signInProvider",social_connected_at AS "connectedAccounts",
+      account_type AS "accountType",business_industry_id AS "businessIndustryId",
       created_at AS "createdAt" FROM users WHERE id=$1`);
     if (!profile) throw Object.assign(new Error('Account not found.'), { status: 404 });
     profile.preferences = { role: profile.role, experience: profile.experience, goals: profile.goals, interests: profile.interests };
+    profile.businessEnrollment = profile.accountType === 'business' ? { industryId: profile.businessIndustryId || '' } : null;
+    delete profile.businessIndustryId;
     delete profile.role; delete profile.experience; delete profile.goals; delete profile.interests;
     const [billing] = await rows(`SELECT plan,business_seats AS "businessSeats",resume_builder_addon AS "resumeBuilderAddon",vpn_connector_addon AS "vpnConnectorAddon",
       stripe_customer_id AS "customerId",stripe_subscription_id AS "subscriptionId",
@@ -124,9 +127,9 @@ async function exportAccountData(db, userId) {
       resumeDrafts: `SELECT id,template,data,updated_at AS "updatedAt" FROM resume_drafts WHERE user_id=$1 ORDER BY id`,
       crossPosts: `SELECT id,content,media_url AS "mediaUrl",targets,created_at AS "createdAt" FROM cross_posts WHERE user_id=$1 ORDER BY created_at,id`,
       businessPosts: `SELECT id,details,content,targets,status,native_post_id AS "nativePostId",created_at AS "createdAt" FROM business_posts WHERE user_id=$1 ORDER BY created_at,id`,
-      businessIndustryWorkspaces: `SELECT id,industry_id AS "industryId",name,source_ids AS "sourceIds",created_at AS "createdAt",updated_at AS "updatedAt"
+      businessIndustryWorkspaces: `SELECT id,industry_id AS "industryId",name,source_ids AS "sourceIds",created_at AS "createdAt",updated_at AS "updatedAt",archived_at AS "archivedAt"
         FROM business_industry_workspaces WHERE owner_id=$1 ORDER BY created_at,id`,
-      businessIndustryPosts: `SELECT id,workspace_id AS "workspaceId",title,content,media_url AS "mediaUrl",targets,status,created_at AS "createdAt"
+      businessIndustryPosts: `SELECT id,workspace_id AS "workspaceId",title,content,media_url AS "mediaUrl",targets,status,created_at AS "createdAt",updated_at AS "updatedAt",version
         FROM business_industry_posts WHERE author_id=$1 ORDER BY created_at,id`,
       ownedGroups: `SELECT id,name,category,description,is_private AS "isPrivate",created_at AS "createdAt"
         FROM community_groups WHERE created_by=$1 ORDER BY created_at,id`,

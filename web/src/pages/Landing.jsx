@@ -106,7 +106,7 @@ function PlanCard({ title, price, tagline }) {
           <span>For 2 or more people, including the owner. A workspace for recruiting, candidates, and career sources.</span>
         </div>
       )}
-      <Link to="/settings" className="landing-plan-link">View {title} membership</Link>
+      <Link to={title === 'Business' ? '/business/register' : '/settings'} className="landing-plan-link">{title === 'Business' ? 'Create a Business account' : `View ${title} membership`}</Link>
     </div>
   );
 }

@@ -32,9 +32,10 @@ const cleanPath = value => {
 try {
   await fs.mkdir(output, { recursive: true });
   for (const width of [1440, 390]) {
-    for (const surface of ['command', 'settings', 'vault', 'resume']) {
+    for (const surface of ['command', 'settings', 'business', 'vault', 'resume']) {
       const userId = `billing-return-${surface}-${width}`;
       const user = member(userId, { name: 'Synthetic billing member', organization: 'Fixture Recruiting',
+        accountType: surface === 'business' ? 'business' : 'personal',
         resumeBuilderAddon: false, vpnConnectorAddon: false });
       app.seedUser(user);
       const context = await browser.newContext({ viewport: { width, height: 1000 }, serviceWorkers: 'block', reducedMotion: 'reduce' });
@@ -43,7 +44,7 @@ try {
       let billingReads = 0, profileReads = 0, sequence = 0, stripeReturn;
       let outcome = 'success';
       page.on('pageerror', error => errors.push(error.message));
-      const status = () => ({ plan: user.plan, effectivePlan: user.plan,
+      const status = () => ({ plan: user.plan, effectivePlan: user.plan, accountType: user.accountType,
         resumeBuilderAddon: user.resumeBuilderAddon, vpnConnectorAddon: user.vpnConnectorAddon,
         hasBillingAccount: user.plan !== 'free' || user.resumeBuilderAddon || user.vpnConnectorAddon,
         businessSeats: user.plan === 'business' ? 1 : 0,
@@ -102,6 +103,7 @@ try {
       const paths = {
         command: '/command-center?tab=yourfeed&view=published#source-posts',
         settings: '/settings?section=membership&view=account#membership-settings-title',
+        business: '/business/enrollment',
         vault: '/vault?section=passwords&view=account#vpn-subscription-title',
         resume: '/resume-builder?tab=cover-letter&view=draft#writing',
       };
@@ -109,6 +111,7 @@ try {
       const waitSurface = async () => {
         if (surface === 'command') await page.getByRole('heading', { name: 'Command Center', exact: true }).waitFor();
         if (surface === 'settings') await page.getByRole('heading', { name: `${user.plan === 'business' ? 'Business' : user.plan === 'pro' ? 'Pro' : 'Free'} plan`, exact: true }).waitFor();
+        if (surface === 'business') await page.getByRole('heading', { name: user.plan === 'business' ? 'Your recruiting workspace is ready' : 'Complete your Business membership', exact: true }).waitFor();
         if (surface === 'vault') await page.locator('.vault-page').waitFor();
         if (surface === 'resume') await page.getByRole('heading', { name: 'Resume Builder', exact: true }).first().waitFor();
       };
@@ -157,9 +160,12 @@ try {
       if (surface === 'command' || surface === 'settings') {
         const choose = async tier => {
           await page.getByRole('button', { name: surface === 'command' ? 'Upgrade to unlock' : 'Upgrade', exact: true }).click();
-          await page.getByRole('dialog', { name: 'Upgrade UFIconnect' }).getByRole('button', { name: `Choose ${tier}`, exact: true }).click();
+          const dialog = page.getByRole('dialog', { name: 'Upgrade UFIconnect' });
+          assert.equal(await dialog.getByRole('button', { name: 'Choose Business', exact: true }).count(), 0, 'Personal upgrade offers no Business conversion');
+          await dialog.getByRole('button', { name: `Choose ${tier}`, exact: true }).click();
         };
         if (surface === 'command') {
+          assert.equal(await page.getByText('$199.94', { exact: false }).count(), 0, 'Personal Command Center does not advertise a Business upgrade');
           await checkout({ tier: 'pro', quantity: 1 }, () => choose('Pro'), 'cancelled');
           await page.getByRole('heading', { name: 'Unlock the Command Center', exact: true }).waitFor();
           await reload();
@@ -173,13 +179,26 @@ try {
           await reload();
           assert.equal(await page.getByRole('tab', { name: 'Your Feed', exact: true }).getAttribute('aria-selected'), 'true', 'Paid Command Center return keeps its tab after reload');
         } else {
-          await checkout({ tier: 'business', quantity: 1 }, () => choose('Business'), 'success', () => { user.plan = 'business'; });
-          await page.getByRole('heading', { name: 'Business plan', exact: true }).waitFor();
-          assert.equal(new URL(page.url()).pathname, '/settings', 'Confirmed Business membership keeps the Settings return route');
+          await checkout({ tier: 'pro', quantity: 1 }, () => choose('Pro'), 'success', () => { user.plan = 'pro'; });
+          await page.getByRole('heading', { name: 'Pro plan', exact: true }).waitFor();
+          assert.equal(new URL(page.url()).pathname, '/settings', 'Confirmed personal membership keeps the Settings return route');
           await reload();
           await portal(() => page.getByRole('button', { name: 'Manage billing', exact: true }).click());
           await reload();
         }
+      } else if (surface === 'business') {
+        const enroll = () => page.getByRole('button', { name: 'Continue to Business checkout', exact: true }).click();
+        await checkout({ tier: 'business', quantity: 1 }, enroll, 'cancelled');
+        await page.getByText('Checkout was closed. You can review your membership and continue when ready.', { exact: true }).waitFor();
+        await reload();
+        await checkout({ tier: 'business', quantity: 1 }, enroll, 'success');
+        await page.getByText('Your payment is still being confirmed. Access begins when your membership is active.', { exact: true }).waitFor();
+        assert.equal(await page.getByRole('heading', { name: 'Your recruiting workspace is ready', exact: true }).count(), 0, 'A success query cannot grant an unpaid Business workspace');
+        await checkout({ tier: 'business', quantity: 1 }, enroll, 'success', () => { user.plan = 'business'; });
+        await page.getByRole('heading', { name: 'Your recruiting workspace is ready', exact: true }).waitFor();
+        await reload();
+        await portal(() => page.getByRole('button', { name: 'Manage billing', exact: true }).click());
+        await reload();
       } else if (surface === 'vault') {
         const subscribe = () => page.getByRole('button', { name: 'Subscribe for $3.94 USD / month', exact: true }).click();
         await checkout({ tier: 'vpn_connector' }, subscribe, 'success');

@@ -12,6 +12,7 @@ const { BILLING_SCHEMA } = require('./billing');
 const { BUSINESS_TEAM_SCHEMA } = require('./business-teams');
 const { BUSINESS_POST_SCHEMA } = require('./business-posts');
 const { BUSINESS_INDUSTRY_SCHEMA } = require('./business-industries');
+const { BUSINESS_ACCOUNT_SCHEMA } = require('./business-enrollment');
 const { CREATOR_ANALYTICS_SCHEMA } = require('./creator-analytics');
 const { UFI_VAULT_SCHEMA } = require('./ufi-vault');
 const { REPORT_SCHEMA } = require('./content-reports');
@@ -53,6 +54,7 @@ async function schema(pg) {
   for (const sql of BUSINESS_TEAM_SCHEMA) await pg.exec(sql);
   for (const sql of BUSINESS_POST_SCHEMA) await pg.exec(sql);
   for (const sql of BUSINESS_INDUSTRY_SCHEMA) await pg.exec(sql);
+  for (const sql of BUSINESS_ACCOUNT_SCHEMA) await pg.exec(sql);
   for (const sql of [...CREATOR_ANALYTICS_SCHEMA, ...UFI_VAULT_SCHEMA, ...REPORT_SCHEMA]) await pg.exec(sql);
   for (const sql of SNAP_SCHEMA) await pg.exec(sql);
   for (const sql of MESSAGE_MEDIA_SCHEMA) await pg.exec(sql);
@@ -71,7 +73,8 @@ async function seed(pg) {
       auth_subject: 'secret-identity-subject', social_tokens: JSON.stringify({ github: 'secret-access-token' }),
       social_refresh_tokens: JSON.stringify({ github: 'secret-refresh-token' }),
       social_connected_at: JSON.stringify({ github: '2026-09-22T00:00:00Z' }), joined_groups: ['shared-group'],
-      role_settings: JSON.stringify({ privacy_publicProfile: false }), interests: ['security'], stripe_customer_id: `cus_${name}` });
+      role_settings: JSON.stringify({ privacy_publicProfile: false }), interests: ['security'], stripe_customer_id: `cus_${name}`,
+      account_type: id === alice ? 'business' : 'personal', business_industry_id: id === alice ? 'technology' : '' });
   }
   await insert('business_team_members', { owner_id: alice, member_id: bob });
   await insert('business_team_invitations', { id: alice, owner_id: alice, invitee_id: carol,
@@ -97,8 +100,8 @@ async function seed(pg) {
     await insert('resume_drafts', { id: `${prefix}-resume`, user_id: uid, data: JSON.stringify({ summary: `${prefix}-summary` }) });
     await insert('cross_posts', { id: `${prefix}-cross`, user_id: uid, content: `${prefix}-cross-content` });
     await insert('business_posts', { id: `${prefix}-hiring`, user_id: uid, request_id: uid, fingerprint: 'internal-fingerprint', details: JSON.stringify({ title: `${prefix}-hiring-title` }), content: `${prefix}-hiring-content`, status: 'draft' });
-    await insert('business_industry_workspaces', { id: uid, owner_id: uid, industry_id: 'technology', name: `${prefix}-industry-space`, source_ids: JSON.stringify(['github']) });
-    await insert('business_industry_posts', { id: `${prefix}-industry-post`, workspace_id: uid, author_id: uid, request_id: uid, fingerprint: 'secret-industry-fingerprint', title: `${prefix}-industry-title`, content: `${prefix}-industry-draft`, status: 'draft' });
+    await insert('business_industry_workspaces', { id: uid, owner_id: uid, industry_id: 'technology', name: `${prefix}-industry-space`, source_ids: JSON.stringify(['github']), archived_at: '2026-10-28T00:00:00Z' });
+    await insert('business_industry_posts', { id: `${prefix}-industry-post`, workspace_id: uid, author_id: uid, request_id: uid, fingerprint: 'secret-industry-fingerprint', title: `${prefix}-industry-title`, content: `${prefix}-industry-draft`, status: 'draft', version: 3 });
     await insert('seen_posts', { user_id: uid, post_id: `${prefix}-seen` });
     await insert('user_engagement_affinity', { user_id: uid, affinity_key: `topic:${prefix}` });
     await insert('restaurant_post_likes', { user_id: uid, post_id: `${prefix}-restaurant` });
@@ -177,6 +180,8 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
     assert.equal(trace[0], 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     assert.equal(trace.at(-1), 'COMMIT');
     assert.equal(exported.profile.name, 'Alice');
+    assert.equal(exported.profile.accountType, 'business');
+    assert.deepEqual(exported.profile.businessEnrollment, { industryId: 'technology' });
     assert.deepEqual(exported.profile.preferences.interests, ['security']);
     assert.deepEqual(exported.messages.map(row => row.id).sort(), ['received', 'sent']);
     assert.equal(exported.resumeDrafts[0].data.summary, 'a-summary');
@@ -191,7 +196,10 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
     assert.equal(Object.hasOwn(exported.businessTeamInvitations[0], 'token_hash'), false);
     assert.equal(exported.businessIndustryWorkspaces[0].name, 'a-industry-space');
     assert.deepEqual(exported.businessIndustryWorkspaces[0].sourceIds, ['github']);
+    assert.equal(new Date(exported.businessIndustryWorkspaces[0].archivedAt).toISOString(), '2026-10-28T00:00:00.000Z');
     assert.equal(exported.businessIndustryPosts[0].content, 'a-industry-draft');
+    assert.equal(exported.businessIndustryPosts[0].version, 3);
+    assert.ok(exported.businessIndustryPosts[0].updatedAt);
     assert.equal(exported.generationUsage[0].used, 1);
     assert.equal(exported.generationRequests[0].state, 'completed');
     assert.equal(Object.hasOwn(exported.generationRequests[0], 'id'), false);
