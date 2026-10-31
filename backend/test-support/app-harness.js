@@ -59,6 +59,25 @@ async function createAppHarness({ env = {}, connected = false, query, withClient
       if (name === 'express') return expressFactory;
       if (name === 'dotenv') return { config() {} };
       if (name === './db') return db;
+      if (name === './suspicious-devices') return {
+        ...localRequire(name), createSuspiciousDevices: options => ({
+          ...localRequire(name).createSuspiciousDevices(options),
+          // Unrelated route fixtures have no persistent device tables. Their
+          // authenticated users represent clean devices; production device
+          // regressions opt into the real module through `modules` above.
+          guard: (_req, _res, next) => next(),
+        }),
+      };
+      if (name === './feed-audit') return {
+        ...localRequire(name), createFeedAudit: (database, options) => {
+          const audit = localRequire(name).createFeedAudit(database, { ...options, requirePolicy: false, schedule: timer });
+          // These fixtures exercise feed selection with an available, clean
+          // policy. Screening remains real. Policy persistence, flood limits,
+          // fail-closed startup and Office controls have dedicated real tests.
+          return { ...audit, initialize: async () => {}, reload: async () => audit.policy(),
+            admit: post => audit.access(post), record() {} };
+        },
+      };
       if (name === './snaps') return {
         ...localRequire(name), createSnaps: options => ({
           ...localRequire(name).createSnaps(options),
