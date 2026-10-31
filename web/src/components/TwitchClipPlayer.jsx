@@ -4,14 +4,19 @@ import { ExternalLink, Play, Square } from 'lucide-react';
 import BrandIcon from './BrandIcon';
 import { isNativeRuntime } from '../nativeRuntime.mjs';
 import { openNativeTwitchPlayer } from '../nativeTwitchPlayer.mjs';
-import { useSoloVideoPlayback } from './videoMedia';
+import { useSoloVideoPlayback, useGlobalMuted } from './videoMedia';
+import { useDataPreferences, previewPlaybackAllowed } from '../preferences';
 import { officialTwitchClipEmbedUrl, officialTwitchClipUrl, officialTwitchPosterUrl } from '../utils/sourceMediaPolicy.mjs';
 import './TwitchClipPlayer.css';
 
 // Clips have no interactive Twitch JS API. Removing the official iframe stops
-// playback; returning to a card always requires another deliberate play click.
+// playback. Start only the visible eligible clip; explicit Close stays stopped.
 export default function TwitchClipPlayer({ post, title, forcePause = false, controlsTarget }) {
   const host = useRef(null), stage = useRef(null), started = useRef(null), playerId = useId();
+  const automatic = useRef(new Set());
+  const [muted] = useGlobalMuted();
+  const preferences = useDataPreferences();
+  const autoplayAllowed = controlsTarget !== undefined || previewPlaybackAllowed(preferences);
   const original = post?.source === 'twitch' ? officialTwitchClipUrl(post.sourceUrl) || officialTwitchClipUrl(post.mediaUrl) : null;
   const hostedPlayer = original ? `https://uficonnect.org/twitch-player.html?clip=${encodeURIComponent(new URL(original).pathname.slice(1))}` : null;
   const embed = original && !isNativeRuntime() && typeof window !== 'undefined' ? officialTwitchClipEmbedUrl(original, window.location.hostname) : null;
@@ -25,6 +30,12 @@ export default function TwitchClipPlayer({ post, title, forcePause = false, cont
   const eligible = !!embed && requested === original && width >= 400 && inView && visible && !forcePause && !modalBlocked;
   const solo = useSoloVideoPlayback(`twitch-clip-${playerId}`, eligible, stage);
   const playing = eligible && solo && failed !== original;
+
+  useEffect(() => {
+    if (embed && autoplayAllowed && width >= 400 && inView && visible && !forcePause && !modalBlocked && !automatic.current.has(original)) {
+      automatic.current.add(original); setRequested(original);
+    }
+  }, [embed, autoplayAllowed, width, inView, visible, forcePause, modalBlocked, original]);
 
   useEffect(() => {
     const node = stage.current;
@@ -99,7 +110,7 @@ export default function TwitchClipPlayer({ post, title, forcePause = false, cont
   </div>;
   return <div ref={host} className="twitch-clip-player" data-embedding={playing ? 'true' : 'false'}>
     <div ref={stage} className="twitch-clip-stage">
-      {playing ? <iframe src={embed.replace('autoplay=false', 'autoplay=true')} title={title || post.title || 'Twitch clip'} width="400" height="300"
+      {playing ? <iframe src={`${embed.replace('autoplay=false', 'autoplay=true')}&muted=${muted ? 'true' : 'false'}`} title={title || post.title || 'Twitch clip'} width="400" height="300"
         allow="autoplay; fullscreen; picture-in-picture" allowFullScreen referrerPolicy="strict-origin-when-cross-origin"
         onError={() => { setFailed(original); setRequested(null); }} />
         : <>{poster && failedPoster !== poster ? <img src={poster} alt={title || post.title || 'Twitch clip preview'} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setFailedPoster(poster)} />

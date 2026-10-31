@@ -2,32 +2,20 @@ import { useEffect, useRef, useState } from 'react';
 import { hasNativeYouTubePlayer, createNativeYouTubeFrame, nativeYouTubeApi } from '../nativeYouTubePlayer.mjs';
 import { useDataPreferences, previewPlaybackAllowed } from '../preferences';
 import { directMediaPlaybackAllowed, officialYouTubeId, officialVimeoId } from '../utils/sourceMediaPolicy.mjs';
+import { playMedia } from '../utils/mediaAutoplay.mjs';
 export { deriveBlueskyPlaylistUrl, isDirectVideoUrl } from '../utils/videoSource.mjs';
 
-// Every video surface (the Videos swipe feed, the photo/video lightbox, and
-// each inline YouTube card in the Feed) starts muted by default and only
-// ever unmutes in direct response to a click — necessary so the mute
-// button's own state can never lie about whether sound is actually playing
-// (see the fetchBluesky-adjacent fix elsewhere this session for why an
-// automatic reveal can't be trusted). But taken alone, that meant a real
-// click was needed on *every single video*, forever, since each one starts
-// its own fresh, independent muted state with nothing carried over —
-// confirmed as a genuine ongoing annoyance, not just an autoplay-policy
-// nitpick. Once someone has directly clicked unmute at all this browser,
-// that's real, registered engagement (the same signal browsers themselves
-// use to judge autoplay-with-sound more leniently going forward) — worth
-// remembering so every subsequent video can just start that way instead of
-// demanding the same click over and over. Symmetric: explicitly muting
-// again is remembered the same way.
+// Sound is enabled by default. Explicit mute/unmute choices persist across
+// video surfaces; autoplay-policy fallbacks do not change that preference.
 const SOUND_PREF_KEY = 'ufc_wants_sound';
 const SOUND_PREF_EVENT = 'ufc-sound-pref-change';
 export function userWantsSound() {
-  try { return localStorage.getItem(SOUND_PREF_KEY) === '1'; } catch { return false; }
+  try { return localStorage.getItem(SOUND_PREF_KEY) !== '0'; } catch { return true; }
 }
 export function rememberSoundPreference(wantsSound) {
   try {
     if (wantsSound) localStorage.setItem(SOUND_PREF_KEY, '1');
-    else localStorage.removeItem(SOUND_PREF_KEY);
+    else localStorage.setItem(SOUND_PREF_KEY, '0');
   } catch {}
   // Broadcast so every other mounted video on the page — a different card
   // in the Feed, a slide in the Videos swipe list, an open lightbox — picks
@@ -236,11 +224,11 @@ export function extractVimeoId(url) {
   return officialVimeoId(url);
 }
 
-export function vimeoEmbedUrl(videoId, { muted = true } = {}) {
+export function vimeoEmbedUrl(videoId, { muted = true, autoplay = true } = {}) {
   if (!/^\d{1,20}$/.test(String(videoId || ''))) return '';
   // These are Vimeo's supported embed preferences. The owner's plan and
   // settings decide which preferences the player can honor.
-  const params = new URLSearchParams({ autoplay: '1', muted: muted ? '1' : '0', loop: '1',
+  const params = new URLSearchParams({ autoplay: autoplay ? '1' : '0', muted: muted ? '1' : '0', loop: '1',
     playsinline: '1', title: '0', byline: '0', portrait: '0', controls: '0', unmute_button: '0', speed: '1' });
   return `https://player.vimeo.com/video/${videoId}?${params}`;
 }
@@ -425,8 +413,10 @@ export function loadYouTubeIframeApi() {
 // browser already supports it (Safari/iOS). Used for Bluesky video — a
 // simple <video src="...m3u8"> only works in Safari; everywhere else needs
 // hls.js to actually decode the stream.
-export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, loop = false, controls, controlsList, disablePictureInPicture, disableRemotePlayback, onClick, videoRef: externalRef, onTimeUpdate, onLoadedMetadata, onPlay, onPause, onVolumeChange, onError, style }) {
+export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, loop = false, controls, controlsList, disablePictureInPicture, disableRemotePlayback, onClick, videoRef: externalRef, onTimeUpdate, onLoadedMetadata, onPlay, onPause, onVolumeChange, onError, canAutoplay, style }) {
   const videoRef = useRef(null);
+  const latest = useRef(null);
+  latest.current = { muted, canAutoplay };
   // Callback ref so the caller (VideoFeedView's custom pause/seek controls)
   // can drive the underlying <video> element directly — hls.js attaches to
   // this same element internally, so there's only ever one element to share.
@@ -442,35 +432,16 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
     setErrored(false);
     let hls;
     let cancelled = false;
-    // Always START muted — the one autoplay policy every browser reliably
-    // allows — then correct to the real desired state (muted prop, itself
-    // driven by userWantsSound: has this browser ever seen a direct unmute
-    // click before) only once play() has actually resolved, confirming
-    // playback genuinely started while still forced-muted. This has to
-    // happen here, not just in the [muted]-sync effect below: on the
-    // hls.js path (every non-Safari browser — most Android/Chrome mobile),
-    // startMuted only runs later, async, inside the MANIFEST_PARSED
-    // handler, well after the [muted] effect already ran once at mount.
-    // With no correction here, that left the video permanently force-muted
-    // regardless of the stored preference, with nothing left to fix it —
-    // confirmed live as the actual mechanism behind "keep hitting a muted
-    // video" despite having unmuted elsewhere already, and worse: the
-    // mute button's displayed "unmuted" state (bound to the muted prop,
-    // never actually corrected) went stale, so the next toggle click
-    // called rememberSoundPreference with the wrong value and wiped the
-    // saved preference entirely.
-    function startMuted() {
-      video.muted = true;
-      video.defaultMuted = true;
-      video.playsInline = true;
-      video.play().then(() => {
-        if (videoRef.current) videoRef.current.muted = muted;
-      }).catch(() => {});
+    // The stream may become ready after the parent changes slides. Check
+    // current ownership and sound preference at both playback attempts.
+    function startPlayback() {
+      void playMedia(video, { muted: latest.current.muted,
+        isCurrent: () => !cancelled && videoRef.current === video && !document.hidden && (!latest.current.canAutoplay || latest.current.canAutoplay()) });
     }
     if (video.canPlayType('application/vnd.apple.mpegurl')) {
       // Safari/iOS play HLS natively — no need to pull in hls.js at all.
       video.src = src;
-      if (autoPlay) startMuted();
+      if (autoPlay) startPlayback();
     } else {
       // Lazy-loaded: hls.js is a genuinely large library, and bundling it
       // statically pulled it into every visitor's Feed download (~140KB
@@ -486,7 +457,7 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
         hls.on(Hls.Events.ERROR, (_evt, data) => { if (data?.fatal) fail(); });
         if (autoPlay) hls.on(Hls.Events.MANIFEST_PARSED, () => {
           if (!videoRef.current) return;
-          startMuted();
+          startPlayback();
         });
       }).catch(() => fail());
     }
@@ -513,7 +484,7 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
     );
   }
   return (
-    <video ref={setRef} controls={controls ?? !onClick} autoPlay={autoPlay} muted={muted} loop={loop}
+    <video ref={setRef} controls={controls ?? !onClick} muted={muted} loop={loop}
       controlsList={controlsList} disablePictureInPicture={disablePictureInPicture} disableRemotePlayback={disableRemotePlayback}
       playsInline draggable={false} poster={poster} onClick={onClick}
       onTimeUpdate={onTimeUpdate} onLoadedMetadata={onLoadedMetadata} onPlay={onPlay} onPause={onPause} onVolumeChange={onVolumeChange}
@@ -536,6 +507,7 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
 // instead of a swipe-snap container.
 export function InlineAutoplayVideo({ kind, src, post, videoKey, poster, style, forcePause = false }) {
   const preferences = useDataPreferences();
+  const [muted] = useGlobalMuted();
   const automaticPlayback = previewPlaybackAllowed(preferences);
   const containerRef = useRef(null);
   const fileRef = useRef(null);
@@ -586,14 +558,13 @@ export function InlineAutoplayVideo({ kind, src, post, videoKey, poster, style, 
     const v = fileRef.current;
     if (!v) return;
     if (shouldPlay) {
-      v.muted = true;
-      v.defaultMuted = true;
-      v.playsInline = true;
-      v.play().catch(() => {});
+      let current = true;
+      void playMedia(v, { muted, isCurrent: () => current && !document.hidden });
+      return () => { current = false; v.pause(); };
     } else {
       v.pause();
     }
-  }, [shouldPlay, kind]);
+  }, [shouldPlay, kind, src, muted]);
 
   if (!sourceAllowed) return <span style={{ display: 'block', padding: 24, color: '#fff', background: '#111827' }}>Open the original source to watch</span>;
   return (
@@ -609,7 +580,7 @@ export function InlineAutoplayVideo({ kind, src, post, videoKey, poster, style, 
         // cards across the visibility boundary and repeatedly remounted HLS.
         <div style={{ width: '100%', aspectRatio: hlsAspectRatio, maxHeight: style?.maxHeight ?? 360, background: '#000', overflow: 'hidden' }}>
           {shouldPlay ? (
-            <HlsVideoPlayer src={src} poster={null} autoPlay muted loop controls={false}
+            <HlsVideoPlayer src={src} poster={null} autoPlay muted={muted} loop controls={false}
               onLoadedMetadata={event => {
                 const { videoWidth, videoHeight } = event.currentTarget;
                 if (videoWidth > 0 && videoHeight > 0) setHlsAspectRatio(videoWidth / videoHeight);
@@ -622,7 +593,7 @@ export function InlineAutoplayVideo({ kind, src, post, videoKey, poster, style, 
           )}
         </div>
       ) : (
-        <video ref={fileRef} src={src} muted loop playsInline preload="metadata" style={style} />
+        <video ref={fileRef} src={src} muted={muted} loop playsInline preload="metadata" style={style} />
       )}
     </div>
   );

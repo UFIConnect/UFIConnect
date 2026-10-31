@@ -35,7 +35,7 @@ jobs:
         if: matrix.group == 'core'
       - run: node --test scripts/analytics.test.mjs scripts/data-preferences.test.mjs
         if: matrix.group == 'core'
-      - run: node --test web/src/businessRoutes.test.mjs web/src/businessAccount.test.mjs web/src/components/snapCameraCommands.test.mjs
+      - run: node --test web/src/businessRoutes.test.mjs web/src/businessAccount.test.mjs web/src/components/snapCameraCommands.test.mjs web/src/utils/mediaAutoplay.test.mjs
         if: matrix.group == 'core'
       - run: node --test scripts/local-web-workbench.test.mjs scripts/local-phone-access.test.mjs
         if: matrix.group == 'core'
@@ -117,6 +117,8 @@ jobs:
       - run: node scripts/audit-job-posting.mjs
         if: matrix.group == 'media'
       - run: node scripts/audit-snap-camera.mjs
+        if: matrix.group == 'media'
+      - run: node scripts/audit-media-autoplay.mjs
         if: matrix.group == 'media'
       - run: node scripts/audit-music-feed.mjs
         if: matrix.group == 'media'
