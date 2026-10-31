@@ -2,9 +2,11 @@
 
 Reviewed 2026-10-03. Review or replace with upstream releases before **2026-11-03**.
 
-Installed versions remain `braces@3.0.3` and `node-forge@1.4.0`. Neither advisory
-currently has a published fixed version. These are local backports, not upstream
-releases; plain `npm audit` continues to report their versions.
+The remaining local backports cover `braces@3.0.3` and `zod@3.25.76`.
+Plain `npm audit` continues to report their affected upstream versions.
+On 2026-10-31, Forge was upgraded to the fixed upstream `node-forge@1.4.2`
+and its obsolete RSA backport was retired. Its behavioral regression remains.
+The web and mobile lockfiles also use fixed `follow-redirects@1.16.2`.
 
 ## Provenance
 
@@ -13,10 +15,9 @@ releases; plain `npm audit` continues to report their versions.
   cap brace/parenthesis nesting and AST traversal at 100, honor stricter limits,
   and reject cyclic parent chains. Only five `lib/` files were backported to
   the npm release; existing code outside the hunks is preserved. MIT license.
-- [node-forge PR 1152](https://github.com/digitalbazaar/forge/pull/1152), addressing
-  [GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv):
-  check nested DigestAlgorithm element count as well as outer DigestInfo count.
-  Only `lib/rsa.js` changes. Used under node-forge's BSD-3-Clause license option.
+- Forge now uses [upstream 1.4.2](https://github.com/digitalbazaar/forge/releases/tag/v1.4.2),
+  including the nested DigestAlgorithm fix and the additional October security fixes.
+- Zod provenance and regression coverage are documented below.
 
 `manifest.json` preserves reviewed hunks, upstream diff SHA-256, package versions
 and before/after SHA-256 for every changed file. Tarball integrity remains pinned
@@ -31,15 +32,14 @@ until `npm run postinstall --prefix mobile` is explicitly run.
 
 `npm run audit:security --prefix mobile` runs attack regressions and the ordinary
 npm JSON audit. The raw report is saved to `mobile/.cache/dependency-audit.json`
-and uploaded by CI. Only the two exact advisory URLs above are recognized after
+and uploaded by CI. Only the exact advisory URLs in the manifest are recognized after
 installed versions, locations, file hashes and regression tests pass. Transitive
 reports are covered only when every underlying advisory is covered. New high or
 critical advisories, unpatched copies, unavailable audit data and expired review
 dates fail the gate. Other package audit commands remain unchanged.
 
-Both vulnerability regressions failed against pristine npm packages, as expected.
-Patched packages pass all six regression/policy tests and all 40 mobile security
-and compatibility tests. Coverage includes malformed RSA DigestInfo with public
+The original backport regressions failed against the vulnerable npm packages.
+Coverage includes malformed RSA DigestInfo with public
 exponents 3 and 65537, valid signatures with optional NULL, ordinary globs/ranges,
 excessive input/AST depth, parent cycles, patch integrity and audit policy.
 

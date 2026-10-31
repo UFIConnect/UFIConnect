@@ -127,27 +127,6 @@
       ]
     },
     {
-      "name": "node-forge",
-      "version": "1.4.0",
-      "advisory": "GHSA-86w9-cpqp-85rv",
-      "source": "https://github.com/digitalbazaar/forge/pull/1152",
-      "diffSha256": "a8a629a1c4e69932a0b075f28651c4e8d36703dfd75faf9928c61ac52bb2fa13",
-      "files": [
-        {
-          "path": "lib/rsa.js",
-          "beforeSha256": "fd4740238145ec26470eb3f06a627c72039538ce1307dbdce40521f94dfd0a50",
-          "afterSha256": "acc22e5d36e27832c34e02dd3933aad7977d45b047eead5016520735efedc9c5",
-          "hunks": [
-            {
-              "offset": 36691,
-              "before": "            parseAllBytes: options._parseAllDigestBytes\n          });\n\n          // validate DigestInfo structure and element count\n          var capture = {};\n          var errors = [];\n          if(!asn1.validate(obj, digestInfoValidator, capture, errors) ||\n            obj.value.length !== 2) {\n            var error = new Error(\n              'ASN.1 object does not contain a valid RSASSA-PKCS1-v1_5 ' +\n              'DigestInfo value.');\n",
-              "after": "            parseAllBytes: options._parseAllDigestBytes\n          });\n\n          // validate DigestInfo structure and element counts (outer DigestInfo\n          // and nested DigestAlgorithm). asn1.validate ignores extra children,\n          // so length must be checked explicitly at each nesting level to\n          // prevent low-exponent PKCS#1 v1.5 signature forgery (CVE-2026-85393).\n          var capture = {};\n          var errors = [];\n          if(!asn1.validate(obj, digestInfoValidator, capture, errors) ||\n            obj.value.length !== 2 ||\n            obj.value[0].value.length !==\n              (('parameters' in capture) ? 2 : 1)) {\n            var error = new Error(\n              'ASN.1 object does not contain a valid RSASSA-PKCS1-v1_5 ' +\n              'DigestInfo value.');\n"
-            }
-          ]
-        }
-      ]
-    },
-    {
       "name": "zod",
       "version": "3.25.76",
       "advisory": "GHSA-mrhx-c7xc-m3w5",
