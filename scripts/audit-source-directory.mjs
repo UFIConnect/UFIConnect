@@ -237,6 +237,9 @@ try {
       app.seedUser(member('business-directory', { plan: 'business' }));
       await installAuditMember(page, app, 'business-directory');
       await auditNavigate(page, server.resolvedUrls.local[0] + 'connected-accounts');
+      // Restore the new synthetic session before checking its catalog. The
+      // personal-to-Business sign-in can still be committing its landing route.
+      await page.goto(server.resolvedUrls.local[0] + 'connected-accounts', { waitUntil: 'domcontentloaded' });
       await page.getByRole('link', { name: 'Visit Indeed website' }).waitFor();
       const careerWebsiteCount = Object.values(accountDirectory).filter(platform => platform.category === 'career').length;
       assert.equal(await page.getByRole('link', { name: /^Visit .* website$/ }).count(), careerWebsiteCount, 'Business includes every declared external career destination');
