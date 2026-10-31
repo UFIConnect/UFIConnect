@@ -1,0 +1,101 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { randomUUID } = require('node:crypto');
+const { PGlite } = require('@electric-sql/pglite');
+const { createGenerationUsage, schemaStatements } = require('./generation-usage');
+const { OFFICE_USER_USAGE_SCHEMA, createOfficeUserUsage } = require('./office-user-usage');
+const { OFFICE_TOPIC_SCHEMA, classifyTopic, classifySubtopic, createOfficeTopicTransfer } = require('./office-topic-transfer');
+
+async function fixture(t) {
+  const pg = new PGlite(); t.after(() => pg.close());
+  const query = async (...args) => { const result = await pg.query(...args); return { ...result, rowCount: result.affectedRows }; };
+  const db = { query, isConnected: () => true, withClient: action => action({ query }) };
+  return { pg, db };
+}
+test('topic inference resolves missing topics with bounded words and leaves ties and ordinary Go/Rust prose unresolved', () => {
+  const topics = ['Python', 'JavaScript', 'Go', 'Rust', 'React', 'AI & Machine Learning', 'LLMs & Chatbots'];
+  assert.equal(classifyTopic({ title: 'Python tutorial for beginners' }, topics).topic, 'Python');
+  assert.equal(classifyTopic({ content: 'A newly trained large language model supports retrieval.' }, topics).topic, 'LLMs & Chatbots');
+  assert.equal(classifyTopic({ title: 'Go outdoors to clean rust and react to changes.' }, topics), null);
+  assert.equal(classifyTopic({ title: 'Python and JavaScript' }, topics), null);
+  assert.equal(classifyTopic({ title: 'Python and JavaScript', topic: 'Python' }, topics).topic, 'Python');
+  assert.equal(classifySubtopic({ title: 'Building a Django application' }, 'Python'), 'Web frameworks');
+  assert.equal(classifySubtopic({ title: 'Unrelated prose' }, 'Python'), null);
+});
+test('unknown optimization persists evidence, retains ambiguity, assigns subtopics, and scopes transfer parameters', async t => {
+  const f = await fixture(t);
+  await f.pg.exec(`CREATE TABLE feed_posts_cache(id TEXT PRIMARY KEY,title TEXT,content TEXT,topic TEXT,fetched_at TIMESTAMPTZ DEFAULT NOW());
+    CREATE TABLE feed_posts_staging(LIKE feed_posts_cache INCLUDING ALL)`);
+  for (const sql of OFFICE_TOPIC_SCHEMA) await f.pg.exec(sql);
+  await f.db.query("INSERT INTO feed_posts_cache(id,title,topic) VALUES('live','Python tutorial',NULL),('unclear','Python and JavaScript',NULL),('known','Django application','Python')");
+  await f.db.query("INSERT INTO feed_posts_staging(id,title,topic) VALUES('staged','Large language model evaluation','unknown')");
+  let called, changes;
+  const service = createOfficeTopicTransfer({ db: f.db, topics: ['Python', 'JavaScript', 'LLMs & Chatbots'], onClassified: value => { changes = value; }, transfer: async options => { called = options; return { transferred: 1 }; } });
+  const before = await service.report(); assert.deepEqual(before.unknown, { live: 2, staged: 1 });
+  assert.ok(before.taxonomy.find(row => row.topic === 'Unknown').subtopics.includes('Unclassified'));
+  assert.ok(before.taxonomy.find(row => row.topic === 'Python').subtopics.includes('Unclassified'));
+  await assert.rejects(service.optimizeUnknown({}), error => error.status === 400);
+  const result = await service.optimizeUnknown({ confirmed: true });
+  assert.equal(result.updated, 2); assert.equal(result.checked, 4); assert.equal(result.remaining, 1); assert.equal(changes.length, 2);
+  const report = await service.report(); assert.deepEqual(report.unknown, { live: 1, staged: 0 });
+  const python = report.topics.find(row => row.topic === 'Python'); assert.equal(python.live, 2);
+  assert.equal(python.subtopics.find(row => row.name === 'Web frameworks').live, 1);
+  assert.equal(report.topics.reduce((sum, row) => sum + row.live + row.staged, 0), 4);
+  assert.equal((await service.optimizeUnknown({ confirmed: true })).checked, 0, 'Unresolved rows should not starve later rows on repeated runs');
+  await service.transferTopic({ confirmed: true, topic: 'Python', subtopic: 'Web frameworks', maxBatches: 2 });
+  assert.equal(called.topic, 'Python'); assert.equal(called.subtopic, 'Web frameworks'); assert.equal(called.maxBatches, 2);
+  await assert.rejects(service.transferTopic({ confirmed: true, topic: 'Python', subtopic: "'; DROP TABLE users;--" }), error => error.status === 400);
+  await assert.rejects(service.transferTopic({ confirmed: true, topic: 'Python', maxBatches: 20 }), error => error.status === 400);
+});
+test('user usage isolates account metrics, respects UTC range, and optimization leaves quotas/history intact across workers', async t => {
+  const f = await fixture(t), id = randomUUID(), other = randomUUID();
+  await f.pg.exec(`CREATE TABLE users(id UUID PRIMARY KEY,name TEXT,created_at TIMESTAMPTZ DEFAULT NOW(),onboarding_complete BOOLEAN DEFAULT false);
+    CREATE TABLE community_posts(id TEXT,author_id TEXT,source TEXT,created_at TIMESTAMPTZ DEFAULT NOW());
+    CREATE TABLE post_comments(author_id TEXT,created_at TIMESTAMPTZ DEFAULT NOW());
+    CREATE TABLE source_interaction_audit(user_id UUID,created_at TIMESTAMPTZ DEFAULT NOW());
+    CREATE TABLE saved_posts(user_id TEXT,created_at TIMESTAMPTZ DEFAULT NOW());
+    CREATE TABLE seen_posts(user_id TEXT,post_id TEXT,seen_at TIMESTAMPTZ DEFAULT NOW(),engaged_at TIMESTAMPTZ);
+    CREATE TABLE user_engagement_affinity(user_id TEXT,affinity_key TEXT,weight INTEGER,updated_at TIMESTAMPTZ DEFAULT NOW())`);
+  for (const sql of [...schemaStatements, ...OFFICE_USER_USAGE_SCHEMA]) await f.pg.exec(sql);
+  await f.db.query("INSERT INTO users(id,name) VALUES($1,'Member'),($2,'Other')", [id, other]);
+  await f.db.query("INSERT INTO community_posts(id,author_id,source) VALUES('1',$1,'uficonnect'),('2',$2,'uficonnect')", [id, other]);
+  await f.db.query("INSERT INTO community_posts(id,author_id,source,created_at) VALUES('old',$1,'uficonnect','2020-01-01')", [id]);
+  await f.db.query("INSERT INTO seen_posts(user_id,post_id,engaged_at) VALUES($1,'p1',NOW()),($1,'p1',NULL),($2,'p2',NULL)", [id, other]);
+  await f.db.query("INSERT INTO user_engagement_affinity(user_id,affinity_key,weight) VALUES($1,'topic:Python',5000),($1,'src:reddit',20),($2,'topic:Python',8000)", [id, other]);
+  const generationUsage = createGenerationUsage({ query: f.db.query, connected: f.db.isConnected });
+  await generationUsage.reserve(id, 'image');
+  const invalidated = [], otherWorker = [];
+  const options = { db: f.db, generationUsage, schedule: () => null, invalidateUser: value => invalidated.push(value) };
+  const service = createOfficeUserUsage(options);
+  const usage = await service.usage(id, { days: 7 });
+  assert.equal(usage.activity.posts, 1); assert.equal(usage.activity.deliveredPosts, 1); assert.equal(usage.activity.engagedPosts, 1); assert.equal(usage.activity.daily.length, 7); assert.equal(usage.generation.limits.image.used, 1);
+  await assert.rejects(service.usage("' OR 1=1"), error => error.status === 400);
+  await assert.rejects(service.usage(randomUUID()), error => error.status === 404);
+  await assert.rejects(service.optimize(id, { command: 'balance-interests' }), error => error.status === 400);
+  const balanced = await service.optimize(id, { command: 'balance-interests', confirmed: true }); assert.equal(balanced.balanced, 1);
+  const next = await service.usage(id); assert.equal(next.affinity.find(row => row.label === 'Python').weight, 1000); assert.equal(next.generation.limits.image.used, 1); assert.equal(next.activity.deliveredPosts, 1);
+  assert.equal((await f.db.query('SELECT weight FROM user_engagement_affinity WHERE user_id=$1', [other])).rows[0].weight, 8000);
+  const second = createOfficeUserUsage({ ...options, invalidateUser: value => otherWorker.push(value) });
+  await second.refreshRevisions(); assert.deepEqual(otherWorker, [id]);
+  await second.refreshRevisions(); assert.deepEqual(otherWorker, [id], 'A revision is applied once per worker');
+  await service.optimize(id, { command: 'refresh-feed', confirmed: true }); await second.refreshRevisions(); assert.deepEqual(otherWorker, [id, id]);
+});
+test('production transfer query selects only requested topic and subtopic, including explicit Unknown', async t => {
+  const f = await fixture(t);
+  await f.pg.exec(`CREATE TABLE feed_posts_staging(id TEXT PRIMARY KEY,topic TEXT,fetched_at TIMESTAMPTZ DEFAULT NOW())`);
+  for (const sql of OFFICE_TOPIC_SCHEMA) await f.pg.exec(sql);
+  await f.db.query("INSERT INTO feed_posts_staging(id,topic) VALUES('python','Python'),('js','JavaScript'),('unknown',NULL),('python-other','Python')");
+  await f.db.query("INSERT INTO office_feed_topic_assignments(post_id,topic,subtopic) VALUES('python','Python','Web frameworks')");
+  const { createAppHarness } = require('./test-support/app-harness');
+  const picked = [];
+  const app = await createAppHarness({ connected: true, env: { OFFICE_TOKEN: 'topic-fixture' }, query: async (sql, params) => {
+    if (sql.includes('WITH picked AS')) { picked.push((await f.db.query(sql, params)).rows.map(row => row.id)); return { rows: [], rowCount: 0 }; }
+    return { rows: [], rowCount: 0 };
+  } }); t.after(() => app.close());
+  assert.equal((await app.request('/office/topic-transfer')).status, 401);
+  assert.equal((await app.request('/office/users/' + randomUUID() + '/usage')).status, 401);
+  await app.transferStagedPosts({ topic: 'Python', subtopic: 'Web frameworks', maxBatches: 1 });
+  await app.transferStagedPosts({ topic: 'Python', subtopic: 'Unclassified', maxBatches: 1 });
+  await app.transferStagedPosts({ topic: 'Unknown', maxBatches: 1 });
+  assert.deepEqual(picked, [['python'], ['python-other'], ['unknown']]);
+});

@@ -5,6 +5,7 @@ const { PGlite } = require('@electric-sql/pglite');
 const { createTokenVault } = require('./token-vault');
 const { SIGNIN_SCHEMA, createSignIn, verifyIdentityToken, providerSettings, safeReturnTo, phoneNumber } = require('./auth-signin');
 const { BUSINESS_TEAM_SCHEMA } = require('./business-teams');
+const { SCHEMA: SUSPICIOUS_DEVICE_SCHEMA } = require('./suspicious-devices');
 const { readSessionCookie } = require('./web-connection-security');
 const { SESSION_TTL_SECONDS } = require('./auth-security');
 const { createAppHarness } = require('./test-support/app-harness');
@@ -38,7 +39,7 @@ async function fixture(t, { phone=false, apple=false } = {}) {
     auth_version INTEGER DEFAULT 0,organization TEXT,plan TEXT DEFAULT 'free',business_seats INTEGER DEFAULT 0,billing_closed BOOLEAN DEFAULT false);
     CREATE UNIQUE INDEX users_auth_subject_idx ON users(auth_provider,auth_subject) WHERE auth_subject IS NOT NULL;
     CREATE TABLE auth_sessions(id UUID PRIMARY KEY,user_id UUID,expires_at TIMESTAMPTZ);`);
-  for (const sql of SIGNIN_SCHEMA) await pg.exec(sql);
+  for (const sql of [...SIGNIN_SCHEMA, ...SUSPICIOUS_DEVICE_SCHEMA]) await pg.exec(sql);
   const env = { NODE_ENV:'test', JWT_SECRET:'unique-test-only-key', OAUTH_TOKEN_ENCRYPTION_KEY:Buffer.alloc(32,2).toString('base64'), YOUTUBE_CLIENT_ID:'google-client',YOUTUBE_CLIENT_SECRET:'private-google-key' };
   if(phone) Object.assign(env,{TWILIO_ACCOUNT_SID:'AC'+'1'.repeat(32),TWILIO_AUTH_TOKEN:'private-sms-key',TWILIO_VERIFY_SERVICE_SID:'VA'+'2'.repeat(32)});
   if(apple) Object.assign(env,{APPLE_CLIENT_ID:'apple-client',APPLE_TEAM_ID:'TEAM',APPLE_KEY_ID:'KEY',APPLE_PRIVATE_KEY:applePrivateKey});

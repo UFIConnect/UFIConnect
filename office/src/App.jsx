@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
 import Controls from './Controls';
 import PostPipeline from './PostPipeline';
+import FeedAudit from './FeedAudit';
+import TopicTransfer from './TopicTransfer';
 import LocalWeb from './LocalWeb';
 import Setup from './Setup';
 import Reports from './Reports';
@@ -2794,7 +2796,7 @@ function TopicsView() {
 // ─── App (root) ───────────────────────────────────────────────────────────────
 
 export default function App() {
-  const officeViews = ['overview', 'city', 'local-web', 'setup', 'controls', 'sources', 'pipeline', 'post-pipeline', 'topics', 'agents', 'feed', 'analytics', 'reports', 'deploy', 'autofix', 'versions'];
+  const officeViews = ['overview', 'city', 'local-web', 'setup', 'controls', 'sources', 'pipeline', 'post-pipeline', 'feed-audit', 'topic-transfer', 'users', 'topics', 'agents', 'feed', 'analytics', 'reports', 'deploy', 'autofix', 'versions'];
   const [view, setView] = useState(() => {
     const requested = typeof window !== 'undefined' ? window.location.hash.slice(1) : '';
     return officeViews.includes(requested) ? requested : 'overview';
@@ -3035,10 +3037,13 @@ export default function App() {
     { id: 'sources',  label: 'Live Sources' },
     { id: 'pipeline', label: 'Pipeline' },
     { id: 'post-pipeline', label: 'Post Pipeline' },
+    { id: 'feed-audit', label: 'Feed Audit' },
+    { id: 'topic-transfer', label: 'Topic Transfer' },
     { id: 'topics',   label: 'Topics' },
     { id: 'agents',   label: 'Agents' },
     { id: 'feed',     label: 'Feed Manager' },
     { id: 'analytics',label: 'Analytics' },
+    { id: 'users', label: 'Users' },
     { id: 'reports', label: 'Reports' },
     { id: 'deploy',   label: 'Deploy Center' },
     { id: 'autofix',  label: 'Autofix' },
@@ -3240,6 +3245,9 @@ export default function App() {
             apiBase={API} pipelineBase={PIPELINE_API} onNavigate={navigateOffice} onActivate={activateConfiguredAgents}
             activating={activating} activationResult={activationResult} activationError={activationError} /></Suspense>}
           {view === 'post-pipeline' && <PostPipeline apiBase={API} request={officeFetch} pipelineStatus={pipelineStatus} />}
+          {view === 'feed-audit' && <FeedAudit apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} />}
+          {view === 'topic-transfer' && <TopicTransfer apiBase={API} request={officeFetch} />}
+          {view === 'users' && <OfficeUsers apiBase={API} request={officeFetch} />}
           {view === 'local-web' && <LocalWeb apiBase={API} request={officeFetch} onNavigate={navigateOffice} />}
           {view === 'overview' && <OverviewView status={status} pipelineStatus={pipelineStatus} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'controls' && <Controls apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} />}

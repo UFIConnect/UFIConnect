@@ -96,6 +96,8 @@ async function createAppHarness({ env = {}, connected = false, query, withClient
   vm.runInContext(fs.readFileSync(entry, 'utf8') + `
     globalThis.audit = {
       app, users, groups, posts, connections, blocks, follows, conversations,
+      // Production route fixtures call this only after preparing their schema.
+      markSecurityStorageReady() { securityStorageReady = true; },
       pickOnboardingGroups, fullProfile, provisionAuth0User, issueSession, createPasswordResetToken, localSessions,
       createOAuthState, verifyOAuthState, dbRowToMemUser, saveSocialToken,
       normalizeFeedPost, dbRowToFeedPost, mapSharedJobPost, parseRSSItems, rssPost, trimPostContent, savePostsToDBFast,

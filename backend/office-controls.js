@@ -1,4 +1,15 @@
 const BASE_OFFICE_CONTROLS = Object.freeze([
+  { id: 'feed.audit-review', category: 'Feed audit', label: 'Review feed safety',
+    description: 'Rescreen up to 2,000 current feed items and inspect retained rejection examples.', target: 'both', impact: 'low' },
+  { id: 'feed.audit-protect', category: 'Feed audit', label: 'Run feed protection bundle',
+    description: 'Enable default flood limits, review current feed safety, then expire delivery snapshots. Existing rejected records remain visible.',
+    target: 'both', impact: 'medium', requiresConfirmation: true, bundle: ['feed.flood-configure', 'feed.audit-review', 'feed.clear-delivery-caches'] },
+  { id: 'feed.flood-configure', category: 'Feed audit', label: 'Configure anti flooding',
+    description: 'Persist source and author limits, duplicate detection, and the source approval cooldown. Held intake is reported separately.',
+    target: 'api', impact: 'medium', requiresConfirmation: true, input: 'flood-settings' },
+  { id: 'feed.optimize-unknown', category: 'Topic transfer', label: 'Optimize unknown topics',
+    description: 'Reclassify unknown posts only when their content supports a specific topic and subtopic.',
+    target: 'api', impact: 'medium', requiresConfirmation: true },
   {
     id: 'agents.activate-configured',
     category: 'Office agents',
@@ -444,13 +455,25 @@ function buildOfficeControlCatalog(sources = []) {
       impact: 'medium',
       sourceId: source.id,
     });
+    for (const action of ['block', 'unblock']) sourceControls.push({
+      id: `source.${action}.${source.id}`, category: 'Feed audit',
+      label: `${action === 'block' ? 'Block' : 'Unblock'} ${source.label}`,
+      description: action === 'block' ? 'Persist an emergency source block across ingestion and feed delivery. Shared services refresh the policy within five seconds.' : 'Remove the source block; all content screening and flood limits still apply.',
+      target: 'api', impact: 'high', requiresConfirmation: true, sourceId: source.id,
+      input: action === 'block' ? 'block-reason' : undefined,
+    });
   }
   return [...BASE_OFFICE_CONTROLS, ...sourceControls];
 }
 
 function findOfficeControl(controlId, sources = []) {
   const id = String(controlId || '').trim().toLowerCase();
-  return buildOfficeControlCatalog(sources).find((control) => control.id === id) || null;
+  const catalog = buildOfficeControlCatalog(sources);
+  const direct = catalog.find((control) => control.id === id);
+  if (direct) return direct;
+  // Public feed items use hackernews, while its registered worker is hn.
+  const workerAlias = /^source\.(block|unblock|refresh)\.hackernews$/.test(id) ? id.replace(/\.hackernews$/, '.hn') : id;
+  return catalog.find((control) => control.id === workerAlias) || null;
 }
 
 function validateOfficeControlExecution(control, payload) {
