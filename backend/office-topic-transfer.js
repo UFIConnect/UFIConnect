@@ -55,9 +55,21 @@ const escapeRegex = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 function hasTerm(text, term) { return new RegExp(`(?:^|[^\\p{L}\\p{N}])${escapeRegex(textOf(term))}(?=$|[^\\p{L}\\p{N}])`, 'u').test(text); }
 const isUnknownTopic = value => UNKNOWN.includes(String(value || '').trim().toLowerCase());
 function subtopicRules(topic) { return { ...SPECIFIC_SUBTOPICS[topic], ...GENERAL_SUBTOPICS }; }
+function subtopicMatches(title, content, rules) {
+  return Object.entries(rules || {}).map(([name, terms]) => ({ name,
+    // A title names the subject; repeated copies of the same term in the
+    // body should not outweigh that evidence or inflate confidence.
+    score: terms.reduce((sum, term) => sum + (hasTerm(title, term) ? 4 : hasTerm(content, term) ? 1 : 0), 0),
+  })).filter(row => row.score > 0).sort((a, b) => b.score - a.score);
+}
 function classifySubtopic(post, topic) {
-  const text = textOf(`${post.title || ''} ${post.content || ''}`);
-  const matches = Object.entries(subtopicRules(topic)).map(([name, terms]) => ({ name, score: terms.filter(term => hasTerm(text, term)).length })).filter(row => row.score > 0).sort((a, b) => b.score - a.score);
+  const title = textOf(post.title), content = textOf(post.content);
+  // Subject-specific evidence takes precedence over the post's format:
+  // a Django tutorial belongs to Web frameworks, even though it is a guide.
+  // Competing subject matches remain unresolved rather than falling back
+  // to a generic format label that would hide the ambiguity.
+  const specific = subtopicMatches(title, content, SPECIFIC_SUBTOPICS[topic]);
+  const matches = specific.length ? specific : subtopicMatches(title, content, GENERAL_SUBTOPICS);
   return matches.length && (!matches[1] || matches[0].score > matches[1].score) ? matches[0].name : null;
 }
 function classifyTopic(post, topics) {
@@ -77,14 +89,14 @@ function classifyTopic(post, topics) {
   return { ...matches[0], subtopic: classifySubtopic(post, matches[0].topic) };
 }
 
-function createOfficeTopicTransfer({ db, topics, transfer, onClassified = () => {} }) {
+function createOfficeTopicTransfer({ db, topics, transfer, onClassified = () => {}, topicAgents = null }) {
   let optimizing = false;
   function available() { if (!db.isConnected()) throw failure(503, 'Topic storage is temporarily unavailable.'); }
   async function report() {
     available();
     const { rows } = await db.query(`SELECT stage,CASE WHEN ${UNKNOWN_SQL} THEN 'Unknown' ELSE p.topic END AS topic,
-      CASE WHEN a.topic=p.topic THEN a.subtopic ELSE NULL END AS subtopic,COUNT(*)::int AS count
-      FROM (SELECT id,topic,'live' AS stage FROM feed_posts_cache UNION ALL SELECT id,topic,'staged' AS stage FROM feed_posts_staging) p
+      CASE WHEN a.topic=p.topic${topicAgents ? ' AND a.source_fetched_at=p.fetched_at' : ''} THEN a.subtopic ELSE NULL END AS subtopic,COUNT(*)::int AS count
+      FROM (SELECT id,topic,fetched_at,'live' AS stage FROM feed_posts_cache UNION ALL SELECT id,topic,fetched_at,'staged' AS stage FROM feed_posts_staging) p
       LEFT JOIN office_feed_topic_assignments a ON a.post_id=p.id GROUP BY 1,2,3`, [UNKNOWN]);
     const byTopic = new Map([...topics, 'Unknown'].map(topic => [topic, { topic, live: 0, staged: 0, subtopics: Object.keys(subtopicRules(topic)).map(name => ({ name, live: 0, staged: 0 })).concat({ name: 'Unclassified', live: 0, staged: 0 }) }]));
     for (const row of rows) {
@@ -96,7 +108,10 @@ function createOfficeTopicTransfer({ db, topics, transfer, onClassified = () => 
       subtopic[row.stage] += Number(row.count);
     }
     const unknown = byTopic.get('Unknown');
-    return { available: true, generatedAt: new Date().toISOString(), topics: [...byTopic.values()].sort((a, b) => b.staged - a.staged || b.live - a.live || a.topic.localeCompare(b.topic)), unknown: { live: unknown.live, staged: unknown.staged }, taxonomy: [...byTopic.values()].map(item => ({ topic: item.topic, subtopics: item.subtopics.map(subtopic => subtopic.name) })), note: 'Counts are stored live and staging inventory. Unknown topics remain visible when content evidence is ambiguous. Subtopics are assigned by bounded optimization passes; unreviewed items remain Unclassified.' };
+    const routing = topicAgents ? await topicAgents.snapshot() : null;
+    const assigned = new Map((routing?.agents || []).flatMap(agent => agent.topics.map(topic => [topic,agent.id])));
+    return { available: true, generatedAt: new Date().toISOString(), topics: [...byTopic.values()].map(item => ({ ...item, agentId: assigned.get(item.topic) || null })).sort((a, b) => b.staged - a.staged || b.live - a.live || a.topic.localeCompare(b.topic)), unknown: { live: unknown.live, staged: unknown.staged }, taxonomy: [...byTopic.values()].map(item => ({ topic: item.topic, subtopics: item.subtopics.map(subtopic => subtopic.name) })), agents: routing?.agents || [], routing,
+      note: topicAgents ? 'Counts are stored live and staging inventory. Each topic has an assigned routing agent. New writes are classified immediately; recovery checks every 15 seconds. Ambiguous content remains Unknown or Unclassified and retries later.' : 'Counts are stored live and staging inventory. Unknown topics remain visible when content evidence is ambiguous. Subtopics are assigned by bounded optimization passes; unreviewed items remain Unclassified.' };
   }
   async function transferTopic(body = {}) {
     available();
@@ -127,12 +142,20 @@ function createOfficeTopicTransfer({ db, topics, transfer, onClassified = () => 
       await db.withClient(async client => {
         await client.query('BEGIN');
         try {
+          const routingStats = [];
           for (const table of ['feed_posts_staging', 'feed_posts_cache']) {
             const { rows } = await client.query(`SELECT p.id,p.title,p.content,p.topic FROM ${table} p
               LEFT JOIN office_feed_topic_assignments a ON a.post_id=p.id
-              WHERE a.post_id IS NULL OR a.checked_at < NOW()-INTERVAL '1 day' OR a.topic IS DISTINCT FROM p.topic
-              ORDER BY CASE WHEN ${UNKNOWN_SQL} THEN 0 ELSE 1 END,p.fetched_at DESC,p.id LIMIT 500 FOR UPDATE OF p SKIP LOCKED`, [UNKNOWN]);
-            for (const post of rows) {
+              WHERE a.post_id IS NULL OR a.topic IS DISTINCT FROM p.topic OR ${topicAgents
+                ? 'a.rule_version IS DISTINCT FROM $2::text OR a.retry_at<=NOW() OR a.source_fetched_at IS DISTINCT FROM p.fetched_at'
+                : "a.checked_at < NOW()-INTERVAL '1 day'"}
+              ORDER BY CASE WHEN ${UNKNOWN_SQL} THEN 0 ELSE 1 END,p.fetched_at DESC,p.id LIMIT 500 FOR UPDATE OF p SKIP LOCKED`, topicAgents ? [UNKNOWN,topicAgents.ruleVersion] : [UNKNOWN]);
+            if (topicAgents) {
+              const result = await topicAgents.classifyPersisted(rows, { targetTable: table, queryRunner: client, trackStats: false });
+              checked += result.checked; updated += result.resolved; subtopicsAssigned += result.assigned;
+              changes.push(...result.changes);
+              routingStats.push(...result.stats);
+            } else for (const post of rows) {
               checked++;
               const guessed = isUnknownTopic(post.topic) ? classifyTopic(post, topics) : null;
               const topic = guessed?.topic || post.topic, subtopic = topic ? classifySubtopic(post, topic) : null;
@@ -142,6 +165,7 @@ function createOfficeTopicTransfer({ db, topics, transfer, onClassified = () => 
                 ON CONFLICT(post_id) DO UPDATE SET topic=EXCLUDED.topic,subtopic=EXCLUDED.subtopic,checked_at=NOW()`, [post.id, topic || null, subtopic]);
             }
           }
+          if (topicAgents) await topicAgents.flushStats(routingStats, { queryRunner: client });
           await client.query('COMMIT');
         } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
       });

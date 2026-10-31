@@ -27,6 +27,7 @@ const { ANALYTICS_SCHEMA, ANALYTICS_MIGRATIONS, createAggregateAnalytics } = req
 const { OFFICE_MEMBERS_SCHEMA, registerOfficeMemberRoutes } = require('./office-members');
 const { OFFICE_USER_USAGE_SCHEMA, registerOfficeUserUsageRoutes } = require('./office-user-usage');
 const { OFFICE_TOPIC_SCHEMA, UNKNOWN: UNKNOWN_FEED_TOPICS, isUnknownTopic, classifyTopic, registerOfficeTopicRoutes } = require('./office-topic-transfer');
+const { TOPIC_ROUTING_SCHEMA, createTopicRoutingAgents } = require('./topic-routing-agents');
 const { SIGNIN_SCHEMA, registerSignInRoutes, isDeliverableEmail } = require('./auth-signin');
 const { createOAuthFrontend } = require('./oauth-frontend');
 const { feedUpdateFrames } = require('./feed-stream-events');
@@ -17451,6 +17452,7 @@ async function migrateDB() {
     for (const statement of OFFICE_USER_USAGE_SCHEMA) await db.query(statement);
     for (const statement of SUSPICIOUS_DEVICE_SCHEMA) await db.query(statement);
     for (const statement of OFFICE_TOPIC_SCHEMA) await db.query(statement);
+    for (const statement of TOPIC_ROUTING_SCHEMA) await db.query(statement);
     for (const statement of SNAP_SCHEMA) await db.query(statement);
     for (const statement of MESSAGE_MEDIA_SCHEMA) await db.query(statement);
     for (const statement of CREATOR_ANALYTICS_SCHEMA) await db.query(statement);
@@ -18779,11 +18781,15 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
   if (!db.isConnected() || !posts.length) return;
   let saved = 0;
   let lastRowError = null;
+  const committedRoutingChanges = [];
   const realPosts = realFeedPosts(posts);
   for (const rawPost of realPosts) {
     const p = normalizeFeedPost(rawPost);
     try {
-      const result = await db.query(
+      const { savedCount, routingChanges } = await db.withClient(async client => {
+        await client.query('BEGIN');
+        try {
+          const result = await client.query(
         `INSERT INTO ${targetTable}
            (id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url, author_profile_url)
          SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18
@@ -18806,7 +18812,8 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
            media_poster   = EXCLUDED.media_poster,
            author_avatar_url = COALESCE(EXCLUDED.author_avatar_url, ${targetTable}.author_avatar_url),
            author_profile_url = COALESCE(EXCLUDED.author_profile_url, ${targetTable}.author_profile_url),
-           fetched_at     = NOW()`,
+           fetched_at     = NOW()
+         RETURNING id,title,content,topic`,
         [
           p.id, p.source,
           p.groupId || p.group?.id || null,
@@ -18826,10 +18833,20 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
           safeAvatarUrl(p.author?.avatarUrl),
           sourceAuthorProfileUrl(p),
         ]
-      );
-      if (result.rowCount !== 0) saved++;
+          );
+          const routing = await topicRoutingAgents.classifyPersisted(result.rows, { targetTable, queryRunner: client });
+          await client.query('COMMIT');
+          return { savedCount: result.rowCount || 0, routingChanges: routing.changes };
+        } catch (error) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw error;
+        }
+      });
+      saved += savedCount;
+      committedRoutingChanges.push(...routingChanges);
     } catch (e) { lastRowError = e.message; /* keep going — one bad row shouldn't drop the rest of the batch */ }
   }
+  applyTopicRoutingChanges(committedRoutingChanges, posts);
   recordFeedWriteOutcome(targetTable, realPosts.length, saved, lastRowError);
   if (targetTable === 'feed_posts_cache') trimFeedPostsCache();
   return saved;
@@ -18851,10 +18868,6 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
   for (const rawPost of realFeedPosts(posts)) {
     const p = normalizeFeedPost(rawPost);
     if (!p?.id || seen.has(p.id)) continue;
-    if (isUnknownTopic(p.topic)) {
-      const inferred = classifyTopic(p, FEED_TOPICS);
-      if (inferred) p.topic = inferred.topic;
-    }
     seen.add(p.id);
     rows.push({
       id: clean(p.id),
@@ -18879,7 +18892,8 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
   }
   if (!rows.length) return 0;
 
-  const result = await queryRunner.query(
+  const persist = async client => {
+    const result = await client.query(
     `WITH incoming AS (
        SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(
          id TEXT,
@@ -18905,7 +18919,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
      INSERT INTO ${targetTable} AS existing
        (id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url, author_profile_url)
      SELECT id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster, author_avatar_url, author_profile_url
-     FROM incoming WHERE ${reportSuppressionPredicate('incoming')}
+     FROM incoming WHERE ${reportSuppressionPredicate('incoming')} ORDER BY id
      ON CONFLICT (id) DO UPDATE SET
        group_id       = COALESCE(EXCLUDED.group_id, existing.group_id),
        title          = EXCLUDED.title,
@@ -18941,9 +18955,37 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
         OR (EXCLUDED.author_avatar_url IS NOT NULL AND existing.author_avatar_url IS DISTINCT FROM EXCLUDED.author_avatar_url)
         OR (EXCLUDED.author_profile_url IS NOT NULL AND existing.author_profile_url IS DISTINCT FROM EXCLUDED.author_profile_url)`,
     [JSON.stringify(rows).replace(/\\u0000/gi, '')]
-  );
+    );
+    // ON CONFLICT may skip unchanged rows. They still need assignments when
+    // they predate routing or when the routing rules have changed.
+    const persisted = await client.query(
+      `SELECT p.id,p.title,p.content,p.topic FROM ${targetTable} p
+       WHERE p.id=ANY($1::text[]) AND ${reportSuppressionPredicate('p')}`,
+      [rows.map(row => row.id)]
+    );
+    const routing = await topicRoutingAgents.classifyPersisted(persisted.rows, { targetTable, queryRunner: client });
+    return { saved: result.rowCount || 0, changes: routing.changes };
+  };
+  if (queryRunner !== db) {
+    const result = await persist(queryRunner);
+    // The owner of this transaction applies these only after its COMMIT.
+    if (Array.isArray(options.routingChanges)) options.routingChanges.push(...result.changes);
+    return result.saved;
+  }
+  const result = await db.withClient(async client => {
+    await client.query('BEGIN');
+    try {
+      const saved = await persist(client);
+      await client.query('COMMIT');
+      return saved;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    }
+  });
+  applyTopicRoutingChanges(result.changes, posts);
   if (!options.skipTrim && targetTable === 'feed_posts_cache') trimFeedPostsCache();
-  return Number.isInteger(result.rowCount) ? result.rowCount : rows.length;
+  return result.saved;
 }
 
 // --- Save public website optimizer snapshots ---------------------------------
@@ -20085,15 +20127,24 @@ registerOfficeUserUsageRoutes(app, {
     for (const key of followingSourceCache.keys()) if (key.startsWith(`${userId}::`)) followingSourceCache.delete(key);
   },
 });
+function applyTopicRoutingChanges(changes, extraPosts = []) {
+  if (!changes?.length) return;
+  const assignments = new Map(changes.map(change => [change.id, change]));
+  const pools = [extraPosts, globalFeedCache.posts, ...[...agentSourceCache.values()].map(cache => cache.posts || [])];
+  for (const pool of pools) for (const post of pool) {
+    const assignment = assignments.get(post?.id);
+    if (!assignment) continue;
+    post.topic = assignment.topic;
+    if (Object.hasOwn(assignment, 'subtopic')) post.subtopic = assignment.subtopic;
+  }
+  mainFeedSnapshots.clear(); filteredFeedSnapshots.clear();
+}
+const topicRoutingAgents = createTopicRoutingAgents({ db, topics: FEED_TOPICS, onClassified: applyTopicRoutingChanges });
 const officeTopicTransfer = registerOfficeTopicRoutes(app, {
   db, topics: FEED_TOPICS, requireOfficeToken,
+  topicAgents: topicRoutingAgents,
   transfer: options => transferStagedPosts(options),
-  onClassified: changes => {
-    const assignments = new Map(changes.map(change => [change.id, change.topic]));
-    for (const post of globalFeedCache.posts) if (assignments.has(post.id) && isUnknownTopic(post.topic)) post.topic = assignments.get(post.id);
-    for (const cache of agentSourceCache.values()) for (const post of cache.posts || []) if (assignments.has(post.id) && isUnknownTopic(post.topic)) post.topic = assignments.get(post.id);
-    mainFeedSnapshots.clear(); filteredFeedSnapshots.clear();
-  },
+  onClassified: applyTopicRoutingChanges,
 });
 
 // --- Auth ---------------------------------------------------------------------
@@ -24909,6 +24960,7 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
 
 // --- Office: agent registry ---------------------------------------------------
 const AGENT_DEFS = {
+  ...Object.fromEntries(topicRoutingAgents.definitions().map(agent => [agent.id, { ...agent, emoji: 'TOP', interval: '15s / assigned topics', triggerable: true }])),
   weworkremotely: {
     name: 'We Work Remotely Agent', emoji: 'WWR', color: '#22C55E', interval: '5min',
     description: 'Collects public remote career listings through the configured paced Pipeline worker.',
@@ -26194,6 +26246,7 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       lastRun: sortAgentState.lastRun,
       lastError: sortAgentState.lastError,
     },
+    topicRouting: topicRoutingAgents.currentSnapshot(),
     topicFilterAgent: {
       status: topicFilterAgentState.lastError ? 'degraded' : 'healthy',
       totalRuns: topicFilterAgentState.totalRuns,
@@ -26329,17 +26382,25 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
 // Only structured observations enter Live City health and its read-only chat.
 function getOfficeAgentObservation(id, observedAt = new Date().toISOString()) {
   if (!Object.prototype.hasOwnProperty.call(AGENT_DEFS, id)) return null;
+  const isTopicRouter = /^topic_router_[1-4]$/.test(id);
   const sourceWorker = Object.prototype.hasOwnProperty.call(SOURCE_CONFIG, id)
     || ['remotive', 'muse'].includes(id) || typeof SOURCE_FETCHERS[id] === 'function';
-  const executionRole = sourceWorker || ['refresh_queue', 'equalizer', 'optimizer', 'cache_helper'].includes(id) ? 'pipeline' : ['ai', 'analytics_verification'].includes(id) ? 'api' : id === 'instagram' ? 'on-demand' : 'both';
+  const executionRole = sourceWorker || ['refresh_queue', 'equalizer', 'optimizer', 'cache_helper'].includes(id) ? 'pipeline' : isTopicRouter || ['ai', 'analytics_verification'].includes(id) ? 'api' : id === 'instagram' ? 'on-demand' : 'both';
   const hasRuntimeMetrics = ['stability', 'crash_guard', 'refresh_queue', 'sort_agent', 'sort_distrib', 'mix_optimizer',
-    'sort_optimizer', 'activity', 'autofix', 'perf', 'equalizer', 'filter', 'topic_filter', 'topic_audit', 'topic_fix', 'analytics_verification'].includes(id) || id.startsWith('web_');
+    'sort_optimizer', 'activity', 'autofix', 'perf', 'equalizer', 'filter', 'topic_filter', 'topic_audit', 'topic_fix', 'analytics_verification'].includes(id) || isTopicRouter || id.startsWith('web_');
   const diagnosticCapability = sourceWorker ? 'source-worker' : id === 'instagram' ? 'on-demand'
     : hasRuntimeMetrics ? 'runtime-metrics' : 'summary-only';
   const cache = agentSourceCache.get(id);
   let status = 'unknown';
   let metrics = {};
-  if (id === 'analytics_verification') {
+  if (isTopicRouter) {
+    const agent = topicRoutingAgents.currentSnapshot()?.agents?.find(item => item.id === id);
+    const stale = agent?.lastRun && Date.now() - Date.parse(agent.lastRun) > Math.max(60000, (agent.intervalMs || 15000) * 4);
+    status = IS_PIPELINE_ROLE ? 'unavailable' : !agent ? 'unknown' : agent.error || stale ? 'degraded' : agent.running ? 'running' : agent.lastRun ? 'healthy' : 'idle';
+    metrics = agent ? { enabled: !IS_PIPELINE_ROLE && agent.enabled, lastRun: agent.lastRun, lastSuccess: agent.error ? null : agent.lastRun,
+      totalChecked: agent.checked, totalFixed: agent.assigned, lastChecked: agent.lastChecked, lastFixed: agent.lastAssigned, lastInput: agent.lastChecked, lastOutput: agent.lastAssigned,
+      pending: agent.pending, lastDurationMs: agent.lastDurationMs } : {};
+  } else if (id === 'analytics_verification') {
     const verification = aggregateAnalytics.verification.snapshot();
     status = IS_PIPELINE_ROLE ? 'unavailable' : ['error', 'mismatch', 'stale'].includes(verification.status) ? 'degraded'
       : verification.running ? 'running' : ({ verified: 'healthy', mismatch: 'degraded', error: 'degraded',
@@ -26414,8 +26475,9 @@ app.post('/office/agents/:id/web-draft', requireOfficeToken, require('./office-w
   serviceRole: SERVICE_ROLE,
 }));
 
-app.get('/office/agents', requireOfficeToken, (req, res) => {
+app.get('/office/agents', requireOfficeToken, async (req, res) => {
   res.set('Cache-Control', 'no-store');
+  await topicRoutingAgents.snapshot().catch(() => {});
   const result = {};
   const observedAt = new Date().toISOString();
   for (const [id, def] of Object.entries(AGENT_DEFS)) {
@@ -26424,7 +26486,7 @@ app.get('/office/agents', requireOfficeToken, (req, res) => {
     const observation = getOfficeAgentObservation(id, observedAt);
     result[id] = {
       ...def, id, emoji: officeBadgeCode(id, def.emoji), logs, lastAction: logs[0] || null,
-      ...(id === 'analytics_verification' ? { triggerable: !IS_PIPELINE_ROLE } : {}),
+      ...(id === 'analytics_verification' || /^topic_router_[1-4]$/.test(id) ? { triggerable: !IS_PIPELINE_ROLE } : {}),
       serviceRole: SERVICE_ROLE, executionRole: observation.executionRole, observedAt,
       diagnosticCapability: observation.diagnosticCapability, observation,
       health: { ...observation.metrics, status: observation.status },
@@ -26452,6 +26514,16 @@ app.get('/office/agents/stream', requireOfficeToken, (req, res) => {
 });
 
 app.post('/office/agents/:id/trigger', requireOfficeToken, async (req, res) => {
+  if (/^topic_router_[1-4]$/.test(req.params.id)) {
+    if (IS_PIPELINE_ROLE) return res.status(409).json({ error: 'Topic routing agents run on the API service.' });
+    try {
+      const result = await topicRoutingAgents.runAgent(req.params.id, { manual: true });
+      await topicRoutingAgents.snapshot();
+      if (result.ok === false) return res.status(503).json({ ...result, error: result.error || 'Topic routing check could not complete.' });
+      if (!result.skipped) logAgentAction(req.params.id, 'TOP', `Reviewed ${result.checked} posts and assigned ${result.assigned} subtopics`, '#22D3EE');
+      return res.status(result.skipped ? 202 : 200).json({ ...result, triggered: req.params.id });
+    } catch { return res.status(503).json({ error: 'Topic routing is temporarily unavailable. Queued posts remain available for retry.' }); }
+  }
   if (req.params.id === 'analytics_verification') {
     if (IS_PIPELINE_ROLE) return res.status(409).json({ error: 'Analytics verification runs on the API service.' });
     try {
@@ -26682,6 +26754,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
   let totalMoved = 0;
   let totalSaved = 0;
   let totalDeleted = 0;
+  let totalScreenedOut = 0;
   let batchCount = 0;
   const sourceCounts = {};
   try {
@@ -26749,15 +26822,16 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
             return screened.allowed ? [screened.post] : [];
           });
           const screenedOut = rows.length - approvedPosts.length;
+          const routingChanges = [];
           const saved = approvedPosts.length
-            ? await savePostsToDBFast(approvedPosts, 'feed_posts_cache', client, { skipTrim: true })
+            ? await savePostsToDBFast(approvedPosts, 'feed_posts_cache', client, { skipTrim: true, routingChanges })
             : 0;
           const deleted = await client.query(
             `DELETE FROM feed_posts_staging WHERE id = ANY($1::text[])`,
             [rows.map(r => r.id)]
           );
           await client.query('COMMIT');
-          return { rows, approvedPosts, rejectedPosts, saved, deleted: deleted.rowCount || 0, screenedOut };
+          return { rows, approvedPosts, rejectedPosts, routingChanges, saved, deleted: deleted.rowCount || 0, screenedOut };
         } catch (e) {
           await client.query('ROLLBACK').catch(() => {});
           for (const row of attemptedRows) postPipelineTracker.record(row, 'retrying', 'Transfer rolled back; staging retained for retry');
@@ -26766,6 +26840,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
       });
       stagingTransferState.lastRun = new Date().toISOString();
       if (!result.rows.length) { stagingTransferState.lastCount = 0; break; }
+      applyTopicRoutingChanges(result.routingChanges, result.approvedPosts);
       for (const post of result.approvedPosts) postPipelineTracker.record(post, 'live', 'Transfer committed; removed from staging');
       for (const { post, reason: rejection } of result.rejectedPosts) postPipelineTracker.record(post, 'rejected', `Transfer screening: ${rejection}`);
       const count = result.saved;
@@ -26775,6 +26850,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
       totalMoved += result.saved;
       totalSaved += result.saved;
       totalDeleted += result.deleted;
+      totalScreenedOut += result.screenedOut;
       stagingTransferState.lastCount = count;
       stagingTransferState.lastSavedCount = result.saved;
       stagingTransferState.lastDeletedCount = result.deleted;
@@ -26813,7 +26889,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
       finishedAt: new Date().toISOString(),
       durationMs: stagingTransferState.lastDurationMs,
     });
-    return { transferred: totalSaved, drained: totalDeleted, screenedOut: totalDeleted - totalSaved, batches: batchCount, pendingAfter: stagingPostCount };
+    return { transferred: totalSaved, drained: totalDeleted, screenedOut: totalScreenedOut, batches: batchCount, pendingAfter: stagingPostCount };
   } catch (e) {
     stagingTransferState.lastError = e.message;
     stagingTransferState.lastDurationMs = Date.now() - transferStartedAt;
@@ -33549,6 +33625,8 @@ db.initDB().then(async () => {
   console.log('[startup] Beginning background data initialization...');
   try {
     await migrateDB();
+    await topicRoutingAgents.initialize();
+    if (!IS_PIPELINE_ROLE) topicRoutingAgents.start();
     await feedAudit.initialize().catch(() => console.warn('[feed audit] Policy initialization pending; imported feed intake remains held.'));
     scheduleRecurring(() => (feedAudit.status().policyReady ? feedAudit.reload() : feedAudit.initialize()).catch(() => {}), 5000);
     await ufiVault.initialize();

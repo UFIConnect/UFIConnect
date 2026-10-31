@@ -11,13 +11,14 @@ const now = new Date().toISOString(), userId = 'a0000000-0000-4000-8000-00000000
 const user = {id:userId,name:'Review Member',email:'review@example.com',onboarded:true,createdAt:now};
 const item = {id:'review-item',postId:'post-spam',title:'Spam review example',content:'Retained text for inspection',source:'news',sourceUrl:'javascript:alert(1)',status:'rejected',reason:'link_spam',explanation:'Too many external links.',at:now};
 const policy = {enabled:true,maxPerSourcePerMinute:300,maxPerAuthorPerMinute:25,duplicateWindowSeconds:300,targetApprovalPct:85,minimumSample:30,cooldownSeconds:60,blockedSources:[]};
+const routingAgents = Array.from({ length: 4 }, (_, index) => ({ id:`topic_router_${index + 1}`, name:`Topic routing ${index + 1}`, topics:index ? [] : ['Engineering'], status:'ready', enabled:true, running:false, lastRun:now, nextRun:now, intervalMs:15000, checked:20, assigned:12, resolved:3, lastChecked:4, lastAssigned:2, pending:0, lagMs:0 }));
 let browser;
 try {
   await server.listen(); await fs.mkdir(path.join(root,'.cache/audit-ui'),{recursive:true});
   browser = await chromium.launch({channel:process.platform === 'win32' ? 'msedge' : undefined});
   for(const width of [1440,390]) {
     const context = await browser.newContext({viewport:{width,height:1000}}), page = await context.newPage(), errors = [], writes = [];
-    let blocked = false, failDetail = false;
+    let blocked = false, failDetail = false, topicReads = 0;
     page.on('pageerror',error => errors.push(error.message));
     await page.route(url => /^\/(pipeline\/)?office\//.test(url.pathname),async route => {
       const req = route.request(), url = new URL(req.url()), endpoint = url.pathname.replace(/^\/pipeline/,'');
@@ -29,7 +30,8 @@ try {
       if(endpoint === '/office/feed-audit/items/review-item') return route.fulfill(failDetail ? {status:503,json:{message:'Audit detail unavailable'}} : {json:{item}});
       if(endpoint === '/office/feed-audit') return route.fulfill({json:{items:url.searchParams.get('q') === 'nothing' ? [] : [item],hasMore:false,summary:{checked:100,approved:85,rejected:15,held:12,approvalPct:85},policy:{...policy,blockedSources:blocked ? [{source:'news',reason:'Breach review',blockedAt:now}] : []},reasons:[{id:'link_spam',label:'Link spam'}],sources:[{id:'news',label:'News'}],commands:[{id:'feed.audit-review',label:'Review current feed',description:'Screen live content.'},{id:'feed.audit-protect',label:'Protect feed',description:'Enable controls and review.'}]}});
       if(endpoint.startsWith('/office/controls/')) { if(endpoint.includes('source.block.news')) blocked = true; return route.fulfill({json:{result:{ok:true,checked:100}}}); }
-      if(endpoint === '/office/topic-transfer') return route.fulfill({json:{available:true,generatedAt:now,topics:[{topic:'Engineering',live:20,staged:10,subtopics:[{name:'Software',live:15,staged:5}]}],unknown:{live:4,staged:2},taxonomy:[{topic:'Engineering',subtopics:['Software']}]}});
+      if(endpoint === '/office/topic-transfer') { topicReads++; return route.fulfill({json:{available:true,generatedAt:now,agents:routingAgents,routing:{enabled:true,intervalMs:15000,observedAt:now},topics:[{topic:'Engineering',agentId:'topic_router_1',live:20,staged:10,subtopics:[{name:'Software',live:15,staged:5}]}],unknown:{live:4,staged:2},taxonomy:[{topic:'Engineering',subtopics:['Software']}]}}); }
+      if(endpoint === '/office/agents/topic_router_1/trigger') return route.fulfill({json:{ok:true,checked:4,assigned:2,resolved:1}});
       if(endpoint === '/office/topic-transfer/transfer') return route.fulfill({json:{ok:true,transferred:5,pendingAfter:5}});
       if(endpoint.endsWith('/optimize-unknown')) return route.fulfill({json:{ok:true,checked:6,updated:4,remaining:2}});
       if(endpoint.endsWith('/usage')) return route.fulfill({json:{available:true,user,days:30,activity:{posts:3,comments:2,sourceActions:4,savedPosts:1,deliveredPosts:40,engagedPosts:6,lastRecordedAt:now,daily:[]},generation:{period:{resetsAt:now},limits:{image:{used:1,limit:10,remaining:9}}},affinity:[],recommendations:['Refresh the delivery cache when content appears stale.'],commands:[{id:'refresh-feed',label:'Refresh user feed',description:'Clear temporary delivery caches.'},{id:'balance-interests',label:'Balance interests',description:'Reduce extreme weights.'}]}});
@@ -60,6 +62,22 @@ try {
     await page.screenshot({path:path.join(root,`.cache/audit-ui/office-feed-audit-${width}.png`)});
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth+1),`Feed audit fits ${width}px`);
     await page.getByRole('button',{name:'Topic Transfer',exact:true}).click(); await page.getByLabel('Transfer topic',{exact:true}).selectOption('Engineering'); await page.getByLabel('Transfer subtopic',{exact:true}).selectOption('Software');
+    await page.getByText('Automatic routing enabled',{exact:true}).waitFor();
+    const routingPanel = page.getByRole('region',{name:'Automatic topic routing agents'});
+    assert.equal(await routingPanel.getByRole('button',{name:/^Run Topic routing \d now$/}).count(),4);
+    await routingPanel.getByRole('button',{name:'Run Topic routing 1 now',exact:true}).click();
+    await routingPanel.getByText('Topic routing 1: Check completed.',{exact:false}).waitFor();
+    assert.deepEqual(writes.find(row => row.path === '/office/agents/topic_router_1/trigger').body,{confirmed:true});
+    await page.getByText('Assigned agent: Topic routing 1',{exact:true}).waitFor();
+    if(width === 1440) {
+      const beforeRefresh = topicReads;
+      await page.waitForTimeout(16000);
+      assert.ok(topicReads > beforeRefresh,'Topic agent status refreshes automatically');
+      assert.equal(await page.getByLabel('Transfer topic',{exact:true}).inputValue(),'Engineering','Background refresh preserves selected topic');
+      assert.equal(await page.getByLabel('Transfer subtopic',{exact:true}).inputValue(),'Software','Background refresh preserves selected subtopic');
+    }
+    await page.getByLabel('Refresh topic and agent status every 15 seconds',{exact:true}).uncheck();
+    await page.screenshot({path:path.join(root,`.cache/audit-ui/office-topic-agents-${width}.png`)});
     await page.getByRole('button',{name:'Transfer selected topic',exact:true}).click(); await page.getByText('Topic transfer result',{exact:true}).waitFor();
     assert.deepEqual(writes.find(x => x.path.endsWith('/topic-transfer/transfer')).body,{confirmed:true,topic:'Engineering',subtopic:'Software',maxBatches:1});
     await page.getByRole('button',{name:'Optimize unknown topics',exact:true}).click(); await page.getByText('Unknown optimization result',{exact:true}).waitFor();
@@ -69,6 +87,6 @@ try {
     assert.deepEqual(writes.find(x => x.path.endsWith('/optimize')).body,{command:'refresh-feed',confirmed:true});
     await page.screenshot({path:path.join(root,`.cache/audit-ui/office-user-usage-${width}.png`)});
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth+1),`User usage fits ${width}px`);
-    assert.deepEqual(errors,[]); await context.close(); console.log(`Office operations ${width}px: audit details, safe links, source blocks, bundle, device review, topic transfer, user commands passed`);
+    assert.deepEqual(errors,[]); await context.close(); console.log(`Office operations ${width}px: audit, topic routing agents, automatic refresh, topic transfer, user commands passed`);
   }
 } finally { await browser?.close(); await server.close(); }

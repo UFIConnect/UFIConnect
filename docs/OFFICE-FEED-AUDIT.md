@@ -6,6 +6,14 @@ Open the existing authenticated Office at `https://office.uficonnect.org`.
 - **Topic Transfer** (`#topic-transfer`): select a topic and optional subtopic, then transfer up to three batches through existing screening. Optimize Unknown checks up to 500 staged and 500 cached posts per run, assigning evidence-backed topics/subtopics. Ambiguous posts remain Unknown.
 - **Users** (`#users`): click an account name for recorded usage, monthly generation allowance, learned interests, and per-user optimization commands. Delivered posts are not verified views or time spent.
 
+## Automatic topic routing
+
+Four agents own stable groups of topic filters, including Unknown. New posts are classified inside the same database transaction that saves them. API workers also check retained staged and live posts every 15 seconds, reserving room for both fresh and oldest work. Each agent checks up to 400 posts per pass; leases prevent workers from running the same agent simultaneously. Large backlogs take multiple passes.
+
+The Topic Transfer page shows each topic's assigned agent, its last check, pending work, oldest pending age and classification totals. The page refreshes every 15 seconds while visible, preserving selected filters. Each agent also appears under Agents and has a **Run now** command. A manual run respects an existing worker lease.
+
+Specific subject evidence takes priority over general formats: a Django tutorial goes to Python's Web frameworks subtopic. Equally strong competing subtopics stay Unclassified. Unknown topics are resolved only when the existing topic rules have enough evidence. Unclassified posts retry after 30 minutes; classified posts are reviewed again after one day. Content changes trigger a fresh decision, while engagement-only refreshes reuse the existing decision. Optimize Unknown uses the same routing rules and metadata as the agents.
+
 ## Commands
 
 The Feed Audit protection bundle enables the default anti flooding policy, reviews up to 2,000 current posts on each owning service, and expires temporary delivery snapshots. Each step is visible in the result. It does not refresh every external source or change approval decisions.
