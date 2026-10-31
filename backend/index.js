@@ -25,6 +25,8 @@ const { createNativeGroupCountHydrator } = require('./group-membership-counts');
 const { createAnalyticsBridgeHandler } = require('./analytics-bridge');
 const { ANALYTICS_SCHEMA, ANALYTICS_MIGRATIONS, createAggregateAnalytics } = require('./aggregate-analytics');
 const { OFFICE_MEMBERS_SCHEMA, registerOfficeMemberRoutes } = require('./office-members');
+const { OFFICE_USER_USAGE_SCHEMA, registerOfficeUserUsageRoutes } = require('./office-user-usage');
+const { OFFICE_TOPIC_SCHEMA, UNKNOWN: UNKNOWN_FEED_TOPICS, isUnknownTopic, classifyTopic, registerOfficeTopicRoutes } = require('./office-topic-transfer');
 const { SIGNIN_SCHEMA, registerSignInRoutes, isDeliverableEmail } = require('./auth-signin');
 const { createOAuthFrontend } = require('./oauth-frontend');
 const { feedUpdateFrames } = require('./feed-stream-events');
@@ -69,6 +71,8 @@ const PDFDocument = require('pdfkit');
 const v8 = require('v8');
 const db        = require('./db');
 const { initializePostPipeline, createPostPipelineTracker, createPostPipelineReader, pipelineFilters } = require('./post-pipeline');
+const { createFeedAudit, DEFAULT_POLICY: DEFAULT_FEED_AUDIT_POLICY } = require('./feed-audit');
+const { createSuspiciousDevices, registerSuspiciousDeviceRoutes, SCHEMA: SUSPICIOUS_DEVICE_SCHEMA } = require('./suspicious-devices');
 const filestore  = require('./filestore');
 const { HISTORY_SCHEMA, createGeneratedContentStore, publicHistoryItem } = require('./generated-content');
 const { createGenerationUsage, schemaStatements: GENERATION_USAGE_SCHEMA } = require('./generation-usage');
@@ -574,6 +578,7 @@ if (process.env.MAINTENANCE === 'true') {
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = resolveJwtSecret(process.env);
+const suspiciousDevices = createSuspiciousDevices({ db, secret: JWT_SECRET, production: process.env.NODE_ENV === 'production' });
 const localSessions = new Map();
 const AUTH0_DOMAIN = (process.env.AUTH0_DOMAIN || process.env.AUTH0_ISSUER_BASE_URL || '')
   .trim()
@@ -6571,27 +6576,15 @@ function normalizeFeedPost(p, fallback = Date.now()) {
 // and memoized: the pipeline may evaluate the same cached item many times,
 // while freshly-read DB rows are still checked before they reach a response.
 const externalFeedScreeningMemo = new WeakMap();
-const importedFeedAuditState = {
-  checked: 0,
-  approved: 0,
-  rejected: 0,
-  byReason: {},
-  lastCheckedAt: null,
-  lastRejected: null,
-};
+const feedAudit = createFeedAudit(db, { role: SERVICE_ROLE, requirePolicy: process.env.NODE_ENV === 'production',
+  onPolicyChange: () => {
+    clearAggregateFeedCandidateCache(); clearGuestFeedPageCache();
+    mainFeedSnapshots.clear(); filteredFeedSnapshots.clear();
+  },
+});
 
 function buildImportedFeedAuditSummary() {
-  return {
-    checked: importedFeedAuditState.checked,
-    approved: importedFeedAuditState.approved,
-    rejected: importedFeedAuditState.rejected,
-    approvalPct: importedFeedAuditState.checked
-      ? Math.round((importedFeedAuditState.approved / importedFeedAuditState.checked) * 1000) / 10
-      : null,
-    byReason: { ...importedFeedAuditState.byReason },
-    lastCheckedAt: importedFeedAuditState.lastCheckedAt,
-    lastRejected: importedFeedAuditState.lastRejected,
-  };
+  return { ...feedAudit.summary(), policy: feedAudit.policy(), health: feedAudit.status() };
 }
 
 function feedScreeningSnapshot(post) {
@@ -6628,24 +6621,16 @@ function matchesFeedScreeningSnapshot(snapshot, post) {
 
 function screenFeedPost(post) {
   if (!post || typeof post !== 'object') return { allowed: false, reason: 'invalid_post', post };
+  // Always apply current source policy before consulting memoized screening.
+  const access = feedAudit.access(post);
+  if (!access.allowed) {
+    feedAudit.record(post, access, access.reason === 'policy_unavailable' ? 'held' : 'rejected');
+    return { ...access, post };
+  }
   const cached = externalFeedScreeningMemo.get(post);
   if (matchesFeedScreeningSnapshot(cached?.snapshot, post)) return cached.result;
   const result = screenImportedFeedPost(post);
-  importedFeedAuditState.checked += 1;
-  importedFeedAuditState.lastCheckedAt = new Date().toISOString();
-  if (result.allowed) {
-    importedFeedAuditState.approved += 1;
-  } else {
-    importedFeedAuditState.rejected += 1;
-    const reason = result.reason || 'unknown';
-    importedFeedAuditState.byReason[reason] = (importedFeedAuditState.byReason[reason] || 0) + 1;
-    importedFeedAuditState.lastRejected = {
-      id: post.id || null,
-      source: post.source || null,
-      reason,
-      at: importedFeedAuditState.lastCheckedAt,
-    };
-  }
+  feedAudit.record(post, result);
   const entry = { snapshot: feedScreeningSnapshot(post), result };
   externalFeedScreeningMemo.set(post, entry);
   if (result.post && result.post !== post) {
@@ -6698,7 +6683,7 @@ async function flushSSEBatch() {
     if (!posts.length) continue;
     for (const [id, res] of sseClients) {
       try {
-        const visible = await visibleNativeGroupContent(posts, res.feedViewerId || null);
+        const visible = await visibleNativeGroupContent(realFeedPosts(posts), res.feedViewerId || null);
         for (const frame of feedUpdateFrames(visible)) res.write(frame);
       }
       catch { sseClients.delete(id); try { res.end?.(); } catch {} }
@@ -6739,6 +6724,8 @@ function addAndBroadcast(incoming, { includeAccepted = false } = {}) {
     const bucket = filterAgentState.bySource[src] || (filterAgentState.bySource[src] = { input: 0, output: 0, droppedInvalid: 0, droppedDuplicate: 0, droppedScreened: 0 });
     bucket.input++;
     if (!p?.id || isFallbackFeedPost(p)) { postPipelineTracker.record(p, 'rejected', 'Invalid or fallback post'); bucket.droppedInvalid++; droppedInvalid++; continue; }
+    const admission = feedAudit.admit(p);
+    if (!admission.allowed) { postPipelineTracker.record(p, 'rejected', admission.reason); bucket.droppedScreened++; droppedScreened++; continue; }
     const screened = screenFeedPost(p);
     if (!screened.allowed) { postPipelineTracker.record(p, 'rejected', screened.reason); bucket.droppedScreened++; droppedScreened++; continue; }
     if (seenPostIds.has(screened.post.id)) refreshImportedPostBody(screened.post);
@@ -6994,7 +6981,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper, options = {}
       if (CACHE_KEY_PREFIX[agentId]) bustCache(CACHE_KEY_PREFIX[agentId] + key);
       try {
         const posts = await fetchFn(key);
-        const fresh = realFeedPosts(posts).map(post => trimPostContent(normalizeFeedPost(post)));
+        const fresh = realFeedPosts(posts.filter(post => feedAudit.admit(post).allowed)).map(post => trimPostContent(normalizeFeedPost(post)));
         health.lastSuccess = Date.now();
         health.lastError = null;
         health.consecutiveErrors = 0;
@@ -7486,6 +7473,8 @@ function pushToEqualizer(sourceId, posts) {
       equalizerState.totalQueueDuplicates += 1;
       continue;
     }
+    const admission = feedAudit.admit(post);
+    if (!admission.allowed) { postPipelineTracker.record(post, 'rejected', admission.reason); continue; }
     buffer.push(post);
     postPipelineTracker.record(post, 'queued', 'Source fetched; waiting in equalizer before screening');
     equalizerQueuedPostIds.add(post.id);
@@ -13007,34 +12996,16 @@ async function runSortDistribCheck() {
 // count as a real content match — same bidirectional-substring spirit
 // filterByUserTopics already uses, just applied to real post text instead
 // of the user's own topic selection string.
-const TOPIC_KEYWORD_FRAGMENTS = new Map(FEED_TOPICS.map(t => {
-  const frags = t.toLowerCase().split(/\s*[/&,]\s*/).map(s => s.trim()).filter(s => s.length > 2);
-  return [t, frags.length ? frags : [t.toLowerCase()]];
-}));
-
 // Returns the single topic this post's own title/content most supports, or
 // null if nothing in FEED_TOPICS matches at all (genuinely ambiguous —
 // deliberately NOT corrected; a wrong-but-confident guess would just
 // replace one unverified assumption with another).
 function guessTopicForPost(post) {
-  const text = `${post?.title || ''} ${post?.content || ''}`.toLowerCase();
-  if (!text.trim()) return null;
-  const matches = [];
-  for (const [topic, frags] of TOPIC_KEYWORD_FRAGMENTS) {
-    if (frags.some(f => text.includes(f))) matches.push(topic);
-  }
-  if (!matches.length) return null;
-  if (matches.length === 1) return matches[0];
-  // Genuinely ambiguous (the text supports more than one topic keyword) —
-  // if the post's own already-assigned topic is among the real matches,
-  // that's still a legitimate match, not a misfile; only reach for the
-  // longest (most specific) matched keyword as a tiebreaker when it isn't.
-  if (post?.topic && matches.includes(post.topic)) return post.topic;
-  return matches.reduce((best, t) => {
-    const bestLen = Math.max(...TOPIC_KEYWORD_FRAGMENTS.get(best).map(f => f.length));
-    const tLen = Math.max(...TOPIC_KEYWORD_FRAGMENTS.get(t).map(f => f.length));
-    return tLen > bestLen ? t : best;
-  });
+  const inferred = classifyTopic(post, FEED_TOPICS);
+  if (inferred) return inferred.topic;
+  // Keep ambiguous rows unresolved; broad substring guesses used to assign
+  // "Go" from ordinary prose and never inspected missing-topic rows.
+  return null;
 }
 
 const TOPIC_AUDIT_BATCH_SIZE = 400;
@@ -13065,7 +13036,7 @@ function runTopicAuditCheck() {
     const start = topicAuditState.cursorIndex % pool.length;
     for (let i = 0; i < Math.min(TOPIC_AUDIT_BATCH_SIZE, pool.length); i++) {
       const post = pool[(start + i) % pool.length];
-      if (!post?.id || !post.topic || JOB_LISTING_SOURCES.includes(post.source)) continue;
+      if (!post?.id || JOB_LISTING_SOURCES.includes(post.source)) continue;
       const guessed = guessTopicForPost(post);
       if (guessed && guessed !== post.topic) {
         mismatches++;
@@ -17477,6 +17448,9 @@ async function migrateDB() {
     await db.query(ANALYTICS_SCHEMA);
     for (const statement of ANALYTICS_MIGRATIONS) await db.query(statement);
     for (const statement of OFFICE_MEMBERS_SCHEMA) await db.query(statement);
+    for (const statement of OFFICE_USER_USAGE_SCHEMA) await db.query(statement);
+    for (const statement of SUSPICIOUS_DEVICE_SCHEMA) await db.query(statement);
+    for (const statement of OFFICE_TOPIC_SCHEMA) await db.query(statement);
     for (const statement of SNAP_SCHEMA) await db.query(statement);
     for (const statement of MESSAGE_MEDIA_SCHEMA) await db.query(statement);
     for (const statement of CREATOR_ANALYTICS_SCHEMA) await db.query(statement);
@@ -18877,6 +18851,10 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
   for (const rawPost of realFeedPosts(posts)) {
     const p = normalizeFeedPost(rawPost);
     if (!p?.id || seen.has(p.id)) continue;
+    if (isUnknownTopic(p.topic)) {
+      const inferred = classifyTopic(p, FEED_TOPICS);
+      if (inferred) p.topic = inferred.topic;
+    }
     seen.add(p.id);
     rows.push({
       id: clean(p.id),
@@ -19877,7 +19855,7 @@ async function authenticate(req, res, next) {
     // requireOfficeToken instead of this middleware, so they deliberately
     // never touch this.
     recordRealUserActivity(req, 'auth');
-    return next();
+    return suspiciousDevices.guard(req, res, next);
   } catch (error) {
     if (error.status === 503) return res.status(503).json({ message: error.message });
     // Not a local UFIconnect JWT; try Auth0 when configured.
@@ -19887,8 +19865,9 @@ async function authenticate(req, res, next) {
     const payload = await verifyAuth0Token(token);
     const user = await provisionAuth0User(payload);
     req.user = { id: user.id, email: user.email, authProvider: 'auth0', sub: payload.sub };
+    req.authToken = token;
     recordRealUserActivity(req, 'auth0');
-    return next();
+    return suspiciousDevices.guard(req, res, next);
   } catch (error) {
     if ([409, 503].includes(error.status)) return res.status(error.status).json({ message: error.message });
     return res.status(401).json({ message: 'Invalid or expired token.' });
@@ -20011,6 +19990,7 @@ const hydrateNativeGroupCounts = createNativeGroupCountHydrator({ db,
   getUsers: () => users, allowMemory: process.env.NODE_ENV !== 'production',
 });
 async function visibleReportContent(content, targetType = 'post') {
+  if (targetType === 'post' && Array.isArray(content)) content = content.filter(post => !post?.source || feedAudit.access(post).allowed);
   // Local fixtures use memory-only content. Production always checks durable
   // removals, including when feed data came from another worker or backup.
   if (!db.isConnected() && process.env.NODE_ENV !== 'production') return content;
@@ -20095,6 +20075,25 @@ const officeMembers = registerOfficeMemberRoutes(app, {
   clearUserCache: () => { const cleared = users.length; users = []; return cleared; },
   mailAvailable: emailConfigured,
   sendMail: message => getMailTransport().sendMail({ from: process.env.EMAIL_FROM || process.env.SMTP_USER, ...message }),
+});
+registerSuspiciousDeviceRoutes(app, { service: suspiciousDevices, requireOfficeToken });
+registerOfficeUserUsageRoutes(app, {
+  db, generationUsage, requireOfficeToken,
+  invalidateUser: userId => {
+    invalidateUserFeedSnapshots(userId);
+    userAffinityCache.delete(userId);
+    for (const key of followingSourceCache.keys()) if (key.startsWith(`${userId}::`)) followingSourceCache.delete(key);
+  },
+});
+const officeTopicTransfer = registerOfficeTopicRoutes(app, {
+  db, topics: FEED_TOPICS, requireOfficeToken,
+  transfer: options => transferStagedPosts(options),
+  onClassified: changes => {
+    const assignments = new Map(changes.map(change => [change.id, change.topic]));
+    for (const post of globalFeedCache.posts) if (assignments.has(post.id) && isUnknownTopic(post.topic)) post.topic = assignments.get(post.id);
+    for (const cache of agentSourceCache.values()) for (const post of cache.posts || []) if (assignments.has(post.id) && isUnknownTopic(post.topic)) post.topic = assignments.get(post.id);
+    mainFeedSnapshots.clear(); filteredFeedSnapshots.clear();
+  },
 });
 
 // --- Auth ---------------------------------------------------------------------
@@ -26669,8 +26668,8 @@ function rememberTransferRun(run) {
   ).catch(e => console.warn('[transfer history] insert failed:', e.message));
 }
 
-async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, reason = 'scheduled' } = {}) {
-  if (!db.isConnected() || transferInFlight) return;
+async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, reason = 'scheduled', topic = null, subtopic = null } = {}) {
+  if (!db.isConnected() || transferInFlight) return { skipped: true };
   transferInFlight = true;
   transferStartedAt = Date.now();
   stagingTransferState.lastReason = reason;
@@ -26709,6 +26708,8 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
     // — an unusually large backlog keeps draining on the next tick.
     for (let batch = 0; batch < maxBatches; batch++) {
       stagingTransferState.currentBatch = batch + 1;
+      // A temporary policy outage must retain staged rows for retry.
+      if (process.env.NODE_ENV === 'production' || feedAudit.status().policyRefreshedAt) await feedAudit.reload();
       const result = await db.withClient(async (client) => {
         await client.query('BEGIN');
         let attemptedRows = [];
@@ -26717,6 +26718,10 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
             `WITH picked AS (
                SELECT id
                FROM feed_posts_staging
+               ${topic === null ? '' : `WHERE (($2='Unknown' AND lower(btrim(COALESCE(topic,'')))=ANY($3::text[])) OR topic=$2)
+                 AND ($4::text IS NULL
+                   OR ($4='Unclassified' AND NOT EXISTS (SELECT 1 FROM office_feed_topic_assignments a WHERE a.post_id=feed_posts_staging.id AND a.topic=feed_posts_staging.topic AND a.subtopic IS NOT NULL))
+                   OR EXISTS (SELECT 1 FROM office_feed_topic_assignments a WHERE a.post_id=feed_posts_staging.id AND a.topic=feed_posts_staging.topic AND a.subtopic=$4))`}
                ORDER BY fetched_at ASC, id ASC
                LIMIT $1
                FOR UPDATE SKIP LOCKED
@@ -26725,7 +26730,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
              FROM feed_posts_staging s
              JOIN picked p ON p.id = s.id
              ORDER BY s.fetched_at ASC, s.id ASC`,
-            [STAGING_TRANSFER_BATCH_SIZE]
+            topic === null ? [STAGING_TRANSFER_BATCH_SIZE] : [STAGING_TRANSFER_BATCH_SIZE, topic, UNKNOWN_FEED_TOPICS, subtopic]
           );
           attemptedRows = rows;
           if (!rows.length) {
@@ -26739,6 +26744,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
           const rejectedPosts = [];
           const approvedPosts = rows.flatMap(row => {
             const screened = screenFeedPost(dbRowToFeedPost(row));
+            if (screened.reason === 'policy_unavailable') throw new Error('Source policy is unavailable; staged posts are retained for retry.');
             if (!screened.allowed) rejectedPosts.push({ post: dbRowToFeedPost(row), reason: screened.reason });
             return screened.allowed ? [screened.post] : [];
           });
@@ -26807,6 +26813,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
       finishedAt: new Date().toISOString(),
       durationMs: stagingTransferState.lastDurationMs,
     });
+    return { transferred: totalSaved, drained: totalDeleted, screenedOut: totalDeleted - totalSaved, batches: batchCount, pendingAfter: stagingPostCount };
   } catch (e) {
     stagingTransferState.lastError = e.message;
     stagingTransferState.lastDurationMs = Date.now() - transferStartedAt;
@@ -26827,6 +26834,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
       error: e.message,
     });
     console.warn('[transfer] failed:', e.message);
+    return { error: 'The database could not complete this transfer.', transferred: totalSaved, drained: totalDeleted };
   } finally {
     transferInFlight = false;
     transferStartedAt = null;
@@ -27048,7 +27056,7 @@ function officeControlCatalog() {
     ));
     const renderConfigured = missingRenderServices.length === 0;
     const deployConfigured = !renderServices.length || githubConfigured || renderConfigured;
-    const sourceConfigured = !control.sourceId || require('./office-agent-activation').officeSourceReady(control.sourceId, process.env);
+    const sourceConfigured = !control.id.startsWith('source.refresh.') || require('./office-agent-activation').officeSourceReady(control.sourceId, process.env);
     const automationConfigured = control.id !== 'automation.enable' || Boolean(process.env.AUTOFIX_GITHUB_TOKEN && process.env.OPENAI_API_KEY);
     const available = (!needsGithub || githubConfigured) && deployConfigured && sourceConfigured && automationConfigured;
     return {
@@ -27148,6 +27156,12 @@ async function executeMobileBuild() {
 
 async function executeOfficeControl(control, body) {
   if (control.input === 'frontend-file') return executeFrontendControl(control, body);
+  if (control.id.startsWith('source.block.') || control.id.startsWith('source.unblock.')) {
+    const policy = control.id.startsWith('source.block.')
+      ? await feedAudit.block(control.sourceId, body?.reason)
+      : await feedAudit.unblock(control.sourceId);
+    return { policy, summary: feedAudit.summary() };
+  }
   if (control.id.startsWith('source.refresh.')) {
     const sourceId = control.sourceId;
     if (!SOURCE_FETCHERS[sourceId]) throw new Error(`Source worker ${sourceId} is not available on this service.`);
@@ -27156,6 +27170,35 @@ async function executeOfficeControl(control, body) {
   }
 
   switch (control.id) {
+    case 'feed.flood-configure':
+      return { policy: await feedAudit.configure(body?.settings), summary: feedAudit.summary() };
+    case 'feed.audit-review':
+    case 'feed.audit-protect': {
+      if (control.id === 'feed.audit-protect') await feedAudit.configure(DEFAULT_FEED_AUDIT_POLICY);
+      else await feedAudit.reload();
+      const sample = [], sampledIds = new Set();
+      const pools = [globalFeedCache.posts, ...Array.from(agentSourceCache.values(), cache => cache.posts || [])];
+      samplePools: for (const pool of pools) {
+        for (const post of pool) {
+          if (!post?.id || sampledIds.has(post.id)) continue;
+          sampledIds.add(post.id); sample.push(post);
+          if (sample.length >= 2000) break samplePools;
+        }
+      }
+      let approved = 0;
+      for (const post of sample) {
+        externalFeedScreeningMemo.delete(post);
+        if (screenFeedPost(post).allowed) approved++;
+      }
+      if (control.id === 'feed.audit-protect') {
+        clearAggregateFeedCandidateCache(); clearGuestFeedPageCache();
+        mainFeedSnapshots.clear(); filteredFeedSnapshots.clear();
+      }
+      await feedAudit.flush();
+      return { checked: sample.length, approved, rejected: sample.length - approved,
+        policy: feedAudit.policy(), summary: feedAudit.summary(),
+        steps: control.id === 'feed.audit-protect' ? ['Enabled anti flooding', 'Reviewed feed safety', 'Expired delivery snapshots'] : ['Reviewed feed safety'] };
+    }
     case 'agents.activate-configured': {
       const { officeSourceReady, planOfficeActivation, activateOfficeAgents } = require('./office-agent-activation');
       const agents = Object.fromEntries(Object.entries(AGENT_DEFS).map(([id, def]) => {
@@ -27205,6 +27248,8 @@ async function executeOfficeControl(control, body) {
     case 'feed.audit-topics':
       runTopicAuditCheck();
       return { checked: topicAuditState.lastChecked, mismatches: topicAuditState.lastMismatches, queued: topicMismatchQueue.length };
+    case 'feed.optimize-unknown':
+      return officeTopicTransfer.optimizeUnknown({ confirmed: true });
     case 'feed.apply-topic-fixes':
       await runTopicFixCheck();
       return { fixed: topicFixState.lastFixed, remaining: topicMismatchQueue.length, error: topicFixState.lastError };
@@ -27457,6 +27502,22 @@ async function executeOfficeControl(control, body) {
       throw new Error('Control has no executable implementation.');
   }
 }
+
+app.get('/office/feed-audit', requireOfficeToken, async (req, res) => {
+  if (!db.isConnected()) return res.status(503).json({ error: 'Feed audit database is unavailable.' });
+  try {
+    const result = await feedAudit.list(req.query);
+    return res.set('Cache-Control', 'no-store').json({ ...result, sources: officeControlSourceList(),
+      commands: officeControlCatalog().filter(control => control.category === 'Feed audit') });
+  } catch (error) { return res.status(503).json({ error: 'Feed audit could not be loaded. Please retry.', detail: error.message === 'Invalid audit status.' ? error.message : undefined }); }
+});
+app.get('/office/feed-audit/items/:id', requireOfficeToken, async (req, res) => {
+  if (!db.isConnected()) return res.status(503).json({ error: 'Feed audit database is unavailable.' });
+  try {
+    const item = await feedAudit.detail(req.params.id);
+    return item ? res.set('Cache-Control', 'no-store').json({ item }) : res.status(404).json({ error: 'This audit record has expired or does not exist.' });
+  } catch { return res.status(503).json({ error: 'Audit item could not be loaded.' }); }
+});
 
 app.get('/office/setup', requireOfficeToken, (_req, res) => {
   const social = Object.fromEntries(Object.keys(SOCIAL_ENV_KEYS).map(platform => [platform, {
@@ -33488,6 +33549,8 @@ db.initDB().then(async () => {
   console.log('[startup] Beginning background data initialization...');
   try {
     await migrateDB();
+    await feedAudit.initialize().catch(() => console.warn('[feed audit] Policy initialization pending; imported feed intake remains held.'));
+    scheduleRecurring(() => (feedAudit.status().policyReady ? feedAudit.reload() : feedAudit.initialize()).catch(() => {}), 5000);
     await ufiVault.initialize();
     await creatorAnalytics.prune();
     // Start the optional feed recovery loop as soon as its primary schema is

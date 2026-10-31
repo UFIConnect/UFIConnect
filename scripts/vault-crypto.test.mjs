@@ -61,10 +61,37 @@ test('ciphertext corruption and manipulated KDF cannot unlock', async () => {
   const record = JSON.parse(storage.getItem(VAULT_STORAGE_KEY));
   record.content.data = (record.content.data.startsWith('A') ? 'B' : 'A') + record.content.data.slice(1);
   storage.setItem(VAULT_STORAGE_KEY, JSON.stringify(record));
-  await assert.rejects(unlockVault(phrase, storage), /verified/);
+  const corrupted = storage.getItem(VAULT_STORAGE_KEY);
+  await assert.rejects(unlockVault(phrase, storage), /passphrase was accepted.*contents could not be opened/);
+  assert.equal(storage.getItem(VAULT_STORAGE_KEY), corrupted, 'Failed reads preserve the original ciphertext');
+  await assert.rejects(unlockVault('wrong passphrase', storage), /passphrase is incorrect/);
   record.kdf.iterations = 1; storage.setItem(VAULT_STORAGE_KEY, JSON.stringify(record));
   await assert.rejects(unlockVault(phrase, storage), /not a supported/);
   await assert.rejects(createVault('short', memory()), /12/);
+});
+
+test('unavailable device encryption is not reported as an incorrect passphrase', async t => {
+  const storage = memory(); await createVault(phrase, storage);
+  const before = storage.getItem(VAULT_STORAGE_KEY);
+  t.mock.method(crypto.subtle, 'deriveKey', async () => { throw new Error('Internal platform detail'); });
+  await assert.rejects(unlockVault(phrase, storage), error => {
+    assert.match(error.message, /encryption could not start/);
+    assert.doesNotMatch(error.message, /incorrect|Internal platform detail/);
+    return true;
+  });
+  assert.equal(storage.getItem(VAULT_STORAGE_KEY), before);
+  t.mock.restoreAll();
+  assert.deepEqual((await unlockVault(phrase, storage)).entries, []);
+});
+
+test('unsupported device decryption preserves the vault and allows a later retry', async t => {
+  const storage = memory(); await createVault(phrase, storage);
+  const before = storage.getItem(VAULT_STORAGE_KEY);
+  t.mock.method(crypto.subtle, 'decrypt', async () => { throw new DOMException('Internal platform detail', 'NotSupportedError'); });
+  await assert.rejects(unlockVault(phrase, storage), /device could not run vault decryption/);
+  assert.equal(storage.getItem(VAULT_STORAGE_KEY), before);
+  t.mock.restoreAll();
+  assert.deepEqual((await unlockVault(phrase, storage)).entries, []);
 });
 
 test('concurrent creation cannot replace the first newly created vault', async () => {

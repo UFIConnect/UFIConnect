@@ -85,7 +85,7 @@ test('audit only accepts proven backports and their dependency chains', () => {
   const verified = new Map(manifest.packages.map(p => [p.name, { advisory: p.advisory, nodes: new Set([`node_modules/${p.name}`]) }]));
   const report = { auditReportVersion: 2, metadata: { vulnerabilities: {} }, vulnerabilities: {} };
   for (const p of manifest.packages) report.vulnerabilities[p.name] = { severity: 'high', nodes: [`node_modules/${p.name}`], via: [{ name: p.name, url: `https://github.com/advisories/${p.advisory}` }] };
-  report.vulnerabilities.expo = { severity: 'high', via: ['braces', 'zod'] };
+  report.vulnerabilities.expo = { severity: 'high', via: manifest.packages.map(p => p.name) };
   const now = new Date('2026-10-03');
   assert.deepEqual(assessAudit(report, verified, now).blocked, []);
   report.vulnerabilities.metro = { severity: 'high', via: ['expo'] };

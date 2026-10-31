@@ -169,8 +169,9 @@ try {
     await page.waitForURL('**/business/enrollment');
     check(!joined, 'Member can leave the team while keeping their separate Business account');
     await page.getByRole('heading', { name: 'Complete your Business membership', exact: true }).waitFor();
-    // The route heading renders before its independent billing-status request.
-    await page.getByRole('button', { name: 'Manage billing', exact: true }).waitFor();
+    // The heading renders before the asynchronous billing status. Wait for the
+    // expected billing control before asserting the completed subscription UI.
+    await page.getByRole('button', { name: 'Manage billing', exact: true }).waitFor({ state: 'visible' });
     check(await page.getByRole('button', { name: 'Manage billing', exact: true }).isVisible(), 'The existing Pro subscription remains manageable after leaving a Business seat');
     check(await page.getByRole('button', { name: 'Continue to Business checkout', exact: true }).count() === 0, 'An existing personal subscription cannot start a duplicate plan checkout');
 

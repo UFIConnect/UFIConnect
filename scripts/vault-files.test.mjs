@@ -73,5 +73,6 @@ test('file-bearing ciphertext is authenticated and browser quota failures leave 
   await assert.rejects(restoreEncryptedVault(JSON.stringify(record), phrase, destination), /could not be verified/);
   assert.equal(exportEncryptedVault(destination), destinationBefore);
   storage.setItem(VAULT_STORAGE_KEY, JSON.stringify(record));
-  await assert.rejects(unlockVault(phrase, storage), /could not be verified/);
+  await assert.rejects(unlockVault(phrase, storage), /passphrase was accepted.*contents could not be opened/);
+  assert.equal(storage.getItem(VAULT_STORAGE_KEY), JSON.stringify(record), 'Rejected decryption preserves the damaged encrypted copy for recovery');
 });
