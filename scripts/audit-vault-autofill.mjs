@@ -19,6 +19,14 @@ const wrong = 'Synthetic wrong saved password';
 const setWithoutChange = (locator, value) => locator.evaluate((input, text) => {
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, text);
 }, value);
+const submitAutofill = (locator, passphrase, confirmation) => locator.evaluate((input, values) => {
+  // Model one password-manager fill-and-submit action. Separate Playwright
+  // calls allow unrelated React renders to clear silently filled fields.
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+  setter.call(input, values.passphrase);
+  if (values.confirmation !== undefined) setter.call(input.form.elements.namedItem('vault-confirmation'), values.confirmation);
+  input.form.requestSubmit();
+}, { passphrase, confirmation });
 let browser;
 try {
   await server.listen();
@@ -51,10 +59,9 @@ try {
     await auditReload(page);
     const field = page.getByLabel('Vault passphrase', { exact: true });
     await field.fill(wrong);
-    await setWithoutChange(field, phrase);
     // Submit without requiring blur/change (e.g. a password manager submitting
     // the filled form). The submit handler must read the current field value.
-    await field.evaluate(input => input.form.requestSubmit());
+    await submitAutofill(field, phrase);
     if (process.argv.includes('--reproduce')) {
       await page.getByRole('alert').getByText(/passphrase is incorrect/).waitFor();
       console.log(`REPRODUCED: autofilled correct passphrase rejected with stale React state at ${width}px`);
@@ -63,8 +70,7 @@ try {
       await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
       // An incorrect current field must never use a correct stale state value.
       await field.fill(phrase);
-      await setWithoutChange(field, wrong);
-      await field.evaluate(input => input.form.requestSubmit());
+      await submitAutofill(field, wrong);
       await page.getByRole('alert').getByText(/passphrase is incorrect/).waitFor();
       await field.fill('');
       await setWithoutChange(field, phrase);
@@ -83,16 +89,11 @@ try {
       await auditReload(page);
       await page.getByRole('button', { name: 'Create vault', exact: true }).waitFor();
       await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent === 'Create vault' && !button.disabled));
-      await setWithoutChange(field, phrase);
-      const confirmation = page.getByLabel('Confirm passphrase', { exact: true });
-      await setWithoutChange(confirmation, wrong);
-      await field.evaluate(input => input.form.requestSubmit());
+      await submitAutofill(field, phrase, wrong);
       await page.getByRole('alert').getByText('The passphrases do not match.', { exact: true }).waitFor();
       assert.equal(await page.evaluate(async user => (await import('/src/vault/accountVault.mjs')).createAccountVault(user).hasVault(), user), false);
       // The error render clears unchanged React state; refill both actual fields.
-      await setWithoutChange(field, phrase);
-      await setWithoutChange(confirmation, phrase);
-      await field.evaluate(input => input.form.requestSubmit());
+      await submitAutofill(field, phrase, phrase);
       await page.getByRole('button', { name: 'Lock vault', exact: true }).waitFor();
       const created = await page.evaluate(async ({ user, phrase }) => (await (await import('/src/vault/accountVault.mjs')).createAccountVault(user).unlockVault(phrase)).entries.length, { user, phrase });
       assert.equal(created, 0, 'Autofill creation uses the exact submitted passphrase');
