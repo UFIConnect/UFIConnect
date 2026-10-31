@@ -119,8 +119,10 @@ try {
   }
   await moreTools.click();
   assert.equal(await moreTools.getAttribute('aria-expanded'),'true');
-  assert.equal(await nav.getByRole('button').count(),17,'Sixteen Office destinations and More tools remain available');
-  assert.equal(await nav.getByRole('button',{name:'Reports',exact:true}).count(),1,'Reports remains accessible from More tools');
+  assert.equal(await nav.getByRole('button').count(),20,'Nineteen Office destinations and More tools remain available');
+  for(const name of ['Reports','Feed Audit','Topic Transfer','Users']){
+   assert.equal(await nav.getByRole('button',{name,exact:true}).count(),1,`${name} remains accessible from More tools`);
+  }
   await nav.getByRole('button',{name:'Agents',exact:true}).click();
   await page.getByRole('heading',{name:'Agent Control',exact:true}).waitFor();
   await nav.getByRole('button',{name:'Overview',exact:true}).click();
