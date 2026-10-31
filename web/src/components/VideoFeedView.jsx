@@ -205,7 +205,7 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
   }, [captionExpanded]);
   const captionId = useId();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const playbackEligibility = useRef(null), autoplayAttempt = useRef(0), pendingNativeStart = useRef(null);
+  const playbackEligibility = useRef(null), autoplayAttempt = useRef(0), pendingNativeStart = useRef(null), pendingVimeoStart = useRef(null);
   playbackEligibility.current = { active, isScrolling, settingsOpen };
   const canAutoplay = () => { const state = playbackEligibility.current; return state.active && !state.isScrolling && !state.settingsOpen && !document.hidden; };
   useEffect(() => { if (!active) setSettingsOpen(false); }, [active]);
@@ -287,7 +287,8 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
         if (src?.kind === 'vimeo') sendVimeo('pause'); else video?.pause();
       } else if (hiddenResumeRef.current) {
         hiddenResumeRef.current = false;
-        if (src?.kind === 'vimeo') sendVimeo('play'); else if (!pendingNativeStart.current?.()) video?.play().catch(() => {});
+        if (src?.kind === 'vimeo') { if (!pendingVimeoStart.current?.()) sendVimeo('play'); }
+        else if (!pendingNativeStart.current?.()) video?.play().catch(() => {});
       }
     };
     document.addEventListener('visibilitychange', visibilityChanged);
@@ -367,7 +368,7 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, src?.kind, getNativeEl]);
 
-  useEffect(() => { if (!settingsOpen && !isScrolling) pendingNativeStart.current?.(); }, [settingsOpen, isScrolling]);
+  useEffect(() => { if (!settingsOpen && !isScrolling) { pendingNativeStart.current?.(); pendingVimeoStart.current?.(); } }, [settingsOpen, isScrolling]);
 
   // Keeps an already-active file/hls video's mute state in sync with manual
   // toggles of the shared mute button — the play effect above already sets
@@ -427,13 +428,19 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
       },
     });
     vimeoController.current = controller;
+    let started = false;
+    const start = () => {
+      if (started || cancelled || !canStart()) return false;
+      started = true;
+      void playVimeo(controller, { muted: !userWantsSound(), isCurrent: () => !cancelled && canStart() });
+      return true;
+    };
     controller.ready.then(async () => {
       if (cancelled) return;
       setVimeoReady(true); setVimeoSettings(previous => ({ ...previous, ready: true }));
+      pendingVimeoStart.current = start;
       if (document.hidden) { hiddenResumeRef.current = true; controller.call('pause').catch(() => {}); }
-      else if (canStart()) {
-        void playVimeo(controller, { muted: !userWantsSound(), isCurrent: () => !cancelled && canStart() });
-      }
+      else start();
       const read = (method, accept) => controller.call(method).then(value => { if (!cancelled) accept(value); }).catch(() => {});
       // Apply each reply immediately; a slow optional getter must not roll
       // playback back to a snapshot taken before a subsequent play event.
@@ -451,6 +458,7 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
       controller.destroy();
     });
     return () => {
+      if (pendingVimeoStart.current === start) pendingVimeoStart.current = null;
       cancelled = true; controller.destroy();
       if (vimeoController.current === controller) vimeoController.current = null;
     };
@@ -586,7 +594,7 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
           vimeoController.current?.call('pause').catch(() => {});
         } else if (scrollResumeRef.current) {
           scrollResumeRef.current = false;
-          vimeoController.current?.call('play').catch(() => {});
+          if (!pendingVimeoStart.current?.()) vimeoController.current?.call('play').catch(() => {});
         }
       } catch {}
       return;
