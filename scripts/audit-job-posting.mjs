@@ -81,7 +81,10 @@ try {
     await page.waitForFunction(() => new URL(location.href).searchParams.get('q') === 'Accessibility');
     await page.getByRole('button', { name: 'Open Accessibility engineer at Example employer', exact: true }).waitFor();
     check(listRequests.some(query => query.sources === 'UFIConnect' && query.search === 'Accessibility'), 'Business search remains available alongside career-site filtering');
-    await page.locator('.jobs-post-entry').getByRole('link', { name: 'Post a job', exact: true }).click();
+    check(await page.locator('.business-main').getByRole('link', { name: 'Post a job', exact: true }).count() === 0, 'Jobs has no Post a job entry');
+    check(await page.locator('.jobs-sidebar-controls').getByRole('link', { name: 'Post a job', exact: true }).count() === 0, 'Jobs sidebar has no Post a job entry');
+    await auditNavigate(page, server.origin + '/recruiting');
+    await page.locator('.business-main').getByRole('link', { name: /Post a job/ }).click();
     await page.getByRole('heading', { name: 'Post a job', exact: true }).waitFor();
     check(await page.getByRole('button', { name: 'Publish job', exact: true }).isDisabled(), 'Empty form cannot publish');
     await page.getByLabel('Role title', { exact: true }).fill(native.title);
@@ -93,7 +96,7 @@ try {
     await page.getByRole('button', { name: 'Publish job', exact: true }).click();
     await page.getByRole('alert').filter({ hasText: 'Publication could not be confirmed' }).waitFor();
     await page.getByRole('link', { name: 'Back to jobs', exact: true }).click();
-    await page.locator('.jobs-post-entry').getByRole('link', { name: 'Post a job', exact: true }).click();
+    await auditNavigate(page, server.origin + '/jobs/new');
     check(await page.getByLabel('Role title', { exact: true }).inputValue() === native.title, 'SPA navigation preserves the private draft');
     await page.getByRole('button', { name: 'Publish job', exact: true }).click();
     await page.getByRole('heading', { name: 'Your job is published', exact: true }).waitFor();

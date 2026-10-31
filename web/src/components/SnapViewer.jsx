@@ -13,7 +13,8 @@ import { SavePostButton } from './SaveButtons';
 import { SnapComments, NativeSnapLike, SnapShareButton, useNativeSnapEngagement } from './SnapInteractions';
 import SnapAvatar from './SnapAvatar';
 import { sourcePostMenuItems } from '../utils/sourcePostMenu.mjs';
-import { HlsVideoPlayer } from './videoMedia';
+import { HlsVideoPlayer, userWantsSound, rememberSoundPreference, useGlobalMuted } from './videoMedia';
+import { playMedia } from '../utils/mediaAutoplay.mjs';
 import { officialSnapEmbedUrl } from '../utils/snapSourcePlayer.mjs';
 import { officialTwitchClipId } from '../utils/sourceMediaPolicy.mjs';
 import TwitchClipPlayer from './TwitchClipPlayer';
@@ -24,11 +25,12 @@ import YouTubeSettingsDialog from './YouTubeSettingsDialog';
 import MediaPlaybackControls from './MediaPlaybackControls';
 import useMediaWatchSession from '../hooks/useMediaWatchSession';
 
-const EMPTY_NATIVE_PLAYBACK = { ready: false, paused: true, muted: true, currentTime: 0, duration: 0 };
+const EMPTY_NATIVE_PLAYBACK = { ready: false, paused: true, muted: false, currentTime: 0, duration: 0 };
 
 function useSnapNativePlayback({ getVideo, enabled, mediaKey, forcePause = false }) {
   const identity = useRef(null), binding = useRef(null);
   const [snapshot, setSnapshot] = useState(null);
+  const [preferredMuted] = useGlobalMuted();
   identity.current = { getVideo, enabled, mediaKey, forcePause };
   const owns = owner => Boolean(owner && binding.current === owner && identity.current.enabled
     && identity.current.mediaKey === owner.mediaKey && identity.current.getVideo() === owner.video && owner.video.isConnected);
@@ -39,11 +41,11 @@ function useSnapNativePlayback({ getVideo, enabled, mediaKey, forcePause = false
       if (document.hidden) owner.autoplayAttempted = true;
       if (!video.paused) { video.pause(); return; }
     } else if (!owner.autoplayAttempted && video.readyState >= 1) {
-      // One muted start belongs to this opened clip. Chrome/visibility pauses
+      // One autoplay attempt belongs to this opened clip. Chrome/visibility pauses
       // and an explicit user pause never re-arm it for the same media.
       owner.autoplayAttempted = true;
-      video.muted = true;
-      video.play().then(() => read(owner)).catch(() => read(owner));
+      const attempt = owner.attempt;
+      void playMedia(video, { muted: !userWantsSound(), isCurrent: () => owns(owner) && owner.attempt === attempt && !document.hidden && !identity.current.forcePause }).then(() => read(owner));
     }
     const playback = { ready: true, paused: video.paused || video.ended, muted: video.muted || video.volume === 0,
       currentTime: Number.isFinite(video.currentTime) && video.currentTime >= 0 ? video.currentTime : 0,
@@ -56,7 +58,7 @@ function useSnapNativePlayback({ getVideo, enabled, mediaKey, forcePause = false
     if (video && binding.current?.video === video && binding.current.mediaKey === mediaKey) return;
     binding.current?.cleanup(); binding.current = null;
     if (!video) { setSnapshot(previous => previous === null ? previous : null); return; }
-    const owner = { video, mediaKey, autoplayAttempted: document.hidden };
+    const owner = { video, mediaKey, autoplayAttempted: document.hidden, attempt: 0 };
     const update = () => read(owner);
     const events = ['play', 'playing', 'pause', 'ended', 'volumechange', 'timeupdate', 'loadedmetadata', 'durationchange', 'seeking', 'seeked', 'emptied'];
     events.forEach(name => video.addEventListener(name, update));
@@ -66,10 +68,15 @@ function useSnapNativePlayback({ getVideo, enabled, mediaKey, forcePause = false
   });
   useEffect(() => () => { binding.current?.cleanup(); binding.current = null; }, []);
   useEffect(() => {
+    const owner = binding.current;
+    if (owns(owner)) { owner.video.muted = preferredMuted; read(owner); }
+  }, [preferredMuted]);
+  useEffect(() => {
     const pauseBlocked = () => {
       const owner = binding.current;
       if (!owns(owner)) return;
       if (document.hidden || identity.current.forcePause) {
+        owner.attempt++;
         if (document.hidden) owner.autoplayAttempted = true;
         owner.video.pause();
       }
@@ -83,8 +90,10 @@ function useSnapNativePlayback({ getVideo, enabled, mediaKey, forcePause = false
     const owner = binding.current;
     if (!owns(owner) || owner.mediaKey !== mediaKey || document.hidden || identity.current.forcePause) return;
     owner.autoplayAttempted = true;
+    owner.attempt++;
     if (owner.video.paused || owner.video.ended) {
-      owner.video.play().then(() => read(owner)).catch(() => read(owner));
+      const attempt = owner.attempt;
+      void playMedia(owner.video, { muted: !userWantsSound(), isCurrent: () => owns(owner) && owner.attempt === attempt && !document.hidden && !identity.current.forcePause }).then(() => read(owner));
     } else owner.video.pause();
   };
   const toggleMute = () => {
@@ -93,6 +102,8 @@ function useSnapNativePlayback({ getVideo, enabled, mediaKey, forcePause = false
     const silent = owner.video.muted || owner.video.volume === 0;
     if (silent && owner.video.volume === 0) owner.video.volume = 1;
     owner.video.muted = !silent;
+    owner.attempt++;
+    rememberSoundPreference(silent);
     read(owner);
   };
   const seek = seconds => {

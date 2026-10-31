@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { createYouTubePlayerFrame, loadYouTubeIframeApi } from '../components/videoMedia';
+import { createYouTubePlayerFrame, loadYouTubeIframeApi, userWantsSound, rememberSoundPreference, useGlobalMuted } from '../components/videoMedia';
 
 const EMPTY_SETTINGS = { ready: false, rates: [], rate: null, captionFontSize: null };
 const EMPTY_PLAYBACK = { ready: false, failed: false, paused: true, playing: false, muted: true, currentTime: 0, duration: 0, settings: EMPTY_SETTINGS };
@@ -23,6 +23,7 @@ function readSettings(player) {
 export default function useYouTubeSnapPlayback({ enabled, mediaKey, videoId, title, forcePause = false }) {
   const hostRef = useRef(null), binding = useRef(null), identity = useRef(null);
   const [snapshot, setSnapshot] = useState(null);
+  const [preferredMuted] = useGlobalMuted();
   identity.current = { enabled, mediaKey, videoId, title, forcePause };
 
   function owns(owner) {
@@ -63,7 +64,7 @@ export default function useYouTubeSnapPlayback({ enabled, mediaKey, videoId, tit
     const player = currentPlayer(owner);
     if (!player || owner.autoplayAttempted || document.hidden || identity.current.forcePause) return;
     owner.autoplayAttempted = true;
-    try { player.mute(); player.playVideo(); } catch { /* UFI Play remains available. */ }
+    try { if (userWantsSound()) { if (player.getVolume() === 0) player.setVolume(100); player.unMute(); } else player.mute(); player.playVideo(); } catch { /* UFI Play remains available. */ }
   }
 
   useLayoutEffect(() => {
@@ -72,9 +73,9 @@ export default function useYouTubeSnapPlayback({ enabled, mediaKey, videoId, tit
     const owner = { host, mediaKey, videoId, player: null, ready: false, cancelled: false,
       autoplayAttempted: document.hidden };
     binding.current = owner;
-    // The confirmed API starts this active clip muted once. The frame itself
+    // The confirmed API starts the active clip once. The frame itself
     // cannot independently restart playback after a chrome or visibility pause.
-    const frame = createYouTubePlayerFrame(host, videoId, { autoplay: 0, controls: 0, mute: 1 }, identity.current.title);
+    const frame = createYouTubePlayerFrame(host, videoId, { autoplay: 0, controls: 0, mute: userWantsSound() ? 0 : 1 }, identity.current.title);
     let poll;
     loadYouTubeIframeApi().then(YT => {
       if (!owns(owner)) return;
@@ -91,6 +92,12 @@ export default function useYouTubeSnapPlayback({ enabled, mediaKey, videoId, tit
               poll = window.setInterval(() => { if (!document.hidden) read(owner); }, 250);
             },
             onStateChange: () => read(owner),
+            onAutoplayBlocked: () => {
+              const player = currentPlayer(owner);
+              if (!player || owner.silentRetry || document.hidden || identity.current.forcePause) return;
+              owner.silentRetry = true;
+              try { player.mute(); player.playVideo(); read(owner); } catch { read(owner); }
+            },
             onPlaybackRateChange: () => read(owner),
             onApiChange: () => read(owner),
             onError: () => {
@@ -128,6 +135,12 @@ export default function useYouTubeSnapPlayback({ enabled, mediaKey, videoId, tit
     return () => document.removeEventListener('visibilitychange', pauseBlocked);
   }, [forcePause, enabled, mediaKey, videoId]);
 
+  useEffect(() => {
+    const owner = binding.current, player = currentPlayer(owner);
+    if (!player) return;
+    try { if (preferredMuted) player.mute(); else player.unMute(); read(owner); } catch {}
+  }, [preferredMuted]);
+
   const togglePlay = () => {
     if (identity.current.mediaKey !== mediaKey || identity.current.videoId !== videoId
       || identity.current.forcePause || document.hidden) return;
@@ -136,7 +149,8 @@ export default function useYouTubeSnapPlayback({ enabled, mediaKey, videoId, tit
     owner.autoplayAttempted = true;
     try {
       const state = player.getPlayerState();
-      if (state === 1 || state === 3) player.pauseVideo(); else player.playVideo();
+      if (state === 1 || state === 3) { owner.silentRetry = true; player.pauseVideo(); }
+      else { owner.silentRetry = false; if (userWantsSound()) player.unMute(); else player.mute(); player.playVideo(); }
       read(owner);
     } catch { /* Do not optimistically claim that playback changed. */ }
   };
@@ -148,7 +162,8 @@ export default function useYouTubeSnapPlayback({ enabled, mediaKey, videoId, tit
       if (player.isMuted() || player.getVolume() === 0) {
         if (player.getVolume() === 0) player.setVolume(100);
         player.unMute();
-      } else player.mute();
+        rememberSoundPreference(true);
+      } else { player.mute(); rememberSoundPreference(false); }
       read(owner);
     } catch { /* The next verified poll reports the actual volume. */ }
   };

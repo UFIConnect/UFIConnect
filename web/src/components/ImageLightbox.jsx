@@ -1,7 +1,8 @@
 import { resolveVideoSource } from '../utils/videoSource.mjs';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { loadYouTubeIframeApi, createYouTubePlayerFrame, youTubeEmbedUrl, HlsVideoPlayer, userWantsSound, useGlobalMuted } from './videoMedia';
+import { loadYouTubeIframeApi, createYouTubePlayerFrame, youTubeEmbedUrl, HlsVideoPlayer, userWantsSound, rememberSoundPreference, useGlobalMuted } from './videoMedia';
+import { playMedia } from '../utils/mediaAutoplay.mjs';
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll';
 import PostInlineText from './PostInlineText';
 import PostLinkPreviews from './PostLinkPreviews';
@@ -49,22 +50,11 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
   const touchStartX = useRef(null);
   const nearEndRequestRef = useRef('');
   const navigate = useNavigate();
-  // Muted by default, even though opening the lightbox is itself a
-  // deliberate click — a *previous* version of this started unmuted on the
-  // theory that click counted as consent, and revealed sound automatically
-  // once play() resolved. That reveal is a delayed, asynchronous
-  // `.muted = false` write, not the direct synchronous result of a user
-  // gesture, and Safari in particular can silently accept the property
-  // write (so the mute button's icon correctly shows "unmuted") while still
-  // refusing to actually output audio — confirmed live as "shows unmuted
-  // but no voice is playing." The mute button below is what actually
-  // unmutes now, since a direct click handler is a gesture every browser
-  // honors, same fix applied to VideoFeedView's swipe feed.
-  //
-  // Shared globally (see useGlobalMuted) so muting/unmuting here also
-  // mutes/unmutes every other currently-mounted video — a Feed card behind
-  // it, the Videos swipe feed — instead of only ever affecting this one.
-  const [muted, toggleMuted] = useGlobalMuted();
+  // Read the shared sound preference, but display confirmed player state
+  // when the browser requires silent autoplay.
+  const [muted] = useGlobalMuted();
+  const [actualMuted, setActualMuted] = useState(muted);
+  const autoplayAttempt = useRef(0), youtubeRetry = useRef(false);
   const [paused, setPaused] = useState(false);
   // See VideoFeedView's identical ytFailed — the IFrame Player API script
   // doesn't load on some devices/networks; falls back to a plain embed
@@ -212,20 +202,17 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
     [playlistUrl]
   );
 
-  // Every new video — including one swapped in via next/prev, a fresh mount
-  // each time since the element below is keyed by item.url — always starts
-  // genuinely muted (the one autoplay policy every browser reliably
-  // allows). Direct-file videos need this handled here explicitly;
-  // HlsVideoPlayer already does the equivalent internally for the HLS path,
-  // so this effect skips it there to avoid fighting over the same element.
+  // Start direct files with the chosen sound state and a policy fallback.
+  // HLS owns the same operation after its stream becomes ready.
   useEffect(() => {
     if (!directVideoUrl) return;
     const v = fileVideoRef.current;
     if (!v) return;
-    v.muted = true;
-    v.defaultMuted = true;
-    v.playsInline = true;
-    v.play().catch(() => {});
+    const attempt = ++autoplayAttempt.current;
+    void playMedia(v, { muted: !userWantsSound(), isCurrent: () => autoplayAttempt.current === attempt && !document.hidden }).then(() => {
+      if (autoplayAttempt.current === attempt) { setPaused(v.paused); setActualMuted(v.muted || v.volume === 0); }
+    });
+    return () => { autoplayAttempt.current++; v.pause(); };
   }, [directVideoUrl]);
 
   // React's `muted` JSX prop doesn't reliably keep a <video> element's live
@@ -251,16 +238,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
 
   // youtube: the real IFrame Player API, same as VideoFeedView's swipe
   // feed — a raw <iframe src="..."> embed has no programmatic control at
-  // all, so pause needs this instead. The player always mounts muted
-  // (playerVars.mute stays 1 — the one autoplay policy every browser
-  // reliably allows), but if `muted` was already false when this effect
-  // ran — the user has directly clicked unmute on an earlier video this
-  // session, see userWantsSound — it's unmuted right away in onReady
-  // instead of waiting for a fresh click on this one too. Unlike the
-  // "shows unmuted but no voice is playing" bug this replaced, this isn't
-  // a blind reveal: it's only reached because of real, prior, direct
-  // engagement, which is the same signal browsers themselves use to judge
-  // autoplay-with-sound more leniently.
+  // all, so its API owns playback and reports any autoplay-policy rejection.
   useEffect(() => {
     if (!youtubeId) return;
     const host = ytHostRef.current;
@@ -270,12 +248,13 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
     let pollId;
     let player = null;
     const startUnmuted = !muted;
+    youtubeRetry.current = true;
     setYtFailed(false);
     setYtReady(false);
     ytPlayerRef.current = null;
 
     host.replaceChildren();
-    const mount = createYouTubePlayerFrame(host, youtubeId, { autoplay: 1, mute: 1, controls: 0 }, post.title || 'YouTube video');
+    const mount = createYouTubePlayerFrame(host, youtubeId, { autoplay: 0, mute: muted ? 1 : 0, controls: 0 }, post.title || 'YouTube video');
 
     const isCurrent = () => !cancelled && ytLifecycleRef.current === lifecycle;
     const readyTimeout = setTimeout(() => { if (isCurrent()) setYtFailed(true); }, 6000);
@@ -287,7 +266,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
         // back to this page can silently fail ("Unable to post message to
         // https://www.youtube.com...") — see VideoFeedView's identical fix
         // for the full explanation; same underlying player construction.
-        playerVars: { autoplay: 1, mute: 1, playsinline: 1, controls: 0, rel: 0, origin: window.location.origin },
+        playerVars: { autoplay: 0, mute: muted ? 1 : 0, playsinline: 1, controls: 0, rel: 0, origin: window.location.origin },
         events: {
           onReady: (e) => {
             if (!isCurrent()) {
@@ -316,6 +295,11 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
               if (d) setDuration(d);
             } catch {}
           },
+          onAutoplayBlocked: e => {
+            if (!isCurrent() || !youtubeRetry.current || document.hidden) return;
+            youtubeRetry.current = false;
+            try { e.target.mute(); e.target.playVideo(); setActualMuted(true); } catch {}
+          },
           onError: () => { if (isCurrent()) setYtFailed(true); },
         },
       });
@@ -325,7 +309,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
       // moving playhead needs its own poll, same as VideoFeedView's.
       pollId = setInterval(() => {
         if (ytPlayerRef.current) {
-          try { setCurrentTime(ytPlayerRef.current.getCurrentTime() || 0); } catch {}
+          try { setCurrentTime(ytPlayerRef.current.getCurrentTime() || 0); setActualMuted(ytPlayerRef.current.isMuted() || ytPlayerRef.current.getVolume?.() === 0); } catch {}
         }
       }, 250);
     }).catch(() => { if (isCurrent()) setYtFailed(true); });
@@ -350,6 +334,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
   }, [muted, youtubeId]);
 
   function togglePlay() {
+    autoplayAttempt.current++; youtubeRetry.current = false;
     if (youtubeId) {
       const p = ytPlayerRef.current;
       if (!p) return;
@@ -361,6 +346,24 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
     const v = getNativeEl();
     if (!v) return;
     if (v.paused) v.play().catch(() => {}); else v.pause();
+  }
+
+  function toggleMuted() {
+    autoplayAttempt.current++; youtubeRetry.current = false;
+    if (youtubeId) {
+      const player = ytPlayerRef.current;
+      if (!player) return;
+      try {
+        const next = !(player.isMuted() || player.getVolume?.() === 0);
+        if (next) player.mute(); else { player.setVolume?.(100); player.unMute(); }
+        setActualMuted(next); rememberSoundPreference(!next);
+      } catch {}
+    } else {
+      const video = getNativeEl(); if (!video) return;
+      const next = !(video.muted || video.volume === 0);
+      if (!next && video.volume === 0) video.volume = 1;
+      video.muted = next; setActualMuted(next); rememberSoundPreference(!next);
+    }
   }
 
   function seekToFraction(fraction) {
@@ -504,7 +507,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
             <div className="media-lightbox-video-shell">
               <HlsVideoPlayer key={item.url} src={playlistUrl} poster={item.url} autoPlay muted={muted} controls={false}
                 videoRef={hlsVideoRef} onClick={togglePlay}
-                onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
+                onPlay={() => setPaused(false)} onPause={() => setPaused(true)} onVolumeChange={e => setActualMuted(e.currentTarget.muted || e.currentTarget.volume === 0)}
                 onTimeUpdate={(e) => setCurrentTime(e.target.currentTime)}
                 onLoadedMetadata={(e) => setDuration(e.target.duration || 0)}
                 style={{ width: '100%', height: '100%', maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 10 }} />
@@ -513,7 +516,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
             <div className="media-lightbox-video-shell">
               <video key={item.url} ref={fileVideoRef} src={directVideoUrl} muted={muted} playsInline controls={false}
                 onClick={togglePlay}
-                onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
+                onPlay={() => setPaused(false)} onPause={() => setPaused(true)} onVolumeChange={e => setActualMuted(e.currentTarget.muted || e.currentTarget.volume === 0)}
                 onTimeUpdate={(e) => setCurrentTime(e.target.currentTime)}
                 onLoadedMetadata={(e) => setDuration(e.target.duration || 0)}
                 style={{ width: '100%', height: '100%', maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 10, display: 'block', background: '#000' }} />
@@ -572,7 +575,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
           </div>
         )}
         </div>
-        {playableVideo && (!youtubeId || !ytFailed) && <MediaPlaybackControls mediaKey={`${post.id || ''}:${videoSource.kind}:${videoSource.id || videoSource.src}`} paused={paused} muted={muted} currentTime={currentTime} duration={duration}
+        {playableVideo && (!youtubeId || !ytFailed) && <MediaPlaybackControls mediaKey={`${post.id || ''}:${videoSource.kind}:${videoSource.id || videoSource.src}`} paused={paused} muted={actualMuted} currentTime={currentTime} duration={duration}
           onTogglePlay={togglePlay} onToggleMute={toggleMuted} onSeek={seconds => seekToFraction(duration > 0 ? seconds / duration : 0)}
           disabled={Boolean(youtubeId && !ytReady)} />}
         <div className="media-lightbox-info"

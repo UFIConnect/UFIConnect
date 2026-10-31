@@ -5,6 +5,7 @@ import { useToast } from '../contexts/ToastContext';
 import { feedLocationKey } from '../utils/feedLocation.mjs';
 import { sourcePostMenuItems } from '../utils/sourcePostMenu.mjs';
 import { HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, rememberSoundPreference, useGlobalMuted, fetchVimeoMetadata, createYouTubePlayerFrame, youTubeEmbedUrl, vimeoEmbedUrl, createVimeoController } from './videoMedia';
+import { playMedia, playVimeo } from '../utils/mediaAutoplay.mjs';
 import { resolveVideoSource } from '../utils/videoSource.mjs';
 import MediaPlaybackControls from './MediaPlaybackControls';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
@@ -204,6 +205,9 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
   }, [captionExpanded]);
   const captionId = useId();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const playbackEligibility = useRef(null), autoplayAttempt = useRef(0), pendingNativeStart = useRef(null);
+  playbackEligibility.current = { active, isScrolling, settingsOpen };
+  const canAutoplay = () => { const state = playbackEligibility.current; return state.active && !state.isScrolling && !state.settingsOpen && !document.hidden; };
   useEffect(() => { if (!active) setSettingsOpen(false); }, [active]);
   const [cursorIdle, setCursorIdle] = useState(false);
   const cursorTimer = useRef(null);
@@ -283,7 +287,7 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
         if (src?.kind === 'vimeo') sendVimeo('pause'); else video?.pause();
       } else if (hiddenResumeRef.current) {
         hiddenResumeRef.current = false;
-        if (src?.kind === 'vimeo') sendVimeo('play'); else video?.play().catch(() => {});
+        if (src?.kind === 'vimeo') sendVimeo('play'); else if (!pendingNativeStart.current?.()) video?.play().catch(() => {});
       }
     };
     document.addEventListener('visibilitychange', visibilityChanged);
@@ -335,34 +339,35 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
     }
   }, [active, post?.id, watchedMs, effectiveDuration]);
 
-  // file/hls: play on becoming active, pause + rewind on becoming inactive
-  // (leaving a video mid-scrub-progress for the next viewer would be
-  // confusing — every slide always starts fresh). Always starts muted and
-  // stays muted — this used to reveal sound right after play() resolved if
-  // the shared mute state wanted it, but that reveal is a delayed,
-  // asynchronous `.muted = false` write, not the direct synchronous result
-  // of a user gesture. Safari in particular can silently accept the
-  // property write (so the mute button's icon correctly shows "unmuted")
-  // while still refusing to actually output audio — confirmed live as
-  // "shows unmuted but no voice is playing." The sync effect right below,
-  // which only ever runs in direct response to the mute button itself, is
-  // what actually unmutes now — a gesture every browser honors.
+  // The active native player owns one autoplay attempt. Metadata may arrive
+  // later for HLS; a stale attempt cannot restart a paused or replaced slide.
   useEffect(() => {
-    if (src?.kind === 'youtube') return;
+    if (src?.kind !== 'file' && src?.kind !== 'hls') return;
     const v = getNativeEl();
     if (!v) return;
+    const attempt = ++autoplayAttempt.current;
+    let started = false;
+    const start = () => {
+      if (started || autoplayAttempt.current !== attempt || v.readyState < 1) return;
+      if (!canAutoplay()) { hiddenResumeRef.current = document.hidden; scrollResumeRef.current = playbackEligibility.current.isScrolling; return; }
+      started = true;
+      void playMedia(v, { muted: !userWantsSound(), isCurrent: () => autoplayAttempt.current === attempt && canAutoplay() }).then(() => { if (autoplayAttempt.current === attempt) setPaused(v.paused); });
+      return true;
+    };
     if (active) {
-      v.muted = true;
-      v.defaultMuted = true;
-      v.playsInline = true;
+      pendingNativeStart.current = start;
+      v.muted = !userWantsSound();
       hiddenResumeRef.current = document.hidden;
       scrollResumeRef.current = isScrolling;
-      if (!document.hidden && !isScrolling) v.play().catch(() => setPaused(true));
+      v.addEventListener('loadedmetadata', start); start();
     } else {
       v.pause(); try { v.currentTime = 0; } catch {} setCurrentTime(0); setPaused(true);
     }
+    return () => { if (pendingNativeStart.current === start) pendingNativeStart.current = null; autoplayAttempt.current++; v.removeEventListener('loadedmetadata', start); v.pause(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, src?.kind, getNativeEl]);
+
+  useEffect(() => { if (!settingsOpen && !isScrolling) pendingNativeStart.current?.(); }, [settingsOpen, isScrolling]);
 
   // Keeps an already-active file/hls video's mute state in sync with manual
   // toggles of the shared mute button — the play effect above already sets
@@ -379,6 +384,8 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
   useEffect(() => {
     if (!active || src?.kind !== 'vimeo') return;
     const frame = vimeoIframeRef.current;
+    const attempt = ++autoplayAttempt.current;
+    const canStart = () => autoplayAttempt.current === attempt && canAutoplay();
     let cancelled = false;
     setVimeoReady(false); setVimeoNotice(''); setPaused(true); setCurrentTime(0);
     setVimeoSettings({ ready: false, rates: [], captionTracks: [], qualities: [] });
@@ -424,6 +431,9 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
       if (cancelled) return;
       setVimeoReady(true); setVimeoSettings(previous => ({ ...previous, ready: true }));
       if (document.hidden) { hiddenResumeRef.current = true; controller.call('pause').catch(() => {}); }
+      else if (canStart()) {
+        void playVimeo(controller, { muted: !userWantsSound(), isCurrent: () => !cancelled && canStart() });
+      }
       const read = (method, accept) => controller.call(method).then(value => { if (!cancelled) accept(value); }).catch(() => {});
       // Apply each reply immediately; a slow optional getter must not roll
       // playback back to a snapshot taken before a subsequent play event.
@@ -588,11 +598,12 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
       v.pause();
     } else if (scrollResumeRef.current) {
       scrollResumeRef.current = false;
-      v.play().catch(() => {});
+      if (!pendingNativeStart.current?.()) v.play().catch(() => {});
     }
   }, [isScrolling, active, src?.kind, getNativeEl]);
 
   function togglePlay() {
+    autoplayAttempt.current++;
     if (isYoutube) {
       sharedYt?.togglePlay?.();
     } else if (src?.kind === 'vimeo') {
@@ -606,6 +617,7 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
   }
 
   function toggleSound() {
+    autoplayAttempt.current++;
     if (isYoutube) { sharedYt?.toggleMute?.(); return; }
     if (src?.kind === 'vimeo') {
       if (!vimeoReady) return;
@@ -680,12 +692,12 @@ function VideoSlide({ post, active, muted, isScrolling, trackingVisible, surface
         {!src ? <p>Video unavailable</p> : src.kind === 'youtube' ? null : src.kind === 'vimeo' ? (
           active ? <iframe key={src.id} ref={vimeoIframeRef}
             onLoad={() => vimeoIframeRef.current?.contentWindow?.postMessage(JSON.stringify({ method: 'ping' }), 'https://player.vimeo.com')}
-            src={vimeoEmbedUrl(src.id, { muted: vimeoStartMuted.current })}
+            src={vimeoEmbedUrl(src.id, { muted: vimeoStartMuted.current, autoplay: false })}
             referrerPolicy="strict-origin-when-cross-origin"
             allow="autoplay; fullscreen; picture-in-picture" allowFullScreen title={post.title || 'Vimeo video'} />
           : null
         ) : src.kind === 'hls' ? (
-          active ? <HlsVideoPlayer src={src.src} autoPlay muted={muted} loop controls={false}
+          active ? <HlsVideoPlayer src={src.src} autoPlay={false} muted={muted} loop controls={false}
             controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture disableRemotePlayback
             videoRef={hlsVideoRef} onTimeUpdate={event => setCurrentTime(event.target.currentTime)}
             onLoadedMetadata={acceptNativeMetadata} onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
@@ -1089,20 +1101,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   // whole viewport, instead of being scoped/clipped inside one snap-scroll
   // slide.
   const [commentsPost, setCommentsPost] = useState(null);
-  // Starts muted like every platform's own feed does — this used to start
-  // unmuted on the theory that clicking the Videos nav item first counted
-  // as enough interaction for browsers to allow autoplay-with-sound
-  // directly, but per-embed/per-element autoplay-with-sound is judged more
-  // strictly than that, especially in Safari: the video plays and the mute
-  // button can end up showing "unmuted" while the actual audio output stays
-  // silently blocked (see VideoSlide's play effects for the mechanics).
-  // Tapping the mute button is a direct gesture every browser honors, so
-  // that's the only thing that ever unmutes now.
-  //
-  // Starting *every* video muted-until-tapped, taken alone, meant a real
-  // tap was needed on every single slide scrolled to, forever — see
-  // userWantsSound's own comment. Once the user has directly tapped unmute
-  // at all this browser, slides start already unmuted instead.
+  // Share explicit sound choices across Videos, feeds and Snaps.
   const [muted] = useGlobalMuted();
   const [hasMore, setHasMore] = useState(true);
   const [tailWaiting, setTailWaiting] = useState(false);
@@ -1992,6 +1991,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   // Guards a fast-swipe race on loadVideoById — see the effect below.
   const sharedYtPendingLoadRef = useRef(null);
   const sharedYtRetryRef = useRef(null);
+  const sharedYtAutoplayRef = useRef(null);
   const sharedYtReadyTimeoutRef = useRef(null);
   const sharedYtResumeRef = useRef(null);
   const [sharedYt, setSharedYt] = useState({ paused: false, duration: 0, currentTime: 0, failed: false });
@@ -2101,6 +2101,7 @@ export default function VideoFeedView({ onExit, music = false }) {
       if (!sharedYtMountedRef.current || sharedYtDesiredIdRef.current !== targetId || !sharedYtReadyRef.current) return;
       if (document.hidden) { sharedYtHiddenResumeRef.current = targetId; player.pauseVideo(); return; }
       try {
+        sharedYtAutoplayRef.current = targetId;
         if (sharedYtLoadedIdRef.current !== targetId) {
           sharedYtLoadedIdRef.current = targetId;
           setSharedYt(s => ({ ...s, duration: 0, currentTime: 0, paused: false, settings: null }));
@@ -2135,7 +2136,7 @@ export default function VideoFeedView({ onExit, music = false }) {
       const isCurrent = () => sharedYtMountedRef.current && sharedYtLifecycleRef.current === lifecycle;
       sharedYtCreatingRef.current = true;
       host.replaceChildren();
-      const mount = createYouTubePlayerFrame(host, videoId, { autoplay: document.hidden ? 0 : 1, mute: 1, loop: 0, controls: 0 }, queueRef.current[activeIndexRef.current]?.title);
+      const mount = createYouTubePlayerFrame(host, videoId, { autoplay: 0, mute: sharedYtMutedRef.current ? 1 : 0, loop: 0, controls: 0 }, queueRef.current[activeIndexRef.current]?.title);
 
       clearTimeout(sharedYtReadyTimeoutRef.current);
       sharedYtReadyTimeoutRef.current = setTimeout(() => {
@@ -2150,7 +2151,7 @@ export default function VideoFeedView({ onExit, music = false }) {
         const player = new YT.Player(mount, {
           videoId: initialId,
           playerVars: {
-            autoplay: document.hidden ? 0 : 1, mute: 1, playsinline: 1, loop: 0,
+            autoplay: 0, mute: sharedYtMutedRef.current ? 1 : 0, playsinline: 1, loop: 0,
             controls: 0, rel: 0,
             origin: window.location.origin,
           },
@@ -2187,6 +2188,7 @@ export default function VideoFeedView({ onExit, music = false }) {
               }
               sharedYtLoadedIdRef.current = desiredId;
               const resume = sharedYtResumeRef.current?.id === desiredId ? sharedYtResumeRef.current : null;
+              sharedYtAutoplayRef.current = resume?.paused ? null : desiredId;
               sharedYtResumeRef.current = null;
               try {
                 if (sharedYtMutedRef.current) e.target.mute(); else e.target.unMute();
@@ -2206,6 +2208,7 @@ export default function VideoFeedView({ onExit, music = false }) {
               // autoplay retry, just as the app's former pause button did.
               if (e.data === YT.PlayerState.PAUSED && !document.hidden
                 && e.target.getVideoData?.()?.video_id === sharedYtDesiredIdRef.current) {
+                sharedYtAutoplayRef.current = null;
                 clearInterval(sharedYtRetryRef.current);
               }
               // loadVideoById does not replace the iframe's original playlist.
@@ -2227,6 +2230,12 @@ export default function VideoFeedView({ onExit, music = false }) {
                   setSharedYt(s => ({ ...s, duration }));
                 }
               } catch {}
+            },
+            onAutoplayBlocked: e => {
+              if (!isCurrent() || document.hidden || e.target.getVideoData?.()?.video_id !== sharedYtDesiredIdRef.current || sharedYtAutoplayRef.current !== sharedYtDesiredIdRef.current) return;
+              sharedYtAutoplayRef.current = null;
+              clearInterval(sharedYtRetryRef.current); sharedYtRetryRef.current = null;
+              try { e.target.mute(); e.target.playVideo(); setSharedYt(s => ({ ...s, muted: true })); } catch {}
             },
             onPlaybackRateChange: e => {
               if (!isCurrent() || e.target.getVideoData?.()?.video_id !== sharedYtDesiredIdRef.current) return;
@@ -2313,6 +2322,7 @@ export default function VideoFeedView({ onExit, music = false }) {
   }, [muted]);
 
   const sharedYtTogglePlay = useCallback(() => {
+    sharedYtAutoplayRef.current = null;
     const p = sharedYtPlayerRef.current;
     try {
       if (!sharedYtReadyRef.current || p?.getVideoData?.()?.video_id !== sharedYtDesiredIdRef.current) return;
@@ -2328,6 +2338,7 @@ export default function VideoFeedView({ onExit, music = false }) {
     } catch { return null; }
   };
   const toggleYouTubeMute = () => {
+    sharedYtAutoplayRef.current = null;
     try {
       const player = currentSettingsPlayer();
       if (!player) return;

@@ -11,7 +11,6 @@
 .job-compose-actions { display:flex; flex-wrap:wrap; align-items:center; gap:.75rem; margin:1rem 0; }
 .job-compose-error { color:#b91c1c; background:#fef2f2; padding:.85rem; border-radius:8px; }
 .job-compose-result { margin-bottom:1rem; }
-.jobs-post-entry { display:flex; justify-content:flex-end; margin-bottom:1rem; }
 .job-publisher { display:block; color:var(--muted); font-size:.85rem; margin-top:.4rem; }
 .jobs-business-search { display:flex; align-items:flex-end; flex-wrap:wrap; gap:.75rem; margin-bottom:1rem; }
 .jobs-business-search label { display:flex; flex:1 1 180px; min-width:0; flex-direction:column; gap:.4rem; font-size:.85rem; font-weight:600; }
