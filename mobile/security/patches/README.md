@@ -2,9 +2,15 @@
 
 Reviewed 2026-10-03. Review or replace with upstream releases before **2026-11-03**.
 
-Installed versions remain `braces@3.0.3` and `node-forge@1.4.0`. Neither advisory
-currently has a published fixed version. These are local backports, not upstream
-releases; plain `npm audit` continues to report their versions.
+Active local backports cover `braces@3.0.3` and `zod@3.25.76`.
+Plain `npm audit` continues to report these installed versions.
+
+On 2026-10-31, the lockfile moved to upstream `node-forge@1.4.2` and
+`follow-redirects@1.16.2` to resolve the newly reported high-severity advisories.
+The Forge backport was removed from the manifest; its RSA behavioral regressions
+remain. Forge 1.4.2 includes the security fixes in 1.4.1 and restores Buffer PEM
+input compatibility. See the [Forge changelog](https://github.com/digitalbazaar/forge/blob/v1.4.2/CHANGELOG.md)
+and [redirect advisory](https://github.com/advisories/GHSA-mrwp-f3q8-3g9p).
 
 ## Provenance
 
@@ -13,7 +19,7 @@ releases; plain `npm audit` continues to report their versions.
   cap brace/parenthesis nesting and AST traversal at 100, honor stricter limits,
   and reject cyclic parent chains. Only five `lib/` files were backported to
   the npm release; existing code outside the hunks is preserved. MIT license.
-- [node-forge PR 1152](https://github.com/digitalbazaar/forge/pull/1152), addressing
+- Retired: [node-forge PR 1152](https://github.com/digitalbazaar/forge/pull/1152), addressing
   [GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv):
   check nested DigestAlgorithm element count as well as outer DigestInfo count.
   Only `lib/rsa.js` changes. Used under node-forge's BSD-3-Clause license option.
@@ -31,7 +37,7 @@ until `npm run postinstall --prefix mobile` is explicitly run.
 
 `npm run audit:security --prefix mobile` runs attack regressions and the ordinary
 npm JSON audit. The raw report is saved to `mobile/.cache/dependency-audit.json`
-and uploaded by CI. Only the two exact advisory URLs above are recognized after
+and uploaded by CI. Only exact advisory URLs in the active manifest are recognized after
 installed versions, locations, file hashes and regression tests pass. Transitive
 reports are covered only when every underlying advisory is covered. New high or
 critical advisories, unpatched copies, unavailable audit data and expired review
@@ -47,7 +53,7 @@ excessive input/AST depth, parent cycles, patch integrity and audit policy.
 
 When fixed upstream versions exist, update the lockfile, remove their manifest
 entries and retain behavioral regressions. Retire custom audit handling after
-both backports are replaced. Do not extend the review date or add exceptions
+all backports are replaced. Do not extend the review date or add exceptions
 without reviewing current upstream state and mitigation.
 
 

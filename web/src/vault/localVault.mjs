@@ -136,8 +136,19 @@ export async function createVault(passphrase, storage = storageDefault()) {
 }
 export async function unlockVault(passphrase, storage = storageDefault()) {
   const record = readRecord(storage);
-  try { return await sessionFromRaw(await open(await wrappingKey(String(passphrase), record.kdf.salt), record.wrappedKey), record); }
-  catch { throw new Error('The passphrase is incorrect or the vault could not be verified.'); }
+  let key;
+  try { key = await wrappingKey(String(passphrase), record.kdf.salt); }
+  catch { throw new Error('Vault encryption could not start on this device. Restart or update your browser or app and try again. Your saved vault is unchanged.'); }
+  let raw;
+  try { raw = await open(key, record.wrappedKey); }
+  catch (failure) {
+    if (['NotSupportedError', 'SecurityError', 'InvalidAccessError'].includes(failure?.name)) {
+      throw new Error('This device could not run vault decryption. Restart or update your browser or app and try again. Your saved vault is unchanged.');
+    }
+    throw new Error('The passphrase is incorrect or the encrypted vault key could not be verified. Your saved vault is unchanged.');
+  }
+  try { return await sessionFromRaw(raw, record); }
+  catch { throw new Error('The passphrase was accepted, but the saved vault contents could not be opened. Save an encrypted copy before trying recovery. Your saved vault is unchanged.'); }
 }
 export async function saveEntries(session, entries, storage = storageDefault()) {
   if (!session?.key) throw new Error('Unlock your vault first.');

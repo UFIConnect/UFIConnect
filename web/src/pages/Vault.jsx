@@ -180,12 +180,18 @@ export default function Vault({ accountId }) {
 
   async function openVault(event) {
     event.preventDefault();
+    // Password managers can fill a field without firing React's change event.
+    // Read the submitted values before state updates can overwrite autofill.
+    const form = new FormData(event.currentTarget);
+    const submittedPassphrase = form.get('vault-passphrase');
+    const submittedConfirmation = form.get('vault-confirmation');
+    if (busy || typeof submittedPassphrase !== 'string') return;
     if (!exists && !requireWriteAccess()) return;
-    if (!exists && passphrase !== confirmation) { setError('The passphrases do not match.'); return; }
+    if (!exists && submittedPassphrase !== submittedConfirmation) { setError('The passphrases do not match.'); return; }
     const request = epoch.current;
     setBusy(true); setError(''); setNotice('');
     try {
-      const next = await (exists ? unlockVault(passphrase) : createVault(passphrase));
+      const next = await (exists ? unlockVault(submittedPassphrase) : createVault(submittedPassphrase));
       setExists(true);
       if (request === epoch.current && !document.hidden) { setSession(next); setPassphrase(''); setConfirmation(''); }
     } catch (failure) { if (request === epoch.current) setError(failure.message || 'The vault could not be opened.'); }
@@ -450,7 +456,7 @@ export default function Vault({ accountId }) {
             <div ref={setSubscriptionTarget} className="vault-subscription-slot" />
             {!exists && !canWrite && <p role="status">{billing.checking ? 'Checking your Vault membership…' : native ? 'An active Vault membership is required to create a vault. If you already have one, choose Check membership status above.' : 'Subscribe above to activate your Vault, then create your passphrase below. Already subscribed? Choose Check subscription status.'}</p>}
             <form onSubmit={openVault}><label className="vault-field">Vault passphrase<input type="password" name="vault-passphrase" autoComplete={exists ? 'current-password' : 'new-password'} value={passphrase} onChange={event => setPassphrase(event.target.value)} required minLength={12} maxLength={1024} placeholder={exists ? 'Enter your passphrase' : 'At least 12 characters'} /></label>
-              {!exists && <label className="vault-field">Confirm passphrase<input type="password" autoComplete="new-password" value={confirmation} onChange={event => setConfirmation(event.target.value)} required minLength={12} maxLength={1024} placeholder="Enter it again" /></label>}
+              {!exists && <label className="vault-field">Confirm passphrase<input type="password" name="vault-confirmation" autoComplete="new-password" value={confirmation} onChange={event => setConfirmation(event.target.value)} required minLength={12} maxLength={1024} placeholder="Enter it again" /></label>}
               <button className="vault-button vault-button--primary vault-button--full" disabled={busy || (!exists && !canWrite)}><LockKeyhole size={17} />{busy ? 'Opening vault…' : exists ? 'Unlock vault' : 'Create vault'}<ChevronRight size={17} /></button>
               {!native && deviceReady && <button type="button" className="vault-button vault-button--secondary vault-button--full" disabled={busy} onClick={useDeviceUnlock}><FaceScan size={18} />Unlock with device</button>}
             </form>
