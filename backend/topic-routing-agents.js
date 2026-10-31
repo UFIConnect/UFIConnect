@@ -52,11 +52,23 @@ function createTopicRoutingAgents({ db, topics, onClassified = () => {}, now = D
   }));
   const laneFromId = id => { const lane = definitions().findIndex(item => item.id === id); if (lane < 0) throw failure(400, 'Unknown topic routing agent.'); return lane; };
   async function seedTopics(values, queryRunner = db) {
-    const names = [...new Set(values.map(canonicalTopic))];
-    if (!names.length) return;
-    await queryRunner.query(`INSERT INTO office_topic_agent_assignments(topic,lane)
+    const names = [...new Set(values.map(canonicalTopic))].sort();
+    if (!names.length) return 0;
+    const { rows } = await queryRunner.query(`INSERT INTO office_topic_agent_assignments(topic,lane)
       SELECT topic,lane FROM jsonb_to_recordset($1::jsonb) AS x(topic TEXT,lane SMALLINT)
-      ON CONFLICT(topic) DO NOTHING`, [JSON.stringify(names.map(topic => ({ topic, lane: laneForTopic(topic) })))]);
+      ON CONFLICT(topic) DO NOTHING RETURNING topic`, [JSON.stringify(names.map(topic => ({ topic, lane: laneForTopic(topic) })))]);
+    return rows.length;
+  }
+  async function observeTopics(values) {
+    const inserted = await seedTopics(values);
+    if (inserted) {
+      // A report already observed these topics in its inventory aggregation.
+      // Finish any older read before invalidating so its stale result cannot
+      // overwrite the fresh routing assignments on the first report.
+      if (snapshotInFlight) await snapshotInFlight.catch(() => {});
+      snapshotCache = null;
+    }
+    return inserted;
   }
   async function initialize() {
     if (!db.isConnected()) throw failure(503, 'Topic routing storage is unavailable.');
@@ -305,6 +317,6 @@ function createTopicRoutingAgents({ db, topics, onClassified = () => {}, now = D
       note: 'New writes are classified in their persistence transaction. Recovery runs every 15 seconds with a bounded workload; backlog age is observed, not a completion-time guarantee. Ambiguous matches retry after 30 minutes.' };
     snapshotCache = { at: now(), value }; return value;
   }
-  return { initialize, definitions, snapshot, currentSnapshot, runAgent, start, stop, tick, classifyPersisted, flushStats, decision, ruleVersion: RULE_VERSION };
+  return { initialize, definitions, snapshot, currentSnapshot, runAgent, start, stop, tick, classifyPersisted, flushStats, observeTopics, decision, ruleVersion: RULE_VERSION };
 }
 module.exports = { TOPIC_ROUTING_SCHEMA, INTERVAL_MS, RULE_VERSION, LANE_COUNT, PHASE_LIMIT, laneForTopic, contentHash, createTopicRoutingAgents };

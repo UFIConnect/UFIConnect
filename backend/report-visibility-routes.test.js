@@ -4,6 +4,9 @@ const { PGlite } = require('@electric-sql/pglite');
 const { REPORT_SCHEMA, createContentReports, createReportVisibilityFilter, reportSuppressionPredicate } = require('./content-reports');
 const { REPORT_TARGET_TEST_SCHEMA, REPORT_BASE_TEST_SCHEMA } = require('./test-support/report-db');
 const { createAppHarness, member } = require('./test-support/app-harness');
+const { OFFICE_TOPIC_SCHEMA } = require('./office-topic-transfer');
+const { createTopicRoutingAgents } = require('./topic-routing-agents');
+const { SCHEMA: DEVICE_SCHEMA } = require('./suspicious-devices');
 const A = 'a0000000-0000-4000-8000-000000000001';
 const sourceUrl = 'https://www.youtube.com/watch?v=abcdefghijk';
 const external = id => ({ id, source:'youtube',sourceUrl,title:'A reported source post',content:'Content from an actual source fixture.',createdAt:new Date().toISOString(),isExternal:true,author:{name:'Source creator'},likesCount:12,commentsCount:3,videoDurationSeconds:30 });
@@ -13,13 +16,17 @@ async function fixture(t) {
   await pg.exec(REPORT_BASE_TEST_SCHEMA + REPORT_TARGET_TEST_SCHEMA);
   for(const sql of REPORT_SCHEMA) await pg.exec(sql);
   await pg.query("INSERT INTO users(id,name,email) VALUES($1,'Alice','synthetic@example.invalid')",[A]);
-  const db={isConnected:()=>true,query:(...args)=>pg.query(...args),withClient:fn=>fn(pg)};
+  const query=async(...args)=>{const result=await pg.query(...args);return{...result,rowCount:result.affectedRows};};
+  const db={isConnected:()=>true,query,withClient:fn=>fn({query})};
+  // The real save and authenticated comment paths now use these durable stores.
+  for(const sql of [...OFFICE_TOPIC_SCHEMA,...DEVICE_SCHEMA]) await pg.exec(sql);
+  await createTopicRoutingAgents({db,topics:[]}).initialize();
   const service=createContentReports({db});
   async function worker() {
     const app=await createAppHarness({connected:true,env:{OFFICE_TOKEN:'synthetic-office'},query:async(sql,params)=>{
       if(sql.startsWith('SELECT id FROM auth_sessions'))return{rows:[{id:params[0]}],rowCount:1};
-      return pg.query(sql,params);
-    },withClient:fn=>fn(pg)});
+      return query(sql,params);
+    },withClient:fn=>fn({query})});
     t.after(()=>app.close()); app.seedUser(member(A));
     app.setContentScreening(async({content})=>({allowed:true,content}));
     return app;

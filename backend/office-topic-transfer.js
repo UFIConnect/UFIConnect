@@ -108,6 +108,7 @@ function createOfficeTopicTransfer({ db, topics, transfer, onClassified = () => 
       subtopic[row.stage] += Number(row.count);
     }
     const unknown = byTopic.get('Unknown');
+    if (topicAgents) await topicAgents.observeTopics([...byTopic.keys()]);
     const routing = topicAgents ? await topicAgents.snapshot() : null;
     const assigned = new Map((routing?.agents || []).flatMap(agent => agent.topics.map(topic => [topic,agent.id])));
     return { available: true, generatedAt: new Date().toISOString(), topics: [...byTopic.values()].map(item => ({ ...item, agentId: assigned.get(item.topic) || null })).sort((a, b) => b.staged - a.staged || b.live - a.live || a.topic.localeCompare(b.topic)), unknown: { live: unknown.live, staged: unknown.staged }, taxonomy: [...byTopic.values()].map(item => ({ topic: item.topic, subtopics: item.subtopics.map(subtopic => subtopic.name) })), agents: routing?.agents || [], routing,

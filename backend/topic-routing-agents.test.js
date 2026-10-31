@@ -50,6 +50,52 @@ test('four durable topic assignments survive restarts and the loop schedules onl
   const idle = createTopicRoutingAgents({ db: { isConnected: () => false }, topics, schedule: (_fn, ms) => { assert.equal(ms, INTERVAL_MS); scheduled++; return 123; }, cancel: value => { assert.equal(value, 123); cancelled++; } });
   idle.start(); idle.start(); idle.stop(); assert.equal(scheduled, 1); assert.equal(cancelled, 1);
 });
+test('the first topic report assigns every observed legacy topic and preserves cached snapshots when assignments already exist', async t => {
+  const f = await fixture(t);
+  const before = await f.service.snapshot();
+  const legacy = Array.from({ length: 105 }, (_, index) => ({ id: `legacy-${index}`, topic: `Legacy topic ${index}` }));
+  for (const [index, table] of ['feed_posts_staging', 'feed_posts_cache'].entries()) {
+    await f.db.query(`INSERT INTO ${table}(id,topic)
+      SELECT id,topic FROM jsonb_to_recordset($1::jsonb) AS x(id TEXT,topic TEXT)`, [JSON.stringify(legacy.filter((_, n) => n % 2 === index))]);
+  }
+  await insert(f, { id: 'legacy-unknown', topic: 'unclassified' });
+  const office = createOfficeTopicTransfer({ db: f.db, topics, topicAgents: f.service });
+  const report = await office.report();
+  assert.notEqual(report.routing, before, 'New assignments invalidate a previously cached snapshot');
+  for (const row of report.topics) assert.equal(row.agentId, agentFor(row.topic), `${row.topic} should have an agent on its first report`);
+  assert.equal(report.topics.length, topics.length + legacy.length + 1);
+  const stored = (await f.pg.query('SELECT topic,lane FROM office_topic_agent_assignments')).rows;
+  assert.equal(stored.length, report.topics.length, 'Unknown aliases share the canonical Unknown assignment');
+  for (const row of stored) assert.equal(Number(row.lane), laneForTopic(row.topic));
+  assert.equal((await office.report()).routing, report.routing, 'An unchanged topic inventory retains the cached snapshot');
+  assert.equal(await f.service.observeTopics(['Unknown', null, 'unclassified']), 0);
+});
+
+test('a report waits out a pre-insert snapshot before showing newly observed topic assignments', async t => {
+  const f = await fixture(t), originalQuery = f.db.query;
+  let releaseRead, captureRead, captureInsert, holdRead = true;
+  const readHeld = new Promise(resolve => { captureRead = resolve; });
+  const readReleased = new Promise(resolve => { releaseRead = resolve; });
+  const inserted = new Promise(resolve => { captureInsert = resolve; });
+  f.db.query = async (sql, params) => {
+    const result = await originalQuery(sql, params);
+    if (holdRead && sql === 'SELECT topic,lane,enabled FROM office_topic_agent_assignments ORDER BY topic') {
+      holdRead = false; captureRead(); await readReleased;
+    }
+    if (sql.startsWith('INSERT INTO office_topic_agent_assignments') && params[0].includes('Concurrent legacy topic')) captureInsert();
+    return result;
+  };
+  const stale = f.service.snapshot();
+  await readHeld;
+  await insert(f, { id: 'concurrent-legacy', topic: 'Concurrent legacy topic' });
+  const reportPending = createOfficeTopicTransfer({ db: f.db, topics, topicAgents: f.service }).report();
+  await inserted;
+  releaseRead();
+  assert.equal((await stale).agents.some(agent => agent.topics.includes('Concurrent legacy topic')), false);
+  const report = await reportPending;
+  assert.equal(report.topics.find(row => row.topic === 'Concurrent legacy topic').agentId, agentFor('Concurrent legacy topic'));
+});
+
 test('immediate routing uses actual current persisted content, skips suppressed/absent rows, and resolves parent plus subtopic atomically', async t => {
   const f = await fixture(t), post = { id: 'fresh', title: 'A Django tutorial using Python', topic: null };
   await insert(f, post);

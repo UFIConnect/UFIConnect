@@ -127,6 +127,8 @@ test('real PostgreSQL recovery changes only body, protects concurrent edits, sup
   const { PGlite } = require('@electric-sql/pglite');
   const { createSourceContentRecoveryQueue } = require('./source-content-recovery');
   const { createAppHarness } = require('./test-support/app-harness');
+  const { OFFICE_TOPIC_SCHEMA } = require('./office-topic-transfer');
+  const { createTopicRoutingAgents } = require('./topic-routing-agents');
   const pg = new PGlite();
   const columns = `id TEXT PRIMARY KEY, source TEXT, group_id TEXT, title TEXT, content TEXT, author_name TEXT,
     source_url TEXT, media_url TEXT, media_type TEXT, video_duration_seconds INTEGER, topic TEXT, likes_count INTEGER,
@@ -135,7 +137,11 @@ test('real PostgreSQL recovery changes only body, protects concurrent edits, sup
   await pg.exec(`CREATE TABLE feed_posts_cache (${columns}); CREATE TABLE feed_posts_staging (${columns});
     CREATE TABLE report_content_suppressions (target_type TEXT, target_id TEXT, source TEXT, source_url TEXT);`);
   let connected = true;
-  const db = { isConnected: () => connected, query: (sql, params) => pg.query(sql, params) };
+  const db = { isConnected: () => connected, query: async (sql, params) => {
+    const result = await pg.query(sql, params); return { ...result, rowCount: result.affectedRows };
+  } };
+  for (const sql of OFFICE_TOPIC_SCHEMA) await pg.exec(sql);
+  await createTopicRoutingAgents({ db, topics: [] }).initialize();
   const queue = createSourceContentRecoveryQueue({ db, tables: ['feed_posts_cache', 'feed_posts_staging'], schedule: () => ({}) });
   const oldBody = content.slice(0, 1999) + '…';
   const seed = async id => {
