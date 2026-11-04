@@ -251,12 +251,12 @@ try {
       if (['notion', 'slack', 'linear'].includes(id)) {
         await page.getByRole('button', { name: 'Conversation', exact: true }).click();
         await page.getByRole('button', { name: 'Ask', exact: true }).click();
-        const source = page.getByRole('checkbox', { name: `${name} Connected Â· include in reply`, exact: true });
+        const source = page.getByRole('checkbox', { name: `${name} Connected · include in reply`, exact: true });
         await source.check();
         await page.getByLabel('Message Office AI').fill(`Find context in ${name}`);
         const sourceSaved = page.waitForResponse(response => response.url().includes('/office/ai/conversations/') && response.request().method() === 'PATCH' && response.status() === 200 && response.request().postDataJSON()?.messages?.at(-1)?.connectedSources?.some(item => item.id === id));
         await page.getByRole('button', { name: 'Send', exact: true }).click();
-        await page.locator('.office-ai-source-results').last().getByText(`${name} Â· Sources retrieved (1)`, { exact: true }).waitFor();
+        await page.locator('.office-ai-source-results').last().getByText(`${name} · Sources retrieved (1)`, { exact: true }).waitFor();
         await sourceSaved;
         check(conversations.get(initialConversation).messages.at(-1).connectedSources[0].id === id, 'Saved history retains connected source results');
         check(JSON.stringify(requests.filter(row => row.path.endsWith('/chat')).at(-1).body.sourceIds) === JSON.stringify([id]), 'Only the selected workspace source is sent to chat');
@@ -372,7 +372,7 @@ try {
     check(await page.getByRole('button', { name: 'Run command', exact: true }).isDisabled(), 'Only one isolated terminal session can run at a time');
     terminal = { ...terminal, status: 'completed', conclusion: 'failure', exitCode: 7 }; terminalOutput = 'fixture output\ncommand failed with exit 7';
     await page.getByRole('button', { name: 'Refresh terminal', exact: true }).click();
-    await page.getByText('completed Â· failure Â· exit 7', { exact: true }).waitFor();
+    await page.getByText('completed · failure · exit 7', { exact: true }).waitFor();
     check((await page.getByLabel('Command output', { exact: true }).innerText()).includes('fixture output'), 'Terminal displays actual fetched output and exit status');
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `Terminal fits ${width}px without horizontal page overflow`);
     await page.screenshot({ path: path.join(output, `office-ai-terminal-${width}.png`), fullPage: true });
@@ -429,7 +429,7 @@ try {
       await page.waitForFunction(() => document.querySelector('.office-connections')?.getAttribute('aria-busy') === 'false');
       await page.clock.install(); stallConnectionRead = true;
       await page.getByRole('button', { name: 'Refresh connections', exact: true }).click();
-      await connectionsView.getByText('Checking connection settingsâ€¦', { exact: true }).waitFor();
+      await connectionsView.getByText('Checking connection settings…', { exact: true }).waitFor();
       await page.clock.fastForward(21000);
       await connectionsView.getByRole('alert').filter({ hasText: 'Connection check timed out.' }).waitFor();
       check(await page.getByRole('button', { name: 'Refresh connections', exact: true }).isEnabled(), 'A stalled connection check releases the loading state and allows retry');
