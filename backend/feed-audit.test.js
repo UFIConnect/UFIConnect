@@ -2,8 +2,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { PGlite } = require('@electric-sql/pglite');
-const { createFeedAudit, migrateLegacySourcePullLimits, normalizePolicy, DEFAULT_POLICY } = require('./feed-audit');
-const { LEGACY_SLOW_SOURCE_PULL_LIMITS } = require('./source-pull-limits');
+const { createFeedAudit, migrateLegacySourcePullLimits, migratePhotoSourcePullLimits, normalizePolicy, DEFAULT_POLICY } = require('./feed-audit');
+const { LEGACY_SLOW_SOURCE_PULL_LIMITS, PREVIOUS_SOURCE_PULL_LIMITS } = require('./source-pull-limits');
 const makePost = (id, extra = {}) => ({ id: String(id), source: 'reddit', title: `Engineering report ${id}`, content: `A useful engineering article containing distinct content number ${id}.`, sourceUrl: `https://example.org/posts/${id}`, ...extra });
 const fixture = async () => {
   const pg = new PGlite(); let time = Date.now();
@@ -107,12 +107,12 @@ test('old stored policies gain pull defaults and nested policy snapshots cannot 
   const f = await fixture(); t.after(() => f.pg.close());
   await f.db.query("UPDATE office_feed_policy SET settings=settings - 'sourcePullLimits' WHERE id=1");
   await f.audit.reload();
-  assert.deepEqual(f.audit.policy().sourcePullLimits.bluesky, { windowSeconds: 30, maxPulls: 12 });
+  assert.deepEqual(f.audit.policy().sourcePullLimits.bluesky, { windowSeconds: 20, maxPulls: 12 });
   const snapshot = f.audit.policy(); snapshot.sourcePullLimits.bluesky.maxPulls = 9999;
-  assert.equal(f.audit.collectionState('bluesky').minSpacingMs, 2500);
+  assert.equal(f.audit.collectionState('bluesky').minSpacingMs, 1667);
   const first = normalizePolicy({}), second = normalizePolicy({});
   first.sourcePullLimits.bluesky.windowSeconds = 9999;
-  assert.equal(second.sourcePullLimits.bluesky.windowSeconds, 30);
+  assert.equal(second.sourcePullLimits.bluesky.windowSeconds, 20);
   await f.audit.block('bluesky', 'Review source');
   const blocked = f.audit.policy(); blocked.blockedSources[0].reason = 'Changed externally';
   assert.equal(f.audit.policy().blockedSources[0].reason, 'Review source');
@@ -170,6 +170,25 @@ test('concurrent partial source pull settings preserve independently updated ent
   assert.equal(f.audit.collectionState('bluesky').minSpacingMs, 10000);
 });
 
+test('photo budget migration waits for rollout, updates exact v2 defaults once and preserves custom policy', async t => {
+  const f = await fixture(); t.after(() => f.pg.close());
+  const settings = { ...structuredClone(DEFAULT_POLICY), sourcePullLimitsVersion: 2, maxPerSourcePerMinute: 80,
+    sourcePullLimits: { ...PREVIOUS_SOURCE_PULL_LIMITS, medium: { windowSeconds: 90, maxPulls: 3 } } };
+  await f.db.query('UPDATE office_feed_policy SET settings=$1::jsonb WHERE id=1', [JSON.stringify(settings)]);
+  await f.audit.initialize();
+  assert.equal(f.audit.collectionState('bluesky').minSpacingMs, 2500, 'Startup does not change live policy');
+  await Promise.all([migratePhotoSourcePullLimits(f.db), migratePhotoSourcePullLimits(f.db)]);
+  await f.audit.reload();
+  for (const [id, limit] of Object.entries(DEFAULT_POLICY.sourcePullLimits)) {
+    assert.deepEqual(f.audit.policy().sourcePullLimits[id], id === 'medium' ? settings.sourcePullLimits.medium : limit, id);
+  }
+  assert.equal(f.audit.policy().maxPerSourcePerMinute, 80);
+  assert.equal((await f.db.query('SELECT settings FROM office_feed_policy WHERE id=1')).rows[0].settings.sourcePullLimitsVersion, 3);
+  await f.audit.configure({ sourcePullLimits: { bluesky: PREVIOUS_SOURCE_PULL_LIMITS.bluesky } });
+  await migratePhotoSourcePullLimits(f.db); await f.audit.reload();
+  assert.deepEqual(f.audit.policy().sourcePullLimits.bluesky, PREVIOUS_SOURCE_PULL_LIMITS.bluesky, 'Later deliberate edits survive');
+});
+
 test('collection budget checks never spend capacity or create synthetic audit outcomes', async t => {
   const f = await fixture(); t.after(() => f.pg.close());
   await f.audit.configure({ maxPerSourcePerMinute: 2 });
@@ -218,7 +237,7 @@ test('collection checks pause blocked and stale sources even when admission limi
   const f = await fixture(); t.after(() => f.pg.close());
   await f.audit.configure({ enabled: false });
   const ready = f.audit.collectionState('bluesky');
-  assert.equal(ready.allowed, true); assert.equal(ready.remaining, null); assert.equal(ready.minSpacingMs, 2500);
+  assert.equal(ready.allowed, true); assert.equal(ready.remaining, null); assert.equal(ready.minSpacingMs, 1667);
   await f.audit.block('bluesky', 'Review intake');
   assert.equal(f.audit.collectionState('bluesky').reason, 'source_blocked');
   assert.equal(f.audit.summary().rejected, 0);

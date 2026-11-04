@@ -2,7 +2,7 @@
 
 const { createHash } = require('node:crypto');
 const { safeUrl } = require('./post-pipeline');
-const { DEFAULT_SOURCE_PULL_LIMITS, LEGACY_SLOW_SOURCE_PULL_LIMITS, normalizeSourcePullLimits, sourcePullLimit } = require('./source-pull-limits');
+const { DEFAULT_SOURCE_PULL_LIMITS, PREVIOUS_SOURCE_PULL_LIMITS, LEGACY_SLOW_SOURCE_PULL_LIMITS, normalizeSourcePullLimits, sourcePullLimit } = require('./source-pull-limits');
 const DEFAULT_POLICY = Object.freeze({ enabled: true, maxPerSourcePerMinute: 300,
   maxPerAuthorPerMinute: 25, duplicateWindowSeconds: 300, targetApprovalPct: 85,
   minimumSample: 30, cooldownSeconds: 60, sourcePullLimits: DEFAULT_SOURCE_PULL_LIMITS });
@@ -64,7 +64,23 @@ async function migrateLegacySourcePullLimits(db) {
     FROM migration
     WHERE id=1 AND NOT (settings ? 'sourcePullLimitsVersion')
       AND (NOT (settings ? 'sourcePullLimits') OR jsonb_typeof(settings->'sourcePullLimits')='object')`,
-    [JSON.stringify(LEGACY_SLOW_SOURCE_PULL_LIMITS), JSON.stringify(DEFAULT_SOURCE_PULL_LIMITS)]);
+    [JSON.stringify(LEGACY_SLOW_SOURCE_PULL_LIMITS), JSON.stringify(PREVIOUS_SOURCE_PULL_LIMITS)]);
+}
+
+// Apply only after both deployed roles accept the photo-based ceilings. Keep
+// administrator overrides, and never reapply after a later deliberate edit.
+async function migratePhotoSourcePullLimits(db) {
+  await migrateLegacySourcePullLimits(db);
+  await db.query(`WITH migration AS (SELECT $1::jsonb AS previous, $2::jsonb AS next)
+    UPDATE office_feed_policy SET settings=jsonb_set(settings, '{sourcePullLimits}',
+    COALESCE((SELECT jsonb_object_agg(key, CASE WHEN value = (migration.previous -> key)
+      THEN migration.next -> key ELSE value END)
+      FROM jsonb_each(COALESCE(settings->'sourcePullLimits','{}'::jsonb))), '{}'::jsonb), true)
+    || '{"sourcePullLimitsVersion":3}'::jsonb, updated_at=NOW()
+    FROM migration
+    WHERE id=1 AND settings->'sourcePullLimitsVersion'='2'::jsonb
+      AND (NOT (settings ? 'sourcePullLimits') OR jsonb_typeof(settings->'sourcePullLimits')='object')`,
+    [JSON.stringify(PREVIOUS_SOURCE_PULL_LIMITS), JSON.stringify(DEFAULT_SOURCE_PULL_LIMITS)]);
 }
 
 function createFeedAudit(db, { role = 'api', now = Date.now, schedule = setTimeout, requirePolicy = false, onPolicyChange = () => {} } = {}) {
@@ -81,7 +97,7 @@ function createFeedAudit(db, { role = 'api', now = Date.now, schedule = setTimeo
     if (!db.isConnected()) return;
     await db.query(`CREATE TABLE IF NOT EXISTS office_feed_policy (id INTEGER PRIMARY KEY CHECK(id=1), settings JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
     await db.query(`INSERT INTO office_feed_policy(id, settings) VALUES (1,$1::jsonb) ON CONFLICT DO NOTHING`,
-      [JSON.stringify({ ...DEFAULT_POLICY, sourcePullLimitsVersion: 2 })]);
+      [JSON.stringify({ ...DEFAULT_POLICY, sourcePullLimitsVersion: 3 })]);
     await db.query(`CREATE TABLE IF NOT EXISTS office_feed_source_blocks (source TEXT PRIMARY KEY, reason TEXT NOT NULL, blocked_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
     await db.query(`CREATE TABLE IF NOT EXISTS office_feed_audit (id TEXT PRIMARY KEY, post_id TEXT, source TEXT NOT NULL, title TEXT, content TEXT, source_url TEXT, status TEXT NOT NULL, reason TEXT, role TEXT, occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
     await db.query(`CREATE INDEX IF NOT EXISTS office_feed_audit_time ON office_feed_audit(occurred_at DESC, id DESC)`);
@@ -285,4 +301,4 @@ function createFeedAudit(db, { role = 'api', now = Date.now, schedule = setTimeo
   return { initialize, reload, access, record, admit, collectionState, flush, list, detail, configure, block, unblock, summary, policy: policySnapshot, status };
 }
 
-module.exports = { migrateLegacySourcePullLimits, createFeedAudit, DEFAULT_POLICY, normalizePolicy, REASONS };
+module.exports = { migrateLegacySourcePullLimits, migratePhotoSourcePullLimits, createFeedAudit, DEFAULT_POLICY, normalizePolicy, REASONS };

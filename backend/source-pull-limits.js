@@ -9,7 +9,9 @@ const LEGACY_SLOW_SOURCE_PULL_LIMITS = Object.freeze(Object.fromEntries([
   [300, ['stackoverflow', 'twitter', 'linkedin', 'facebook', 'openalex']],
   [60, ['cntraveler', 'weworkremotely', 'twitch', 'crossref', 'datacite', 'zenodo']],
 ].flatMap(([windowSeconds, ids]) => ids.map(id => [id, Object.freeze({ windowSeconds, maxPulls: 1 })]))));
-const budgets = [
+// The reference photo specifies an interval per shard, not one pull per site.
+// Keep its shard counts while capping each interval at twenty seconds.
+const photoBudgets = [
   [15, 8, ['reddit']],
   [20, 10, ['hackernews', 'mastodon']],
   [30, 12, ['bluesky']],
@@ -18,12 +20,26 @@ const budgets = [
   [120, 18, ['theregister', 'remoteok', 'behance']],
   [180, 20, ['indiehackers', 'smashing', 'infoq', 'mittr', 'gitlab', 'yc', 'crunchbase', 'designweb']],
   [240, 16, ['lobsters']],
-  [20, 1, ['github', 'arxiv', 'usajobs', 'stackoverflow', 'twitter', 'linkedin', 'facebook', 'openalex',
-    'remotive', 'muse', 'cntraveler', 'weworkremotely', 'twitch', 'crossref', 'datacite', 'zenodo']],
+  [240, 1, ['github', 'arxiv', 'usajobs']],
+  [300, 1, ['stackoverflow', 'twitter', 'linkedin', 'facebook']],
+  [20, 1, ['remotive', 'muse']],
 ];
-const DEFAULT_SOURCE_PULL_LIMITS = Object.freeze(Object.fromEntries(budgets.flatMap(
-  ([windowSeconds, maxPulls, ids]) => ids.map(id => [id, Object.freeze({ windowSeconds, maxPulls })]),
+// Sites absent from the photo follow comparable collectors: news (12),
+// video (14), job boards (18), and scholarly APIs (1, like arXiv).
+const addedBudgets = [
+  [20, 12, ['cntraveler']],
+  [20, 14, ['twitch']],
+  [20, 18, ['weworkremotely']],
+  [20, 1, ['crossref', 'datacite', 'zenodo', 'openalex']],
+];
+const DEFAULT_SOURCE_PULL_LIMITS = Object.freeze(Object.fromEntries([...photoBudgets, ...addedBudgets].flatMap(
+  ([seconds, maxPulls, ids]) => ids.map(id => [id, Object.freeze({ windowSeconds: Math.min(20, seconds), maxPulls })]),
 )));
+// Exact shipped v2 defaults, used only to migrate unchanged saved settings.
+const PREVIOUS_SOURCE_PULL_LIMITS = Object.freeze(Object.fromEntries([
+  ...photoBudgets.map(([seconds, shards, ids]) => [shards === 1 ? Math.min(20, seconds) : seconds, shards, ids]),
+  [20, 1, addedBudgets.flatMap(([, , ids]) => ids)],
+].flatMap(([windowSeconds, maxPulls, ids]) => ids.map(id => [id, Object.freeze({ windowSeconds, maxPulls })]))));
 const forbiddenIds = new Set(['__proto__', 'prototype', 'constructor']);
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 const plainObject = value => value !== null && typeof value === 'object'
@@ -150,4 +166,4 @@ function createSourcePullGate({ collectionState = () => ({ allowed: true }), now
   return { state, run };
 }
 
-module.exports = { DEFAULT_SOURCE_PULL_LIMITS, FALLBACK_SOURCE_PULL_LIMIT, LEGACY_SLOW_SOURCE_PULL_LIMITS, normalizeSourcePullLimits, sourcePullLimit, createSourcePullGate };
+module.exports = { DEFAULT_SOURCE_PULL_LIMITS, PREVIOUS_SOURCE_PULL_LIMITS, FALLBACK_SOURCE_PULL_LIMIT, LEGACY_SLOW_SOURCE_PULL_LIMITS, normalizeSourcePullLimits, sourcePullLimit, createSourcePullGate };

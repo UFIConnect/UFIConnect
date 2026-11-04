@@ -97,6 +97,28 @@ test('configured policy spacing can intentionally exceed the normal twenty-secon
   assert.equal(calls, 2);
 });
 
+test('photo pull slots are scheduled independently of inventory size without concurrent same-source work', async () => {
+  const { DEFAULT_SOURCE_PULL_LIMITS, sourcePullLimit } = require('./source-pull-limits');
+  for (const [id, budget] of Object.entries(DEFAULT_SOURCE_PULL_LIMITS)) {
+    for (const keyCount of [1, 200]) {
+      const { scheduler, advance } = fixture();
+      const starts = [], spacing = sourcePullLimit(id).minSpacingMs;
+      scheduler.register({ id, keys: Array.from({ length: keyCount }, (_, i) => String(i)),
+        minSpacingMs: spacing, targetIntervalMs: spacing,
+        collect: async key => { starts.push(key); return {}; } });
+      assert.equal(scheduler.status().sources[0].intervalMs, spacing, id);
+      for (let pull = 0; pull < budget.maxPulls; pull++) {
+        await Promise.all(scheduler.pump());
+        assert.equal(starts.length, pull + 1, id);
+        assert.equal(scheduler.pump().length, 0, 'Repeated pumping cannot spend another slot');
+        advance(spacing);
+      }
+      assert.equal(starts.length, budget.maxPulls);
+      assert.equal(scheduler.status().sources[0].expectedCycleMs, keyCount * spacing);
+    }
+  }
+});
+
 test('missing setup remains degraded without attempts and resumes when credentials are configured', async () => {
   const { scheduler, advance } = fixture();
   let configured = false, calls = 0;

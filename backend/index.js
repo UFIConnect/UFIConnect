@@ -2284,7 +2284,8 @@ function bustCachePrefix(prefix)  { for (const k of postCache.keys()) if (k.star
 // Expired entries are removed by the shared runtime-cache maintenance pass.
 // Keeping one sweep for every cache avoids a growing collection of timers.
 
-// Public inventories are checked at most twenty seconds apart. Query-only adapters rotate
+// Photo-based shard budgets are paced across each interval (at most 20 seconds).
+// Public inventories and query-only adapters share those collection slots and rotate
 // their distinct mapped keys; provider spacing and cooldowns can limit keyword
 // coverage and are reported separately from a source's last successful check.
 const SOURCE_COLLECTION_TARGET_MS = 5 * 60 * 1000;
@@ -6905,6 +6906,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper, options = {}
     && require('./office-agent-activation').officeSourceReady(agentId, process.env);
   scheduler.register({ id: agentId, keys, enabled: ready,
     minSpacingMs: options.minSpacingMs || cfg.minSpacingMs || 1000,
+    targetIntervalMs: sourcePullLimit(agentId).minSpacingMs,
     startDelayMs: options.startDelayMs || 0,
     providerUntil: () => sourceProviderCooldown(agentId),
     collectionState: () => sourceCollectionState(agentId),

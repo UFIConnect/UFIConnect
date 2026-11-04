@@ -47,8 +47,8 @@ test('all source metadata endpoints reflect saved limits without a restart or fa
     return response.data;
   };
   let agents = await read('/office/agents');
-  assert.equal(agents.agents.bluesky.interval, '12 pulls / 30s');
-  assert.equal(agents.agents.medium.interval, '14 pulls / 90s');
+  assert.equal(agents.agents.bluesky.interval, '12 pulls / 20s');
+  assert.equal(agents.agents.medium.interval, '14 pulls / 20s');
   assert.equal(agents.agents.github.interval, '1 pull / 20s');
   for (const id of ['remotive', 'muse', 'crossref', 'datacite', 'zenodo', 'openalex']) {
     assert.ok(agents.agents[id].pullLimit, id + ' is part of the common source metadata');
@@ -97,10 +97,14 @@ test('pipeline observations report actual intervals separately and mark missing 
   assert.equal(agents.github.cycleMinutes, Math.round(scheduled.expectedCycleMs / 6000) / 10);
   assert.equal(agents.github.observation.collectionIntervalMs, scheduled.intervalMs);
   assert.equal(agents.linkedin.observation.status, 'degraded');
-  assert.equal(app.SOURCE_CONFIG.bluesky.minSpacingMs, 2500);
-  assert.equal(app.SOURCE_CONFIG.medium.minSpacingMs, 6429);
+  assert.equal(app.SOURCE_CONFIG.bluesky.minSpacingMs, 1667);
+  assert.equal(app.SOURCE_CONFIG.medium.minSpacingMs, 1429);
   assert.equal(app.SOURCE_CONFIG.github.minSpacingMs, 20000);
   assert.equal(app.getSourceCollectionScheduler().status().active, 0);
+  for (const source of app.getSourceCollectionScheduler().status().sources) {
+    assert.equal(source.intervalMs, require('./source-pull-limits').sourcePullLimit(source.id).minSpacingMs,
+      source.id + ' scheduler follows the photo-based budget even for a single inventory');
+  }
   const reply = await app.request('/office/agents/github/chat', { method: 'POST', headers, body: { message: 'How often do you refresh?' } });
   assert.equal(reply.status, 200);
   assert.match(reply.data.reply, /Pull limit: 1 pull \/ 20s/);

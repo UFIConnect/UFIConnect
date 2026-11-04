@@ -67,7 +67,7 @@ test('all public collectors share one scheduler; website and member-only sources
     for (const id of ['weworkremotely', 'cntraveler', 'twitch', 'techcrunch', 'github', 'hn', 'remoteok', 'stackoverflow']) {
       const worker = state.sources.find(source => source.id === id);
       assert.equal(worker.keyCount, 1, id + ' collects a whole inventory once');
-      assert.equal(worker.expectedCycleMs, 20000);
+      assert.equal(worker.expectedCycleMs, require('./source-pull-limits').sourcePullLimit(id).minSpacingMs);
     }
     const youtube = state.sources.find(source => source.id === 'youtube');
     assert.ok(youtube.keyCount > 1 && youtube.keyCount < app.FEED_TOPICS.length);

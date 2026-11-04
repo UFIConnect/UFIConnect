@@ -27,7 +27,7 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
   const slotLimit = () => Math.max(1, Math.min(concurrency, Number(effectiveConcurrency?.()) || concurrency));
 
   function register({ id, keys, collect, enabled = () => true, minSpacingMs = 1000,
-    targetCycleMs = TARGET_CYCLE_MS, providerUntil = () => 0, startDelayMs = 0,
+    targetCycleMs = TARGET_CYCLE_MS, targetIntervalMs = null, providerUntil = () => 0, startDelayMs = 0,
     collectionState = () => ({ allowed: true }) }) {
     if (sources.has(id)) throw new Error(`Source already registered: ${id}`);
     const uniqueKeys = [...new Map(keys.filter(key => key != null).map(key => [String(key), key])).values()];
@@ -35,7 +35,11 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
     const spacing = Math.max(1000, minSpacingMs);
     // A small inventory must not turn the coverage target into a five-minute
     // pull interval. Explicit policy spacing and provider cooldowns still win.
-    const intervalMs = Math.max(spacing, Math.min(MAX_COLLECTION_INTERVAL_MS, targetCycleMs / uniqueKeys.length));
+    // Source budgets express the aggregate of the reference shard schedules.
+    // Inventory size controls rotation, not the number of scheduled pull slots.
+    const requestedInterval = Number.isFinite(targetIntervalMs) && targetIntervalMs > 0
+      ? targetIntervalMs : targetCycleMs / uniqueKeys.length;
+    const intervalMs = Math.max(spacing, Math.min(MAX_COLLECTION_INTERVAL_MS, requestedInterval));
     const source = { id, keys: uniqueKeys, collect, enabled, providerUntil, collectionState, minSpacingMs: spacing, intervalMs,
       cursor: 0, registeredAt: now(), nextAt: now() + startDelayMs, lastAttemptAt: null, lastSuccessAt: null,
       inFlight: null, failures: 0, backoffUntil: 0, deferredUntil: 0, deferredReason: null, lastError: null, completedKeys: new Set(), keySuccessAt: new Map(),

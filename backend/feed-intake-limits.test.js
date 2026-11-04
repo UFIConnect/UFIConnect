@@ -161,8 +161,8 @@ test('blocked and stale policy prevent provider access; manual retries obey scre
   assert.equal(calls, 1);
   const held = await app.SOURCE_FETCHERS.bluesky();
   assert.equal(held.reason, 'source_pull_limit');
-  assert.equal(held.retryAt, f.clock() + 2500);
-  f.advance(2499);
+  assert.equal(held.retryAt, f.clock() + 1667);
+  f.advance(1666);
   assert.equal((await app.SOURCE_FETCHERS.bluesky()).reason, 'source_pull_limit');
   assert.equal(calls, 1);
   f.advance(1);

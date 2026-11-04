@@ -16,12 +16,12 @@ test('all published and added sources have collection budgets; future sources re
   assert.deepEqual(sourcePullLimit(undefined), sourcePullLimit('future_provider'));
 });
 
-test('faster source budgets keep upward-rounded pacing and slow source defaults use 20 seconds', () => {
+test('photo shard budgets use upward-rounded pacing and single-slot sources use 20 seconds', () => {
   assert.deepEqual(sourcePullLimit('reddit'), { windowSeconds: 15, maxPulls: 8, minSpacingMs: 1875 });
-  assert.deepEqual(sourcePullLimit('medium'), { windowSeconds: 90, maxPulls: 14, minSpacingMs: 6429 });
+  assert.deepEqual(sourcePullLimit('medium'), { windowSeconds: 20, maxPulls: 14, minSpacingMs: 1429 });
   assert.deepEqual(sourcePullLimit('github'), { windowSeconds: 20, maxPulls: 1, minSpacingMs: 20000 });
   for (const id of ['arxiv', 'usajobs', 'stackoverflow', 'twitter', 'linkedin', 'facebook', 'openalex',
-    'crossref', 'datacite', 'zenodo', 'cntraveler', 'weworkremotely', 'twitch', 'remotive', 'muse']) {
+    'crossref', 'datacite', 'zenodo', 'remotive', 'muse']) {
     assert.equal(sourcePullLimit(id).minSpacingMs, 20000, id);
   }
 });
@@ -39,13 +39,31 @@ test('partial source maps preserve unrelated settings and canonicalize Hacker Ne
   assert.deepEqual(current.hackernews, DEFAULT_SOURCE_PULL_LIMITS.hackernews);
 });
 
+test('every photo group preserves its shard count and caps the per-shard interval at twenty seconds', () => {
+  const groups = [
+    [15, 8, ['reddit']], [20, 10, ['hackernews', 'mastodon']],
+    [20, 12, ['bluesky', 'devto', 'indeed', 'techcrunch', 'theverge', 'cntraveler']],
+    [20, 14, ['medium', 'youtube', 'hashnode', 'producthunt', 'arstechnica', 'wired', 'venturebeat', 'phoronix', 'twitch']],
+    [20, 18, ['theregister', 'remoteok', 'behance', 'weworkremotely']],
+    [20, 20, ['indiehackers', 'smashing', 'infoq', 'mittr', 'gitlab', 'yc', 'crunchbase', 'designweb']],
+    [20, 16, ['lobsters']],
+    [20, 1, ['github', 'arxiv', 'usajobs', 'stackoverflow', 'twitter', 'linkedin', 'facebook', 'remotive', 'muse', 'crossref', 'datacite', 'zenodo', 'openalex']],
+  ];
+  const covered = new Set();
+  for (const [windowSeconds, maxPulls, ids] of groups) for (const id of ids) {
+    assert.deepEqual(sourcePullLimit(id), { windowSeconds, maxPulls, minSpacingMs: Math.ceil(windowSeconds * 1000 / maxPulls) }, id);
+    covered.add(id);
+  }
+  assert.deepEqual([...covered].sort(), Object.keys(DEFAULT_SOURCE_PULL_LIMITS).sort());
+});
+
 test('equivalent or tighter windows are allowed; faster known and future-source overrides are rejected', () => {
-  const limits = normalizeSourcePullLimits({ medium: { windowSeconds: 180, maxPulls: 28 },
+  const limits = normalizeSourcePullLimits({ medium: { windowSeconds: 40, maxPulls: 28 },
     future_provider: { windowSeconds: 600, maxPulls: 1 } });
-  assert.equal(sourcePullLimit('medium', limits).minSpacingMs, 6429);
+  assert.equal(sourcePullLimit('medium', limits).minSpacingMs, 1429);
   assert.equal(sourcePullLimit('future_provider', limits).minSpacingMs, 600000);
   for (const overrides of [
-    { medium: { windowSeconds: 90, maxPulls: 15 } },
+    { medium: { windowSeconds: 20, maxPulls: 15 } },
     { github: { windowSeconds: 19, maxPulls: 1 } },
     { future_provider: { windowSeconds: 19, maxPulls: 1 } },
   ]) assert.throws(() => normalizeSourcePullLimits(overrides), /cannot exceed/);
@@ -67,7 +85,7 @@ test('invalid, incomplete, ambiguous, and prototype-bearing settings cannot ente
     hackernews: { windowSeconds: 20, maxPulls: 5 } }), /only once/);
   const inherited = Object.create({ medium: { windowSeconds: 1, maxPulls: 10000 } });
   assert.throws(() => normalizeSourcePullLimits(inherited), /object/);
-  assert.equal(sourcePullLimit('medium', inherited).minSpacingMs, 6429);
+  assert.equal(sourcePullLimit('medium', inherited).minSpacingMs, 1429);
   assert.ok(Object.isFrozen(DEFAULT_SOURCE_PULL_LIMITS));
   assert.ok(Object.isFrozen(DEFAULT_SOURCE_PULL_LIMITS.medium));
 });
@@ -86,9 +104,9 @@ test('pull gate consults policy only during run and never spends time or starts 
   assert.equal(calls, 0);
   policy = { allowed: true, remaining: 10 };
   assert.equal(await gate.run('medium', () => ++calls), 1, 'Previously denied work has no reserved slot');
-  at = 6428;
-  await assert.rejects(gate.run('medium', () => calls++), { code: 'source_collection_deferred', reason: 'source_pull_limit', retryAt: 6429 });
-  at = 6429;
+  at = 1428;
+  await assert.rejects(gate.run('medium', () => calls++), { code: 'source_collection_deferred', reason: 'source_pull_limit', retryAt: 1429 });
+  at = 1429;
   assert.equal(await gate.run('medium', () => ++calls), 2, 'Denied retry did not push out the next start');
 });
 
@@ -106,16 +124,16 @@ test('same-source concurrent queries defer without joining; independent sources 
 });
 
 test('pull gate applies changed spacing to last real start and charges failed provider requests', async () => {
-  let at = 0, spacing = 6429, calls = 0;
+  let at = 0, spacing = 1429, calls = 0;
   const gate = createSourcePullGate({ now: () => at, collectionState: () => ({ allowed: true, minSpacingMs: spacing }) });
   await assert.rejects(gate.run('medium', () => { calls++; throw new Error('Provider unavailable'); }), /Provider unavailable/);
   at = 7000; spacing = 15000;
   await assert.rejects(gate.run('medium', () => calls++), { code: 'source_collection_deferred', retryAt: 15000 });
   at = 15000;
   await gate.run('medium', () => calls++);
-  spacing = 1; at = 21428;
-  await assert.rejects(gate.run('medium', () => calls++), { code: 'source_collection_deferred', retryAt: 21429 });
-  at = 21429;
+  spacing = 1; at = 16428;
+  await assert.rejects(gate.run('medium', () => calls++), { code: 'source_collection_deferred', retryAt: 16429 });
+  at = 16429;
   await gate.run('medium', () => calls++);
   assert.equal(calls, 3);
 });
