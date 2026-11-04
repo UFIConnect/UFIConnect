@@ -111,6 +111,8 @@ async function auditWidth(browser, width) {
     await page.goto(server.resolvedUrls.local[0]+'#city',{waitUntil:'domcontentloaded'});
     await page.getByLabel('Access token',{exact:true}).fill(TOKEN);
     await page.getByRole('button',{name:'Unlock Office',exact:true}).click();
+    await page.getByRole('heading',{name:'Office AI',exact:true}).waitFor();
+    await page.getByRole('navigation',{name:'Office sections',exact:true}).getByRole('button',{name:'Live City',exact:true}).click();
     const city=page.getByTestId('live-city');
     await city.waitFor();
     await page.getByRole('button',{name:'Street map',exact:true}).click();
@@ -326,6 +328,8 @@ try {
     await page.goto(server.resolvedUrls.local[0]+'#city',{waitUntil:'domcontentloaded'});
     await page.getByLabel('Access token',{exact:true}).fill(TOKEN);
     await page.getByRole('button',{name:'Unlock Office',exact:true}).click();
+    await page.getByRole('heading',{name:'Office AI',exact:true}).waitFor();
+    await page.getByRole('navigation',{name:'Office sections',exact:true}).getByRole('button',{name:'Live City',exact:true}).click();
     const scene=page.locator('.lc-3d-scene canvas[data-rendered="true"]');
     await scene.waitFor();
     if (forceSoftwareGpu) {
