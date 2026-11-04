@@ -35,24 +35,176 @@ const SPECIFIC_SUBTOPICS = {
 const ALIASES = {
   'AI & Machine Learning': ['machine learning', 'artificial intelligence', 'deep learning', 'neural network'],
   'Generative AI': ['generative ai', 'diffusion model', 'image generation'],
-  'LLMs & Chatbots': ['large language model', 'llm', 'chatbot', 'retrieval augmented generation'],
+  'LLMs & Chatbots': ['large language model', 'large language models', 'llm', 'llms', 'chatbot', 'chatbots', 'retrieval augmented generation'],
   'Cybersecurity': ['cybersecurity', 'ransomware', 'malware', 'data breach', 'zero day'],
-  'Cloud & DevOps': ['devops', 'cloud computing', 'ci/cd', 'terraform'],
+  'Cloud & DevOps': ['devops', 'cloud computing', 'ci/cd', 'terraform', 'object storage', 'cloud infrastructure'],
   'Frontend Dev': ['frontend development', 'front end development', 'css layout'],
-  'Backend Dev': ['backend development', 'back end development'],
-  'Mobile Dev': ['mobile development', 'android development', 'ios development'],
+  'Backend Dev': ['backend development', 'back end development', 'backend engineer', 'backend server'],
+  'Mobile Dev': ['mobile development', 'android development', 'ios development', 'targetsdk', 'play console', 'android sdk', 'swiftui'],
   'Python': ['python', 'pandas', 'numpy', 'django', 'fastapi'],
-  'JavaScript': ['javascript', 'ecmascript'], 'TypeScript': ['typescript'],
+  'JavaScript': ['javascript', 'ecmascript', 'intl.datetimeformat'], 'TypeScript': ['typescript'],
   'Go': ['golang', 'go programming', 'go language'], 'Rust': ['rust programming', 'rust language', 'rust compiler'],
   'Node': ['node.js', 'nodejs'], 'React': ['react.js', 'reactjs', 'react component', 'react hook', 'react framework'],
   'Database': ['database', 'postgresql', 'mysql', 'mongodb'], 'Docker & Containers': ['docker', 'containerization'],
+  'Kubernetes': ['kubernetes', 'k8s', 'kubectl'],
   'Travel & Adventure': ['travel itinerary', 'travel guide', 'backpacking trip'],
-  'Cooking & Recipes': ['recipe', 'cooking', 'meal preparation'], 'Fitness & Gym': ['strength training', 'weightlifting', 'gym workout'],
+  'Cooking & Recipes': ['recipe', 'recipes', 'cooking', 'meal preparation'], 'Fitness & Gym': ['strength training', 'weightlifting', 'gym workout'],
   'Science & Research': ['scientific research', 'peer reviewed', 'research paper'],
+  // Use subject phrases and established technical names rather than splitting
+  // display labels on '&'. Generic words such as 'work', 'content', 'model',
+  // 'running', 'go', and 'rust' are not enough evidence for a topic.
+  'Computer Vision': ['computer vision', 'object detection', 'image segmentation'],
+  'Data Science': ['data science', 'data scientist', 'data analytics'],
+  'Developer Tools': ['developer tools', 'developer tooling', 'code editor', 'integrated development environment'],
+  'Open Source': ['open source', 'open source software'],
+  'Web3 / Crypto': ['web3', 'cryptocurrency', 'cryptocurrencies', 'bitcoin', 'ethereum'],
+  'Game Dev': ['game development', 'game developer', 'game engine', 'unreal engine', 'godot'],
+  'No-Code / Low-Code': ['no code', 'low code', 'visual programming'],
+  'Architecture': ['software architecture', 'system architecture', 'distributed systems', 'microservices'],
+  'Testing & QA': ['software testing', 'unit testing', 'integration testing', 'test automation', 'quality assurance'],
+  'API Design': ['api design', 'rest api', 'restful api', 'openapi'],
+  'Venture Capital': ['venture capital', 'venture capitalist'],
+  'Growth Marketing': ['growth marketing', 'growth hacking', 'conversion optimization'],
+  'UI/UX Design': ['ux design', 'ui design', 'user experience design', 'user interface design', 'usability testing'],
+  'SEO & Content': ['search engine optimization', 'seo', 'content marketing'],
+  'Newsletter & Writing': ['newsletter', 'newsletters', 'copywriting'],
+  'FinTech': ['fintech', 'financial technology'],
+  'Career Growth': ['career development', 'career growth', 'career advice', 'job interview'],
+  'Freelancing': ['freelancing', 'freelancer', 'freelance work'],
+  'Side Projects': ['side project', 'side projects', 'side hustle'],
+  'Startup': ['startup', 'startup founder', 'product market fit'],
+  'E-commerce': ['e commerce', 'ecommerce', 'online retail'],
+  'Creator Economy': ['creator economy', 'creator monetization'],
+  'Content Creator': ['content creator', 'content creation'],
+  'Remote Work': ['remote work', 'working remotely', 'work from home'],
+  'EdTech': ['edtech', 'educational technology'],
+  'Health Tech': ['health technology', 'healthtech', 'digital health'],
+  'Climate Tech': ['climate technology', 'climatetech', 'carbon capture'],
+  'Music Discovery': ['music discovery', 'new album', 'new single', 'album review'],
+  'Personal Finance': ['personal finance', 'personal budget', 'retirement savings', 'emergency fund', 'debt repayment'],
+  'Mental Health': ['mental health', 'anxiety disorder', 'clinical depression', 'psychotherapy'],
+  'Sports': ['sports news', 'sports highlights', 'sports results'],
+  'Fashion': ['fashion', 'runway show', 'fashion week'],
+  'Film & TV': ['film and tv', 'film & tv', 'television industry', 'tv production'],
+  'Movies & Shows': ['movie review', 'movie trailer', 'tv series', 'television series'],
+  'Pets & Animals': ['animal rescue', 'wildlife', 'animal behavior'],
+  'Home & Garden': ['home and garden', 'home & garden', 'landscaping'],
+  'Food & Drink': ['food and drink', 'food & drink', 'food tasting', 'beverage'],
+  'Books': ['book review', 'book recommendation', 'new book release'],
+  'Hardware / IoT': ['iot', 'internet of things', 'embedded systems', 'computer hardware'],
+  'AR / VR': ['augmented reality', 'virtual reality', 'mixed reality'],
+  'B2B / Enterprise': ['b2b', 'enterprise software', 'business to business'],
+  'D2C / Consumer Apps': ['d2c', 'direct to consumer', 'consumer apps'],
+  'Angel Investing': ['angel investing', 'angel investor'],
+  'Product-Led Growth': ['product led growth'],
+  'Sales & Revenue': ['sales strategy', 'sales pipeline', 'revenue growth'],
+  'CRM': ['crm', 'customer relationship management'],
+  '3D & CGI': ['3d modeling', '3d rendering', 'cgi', 'computer generated imagery'],
+  'Film & Video': ['filmmaking', 'cinematography', 'video editing', 'film production'],
+  'Music Production': ['music production', 'audio mixing', 'audio mastering'],
+  'Supply Chain': ['supply chain', 'supply chains', 'logistics management'],
+  'Operations Excellence': ['operational excellence', 'process improvement', 'lean manufacturing'],
+  'BioTech': ['biotech', 'biotechnology'], 'LegalTech': ['legaltech', 'legal technology'],
+  'GovTech': ['govtech', 'government technology'], 'AgriTech': ['agritech', 'agricultural technology'],
+  'SpaceTech': ['spacetech', 'space technology'], 'PropTech': ['proptech', 'property technology'],
+  'RetailTech': ['retailtech', 'retail technology'], 'FoodTech': ['foodtech', 'food technology'],
+  'SportsTech': ['sportstech', 'sports technology'],
+  'Nonprofit Impact': ['nonprofit impact', 'charitable giving'],
+  'Recruiting & Hiring': ['recruiting', 'recruitment', 'talent acquisition', 'hiring process'],
+  'Diversity & Inclusion': ['diversity and inclusion', 'diversity & inclusion', 'workplace inclusion'],
+  'People Ops': ['people operations', 'human resources'],
+  'Podcasting': ['podcasting', 'podcast', 'podcasts'],
+  'YouTube & Video': ['youtube channel', 'youtube creator', 'youtube video'],
+  'Social Media': ['social media', 'social networking'],
+  'Subscription Businesses': ['subscription business', 'subscription model', 'recurring revenue'],
+  'Yoga & Meditation': ['yoga', 'yogic', 'pranayama'],
+  'Running & Cycling': ['marathon training', 'running training', 'cycling', 'bicycle racing'],
+  'Nutrition & Diet': ['nutrition', 'dietary', 'balanced diet', 'dietitian'],
+  'Live Events & Concerts': ['concert', 'concerts', 'music festival', 'concert tour'],
+  'DJing & Remixing': ['djing', 'remixing', 'dj set'],
+  'Football & Soccer': ['football', 'soccer'], 'Basketball': ['basketball', 'nba'],
+  'Tennis & Golf': ['tennis', 'golf'], 'Combat Sports': ['boxing', 'mixed martial arts', 'jiu jitsu', 'wrestling'],
+  'Esports & Competitive Gaming': ['esports', 'competitive gaming', 'gaming tournament'],
+  'Art & Painting': ['fine art', 'oil painting', 'watercolor painting', 'art exhibition'],
+  'Theatre & Performing Arts': ['theatre', 'theater production', 'performing arts', 'stage performance'],
+  'Museums & Galleries': ['museum', 'museums', 'art gallery'],
+  'Restaurant Culture': ['restaurant review', 'restaurant opening', 'fine dining'],
+  'Wine & Spirits': ['wine', 'winemaking', 'whisky', 'whiskey', 'distillery'],
+  'Coffee Culture': ['coffee', 'espresso', 'barista'],
+  'Baking & Pastry': ['baking', 'sourdough', 'pastry', 'patisserie'],
+  'Solo Travel': ['solo travel', 'traveling solo', 'travelling solo'],
+  'Cultural Tourism': ['cultural tourism', 'heritage tourism'],
+  'Budget Travel': ['budget travel', 'cheap flights', 'travel deals'],
+  'Sustainable Fashion': ['sustainable fashion', 'ethical fashion'],
+  'Beauty & Skincare': ['skincare', 'skin care', 'cosmetics', 'makeup tutorial'],
+  'Reading & Book Clubs': ['book club', 'reading group'],
+  'Fiction & Storytelling': ['fiction writing', 'storytelling', 'short story'],
+  'Non-Fiction & Learning': ['nonfiction', 'non fiction', 'lifelong learning'],
+  'Poetry & Creative Writing': ['poetry', 'poem', 'creative writing'],
+  'Video Games': ['video game', 'video games', 'playstation', 'xbox', 'nintendo'],
+  'Mobile Gaming': ['mobile gaming', 'mobile game', 'mobile games'],
+  'Game Streaming & Content': ['game streaming', 'gaming livestream', 'twitch streamer'],
+  'Tabletop & Board Games': ['board game', 'board games', 'tabletop gaming', 'dungeons and dragons'],
+  'Interior Design & Decor': ['interior design', 'interior decor', 'home decor'],
+  'Home Improvement': ['home renovation', 'home improvement', 'kitchen remodel'],
+  'Gardening & Plants': ['gardening', 'houseplants', 'vegetable garden'],
+  'Pet Ownership': ['pet care', 'dog training', 'cat care', 'pet adoption'],
+  'Mindfulness & Meditation': ['mindfulness', 'mindful meditation', 'meditation practice'],
+  'Philosophy & Ethics': ['philosophy', 'moral philosophy', 'ethical theory'],
+  'Parenting & Family': ['parenting', 'childcare', 'child care'],
+  'Environmental Activism': ['environmental activism', 'climate activism'],
+  'Zero Waste Living': ['zero waste', 'plastic free living'],
+  'Medicine & Clinical Practice': ['clinical practice', 'clinical medicine', 'patient diagnosis', 'hiv diagnosis'],
+  'Law & Legal Practice': ['legal practice', 'case law', 'litigation'],
+  'Architecture & Urban Design': ['urban design', 'urban planning', 'building design'],
+  'Aviation & Aerospace': ['aviation', 'aerospace', 'aircraft'],
+  'Military & Defense': ['military', 'defense policy', 'defence policy'],
+  'Policy & Government': ['public policy', 'government policy', 'legislation'],
+  'Accounting & Tax': ['accounting', 'taxation', 'tax return'],
+  'Insurance & Risk': ['insurance', 'risk management'],
+  'Agriculture & Farming': ['agriculture', 'farming', 'crop production'],
+  'Pharmaceutical & Drug Development': ['pharmaceutical', 'drug development', 'drug discovery'],
+  'Psychology & Behavioral Science': ['psychology', 'behavioral science', 'behavioural science'],
+  'Construction & Skilled Trades': ['construction industry', 'skilled trades', 'carpentry', 'plumbing'],
+  'Manufacturing & Industry': ['manufacturing', 'industrial production'],
+  'Energy & Utilities': ['renewable energy', 'power grid', 'electric utility'],
+  'Environmental Science': ['environmental science', 'greenhouse gas', 'carbon dioxide pollution', 'climate change'],
+  'Veterinary Science': ['veterinary', 'veterinarian'],
+  'Ocean & Marine Sciences': ['oceanography', 'marine biology', 'marine science'],
+  'Nonprofit Management': ['nonprofit management', 'charity management'],
+  'Journalism & Media': ['journalism', 'news reporting', 'newsroom'],
+  'Screenwriting & Film': ['screenwriting', 'screenplay'],
+  'Culinary Arts': ['culinary', 'culinary arts'],
+  'MLOps': ['mlops', 'machine learning operations'],
+  'AI Ethics': ['ai ethics', 'responsible ai', 'algorithmic bias'],
+  'Digital Nomad': ['digital nomad', 'digital nomads'],
+  'Networking': ['professional networking', 'networking event', 'business networking'],
 };
 const textOf = value => String(value || '').normalize('NFKC').toLowerCase().replace(/[-_]+/g, ' ').slice(0, 16000);
 const escapeRegex = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-function hasTerm(text, term) { return new RegExp(`(?:^|[^\\p{L}\\p{N}])${escapeRegex(textOf(term))}(?=$|[^\\p{L}\\p{N}])`, 'u').test(text); }
+const termPatterns = new Map(), topicRuleCache = new WeakMap();
+const CONTEXT_REQUIRED_TOPICS = new Set(['Go', 'Rust', 'React', 'Node', 'Architecture', 'Networking']);
+function termPattern(term) {
+  const normalized = textOf(term);
+  if (!termPatterns.has(normalized)) {
+    // The catalog is finite, but keep the shared subtopic cache bounded if a
+    // future caller supplies externally configured topic names.
+    if (termPatterns.size >= 2048) termPatterns.clear();
+    termPatterns.set(normalized, new RegExp(`(?:^|[^\\p{L}\\p{N}])${escapeRegex(normalized)}(?=$|[^\\p{L}\\p{N}])`, 'u'));
+  }
+  return termPatterns.get(normalized);
+}
+function hasTerm(text, term) { return termPattern(term).test(text); }
+function topicRules(topics) {
+  let cached = topicRuleCache.get(topics);
+  if (!cached || cached.names.length !== topics.length || cached.names.some((name, index) => name !== topics[index])) {
+    cached = { names: [...topics], rules: [...new Set(topics)].filter(topic => typeof topic === 'string' && !isUnknownTopic(topic)).map(topic => ({
+      topic, terms: [...new Set([...(CONTEXT_REQUIRED_TOPICS.has(topic) ? [] : [topic]), ...(ALIASES[topic] || [])])].map(term => ({ term, pattern: termPattern(term), phrase: textOf(term).includes(' ') })),
+    })) };
+    topicRuleCache.set(topics, cached);
+  }
+  return cached.rules;
+}
 const isUnknownTopic = value => UNKNOWN.includes(String(value || '').trim().toLowerCase());
 function subtopicRules(topic) { return { ...SPECIFIC_SUBTOPICS[topic], ...GENERAL_SUBTOPICS }; }
 function subtopicMatches(title, content, rules) {
@@ -74,12 +226,21 @@ function classifySubtopic(post, topic) {
 }
 function classifyTopic(post, topics) {
   const title = textOf(post.title), content = textOf(post.content);
-  const matches = topics.map(topic => {
-    const terms = ALIASES[topic] || [topic];
-    const evidence = terms.filter(term => hasTerm(title, term) || hasTerm(content, term));
-    const score = evidence.reduce((sum, term) => sum + (hasTerm(title, term) ? 5 : 3) + (term.split(/\s+/).length > 1 ? 1 : 0), 0);
-    return { topic, score, evidence };
-  }).filter(row => row.score >= 3).sort((a, b) => b.score - a.score);
+  const matches = [];
+  // Compile rules once per catalog, not once per post in a recovery batch.
+  // Only content supplies new evidence: a generic provider or guessed source
+  // category must not turn an ambiguous post into a confident assignment.
+  for (const { topic, terms } of topicRules(topics)) {
+    let score = 0;
+    const evidence = [];
+    for (const { term, pattern, phrase } of terms) {
+      const inTitle = pattern.test(title);
+      if (!inTitle && !pattern.test(content)) continue;
+      evidence.push(term); score += (inTitle ? 5 : 3) + (phrase ? 1 : 0);
+    }
+    if (score >= 3) matches.push({ topic, score, evidence });
+  }
+  matches.sort((a, b) => b.score - a.score);
   if (!matches.length) return null;
   if (matches[1] && matches[0].score - matches[1].score < 2) {
     const existing = matches.find(row => row.topic === post.topic);
@@ -89,7 +250,7 @@ function classifyTopic(post, topics) {
   return { ...matches[0], subtopic: classifySubtopic(post, matches[0].topic) };
 }
 
-function createOfficeTopicTransfer({ db, topics, transfer, onClassified = () => {}, topicAgents = null }) {
+function createOfficeTopicTransfer({ db, topics, transfer, onClassified = () => {}, topicAgents = null, guardian = null }) {
   let optimizing = false;
   function available() { if (!db.isConnected()) throw failure(503, 'Topic storage is temporarily unavailable.'); }
   async function report() {
@@ -110,9 +271,10 @@ function createOfficeTopicTransfer({ db, topics, transfer, onClassified = () => 
     const unknown = byTopic.get('Unknown');
     if (topicAgents) await topicAgents.observeTopics([...byTopic.keys()]);
     const routing = topicAgents ? await topicAgents.snapshot() : null;
+    const guardianState = guardian ? await guardian.snapshot() : null;
     const assigned = new Map((routing?.agents || []).flatMap(agent => agent.topics.map(topic => [topic,agent.id])));
-    return { available: true, generatedAt: new Date().toISOString(), topics: [...byTopic.values()].map(item => ({ ...item, agentId: assigned.get(item.topic) || null })).sort((a, b) => b.staged - a.staged || b.live - a.live || a.topic.localeCompare(b.topic)), unknown: { live: unknown.live, staged: unknown.staged }, taxonomy: [...byTopic.values()].map(item => ({ topic: item.topic, subtopics: item.subtopics.map(subtopic => subtopic.name) })), agents: routing?.agents || [], routing,
-      note: topicAgents ? 'Counts are stored live and staging inventory. Each topic has an assigned routing agent. New writes are classified immediately; recovery checks every 15 seconds. Ambiguous content remains Unknown or Unclassified and retries later.' : 'Counts are stored live and staging inventory. Unknown topics remain visible when content evidence is ambiguous. Subtopics are assigned by bounded optimization passes; unreviewed items remain Unclassified.' };
+    return { available: true, generatedAt: new Date().toISOString(), topics: [...byTopic.values()].map(item => ({ ...item, agentId: assigned.get(item.topic) || null })).sort((a, b) => b.staged - a.staged || b.live - a.live || a.topic.localeCompare(b.topic)), unknown: { live: unknown.live, staged: unknown.staged }, taxonomy: [...byTopic.values()].map(item => ({ topic: item.topic, subtopics: item.subtopics.map(subtopic => subtopic.name) })), agents: routing?.agents || [], routing, guardian: guardianState,
+      note: guardian ? 'The Unknown topic guardian targets zero Unknown live posts and protects the 500 ceiling. Ambiguous posts are preserved separately for review and retry; held posts are not included in live inventory.' : topicAgents ? 'Counts are stored live and staging inventory. Each topic has an assigned routing agent. New writes are classified immediately; recovery checks every 15 seconds. Ambiguous content remains Unknown or Unclassified and retries later.' : 'Counts are stored live and staging inventory. Unknown topics remain visible when content evidence is ambiguous. Subtopics are assigned by bounded optimization passes; unreviewed items remain Unclassified.' };
   }
   async function transferTopic(body = {}) {
     available();

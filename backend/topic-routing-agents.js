@@ -3,7 +3,7 @@
 const { createHash, randomUUID } = require('node:crypto');
 const { classifyTopic, classifySubtopic, isUnknownTopic, UNKNOWN } = require('./office-topic-transfer');
 const INTERVAL_MS = 15000;
-const RULE_VERSION = 'topic-routing-v2';
+const RULE_VERSION = 'topic-routing-v3';
 const LANE_COUNT = 4;
 const PHASE_LIMIT = 100;
 const TABLES = ['feed_posts_staging', 'feed_posts_cache'];

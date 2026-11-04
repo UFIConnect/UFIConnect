@@ -2,19 +2,21 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { readOperation, operationNumber as num, operationDate as date } from './operations-runtime.mjs';
 import './office-operations.css';
 import TopicRoutingAgents from './TopicRoutingAgents';
+import UnknownTopicGuardian from './UnknownTopicGuardian';
 
 export default function TopicTransfer({ apiBase = '', request }) {
   const [data,setData] = useState(null), [error,setError] = useState(''), [busy,setBusy] = useState(false), [revision,setRevision] = useState(0);
   const [topic,setTopic] = useState(''), [subtopic,setSubtopic] = useState(''), [batches,setBatches] = useState(1), [running,setRunning] = useState(''), [result,setResult] = useState(null);
   const [autoRefresh,setAutoRefresh] = useState(true);
-  const generation = useRef(0), actionGeneration = useRef(0), runningRef = useRef(false);
+  const generation = useRef(0), actionGeneration = useRef(0), runningRef = useRef(false), refreshingRef = useRef(false);
   const refresh = useCallback(() => setRevision(x => x + 1),[]);
   useEffect(() => { const clear = () => { generation.current++; actionGeneration.current++; setData(null); setResult(null); refresh(); }; window.addEventListener('office-token-changed',clear); return () => { generation.current++; actionGeneration.current++; window.removeEventListener('office-token-changed',clear); }; },[refresh]);
-  useEffect(() => { const controller = new AbortController(), current = ++generation.current; setBusy(true); setError('');
-    request(`${apiBase}/office/topic-transfer`,{signal:controller.signal}).then(readOperation).then(body => { if(current === generation.current) setData(body); }).catch(e => { if(current === generation.current && e.name !== 'AbortError') { setData(null); setError(e.message); } }).finally(() => { if(current === generation.current) setBusy(false); });
+  useEffect(() => { generation.current++; actionGeneration.current++; setData(null); setResult(null); },[apiBase,request]);
+  useEffect(() => { const controller = new AbortController(), current = ++generation.current; refreshingRef.current = true; setBusy(true); setError('');
+    request(`${apiBase}/office/topic-transfer`,{signal:controller.signal}).then(readOperation).then(body => { if(current === generation.current) setData(body); }).catch(e => { if(current === generation.current && e.name !== 'AbortError') { setData(null); setError(e.message); } }).finally(() => { if(current === generation.current) { refreshingRef.current = false; setBusy(false); } });
     return () => controller.abort();
   },[apiBase,request,revision]);
-  useEffect(() => { if (!autoRefresh || running) return; const timer = window.setInterval(() => { if (!document.hidden) refresh(); }, 15000); return () => window.clearInterval(timer); },[autoRefresh,running,refresh]);
+  useEffect(() => { if (!autoRefresh || running) return; const timer = window.setInterval(() => { if (!document.hidden && !refreshingRef.current && !runningRef.current) refresh(); }, 15000); return () => window.clearInterval(timer); },[autoRefresh,running,refresh]);
   async function run(command,payload = {}) { if(runningRef.current) return; runningRef.current = true; const current = actionGeneration.current; setRunning(command); setError(''); setResult(null);
     try { const body = await readOperation(await request(`${apiBase}/office/topic-transfer/${command}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmed:true,...payload})})); if(current === actionGeneration.current) { setResult({command,...body}); refresh(); } }
     catch(e) { if(current === actionGeneration.current) setError(e.message); } finally { runningRef.current = false; setRunning(''); }
@@ -25,6 +27,7 @@ export default function TopicTransfer({ apiBase = '', request }) {
     <label className="op-check"><input type="checkbox" checked={autoRefresh} onChange={event => setAutoRefresh(event.target.checked)} />Refresh topic and agent status every 15 seconds</label>
     {error && <div className="op-error" role="alert">{error}</div>}{busy && <p role="status">{data ? 'Refreshing topic coverage…' : 'Loading topic coverage…'}</p>}
     <div className="op-stats">{[['Live posts',live],['Staged posts',staged],['Unknown live',data?.unknown?.live],['Unknown staged',data?.unknown?.staged]].map(([label,value]) => <div key={label}><span>{label}</span><strong>{num(value)}</strong></div>)}</div>
+    <UnknownTopicGuardian guardian={data?.guardian} unknownLive={data?.unknown?.live} />
     <TopicRoutingAgents agents={data?.agents || []} routing={data?.routing} apiBase={apiBase} request={request} onUpdated={refresh} />
     <div className="op-grid"><section className="op-card"><h2>Transfer a topic</h2><p>Only matching staged posts are selected. Existing screening and source blocks still apply.</p><form onSubmit={event => { event.preventDefault(); run('transfer',{topic,subtopic:subtopic || undefined,maxBatches:Number(batches)}); }}><div className="op-filters"><label>Transfer topic<select aria-label="Transfer topic" required value={topic} onChange={e => { setTopic(e.target.value); setSubtopic(''); }}><option value="">Select a topic</option>{taxonomy.map(row => <option key={row.topic} value={row.topic}>{row.topic}</option>)}</select></label><label>Transfer subtopic<select aria-label="Transfer subtopic" value={subtopic} disabled={!selected} onChange={e => setSubtopic(e.target.value)}><option value="">All subtopics</option>{selected?.subtopics?.map(name => <option key={name} value={name}>{name}</option>)}</select></label><label>Batch limit<select aria-label="Batch limit" value={batches} onChange={e => setBatches(Number(e.target.value))}>{[1,2,3].map(n => <option key={n} value={n}>{n} {n === 1 ? 'batch' : 'batches'}</option>)}</select></label></div><button className="op-primary" disabled={!topic || !!running || !data}>{running === 'transfer' ? 'Transferring…' : 'Transfer selected topic'}</button></form></section>
     <section className="op-card"><h2>Optimize Unknown</h2><p>Reclassify a bounded batch using evidence in the post text. Confident matches receive a topic and subtopic; ambiguous posts stay available for review.</p><button disabled={!!running || !data} onClick={() => run('optimize-unknown')}>{running === 'optimize-unknown' ? 'Classifying…' : 'Optimize unknown topics'}</button><details><summary>What this command does</summary><p>Checks unclassified posts, saves confident assignments, and reports how many changed. Run another batch to continue through a large backlog. Counts describe this run and do not imply that all Unknown posts can be classified.</p></details></section></div>

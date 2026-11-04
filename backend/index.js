@@ -28,6 +28,7 @@ const { OFFICE_MEMBERS_SCHEMA, registerOfficeMemberRoutes } = require('./office-
 const { OFFICE_USER_USAGE_SCHEMA, registerOfficeUserUsageRoutes } = require('./office-user-usage');
 const { OFFICE_TOPIC_SCHEMA, UNKNOWN: UNKNOWN_FEED_TOPICS, isUnknownTopic, classifyTopic, registerOfficeTopicRoutes } = require('./office-topic-transfer');
 const { TOPIC_ROUTING_SCHEMA, createTopicRoutingAgents } = require('./topic-routing-agents');
+const { createUnknownTopicGuardian } = require('./unknown-topic-guardian');
 const { SIGNIN_SCHEMA, registerSignInRoutes, isDeliverableEmail } = require('./auth-signin');
 const { createOAuthFrontend } = require('./oauth-frontend');
 const { feedUpdateFrames } = require('./feed-stream-events');
@@ -18731,11 +18732,13 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
   let saved = 0;
   let lastRowError = null;
   const committedRoutingChanges = [];
+  const heldIds = [];
   const realPosts = realFeedPosts(posts);
   for (const rawPost of realPosts) {
     const p = normalizeFeedPost(rawPost);
+    const admittedTopic = targetTable === 'feed_posts_cache' && isUnknownTopic(p.topic) ? classifyTopic(p, FEED_TOPICS)?.topic || p.topic : p.topic;
     try {
-      const { savedCount, routingChanges } = await db.withClient(async client => {
+      const { savedCount, routingChanges, held = [] } = await db.withClient(async client => {
         await client.query('BEGIN');
         try {
           const result = await client.query(
@@ -18773,7 +18776,7 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
           p.mediaUrl || null,
           p.mediaType || null,
           p.videoDurationSeconds,
-          p.topic || null,
+          admittedTopic || null,
           p.likesCount || 0,
           p.commentsCount || 0,
           p.createdAt,
@@ -18784,8 +18787,10 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
         ]
           );
           const routing = await topicRoutingAgents.classifyPersisted(result.rows, { targetTable, queryRunner: client });
+          const held = targetTable === 'feed_posts_cache' && !result.rows.length && unknownTopicGuardian.currentSnapshot().enabled
+            ? (await client.query('SELECT post_id FROM office_unknown_topic_review WHERE post_id=$1', [p.id])).rows.map(row => row.post_id) : [];
           await client.query('COMMIT');
-          return { savedCount: result.rowCount || 0, routingChanges: routing.changes };
+          return { savedCount: result.rowCount || 0, held, routingChanges: [...result.rows.filter(row => row.topic !== p.topic).map(row => ({ id: row.id, topic: row.topic })), ...routing.changes] };
         } catch (error) {
           await client.query('ROLLBACK').catch(() => {});
           throw error;
@@ -18793,9 +18798,11 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
       });
       saved += savedCount;
       committedRoutingChanges.push(...routingChanges);
+      heldIds.push(...held);
     } catch (e) { lastRowError = e.message; /* keep going — one bad row shouldn't drop the rest of the batch */ }
   }
   applyTopicRoutingChanges(committedRoutingChanges, posts);
+  removeUnknownTopicHeldPosts(heldIds);
   recordFeedWriteOutcome(targetTable, realPosts.length, saved, lastRowError);
   if (targetTable === 'feed_posts_cache') trimFeedPostsCache();
   return saved;
@@ -18829,7 +18836,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
       media_url: p.mediaUrl ? clean(p.mediaUrl) : null,
       media_type: p.mediaType ? clean(p.mediaType) : null,
       video_duration_seconds: p.videoDurationSeconds,
-      topic: p.topic ? clean(p.topic) : null,
+      topic: targetTable === 'feed_posts_cache' && isUnknownTopic(p.topic) ? classifyTopic(p, FEED_TOPICS)?.topic || null : p.topic ? clean(p.topic) : null,
       likes_count: p.likesCount || 0,
       comments_count: p.commentsCount || 0,
       post_created_at: clean(p.createdAt),
@@ -18913,7 +18920,12 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
       [rows.map(row => row.id)]
     );
     const routing = await topicRoutingAgents.classifyPersisted(persisted.rows, { targetTable, queryRunner: client });
-    return { saved: result.rowCount || 0, changes: routing.changes };
+    const originalTopics = new Map(posts.map(post => [post.id, post.topic]));
+    const liveIds = new Set(persisted.rows.map(row => row.id));
+    const missing = rows.filter(row => !liveIds.has(row.id)).map(row => row.id);
+    const heldIds = targetTable === 'feed_posts_cache' && missing.length && unknownTopicGuardian.currentSnapshot().enabled
+      ? (await client.query('SELECT post_id FROM office_unknown_topic_review WHERE post_id=ANY($1::text[])', [missing])).rows.map(row => row.post_id) : [];
+    return { saved: result.rowCount || 0, heldIds, changes: [...persisted.rows.filter(row => row.topic !== originalTopics.get(row.id)).map(row => ({ id: row.id, topic: row.topic })), ...routing.changes] };
   };
   if (queryRunner !== db) {
     const result = await persist(queryRunner);
@@ -18933,6 +18945,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
     }
   });
   applyTopicRoutingChanges(result.changes, posts);
+  removeUnknownTopicHeldPosts(result.heldIds);
   if (!options.skipTrim && targetTable === 'feed_posts_cache') trimFeedPostsCache();
   return result.saved;
 }
@@ -20098,9 +20111,37 @@ function applyTopicRoutingChanges(changes, extraPosts = []) {
   mainFeedSnapshots.clear(); filteredFeedSnapshots.clear();
 }
 const topicRoutingAgents = createTopicRoutingAgents({ db, topics: FEED_TOPICS, onClassified: applyTopicRoutingChanges });
+function removeUnknownTopicHeldPosts(heldIds = []) {
+  if (heldIds.length) {
+    const held = new Set(heldIds);
+    globalFeedCache.posts = globalFeedCache.posts.filter(post => !held.has(post.id));
+    for (const cache of agentSourceCache.values()) cache.posts = (cache.posts || []).filter(post => !held.has(post.id));
+    sseBatchBuffer = sseBatchBuffer.filter(post => !held.has(post.id));
+    clearAggregateFeedCandidateCache(); clearGuestFeedPageCache();
+    mainFeedSnapshots.clear(); filteredFeedSnapshots.clear();
+  }
+}
+const unknownTopicGuardian = createUnknownTopicGuardian({ db, topics: FEED_TOPICS, onChanged: ({ changes, heldIds }) => {
+  applyTopicRoutingChanges(changes);
+  removeUnknownTopicHeldPosts(heldIds);
+}, reconcile: async () => {
+  // Every API process expires its own cached copies, including when another
+  // process won the database drain lock. Known cached copies may also be stale.
+  const ids = [...new Set([globalFeedCache.posts, ...[...agentSourceCache.values()].map(cache => cache.posts || [])]
+    .flatMap(pool => pool.map(post => post.id)).filter(Boolean))];
+  for (let offset = 0; offset < ids.length; offset += 1000) {
+    const { rows } = await db.query(`SELECT post_id FROM office_unknown_topic_review r WHERE post_id=ANY($1::text[])
+      AND NOT EXISTS(SELECT 1 FROM feed_posts_cache live WHERE live.id=r.post_id)`, [ids.slice(offset, offset + 1000)]);
+    removeUnknownTopicHeldPosts(rows.map(row => row.post_id));
+  }
+  // Member snapshots can contain database-only rows absent from local pools.
+  mainFeedSnapshots.clear(); filteredFeedSnapshots.clear();
+  clearAggregateFeedCandidateCache(); clearGuestFeedPageCache();
+} });
 const officeTopicTransfer = registerOfficeTopicRoutes(app, {
   db, topics: FEED_TOPICS, requireOfficeToken,
   topicAgents: topicRoutingAgents,
+  guardian: unknownTopicGuardian,
   transfer: options => transferStagedPosts(options),
   onClassified: applyTopicRoutingChanges,
 });
@@ -24929,6 +24970,7 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
 // --- Office: agent registry ---------------------------------------------------
 const AGENT_DEFS = {
   ...Object.fromEntries(topicRoutingAgents.definitions().map(agent => [agent.id, { ...agent, emoji: 'TOP', interval: '15s / assigned topics', triggerable: true }])),
+  unknown_topic_guardian: { ...unknownTopicGuardian.definition, interval: '15s / target 0, maximum 500' },
   weworkremotely: {
     name: 'We Work Remotely Agent', emoji: 'WWR', color: '#22C55E',
   },
@@ -26191,6 +26233,7 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       lastError: sortAgentState.lastError,
     },
     topicRouting: topicRoutingAgents.currentSnapshot(),
+    unknownTopicGuardian: unknownTopicGuardian.currentSnapshot(),
     topicFilterAgent: {
       status: topicFilterAgentState.lastError ? 'degraded' : 'healthy',
       totalRuns: topicFilterAgentState.totalRuns,
@@ -26327,18 +26370,24 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
 function getOfficeAgentObservation(id, observedAt = new Date().toISOString(), rateContext = sourceRateContext()) {
   if (!Object.prototype.hasOwnProperty.call(AGENT_DEFS, id)) return null;
   const isTopicRouter = /^topic_router_[1-4]$/.test(id);
+  const isUnknownGuardian = id === 'unknown_topic_guardian';
   const sourceWorker = Object.prototype.hasOwnProperty.call(SOURCE_CONFIG, id)
     || ['remotive', 'muse'].includes(id) || typeof SOURCE_FETCHERS[id] === 'function';
-  const executionRole = sourceWorker || ['refresh_queue', 'equalizer', 'optimizer', 'cache_helper'].includes(id) ? 'pipeline' : isTopicRouter || ['ai', 'analytics_verification'].includes(id) ? 'api' : id === 'instagram' ? 'on-demand' : 'both';
+  const executionRole = sourceWorker || ['refresh_queue', 'equalizer', 'optimizer', 'cache_helper'].includes(id) ? 'pipeline' : isTopicRouter || isUnknownGuardian || ['ai', 'analytics_verification'].includes(id) ? 'api' : id === 'instagram' ? 'on-demand' : 'both';
   const hasRuntimeMetrics = ['stability', 'crash_guard', 'refresh_queue', 'sort_agent', 'sort_distrib', 'mix_optimizer',
-    'sort_optimizer', 'activity', 'autofix', 'perf', 'equalizer', 'filter', 'topic_filter', 'topic_audit', 'topic_fix', 'analytics_verification'].includes(id) || isTopicRouter || id.startsWith('web_');
+    'sort_optimizer', 'activity', 'autofix', 'perf', 'equalizer', 'filter', 'topic_filter', 'topic_audit', 'topic_fix', 'analytics_verification'].includes(id) || isTopicRouter || isUnknownGuardian || id.startsWith('web_');
   const diagnosticCapability = sourceWorker ? 'source-worker' : id === 'instagram' ? 'on-demand'
     : hasRuntimeMetrics ? 'runtime-metrics' : 'summary-only';
   const cache = agentSourceCache.get(id);
   const rateMetadata = sourceWorker ? getSourceRateMetadata(id, rateContext) : {};
   let status = 'unknown';
   let metrics = {};
-  if (isTopicRouter) {
+  if (isUnknownGuardian) {
+    const guardian = unknownTopicGuardian.currentSnapshot();
+    status = IS_PIPELINE_ROLE ? 'unavailable' : guardian.lastError || guardian.unknownLive > 500 ? 'degraded' : guardian.lastRun ? 'healthy' : 'idle';
+    metrics = { ...guardian, enabled: !IS_PIPELINE_ROLE && guardian.enabled, lastSuccess: guardian.lastError ? null : guardian.lastRun,
+      totalFixed: guardian.totalClassified, lastInput: guardian.lastChecked, lastOutput: guardian.lastClassified, pending: guardian.unknownLive };
+  } else if (isTopicRouter) {
     const agent = topicRoutingAgents.currentSnapshot()?.agents?.find(item => item.id === id);
     const stale = agent?.lastRun && Date.now() - Date.parse(agent.lastRun) > Math.max(60000, (agent.intervalMs || 15000) * 4);
     status = IS_PIPELINE_ROLE ? 'unavailable' : !agent ? 'unknown' : agent.error || stale ? 'degraded' : agent.running ? 'running' : agent.lastRun ? 'healthy' : 'idle';
@@ -26482,6 +26531,7 @@ app.post('/office/agents/:id/web-draft', requireOfficeToken, require('./office-w
 app.get('/office/agents', requireOfficeToken, async (req, res) => {
   res.set('Cache-Control', 'no-store');
   await topicRoutingAgents.snapshot().catch(() => {});
+  await unknownTopicGuardian.snapshot().catch(() => {});
   const result = {};
   const observedAt = new Date().toISOString();
   const rateContext = sourceRateContext();
@@ -26491,7 +26541,7 @@ app.get('/office/agents', requireOfficeToken, async (req, res) => {
     const observation = getOfficeAgentObservation(id, observedAt, rateContext);
     result[id] = {
       ...def, ...getSourceRateMetadata(id, rateContext), id, emoji: officeBadgeCode(id, def.emoji), logs, lastAction: logs[0] || null,
-      ...(id === 'analytics_verification' || /^topic_router_[1-4]$/.test(id) ? { triggerable: !IS_PIPELINE_ROLE } : {}),
+      ...(id === 'analytics_verification' || id === 'unknown_topic_guardian' || /^topic_router_[1-4]$/.test(id) ? { triggerable: !IS_PIPELINE_ROLE } : {}),
       serviceRole: SERVICE_ROLE, executionRole: observation.executionRole, observedAt,
       diagnosticCapability: observation.diagnosticCapability, observation,
       health: { ...observation.metrics, status: observation.status },
@@ -26519,6 +26569,11 @@ app.get('/office/agents/stream', requireOfficeToken, (req, res) => {
 });
 
 app.post('/office/agents/:id/trigger', requireOfficeToken, async (req, res) => {
+  if (req.params.id === 'unknown_topic_guardian') {
+    if (IS_PIPELINE_ROLE) return res.status(409).json({ error: 'Unknown topic guardian runs on the API service.' });
+    try { const result = await unknownTopicGuardian.run(); return res.status(result.ok === false ? 503 : result.skipped ? 202 : 200).json({ ...result, triggered: req.params.id }); }
+    catch { return res.status(503).json({ error: 'Unknown topic cleanup could not finish; preserved posts will retry.' }); }
+  }
   if (/^topic_router_[1-4]$/.test(req.params.id)) {
     if (IS_PIPELINE_ROLE) return res.status(409).json({ error: 'Topic routing agents run on the API service.' });
     try {
@@ -26656,6 +26711,7 @@ const stagingTransferState = {
   lastDurationMs: null,
   lastSavedCount: 0,
   lastDeletedCount: 0,
+  lastHeldForReview: 0,
   lastStagingClearedPosts: [],
   lastSourceDeletedPurgeCount: 0,
   lastSourceCounts: {},
@@ -26754,12 +26810,14 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
   stagingTransferState.currentBatch = 0;
   stagingTransferState.currentBatchSize = 0;
   stagingTransferState.lastStagingClearedPosts = [];
+  stagingTransferState.lastHeldForReview = 0;
   const startedAtIso = new Date(transferStartedAt).toISOString();
   const pendingBefore = stagingPostCount;
   let totalMoved = 0;
   let totalSaved = 0;
   let totalDeleted = 0;
   let totalScreenedOut = 0;
+  let heldForReview = 0;
   let batchCount = 0;
   const sourceCounts = {};
   try {
@@ -26828,15 +26886,23 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
           });
           const screenedOut = rows.length - approvedPosts.length;
           const routingChanges = [];
-          const saved = approvedPosts.length
-            ? await savePostsToDBFast(approvedPosts, 'feed_posts_cache', client, { skipTrim: true, routingChanges })
-            : 0;
+          // Removal remains uncommitted until live/review persistence succeeds.
+          // Routing must see the promoted row as authoritative rather than a
+          // conflicting, still-unclassified staging copy of the same ID.
           const deleted = await client.query(
             `DELETE FROM feed_posts_staging WHERE id = ANY($1::text[])`,
             [rows.map(r => r.id)]
           );
+          const saved = approvedPosts.length
+            ? await savePostsToDBFast(approvedPosts, 'feed_posts_cache', client, { skipTrim: true, routingChanges })
+            : 0;
+          const admitted = approvedPosts.length && unknownTopicGuardian.currentSnapshot().enabled
+            ? new Set((await client.query(`SELECT id FROM feed_posts_cache WHERE id=ANY($1::text[])
+                AND NOT (lower(btrim(COALESCE(topic,'')))=ANY($2::text[]))`, [approvedPosts.map(post => post.id), UNKNOWN_FEED_TOPICS])).rows.map(row => row.id)) : null;
+          const heldPosts = admitted ? approvedPosts.filter(post => !admitted.has(post.id)) : [];
+          const livePosts = admitted ? approvedPosts.filter(post => admitted.has(post.id)) : approvedPosts;
           await client.query('COMMIT');
-          return { rows, approvedPosts, rejectedPosts, routingChanges, saved, deleted: deleted.rowCount || 0, screenedOut };
+          return { rows, approvedPosts: livePosts, heldPosts, rejectedPosts, routingChanges, saved, deleted: deleted.rowCount || 0, screenedOut };
         } catch (e) {
           await client.query('ROLLBACK').catch(() => {});
           for (const row of attemptedRows) postPipelineTracker.record(row, 'retrying', 'Transfer rolled back; staging retained for retry');
@@ -26846,6 +26912,8 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
       stagingTransferState.lastRun = new Date().toISOString();
       if (!result.rows.length) { stagingTransferState.lastCount = 0; break; }
       applyTopicRoutingChanges(result.routingChanges, result.approvedPosts);
+      removeUnknownTopicHeldPosts((result.heldPosts || []).map(post => post.id));
+      for (const post of result.heldPosts || []) postPipelineTracker.record(post, 'queued', 'Preserved for topic review; not admitted to live inventory');
       for (const post of result.approvedPosts) postPipelineTracker.record(post, 'live', 'Transfer committed; removed from staging');
       for (const { post, reason: rejection } of result.rejectedPosts) postPipelineTracker.record(post, 'rejected', `Transfer screening: ${rejection}`);
       const count = result.saved;
@@ -26856,6 +26924,8 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
       totalSaved += result.saved;
       totalDeleted += result.deleted;
       totalScreenedOut += result.screenedOut;
+      heldForReview += result.heldPosts?.length || 0;
+      stagingTransferState.lastHeldForReview = heldForReview;
       stagingTransferState.lastCount = count;
       stagingTransferState.lastSavedCount = result.saved;
       stagingTransferState.lastDeletedCount = result.deleted;
@@ -26870,7 +26940,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
       }
       broadcastSSE(result.approvedPosts);
       const withheld = result.screenedOut ? `; withheld ${result.screenedOut} screened post(s)` : '';
-      logAgentAction('feed', 'transfer', `Transferred ${count} post(s) from staging to feed_posts_cache${withheld}`, '#38BDF8');
+      logAgentAction('feed', 'transfer', `Transferred ${count} post(s) from staging to feed_posts_cache${withheld}${result.heldPosts?.length ? `; preserved ${result.heldPosts.length} for topic review` : ''}`, '#38BDF8');
       if (result.rows.length < STAGING_TRANSFER_BATCH_SIZE) break; // caught up - no need to keep looping this tick
     }
     // Retention runs on dedicated timers below. Keeping its whole-table
@@ -26894,7 +26964,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
       finishedAt: new Date().toISOString(),
       durationMs: stagingTransferState.lastDurationMs,
     });
-    return { transferred: totalSaved, drained: totalDeleted, screenedOut: totalScreenedOut, batches: batchCount, pendingAfter: stagingPostCount };
+    return { transferred: totalSaved, drained: totalDeleted, screenedOut: totalScreenedOut, heldForReview, batches: batchCount, pendingAfter: stagingPostCount };
   } catch (e) {
     stagingTransferState.lastError = e.message;
     stagingTransferState.lastDurationMs = Date.now() - transferStartedAt;
@@ -33697,6 +33767,13 @@ db.initDB().then(async () => {
   try {
     await migrateDB();
     await topicRoutingAgents.initialize();
+    const startUnknownGuardian = async () => {
+      if (unknownTopicGuardian.currentSnapshot().enabled) return;
+      try { await unknownTopicGuardian.initialize(); if (!IS_PIPELINE_ROLE) unknownTopicGuardian.start(); }
+      catch { console.warn('[unknown topic guardian] Initialization pending; retrying in 15 seconds.'); }
+    };
+    await startUnknownGuardian();
+    scheduleRecurring(startUnknownGuardian, 15000);
     if (!IS_PIPELINE_ROLE) topicRoutingAgents.start();
     await feedAudit.initialize().catch(() => console.warn('[feed audit] Policy initialization pending; imported feed intake remains held.'));
     scheduleRecurring(() => (feedAudit.status().policyReady ? feedAudit.reload() : feedAudit.initialize()).catch(() => {}), 5000);
