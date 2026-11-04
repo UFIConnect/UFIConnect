@@ -2,6 +2,7 @@
 
 const TARGET_CYCLE_MS = 5 * 60 * 1000;
 const MAX_CYCLE_MS = 10 * 60 * 1000;
+const PACING_REASONS = new Set(['source_pull_limit', 'source_in_flight']);
 
 function retryUntil(error, now, failures) {
   const value = error?.headers?.['retry-after'];
@@ -222,7 +223,16 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
     const sampledAt = now();
     const inventory = [...sources.values()].map(source => {
       const state = readCollectionState(source), blocked = gate(source, state);
-      const enabled = source.enabled(), blockedUntil = Math.max(source.backoffUntil, source.providerUntil() || 0, source.deferredUntil, state.allowed ? 0 : state.retryAt || 0);
+      const enabled = source.enabled(), providerUntil = Math.max(source.backoffUntil, source.providerUntil() || 0);
+      const deferredPauseUntil = PACING_REASONS.has(source.deferredReason) ? 0 : source.deferredUntil;
+      // A routine spacing/in-flight wait is scheduling information, not a
+      // provider failure or policy pause. Office uses backoffUntil as health.
+      const backoffUntil = Math.max(providerUntil, deferredPauseUntil,
+        state.allowed || PACING_REASONS.has(state.reason) ? 0 : state.retryAt || 0);
+      const waitUntil = Math.max(providerUntil, source.deferredUntil, state.allowed ? 0 : state.retryAt || 0);
+      const pause = blocked && !PACING_REASONS.has(blocked.reason) ? blocked
+        : providerUntil > sampledAt ? { reason: 'backoff', retryAt: providerUntil }
+          : deferredPauseUntil > sampledAt ? { reason: source.deferredReason || 'deferred', retryAt: deferredPauseUntil } : null;
       const intervalMs = Math.max(source.intervalMs, state.minSpacingMs);
       const ageMs = source.lastSuccessAt == null ? null : sampledAt - source.lastSuccessAt;
       const keyAges = source.keys.map(key => sampledAt - (source.keySuccessAt.get(String(key)) ?? source.registeredAt));
@@ -231,7 +241,7 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
         failedKeys: [...source.keyFailures.values()],
         intervalMs, minSpacingMs: state.minSpacingMs, expectedCycleMs: Math.ceil(source.keys.length * intervalMs),
         collectionReason: state.allowed ? null : state.reason || 'policy_unavailable', collectionRetryAt: state.allowed ? null : state.retryAt || null,
-        remainingAdmission: state.remaining ?? null, pauseReason: blocked?.reason || null, retryAt: blocked?.retryAt || null,
+        remainingAdmission: state.remaining ?? null, pauseReason: pause?.reason || null, retryAt: pause?.retryAt || blocked?.retryAt || null,
         coverageLimited: source.keys.length * intervalMs > MAX_CYCLE_MS,
         staleKeyCount: keyAges.filter(age => age > MAX_CYCLE_MS).length,
         oldestKeyAgeMs: Math.max(0, ...keyAges),
@@ -239,7 +249,7 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
         lastAttemptAt: source.lastAttemptAt, lastSuccessAt: source.lastSuccessAt, ageMs,
         overdue: enabled && (ageMs == null ? sampledAt - source.registeredAt > MAX_CYCLE_MS : ageMs > MAX_CYCLE_MS),
         inFlight: Boolean(source.inFlight), inFlightMs: source.inFlight ? sampledAt - source.lastAttemptAt : 0,
-        nextAt: Math.max(source.nextAt, spacingDueAt(source, state), blockedUntil, availableKey(source, sampledAt) ? 0 : nextKeyRetryAt(source)), backoffUntil: blockedUntil || null,
+        nextAt: Math.max(source.nextAt, spacingDueAt(source, state), waitUntil, availableKey(source, sampledAt) ? 0 : nextKeyRetryAt(source)), backoffUntil: backoffUntil || null,
         lastError: source.lastError, failures: source.failures, totalRuns: source.totalRuns,
         lastCycleFinishedAt: source.lastCycleFinishedAt, lastCycleDurationMs: source.lastCycleDurationMs,
         lastAttemptCycleFinishedAt: source.lastAttemptCycleFinishedAt, lastAttemptCycleDurationMs: source.lastAttemptCycleDurationMs,

@@ -321,3 +321,54 @@ test('blocking a later manual request does not misreport the result of an alread
   release({ posts: 2 });
   assert.equal((await first).posts, 2);
 });
+
+test('normal pull spacing and in-flight waits remain visible without reporting a health pause', async () => {
+  const { scheduler, advance } = fixture();
+  let reason = null;
+  scheduler.register({ id: 'bluesky', keys: ['inventory'],
+    collectionState: () => ({ allowed: !reason, reason, retryAt: 300000, minSpacingMs: 2500 }),
+    collect: async () => ({ posts: 1 }) });
+  await Promise.all(scheduler.pump());
+  for (const wait of ['source_pull_limit', 'source_in_flight']) {
+    reason = wait;
+    const status = scheduler.status().sources[0];
+    assert.equal(status.collectionReason, wait);
+    assert.equal(status.collectionRetryAt, 300000);
+    assert.equal(status.retryAt, 300000);
+    assert.equal(status.nextAt, 300000);
+    assert.equal(status.pauseReason, null);
+    assert.equal(status.backoffUntil, null);
+    assert.equal(status.overdue, false);
+  }
+  advance(MAX_CYCLE_MS + 1);
+  assert.equal(scheduler.status().sources[0].overdue, true, 'Routine wait labels cannot conceal genuinely stale collection');
+});
+
+test('a shared-gate race wait retains its deadline without becoming a health backoff', async () => {
+  const { scheduler } = fixture();
+  scheduler.register({ id: 'bluesky', keys: ['inventory'], collect: async () => {
+    throw Object.assign(new Error('Collection already in flight'), {
+      code: 'source_collection_deferred', reason: 'source_in_flight', retryAt: 300000,
+    });
+  } });
+  await Promise.all(scheduler.pump());
+  const status = scheduler.status().sources[0];
+  assert.equal(status.pauseReason, null); assert.equal(status.backoffUntil, null);
+  assert.equal(status.retryAt, 300000); assert.equal(status.nextAt, 300000);
+  assert.equal(status.failures, 0);
+});
+
+test('normal pull waits cannot hide an independent provider error cooldown', async () => {
+  const { scheduler } = fixture();
+  let pacing = false;
+  scheduler.register({ id: 'bluesky', keys: ['inventory'],
+    collectionState: () => ({ allowed: !pacing, reason: 'source_pull_limit', retryAt: 2500 }),
+    collect: async () => { throw Object.assign(new Error('429 provider limit'), { retryAfter: 900 }); } });
+  await Promise.all(scheduler.pump()); pacing = true;
+  const status = scheduler.status().sources[0];
+  assert.equal(status.collectionReason, 'source_pull_limit');
+  assert.equal(status.collectionRetryAt, 2500);
+  assert.equal(status.pauseReason, 'backoff');
+  assert.equal(status.backoffUntil, 900000); assert.equal(status.retryAt, 900000);
+  assert.equal(status.failures, 1); assert.equal(status.lastError, '429 provider limit');
+});
