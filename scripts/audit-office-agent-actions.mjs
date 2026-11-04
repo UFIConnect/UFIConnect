@@ -13,7 +13,7 @@ import {createRoot} from 'react-dom/client';
 import AgentChat from '../src/AgentChat.jsx';
 import '../src/LiveCity.css';
 function Fixture() {
- const [agent,setAgent]=useState({id:'security',name:'Security',serviceRole:'api'}),[histories,setHistories]=useState({});
+ const [agent,setAgent]=useState({id:'security',name:'Security',serviceRole:'api'}),[histories,setHistories]=useState({}),[destination,setDestination]=useState('');
  const key=agent.serviceRole+':'+agent.id;
  const request=(url,options={})=>fetch(url,{...options,credentials:'omit',headers:{...options.headers,'x-office-token':'${TOKEN}'}});
  return <main style={{padding:12,maxWidth:800,margin:'auto',background:'#0b1523',color:'#d5e8f6'}}>
@@ -21,7 +21,8 @@ function Fixture() {
  <button onClick={()=>setAgent({id:'reddit',name:'Reddit',serviceRole:'pipeline'})}>Source agent</button>
  <button onClick={()=>setAgent({id:'ai',name:'Office AI',serviceRole:'api'})}>AI agent</button>
  <button onClick={()=>setHistories(h=>({...h,[key]:Array.from({length:70},(_,i)=>({role:i%2?'assistant':'user',mode:'diagnostics',content:'Saved message '+i}))}))}>Seed earlier history</button>
- <AgentChat key={key} agent={agent} officeFetch={request} base={agent.serviceRole==='api'?'${API}':'${PIPELINE}'} apiBase='${API}' pipelineBase='${PIPELINE}' messages={histories[key]||[]} updateMessages={messages=>setHistories(h=>({...h,[key]:messages}))}/>
+ <output aria-label="Navigation destination">{destination}</output>
+ <AgentChat key={key} agent={agent} officeFetch={request} base={agent.serviceRole==='api'?'${API}':'${PIPELINE}'} apiBase='${API}' pipelineBase='${PIPELINE}' messages={histories[key]||[]} updateMessages={messages=>setHistories(h=>({...h,[key]:messages}))} onNavigate={setDestination}/>
  </main>;
 }
 createRoot(document.getElementById('root')).render(<Fixture/>);`, { flag: 'wx' });
@@ -44,7 +45,8 @@ const aiTasks = [
 const tasks = id => id === 'ai' ? aiTasks : [id === 'reddit'
   ? { id: 'source.refresh.reddit', label: 'Refresh Reddit', description: 'Queue source work on Pipeline.', target: 'pipeline', impact: 'low', available: true, requiresConfirmation: false }
   : { id: 'health.security', label: 'Run security check', description: 'Read authentication configuration.', target: 'both', impact: 'low', available: true, requiresConfirmation: false },
-  { id: 'feed.clear-delivery-caches', label: 'Clear delivery caches', description: 'Expire feed cache keys.', target: 'api', impact: 'medium', available: true, requiresConfirmation: true }, webAction];
+  { id: 'feed.clear-delivery-caches', label: 'Clear delivery caches', description: 'Expire feed cache keys.', target: 'api', impact: 'medium', available: true, requiresConfirmation: true },
+  { id: 'feed.flood-configure', label: 'Configure anti flooding', description: 'Edit feed protection settings.', target: 'api', impact: 'medium', input: 'flood-settings', available: true, requiresConfirmation: true }, webAction];
 try {
   await fs.mkdir(path.join(root, '.cache/audit-ui'), { recursive: true });
   await server.listen(); browser = await chromium.launch({ headless: true });
@@ -76,6 +78,9 @@ try {
     });
     await page.goto(server.resolvedUrls.local[0] + 'agent-actions-audit');
     await page.getByRole('button', { name: 'Run task: Run security check', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Configure anti flooding', exact: true }).click();
+    await page.getByLabel('Navigation destination', { exact: true }).filter({ hasText: 'feed-audit' }).waitFor();
+    check(!requests.some(row => row.path.endsWith('/execute')), 'Configure anti flooding navigates without sending empty settings');
     for (let i = 0; i < 8; i++) { await page.getByLabel('Message this agent', { exact: true }).fill('status ' + i); await page.getByRole('button', { name: 'Send message', exact: true }).click(); await page.getByText('Fixture reply status ' + i, { exact: true }).waitFor(); }
     check(await page.getByText('status 0', { exact: true }).count() === 1, 'Conversation retains messages beyond twelve');
     const longMessage = 'Detailed Office observations '.repeat(400) + ' What is your status?';

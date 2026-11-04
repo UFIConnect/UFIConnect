@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { createSourceCollectionScheduler, TARGET_CYCLE_MS, MAX_CYCLE_MS } = require('./source-collection-scheduler');
+const { createSourceCollectionScheduler, TARGET_CYCLE_MS, MAX_CYCLE_MS, retryUntil } = require('./source-collection-scheduler');
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
 function fixture(options = {}) {
@@ -101,6 +101,32 @@ test('runtime protection and missing approval do not invent successful checks', 
   assert.deepEqual(scheduler.status().overdue, []);
 });
 
+test('adapter retryAfter seconds preserve research provider cooldowns across manual and automatic collection', async () => {
+  const { scheduler, advance } = fixture();
+  let calls = 0;
+  scheduler.register({ id: 'openalex', keys: ['research'], collect: async () => {
+    if (++calls === 1) throw Object.assign(new Error('Provider rate limit'), { status: 429, retryAfter: 900 });
+    return {};
+  } });
+  await Promise.all(scheduler.pump());
+  assert.equal(scheduler.status().sources[0].backoffUntil, 900000);
+  advance(899999);
+  assert.equal((await scheduler.request('openalex')).retryAt, 900000);
+  scheduler.nudge(['openalex']); await Promise.all(scheduler.pump());
+  assert.equal(calls, 1);
+  advance(1); await Promise.all(scheduler.pump());
+  assert.equal(calls, 2);
+  assert.equal(scheduler.status().sources[0].failures, 0);
+});
+
+test('malformed adapter cooldowns retain normal backoff and cannot shorten a provider header', () => {
+  for (const retryAfter of [undefined, null, -5, NaN, Infinity, 'invalid']) {
+    assert.equal(retryUntil({ retryAfter }, 1000, 1), 31000);
+  }
+  assert.equal(retryUntil({ retryAfter: 60, headers: { 'retry-after': '900' } }, 1000, 1), 901000);
+  assert.equal(retryUntil({ retryAfter: 900, headers: { 'retry-after': '60' } }, 1000, 1), 901000);
+});
+
 test('provider-constrained query coverage is reported separately from successful source visits', async () => {
   const { scheduler } = fixture();
   scheduler.register({ id: 'limited-search', keys: Array.from({ length: 20 }, (_, i) => i), minSpacingMs: 60000, collect: async () => ({}) });
@@ -181,4 +207,117 @@ for (const status of [403, 429, 503]) test(`provider failure ${status} still pau
   assert.equal((await scheduler.request('youtube')).reason, 'backoff');
   scheduler.nudge(['youtube']); advance(29999); assert.equal(scheduler.pump().length, 0);
   assert.deepEqual(calls, ['first']);
+});
+
+test('collection policy pauses provider calls without advancing keys or claiming freshness', async () => {
+  const { scheduler } = fixture();
+  let policy = { allowed: false, reason: 'source_blocked', remaining: 0, retryAt: null, minSpacingMs: 2500 };
+  const calls = [];
+  scheduler.register({ id: 'bluesky', keys: ['first', 'second'], collectionState: () => policy,
+    collect: async key => { calls.push(key); return {}; } });
+  for (const reason of ['source_blocked', 'policy_unavailable', 'approval_cooldown', 'source_flood']) {
+    policy = { ...policy, reason, retryAt: reason === 'source_flood' ? 60000 : null };
+    assert.equal(scheduler.pump().length, 0);
+    assert.equal((await scheduler.request('bluesky')).reason, reason);
+    assert.deepEqual(scheduler.nudge(['bluesky']), []);
+    const status = scheduler.status().sources[0];
+    assert.equal(status.collectionReason, reason); assert.equal(status.collectionRetryAt, policy.retryAt);
+    assert.equal(status.totalRuns, 0); assert.equal(status.lastSuccessAt, null); assert.equal(status.lastAttemptAt, null);
+  }
+  policy = { allowed: true, remaining: 2, minSpacingMs: 2500 };
+  await Promise.all(scheduler.pump());
+  assert.deepEqual(calls, ['first']);
+  assert.equal(scheduler.status().sources[0].remainingAdmission, 2);
+});
+
+test('dynamic pull ceilings govern automatic visits, manual requests, and nudges across query keys', async () => {
+  let time = 0, spacing = 2500;
+  const scheduler = createSourceCollectionScheduler({ now: () => time });
+  const starts = [];
+  scheduler.register({ id: 'bluesky', keys: ['a', 'b', 'c'], targetCycleMs: 3000,
+    collectionState: () => ({ allowed: true, remaining: null, minSpacingMs: spacing }),
+    collect: async key => { starts.push({ key, time }); return {}; } });
+  await Promise.all(scheduler.pump());
+  const manual = scheduler.request('bluesky');
+  time = 2499; scheduler.nudge(['bluesky']); assert.equal(scheduler.pump().length, 0);
+  time = 2500; await Promise.all(scheduler.pump()); await manual;
+  assert.deepEqual(starts, [{ key: 'a', time: 0 }, { key: 'b', time: 2500 }]);
+  spacing = 5000;
+  time = 5000; scheduler.nudge(['bluesky']); assert.equal(scheduler.pump().length, 0);
+  time = 7500; await Promise.all(scheduler.pump());
+  assert.deepEqual(starts.at(-1), { key: 'c', time: 7500 });
+  assert.equal(scheduler.status().sources[0].minSpacingMs, 5000);
+});
+
+test('a queued manual request settles when policy pauses its source before collection', async () => {
+  const { scheduler, advance } = fixture();
+  let allowed = true, calls = 0;
+  scheduler.register({ id: 'medium', keys: ['tag'], minSpacingMs: 2000,
+    collectionState: () => ({ allowed, reason: 'approval_cooldown', remaining: 0, retryAt: 60000 }),
+    collect: async () => { calls++; return {}; } });
+  await Promise.all(scheduler.pump());
+  const manual = scheduler.request('medium');
+  allowed = false; advance(500); scheduler.pump();
+  assert.deepEqual(await manual, { deferred: true, reason: 'approval_cooldown', retryAt: 60000 });
+  assert.equal(calls, 1); assert.equal(scheduler.status().sources[0].totalRuns, 1);
+});
+
+test('collector deferral honors retryAt, preserves its query key, and cannot be bypassed manually', async () => {
+  const { scheduler, advance } = fixture();
+  const calls = [];
+  scheduler.register({ id: 'budgeted', keys: ['first', 'second'], targetCycleMs: 2000,
+    collect: async key => { calls.push(key); return calls.length === 1 ? { deferred: true, reason: 'source_capacity', retryAt: 60000 } : {}; } });
+  await Promise.all(scheduler.pump());
+  assert.equal(scheduler.status().sources[0].lastSuccessAt, null);
+  assert.equal((await scheduler.request('budgeted')).retryAt, 60000);
+  advance(59999); scheduler.nudge(['budgeted']); assert.equal(scheduler.pump().length, 0);
+  advance(1); await Promise.all(scheduler.pump());
+  assert.deepEqual(calls, ['first', 'first']);
+  assert.equal(scheduler.status().sources[0].totalRuns, 1);
+});
+
+test('an unavailable collection policy fails closed without creating provider errors', async () => {
+  const { scheduler } = fixture();
+  scheduler.register({ id: 'unavailable', keys: ['inventory'], collectionState: () => { throw new Error('Policy not initialized'); },
+    collect: async () => { throw new Error('Must not fetch'); } });
+  assert.equal(scheduler.pump().length, 0);
+  assert.equal((await scheduler.request('unavailable')).reason, 'policy_unavailable');
+  assert.equal(scheduler.status().sources[0].failures, 0);
+});
+
+test('a shared pull gate race defers the same key without reporting a provider failure', async () => {
+  let errors = 0;
+  const { scheduler, advance } = fixture({ onError: () => { errors++; } });
+  const calls = [];
+  scheduler.register({ id: 'bluesky', keys: ['first', 'second'], targetCycleMs: 2000,
+    collect: async key => {
+      calls.push(key);
+      if (calls.length === 1) throw Object.assign(new Error('Source pull ceiling reached'), {
+        code: 'source_collection_deferred', reason: 'source_pull_limit', retryAt: 5000,
+      });
+      return { posts: 1 };
+    } });
+  await Promise.all(scheduler.pump());
+  assert.equal(errors, 0);
+  let status = scheduler.status().sources[0];
+  assert.equal(status.failures, 0); assert.equal(status.attemptedKeys, 0);
+  assert.equal(status.lastError, null); assert.equal(status.lastSuccessAt, null);
+  assert.equal((await scheduler.request('bluesky')).reason, 'source_pull_limit');
+  advance(5000); await Promise.all(scheduler.pump());
+  assert.deepEqual(calls, ['first', 'first']);
+  status = scheduler.status().sources[0]; assert.equal(status.totalRuns, 1);
+});
+
+test('blocking a later manual request does not misreport the result of an already running request', async () => {
+  const { scheduler } = fixture();
+  let allowed = true, release, firstSettled = false;
+  scheduler.register({ id: 'bluesky', keys: ['inventory'],
+    collectionState: () => ({ allowed, reason: 'source_blocked' }),
+    collect: () => new Promise(resolve => { release = resolve; }) });
+  const first = scheduler.request('bluesky').then(result => { firstSettled = true; return result; });
+  await settle(); allowed = false;
+  assert.equal((await scheduler.request('bluesky')).reason, 'source_blocked');
+  await settle(); assert.equal(firstSettled, false);
+  release({ posts: 2 });
+  assert.equal((await first).posts, 2);
 });

@@ -1,6 +1,6 @@
 'use strict';
 
-const SOURCE_KEYS = Object.freeze({ reddit: ['REDDIT_CLIENT_ID', 'REDDIT_CLIENT_SECRET'],
+const SOURCE_KEYS = Object.freeze({ openalex: ['OPENALEX_API_KEY'], reddit: ['REDDIT_CLIENT_ID', 'REDDIT_CLIENT_SECRET'],
   twitter: ['TWITTER_BEARER_TOKEN'], linkedin: ['LINKEDIN_TOKEN'], facebook: ['FACEBOOK_TOKEN'],
   twitch: ['TWITCH_CLIENT_ID', 'TWITCH_CLIENT_SECRET'], usajobs: ['USAJOBS_API_KEY', 'USAJOBS_USER_AGENT'] });
 function officeSourceReady(id, env = {}) {

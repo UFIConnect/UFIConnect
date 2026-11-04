@@ -121,6 +121,8 @@ async function createAppHarness({ env = {}, connected = false, query, withClient
       getVideoCapableSources, videoReadAdmission,
       sourceRefreshQueue, refreshControl, SOURCE_FETCHERS, enqueueSourceRefresh, drainSourceRefreshQueue,
       makeTopicCycler, FEED_TOPICS, startContinuousWorkers, startJobBoardSweeps, getSourceCollectionScheduler,
+      feedAudit, equalizerBuffer, runEqualizerDrain, buildEqualizerDrainPlan, agentSourceCache,
+      sourceCollectionState, fetchAllTopicPosts,
       SOURCE_CONFIG, PLATFORMS, AGGREGATE_FEED_SOURCES, sourceRefreshRequests, pollSharedSourceRefreshRequests,
       followingRefreshQueue, refreshFollowingSourceCaches,
       setSourceRefreshWait(handler) { waitMs = handler; },

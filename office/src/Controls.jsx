@@ -43,6 +43,7 @@ async function responsePayload(response) {
 }
 
 function controlActionLabel(control) {
+  if (control.input === 'flood-settings') return 'Configure';
   if (control.input === 'frontend-file') return 'Edit and commit';
   if (control.id === 'deploy.mobile') return 'Build app';
   if (control.id.startsWith('deploy.')) return 'Deploy';
@@ -125,7 +126,7 @@ function Field({ label, hint, children }) {
   );
 }
 
-export default function Controls({ apiBase = '', pipelineBase = '', request = fetch, initialQuery = '' }) {
+export default function Controls({ apiBase = '', pipelineBase = '', request = fetch, onNavigate = () => {}, initialQuery = '' }) {
   const [controls, setControls] = useState([]);
   const [history, setHistory] = useState([]);
   const [query, setQuery] = useState(initialQuery);
@@ -268,6 +269,10 @@ export default function Controls({ apiBase = '', pipelineBase = '', request = fe
     }
     if (control.available === false) {
       setNotice({ tone: 'error', text: control.unavailableReason || 'This control is not configured.' });
+      return null;
+    }
+    if (control.input === 'flood-settings') {
+      onNavigate('feed-audit');
       return null;
     }
     if (control.requiresConfirmation && !window.confirm(

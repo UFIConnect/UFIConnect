@@ -268,7 +268,7 @@ function AgentInspector({ agent, model, officeFetch, apiBase, pipelineBase, onNa
     {health.lastError && <p className="lc-notice">This service reports an agent error. Inspect its protected service logs for details.</p>}
     {agentInactiveExplanation(agent) && <p className="lc-notice" role="status">{agentInactiveExplanation(agent)}</p>}
     <div className="lc-crosslinks"><button type="button" onClick={() => onNavigate('setup')}>Open Setup <ArrowUpRight size={14} /></button><button type="button" onClick={() => onNavigate('controls')}>Open Controls <ArrowUpRight size={14} /></button><button type="button" onClick={() => onNavigate('agents')}>Open Agents <ArrowUpRight size={14} /></button><button type="button" onClick={() => onNavigate('post-pipeline')}>Open Post Pipeline <ArrowUpRight size={14} /></button></div>
-    <AgentChat key={agent.key} agent={agent} officeFetch={officeFetch} apiBase={apiBase} pipelineBase={pipelineBase} base={agent.serviceRole === 'pipeline' ? pipelineBase : apiBase} messages={messages} updateMessages={updateMessages} />
+    <AgentChat key={agent.key} agent={agent} officeFetch={officeFetch} apiBase={apiBase} pipelineBase={pipelineBase} base={agent.serviceRole === 'pipeline' ? pipelineBase : apiBase} messages={messages} updateMessages={updateMessages} onNavigate={onNavigate} />
     <History entries={entries} />
   </>;
 }

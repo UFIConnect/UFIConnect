@@ -4,13 +4,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { createServer } from '../office/node_modules/vite/dist/node/index.js';
+import sourcePullLimits from '../backend/source-pull-limits.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const server = await createServer({root:path.join(root,'office'),configFile:path.join(root,'office/vite.config.js'),envDir:false,define:{'import.meta.env.VITE_API_URL':JSON.stringify(''),'import.meta.env.VITE_PIPELINE_API_URL':JSON.stringify('/pipeline')},server:{host:'127.0.0.1',port:5223,strictPort:false}});
 const now = new Date().toISOString(), userId = 'a0000000-0000-4000-8000-000000000001', deviceId = 'd0000000-0000-4000-8000-000000000001';
 const user = {id:userId,name:'Review Member',email:'review@example.com',onboarded:true,createdAt:now};
 const item = {id:'review-item',postId:'post-spam',title:'Spam review example',content:'Retained text for inspection',source:'news',sourceUrl:'javascript:alert(1)',status:'rejected',reason:'link_spam',explanation:'Too many external links.',at:now};
-const policy = {enabled:true,maxPerSourcePerMinute:300,maxPerAuthorPerMinute:25,duplicateWindowSeconds:300,targetApprovalPct:85,minimumSample:30,cooldownSeconds:60,blockedSources:[]};
+const policy = {enabled:true,maxPerSourcePerMinute:300,maxPerAuthorPerMinute:25,duplicateWindowSeconds:300,targetApprovalPct:85,minimumSample:30,cooldownSeconds:60,blockedSources:[],sourcePullLimits:{...sourcePullLimits.DEFAULT_SOURCE_PULL_LIMITS,future_source:{windowSeconds:600,maxPulls:1}}};
 const routingAgents = Array.from({ length: 4 }, (_, index) => ({ id:`topic_router_${index + 1}`, name:`Topic routing ${index + 1}`, topics:index ? [] : ['Engineering'], status:'ready', enabled:true, running:false, lastRun:now, nextRun:now, intervalMs:15000, checked:20, assigned:12, resolved:3, lastChecked:4, lastAssigned:2, pending:0, lagMs:0 }));
 let browser;
 try {
@@ -18,7 +19,7 @@ try {
   browser = await chromium.launch({channel:process.platform === 'win32' ? 'msedge' : undefined});
   for(const width of [1440,390]) {
     const context = await browser.newContext({viewport:{width,height:1000}}), page = await context.newPage(), errors = [], writes = [];
-    let blocked = false, failDetail = false, topicReads = 0;
+    let blocked = false, failDetail = false, topicReads = 0, savedSettings = {};
     page.on('pageerror',error => errors.push(error.message));
     await page.route(url => /^\/(pipeline\/)?office\//.test(url.pathname),async route => {
       const req = route.request(), url = new URL(req.url()), endpoint = url.pathname.replace(/^\/pipeline/,'');
@@ -28,8 +29,9 @@ try {
       if(endpoint === '/office/security/devices') return route.fulfill({json:{threshold:5,blockOn:6,scope:'Registered device identity.',devices:[{id:deviceId,strikes:6,blockedAt:now,createdAt:now,accounts:1,events:[{reason:'link_spam',activity:'/groups/test/posts',occurred_at:now}]}]}});
       if(endpoint.endsWith('/unblock')) return route.fulfill({json:{ok:true,message:'Device unblocked and strike count reset.'}});
       if(endpoint === '/office/feed-audit/items/review-item') return route.fulfill(failDetail ? {status:503,json:{message:'Audit detail unavailable'}} : {json:{item}});
-      if(endpoint === '/office/feed-audit') return route.fulfill({json:{items:url.searchParams.get('q') === 'nothing' ? [] : [item],hasMore:false,summary:{checked:100,approved:85,rejected:15,held:12,approvalPct:85},policy:{...policy,blockedSources:blocked ? [{source:'news',reason:'Breach review',blockedAt:now}] : []},reasons:[{id:'link_spam',label:'Link spam'}],sources:[{id:'news',label:'News'}],commands:[{id:'feed.audit-review',label:'Review current feed',description:'Screen live content.'},{id:'feed.audit-protect',label:'Protect feed',description:'Enable controls and review.'}]}});
-      if(endpoint.startsWith('/office/controls/')) { if(endpoint.includes('source.block.news')) blocked = true; return route.fulfill({json:{result:{ok:true,checked:100}}}); }
+      if(endpoint === '/office/feed-audit') return route.fulfill({json:{items:url.searchParams.get('q') === 'nothing' ? [] : [item],hasMore:false,summary:{checked:100,approved:85,rejected:15,held:12,approvalPct:85},policy:{...policy,...savedSettings,blockedSources:blocked ? [{source:'news',reason:'Breach review',blockedAt:now}] : []},reasons:[{id:'link_spam',label:'Link spam'}],sources:[{id:'news',label:'News'},{id:'medium',label:'Medium'}],commands:[{id:'feed.audit-review',label:'Review current feed',description:'Screen live content.'},{id:'feed.audit-protect',label:'Protect feed',description:'Enable controls and review.'}]}});
+      if(endpoint === '/office/controls') return route.fulfill({json:{controls:[{id:'feed.flood-configure',label:'Configure anti flooding',description:'Edit the feed protection settings.',category:'Feed',input:'flood-settings',target:'api',impact:'medium',available:true,requiresConfirmation:true}],history:[]}});
+      if(endpoint.startsWith('/office/controls/')) { if(endpoint.includes('source.block.news')) blocked = true; if(endpoint.includes('feed.flood-configure')) savedSettings = req.postDataJSON().settings; return route.fulfill({json:{result:{ok:true,checked:100}}}); }
       if(endpoint === '/office/topic-transfer') { topicReads++; return route.fulfill({json:{available:true,generatedAt:now,agents:routingAgents,routing:{enabled:true,intervalMs:15000,observedAt:now},topics:[{topic:'Engineering',agentId:'topic_router_1',live:20,staged:10,subtopics:[{name:'Software',live:15,staged:5}]}],unknown:{live:4,staged:2},taxonomy:[{topic:'Engineering',subtopics:['Software']}]}}); }
       if(endpoint === '/office/agents/topic_router_1/trigger') return route.fulfill({json:{ok:true,checked:4,assigned:2,resolved:1}});
       if(endpoint === '/office/topic-transfer/transfer') return route.fulfill({json:{ok:true,transferred:5,pendingAfter:5}});
@@ -41,8 +43,23 @@ try {
       if(endpoint.endsWith('/stream')) return route.fulfill({contentType:'text/event-stream',body:'data: {"backlog":[]}\n\n'});
       return route.fulfill({json:{agents:{}}});
     });
-    await page.goto(server.resolvedUrls.local[0]+'#feed-audit',{waitUntil:'domcontentloaded'});
+    await page.goto(server.resolvedUrls.local[0]+'#controls',{waitUntil:'domcontentloaded'});
     await page.getByLabel('Access token',{exact:true}).fill('audit-only'); await page.getByRole('button',{name:'Unlock Office',exact:true}).click();
+    await page.getByRole('button',{name:'Configure',exact:true}).click();
+    await page.getByRole('heading',{name:'Anti flooding',exact:true}).waitFor();
+    assert.equal(writes.length,0,'Configure opens the settings form without an empty execution');
+    const pullTable = page.getByRole('region',{name:'Source pull limits',exact:true});
+    await pullTable.getByRole('spinbutton',{name:'Medium maximum pulls',exact:true}).waitFor();
+    assert.equal(await pullTable.locator('tbody tr').count(),Object.keys(policy.sourcePullLimits).length,'Every configured and future source appears');
+    await pullTable.getByRole('spinbutton',{name:'Medium maximum pulls',exact:true}).fill('7');
+    await page.getByRole('button',{name:'Save flood settings',exact:true}).click();
+    await page.getByText('Command results: feed.flood-configure',{exact:false}).waitFor();
+    const floodWrites = writes.filter(row => row.path.endsWith('/feed.flood-configure/execute'));
+    assert.equal(floodWrites.length,1,'Settings are submitted only when saved');
+    assert.deepEqual(floodWrites[0].body.settings.sourcePullLimits,{...policy.sourcePullLimits,medium:{windowSeconds:90,maxPulls:7}},'Edited pull limits retain all other sources');
+    assert.equal(floodWrites[0].body.settings.maxPerSourcePerMinute,policy.maxPerSourcePerMinute,'Existing post limits are retained');
+    await pullTable.getByRole('spinbutton',{name:'Medium maximum pulls',exact:true}).waitFor();
+    assert.equal(await pullTable.getByRole('spinbutton',{name:'Medium maximum pulls',exact:true}).inputValue(),'7','Saved settings are read back');
     await page.getByRole('button',{name:item.title,exact:true}).click();
     const details = page.getByRole('region',{name:'Audit item details'});
     await details.getByText(item.content,{exact:true}).waitFor();

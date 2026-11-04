@@ -2,9 +2,10 @@
 
 const { createHash } = require('node:crypto');
 const { safeUrl } = require('./post-pipeline');
+const { DEFAULT_SOURCE_PULL_LIMITS, normalizeSourcePullLimits, sourcePullLimit } = require('./source-pull-limits');
 const DEFAULT_POLICY = Object.freeze({ enabled: true, maxPerSourcePerMinute: 300,
   maxPerAuthorPerMinute: 25, duplicateWindowSeconds: 300, targetApprovalPct: 85,
-  minimumSample: 30, cooldownSeconds: 60 });
+  minimumSample: 30, cooldownSeconds: 60, sourcePullLimits: DEFAULT_SOURCE_PULL_LIMITS });
 const MAX_EVENTS = 10000;
 const REASONS = {
   spam_or_solicitation: 'Language matched a solicitation or scam pattern. Review the quoted content before deciding whether the source needs blocking.',
@@ -36,9 +37,10 @@ const digest = value => createHash('sha256').update(value).digest('hex');
 function normalizePolicy(settings, current = DEFAULT_POLICY) {
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) throw new Error('Provide anti-flood settings.');
   const limits = { maxPerSourcePerMinute: [1, 10000], maxPerAuthorPerMinute: [1, 1000], duplicateWindowSeconds: [10, 3600], targetApprovalPct: [1, 100], minimumSample: [5, 1000], cooldownSeconds: [10, 3600] };
-  const next = { ...current };
+  const next = structuredClone(current);
   for (const [key, value] of Object.entries(settings)) {
     if (key === 'enabled') { if (typeof value !== 'boolean') throw new Error('Enabled must be true or false.'); next.enabled = value; continue; }
+    if (key === 'sourcePullLimits') { next.sourcePullLimits = normalizeSourcePullLimits(value, current.sourcePullLimits || {}); continue; }
     if (!limits[key]) throw new Error(`Unknown anti-flood setting: ${key}`);
     if (!Number.isInteger(value) || value < limits[key][0] || value > limits[key][1]) throw new Error(`Invalid ${key}; use ${limits[key].join(' to ')}.`);
     next[key] = value;
@@ -47,13 +49,13 @@ function normalizePolicy(settings, current = DEFAULT_POLICY) {
 }
 
 function createFeedAudit(db, { role = 'api', now = Date.now, schedule = setTimeout, requirePolicy = false, onPolicyChange = () => {} } = {}) {
-  let policy = { ...DEFAULT_POLICY }, blocked = new Map(), ready = !requirePolicy;
+  let policy = normalizePolicy({}), blocked = new Map(), ready = !requirePolicy;
   let pending = new Map(), recent = new Map(), timer = null, flushing = false, lastCleanup = 0;
   let lastPolicyVersion = '', reloadInFlight = null;
   const sourceRates = new Map(), authorRates = new Map(), duplicateTexts = new Map(), quality = new Map(), cooldowns = new Map(), admissions = new Map();
   const totals = { checked: 0, approved: 0, rejected: 0, held: 0, byReason: {}, lastCheckedAt: null, lastRejected: null };
   const health = { droppedEvents: 0, lastError: null, policyError: null, lastPersistedAt: null, policyRefreshedAt: null };
-  const policySnapshot = () => ({ ...policy, blockedSources: [...blocked.values()], syncIntervalSeconds: 5 });
+  const policySnapshot = () => structuredClone({ ...policy, blockedSources: [...blocked.values()], syncIntervalSeconds: 5 });
   const scope = 'Unique post content and outcome observed by this process; held intake is separate from screened approval. Historical events are retained for 7 days, up to 10,000 records.';
   const summary = () => ({ ...totals, byReason: { ...totals.byReason }, approvalPct: totals.checked ? Math.round(totals.approved / totals.checked * 1000) / 10 : null, scope });
   async function initialize() {
@@ -127,26 +129,61 @@ function createFeedAudit(db, { role = 'api', now = Date.now, schedule = setTimeo
     const rate = !current || now() - current.start >= 60000 ? { start: now(), count: 0 } : current;
     boundedSet(map, key, rate); return rate;
   }
+  function sourceCooldown(source) {
+    const cooldown = cooldowns.get(source);
+    if (cooldown && cooldown > now()) return cooldown;
+    if (cooldown) { cooldowns.delete(source); quality.delete(source); }
+    const outcomes = (quality.get(source) || []).filter(value => value.at > now() - 300000);
+    if (outcomes.length >= policy.minimumSample && outcomes.filter(value => value.approved).length * 100 / outcomes.length < policy.targetApprovalPct) {
+      const until = now() + policy.cooldownSeconds * 1000;
+      boundedSet(cooldowns, source, until, 1000); return until;
+    }
+    return null;
+  }
+  // Scheduling checks do not spend admission capacity or invent audit records.
+  // Provider pull ceilings still apply when the optional post flood guard is off.
+  function collectionState(value) {
+    const source = sourceId(value);
+    const minSpacingMs = sourcePullLimit(source, policy.sourcePullLimits).minSpacingMs;
+    const permission = access({ source });
+    if (!permission.allowed) return { ...permission, remaining: 0, retryAt: null, minSpacingMs };
+    if (!policy.enabled || source === 'uficonnect') return { allowed: true, reason: null, remaining: null, retryAt: null, minSpacingMs };
+    const rate = sourceRates.get(source);
+    const activeRate = rate && now() - rate.start < 60000 ? rate : null;
+    const remaining = Math.max(0, policy.maxPerSourcePerMinute - (activeRate?.count || 0));
+    const cooldown = sourceCooldown(source);
+    if (cooldown) return { allowed: false, reason: 'approval_cooldown', remaining, retryAt: cooldown, minSpacingMs };
+    if (!remaining) return { allowed: false, reason: 'source_flood', remaining, retryAt: activeRate.start + 60000, minSpacingMs };
+    return { allowed: true, reason: null, remaining, retryAt: null, minSpacingMs };
+  }
+  function authorIdentity(post, source) {
+    if (post?.author?.isUnknown === true) return '';
+    const author = post?.author || {};
+    const id = clean(author.id, 200).trim().toLowerCase();
+    if (id === `${source}_author`) {
+      const name = clean(author.name, 200).trim().toLowerCase();
+      const sourceNames = [source, post?.sourceLabel, author.title, author.organization].map(value => clean(value, 200).trim().toLowerCase());
+      return name && !sourceNames.includes(name) ? name : '';
+    }
+    return clean(author.id || author.username || author.name || '', 200).trim().toLowerCase();
+  }
   function admit(post) {
     const permission = access(post);
     if (!permission.allowed) { record(post, permission, permission.reason === 'policy_unavailable' ? 'held' : 'rejected'); return permission; }
     if (!policy.enabled || post?.source === 'uficonnect') return { allowed: true };
     const source = sourceId(post?.source), key = digest(JSON.stringify([source, post?.id]));
-    // The equalizer and addAndBroadcast both call this gate. One admission is charged once.
+    // Remember accepted items so a delivery retry cannot charge the same ID twice.
     if ((admissions.get(key) || 0) > now()) return { allowed: true };
-    const hold = reason => { const result = { allowed: false, reason }; record(post, result, 'held'); return result; };
-    const cooldown = cooldowns.get(source);
-    if (cooldown && cooldown > now()) return hold('approval_cooldown');
-    if (cooldown) { cooldowns.delete(source); quality.delete(source); }
-    const outcomes = (quality.get(source) || []).filter(value => value.at > now() - 300000);
-    if (outcomes.length >= policy.minimumSample && outcomes.filter(value => value.approved).length * 100 / outcomes.length < policy.targetApprovalPct) {
-      boundedSet(cooldowns, source, now() + policy.cooldownSeconds * 1000, 1000); return hold('approval_cooldown');
-    }
+    const hold = (reason, retryAt = null) => {
+      const result = { allowed: false, reason, ...(Number.isFinite(retryAt) ? { retryAt } : {}) };
+      record(post, result, 'held'); return result;
+    };
+    const collection = collectionState(source);
+    if (!collection.allowed) return hold(collection.reason, collection.retryAt);
     const sourceRate = countRate(sourceRates, source);
-    if (sourceRate.count >= policy.maxPerSourcePerMinute) return hold('source_flood');
-    const author = clean(post?.author?.id || post?.author?.username || post?.author?.name || '', 200).trim().toLowerCase();
+    const author = authorIdentity(post, source);
     const authorRate = author ? countRate(authorRates, `${source}:${author}`) : null;
-    if (authorRate && authorRate.count >= policy.maxPerAuthorPerMinute) return hold('author_flood');
+    if (authorRate && authorRate.count >= policy.maxPerAuthorPerMinute) return hold('author_flood', authorRate.start + 60000);
     const normalizedText = `${post?.title || ''} ${post?.content || ''}`.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
     const contentKey = digest(`${source}:${normalizedText}`);
     const duplicate = duplicateTexts.get(contentKey);
@@ -199,22 +236,32 @@ function createFeedAudit(db, { role = 'api', now = Date.now, schedule = setTimeo
       coverage: { retentionDays: 7, maxEvents: MAX_EVENTS, rejectedContentMaxChars: 6000 } };
   }
   async function detail(id) { const { rows } = await db.query('SELECT * FROM office_feed_audit WHERE id=$1', [clean(id, 64)]); return rows[0] ? itemFromRow(rows[0]) : recent.get(id) || null; }
+  async function refreshAfterWrite() {
+    // A periodic reload may have selected a snapshot before this write. Let
+    // that read finish, then enforce and return a freshly selected policy.
+    try { await reloadInFlight; } catch { /* The fresh read below reports any continuing failure. */ }
+    return reload();
+  }
   async function configure(settings) {
     const validated = normalizePolicy(settings, {});
-    // Merge in SQL so concurrent changes to unrelated settings survive.
-    await db.query(`UPDATE office_feed_policy SET settings=settings || $1::jsonb,updated_at=NOW() WHERE id=1`, [JSON.stringify(validated)]);
-    await reload(); return policySnapshot();
+    // Merge nested source entries in SQL too: simultaneous updates to different
+    // sources must not replace one another's freshly persisted pull ceiling.
+    await db.query(`UPDATE office_feed_policy SET settings=(settings || ($1::jsonb - 'sourcePullLimits'))
+      || CASE WHEN $1::jsonb ? 'sourcePullLimits' THEN jsonb_build_object('sourcePullLimits',
+        COALESCE(settings->'sourcePullLimits','{}'::jsonb) || ($1::jsonb->'sourcePullLimits')) ELSE '{}'::jsonb END,
+      updated_at=NOW() WHERE id=1`, [JSON.stringify(validated)]);
+    await refreshAfterWrite(); return policySnapshot();
   }
   async function block(source, reason) {
     const id = sourceId(source), explanation = clean(reason, 500).trim();
     if (!/^[a-z0-9][a-z0-9_-]{1,79}$/.test(id) || id === 'uficonnect') throw new Error('Choose a supported external source.');
     if (!explanation) throw new Error('Provide a reason for blocking the source.');
     await db.query(`INSERT INTO office_feed_source_blocks(source,reason) VALUES($1,$2) ON CONFLICT(source) DO UPDATE SET reason=EXCLUDED.reason,blocked_at=NOW()`, [id, explanation]);
-    await reload(); return policySnapshot();
+    await refreshAfterWrite(); return policySnapshot();
   }
-  async function unblock(source) { await db.query('DELETE FROM office_feed_source_blocks WHERE source=$1', [sourceId(source)]); await reload(); return policySnapshot(); }
+  async function unblock(source) { await db.query('DELETE FROM office_feed_source_blocks WHERE source=$1', [sourceId(source)]); await refreshAfterWrite(); return policySnapshot(); }
   function status() { return { ...health, pendingEvents: pending.size, policyReady: ready, cooldowns: [...cooldowns].filter(([, until]) => until > now()).map(([source, until]) => ({ source, until: new Date(until).toISOString() })) }; }
-  return { initialize, reload, access, record, admit, flush, list, detail, configure, block, unblock, summary, policy: policySnapshot, status };
+  return { initialize, reload, access, record, admit, collectionState, flush, list, detail, configure, block, unblock, summary, policy: policySnapshot, status };
 }
 
 module.exports = { createFeedAudit, DEFAULT_POLICY, normalizePolicy, REASONS };

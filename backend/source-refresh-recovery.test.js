@@ -54,7 +54,7 @@ test('all public collectors share one scheduler; website and member-only sources
     app.startJobBoardSweeps();
     const state = app.getSourceCollectionScheduler().status();
     assert.equal(Object.keys(app.PLATFORMS).length, 102, 'Count the installed account catalog rather than inventing unsupported adapters');
-    assert.equal(state.total, 40, '38 original source configurations plus two category job collectors');
+    assert.equal(state.total, 44, '38 original sources, four research sources, and two category job collectors');
     assert.equal(state.maxConcurrency, 4);
     assert.equal(state.active, 0);
     for (const source of app.AGGREGATE_FEED_SOURCES) {
@@ -82,7 +82,7 @@ test('real pipeline startup registers later-declared job inventories without a c
   try {
     await new Promise(resolve => setImmediate(resolve));
     const state = app.getSourceCollectionScheduler().status();
-    assert.equal(state.total, 40);
+    assert.equal(state.total, 44);
     assert.ok(state.sources.some(source => source.id === 'remotive'));
     assert.ok(state.sources.some(source => source.id === 'muse'));
     assert.equal(state.active, 0, 'Staggered requests have not contacted providers during startup');

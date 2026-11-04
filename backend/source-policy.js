@@ -95,6 +95,15 @@ function isSourceActionAllowed(source, action, options) {
   return getSourcePolicy(source, options)?.features[action] === true;
 }
 function isSourceDisplayAllowed(source, options) {
+  const key = String(source || '').toLowerCase();
+  // Public research metadata has no member OAuth or interaction adapter, but
+  // the same operator display switches still revoke collection and cached reads.
+  if (['crossref', 'datacite', 'zenodo', 'openalex'].includes(key)) {
+    const env = options?.env || process.env;
+    return enabledBySetting(env.SOURCE_ACCESS_ENABLED)
+      && enabledBySetting(env[`SOURCE_${key.toUpperCase()}_ENABLED`])
+      && enabledBySetting(env[`SOURCE_${key.toUpperCase()}_DISPLAY_POST_ENABLED`]);
+  }
   const policy = getSourcePolicy(source, options);
   // Native content and connectors outside this review keep their own policy.
   return !policy || (policy.enabled && policy.features.displayPost);

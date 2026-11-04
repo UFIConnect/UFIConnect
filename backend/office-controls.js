@@ -5,7 +5,7 @@ const BASE_OFFICE_CONTROLS = Object.freeze([
     description: 'Enable default flood limits, review current feed safety, then expire delivery snapshots. Existing rejected records remain visible.',
     target: 'both', impact: 'medium', requiresConfirmation: true, bundle: ['feed.flood-configure', 'feed.audit-review', 'feed.clear-delivery-caches'] },
   { id: 'feed.flood-configure', category: 'Feed audit', label: 'Configure anti flooding',
-    description: 'Persist source and author limits, duplicate detection, and the source approval cooldown. Held intake is reported separately.',
+    description: 'Configure source pull ceilings, post and author limits, duplicate detection, and approval cooldowns. Temporary intake holds wait in the bounded queue.',
     target: 'api', impact: 'medium', requiresConfirmation: true, input: 'flood-settings' },
   { id: 'feed.optimize-unknown', category: 'Topic transfer', label: 'Optimize unknown topics',
     description: 'Reclassify unknown posts only when their content supports a specific topic and subtopic.',

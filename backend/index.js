@@ -75,6 +75,8 @@ const v8 = require('v8');
 const db        = require('./db');
 const { initializePostPipeline, createPostPipelineTracker, createPostPipelineReader, pipelineFilters } = require('./post-pipeline');
 const { createFeedAudit, DEFAULT_POLICY: DEFAULT_FEED_AUDIT_POLICY } = require('./feed-audit');
+const { createSourcePullGate } = require('./source-pull-limits');
+const { rssAuthorIdentity } = require('./rss-author-identity');
 const { createSuspiciousDevices, registerSuspiciousDeviceRoutes, SCHEMA: SUSPICIOUS_DEVICE_SCHEMA } = require('./suspicious-devices');
 const filestore  = require('./filestore');
 const { HISTORY_SCHEMA, createGeneratedContentStore, publicHistoryItem } = require('./generated-content');
@@ -2279,8 +2281,9 @@ const SOURCE_CONFIG = Object.fromEntries([
   'remoteok', 'behance', 'indiehackers', 'smashing', 'infoq', 'mittr', 'gitlab',
   'yc', 'crunchbase', 'designweb', 'lobsters', 'github', 'arxiv', 'usajobs',
   'stackoverflow', 'twitter', 'linkedin', 'facebook',
+  'crossref', 'datacite', 'zenodo', 'openalex',
 ].map(id => [id, { ttl: SOURCE_COLLECTION_TARGET_MS, delay: SOURCE_COLLECTION_TARGET_MS, shards: 1,
-  inventory: !['reddit', 'medium', 'bluesky', 'youtube', 'twitter', 'linkedin', 'facebook'].includes(id),
+  inventory: !['reddit', 'medium', 'bluesky', 'youtube', 'twitter', 'linkedin', 'facebook', 'crossref', 'datacite', 'zenodo', 'openalex'].includes(id),
   minSpacingMs: ['twitter', 'linkedin', 'facebook', 'stackoverflow'].includes(id) ? SOURCE_COLLECTION_TARGET_MS
     : ['github', 'arxiv', 'usajobs'].includes(id) ? 60000
       : ['reddit', 'medium', 'bluesky'].includes(id) ? 2000 : 60000,
@@ -4518,9 +4521,10 @@ function rssPost(item, sourceId, sourceLabel, groupId, groupName, category, topi
   // fetched but exactly 1 row in the database. MD5 distributes across the
   // whole input regardless of shared prefixes.
   const linkHash = crypto.createHash('md5').update(item.link || topic + Date.now()).digest('hex').slice(0, 20);
+  const authorId = rssAuthorIdentity(item, sourceId);
   return {
     id:          `${sourceId}_${linkHash}`,
-    authorId:    `${sourceId}_author`,
+    authorId,
     groupId,
     content:     truncateWithEllipsis(item.desc || item.title, importedContentLimit({ source: sourceId })),
     title:       item.title,
@@ -4528,7 +4532,7 @@ function rssPost(item, sourceId, sourceLabel, groupId, groupName, category, topi
     sourceLabel,
     sourceUrl:   item.link,
     topic,
-    author:      { id: `${sourceId}_author`, name: item.author || sourceLabel, title: sourceLabel, organization: sourceLabel },
+    author:      { id: authorId, name: item.author || sourceLabel, title: sourceLabel, organization: sourceLabel, isUnknown: !authorId },
     likes: [], likesCount: 0, commentsCount: 0,
     createdAt:   JOB_SOURCES.has(sourceId) ? jobPostedDate(item.pubDate) : normalizeTimestamp(item.pubDate),
     isExternal:  true,
@@ -4557,6 +4561,8 @@ function filterAndSlice(items, keyword, max = 1000) {
 const expandedFeedSources = require('./expanded-feed-sources').createExpandedFeedSources({
   fetchJSON, fetchText, parseRSSItems, rssPost, decodeHTMLEntities,
 });
+
+const researchFeedSources = require('./research-feed-sources').createResearchFeedSources({ fetchJSON, rssPost, env: process.env });
 
 // --- Indeed: job listings by keyword -----------------------------------------
 async function fetchIndeedJobs(keyword) {
@@ -6296,135 +6302,12 @@ function generateSocialSearchCards(interests = []) {
   return cards;
 }
 
-async function fetchAllTopicPosts(interests = [], role = '', skills = [], goals = [], title = '', org = '', sourceFilter = null) {
-  skills = asArray(skills);
-  goals = asArray(goals);
-  // Base: interest ? primary keyword
-  const keywords = interests.flatMap(i => {
-    const primary = interestKeyword(i);
-    const extras  = INTEREST_EXTRA_KEYWORDS[i] || [];
-    return [primary, ...extras].filter(Boolean);
-  });
-
-  // Role keyword
-  const roleKeyword = ROLE_TO_KEYWORDS[role];
-  if (roleKeyword) keywords.push(roleKeyword);
-
-  // Safe skill strings (filter nulls/non-strings before any .trim()/.toLowerCase())
-  const safeSkills = (skills || []).filter(s => s && typeof s === 'string');
-
-  // Skills as direct search terms
-  const skillKeywords = safeSkills.map(s => s.trim()).filter(s => s.length > 1).slice(0, 5);
-
-  // Goals ? search phrases
-  const goalKeywords = (goals || []).map(g => GOAL_TO_KEYWORDS[g]).filter(Boolean);
-
-  // Title and org add industry context
-  if (title && typeof title === 'string' && title.trim().length > 3) keywords.push(title.trim());
-  if (org   && typeof org   === 'string' && org.trim().length > 2)   keywords.push(`${org.trim()} tech`);
-
-  const allKeywords = [...keywords, ...skillKeywords, ...goalKeywords];
-  if (allKeywords.length === 0) allKeywords.push('technology startup programming');
-  const topics = [...new Set(allKeywords)];
-
-  // Tag-based sources — interests + skill-derived tags
-  const skillDevtoTags = safeSkills.map(s => SKILL_TO_DEVTO_TAG[s.toLowerCase().trim()]).filter(Boolean);
-  const skillSoTags    = safeSkills.map(s => SKILL_TO_SO_TAG[s.toLowerCase().trim()]).filter(Boolean);
-
-  const soTags      = [...new Set([...interests.map(i => INTEREST_TO_SO_TAG[i]).filter(Boolean), ...skillSoTags])];
-  const mastoTags   = [...new Set(interests.map(i => INTEREST_TO_MASTODON_TAG[i]).filter(Boolean))];
-  const lobTags     = [...new Set(interests.map(i => LOBSTERS_TAGS[i]).filter(Boolean))];
-  const arxivKws    = [...new Set(interests.map(i => INTEREST_TO_ARXIV[i]).filter(Boolean))];
-  const devtoTags   = [...new Set([...interests.map(i => INTEREST_TO_DEVTO_TAG[i]).filter(Boolean), ...skillDevtoTags])];
-  const mediumTags  = [...new Set(interests.map(i => INTEREST_TO_MEDIUM_TAG[i]).filter(Boolean))];
-
-  // Fallback defaults so tag-based sources always have something when user has no interests
-  const effectiveDevtoTags  = devtoTags.length  > 0 ? devtoTags  : ['javascript','webdev','programming','react','python'];
-  const effectiveSoTags     = soTags.length     > 0 ? soTags     : ['javascript','python','node.js','reactjs','git'];
-  const effectiveMastoTags  = mastoTags.length  > 0 ? mastoTags  : ['programming','webdev','javascript','foss'];
-  const effectiveLobTags    = lobTags.length    > 0 ? lobTags    : ['programming','web','javascript'];
-  const effectiveArxivKws   = arxivKws.length   > 0 ? arxivKws   : ['machine learning','neural networks','deep learning'];
-  const effectiveMediumTags = mediumTags.length > 0 ? mediumTags : ['programming','javascript','startup','technology'];
-
-  // Only run the fetcher(s) matching the requested source; all others resolve immediately
-  const run = (name) => !sourceFilter || sourceFilter === name;
-
-  const [
-    redditResults, hnResults, githubResults, youtubeResults,
-    devtoResults, mediumResults,
-    soResults, mastoResults, lobResults, arxivResults,
-    indeedResults, phResults, tcResults, vergeResults, ihResults, hashnodeResults, blueskyResults,
-    arsResults, wiredResults, regResults, vbResults, smashingResults, phoronixResults, infoqResults, mittrResults,
-    gitlabResults, remoteokResults, ycResults, crunchbaseResults, behanceResults, designwebResults, twitchResults,
-  ] = await Promise.all([
-    run('reddit')        ? Promise.all(topics.map(kw => fetchRedditByKeyword(kw))).catch(() => []) : [],
-    run('hackernews')    ? Promise.all(topics.map(kw => fetchHNByKeyword(kw))).catch(() => [])     : [],
-    run('github')        ? Promise.all(topics.map(kw => fetchGitHubByKeyword(kw))).catch(() => []) : [],
-    run('youtube')       ? Promise.all(topics.map(kw => fetchYouTubeByKeyword(kw))).catch(() => []) : [],
-    run('devto')         ? Promise.all(effectiveDevtoTags.map(t => fetchDevToByTag(t))).catch(() => [])        : [],
-    run('medium')        ? Promise.all(effectiveMediumTags.map(t => fetchMediumByTag(t))).catch(() => [])      : [],
-    run('stackoverflow') ? Promise.all(effectiveSoTags.map(t => fetchStackOverflowByTag(t))).catch(() => [])   : [],
-    run('mastodon')      ? Promise.all(effectiveMastoTags.map(t => fetchMastodonByTag(t))).catch(() => [])     : [],
-    run('lobsters')      ? Promise.all(effectiveLobTags.map(t => fetchLobstersByTag(t))).catch(() => [])       : [],
-    run('arxiv')         ? Promise.all(effectiveArxivKws.map(k => fetchArxivByKeyword(k))).catch(() => [])     : [],
-    run('indeed')        ? Promise.all(topics.map(kw => fetchIndeedJobs(kw))).catch(() => [])           : [],
-    run('producthunt')   ? Promise.all(topics.map(kw => fetchProductHunt(kw))).catch(() => [])          : [],
-    run('techcrunch')    ? Promise.all(topics.map(kw => fetchTechCrunch(kw))).catch(() => [])           : [],
-    run('theverge')      ? Promise.all(topics.map(kw => fetchTheVerge(kw))).catch(() => [])             : [],
-    run('indiehackers')  ? Promise.all(topics.map(kw => fetchIndieHackers(kw))).catch(() => [])         : [],
-    run('hashnode')      ? Promise.all(topics.map(kw => fetchHashnode(kw))).catch(() => [])             : [],
-    run('bluesky')       ? Promise.all(topics.map(kw => fetchBlueskyByKeyword(kw))).catch(() => [])     : [],
-    run('arstechnica')   ? Promise.all(topics.map(kw => fetchArsTechnica(kw))).catch(() => [])          : [],
-    run('wired')         ? Promise.all(topics.map(kw => fetchWired(kw))).catch(() => [])                : [],
-    run('theregister')   ? Promise.all(topics.map(kw => fetchTheRegister(kw))).catch(() => [])          : [],
-    run('venturebeat')   ? Promise.all(topics.map(kw => fetchVentureBeat(kw))).catch(() => [])          : [],
-    run('smashing')      ? Promise.all(topics.map(kw => fetchSmashingMagazine(kw))).catch(() => [])     : [],
-    run('phoronix')      ? Promise.all(topics.map(kw => fetchPhoronix(kw))).catch(() => [])             : [],
-    run('infoq')         ? Promise.all(topics.map(kw => fetchInfoQ(kw))).catch(() => [])                : [],
-    run('mittr')         ? Promise.all(topics.map(kw => fetchMITTechReview(kw))).catch(() => [])        : [],
-    run('gitlab')        ? Promise.all(topics.map(kw => fetchGitLabByKeyword(kw))).catch(() => [])      : [],
-    run('remoteok')      ? Promise.all(topics.map(kw => fetchRemoteOKJobs(kw))).catch(() => [])         : [],
-    run('yc')            ? Promise.all(topics.map(kw => fetchYCombinator(kw))).catch(() => [])          : [],
-    run('crunchbase')    ? Promise.all(topics.map(kw => fetchCrunchbaseNews(kw))).catch(() => [])       : [],
-    run('behance')       ? Promise.all(topics.map(kw => fetchBehanceProjects(kw))).catch(() => [])      : [],
-    run('designweb')     ? Promise.all(topics.map(kw => fetchDesignWeb(kw))).catch(() => [])            : [],
-    run('twitch')        ? fetchTwitchPublicPosts().catch(() => []) : [],
-  ]);
-
-  return {
-    reddit:        redditResults.flat(),
-    hn:            hnResults.flat(),
-    github:        githubResults.flat(),
-    devto:         devtoResults.flat(),
-    medium:        mediumResults.flat(),
-    youtube:       youtubeResults.flat(),
-    stackoverflow: soResults.flat(),
-    mastodon:      mastoResults.flat(),
-    lobsters:      lobResults.flat(),
-    arxiv:         arxivResults.flat(),
-    indeed:        indeedResults.flat(),
-    producthunt:   phResults.flat(),
-    techcrunch:    tcResults.flat(),
-    theverge:      vergeResults.flat(),
-    indiehackers:  ihResults.flat(),
-    hashnode:      hashnodeResults.flat(),
-    bluesky:       blueskyResults.flat(),
-    arstechnica:   arsResults.flat(),
-    wired:         wiredResults.flat(),
-    theregister:   regResults.flat(),
-    venturebeat:   vbResults.flat(),
-    smashing:      smashingResults.flat(),
-    phoronix:      phoronixResults.flat(),
-    infoq:         infoqResults.flat(),
-    mittr:         mittrResults.flat(),
-    gitlab:        gitlabResults.flat(),
-    remoteok:      remoteokResults.flat(),
-    yc:            ycResults.flat(),
-    crunchbase:    crunchbaseResults.flat(),
-    behance:       behanceResults.flat(),
-    designweb:     designwebResults.flat(),
-    twitch:        twitchResults,
-  };
+async function fetchAllTopicPosts(_interests = [], _role = '', _skills = [], _goals = [], _title = '', _org = '', sourceFilter = null) {
+  // Member reads use admitted supply. A cache miss must not fan out a second
+  // collection system or return raw provider results before Equalizer admission.
+  const ids = Object.keys(SOURCE_CONFIG).filter(id => !sourceFilter || canonicalFeedSourceId(id) === canonicalFeedSourceId(sourceFilter));
+  if (IS_PIPELINE_ROLE) getSourceCollectionScheduler().nudge(ids);
+  return Object.fromEntries(ids.map(id => [id, agentSourceCache.get(id)?.posts || []]));
 }
 
 // --- Agent action log (in-memory, circular, 120 entries) ---------------------
@@ -6624,18 +6507,18 @@ function matchesFeedScreeningSnapshot(snapshot, post) {
     && snapshot?.dbScreeningStatus === post?.screening_status;
 }
 
-function screenFeedPost(post) {
+function screenFeedPost(post, { recordAudit = true } = {}) {
   if (!post || typeof post !== 'object') return { allowed: false, reason: 'invalid_post', post };
   // Always apply current source policy before consulting memoized screening.
   const access = feedAudit.access(post);
   if (!access.allowed) {
-    feedAudit.record(post, access, access.reason === 'policy_unavailable' ? 'held' : 'rejected');
+    if (recordAudit) feedAudit.record(post, access, access.reason === 'policy_unavailable' ? 'held' : 'rejected');
     return { ...access, post };
   }
   const cached = externalFeedScreeningMemo.get(post);
   if (matchesFeedScreeningSnapshot(cached?.snapshot, post)) return cached.result;
   const result = screenImportedFeedPost(post);
-  feedAudit.record(post, result);
+  if (recordAudit) feedAudit.record(post, result);
   const entry = { snapshot: feedScreeningSnapshot(post), result };
   externalFeedScreeningMemo.set(post, entry);
   if (result.post && result.post !== post) {
@@ -6722,6 +6605,7 @@ function refreshImportedPostBody(post) {
 function addAndBroadcast(incoming, { includeAccepted = false } = {}) {
   const started = Date.now();
   const passed = [];
+  const deferred = [];
   const acceptedIds = new Set();
   let droppedInvalid = 0, droppedDuplicate = 0, droppedScreened = 0;
   for (const p of incoming) {
@@ -6729,12 +6613,24 @@ function addAndBroadcast(incoming, { includeAccepted = false } = {}) {
     const bucket = filterAgentState.bySource[src] || (filterAgentState.bySource[src] = { input: 0, output: 0, droppedInvalid: 0, droppedDuplicate: 0, droppedScreened: 0 });
     bucket.input++;
     if (!p?.id || isFallbackFeedPost(p)) { postPipelineTracker.record(p, 'rejected', 'Invalid or fallback post'); bucket.droppedInvalid++; droppedInvalid++; continue; }
-    const admission = feedAudit.admit(p);
-    if (!admission.allowed) { postPipelineTracker.record(p, 'rejected', admission.reason); bucket.droppedScreened++; droppedScreened++; continue; }
-    const screened = screenFeedPost(p);
-    if (!screened.allowed) { postPipelineTracker.record(p, 'rejected', screened.reason); bucket.droppedScreened++; droppedScreened++; continue; }
-    if (seenPostIds.has(screened.post.id)) refreshImportedPostBody(screened.post);
-    if (seenPostIds.has(screened.post.id) || acceptedIds.has(screened.post.id)) { postPipelineTracker.record(p, 'duplicate', 'Previously accepted post ID'); bucket.droppedDuplicate++; droppedDuplicate++; continue; }
+    // Known IDs never spend a new admission, including after the audit memo expires.
+    if (seenPostIds.has(p.id)) refreshImportedPostBody(p);
+    if (seenPostIds.has(p.id) || acceptedIds.has(p.id)) { postPipelineTracker.record(p, 'duplicate', 'Previously accepted post ID'); bucket.droppedDuplicate++; droppedDuplicate++; continue; }
+    const screened = screenFeedPost(p, { recordAudit: false });
+    if (!screened.allowed) {
+      if (screened.reason === 'policy_unavailable') { deferred.push({ post: p, retryAt: Date.now() + 5000 }); continue; }
+      feedAudit.record(p, screened);
+      postPipelineTracker.record(p, 'rejected', screened.reason); bucket.droppedScreened++; droppedScreened++; continue;
+    }
+    const admission = feedAudit.admit(screened.post);
+    if (!admission.allowed) {
+      if (['source_flood', 'author_flood', 'approval_cooldown', 'policy_unavailable'].includes(admission.reason)) {
+        deferred.push({ post: p, retryAt: admission.retryAt || Date.now() + 5000 });
+        postPipelineTracker.record(p, 'queued', admission.reason + '; retained for later admission');
+      } else { postPipelineTracker.record(p, 'rejected', admission.reason); bucket.droppedScreened++; droppedScreened++; }
+      continue;
+    }
+    feedAudit.record(p, screened);
     acceptedIds.add(screened.post.id);
     bucket.output++;
     passed.push(screened.post);
@@ -6754,8 +6650,21 @@ function addAndBroadcast(incoming, { includeAccepted = false } = {}) {
   filterAgentState.lastDurationMs = Date.now() - started;
   filterAgentState.lastRun = Date.now();
 
-  if (!fresh.length) return includeAccepted ? { count: 0, posts: [] } : 0;
+  if (!fresh.length) return includeAccepted ? { count: 0, posts: [], deferred } : 0;
   fresh.forEach(p => addSeenId(p.id, p));
+  const acceptedSources = new Map();
+  for (const post of fresh) {
+    const id = feedWorkerKey(canonicalFeedSourceId(post.source) || post.source);
+    if (!acceptedSources.has(id)) acceptedSources.set(id, []);
+    acceptedSources.get(id).push(post);
+  }
+  for (const [id, batch] of acceptedSources) {
+    const previous = agentSourceCache.get(id) || { posts: [], totalSeen: 0 };
+    agentSourceCache.set(id, { ...previous, posts: sortFeedBatch([...batch, ...previous.posts], id + '-source-cache', {
+      limit: SOURCE_FEED_CACHE_LIMIT,
+    }), lastFetch: Date.now(), totalSeen: previous.totalSeen + batch.length });
+    indexPostUrls(batch);
+  }
   // This is the one call site building the shared cache itself (every other
   // diversify/maxSharePct usage — enforceFeedDiversity, the Jobs filter —
   // only caps what a single *request* sees, downstream of whatever's
@@ -6779,7 +6688,7 @@ function addAndBroadcast(incoming, { includeAccepted = false } = {}) {
   // relevant for the Deploy A overlap window and any api-role code path not
   // yet gated (see SERVICE_ROLE), so a save never lands somewhere unexpected.
   queueFeedPersistence(fresh, IS_PIPELINE_ROLE ? 'feed_posts_staging' : 'feed_posts_cache');
-  return includeAccepted ? { count: fresh.length, posts: fresh } : fresh.length;
+  return includeAccepted ? { count: fresh.length, posts: fresh, deferred } : fresh.length;
 }
 
 // Equalizer drains are intentionally quick and frequent. Persisting every
@@ -6946,6 +6855,20 @@ const FEED_TOPICS = [
   'Privacy', 'AI Ethics', 'Digital Nomad', 'Networking',
 ];
 
+const sourcePullGate = createSourcePullGate({ collectionState: sourceCollectionState });
+function sourceCollectionState(value) {
+  const id = canonicalFeedSourceId(value) || value;
+  const state = feedAudit.collectionState(id);
+  if (!state.allowed) return state;
+  const buffered = equalizerBuffer.get(id)?.length || 0;
+  if (buffered >= EQUALIZER_MAX_BUFFER_PER_SOURCE || equalizerPendingTotal() >= EQUALIZER_MAX_BUFFER_TOTAL
+    || (state.remaining !== null && buffered >= state.remaining)) {
+    return { ...state, allowed: false, reason: 'intake_backlog', retryAt: Date.now() + EQUALIZER_DRAIN_MS };
+  }
+  const pull = sourcePullGate.state(id);
+  return pull.allowed ? state : { ...state, ...pull };
+}
+
 let sourceCollectionScheduler = null;
 function getSourceCollectionScheduler() {
   if (!sourceCollectionScheduler) sourceCollectionScheduler = require('./source-collection-scheduler').createSourceCollectionScheduler({
@@ -6978,6 +6901,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper, options = {}
     minSpacingMs: options.minSpacingMs || cfg.minSpacingMs || 1000,
     startDelayMs: options.startDelayMs || 0,
     providerUntil: () => sourceProviderCooldown(agentId),
+    collectionState: () => sourceCollectionState(agentId),
     collect: async key => {
       health.lastAttempt = Date.now();
       health.fetchCount++;
@@ -6985,24 +6909,23 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper, options = {}
       // clearing only this key leaves unrelated member-owned caches intact.
       if (CACHE_KEY_PREFIX[agentId]) bustCache(CACHE_KEY_PREFIX[agentId] + key);
       try {
-        const posts = await fetchFn(key);
-        const fresh = realFeedPosts(posts.filter(post => feedAudit.admit(post).allowed)).map(post => trimPostContent(normalizeFeedPost(post)));
+        const posts = await sourcePullGate.run(agentId, () => fetchFn(key));
+        const fresh = (Array.isArray(posts) ? posts : []).filter(post => post && typeof post === 'object')
+          .map(post => trimPostContent(normalizeFeedPost(post)));
         health.lastSuccess = Date.now();
         health.lastError = null;
         health.consecutiveErrors = 0;
         health.paused = false;
         health.pauseUntil = 0;
-        if (fresh.length) {
-          indexPostUrls(fresh);
-          pushToEqualizer(agentId, fresh);
-          const previous = agentSourceCache.get(agentId) || { posts: [], totalSeen: 0 };
-          agentSourceCache.set(agentId, { posts: sortFeedBatch([...fresh, ...previous.posts], agentId + '-source-cache', {
-            limit: SOURCE_FEED_CACHE_LIMIT,
-          }), lastFetch: Date.now(), totalSeen: previous.totalSeen + fresh.length, emoji, color });
-        }
+        if (fresh.length) pushToEqualizer(agentId, fresh);
+        // Source caches contain admitted posts only; collection metadata may
+        // update before the queue drains without exposing the raw candidates.
+        const previous = agentSourceCache.get(agentId) || { posts: [], totalSeen: 0 };
+        agentSourceCache.set(agentId, { ...previous, lastFetch: Date.now(), emoji, color });
         updateAgentStatus(agentId);
         return { posts: fresh.length };
       } catch (error) {
+        if (error?.code === 'source_collection_deferred') throw error;
         health.consecutiveErrors++;
         health.totalErrors++;
         health.lastError = error?.message || String(error);
@@ -7079,6 +7002,10 @@ function startContinuousWorkers() {
     ['twitter',       '??',  '#000000', fetchTwitterShared,       kw,  32000],
     ['linkedin',      '??', '#0A66C2', fetchLinkedInShared,      kw,  33000],
     ['facebook',      '??', '#1877F2', fetchFacebookShared,      kw,  35000],
+    ['crossref',      'CR', '#0577B9', researchFeedSources.crossref, kw, 40000],
+    ['datacite',      'DC', '#2497B3', researchFeedSources.datacite, kw, 42000],
+    ['zenodo',        'ZE', '#0072CE', researchFeedSources.zenodo, kw, 44000],
+    ['openalex',      'OA', '#D45500', researchFeedSources.openalex, kw, 46000],
   ];
 
   for (const [id, emoji, color, fetchFn, keyMapper, startDelay] of SOURCES) {
@@ -7335,13 +7262,9 @@ const lastPersonalFeedComputeAt = new Map(); // userId -> timestamp
 const MAX_CONCURRENT_PERSONAL_FEED_COMPUTES = 8;
 let activePersonalFeedComputes = 0;
 
-// Builds this one user's own candidate supply from their real profile
-// (fetchAllTopicPosts, previously only ever called with one shared generic
-// interest list or from a dead code path — see its own comment) instead of
-// reading the same shared globalFeedCache pool every other user also reads.
-// Returns null on cooldown/capacity/timeout — the caller treats that as "no
-// personalized layer this round," falling back to the existing DB-backed
-// supply rather than blocking the response.
+// Reuses admitted source caches for the caller's later profile ranking.
+// Refresh nudges use the shared collector; a request never fans out provider
+// searches or returns unadmitted posts. Cooldown/capacity falls back to DB supply.
 async function computePersonalizedFeedPool(userId, prefs, skills, title, organization) {
   // Highest-priority SERVICE_ROLE gate in this file — this was live in the
   // *default* /feed response path for every user, the one external-call
@@ -7438,6 +7361,7 @@ function roundRobinMerge(lists) {
 const EQUALIZER_DRAIN_MS = 2000;
 const equalizerBuffer = new Map(); // sourceId -> post[], awaiting the next drain
 const equalizerQueuedPostIds = new Set();
+const equalizerRetryAt = new Map(); // deferred post ID -> earliest admission retry
 const EQUALIZER_MAX_BUFFER_PER_SOURCE = envNumber('EQUALIZER_MAX_BUFFER_PER_SOURCE', 1200, 100, 10000);
 const EQUALIZER_MAX_BUFFER_TOTAL = envNumber('EQUALIZER_MAX_BUFFER_TOTAL', 12000, 500, 50000);
 const EQUALIZER_MAX_DRAIN_PER_TICK = envNumber('EQUALIZER_MAX_DRAIN_PER_TICK', 600, 20, 5000);
@@ -7478,8 +7402,6 @@ function pushToEqualizer(sourceId, posts) {
       equalizerState.totalQueueDuplicates += 1;
       continue;
     }
-    const admission = feedAudit.admit(post);
-    if (!admission.allowed) { postPipelineTracker.record(post, 'rejected', admission.reason); continue; }
     buffer.push(post);
     postPipelineTracker.record(post, 'queued', 'Source fetched; waiting in equalizer before screening');
     equalizerQueuedPostIds.add(post.id);
@@ -7496,6 +7418,7 @@ function dropEqualizerPosts(sourceId, count) {
   const dropped = buffer.splice(0, Math.min(count, buffer.length));
   for (const post of dropped) {
     equalizerQueuedPostIds.delete(post?.id);
+    equalizerRetryAt.delete(post?.id);
     postPipelineTracker.record(post, 'dropped', 'Equalizer backlog capacity exceeded');
   }
   if (!buffer.length) equalizerBuffer.delete(sourceId);
@@ -7561,9 +7484,11 @@ function buildEqualizerDrainPlan(sourceIds) {
     const fairShare = baseWeight / totalBaseWeight;
     const recentShare = equalizerShareTotal > 0 ? (equalizerShareCounts.get(id) || 0) / equalizerShareTotal : fairShare;
     const dampening = recentShare > fairShare ? Math.max(0.15, fairShare / recentShare) : 1;
+    const admission = feedAudit.collectionState(id);
+    const eligible = buffer.filter(post => (equalizerRetryAt.get(post.id) || 0) <= Date.now()).length;
     return {
       id,
-      available: buffer.length,
+      available: admission.allowed ? Math.min(eligible, admission.remaining ?? eligible) : 0,
       weight: Math.max(0.15, baseWeight * dampening),
       quota: 0,
     };
@@ -7602,6 +7527,19 @@ function buildEqualizerDrainPlan(sourceIds) {
 }
 
 function runEqualizerDrain() {
+  // An explicit source block discards that source's pending supply. Temporary
+  // quota, cooldown and policy outages retain it for a later drain.
+  for (const [id, buffer] of equalizerBuffer) {
+    const permission = feedAudit.access({ source: id });
+    if (permission.reason !== 'source_blocked') continue;
+    for (const post of buffer) {
+      equalizerQueuedPostIds.delete(post.id);
+      equalizerRetryAt.delete(post.id);
+      feedAudit.record(post, permission);
+      postPipelineTracker.record(post, 'rejected', permission.reason);
+    }
+    equalizerBuffer.delete(id);
+  }
   const sourceIds = [...equalizerBuffer.keys()].filter(id => equalizerBuffer.get(id)?.length);
   if (!sourceIds.length) return;
   const started = Date.now();
@@ -7614,19 +7552,14 @@ function runEqualizerDrain() {
   const drainedBySource = {};
   for (const { id, quota } of buildEqualizerDrainPlan(sourceIds)) {
     const buf = equalizerBuffer.get(id);
-    // Dampen — never boost — a source currently running ahead of its fair
-    // share. This is the "also take into account some sources really
-    // over-dominating" half: a source configured to pull fast still gets
-    // fewer turns this tick if it's already over-represented in what's
-    // actually made it through recently, not just its raw configured rate.
-    // The extra ceil(buf.length/20) floor keeps a backlog from growing
-    // unbounded under sustained dampening — always drains at least 5% of
-    // whatever's waiting on top of the weighted amount, so a heavily-
-    // dampened source's buffer still empties out, just slower than a
-    // fairly-weighted one's.
-    const drained = buf.splice(0, quota);
-    for (const post of drained) equalizerQueuedPostIds.delete(post?.id);
-    if (!buf.length) equalizerBuffer.delete(id);
+    const drained = [], retained = [];
+    for (const post of buf) {
+      if (drained.length < quota && (equalizerRetryAt.get(post.id) || 0) <= Date.now()) drained.push(post);
+      else retained.push(post);
+    }
+    for (const post of drained) { equalizerQueuedPostIds.delete(post.id); equalizerRetryAt.delete(post.id); }
+    if (retained.length) equalizerBuffer.set(id, retained);
+    else equalizerBuffer.delete(id);
     if (!drained.length) continue;
     perSourceLists.push(drained);
     drainedBySource[id] = drained.length;
@@ -7638,6 +7571,17 @@ function runEqualizerDrain() {
   // uses — see its own comment for why this is "the full equalizer."
   const merged = roundRobinMerge(perSourceLists);
   const accepted = addAndBroadcast(merged, { includeAccepted: true });
+  const deferredBySource = {};
+  for (const { post, retryAt } of accepted.deferred) {
+    const id = canonicalFeedSourceId(post.source) || post.source;
+    if (!equalizerBuffer.has(id)) equalizerBuffer.set(id, []);
+    equalizerBuffer.get(id).push(post);
+    equalizerQueuedPostIds.add(post.id);
+    equalizerRetryAt.set(post.id, retryAt);
+    deferredBySource[id] = (deferredBySource[id] || 0) + 1;
+  }
+  trimEqualizerBacklog();
+  equalizerState.lastDeferredBySource = deferredBySource;
   const acceptedBySource = {};
   for (const post of accepted.posts) {
     const sourceId = canonicalFeedSourceId(post.source) || 'unknown';
@@ -7647,7 +7591,8 @@ function runEqualizerDrain() {
   for (const [sourceId, drainedCount] of Object.entries(drainedBySource)) {
     const acceptedCount = acceptedBySource[sourceId] || 0;
     if (acceptedCount) recordEqualizerShare(sourceId, acceptedCount);
-    if (drainedCount > acceptedCount) rejectedBySource[sourceId] = drainedCount - acceptedCount;
+    const rejected = drainedCount - acceptedCount - (deferredBySource[sourceId] || 0);
+    if (rejected > 0) rejectedBySource[sourceId] = rejected;
   }
 
   equalizerState.totalRuns += 1;
@@ -29904,7 +29849,7 @@ async function loadLiveJobCatalog(sourceLimit = LIVE_JOB_SOURCE_LIMIT) {
     fetchRemoteOKOpportunities(sourceLimit),
     fetchUSAJobsOpportunities(sourceLimit),
     fetchIndeedOpportunities(sourceLimit),
-    expandedFeedSources.weworkremotely().catch(() => []),
+    fetchJobBoardListings('weworkremotely', 'We Work Remotely', { limit: sourceLimit }),
   ]);
   const seenIds = new Set();
   const seenUrls = new Set();

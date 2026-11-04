@@ -26,6 +26,7 @@ function createProviderJsonClient(https) {
           response.resume();
           // URLs and error bodies can contain access tokens, app keys or PII.
           const error = new Error(`HTTP ${response.statusCode} for ${target.origin}`);
+          error.status = response.statusCode;
           error.headers = response.headers;
           return reject(error);
         }

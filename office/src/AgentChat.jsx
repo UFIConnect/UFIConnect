@@ -31,7 +31,7 @@ function taskResult(data) {
   }
   return lines.length ? lines.join('\n') : 'Detailed results are recorded in Office Controls history.';
 }
-export default function AgentChat({ agent, officeFetch, base, apiBase, pipelineBase, messages, updateMessages }) {
+export default function AgentChat({ agent, officeFetch, base, apiBase, pipelineBase, messages, updateMessages, onNavigate }) {
   const setupKey = `${base}:${agent.serviceRole}:${agent.id}`;
   const [draft, setDraft] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [actions, setActions] = useState([]), [actionsError, setActionsError] = useState(''), [actionsLoading, setActionsLoading] = useState(true), [revision, setRevision] = useState(0);
@@ -117,6 +117,10 @@ export default function AgentChat({ agent, officeFetch, base, apiBase, pipelineB
     const canonical = actions.find(item => item.id === action.id);
     if (!canonical) { setError('Reload the task list before running this action.'); return; }
     if (canonical.available === false) { setError(canonical.unavailableReason || 'This task is unavailable.'); return; }
+    if (canonical.input === 'flood-settings') {
+      if (typeof onNavigate !== 'function') { setError('Open Feed Audit to configure anti flooding.'); return; }
+      setReview(null); setError(''); onNavigate('feed-audit'); return;
+    }
     if (canonical.input === 'frontend-file' && canonical.frontendTarget === 'web') {
       setWebEditor({ instruction: draft || latest.current.filter(item => item.role === 'user').at(-1)?.content || '' }); setReview(null); return;
     }
@@ -152,7 +156,7 @@ export default function AgentChat({ agent, officeFetch, base, apiBase, pipelineB
   }
   function actionCard(action, key = action.id, saved = false) {
     action = actions.find(item => item.id === action.id) || action;
-    return <div className="lc-agent-task" key={key}><div><strong>{action.label}</strong><p>{action.description}</p><small>{taskTarget(action)} · {action.impact} impact</small>{action.available === false && <p className="lc-error">{action.unavailableReason}</p>}</div><button type="button" disabled={busy || !!running || actionsLoading || !!actionsError || action.available === false} onClick={() => execute(action)} aria-label={saved ? 'Run saved AI action' : `Run task: ${action.label}`}><Play size={13} />{running === action.id ? 'Running…' : action.input === 'frontend-file' ? 'Edit public web' : action.requiresConfirmation ? 'Review task' : saved ? 'Run action' : 'Run task'}</button></div>;
+    return <div className="lc-agent-task" key={key}><div><strong>{action.label}</strong><p>{action.description}</p><small>{taskTarget(action)} · {action.impact} impact</small>{action.available === false && <p className="lc-error">{action.unavailableReason}</p>}</div><button type="button" disabled={busy || !!running || actionsLoading || !!actionsError || action.available === false} onClick={() => execute(action)} aria-label={action.input === 'flood-settings' ? 'Configure anti flooding' : saved ? 'Run saved AI action' : `Run task: ${action.label}`}><Play size={13} />{running === action.id ? 'Running…' : action.input === 'flood-settings' ? 'Configure anti flooding' : action.input === 'frontend-file' ? 'Edit public web' : action.requiresConfirmation ? 'Review task' : saved ? 'Run action' : 'Run task'}</button></div>;
   }
   const suggestions = messages.at(-1)?.suggestions || [], visible = messages.slice(-visibleCount);
   const selectedAction = actions.find(action => action.id === selectedActionId), savedAction = actions.find(action => action.id === savedActionId);
