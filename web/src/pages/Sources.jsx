@@ -7,9 +7,11 @@ import client from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
-import { SOURCE_META as DIRECTORY_META, HOME_FEED_SOURCE_IDS, CAREER_ACCOUNT_PLATFORMS, TRAVEL_ACCOUNT_PLATFORMS, NEWS_ACCOUNT_PLATFORMS } from '../components/sourceMeta';
+import { SOURCE_META as DIRECTORY_META, HOME_FEED_SOURCE_IDS, JOB_FEED_SOURCE_IDS, CAREER_ACCOUNT_PLATFORMS, TRAVEL_ACCOUNT_PLATFORMS, NEWS_ACCOUNT_PLATFORMS } from '../components/sourceMeta';
 import ExternalAccountLogin from '../components/ExternalAccountLogin';
 import { enabledFirstSourceSections } from '../components/sourceDirectory';
+import SourceCollectionDetails from '../components/SourceCollectionDetails';
+import { canonicalCollectionSource, collectionSourceRows, collectionStatus } from '../components/sourceCollection.mjs';
 
 const SOURCE_META = {
   ...DIRECTORY_META,
@@ -93,12 +95,9 @@ function Toggle({ enabled, onChange, disabled = false, label }) {
   );
 }
 
-function HealthDot({ postCount, lastFetch }) {
-  const age = lastFetch ? (Date.now() - new Date(lastFetch).getTime()) / 60000 : 9999;
-  const live = postCount > 0 && age < 30;
-  const stale = postCount > 0 && age >= 30;
-  const color = live ? '#22C55E' : stale ? '#F59E0B' : '#94A3B8';
-  const label = live ? 'Live' : stale ? 'Updating' : 'No data yet';
+function HealthDot({ source }) {
+  const { label, tone } = collectionStatus(source);
+  const color = ({ active: '#2563EB', available: '#16A34A', waiting: '#B45309', muted: '#64748B' })[tone];
   return (
     <span title={label} style={{
       display: 'inline-flex', alignItems: 'center', gap: 4,
@@ -106,7 +105,7 @@ function HealthDot({ postCount, lastFetch }) {
     }}>
       <span style={{
         width: 6, height: 6, borderRadius: '50%', background: color,
-        boxShadow: live ? `0 0 0 2px ${color}33` : 'none', display: 'inline-block',
+        display: 'inline-block',
       }} />
       {label}
     </span>
@@ -124,8 +123,8 @@ function relativeTime(iso) {
 }
 
 function SourceRow({ sourceId, health, enabled, onToggle, expanded, onExpand, saving }) {
-  const meta = SOURCE_META[sourceId] || { label: sourceId, icon: 'SRC', color: '#6366F1', desc: '' };
-  const { postCount = 0, lastFetch, samplePosts = [] } = health || {};
+  const meta = SOURCE_META[sourceId] || { label: health?.name || sourceId, icon: 'SRC', color: '#6366F1', desc: health?.description || '' };
+  const { postCount = 0, samplePosts = [] } = health || {};
 
   return (
     <div style={{
@@ -152,11 +151,12 @@ function SourceRow({ sourceId, health, enabled, onToggle, expanded, onExpand, sa
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span style={{ fontWeight: 700, fontSize: '.88rem' }}>{meta.label}</span>
-            {health && <HealthDot postCount={postCount} lastFetch={lastFetch} />}
+            {health && <HealthDot source={health} />}
           </div>
           <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 1, lineHeight: 1.4 }}>
             {meta.desc}
           </div>
+          <SourceCollectionDetails source={health} />
         </div>
 
         {/* Post count + expand + toggle */}
@@ -246,7 +246,7 @@ export default function Sources() {
   useEffect(() => {
     if (!profile?.id) return;
     const stored = profile.roleSettings?.disabledSources;
-    setDisabled(new Set(Array.isArray(stored) ? stored : []));
+    setDisabled(new Set((Array.isArray(stored) ? stored : []).map(canonicalCollectionSource)));
   }, [profile?.id, profile?.roleSettings?.disabledSources]);
 
   // Scrolling back up to the top acts as pull-to-refresh, same as every
@@ -264,7 +264,7 @@ export default function Sources() {
       });
       const persisted = saved.profile || saved;
       updateProfileLocally(persisted);
-      setDisabled(new Set(Array.isArray(persisted.roleSettings?.disabledSources) ? persisted.roleSettings.disabledSources : []));
+      setDisabled(new Set((Array.isArray(persisted.roleSettings?.disabledSources) ? persisted.roleSettings.disabledSources : []).map(canonicalCollectionSource)));
       setError(null);
     } catch (err) {
       setDisabled(previous);
@@ -284,32 +284,31 @@ export default function Sources() {
   const enableAll = () => persistDisabled(new Set());
   const disableAll = (ids) => persistDisabled(new Set(ids));
 
-  // Build a health map: sourceId → { postCount, lastFetch, samplePosts }
+  const sourceRows = useMemo(() => collectionSourceRows(data), [data]);
+  // Configuration and cached sample counts have different meanings.
   const healthMap = useMemo(() => {
     const map = {};
-    for (const s of (data?.sources || [])) {
-      map[s.id] = { postCount: s.postCount, lastFetch: s.lastFetch, samplePosts: s.samplePosts || [] };
+    for (const s of sourceRows) {
+      map[s.id] = { ...s, samplePosts: s.samplePosts || [] };
     }
     return map;
-  }, [data]);
+  }, [sourceRows]);
 
   // All known source IDs (union of API data + SOURCE_META)
   const allSourceIds = useMemo(() => {
-    const fromApi = (data?.sources || []).map(s => s.id);
-    const fromMeta = [...HOME_FEED_SOURCE_IDS, 'uficonnect'];
+    const fromApi = sourceRows.map(s => s.id);
+    const fromMeta = data?.sourceCatalog ? ['uficonnect'] : [...HOME_FEED_SOURCE_IDS, ...JOB_FEED_SOURCE_IDS, 'uficonnect'];
     return [...new Set([...fromApi, ...fromMeta])];
-  }, [data]);
+  }, [data, sourceRows]);
 
   const enabledCount  = allSourceIds.filter(id => !disabled.has(id)).length;
   const categorised = new Set(CATEGORIES.flatMap(category => category.sources));
   const sourceGroups = enabledFirstSourceSections([
-    ...CATEGORIES.map(({ id, label, sources }) => ({ id, label, items: sources })),
+    ...CATEGORIES.map(({ id, label, sources }) => ({ id, label, items: sources.filter(source => allSourceIds.includes(source)) })),
     { id: 'other', label: 'Other', items: allSourceIds.filter(id => !categorised.has(id)) },
   ], disabled);
-  const liveCount     = (data?.sources || []).filter(s => {
-    const age = s.lastFetch ? (Date.now() - new Date(s.lastFetch).getTime()) / 60000 : 9999;
-    return s.postCount > 0 && age < 30;
-  }).length;
+  const availableCount = sourceRows.filter(source => source.postCount > 0).length;
+  const hiddenCount = allSourceIds.filter(id => disabled.has(id)).length;
 
   return (
     <Layout>
@@ -353,14 +352,14 @@ export default function Sources() {
           }}>
             <div style={{ flex: 1, minWidth: 160 }}>
               <div style={{ fontWeight: 700, fontSize: '.9rem' }}>
-                {enabledCount} of {allSourceIds.length} sources active
+                {enabledCount} of {allSourceIds.length} sources selected
               </div>
               <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>
-                {liveCount > 0 ? `${liveCount} fetching live right now` : 'Sources update in the background'}
+                {availableCount} sources with available posts
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              {disabled.size > 0 && (
+              {hiddenCount > 0 && (
                 <button
                   onClick={enableAll}
                   disabled={savingSources}
@@ -370,7 +369,7 @@ export default function Sources() {
                   Enable all
                 </button>
               )}
-              {disabled.size < allSourceIds.length && (
+              {hiddenCount < allSourceIds.length && (
                 <button
                   onClick={() => disableAll(allSourceIds)}
                   disabled={savingSources}
@@ -382,9 +381,12 @@ export default function Sources() {
               )}
             </div>
           </div>
+          {sourceRows.some(source => source.pullLimit) && <p style={{ fontSize: '.75rem', color: 'var(--muted)', marginBottom: 20 }}>
+            App pull limits cap background collection jobs. Provider quotas and cooldowns can slow collection further. Refreshing this page updates these details.
+          </p>}
 
           {/* Disabled banner */}
-          {disabled.size > 0 && (
+          {hiddenCount > 0 && (
             <div style={{
               padding: '10px 14px', borderRadius: 8, marginBottom: 16,
               background: '#FFF7ED', border: '1px solid #FED7AA',
@@ -392,7 +394,7 @@ export default function Sources() {
             }}>
               <span>!</span>
               <span>
-                {disabled.size} source{disabled.size !== 1 ? 's are' : ' is'} hidden from your feed.
+                {hiddenCount} source{hiddenCount !== 1 ? 's are' : ' is'} hidden from your feed.
               </span>
               <button onClick={enableAll} style={{
                 marginLeft: 'auto', background: 'none', border: 'none',

@@ -4,20 +4,31 @@ import './office-operations.css';
 import DeviceSecurity from './DeviceSecurity';
 
 const policyFields = [['maxPerSourcePerMinute','Posts per source / minute',1,10000],['maxPerAuthorPerMinute','Posts per author / minute',1,1000],['duplicateWindowSeconds','Duplicate window (seconds)',10,3600],['targetApprovalPct','Approval target (%)',1,100],['minimumSample','Minimum sample for cooldown',5,1000],['cooldownSeconds','Source cooldown (seconds)',10,3600]];
+const editablePolicy = policy => policy && Object.fromEntries(['enabled',...policyFields.map(([key]) => key),'sourcePullLimits'].map(key => [key,policy[key]]));
+const policySignature = policy => JSON.stringify(editablePolicy(policy), (_key, value) => value && typeof value === 'object' && !Array.isArray(value)
+  ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))) : value);
 export default function FeedAudit({ apiBase = '', pipelineBase = '', request }) {
   const [data,setData] = useState(null), [error,setError] = useState(''), [busy,setBusy] = useState(false), [revision,setRevision] = useState(0);
   const [filters,setFilters] = useState({status:'all',reason:'',source:'',q:''}), [offset,setOffset] = useState(0);
   const [selected,setSelected] = useState(null), [detail,setDetail] = useState(null), [detailError,setDetailError] = useState('');
   const [settings,setSettings] = useState(null), [source,setSource] = useState(''), [blockReason,setBlockReason] = useState('');
   const [running,setRunning] = useState(''), [result,setResult] = useState(null);
+  const [policyChanged,setPolicyChanged] = useState(false);
   const generation = useRef(0), actionGeneration = useRef(0), runningRef = useRef(false);
+  const settingsDirty = useRef(false), loadedPolicy = useRef(null);
   const refresh = useCallback(() => setRevision(x => x + 1), []);
-  useEffect(() => { const clear = () => { generation.current++; actionGeneration.current++; setData(null); setSettings(null); setSelected(null); setDetail(null); setResult(null); refresh(); }; window.addEventListener('office-token-changed',clear); return () => { generation.current++; actionGeneration.current++; window.removeEventListener('office-token-changed',clear); }; },[refresh]);
+  useEffect(() => { const clear = () => { generation.current++; actionGeneration.current++; settingsDirty.current = false; loadedPolicy.current = null; setPolicyChanged(false); setData(null); setSettings(null); setSelected(null); setDetail(null); setResult(null); refresh(); }; window.addEventListener('office-token-changed',clear); return () => { generation.current++; actionGeneration.current++; window.removeEventListener('office-token-changed',clear); }; },[refresh]);
   useEffect(() => {
     const controller = new AbortController(), current = ++generation.current;
     setBusy(true); setError(''); setData(null);
     const params = new URLSearchParams({...filters,offset:String(offset),limit:'40'});
-    request(`${apiBase}/office/feed-audit?${params}`,{signal:controller.signal}).then(readOperation).then(body => { if (current === generation.current) { setData(body); setSettings(old => old || body.policy); } }).catch(e => { if (current === generation.current && e.name !== 'AbortError') setError(e.message); }).finally(() => { if (current === generation.current) setBusy(false); });
+    request(`${apiBase}/office/feed-audit?${params}`,{signal:controller.signal}).then(readOperation).then(body => {
+      if (current !== generation.current) return;
+      setData(body);
+      if (!settingsDirty.current) {
+        setSettings(editablePolicy(body.policy)); loadedPolicy.current = policySignature(body.policy); setPolicyChanged(false);
+      } else setPolicyChanged(loadedPolicy.current !== policySignature(body.policy));
+    }).catch(e => { if (current === generation.current && e.name !== 'AbortError') setError(e.message); }).finally(() => { if (current === generation.current) setBusy(false); });
     return () => controller.abort();
   },[apiBase,request,filters,offset,revision]);
   useEffect(() => {
@@ -35,19 +46,23 @@ export default function FeedAudit({ apiBase = '', pipelineBase = '', request }) 
         const body = await readOperation(await request(`${base}/office/controls/${encodeURIComponent(id)}/execute`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmed:true,...payload})}));
         results.push({service:base === apiBase ? 'API' : 'Pipeline',...body});
       }
-      if(current === actionGeneration.current) { setResult({command:id,results}); if(id === 'feed.audit-protect' || id === 'feed.flood-configure') setSettings(null); refresh(); }
+      if(current === actionGeneration.current) { setResult({command:id,results}); if(id === 'feed.audit-protect' || id === 'feed.flood-configure') { settingsDirty.current = false; loadedPolicy.current = null; setPolicyChanged(false); setSettings(null); } refresh(); }
     } catch(e) { if(current === actionGeneration.current) { setError(`${e.message}${results.length ? ' Earlier service results are shown below; this command partially completed.' : ''}`); if(results.length) setResult({command:id,results}); refresh(); } }
     finally { runningRef.current = false; setRunning(''); }
   }
   function filter(key,value) { setFilters(old => ({...old,[key]:value})); setOffset(0); setSelected(null); }
+  function editSettings(update) { settingsDirty.current = true; setSettings(update); }
+  function loadCurrentSettings() {
+    settingsDirty.current = false; loadedPolicy.current = policySignature(data?.policy); setPolicyChanged(false); setSettings(editablePolicy(data?.policy));
+  }
   function updatePullLimit(sourceId, key, value) {
-    setSettings(old => ({ ...old, sourcePullLimits: {
+    editSettings(old => ({ ...old, sourcePullLimits: {
       ...old.sourcePullLimits,
       [sourceId]: { ...old.sourcePullLimits[sourceId], [key]: value === '' ? '' : Number(value) },
     } }));
   }
   const summary = data?.summary, itemUrl = safeSourceUrl(detail?.sourceUrl);
-  const sourceLabels = new Map((data?.sources || []).map(row => [row.id, row.label || row.id]));
+  const sourceLabels = new Map((data?.sources || []).map(row => [row.id === 'hn' ? 'hackernews' : row.id, row.label || row.id]));
   const pullLimits = Object.entries(settings?.sourcePullLimits || {}).sort(([left], [right]) =>
     (sourceLabels.get(left) || left).localeCompare(sourceLabels.get(right) || right));
   return <section className="office-ops" aria-label="Feed audit">
@@ -61,15 +76,16 @@ export default function FeedAudit({ apiBase = '', pipelineBase = '', request }) 
       <div className="op-grid">{(data?.commands || []).filter(command => !command.id.startsWith('source.')).map(command => <details key={command.id}><summary>{command.label}</summary><p>{command.description}</p><code>{command.id}</code>{['feed.audit-review','feed.audit-protect'].includes(command.id) && <div className="op-actions"><button disabled={!!running} onClick={() => execute(command.id,{},true)}>Run {command.label}</button></div>}</details>)}</div>
       {result && <div className="op-notice" role="status">Command results: {result.command}<details><summary>View each result</summary><pre>{JSON.stringify(result.results,null,2)}</pre></details></div>}
     </div>
-    <section className="op-card" aria-labelledby="anti-flooding-heading"><h2 id="anti-flooding-heading">Anti flooding</h2><p>Limit bursts and repeated content, then cool down sources with poor approval.</p>{settings && <form onSubmit={event => { event.preventDefault(); execute('feed.flood-configure',{settings:Object.fromEntries(['enabled',...policyFields.map(([key]) => key),'sourcePullLimits'].map(key => [key,settings[key]]))}); }}>
-      <label className="op-check"><input type="checkbox" checked={!!settings.enabled} onChange={e => setSettings({...settings,enabled:e.target.checked})} />Flood protection enabled</label>
-      <div className="op-filters">{policyFields.map(([key,label,min,max]) => <label key={key}>{label}<input type="number" required min={min} max={max} step="1" value={settings[key] ?? ''} onChange={e => setSettings({...settings,[key]:e.target.value === '' ? '' : Number(e.target.value)})} /></label>)}</div>
+    <section className="op-card" aria-labelledby="anti-flooding-heading"><h2 id="anti-flooding-heading">Anti flooding</h2><p>Limit bursts and repeated content, then cool down sources with poor approval.</p>{settings && <form onSubmit={event => { event.preventDefault(); execute('feed.flood-configure',{settings:editablePolicy(settings)}); }}>
+      {policyChanged && <div className="op-notice" role="status"><p>Flood settings changed on the server while you were editing. Your unsaved edits are preserved.</p><button type="button" disabled={busy || !!running || !data?.policy} onClick={loadCurrentSettings}>Load current flood settings</button></div>}
+      <label className="op-check"><input type="checkbox" checked={!!settings.enabled} onChange={e => editSettings({...settings,enabled:e.target.checked})} />Flood protection enabled</label>
+      <div className="op-filters">{policyFields.map(([key,label,min,max]) => <label key={key}>{label}<input type="number" required min={min} max={max} step="1" value={settings[key] ?? ''} onChange={e => editSettings({...settings,[key]:e.target.value === '' ? '' : Number(e.target.value)})} /></label>)}</div>
       <h3 id="source-pull-limits-heading">Source pull limits</h3>
       <p>Set the maximum collection rate for each source. Pulls are spaced evenly across the window, including manual refreshes. These limits apply even when post flood protection is off. You can reduce a source's rate; its collection ceiling and any stricter provider limits still apply.</p>
       {pullLimits.length ? <>
         <p>{num(pullLimits.length)} sources configured. New sources returned by the service appear here automatically.</p>
         <div className="op-table op-pull-limits" role="region" aria-labelledby="source-pull-limits-heading" tabIndex={0}><table>
-          <thead><tr><th scope="col">Source</th><th scope="col">Maximum pulls</th><th scope="col">Window (seconds)</th><th scope="col">Minimum spacing</th></tr></thead>
+          <thead><tr><th scope="col">Source</th><th scope="col">Maximum pulls</th><th scope="col">Window (seconds)</th><th scope="col">Policy minimum spacing</th></tr></thead>
           <tbody>{pullLimits.map(([sourceId, limit]) => {
             const label = sourceLabels.get(sourceId) || sourceId;
             const spacing = limit.windowSeconds > 0 && limit.maxPulls > 0 ? Math.ceil(limit.windowSeconds * 1000 / limit.maxPulls) / 1000 : null;
@@ -77,7 +93,7 @@ export default function FeedAudit({ apiBase = '', pipelineBase = '', request }) 
               <td data-label="Source"><strong>{label}</strong>{label !== sourceId && <small>{sourceId}</small>}</td>
               <td data-label="Maximum pulls"><input aria-label={`${label} maximum pulls`} type="number" required min="1" max="10000" step="1" value={limit.maxPulls ?? ''} onChange={event => updatePullLimit(sourceId,'maxPulls',event.target.value)} /></td>
               <td data-label="Window (seconds)"><input aria-label={`${label} window in seconds`} type="number" required min="1" max="86400" step="1" value={limit.windowSeconds ?? ''} onChange={event => updatePullLimit(sourceId,'windowSeconds',event.target.value)} /></td>
-              <td data-label="Minimum spacing">{spacing == null ? 'Enter a valid limit' : `${spacing.toLocaleString(undefined, { maximumFractionDigits: 3 })} seconds`}</td>
+              <td data-label="Policy minimum spacing">{spacing == null ? 'Enter a valid limit' : `${spacing.toLocaleString(undefined, { maximumFractionDigits: 3 })} seconds`}</td>
             </tr>;
           })}</tbody>
         </table></div>

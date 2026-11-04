@@ -4,6 +4,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, ArrowDownLeft, ArrowUpRight, Building2, Check, ChevronRight, CircleHelp, Focus, Home, Layers3, Minus, Pause, Play, Plus, Radio, Search, ShieldCheck, X } from 'lucide-react';
 import { agentInactiveExplanation, buildCityModel, cityNumber, cityTimestamp } from './city-model.mjs';
 import { buildCityStreets } from './city-streets.mjs';
+import { sourceRateMetrics } from './source-rate-display.mjs';
 import './LiveCity.css';
 const CityScene3D = lazy(() => import('./CityScene3D'));
 
@@ -267,7 +268,7 @@ function AgentInspector({ agent, model, officeFetch, apiBase, pipelineBase, onNa
     {agent.observation !== 'fresh' && <p className="lc-notice" role="status">Agent observations are {stateName(agent.observation).toLowerCase()}. Displayed values describe the last received snapshot.</p>}
     <MetricGrid metrics={[
       { label: 'Service', value: roleName(agent.serviceRole), text: true }, { label: 'Execution role', value: agent.executionRole || null, text: true },
-      { label: 'Configured cadence', value: agent.interval || null, text: true }, { label: 'Reported posts', value: cityNumber(agent.postCount) },
+      ...sourceRateMetrics(agent), { label: 'Reported posts', value: cityNumber(agent.postCount) },
       { label: 'Fetch count', value: cityNumber(health.fetchCount) }, { label: 'Total errors', value: cityNumber(health.totalErrors) },
       { label: 'Consecutive errors', value: cityNumber(health.consecutiveErrors) }, { label: 'Last successful work', value: cityTimestamp(health.lastSuccess), time: true },
       { label: 'Last fetch', value: cityTimestamp(agent.lastFetch), time: true }, { label: 'Registry received', value: cityTimestamp(agent.receivedAt), time: true },

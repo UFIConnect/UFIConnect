@@ -2,6 +2,7 @@
 
 const https = require('node:https');
 const { requestedActions } = require('./office-agent-actions');
+const { sanitizeSourceRateMetadata } = require('./source-rate-metadata');
 const MAX_REQUEST_BYTES = 1024 * 1024;
 const TOPIC_SCAN_CHARACTERS = 16384;
 
@@ -11,6 +12,7 @@ const INSTRUCTIONS = 'You explain UFIConnect service observations to its operato
   + 'Use only the supplied snapshot and topic codes. Explain the selected agent and local process ownership. '
   + 'Do not invent measurements, successful work, causes, fixes, or access to other processes. '
   + 'A heartbeat or sample timestamp is not evidence of completed work. Missing or unknown means unobserved. '
+  + 'A source pull limit is a ceiling, distinct from the scheduler interval, query-cycle duration and admitted-post limits. '
   + 'You are read-only and cannot execute commands or change the service. Never claim to have done so. '
   + 'Answer the current topic concisely in plain text, using prior topic codes only to understand follow-ups. '
   + 'Suggest checks an operator can make; do not output scripts, commands, URLs, credentials, or personal data.';
@@ -71,6 +73,7 @@ function sanitizeSnapshot(input) {
   const diagnosticCapability = ['source-worker', 'runtime-metrics', 'summary-only', 'on-demand'].includes(input.diagnosticCapability)
     ? input.diagnosticCapability : 'summary-only';
   const metrics = {};
+  const sourceRate = diagnosticCapability === 'source-worker' ? sanitizeSourceRateMetadata(input) : {};
   for (const key of NUMBERS) {
     const n = input.metrics?.[key];
     if (typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= Number.MAX_SAFE_INTEGER) metrics[key] = Math.round(n * 1000) / 1000;
@@ -83,7 +86,8 @@ function sanitizeSnapshot(input) {
     agentId: input.agentId, serviceRole, executionRole, diagnosticCapability,
     observedAt: iso(input.observedAt) || new Date().toISOString(),
     status: STATUS.has(input.status) ? input.status : 'unknown',
-    cadence: typeof input.cadence === 'string' && /^[\da-z /+.,-]{1,60}$/i.test(input.cadence) ? input.cadence : null,
+    cadence: sourceRate.pullLimitLabel || (typeof input.cadence === 'string' && /^[\da-z /+.,-]{1,60}$/i.test(input.cadence) ? input.cadence : null),
+    ...sourceRate,
     purpose: input.agentId === 'ai' ? PURPOSES.ai
       : diagnosticCapability === 'source-worker' ? 'Fetches public source content on the pipeline service and stages it for transfer to the API feed.'
       : diagnosticCapability === 'on-demand' ? 'Provides connected-account content on demand. A registry heartbeat does not verify connection or fetch success.'
@@ -147,7 +151,9 @@ function diagnostics(snapshot, topic, reason) {
   if (topic === 'action_request') detail = 'Chat is read-only. No command was executed and no setting was changed. Use the separate authorized Office controls for operational actions.';
   else if (topic === 'unsupported') detail = 'I can explain this agent’s status, purpose, cadence, errors, performance, dependencies, and next checks. Your message is not sent to the AI provider.';
   else if (topic === 'purpose') detail = snapshot.purpose;
-  else if (topic === 'cadence') detail = snapshot.cadence ? `Configured cadence: ${snapshot.cadence}. This describes scheduling, not proof that a fetch completed.` : 'No scheduling measurement is available for this observation.';
+  else if (topic === 'cadence') detail = snapshot.pullLimit
+    ? `Pull limit: ${snapshot.pullLimitLabel}. ${snapshot.collectionIntervalMs ? `Scheduled interval: ${snapshot.collectionIntervalMs / 1000}s.` : 'The scheduler interval is not observed on this service.'} This ceiling is separate from post admission and does not prove a fetch completed.`
+    : snapshot.cadence ? `Configured cadence: ${snapshot.cadence}. This describes scheduling, not proof that a fetch completed.` : 'No scheduling measurement is available for this observation.';
   else if (topic === 'dependencies') detail = 'Public source workers fetch into pipeline staging; API transfer reads staged posts into the feed cache. This snapshot cannot prove that a separate service or database is synchronized.';
   else if (topic === 'performance') {
     const measured = ['heapUsedMB', 'rssMB', 'eventLoopLagMs', 'lastDurationMs', 'lastTtfbMs'].filter(key => key in snapshot.metrics);

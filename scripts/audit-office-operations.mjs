@@ -29,7 +29,7 @@ try {
       if(endpoint === '/office/security/devices') return route.fulfill({json:{threshold:5,blockOn:6,scope:'Registered device identity.',devices:[{id:deviceId,strikes:6,blockedAt:now,createdAt:now,accounts:1,events:[{reason:'link_spam',activity:'/groups/test/posts',occurred_at:now}]}]}});
       if(endpoint.endsWith('/unblock')) return route.fulfill({json:{ok:true,message:'Device unblocked and strike count reset.'}});
       if(endpoint === '/office/feed-audit/items/review-item') return route.fulfill(failDetail ? {status:503,json:{message:'Audit detail unavailable'}} : {json:{item}});
-      if(endpoint === '/office/feed-audit') return route.fulfill({json:{items:url.searchParams.get('q') === 'nothing' ? [] : [item],hasMore:false,summary:{checked:100,approved:85,rejected:15,held:12,approvalPct:85},policy:{...policy,...savedSettings,blockedSources:blocked ? [{source:'news',reason:'Breach review',blockedAt:now}] : []},reasons:[{id:'link_spam',label:'Link spam'}],sources:[{id:'news',label:'News'},{id:'medium',label:'Medium'}],commands:[{id:'feed.audit-review',label:'Review current feed',description:'Screen live content.'},{id:'feed.audit-protect',label:'Protect feed',description:'Enable controls and review.'}]}});
+      if(endpoint === '/office/feed-audit') return route.fulfill({json:{items:url.searchParams.get('q') === 'nothing' ? [] : [item],hasMore:false,summary:{checked:100,approved:85,rejected:15,held:12,approvalPct:85},policy:{...policy,...savedSettings,blockedSources:blocked ? [{source:'news',reason:'Breach review',blockedAt:now}] : []},reasons:[{id:'link_spam',label:'Link spam'}],sources:[{id:'news',label:'News'},{id:'medium',label:'Medium'},{id:'hn',label:'Hacker News'}],commands:[{id:'feed.audit-review',label:'Review current feed',description:'Screen live content.'},{id:'feed.audit-protect',label:'Protect feed',description:'Enable controls and review.'}]}});
       if(endpoint === '/office/controls') return route.fulfill({json:{controls:[{id:'feed.flood-configure',label:'Configure anti flooding',description:'Edit the feed protection settings.',category:'Feed',input:'flood-settings',target:'api',impact:'medium',available:true,requiresConfirmation:true}],history:[]}});
       if(endpoint.startsWith('/office/controls/')) { if(endpoint.includes('source.block.news')) blocked = true; if(endpoint.includes('feed.flood-configure')) savedSettings = req.postDataJSON().settings; return route.fulfill({json:{result:{ok:true,checked:100}}}); }
       if(endpoint === '/office/topic-transfer') { topicReads++; return route.fulfill({json:{available:true,generatedAt:now,agents:routingAgents,routing:{enabled:true,intervalMs:15000,observedAt:now},topics:[{topic:'Engineering',agentId:'topic_router_1',live:20,staged:10,subtopics:[{name:'Software',live:15,staged:5}]}],unknown:{live:4,staged:2},taxonomy:[{topic:'Engineering',subtopics:['Software']}]}}); }
@@ -51,6 +51,7 @@ try {
     const pullTable = page.getByRole('region',{name:'Source pull limits',exact:true});
     await pullTable.getByRole('spinbutton',{name:'Medium maximum pulls',exact:true}).waitFor();
     assert.equal(await pullTable.locator('tbody tr').count(),Object.keys(policy.sourcePullLimits).length,'Every configured and future source appears');
+    assert.equal(await pullTable.getByRole('spinbutton',{name:'Hacker News maximum pulls',exact:true}).count(),1,'Canonical Hacker News policy uses its source label');
     await pullTable.getByRole('spinbutton',{name:'Medium maximum pulls',exact:true}).fill('7');
     await page.getByRole('button',{name:'Save flood settings',exact:true}).click();
     await page.getByText('Command results: feed.flood-configure',{exact:false}).waitFor();
@@ -60,6 +61,20 @@ try {
     assert.equal(floodWrites[0].body.settings.maxPerSourcePerMinute,policy.maxPerSourcePerMinute,'Existing post limits are retained');
     await pullTable.getByRole('spinbutton',{name:'Medium maximum pulls',exact:true}).waitFor();
     assert.equal(await pullTable.getByRole('spinbutton',{name:'Medium maximum pulls',exact:true}).inputValue(),'7','Saved settings are read back');
+    savedSettings = {...savedSettings,sourcePullLimits:{...savedSettings.sourcePullLimits,medium:{windowSeconds:180,maxPulls:7}}};
+    await page.getByRole('button',{name:'Refresh audit',exact:true}).click();
+    await page.waitForFunction(() => document.querySelector('[aria-label="Medium window in seconds"]')?.value === '180');
+    assert.equal(await pullTable.getByRole('spinbutton',{name:'Medium maximum pulls',exact:true}).inputValue(),'7','Clean settings track externally updated policy');
+    await pullTable.getByRole('spinbutton',{name:'Medium maximum pulls',exact:true}).fill('6');
+    savedSettings = {...savedSettings,sourcePullLimits:{...savedSettings.sourcePullLimits,medium:{windowSeconds:360,maxPulls:7}}};
+    await page.getByRole('button',{name:'Refresh audit',exact:true}).click();
+    await page.getByText('Flood settings changed on the server while you were editing. Your unsaved edits are preserved.',{exact:true}).waitFor();
+    assert.equal(await pullTable.getByRole('spinbutton',{name:'Medium maximum pulls',exact:true}).inputValue(),'6','External policy changes preserve edited values');
+    assert.equal(await pullTable.getByRole('spinbutton',{name:'Medium window in seconds',exact:true}).inputValue(),'180','A draft keeps its original settings until explicitly replaced');
+    await page.getByRole('button',{name:'Load current flood settings',exact:true}).click();
+    assert.equal(await pullTable.getByRole('spinbutton',{name:'Medium window in seconds',exact:true}).inputValue(),'360','The current server policy can be loaded explicitly');
+    assert.equal(await pullTable.getByRole('spinbutton',{name:'Medium maximum pulls',exact:true}).inputValue(),'7');
+    assert.equal(writes.filter(row => row.path.endsWith('/feed.flood-configure/execute')).length,1,'Refreshing and replacing the draft never submits settings');
     await page.getByRole('button',{name:item.title,exact:true}).click();
     const details = page.getByRole('region',{name:'Audit item details'});
     await details.getByText(item.content,{exact:true}).waitFor();

@@ -1,5 +1,6 @@
 import { createBuildingLevels } from './city-architecture.mjs';
 import { managedRecoveryState } from './recovery-status.mjs';
+import { sourceRateSummary } from './source-rate-display.mjs';
 
 // This view models observations, never an inferred job scheduler or a post ledger.
 export const CITY_FRESH_MS = 30_000;
@@ -130,7 +131,7 @@ export function buildCityModel({ status, pipelineStatus, agents = {}, log = [], 
     sources: { present: Boolean(pipeline.sources), health: pipeline.sources?.degraded > 0 ? 'degraded' : 'observed',
       active: workers.some(worker => !worker.paused && !degraded(worker.status) && recentWork(worker.lastSuccess, now)),
       metrics: [metric('Registered sources', pipeline.sources?.total), metric('Healthy sources', pipeline.sources?.healthy), metric('Degraded sources', pipeline.sources?.degraded), metric('Paused sources', pipeline.sources?.paused), metric('Sources starting', pipeline.sources?.starting), metric('Refresh queue pending', pipeline.refreshQueue?.pending)],
-      breakdown: workers.map(worker => ({ label: worker.name || worker.id, value: worker.status || 'Not reported', detail: cityNumber(worker.postCount) == null ? 'Post count not reported' : `${worker.postCount.toLocaleString()} reported posts` })) },
+      breakdown: workers.map(worker => ({ label: worker.name || worker.id, value: worker.status || 'Not reported', detail: `${sourceRateSummary(worker, { source: true })} · ${cityNumber(worker.postCount) == null ? 'Post count not reported' : `${worker.postCount.toLocaleString()} reported posts`}` })) },
     equalizer: { present: Boolean(pipeline.equalizer), active: equalizer.persistenceInFlight === true || (recentWork(equalizer.lastRun, now) && (sum(equalizer.lastDrainedBySource) > 0 || sum(equalizer.lastAcceptedBySource) > 0)),
       metrics: [metric('Buffered now', equalizer.pendingTotal), metric('Persistence queue', equalizer.persistencePendingTotal), metric('Accepted total', equalizer.totalAccepted), metric('Drained total', equalizer.totalDrained), metric('Backpressure drops', equalizer.totalBackpressureDropped), timeMetric('Last run', equalizer.lastRun), metric('Last duration', equalizer.lastDurationMs, 'ms')],
       breakdown: Object.entries(equalizer.bufferedBySource || {}).map(([label, value]) => ({ label, value: cityNumber(value), detail: 'buffered posts' })) },

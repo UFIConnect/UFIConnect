@@ -64,6 +64,12 @@ jobs:
         if: matrix.group == 'office'
       - run: node --test office/src/office-email-templates.test.mjs
         if: matrix.group == 'office'
+      - run: node --test office/src/source-rate-display.test.mjs web/src/components/sourceCollection.test.mjs
+        if: matrix.group == 'office'
+      - run: node scripts/audit-office-source-rates.mjs
+        if: matrix.group == 'office'
+      - run: node web/tests/source-collection.browser.mjs
+        if: matrix.group == 'office'
       - run: node office/tests/email-selection.browser.mjs
         if: matrix.group == 'office'
       - run: node office/tests/analytics-refresh.browser.mjs

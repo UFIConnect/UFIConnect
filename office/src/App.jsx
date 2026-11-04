@@ -13,6 +13,7 @@ import OfficeAI from './OfficeAI';
 import { mergeObservedAgents, observeAgentPayload } from './office-telemetry.mjs';
 import { createOfficeClient, createOfficeEventSource, createTrustedOfficeFetch, connectOfficeStreams, mergeOfficeLog } from './office-runtime.mjs';
 import { requestOfficeAccess } from './OfficeAccessDialog';
+import { sourceRateSummary } from './source-rate-display.mjs';
 
 const API = import.meta.env.VITE_API_URL || '';
 // uficonnect-pipeline's own URL (see render.yaml) — the service that
@@ -573,7 +574,7 @@ function AgentsView({ agents, triggerAgent, triggering }) {
                   </div>
                   <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>
                     id: <code style={{ ...CODE, padding: '1px 5px' }}>{id}</code>
-                    {' · '}runs every {ag.interval}
+                    {' · '}{sourceRateSummary(ag)}
                     {ag.postCount != null && <> · <span style={{ color: '#60a5fa' }}>{ag.postCount.toLocaleString()} posts</span></>}
                   </div>
                 </div>
@@ -1060,10 +1061,10 @@ function SourcesView({ status, triggerAgent, triggering }) {
                   <span>Err <strong style={{ color: w.totalErrors ? '#f87171' : '#4ade80' }}>{errorRate}%</strong></span>
                 </div>
 
-                {(w.cadence || w.refreshTtlMinutes) && (
+                {(w.pullLimit || w.pullLimitLabel || w.refreshTtlMinutes) && (
                   <div style={{ fontSize: 10, color: '#64748b', lineHeight: 1.45 }}>
-                    {w.cadence && <>Scheduled {w.cadence}</>}
-                    {w.cycleMinutes != null && <> · full topic cycle {w.cycleMinutes}m</>}
+                    {sourceRateSummary(w, { source: true })}
+                    {w.cycleMinutes != null && <> · topic cycle at current interval {w.cycleMinutes}m</>}
                     {w.refreshTtlMinutes != null && <> · live refresh TTL {w.refreshTtlMinutes}m</>}
                   </div>
                 )}
@@ -1529,7 +1530,7 @@ function PipelineView({ status, pipelineStatus, compact = false }) {
                   return (
                     <div
                       key={w.id}
-                      title={`${(w.name || w.id).replace(' Agent', '')} — ${w.status} — ${(w.postCount || 0).toLocaleString()} posts`}
+                      title={`${(w.name || w.id).replace(' Agent', '')} — ${w.status} — ${(w.postCount || 0).toLocaleString()} posts — ${sourceRateSummary(w, { source: true })}`}
                       style={{
                         display: 'flex', alignItems: 'center', gap: 5,
                         padding: '4px 9px', borderRadius: 20, fontSize: 11, color: '#94a3b8',
@@ -1554,8 +1555,7 @@ function PipelineView({ status, pipelineStatus, compact = false }) {
           {/* Stage 1.5 — Equalizer: sits between raw fetches and Filter —
               see runEqualizerDrain server-side. Each source's fetches queue
               here instead of going straight to Filter; a drain every 2s
-              interleaves them fairly, weighted by each source's own
-              configured pull rate (SOURCE_CONFIG shards) and dampened for
+              interleaves them fairly, weighted by source balancing settings and dampened for
               whichever source is currently over-represented in what's
               actually made it through recently — never excludes, only
               reorders, same as every other diversity mechanism in this
@@ -1854,8 +1854,7 @@ function EqualizerDetailCard({ equalizer, workers = [] }) {
     <Card>
       <Label color="#38bdf8">Equalizer — detail</Label>
       <p style={{ fontSize: 11.5, color: '#64748b', margin: '6px 0 14px', lineHeight: 1.6 }}>
-        Drains every 2s: interleaves whatever's queued from each source, weighted by its own configured pull rate
-        and dampened if it is currently over-represented in accepted output. Queue and write batches are capped so a burst cannot exhaust memory or database connections.
+        Interleaves queued posts using source balancing weights and reduces the share of sources over-represented in accepted output. Pull limits control collection separately. Queue and write batches are capped so a burst cannot exhaust memory or database connections.
       </p>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: 12, marginBottom: 14 }}>
@@ -2680,7 +2679,7 @@ function TopicsView() {
 
   // "Where posts are coming from" — same per-topic source breakdown the
   // bars below already carry, just re-summed across every topic instead of
-  // one at a time, so "32 sources feeding in" is a single glanceable number
+  // one at a time, so "sources feeding in" is a single glanceable number
   // instead of something you'd have to add up yourself from 200 bars.
   const bySourceTotal = useMemo(() => {
     const map = new Map();

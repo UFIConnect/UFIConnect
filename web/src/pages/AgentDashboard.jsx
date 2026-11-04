@@ -1,9 +1,9 @@
 ﻿import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Layout from '../components/Layout';
-import { continueSourceConnectionInBrowser } from '../nativeRuntime.mjs';
-import { useNavigate } from 'react-router-dom';
 import client from '../api/client';
-import AccountActionIcon from '../components/AccountActionIcon';
+import { SOURCE_META } from '../components/sourceMeta';
+import SourceCollectionDetails from '../components/SourceCollectionDetails';
+import { collectionSourceRows, collectionStatus } from '../components/sourceCollection.mjs';
 
 /* ─── Agent Definitions ──────────────────────────────────────────────────────── */
 const AGENT_DEFS = [
@@ -115,12 +115,7 @@ const AGENT_DEFS = [
       'Analysing source health scores…',
     ],
     completions: [
-      'Source inspection complete — all 31 agents healthy',
-      'Reddit agent flagged: last fetch 45m ago — nudging retry',
-      'DEV.to recovering — 0-post cache resolved, refresh queued',
-      'Source health: 28/31 agents active, 3 queued for retry',
-      'GitHub trending: idle agent detected — forced refresh scheduled',
-      'Hacker News lag resolved — 12 missed posts recovered',
+      'Source inspection details are available in Office',
     ],
   },
   {
@@ -155,8 +150,8 @@ const AGENT_DEFS = [
       'Source caches merged — global feed updated',
       'Deduplication complete — feed quality maintained',
       'Source agent stores synchronised successfully',
-      'Cache compacted — 500 newest posts retained per source',
-      'Cache sync: all source agents reporting healthy',
+      'Source cache sizes follow the backend configuration',
+      'Current source collection status is reported by the backend',
     ],
   },
   {
@@ -289,137 +284,30 @@ const AGENT_DEFS = [
   },
 ];
 
-/* ─── Active Source Agents ───────────────────────────────────────────────────── */
-const SOURCE_AGENTS = [
-  { id: 'reddit',        emoji: '🟠', name: 'Reddit',          color: '#FF6347' },
-  { id: 'hn',            emoji: '🔶', name: 'Hacker News',     color: '#FF6600' },
-  { id: 'github',        emoji: '🐙', name: 'GitHub',          color: '#475569' },
-  { id: 'gitlab',        emoji: 'GL', name: 'GitLab',          color: '#FC6D26' },
-  { id: 'devto',         emoji: '💻', name: 'DEV.to',          color: '#8B5CF6' },
-  { id: 'medium',        emoji: '📝', name: 'Medium',          color: '#10B981' },
-  { id: 'youtube',       emoji: '▶️',  name: 'YouTube',         color: '#EF4444' },
-  { id: 'stackoverflow', emoji: '💬', name: 'Stack Overflow',  color: '#F59E0B' },
-  { id: 'mastodon',      emoji: '🐘', name: 'Mastodon',        color: '#6366F1' },
-  { id: 'lobsters',      emoji: '🦞', name: 'Lobsters',        color: '#DC2626' },
-  { id: 'arxiv',         emoji: '📄', name: 'arXiv',           color: '#3B82F6' },
-  { id: 'indeed',        emoji: '💼', name: 'Indeed',          color: '#2557A7' },
-  { id: 'producthunt',   emoji: '🚀', name: 'Product Hunt',    color: '#DA552F' },
-  { id: 'techcrunch',    emoji: '📰', name: 'TechCrunch',      color: '#0D9F3F' },
-  { id: 'theverge',      emoji: '⬛', name: 'The Verge',       color: '#CC2200' },
-  { id: 'indiehackers',  emoji: '💡', name: 'Indie Hackers',   color: '#0E2150' },
-  { id: 'hashnode',      emoji: '✍️',  name: 'Hashnode',        color: '#2962FF' },
-  { id: 'bluesky',       emoji: '🦋', name: 'Bluesky',         color: '#0085FF' },
-  { id: 'arstechnica',   emoji: '📡', name: 'Ars Technica',    color: '#FF6600' },
-  { id: 'wired',         emoji: '🔌', name: 'WIRED',           color: '#444444' },
-  { id: 'theregister',   emoji: '📋', name: 'The Register',    color: '#CC0000' },
-  { id: 'venturebeat',   emoji: '💹', name: 'VentureBeat',     color: '#1E6FBF' },
-  { id: 'smashing',      emoji: '🎨', name: 'Smashing Mag',    color: '#E9620A' },
-  { id: 'phoronix',      emoji: '🐧', name: 'Phoronix',        color: '#2B7BB9' },
-  { id: 'infoq',         emoji: '🏗️',  name: 'InfoQ',           color: '#67B346' },
-  { id: 'mittr',         emoji: '🔬', name: 'MIT Tech Review', color: '#A31F34' },
-  { id: 'remoteok',      emoji: 'RO', name: 'Remote OK',       color: '#10B981' },
-  { id: 'yc',            emoji: 'YC', name: 'Y Combinator',    color: '#FF6600' },
-  { id: 'crunchbase',    emoji: 'CB', name: 'Crunchbase',      color: '#146AFF' },
-  { id: 'behance',       emoji: 'Be', name: 'Behance',         color: '#053EFF' },
-  { id: 'designweb',     emoji: 'UX', name: 'Design Web',      color: '#DB2777' },
-  { id: 'linkedin',   emoji: '🔷', name: 'LinkedIn',    color: '#0A66C2', needsAuth: true },
-  { id: 'twitter',    emoji: '🐦', name: 'X / Twitter', color: '#1DA1F2', needsAuth: true },
-  { id: 'instagram',  emoji: '📸', name: 'Instagram',   color: '#E1306C', needsAuth: true },
-  { id: 'facebook',   emoji: '📘', name: 'Facebook',    color: '#1877F2', needsAuth: true },
-];
-
-const SCAN_TOPICS = [
-  'AI & ML', 'Open Source', 'Cybersecurity', 'DevOps', 'Frontend',
-  'Backend', 'Web3', 'SaaS', 'Design', 'FinTech', 'Career',
-  'Startups', 'Remote Work', 'Mobile Dev', 'EdTech', 'Health Tech',
-];
-
 const CORRIDOR_Y = 42;
 const EXEC_ZONE  = { x: 50, y: CORRIDOR_Y };
 
 /* ─── Live Data Card ─────────────────────────────────────────────────────────── */
-function LiveDataCard({ agent, phaseData, stats, onTrigger, onConnect, connected }) {
-  const isAuthNeeded = agent.needsAuth && !connected;
-  const phase     = isAuthNeeded ? -1 : (phaseData?.phase ?? 0);
-  const topicIdx  = phaseData?.topic ?? 0;
-  const phaseMeta = isAuthNeeded
-    ? { label: '🔒 Needs auth', barW: '0%', color: '#94A3B8' }
-    : [
-        { label: '🔍 Scanning topics', barW: '35%', color: '#94A3B8' },
-        { label: '⚡ Fetching posts',  barW: '72%', color: '#F59E0B' },
-        { label: '✅ Cache updated',   barW: '100%', color: '#4ADE80' },
-      ][phase];
-  const lastFetchAgo = stats?.lastFetch
-    ? Math.round((Date.now() - stats.lastFetch) / 60000) : null;
-
+function LiveDataCard({ source, onTrigger }) {
+  const meta = SOURCE_META[source.id] || {};
+  const name = meta.label || source.name || source.id;
+  const color = source.color || meta.color || '#6366F1';
+  const state = collectionStatus(source);
+  const stateColor = ({ active: '#2563EB', available: '#16A34A', waiting: '#B45309', muted: '#64748B' })[state.tone];
   return (
-    <div style={{
-      background: '#fff',
-      border: `2px solid ${phase === 2 ? agent.color + '55' : agent.color + '1A'}`,
-      borderRadius: 12,
-      padding: '12px 14px',
-      display: 'flex', flexDirection: 'column', gap: 7,
-      transition: 'border-color 0.6s',
-      boxShadow: phase === 1 ? `0 0 0 3px ${agent.color}18` : 'none',
-    }}>
-      {/* Header row */}
+    <div style={{ background: '#fff', border: '1px solid #E2E8F0', borderRadius: 12, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <div style={{
-          width: 34, height: 34, borderRadius: 9, flexShrink: 0,
-          background: `${agent.color}15`,
-          border: `1.5px solid ${agent.color}30`,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: '1.05rem',
-          animation: phase === 1 ? 'srcPulse 1s ease-in-out infinite' : 'none',
-        }}>{agent.emoji}</div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: '.78rem', fontWeight: 800, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {agent.name}
-          </div>
-          <div style={{ fontSize: '.6rem', color: phaseMeta.color, fontWeight: 600 }}>
-            {phaseMeta.label}
-          </div>
-        </div>
-        <div style={{ textAlign: 'right', flexShrink: 0 }}>
-          <div style={{ fontSize: '.82rem', fontWeight: 900, color: agent.color }}>
-            {(stats?.postCount ?? 0).toLocaleString()}
-          </div>
-          <div style={{ fontSize: '.56rem', color: '#94A3B8' }}>cached</div>
-        </div>
+        <span style={{ color, fontWeight: 800 }}>{source.emoji || meta.icon || 'SRC'}</span>
+        <strong style={{ flex: 1, fontSize: '.8rem', color: '#0F172A' }}>{name}</strong>
+        <span style={{ fontSize: '.7rem', color: '#64748B' }}>{source.postCount ?? '—'} cached</span>
       </div>
-
-      {/* Progress bar */}
-      <div style={{ height: 4, background: '#F1F5F9', borderRadius: 2, overflow: 'hidden' }}>
-        <div style={{
-          height: '100%',
-          width: phaseMeta.barW,
-          background: `linear-gradient(90deg, ${agent.color}88, ${agent.color})`,
-          borderRadius: 2,
-          transition: 'width 0.9s ease',
-        }} />
-      </div>
-
-      {/* Footer row */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ fontSize: '.6rem', color: '#94A3B8' }}>
-          {!isAuthNeeded && phase === 0 && `topic: ${SCAN_TOPICS[topicIdx % SCAN_TOPICS.length]}`}
-          {!isAuthNeeded && phase === 1 && `fetching…`}
-          {!isAuthNeeded && phase === 2 && (lastFetchAgo === 0 ? 'just now' : lastFetchAgo !== null ? `${lastFetchAgo}m ago` : '—')}
-          {isAuthNeeded && <span style={{ color: '#94A3B8' }}>connect to activate</span>}
-        </div>
-        {isAuthNeeded ? (
-          <button type="button" className="account-icon-action" onClick={onConnect} aria-label={`Connect ${agent.name}`} title={`Connect ${agent.name}`} style={{
-            width: 44, height: 44, padding: 0, border: 'none', borderRadius: 8, cursor: 'pointer',
-            background: `${agent.color}18`, color: agent.color,
-            fontSize: '.6rem', fontWeight: 700,
-          }}><AccountActionIcon platform={agent.id} /></button>
-        ) : (
-          <button onClick={onTrigger} style={{
-            padding: '2px 8px', border: 'none', borderRadius: 5,
-            background: `${agent.color}18`, color: agent.color,
-            fontSize: '.6rem', fontWeight: 700, cursor: 'pointer',
-          }}>▶</button>
-        )}
+      <span style={{ fontSize: '.7rem', color: stateColor }}>{state.label}</span>
+      <SourceCollectionDetails source={source} />
+      {!source.pullLimit && <span style={{ fontSize: '.7rem', color: '#64748B' }}>Pull limit unavailable</span>}
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', fontSize: '.68rem', color: '#64748B' }}>
+        <span>{source.lastFetch ? 'Last fetch: ' + new Date(source.lastFetch).toLocaleString() : 'No fetch reported'}</span>
+        <button type="button" onClick={onTrigger} disabled={source.collection?.enabled === false}
+          aria-label={'Request ' + name + ' refresh'} style={{ padding: '4px 8px', borderRadius: 5, border: '1px solid #CBD5E1', background: '#F8FAFC', color: '#334155' }}>Refresh</button>
       </div>
     </div>
   );
@@ -469,7 +357,7 @@ function AgentRoom({ agent, agentState }) {
   );
 }
 
-function ServerRoom({ eventsCount }) {
+function ServerRoom({ eventsCount, sourceAgents, sourceLoaded }) {
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const t = setInterval(() => setTick(v => (v + 1) % 1000), 3000);
@@ -480,9 +368,9 @@ function ServerRoom({ eventsCount }) {
     { k: 'UPTIME',   v: '99.98%',               color: '#4ADE80' },
     { k: 'DB PING',  v: `${11 + (tick % 5)}ms`, color: '#34D399' },
     { k: 'API ERR',  v: '0',                     color: '#4ADE80' },
-    { k: 'FEED',     v: `${1820 + tick * 3}`,    color: '#60A5FA' },
+    { k: 'SOURCE CACHE', v: sourceLoaded ? sourceAgents.reduce((total, source) => total + (source.postCount || 0), 0).toLocaleString() : '—', color: '#60A5FA' },
     { k: 'EVENTS',   v: eventsCount.toString(),  color: '#A78BFA' },
-    { k: 'AGENTS',   v: `${SOURCE_AGENTS.length}+${AGENT_DEFS.length}`, color: '#FCD34D' },
+    { k: 'SOURCES', v: sourceLoaded ? String(sourceAgents.length) : '—', color: '#FCD34D' },
   ];
 
   return (
@@ -588,7 +476,7 @@ function AgentSprite({ agent, state }) {
 }
 
 /* ─── Office Floor Plan ──────────────────────────────────────────────────────── */
-function OfficeFloorPlan({ agentStates, eventsCount }) {
+function OfficeFloorPlan({ agentStates, eventsCount, sourceAgents, sourceLoaded }) {
   return (
     <div style={{
       position: 'relative',
@@ -627,7 +515,7 @@ function OfficeFloorPlan({ agentStates, eventsCount }) {
         </div>
 
         {/* Server room / live monitor */}
-        <ServerRoom eventsCount={eventsCount} />
+        <ServerRoom eventsCount={eventsCount} sourceAgents={sourceAgents} sourceLoaded={sourceLoaded} />
 
         {/* Agent sprites */}
         {AGENT_DEFS.map(agent => (
@@ -710,7 +598,7 @@ function StatusHeader({ sessionTime, eventsCount, agentCount }) {
       <div style={{ flex: 1, display: 'flex', gap: 20, flexWrap: 'wrap' }}>
         {[
           { label: 'Mode',    value: '🟢 Fully Autonomous',          color: '#4ADE80' },
-          { label: 'Agents',  value: `${agentCount} / ${agentCount} active`, color: '#60A5FA' },
+          { label: 'Configured agents', value: agentCount, color: '#60A5FA' },
           { label: 'Events',  value: eventsCount.toLocaleString(),   color: '#A78BFA' },
           { label: 'Session', value: sessionTime,                    color: '#34D399' },
         ].map(s => (
@@ -947,7 +835,7 @@ function OverviewTab({ agentStates, eventsCount, sourceAgents, sessionTime, agen
           <div style={{ color: '#94A3B8', fontSize: '.8rem' }}>Fetching source data…</div>
         )}
         {topSources.map((src, i) => {
-          const agent = SOURCE_AGENTS.find(a => a.id === src.id);
+          const agent = { ...SOURCE_META[src.id], ...src, name: SOURCE_META[src.id]?.label || src.name || src.id };
           const barPct = (src.postCount / maxPosts) * 100;
           return (
             <div key={src.id} style={{ display: 'flex', alignItems: 'center', gap: 10, animation: `slideUp 0.3s ease ${i * 40}ms both` }}>
@@ -1021,7 +909,6 @@ function OverviewTab({ agentStates, eventsCount, sourceAgents, sessionTime, agen
 
 /* ─── Main Page ──────────────────────────────────────────────────────────────── */
 export default function AgentDashboard() {
-  const navigate = useNavigate();
   const [agentStates, setAgentStates] = useState(
     () => Object.fromEntries(
       AGENT_DEFS.map(a => [a.id, { x: a.homeX, y: a.homeY, status: 'idle', taskIdx: 0 }])
@@ -1034,22 +921,11 @@ export default function AgentDashboard() {
   const [activeTab,      setActiveTab]      = useState('overview');
   const [sourceAgents,   setSourceAgents]   = useState([]);
   const [userStats,      setUserStats]      = useState(null);
-  const [connectedSocial, setConnectedSocial] = useState({});
-  const [workerPhases,   setWorkerPhases]   = useState(
-    () => Object.fromEntries(SOURCE_AGENTS.map(a => [a.id, { phase: Math.floor(Math.random() * 3), topic: Math.floor(Math.random() * 16) }]))
-  );
+  const [sourceLoaded, setSourceLoaded] = useState(false);
+  const [sourceError, setSourceError] = useState('');
 
   const timeoutsRef  = useRef([]);
   const activeAgents = useRef(new Set());
-
-  async function connectSource(platform) {
-    if (await continueSourceConnectionInBrowser(platform)) return;
-    if (platform === 'mastodon') { navigate('/connected-accounts?connect=mastodon'); return; }
-    try {
-      const { data } = await client.get(`/auth/social/${platform}/start`);
-      window.location.href = data.url;
-    } catch {}
-  }
 
   const addTimeout = useCallback((fn, delay) => {
     const t = setTimeout(fn, delay);
@@ -1181,7 +1057,9 @@ export default function AgentDashboard() {
   /* ── Source agent cache stats polling ────────────────────────────────────── */
   useEffect(() => {
     function fetchSources() {
-      client.get('/office/sources').then(({ data }) => setSourceAgents(data.sources || [])).catch(() => {});
+      client.get('/office/sources').then(({ data }) => {
+        setSourceAgents(collectionSourceRows(data)); setSourceLoaded(true); setSourceError('');
+      }).catch(() => setSourceError('Source details could not refresh. Any values shown are from the last response.'));
     }
     fetchSources();
     const t = setInterval(fetchSources, 30000);
@@ -1199,30 +1077,6 @@ export default function AgentDashboard() {
     const t = setInterval(fetchUsers, 30000);
     return () => clearInterval(t);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  /* ── Social connection status ─────────────────────────────────────────────── */
-  useEffect(() => {
-    client.get('/profile/social').then(({ data }) => setConnectedSocial(data.connected || {})).catch(() => {});
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  /* ── Worker phase animation — advances 3-4 random agents every 750ms ──────── */
-  useEffect(() => {
-    const ids = SOURCE_AGENTS.map(a => a.id);
-    const t = setInterval(() => {
-      setWorkerPhases(prev => {
-        const next = { ...prev };
-        const shuffle = [...ids].sort(() => Math.random() - 0.5).slice(0, 4);
-        shuffle.forEach(id => {
-          next[id] = {
-            phase: (next[id].phase + 1) % 3,
-            topic: Math.floor(Math.random() * SCAN_TOPICS.length),
-          };
-        });
-        return next;
-      });
-    }, 750);
-    return () => clearInterval(t);
-  }, []);
 
   /* ── Task ticker (cycles display text while idle) ─────────────────────────── */
   useEffect(() => {
@@ -1246,8 +1100,7 @@ export default function AgentDashboard() {
 
   /* ── Render ────────────────────────────────────────────────────────────────── */
 
-  const techAgents   = SOURCE_AGENTS.filter(a => !a.needsAuth);
-  const socialAgents = SOURCE_AGENTS.filter(a => a.needsAuth);
+  const configuredAgentCount = AGENT_DEFS.length + sourceAgents.length;
 
   function SectionBar({ label, right }) {
     return (
@@ -1338,11 +1191,11 @@ export default function AgentDashboard() {
       <div className="page-header">
         <h1 className="page-title">🏢 UFIconnect HQ</h1>
         <p className="page-subtitle">
-          {techAgents.length + socialAgents.length} data agents + {AGENT_DEFS.length} ops agents — fully autonomous 24/7
+          {sourceLoaded ? sourceAgents.length + ' configured source workers' : 'Source configuration not yet reported'} · {AGENT_DEFS.length} operations views
         </p>
       </div>
 
-      <StatusHeader sessionTime={sessionTime} eventsCount={eventsCount} agentCount={AGENT_DEFS.length + SOURCE_AGENTS.length} />
+      <StatusHeader sessionTime={sessionTime} eventsCount={eventsCount} agentCount={configuredAgentCount} />
 
       {/* ── Tab bar ── */}
       <div style={{
@@ -1380,7 +1233,7 @@ export default function AgentDashboard() {
           eventsCount={eventsCount}
           sourceAgents={sourceAgents}
           sessionTime={sessionTime}
-          agentCount={AGENT_DEFS.length + SOURCE_AGENTS.length}
+          agentCount={configuredAgentCount}
           userStats={userStats}
         />
       )}
@@ -1393,7 +1246,7 @@ export default function AgentDashboard() {
             right={<Badge label={`${AGENT_DEFS.length} ops agents`} />}
           />
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 18, alignItems: 'start', marginBottom: 24 }}>
-            <OfficeFloorPlan agentStates={agentStates} eventsCount={eventsCount} />
+            <OfficeFloorPlan agentStates={agentStates} eventsCount={eventsCount} sourceAgents={sourceAgents} sourceLoaded={sourceLoaded} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <LastExecution entry={lastExecution} />
               <ActivityLog log={activityLog} maxHeight={480} />
@@ -1451,57 +1304,18 @@ export default function AgentDashboard() {
 
       {/* ── Data Ops tab ── */}
       {activeTab === 'dataops' && (
-        <div style={{ animation: 'slideUp 0.3s ease' }}>
-          <SectionBar
-            label="Live Data Operations"
-            right={
-              <div style={{ display: 'flex', gap: 6 }}>
-                <Badge label={`${techAgents.length} tech & news`} color="#0284C7" bg="#F0F9FF" border="#BAE6FD" />
-                <Badge label={`${socialAgents.length} social`} color="#7C3AED" bg="#F3EEFF" border="#DDD6FE" />
-              </div>
-            }
-          />
-          <div style={{ fontSize: '.62rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '.6px', textTransform: 'uppercase', marginBottom: 8 }}>
-            Tech &amp; News
+        <div>
+          <SectionBar label="Source collection" right={<Badge label={sourceLoaded ? sourceAgents.length + ' configured workers' : 'Waiting for configuration'} />} />
+          {sourceError && <p role="status" style={{ color: '#B45309', fontSize: '.8rem' }}>{sourceError}</p>}
+          {!sourceLoaded && !sourceError && <p>Loading source configuration…</p>}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10, marginBottom: 16 }}>
+            {sourceAgents.map(source => <LiveDataCard key={source.id} source={source}
+              onTrigger={() => client.post('/office/agents/' + encodeURIComponent(source.workerId) + '/trigger').catch(() => {})} />)}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 10, marginBottom: 20 }}>
-            {techAgents.map(agent => {
-              const stats = sourceAgents.find(s => s.id === agent.id);
-              return (
-                <LiveDataCard
-                  key={agent.id} agent={agent}
-                  phaseData={workerPhases[agent.id]} stats={stats}
-                  connected={connectedSocial[agent.id]}
-                  onTrigger={() => client.post(`/office/agents/${agent.id}/trigger`).catch(() => {})}
-                  onConnect={() => connectSource(agent.id)}
-                />
-              );
-            })}
-          </div>
-          <div style={{ fontSize: '.62rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '.6px', textTransform: 'uppercase', marginBottom: 8 }}>
-            Social Platforms
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 10, marginBottom: 24 }}>
-            {socialAgents.map(agent => {
-              const stats = sourceAgents.find(s => s.id === agent.id);
-              return (
-                <LiveDataCard
-                  key={agent.id} agent={agent}
-                  phaseData={workerPhases[agent.id]} stats={stats}
-                  connected={connectedSocial[agent.id]}
-                  onTrigger={() => client.post(`/office/agents/${agent.id}/trigger`).catch(() => {})}
-                  onConnect={() => connectSource(agent.id)}
-                />
-              );
-            })}
-          </div>
-          <div style={{ padding: '10px 14px', background: '#F8FAFC', borderRadius: 10, border: '1px solid #E2E8F0', fontSize: '.72rem', color: '#64748B', display: 'flex', gap: 8, alignItems: 'center' }}>
-            <span>ℹ️</span>
-            <span>
-              {techAgents.length} tech & news agents cycle topics continuously.{' '}
-              {socialAgents.length} social agents require OAuth connection to activate personalised feeds.
-            </span>
-          </div>
+          <p style={{ fontSize: '.75rem', color: '#64748B' }}>
+            App pull limits cap collection jobs. Provider quotas, cached results and cooldowns can reduce actual requests.
+            This view refreshes its details every 30 seconds; refreshing the view does not pull provider content.
+          </p>
         </div>
       )}
 

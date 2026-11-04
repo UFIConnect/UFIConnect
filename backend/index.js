@@ -75,7 +75,8 @@ const v8 = require('v8');
 const db        = require('./db');
 const { initializePostPipeline, createPostPipelineTracker, createPostPipelineReader, pipelineFilters } = require('./post-pipeline');
 const { createFeedAudit, DEFAULT_POLICY: DEFAULT_FEED_AUDIT_POLICY } = require('./feed-audit');
-const { createSourcePullGate } = require('./source-pull-limits');
+const { createSourcePullGate, sourcePullLimit } = require('./source-pull-limits');
+const { sourceRateMetadata } = require('./source-rate-metadata');
 const { rssAuthorIdentity } = require('./rss-author-identity');
 const { createSuspiciousDevices, registerSuspiciousDeviceRoutes, SCHEMA: SUSPICIOUS_DEVICE_SCHEMA } = require('./suspicious-devices');
 const filestore  = require('./filestore');
@@ -2284,9 +2285,9 @@ const SOURCE_CONFIG = Object.fromEntries([
   'crossref', 'datacite', 'zenodo', 'openalex',
 ].map(id => [id, { ttl: SOURCE_COLLECTION_TARGET_MS, delay: SOURCE_COLLECTION_TARGET_MS, shards: 1,
   inventory: !['reddit', 'medium', 'bluesky', 'youtube', 'twitter', 'linkedin', 'facebook', 'crossref', 'datacite', 'zenodo', 'openalex'].includes(id),
-  minSpacingMs: ['twitter', 'linkedin', 'facebook', 'stackoverflow'].includes(id) ? SOURCE_COLLECTION_TARGET_MS
+  minSpacingMs: Math.max(sourcePullLimit(id).minSpacingMs, ['twitter', 'linkedin', 'facebook', 'stackoverflow'].includes(id) ? SOURCE_COLLECTION_TARGET_MS
     : ['github', 'arxiv', 'usajobs'].includes(id) ? 60000
-      : ['reddit', 'medium', 'bluesky'].includes(id) ? 2000 : 60000,
+      : ['reddit', 'medium', 'bluesky'].includes(id) ? 2000 : 60000),
 }]));
 
 // Cache key prefix per source — used by makeTopicCycler to bust cache when TTL elapses
@@ -3830,18 +3831,9 @@ function parseISO8601DurationSeconds(iso) {
 // the older, now-inaccurate 60s figure.
 const YOUTUBE_SHORTS_MAX_SECONDS = 183;
 
-// The official Data API v3 search tier is shared across every one of
-// SOURCE_CONFIG.youtube's shards (14 independent parallel topic-cycling
-// loops, each firing its own main+shorts search pair) with no coordination
-// between them — confirmed live as HTTP 429 ("too many requests"), a burst/
-// QPS rejection distinct from the documented daily-quota 403, meaning
-// several shards landing on a topic within the same moment is enough to
-// trip it well before the day's 10,000-unit budget is anywhere near spent.
-// This isn't a per-key quota problem the RSS-fallback comment above already
-// accounts for — it's concurrency, fixed by serializing attempts instead of
-// letting every shard fire independently. Set synchronously, before the
-// fetch starts, so two shards racing in the same tick can't both slip
-// through before either updates it.
+// Adapter request spacing is separate from the shared collector's pull
+// ceiling and provider quota. Set this timestamp synchronously before a
+// request so callers cannot race through the same adapter window.
 let youtubeApiLastCallAt = 0;
 const YOUTUBE_API_MIN_SPACING_MS = 1100;
 function youtubeApiBlocked() {
@@ -7345,19 +7337,15 @@ function roundRobinMerge(lists) {
 // addAndBroadcast). Each source's own fetch results land in a per-source
 // buffer here (pushToEqualizer) instead of calling addAndBroadcast
 // directly; a periodic drain (runEqualizerDrain) interleaves those buffers
-// — weighted by each source's own configured pull rate (SOURCE_CONFIG
-// shards, the rate just retuned — more shards means proportionally more
-// turns) — then dampened for any source whose actual recent output share
+// using the legacy SOURCE_CONFIG.shards weights, independently of collection
+// pull ceilings, then dampened for any source whose actual recent output share
 // is running ahead of its fair share, before finally calling
 // addAndBroadcast with the combined, fairly-ordered batch. Draining every
 // EQUALIZER_DRAIN_MS keeps this close to real-time (not a meaningful delay
 // even for breaking-news sources), while still giving every fetch a real
 // chance to be reordered fairly relative to whatever else arrived in the
-// same short window. Weight is never dampened to zero and the drain always
-// takes at least a small floor of whatever's waiting regardless of weight
-// — every source still gets through, same "reorder, don't exclude" lesson
-// the reverted strict 25% cap taught (see addAndBroadcast's own history
-// comment).
+// same short window. Admission budgets and cooldowns can retain queued
+// items for a later drain; bounded backlog limits still apply.
 const EQUALIZER_DRAIN_MS = 2000;
 const equalizerBuffer = new Map(); // sourceId -> post[], awaiting the next drain
 const equalizerQueuedPostIds = new Set();
@@ -7544,7 +7532,7 @@ function runEqualizerDrain() {
   if (!sourceIds.length) return;
   const started = Date.now();
 
-  // Fair share = this source's own configured pull rate (shards) as a
+  // Fair share = this source's legacy Equalizer weight (shards) as a
   // fraction of every currently-buffered source's combined rate — a source
   // configured to pull faster earns proportionally more turns, the "based
   // on the limit we just set" half of this.
@@ -12414,7 +12402,7 @@ function installCrashGuard() {
 }
 
 // How many sources drainSourceRefreshQueue processes concurrently. Was 1
-// (strictly sequential) — with 36 sources and FEED_TOPICS now at 203
+// (strictly sequential) — across the configured sources and FEED_TOPICS
 // entries (see the onboarding-coverage expansion), a sequential drain's
 // real wall-clock cycle time had crept up to ~10.1min, right at the old
 // 10-minute auto-trigger interval itself (see AUTO_TRANSFER_INTERVAL_MS's
@@ -19236,7 +19224,7 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
   // Was a flat Math.max(limit, 20) per source regardless of how many
   // sources were asked for — harmless for a 1-3 source filter (each one
   // genuinely needs to supply most of the page), but the unfiltered case
-  // asks ~30 sources for a full page's worth of rows each, even though the
+  // asks every selected source for a full page's worth of rows, even though the
   // share cap (see mergeByRecencyWithStreakCap) means no single source can
   // ever contribute more than roughly its capped fraction of one page —
   // ~30 queries fetching 20-25 rows to actually use 1-2 of them each.
@@ -22125,7 +22113,7 @@ async function handleFeedRequest(req, res) {
   //
   // That 1h tightness is specific to the full, unfiltered aggregate case —
   // what actually made the query expensive was the WHERE clause matching
-  // essentially the whole table across all 36 sources (see the getCursorFeedPage
+  // essentially the whole table across the source catalog (see the getCursorFeedPage
   // EXPLAIN in that fix), not the time window in isolation. A single- or
   // few-source filter is a far more selective WHERE clause on its own, so it
   // can afford a much wider window — and for a lower-volume source it
@@ -22384,7 +22372,7 @@ async function handleFeedRequest(req, res) {
     // above (see its own dbTimeRange comment), so leaving 'all' unbounded here
     // meant every unfiltered newest-sort request (the main Feed's default
     // view) sorted the entire feed_posts_cache table with no time floor.
-    // Confirmed live: with AGGREGATE_FEED_SOURCES now covering 36 sources,
+    // With AGGREGATE_FEED_SOURCES covering the configured public inventory,
     // this took over two minutes under real concurrent load, hit Postgres's
     // statement_timeout, and was silently swallowed by the catch block below
     // into an empty feed. Reusing dbTimeRange (already computed above for
@@ -24206,12 +24194,19 @@ app.get('/feed/stats', authenticate, async (req, res) => {
 // --- Feed sources explorer - all live sources with sample posts ---------------
 app.get('/feed/sources', authenticate, (req, res) => {
   const sampleSize = Math.min(10, Math.max(1, parseInt(req.query.sample || '5', 10)));
+  const rateContext = sourceRateContext();
+  const sourceCatalog = AGGREGATE_FEED_SOURCES.map(id => {
+    const workerId = feedWorkerKey(id), meta = AGENT_DEFS[workerId] || {};
+    return { id, name: meta.name || id, emoji: officeBadgeCode(workerId, meta.emoji), color: meta.color || '#6366F1',
+      description: meta.description || null, ...getSourceRateMetadata(id, rateContext) };
+  });
 
   // Build a map: sourceId ? { posts[], lastFetch, totalSeen }
   const sourceMap = {};
 
   // Pull from per-source agent cache first (highest fidelity)
-  for (const [id, d] of agentSourceCache) {
+  for (const [workerId, d] of agentSourceCache) {
+    const id = canonicalFeedSourceId(workerId);
     const posts = realFeedPosts(d.posts || []);
     if (!sourceMap[id]) sourceMap[id] = { posts: [], lastFetch: d.lastFetch || null, totalSeen: d.totalSeen || 0 };
     sourceMap[id].posts.push(...posts);
@@ -24221,7 +24216,7 @@ app.get('/feed/sources', authenticate, (req, res) => {
 
   // Supplement with global cache posts grouped by source
   for (const p of realFeedPosts(globalFeedCache.posts)) {
-    const src = p.source || 'unknown';
+    const src = canonicalFeedSourceId(p.source) || 'unknown';
     if (!sourceMap[src]) sourceMap[src] = { posts: [], lastFetch: null, totalSeen: 0 };
     sourceMap[src].posts.push(p);
   }
@@ -24230,7 +24225,7 @@ app.get('/feed/sources', authenticate, (req, res) => {
   const def = AGENT_DEFS || {};
   const sources = Object.entries(sourceMap)
     .map(([id, d]) => {
-      const meta = def[id] || {};
+      const meta = def[feedWorkerKey(id)] || {};
       const sorted = sortFeedBatch(d.posts, `sources-${id}`, { limit: sampleSize + 1 });
       return {
         id,
@@ -24238,6 +24233,7 @@ app.get('/feed/sources', authenticate, (req, res) => {
         emoji:       officeBadgeCode(id, meta.emoji),
         color:       meta.color       || '#6366F1',
         description: meta.description || null,
+        ...getSourceRateMetadata(id, rateContext),
         postCount:   d.posts.length,
         totalSeen:   d.totalSeen || d.posts.length,
         lastFetch:   d.lastFetch,
@@ -24258,6 +24254,8 @@ app.get('/feed/sources', authenticate, (req, res) => {
 
   res.json({
     sources,
+    sourceCatalog,
+    configuredSourceCount: sourceCatalog.length,
     totalSources: sources.length,
     totalPosts: sources.reduce((n, s) => n + s.postCount, 0),
     globalCacheCount: realFeedPosts(globalFeedCache.posts).length,
@@ -24920,177 +24918,141 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
 const AGENT_DEFS = {
   ...Object.fromEntries(topicRoutingAgents.definitions().map(agent => [agent.id, { ...agent, emoji: 'TOP', interval: '15s / assigned topics', triggerable: true }])),
   weworkremotely: {
-    name: 'We Work Remotely Agent', emoji: 'WWR', color: '#22C55E', interval: '5min',
-    description: 'Collects public remote career listings through the configured paced Pipeline worker.',
+    name: 'We Work Remotely Agent', emoji: 'WWR', color: '#22C55E',
   },
   cntraveler: {
-    name: 'Condé Nast Traveler Agent', emoji: 'CNT', color: '#38BDF8', interval: '5min',
-    description: 'Collects public travel stories through the configured paced Pipeline worker.',
+    name: 'Condé Nast Traveler Agent', emoji: 'CNT', color: '#38BDF8',
   },
   twitch: {
-    name: 'Twitch Agent', emoji: 'TW', color: '#A78BFA', interval: '5min',
-    description: 'Uses the configured Twitch app to discover public clips. Member account feeds use separate connections.',
+    name: 'Twitch Agent', emoji: 'TW', color: '#A78BFA',
   },
+  crossref: { name: 'Crossref Agent', emoji: 'CR', color: '#0577B9', description: 'Collects public scholarly metadata through the shared Pipeline collector.' },
+  datacite: { name: 'DataCite Agent', emoji: 'DC', color: '#2497B3', description: 'Collects public research dataset metadata through the shared Pipeline collector.' },
+  zenodo: { name: 'Zenodo Agent', emoji: 'ZE', color: '#0072CE', description: 'Collects public research repository metadata through the shared Pipeline collector.' },
+  openalex: { name: 'OpenAlex Agent', emoji: 'OA', color: '#D45500', description: 'Collects scholarly work metadata through the shared Pipeline collector when configured.' },
   ai: {
     name: 'Office AI Agent', emoji: 'AI', color: '#A78BFA', interval: 'on-demand', triggerable: false,
     description: 'Choose an Office action, review its requirements, and run it through authenticated controls. AI explains observed metrics when its provider is configured.',
   },
   // -- Platform source agents (one per data source) --------------------------
   reddit: {
-    name: 'Reddit Agent', emoji: 'RD', color: '#FF6347', interval: '15s / 4 shards',
-    description: '4 parallel shard workers cycle through all 60 topics at 15s each — full topic coverage every ~4 min. Fetches subreddit RSS for each keyword and streams posts live.',
+    name: 'Reddit Agent', emoji: 'RD', color: '#FF6347',
   },
   hn: {
-    name: 'HackerNews Agent', emoji: 'HN', color: '#FF6600', interval: '10s / 4 shards',
-    description: '4 parallel shard workers query HackerNews Algolia at 10s each — full topic coverage every ~2.5 min. Surfaces top-scored technical discussions continuously.',
+    name: 'HackerNews Agent', emoji: 'HN', color: '#FF6600',
   },
   github: {
-    name: 'GitHub Agent', emoji: 'GH', color: '#94A3B8', interval: '30s / 2 shards',
-    description: '2 parallel shard workers search GitHub public repos at 30s each — full topic coverage every ~15 min. Rate-limited at 60 req/hr so shards spread load.',
+    name: 'GitHub Agent', emoji: 'GH', color: '#94A3B8',
   },
   devto: {
-    name: 'DEV.to Agent', emoji: 'DEV', color: '#8B5CF6', interval: '12s / 3 shards',
-    description: '3 parallel shard workers fetch DEV.to articles by tag at 12s each — full topic coverage every ~4 min. Developer tutorials and project showcases across all tags.',
+    name: 'DEV.to Agent', emoji: 'DEV', color: '#8B5CF6',
   },
   medium: {
-    name: 'Medium Agent', emoji: 'MED', color: '#10B981', interval: '15s / 3 shards',
-    description: '3 parallel shard workers scrape Medium RSS by topic tag at 15s each — full topic coverage every ~5 min. Long-form developer and startup articles stream continuously.',
+    name: 'Medium Agent', emoji: 'MED', color: '#10B981',
   },
   youtube: {
-    name: 'YouTube Agent', emoji: 'YT', color: '#EF4444', interval: '15s / 3 shards',
-    description: '3 parallel shard workers query YouTube channel RSS at 15s each — full topic coverage every ~5 min. Talks, tutorials, and demos surface continuously.',
+    name: 'YouTube Agent', emoji: 'YT', color: '#EF4444',
   },
   stackoverflow: {
-    name: 'StackOverflow Agent', emoji: 'SO', color: '#F59E0B', interval: '60s / 1 shard',
-    description: 'Single-shard worker fetches StackOverflow questions by tag at 60s per topic — rate-limited at 300 req/day. Developer Q&A and solutions across mapped tags.',
+    name: 'StackOverflow Agent', emoji: 'SO', color: '#F59E0B',
   },
   mastodon: {
-    name: 'Mastodon Agent', emoji: 'MAS', color: '#6366F1', interval: '10s / 4 shards',
-    description: '4 parallel shard workers fetch public Mastodon.social hashtag timelines at 10s each — full topic coverage every ~2.5 min. Decentralized real-time social content.',
+    name: 'Mastodon Agent', emoji: 'MAS', color: '#6366F1',
   },
   lobsters: {
-    name: 'Lobsters Agent', emoji: 'LOB', color: '#DC2626', interval: '20s / 2 shards',
-    description: '2 parallel shard workers fetch curated Lobste.rs links by tag at 20s each — full topic coverage every ~10 min. High signal-to-noise engineering community.',
+    name: 'Lobsters Agent', emoji: 'LOB', color: '#DC2626',
   },
   arxiv: {
-    name: 'arXiv Agent', emoji: 'ARX', color: '#3B82F6', interval: '45s / 1 shard',
-    description: 'Single-shard worker queries arXiv OAI-PMH API at 45s per topic — full topic coverage every ~45 min. Rate-limited API; covers AI/ML, CS, and research papers.',
+    name: 'arXiv Agent', emoji: 'ARX', color: '#3B82F6',
   },
   indeed: {
-    name: 'Indeed Agent', emoji: 'JOB', color: '#2557A7', interval: '20s / 2 shards',
-    description: '2 parallel shard workers fetch Indeed job RSS feeds at 20s each — full topic coverage every ~10 min. Surfaces active job postings across all professional topics.',
+    name: 'Indeed Agent', emoji: 'JOB', color: '#2557A7',
   },
   producthunt: {
-    name: 'Product Hunt Agent', emoji: 'PH', color: '#DA552F', interval: '25s / 2 shards',
-    description: '2 parallel shard workers fetch Product Hunt RSS at 25s each — full topic coverage every ~12 min. Discovers new tools, apps, and SaaS launches continuously.',
+    name: 'Product Hunt Agent', emoji: 'PH', color: '#DA552F',
   },
   techcrunch: {
-    name: 'TechCrunch Agent', emoji: 'TC', color: '#0D9F3F', interval: '12s / 3 shards',
-    description: '3 parallel shard workers fetch TechCrunch RSS at 12s each — full topic coverage every ~4 min. Startup news and funding rounds surface continuously.',
+    name: 'TechCrunch Agent', emoji: 'TC', color: '#0D9F3F',
   },
   theverge: {
-    name: 'The Verge Agent', emoji: 'TV', color: '#FF3333', interval: '12s / 3 shards',
-    description: '3 parallel shard workers fetch The Verge RSS at 12s each — full topic coverage every ~4 min. Consumer tech and digital culture news streams continuously.',
+    name: 'The Verge Agent', emoji: 'TV', color: '#FF3333',
   },
   indiehackers: {
-    name: 'Indie Hackers Agent', emoji: 'IH', color: '#0E2150', interval: '15s / 2 shards',
-    description: '2 parallel shard workers fetch Indie Hackers RSS at 15s each — full topic coverage every ~7.5 min. Bootstrapper stories and startup advice across topics.',
+    name: 'Indie Hackers Agent', emoji: 'IH', color: '#0E2150',
   },
   hashnode: {
-    name: 'freeCodeCamp Agent', emoji: 'FCC', color: '#006400', interval: '12s / 3 shards',
-    description: '3 parallel shard workers fetch freeCodeCamp News RSS at 12s each — full topic coverage every ~4 min. Developer tutorials with The New Stack as fallback.',
+    name: 'freeCodeCamp Agent', emoji: 'FCC', color: '#006400',
   },
   bluesky: {
-    name: 'Bluesky Agent', emoji: 'BS', color: '#0085FF', interval: '10s / 4 shards',
-    description: '4 parallel shard workers search Bluesky public AT Protocol API at 10s each — full topic coverage every ~2.5 min. Real-time social content, no auth required.',
+    name: 'Bluesky Agent', emoji: 'BS', color: '#0085FF',
   },
   arstechnica: {
-    name: 'Ars Technica Agent', emoji: 'ARS', color: '#FF6600', interval: '12s / 3 shards',
-    description: '3 parallel shard workers fetch Ars Technica RSS feeds at 12s each — full topic coverage every ~4 min. Deep-dive engineering, science, and hardware coverage.',
+    name: 'Ars Technica Agent', emoji: 'ARS', color: '#FF6600',
   },
   wired: {
-    name: 'WIRED Agent', emoji: 'WI', color: '#111111', interval: '12s / 3 shards',
-    description: 'Pulls technology, business, and culture articles from WIRED\'s RSS feed. 3 parallel shards cover all 60 topics simultaneously.',
+    name: 'WIRED Agent', emoji: 'WI', color: '#111111',
   },
   theregister: {
-    name: 'The Register Agent', emoji: 'REG', color: '#CC0000', interval: '12s / 3 shards',
-    description: 'Fetches enterprise IT, cybersecurity, and open-source news from The Register RSS. 3 parallel shards continuously cover all topic keywords.',
+    name: 'The Register Agent', emoji: 'REG', color: '#CC0000',
   },
   venturebeat: {
-    name: 'VentureBeat Agent', emoji: 'VB', color: '#1E6FBF', interval: '12s / 3 shards',
-    description: 'Pulls AI, enterprise tech, and startup funding coverage from VentureBeat RSS. 3 parallel shards cover all 60 topics simultaneously.',
+    name: 'VentureBeat Agent', emoji: 'VB', color: '#1E6FBF',
   },
   smashing: {
-    name: 'Smashing Magazine Agent', emoji: 'SM', color: '#E9620A', interval: '15s / 2 shards',
-    description: 'Fetches web development, design, and UX articles from Smashing Magazine RSS. 2 parallel shards cover all topic keywords.',
+    name: 'Smashing Magazine Agent', emoji: 'SM', color: '#E9620A',
   },
   phoronix: {
-    name: 'Phoronix Agent', emoji: 'PHX', color: '#2B7BB9', interval: '15s / 2 shards',
-    description: 'Pulls Linux, open-source hardware, and benchmark coverage from Phoronix RSS. 2 parallel shards continuously cover all topic keywords.',
+    name: 'Phoronix Agent', emoji: 'PHX', color: '#2B7BB9',
   },
   infoq: {
-    name: 'InfoQ Agent', emoji: 'IQ', color: '#67B346', interval: '15s / 2 shards',
-    description: 'Fetches enterprise software architecture, cloud, and DevOps news from InfoQ RSS. 2 parallel shards cover all 60 topic keywords.',
+    name: 'InfoQ Agent', emoji: 'IQ', color: '#67B346',
   },
   mittr: {
-    name: 'MIT Tech Review Agent', emoji: 'MIT', color: '#A31F34', interval: '20s / 2 shards',
-    description: 'Pulls deep tech, AI policy, and science coverage from MIT Technology Review RSS. 2 parallel shards cover all topic keywords.',
+    name: 'MIT Tech Review Agent', emoji: 'MIT', color: '#A31F34',
   },
   gitlab: {
-    name: 'GitLab Agent', emoji: 'GL', color: '#FC6D26', interval: '45s / 1 shard',
-    description: 'Searches GitLab public projects by topic keyword. Covers open-source repos, libraries, and engineering portfolios without requiring user auth.',
+    name: 'GitLab Agent', emoji: 'GL', color: '#FC6D26',
   },
   remoteok: {
-    name: 'Remote OK Agent', emoji: 'RO', color: '#10B981', interval: '45s / 1 shard',
-    description: 'Fetches remote professional job listings from Remote OK RSS and filters them against user interests, roles, and skills.',
+    name: 'Remote OK Agent', emoji: 'RO', color: '#10B981',
   },
   yc: {
-    name: 'Y Combinator Agent', emoji: 'YC', color: '#FF6600', interval: '45s / 1 shard',
-    description: 'Pulls startup, founder, and company-building posts from Y Combinator RSS for professional and startup-focused feeds.',
+    name: 'Y Combinator Agent', emoji: 'YC', color: '#FF6600',
   },
   crunchbase: {
-    name: 'Crunchbase News Agent', emoji: 'CB', color: '#146AFF', interval: '45s / 1 shard',
-    description: 'Pulls funding, company, market, and startup news from Crunchbase News RSS for business-focused discovery.',
+    name: 'Crunchbase News Agent', emoji: 'CB', color: '#146AFF',
   },
   behance: {
-    name: 'Behance Agent', emoji: 'BE', color: '#053EFF', interval: '45s / 1 shard',
-    description: 'Fetches public creative portfolio projects from Behance RSS for design, branding, and visual professional feeds.',
+    name: 'Behance Agent', emoji: 'BE', color: '#053EFF',
   },
   designweb: {
-    name: 'Design Web Agent', emoji: 'UX', color: '#DB2777', interval: '45s / 1 shard',
-    description: 'Aggregates public design, UX, CSS, and product craft feeds from Designboom, Awwwards, CSS-Tricks, and Fast Company.',
+    name: 'Design Web Agent', emoji: 'UX', color: '#DB2777',
   },
   usajobs: {
     name: 'USAJobs Agent', emoji: 'USA', color: '#005EA8',
-    description: 'Searches the official USAJobs Search API by topic keyword for live federal and public-sector job openings — a free, self-serve API key, unlike the paid/reviewed developer access Twitter, LinkedIn, Instagram, and Facebook require.',
   },
   remotive: {
-    name: 'Remotive Agent', emoji: 'REM', color: '#00A876', interval: '20s, category sweep',
-    description: 'Sweeps Remotive’s own job categories (not a keyword search — see ROLE_TO_REMOTIVE) on a dedicated timer, one category per tick. Used to be a live per-request fetch inside /opportunities; now feeds feed_posts_cache like every other source.',
+    name: 'Remotive Agent', emoji: 'REM', color: '#00A876',
   },
   muse: {
-    name: 'The Muse Agent', emoji: 'MUSE', color: '#8A2BE2', interval: '20s, category+level sweep',
-    description: 'Sweeps every The Muse category/experience-level pair (ROLE_TO_MUSE × MUSE_LEVELS) on a dedicated timer. Used to be a live per-request fetch inside /opportunities; now feeds feed_posts_cache like every other source.',
+    name: 'The Muse Agent', emoji: 'MUSE', color: '#8A2BE2',
   },
   optimizer: {
     name: 'Feed Optimizer', emoji: 'OPT', color: '#F59E0B', interval: '5min',
     description: 'Monitors all source workers every 5 minutes. Detects circuit breaker trips, stale fetchers, and degraded sources while respecting stability throttle mode.',
   },
   linkedin: {
-    name: 'LinkedIn Agent', emoji: 'IN', color: '#0A66C2', interval: '30min',
-    description: 'Fetches professional content from LinkedIn API (requires LINKEDIN_TOKEN). Pulls career posts and industry insights across 36 topics.',
+    name: 'LinkedIn Agent', emoji: 'IN', color: '#0A66C2',
   },
   twitter: {
-    name: 'Twitter/X Agent', emoji: 'X', color: '#1DA1F2', interval: '30min',
-    description: 'Searches Twitter/X via Bearer API (requires TWITTER_BEARER_TOKEN). Surfaces trending tech discussions and developer conversations across 36 topics.',
+    name: 'Twitter/X Agent', emoji: 'X', color: '#1DA1F2',
   },
   instagram: {
     name: 'Instagram Agent', emoji: 'IG', color: '#E1306C', interval: '30min',
     description: 'Fetches tagged media from Instagram Graph API (requires INSTAGRAM_TOKEN). Discovers visual content and creator posts across professional topics.',
   },
   facebook: {
-    name: 'Facebook Agent', emoji: 'FB', color: '#1877F2', interval: '30min',
-    description: 'Queries Facebook Graph API for public page content (requires FACEBOOK_TOKEN). Surfaces professional and community posts across 36 topics.',
+    name: 'Facebook Agent', emoji: 'FB', color: '#1877F2',
   },
   // -- Operational agents ----------------------------------------------------
   equalizer: {
@@ -25227,20 +25189,34 @@ const AGENT_DEFS = {
   },
 };
 
-// The `interval` strings above were hand-written and drifted out of sync
-// with SOURCE_CONFIG more than once (e.g. GitHub's description said "30s /
-// 2 shards" in the office dashboard while it was actually configured at
-// 60s / 1 shard) — showing the office an inaccurate cadence for a source
-// makes it look broken/erratic when it's actually paced correctly. Derive
-// it from the real config instead so it can't drift again.
-for (const [id, cfg] of Object.entries(SOURCE_CONFIG)) {
+// Source limits come from the latest confirmed policy, including job workers.
+// Keep legacy interval readers current without freezing a boot-time snapshot.
+const CONFIGURED_SOURCE_WORKERS = [...new Set([...Object.keys(SOURCE_CONFIG), ...PIPELINE_ONLY_FEED_SOURCES])];
+for (const id of CONFIGURED_SOURCE_WORKERS) {
   if (!AGENT_DEFS[id]) continue;
-  const scheduled = sourceCollectionScheduler?.status().sources.find(source => source.id === id);
-  AGENT_DEFS[id].interval = scheduled ? `${Math.round(scheduled.intervalMs / 1000)}s / shared scheduler` : '5min / shared scheduler';
-  AGENT_DEFS[id].cycleMinutes = scheduled ? Math.round(scheduled.expectedCycleMs / 6000) / 10 : 5;
-  AGENT_DEFS[id].description = cfg.inventory
-    ? 'Checks the complete public inventory every five minutes using the shared, bounded collector. Provider failures and quota cooldowns are reported separately.'
-    : 'Cycles distinct configured queries or channels through the shared collector. Provider spacing and quota cooldowns can limit complete query coverage.';
+  Object.defineProperty(AGENT_DEFS[id], 'interval', { enumerable: true,
+    get: () => sourceRateMetadata(id, feedAudit.policy()).pullLimitLabel });
+  AGENT_DEFS[id].description = SOURCE_CONFIG[id]?.inventory
+    ? 'Checks the public inventory through the shared collector. The pull limit is a ceiling; scheduler spacing and provider cooldowns can make checks less frequent.'
+    : 'Cycles configured queries, channels or job categories through the shared collector. Pull limits and provider cooldowns can extend complete coverage.';
+}
+
+function sourceRateContext(collectionStatus = sourceCollectionScheduler?.status() || null) {
+  return { policy: feedAudit.policy(), collectionById: new Map((collectionStatus?.sources || []).map(source => [source.id, source])) };
+}
+
+function getSourceRateMetadata(source, context = sourceRateContext()) {
+  const workerId = feedWorkerKey(canonicalFeedSourceId(source));
+  if (!CONFIGURED_SOURCE_WORKERS.includes(workerId)) return {};
+  const collection = context.collectionById.get(workerId) || null;
+  const metadata = sourceRateMetadata(workerId, context.policy, collection);
+  // Public source cards need timing and state, never provider error bodies or
+  // individual query keys from the protected scheduler diagnostics.
+  const summary = collection && Object.fromEntries(['enabled', 'inFlight', 'overdue', 'pauseReason', 'collectionReason',
+    'retryAt', 'collectionRetryAt', 'backoffUntil', 'intervalMs', 'minSpacingMs', 'expectedCycleMs', 'keyCount',
+    'coverageLimited', 'cycleOverdue', 'lastAttemptAt', 'lastSuccessAt', 'lastDurationMs', 'nextAt']
+    .map(key => [key, collection[key]]));
+  return { workerId, ...metadata, cadence: metadata.pullLimitLabel, collection: summary };
 }
 
 function getRuntimeHealthForAgent(id) {
@@ -25915,7 +25891,8 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
   // workers, but they do pull live listings into the same feed cache.
   const collectionStatus = sourceCollectionScheduler?.status() || null;
   const collectionById = new Map((collectionStatus?.sources || []).map(source => [source.id, source]));
-  const sourceHealthArr = AGGREGATE_FEED_SOURCES.map((id) => {
+  const rateContext = sourceRateContext(collectionStatus);
+  const sourceHealthArr = CONFIGURED_SOURCE_WORKERS.map(canonicalFeedSourceId).map((id) => {
     const workerId = feedWorkerKey(id);
     const h = workerHealth.get(workerId);
     const cache = agentSourceCache.get(workerId);
@@ -25934,10 +25911,7 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       id, emoji: officeBadgeCode(workerId, AGENT_DEFS[workerId]?.emoji), color: AGENT_DEFS[workerId]?.color,
       name: AGENT_DEFS[workerId]?.name || id,
       status,
-      // Real configured cadence — lets the office compare rates across
-      // platforms directly instead of guessing from post counts alone.
-      cadence: AGENT_DEFS[workerId]?.interval || null,
-      cycleMinutes: AGENT_DEFS[workerId]?.cycleMinutes ?? null,
+      ...getSourceRateMetadata(id, rateContext),
       refreshTtlMinutes: SOURCE_CONFIG[workerId]?.ttl
         ? Math.round(SOURCE_CONFIG[workerId].ttl / 60000)
         : null,
@@ -26338,7 +26312,7 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
 
 // Registry heartbeats and log messages are not evidence of successful work.
 // Only structured observations enter Live City health and its read-only chat.
-function getOfficeAgentObservation(id, observedAt = new Date().toISOString()) {
+function getOfficeAgentObservation(id, observedAt = new Date().toISOString(), rateContext = sourceRateContext()) {
   if (!Object.prototype.hasOwnProperty.call(AGENT_DEFS, id)) return null;
   const isTopicRouter = /^topic_router_[1-4]$/.test(id);
   const sourceWorker = Object.prototype.hasOwnProperty.call(SOURCE_CONFIG, id)
@@ -26349,6 +26323,7 @@ function getOfficeAgentObservation(id, observedAt = new Date().toISOString()) {
   const diagnosticCapability = sourceWorker ? 'source-worker' : id === 'instagram' ? 'on-demand'
     : hasRuntimeMetrics ? 'runtime-metrics' : 'summary-only';
   const cache = agentSourceCache.get(id);
+  const rateMetadata = sourceWorker ? getSourceRateMetadata(id, rateContext) : {};
   let status = 'unknown';
   let metrics = {};
   if (isTopicRouter) {
@@ -26369,7 +26344,7 @@ function getOfficeAgentObservation(id, observedAt = new Date().toISOString()) {
       enabled: !IS_PIPELINE_ROLE && verification.enabled !== false, verified: !IS_PIPELINE_ROLE && verification.status === 'verified' };
   } else if (sourceWorker) {
     const health = workerHealth.get(id);
-    const collection = sourceCollectionScheduler?.status().sources.find(source => source.id === id);
+    const collection = rateMetadata.collection;
     if (SERVICE_ROLE !== 'pipeline') status = 'unavailable';
     else if (collection?.enabled === false || !require('./office-agent-activation').officeSourceReady(id, process.env)) status = 'disabled';
     else if (health) {
@@ -26403,14 +26378,17 @@ function getOfficeAgentObservation(id, observedAt = new Date().toISOString()) {
   if (id === 'data') metrics = { ...metrics, databaseConnected: db.isConnected(), backupConnected: db.isBackupConnected() };
   if (cache) metrics = { ...metrics, postCount: getAgentPostCount(id, cache), lastFetch: cache.lastFetch };
   return sanitizeAgentSnapshot({ agentId: id, serviceRole: SERVICE_ROLE, executionRole, diagnosticCapability,
-    observedAt, status, cadence: AGENT_DEFS[id].interval, metrics });
+    observedAt, status, cadence: AGENT_DEFS[id].interval, ...rateMetadata, metrics });
 }
 
 const officeAI = createOfficeAI({
   env: officeProviderEnv, db,
   getControls: officeControlCatalog,
-  getSnapshot: () => ({ serviceRole: SERVICE_ROLE, observedAt: new Date().toISOString(),
-    agents: Object.keys(AGENT_DEFS).slice(0, 120).map(id => getOfficeAgentObservation(id)).filter(Boolean) }),
+  getSnapshot: () => {
+    const observedAt = new Date().toISOString(), rateContext = sourceRateContext();
+    return { serviceRole: SERVICE_ROLE, observedAt,
+      agents: Object.keys(AGENT_DEFS).slice(0, 120).map(id => getOfficeAgentObservation(id, observedAt, rateContext)).filter(Boolean) };
+  },
 });
 app.get('/office/ai', requireOfficeToken, officeAI.status);
 app.post('/office/ai/chat', requireOfficeToken, officeAI.chat);
@@ -26450,12 +26428,13 @@ app.get('/office/agents', requireOfficeToken, async (req, res) => {
   await topicRoutingAgents.snapshot().catch(() => {});
   const result = {};
   const observedAt = new Date().toISOString();
+  const rateContext = sourceRateContext();
   for (const [id, def] of Object.entries(AGENT_DEFS)) {
     const logs   = agentActionLog.filter(e => e.agentId === id).slice(0, 15);
     const cache  = agentSourceCache.get(id) || null;
-    const observation = getOfficeAgentObservation(id, observedAt);
+    const observation = getOfficeAgentObservation(id, observedAt, rateContext);
     result[id] = {
-      ...def, id, emoji: officeBadgeCode(id, def.emoji), logs, lastAction: logs[0] || null,
+      ...def, ...getSourceRateMetadata(id, rateContext), id, emoji: officeBadgeCode(id, def.emoji), logs, lastAction: logs[0] || null,
       ...(id === 'analytics_verification' || /^topic_router_[1-4]$/.test(id) ? { triggerable: !IS_PIPELINE_ROLE } : {}),
       serviceRole: SERVICE_ROLE, executionRole: observation.executionRole, observedAt,
       diagnosticCapability: observation.diagnosticCapability, observation,
@@ -26892,7 +26871,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
 // Was 15 min — that made sense as "re-sort + bulk-upsert" cadence pre-split,
 // but post-split this interval is the ONLY path fetched content takes to
 // reach feed_posts_cache at all (see transferStagedPosts's own comment).
-// Individual source fetchers cycle every 15-60s (see AGENT_DEFS' cadence),
+// Source collection follows the shared scheduler and current pull ceilings,
 // so batching their output behind a 15-minute gate turned what used to be
 // near-continuous delivery into content arriving in occasional large
 // pulses — confirmed as a real regression from "same rate as before",
@@ -27081,9 +27060,11 @@ function officeGithubToken() {
 
 function officeControlSourceList() {
   const ids = [...new Set([...Object.keys(SOURCE_CONFIG), ...JOB_LISTING_SOURCES, 'remotive', 'muse'])].sort();
+  const rateContext = sourceRateContext();
   return ids.map((id) => ({
     id,
     label: String(AGENT_DEFS[id]?.name || id).replace(/\s+Agent$/i, ''),
+    ...getSourceRateMetadata(id, rateContext),
   }));
 }
 
@@ -27770,18 +27751,26 @@ app.get('/hq/status', (req, res) => {
 // --- Office: per-source cache stats ------------------------------------------
 app.get('/office/sources', requireOfficeToken, (_req, res) => {
   const sources = [];
-  for (const [id, d] of agentSourceCache) {
+  const rateContext = sourceRateContext();
+  for (const id of CONFIGURED_SOURCE_WORKERS) {
+    const d = agentSourceCache.get(id) || {};
     const posts = d.posts || [];
+    const observation = getOfficeAgentObservation(id, undefined, rateContext);
     sources.push({
       id,
+      sourceId: canonicalFeedSourceId(id),
+      name: AGENT_DEFS[id]?.name || id,
+      description: AGENT_DEFS[id]?.description || null,
+      ...getSourceRateMetadata(id, rateContext),
+      status: observation?.status || 'unknown',
       postCount:  posts.length,
       totalSeen:  Math.min(d.totalSeen || posts.length, posts.length),
-      lastFetch:  d.lastFetch,
-      emoji:      officeBadgeCode(id, d.emoji),
-      color:      d.color,
+      lastFetch:  d.lastFetch || null,
+      emoji:      officeBadgeCode(id, d.emoji || AGENT_DEFS[id]?.emoji),
+      color:      d.color || AGENT_DEFS[id]?.color,
     });
   }
-  res.json({ sources, globalCount: globalFeedCache.posts.length });
+  res.json({ sources, configuredSourceCount: CONFIGURED_SOURCE_WORKERS.length, globalCount: globalFeedCache.posts.length });
 });
 
 // --- HQ manual agent trigger (internal use) ----------------------------------
@@ -29578,7 +29567,7 @@ function getPlatformSearchUrls(role, title, resumeKeywords) {
 // --- Remotive/Muse: dedicated pipeline sweeps, not a per-request live fetch --
 // Both APIs are category-taxonomy-based (Remotive: ROLE_TO_REMOTIVE,
 // Muse: ROLE_TO_MUSE), not free-text keyword search, so neither fits
-// makeTopicCycler's FEED_TOPICS-keyed model the other ~30 sources use — a
+// makeTopicCycler's FEED_TOPICS-keyed model used by topic collectors — a
 // small dedicated sweep over each source's own real category list instead
 // (see startJobBoardSweeps). Used to be a live fetch inside /opportunities
 // on every single request; now reads from feed_posts_cache like every other
