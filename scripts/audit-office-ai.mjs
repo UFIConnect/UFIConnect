@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { chromium } from 'playwright';
 import { createServer } from '../office/node_modules/vite/dist/node/index.js';
 
@@ -27,6 +28,8 @@ const server = await createServer({
 });
 
 const command = { id: 'health.security', label: 'Run security check', category: 'Health', description: 'Read configuration checks.', target: 'api', impact: 'low', available: true, requiresConfirmation: false };
+const { BASE_OFFICE_CONTROLS } = createRequire(import.meta.url)('../backend/office-controls.js');
+const commands = [command, ...BASE_OFFICE_CONTROLS.filter(item => item.id !== command.id)];
 let checks = 0, browser;
 const check = (condition, message) => { assert.ok(condition, message); checks++; };
 try {
@@ -36,7 +39,7 @@ try {
     const context = await browser.newContext({ viewport: { width, height: 1000 } }), page = await context.newPage();
     const requests = [], errors = [];
     let tools = [], failChat = false, slowChat = false, configured = true, researchStatus = 'verified';
-    let connections = ['github', 'render', 'cloudflare'].map(id => ({ id, configured: false }));
+    let connections = ['github', 'render', 'cloudflare', 'notion', 'slack', 'linear'].map(id => ({ id, configured: false, chatSource: ['notion', 'slack', 'linear'].includes(id) }));
     let stallConnectionRead = false, stalledConnectionRoute = null, statusReadDelayMs = 0, connectionReadDelayMs = 0;
     let holdChat = false, releaseChat = null, heldChatReady = null, failChatNetwork = false;
     const conversations = new Map();
@@ -45,7 +48,7 @@ try {
     await context.route('**/*', async route => {
       const req = route.request(), url = new URL(req.url());
       if (![API, PIPELINE].includes(url.origin)) return route.continue();
-      const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'x-office-token,content-type', 'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS' };
+      const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'x-office-token,content-type', 'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS' };
       if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
       check(req.headers()['x-office-token'] === 'synthetic-office-ai-token' && !url.href.includes('synthetic-office-ai-token'), 'Office credentials stay in authenticated headers');
       const body = req.postData() ? req.postDataJSON() : null;
@@ -92,14 +95,14 @@ try {
         if (connectionReadDelayMs) await new Promise(resolve => setTimeout(resolve, connectionReadDelayMs));
         return route.fulfill({ headers, json: { connections } });
       }
-      const connectionMatch = url.pathname.match(/^\/office\/connections\/(github|render|cloudflare)(\/verify)?$/);
+      const connectionMatch = url.pathname.match(/^\/office\/connections\/(github|render|cloudflare|notion|slack|linear)(\/verify)?$/);
       if (connectionMatch) {
         const id = connectionMatch[1];
-        if (req.method() === 'DELETE') connections = connections.map(item => item.id === id ? { id, configured: false } : item);
-        else connections = connections.map(item => item.id === id ? { id, configured: true, verifiedAt: '2026-11-03T18:00:00Z', ...(id === 'github' ? { repository: 'fixture/office' } : {}), ...(id === 'render' ? { serviceIds: body.serviceIds || item.serviceIds } : {}), ...(id === 'cloudflare' ? { accountId: body.accountId || item.accountId, model: body.model || item.model, gateway: body.gateway || item.gateway, deploymentConfigured: !!body.deploymentToken || !!item.deploymentConfigured } : {}) } : item);
+        if (req.method() === 'DELETE') connections = connections.map(item => item.id === id ? { ...item, configured: false } : item);
+        else connections = connections.map(item => item.id === id ? { ...item, configured: true, verifiedAt: '2026-11-03T18:00:00Z', ...(id === 'github' ? { repository: 'fixture/office' } : {}), ...(id === 'render' ? { serviceIds: body.serviceIds || item.serviceIds } : {}), ...(id === 'cloudflare' ? { accountId: body.accountId || item.accountId, model: body.model || item.model, gateway: body.gateway || item.gateway, deploymentConfigured: !!body.deploymentToken || !!item.deploymentConfigured } : {}) } : item);
         return route.fulfill({ headers, json: { detail: req.method() === 'DELETE' ? 'Connection disabled.' : connectionMatch[2] ? 'Connection verified.' : 'Connection verified and saved.' } });
       }
-      if (url.pathname === '/office/controls') return route.fulfill({ headers, json: { controls: [command], history: [] } });
+      if (url.pathname === '/office/controls') return route.fulfill({ headers, json: { controls: commands, history: [] } });
       if (url.pathname === '/office/ai/tools') {
         if (req.method() === 'POST') { const tool = { ...body, id: '00000000-0000-4000-8000-000000000001' }; tools.push(tool); return route.fulfill({ headers, json: { tool } }); }
         return route.fulfill({ headers, json: { tools, persistence: 'database' } });
@@ -110,7 +113,7 @@ try {
         if (failChatNetwork) return route.abort('connectionfailed');
         if (slowChat) await new Promise(resolve => setTimeout(resolve, 1500));
         if (failChat) return route.fulfill({ status: 503, headers, json: { error: 'Cloudflare could not complete the request. Please retry.' } });
-        const fulfillReply = () => route.fulfill({ headers, json: { reply: markdownReply ? '## Example\n**A safe code example**\n```js\nconsole.log("hello");\n```\n[Unsafe link](javascript:alert(1))\n<img src=x onerror=alert(1)>' : 'A grounded answer with alternatives and limitations.', provider: 'Cloudflare', model: '@cf/test/model', generatedAt: '2026-11-03T18:00:00Z', research: { status: researchStatus, checkedAt: '2026-11-03T18:00:00Z' },
+        const fulfillReply = () => route.fulfill({ headers, json: { reply: markdownReply ? '## Example\n**A safe code example**\n```js\nconsole.log("hello");\n```\n[Unsafe link](javascript:alert(1))\n<img src=x onerror=alert(1)>' : 'A grounded answer with alternatives and limitations.', provider: 'Cloudflare', model: '@cf/test/model', generatedAt: '2026-11-03T18:00:00Z', research: { status: researchStatus, checkedAt: '2026-11-03T18:00:00Z' }, connectedSources: (body.sourceIds || []).map(id => ({ id, status: 'retrieved', count: 1 })),
           sources: researchStatus === 'official-updates' ? [{ title: 'Official model announcement', url: 'https://blog.google/technology/ai/fixture-announcement/', publisher: 'Google AI', publishedAt: '2026-11-02T12:00:00Z' }] : researchStatus === 'verified' ? [{ title: 'Official update', url: 'https://developers.cloudflare.com/changelog/', description: 'A current release.' }, { title: 'Unsafe script', url: 'javascript:alert(1)' }, { title: 'Credential URL', url: 'https://secret:password@example.org/' }] : [], actions: [command], toolsUsed: body.toolIds } });
         if (holdChat) { releaseChat = fulfillReply; heldChatReady?.(); return; }
         return fulfillReply();
@@ -127,6 +130,7 @@ try {
     await page.getByText('A grounded answer with alternatives and limitations.', { exact: true }).waitFor();
     const firstChat = requests.find(row => row.path.endsWith('/chat'));
     check(firstChat.body.research && firstChat.body.perspective === 'balanced', 'New conversations use live research and balanced perspectives');
+    check(!firstChat.body.sourceIds?.length, 'Workspace retrieval is opt-in for each reply');
     check(await page.getByRole('link', { name: 'Official update' }).count() === 1, 'Retrieved source is a usable citation');
     check(await page.getByRole('link', { name: /Unsafe script|Credential URL/ }).count() === 0, 'Unsafe source schemes and credentials never become links');
     await page.getByText('Conversation saved in Office', { exact: true }).waitFor();
@@ -141,6 +145,37 @@ try {
     await page.getByRole('textbox', { name: 'Search controls' }).waitFor();
     check(await page.getByRole('textbox', { name: 'Search controls' }).inputValue() === command.id, 'Suggested command opens the canonical control filter');
     check(!requests.some(row => row.path.endsWith('/execute')), 'Reading a model command proposal never executes an Office command');
+    await page.getByRole('button', { name: 'Back to control map', exact: true }).click();
+    await page.getByRole('heading', { name: 'Control map', exact: true }).waitFor();
+    check(await page.locator('.ocm-command').count() === commands.length, 'Every registered Office command has a map destination');
+    check(await page.locator('.ocm-group-node').count() === new Set(commands.map(item => item.category)).size, 'Every command category has a functional group');
+    const graph = page.getByRole('group', { name: 'Connected map of Office controls by purpose', exact: true });
+    check(await graph.locator('[data-from][data-to]').count() > 0, 'Functional connections are rendered on the map');
+    await page.screenshot({ path: path.join(output, `office-control-map-${width}.png`), fullPage: true });
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `Control map fits ${width}px without page overflow`);
+    if (width < 800) check(await page.locator('.ocm-canvas').evaluate(element => element.clientHeight <= 440), 'Mobile map leaves room for group navigation and the command list');
+    const district = page.getByRole('button', { name: 'Health, 1 commands. Open group', exact: true });
+    await district.focus(); await district.press('Enter');
+    check(await page.locator('.ocm-command').count() === 1, 'Functional groups can be entered with the keyboard');
+    await page.getByRole('button', { name: 'All controls', exact: true }).click();
+    check(await page.locator('.ocm-command').count() === commands.length, 'All controls clears the selected group');
+    await page.getByRole('button', { name: 'Map', exact: true }).click();
+    await page.getByRole('searchbox', { name: 'Search control map', exact: true }).fill('health.security');
+    await page.getByRole('button', { name: 'Review Run security check', exact: true }).click();
+    await page.getByRole('textbox', { name: 'Search controls' }).waitFor();
+    check(await page.getByRole('textbox', { name: 'Search controls' }).inputValue() === command.id, 'Map destination opens the existing command review');
+    check(!requests.some(row => row.path.endsWith('/execute')), 'Map navigation never executes a command');
+    check(await page.locator('[aria-label="Command review"]').evaluate(element => element === document.activeElement), 'Opening review moves keyboard focus to the review panel');
+    await page.getByRole('button', { name: 'Back to control map', exact: true }).click();
+    check(await page.getByRole('searchbox', { name: 'Search control map', exact: true }).inputValue() === command.id, 'Returning from command review preserves the map search');
+    await page.waitForFunction(id => document.activeElement?.getAttribute('data-control-id') === id, command.id);
+    await page.getByRole('button', { name: 'Clear control search', exact: true }).click();
+    await page.getByRole('button', { name: 'All controls', exact: true }).click();
+    check(await page.locator('.ocm-command').count() === commands.length && !(await graph.count()), 'Directory view exposes all controls without the map');
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.getByRole('button', { name: 'Map', exact: true }).click();
+    check(await page.locator('.office-command-map').evaluate(element => element.getAnimations({ subtree: true }).every(animation => animation.playState !== 'running')), 'System reduced-motion preference leaves no running map animation');
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
     await page.getByRole('button', { name: 'My tools', exact: true }).click();
     await page.getByLabel('Tool name', { exact: true }).fill('Review an idea');
     await page.getByLabel('Description', { exact: true }).fill('Compare benefits, risks, and alternatives.');
@@ -189,10 +224,18 @@ try {
     await page.screenshot({ path: path.join(output, `office-ai-${width}.png`), fullPage: true });
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `Office AI fits ${width}px without horizontal page overflow`);
     await page.getByRole('button', { name: 'Connections', exact: true }).click();
-    for (const [id, name] of [['github', 'GitHub'], ['render', 'Render'], ['cloudflare', 'Cloudflare']]) {
+    await page.getByRole('button', { name: 'Knowledge sources', exact: true }).click();
+    check(await page.locator('.oc-card').count() === 3, 'Knowledge source category lists all new providers');
+    await page.getByRole('searchbox', { name: 'Search connections', exact: true }).fill('slack');
+    check(await page.locator('.oc-card').count() === 1 && await page.getByRole('heading', { name: 'Slack', exact: true }).isVisible(), 'Connection search finds a provider');
+    await page.getByRole('searchbox', { name: 'Search connections', exact: true }).fill('');
+    await page.getByRole('button', { name: 'All connections', exact: true }).click();
+    await page.screenshot({ path: path.join(output, `office-connections-${width}.png`), fullPage: true });
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `Connections fit ${width}px without page overflow`);
+    for (const [id, name] of [['github', 'GitHub'], ['render', 'Render'], ['cloudflare', 'Cloudflare'], ['notion', 'Notion'], ['slack', 'Slack'], ['linear', 'Linear']]) {
       const card = page.locator('.oc-card').filter({ has: page.getByRole('heading', { name, exact: true }) });
       await card.getByRole('button', { name: `Connect ${name}`, exact: true }).click();
-      const credentialLabel = name + (id === 'render' ? ' API key' : ' API token');
+      const credentialLabel = name + ({ render: ' API key', notion: ' internal connection token', slack: ' user OAuth token', linear: ' personal API key' }[id] || ' API token');
       await page.getByLabel(credentialLabel, { exact: true }).fill(`synthetic-${id}-private-connection-token`);
       check(await page.getByLabel(credentialLabel, { exact: true }).getAttribute('type') === 'password', 'Connection credential input is masked');
       if (id === 'render') await page.getByLabel('API service ID', { exact: true }).fill('srv-fixture-api');
@@ -205,6 +248,20 @@ try {
       await card.getByRole('button', { name: 'Verify connection', exact: true }).click();
       await page.getByRole('status').filter({ hasText: 'Connection verified.' }).waitFor();
       check(requests.some(row => row.path === `/office/connections/${id}/verify` && !row.body.token), 'Stored connection can be verified without returning its credential');
+      if (['notion', 'slack', 'linear'].includes(id)) {
+        await page.getByRole('button', { name: 'Conversation', exact: true }).click();
+        await page.getByRole('button', { name: 'Ask', exact: true }).click();
+        const source = page.getByRole('checkbox', { name: `${name} Connected Â· include in reply`, exact: true });
+        await source.check();
+        await page.getByLabel('Message Office AI').fill(`Find context in ${name}`);
+        const sourceSaved = page.waitForResponse(response => response.url().includes('/office/ai/conversations/') && response.request().method() === 'PATCH' && response.status() === 200 && response.request().postDataJSON()?.messages?.at(-1)?.connectedSources?.some(item => item.id === id));
+        await page.getByRole('button', { name: 'Send', exact: true }).click();
+        await page.locator('.office-ai-source-results').last().getByText(`${name} Â· Sources retrieved (1)`, { exact: true }).waitFor();
+        await sourceSaved;
+        check(conversations.get(initialConversation).messages.at(-1).connectedSources[0].id === id, 'Saved history retains connected source results');
+        check(JSON.stringify(requests.filter(row => row.path.endsWith('/chat')).at(-1).body.sourceIds) === JSON.stringify([id]), 'Only the selected workspace source is sent to chat');
+        await page.getByRole('button', { name: 'Connections', exact: true }).click();
+      }
       if (id === 'cloudflare') {
         await card.getByRole('button', { name: 'Update connection Cloudflare', exact: true }).click();
         await page.getByLabel('Workers deployment token', { exact: true }).fill('synthetic-cloudflare-private-deployment-token');
@@ -220,6 +277,14 @@ try {
       await card.getByRole('button', { name: 'Confirm disconnect', exact: true }).click();
       await card.getByRole('button', { name: `Connect ${name}`, exact: true }).waitFor();
       check(requests.some(row => row.path === `/office/connections/${id}` && row.method === 'DELETE' && row.body.confirmed === true), 'Disconnect uses the confirmed authenticated endpoint');
+      if (['notion', 'slack', 'linear'].includes(id)) {
+        await page.getByRole('button', { name: 'Conversation', exact: true }).click();
+        await page.getByRole('button', { name: 'Ask', exact: true }).click();
+        const source = page.getByRole('checkbox', { name: `${name} Connect to use in replies`, exact: true });
+        await source.waitFor();
+        check(await source.isDisabled() && !(await source.isChecked()), 'Disconnect removes the source from the next reply');
+        await page.getByRole('button', { name: 'Connections', exact: true }).click();
+      }
     }
     await page.getByRole('button', { name: 'Connect GitHub', exact: true }).click();
     await page.getByLabel('GitHub API token', { exact: true }).fill('synthetic-unsaved-private-connection-token');
@@ -307,7 +372,7 @@ try {
     check(await page.getByRole('button', { name: 'Run command', exact: true }).isDisabled(), 'Only one isolated terminal session can run at a time');
     terminal = { ...terminal, status: 'completed', conclusion: 'failure', exitCode: 7 }; terminalOutput = 'fixture output\ncommand failed with exit 7';
     await page.getByRole('button', { name: 'Refresh terminal', exact: true }).click();
-    await page.getByText('completed · failure · exit 7', { exact: true }).waitFor();
+    await page.getByText('completed Â· failure Â· exit 7', { exact: true }).waitFor();
     check((await page.getByLabel('Command output', { exact: true }).innerText()).includes('fixture output'), 'Terminal displays actual fetched output and exit status');
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `Terminal fits ${width}px without horizontal page overflow`);
     await page.screenshot({ path: path.join(output, `office-ai-terminal-${width}.png`), fullPage: true });
@@ -364,7 +429,7 @@ try {
       await page.waitForFunction(() => document.querySelector('.office-connections')?.getAttribute('aria-busy') === 'false');
       await page.clock.install(); stallConnectionRead = true;
       await page.getByRole('button', { name: 'Refresh connections', exact: true }).click();
-      await connectionsView.getByText('Checking connection settings…', { exact: true }).waitFor();
+      await connectionsView.getByText('Checking connection settingsâ€¦', { exact: true }).waitFor();
       await page.clock.fastForward(21000);
       await connectionsView.getByRole('alert').filter({ hasText: 'Connection check timed out.' }).waitFor();
       check(await page.getByRole('button', { name: 'Refresh connections', exact: true }).isEnabled(), 'A stalled connection check releases the loading state and allows retry');
