@@ -1,18 +1,25 @@
 'use strict';
 
 const { createTokenVault } = require('./token-vault');
-const PROVIDERS = ['github', 'render', 'cloudflare'];
+const { createOfficeAISources, SOURCE_DEFINITIONS, SOURCE_IDS } = require('./office-ai-sources');
+const PROVIDERS = ['github', 'render', 'cloudflare', ...SOURCE_IDS];
 const KEYS = {
   github: ['OFFICE_GITHUB_TOKEN', 'AUTOFIX_GITHUB_TOKEN'],
   render: ['RENDER_API_KEY', 'RENDER_HOOK_API', 'RENDER_HOOK_WEB', 'RENDER_HOOK_OFFICE', 'RENDER_HOOK_PIPELINE',
     'RENDER_SERVICE_API_ID', 'RENDER_SERVICE_WEB_ID', 'RENDER_SERVICE_OFFICE_ID', 'RENDER_SERVICE_PIPELINE_ID'],
   cloudflare: ['CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_DEPLOY_API_TOKEN', 'OFFICE_AI_MODEL', 'OFFICE_AI_GATEWAY', 'OFFICE_AI_RELAY_URL', 'OFFICE_AI_RELAY_SECRET'],
+  ...Object.fromEntries(SOURCE_IDS.map(id => [id, [SOURCE_DEFINITIONS[id].key]])),
 };
 const OFFICE_CONNECTION_SCHEMA = `CREATE TABLE IF NOT EXISTS office_provider_connections (
-  provider TEXT PRIMARY KEY CHECK (provider IN ('github','render','cloudflare')),
+  provider TEXT PRIMARY KEY CHECK (provider IN ('github','render','cloudflare','notion','slack','linear')),
   enabled BOOLEAN NOT NULL, encrypted_config TEXT, verified_at TIMESTAMPTZ,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )`;
+// Existing installations have a three-provider CHECK. Replace it atomically so
+// an Office update can add sources without deleting existing encrypted records.
+const OFFICE_CONNECTION_MIGRATION = `ALTER TABLE office_provider_connections
+  DROP CONSTRAINT IF EXISTS office_provider_connections_provider_check,
+  ADD CONSTRAINT office_provider_connections_provider_check CHECK (provider IN ('github','render','cloudflare','notion','slack','linear'))`;
 const problem = (status, message) => Object.assign(new Error(message), { status, publicMessage: message });
 const tokenValid = value => typeof value === 'string' && /^[\x21-\x7e]{20,4096}$/.test(value);
 
@@ -20,12 +27,13 @@ const tokenValid = value => typeof value === 'string' && /^[\x21-\x7e]{20,4096}$
 // It never changes process.env or the credentials used by background agents.
 function createOfficeConnections({ db, env = process.env, fetcher = fetch, now = Date.now } = {}) {
   const baseline = { ...env }, officeEnv = { ...env };
+  const sources = createOfficeAISources({ env: officeEnv, fetcher, now });
   const repository = `${env.AUTOFIX_GITHUB_OWNER || 'UFIConnect'}/${(env.AUTOFIX_GITHUB_REPO || 'UFIConnect').replace(/^ufconnect$/i, 'UFIConnect')}`;
   let ready, loading, loadedAt = -Infinity, records = new Map(), savedConfigs = new Map();
   const verificationBudgets = new Map();
   async function storage() {
     if (!db?.isConnected?.()) throw problem(503, 'Office connection storage is unavailable.');
-    if (!ready) ready = db.query(OFFICE_CONNECTION_SCHEMA).catch(error => { ready = null; throw error; });
+    if (!ready) ready = (async () => { await db.query(OFFICE_CONNECTION_SCHEMA); await db.query(OFFICE_CONNECTION_MIGRATION); })().catch(error => { ready = null; throw error; });
     await ready;
   }
   function apply(rows) {
@@ -61,6 +69,7 @@ function createOfficeConnections({ db, env = process.env, fetcher = fetch, now =
     try { await loading; } finally { loading = null; }
   }
   function configuration(provider) {
+    if (SOURCE_DEFINITIONS[provider]) return { token: officeEnv[SOURCE_DEFINITIONS[provider].key] };
     if (provider === 'github') return { token: officeEnv.OFFICE_GITHUB_TOKEN || officeEnv.AUTOFIX_GITHUB_TOKEN };
     if (provider === 'render') return { token: officeEnv.RENDER_API_KEY };
     return { token: officeEnv.CLOUDFLARE_API_TOKEN, accountId: officeEnv.CLOUDFLARE_ACCOUNT_ID,
@@ -71,6 +80,7 @@ function createOfficeConnections({ db, env = process.env, fetcher = fetch, now =
       const record = records.get(provider), config = configuration(provider);
       const configured = provider === 'cloudflare' ? Boolean(config.token && config.accountId || config.relayUrl && config.relaySecret) : Boolean(config.token);
       return { id: provider, configured, source: record ? (record.enabled ? 'saved' : 'disconnected') : 'server',
+        chatSource: SOURCE_IDS.includes(provider), sourceDescription: SOURCE_DEFINITIONS[provider]?.description,
         verifiedAt: record?.verifiedAt || null, repository: provider === 'github' ? repository : undefined,
         accountId: provider === 'cloudflare' ? config.accountId || '' : undefined,
         mode: provider === 'cloudflare' ? config.token && config.accountId ? 'api-token' : config.relayUrl && config.relaySecret ? 'worker-binding' : null : undefined,
@@ -99,6 +109,7 @@ function createOfficeConnections({ db, env = process.env, fetcher = fetch, now =
     return JSON.parse(text);
   }
   async function checkProvider(provider, config) {
+    if (SOURCE_IDS.includes(provider)) return sources.verify(provider, config.token);
     if (provider === 'github') {
       if (!tokenValid(config.token)) throw problem(400, 'Enter a valid GitHub token.');
       const repo = await json(`https://api.github.com/repos/${repository.split('/').map(encodeURIComponent).join('/')}`, config.token,
@@ -161,14 +172,15 @@ function createOfficeConnections({ db, env = process.env, fetcher = fetch, now =
   const save = handle(async (req, res) => {
     const provider = req.params.provider, body = req.body;
     if (!PROVIDERS.includes(provider)) throw problem(404, 'Unknown provider.');
-    const allowed = provider === 'github' ? ['token'] : provider === 'render' ? ['token', 'serviceIds'] : ['token', 'deploymentToken', 'accountId', 'model', 'gateway'];
+    const allowed = provider === 'github' || SOURCE_IDS.includes(provider) ? ['token'] : provider === 'render' ? ['token', 'serviceIds'] : ['token', 'deploymentToken', 'accountId', 'model', 'gateway'];
     if (!body || typeof body !== 'object' || Array.isArray(body) || Buffer.byteLength(JSON.stringify(body)) > 8192 ||
         Object.keys(body).some(key => !allowed.includes(key)) || (provider === 'cloudflare'
           ? (body.token !== undefined && !tokenValid(body.token) || body.deploymentToken !== undefined && !tokenValid(body.deploymentToken) || !body.token && !body.deploymentToken)
           : !tokenValid(body.token))) throw problem(400, 'Enter a valid provider credential.');
     const config = provider === 'cloudflare' ? { ...(savedConfigs.get(provider) || {}) } : {};
     let verification = body;
-    if (provider === 'github') config.OFFICE_GITHUB_TOKEN = body.token;
+    if (SOURCE_DEFINITIONS[provider]) config[SOURCE_DEFINITIONS[provider].key] = body.token;
+    else if (provider === 'github') config.OFFICE_GITHUB_TOKEN = body.token;
     else if (provider === 'render') {
       config.RENDER_API_KEY = body.token;
       // Saved API credentials and service selections must not silently fall

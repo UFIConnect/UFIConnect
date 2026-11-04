@@ -1,6 +1,7 @@
 'use strict';
 
 const { createTokenVault } = require('./token-vault');
+const { SOURCE_IDS } = require('./office-ai-sources');
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const SCHEMA = `CREATE TABLE IF NOT EXISTS office_ai_conversations (
   id UUID PRIMARY KEY, version INTEGER NOT NULL DEFAULT 1,
@@ -29,10 +30,27 @@ function messagesValue(input) {
       checkedAt: date(message.research.checkedAt), note: text(message.research.note, 600),
       providers: (Array.isArray(message.research.providers) ? message.research.providers : []).slice(0, 8).map(value => text(value, 100)),
     };
-    item.sources = (Array.isArray(message.sources) ? message.sources : []).slice(0, 8).flatMap(source => object(source) && sourceUrl(source.url) ? [{
-      title: text(source.title, 240), url: sourceUrl(source.url), description: text(source.description, 1200),
-      publishedAt: date(source.publishedAt), publisher: text(source.publisher, 100),
-    }] : []);
+    if (Array.isArray(message.connectedSources)) {
+      const seen = new Set();
+      item.connectedSources = message.connectedSources.slice(0, 3).flatMap(source => {
+        if (!object(source) || !SOURCE_IDS.includes(source.id) || seen.has(source.id)
+          || !['retrieved', 'empty', 'unavailable', 'not-connected'].includes(source.status)) return [];
+        seen.add(source.id);
+        return [{ id: source.id, status: source.status, count: Number.isInteger(source.count) && source.count >= 0 && source.count <= 4 ? source.count : 0,
+          checkedAt: date(source.checkedAt), note: text(source.note, 600) }];
+      });
+    }
+    item.sources = (Array.isArray(message.sources) ? message.sources : []).slice(0, 20).flatMap(source => {
+      if (!object(source) || !sourceUrl(source.url)) return [];
+      const url = sourceUrl(source.url), hostname = new URL(url).hostname;
+      // Keep citation links and attribution for saved replies, without storing
+      // raw workspace excerpts alongside the assistant's answer.
+      const provider = SOURCE_IDS.includes(source.provider) ? source.provider
+        : /(?:^|\.)(?:notion\.so|notion\.com|notion\.site)$/.test(hostname) ? 'notion'
+          : /(?:^|\.)slack\.com$/.test(hostname) ? 'slack' : /(?:^|\.)linear\.app$/.test(hostname) ? 'linear' : null;
+      return [{ title: text(source.title, 240), url, publisher: text(source.publisher, 100),
+        ...(provider ? { provider } : { description: text(source.description, 1200), publishedAt: date(source.publishedAt) }) }];
+    });
     item.actions = (Array.isArray(message.actions) ? message.actions : []).slice(0, 8).flatMap(action => object(action) && /^[a-z][a-z0-9.-]{1,100}$/.test(action.id) ? [{
       id: action.id, label: text(action.label, 180), description: text(action.description, 600),
       target: ['api', 'pipeline', 'both'].includes(action.target) ? action.target : 'api',

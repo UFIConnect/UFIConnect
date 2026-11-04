@@ -38,9 +38,21 @@ The terminal runs commands in a disposable Node 24 container on a GitHub Actions
 
 The repository is public, so GitHub terminal workflow logs are public even though Office access is private. Do not put credentials or private member data in commands or output. Terminal write tools require the task's code-editing permission; ordinary read-only tasks cannot start commands.
 
+Office commands opens a connected control map. Controls are grouped by purpose, and labeled links help navigate related work such as collecting content, checking safety, investigating health, and releasing changes. These are navigation relationships, not a claim that commands run automatically in that order. Every registered control, including generated source controls and unavailable controls, remains reachable. Search by action, category, service, or command ID; switch to the directory for a list. Returning from a command review preserves the map selection and search. Keyboard navigation and system reduced-motion preferences are supported.
+
 ## Connections
 
-Office AI → Connections supports GitHub, Render, and Cloudflare. It reuses configured server credentials or allows the operator to enter replacements in password fields. Verification checks provider access before saving; it does not infer GitHub write permissions from repository metadata. Actual operations still enforce provider permissions.
+Office AI → Connections supports Notion, Slack, Linear, GitHub, Render, and Cloudflare, with provider search and knowledge/service filters. It reuses configured server credentials or allows the operator to enter replacements in password fields. Verification checks provider access before saving; it does not infer GitHub write permissions from repository metadata. Actual operations still enforce provider permissions.
+
+In Conversation → Ask, explicitly select connected knowledge sources under **Sources for this reply**. Selected sources are searched even when public web research is off. Queries go to their providers, and retrieved excerpts go to Cloudflare with the message. Replies show provider-specific retrieval status and source links; failed or empty lookups are reported. Excerpts are bounded and do not represent a complete workspace search.
+
+| Source | Credential and access | Retrieved context |
+| --- | --- | --- |
+| Notion | Internal connection token with Read content; share the intended pages with the connection | Page title search and top-level text excerpts from up to three pages |
+| Slack | User OAuth token beginning `xoxp-`, with `search:read.public` and access to Slack real-time search | Up to four public-channel message excerpts; no private channels or direct messages |
+| Linear | Personal API key with Read access, limited to intended teams | Up to four matching issue titles, descriptions, and statuses |
+
+Connections are shared with authorized Office operators. Choose source accounts and scopes appropriate for everyone who can access this Office. Credentials belong in Connections, never in the chat. Optional server settings are `OFFICE_NOTION_TOKEN`, `OFFICE_SLACK_TOKEN`, and `OFFICE_LINEAR_TOKEN`; a saved connection overrides its corresponding server credential. The connection-table constraint migrates automatically to allow the added providers without deleting existing records.
 
 Saved credentials are encrypted using the existing `OAUTH_TOKEN_ENCRYPTION_KEY` with AES-256-GCM and provider-bound additional authenticated data. The shared `office_provider_connections` table stores ciphertext, enabled state, and timestamps. Values are never returned to the browser, logged by these modules, or sent to the model. Saved settings apply only to Office's environment view; background agents keep their original credentials. Instances refresh the connection cache within 15 seconds. An unavailable database fails closed for connection-dependent requests.
 
@@ -63,7 +75,7 @@ All `/office/ai` and `/office/connections` endpoints require the existing `x-off
 
 ## Validation
 
-Run the backend Office AI and connection tests, the Worker tests, and `node scripts/audit-office-ai.mjs`; then build Office. The browser audit covers desktop/mobile layouts, research sources, tools, command handoff, connections, request failure/cancellation, and access changes. The release should be assembled from the current production source plus this feature's reviewed changes so unrelated local work is excluded.
+Run `node --test scripts/office-command-city.test.mjs`, the backend Office AI, connected-source, conversation, and connection tests, the Worker tests, and `node scripts/audit-office-ai.mjs`; then build Office. The browser audit covers desktop/mobile layouts, research sources, tools, command handoff, connections, request failure/cancellation, and access changes. The release should be assembled from the current production source plus this feature's reviewed changes so unrelated local work is excluded.
 
 Cloudflare's current [AI REST API](https://developers.cloudflare.com/ai-gateway/usage/rest-api/), [Web Search API](https://developers.cloudflare.com/web-search/how-to-use/), [GitHub repository API](https://docs.github.com/en/rest/repos/repos), and [Render authentication](https://api-docs.render.com/reference/authentication) document the provider contracts used here.
 

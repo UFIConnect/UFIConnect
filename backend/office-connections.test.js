@@ -320,3 +320,54 @@ test('real Office AI and connection routes require authorization before database
   assert.match(authorized.data.error, /storage is unavailable/);
   assert.equal(authorized.headers.get('cache-control'), 'no-store');
 });
+
+test('workspace sources migrate the existing provider constraint, encrypt credentials, persist, and disconnect independently', async t => {
+  const db = await database(t), env = { ...environment(), OFFICE_NOTION_TOKEN: 'baseline-notion-credential-123456789',
+    OFFICE_SLACK_TOKEN: 'xoxp-baseline-slack-credential-123456789', OFFICE_LINEAR_TOKEN: 'baseline-linear-credential-123456789' };
+  const original = { ...env }, calls = [];
+  await db.query(`CREATE TABLE office_provider_connections (
+    provider TEXT PRIMARY KEY CHECK(provider IN ('github','render','cloudflare')), enabled BOOLEAN NOT NULL,
+    encrypted_config TEXT, verified_at TIMESTAMPTZ, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+  const fetcher = async (url, options) => {
+    calls.push({ url, options });
+    if (url.endsWith('/users/me')) return json({ object: 'user', id: 'bot-user' });
+    if (url.endsWith('/v1/search')) return json({ results: [] });
+    if (url.endsWith('/auth.test')) return json({ ok: true, user_id: 'U1', team_id: 'T1' });
+    if (url.endsWith('/assistant.search.context')) return json({ ok: true, results: { messages: [] } });
+    if (url.endsWith('/graphql')) return json({ data: { viewer: { id: 'user-1' }, issues: { nodes: [] } } });
+    return provider().fetcher(url, options);
+  };
+  const service = createOfficeConnections({ db, env, fetcher });
+  assert.equal((await invoke(service.save, { provider: 'github', body: { token: TOKEN } })).status, 200);
+  const github = (await db.query("SELECT encrypted_config FROM office_provider_connections WHERE provider='github'")).rows[0].encrypted_config;
+  for (const [id, token] of [['notion', TOKEN], ['slack', `xoxp-${TOKEN}`], ['linear', TOKEN]]) {
+    const saved = await invoke(service.save, { provider: id, body: { token } });
+    assert.equal(saved.status, 200, JSON.stringify(saved.data));
+    assert.equal(saved.data.connection.chatSource, true);
+    assert.equal(saved.data.connection.configured, true);
+    assert.ok(!JSON.stringify(saved.data).includes(TOKEN));
+    const row = (await db.query('SELECT encrypted_config FROM office_provider_connections WHERE provider=$1', [id])).rows[0];
+    assert.match(row.encrypted_config, /^enc:v1:/);
+    assert.ok(!row.encrypted_config.includes(token));
+    assert.ok(createTokenVault(env).open(row.encrypted_config, `office:provider:${id}`).includes(token));
+  }
+  assert.equal((await db.query("SELECT encrypted_config FROM office_provider_connections WHERE provider='github'")).rows[0].encrypted_config, github);
+  const restarted = createOfficeConnections({ db, env, fetcher });
+  await restarted.refresh();
+  assert.equal(restarted.env.OFFICE_NOTION_TOKEN, TOKEN);
+  assert.equal(restarted.env.OFFICE_SLACK_TOKEN, `xoxp-${TOKEN}`);
+  assert.equal(restarted.env.OFFICE_LINEAR_TOKEN, TOKEN);
+  for (const id of ['notion', 'slack', 'linear']) {
+    const result = await invoke(restarted.disconnect, { provider: id, body: { confirmed: true } });
+    assert.equal(result.status, 200); assert.equal(result.data.connection.configured, false);
+  }
+  const disconnected = createOfficeConnections({ db, env, fetcher });
+  await disconnected.refresh();
+  assert.equal(disconnected.env.OFFICE_NOTION_TOKEN, '');
+  assert.equal(disconnected.env.OFFICE_SLACK_TOKEN, '');
+  assert.equal(disconnected.env.OFFICE_LINEAR_TOKEN, '');
+  assert.equal(disconnected.env.OFFICE_GITHUB_TOKEN, TOKEN);
+  assert.deepEqual(env, original);
+  await assert.rejects(db.query("INSERT INTO office_provider_connections(provider,enabled) VALUES('unknown',false)"), /check constraint/);
+  assert.ok(calls.every(call => call.options.redirect === 'error'));
+});

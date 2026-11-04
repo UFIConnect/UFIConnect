@@ -66,6 +66,46 @@ test('message validation bounds storage and drops unsupported metadata and unsaf
   const saved = messagesValue([{ ...messages[1], token: 'do not persist', sources: [{ url: 'javascript:alert(1)' }, { url: 'https://secret@example.com/' }] }]);
   assert.equal(saved[0].token, undefined); assert.deepEqual(saved[0].sources, []);
 });
+
+test('saved replies preserve connected source status and all citation positions without persisting workspace excerpts', async t => {
+  const f = await fixture(t), id = randomUUID(), taskId = randomUUID();
+  const citations = Array.from({ length: 19 }, (_, index) => index < 8
+    ? { title: `Web ${index + 1}`, url: `https://example.com/${index + 1}`, description: 'Public snippet', publisher: 'Example' }
+    : { title: `Issue ${index + 1}`, url: `https://linear.app/example/issue/ID-${index + 1}`, description: 'PRIVATE RAW WORKSPACE EXCERPT', provider: 'linear', publisher: 'Linear' });
+  const statuses = [{ id: 'linear', status: 'retrieved', count: 4, checkedAt: '2026-11-04T00:00:00Z', note: 'Matching issues only' },
+    { id: 'notion', status: 'empty', count: 0, checkedAt: '2026-11-04T00:00:00Z', note: 'Title search only' },
+    { id: 'slack', status: 'not-connected', count: 0, checkedAt: '2026-11-04T00:00:00Z', note: 'Connect this source' }];
+  const input = [{ role: 'user', content: 'Summarize the project' }, { role: 'assistant', content: 'Project summary [19].', taskId,
+    research: { status: 'pages' }, sources: citations, connectedSources: statuses }];
+  const created = await call(f.api.create, { clientRequestId: id, messages: input });
+  assert.equal(created.code, 201);
+  const recreated = createOfficeConversations({ db: f.db, env });
+  const loaded = (await call(recreated.detail, undefined, id)).body.conversation.messages[1];
+  assert.equal(loaded.sources.length, 19); assert.equal(loaded.sources[18].title, 'Issue 19');
+  assert.equal(loaded.sources[0].description, 'Public snippet');
+  assert.deepEqual(Object.keys(loaded.sources[8]).sort(), ['provider', 'publisher', 'title', 'url']);
+  assert.equal(loaded.sources[8].provider, 'linear');
+  assert.equal(loaded.connectedSources.length, 3); assert.equal(loaded.connectedSources[0].count, 4);
+  assert.equal(loaded.connectedSources[2].status, 'not-connected');
+  assert.equal(loaded.taskId, taskId); assert.equal(loaded.research.status, 'pages');
+  assert.ok(!JSON.stringify(loaded).includes('PRIVATE RAW WORKSPACE EXCERPT'));
+});
+
+test('saved source metadata is bounded, allowlisted, and strips excerpts even when provider metadata is missing', () => {
+  const saved = messagesValue([{ role: 'assistant', content: 'Answer', connectedSources: [
+    { id: 'linear', status: 'retrieved', count: 999, checkedAt: 'invalid', note: 'x'.repeat(700), token: 'private' },
+    { id: 'linear', status: 'empty', count: 0 }, { id: 'unknown', status: 'retrieved', count: 1 },
+  ], sources: [
+    { title: 'Message', url: 'https://example.slack.com/archives/C1/p1', description: 'Private message' },
+    ...Array.from({ length: 25 }, (_, index) => ({ title: `Web ${index}`, url: `https://example.com/${index}`, provider: 'unknown', description: 'Public text' })),
+  ] }])[0];
+  assert.equal(saved.connectedSources.length, 1); assert.equal(saved.connectedSources[0].count, 0);
+  assert.equal(saved.connectedSources[0].checkedAt, null); assert.equal(saved.connectedSources[0].note.length, 600);
+  assert.equal(saved.connectedSources[0].token, undefined);
+  assert.equal(saved.sources.length, 20); assert.equal(saved.sources[0].provider, 'slack');
+  assert.equal(saved.sources[0].description, undefined); assert.equal(saved.sources[1].provider, undefined);
+  assert.equal(saved.sources[1].description, 'Public text');
+});
 test('database failure or wrong encryption key never reports a successful save or reveals content', async t => {
   const unavailable = createOfficeConversations({ db: { isConnected: () => false }, env });
   assert.equal((await call(unavailable.create, { clientRequestId: randomUUID(), messages })).code, 503);

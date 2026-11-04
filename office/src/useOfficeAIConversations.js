@@ -1,9 +1,36 @@
 import { useEffect, useRef, useState } from 'react';
 import { officeAIRequest, officeAIError } from './office-ai-client';
 
+const WORKSPACE_PROVIDERS = new Set(['notion', 'slack', 'linear']);
+const SOURCE_STATUSES = new Set(['retrieved', 'empty', 'unavailable', 'not-connected']);
+const savedText = (value, limit) => typeof value === 'string' ? value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '').slice(0, limit) : '';
+const savedDate = value => Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
+function savedSources(input) {
+  return (Array.isArray(input) ? input : []).slice(0, 20).flatMap(source => {
+    if (!source || typeof source !== 'object') return [];
+    let url;
+    try { url = new URL(source.url); if (url.protocol !== 'https:' || url.username || url.password || url.href.length > 2048) return []; } catch { return []; }
+    const citation = { title: savedText(source.title, 240), url: url.href, publisher: savedText(source.publisher, 100) };
+    const provider = WORKSPACE_PROVIDERS.has(source.provider) ? source.provider
+      : /(?:^|\.)(?:notion\.so|notion\.com|notion\.site)$/.test(url.hostname) ? 'notion'
+        : /(?:^|\.)slack\.com$/.test(url.hostname) ? 'slack' : /(?:^|\.)linear\.app$/.test(url.hostname) ? 'linear' : null;
+    // Keep citation metadata, never the retrieved private workspace excerpt.
+    return provider ? [{ ...citation, provider }]
+      : [{ ...citation, description: savedText(source.description, 1200), publishedAt: savedDate(source.publishedAt) }];
+  });
+}
+function savedSourceResults(input) {
+  const seen = new Set();
+  return (Array.isArray(input) ? input : []).slice(0, 3).flatMap(source => {
+    if (!source || !WORKSPACE_PROVIDERS.has(source.id) || !SOURCE_STATUSES.has(source.status) || seen.has(source.id)) return [];
+    seen.add(source.id);
+    return [{ id: source.id, status: source.status, count: Number.isInteger(source.count) && source.count >= 0 && source.count <= 4 ? source.count : 0,
+      checkedAt: savedDate(source.checkedAt), note: savedText(source.note, 600) }];
+  });
+}
 function storedMessages(messages) {
-  return messages.map(({ role, content, sources, research, actions, model, generatedAt, taskId }) => ({ role, content: content.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, ''),
-    ...(role === 'assistant' ? { sources, research, actions, model, generatedAt, ...(taskId ? { taskId } : {}) } : {}) }));
+  return messages.map(({ role, content, sources, connectedSources, research, actions, model, generatedAt, taskId }) => ({ role, content: content.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, ''),
+    ...(role === 'assistant' ? { sources: savedSources(sources), connectedSources: savedSourceResults(connectedSources), research, actions, model, generatedAt, ...(taskId ? { taskId } : {}) } : {}) }));
 }
 
 export default function useOfficeAIConversations({ apiBase, request, messages, setMessages, beforeLoad }) {
@@ -35,9 +62,13 @@ export default function useOfficeAIConversations({ apiBase, request, messages, s
         const received = Array.isArray(conversation.messages) ? storedMessages(conversation.messages) : null;
         if (!received) throw Error('Conversation saving returned an incomplete receipt. Retry saving your chat.');
         const sameText = received.length === snapshot.length && received.every((item, index) => item.role === snapshot[index].role && item.content === snapshot[index].content);
-        const sameContent = sameText && received.every((item, index) => item.taskId === snapshot[index].taskId);
+        const sameTask = sameText && received.every((item, index) => item.taskId === snapshot[index].taskId);
+        const sameSourceMetadata = sameText && received.every((item, index) => JSON.stringify(item.sources) === JSON.stringify(snapshot[index].sources)
+          && JSON.stringify(item.connectedSources) === JSON.stringify(snapshot[index].connectedSources));
+        const sameContent = sameTask && sameSourceMetadata;
         current.current = conversation; saved.current = sameContent ? signature : JSON.stringify(received); setCurrentId(conversation.id); setSavedAt(conversation.updatedAt || new Date().toISOString()); remember(conversation);
-        if (sameText && !sameContent) throw Error('The service did not retain the task link. Your task remains here. Refresh after the service update and retry saving.');
+        if (sameText && !sameTask) throw Error('The service did not retain the task link. Your task remains here. Refresh after the service update and retry saving.');
+        if (sameTask && !sameSourceMetadata) throw Error('The service did not retain the source references. Your answer remains here. Refresh after the service update and retry saving.');
       }
     } catch (cause) {
       if (mounted.current && generation === epoch.current) { conflict.current = cause.status === 409 && !!current.current; setError(conflict.current ? 'This conversation changed elsewhere. Your current messages remain here. Reload the saved conversation to resolve the conflict.' : officeAIError(cause)); }

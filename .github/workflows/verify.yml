@@ -60,6 +60,8 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: node --test infra/office-ai-worker/index.test.mjs infra/office-ai-site/index.test.mjs
         if: matrix.group == 'office'
+      - run: node --test scripts/office-command-city.test.mjs
+        if: matrix.group == 'office'
       - run: node scripts/audit-office-ai.mjs
         if: matrix.group == 'office'
       - run: node scripts/audit-office-ai-execution.mjs
