@@ -6,6 +6,7 @@ const bcrypt = require('bcryptjs');
 const { PGlite } = require('@electric-sql/pglite');
 const { BUSINESS_TEAM_SCHEMA } = require('./business-teams');
 const { MANAGED_VPN_SCHEMA } = require('./managed-vpn-schema');
+const { SCHEMA: SUSPICIOUS_DEVICE_SCHEMA } = require('./suspicious-devices');
 const { createAppHarness, member } = require('./test-support/app-harness');
 const { passwordPolicyError, resolveJwtSecret, publicRoleSettings } = require('./auth-security');
 const { createTokenVault, migrateSocialCredentials } = require('./token-vault');
@@ -262,6 +263,10 @@ test('database password updates reject concurrent changes and never report succe
     CREATE TABLE auth_sessions (id UUID PRIMARY KEY, user_id UUID, expires_at TIMESTAMPTZ);`);
   for (const sql of BUSINESS_TEAM_SCHEMA) await pg.exec(sql);
   for (const sql of MANAGED_VPN_SCHEMA) await pg.exec(sql);
+  // Authenticated routes now check device records before password mutation.
+  // Exercise the real guard against its schema, rather than failing with 503
+  // because the password-focused fixture omitted the security tables.
+  for (const sql of SUSPICIOUS_DEVICE_SCHEMA) await pg.exec(sql);
   const id = crypto.randomUUID();
   const email = 'alice@example.invalid';
   await pg.query('INSERT INTO users(id,name,email,password_hash,auth_version) VALUES ($1,$2,$3,$4,0)', [id, 'Alice', email, await bcrypt.hash(newPassword, 4)]);
@@ -284,7 +289,9 @@ test('database password updates reject concurrent changes and never report succe
   };
   await pg.query(`INSERT INTO managed_vpn_devices(id,user_id,gateway_id,public_key,label,tunnel_address)
     VALUES($1,$1,'ufi-de-1',$2,'Phone','10.80.0.2')`, [id, Buffer.alloc(32, 7).toString('base64')]);
-  const workers = await Promise.all([createAppHarness({ connected: true, query, withClient }), createAppHarness({ connected: true, query, withClient })]);
+  const workerOptions = { connected: true, query, withClient,
+    modules: { './suspicious-devices': require('./suspicious-devices') } };
+  const workers = await Promise.all([createAppHarness(workerOptions), createAppHarness(workerOptions)]);
   for (const app of workers) t.after(() => app.close());
   const login = (app, password) => app.request('/auth/login', { method: 'POST', body: { email, password } });
   const sessions = await Promise.all(workers.map(app => login(app, newPassword)));

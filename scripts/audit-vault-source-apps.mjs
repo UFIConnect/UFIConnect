@@ -1,3 +1,4 @@
+import { installAuditVaultStorage } from './audit-vault-storage-fixture.mjs';
 // Synthetic imports and source responses. No real accounts or provider writes.
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -24,7 +25,8 @@ try {
   const origin = server.resolvedUrls.local[0];
   for (const width of [1440, 390, 320]) {
     const context = await browser.newContext({ viewport: { width, height: 950 }, colorScheme: width === 390 ? 'dark' : 'light' });
-    const page = await context.newPage(); page.setDefaultTimeout(12000);
+    const page = await context.newPage();
+    const accountStorage = await installAuditVaultStorage(page, user); page.setDefaultTimeout(12000);
     const errors = [], outbound = [];
     let mastodonDenied = true, libraryReads = 0;
     page.on('pageerror', error => errors.push(error.message));

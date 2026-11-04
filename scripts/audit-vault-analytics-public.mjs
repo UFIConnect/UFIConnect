@@ -1,3 +1,4 @@
+import { installAuditVaultStorage } from './audit-vault-storage-fixture.mjs';
 // Exercise the built public bundle with synthetic accounts and all requests intercepted.
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -32,6 +33,7 @@ try {
     page.setDefaultTimeout(12_000);
     const errors = []; const requests = [];
     let memberId = `built-vault-a-${width}`;
+    await installAuditVaultStorage(page, () => memberId);
     app.seedUser(member(memberId, { name: 'Synthetic Alice' }));
     app.seedUser(member(`built-vault-b-${width}`, { name: 'Synthetic Bob' }));
     const source = { id: 'youtube', label: 'YouTube', connected: true, status: 'available',

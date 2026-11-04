@@ -37,14 +37,14 @@ async function fixture(t, { music = false, leadingMusic = false } = {}) {
   const createdAt = new Date().toISOString();
   const inventory = ['United States', 'Canada'].flatMap((country, c) => ['reddit', 'github'].flatMap(source => [120, 1200].map(duration => ({
     id: `${source}_geo_${c}_${duration}`, source, topic: music ? 'Music' : 'Science', title: `${country} ${music ? 'song live performance' : 'science research'}`,
-    content: `${country} researchers report their latest science findings.`, location: country,
+    content: `${country} researchers report their latest science findings in a ${duration}-second presentation.`, location: country,
     source_url: `https://example.com/${source}/${c}/${duration}`, post_created_at: createdAt,
     media_type: 'video', media_url: `https://example.com/${source}/${c}/${duration}.mp4`, video_duration_seconds: duration,
     author_name: 'Public publisher',
   })))).sort((left, right) => left.video_duration_seconds - right.video_duration_seconds);
   if (leadingMusic) inventory.unshift(...['reddit', 'github'].flatMap(source => [2, 1].map(index => ({
     ...inventory.find(row => row.source === source && row.video_duration_seconds === 1200),
-    id: `${source}_zzz_music_${index}`, title: 'Acoustic song live performance', topic: 'Music',
+    id: `${source}_zzz_music_${index}`, title: `Acoustic song live performance ${index}`, topic: 'Music',
   }))));
   const app = await createAppHarness({ env: { TRUST_PROXY: 'loopback' }, connected: true, query: async (sql, params) => {
     if (!sql.includes('FROM feed_posts_cache')) return { rows: [], rowCount: 0 };

@@ -542,7 +542,7 @@ test('real phone signup routes issue no session before completion, restore the p
     ADD COLUMN onboarding_complete BOOLEAN DEFAULT false, ADD COLUMN bio TEXT DEFAULT '', ADD COLUMN role_settings JSONB DEFAULT '{}';`);
   const signin=require('./auth-signin');
   const app=await createAppHarness({env:f.env,connected:true,query:(sql,params)=>f.pg.query(sql,params.map(value=>Object.prototype.toString.call(value)==='[object Date]'?new Date(value.getTime()):value)),withClient:fn=>f.db.withClient(fn),
-    modules:{'./auth-signin':{...signin,registerSignInRoutes:(server,options)=>signin.registerSignInRoutes(server,{...options,phoneProvider:f.options.phoneProvider})}}});
+    modules:{'./suspicious-devices':require('./suspicious-devices'),'./auth-signin':{...signin,registerSignInRoutes:(server,options)=>signin.registerSignInRoutes(server,{...options,phoneProvider:f.options.phoneProvider})}}});
   t.after(()=>app.close());
   const challenge=await app.request('/auth/phone/request',{method:'POST',body:{phoneNumber:'+15551234567',mode:'login'}});
   assert.equal(challenge.status,200);
@@ -574,7 +574,7 @@ test('real application routes restore Google sessions while Apple and phone rema
   for(const sql of BUSINESS_TEAM_SCHEMA) await f.pg.exec(sql);
   const signin=require('./auth-signin');
   const app=await createAppHarness({env:f.env,connected:true,query:(sql,params)=>f.pg.query(sql,params.map(value=>Object.prototype.toString.call(value)==='[object Date]'?new Date(value.getTime()):value)),withClient:fn=>f.db.withClient(fn),
-    modules:{'./auth-signin':{...signin,registerSignInRoutes:(server,options)=>signin.registerSignInRoutes(server,{...options,fetcher:f.options.fetcher,keySets:f.options.keySets})}}});
+    modules:{'./suspicious-devices':require('./suspicious-devices'),'./auth-signin':{...signin,registerSignInRoutes:(server,options)=>signin.registerSignInRoutes(server,{...options,fetcher:f.options.fetcher,keySets:f.options.keySets})}}});
   t.after(()=>app.close());
   const readiness=await app.request('/auth/providers');
   assert.equal(readiness.data.providers.google.enabled,true);

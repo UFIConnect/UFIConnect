@@ -1,5 +1,15 @@
 # Data and privacy controls
 
+## Vault storage
+
+Vault encrypts contents on the device before saving an account copy in the
+primary database. Passphrases, plaintext entries and unwrapped keys are not
+uploaded. Local device/Face ID wrappers remain local. Encrypted account copies
+are included in account exports and deleted with the account; downloaded and
+cached device copies remain until removed locally. Vault contents stay outside
+analytics and learning. See [Vault account storage](VAULT-ACCOUNT-STORAGE.md)
+for migration, conflict handling and deployment details.
+
 ## Collection choices
 
 | Control | Default | Behavior |

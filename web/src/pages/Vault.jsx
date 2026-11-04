@@ -9,6 +9,9 @@ import { ArrowUpRight, Check, ChevronRight, Clock3, Copy, Download, Eye, EyeOff,
 import Layout from '../components/Layout';
 import client from '../api/client';
 import { createAccountVault } from '../vault/accountVault.mjs';
+import { createSyncedAccountVault } from '../vault/syncedAccountVault.mjs';
+import { createVaultTransport } from '../vault/vaultTransport.mjs';
+import { getAccessToken } from '../auth/session';
 import { importVaultFile, vaultFileBytes } from '../vault/vaultFiles.mjs';
 import { MAX_VAULT_BACKUP_BYTES, MAX_VAULT_BYTES, parsePasswordImport, exportPasswordCsv } from '../vault/localVault.mjs';
 import { changesVaultContent } from '../vault/vaultEntitlement.mjs';
@@ -99,7 +102,8 @@ export default function Vault({ accountId }) {
   const canWrite = LOCAL_PREVIEW || billing.active;
   const writeAccess = useRef(canWrite);
   writeAccess.current = canWrite;
-  const vault = useMemo(() => createAccountVault(accountId), [accountId]);
+  const vault = useMemo(() => LOCAL_PREVIEW ? createAccountVault(accountId)
+    : createSyncedAccountVault(accountId, createVaultTransport(client, getAccessToken)), [accountId]);
   const { hasVault, createVault, unlockVault, saveEntries, changePassphrase, exportEncryptedVault, restoreEncryptedVault, hasDeviceUnlock, enableDeviceUnlock, unlockWithDevice } = vault;
   const [exists, setExists] = useState(() => { try { return hasVault(); } catch { return false; } });
   const [session, setSession] = useState(null);
@@ -128,6 +132,8 @@ export default function Vault({ accountId }) {
   const [newPassphrase, setNewPassphrase] = useState('');
   const [newConfirmation, setNewConfirmation] = useState('');
   const [recoveryBackup, setRecoveryBackup] = useState('');
+  const [accountCopyConfirmed, setAccountCopyConfirmed] = useState(false);
+  const [storageChecking, setStorageChecking] = useState(!LOCAL_PREVIEW);
   const [restoreFromRecovery, setRestoreFromRecovery] = useState(false);
   const recoveryOperation = useRef(null);
   const [deviceReady, setDeviceReady] = useState(() => hasDeviceUnlock());
@@ -138,6 +144,36 @@ export default function Vault({ accountId }) {
   const downloadUrls = useRef(new Set());
   const epoch = useRef(0);
   const backupRead = useRef(0);
+  useEffect(() => {
+    let mounted = true;
+    if (!vault.initialize) return undefined;
+    setStorageChecking(true);
+    vault.initialize().catch(failure => { if (mounted) setError(failure.message); }).finally(() => {
+      if (mounted) {
+        try { setExists(hasVault()); setDeviceReady(hasDeviceUnlock()); } catch (failure) { setError(failure.message); }
+        setStorageChecking(false);
+      }
+    });
+    return () => { mounted = false; };
+  }, [vault]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function retryAccountStorage() {
+    setStorageChecking(true); setError('');
+    try { await vault.initialize(); setExists(hasVault()); setDeviceReady(hasDeviceUnlock()); }
+    catch (failure) { setError(failure.message); }
+    finally { setStorageChecking(false); }
+  }
+
+  async function useSavedAccountCopy() {
+    if (!accountCopyConfirmed || !recoveryBackup || busy) return;
+    setBusy(true); setError('');
+    try {
+      await vault.useAccountCopy(recoveryBackup);
+      setExists(hasVault());
+      lockVault('Account copy loaded. Unlock it with the passphrase used for that copy.');
+    } catch (failure) { setError(failure.message); }
+    finally { setBusy(false); }
+  }
   const lockVault = useCallback((message = 'Vault locked.') => {
     epoch.current += 1;
     backupRead.current += 1;
@@ -195,7 +231,7 @@ export default function Vault({ accountId }) {
       setExists(true);
       if (request === epoch.current && !document.hidden) { setSession(next); setPassphrase(''); setConfirmation(''); }
     } catch (failure) { if (request === epoch.current) setError(failure.message || 'The vault could not be opened.'); }
-    finally { if (request === epoch.current) setBusy(false); }
+    finally { if (request === epoch.current) { setBusy(false); setExists(hasVault()); } }
   }
 
   async function persist(entries, message, nextPreferences = preferences) {
@@ -338,7 +374,15 @@ export default function Vault({ accountId }) {
       await restoreEncryptedVault(restoreText, backupPassphrase, { signal: operation.signal });
       setExists(true);
       if (request === epoch.current) lockVault('Backup verified and restored. Unlock it with the backup’s passphrase.');
-    } catch (failure) { if (request === epoch.current) setError(failure.message || 'The backup could not be verified and restored.'); }
+    } catch (failure) {
+      if (request === epoch.current) {
+        setError(failure.message || 'The backup could not be verified and restored.');
+        setExists(hasVault());
+        if (recoveryBackup && recoveryBackup !== exportEncryptedVault()) {
+          setRestoreConfirmed(false); setRecoveryBackup('');
+        }
+      }
+    }
     finally { if (recoveryOperation.current === operation) recoveryOperation.current = null; if (request === epoch.current) setBusy(false); }
   }
 
@@ -445,7 +489,8 @@ export default function Vault({ accountId }) {
       <header className="vault-page-heading"><div><div className="vault-wordmark"><img src="/uficonnect-google-verification-icon.svg" width="24" height="24" alt="" /><span>UFI<span>connect</span></span><span className="vault-preview-badge">{LOCAL_PREVIEW ? 'LOCAL PREVIEW' : 'BROWSER VAULT · BETA'}</span></div><h1>Your Vault<span>.</span></h1><p>Your passwords, documents, and keys. One private space.</p></div><div className="vault-heading-actions">{session && <button className="vault-button vault-button--secondary" onClick={() => lockVault()}><LockKeyhole size={16} />Lock vault</button>}<span className={`vault-status${session ? ' is-connected' : ''}`}><i />{session ? 'Unlocked' : 'Locked'}</span></div></header>
 
       <VaultNavigation />
-      <div className="vault-overview"><span><ShieldCheck size={16} />Encrypted on this browser</span><span><Clock3 size={16} />Auto-lock after 1 minute</span><span><Globe2 size={16} />No vault sync</span></div>
+      <div className="vault-overview"><span><ShieldCheck size={16} />Encrypted on your device</span><span><Clock3 size={16} />Auto-lock after 1 minute</span><span><Globe2 size={16} />{LOCAL_PREVIEW ? 'Local preview' : storageChecking ? 'Checking account storage' : vault.syncState() === 'saved' ? 'Encrypted account copy saved' : vault.syncState() === 'local' ? 'Unlock to save an account copy' : vault.syncState() === 'empty' ? 'Account storage ready' : 'Account storage needs attention'}</span></div>
+      {!LOCAL_PREVIEW && !storageChecking && ['unavailable', 'conflict'].includes(vault.syncState()) && <button type="button" className="vault-text-button" disabled={busy} onClick={retryAccountStorage}>Retry account storage</button>}
       {notice && <div className="vault-feedback" role="status"><Check size={16} />{notice}<button aria-label="Dismiss message" onClick={() => setNotice('')}><X size={15} /></button></div>}
       {error && !editor && !restoreOpen && !deviceSetupOpen && !importOpen && !recoveryOpen && <div className="vault-feedback vault-feedback--error" role="alert">{error}</div>}
 
@@ -457,11 +502,11 @@ export default function Vault({ accountId }) {
             {!exists && !canWrite && <p role="status">{billing.checking ? 'Checking your Vault membership…' : native ? 'An active Vault membership is required to create a vault. If you already have one, choose Check membership status above.' : 'Subscribe above to activate your Vault, then create your passphrase below. Already subscribed? Choose Check subscription status.'}</p>}
             <form onSubmit={openVault}><label className="vault-field">Vault passphrase<input type="password" name="vault-passphrase" autoComplete={exists ? 'current-password' : 'new-password'} value={passphrase} onChange={event => setPassphrase(event.target.value)} required minLength={12} maxLength={1024} placeholder={exists ? 'Enter your passphrase' : 'At least 12 characters'} /></label>
               {!exists && <label className="vault-field">Confirm passphrase<input type="password" name="vault-confirmation" autoComplete="new-password" value={confirmation} onChange={event => setConfirmation(event.target.value)} required minLength={12} maxLength={1024} placeholder="Enter it again" /></label>}
-              <button className="vault-button vault-button--primary vault-button--full" disabled={busy || (!exists && !canWrite)}><LockKeyhole size={17} />{busy ? 'Opening vault…' : exists ? 'Unlock vault' : 'Create vault'}<ChevronRight size={17} /></button>
+              <button className="vault-button vault-button--primary vault-button--full" disabled={busy || storageChecking || (!exists && !canWrite)}><LockKeyhole size={17} />{storageChecking ? 'Checking saved vault…' : busy ? 'Opening vault…' : exists ? 'Unlock vault' : 'Create vault'}<ChevronRight size={17} /></button>
               {!native && deviceReady && <button type="button" className="vault-button vault-button--secondary vault-button--full" disabled={busy} onClick={useDeviceUnlock}><FaceScan size={18} />Unlock with device</button>}
             </form>
             {exists && <button className="vault-text-button vault-recovery-link" type="button" disabled={busy} onClick={() => { setError(''); setPassphrase(''); setRecoveryOpen(true); }}>Forgot vault password?</button>}
-            <p className="vault-footnote">{native ? 'Saved only in this app on this device for this account, with no cloud sync. Recovery needs an encrypted backup and its passphrase. Keep a backup before removing the app or changing devices.' : 'Saved only in this browser for this account, with no cloud sync. Recovery needs previously configured device unlock or an encrypted backup with its passphrase. Keep a backup before clearing browser data or changing devices.'}</p>
+            <p className="vault-footnote">{LOCAL_PREVIEW ? 'This preview saves only on this device.' : 'Encrypted vaults are saved to your account and cached on this device. Existing device-only vaults are copied after a successful unlock. Your passphrase and unencrypted contents never leave your device.'} Keep an encrypted backup and its passphrase for recovery.</p>
             {!exists && <button className="vault-text-button" type="button" onClick={() => { setError(''); setRestoreOpen(true); }}>Already have a backup? Restore it <ArrowUpRight size={14} /></button>}
           </div>
         </section> : selectedApp ? <VaultSourceApp key={selectedApp.id} entry={selectedApp} busy={busy} onBack={() => setSearchParams({})} onCopy={copyPassword} launchLinks={sourceLaunchLinks} /> : <section className="vault-panel vault-password-panel" aria-labelledby="vault-password-title">
@@ -490,7 +535,7 @@ export default function Vault({ accountId }) {
 
         <div className="vault-device-grid"><section className="vault-panel vault-device-panel" aria-labelledby="vault-device-title"><div className="vault-panel-heading"><span className="vault-eyebrow">UFI DEVICE</span><span className="vault-pending">Awaiting hardware</span></div><div className="vault-device-body"><VaultCardDesign compact /><div><h2 id="vault-device-title">Your physical connection.</h2><p>Explore the UFI Vault Card design. Device pairing and orders are not open yet.</p></div></div><Link className="vault-text-button" to="/vault/device">View device <ArrowUpRight size={14} /></Link><button className="vault-button vault-button--secondary vault-button--full" disabled><Plus size={16} />Connect device · pending</button></section>
           {native ? <section className="vault-panel vault-face-panel" aria-labelledby="vault-recovery-title"><div className="vault-panel-heading"><span className="vault-eyebrow">RECOVERY</span></div><div className="vault-face-art"><KeyRound size={40} /></div><h2 id="vault-recovery-title">Keep your vault recoverable</h2><p>Unlock this app's vault with its passphrase. Keep an encrypted backup and the backup's passphrase somewhere safe.</p><p>Browser device unlock is unavailable in this app.</p></section> : <section className="vault-panel vault-face-panel" aria-labelledby="vault-face-title"><div className="vault-panel-heading"><span className="vault-eyebrow">QUICK ACCESS</span><span className="vault-pending">{deviceReady ? 'Configured' : 'Not configured'}</span></div><div className="vault-face-art"><FaceScan size={40} /></div><h2 id="vault-face-title">Face ID / device unlock</h2><p>Face ID on supported Apple devices; your browser controls device verification.</p>{deviceReady ? <button className="vault-button vault-button--secondary vault-button--full" disabled={busy || !!session} onClick={useDeviceUnlock}><FaceScan size={17} />{session ? 'Device unlock is ready' : 'Unlock with device'}</button> : <button className="vault-button vault-button--secondary vault-button--full" disabled={!session || busy} onClick={() => { setError(''); setDeviceSetupOpen(true); }}><FaceScan size={17} />{session ? 'Set up device unlock' : 'Unlock vault to set up'}</button>}</section>}</div>
-        <p className="vault-local-note"><LockKeyhole size={14} />{LOCAL_PREVIEW ? 'Local preview. ' : 'Browser vault beta. '}Passwords, documents, and keys are saved encrypted in this browser; they do not sync with your account or other devices. Keep an encrypted backup and its passphrase for recovery. Independent security review and UFI hardware integration are pending.</p>
+        <p className="vault-local-note"><LockKeyhole size={14} />{LOCAL_PREVIEW ? 'Local preview. ' : 'Vault beta. Encrypted account storage keeps a copy across devices. '}Keep an encrypted backup and its passphrase for recovery. Independent security review and UFI hardware integration are pending.</p>
       </div><aside className="vault-secondary-column" aria-label="Web protection and verification"><VaultVpnPanel accountId={accountId} activityTarget={activityTarget} subscriptionTarget={subscriptionTarget} billing={billing} /><div ref={setActivityTarget} className="vault-activity-slot" /><HardwareVerification accountId={accountId} /></aside></div>
     </section>
 
@@ -550,6 +595,11 @@ export default function Vault({ accountId }) {
         <p>Your vault passphrase is separate from your UFIConnect sign-in password. It encrypts your items on this browser, so UFIConnect cannot email or recover it.</p>
         {!native && <section><h3>Use device unlock</h3><p>{deviceReady ? 'Verify with the device unlock you already set up, then choose a new vault passphrase. Your browser may use Face ID, a fingerprint or another device verification method.' : 'Device unlock was not set up for this vault. It must be configured while the vault is unlocked before it can help with recovery.'}</p><button type="button" className="vault-button vault-button--secondary vault-button--full" disabled={busy || !deviceReady} onClick={recoverWithDevice}><FaceScan size={18} />{busy ? 'Waiting for your device…' : 'Recover with device unlock'}</button></section>}
         <section><h3>Restore an encrypted backup</h3><p>Use a backup whose passphrase you still know. You will save an encrypted copy of this locked vault before replacing it with the backup.</p><button type="button" className="vault-button vault-button--secondary vault-button--full" disabled={busy} onClick={() => { setRecoveryOpen(false); setRestoreFromRecovery(true); setRecoveryBackup(''); setRestoreConfirmed(false); setError(''); setRestoreOpen(true); }}>Restore a known backup</button></section>
+        {!LOCAL_PREVIEW && <section><h3>Use the saved account copy</h3><p>If this device has a different vault, preserve its encrypted backup first. This replaces only the device copy with the account copy; it does not change its passphrase.</p>
+          <button type="button" className="vault-text-button" disabled={busy} onClick={() => { const copy = downloadBackup(); if (copy) { setRecoveryBackup(copy); setAccountCopyConfirmed(false); } }}>Save device copy before continuing</button>
+          <label className="vault-confirm"><input type="checkbox" checked={accountCopyConfirmed} onChange={event => setAccountCopyConfirmed(event.target.checked)} />I saved the device copy and want to use the account copy.</label>
+          <button type="button" className="vault-button vault-button--secondary" disabled={busy || !recoveryBackup || !accountCopyConfirmed} onClick={useSavedAccountCopy}>Use account copy</button>
+        </section>}
         <p className="vault-helper">{native ? 'Without your vault passphrase or a backup whose passphrase you know, these encrypted items cannot be recovered. Keep the app data and save an encrypted copy in case you remember the passphrase later.' : 'Without device unlock or a backup passphrase, these encrypted items cannot be recovered. Keep your browser data and save an encrypted copy in case you remember the passphrase later.'}</p>
         <button type="button" className="vault-text-button" disabled={busy} onClick={downloadBackup}><Download size={16} />Save encrypted copy</button>
         <Link className="vault-text-button" to="/forgot-password">Reset UFIConnect sign-in password <ArrowUpRight size={14} /></Link>
@@ -560,7 +610,7 @@ export default function Vault({ accountId }) {
       <p className="vault-helper">Choose a UFIConnect encrypted backup. Its passphrase must unlock and verify the backup before anything is replaced in this browser.</p>
       <label className="vault-field">Backup file<input type="file" accept=".json,application/json" onChange={readBackup} /></label>
       <label className="vault-field">Backup passphrase<input type="password" autoComplete="off" required maxLength={1024} value={backupPassphrase} onChange={event => setBackupPassphrase(event.target.value)} placeholder="Passphrase used for this backup" /></label>
-      {exists && <><p className="vault-form-warning">Restoring replaces all passwords, documents, and keys stored in this browser. Items added after the backup will be absent. Download your current encrypted backup first.</p>
+      {exists && <><p className="vault-form-warning">Restoring replaces your current vault{LOCAL_PREVIEW ? ' on this device' : ' on this device and in your account'}. Items added after the backup will be absent. Download your current encrypted backup first.</p>
         <button type="button" className="vault-text-button" disabled={busy} onClick={() => { const copy = downloadBackup(); if (copy && restoreFromRecovery) setRecoveryBackup(copy); }}><Download size={16} />Download current backup</button>
         {restoreFromRecovery && <p className="vault-helper" role="status">{recoveryBackup ? 'Encrypted copy downloaded. Keep it if you remember the original passphrase later; that passphrase is still needed to restore this copy.' : 'Save the current encrypted copy before continuing. Downloading it does not unlock its contents.'}</p>}
         <label className="vault-confirm"><input type="checkbox" checked={restoreConfirmed} onChange={event => setRestoreConfirmed(event.target.checked)} />I understand this replaces my current vault.</label></>}
