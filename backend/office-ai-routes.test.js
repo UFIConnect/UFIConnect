@@ -47,7 +47,7 @@ async function executionFixture(t, extra = {}) {
       './office-ai-tasks': { createOfficeAITasks: options => {
         execute = options.executeControl;
         const handler = (_req, res) => res.json({});
-        return { list: handler, create: handler, detail: handler, cancel: handler, confirm: handler, start() {}, stop() {}, capabilities: () => ({}) };
+        return { list: handler, create: handler, detail: handler, cancel: handler, confirm: handler, resume: handler, start() {}, stop() {}, capabilities: () => ({}) };
       } },
     },
   }); t.after(() => app.close());

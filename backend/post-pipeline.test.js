@@ -105,6 +105,7 @@ test('transfer events reflect committed publication and rollback without false l
       calls.push(sql);
       if (sql === 'COMMIT' && failCommit) throw new Error('Simulated transaction failure');
       if (sql.includes('WITH picked AS')) return { rows, rowCount: 2 };
+      if (sql.includes('INSERT INTO feed_posts_cache AS existing')) return { rows: [{ id: 'approved-transfer' }], rowCount: 1 };
       return { rows: [{ count: 0 }], rowCount: 1 };
     } });
     t.after(() => app.close());
