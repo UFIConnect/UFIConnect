@@ -58,6 +58,10 @@ jobs:
       - run: npm run build --prefix web
       - run: npm run build --prefix office
       - run: npx playwright install --with-deps chromium
+      - run: node --test infra/office-ai-worker/index.test.mjs infra/office-ai-site/index.test.mjs
+        if: matrix.group == 'office'
+      - run: node scripts/audit-office-ai.mjs
+        if: matrix.group == 'office'
       - run: node --test office/src/office-email-templates.test.mjs
         if: matrix.group == 'office'
       - run: node office/tests/email-selection.browser.mjs

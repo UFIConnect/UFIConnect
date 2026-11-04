@@ -9,6 +9,7 @@ import Reports from './Reports';
 import AnalyticsDashboard from './AnalyticsDashboard';
 import OfficeUsers from './OfficeUsers';
 import RecoveryOverview from './RecoveryOverview';
+import OfficeAI from './OfficeAI';
 import { mergeObservedAgents, observeAgentPayload } from './office-telemetry.mjs';
 import { createOfficeClient, createOfficeEventSource, createTrustedOfficeFetch, connectOfficeStreams, mergeOfficeLog } from './office-runtime.mjs';
 import { requestOfficeAccess } from './OfficeAccessDialog';
@@ -34,7 +35,7 @@ const STAGING_BACKLOG_WARN = 20000;
 // other version's code out.
 const LOCAL_OFFICE = import.meta.env.MODE !== 'production';
 const LiveCity = LOCAL_OFFICE ? lazy(() => import('./LiveCity')) : lazy(() => import('./legacy-city/LiveCity'));
-const PRIMARY_OFFICE_VIEWS = new Set(['overview', 'city', 'controls', 'setup', 'deploy']);
+const PRIMARY_OFFICE_VIEWS = new Set(['overview', 'office-ai', 'city', 'controls', 'setup', 'deploy']);
 
 // ─── office auth ────────────────────────────────────────────────────────────
 // Office requires a configured server token and a matching x-office-token
@@ -2796,16 +2797,16 @@ function TopicsView() {
 // ─── App (root) ───────────────────────────────────────────────────────────────
 
 export default function App() {
-  const officeViews = ['overview', 'city', 'local-web', 'setup', 'controls', 'sources', 'pipeline', 'post-pipeline', 'feed-audit', 'topic-transfer', 'users', 'topics', 'agents', 'feed', 'analytics', 'reports', 'deploy', 'autofix', 'versions'];
+  const officeViews = ['overview', 'office-ai', 'city', 'local-web', 'setup', 'controls', 'sources', 'pipeline', 'post-pipeline', 'feed-audit', 'topic-transfer', 'users', 'topics', 'agents', 'feed', 'analytics', 'reports', 'deploy', 'autofix', 'versions'];
   const [view, setView] = useState(() => {
     const requested = typeof window !== 'undefined' ? window.location.hash.slice(1) : '';
-    return officeViews.includes(requested) ? requested : 'overview';
+    return officeViews.includes(requested) ? requested : /^(?:www\.)?uficonnect\.ai$/i.test(window.location.hostname) ? 'office-ai' : 'overview';
   });
   const [moreToolsOpen, setMoreToolsOpen] = useState(() => !PRIMARY_OFFICE_VIEWS.has(view));
   useEffect(() => {
     if (!PRIMARY_OFFICE_VIEWS.has(view)) setMoreToolsOpen(true);
   }, [view]);
-  const needsOfficeTelemetry = !['local-web', 'setup', 'reports'].includes(view);
+  const needsOfficeTelemetry = !['office-ai', 'local-web', 'setup', 'reports'].includes(view);
   const [status, setStatus] = useState(null);
   // Source-fetcher health (workerHealth/agentSourceCache) only ever has real
   // data on the pipeline role now — SourcesView/PipelineView read this
@@ -3030,6 +3031,7 @@ export default function App() {
 
   const nav = [
     { id: 'overview', label: 'Overview' },
+    { id: 'office-ai', label: 'Office AI' },
     { id: 'city', label: 'Live City' },
     { id: 'local-web', label: 'Local web' },
     { id: 'setup', label: 'Setup' },
@@ -3251,6 +3253,7 @@ export default function App() {
           {view === 'local-web' && <LocalWeb apiBase={API} request={officeFetch} onNavigate={navigateOffice} />}
           {view === 'overview' && <OverviewView status={status} pipelineStatus={pipelineStatus} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'controls' && <Controls apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} />}
+          {view === 'office-ai' && <OfficeAI apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} onNavigate={navigateOffice} />}
           {/* Source health (workerHealth/agentSourceCache) only has real
               data on the pipeline role now — see pipelineStatus above. */}
           {view === 'sources'  && <SourcesView status={pipelineStatus} triggerAgent={triggerAgent} triggering={triggering} />}

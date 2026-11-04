@@ -1,0 +1,11 @@
+{
+  "name": "uficonnect-office-ai",
+  "main": "index.mjs",
+  "account_id": "edc675f01dd686d29d7a2e447bc04a8b",
+  "compatibility_date": "2026-11-03",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "ai": { "binding": "AI" },
+  "observability": { "enabled": false }
+}

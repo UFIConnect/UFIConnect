@@ -39,6 +39,11 @@ function buildOfficeSetup({ env = {}, role = 'api', database = false, backup = {
   add('agent-chat', 'Agent explanations', 'AI and content', ['OPENAI_API_KEY'], 'Enables AI explanations of curated agent metrics. Local diagnostic replies remain available without this key.', {
     capabilities: { apiKeyConfigured: present('OPENAI_API_KEY'), modelConfigured: present('OFFICE_CHAT_OPENAI_MODEL') || present('AI_CONTENT_OPENAI_MODEL'), usesDefaultModel: !present('OFFICE_CHAT_OPENAI_MODEL') && !present('AI_CONTENT_OPENAI_MODEL') },
   });
+  if (role === 'api') add('office-ai', 'Office AI · Cloudflare', 'AI and content', ['CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN'],
+    'General conversation, live research, saved tools, and reviewed Office commands.', {
+      configured: present('CLOUDFLARE_ACCOUNT_ID') && present('CLOUDFLARE_API_TOKEN') || present('OFFICE_AI_RELAY_URL') && present('OFFICE_AI_RELAY_SECRET'),
+      detail: 'Open Office AI → Connections to verify or connect Cloudflare, GitHub, and Render. Research availability depends on the connected AI Gateway and credits.',
+    });
   add('youtube', 'YouTube search', 'Content sources', ['YOUTUBE_API_KEY'], 'Enables keyword search and duration information; public channel feeds remain available without it.');
   add('twitch', 'Twitch discovery', 'Content sources', ['TWITCH_CLIENT_ID', 'TWITCH_CLIENT_SECRET'], 'Enables Twitch API discovery.', sourceRuntime('twitch'));
   if (role === 'pipeline') {

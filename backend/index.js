@@ -44,6 +44,8 @@ const { createSourceImageDownloader } = require('./source-image-download');
 const { CREATOR_ANALYTICS_SCHEMA, createCreatorAnalytics, registerCreatorAnalyticsRoutes } = require('./creator-analytics');
 const { createUfiVault, registerUfiVaultRoutes, UFI_VAULT_SCHEMA } = require('./ufi-vault');
 const { createOfficeAgentChat, sanitizeSnapshot: sanitizeAgentSnapshot } = require('./office-agent-chat');
+const { createOfficeAI } = require('./office-ai');
+const { createOfficeConnections } = require('./office-connections');
 const { buildOfficeSetup } = require('./office-setup');
 const { createManagedRecovery } = require('./managed-recovery');
 const { withActiveMembers } = require('./member-write');
@@ -121,6 +123,8 @@ const {
 
 dotenv.config();
 const tokenVault = createTokenVault(process.env);
+const officeConnections = createOfficeConnections({ db, env: process.env });
+const officeProviderEnv = officeConnections.env;
 const snapMedia = createSnapMedia({ env: process.env });
 const messageMedia = createMessageMedia({ env: process.env });
 const snaps = createSnaps({ db, getUser, screenMemberContent,
@@ -19974,6 +19978,15 @@ function requireOfficeToken(req, res, next) {
 // exposes presence and the exact callback URLs, never a client ID or secret,
 // so production configuration can be audited without creating another secret
 // surface in the browser or API logs.
+// Resolve encrypted Office-only provider overrides before commands or AI use.
+// Background agents continue using their original environment credentials.
+app.use(['/office/ai', '/office/connections', '/office/controls', '/office/deploy', '/office/deploy-legacy', '/office/setup',
+  '/office/frontend-file', '/office/frontend-files', '/office/agents/:id/web-draft'], requireOfficeToken, officeConnections.middleware);
+app.get('/office/connections', requireOfficeToken, officeConnections.list);
+app.post('/office/connections/:provider', requireOfficeToken, officeConnections.save);
+app.post('/office/connections/:provider/verify', requireOfficeToken, officeConnections.verify);
+app.delete('/office/connections/:provider', requireOfficeToken, officeConnections.disconnect);
+
 app.get('/office/oauth-status', requireOfficeToken, (_req, res) => {
   const platforms = Object.fromEntries([...ACCOUNT_PLATFORM_CATALOG].map(platform => {
     const status = socialCredentialStatus(platform);
@@ -26448,6 +26461,18 @@ function getOfficeAgentObservation(id, observedAt = new Date().toISOString()) {
     observedAt, status, cadence: AGENT_DEFS[id].interval, metrics });
 }
 
+const officeAI = createOfficeAI({
+  env: officeProviderEnv, db,
+  getControls: officeControlCatalog,
+  getSnapshot: () => ({ serviceRole: SERVICE_ROLE, observedAt: new Date().toISOString(),
+    agents: Object.keys(AGENT_DEFS).slice(0, 120).map(id => getOfficeAgentObservation(id)).filter(Boolean) }),
+});
+app.get('/office/ai', requireOfficeToken, officeAI.status);
+app.post('/office/ai/chat', requireOfficeToken, officeAI.chat);
+app.get('/office/ai/tools', requireOfficeToken, officeAI.listTools);
+app.post('/office/ai/tools', requireOfficeToken, officeAI.saveTool);
+app.delete('/office/ai/tools/:id', requireOfficeToken, officeAI.deleteTool);
+
 app.post('/office/agents/:id/chat', requireOfficeToken, createOfficeAgentChat({
   getAgentSnapshot: getOfficeAgentObservation,
   getActions: snapshot => require('./office-agent-actions').agentActions(snapshot, officeControlCatalog()),
@@ -27012,13 +27037,13 @@ async function triggerRenderServiceDeploy(service, hook) {
   }
 
   const serviceIds = {
-    api:      process.env.RENDER_SERVICE_API_ID,
-    web:      process.env.RENDER_SERVICE_WEB_ID,
-    office:   process.env.RENDER_SERVICE_OFFICE_ID,
-    pipeline: process.env.RENDER_SERVICE_PIPELINE_ID,
+    api:      officeProviderEnv.RENDER_SERVICE_API_ID,
+    web:      officeProviderEnv.RENDER_SERVICE_WEB_ID,
+    office:   officeProviderEnv.RENDER_SERVICE_OFFICE_ID,
+    pipeline: officeProviderEnv.RENDER_SERVICE_PIPELINE_ID,
   };
   const serviceId = serviceIds[service];
-  if (!process.env.RENDER_API_KEY || !serviceId) return null;
+  if (!officeProviderEnv.RENDER_API_KEY || !serviceId) return null;
 
   return {
     method: 'api',
@@ -27027,7 +27052,7 @@ async function triggerRenderServiceDeploy(service, hook) {
       hostname: 'api.render.com',
       path: `/v1/services/${encodeURIComponent(serviceId)}/deploys`,
       headers: {
-        'Authorization': `Bearer ${process.env.RENDER_API_KEY}`,
+        'Authorization': `Bearer ${officeProviderEnv.RENDER_API_KEY}`,
         'Content-Type': 'application/json',
         'User-Agent': 'UFIconnect-Office/1.0',
       },
@@ -27061,10 +27086,10 @@ app.post('/office/deploy/:service', requireOfficeToken, async (req, res) => {
   }
 
   const hooks = {
-    api:      process.env.RENDER_HOOK_API,
-    web:      process.env.RENDER_HOOK_WEB,
-    office:   process.env.RENDER_HOOK_OFFICE,
-    pipeline: process.env.RENDER_HOOK_PIPELINE,
+    api:      officeProviderEnv.RENDER_HOOK_API,
+    web:      officeProviderEnv.RENDER_HOOK_WEB,
+    office:   officeProviderEnv.RENDER_HOOK_OFFICE,
+    pipeline: officeProviderEnv.RENDER_HOOK_PIPELINE,
   };
 
   try {
@@ -27106,7 +27131,7 @@ app.post('/office/deploy/:service', requireOfficeToken, async (req, res) => {
 const OFFICE_FRONTEND_MAX_BYTES = 400 * 1024;
 
 function officeGithubToken() {
-  return process.env.OFFICE_GITHUB_TOKEN || process.env.AUTOFIX_GITHUB_TOKEN || '';
+  return officeProviderEnv.OFFICE_GITHUB_TOKEN || officeProviderEnv.AUTOFIX_GITHUB_TOKEN || '';
 }
 
 function officeControlSourceList() {
@@ -27127,8 +27152,8 @@ function officeControlCatalog() {
         ? [control.id.slice('deploy.'.length)]
         : [];
     const missingRenderServices = renderServices.filter((service) => !(
-      process.env[`RENDER_HOOK_${service.toUpperCase()}`]
-      || (process.env.RENDER_API_KEY && process.env[`RENDER_SERVICE_${service.toUpperCase()}_ID`])
+      officeProviderEnv[`RENDER_HOOK_${service.toUpperCase()}`]
+      || (officeProviderEnv.RENDER_API_KEY && officeProviderEnv[`RENDER_SERVICE_${service.toUpperCase()}_ID`])
     ));
     const renderConfigured = missingRenderServices.length === 0;
     const deployConfigured = !renderServices.length || githubConfigured || renderConfigured;
@@ -27529,7 +27554,7 @@ async function executeOfficeControl(control, body) {
       }
       const deployments = [];
       for (const service of ['web', 'office']) {
-        const hook = process.env[`RENDER_HOOK_${service.toUpperCase()}`];
+        const hook = officeProviderEnv[`RENDER_HOOK_${service.toUpperCase()}`];
         const deployment = await triggerRenderServiceDeploy(service, hook);
         if (!deployment) throw new Error(`No Render deployment configuration is set for ${service}.`);
         if (deployment.statusCode < 200 || deployment.statusCode >= 300) {
@@ -27562,10 +27587,10 @@ async function executeOfficeControl(control, body) {
         };
       }
       const hooks = {
-        api: process.env.RENDER_HOOK_API,
-        web: process.env.RENDER_HOOK_WEB,
-        office: process.env.RENDER_HOOK_OFFICE,
-        pipeline: process.env.RENDER_HOOK_PIPELINE,
+        api: officeProviderEnv.RENDER_HOOK_API,
+        web: officeProviderEnv.RENDER_HOOK_WEB,
+        office: officeProviderEnv.RENDER_HOOK_OFFICE,
+        pipeline: officeProviderEnv.RENDER_HOOK_PIPELINE,
       };
       const deployment = await triggerRenderServiceDeploy(service, hooks[service]);
       if (!deployment) throw new Error(`No Render deployment configuration is set for ${service}.`);
@@ -27600,7 +27625,7 @@ app.get('/office/setup', requireOfficeToken, (_req, res) => {
     ...socialCredentialStatus(platform), disabled: FORCE_COMING_SOON_PLATFORMS.has(platform),
   }]));
   res.set('Cache-Control', 'no-store').json(buildOfficeSetup({
-    env: process.env, role: SERVICE_ROLE, database: db.isConnected(), backup: db.getBackupStatus(), social, autofixEnabled: autofixState.enabled,
+    env: officeProviderEnv, role: SERVICE_ROLE, database: db.isConnected(), backup: db.getBackupStatus(), social, autofixEnabled: autofixState.enabled,
     sourceWorkers: Object.fromEntries([...workerHealth].map(([id, health]) => [id, { ...health, postCount: agentSourceCache.get(id)?.posts?.length || 0 }])),
   }));
 });
@@ -27707,9 +27732,9 @@ app.post('/office/controls/:id/execute', requireOfficeToken, async (req, res) =>
 
 app.post('/office/deploy-legacy/:service', requireOfficeToken, (req, res) => {
   const hooks = {
-    api:    process.env.RENDER_HOOK_API,
-    web:    process.env.RENDER_HOOK_WEB,
-    office: process.env.RENDER_HOOK_OFFICE,
+    api:    officeProviderEnv.RENDER_HOOK_API,
+    web:    officeProviderEnv.RENDER_HOOK_WEB,
+    office: officeProviderEnv.RENDER_HOOK_OFFICE,
   };
   const hook = hooks[req.params.service];
   if (!hook) {

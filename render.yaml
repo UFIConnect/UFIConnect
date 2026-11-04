@@ -128,7 +128,7 @@ services:
       - key: BACKUP_DB_RESET_PCT
         value: '85'
       - key: ALLOWED_ORIGINS
-        value: https://uficonnect.org,https://www.uficonnect.org,https://uficonnect.pro,https://www.uficonnect.pro,https://uficonnect-web.onrender.com,https://office.uficonnect.org,https://uficonnect-office.onrender.com,https://app.uficonnect.org
+        value: https://uficonnect.org,https://www.uficonnect.org,https://uficonnect.pro,https://www.uficonnect.pro,https://uficonnect-web.onrender.com,https://office.uficonnect.org,https://uficonnect-office.onrender.com,https://app.uficonnect.org,https://uficonnect.ai
       # Only these public sites may embed the isolated optional Google tag.
       # Add the Expo web deployment's exact origin when hosting it elsewhere.
       - key: ANALYTICS_PARENT_ORIGINS
@@ -490,7 +490,7 @@ services:
       # Not user-facing, but /office/* still needs a CORS allowance for the
       # dashboard's own browser requests.
       - key: ALLOWED_ORIGINS
-        value: https://office.uficonnect.org,https://uficonnect-office.onrender.com
+        value: https://office.uficonnect.org,https://uficonnect-office.onrender.com,https://uficonnect.ai
       # Same office-token gate as uficonnect-api's /office/* routes.
       - key: OFFICE_TOKEN
         sync: false

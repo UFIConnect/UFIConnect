@@ -125,10 +125,10 @@ function Field({ label, hint, children }) {
   );
 }
 
-export default function Controls({ apiBase = '', pipelineBase = '', request = fetch }) {
+export default function Controls({ apiBase = '', pipelineBase = '', request = fetch, initialQuery = '' }) {
   const [controls, setControls] = useState([]);
   const [history, setHistory] = useState([]);
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(initialQuery);
   const [category, setCategory] = useState('All controls');
   const [status, setStatus] = useState('Loading controls');
   const [error, setError] = useState('');

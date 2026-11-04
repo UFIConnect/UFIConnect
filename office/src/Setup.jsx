@@ -26,6 +26,7 @@ export function OfficeActivationResult({ result, error }) {
 }
 
 function setupWorkflow(item) {
+  if (item.id === 'office-ai') return { view: 'office-ai', label: 'Open Office AI' };
   if (item.id === 'github' || item.id === 'render-status') return { view: 'deploy', label: 'Open Deploy Center' };
   if (item.id === 'agent-chat') return { view: 'city', label: 'Open Live City' };
   if (item.id === 'youtube' || item.id === 'twitch') return { view: 'sources', label: 'Open source agents' };
