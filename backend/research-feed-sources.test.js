@@ -63,17 +63,17 @@ test('research feed readers are in Home and never registered as connected Follow
   }
 });
 
-test('research workers activate on Pipeline only and OpenAlex waits for its server key', () => {
+test('research workers activate on Pipeline only while OpenAlex setup remains separately reported', () => {
   const { officeSourceReady, planOfficeActivation } = require('./office-agent-activation');
   const sourceIds = ['crossref', 'datacite', 'zenodo', 'openalex'];
   const agents = Object.fromEntries(sourceIds.map(id => [id, { name: id }]));
-  const missing = planOfficeActivation({ role: 'pipeline', agents, sourceIds, sourceReady: id => officeSourceReady(id, {}) });
-  assert.deepEqual(missing.filter(row => row.status === 'queue').map(row => row.id), ['crossref', 'datacite', 'zenodo']);
-  assert.equal(missing.find(row => row.id === 'openalex').status, 'skipped');
-  const configured = planOfficeActivation({ role: 'pipeline', agents, sourceIds,
-    sourceReady: id => officeSourceReady(id, { OPENALEX_API_KEY: 'fixture-key' }) });
-  assert.ok(configured.every(row => row.status === 'queue'));
-  const api = planOfficeActivation({ role: 'api', agents, sourceIds, sourceReady: () => true });
+  assert.equal(officeSourceReady('openalex', {}), false);
+  assert.equal(officeSourceReady('openalex', { OPENALEX_API_KEY: 'fixture-key' }), true);
+  const enabled = planOfficeActivation({ role: 'pipeline', agents, sourceIds, sourceEnabled: () => true });
+  assert.deepEqual(enabled.filter(row => row.status === 'queue').map(row => row.id), sourceIds);
+  const disabled = planOfficeActivation({ role: 'pipeline', agents, sourceIds, sourceEnabled: id => id !== 'openalex' });
+  assert.equal(disabled.find(row => row.id === 'openalex').status, 'skipped');
+  const api = planOfficeActivation({ role: 'api', agents, sourceIds, sourceEnabled: () => true });
   assert.ok(api.every(row => row.status === 'skipped'));
 });
 
