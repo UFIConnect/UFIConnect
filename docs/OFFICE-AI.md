@@ -66,3 +66,11 @@ All `/office/ai` and `/office/connections` endpoints require the existing `x-off
 Run the backend Office AI and connection tests, the Worker tests, and `node scripts/audit-office-ai.mjs`; then build Office. The browser audit covers desktop/mobile layouts, research sources, tools, command handoff, connections, request failure/cancellation, and access changes. The release should be assembled from the current production source plus this feature's reviewed changes so unrelated local work is excluded.
 
 Cloudflare's current [AI REST API](https://developers.cloudflare.com/ai-gateway/usage/rest-api/), [Web Search API](https://developers.cloudflare.com/web-search/how-to-use/), [GitHub repository API](https://docs.github.com/en/rest/repos/repos), and [Render authentication](https://api-docs.render.com/reference/authentication) document the provider contracts used here.
+
+## First conversation
+
+1. Open Office AI in Ask mode, enter a question, and select Send.
+2. Wait for the reply and the Saved indicator before leaving the page.
+3. Reload Office, then select the conversation in saved history to continue.
+
+Enter provider credentials only in Office AI Connections. Never paste credentials into a message, attachment, or terminal command.

@@ -16,10 +16,11 @@ async function fixture(t) {
   const pg = new PGlite(); t.after(() => pg.close());
   const query = (sql, params) => sql.startsWith('SELECT pg_advisory_xact_lock') ? Promise.resolve({ rows: [] }) : pg.query(sql, params);
   const db = { query, isConnected: () => true, withClient: fn => fn({ query }) };
-  const state = { calls: [], dispatches: [], runs: [], failDispatch: false, directReceipt: false, logUrl: 'https://logs.blob.core.windows.net/job?signature=fixture', output: '' };
+  const state = { calls: [], dispatches: [], runs: [], failDispatch: false, failReads: false, directReceipt: false, logUrl: 'https://logs.blob.core.windows.net/job?signature=fixture', output: '' };
   const env = { OFFICE_GITHUB_TOKEN: TOKEN, RENDER_API_KEY: 'render-fixture-private-secret' };
   async function fetcher(url, options = {}) {
     state.calls.push({ url: String(url), options });
+    if (state.failReads && options.method === 'GET') throw Error('GitHub run is temporarily unavailable.');
     const parsed = new URL(url), route = parsed.pathname.replace('/repos/UFIConnect/UFIConnect', '');
     if (parsed.hostname.endsWith('.blob.core.windows.net')) { assert.equal(options.headers?.Authorization, undefined); return new Response(state.output); }
     assert.equal(parsed.origin, 'https://api.github.com'); assert.equal(options.headers.Authorization, `Bearer ${TOKEN}`);
@@ -49,7 +50,8 @@ test('terminal dispatch is pinned, durable and idempotent across manager recreat
   assert.equal(f.state.dispatches[0].ref, 'main'); assert.equal(f.state.dispatches[0].inputs.commit_sha, SHA);
   assert.equal(Buffer.from(f.state.dispatches[0].inputs.command_b64, 'base64').toString(), input.command);
   const again = await f.recreate().startSession(input);
-  assert.equal(again.id, first.id); assert.equal(again.runId, '101'); assert.equal(f.state.dispatches.length, 1);
+  assert.deepEqual(again, first); assert.equal(f.state.dispatches.length, 1);
+  assert.equal((await f.app.getSession(first.id)).session.runId, '101');
   await assert.rejects(f.app.startSession({ ...input, command: 'echo changed' }), { status: 409 });
   const rows = await f.db.query('SELECT * FROM office_ai_terminal_sessions'); assert.equal(rows.rows.length, 1);
 });
@@ -58,7 +60,23 @@ test('ambiguous dispatch reconciles a unique run receipt without replaying a com
   const f = await fixture(t); f.state.failDispatch = true;
   const input = { clientRequestId: randomUUID(), command: 'npm test', ref: SHA };
   const first = await f.app.startSession(input); assert.equal(first.status, 'dispatch_uncertain'); assert.ok(!JSON.stringify(first).includes(TOKEN));
-  const next = await f.app.startSession(input); assert.equal(next.status, 'queued'); assert.equal(next.id, first.id); assert.equal(f.state.dispatches.length, 1);
+  const next = await f.app.startSession(input); assert.equal(next.status, 'dispatch_uncertain'); assert.equal(next.id, first.id); assert.equal(f.state.dispatches.length, 1);
+  assert.equal((await f.app.getSession(first.id)).session.status, 'queued');
+});
+
+test('duplicate creation returns the persisted receipt without depending on an early or unavailable GitHub read', async t => {
+  const f = await fixture(t); f.state.directReceipt = true;
+  const input = { clientRequestId: randomUUID(), command: 'node --version' };
+  const first = await f.app.startSession(input), callsBeforeRetry = f.state.calls.length;
+  f.state.failReads = true;
+  const duplicate = await f.recreate().startSession(input);
+  assert.deepEqual(duplicate, first); assert.equal(duplicate.runId, '101');
+  assert.equal(f.state.calls.length, callsBeforeRetry, 'A matching creation retry must not read GitHub or dispatch again.');
+  assert.equal(f.state.dispatches.length, 1);
+  await assert.rejects(f.app.getSession(first.id), /temporarily unavailable/);
+  f.state.failReads = false;
+  assert.equal((await f.app.getSession(first.id)).session.runId, first.runId);
+  assert.equal(f.state.dispatches.length, 1);
 });
 
 test('current GitHub dispatch API returns a direct durable run receipt', async t => {

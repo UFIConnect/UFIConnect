@@ -130,7 +130,11 @@ function createOfficeTerminal({ db, env = process.env, fetcher = fetch, now = Da
     function same(row) { return row.command === input.command && row.requested_ref === input.ref && row.timeout_seconds === input.timeoutSeconds; }
     if (existing) {
       if (!same(existing)) throw fail(409, 'This request ID already belongs to a different terminal command.');
-      return session(await refresh(existing));
+      // Creation retries acknowledge the durable receipt even while GitHub
+      // is unavailable or has not exposed a newly dispatched run yet. Status
+      // reconciliation belongs to GET and must never make a saved command
+      // look as though its creation failed or invite a second dispatch.
+      return session(existing);
     }
     const commit = await json(`/commits/${input.ref}`, { signal });
     if (!SHA.test(commit.sha || '') || input.ref !== 'main' && commit.sha.toLowerCase() !== input.ref) throw fail(502, 'GitHub did not resolve the requested commit.');
@@ -154,7 +158,7 @@ function createOfficeTerminal({ db, env = process.env, fetcher = fetch, now = Da
         await client.query('COMMIT'); return { row: result.rows[0], created: true };
       } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
     });
-    if (!reserved.created) return session(await refresh(reserved.row));
+    if (!reserved.created) return session(reserved.row);
     let row = reserved.row;
     try {
       const response = await github(`/actions/workflows/${WORKFLOW}/dispatches`, { method: 'POST', signal,
