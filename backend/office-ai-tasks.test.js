@@ -371,3 +371,33 @@ test('partial command receipts survive an uncertain second-service outcome witho
   assert.match(task.confirmation.detail, /control-confirmed-api/);
   assert.equal(await service.runOne(task.id), false); assert.equal(executions, 1);
 });
+
+test('Work image turns use the vision model while preserving execution tool schemas', async () => {
+  let request;
+  const model = createOfficeAIModel({ env: { CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32), CLOUDFLARE_API_TOKEN: 'private-test-token',
+    OFFICE_AI_MODEL: '@cf/qwen/qwen3-30b-a3b-fp8' }, fetcher: async (_url, options) => {
+    request = JSON.parse(options.body); return Response.json({ choices: [{ message: { content: 'The frame is visible.' } }] });
+  } });
+  const tools = [{ type: 'function', function: { name: 'office_command', parameters: { type: 'object' } } }];
+  await model({ messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/jpeg;base64,/9j/' } }] }], tools });
+  assert.equal(request.model, '@cf/google/gemma-4-26b-a4b-it');
+  assert.deepEqual(request.tools, tools);
+  assert.equal(request.chat_template_kwargs.enable_thinking, true);
+});
+
+test('Work receives real uploaded content, exposes metadata only, and clears uploads after completion', async t => {
+  let messages;
+  const { service, db } = await fixture(t, { model: async input => { messages = input.messages; return { content: 'The image is ready to discuss.' }; } });
+  const data = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jFioAAAAASUVORK5CYII=';
+  const request = body({ message: 'Describe this photo', target: 'general', permissions: {}, deployTargets: [], attachments: [{ name: 'photo.png', type: 'image/png', data }] });
+  const created = await invoke(service.create, request);
+  assert.equal(created.status, 202);
+  assert.deepEqual(created.body.task.attachments, [{ name: 'photo.png', type: 'image/png' }]);
+  assert.equal(JSON.stringify(created.body).includes(data), false);
+  assert.equal((await invoke(service.create, request)).body.task.id, created.body.task.id);
+  const task = await finish(service, created.body.task.id);
+  assert.equal(task.status, 'succeeded');
+  assert.equal(messages.find(message => Array.isArray(message.content)).content.find(part => part.type === 'image_url').image_url.url, data);
+  assert.equal(JSON.stringify((await db.query('SELECT data FROM office_ai_tasks WHERE id=$1', [task.id])).rows[0]).includes(data), false);
+  assert.equal((await invoke(service.create, body({ attachments: [{ name: 'note.txt', type: 'text/plain', data: 'Use private-token-value' }] }))).status, 400);
+});

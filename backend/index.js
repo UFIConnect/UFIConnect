@@ -425,6 +425,10 @@ app.use(privateConnectionResponse);
 // routes retain their smaller default body limit.
 registerVaultStorageRoutes(app, { db, authenticate, json: express.json,
   limiter: rateLimit({ windowMs: 60000, limit: 120, keyGenerator: req => req.user.id }) });
+// Authenticate attachments before parsing; retain normal Office connection,
+// authorization, and command middleware after this larger bounded parser.
+app.use(['/office/ai/chat', '/office/ai/tasks'], requireOfficeToken,
+  express.json({ limit: '3mb', strict: true }));
 app.use(express.json({ limit: '512kb' }));
 app.use((error, _req, res, next) => {
   if (!['entity.parse.failed', 'entity.too.large'].includes(error.type)) return next(error);

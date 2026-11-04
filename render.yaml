@@ -1059,7 +1059,7 @@ services:
         value: no-referrer
       - path: /*
         name: Permissions-Policy
-        value: camera=(), microphone=(), geolocation=()
+        value: camera=(self), microphone=(self), geolocation=()
       # Internal ops dashboard — no reason for this to be publicly
       # searchable. robots.txt covers well-behaved crawlers; this header
       # is the more reliable belt-and-suspenders version.

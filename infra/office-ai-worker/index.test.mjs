@@ -2,6 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from './index.mjs';
 const secret = 'unit-test-secret-'.repeat(4);
+
+test('uploaded photos reach the vision binding and remote image URLs are rejected', async () => {
+  let captured;
+  const env = { OFFICE_AI_RELAY_SECRET: secret, AI: { async run(_model, input) { captured = input; return { response: 'A photo.' }; } } };
+  const data = `data:image/jpeg;base64,${Buffer.alloc(300000, 255).toString('base64')}`;
+  const body = { messages: [{ role: 'user', content: [{ type: 'text', text: 'Describe the photo.' }, { type: 'image_url', image_url: { url: data } }] }] };
+  assert.equal((await worker.fetch(request('/chat', body), env)).status, 200);
+  assert.equal(captured.messages[0].content[1].image_url.url, data);
+  body.messages[0].content[1].image_url.url = 'https://internal.example/photo';
+  assert.equal((await worker.fetch(request('/chat', body), env)).status, 400);
+  body.messages[0].role = 'system';
+  assert.equal((await worker.fetch(request('/chat', body), env)).status, 400);
+});
 function request(route, body, authorization = `Bearer ${secret}`) {
   return new Request(`https://relay.example${route}`, { method: body === undefined ? 'GET' : 'POST', headers: { authorization, 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 }

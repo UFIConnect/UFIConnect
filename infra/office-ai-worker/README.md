@@ -1,8 +1,8 @@
 # Office AI relay
 
-This Worker gives the authenticated Office backend access to the owner's Cloudflare AI binding without placing a Cloudflare account token in the backend or browser. Every endpoint requires a separate, random `OFFICE_AI_RELAY_SECRET` bearer credential. Requests are capped at 256 KiB. The relay only runs model inference and web search; Office command authorization remains in the backend.
+This Worker gives the authenticated Office backend access to the owner's Cloudflare AI binding without placing a Cloudflare account token in the backend or browser. Every endpoint requires a separate, random `OFFICE_AI_RELAY_SECRET` bearer credential. Requests are capped at 4 MiB, including up to four uploaded images of 512 KiB each; text context remains capped at 256 KiB. The relay only runs model inference and web search; Office command authorization remains in the backend.
 
-- `POST /chat`: `model`, text `messages`, optional OpenAI-format `tools`, `max_tokens` (1–8192), `temperature`, `gatewayId` (default `default`). Returns OpenAI chat-completion format, including normalized native Workers AI tool calls.
+- `POST /chat`: `model`, `messages` containing text or user content arrays with text and uploaded JPEG/PNG/WebP data URLs, optional OpenAI-format `tools`, `max_tokens` (1–8192), `temperature`, `gatewayId` (default `default`). Remote image URLs are rejected. Returns OpenAI chat-completion format, including normalized native Workers AI tool calls. The default Gemma 4 model supports image input.
 - `POST /search`: `query`, optional `limit` (1–10), `provider` (`exa` or `ceramic`), `gatewayId`. Returns Cloudflare Web Search JSON. Requires AI Gateway credits or a search provider key on that gateway.
 - `GET /health`: authenticated binding-presence check. Does not incur inference charges or prove model/search billing readiness.
 

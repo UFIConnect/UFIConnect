@@ -10,6 +10,7 @@ import AnalyticsDashboard from './AnalyticsDashboard';
 import OfficeUsers from './OfficeUsers';
 import RecoveryOverview from './RecoveryOverview';
 import OfficeAI from './OfficeAI';
+import useOfficeWelcome from './useOfficeWelcome';
 import { mergeObservedAgents, observeAgentPayload } from './office-telemetry.mjs';
 import { createOfficeClient, createOfficeEventSource, createTrustedOfficeFetch, connectOfficeStreams, mergeOfficeLog } from './office-runtime.mjs';
 import { requestOfficeAccess } from './OfficeAccessDialog';
@@ -2851,6 +2852,8 @@ export default function App() {
     setView(id);
     window.history.replaceState(null, '', `#${id}`);
   }, []);
+  const [welcomeBriefing, consumeWelcome] = useOfficeWelcome({ request: officeFetch, apiBase: API,
+    pipelineBase: PIPELINE_API, getToken: officeClient.getToken, onOpen: navigateOffice });
 
   const fetchStatus = useCallback(async () => {
     if (polls.current.api) return;
@@ -3267,7 +3270,7 @@ export default function App() {
           {view === 'local-web' && <LocalWeb apiBase={API} request={officeFetch} onNavigate={navigateOffice} />}
           {view === 'overview' && <OverviewView status={status} pipelineStatus={pipelineStatus} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'controls' && <Controls apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} onNavigate={navigateOffice} />}
-          {view === 'office-ai' && <OfficeAI apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} onNavigate={navigateOffice} />}
+          {view === 'office-ai' && <OfficeAI apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} onNavigate={navigateOffice} welcomeBriefing={welcomeBriefing} onWelcomeConsumed={consumeWelcome} />}
           {/* Source health (workerHealth/agentSourceCache) only has real
               data on the pipeline role now — see pipelineStatus above. */}
           {view === 'sources'  && <SourcesView status={pipelineStatus} triggerAgent={triggerAgent} triggering={triggering} />}

@@ -407,3 +407,20 @@ test('tool library cap is enforced by a serialized database transaction, includi
   assert.equal(list.body.tools.length, 50);
   assert.equal((await invoke(service.saveTool, { id: list.body.tools[0].id, name: 'Updated', kind: 'prompt', instructions: 'Update existing.' })).status, 200);
 });
+
+test('photo and text uploads reach Cloudflare as multimodal user content without changing command permissions', async () => {
+  const fake = fakeProvider();
+  const service = configured({ env: { ...settings, OFFICE_AI_MODEL: '@cf/qwen/qwen3-30b-a3b-fp8' }, fetcher: fake.fetcher });
+  const data = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jFioAAAAASUVORK5CYII=';
+  const result = await invoke(service.chat, { message: 'Explain the photo and note', research: false,
+    attachments: [{ name: 'photo.png', type: 'image/png', data }, { name: 'note.txt', type: 'text/plain', data: 'The pictured item needs a label.' }] });
+  assert.equal(result.status, 200);
+  assert.equal(fake.calls.at(-1).body.model, DEFAULT_MODEL, 'Image turns use a vision model even if the primary model is text-only');
+  const content = fake.calls.at(-1).body.messages.at(-1).content;
+  assert.equal(content.find(part => part.type === 'image_url').image_url.url, data);
+  assert.match(content.at(-1).text, /The pictured item needs a label/);
+  assert.deepEqual(result.body.actions, []);
+  assert.equal((await invoke(service.chat, { message: 'Look', research: false,
+    attachments: [{ name: 'photo.png', type: 'image/png', data: 'https://internal.example/photo.png' }] })).status, 400);
+  assert.equal(fake.calls.length, 1);
+});

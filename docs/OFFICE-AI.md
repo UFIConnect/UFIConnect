@@ -4,6 +4,12 @@ Conversation is the default. Tasks, Upgrade AI, Office controls, Memory, Activit
 
 Open `https://uficonnect.ai` or `https://office.uficonnect.org/#office-ai`. Both use the existing Office access token and provide Cloudflare conversations, saved history, public web reading, coding tasks, an isolated terminal, reusable tools, provider connections, and the Office control catalog. This is a private Office application; internet access does not enable public visitors or public administration.
 
+## Voice, camera, and attachments
+
+After unlocking Office, a call popup reads current service observations and the latest Work task state, then asks whether you need anything. It listens for five seconds after the microphone starts. Silence closes the call and releases the camera. A spoken response starts a Work request with the selected task permissions and keeps the voice conversation open. Use End call to stop the microphone, camera, and speech. Leaving Office AI or hiding the tab also stops the sensors. Browser permission prompts and audio playback restrictions can require pressing Start call first.
+
+The call shows your live camera preview and an animated Office AI avatar. Camera context is a snapshot captured when you speak or send a message; it is not continuous video analysis. Attach photo or file accepts images, text files, and PDFs within the limits shown in the composer. Camera snapshots and attachments go to the authenticated Office AI backend and configured Cloudflare model as context. Unsupported formats and extraction failures are reported. Work keeps the existing task execution permissions, approval steps, and result receipts.
+
 ## Conversation and research
 
 Live research is enabled by default. The server retrieves up to six web search results for the message before asking the model to answer. Sources and the lookup time accompany the answer. Search results are snippets; the system does not independently read every linked page or guarantee exhaustive topic coverage. When research fails or is disabled, the interface and model instructions explicitly say current information was not verified.

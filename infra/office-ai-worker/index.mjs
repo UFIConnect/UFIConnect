@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 
-const MAX_BODY = 262144;
+const MAX_BODY = 4 * 1024 * 1024;
 const DEFAULT_MODEL = '@cf/google/gemma-4-26b-a4b-it';
 const headers = { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers });
@@ -33,6 +33,28 @@ async function bodyJson(request) {
   return body;
 }
 const invalid = message => { throw Object.assign(Error(message), { status: 400 }); };
+function validateMessages(messages) {
+  let imageCount = 0, imageBytes = 0, textBytes = 0;
+  for (const message of messages) {
+    if (!message || !['system', 'developer', 'user', 'assistant', 'tool'].includes(message.role)) invalid('Invalid message role.');
+    if (typeof message.content === 'string') { textBytes += new TextEncoder().encode(message.content).length; continue; }
+    if (message.role === 'assistant' && message.content == null && Array.isArray(message.tool_calls)) continue;
+    if (message.role !== 'user' || !Array.isArray(message.content) || !message.content.length || message.content.length > 16) invalid('Messages must contain text or uploaded photos.');
+    for (const part of message.content) {
+      if (part?.type === 'text' && typeof part.text === 'string' && Object.keys(part).every(key => ['type', 'text'].includes(key))) {
+        textBytes += new TextEncoder().encode(part.text).length; continue;
+      }
+      if (part?.type !== 'image_url' || Object.keys(part).some(key => !['type', 'image_url'].includes(key))
+        || !part.image_url || Object.keys(part.image_url).some(key => key !== 'url') || typeof part.image_url.url !== 'string') invalid('Invalid photo content.');
+      const match = /^data:image\/(?:jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(part.image_url.url);
+      if (!match || match[1].length % 4) invalid('Photos must be uploaded JPEG, PNG, or WebP files.');
+      const bytes = match[1].length / 4 * 3 - (match[1].endsWith('==') ? 2 : match[1].endsWith('=') ? 1 : 0);
+      imageCount++; imageBytes += bytes;
+      if (bytes > 512 * 1024 || imageCount > 4 || imageBytes > 2 * 1024 * 1024) invalid('Photo capacity exceeded.');
+    }
+  }
+  if (textBytes > 262144) throw Object.assign(Error('Text context is too large.'), { status: 413 });
+}
 function gateway(body) {
   const id = body.gatewayId || 'default';
   if (typeof id !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(id)) invalid('Invalid gateway.');
@@ -80,10 +102,7 @@ export default {
       const model = body.model || DEFAULT_MODEL;
       if (typeof model !== 'string' || model.length > 160 || !/^(?:@cf\/)?[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:/-]*$/i.test(model)) invalid('Invalid model.');
       if (!Array.isArray(body.messages) || !body.messages.length || body.messages.length > 80) invalid('Provide between 1 and 80 messages.');
-      for (const message of body.messages) {
-        if (!message || !['system', 'developer', 'user', 'assistant', 'tool'].includes(message.role)) invalid('Invalid message role.');
-        if (typeof message.content !== 'string' && !(message.role === 'assistant' && message.content == null && Array.isArray(message.tool_calls))) invalid('Messages must contain text.');
-      }
+      validateMessages(body.messages);
       const maxTokens = body.max_tokens ?? 2048;
       if (!Number.isInteger(maxTokens) || maxTokens < 1 || maxTokens > 8192) invalid('Invalid output limit.');
       if (body.temperature != null && (!Number.isFinite(body.temperature) || body.temperature < 0 || body.temperature > 2)) invalid('Invalid temperature.');
@@ -97,7 +116,7 @@ export default {
       const result = await env.AI.run(model, inputs, { gateway: { id: gatewayId, skipCache: true, collectLog: false } });
       return json(completion(result, model));
     } catch (error) {
-      if (error.status === 400) return failure(400, 'invalid_request', error.message);
+      if (error.status === 400 || error.status === 413) return failure(error.status, 'invalid_request', error.message);
       return failure(error.status === 429 ? 429 : 502, 'provider_unavailable', 'Cloudflare AI could not complete this request. Check the model, gateway credits, and service availability.');
     }
   },
