@@ -1,13 +1,13 @@
 // One survey supplies the district plan, road geometry, traffic and drive routes.
-export const CITY_ROAD_SPAN = { arterial: 316, transit: 316, highway: 354, 'highway-return': 354 };
+export const CITY_ROAD_SPAN = { arterial: 252, transit: 252, highway: 286, 'highway-return': 286 };
 export const CITY_DISTRICT_SCALE = .82;
 export const CITY_DISTRICT_ANCHOR = 11.5 * CITY_DISTRICT_SCALE;
 export const cityRoadPosition = (kind, x) => .5 + x / CITY_ROAD_SPAN[kind];
 export function cityRoadPoint(kind, position, offset = 0) {
   const evaluate = a => {
     const valley = 42 + 5 * Math.sin((a - .5) * Math.PI * 1.6) + 2 * Math.sin((a - .5) * Math.PI * 3);
-    if (kind === 'highway') return [(a - .5) * CITY_ROAD_SPAN[kind], -66 + 4 * Math.sin(a * Math.PI) + Math.sin(a * Math.PI * 3)];
-    if (kind === 'highway-return') return [(a - .5) * CITY_ROAD_SPAN[kind], 12 + 2 * Math.sin((a - .5) * Math.PI)];
+    if (kind === 'highway') return [(a - .5) * CITY_ROAD_SPAN[kind], -34 + 4 * Math.sin(a * Math.PI) + Math.sin(a * Math.PI * 3)];
+    if (kind === 'highway-return') return [(a - .5) * CITY_ROAD_SPAN[kind], 24 + 2 * Math.sin((a - .5) * Math.PI)];
     if (kind === 'transit') return [(a - .5) * CITY_ROAD_SPAN[kind], valley + 8];
     if (kind === 'promenade') return [(a - .5) * 32.4, -18 + 1.8 * Math.sin(a * Math.PI * 2)];
     return [(a - .5) * CITY_ROAD_SPAN.arterial, valley];
@@ -30,8 +30,8 @@ export const CITY_DISTRICT_PLAN = [
   ['business', 5, -1], ['design', 7, -1], ['careers', 6, -1], ['people', 7, 1],
 ];
 export const CITY_SITES = CITY_DISTRICT_PLAN.map(([id, station, side]) => {
-  const x = [-140, -105, -70, -35, 35, 70, 105, 140][station] + side * 2;
-  const setback = side < 0 ? 54 + station % 3 * 2 : 26 + station % 3 * 3;
+  const x = [-112, -84, -56, -28, 28, 56, 84, 112][station] + side * 2;
+  const setback = side < 0 ? 40 + station % 3 * 2 : 22 + station % 3 * 2;
   const z = cityRoadPoint('arterial', cityRoadPosition('arterial', x))[1] + side * setback;
   const nearest = nearestCityArterial([x, z]), angle = nearest.angle, junction = nearest.point;
   const distance = Math.hypot(x - junction[0], z - junction[1]), nx = (x - junction[0]) / distance, nz = (z - junction[1]) / distance;
@@ -57,8 +57,8 @@ export function nearestCityArterial(point) {
 }
 // Tangential expressway departures curve into gaps between districts. Elevation
 // changes along distance with zero grade at either end, avoiding abrupt crests.
-export const CITY_AIRPORT = { id: 'airport', label: 'Airport', to: '/?feed=countries', focus: [-117, 104], camera: [20, 35, 44], entrance: [-108, 92], junction: cityRoadPoint('arterial', cityRoadPosition('arterial', -122)), angle: cityRoadPosition('arterial', -122) };
-export const CITY_SHOPPING = { id: 'shopping', label: 'Shopping center', to: '/?feed=ufi&channel=shop', focus: [129, 112], camera: [22, 29, -40], entrance: [149, 106], junction: cityRoadPoint('arterial', cityRoadPosition('arterial', 165)), angle: cityRoadPosition('arterial', 165) };
+export const CITY_AIRPORT = { id: 'airport', label: 'Airport', to: '/?feed=countries', focus: [-94, 92], camera: [20, 35, 44], entrance: [-85, 80], junction: cityRoadPoint('arterial', cityRoadPosition('arterial', -98)), angle: cityRoadPosition('arterial', -98) };
+export const CITY_SHOPPING = { id: 'shopping', label: 'Shopping center', to: '/?feed=ufi&channel=shop', focus: [104, 99], camera: [22, 29, -40], entrance: [124, 93], junction: cityRoadPoint('arterial', cityRoadPosition('arterial', 132)), angle: cityRoadPosition('arterial', 132) };
 for (const landmark of [CITY_AIRPORT, CITY_SHOPPING]) {
   const [x, z] = landmark.junction, [endX, endZ] = landmark.entrance;
   landmark.collector = [[x, .11, z], [x, .11, endZ - 5], [x + Math.sign(endX - x) * 1.5, .11, endZ - 1.5], [x + Math.sign(endX - x) * 5, .11, endZ], [endX, .11, endZ]];
@@ -117,7 +117,7 @@ export const CITY_HIGHWAY_KINDS = ['highway', 'highway-return'];
 function highwayConnector(x, fromKind, toKind, endHeight) {
   const upper = fromKind === 'highway';
   const position = cityRoadPosition(toKind, x);
-  const departure = cityRoadPosition(fromKind, x - (upper ? 32 : 64)), a = cityRoadPoint(fromKind, departure), d = cityRoadPoint(toKind, position);
+  const departure = cityRoadPosition(fromKind, x - (upper ? 26 : 48)), a = cityRoadPoint(fromKind, departure), d = cityRoadPoint(toKind, position);
   const ahead = cityRoadPoint(fromKind, departure + .001), tangent = [ahead[0] - a[0], ahead[1] - a[1]], magnitude = Math.hypot(...tangent);
   const before = cityRoadPoint(toKind, position - .001), dx = d[0] - before[0], dz = d[1] - before[1], length = Math.hypot(dx, dz);
   const b = [a[0] + tangent[0] / magnitude * (upper ? 12 : 22), a[1] + tangent[1] / magnitude * (upper ? 12 : 22)], middle = [x, d[1] - 20];
@@ -138,13 +138,13 @@ function highwayConnector(x, fromKind, toKind, endHeight) {
     return [x, 2.9 + (endHeight - 2.9) * eased, z];
   });
 }
-export const CITY_HIGHWAY_LINKS = [-88, 122].map(x => highwayConnector(x, 'highway', 'highway-return', 2.9));
+export const CITY_HIGHWAY_LINKS = [-70, 98].map(x => highwayConnector(x, 'highway', 'highway-return', 2.9));
 export function cityEndRoadPoint(side, position) {
-  return [side * (184 + 2 * Math.sin(position * Math.PI) + Math.sin(position * Math.PI * 2)), 2.9, -76 + 132 * position];
+  return [side * (148 + 2 * Math.sin(position * Math.PI) + Math.sin(position * Math.PI * 2)), 2.9, -44 + 110 * position];
 }
 export const CITY_END_JUNCTIONS = [-1, 1].flatMap(side => CITY_HIGHWAY_KINDS.map(kind => {
   const position = side > 0 ? 1 : 0, end = cityRoadPoint(kind, position), turn = kind === 'highway' ? 1 : -1;
-  const junction = cityEndRoadPoint(side, (end[1] + turn * 12 + 76) / 132);
+  const junction = cityEndRoadPoint(side, (end[1] + turn * 12 + 44) / 110);
   const a = [end[0], end[1]], b = [end[0] + side * 5.5, end[1]], c = [junction[0], junction[2] - turn * 5.5], d = [junction[0], junction[2]];
   const points = Array.from({ length: 49 }, (_, i) => {
     const t = i / 48, u = 1 - t;
@@ -157,7 +157,7 @@ export const CITY_END_JUNCTIONS = [-1, 1].flatMap(side => CITY_HIGHWAY_KINDS.map
 }));
 export const CITY_SIDE_EXITS = [{ index: 0, side: -1 }, { index: 1, side: -1 }, { index: 13, side: 1 }, { index: 15, side: 1 }].map(exit => {
   const site = CITY_SITES[exit.index], d = site.entrance, nx = Math.sin(site.rotation), nz = Math.cos(site.rotation);
-  const startPosition = (d[1] - 48 + 76) / 132, a = cityEndRoadPoint(exit.side, startPosition), b = [a[0], a[2] + 36], c = [d[0] - nx * 12, d[1] - nz * 12];
+  const startPosition = (d[1] - 36 + 44) / 110, a = cityEndRoadPoint(exit.side, startPosition), b = [a[0], a[2] + 26], c = [d[0] - nx * 12, d[1] - nz * 12];
   const plan = Array.from({ length: 97 }, (_, i) => {
     const t = i / 96, u = 1 - t;
     return [u ** 3 * a[0] + 3 * u * u * t * b[0] + 3 * u * t * t * c[0] + t ** 3 * d[0],
@@ -170,7 +170,7 @@ export const CITY_SIDE_EXITS = [{ index: 0, side: -1 }, { index: 1, side: -1 }, 
 export const CITY_END_ROADS = [-1, 1].map(side => {
   const joins = [...CITY_END_JUNCTIONS.filter(junction => junction.side === side).map(junction => junction.points.at(-1)), ...CITY_SIDE_EXITS.filter(exit => exit.side === side).map(exit => exit.points[0])];
   const first = Math.min(...joins.map(point => point[2])), last = Math.max(...joins.map(point => point[2])), segments = Math.ceil(last - first);
-  return { side, points: Array.from({ length: segments + 1 }, (_, i) => cityEndRoadPoint(side, (first + (last - first) * i / segments + 76) / 132)) };
+  return { side, points: Array.from({ length: segments + 1 }, (_, i) => cityEndRoadPoint(side, (first + (last - first) * i / segments + 44) / 110)) };
 });
 // Secondary streets link both terraces. The waterfront street uses the front
 // entrances, preserving a separate green belt around the lake and airport.
@@ -193,7 +193,7 @@ for (const road of CITY_LOCAL_LINKS) for (let i = 1; i < road.length; i++) {
 export const CITY_HIGHWAY_PIERS = Object.fromEntries(CITY_HIGHWAY_KINDS.map(kind => [kind,
   cityRoadPoints(kind).filter(([x, , z], i) => i < 384 && i % 12 === 0
     && CITY_GROUND_ROADS.every(([a, b]) => citySegmentDistance([x, z], a, b) > 3))]));
-export const CITY_RAMPS = [-88, 122].map(x => highwayConnector(x, 'highway-return', 'arterial', .075));
+export const CITY_RAMPS = [-70, 98].map(x => highwayConnector(x, 'highway-return', 'arterial', .075));
 // Widen the junction mouths gradually without changing the surveyed alignment.
 // The same cross sections also position the edge markings and guardrails.
 export function cityRampWidths(points) {
@@ -222,7 +222,7 @@ export function cityTrafficSignals(sites = [...CITY_SITES, ...CITY_LANDMARKS]) {
 }
 export const CITY_TOP_EXITS = [{ index: 2, id: 'science', label: 'Science' }, { index: 12, id: 'business', label: 'Business' }].map(exit => {
   const site = CITY_SITES[exit.index], nx = Math.sin(site.rotation), nz = Math.cos(site.rotation);
-  const rear = [site.x + nx * CITY_DISTRICT_ANCHOR, site.z + nz * CITY_DISTRICT_ANCHOR], departure = cityRoadPosition('highway', rear[0] - 64);
+  const rear = [site.x + nx * CITY_DISTRICT_ANCHOR, site.z + nz * CITY_DISTRICT_ANCHOR], departure = cityRoadPosition('highway', rear[0] - 48);
   const a = cityRoadPoint('highway', departure), ahead = cityRoadPoint('highway', departure + .001), length = Math.hypot(ahead[0] - a[0], ahead[1] - a[1]);
   const b = [a[0] + (ahead[0] - a[0]) / length * 22, a[1] + (ahead[1] - a[1]) / length * 22], c = [rear[0] + nx * 12, rear[1] + nz * 12];
   const plan = Array.from({ length: 97 }, (_, i) => {

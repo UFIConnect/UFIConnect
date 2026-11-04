@@ -3,13 +3,13 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 const IDLE_INPUT = { steer: 0, throttle: false, brake: false };
 const KEY_ACTIONS = { ArrowLeft: 'left', a: 'left', ArrowRight: 'right', d: 'right', ArrowUp: 'throttle', w: 'throttle', ArrowDown: 'brake', s: 'brake' };
 const ACTIONS = [
-  { id: 'left', label: 'Steer left', icon: '←', text: 'Left' },
-  { id: 'right', label: 'Steer right', icon: '→', text: 'Right' },
+  { id: 'left', label: 'Turn left', icon: '←', text: 'Turn left' },
+  { id: 'right', label: 'Turn right', icon: '→', text: 'Turn right' },
   { id: 'throttle', label: 'Accelerate', icon: '↑', text: 'Accelerate' },
-  { id: 'brake', label: 'Brake', icon: '↓', text: 'Brake' },
+  { id: 'brake', label: 'Brake / reverse', icon: '↓', text: 'Brake / reverse' },
 ];
 
-export default function DriveControls({ disabled, resetKey, onInput }) {
+export default function DriveControls({ disabled, resetKey, pendingTurn = 0, onInput, onTurn }) {
   const group = useRef(null), held = useRef(new Map()), pulses = useRef(new Map()), disabledRef = useRef(disabled);
   const focusWithin = useRef(false);
   const [input, setInput] = useState(IDLE_INPUT);
@@ -17,10 +17,16 @@ export default function DriveControls({ disabled, resetKey, onInput }) {
   disabledRef.current = disabled;
   const publish = useCallback(() => {
     const actions = new Set(held.current.values());
-    const next = { steer: Number(actions.has('right')) - Number(actions.has('left')), throttle: actions.has('throttle'), brake: actions.has('brake') };
+    const next = { steer: 0, throttle: actions.has('throttle'), brake: actions.has('brake') };
     setInput(previous => previous.steer === next.steer && previous.throttle === next.throttle && previous.brake === next.brake ? previous : next);
     onInput(next);
   }, [onInput]);
+  const activate = useCallback((token, action) => {
+    if (held.current.has(token)) return;
+    held.current.set(token, action);
+    if (action === 'left' || action === 'right') onTurn(action === 'left' ? -1 : 1);
+    publish();
+  }, [onTurn, publish]);
   const clear = useCallback(() => {
     for (const timer of pulses.current.values()) window.clearTimeout(timer);
     pulses.current.clear(); held.current.clear(); publish();
@@ -47,9 +53,9 @@ export default function DriveControls({ disabled, resetKey, onInput }) {
         || (ownButton && [' ', 'Enter'].includes(event.key) ? ownButton.dataset.driveAction : null);
       if (!action) return;
       event.preventDefault();
+      if (event.repeat) return;
       const token = 'key:' + event.code;
-      if (held.current.has(token)) return;
-      held.current.set(token, action); publish();
+      activate(token, action);
     };
     const keyUp = event => { if (held.current.delete('key:' + event.code)) { event.preventDefault(); publish(); } };
     const visibility = () => { if (document.hidden) clear(); };
@@ -72,9 +78,9 @@ export default function DriveControls({ disabled, resetKey, onInput }) {
       document.removeEventListener('focusin', focusChange);
       clear();
     };
-  }, [clear, publish]);
+  }, [activate, clear, publish]);
 
-  return <div ref={group} className="map-drive-steering" role="group" aria-label="Steering controls" aria-describedby={hintId} tabIndex={0}
+  return <div ref={group} className="map-drive-steering" role="group" aria-label="Driving controls" aria-describedby={hintId} tabIndex={0}
     onFocusCapture={() => { focusWithin.current = true; }}
     onBlurCapture={event => {
       if (event.currentTarget.contains(event.relatedTarget)) return;
@@ -83,13 +89,13 @@ export default function DriveControls({ disabled, resetKey, onInput }) {
     }}>
     <div className="map-drive-steering-buttons">
       {ACTIONS.map(action => <button key={action.id} type="button" data-drive-action={action.id} aria-label={action.label} disabled={disabled}
-        aria-pressed={action.id === 'left' ? input.steer < 0 : action.id === 'right' ? input.steer > 0 : input[action.id]}
+        aria-pressed={action.id === 'left' ? pendingTurn < 0 : action.id === 'right' ? pendingTurn > 0 : input[action.id]}
         onPointerDown={event => {
           if (event.button !== 0 || disabledRef.current) return;
           event.preventDefault();
           event.currentTarget.focus({ preventScroll: true });
           event.currentTarget.setPointerCapture(event.pointerId);
-          held.current.set('pointer:' + event.pointerId, action.id); publish();
+          activate('pointer:' + event.pointerId, action.id);
         }}
         onPointerUp={event => release('pointer:' + event.pointerId)}
         onPointerCancel={event => release('pointer:' + event.pointerId)}
@@ -98,6 +104,10 @@ export default function DriveControls({ disabled, resetKey, onInput }) {
           // Assistive technologies may activate a button without pointer/key
           // events. Give that activation one short, bounded driving input.
           if (event.detail !== 0 || disabledRef.current) return;
+          if (action.id === 'left' || action.id === 'right') {
+            onTurn(action.id === 'left' ? -1 : 1);
+            return;
+          }
           const token = 'click:' + action.id;
           window.clearTimeout(pulses.current.get(token));
           held.current.set(token, action.id); publish();
@@ -107,6 +117,6 @@ export default function DriveControls({ disabled, resetKey, onInput }) {
         <span aria-hidden="true">{action.icon}</span>{action.text}
       </button>)}
     </div>
-    <small id={hintId}>Hold to steer through traffic, accelerate or brake. Focus these controls to use arrow keys or WASD.</small>
+    <small id={hintId}>Choose left or right for the next street. Hold brake to slow down, then reverse. Focus these controls to use arrow keys or WASD.</small>
   </div>;
 }

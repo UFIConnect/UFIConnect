@@ -96,6 +96,7 @@
 .map-drive-status { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 160px; }
 .map-drive-status [role="status"] { color: var(--text); font-weight: 600; }
 .map-drive-status small { color: var(--muted); font-size: .72rem; }
+.map-drive-turn-status { display: block; margin-top: 3px; color: var(--muted); font-size: .72rem; font-weight: 400; overflow-wrap: anywhere; }
 .map-drive-signal { display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--text); font-size: .75rem; white-space: nowrap; }
 .map-drive-signal i { width: 9px; height: 9px; border-radius: 50%; background: #d64b47; }
 .map-drive-signal[data-signal="yellow"] i { background: #bb8513; }

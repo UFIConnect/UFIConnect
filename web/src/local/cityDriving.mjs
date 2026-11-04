@@ -3,6 +3,9 @@ import { advanceTrafficVehicle, trafficVehiclePoint } from './cityTraffic.mjs';
 // Driving is part of the decorative city simulation; reports stay in this scene.
 export const DRIVE_ACCIDENT_PAUSE_SECONDS = 4;
 export const DRIVE_MAX_LATERAL_OFFSET = 1.5;
+const DRIVE_REVERSE_SPEED = 2.5;
+const DRIVE_ACCELERATION = 2.4;
+const DRIVE_BRAKING = 5.5;
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 const dot = (a, b) => a[0] * b[0] + a[2] * b[2];
 const right = heading => [-heading[2], 0, heading[0]];
@@ -35,8 +38,20 @@ function collisionBetween(before, after, others, ignored) {
   return null;
 }
 
+function reverseDrivenVehicle(vehicle, dt, braking) {
+  const previousSpeed = Math.min(0, Number(vehicle.speed) || 0);
+  // Releasing the pedal stops reverse before the forward controller takes over
+  // on a later frame. The body keeps facing along the route while backing up.
+  const speed = braking ? Math.max(-DRIVE_REVERSE_SPEED, previousSpeed - DRIVE_ACCELERATION * dt)
+    : Math.min(0, previousSpeed + DRIVE_BRAKING * dt);
+  const travelled = vehicle.distance + (previousSpeed + speed) / 2 * dt;
+  const distance = clamp(travelled, 0, vehicle.path.length);
+  return { ...vehicle, distance, speed: travelled <= 0 ? 0 : speed,
+    status: braking && distance > 0 && speed < 0 ? 'reversing' : 'braking', signal: null, gap: null };
+}
+
 export function advanceDrivenVehicle(vehicle, { delta = 0, time = 0, now = time, others = [], paused = false, input = {}, skip = false } = {}) {
-  if (skip || vehicle.distance >= vehicle.path.length) {
+  if (skip) {
     return { ...vehicle, distance: vehicle.path.length, speed: 0, lateralOffset: 0, status: 'arrived', signal: null, gap: null,
       accidentUntil: 0, accidentContacts: [] };
   }
@@ -50,21 +65,22 @@ export function advanceDrivenVehicle(vehicle, { delta = 0, time = 0, now = time,
   // Keep an already reported contact suppressed until both footprints have cleared.
   // It also stops the following controller trapping the car inside that contact.
   const contacts = (vehicle.accidentContacts || []).filter(id => neighbors.some(other => other.id === id && overlaps(current, other, .25)));
-  const steer = clamp(Number(input.steer) || 0, -1, 1);
-  const remaining = Math.max(0, vehicle.path.length - vehicle.distance);
-  const limit = DRIVE_MAX_LATERAL_OFFSET * clamp(remaining / 6, 0, 1);
-  const lateralOffset = clamp((Number(vehicle.lateralOffset) || 0) + steer * 2.4 * dt, -limit, limit);
   const cruise = vehicle.cruise ?? 5.5;
-  let next = advanceTrafficVehicle({ ...resumed, lateralOffset, cruise: input.brake ? 0 : input.throttle ? cruise * 1.6 : cruise },
-    { delta: dt, time, others: neighbors.filter(other => !contacts.includes(other.id)) });
+  const speed = Number(vehicle.speed) || 0;
+  // Braking a forward-moving car must reach zero before reverse can start.
+  // Left and right select a street route; they no longer slide the car sideways.
+  let next = speed < 0 || (input.brake && speed === 0)
+    ? reverseDrivenVehicle(resumed, dt, Boolean(input.brake))
+    : advanceTrafficVehicle({ ...resumed, cruise: input.brake ? 0 : input.throttle ? cruise * 1.6 : cruise },
+      { delta: dt, time, others: neighbors.filter(other => !contacts.includes(other.id)) });
   next = { ...next, cruise, accidentContacts: contacts };
-  if (next.status === 'arrived') return { ...next, lateralOffset: 0 };
   const collision = collisionBetween(current, drivenVehiclePoint(next), neighbors, contacts);
   if (collision) {
     return { ...next, speed: 0, status: 'accident', signal: null, gap: null,
       accidentUntil: now + DRIVE_ACCIDENT_PAUSE_SECONDS, accidentCount: (vehicle.accidentCount || 0) + 1,
       accidentOtherId: collision.id, accidentContacts: [...contacts, collision.id] };
   }
+  if (next.status === 'arrived') return { ...next, lateralOffset: 0 };
   if (input.brake && ['driving', 'turning'].includes(next.status)) next.status = 'braking';
   return next;
 }

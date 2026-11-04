@@ -13,11 +13,12 @@ import { CITY_DOWNTOWN } from '../local/cityDowntown';
 import { CITY_SITES, CITY_DISTRICT_SCALE, CITY_ARCHITECTURE, CITY_RAMPS, CITY_TOP_EXITS, CITY_SIDE_EXITS, CITY_LOCAL_LINKS, CITY_END_ROADS, CITY_END_JUNCTIONS, CITY_HIGHWAY_LINKS, CITY_HIGHWAY_KINDS, CITY_AIRPORT, CITY_SHOPPING, CITY_LANDMARKS, CITY_HIGHWAY_PIERS, CITY_GROUND_ROADS, cityCollectorPoints, citySegmentDistance, cityHighwayJourney, cityRoadPoint, cityRoadPoints, cityRoadPosition, cityDriveOrigin, cityDriveWaypoints, cityRampWidths, cityTrafficSignals } from '../local/cityEngineering.mjs';
 import { createTrafficPath, createDriveTrafficPath, continueTrafficPath, trafficPoint, trafficPathSignals, trafficLightPhase, trafficSnapshot, advanceTrafficVehicle, cityResidentCount } from '../local/cityTraffic.mjs';
 import { advanceDrivenVehicle, drivenVehiclePoint } from '../local/cityDriving.mjs';
+import { planNextStreetTurn, planDriveDestination, prependDriveApproach } from '../local/cityDriveNavigation.mjs';
 
 // Decorative city simulation. It never represents measured traffic or member activity.
-export default function MapCityScene({ homes, cities, overview, viewMode = 'plan', timeOfDay = 'day', altitude = 100, focusLandmark = '', motion, quality = 'auto', theme, title, cityId, selected, onSelect, onCitySelect, onCivicSelect, resetKey, onFallback, driving = false, drivePaused = false, driveDestination = '', driveInput = {}, driveSkipRequest = 0, onDriveArrival, onDriveStatus }) {
+export default function MapCityScene({ homes, cities, overview, viewMode = 'plan', timeOfDay = 'day', altitude = 100, focusLandmark = '', motion, quality = 'auto', theme, title, cityId, selected, onSelect, onCitySelect, onCivicSelect, resetKey, onFallback, driving = false, drivePaused = false, driveDestination = '', driveInput = {}, driveSkipRequest = 0, driveTurnRequest = null, onDriveDestinationChange, onDriveArrival, onDriveStatus }) {
   const host = useRef(null), current = useRef(null), wake = useRef(null), renderBudget = useRef({ lightweight: false, illustrated: false });
-  current.current = { motion, altitude, onSelect, onCitySelect, onCivicSelect, onFallback, driving, drivePaused, driveDestination, driveInput, driveSkipRequest, onDriveArrival, onDriveStatus };
+  current.current = { motion, altitude, onSelect, onCitySelect, onCivicSelect, onFallback, driving, drivePaused, driveDestination, driveInput, driveSkipRequest, driveTurnRequest, onDriveDestinationChange, onDriveArrival, onDriveStatus };
   const shape = JSON.stringify(overview ? cities.map(city => [city.id, city.label, city.sources]) : homes);
   useEffect(() => {
     const element = host.current;
@@ -71,7 +72,7 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
     const rows = Math.max(2, Math.ceil(homes.length / 3));
     const length = 9 + rows * 6, middle = length / 2 - 4;
     const focused = overview && CITY_LANDMARKS.find(item => item.id === focusLandmark);
-    const target = focused ? new THREE.Vector3(focused.focus[0], 0, focused.focus[1]) : new THREE.Vector3(0, overview ? -3 : 0, overview ? 31 : middle);
+    const target = focused ? new THREE.Vector3(focused.focus[0], 0, focused.focus[1]) : new THREE.Vector3(0, overview ? -3 : 0, overview ? 38 : middle);
     const planView = overview && !focused && viewMode === 'plan';
     renderer.domElement.dataset.viewMode = planView ? 'plan' : 'perspective';
     renderer.domElement.dataset.focusLandmark = focused?.id || '';
@@ -82,7 +83,7 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
     scene.add(new THREE.HemisphereLight(night ? '#a9c4ee' : '#eaf6ff', night ? '#253541' : '#8b9d77', night ? .7 : .35));
     const sun = new THREE.DirectionalLight(night ? '#b8d5ff' : '#fff1d5', night ? .85 : 2.8);
     sun.position.set(-60, 110, 60); sun.castShadow = true;
-    const shadowExtent = overview ? 200 : 40;
+    const shadowExtent = overview ? 165 : 40;
     const shadowSize = Math.min(renderer.capabilities.maxTextureSize, 4096);
     sun.shadow.mapSize.set(shadowSize, shadowSize);
     Object.assign(sun.shadow.camera, { left: -shadowExtent, right: shadowExtent, top: shadowExtent, bottom: -shadowExtent, near: 1, far: 400 });
@@ -281,7 +282,8 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
     }
     function landscapeLake(parent) {
       const center = new THREE.Vector3(-23, .035, 90);
-      const boundary = [[-62, 90], [-55, 79], [-39, 76], [-24, 80], [-12, 76], [5, 83], [18, 89], [12, 100], [-5, 105], [-19, 100], [-34, 106], [-51, 103]];
+      const shorePoint = (x, z) => [center.x + (x - center.x) * .7, center.z + (z - center.z) * .65];
+      const boundary = [[-62, 90], [-55, 79], [-39, 76], [-24, 80], [-12, 76], [5, 83], [18, 89], [12, 100], [-5, 105], [-19, 100], [-34, 106], [-51, 103]].map(([x, z]) => shorePoint(x, z));
       const shoreline = new THREE.CatmullRomCurve3(boundary.map(([x, z]) => new THREE.Vector3(x, .035, z)), true, 'centripetal').getPoints(128).slice(0, -1);
       const shore = new THREE.Shape();
       shoreline.forEach((point, i) => {
@@ -309,12 +311,12 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       lake.setAttribute('color', new THREE.Float32BufferAttribute(shades, 3)); lake.setIndex(indices); lake.computeVertexNormals();
       geometries.set('landscapeLake', lake); form(parent, 'landscapeLake', '#6dbece', 0, 0, 0, 1, 1, 1);
       // Shore planting and a promenade keep the water inside the landscape.
-      roadRibbon(parent, [[-63, .07, 72], [-40, .07, 69], [-17, .07, 70], [8, .07, 78]], .8, '#d5cfbc');
+      roadRibbon(parent, [[-63, 72], [-40, 69], [-17, 70], [8, 78]].map(([x, z]) => { const point = shorePoint(x, z); return [point[0], .07, point[1]]; }), .8, '#d5cfbc');
       for (let i = 0; i < shoreline.length; i += 12) {
         const edge = center.clone().lerp(shoreline[i], 1.16);
         tree(parent, CITY_NATURE.science, edge.x, edge.z, i);
       }
-      bench(parent, -37, 68.3); bench(parent, -12, 70.5);
+      for (const [x, z] of [[-37, 68.3], [-12, 70.5]]) bench(parent, ...shorePoint(x, z));
     }
     function airport(parent, origin = [0, 0]) {
       const travel = { civic: 'airport' };
@@ -624,11 +626,11 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       const vertices = [], indices = [], shades = [], columns = 96, terrainRows = 48;
       const grass = new THREE.Color('#829c75'), rock = new THREE.Color('#908e7a');
       for (let col = 0; col <= columns; col++) {
-        const x = -195 + col * 390 / columns, north = -85 + 4 * Math.sin(x * .035), south = 147 + 4 * Math.cos(x * .027);
+        const x = -158 + col * 316 / columns, north = -48 + 2 * Math.sin(x * .035), south = 124 + 2 * Math.cos(x * .027);
         for (let row = 0; row <= terrainRows; row++) {
           const z = north + (south - north) * row / terrainRows;
-          const fringe = Math.max(Math.max(0, Math.min(1, (-70 - z) / 15)), Math.max(0, Math.min(1, (z - 136) / 14)));
-          const relief = fringe ** 2 * Math.max(0, Math.sin(x / 24) * Math.cos(z / 29)) * 8;
+          const fringe = Math.max(Math.max(0, Math.min(1, (-42 - z) / 8)), Math.max(0, Math.min(1, (z - 116) / 10)));
+          const relief = fringe ** 2 * Math.max(0, Math.sin(x / 24) * Math.cos(z / 29)) * 4;
           const shade = grass.clone().lerp(rock, relief / 9).multiplyScalar(.96 + .04 * Math.sin(x / 9) * Math.cos(z / 11));
           vertices.push(x, -.17 + relief, z); shades.push(shade.r, shade.g, shade.b);
           if (col && row) { const a = (col - 1) * (terrainRows + 1) + row - 1, b = col * (terrainRows + 1) + row - 1; indices.push(a, a + 1, b, a + 1, b + 1, b); }
@@ -673,11 +675,21 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
         streetLight(central, junction[0] + nx * 4 + nz * 1.6, junction[1] + nz * 4 - nx * 1.6, i);
         cityPortals.push(site);
       });
-      // Green corridors between neighborhood branches retain walking paths and ponds.
+      const elevatedCorridors = [
+        ...CITY_HIGHWAY_KINDS.map(kind => ({ points: cityRoadPoints(kind), halfWidth: 4.1 })),
+        ...[...CITY_HIGHWAY_LINKS, ...CITY_RAMPS, ...CITY_TOP_EXITS.map(exit => exit.points), ...CITY_SIDE_EXITS.map(exit => exit.points), ...CITY_END_ROADS.map(road => road.points), ...CITY_END_JUNCTIONS.map(junction => junction.points)]
+          .map(points => ({ points, halfWidth: 2.3 })),
+      ].flatMap(({ points, halfWidth }) => points.slice(1).map((point, index) => ({ a: [points[index][0], points[index][2]], b: [point[0], point[2]], halfWidth })));
+      const clearOfRoads = (x, z, radius) => CITY_GROUND_ROADS.every(([a, b]) => citySegmentDistance([x, z], a, b) > radius + 2.4)
+        && elevatedCorridors.every(({ a, b, halfWidth }) => citySegmentDistance([x, z], a, b) > radius + halfWidth);
+      // Small pocket gardens sit in the remaining gaps between compact districts.
+      const parkPositions = [];
       for (let i = 0; i < 7; i++) for (const side of [-1, 1]) {
         if (i === 3 && side < 0) continue; // Civic center reserves the middle parcel.
-        const position = cityRoadPosition('arterial', [-122.5, -87.5, -52.5, 0, 52.5, 87.5, 122.5][i]), [x, z] = cityRoadPoint('arterial', position, side < 0 ? 57 : -31);
-        const park = group(x, z);
+        const x = [-98, -70, -42, 0, 42, 70, 98][i] + side * 2, position = cityRoadPosition('arterial', x), [, z] = cityRoadPoint('arterial', position, side < 0 ? 29 : -36);
+        if (!clearOfRoads(x, z, 2.5)) continue;
+        const park = group(x, z, .55);
+        parkPositions.push([x, z]);
         pond(park, CITY_NATURE.science, 0, 0, 1.8);
         for (let treeIndex = 0; treeIndex < 4; treeIndex++) tree(park, CITY_NATURE.technology, -3 + treeIndex * 2, treeIndex % 2 ? 3 : -3, treeIndex);
         box(park, '#d5cfbc', 0, .05, -4.1, 8, .08, .8); bench(park, -2, -3.7); bench(park, 2, -3.7);
@@ -687,14 +699,40 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       roadRibbon(central, [[-16, .1, 89], [9, .1, 89], [31, .1, 101]], 1.2, '#d5cfbc');
       for (let crossing = 40.5; crossing <= 43.5; crossing += .45) box(central, '#f2eee1', 0, .17, crossing, 1.65, .02, .16);
       fountain(central, -8, 78, 2.4);
-      landscapeLake(group(23, 23));
-      airport(group(-18, 32), [-18, 32]);
-      shoppingCenter(group(85, 23), [85, 23]);
+      landscapeLake(group(23, 13));
+      airport(group(5, 20), [5, 20]);
+      shoppingCenter(group(60, 10), [60, 10]);
+      // Modest infill brings the remaining edge parcels up to the street without
+      // covering a district, access road, ramp, park or waterfront destination.
+      let infillCount = 0;
+      for (const z of [-22, 14, 80, 88]) for (let x = -126; x <= 126; x += 14) {
+        if (infillCount >= 24 || !clearOfRoads(x, z, 3.8)) continue;
+        if ((Math.abs(x) < 24 && (z < 30 || z > 70)) || (x < -58 && z > 75) || (x > 81 && z > 85) || (Math.abs(x) < 38 && z > 83)) continue;
+        if (parkPositions.some(([px, pz]) => Math.hypot(x - px, z - pz) < 7)) continue;
+        if (CITY_SITES.some(site => {
+          const dx = x - site.x, dz = z - site.z, along = dx * Math.sin(site.rotation) + dz * Math.cos(site.rotation), across = dx * Math.cos(site.rotation) - dz * Math.sin(site.rotation);
+          return Math.abs(across) < 16 && along > -13 && along < 16;
+        })) continue;
+        const height = 2.1 + infillCount % 3 * .45, facade = ['#d8c9b2', '#bdc9c2', '#c8c4b9'][infillCount % 3];
+        const block = group(x, z);
+        roundedBox(block, '#e3dfd2', 0, .11, 0, 5.4, .18, 4.6);
+        roundedBox(block, facade, 0, .24 + height / 2, 0, 4.3, height, 3.5);
+        box(block, '#e7e7dd', 0, height + .34, 0, 4.6, .16, 3.8);
+        for (const side of [-1, 1]) for (const window of [-1.25, 0, 1.25]) {
+          box(block, '#93bac5', window, 1.03, side * 1.77, .8, .75, .06);
+          box(block, '#93bac5', window, height - .36, side * 1.77, .8, .55, .06);
+        }
+        box(block, '#7b9092', 0, .73, 1.82, .65, 1.1, .08);
+        box(block, '#e7e7dd', 0, 1.48, 2, 1.6, .1, .6);
+        const solar = box(block, '#486e83', -.5, height + .48, -.3, 1.8, .08, 2.3); solar.rotation.x = -.15;
+        for (const side of [-1, 1]) { box(block, '#b6bda9', side * 1.9, .32, 1.95, .5, .3, .45); ball(block, '#86a07d', side * 1.9, .65, 1.95, .35); }
+        infillCount++;
+      }
       if (night) {
-        for (const [x, z] of [[0, -6], [-109, 96], [128, 117]]) {
+        for (const [x, z] of [[0, -6], [-86, 84], [103, 104]]) {
           const light = new THREE.PointLight('#ffd69c', 55, 40, 2); light.position.set(x, 8, z); scene.add(light);
         }
-        for (const [x, z] of [[-116, 92], [-103, 92], [110, 108], [144, 108]]) streetLight(central, x, z);
+        for (const [x, z] of [[-93, 80], [-80, 80], [85, 95], [119, 95]]) streetLight(central, x, z);
       }
       // Divided expressway: continuous swept deck, shoulders, barriers and pier spans.
       for (const kind of CITY_HIGHWAY_KINDS) {
@@ -1041,21 +1079,27 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       path.add(new THREE.LineCurve3(previous, vertices[vertices.length - 1])); path.updateArcLengths(); return path;
     }
     let drivePath = null, driveProgress = 0, lastDriveDestination = '', originSite = null, orbitCamera = null, arrivalSent = false, labelsHidden = false;
+    let pendingTurn = null, turnUnavailable = false, streetLabel = '', pendingDestinationChange = null, snapDriveCamera = false;
+    let lastDriveTurnRequest = current.current.driveTurnRequest?.id || 0, lastReportedTurn = '';
     const arterialSurvey = cityRoadPoints('arterial').map(([x, , z]) => [x, z]);
     let lastDriveReport = -Infinity, lastReportedStatus = '', lastReportedSignal = null, lastReportedAccidents = 0;
     let lastDriveSkipRequest = current.current.driveSkipRequest;
     function reportDrive(vehicle) {
       const status = vehicle.status || 'driving', signal = vehicle.signal || null;
+      const turnReport = `${pendingTurn?.direction || 0}:${turnUnavailable}:${streetLabel}`;
       renderer.domElement.dataset.driveSpeed = vehicle.speed.toFixed(2);
       renderer.domElement.dataset.driveStatus = status;
       renderer.domElement.dataset.driveSignal = signal || '';
       renderer.domElement.dataset.driveGap = vehicle.gap == null ? '' : vehicle.gap.toFixed(2);
       renderer.domElement.dataset.driveLateralOffset = (vehicle.lateralOffset || 0).toFixed(3);
       renderer.domElement.dataset.driveAccidentCount = String(vehicle.accidentCount || 0);
-      if (trafficTime - lastDriveReport >= .25 || status !== lastReportedStatus || signal !== lastReportedSignal || vehicle.accidentCount !== lastReportedAccidents) {
+      renderer.domElement.dataset.drivePendingTurn = String(pendingTurn?.direction || 0);
+      if (trafficTime - lastDriveReport >= .25 || status !== lastReportedStatus || signal !== lastReportedSignal || vehicle.accidentCount !== lastReportedAccidents || turnReport !== lastReportedTurn) {
         current.current.onDriveStatus?.({ status, speed: vehicle.speed, signal, gap: vehicle.gap ?? null, residents: residentPopulation,
-          accidentCount: vehicle.accidentCount || 0, accidentOtherId: vehicle.accidentOtherId || null });
+          accidentCount: vehicle.accidentCount || 0, accidentOtherId: vehicle.accidentOtherId || null,
+          pendingTurn: pendingTurn?.direction || 0, turnUnavailable, streetLabel });
         lastDriveReport = trafficTime; lastReportedStatus = status; lastReportedSignal = signal; lastReportedAccidents = vehicle.accidentCount;
+        lastReportedTurn = turnReport;
       }
     }
     function makeDriveVehicle(path, origin = null) {
@@ -1064,8 +1108,9 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
         const point = path.getPointAt(index / count);
         return [point.x, point.y, point.z];
       });
-      const model = continueTrafficPath(createDriveTrafficPath(points, arterialSurvey), origin);
-      return { id: 'driver', path: model, signals: trafficPathSignals(model, signals), distance: 0,
+      const continued = continueTrafficPath(createDriveTrafficPath(points, arterialSurvey), origin);
+      const { path: model, distance } = prependDriveApproach(continued);
+      return { id: 'driver', path: model, signals: trafficPathSignals(model, signals), distance,
         speed: 0, cruise: 5.5, priority: 200, status: 'driving', active: true };
     }
     function updateTraffic(delta, running) {
@@ -1126,41 +1171,72 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
         if (orbitCamera) { camera.position.copy(orbitCamera.position); controls.target.copy(orbitCamera.target); orbitCamera = null; }
         controls.enabled = true; lastDriveDestination = ''; drivePath = null; driveVehicle = null; originSite = null;
         lastDriveSkipRequest = state.driveSkipRequest;
+        lastDriveTurnRequest = state.driveTurnRequest?.id || 0;
+        pendingTurn = null; turnUnavailable = false; streetLabel = ''; pendingDestinationChange = null;
         renderer.domElement.dataset.driveSpeed = '0.00'; renderer.domElement.dataset.driveStatus = 'idle';
         renderer.domElement.dataset.driveLateralOffset = '0.000'; renderer.domElement.dataset.driveAccidentCount = '0';
-        renderer.domElement.dataset.driveSignal = ''; renderer.domElement.dataset.driveGap = ''; return;
+        renderer.domElement.dataset.driveSignal = ''; renderer.domElement.dataset.driveGap = ''; renderer.domElement.dataset.drivePendingTurn = '0'; return;
       }
       if (!orbitCamera) orbitCamera = { position: camera.position.clone(), target: controls.target.clone() };
       controls.enabled = false;
-      if (lastDriveDestination !== state.driveDestination) {
-        const destination = CITY_LANDMARKS.find(item => item.id === state.driveDestination) || CITY_SITES.find(item => item.id === state.driveDestination); if (!destination) return;
-        let routeOrigin = null;
-        if (drivePath && driveVehicle) {
-          routeOrigin = drivenVehiclePoint(driveVehicle);
-          const point = routeOrigin.position;
-          if (driveProgress < 1) originSite = cityDriveOrigin([point[0], point[2]]);
+      // React receives route changes on the next render. Keep the chosen street
+      // active in the meantime instead of rebuilding the previous destination.
+      if (pendingDestinationChange && state.driveDestination !== pendingDestinationChange.from) pendingDestinationChange = null;
+      const destinationId = pendingDestinationChange?.to || state.driveDestination;
+      if (lastDriveDestination !== destinationId) {
+        const destination = CITY_LANDMARKS.find(item => item.id === destinationId) || CITY_SITES.find(item => item.id === destinationId); if (!destination) return;
+        const reroute = driveVehicle && planDriveDestination(driveVehicle, destinationId);
+        if (reroute) {
+          driveVehicle = { ...driveVehicle, ...reroute, signals: trafficPathSignals(reroute.path, signals) };
+        } else {
+          let routeOrigin = null;
+          if (drivePath && driveVehicle) {
+            routeOrigin = drivenVehiclePoint(driveVehicle);
+            const point = routeOrigin.position;
+            if (driveProgress < 1) originSite = cityDriveOrigin([point[0], point[2]]);
+          }
+          drivePath = driveCurve(cityDriveWaypoints(originSite, destination));
+          driveVehicle = { ...makeDriveVehicle(drivePath, routeOrigin), accidentCount: driveVehicle?.accidentCount || 0 };
         }
-        drivePath = driveCurve(cityDriveWaypoints(originSite, destination));
-        driveVehicle = { ...makeDriveVehicle(drivePath, routeOrigin), accidentCount: driveVehicle?.accidentCount || 0 };
-        driveProgress = 0; arrivalSent = false; lastDriveDestination = state.driveDestination; originSite = destination;
+        driveProgress = driveVehicle.distance / driveVehicle.path.length; arrivalSent = false; lastDriveDestination = destinationId; originSite = destination;
+        pendingTurn = null; turnUnavailable = false; streetLabel = ''; snapDriveCamera = true;
       }
       if (!drivePath) return;
+      const request = state.driveTurnRequest;
+      if (request?.id && request.id !== lastDriveTurnRequest) {
+        lastDriveTurnRequest = request.id;
+        const turn = planNextStreetTurn(driveVehicle, request.direction);
+        turnUnavailable = !turn;
+        if (turn) {
+          driveVehicle = { ...driveVehicle, path: turn.path, signals: trafficPathSignals(turn.path, signals) };
+          pendingTurn = turn; streetLabel = turn.streetLabel || ''; arrivalSent = false;
+          if (turn.destinationId && turn.destinationId !== lastDriveDestination) {
+            pendingDestinationChange = { from: state.driveDestination, to: turn.destinationId };
+            lastDriveDestination = turn.destinationId;
+            originSite = CITY_LANDMARKS.find(item => item.id === turn.destinationId) || CITY_SITES.find(item => item.id === turn.destinationId);
+            state.onDriveDestinationChange?.(turn.destinationId);
+          }
+        }
+      }
       const skip = state.driveSkipRequest !== lastDriveSkipRequest;
       lastDriveSkipRequest = state.driveSkipRequest;
       driveVehicle = advanceDrivenVehicle(driveVehicle, { delta, time: trafficTime, now, input: state.driveInput, skip,
-        others: trafficVehicles.map(trafficSnapshot), paused: state.drivePaused && driveProgress < 1 });
+        others: trafficVehicles.map(trafficSnapshot), paused: state.drivePaused });
       driveProgress = driveVehicle.distance / driveVehicle.path.length;
+      if (skip || (pendingTurn && driveVehicle.distance > pendingTurn.turnDistance + 1.2)) pendingTurn = null;
+      if (skip) turnUnavailable = false;
+      if (driveProgress < 1) arrivalSent = false;
       const sample = drivenVehiclePoint(driveVehicle), point = new THREE.Vector3(...sample.position), tangent = new THREE.Vector3(...sample.heading);
       driveCar.position.copy(point); driveCar.rotation.y = Math.atan2(tangent.x, tangent.z);
       const chase = point.clone().addScaledVector(tangent, -5.5); chase.y += 3.2;
-      if (driveProgress === 0 || skip) camera.position.copy(chase);
+      if (snapDriveCamera || driveProgress === 0 || skip) { camera.position.copy(chase); snapDriveCamera = false; }
       else if (driveVehicle.status !== 'accident') camera.position.lerp(chase, 1 - Math.exp(-delta * 5));
       const look = point.clone().addScaledVector(tangent, 4); look.y += 1;
       camera.lookAt(look);
       renderer.domElement.dataset.driveProgress = String(driveProgress);
-      renderer.domElement.dataset.driveDestination = state.driveDestination;
+      renderer.domElement.dataset.driveDestination = lastDriveDestination;
       reportDrive(driveVehicle);
-      if (driveProgress >= 1 && !arrivalSent) { arrivalSent = true; state.onDriveArrival?.(state.driveDestination); }
+      if (driveProgress >= 1 && !arrivalSent) { arrivalSent = true; state.onDriveArrival?.(lastDriveDestination); }
     }
     animations.forEach(animate => animate(0));
     updateTraffic(0, false);
@@ -1352,7 +1428,7 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       adaptResolution(Math.max(performance.now() - renderStarted, playing ? Math.min(elapsed, current.current.motion === 'calm' ? 22 : 100) : 0));
       if (playing) requestFrame();
     }
-    const fitFraming = (w, h) => planView ? Math.max(238, 390 * h / w) * 1.1 / (2 * Math.tan(THREE.MathUtils.degToRad(21))) / 330 : Math.max(1, h / w) * (w < 500 ? 1.35 : 1);
+    const fitFraming = (w, h) => planView ? Math.max(180, 316 * h / w) * 1.08 / (2 * Math.tan(THREE.MathUtils.degToRad(21))) / 330 : Math.max(1, h / w) * (w < 500 ? 1.35 : 1);
     let framing = 1;
     let altitudeBase = 0, lastAltitude = Number(altitude) || 100;
     function updateAltitude() {
@@ -1380,7 +1456,7 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
     // Match framing to the canvas aspect, including narrow phone screens.
     const width = element.clientWidth || 680, height = element.clientHeight || 580;
     framing = fitFraming(width, height);
-    camera.position.copy(focused ? target.clone().add(new THREE.Vector3(...focused.camera).multiplyScalar(framing)) : planView ? target.clone().add(new THREE.Vector3(0, 330, .01).multiplyScalar(framing)) : overview ? new THREE.Vector3(44, 210, 240).multiplyScalar(framing)
+    camera.position.copy(focused ? target.clone().add(new THREE.Vector3(...focused.camera).multiplyScalar(framing)) : planView ? target.clone().add(new THREE.Vector3(0, 330, .01).multiplyScalar(framing)) : overview ? new THREE.Vector3(34, 176, 212).multiplyScalar(framing)
       : new THREE.Vector3(20 * framing, 25 * framing, middle + 28 * framing));
     altitudeBase = camera.position.y - controls.target.y;
     camera.position.y = controls.target.y + altitudeBase * lastAltitude / 100;
@@ -1437,7 +1513,7 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       renderer.dispose(); renderer.domElement.remove();
     };
   }, [shape, overview, viewMode, timeOfDay, focusLandmark, theme, title, cityId, selected, resetKey, quality]);
-  useEffect(() => { wake.current?.(); }, [motion, altitude, driving, drivePaused, driveDestination, driveInput, driveSkipRequest]);
+  useEffect(() => { wake.current?.(); }, [motion, altitude, driving, drivePaused, driveDestination, driveInput, driveSkipRequest, driveTurnRequest]);
   return <div ref={host} className={'map-city-scene' + (overview ? ' map-city-scene--all' : '')}
-    tabIndex={driving ? 0 : undefined} aria-label={driving ? 'Driving view. Use arrow keys or W A S D to steer, accelerate and brake.' : undefined} />;
+    tabIndex={driving ? 0 : undefined} aria-label={driving ? 'Driving view. Use arrow keys or W A S D to choose the next street, accelerate, brake and reverse.' : undefined} />;
 }

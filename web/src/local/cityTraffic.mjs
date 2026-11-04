@@ -111,8 +111,12 @@ export function trafficVehiclePoint(vehicle) {
 }
 
 export function trafficSnapshot(vehicle) {
-  return { id: vehicle.id, priority: vehicle.priority || 0, speed: vehicle.speed || 0,
-    ...trafficVehiclePoint(vehicle), active: vehicle.active !== false };
+  const sample = trafficVehiclePoint(vehicle);
+  const speed = Number(vehicle.speed) || 0;
+  // Traffic predicts motion, while the renderer uses the unchanged body heading.
+  if (speed < 0) sample.heading = sample.heading.map(value => -value);
+  return { id: vehicle.id, priority: vehicle.priority || 0, speed: Math.abs(speed),
+    ...sample, active: vehicle.active !== false };
 }
 
 function crossingAhead(ego, other) {
