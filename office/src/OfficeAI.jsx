@@ -5,6 +5,8 @@ import OfficeConnections from './OfficeConnections';
 import OfficeAIContent from './OfficeAIContent';
 import OfficeAITasks from './OfficeAITasks';
 import OfficeAITerminal from './OfficeAITerminal';
+import { OfficeAITaskRun, FINISHED_TASKS } from './OfficeAITaskDetail';
+import OfficeAITaskScope, { DEFAULT_TASK_PERMISSIONS } from './OfficeAITaskScope';
 import useOfficeAIConversations from './useOfficeAIConversations';
 import './OfficeAI.css';
 
@@ -51,7 +53,7 @@ function Source({ source }) {
   return <li><a href={url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer"><span>{typeof source.title === 'string' && source.title ? source.title : hostname}</span><ArrowUpRight size={14} /></a><small>{hostname}</small>{(publisher || publishedAt) && <small>{publisher}{publisher && publishedAt ? ' · ' : ''}{publishedAt && <>Published <time dateTime={publishedAt}>{dateLabel(publishedAt)}</time></>}</small>}</li>;
 }
 
-function Answer({ message, onCommand }) {
+function Answer({ message, onCommand, apiBase, request, onTaskUpdate, onOpenTerminal }) {
   const sources = (Array.isArray(message.sources) ? message.sources : []).filter(source => sourceUrl(source?.url));
   const actions = (Array.isArray(message.actions) ? message.actions : []).filter(action => /^[a-z][a-z0-9.-]{1,100}$/.test(action?.id) && typeof action.label === 'string');
   return <article className={`office-ai-message office-ai-message-${message.role}`}>
@@ -59,13 +61,14 @@ function Answer({ message, onCommand }) {
       {message.role === 'assistant' && <span>{dateLabel(message.generatedAt)}</span>}
     </div>
     <div className="office-ai-answer">{message.role === 'assistant' ? <OfficeAIContent text={message.content} /> : message.content}</div>
-    {message.role === 'assistant' && <>
+    {message.role === 'assistant' && !message.taskId && <>
       <div className="office-ai-answer-meta"><Globe2 size={13} /><span>{researchLabel(message.research)}</span>{message.model && <span>{message.model}</span>}</div>
       {['unavailable', 'empty'].includes(message.research?.status) && <p className="office-ai-research-note">Current information could not be verified for this reply. Check primary sources before relying on recent claims.</p>}
       {message.research?.status === 'official-updates' && <p className="office-ai-research-note">Official announcement feeds were checked. Broader web research is unavailable for this reply.</p>}
       {!!sources.length && <details className="office-ai-sources" open><summary>{sources.length} sources · retrieved {dateLabel(message.research?.checkedAt || message.generatedAt)}</summary><ol>{sources.map((source, index) => <Source key={`${source.url}-${index}`} source={source} />)}</ol></details>}
       {!!actions.length && <div className="office-ai-actions" aria-label="Suggested Office commands">{actions.map(action => <button key={action.id} type="button" onClick={() => onCommand(action.id)}><SlidersHorizontal size={16} /><span><strong>{action.label}</strong><small>Review in Office commands</small></span><ChevronRight size={16} /></button>)}</div>}
     </>}
+    {message.role === 'assistant' && message.taskId && <OfficeAITaskRun taskId={message.taskId} apiBase={apiBase} request={request} onUpdate={onTaskUpdate} onOpenTerminal={onOpenTerminal} />}
   </article>;
 }
 
@@ -76,16 +79,21 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
   const [selectedTools, setSelectedTools] = useState([]), [toolForm, setToolForm] = useState(BLANK_TOOL), [toolBusy, setToolBusy] = useState(false), [toolNotice, setToolNotice] = useState('');
   const [draft, setDraft] = useState(''), [messages, setMessages] = useState([]), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [research, setResearch] = useState(true), [perspective, setPerspective] = useState('balanced'), [commandQuery, setCommandQuery] = useState('');
-  const [mode, setMode] = useState('ask'), [deleteChat, setDeleteChat] = useState(null);
+  const [mode, setMode] = useState('work'), [deleteChat, setDeleteChat] = useState(null);
+  const [permissions,setPermissions] = useState({ ...DEFAULT_TASK_PERMISSIONS }), [targets,setTargets] = useState([]), [taskCapabilities,setTaskCapabilities] = useState(null), [executionError,setExecutionError] = useState('');
+  const [taskStates,setTaskStates] = useState({}), [selectedTerminalId,setSelectedTerminalId] = useState(null);
+  const taskSubmission = useRef(null);
   const mounted = useRef(false), generation = useRef(0), chatSequence = useRef(0), pending = useRef(null), requests = useRef(new Set()), saving = useRef(false), transcript = useRef(null), composer = useRef(null);
-  const conversations = useOfficeAIConversations({ apiBase, request, messages, setMessages, beforeLoad: () => { stop(); setDraft(''); } });
+  const conversations = useOfficeAIConversations({ apiBase, request, messages, setMessages, beforeLoad: () => { stop(); setDraft(''); taskSubmission.current = null; setTaskStates({}); } });
+  const latestTaskId = messages.findLast(message => message.taskId)?.taskId;
+  const taskActive = !!latestTaskId && !FINISHED_TASKS.has(taskStates[latestTaskId]);
 
   useEffect(() => {
     mounted.current = true;
     const reset = () => {
       generation.current++; chatSequence.current++; requests.current.forEach(controller => controller.abort()); requests.current.clear();
       pending.current = null; saving.current = false;
-      setDeleteChat(null); setMode('ask');
+      setDeleteChat(null); setMode('work'); taskSubmission.current = null; setTaskStates({}); setSelectedTerminalId(null); setTaskCapabilities(null); setExecutionError(''); setPermissions({ ...DEFAULT_TASK_PERMISSIONS }); setTargets([]);
       setMessages([]); setDraft(''); setBusy(false); setError(''); setToolBusy(false); setToolNotice(''); setSelectedTools([]); setToolForm(BLANK_TOOL); setTools([]); setControls([]); setConnection(null); setCommandQuery(''); setRevision(value => value + 1);
     };
     window.addEventListener('office-token-changed', reset);
@@ -111,6 +119,9 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
       request(`${apiBase}/office/controls`, { signal: controller.signal }).then(payload).then(data => {
         if (valid()) setControls(Array.isArray(data.controls) ? data.controls : []);
       }).catch(cause => { if (valid()) { setControls([]); setControlsError(cause.name === 'AbortError' ? 'Command list check timed out. Retry to load commands.' : cause.message); } }),
+      request(`${apiBase}/office/ai/tasks`, { signal: controller.signal }).then(payload).then(data => {
+        if (valid()) { setTaskCapabilities(data.capabilities || {}); setExecutionError(''); }
+      }).catch(cause => { if (valid()) { setTaskCapabilities(null); setExecutionError(cause.name === 'AbortError' ? 'Task connection check timed out. Refresh the AI connection.' : cause.message); } }),
     ]).finally(() => { clearTimeout(timeout); requests.current.delete(controller); if (valid()) setLoading(false); });
     return () => { active = false; clearTimeout(timeout); controller.abort(); requests.current.delete(controller); };
   }, [apiBase, request, revision]);
@@ -121,21 +132,22 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
     const active = pending.current;
     chatSequence.current++; active?.controller.abort(); pending.current = null; setBusy(false); setError('');
     if (clear) { setMessages([]); setDraft(''); }
-    else if (active) { setMessages(previous => previous.filter(message => message.id !== active.id)); setDraft(active.message); }
+    else if (active) { setMessages(previous => previous.filter(message => message.id !== active.id)); setDraft(active.message); if(active.kind === 'work') setError('Stopped waiting for the receipt. The task may still be running. Send the same request to recover its status without starting it twice.'); }
   }
 
   async function send(event) {
     event.preventDefault(); const message = draft.trim();
     if (!message || pending.current || !connection?.configured || loading) return;
+    if (mode === 'work') { await sendWork(message); return; }
     const history = messages.filter(item => ['user', 'assistant'].includes(item.role)).slice(-12).map(({ role, content }) => ({ role, content }));
     while (history.length && history.reduce((total, item) => total + item.content.length, 0) > 32000) history.shift();
     const controller = new AbortController(), current = generation.current, sequence = ++chatSequence.current, id = `user-${crypto.randomUUID()}`;
     requests.current.add(controller); pending.current = { controller, message, id }; setBusy(true); setError(''); setDraft('');
     setMessages(previous => [...previous, { role: 'user', content: message, id }]);
     let timedOut = false;
-    // Leave time for the backend's bounded 90-second research and inference
+    // Leave time for the backend's bounded 210-second research and inference
     // request to return a result or its own actionable timeout response.
-    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 100000);
+    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 220000);
     const valid = () => mounted.current && current === generation.current && sequence === chatSequence.current;
     try {
       const data = await payload(await request(`${apiBase}/office/ai/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
@@ -149,6 +161,40 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
       if (valid()) { pending.current = null; setBusy(false); composer.current?.focus(); }
     }
   }
+
+  async function sendWork(message) {
+    if (taskActive || !taskCapabilities) return;
+    const history = messages.filter(item => ['user','assistant'].includes(item.role)).slice(-24).map(({role,content}) => ({role,content}));
+    while(history.length && history.reduce((sum,item) => sum + item.content.length,0) > 48000) history.shift();
+    const body = { message, history, conversationId: conversations.identity(), permissions, deployTargets: targets };
+    const signature = JSON.stringify(body);
+    if (!taskSubmission.current || taskSubmission.current.signature !== signature) taskSubmission.current = { signature, clientRequestId: crypto.randomUUID() };
+    const controller = new AbortController(), current = generation.current, sequence = ++chatSequence.current, id = `user-${crypto.randomUUID()}`;
+    requests.current.add(controller); pending.current = {controller,message,id,kind:'work'}; setBusy(true); setError(''); setDraft('');
+    setMessages(previous => [...previous,{role:'user',content:message,id}]);
+    const timeout = setTimeout(() => controller.abort(),25000), valid = () => mounted.current && generation.current === current && chatSequence.current === sequence;
+    try {
+      const data = await payload(await request(`${apiBase}/office/ai/tasks`,{method:'POST',headers:{'Content-Type':'application/json'},signal:controller.signal,body:JSON.stringify({...body,clientRequestId:taskSubmission.current.clientRequestId})}));
+      if (!data.task?.id) throw Error('Office did not return a task receipt. Retry the same request to recover it.');
+      if(valid()) {
+        taskSubmission.current = null;
+        setTaskStates(previous => ({...previous,[data.task.id]:data.task.status}));
+        setMessages(previous => [...previous,{role:'assistant',content:data.task.summary || 'I’m working on your request. Follow the progress and results below.',taskId:data.task.id,generatedAt:data.task.createdAt || new Date().toISOString(),id:`assistant-${crypto.randomUUID()}`}]);
+      }
+    } catch(cause) {
+      if(valid()) { setMessages(previous => previous.filter(item => item.id !== id)); setDraft(message); setError(cause.name === 'AbortError' || cause.name === 'TypeError' ? 'The connection ended before the task receipt arrived. Retry this same request to recover its task without starting it twice.' : cause.message); }
+    } finally {
+      clearTimeout(timeout); requests.current.delete(controller);
+      if(valid()) { pending.current = null; setBusy(false); composer.current?.focus(); }
+    }
+  }
+
+  function updateTask(task) {
+    setTaskStates(previous => previous[task.id] === task.status ? previous : {...previous,[task.id]:task.status});
+    const content = task.summary || (task.status === 'cancelled' ? 'Task stopped. Completed actions and their receipts remain below.' : task.status === 'failed' ? 'The task could not finish. Review its error and completed steps below.' : null);
+    if(content) setMessages(previous => previous.some(message => message.taskId === task.id && message.content !== content) ? previous.map(message => message.taskId === task.id ? {...message,content} : message) : previous);
+  }
+  function openTerminal(id) { setSelectedTerminalId(id); setMode('terminal'); setTab('conversation'); }
 
   async function mutateTool(method, id) {
     if (saving.current) return;
@@ -199,10 +245,10 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
     {!loading && connection && !connection.configured && <div className="office-ai-setup" role="status"><strong>Connect your Cloudflare AI account</strong><p>Office AI needs its server connection before it can answer. Your Office commands are available in the commands tab.</p>{Array.isArray(connection.missing) && connection.missing.length > 0 && <p>Missing settings: <code>{connection.missing.join(', ')}</code></p>}<button type="button" onClick={() => setTab('connections')}>Open connections <ArrowUpRight size={14} /></button></div>}
 
     <div hidden={tab !== 'conversation'}>
-      <div className="office-ai-modes" aria-label="Assistant mode">{[['ask', 'Ask'], ['task', 'Run a task'], ['terminal', 'Terminal']].map(([id, label]) => <button key={id} type="button" aria-pressed={mode === id} onClick={() => setMode(id)}>{label}</button>)}</div>
-      {tab === 'conversation' && mode === 'task' && <OfficeAITasks apiBase={apiBase} request={request} />}
-      {tab === 'conversation' && mode === 'terminal' && <OfficeAITerminal apiBase={apiBase} request={request} />}
-      <div hidden={mode !== 'ask'}>
+      <div className="office-ai-modes" aria-label="Assistant mode">{[['work', 'Work'], ['ask', 'Ask'], ['task', 'Tasks'], ['terminal', 'Terminal']].map(([id, label]) => <button key={id} type="button" aria-pressed={mode === id} onClick={() => setMode(id)}>{label}</button>)}</div>
+      {tab === 'conversation' && mode === 'task' && <OfficeAITasks apiBase={apiBase} request={request} onOpenTerminal={openTerminal} />}
+      {tab === 'conversation' && mode === 'terminal' && <OfficeAITerminal apiBase={apiBase} request={request} sessionId={selectedTerminalId} />}
+      <div hidden={!(['ask','work'].includes(mode))}>
       <div className="office-ai-workspace">
         <div className="office-ai-chat">
           <div className="office-ai-chat-bar"><span><span className="office-ai-dot" />Private Office conversation</span><button type="button" onClick={newChat} disabled={conversations.saving || conversations.loading || (!messages.length && !draft && !busy)}><Plus size={14} />New chat</button></div>
@@ -210,21 +256,23 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
           {conversations.error && <div className="office-ai-save-error"><p className="office-ai-error" role="alert">{conversations.error}</p>{conversations.conflict && conversations.currentId ? <button type="button" onClick={() => { if (window.confirm('Replace your current messages with the version saved in Office?')) conversations.open(conversations.currentId); }}>Reload saved conversation</button> : <button type="button" onClick={() => { conversations.refresh(); conversations.retry(); }}>Retry saving conversation</button>}</div>}
           <div className="office-ai-transcript" ref={transcript} role="log" aria-label="Office AI conversation" aria-live="polite" aria-relevant="additions text">
             {!messages.length && <div className="office-ai-welcome"><div className="office-ai-welcome-icon"><Bot size={29} /></div><h2>What are we working on?</h2><p>Go from a question to a clearer decision, with current sources and the Office tools to follow through.</p><div className="office-ai-starters">{STARTERS.map(item => <button key={item.title} type="button" disabled={busy} onClick={() => starter(item)}><strong>{item.title}<ArrowUpRight size={15} /></strong><span>{item.detail}</span></button>)}</div></div>}
-            {messages.map(message => <Answer key={message.id} message={message} onCommand={chooseCommand} />)}
-            {busy && <p className="office-ai-thinking" role="status"><span />{research ? 'Researching sources and preparing your answer…' : 'Preparing your answer…'}</p>}
+            {messages.map(message => <Answer key={message.id} message={message} onCommand={chooseCommand} apiBase={apiBase} request={request} onTaskUpdate={updateTask} onOpenTerminal={openTerminal} />)}
+            {busy && <p className="office-ai-thinking" role="status"><span />{mode === 'work' ? 'Starting your task…' : research ? 'Researching sources and preparing your answer…' : 'Preparing your answer…'}</p>}
           </div>
           <form className="office-ai-composer" onSubmit={send}>
             {error && <p className="office-ai-error" role="alert">{error}</p>}
-            {!!selectedTools.length && <div className="office-ai-selected" aria-label="Selected tools">{tools.filter(tool => selectedTools.includes(tool.id)).map(tool => <button key={tool.id} type="button" disabled={busy} onClick={() => toggleTool(tool.id)} title="Remove from next reply"><Wrench size={12} />{tool.name}<span aria-hidden="true">×</span></button>)}</div>}
-            <label className="office-ai-sr-only" htmlFor="office-ai-prompt">Message Office AI</label><textarea id="office-ai-prompt" ref={composer} value={draft} onChange={event => setDraft(event.target.value)} disabled={busy} maxLength={12000} rows={3} placeholder="Ask a question, explore an idea, or find an Office command…" onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.currentTarget.form.requestSubmit(); } }} />
-            <div className="office-ai-composer-footer"><span>{draft.length.toLocaleString()} / 12,000 <span className="office-ai-key-hint">· Ctrl / ⌘ + Enter to send</span></span><label className="office-ai-attachment">Attach text<input type="file" accept=".txt,.md,.csv,.json,text/plain,text/markdown,text/csv,application/json" disabled={busy} onChange={attach} aria-label="Attach text file" /></label>{busy ? <button key="stop" type="button" onClick={event => { event.preventDefault(); stop(); }}><Square size={14} />Stop</button> : <button key="send" className="office-ai-primary" type="submit" disabled={!draft.trim() || !connection?.configured || loading || conversations.loading}><Send size={15} />Send</button>}</div>
+            {mode === 'work' && executionError && <p className="office-ai-error" role="alert">{executionError}</p>}
+            {mode === 'work' && taskActive && <p className="office-ai-form-note">Your task is continuing below. You can stop it, confirm a requested action, or continue its saved checkpoint there.</p>}
+            {mode === 'ask' && !!selectedTools.length && <div className="office-ai-selected" aria-label="Selected tools">{tools.filter(tool => selectedTools.includes(tool.id)).map(tool => <button key={tool.id} type="button" disabled={busy} onClick={() => toggleTool(tool.id)} title="Remove from next reply"><Wrench size={12} />{tool.name}<span aria-hidden="true">×</span></button>)}</div>}
+            <label className="office-ai-sr-only" htmlFor="office-ai-prompt">Message Office AI</label><textarea id="office-ai-prompt" ref={composer} value={draft} onChange={event => setDraft(event.target.value)} disabled={busy} maxLength={12000} rows={3} placeholder={mode === 'work' ? 'Tell Office AI what to do. It can research, use your connections, run commands, and finish the work.' : 'Ask a question or research an idea…'} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.currentTarget.form.requestSubmit(); } }} />
+            <div className="office-ai-composer-footer"><span>{draft.length.toLocaleString()} / 12,000 <span className="office-ai-key-hint">· Ctrl / ⌘ + Enter to send</span></span><label className="office-ai-attachment">Attach text<input type="file" accept=".txt,.md,.csv,.json,text/plain,text/markdown,text/csv,application/json" disabled={busy} onChange={attach} aria-label="Attach text file" /></label>{busy ? <button key="stop" type="button" onClick={event => { event.preventDefault(); stop(); }}><Square size={14} />{mode === 'work' ? 'Stop waiting' : 'Stop'}</button> : <button key="send" className="office-ai-primary" type="submit" disabled={!draft.trim() || !connection?.configured || loading || conversations.loading || (mode === 'work' && (!taskCapabilities || taskActive))}><Send size={15} />{mode === 'work' ? 'Send and work' : 'Send'}</button>}</div>
           </form>
           <p className="office-ai-privacy">Messages and attached text are sent to Cloudflare. Live research sends queries to Cloudflare search; supplied public web links can be retrieved. Chats are saved in the Office database for authorized operators. Avoid pasting passwords or credentials.</p>
         </div>
-        <aside className="office-ai-context" aria-label="Conversation settings"><div className="office-ai-context-card office-ai-saved-chats"><div className="office-ai-card-heading"><h2>Saved conversations</h2><button type="button" className="office-ai-text-button" disabled={conversations.loading || conversations.saving} onClick={conversations.refresh} aria-label="Refresh saved conversations"><RefreshCw size={14} /></button></div><p>Saved automatically in Office. Available after you return and sign in.</p>{conversations.conversations.length ? <ul>{conversations.conversations.map(item => <li key={item.id}><button type="button" disabled={busy || conversations.saving || conversations.loading} aria-pressed={conversations.currentId === item.id} onClick={() => openChat(item.id)}>{item.title || 'Office conversation'}</button><button type="button" disabled={conversations.saving || conversations.loading} aria-label={`Delete conversation ${item.title || 'Office conversation'}`} onClick={() => setDeleteChat(item.id)}><Trash2 size={13} /></button>{deleteChat === item.id && <div className="office-ai-delete-chat"><span>Delete this saved conversation?</span><button type="button" disabled={conversations.loading} onClick={() => { setDeleteChat(null); conversations.remove(item.id); }}>Delete saved chat</button><button type="button" onClick={() => setDeleteChat(null)}>Keep chat</button></div>}</li>)}</ul> : <p>No saved conversations yet.</p>}</div><div className="office-ai-context-card"><h2>Make the answer yours</h2><label className="office-ai-research-toggle"><span><Globe2 size={17} /><strong>Live web research</strong></span><input type="checkbox" checked={research} disabled={busy} onChange={event => setResearch(event.target.checked)} /></label><p>Look up current information and include sources. Search availability is shown with each reply; broad search requires Cloudflare search credits.</p><label className="office-ai-field">Answer style<select value={perspective} disabled={busy} onChange={event => setPerspective(event.target.value)}><option value="balanced">Balanced perspectives</option><option value="concise">Concise answer</option><option value="deep">Deep analysis</option></select></label><p>Consider evidence, alternatives, tradeoffs, and what remains unknown.</p></div>
-          <div className="office-ai-context-card"><div className="office-ai-card-heading"><h2>Tools for this conversation</h2><Wrench size={15} /></div>{tools.length ? <div className="office-ai-tool-selection">{tools.map(tool => <label key={tool.id}><input type="checkbox" checked={selectedTools.includes(tool.id)} disabled={busy || (!selectedTools.includes(tool.id) && selectedTools.length >= 8)} onChange={() => toggleTool(tool.id)} /><span>{tool.name}<small>{tool.kind === 'prompt' ? 'Answer instructions' : 'Office command'}</small></span></label>)}</div> : <p>{toolsError ? 'The saved tool library is unavailable. Retry in My tools.' : 'Save a research method or an Office command to use again.'}</p>}<button type="button" className="office-ai-text-button" onClick={() => setTab('tools')}><Plus size={14} />Manage tools</button>{tools.length > 8 && <small>Choose up to 8 tools per reply.</small>}</div>
-          <div className="office-ai-context-card office-ai-command-note"><SlidersHorizontal size={19} /><h2>Connected to your Office</h2><p>Suggested actions open your existing controls, with their required inputs, service routing, and confirmations.</p><button type="button" className="office-ai-text-button" onClick={() => chooseCommand()}>Browse Office commands<ChevronRight size={14} /></button></div>
-          {connection?.model && <p className="office-ai-model">Cloudflare model<br /><span>{connection.model}</span></p>}
+        <aside className="office-ai-context" aria-label="Conversation settings"><div className="office-ai-context-card office-ai-saved-chats"><div className="office-ai-card-heading"><h2>Saved conversations</h2><button type="button" className="office-ai-text-button" disabled={conversations.loading || conversations.saving} onClick={conversations.refresh} aria-label="Refresh saved conversations"><RefreshCw size={14} /></button></div><p>Saved automatically in Office. Available after you return and sign in.</p>{conversations.conversations.length ? <ul>{conversations.conversations.map(item => <li key={item.id}><button type="button" disabled={busy || conversations.saving || conversations.loading} aria-pressed={conversations.currentId === item.id} onClick={() => openChat(item.id)}>{item.title || 'Office conversation'}</button><button type="button" disabled={conversations.saving || conversations.loading} aria-label={`Delete conversation ${item.title || 'Office conversation'}`} onClick={() => setDeleteChat(item.id)}><Trash2 size={13} /></button>{deleteChat === item.id && <div className="office-ai-delete-chat"><span>Delete this saved conversation?</span><button type="button" disabled={conversations.loading} onClick={() => { setDeleteChat(null); conversations.remove(item.id); }}>Delete saved chat</button><button type="button" onClick={() => setDeleteChat(null)}>Keep chat</button></div>}</li>)}</ul> : <p>No saved conversations yet.</p>}</div>{mode === 'work' && <div className="office-ai-context-card"><h2>Work with your connections</h2><p>Office AI uses the latest saved connections and shows completed work in this conversation.</p><OfficeAITaskScope permissions={permissions} setPermissions={setPermissions} targets={targets} setTargets={setTargets} capabilities={taskCapabilities} disabled={busy || taskActive} /><button type="button" className="office-ai-text-button" onClick={() => setTab('connections')}>Review connections</button></div>}{mode === 'ask' && <div className="office-ai-context-card"><h2>Make the answer yours</h2><label className="office-ai-research-toggle"><span><Globe2 size={17} /><strong>Live web research</strong></span><input type="checkbox" checked={research} disabled={busy} onChange={event => setResearch(event.target.checked)} /></label><p>Look up current information and include sources. Search availability is shown with each reply; broad search requires Cloudflare search credits.</p><label className="office-ai-field">Answer style<select value={perspective} disabled={busy} onChange={event => setPerspective(event.target.value)}><option value="balanced">Balanced perspectives</option><option value="concise">Concise answer</option><option value="deep">Deep analysis</option></select></label><p>Consider evidence, alternatives, tradeoffs, and what remains unknown.</p></div>}
+          {mode === 'ask' && <div className="office-ai-context-card"><div className="office-ai-card-heading"><h2>Tools for this conversation</h2><Wrench size={15} /></div>{tools.length ? <div className="office-ai-tool-selection">{tools.map(tool => <label key={tool.id}><input type="checkbox" checked={selectedTools.includes(tool.id)} disabled={busy || (!selectedTools.includes(tool.id) && selectedTools.length >= 8)} onChange={() => toggleTool(tool.id)} /><span>{tool.name}<small>{tool.kind === 'prompt' ? 'Answer instructions' : 'Office command'}</small></span></label>)}</div> : <p>{toolsError ? 'The saved tool library is unavailable. Retry in My tools.' : 'Save a research method or an Office command to use again.'}</p>}<button type="button" className="office-ai-text-button" onClick={() => setTab('tools')}><Plus size={14} />Manage tools</button>{tools.length > 8 && <small>Choose up to 8 tools per reply.</small>}</div>}
+          <div className="office-ai-context-card office-ai-command-note"><SlidersHorizontal size={19} /><h2>Connected to your Office</h2><p>Work mode can run Office commands for your request. You can also open individual controls and review their inputs and confirmations.</p><button type="button" className="office-ai-text-button" onClick={() => chooseCommand()}>Browse Office commands<ChevronRight size={14} /></button></div>
+          {connection?.model && <p className="office-ai-model">Cloudflare model<br /><span>{connection.model}</span>{connection.reasoning?.enabled && <><br /><span>Thinking enabled</span></>}</p>}
         </aside>
       </div>
       </div>

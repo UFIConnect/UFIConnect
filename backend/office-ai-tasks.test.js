@@ -155,7 +155,7 @@ test('task model uses only Cloudflare relay and hides credentials in responses a
   assert.equal((await model({ messages: [{ role: 'user', content: 'Hello' }] })).content, '[credential redacted]');
   assert.equal(calls[0].url, 'https://office.owner.workers.dev/chat');
   assert.equal(calls[0].options.headers['cf-aig-collect-log'], 'false');
-  assert.equal(JSON.parse(calls[0].options.body).max_tokens, 6000);
+  assert.equal(JSON.parse(calls[0].options.body).max_tokens, 8192);
 });
 
 test('read-only scope cannot execute Office commands and deployment destinations remain enforced', async t => {

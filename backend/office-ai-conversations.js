@@ -21,6 +21,7 @@ function messagesValue(input) {
       || !message.content.trim() || message.content.length > 24000) throw problem(400, 'Saved messages need a user or assistant role and up to 24,000 characters of text.');
     const item = { id: text(message.id, 100) || `message-${index}`, role: message.role, content: text(message.content, 24000) };
     if (message.role === 'user') return item;
+    if (typeof message.taskId === 'string' && UUID.test(message.taskId)) item.taskId = message.taskId.toLowerCase();
     if (date(message.generatedAt)) item.generatedAt = date(message.generatedAt);
     if (message.model) item.model = text(message.model, 160);
     if (object(message.research)) item.research = {

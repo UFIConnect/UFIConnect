@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { officeAIRequest, officeAIError } from './office-ai-client';
 
 function storedMessages(messages) {
-  return messages.map(({ role, content, sources, research, actions, model, generatedAt }) => ({ role, content: content.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, ''),
-    ...(role === 'assistant' ? { sources, research, actions, model, generatedAt } : {}) }));
+  return messages.map(({ role, content, sources, research, actions, model, generatedAt, taskId }) => ({ role, content: content.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, ''),
+    ...(role === 'assistant' ? { sources, research, actions, model, generatedAt, ...(taskId ? { taskId } : {}) } : {}) }));
 }
 
 export default function useOfficeAIConversations({ apiBase, request, messages, setMessages, beforeLoad }) {
@@ -34,8 +34,10 @@ export default function useOfficeAIConversations({ apiBase, request, messages, s
         // until the receipt includes them; update that recovered version next.
         const received = Array.isArray(conversation.messages) ? storedMessages(conversation.messages) : null;
         if (!received) throw Error('Conversation saving returned an incomplete receipt. Retry saving your chat.');
-        const sameContent = received.length === snapshot.length && received.every((item, index) => item.role === snapshot[index].role && item.content === snapshot[index].content);
+        const sameText = received.length === snapshot.length && received.every((item, index) => item.role === snapshot[index].role && item.content === snapshot[index].content);
+        const sameContent = sameText && received.every((item, index) => item.taskId === snapshot[index].taskId);
         current.current = conversation; saved.current = sameContent ? signature : JSON.stringify(received); setCurrentId(conversation.id); setSavedAt(conversation.updatedAt || new Date().toISOString()); remember(conversation);
+        if (sameText && !sameContent) throw Error('The service did not retain the task link. Your task remains here. Refresh after the service update and retry saving.');
       }
     } catch (cause) {
       if (mounted.current && generation === epoch.current) { conflict.current = cause.status === 409 && !!current.current; setError(conflict.current ? 'This conversation changed elsewhere. Your current messages remain here. Reload the saved conversation to resolve the conflict.' : officeAIError(cause)); }
@@ -71,5 +73,6 @@ export default function useOfficeAIConversations({ apiBase, request, messages, s
     catch (cause) { if (mounted.current && generation === epoch.current) setError(officeAIError(cause)); }
     finally { if (mounted.current) setLoading(false); }
   }
-  return { conversations, currentId, saving, loading, error, savedAt, newConversation, open, remove, refresh, retry: () => { setError(''); pump(); }, conflict: conflict.current };
+  function identity() { if (!clientId.current) clientId.current = crypto.randomUUID(); return current.current?.id || clientId.current; }
+  return { conversations, currentId, saving, loading, error, savedAt, newConversation, open, remove, refresh, identity, retry: () => { setError(''); pump(); }, conflict: conflict.current };
 }

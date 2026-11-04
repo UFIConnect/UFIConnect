@@ -119,6 +119,8 @@ try {
     });
     await page.goto(server.resolvedUrls.local[0] + 'office-ai-audit');
     await page.getByText('Cloudflare configured', { exact: true }).waitFor();
+    check(await page.getByRole('button', { name: 'Work', exact: true }).getAttribute('aria-pressed') === 'true', 'Work is the default conversation mode');
+    await page.getByRole('button', { name: 'Ask', exact: true }).click();
     await page.getByRole('button', { name: 'Catch up on AI' }).click();
     check((await page.getByLabel('Message Office AI').inputValue()).includes('latest important AI updates'), 'Latest AI starter asks for current evidence');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -148,6 +150,7 @@ try {
     check(requests.some(row => row.path === '/office/ai/tools' && row.body?.kind === 'prompt'), 'Adding a prompt tool persists through the Office API');
     await page.getByRole('button', { name: 'Use in chat', exact: true }).click();
     await page.getByRole('button', { name: 'Conversation', exact: true }).click();
+    await page.getByRole('button', { name: 'Ask', exact: true }).click();
     researchStatus = 'unavailable';
     await page.getByLabel('Message Office AI').fill('Review my idea.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -181,6 +184,7 @@ try {
     await page.getByRole('heading', { name: 'Build your personal toolkit', exact: true }).waitFor();
     check(requests.some(row => row.method === 'DELETE'), 'Removing a tool updates persistent storage');
     await page.getByRole('button', { name: 'Conversation', exact: true }).click();
+    await page.getByRole('button', { name: 'Ask', exact: true }).click();
     check(await page.locator('.office-ai-selected').count() === 0, 'Deleted tool cannot remain selected for later chats');
     await page.screenshot({ path: path.join(output, `office-ai-${width}.png`), fullPage: true });
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `Office AI fits ${width}px without horizontal page overflow`);
@@ -220,6 +224,7 @@ try {
     await page.getByRole('button', { name: 'Connect GitHub', exact: true }).click();
     await page.getByLabel('GitHub API token', { exact: true }).fill('synthetic-unsaved-private-connection-token');
     await page.getByRole('button', { name: 'Conversation', exact: true }).click();
+    await page.getByRole('button', { name: 'Ask', exact: true }).click();
     check(await page.locator('input[type=password]').count() === 0, 'Leaving connections unmounts sensitive inputs');
     await page.getByLabel('Message Office AI').fill('Explain my connections.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -260,12 +265,12 @@ try {
       await page.getByRole('button', { name: 'Copy code', exact: true }).waitFor();
       check(await page.locator('.office-ai-message-user', { hasText: 'Keep this conflicting local message' }).count() === 0, 'Explicit reload resolves the conflict using the saved version');
     }
-    await page.getByRole('button', { name: 'Run a task', exact: true }).click();
+    await page.getByRole('button', { name: 'Tasks', exact: true }).click();
     await page.getByLabel('Task request', { exact: true }).fill('Update the example title, check it, publish, and deploy Office.');
-    check(!await page.getByLabel('Run Office commands', { exact: true }).isChecked(), 'Operational Office commands require their own task scope');
+    check(await page.getByLabel('Run Office commands', { exact: true }).isChecked(), 'Operational Office commands are included in the visible default task scope');
     await page.getByLabel('Run Office commands', { exact: true }).check();
     await page.getByLabel('Office website', { exact: true }).check();
-    check(await page.getByText('Publishing to main can trigger automatic deployment.', { exact: false }).isVisible(), 'Task scope discloses the repository automatic deployment behavior');
+    check(await page.getByText('Publishing can trigger deployment.', { exact: false }).isVisible(), 'Task scope discloses the repository automatic deployment behavior');
     taskCreateFailure = true;
     await page.getByRole('button', { name: 'Run task', exact: true }).click();
     await page.getByRole('alert').filter({ hasText: 'The connection ended.' }).waitFor();
@@ -280,7 +285,7 @@ try {
     check(await page.getByText('- old title\n+ requested title', { exact: true }).isVisible(), 'Task file diffs are inspectable');
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `Task results fit ${width}px without horizontal page overflow`);
     await page.getByRole('button', { name: 'Ask', exact: true }).click();
-    await page.getByRole('button', { name: 'Run a task', exact: true }).click();
+    await page.getByRole('button', { name: 'Tasks', exact: true }).click();
     await page.getByText('Candidate commit; not published', { exact: false }).waitFor();
     check(await page.getByRole('heading', { name: 'Update the example title, check it, publish, and deploy Office.', exact: true }).isVisible(), 'Server-backed task is recovered after navigating away and back');
     task = { ...task, status: 'needs_confirmation', confirmation: { id: 'uncertain-action', label: 'Check an unconfirmed external operation', detail: 'Inspect the provider receipt before retrying.', uncertain: true } };
@@ -375,6 +380,7 @@ try {
     }
     statusReadDelayMs = 0; connectionReadDelayMs = 0;
     await page.getByRole('button', { name: 'Conversation', exact: true }).click();
+    await page.getByRole('button', { name: 'Ask', exact: true }).click();
     await page.getByRole('heading', { name: 'What are we working on?', exact: true }).waitFor();
     check(await page.getByLabel('Message Office AI').inputValue() === '', 'Auth change clears private conversation and draft');
     if (width === 1280) {
@@ -393,9 +399,9 @@ try {
       await page.getByLabel('Message Office AI').fill('Preserve this stalled research draft.');
       await page.getByRole('button', { name: 'Send', exact: true }).click();
       await pendingChat;
-      await page.clock.fastForward(100001);
+      await page.clock.fastForward(220001);
       await page.getByRole('alert').filter({ hasText: 'The response timed out. Your message is ready to retry.' }).waitFor();
-      check(await page.getByLabel('Message Office AI').inputValue() === 'Preserve this stalled research draft.', 'The bounded 100-second deadline restores the pending draft');
+      check(await page.getByLabel('Message Office AI').inputValue() === 'Preserve this stalled research draft.', 'The bounded 220-second deadline restores the pending draft');
       check(await page.locator('.office-ai-message-user', { hasText: 'Preserve this stalled research draft.' }).count() === 0, 'Timed-out requests do not pollute the follow-up history');
       await releaseChat().catch(() => {}); holdChat = false;
       check(await page.locator('.office-ai-message-assistant').count() === 1, 'A late timed-out response cannot enter the conversation');

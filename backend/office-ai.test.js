@@ -86,10 +86,10 @@ test('full-context inference may finish after 30 seconds while preserving deep a
   const result = await pending;
   assert.equal(result.status, 200);
   assert.equal(result.body.reply, 'Complete detailed answer.');
-  assert.equal(request.max_tokens, 3200);
+  assert.equal(request.max_tokens, 8192);
 });
 
-test('inference still aborts at 70 seconds with a safe error and releases concurrency capacity', async t => {
+test('thinking inference aborts at 180 seconds with a safe error and releases concurrency capacity', async t => {
   mockDeadlineClock(t);
   let signal;
   const service = configured({ fetcher: async (_url, options) => {
@@ -98,7 +98,7 @@ test('inference still aborts at 70 seconds with a safe error and releases concur
   } });
   for (let attempt = 0; attempt < 3; attempt++) {
     const pending = invoke(service.chat, { message: 'A request that stalls', research: false });
-    t.mock.timers.tick(69999);
+    t.mock.timers.tick(179999);
     assert.equal(signal.aborted, false);
     t.mock.timers.tick(1);
     const result = await pending;
@@ -108,14 +108,14 @@ test('inference still aborts at 70 seconds with a safe error and releases concur
   }
 });
 
-test('the 90-second overall deadline includes tool preparation and cancels remaining inference', async t => {
+test('the 210-second overall deadline includes tool preparation and cancels remaining inference', async t => {
   mockDeadlineClock(t);
   let signal;
   const id = '10000000-0000-0000-0000-000000000001';
   const db = { isConnected: () => true, query: async sql => {
     if (!sql.startsWith('SELECT')) return { rows: [] };
     return new Promise(resolve => setTimeout(() => resolve({ rows: [{ id, name: 'Review', description: '', kind: 'prompt',
-      instructions: 'Consider uncertainties.', control_id: '', updated_at: '2026-11-03T00:00:00Z' }] }), 25000));
+      instructions: 'Consider uncertainties.', control_id: '', updated_at: '2026-11-03T00:00:00Z' }] }), 45000));
   } };
   const service = configured({ db, fetcher: async (_url, options) => {
     signal = options.signal;
@@ -123,10 +123,10 @@ test('the 90-second overall deadline includes tool preparation and cancels remai
   } });
   const pending = invoke(service.chat, { message: 'Review this topic', research: false, toolIds: [id] });
   await new Promise(setImmediate);
-  t.mock.timers.tick(25000);
+  t.mock.timers.tick(45000);
   await new Promise(setImmediate);
   assert.ok(signal);
-  t.mock.timers.tick(64999);
+  t.mock.timers.tick(164999);
   assert.equal(signal.aborted, false);
   t.mock.timers.tick(1);
   assert.equal((await pending).status, 504);
@@ -195,7 +195,7 @@ test('live search uses Cloudflare server credentials and grounds current claims 
   assert.match(prompt, /search snippets/);
   assert.match(prompt, /current information was not verified/);
   assert.ok(!prompt.includes('DO-NOT-TRANSMIT') && !prompt.includes('HIDDEN'));
-  assert.equal(fake.calls[1].body.max_tokens, 3200);
+  assert.equal(fake.calls[1].body.max_tokens, 8192);
 });
 
 test('search failures remain explicit and upstream error bodies never reach the user or model', async () => {

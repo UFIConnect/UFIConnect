@@ -55,7 +55,7 @@ export default {
   async fetch(request, env) {
     if (!authenticated(request, env.OFFICE_AI_RELAY_SECRET)) return failure(401, 'unauthorized', 'Authentication required.');
     const route = new URL(request.url).pathname;
-    if (route === '/health' && request.method === 'GET') return json({ ok: !!env.AI, configured: !!env.AI, service: 'office-ai-relay', version: 1 });
+    if (route === '/health' && request.method === 'GET') return json({ ok: !!env.AI, configured: !!env.AI, service: 'office-ai-relay', version: 2, thinkingSupported: true, maxOutputTokens: 8192 });
     if (!['/chat', '/search'].includes(route)) return failure(404, 'not_found', 'Unknown operation.');
     if (request.method !== 'POST') return failure(405, 'method_not_allowed', 'Use POST.');
     let body;
@@ -88,7 +88,11 @@ export default {
       if (!Number.isInteger(maxTokens) || maxTokens < 1 || maxTokens > 8192) invalid('Invalid output limit.');
       if (body.temperature != null && (!Number.isFinite(body.temperature) || body.temperature < 0 || body.temperature > 2)) invalid('Invalid temperature.');
       if (body.tools != null && (!Array.isArray(body.tools) || body.tools.length > 64 || body.tools.some(tool => tool?.type !== 'function' || !/^[a-z0-9_-]{1,64}$/i.test(tool?.function?.name || '')))) invalid('Invalid tools.');
+      if (body.chat_template_kwargs !== undefined && (!body.chat_template_kwargs || Array.isArray(body.chat_template_kwargs)
+        || typeof body.chat_template_kwargs !== 'object' || Object.keys(body.chat_template_kwargs).some(key => key !== 'enable_thinking')
+        || typeof body.chat_template_kwargs.enable_thinking !== 'boolean')) invalid('Invalid thinking options.');
       const inputs = { messages: body.messages, max_tokens: maxTokens, stream: false,
+        ...(body.chat_template_kwargs ? { chat_template_kwargs: { enable_thinking: body.chat_template_kwargs.enable_thinking } } : {}),
         ...(body.tools?.length ? { tools: body.tools } : {}), ...(body.temperature != null ? { temperature: body.temperature } : {}) };
       const result = await env.AI.run(model, inputs, { gateway: { id: gatewayId, skipCache: true, collectLog: false } });
       return json(completion(result, model));

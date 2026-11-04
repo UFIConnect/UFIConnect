@@ -349,4 +349,4 @@ function registerOfficeTopicRoutes(app, { requireOfficeToken, ...options }) {
   app.post('/office/topic-transfer/optimize-unknown', privateResponse, requireOfficeToken, limit, route(req => service.optimizeUnknown(req.body)));
   return service;
 }
-module.exports = { OFFICE_TOPIC_SCHEMA, UNKNOWN, isUnknownTopic, classifyTopic, classifySubtopic, createOfficeTopicTransfer, registerOfficeTopicRoutes };
+module.exports = { OFFICE_TOPIC_SCHEMA, UNKNOWN, isUnknownTopic, classifyTopic, classifySubtopic, subtopicRules, createOfficeTopicTransfer, registerOfficeTopicRoutes };

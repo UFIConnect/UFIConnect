@@ -29,6 +29,7 @@ const { OFFICE_USER_USAGE_SCHEMA, registerOfficeUserUsageRoutes } = require('./o
 const { OFFICE_TOPIC_SCHEMA, UNKNOWN: UNKNOWN_FEED_TOPICS, isUnknownTopic, classifyTopic, registerOfficeTopicRoutes } = require('./office-topic-transfer');
 const { TOPIC_ROUTING_SCHEMA, createTopicRoutingAgents } = require('./topic-routing-agents');
 const { createUnknownTopicGuardian } = require('./unknown-topic-guardian');
+const { registerOfficeTopicReviewRoutes } = require('./unknown-topic-review');
 const { SIGNIN_SCHEMA, registerSignInRoutes, isDeliverableEmail } = require('./auth-signin');
 const { createOAuthFrontend } = require('./oauth-frontend');
 const { feedUpdateFrames } = require('./feed-stream-events');
@@ -18848,6 +18849,8 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
   }
   if (!rows.length) return 0;
 
+  const preserveExistingIds = targetTable === 'feed_posts_cache' && Array.isArray(options.preserveExistingIds)
+    ? options.preserveExistingIds.filter(id => seen.has(id)) : [];
   const persist = async client => {
     const result = await client.query(
     `WITH incoming AS (
@@ -18894,7 +18897,8 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
        author_avatar_url = COALESCE(EXCLUDED.author_avatar_url, existing.author_avatar_url),
        author_profile_url = COALESCE(EXCLUDED.author_profile_url, existing.author_profile_url),
        fetched_at     = NOW()
-     WHERE (EXCLUDED.group_id IS NOT NULL AND existing.group_id IS DISTINCT FROM EXCLUDED.group_id)
+     WHERE NOT (existing.id=ANY($2::text[])) AND (
+           (EXCLUDED.group_id IS NOT NULL AND existing.group_id IS DISTINCT FROM EXCLUDED.group_id)
         OR existing.title IS DISTINCT FROM EXCLUDED.title
         OR existing.content IS DISTINCT FROM EXCLUDED.content
         OR existing.author_name IS DISTINCT FROM EXCLUDED.author_name
@@ -18909,8 +18913,9 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
         OR existing.location IS DISTINCT FROM EXCLUDED.location
         OR existing.media_poster IS DISTINCT FROM EXCLUDED.media_poster
         OR (EXCLUDED.author_avatar_url IS NOT NULL AND existing.author_avatar_url IS DISTINCT FROM EXCLUDED.author_avatar_url)
-        OR (EXCLUDED.author_profile_url IS NOT NULL AND existing.author_profile_url IS DISTINCT FROM EXCLUDED.author_profile_url)`,
-    [JSON.stringify(rows).replace(/\\u0000/gi, '')]
+        OR (EXCLUDED.author_profile_url IS NOT NULL AND existing.author_profile_url IS DISTINCT FROM EXCLUDED.author_profile_url))
+     RETURNING existing.id`,
+    [JSON.stringify(rows).replace(/\\u0000/gi, ''), preserveExistingIds]
     );
     // ON CONFLICT may skip unchanged rows. They still need assignments when
     // they predate routing or when the routing rules have changed.
@@ -18925,12 +18930,13 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
     const missing = rows.filter(row => !liveIds.has(row.id)).map(row => row.id);
     const heldIds = targetTable === 'feed_posts_cache' && missing.length && unknownTopicGuardian.currentSnapshot().enabled
       ? (await client.query('SELECT post_id FROM office_unknown_topic_review WHERE post_id=ANY($1::text[])', [missing])).rows.map(row => row.post_id) : [];
-    return { saved: result.rowCount || 0, heldIds, changes: [...persisted.rows.filter(row => row.topic !== originalTopics.get(row.id)).map(row => ({ id: row.id, topic: row.topic })), ...routing.changes] };
+    return { saved: result.rowCount || 0, writtenIds: result.rows.map(row => row.id), heldIds, changes: [...persisted.rows.filter(row => row.topic !== originalTopics.get(row.id)).map(row => ({ id: row.id, topic: row.topic })), ...routing.changes] };
   };
   if (queryRunner !== db) {
     const result = await persist(queryRunner);
     // The owner of this transaction applies these only after its COMMIT.
     if (Array.isArray(options.routingChanges)) options.routingChanges.push(...result.changes);
+    if (Array.isArray(options.writtenIds)) options.writtenIds.push(...result.writtenIds);
     return result.saved;
   }
   const result = await db.withClient(async client => {
@@ -18946,6 +18952,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
   });
   applyTopicRoutingChanges(result.changes, posts);
   removeUnknownTopicHeldPosts(result.heldIds);
+  if (Array.isArray(options.writtenIds)) options.writtenIds.push(...result.writtenIds);
   if (!options.skipTrim && targetTable === 'feed_posts_cache') trimFeedPostsCache();
   return result.saved;
 }
@@ -20145,6 +20152,7 @@ const officeTopicTransfer = registerOfficeTopicRoutes(app, {
   transfer: options => transferStagedPosts(options),
   onClassified: applyTopicRoutingChanges,
 });
+const officeTopicReview = registerOfficeTopicReviewRoutes(app, { db, topics: FEED_TOPICS, requireOfficeToken });
 
 // --- Auth ---------------------------------------------------------------------
 registerSignInRoutes(app, {
@@ -26488,6 +26496,7 @@ app.post('/office/ai/tasks', requireOfficeToken, requireOfficeAIRuntime, officeT
 app.get('/office/ai/tasks/:id', requireOfficeToken, requireOfficeAIRuntime, officeTasks.detail);
 app.post('/office/ai/tasks/:id/cancel', requireOfficeToken, requireOfficeAIRuntime, officeTasks.cancel);
 app.post('/office/ai/tasks/:id/confirm', requireOfficeToken, requireOfficeAIRuntime, officeTasks.confirm);
+app.post('/office/ai/tasks/:id/resume', requireOfficeToken, requireOfficeAIRuntime, officeTasks.resume);
 app.get('/office/ai/terminal', requireOfficeToken, requireOfficeAIRuntime, officeTerminal.list);
 app.post('/office/ai/terminal', requireOfficeToken, requireOfficeAIRuntime, officeTerminal.create);
 app.get('/office/ai/terminal/:id', requireOfficeToken, requireOfficeAIRuntime, officeTerminal.status);
@@ -26873,6 +26882,10 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
             await client.query('COMMIT');
             return { rows: [], approvedPosts: [], saved: 0, deleted: 0, screenedOut: 0 };
           }
+          // A reviewed historical copy must not overwrite a live post that
+          // appeared after the review's absence check. The upsert enforces
+          // this atomically even if another writer arrives after this read.
+          const preserveExistingIds = await officeTopicReview.pendingAssignments(rows.map(row => row.id), { queryRunner: client });
           // Stage rows are screened again at the final promotion boundary.
           // That catches anything written by an older pipeline deployment and
           // makes the visible-transfer count honest: filtered rows are
@@ -26885,7 +26898,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
             return screened.allowed ? [screened.post] : [];
           });
           const screenedOut = rows.length - approvedPosts.length;
-          const routingChanges = [];
+          const routingChanges = [], writtenIds = [];
           // Removal remains uncommitted until live/review persistence succeeds.
           // Routing must see the promoted row as authoritative rather than a
           // conflicting, still-unclassified staging copy of the same ID.
@@ -26894,13 +26907,14 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
             [rows.map(r => r.id)]
           );
           const saved = approvedPosts.length
-            ? await savePostsToDBFast(approvedPosts, 'feed_posts_cache', client, { skipTrim: true, routingChanges })
+            ? await savePostsToDBFast(approvedPosts, 'feed_posts_cache', client, { skipTrim: true, routingChanges, preserveExistingIds, writtenIds })
             : 0;
-          const admitted = approvedPosts.length && unknownTopicGuardian.currentSnapshot().enabled
-            ? new Set((await client.query(`SELECT id FROM feed_posts_cache WHERE id=ANY($1::text[])
-                AND NOT (lower(btrim(COALESCE(topic,'')))=ANY($2::text[]))`, [approvedPosts.map(post => post.id), UNKNOWN_FEED_TOPICS])).rows.map(row => row.id)) : null;
-          const heldPosts = admitted ? approvedPosts.filter(post => !admitted.has(post.id)) : [];
-          const livePosts = admitted ? approvedPosts.filter(post => admitted.has(post.id)) : approvedPosts;
+          const liveIds = approvedPosts.length && unknownTopicGuardian.currentSnapshot().enabled
+            ? new Set((await client.query('SELECT id FROM feed_posts_cache WHERE id=ANY($1::text[])', [approvedPosts.map(post => post.id)])).rows.map(row => row.id)) : null;
+          const heldPosts = liveIds ? approvedPosts.filter(post => !liveIds.has(post.id)) : [];
+          const written = new Set(writtenIds);
+          const livePosts = approvedPosts.filter(post => written.has(post.id));
+          await officeTopicReview.markProcessed(preserveExistingIds, { queryRunner: client });
           await client.query('COMMIT');
           return { rows, approvedPosts: livePosts, heldPosts, rejectedPosts, routingChanges, saved, deleted: deleted.rowCount || 0, screenedOut };
         } catch (e) {
@@ -33774,6 +33788,14 @@ db.initDB().then(async () => {
     };
     await startUnknownGuardian();
     scheduleRecurring(startUnknownGuardian, 15000);
+    let topicReviewReady = false;
+    const initializeTopicReview = async () => {
+      if (topicReviewReady || !unknownTopicGuardian.currentSnapshot().enabled) return;
+      try { await officeTopicReview.initialize(); topicReviewReady = true; }
+      catch { console.warn('[topic review] Initialization pending; retrying in 15 seconds.'); }
+    };
+    await initializeTopicReview();
+    scheduleRecurring(initializeTopicReview, 15000);
     if (!IS_PIPELINE_ROLE) topicRoutingAgents.start();
     await feedAudit.initialize().catch(() => console.warn('[feed audit] Policy initialization pending; imported feed intake remains held.'));
     scheduleRecurring(() => (feedAudit.status().policyReady ? feedAudit.reload() : feedAudit.initialize()).catch(() => {}), 5000);

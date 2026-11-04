@@ -4,12 +4,13 @@ import { safeOfficeLink } from './OfficeAIContent';
 import { officeAIRequest, officeAIError, taskDate, taskState } from './office-ai-client';
 
 const DONE = new Set(['completed', 'failed', 'cancelled', 'timed_out']);
-export default function OfficeAITerminal({ apiBase, request }) {
+export default function OfficeAITerminal({ apiBase, request, sessionId = null }) {
   const [sessions, setSessions] = useState([]), [session, setSession] = useState(null), [capabilities, setCapabilities] = useState(null);
   const [command, setCommand] = useState(''), [ref, setRef] = useState('main'), [timeoutSeconds, setTimeoutSeconds] = useState(120), [output, setOutput] = useState(''), [truncated, setTruncated] = useState(false);
   const [busy, setBusy] = useState(false), [loading, setLoading] = useState(true), [error, setError] = useState(''), [revision, setRevision] = useState(0), [observedAt, setObservedAt] = useState(''), [cancelRequested, setCancelRequested] = useState(false);
   const controllers = useRef(new Set()), generation = useRef(0), selected = useRef(null), submission = useRef(null), mutating = useRef(false);
   const api = (suffix = '', options = {}) => officeAIRequest(request, `${apiBase}/office/ai/terminal${suffix}`, options, controllers.current);
+  useEffect(() => { if (sessionId) { selected.current = sessionId; setRevision(value => value + 1); } }, [sessionId]);
   useEffect(() => {
     let stopped = false, timer;
     const current = ++generation.current, valid = () => !stopped && current === generation.current;

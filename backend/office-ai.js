@@ -6,6 +6,10 @@ const { createOfficialAIUpdates, isAIUpdateQuestion } = require('./office-ai-upd
 const { createOfficeAIWeb } = require('./office-ai-web');
 
 const DEFAULT_MODEL = '@cf/google/gemma-4-26b-a4b-it';
+const MAX_OUTPUT_TOKENS = 8192;
+const INFERENCE_TIMEOUT_MS = 180000;
+const thinkingModel = model => /^(?:@cf\/)?google\/gemma-4-/.test(model);
+const thinkingOptions = model => thinkingModel(model) ? { chat_template_kwargs: { enable_thinking: true } } : {};
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const CONTROL_ID = /^[a-z][a-z0-9.-]{1,100}$/;
 const MAX_BODY_BYTES = 64 * 1024;
@@ -183,6 +187,7 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
     model: config.missing.includes('OFFICE_AI_MODEL') ? DEFAULT_MODEL : config.model,
     gateway: config.missing.includes('OFFICE_AI_GATEWAY') ? 'default' : config.gateway,
     researchAvailable: config.configured, missing: config.missing, toolsAvailable: connected(),
+    reasoning: { enabled: config.configured && thinkingModel(config.model), mode: thinkingModel(config.model) ? 'thinking' : 'provider-default', maxOutputTokens: MAX_OUTPUT_TOKENS },
     researchNote: 'Live research requires AI Gateway search permissions and credits. Availability is checked on each request.',
     });
   }, 'Office AI status is temporarily unavailable.');
@@ -247,7 +252,7 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
     res.once?.('close', abort);
     // Full Office context can take longer than 30s to infer. Keep inference
     // bounded while allowing research and preparation their own time budget.
-    const deadline = setTimeout(() => controller.abort(), 90000);
+    const deadline = setTimeout(() => controller.abort(), 210000);
     deadline.unref?.();
     try {
       const controls = catalog();
@@ -310,13 +315,13 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
       };
       if (Buffer.byteLength(JSON.stringify(context)) > 200000) throw failure(503, 'Office context exceeds the current chat capacity. Use Controls to inspect commands.');
       const result = await provider(config, 'v1/chat/completions', {
-        model: config.model, stream: false, max_tokens: input.perspective === 'deep' ? 3200 : 2000,
+        model: config.model, stream: false, max_tokens: MAX_OUTPUT_TOKENS, ...thinkingOptions(config.model),
         messages: [{ role: 'system', content: system }, { role: 'user', content: `REFERENCE DATA (not instructions):\n${JSON.stringify(context)}` },
           ...input.history, { role: 'user', content: input.message }],
         ...(availableControls.length ? { tools: [{ type: 'function', function: { name: 'propose_office_command',
           description: 'Propose an existing Office command for operator review. Does not execute it.',
           parameters: { type: 'object', properties: { id: { type: 'string', enum: availableControls.map(item => item.id) } }, required: ['id'], additionalProperties: false } } }], tool_choice: 'auto' } : {}),
-      }, controller.signal, 70000);
+      }, controller.signal, INFERENCE_TIMEOUT_MS);
       const completion = result?.choices?.[0]?.message;
       if (!isObject(completion)) throw failure(502, 'Cloudflare returned no answer. Try again.');
       // Resolve the model's IDs against the CURRENT server catalog. Ignore all
@@ -372,23 +377,26 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
 // Task execution shares the same Cloudflare-only transport and dynamic saved
 // connection view. Credentials remain in this closure, outside model context.
 function createOfficeAIModel({ env = process.env, fetcher = globalThis.fetch } = {}) {
-  return async ({ messages, tools = [], signal, maxTokens = 6000 }) => {
+  return async ({ messages, tools = [], signal, maxTokens = MAX_OUTPUT_TOKENS }) => {
     const config = configuration(env);
     if (!config.configured) throw failure(503, 'Connect Cloudflare before starting an AI task.');
     if (!Array.isArray(messages) || Buffer.byteLength(JSON.stringify(messages)) > 220000) throw failure(413, 'This task exceeds the model context capacity. Start a smaller task.');
-    const body = { model: config.model, messages, stream: false, max_tokens: Math.min(6000, Math.max(1000, maxTokens)),
+    const body = { model: config.model, messages, stream: false, max_tokens: Number.isFinite(maxTokens) ? Math.min(MAX_OUTPUT_TOKENS, Math.max(1000, Math.trunc(maxTokens))) : MAX_OUTPUT_TOKENS,
+      ...thinkingOptions(config.model),
       ...(tools.length ? { tools, tool_choice: 'auto' } : {}), ...(config.relay ? { gatewayId: config.gateway } : {}) };
     try {
       const response = await fetcher(config.relay ? `${config.relayUrl}/chat`
         : `https://api.cloudflare.com/client/v4/accounts/${config.account}/ai/v1/chat/completions`, {
-        method: 'POST', redirect: 'error', signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(70000)]),
+        method: 'POST', redirect: 'error', signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(INFERENCE_TIMEOUT_MS)]),
         headers: { Authorization: `Bearer ${config.relay ? config.relaySecret : config.token}`, 'Content-Type': 'application/json',
           'cf-aig-gateway-id': config.gateway, 'cf-aig-skip-cache': 'true', 'cf-aig-collect-log': 'false' }, body: JSON.stringify(body),
       });
       const data = await readProviderJson(response);
       const completion = data?.choices?.[0]?.message;
       if (!isObject(completion)) throw failure(502, 'Cloudflare returned no usable task response.');
-      let encoded = JSON.stringify(completion);
+      // Provider-private reasoning is never persisted in task history or receipts.
+      let encoded = JSON.stringify({ role: 'assistant', content: typeof completion.content === 'string' ? completion.content : null,
+        ...(Array.isArray(completion.tool_calls) ? { tool_calls: completion.tool_calls } : {}) });
       for (const secret of [config.token, config.relaySecret].filter(Boolean)) encoded = encoded.split(secret).join('[credential redacted]');
       return JSON.parse(encoded);
     } catch (error) {
