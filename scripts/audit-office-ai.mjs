@@ -31,13 +31,14 @@ let checks = 0, browser;
 const check = (condition, message) => { assert.ok(condition, message); checks++; };
 try {
   await server.listen();
-  browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined, headless: true });
+  browser = await chromium.launch({ headless: true });
   for (const width of [1280, 390, 320]) {
     const context = await browser.newContext({ viewport: { width, height: 1000 } }), page = await context.newPage();
     const requests = [], errors = [];
     let tools = [], failChat = false, slowChat = false, configured = true, researchStatus = 'verified';
     let connections = ['github', 'render', 'cloudflare'].map(id => ({ id, configured: false }));
-    let stallConnectionRead = false, stalledConnectionRoute = null;
+    let stallConnectionRead = false, stalledConnectionRoute = null, statusReadDelayMs = 0, connectionReadDelayMs = 0;
+    let holdChat = false, releaseChat = null, heldChatReady = null, failChatNetwork = false;
     page.on('pageerror', error => errors.push(error.message));
     await context.route('**/*', async route => {
       const req = route.request(), url = new URL(req.url());
@@ -47,9 +48,13 @@ try {
       check(req.headers()['x-office-token'] === 'synthetic-office-ai-token' && !url.href.includes('synthetic-office-ai-token'), 'Office credentials stay in authenticated headers');
       const body = req.postData() ? req.postDataJSON() : null;
       requests.push({ method: req.method(), path: url.pathname, body });
-      if (url.pathname === '/office/ai') return route.fulfill({ headers, json: { provider: 'Cloudflare', configured, model: '@cf/test/model', gateway: 'default', researchAvailable: true, missing: configured ? [] : ['CLOUDFLARE_API_TOKEN'] } });
+      if (url.pathname === '/office/ai') {
+        if (statusReadDelayMs) await new Promise(resolve => setTimeout(resolve, statusReadDelayMs));
+        return route.fulfill({ headers, json: { provider: 'Cloudflare', configured, model: '@cf/test/model', gateway: 'default', researchAvailable: true, missing: configured ? [] : ['CLOUDFLARE_API_TOKEN'] } });
+      }
       if (url.pathname === '/office/connections') {
         if (stallConnectionRead) { stalledConnectionRoute = route; return; }
+        if (connectionReadDelayMs) await new Promise(resolve => setTimeout(resolve, connectionReadDelayMs));
         return route.fulfill({ headers, json: { connections } });
       }
       const connectionMatch = url.pathname.match(/^\/office\/connections\/(github|render|cloudflare)(\/verify)?$/);
@@ -67,10 +72,13 @@ try {
       if (url.pathname.startsWith('/office/ai/tools/') && req.method() === 'DELETE') { tools = []; return route.fulfill({ headers, json: { ok: true } }); }
       if (url.pathname === '/office/ai/chat') {
         check(body.history.length <= 12 && body.history.reduce((sum, item) => sum + item.content.length, 0) <= 32000, 'Only bounded conversation context is sent');
+        if (failChatNetwork) return route.abort('connectionfailed');
         if (slowChat) await new Promise(resolve => setTimeout(resolve, 1500));
         if (failChat) return route.fulfill({ status: 503, headers, json: { error: 'Cloudflare could not complete the request. Please retry.' } });
-        return route.fulfill({ headers, json: { reply: 'A grounded answer with alternatives and limitations.', provider: 'Cloudflare', model: '@cf/test/model', generatedAt: '2026-11-03T18:00:00Z', research: { status: researchStatus, checkedAt: '2026-11-03T18:00:00Z' },
+        const fulfillReply = () => route.fulfill({ headers, json: { reply: 'A grounded answer with alternatives and limitations.', provider: 'Cloudflare', model: '@cf/test/model', generatedAt: '2026-11-03T18:00:00Z', research: { status: researchStatus, checkedAt: '2026-11-03T18:00:00Z' },
           sources: researchStatus === 'official-updates' ? [{ title: 'Official model announcement', url: 'https://blog.google/technology/ai/fixture-announcement/', publisher: 'Google AI', publishedAt: '2026-11-02T12:00:00Z' }] : researchStatus === 'verified' ? [{ title: 'Official update', url: 'https://developers.cloudflare.com/changelog/', description: 'A current release.' }, { title: 'Unsafe script', url: 'javascript:alert(1)' }, { title: 'Credential URL', url: 'https://secret:password@example.org/' }] : [], actions: [command], toolsUsed: body.toolIds } });
+        if (holdChat) { releaseChat = fulfillReply; heldChatReady?.(); return; }
+        return fulfillReply();
       }
       throw Error('Unexpected Office AI fixture route ' + url.pathname);
     });
@@ -168,26 +176,68 @@ try {
     await page.getByRole('button', { name: 'Connect GitHub', exact: true }).click();
     check(await page.getByLabel('GitHub API token', { exact: true }).inputValue() === '', 'Unsaved credential is cleared when Connections remounts');
     await page.getByLabel('GitHub API token', { exact: true }).fill('synthetic-auth-reset-private-connection-token');
+    statusReadDelayMs = 100;
     await page.evaluate(() => window.dispatchEvent(new Event('office-token-changed')));
-    await page.getByRole('button', { name: 'Connect GitHub', exact: true }).waitFor();
+    // The card's Connect button exists before and after reset; wait for the
+    // sensitive form itself to leave the DOM after React processes the event.
+    await page.locator('input[type=password]').waitFor({ state: 'hidden' });
     check(await page.locator('input[type=password]').count() === 0, 'Auth changes clear provider credential forms');
     if (width === 1280) {
-      await page.getByRole('button', { name: 'Refresh connections', exact: true }).waitFor({ state: 'visible' });
+      const connectionsView = page.getByRole('region', { name: 'Provider connections', exact: true });
+      // Auth reset reloads the parent AI status as well as this panel. Settle
+      // those real requests before advancing the shared browser clock.
+      await page.getByText('Cloudflare configured', { exact: true }).waitFor();
+      await page.waitForFunction(() => document.querySelector('.office-connections')?.getAttribute('aria-busy') === 'false');
       await page.clock.install(); stallConnectionRead = true;
       await page.getByRole('button', { name: 'Refresh connections', exact: true }).click();
-      await page.getByText('Checking connection settings…', { exact: true }).waitFor();
+      await connectionsView.getByText('Checking connection settings…', { exact: true }).waitFor();
       await page.clock.fastForward(21000);
-      await page.getByRole('alert').filter({ hasText: 'Connection check timed out.' }).waitFor();
+      await connectionsView.getByRole('alert').filter({ hasText: 'Connection check timed out.' }).waitFor();
       check(await page.getByRole('button', { name: 'Refresh connections', exact: true }).isEnabled(), 'A stalled connection check releases the loading state and allows retry');
       await stalledConnectionRoute?.abort().catch(() => {});
-      stallConnectionRead = false;
+      stallConnectionRead = false; connectionReadDelayMs = 100;
+      // A hidden loading label can match before React starts the retry. Wait
+      // for its response and the resulting panel state instead of that absence.
+      const retryResponse = page.waitForResponse(response => response.url() === `${API}/office/connections` && response.status() === 200);
       await page.getByRole('button', { name: 'Refresh connections', exact: true }).click();
-      await page.getByText('Checking connection settings…', { exact: true }).waitFor({ state: 'hidden' });
-      check(await page.getByRole('alert').count() === 0, 'Retry recovers the connection view after a timeout');
+      await retryResponse;
+      await page.waitForFunction(() => document.querySelector('.office-connections')?.getAttribute('aria-busy') === 'false');
+      await connectionsView.getByRole('alert').waitFor({ state: 'hidden' });
+      check(await connectionsView.getByRole('alert').count() === 0, 'Retry recovers the connection view after a timeout');
     }
+    statusReadDelayMs = 0; connectionReadDelayMs = 0;
     await page.getByRole('button', { name: 'Conversation', exact: true }).click();
     await page.getByRole('heading', { name: 'What are we working on?', exact: true }).waitFor();
     check(await page.getByLabel('Message Office AI').inputValue() === '', 'Auth change clears private conversation and draft');
+    if (width === 1280) {
+      holdChat = true;
+      let pendingChat = new Promise(resolve => { heldChatReady = resolve; });
+      await page.getByLabel('Message Office AI').fill('Wait for a slower research response.');
+      await page.getByRole('button', { name: 'Send', exact: true }).click();
+      await pendingChat;
+      await page.clock.fastForward(70000);
+      check(await page.getByRole('button', { name: 'Stop', exact: true }).isVisible(), 'A research reply can exceed the former 65-second browser deadline');
+      await releaseChat();
+      await page.getByText('A grounded answer with alternatives and limitations.', { exact: true }).waitFor();
+      check(await page.locator('.office-ai-message-assistant').count() === 1, 'A response after 70 seconds still reaches the conversation');
+
+      pendingChat = new Promise(resolve => { heldChatReady = resolve; });
+      await page.getByLabel('Message Office AI').fill('Preserve this stalled research draft.');
+      await page.getByRole('button', { name: 'Send', exact: true }).click();
+      await pendingChat;
+      await page.clock.fastForward(100001);
+      await page.getByRole('alert').filter({ hasText: 'The response timed out. Your message is ready to retry.' }).waitFor();
+      check(await page.getByLabel('Message Office AI').inputValue() === 'Preserve this stalled research draft.', 'The bounded 100-second deadline restores the pending draft');
+      check(await page.locator('.office-ai-message-user', { hasText: 'Preserve this stalled research draft.' }).count() === 0, 'Timed-out requests do not pollute the follow-up history');
+      await releaseChat().catch(() => {}); holdChat = false;
+      check(await page.locator('.office-ai-message-assistant').count() === 1, 'A late timed-out response cannot enter the conversation');
+
+      failChatNetwork = true;
+      await page.getByRole('button', { name: 'Send', exact: true }).click();
+      await page.getByRole('alert').filter({ hasText: 'The connection ended before Office AI could respond. Your message is ready to retry.' }).waitFor();
+      check(await page.getByLabel('Message Office AI').inputValue() === 'Preserve this stalled research draft.', 'A failed network response has a clear retry message and preserves the draft');
+      failChatNetwork = false;
+    }
     configured = false;
     await page.getByRole('button', { name: 'Refresh AI connection', exact: true }).click();
     await page.getByText('Connect your Cloudflare AI account', { exact: true }).waitFor();

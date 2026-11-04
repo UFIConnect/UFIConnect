@@ -244,7 +244,9 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
     const controller = new AbortController();
     const abort = () => { if (!res.writableEnded) controller.abort(); };
     res.once?.('close', abort);
-    const deadline = setTimeout(() => controller.abort(), 50000);
+    // Full Office context can take longer than 30s to infer. Keep inference
+    // bounded while allowing research and preparation their own time budget.
+    const deadline = setTimeout(() => controller.abort(), 90000);
     deadline.unref?.();
     try {
       const controls = catalog();
@@ -302,7 +304,7 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
         ...(availableControls.length ? { tools: [{ type: 'function', function: { name: 'propose_office_command',
           description: 'Propose an existing Office command for operator review. Does not execute it.',
           parameters: { type: 'object', properties: { id: { type: 'string', enum: availableControls.map(item => item.id) } }, required: ['id'], additionalProperties: false } } }], tool_choice: 'auto' } : {}),
-      }, controller.signal, 30000);
+      }, controller.signal, 70000);
       const completion = result?.choices?.[0]?.message;
       if (!isObject(completion)) throw failure(502, 'Cloudflare returned no answer. Try again.');
       // Resolve the model's IDs against the CURRENT server catalog. Ignore all

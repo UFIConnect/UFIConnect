@@ -35,7 +35,7 @@ Two server-side configurations are supported:
 - Direct: `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`. The token needs Workers AI Read, plus AI Gateway Read for web search.
 - Worker binding: `OFFICE_AI_RELAY_URL` and `OFFICE_AI_RELAY_SECRET`, using the isolated Worker in `infra/office-ai-worker`. The URL must be an HTTPS `workers.dev` origin. The secret is stored in the Worker and the Render API service only, with a local Windows DPAPI recovery copy in the ignored deployment-secret directory.
 
-`OFFICE_AI_GATEWAY` defaults to `default`. Research requires AI Gateway credits or a supported provider key configured on the gateway. Requests have timeouts and size limits; inference is capped at two concurrent requests and 20 requests per minute per backend process. These are process-level limits, not an account-wide spending cap.
+`OFFICE_AI_GATEWAY` defaults to `default`. Research requires AI Gateway credits or a supported provider key configured on the gateway. Search has a 12-second deadline, announcement feeds have five seconds each in parallel, and inference has 70 seconds within a 90-second server request deadline. The browser waits up to 100 seconds and supports cancellation. These budgets accommodate the complete Office context and deep answers; they do not change answer token limits. Inference is capped at two concurrent requests and 20 requests per minute per backend process. These are process-level limits, not an account-wide spending cap.
 
 All `/office/ai` and `/office/connections` endpoints require the existing `x-office-token`. Tables are created lazily on the first authenticated use. Failed database writes are reported as failures, without an in-memory persistence fallback.
 

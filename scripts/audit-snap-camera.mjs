@@ -325,10 +325,17 @@ try {
     await button(page, 'Enable voice commands').click(); await page.waitForFunction(() => document.querySelector('[aria-label="Voice commands"]').getAttribute('aria-pressed') === 'true');
     await page.evaluate(() => { window.__speech.at(-1).say('take photo', false); window.__speech.at(-1).say('do not take photo'); window.__speech.at(-1).say('post snap'); window.__speech.at(-1).say('hide commands'); });
     check(await page.evaluate(() => window.__createdUrls.length === 0), 'Partial, negative and publishing speech cannot capture or publish');
-    await page.evaluate(() => window.__speech.at(-1).say('three second timer')); await page.evaluate(() => window.__speech.at(-1).say('take photo'));
+    await page.evaluate(() => window.__speech.at(-1).say('three second timer'));
+    // Synthetic recognition can deliver commands before React commits the
+    // preceding setting. Observe that setting before issuing dependent speech.
+    await button(page, 'Capture timer: 3 seconds').waitFor();
+    await page.evaluate(() => window.__speech.at(-1).say('take photo'));
     await button(page, 'Cancel timer').waitFor(); await page.evaluate(() => window.__speech.at(-1).say('cancel timer'));
+    await button(page, 'Cancel timer').waitFor({ state: 'hidden' });
     check(await page.evaluate(() => window.__createdUrls.length === 0), 'Voice can cancel a pending capture');
-    await page.evaluate(() => { window.__speech.at(-1).say('timer off'); window.__speech.at(-1).say('video mode'); });
+    await page.evaluate(() => window.__speech.at(-1).say('timer off'));
+    await button(page, 'Capture timer: off').waitFor();
+    await page.evaluate(() => window.__speech.at(-1).say('video mode'));
     await page.waitForFunction(() => document.querySelector('.snap-shutter')?.getAttribute('aria-label') === 'Record video' && !document.querySelector('.snap-shutter').disabled);
     await page.evaluate(() => window.__speech.at(-1).say('start recording')); await button(page, 'Stop recording').waitFor();
     await page.waitForTimeout(1100); await page.evaluate(() => window.__speech.at(-1).say('pause recording')); await button(page, 'Resume recording').waitFor();

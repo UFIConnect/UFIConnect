@@ -1,9 +1,55 @@
 # Temporary dependency security backports
 
-Reviewed 2026-10-03. Review or replace with upstream releases before **2026-11-03**.
+Re-reviewed 2026-11-03 (America/Los_Angeles). Review or replace with upstream
+releases before **2026-11-17 at 00:00 UTC**, when the release gate expires again.
 
 Active local backports cover `braces@3.0.3` and `zod@3.25.76`.
-Plain `npm audit` continues to report these installed versions.
+Plain `npm audit` continues to report the installed Zod version. The braces
+advisory has been withdrawn; its existing bounded-depth hardening remains.
+
+## 2026-11-03 upstream and mitigation review
+
+The previous review deadline expired independently of the Office AI changes.
+This renewal keeps the pinned dependencies, patch hunks, before/after hashes,
+exact advisory matching, installed-copy checks, regression tests, and expiry
+enforcement unchanged. No new advisory exception is added.
+
+- [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5)
+  remains high severity and identifies Zod 4.6.6 as fixed. The current
+  [Zod registry metadata](https://registry.npmjs.org/zod) still lists 3.25.76
+  as the latest stable v3 release. The current SDK57
+  [Expo CLI 57.0.32 metadata](https://registry.npmjs.org/@expo/cli/57.0.32)
+  requires `zod: ^3.25.76`; forcing Zod4 would cross its supported major range.
+  The existing backport follows upstream commit
+  [a0ebf970](https://github.com/colinhacks/zod/commit/a0ebf970f2d752e5f58527cd2942ff48be4f46bd):
+  leading collection size bounds reject oversized input before child parsing.
+  Unbounded schemas remain outside this mitigation, matching that upstream fix.
+- [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)
+  was withdrawn on 2026-10-23 because it was not considered practically
+  exploitable. The current [braces registry metadata](https://registry.npmjs.org/braces)
+  still lists 3.0.3 as latest. Retaining the already-tested depth checks avoids
+  changing glob behavior during this narrow review renewal; this is hardening,
+  not a claim that an active braces advisory remains unresolved.
+- The [CI native job](https://github.com/UFIConnect/UFIConnect/actions/runs/41795066544/job/126457109094)
+  passed all 24 backport regression and integrity tests before failing solely
+  on the old review date. Its
+  [raw npm audit artifact](https://github.com/UFIConnect/UFIConnect/actions/runs/41795066544/artifacts/13305051655)
+  contains two high findings (Zod and the dependent Expo CLI), eleven moderate,
+  two low, and no critical findings. The unchanged exact-advisory assessment
+  covers the Zod high cause and finds no unmitigated high/critical causes.
+  Lower-severity findings remain visible and are not marked patched.
+
+Local validation on 2026-11-04 repeated all 24 backport tests after a fresh
+installation of the unchanged lockfile and explicit application of the pinned
+patches. `processPatches()` verified every installed file hash and package copy;
+`assessAudit()` accepted the CI report at the current date and still rejected
+that same report at the new expiry. The reviewed raw report's SHA-256 is
+`82aad6eef2845ebad1ebb43857f828b8a32e26f05d89019a29f3e4b5f60f4c1b`.
+
+The next review is limited to 14 days. Replace the backport when a compatible
+upstream release is available, or plan and validate the Expo major migration
+separately. A future expiry, unknown high/critical advisory, changed package,
+missing patch, or unavailable audit report still blocks release.
 
 On 2026-10-31, the lockfile moved to upstream `node-forge@1.4.2` and
 `follow-redirects@1.16.2` to resolve the newly reported high-severity advisories.

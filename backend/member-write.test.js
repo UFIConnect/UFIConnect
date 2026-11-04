@@ -2,11 +2,17 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { PGlite } = require('@electric-sql/pglite');
 const { withActiveMembers } = require('./member-write');
+const { SCHEMA: DEVICE_SCHEMA } = require('./suspicious-devices');
 const { createAppHarness, member } = require('./test-support/app-harness');
 
 const A = 'a0000000-0000-4000-8000-000000000001';
 const B = 'b0000000-0000-4000-8000-000000000002';
 function deferred() { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; }
+async function waitForPause(entered, pending) {
+  await Promise.race([entered.promise, pending.then(response => {
+    throw new Error(`Request completed before the expected processing pause: HTTP ${response.status}`);
+  })]);
+}
 async function database(t) {
   const pg = new PGlite(); t.after(() => pg.close());
   await pg.exec(`CREATE TABLE users(id UUID PRIMARY KEY,name TEXT,email TEXT,plan TEXT DEFAULT 'free',auth_version INTEGER DEFAULT 0,billing_closed BOOLEAN DEFAULT false,
@@ -17,6 +23,7 @@ async function database(t) {
     CREATE TABLE connections(from_id TEXT,to_id TEXT,status TEXT);
     CREATE TABLE follows(follower_id TEXT,following_id TEXT);
     CREATE TABLE attachments(id TEXT PRIMARY KEY,user_id TEXT,is_primary BOOLEAN)`);
+  for (const sql of DEVICE_SCHEMA) await pg.exec(sql);
   await pg.query("INSERT INTO users(id,name,email) VALUES($1,'Alice','alice@example.invalid'),($2,'Bob','bob@example.invalid')", [A,B]);
   return pg;
 }
@@ -36,8 +43,8 @@ test('an upload authenticated before deletion cannot recreate attachment records
   const entered = deferred(); const release = deferred();
   app.setResumeExtraction(async () => { entered.resolve(); await release.promise; return 'Example resume'; });
   const form = new FormData(); form.append('file', new Blob(['resume'], { type: 'text/plain' }), 'resume.txt');
-  const pending = fetch(app.base + '/profile/attachments', { method: 'POST', headers: { authorization: `Bearer ${app.token(A)}` }, body: form });
-  await entered.promise;
+  const pending = fetch(app.base + '/profile/attachments', { method: 'POST', headers: { authorization: `Bearer ${app.token(A)}` }, body: form, signal: AbortSignal.timeout(5000) });
+  await waitForPause(entered, pending);
   await pg.query('DELETE FROM users WHERE id=$1', [A]);
   release.resolve();
   const response = await pending;
@@ -54,7 +61,7 @@ test('messages delayed by screening cannot recreate records for a deleted sender
     const entered = deferred(); const release = deferred();
     app.setContentScreening(async () => { entered.resolve(); await release.promise; return { allowed: true, content: 'Hello' }; });
     const pending = app.request(`/messages/${B}`, { method: 'POST', userId: A, body: { content: 'Hello' } });
-    await entered.promise;
+    await waitForPause(entered, pending);
     if (closeSender) await pg.query('DELETE FROM users WHERE id=$1', [A]);
     else await pg.query('UPDATE users SET billing_closed=true WHERE id=$1', [B]);
     release.resolve();

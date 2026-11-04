@@ -125,7 +125,9 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
     requests.current.add(controller); pending.current = { controller, message, id }; setBusy(true); setError(''); setDraft('');
     setMessages(previous => [...previous, { role: 'user', content: message, id }]);
     let timedOut = false;
-    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 65000);
+    // Leave time for the backend's bounded 90-second research and inference
+    // request to return a result or its own actionable timeout response.
+    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 100000);
     const valid = () => mounted.current && current === generation.current && sequence === chatSequence.current;
     try {
       const data = await payload(await request(`${apiBase}/office/ai/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
@@ -133,7 +135,7 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
       if (typeof data?.reply !== 'string' || !data.reply.trim()) throw Error('Office AI returned an empty reply. Please retry.');
       if (valid()) setMessages(previous => [...previous, { ...data, role: 'assistant', content: data.reply, id: `assistant-${sequence}` }]);
     } catch (cause) {
-      if (valid()) { setMessages(previous => previous.filter(item => item.id !== id)); setDraft(message); setError(timedOut ? 'The response timed out. Your message is ready to retry.' : cause.name === 'AbortError' ? 'Request stopped. Your message is ready to retry.' : cause.message); }
+      if (valid()) { setMessages(previous => previous.filter(item => item.id !== id)); setDraft(message); setError(timedOut ? 'The response timed out. Your message is ready to retry.' : cause.name === 'AbortError' ? 'Request stopped. Your message is ready to retry.' : cause.name === 'TypeError' ? 'The connection ended before Office AI could respond. Your message is ready to retry.' : cause.message); }
     } finally {
       clearTimeout(timeout); requests.current.delete(controller);
       if (valid()) { pending.current = null; setBusy(false); composer.current?.focus(); }

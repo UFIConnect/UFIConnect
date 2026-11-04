@@ -33,6 +33,82 @@ async function invoke(handler, body = {}, extras = {}) {
 }
 const configured = options => createOfficeAI({ env: { ...settings }, now, ...options });
 
+function mockDeadlineClock(t) {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  // AbortSignal.timeout uses native timers outside Node's mocked clock.
+  // Route that timer through the same clock while retaining abort semantics.
+  t.mock.method(AbortSignal, 'timeout', milliseconds => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(new DOMException('Deadline exceeded', 'TimeoutError')), milliseconds);
+    return controller.signal;
+  });
+}
+
+test('full-context inference may finish after 30 seconds while preserving deep answer capacity', async t => {
+  mockDeadlineClock(t);
+  let signal, request;
+  const service = configured({ fetcher: async (_url, options) => {
+    signal = options.signal;
+    request = JSON.parse(options.body);
+    return new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      setTimeout(() => resolve(json({ choices: [{ message: { content: 'Complete detailed answer.' } }] })), 65000);
+    });
+  } });
+  const pending = invoke(service.chat, { message: 'Compare all relevant perspectives', research: false, perspective: 'deep' });
+  t.mock.timers.tick(30000);
+  assert.equal(signal.aborted, false);
+  t.mock.timers.tick(35000);
+  const result = await pending;
+  assert.equal(result.status, 200);
+  assert.equal(result.body.reply, 'Complete detailed answer.');
+  assert.equal(request.max_tokens, 3200);
+});
+
+test('inference still aborts at 70 seconds with a safe error and releases concurrency capacity', async t => {
+  mockDeadlineClock(t);
+  let signal;
+  const service = configured({ fetcher: async (_url, options) => {
+    signal = options.signal;
+    return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+  } });
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const pending = invoke(service.chat, { message: 'A request that stalls', research: false });
+    t.mock.timers.tick(69999);
+    assert.equal(signal.aborted, false);
+    t.mock.timers.tick(1);
+    const result = await pending;
+    assert.equal(result.status, 504);
+    assert.equal(result.body.error, 'Office AI timed out. Please try again.');
+    assert.equal(signal.aborted, true);
+  }
+});
+
+test('the 90-second overall deadline includes tool preparation and cancels remaining inference', async t => {
+  mockDeadlineClock(t);
+  let signal;
+  const id = '10000000-0000-0000-0000-000000000001';
+  const db = { isConnected: () => true, query: async sql => {
+    if (!sql.startsWith('SELECT')) return { rows: [] };
+    return new Promise(resolve => setTimeout(() => resolve({ rows: [{ id, name: 'Review', description: '', kind: 'prompt',
+      instructions: 'Consider uncertainties.', control_id: '', updated_at: '2026-11-03T00:00:00Z' }] }), 25000));
+  } };
+  const service = configured({ db, fetcher: async (_url, options) => {
+    signal = options.signal;
+    return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+  } });
+  const pending = invoke(service.chat, { message: 'Review this topic', research: false, toolIds: [id] });
+  await new Promise(setImmediate);
+  t.mock.timers.tick(25000);
+  await new Promise(setImmediate);
+  assert.ok(signal);
+  t.mock.timers.tick(64999);
+  assert.equal(signal.aborted, false);
+  t.mock.timers.tick(1);
+  assert.equal((await pending).status, 504);
+  assert.equal(signal.aborted, true);
+});
+
 test('status reports missing configuration without exposing secrets; mutable settings reconnect without restart', async () => {
   const env = {};
   const service = createOfficeAI({ env });
