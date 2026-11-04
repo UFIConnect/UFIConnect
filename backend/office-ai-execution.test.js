@@ -36,6 +36,16 @@ async function untilStopped(service, id, steps = 100) {
   }
   assert.fail('Task did not reach a checkpoint');
 }
+function terminalFixture(read) {
+  const state = { id: randomUUID(), dispatches: 0, reads: 0 };
+  const adapters = {
+    terminal_run: { permission: 'editCode', parameters: { type: 'object', properties: {}, additionalProperties: false },
+      execute: async () => { state.dispatches++; return { id: state.id, status: 'queued', commitSha: SHA }; } },
+    terminal_status: { permission: 'read', parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'], additionalProperties: false },
+      execute: async ({ id }) => { assert.equal(id, state.id); return read(++state.reads, state.id); } },
+  };
+  return { state, adapters };
+}
 
 test('effective execution limits default to supported maxima and environment values cannot exceed them', () => {
   assert.deepEqual(taskLimits({}), { modelTurns: 128, toolCalls: 512, lifetimeMinutes: 90 });
@@ -85,6 +95,91 @@ test('tool exhaustion retains the pending call and continuation never replays an
   await invoke(f.service.resume, { confirmed: true, continuationId: paused.continuation.id }, created.id);
   const finished = await untilStopped(f.service, created.id);
   assert.equal(finished.status, 'succeeded'); assert.equal(f.state.reads, 2); assert.equal(finished.progress.totalToolCalls, 2);
+});
+
+test('temporary terminal receipt failures retry only the same read and then record verified completion', async t => {
+  for (const status of [429, 502]) await t.test(`provider status ${status}`, async t => {
+    let turns = 0;
+    const clock = Date.now();
+    const terminal = terminalFixture(async (attempt, id) => {
+      if (attempt === 1) throw Object.assign(new Error('Temporary receipt failure'), { status, publicMessage: 'GitHub returned a mismatched terminal run.' });
+      return { session: { id, status: 'completed', commitSha: SHA, exitCode: 0 }, output: '323' };
+    });
+    const f = await fixture(t, { adapters: terminal.adapters, now: () => clock, model: async ({ messages }) => {
+      if (++turns === 1) return calls('terminal_run');
+      assert.ok(messages.some(message => message.content?.includes('323')));
+      return { content: 'The terminal printed 323 and exited successfully.' };
+    } });
+    const task = (await invoke(f.service.create, input({ permissions: { editCode: true } }))).body.task;
+    await f.service.runOne(task.id); await f.service.runOne(task.id); await f.service.runOne(task.id);
+    const retry = await f.raw(task.id);
+    assert.equal(retry.status, 'working'); assert.equal(retry.internal.waitingTerminal.id, terminal.state.id);
+    assert.equal(retry.internal.waitingTerminal.readFailures, 1); assert.equal(terminal.state.dispatches, 1);
+    assert.equal(retry.events.filter(event => event.kind === 'terminal' && event.status === 'succeeded').length, 0);
+    const scheduled = (await f.db.query('SELECT next_run_at FROM office_ai_tasks WHERE id=$1', [task.id])).rows[0].next_run_at;
+    assert.equal(new Date(scheduled).getTime(), clock + 5000);
+    const finished = await untilStopped(f.service, task.id);
+    assert.equal(finished.status, 'succeeded'); assert.equal(terminal.state.reads, 2); assert.equal(terminal.state.dispatches, 1);
+    assert.equal(finished.terminals[0].id, terminal.state.id); assert.equal(finished.terminals[0].exitCode, 0);
+  });
+});
+
+test('persistent terminal read failures preserve staged work and resume the same session without redispatch', async t => {
+  let clock = Date.now(), turns = 0, available = false;
+  const terminal = terminalFixture(async (_attempt, id) => {
+    if (!available) throw Object.assign(new Error('Temporary receipt failure'), { status: 502, publicMessage: 'GitHub receipt is unavailable.' });
+    return { session: { id, status: 'completed', exitCode: 0 }, output: 'Verified output.' };
+  });
+  const f = await fixture(t, { adapters: terminal.adapters, now: () => clock,
+    model: async () => ++turns === 1 ? calls('repo_edit', 'terminal_run') : { content: 'Complete.' } });
+  const task = (await invoke(f.service.create, input({ permissions: { editCode: true } }))).body.task;
+  const paused = await untilStopped(f.service, task.id);
+  assert.equal(paused.status, 'needs_continuation'); assert.equal(paused.continuation.reason, 'terminal-status');
+  assert.equal(terminal.state.reads, 5); assert.equal(terminal.state.dispatches, 1); assert.equal(turns, 1);
+  const saved = await f.raw(task.id), startedAt = saved.internal.waitingTerminal.startedAt;
+  assert.equal(saved.internal.files[0].content, 'const value=2;'); assert.equal(saved.internal.waitingTerminal.id, terminal.state.id);
+  assert.equal(await f.service.runOne(task.id), false);
+  clock += 13 * 60000; available = true;
+  const resumed = await invoke(f.service.resume, { confirmed: true, continuationId: paused.continuation.id }, task.id);
+  assert.equal(resumed.code, 200);
+  const checkpoint = await f.raw(task.id);
+  assert.equal(checkpoint.internal.waitingTerminal.startedAt, startedAt);
+  assert.equal(checkpoint.internal.waitingTerminal.pollStartedAt, new Date(clock).toISOString());
+  assert.equal(checkpoint.internal.waitingTerminal.readFailures, 0);
+  const finished = await untilStopped(f.service, task.id);
+  assert.equal(finished.status, 'succeeded'); assert.equal(terminal.state.dispatches, 1); assert.equal(terminal.state.reads, 6);
+  assert.equal(f.state.edits, 1); assert.equal(f.state.commits, 1); assert.equal(finished.terminals[0].exitCode, 0);
+});
+
+test('terminal polling timeout saves staged work and resume renews only the read window', async t => {
+  let clock = Date.now(), turns = 0, completed = false;
+  const terminal = terminalFixture(async (_attempt, id) => ({ session: { id, status: completed ? 'completed' : 'running', exitCode: completed ? 0 : null } }));
+  const f = await fixture(t, { adapters: terminal.adapters, now: () => clock,
+    model: async () => ++turns === 1 ? calls('repo_edit', 'terminal_run') : { content: 'Complete.' } });
+  const task = (await invoke(f.service.create, input({ permissions: { editCode: true } }))).body.task;
+  for (let i = 0; i < 4; i++) await f.service.runOne(task.id);
+  assert.equal(terminal.state.reads, 1);
+  clock += 13 * 60000;
+  const paused = await untilStopped(f.service, task.id);
+  assert.equal(paused.continuation.reason, 'terminal-wait'); assert.equal(terminal.state.reads, 1);
+  assert.equal((await f.raw(task.id)).internal.files[0].content, 'const value=2;');
+  completed = true;
+  await invoke(f.service.resume, { confirmed: true, continuationId: paused.continuation.id }, task.id);
+  assert.equal((await untilStopped(f.service, task.id)).status, 'succeeded');
+  assert.equal(terminal.state.dispatches, 1); assert.equal(terminal.state.reads, 2);
+});
+
+test('a mismatched terminal session cannot supply a completion receipt or replace the pending ID', async t => {
+  let turns = 0;
+  const other = randomUUID(), terminal = terminalFixture(async () => ({ session: { id: other, status: 'completed', exitCode: 0 }, output: 'Unrelated output.' }));
+  const f = await fixture(t, { adapters: terminal.adapters, model: async () => ++turns === 1 ? calls('terminal_run') : { content: 'Must not be reached.' } });
+  const task = (await invoke(f.service.create, input({ permissions: { editCode: true } }))).body.task;
+  const paused = await untilStopped(f.service, task.id);
+  assert.equal(paused.continuation.reason, 'terminal-status'); assert.equal(turns, 1); assert.equal(terminal.state.dispatches, 1);
+  assert.equal(paused.terminals[0].id, terminal.state.id); assert.equal(paused.terminals[0].status, 'queued');
+  const saved = await f.raw(task.id);
+  assert.equal(saved.internal.waitingTerminal.id, terminal.state.id);
+  assert.ok(!saved.internal.messages.some(message => message.content?.includes('Unrelated output.')));
 });
 
 test('context compaction bounds schema-inclusive bytes and preserves complete tool groups and executable staged work', () => {

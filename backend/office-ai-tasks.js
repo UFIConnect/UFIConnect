@@ -8,6 +8,10 @@ const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const ACTIVE = ['planning', 'working', 'waiting_checks', 'cancel_requested'];
 const TERMINAL = ['succeeded', 'failed', 'cancelled'];
 const TARGETS = ['api', 'pipeline', 'web', 'office', 'mobile', 'cloudflare-ai', 'cloudflare-site'];
+const TERMINAL_WAIT_MS = 12 * 60000;
+const TERMINAL_READ_FAILURE_LIMIT = 5;
+const TERMINAL_ACTIVE = ['dispatching', 'dispatch_uncertain', 'queued', 'running'];
+const TERMINAL_FINISHED = ['completed', 'failed', 'cancelled', 'timed_out'];
 const fail = (status, message) => Object.assign(new Error(message), { status, publicMessage: message });
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const TASK_SCHEMA = `CREATE TABLE IF NOT EXISTS office_ai_tasks (
@@ -204,6 +208,10 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     task.internal.budgetStartTurns = task.internal.turns;
     task.internal.budgetStartCalls = task.internal.calls;
     task.internal.budgetStartedAt = stamp();
+    if (task.internal.waitingTerminal) {
+      task.internal.waitingTerminal.pollStartedAt = stamp();
+      task.internal.waitingTerminal.readFailures = 0;
+    }
     task.internal.resumes = (task.internal.resumes || 0) + 1;
     task.internal.resumedContinuations = [...(task.internal.resumedContinuations || []), id].slice(-40);
     task.continuation = null; task.status = 'working'; task.error = null;
@@ -312,7 +320,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     if (call.name === 'terminal_run') {
       const session = result.session || result;
       if (UUID.test(session.id || '') && !task.internal.terminalIds.includes(session.id)) task.internal.terminalIds.push(session.id);
-      if (UUID.test(session.id || '') && ['dispatching', 'dispatch_uncertain', 'queued', 'running'].includes(session.status)) task.internal.waitingTerminal = { id: session.id, startedAt: stamp() };
+      if (UUID.test(session.id || '') && TERMINAL_ACTIVE.includes(session.status)) task.internal.waitingTerminal = { id: session.id, startedAt: stamp(), pollStartedAt: stamp(), readFailures: 0 };
     }
     if (call.name === 'cloudflare_deploy') task.deployments.push(result);
     return result;
@@ -331,10 +339,27 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       return pause('lifetime', 'This run reached its 90-minute limit. Continue the saved checkpoint to keep working with the same permissions.');
     if (task.internal.waitingTerminal) {
       const pending = task.internal.waitingTerminal;
-      if (now() - Date.parse(pending.startedAt) > 12 * 60000) throw fail(408, 'The terminal job has not confirmed completion. Open its receipt; it will not be restarted.');
-      const result = await adapters.terminal_status.execute({ id: pending.id }, { task: view(task), signal });
+      if (now() - Date.parse(pending.pollStartedAt || pending.startedAt) > TERMINAL_WAIT_MS)
+        return pause('terminal-wait', 'The terminal job has not confirmed completion within this polling window. Staged work is saved. Continue to check the same terminal receipt; the command will not be restarted.');
+      let result;
+      try {
+        result = await adapters.terminal_status.execute({ id: pending.id }, { task: view(task), signal });
+        const session = result?.session || result;
+        if (session?.id !== pending.id || ![...TERMINAL_ACTIVE, ...TERMINAL_FINISHED].includes(session.status))
+          throw fail(502, 'The terminal status response did not match the pending session.');
+      } catch (error) {
+        if (signal.aborted) throw error;
+        pending.readFailures = (pending.readFailures || 0) + 1;
+        const status = Number(error.status);
+        const retryable = status === 429 || status >= 500 && status <= 599;
+        event(task, 'terminal', 'unknown', 'Terminal receipt is being reconciled', publicError(error));
+        if (!retryable || pending.readFailures >= TERMINAL_READ_FAILURE_LIMIT)
+          return pause('terminal-status', 'Terminal status could not be confirmed. Staged work and the pending session are saved. Continue to read the same terminal receipt; the command will not be restarted.');
+        return Math.min(30000, 5000 * 2 ** (pending.readFailures - 1));
+      }
+      pending.readFailures = 0;
       const session = result.session || result;
-      if (['dispatching', 'dispatch_uncertain', 'queued', 'running'].includes(session.status)) return 5000;
+      if (TERMINAL_ACTIVE.includes(session.status)) return 5000;
       task.internal.messages.push({ role: 'user', content: `UNTRUSTED TERMINAL RECEIPT:\n${safe(JSON.stringify(result)).slice(0, 24000)}` });
       receipts(task, { name: 'terminal_status' }, result);
       event(task, 'terminal', session.status === 'completed' ? 'succeeded' : 'failed', 'Terminal job finished', `Status: ${session.status}; exit code: ${session.exitCode ?? 'not confirmed'}`, session.runUrl);
