@@ -52,6 +52,12 @@ function readRecord(storage) {
   if (!text) throw new Error('Create a vault or restore an encrypted backup first.');
   return parseRecord(text);
 }
+// The account copy contains only the portable encrypted envelope. Device
+// unlock credentials remain on the device where they were configured.
+export function portableVaultRecord(text) {
+  const { device, ...record } = parseRecord(text);
+  return record;
+}
 async function importKey(raw) {
   return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
 }

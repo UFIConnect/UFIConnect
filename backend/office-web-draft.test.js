@@ -48,7 +48,9 @@ test('cancelled requests stop generation without producing a change', async () =
 });
 test('authenticated real web draft route checks paths and revisions before generation and never commits', async t => {
   const fake = provider(); let file = { sha, content: source }, loads = 0;
-  const app = await createAppHarness({ env: { OFFICE_TOKEN: 'web-draft-test', OPENAI_API_KEY: 'fixture-only' }, modules: {
+  // The Office connection middleware reads an empty synthetic settings store
+  // before invoking the draft handler; provider traffic stays mocked below.
+  const app = await createAppHarness({ connected: true, env: { OFFICE_TOKEN: 'web-draft-test', OPENAI_API_KEY: 'fixture-only' }, modules: {
     './office-web-draft': { createOfficeWebDraft: options => createOfficeWebDraft({ ...options, request: fake.request, getFile: async () => { loads++; return file; } }) },
   } }); t.after(() => app.close());
   const headers = { 'x-office-token': 'web-draft-test' }, body = { message: 'Improve heading', filePath: 'web/index.html', expectedSha: sha };

@@ -43,6 +43,7 @@ const { createMessageAccess } = require('./message-access');
 const { createSourceImageDownloader } = require('./source-image-download');
 const { CREATOR_ANALYTICS_SCHEMA, createCreatorAnalytics, registerCreatorAnalyticsRoutes } = require('./creator-analytics');
 const { createUfiVault, registerUfiVaultRoutes, UFI_VAULT_SCHEMA } = require('./ufi-vault');
+const { VAULT_STORAGE_SCHEMA, registerVaultStorageRoutes } = require('./vault-storage');
 const { createOfficeAgentChat, sanitizeSnapshot: sanitizeAgentSnapshot } = require('./office-agent-chat');
 const { createOfficeAI } = require('./office-ai');
 const { createOfficeConnections } = require('./office-connections');
@@ -406,6 +407,10 @@ app.use('/office/agents/:id/chat', (_req, res, next) => { res.set('Cache-Control
   requireOfficeToken, express.json({ limit: '1mb', strict: true }),
   (error, _req, res, _next) => res.status(error.status === 413 ? 413 : 400).json({ error: 'Invalid agent chat request.' }));
 app.use(privateConnectionResponse);
+// Authenticate before accepting a bounded encrypted Vault envelope. Other API
+// routes retain their smaller default body limit.
+registerVaultStorageRoutes(app, { db, authenticate, json: express.json,
+  limiter: rateLimit({ windowMs: 60000, limit: 120, keyGenerator: req => req.user.id }) });
 app.use(express.json({ limit: '512kb' }));
 app.use((error, _req, res, next) => {
   if (!['entity.parse.failed', 'entity.too.large'].includes(error.type)) return next(error);
@@ -17395,6 +17400,7 @@ async function migrateDB() {
     for (const statement of CREATOR_ANALYTICS_SCHEMA) await db.query(statement);
     await db.query(COPYRIGHT_REPORT_BRIDGE_SCHEMA);
     for (const statement of UFI_VAULT_SCHEMA) await db.query(statement);
+    for (const statement of VAULT_STORAGE_SCHEMA) await db.query(statement);
 
     // Legacy first-party pageview log — there was no way to tell whether the site
     // was actually getting traffic at all (no GA/Plausible/etc. installed),

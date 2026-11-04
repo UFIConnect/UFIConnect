@@ -1,9 +1,10 @@
+import { installAuditVaultStorage } from './audit-vault-storage-fixture.mjs';
 // Synthetic vaults only. Never read a user's vault or contact external services.
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
 import { createServer } from '../web/node_modules/vite/dist/node/index.js';
 import { installAuditMember, auditNavigate, auditReload } from './audit-session.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -30,10 +31,12 @@ const submitAutofill = (locator, passphrase, confirmation) => locator.evaluate((
 let browser;
 try {
   await server.listen();
-  browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
+  browser = process.argv.includes('--webkit') ? await webkit.launch()
+    : await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
   for (const width of [390, 1440]) {
     const context = await browser.newContext({ viewport: { width, height: 900 } });
-    const page = await context.newPage(); page.setDefaultTimeout(15000);
+    const page = await context.newPage();
+    const accountStorage = await installAuditVaultStorage(page, user); page.setDefaultTimeout(15000);
     const errors = [], outbound = [];
     let membership = false;
     page.on('pageerror', error => errors.push(error.message));
@@ -81,10 +84,27 @@ try {
     const after = await page.evaluate(async user => (await import('/src/vault/accountVault.mjs')).createAccountVault(user).exportEncryptedVault(), user);
     assert.equal(after, before, 'Unlock attempts must not modify encrypted data');
     if (!process.argv.includes('--reproduce')) {
+      assert.ok(accountStorage.snapshot()?.record, `Verified local vault must reach account storage: ${await page.locator('.vault-overview').innerText()}`);
+      // Simulate eviction of both the encrypted local record and sync metadata.
+      // The same account must reload its ciphertext, not offer a new password.
+      await page.evaluate(async user => {
+        const key = (await import('/src/vault/accountVault.mjs')).accountVaultStorageKey(user);
+        localStorage.removeItem(key); localStorage.removeItem(`${key}.sync`);
+      }, user);
+      await auditReload(page);
+      await page.getByRole('button', { name: 'Unlock vault', exact: true }).waitFor();
+      assert.equal(await page.getByRole('button', { name: 'Create vault', exact: true }).count(), 0);
+      await field.fill(phrase);
+      await page.getByRole('button', { name: 'Unlock vault', exact: true }).click();
+      await page.getByRole('button', { name: 'Details for Preserved item', exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Lock vault', exact: true }).click();
+      console.log(`PASS: account ciphertext survives local storage eviction at ${width}px`);
       membership = true;
+      accountStorage.reset();
       await page.evaluate(async user => {
         const { accountVaultStorageKey } = await import('/src/vault/accountVault.mjs');
         localStorage.removeItem(accountVaultStorageKey(user));
+        localStorage.removeItem(`${accountVaultStorageKey(user)}.sync`);
       }, user);
       await auditReload(page);
       await page.getByRole('button', { name: 'Create vault', exact: true }).waitFor();

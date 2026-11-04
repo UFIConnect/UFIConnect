@@ -39,7 +39,7 @@ jobs:
         if: matrix.group == 'core'
       - run: node --test scripts/local-web-workbench.test.mjs scripts/local-phone-access.test.mjs
         if: matrix.group == 'core'
-      - run: node --test scripts/account-vault.test.mjs scripts/vault-crypto.test.mjs scripts/vault-files.test.mjs scripts/vault-launch-preferences.test.mjs scripts/local-vault-vpn.test.mjs scripts/city-topic-targets.test.mjs
+      - run: node --test scripts/vault-sync.test.mjs scripts/account-vault.test.mjs scripts/vault-crypto.test.mjs scripts/vault-files.test.mjs scripts/vault-launch-preferences.test.mjs scripts/local-vault-vpn.test.mjs scripts/city-topic-targets.test.mjs
         if: matrix.group == 'core'
       - run: node scripts/sync-analytics-bridge.mjs --check
         if: matrix.group == 'core'

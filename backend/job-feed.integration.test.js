@@ -3,7 +3,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createAppHarness, member } = require('./test-support/app-harness');
 const actualJobs = require('./job-posts');
-const actualExpanded = require('./expanded-feed-sources');
 
 test('real opportunities route merges native jobs before source/search/work/date filters and pagination', async t => {
   const now = new Date().toISOString();
@@ -18,9 +17,11 @@ test('real opportunities route merges native jobs before source/search/work/date
   const readers = []; let unavailable = false;
   const app = await createAppHarness({ modules: {
     './job-posts': { ...actualJobs, createJobPosts: () => ({ list: async id => { readers.push(id); if (unavailable) throw Error('Synthetic database outage'); return native; }, get: async (_id, id) => native.find(job => job.id === id) }) },
-    './expanded-feed-sources': { ...actualExpanded, createExpandedFeedSources: options => ({ ...actualExpanded.createExpandedFeedSources(options), weworkremotely: async () => [external] }) },
   } });
   t.after(() => app.close()); app.seedUser(member('job-reader'));
+  // External jobs now come from the shared pipeline catalog, not a live
+  // provider request. Keep this route test focused on merging and filtering.
+  app.seedJobCatalog([external]);
   const request = query => app.request('/opportunities?type=job&sort=title&' + query, { userId: 'job-reader' });
   assert.equal((await app.request('/opportunities?type=job')).status, 401);
   const first = await request('limit=20'); assert.equal(first.status, 200);

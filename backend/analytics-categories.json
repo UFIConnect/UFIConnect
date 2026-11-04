@@ -4183,5 +4183,149 @@
     "platform": "web",
     "group": "Command Center accounts category",
     "viewType": "tab"
+  },
+  "home_source_crossref": {
+    "category": "home_source_crossref",
+    "path": "/analytics-tabs/home-source/crossref",
+    "title": "Home source: Crossref",
+    "label": "Home source: Crossref",
+    "platform": "web",
+    "group": "Home source",
+    "viewType": "tab"
+  },
+  "home_source_datacite": {
+    "category": "home_source_datacite",
+    "path": "/analytics-tabs/home-source/datacite",
+    "title": "Home source: DataCite",
+    "label": "Home source: DataCite",
+    "platform": "web",
+    "group": "Home source",
+    "viewType": "tab"
+  },
+  "home_source_zenodo": {
+    "category": "home_source_zenodo",
+    "path": "/analytics-tabs/home-source/zenodo",
+    "title": "Home source: Zenodo",
+    "label": "Home source: Zenodo",
+    "platform": "web",
+    "group": "Home source",
+    "viewType": "tab"
+  },
+  "home_source_openalex": {
+    "category": "home_source_openalex",
+    "path": "/analytics-tabs/home-source/openalex",
+    "title": "Home source: OpenAlex",
+    "label": "Home source: OpenAlex",
+    "platform": "web",
+    "group": "Home source",
+    "viewType": "tab"
+  },
+  "video_source_crossref": {
+    "category": "video_source_crossref",
+    "path": "/analytics-tabs/video-source/crossref",
+    "title": "Video source: Crossref",
+    "label": "Video source: Crossref",
+    "platform": "web",
+    "group": "Video source",
+    "viewType": "tab"
+  },
+  "video_source_datacite": {
+    "category": "video_source_datacite",
+    "path": "/analytics-tabs/video-source/datacite",
+    "title": "Video source: DataCite",
+    "label": "Video source: DataCite",
+    "platform": "web",
+    "group": "Video source",
+    "viewType": "tab"
+  },
+  "video_source_zenodo": {
+    "category": "video_source_zenodo",
+    "path": "/analytics-tabs/video-source/zenodo",
+    "title": "Video source: Zenodo",
+    "label": "Video source: Zenodo",
+    "platform": "web",
+    "group": "Video source",
+    "viewType": "tab"
+  },
+  "video_source_openalex": {
+    "category": "video_source_openalex",
+    "path": "/analytics-tabs/video-source/openalex",
+    "title": "Video source: OpenAlex",
+    "label": "Video source: OpenAlex",
+    "platform": "web",
+    "group": "Video source",
+    "viewType": "tab"
+  },
+  "music_source_crossref": {
+    "category": "music_source_crossref",
+    "path": "/analytics-tabs/music-source/crossref",
+    "title": "Music source: Crossref",
+    "label": "Music source: Crossref",
+    "platform": "web",
+    "group": "Music source",
+    "viewType": "tab"
+  },
+  "music_source_datacite": {
+    "category": "music_source_datacite",
+    "path": "/analytics-tabs/music-source/datacite",
+    "title": "Music source: DataCite",
+    "label": "Music source: DataCite",
+    "platform": "web",
+    "group": "Music source",
+    "viewType": "tab"
+  },
+  "music_source_zenodo": {
+    "category": "music_source_zenodo",
+    "path": "/analytics-tabs/music-source/zenodo",
+    "title": "Music source: Zenodo",
+    "label": "Music source: Zenodo",
+    "platform": "web",
+    "group": "Music source",
+    "viewType": "tab"
+  },
+  "music_source_openalex": {
+    "category": "music_source_openalex",
+    "path": "/analytics-tabs/music-source/openalex",
+    "title": "Music source: OpenAlex",
+    "label": "Music source: OpenAlex",
+    "platform": "web",
+    "group": "Music source",
+    "viewType": "tab"
+  },
+  "maps_source_crossref": {
+    "category": "maps_source_crossref",
+    "path": "/analytics-tabs/maps-source/crossref",
+    "title": "City source: Crossref",
+    "label": "City source: Crossref",
+    "platform": "web",
+    "group": "City source",
+    "viewType": "tab"
+  },
+  "maps_source_datacite": {
+    "category": "maps_source_datacite",
+    "path": "/analytics-tabs/maps-source/datacite",
+    "title": "City source: DataCite",
+    "label": "City source: DataCite",
+    "platform": "web",
+    "group": "City source",
+    "viewType": "tab"
+  },
+  "maps_source_zenodo": {
+    "category": "maps_source_zenodo",
+    "path": "/analytics-tabs/maps-source/zenodo",
+    "title": "City source: Zenodo",
+    "label": "City source: Zenodo",
+    "platform": "web",
+    "group": "City source",
+    "viewType": "tab"
+  },
+  "maps_source_openalex": {
+    "category": "maps_source_openalex",
+    "path": "/analytics-tabs/maps-source/openalex",
+    "title": "City source: OpenAlex",
+    "label": "City source: OpenAlex",
+    "platform": "web",
+    "group": "City source",
+    "viewType": "tab"
   }
 }

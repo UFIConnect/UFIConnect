@@ -23,7 +23,7 @@ async function fixture(t) {
   await createTopicRoutingAgents({db,topics:[]}).initialize();
   const service=createContentReports({db});
   async function worker() {
-    const app=await createAppHarness({connected:true,env:{OFFICE_TOKEN:'synthetic-office'},query:async(sql,params)=>{
+    const app=await createAppHarness({connected:true,modules:{'./suspicious-devices':require('./suspicious-devices')},env:{OFFICE_TOKEN:'synthetic-office'},query:async(sql,params)=>{
       if(sql.startsWith('SELECT id FROM auth_sessions'))return{rows:[{id:params[0]}],rowCount:1};
       return query(sql,params);
     },withClient:fn=>fn({query})});

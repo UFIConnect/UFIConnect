@@ -28,7 +28,8 @@ async function database(t) {
   return pg;
 }
 async function appFor(t, pg, extra = {}) {
-  const app = await createAppHarness({ connected: true, query: async (sql, params) => {
+  const app = await createAppHarness({ connected: true,
+    modules: { './suspicious-devices': require('./suspicious-devices') }, query: async (sql, params) => {
     if (sql.startsWith('SELECT id FROM auth_sessions')) return { rows: [{ id: params[0] }] };
     return pg.query(sql, params);
   }, ...extra });

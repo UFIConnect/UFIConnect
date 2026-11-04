@@ -1,3 +1,4 @@
+import { installAuditVaultStorage } from './audit-vault-storage-fixture.mjs';
 // Exercise device imports with synthetic files; all API calls stay in the local
 // harness and no vault contents are uploaded to a service.
 import assert from 'node:assert/strict';
@@ -33,7 +34,8 @@ try {
   browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
   for (const width of [1440, 390]) {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, isMobile: width < 600, hasTouch: width < 600, acceptDownloads: true });
-    const page = await context.newPage(); page.setDefaultTimeout(12_000);
+    const page = await context.newPage();
+    await installAuditVaultStorage(page, 'vault-files-audit'); page.setDefaultTimeout(12_000);
     const errors = [], outbound = [];
     let vaultPaid = false;
     let releaseCheckout;

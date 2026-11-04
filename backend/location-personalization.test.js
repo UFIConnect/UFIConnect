@@ -233,7 +233,7 @@ test('ranked source feed can favor a nearby older post while explicit newest kee
   const now = Date.now();
   const inventory = [['us-newer', 'United States', 60000], ['ca-older', 'Canada', 120000]].map(([id, country, age]) => ({
     id: `github_regional_${id}`, source: 'github', topic: 'Science', title: 'Open science research project update',
-    content: 'Researchers share project methods and discuss new science findings with the community.',
+    content: `Researchers in ${country} share project methods and discuss new science findings with the community.`,
     location: country, source_url: `https://github.com/example/${id}`, author_name: 'Research project',
     post_created_at: new Date(now - age).toISOString(), media_type: null,
   }));

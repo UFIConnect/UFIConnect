@@ -88,6 +88,7 @@ async function exportAccountData(db, userId) {
       FROM users WHERE id=$1`);
     const result = { exportedAt: new Date().toISOString(), formatVersion: 2, profile, billing };
     const collections = {
+      encryptedVault: `SELECT revision,record,updated_at AS "updatedAt" FROM account_vaults WHERE account_id=$1`,
       inboxReadReceipts: `SELECT item_id AS "itemId",read_at AS "readAt" FROM inbox_read_receipts WHERE user_id=$1 ORDER BY read_at,item_id`,
       businessTeamSeats: `SELECT owner_id AS "ownerId",member_id AS "memberId",joined_at AS "joinedAt"
         FROM business_team_members WHERE owner_id=$1 OR member_id=$1 ORDER BY owner_id,joined_at,member_id`,

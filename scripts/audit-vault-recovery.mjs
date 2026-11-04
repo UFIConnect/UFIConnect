@@ -1,3 +1,4 @@
+import { installAuditVaultStorage } from './audit-vault-storage-fixture.mjs';
 // Synthetic records only; all external requests are blocked.
 import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -26,7 +27,8 @@ try {
   browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined });
   for (const width of [1440, 390]) {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, acceptDownloads: true });
-    const page = await context.newPage(); page.setDefaultTimeout(15000);
+    const page = await context.newPage();
+    const accountStorage = await installAuditVaultStorage(page, user); page.setDefaultTimeout(15000);
     const errors = [], outbound = [];
     page.on('pageerror', error => errors.push(error.message));
     page.on('request', request => outbound.push(request.url() + (request.postData() || '')));
@@ -86,6 +88,7 @@ try {
       const vault = (await import('/src/vault/accountVault.mjs')).createAccountVault(user);
       await vault.restoreEncryptedVault(current, oldPhrase); await vault.enableDeviceUnlock(oldPhrase);
     }, { user, current: fixture.current, oldPhrase });
+    accountStorage.seed(JSON.parse(fixture.current));
     await auditReload(page);
     await page.getByRole('button', { name: 'Forgot vault password?', exact: true }).click();
     recovery = page.getByRole('dialog', { name: 'Forgot vault password?', exact: true });

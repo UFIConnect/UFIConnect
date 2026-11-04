@@ -15,6 +15,7 @@ const { BUSINESS_INDUSTRY_SCHEMA } = require('./business-industries');
 const { BUSINESS_ACCOUNT_SCHEMA } = require('./business-enrollment');
 const { CREATOR_ANALYTICS_SCHEMA } = require('./creator-analytics');
 const { UFI_VAULT_SCHEMA } = require('./ufi-vault');
+const { VAULT_STORAGE_SCHEMA } = require('./vault-storage');
 const { REPORT_SCHEMA } = require('./content-reports');
 const { MANAGED_VPN_SCHEMA } = require('./managed-vpn-schema');
 const { INBOX_RECEIPTS_SCHEMA } = require('./inbox-receipts');
@@ -55,7 +56,7 @@ async function schema(pg) {
   for (const sql of BUSINESS_POST_SCHEMA) await pg.exec(sql);
   for (const sql of BUSINESS_INDUSTRY_SCHEMA) await pg.exec(sql);
   for (const sql of BUSINESS_ACCOUNT_SCHEMA) await pg.exec(sql);
-  for (const sql of [...CREATOR_ANALYTICS_SCHEMA, ...UFI_VAULT_SCHEMA, ...REPORT_SCHEMA]) await pg.exec(sql);
+  for (const sql of [...CREATOR_ANALYTICS_SCHEMA, ...UFI_VAULT_SCHEMA, ...VAULT_STORAGE_SCHEMA, ...REPORT_SCHEMA]) await pg.exec(sql);
   for (const sql of SNAP_SCHEMA) await pg.exec(sql);
   for (const sql of MESSAGE_MEDIA_SCHEMA) await pg.exec(sql);
 }
@@ -81,6 +82,7 @@ async function seed(pg) {
     email: 'carol@example.invalid', token_hash: 'secret-invitation-hash', expires_at: '2027-01-01T00:00:00Z' });
   await insert('community_groups', { id: 'shared-group', name: 'Shared group', category: 'Test', created_by: alice, member_count: 3 });
   for (const [uid, prefix] of [[alice, 'a'], [bob, 'b']]) {
+    await insert('account_vaults', { account_id: uid, revision: 1, record: JSON.stringify({ syntheticEncryptedRecord: prefix }) });
     await insert('vault_vpn_locations', { id: uid, user_id: uid, platform: 'ios', name: `${prefix}-vpn-profile`, country: 'Canada' });
     await insert('managed_vpn_devices', { id: uid, user_id: uid, gateway_id: 'ufi-de-1', label: `${prefix}-vpn-device`,
       enrollment_mode: prefix === 'a' ? 'profile' : 'native', registration_auth_version: prefix === 'a' ? 0 : null,
@@ -177,6 +179,7 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
   await t.test('exports every implemented collection with account isolation and no credentials', async () => {
     const { db, trace } = harness(pg);
     const exported = await exportAccountData(db, alice);
+    assert.deepEqual(exported.encryptedVault.map(value => value.record), [{ syntheticEncryptedRecord: 'a' }]);
     assert.equal(trace[0], 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     assert.equal(trace.at(-1), 'COMMIT');
     assert.equal(exported.profile.name, 'Alice');
@@ -229,6 +232,7 @@ test('privacy operations use authoritative PostgreSQL data and commit before cac
   await t.test('purges owned records and cascades while preserving unrelated members and shared communities', async () => {
     const { db } = harness(pg);
     await deleteAccountData(db, alice);
+    assert.deepEqual((await pg.query('SELECT account_id FROM account_vaults')).rows, [{ account_id: bob }]);
     assert.deepEqual((await pg.query('SELECT id FROM users ORDER BY id')).rows.map(row => row.id), [bob, carol]);
     for (const table of [...tables].filter(name => !['users', 'community_groups', 'follows', 'connections', 'blocks', 'reports', 'community_posts', 'post_comments', 'direct_messages'].includes(name))) {
       assert.equal((await pg.query(`SELECT COUNT(*)::integer AS count FROM ${table} WHERE user_id=$1`, [alice])).rows[0].count, 0, table);

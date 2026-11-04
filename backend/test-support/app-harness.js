@@ -59,6 +59,15 @@ async function createAppHarness({ env = {}, connected = false, query, withClient
       if (name === 'express') return expressFactory;
       if (name === 'dotenv') return { config() {} };
       if (name === './db') return db;
+      if (name === './suspicious-devices') return {
+        ...localRequire(name), createSuspiciousDevices: options => ({
+          ...localRequire(name).createSuspiciousDevices(options),
+          // Route fixtures have synthetic sessions and partial schemas. Device
+          // enforcement has real-database coverage in suspicious-devices.test;
+          // security integration tests explicitly select the real module.
+          guard: async (_req, _res, next) => next(),
+        }),
+      };
       if (name === './snaps') return {
         ...localRequire(name), createSnaps: options => ({
           ...localRequire(name).createSnaps(options),
@@ -111,6 +120,7 @@ async function createAppHarness({ env = {}, connected = false, query, withClient
       setTokenExchange(handler) { postForm = handler; },
       setPostJSONWithMeta(handler) { postJSONWithMeta = handler; },
       setAIText(handler) { callOpenAIText = handler; },
+      seedJobCatalog(jobs) { liveJobCatalogCache = { jobs, expiresAt: Date.now() + 60000, sourceLimit: LIVE_JOB_SOURCE_LIMIT, pending: null }; },
       setAIImage(handler) { callOpenAIImage = handler; },
       setConfiguredVideoGenerator(handler) { callConfiguredVideoGenerator = handler; },
       setAIVideoCreate(handler) { createOpenAIVideoJob = handler; },
