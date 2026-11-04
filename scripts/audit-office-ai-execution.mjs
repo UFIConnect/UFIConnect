@@ -47,7 +47,7 @@ async function mock(route) {
     return reply({task});
   }
   if(pathname==='/office/ai/terminal')return reply({sessions:[{id:terminalId,status:'completed',command:'npm test',createdAt:time()}],capabilities:{available:true,repository:'fixture/office'}});
-  if(pathname===`/office/ai/terminal/${terminalId}`)return reply({session:{id:terminalId,status:'completed',command:'npm test',exitCode:0,ref:'main',runUrl:'https://example.test/run/1'},output:'Synthetic terminal output: all 24 tests passed.',outputTruncated:false});
+  if(pathname===`/office/ai/terminal/${terminalId}`){await new Promise(resolve=>setTimeout(resolve,100));return reply({session:{id:terminalId,status:'completed',command:'npm test',exitCode:0,ref:'main',runUrl:'https://example.test/run/1'},output:'Synthetic terminal output: all 24 tests passed.',outputTruncated:false});}
   if(pathname==='/office/ai/conversations' && method==='GET')return reply({conversations:[...conversations.values()].map(({id,title,version,updatedAt})=>({id,title,version,updatedAt}))});
   if(pathname==='/office/ai/conversations' && method==='POST') {
     let conversation=conversations.get(body.clientRequestId);
@@ -84,7 +84,7 @@ try {
   await page.getByRole('button',{name:'Continue task',exact:true}).click();await page.getByText('Checks passed and the requested work is complete.',{exact:true}).first().waitFor();
   await page.getByText('Command output',{exact:true}).click();await page.getByText('Synthetic terminal output: all 24 tests passed.',{exact:true}).waitFor();
   report.checks.push('confirmation and checkpoint continuation retain the task and show terminal output in conversation');
-  await page.getByRole('button',{name:'Open in Terminal',exact:true}).click();await page.getByLabel('Command output',{exact:true}).waitFor();assert.match(await page.getByLabel('Command output',{exact:true}).innerText(),/all 24 tests passed/);
+  await page.getByRole('button',{name:'Open in Terminal',exact:true}).click();await page.getByLabel('Command output',{exact:true}).filter({hasText:'Synthetic terminal output: all 24 tests passed.'}).waitFor();assert.match(await page.getByLabel('Command output',{exact:true}).innerText(),/all 24 tests passed/);
   await page.getByRole('button',{name:'Work',exact:true}).click();
   await page.reload();await page.locator('.office-ai-saved-chats').getByRole('button',{name:'Run the requested checks and show their results.',exact:true}).click();
   await page.getByLabel('Task execution',{exact:true}).waitFor();assert.equal(taskCreates,1);
