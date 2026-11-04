@@ -541,6 +541,7 @@ function HealthBadge({ health }) {
     critical: { bg: 'rgba(239,68,68,.1)',   color: '#f87171', label: 'Critical' },
     degraded: { bg: 'rgba(251,191,36,.12)', color: '#fbbf24', label: 'Degraded' },
     paused:   { bg: 'rgba(239,68,68,.1)',   color: '#f87171', label: 'Paused' },
+    disabled: { bg: 'rgba(148,163,184,.12)', color: '#94a3b8', label: 'Disabled' },
     gated:    { bg: 'rgba(148,163,184,.12)',color: '#94a3b8', label: 'Gated' },
     unavailable: { bg: 'rgba(148,163,184,.12)', color: '#94a3b8', label: 'Unavailable' },
     unknown: { bg: 'rgba(148,163,184,.12)', color: '#94a3b8', label: 'Not reported' },
@@ -588,6 +589,11 @@ function AgentsView({ agents, triggerAgent, triggering }) {
               <p style={{ fontSize: 12, color: '#64748b', lineHeight: 1.65, margin: '0 0 14px' }}>
                 {ag.description}
               </p>
+              {ag.health?.setupRequired && (
+                <p style={{ fontSize: 12, color: '#fbbf24', lineHeight: 1.5, margin: '0 0 14px' }}>
+                  Setup required. Add the missing provider settings in Office Setup to enable pulls.
+                </p>
+              )}
               {ag.health && (
                 <div style={{
                   display: 'flex', gap: 16, marginBottom: 12, padding: '7px 10px',
@@ -998,6 +1004,9 @@ function SourcesView({ status, triggerAgent, triggering }) {
     paused:   { dot: '#ef4444', bg: 'rgba(239,68,68,.07)',  border: 'rgba(239,68,68,.22)',  label: 'Paused' },
     pro:      { dot: '#f59e0b', bg: 'rgba(245,158,11,.07)', border: 'rgba(245,158,11,.2)',  label: 'Pro' },
     gated:    { dot: '#64748b', bg: 'rgba(148,163,184,.06)', border: 'rgba(148,163,184,.18)', label: 'Gated' },
+    disabled: { dot: '#64748b', bg: 'rgba(148,163,184,.06)', border: 'rgba(148,163,184,.18)', label: 'Disabled' },
+    unavailable: { dot: '#64748b', bg: 'rgba(148,163,184,.06)', border: 'rgba(148,163,184,.18)', label: 'Unavailable' },
+    unknown:  { dot: '#64748b', bg: 'rgba(148,163,184,.06)', border: 'rgba(148,163,184,.18)', label: 'Not reported' },
   };
 
   return (
@@ -1009,7 +1018,7 @@ function SourcesView({ status, triggerAgent, triggering }) {
         <StatCard icon="SRC" label="Total Sources"  value={src?.total ?? '—'}    sub="active workers"            color="#60a5fa" />
         <StatCard icon="OK" label="Healthy"         value={src?.healthy ?? '—'}  sub="fetching or fallback-backed" color="#4ade80" />
         <StatCard icon="⏳" label="Starting"         value={src?.starting ?? '—'} sub="awaiting first fetch"       color="#94a3b8" />
-        <StatCard icon="!" label="Degraded"         value={src?.degraded ?? '—'} sub=">=3 consecutive errors"    color="#fbbf24" />
+        <StatCard icon="!" label="Degraded"         value={src?.degraded ?? '—'} sub="setup, errors or stale pulls" color="#fbbf24" />
         <StatCard icon="PZ" label="Paused"          value={src?.paused ?? '—'}   sub="circuit breaker tripped"   color="#f87171" />
         <StatCard icon="POST" label="Total Seen"
           value={workers.reduce((s, w) => s + (w.postCount || 0), 0).toLocaleString()}
@@ -1023,7 +1032,7 @@ function SourcesView({ status, triggerAgent, triggering }) {
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 12 }}>
           {workers.map(w => {
-            const cfg = statusCfg[w.status] || statusCfg.healthy;
+            const cfg = statusCfg[w.status] || statusCfg.unknown;
             const errorRate = w.fetchCount > 0 ? ((w.totalErrors / w.fetchCount) * 100).toFixed(1) : '0.0';
             return (
               <div key={w.id} style={{
@@ -1066,6 +1075,12 @@ function SourcesView({ status, triggerAgent, triggering }) {
                     {sourceRateSummary(w, { source: true })}
                     {w.cycleMinutes != null && <> · topic cycle at current interval {w.cycleMinutes}m</>}
                     {w.refreshTtlMinutes != null && <> · live refresh TTL {w.refreshTtlMinutes}m</>}
+                  </div>
+                )}
+
+                {w.setupRequired && (
+                  <div style={{ fontSize: 11, color: '#fbbf24', lineHeight: 1.5 }}>
+                    Setup required. Add the missing provider settings in Office Setup to enable pulls.
                   </div>
                 )}
 

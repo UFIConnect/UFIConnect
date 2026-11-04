@@ -15,11 +15,11 @@ test('source rate metadata keeps ceiling, scheduler interval and query coverage 
     collectionIntervalMs: 300000, cycleMinutes: 15,
   });
   const unknown = sourceRateMetadata('github');
-  assert.equal(unknown.pullLimitLabel, '1 pull / 240s');
+  assert.equal(unknown.pullLimitLabel, '1 pull / 20s');
   assert.equal(unknown.collectionIntervalMs, null); assert.equal(unknown.cycleMinutes, null);
   assert.deepEqual(sanitizeSourceRateMetadata({ pullLimit: { windowSeconds: 30, maxPulls: 12, minSpacingMs: 1 } }), {});
   const safe = sanitizeSourceRateMetadata({ ...unknown, pullLimitLabel: 'secret arbitrary text', collectionIntervalMs: Infinity });
-  assert.equal(safe.pullLimitLabel, '1 pull / 240s'); assert.equal(safe.collectionIntervalMs, null);
+  assert.equal(safe.pullLimitLabel, '1 pull / 20s'); assert.equal(safe.collectionIntervalMs, null);
 });
 
 async function fixture(t, role = 'api') {
@@ -49,7 +49,7 @@ test('all source metadata endpoints reflect saved limits without a restart or fa
   let agents = await read('/office/agents');
   assert.equal(agents.agents.bluesky.interval, '12 pulls / 30s');
   assert.equal(agents.agents.medium.interval, '14 pulls / 90s');
-  assert.equal(agents.agents.github.interval, '1 pull / 240s');
+  assert.equal(agents.agents.github.interval, '1 pull / 20s');
   for (const id of ['remotive', 'muse', 'crossref', 'datacite', 'zenodo', 'openalex']) {
     assert.ok(agents.agents[id].pullLimit, id + ' is part of the common source metadata');
     assert.equal(agents.agents[id].observation.collectionIntervalMs, null);
@@ -84,24 +84,25 @@ test('all source metadata endpoints reflect saved limits without a restart or fa
   }
 });
 
-test('pipeline observations report actual intervals separately and preserve disabled source state', async t => {
+test('pipeline observations report actual intervals separately and mark missing source setup degraded', async t => {
   const app = await fixture(t, 'pipeline');
   app.refreshControl.mode = 'critical';
   app.startContinuousWorkers(); app.startJobBoardSweeps();
   const response = await app.request('/office/agents', { headers });
   assert.equal(response.status, 200);
   const agents = response.data.agents;
-  assert.equal(agents.github.pullLimit.minSpacingMs, 240000);
-  assert.equal(agents.github.collectionIntervalMs, 300000);
-  assert.equal(agents.github.cycleMinutes, 5);
-  assert.equal(agents.github.observation.collectionIntervalMs, 300000);
-  assert.equal(agents.linkedin.observation.status, 'disabled');
+  const scheduled = app.getSourceCollectionScheduler().status().sources.find(source => source.id === 'github');
+  assert.equal(agents.github.pullLimit.minSpacingMs, 20000);
+  assert.equal(agents.github.collectionIntervalMs, scheduled.intervalMs);
+  assert.equal(agents.github.cycleMinutes, Math.round(scheduled.expectedCycleMs / 6000) / 10);
+  assert.equal(agents.github.observation.collectionIntervalMs, scheduled.intervalMs);
+  assert.equal(agents.linkedin.observation.status, 'degraded');
   assert.equal(app.SOURCE_CONFIG.bluesky.minSpacingMs, 2500);
   assert.equal(app.SOURCE_CONFIG.medium.minSpacingMs, 6429);
-  assert.equal(app.SOURCE_CONFIG.github.minSpacingMs, 240000);
+  assert.equal(app.SOURCE_CONFIG.github.minSpacingMs, 20000);
   assert.equal(app.getSourceCollectionScheduler().status().active, 0);
   const reply = await app.request('/office/agents/github/chat', { method: 'POST', headers, body: { message: 'How often do you refresh?' } });
   assert.equal(reply.status, 200);
-  assert.match(reply.data.reply, /Pull limit: 1 pull \/ 240s/);
-  assert.match(reply.data.reply, /Scheduled interval: 300s/);
+  assert.match(reply.data.reply, /Pull limit: 1 pull \/ 20s/);
+  assert.ok(reply.data.reply.includes(`Scheduled interval: ${scheduled.intervalMs / 1000}s`));
 });

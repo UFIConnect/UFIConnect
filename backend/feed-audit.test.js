@@ -2,7 +2,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { PGlite } = require('@electric-sql/pglite');
-const { createFeedAudit, normalizePolicy } = require('./feed-audit');
+const { createFeedAudit, migrateLegacySourcePullLimits, normalizePolicy, DEFAULT_POLICY } = require('./feed-audit');
+const { LEGACY_SLOW_SOURCE_PULL_LIMITS } = require('./source-pull-limits');
 const makePost = (id, extra = {}) => ({ id: String(id), source: 'reddit', title: `Engineering report ${id}`, content: `A useful engineering article containing distinct content number ${id}.`, sourceUrl: `https://example.org/posts/${id}`, ...extra });
 const fixture = async () => {
   const pg = new PGlite(); let time = Date.now();
@@ -115,6 +116,39 @@ test('old stored policies gain pull defaults and nested policy snapshots cannot 
   await f.audit.block('bluesky', 'Review source');
   const blocked = f.audit.policy(); blocked.blockedSources[0].reason = 'Changed externally';
   assert.equal(f.audit.policy().blockedSources[0].reason, 'Review source');
+});
+
+test('persisted slow defaults migrate once while custom source ceilings and policy settings survive', async t => {
+  const f = await fixture(); t.after(() => f.pg.close());
+  const legacy = { ...structuredClone(DEFAULT_POLICY), maxPerSourcePerMinute: 80,
+    sourcePullLimits: { ...DEFAULT_POLICY.sourcePullLimits, ...LEGACY_SLOW_SOURCE_PULL_LIMITS,
+      arxiv: { windowSeconds: 600, maxPulls: 1 }, medium: { windowSeconds: 90, maxPulls: 3 },
+      future_provider: { windowSeconds: 600, maxPulls: 1 } } };
+  await f.db.query('UPDATE office_feed_policy SET settings=$1::jsonb WHERE id=1', [JSON.stringify(legacy)]);
+  const api = createFeedAudit(f.db, f.options), pipeline = createFeedAudit(f.db, f.options);
+  await Promise.all([api.initialize(), pipeline.initialize()]);
+  assert.equal(api.collectionState('github').minSpacingMs, 240000, 'Startup preserves legacy policy during a rolling deploy');
+  assert.equal((await f.db.query('SELECT settings FROM office_feed_policy WHERE id=1')).rows[0].settings.sourcePullLimitsVersion, undefined);
+  await Promise.all([migrateLegacySourcePullLimits(f.db), migrateLegacySourcePullLimits(f.db)]);
+  await Promise.all([api.reload(), pipeline.reload()]);
+  for (const audit of [api, pipeline]) {
+    for (const id of Object.keys(LEGACY_SLOW_SOURCE_PULL_LIMITS).filter(id => id !== 'arxiv')) {
+      assert.equal(audit.collectionState(id).minSpacingMs, 20000, id);
+    }
+    assert.equal(audit.collectionState('arxiv').minSpacingMs, 600000);
+    assert.equal(audit.collectionState('medium').minSpacingMs, 30000);
+    assert.equal(audit.collectionState('future_provider').minSpacingMs, 600000);
+    assert.equal(audit.policy().maxPerSourcePerMinute, 80);
+    assert.equal(Object.hasOwn(audit.policy(), 'sourcePullLimitsVersion'), false, 'Migration metadata is internal');
+  }
+  const { rows } = await f.db.query('SELECT settings FROM office_feed_policy WHERE id=1');
+  assert.equal(rows[0].settings.sourcePullLimitsVersion, 2);
+  assert.equal(rows[0].settings.sourcePullLimits.github.windowSeconds, 20, 'Upgrade is persisted across processes');
+  await api.configure({ sourcePullLimits: { github: { windowSeconds: 240, maxPulls: 1 } } });
+  await migrateLegacySourcePullLimits(f.db);
+  await pipeline.initialize();
+  assert.equal(pipeline.collectionState('github').minSpacingMs, 240000, 'An explicit later slow limit is not migrated again');
+  await assert.rejects(api.configure({ sourcePullLimitsVersion: 1 }), /Unknown anti-flood setting/);
 });
 
 test('concurrent partial source pull settings preserve independently updated entries', async t => {

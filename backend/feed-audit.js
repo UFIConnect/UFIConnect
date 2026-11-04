@@ -2,7 +2,7 @@
 
 const { createHash } = require('node:crypto');
 const { safeUrl } = require('./post-pipeline');
-const { DEFAULT_SOURCE_PULL_LIMITS, normalizeSourcePullLimits, sourcePullLimit } = require('./source-pull-limits');
+const { DEFAULT_SOURCE_PULL_LIMITS, LEGACY_SLOW_SOURCE_PULL_LIMITS, normalizeSourcePullLimits, sourcePullLimit } = require('./source-pull-limits');
 const DEFAULT_POLICY = Object.freeze({ enabled: true, maxPerSourcePerMinute: 300,
   maxPerAuthorPerMinute: 25, duplicateWindowSeconds: 300, targetApprovalPct: 85,
   minimumSample: 30, cooldownSeconds: 60, sourcePullLimits: DEFAULT_SOURCE_PULL_LIMITS });
@@ -48,6 +48,25 @@ function normalizePolicy(settings, current = DEFAULT_POLICY) {
   return next;
 }
 
+// Run after every API and Pipeline instance supports the new pull ceilings.
+// Startup only reads existing policy so a rolling deployment cannot interrupt
+// older instances with a policy format or limit they do not understand.
+async function migrateLegacySourcePullLimits(db) {
+  // Upgrade only the previous shipped defaults, once. This operates on the
+  // locked current row, so a concurrent administrator edit is not overwritten.
+  // Later explicit slower ceilings remain valid, including the old values.
+  await db.query(`WITH migration AS (SELECT $1::jsonb AS previous, $2::jsonb AS next)
+    UPDATE office_feed_policy SET settings=jsonb_set(settings, '{sourcePullLimits}',
+    COALESCE((SELECT jsonb_object_agg(key, CASE WHEN value = (migration.previous -> key)
+      THEN migration.next -> key ELSE value END)
+      FROM jsonb_each(COALESCE(settings->'sourcePullLimits','{}'::jsonb))), '{}'::jsonb), true)
+    || '{"sourcePullLimitsVersion":2}'::jsonb, updated_at=NOW()
+    FROM migration
+    WHERE id=1 AND NOT (settings ? 'sourcePullLimitsVersion')
+      AND (NOT (settings ? 'sourcePullLimits') OR jsonb_typeof(settings->'sourcePullLimits')='object')`,
+    [JSON.stringify(LEGACY_SLOW_SOURCE_PULL_LIMITS), JSON.stringify(DEFAULT_SOURCE_PULL_LIMITS)]);
+}
+
 function createFeedAudit(db, { role = 'api', now = Date.now, schedule = setTimeout, requirePolicy = false, onPolicyChange = () => {} } = {}) {
   let policy = normalizePolicy({}), blocked = new Map(), ready = !requirePolicy;
   let pending = new Map(), recent = new Map(), timer = null, flushing = false, lastCleanup = 0;
@@ -61,7 +80,8 @@ function createFeedAudit(db, { role = 'api', now = Date.now, schedule = setTimeo
   async function initialize() {
     if (!db.isConnected()) return;
     await db.query(`CREATE TABLE IF NOT EXISTS office_feed_policy (id INTEGER PRIMARY KEY CHECK(id=1), settings JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
-    await db.query(`INSERT INTO office_feed_policy(id, settings) VALUES (1,$1::jsonb) ON CONFLICT DO NOTHING`, [JSON.stringify(DEFAULT_POLICY)]);
+    await db.query(`INSERT INTO office_feed_policy(id, settings) VALUES (1,$1::jsonb) ON CONFLICT DO NOTHING`,
+      [JSON.stringify({ ...DEFAULT_POLICY, sourcePullLimitsVersion: 2 })]);
     await db.query(`CREATE TABLE IF NOT EXISTS office_feed_source_blocks (source TEXT PRIMARY KEY, reason TEXT NOT NULL, blocked_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
     await db.query(`CREATE TABLE IF NOT EXISTS office_feed_audit (id TEXT PRIMARY KEY, post_id TEXT, source TEXT NOT NULL, title TEXT, content TEXT, source_url TEXT, status TEXT NOT NULL, reason TEXT, role TEXT, occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
     await db.query(`CREATE INDEX IF NOT EXISTS office_feed_audit_time ON office_feed_audit(occurred_at DESC, id DESC)`);
@@ -76,7 +96,8 @@ function createFeedAudit(db, { role = 'api', now = Date.now, schedule = setTimeo
         db.query('SELECT source, reason, blocked_at FROM office_feed_source_blocks ORDER BY source'),
       ]);
       if (!settings.rows[0]) throw new Error('Feed policy has not initialized.');
-      const next = normalizePolicy(settings.rows[0].settings);
+      const { sourcePullLimitsVersion, ...storedPolicy } = settings.rows[0].settings;
+      const next = normalizePolicy(storedPolicy);
       const nextBlocked = sources.rows.map(row => ({ source: row.source, reason: row.reason, blockedAt: row.blocked_at }));
       const version = JSON.stringify([next, nextBlocked]);
       policy = next; blocked = new Map(nextBlocked.map(row => [row.source, row])); ready = true;
@@ -264,4 +285,4 @@ function createFeedAudit(db, { role = 'api', now = Date.now, schedule = setTimeo
   return { initialize, reload, access, record, admit, collectionState, flush, list, detail, configure, block, unblock, summary, policy: policySnapshot, status };
 }
 
-module.exports = { createFeedAudit, DEFAULT_POLICY, normalizePolicy, REASONS };
+module.exports = { migrateLegacySourcePullLimits, createFeedAudit, DEFAULT_POLICY, normalizePolicy, REASONS };

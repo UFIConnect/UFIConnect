@@ -3,8 +3,13 @@
 const SOURCE_KEYS = Object.freeze({ openalex: ['OPENALEX_API_KEY'], reddit: ['REDDIT_CLIENT_ID', 'REDDIT_CLIENT_SECRET'],
   twitter: ['TWITTER_BEARER_TOKEN'], linkedin: ['LINKEDIN_TOKEN'], facebook: ['FACEBOOK_TOKEN'],
   twitch: ['TWITCH_CLIENT_ID', 'TWITCH_CLIENT_SECRET'], usajobs: ['USAJOBS_API_KEY', 'USAJOBS_USER_AGENT'] });
+function officeSourceReadiness(id, env = {}) {
+  const missingEnv = (Object.hasOwn(SOURCE_KEYS, id) ? SOURCE_KEYS[id] : [])
+    .filter(key => !String(env[key] || '').trim());
+  return { configured: missingEnv.length === 0, missingEnv, reason: missingEnv.length ? 'setup_required' : null };
+}
 function officeSourceReady(id, env = {}) {
-  return (Object.hasOwn(SOURCE_KEYS, id) ? SOURCE_KEYS[id] : []).every(key => Boolean(String(env[key] || '').trim()));
+  return officeSourceReadiness(id, env).configured;
 }
 
 // Use the registered worker and control inventory; activation never creates
@@ -58,4 +63,4 @@ async function activateOfficeAgents({ role, plan, checks = {}, enqueue }) {
   return { role, ...Object.fromEntries(['queued', 'checked', 'skipped', 'failed'].map(status => [status, items.filter(item => item.status === status).length])), items };
 }
 
-module.exports = { SOURCE_KEYS, officeSourceReady, planOfficeActivation, activateOfficeAgents };
+module.exports = { SOURCE_KEYS, officeSourceReadiness, officeSourceReady, planOfficeActivation, activateOfficeAgents };

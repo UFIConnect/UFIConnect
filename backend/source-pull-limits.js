@@ -2,7 +2,13 @@
 
 // Application collection budgets. These bound starts across topic workers and
 // manual refreshes; a provider's stricter quota or Retry-After still wins.
-const FALLBACK_SOURCE_PULL_LIMIT = Object.freeze({ windowSeconds: 300, maxPulls: 1 });
+const FALLBACK_SOURCE_PULL_LIMIT = Object.freeze({ windowSeconds: 20, maxPulls: 1 });
+// Used only by the one-time stored-policy migration. Preserve custom ceilings.
+const LEGACY_SLOW_SOURCE_PULL_LIMITS = Object.freeze(Object.fromEntries([
+  [240, ['github', 'arxiv', 'usajobs']],
+  [300, ['stackoverflow', 'twitter', 'linkedin', 'facebook', 'openalex']],
+  [60, ['cntraveler', 'weworkremotely', 'twitch', 'crossref', 'datacite', 'zenodo']],
+].flatMap(([windowSeconds, ids]) => ids.map(id => [id, Object.freeze({ windowSeconds, maxPulls: 1 })]))));
 const budgets = [
   [15, 8, ['reddit']],
   [20, 10, ['hackernews', 'mastodon']],
@@ -12,10 +18,8 @@ const budgets = [
   [120, 18, ['theregister', 'remoteok', 'behance']],
   [180, 20, ['indiehackers', 'smashing', 'infoq', 'mittr', 'gitlab', 'yc', 'crunchbase', 'designweb']],
   [240, 16, ['lobsters']],
-  [240, 1, ['github', 'arxiv', 'usajobs']],
-  [300, 1, ['stackoverflow', 'twitter', 'linkedin', 'facebook', 'openalex']],
-  [20, 1, ['remotive', 'muse']],
-  [60, 1, ['cntraveler', 'weworkremotely', 'twitch', 'crossref', 'datacite', 'zenodo']],
+  [20, 1, ['github', 'arxiv', 'usajobs', 'stackoverflow', 'twitter', 'linkedin', 'facebook', 'openalex',
+    'remotive', 'muse', 'cntraveler', 'weworkremotely', 'twitch', 'crossref', 'datacite', 'zenodo']],
 ];
 const DEFAULT_SOURCE_PULL_LIMITS = Object.freeze(Object.fromEntries(budgets.flatMap(
   ([windowSeconds, maxPulls, ids]) => ids.map(id => [id, Object.freeze({ windowSeconds, maxPulls })]),
@@ -146,4 +150,4 @@ function createSourcePullGate({ collectionState = () => ({ allowed: true }), now
   return { state, run };
 }
 
-module.exports = { DEFAULT_SOURCE_PULL_LIMITS, FALLBACK_SOURCE_PULL_LIMIT, normalizeSourcePullLimits, sourcePullLimit, createSourcePullGate };
+module.exports = { DEFAULT_SOURCE_PULL_LIMITS, FALLBACK_SOURCE_PULL_LIMIT, LEGACY_SLOW_SOURCE_PULL_LIMITS, normalizeSourcePullLimits, sourcePullLimit, createSourcePullGate };

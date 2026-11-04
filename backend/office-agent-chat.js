@@ -3,6 +3,7 @@
 const https = require('node:https');
 const { requestedActions } = require('./office-agent-actions');
 const { sanitizeSourceRateMetadata } = require('./source-rate-metadata');
+const { SOURCE_KEYS } = require('./office-agent-activation');
 const MAX_REQUEST_BYTES = 1024 * 1024;
 const TOPIC_SCAN_CHARACTERS = 16384;
 
@@ -79,8 +80,12 @@ function sanitizeSnapshot(input) {
     if (typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= Number.MAX_SAFE_INTEGER) metrics[key] = Math.round(n * 1000) / 1000;
   }
   for (const key of TIMES) { const value = iso(input.metrics?.[key]); if (value) metrics[key] = value; }
-  for (const key of ['paused', 'enabled', 'databaseConnected', 'backupConnected', 'verified']) {
+  for (const key of ['paused', 'enabled', 'configured', 'setupRequired', 'databaseConnected', 'backupConnected', 'verified']) {
     if (typeof input.metrics?.[key] === 'boolean') metrics[key] = input.metrics[key];
+  }
+  if (diagnosticCapability === 'source-worker' && Array.isArray(input.metrics?.missingEnv)) {
+    const allowedKeys = Object.hasOwn(SOURCE_KEYS, input.agentId) ? SOURCE_KEYS[input.agentId] : [];
+    metrics.missingEnv = allowedKeys.filter(key => input.metrics.missingEnv.includes(key));
   }
   return {
     agentId: input.agentId, serviceRole, executionRole, diagnosticCapability,

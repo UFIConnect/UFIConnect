@@ -2284,7 +2284,7 @@ function bustCachePrefix(prefix)  { for (const k of postCache.keys()) if (k.star
 // Expired entries are removed by the shared runtime-cache maintenance pass.
 // Keeping one sweep for every cache avoids a growing collection of timers.
 
-// Public inventories are checked every five minutes. Query-only adapters rotate
+// Public inventories are checked at most twenty seconds apart. Query-only adapters rotate
 // their distinct mapped keys; provider spacing and cooldowns can limit keyword
 // coverage and are reported separately from a source's last successful check.
 const SOURCE_COLLECTION_TARGET_MS = 5 * 60 * 1000;
@@ -2296,11 +2296,9 @@ const SOURCE_CONFIG = Object.fromEntries([
   'yc', 'crunchbase', 'designweb', 'lobsters', 'github', 'arxiv', 'usajobs',
   'stackoverflow', 'twitter', 'linkedin', 'facebook',
   'crossref', 'datacite', 'zenodo', 'openalex',
-].map(id => [id, { ttl: SOURCE_COLLECTION_TARGET_MS, delay: SOURCE_COLLECTION_TARGET_MS, shards: 1,
+].map(id => [id, { ttl: SOURCE_COLLECTION_TARGET_MS, delay: 20000, shards: 1,
   inventory: !['reddit', 'medium', 'bluesky', 'youtube', 'twitter', 'linkedin', 'facebook', 'crossref', 'datacite', 'zenodo', 'openalex'].includes(id),
-  minSpacingMs: Math.max(sourcePullLimit(id).minSpacingMs, ['twitter', 'linkedin', 'facebook', 'stackoverflow'].includes(id) ? SOURCE_COLLECTION_TARGET_MS
-    : ['github', 'arxiv', 'usajobs'].includes(id) ? 60000
-      : ['reddit', 'medium', 'bluesky'].includes(id) ? 2000 : 60000),
+  minSpacingMs: Math.max(1000, sourcePullLimit(id).minSpacingMs),
 }]));
 
 // Cache key prefix per source — used by makeTopicCycler to bust cache when TTL elapses
@@ -6863,6 +6861,9 @@ const FEED_TOPICS = [
 const sourcePullGate = createSourcePullGate({ collectionState: sourceCollectionState });
 function sourceCollectionState(value) {
   const id = canonicalFeedSourceId(value) || value;
+  const readiness = require('./office-agent-activation').officeSourceReadiness(id, process.env);
+  if (!readiness.configured) return { allowed: false, reason: readiness.reason, retryAt: null,
+    remaining: 0, minSpacingMs: sourcePullLimit(id, feedAudit.policy().sourcePullLimits).minSpacingMs };
   const state = feedAudit.collectionState(id);
   if (!state.allowed) return state;
   const buffered = equalizerBuffer.get(id)?.length || 0;
@@ -6945,7 +6946,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper, options = {}
 
 function calculateExpectedLoad() {
   const state = getSourceCollectionScheduler().status();
-  console.log(`[Collection] ${state.enabled}/${state.total} configured source inventories; max ${state.maxConcurrency} concurrent jobs; target 5min, stale alert 10min. Provider cooldowns remain enforced.`);
+  console.log(`[Collection] ${state.enabled}/${state.total} configured source inventories; max ${state.maxConcurrency} concurrent jobs; normal pulls at most ${state.maxCollectionIntervalMs / 1000}s apart; coverage target 5min, stale alert 10min. Policy limits and provider cooldowns remain enforced.`);
 }
 
 function startContinuousWorkers() {
@@ -25272,13 +25273,16 @@ function getSourceRateMetadata(source, context = sourceRateContext()) {
   if (!CONFIGURED_SOURCE_WORKERS.includes(workerId)) return {};
   const collection = context.collectionById.get(workerId) || null;
   const metadata = sourceRateMetadata(workerId, context.policy, collection);
+  const readiness = require('./office-agent-activation').officeSourceReadiness(workerId, process.env);
+  const setup = { configured: readiness.configured, setupRequired: !readiness.configured, missingEnv: readiness.missingEnv };
   // Public source cards need timing and state, never provider error bodies or
   // individual query keys from the protected scheduler diagnostics.
   const summary = collection && Object.fromEntries(['enabled', 'inFlight', 'overdue', 'pauseReason', 'collectionReason',
     'retryAt', 'collectionRetryAt', 'backoffUntil', 'intervalMs', 'minSpacingMs', 'expectedCycleMs', 'keyCount',
     'coverageLimited', 'cycleOverdue', 'lastAttemptAt', 'lastSuccessAt', 'lastDurationMs', 'nextAt']
     .map(key => [key, collection[key]]));
-  return { workerId, ...metadata, cadence: metadata.pullLimitLabel, collection: summary };
+  return { workerId, ...metadata, ...setup, cadence: metadata.pullLimitLabel,
+    collection: summary && { ...summary, configured: setup.configured, setupRequired: setup.setupRequired } };
 }
 
 function getRuntimeHealthForAgent(id) {
@@ -25963,7 +25967,8 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
     const liveCount = cache?.totalSeen ?? (cachedPosts.length || globalPostCount);
     const collection = collectionById.get(workerId);
     const status = !IS_PIPELINE_ROLE ? 'unavailable'
-      : collection?.enabled === false || !require('./office-agent-activation').officeSourceReady(workerId, process.env) ? 'disabled'
+      : !require('./office-agent-activation').officeSourceReady(workerId, process.env) ? 'degraded'
+      : collection?.enabled === false ? 'disabled'
       : collection?.overdue ? 'degraded'
       : collection?.backoffUntil > Date.now() ? 'paused'
       : h
@@ -26415,12 +26420,14 @@ function getOfficeAgentObservation(id, observedAt = new Date().toISOString(), ra
     const health = workerHealth.get(id);
     const collection = rateMetadata.collection;
     if (SERVICE_ROLE !== 'pipeline') status = 'unavailable';
-    else if (collection?.enabled === false || !require('./office-agent-activation').officeSourceReady(id, process.env)) status = 'disabled';
+    else if (rateMetadata.setupRequired) status = 'degraded';
+    else if (collection?.enabled === false) status = 'disabled';
     else if (health) {
       metrics = { ...health, enabled: collection?.enabled, lastDurationMs: collection?.lastDurationMs };
       status = collection?.overdue ? 'degraded' : collection?.backoffUntil > Date.now() || health.paused ? 'paused'
         : health.consecutiveErrors > 0 ? 'degraded' : health.lastSuccess ? 'healthy' : 'unknown';
     }
+    metrics = { ...metrics, configured: rateMetadata.configured, setupRequired: rateMetadata.setupRequired };
   } else if (hasRuntimeMetrics) {
     const stageState = { equalizer: equalizerState, filter: filterAgentState, topic_filter: topicFilterAgentState,
       topic_audit: topicAuditState, topic_fix: topicFixState }[id];

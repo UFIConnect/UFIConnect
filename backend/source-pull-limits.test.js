@@ -10,19 +10,19 @@ test('all published and added sources have collection budgets; future sources re
   for (const id of sources) {
     assert.ok(Object.hasOwn(DEFAULT_SOURCE_PULL_LIMITS, id), `${id} has an explicit budget`);
     assert.ok(sourcePullLimit(id).minSpacingMs > 0);
+    assert.ok(sourcePullLimit(id).minSpacingMs <= 20000, `${id} defaults to at most 20 seconds between pulls`);
   }
-  assert.deepEqual(sourcePullLimit('future_provider'), { windowSeconds: 300, maxPulls: 1, minSpacingMs: 300000 });
+  assert.deepEqual(sourcePullLimit('future_provider'), { windowSeconds: 20, maxPulls: 1, minSpacingMs: 20000 });
   assert.deepEqual(sourcePullLimit(undefined), sourcePullLimit('future_provider'));
 });
 
-test('high-volume and quota-limited sources keep their distinct ceilings with upward-rounded pacing', () => {
+test('faster source budgets keep upward-rounded pacing and slow source defaults use 20 seconds', () => {
   assert.deepEqual(sourcePullLimit('reddit'), { windowSeconds: 15, maxPulls: 8, minSpacingMs: 1875 });
   assert.deepEqual(sourcePullLimit('medium'), { windowSeconds: 90, maxPulls: 14, minSpacingMs: 6429 });
-  assert.deepEqual(sourcePullLimit('github'), { windowSeconds: 240, maxPulls: 1, minSpacingMs: 240000 });
-  assert.equal(sourcePullLimit('stackoverflow').minSpacingMs, 300000);
-  assert.equal(sourcePullLimit('openalex').minSpacingMs, 300000);
-  for (const id of ['crossref', 'datacite', 'zenodo', 'cntraveler', 'weworkremotely', 'twitch']) {
-    assert.equal(sourcePullLimit(id).minSpacingMs, 60000);
+  assert.deepEqual(sourcePullLimit('github'), { windowSeconds: 20, maxPulls: 1, minSpacingMs: 20000 });
+  for (const id of ['arxiv', 'usajobs', 'stackoverflow', 'twitter', 'linkedin', 'facebook', 'openalex',
+    'crossref', 'datacite', 'zenodo', 'cntraveler', 'weworkremotely', 'twitch', 'remotive', 'muse']) {
+    assert.equal(sourcePullLimit(id).minSpacingMs, 20000, id);
   }
 });
 
@@ -46,8 +46,8 @@ test('equivalent or tighter windows are allowed; faster known and future-source 
   assert.equal(sourcePullLimit('future_provider', limits).minSpacingMs, 600000);
   for (const overrides of [
     { medium: { windowSeconds: 90, maxPulls: 15 } },
-    { github: { windowSeconds: 239, maxPulls: 1 } },
-    { future_provider: { windowSeconds: 299, maxPulls: 1 } },
+    { github: { windowSeconds: 19, maxPulls: 1 } },
+    { future_provider: { windowSeconds: 19, maxPulls: 1 } },
   ]) assert.throws(() => normalizeSourcePullLimits(overrides), /cannot exceed/);
 });
 

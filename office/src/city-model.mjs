@@ -47,6 +47,7 @@ export function agentHomeState(agent, observation, now = Date.now()) {
 export function agentInactiveExplanation(agent) {
   if (agent?.observation !== 'fresh') return '';
   const status = String(agent?.health?.status || '').toLowerCase();
+  if (agent?.health?.setupRequired || agent?.setupRequired) return 'Setup required. Add the missing provider settings in Office Setup to enable pulls.';
   if (status === 'paused') return 'This worker is paused after reported failures. Activate configured agents to request recovery, then check its next observation.';
   if (['disabled', 'gated'].includes(status)) return 'This agent is disabled or waiting for setup. Review Office setup before requesting work.';
   if (status === 'unavailable') return 'Required service or provider access is unavailable. Review Office setup for the missing connection.';

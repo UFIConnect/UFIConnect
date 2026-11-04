@@ -1,10 +1,10 @@
 // Configuration inventory only: never return environment values or provider errors.
 const { providerSettings } = require('./auth-signin');
-const { SOURCE_KEYS, officeSourceReady } = require('./office-agent-activation');
+const { SOURCE_KEYS, officeSourceReadiness } = require('./office-agent-activation');
 function getOfficeSourceReadiness(id, env = {}) {
   const requiredEnv = [...(SOURCE_KEYS[id] || [])];
-  const missingEnv = requiredEnv.filter(key => !String(env[key] || '').trim());
-  return { configured: officeSourceReady(id, env), requiredEnv, missingEnv };
+  const { configured, missingEnv } = officeSourceReadiness(id, env);
+  return { configured, requiredEnv, missingEnv };
 }
 function buildOfficeSetup({ env = {}, role = 'api', database = false, backup = {}, social = {}, sourceWorkers = {}, autofixEnabled = env.AUTOFIX_ENABLED === 'true' } = {}) {
   const items = [];

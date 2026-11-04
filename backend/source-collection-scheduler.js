@@ -2,6 +2,7 @@
 
 const TARGET_CYCLE_MS = 5 * 60 * 1000;
 const MAX_CYCLE_MS = 10 * 60 * 1000;
+const MAX_COLLECTION_INTERVAL_MS = 20 * 1000;
 const PACING_REASONS = new Set(['source_pull_limit', 'source_in_flight']);
 
 function retryUntil(error, now, failures) {
@@ -32,7 +33,9 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
     const uniqueKeys = [...new Map(keys.filter(key => key != null).map(key => [String(key), key])).values()];
     if (!uniqueKeys.length || typeof collect !== 'function') throw new Error(`Source has no collection inventory: ${id}`);
     const spacing = Math.max(1000, minSpacingMs);
-    const intervalMs = Math.max(spacing, targetCycleMs / uniqueKeys.length);
+    // A small inventory must not turn the coverage target into a five-minute
+    // pull interval. Explicit policy spacing and provider cooldowns still win.
+    const intervalMs = Math.max(spacing, Math.min(MAX_COLLECTION_INTERVAL_MS, targetCycleMs / uniqueKeys.length));
     const source = { id, keys: uniqueKeys, collect, enabled, providerUntil, collectionState, minSpacingMs: spacing, intervalMs,
       cursor: 0, registeredAt: now(), nextAt: now() + startDelayMs, lastAttemptAt: null, lastSuccessAt: null,
       inFlight: null, failures: 0, backoffUntil: 0, deferredUntil: 0, deferredReason: null, lastError: null, completedKeys: new Set(), keySuccessAt: new Map(),
@@ -54,7 +57,7 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
   }
 
   function gate(source, state = readCollectionState(source)) {
-    if (!source.enabled()) return { reason: 'disabled', retryAt: null };
+    if (!source.enabled()) return { reason: state.reason === 'setup_required' ? 'setup_required' : 'disabled', retryAt: null };
     if (!canRun()) return { reason: 'protected', retryAt: null };
     if (!state.allowed) return { reason: state.reason || 'policy_unavailable', retryAt: state.retryAt || null };
     const providerRetryAt = Math.max(source.backoffUntil, source.providerUntil() || 0);
@@ -256,7 +259,8 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
         lastAttemptCycleSuccessfulKeys: source.lastAttemptCycleSuccessfulKeys, lastAttemptCycleFailedKeys: source.lastAttemptCycleFailedKeys,
         lastDurationMs: source.lastDurationMs };
     });
-    return { targetCycleMs: TARGET_CYCLE_MS, maxCycleMs: MAX_CYCLE_MS, maxConcurrency: concurrency, effectiveConcurrency: slotLimit(), active,
+    return { targetCycleMs: TARGET_CYCLE_MS, maxCycleMs: MAX_CYCLE_MS, maxCollectionIntervalMs: MAX_COLLECTION_INTERVAL_MS,
+      maxConcurrency: concurrency, effectiveConcurrency: slotLimit(), active,
       total: inventory.length, enabled: inventory.filter(source => source.enabled).length,
       overdue: inventory.filter(source => source.overdue).map(source => source.id),
       coverageOverdue: inventory.filter(source => source.cycleOverdue).map(source => source.id),
@@ -269,4 +273,4 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
   };
 }
 
-module.exports = { createSourceCollectionScheduler, TARGET_CYCLE_MS, MAX_CYCLE_MS, retryUntil };
+module.exports = { createSourceCollectionScheduler, TARGET_CYCLE_MS, MAX_CYCLE_MS, MAX_COLLECTION_INTERVAL_MS, retryUntil };

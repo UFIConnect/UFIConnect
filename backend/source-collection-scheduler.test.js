@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { createSourceCollectionScheduler, TARGET_CYCLE_MS, MAX_CYCLE_MS, retryUntil } = require('./source-collection-scheduler');
+const { createSourceCollectionScheduler, TARGET_CYCLE_MS, MAX_CYCLE_MS, MAX_COLLECTION_INTERVAL_MS, retryUntil } = require('./source-collection-scheduler');
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
 function fixture(options = {}) {
@@ -42,12 +42,12 @@ test('mapped query keys are deduplicated, rotate once per cycle and respect prov
     collect: async key => { keys.push(key); return {}; } });
   await Promise.all(scheduler.pump());
   assert.deepEqual(keys, ['ai']);
-  advance(TARGET_CYCLE_MS / 2);
+  advance(MAX_COLLECTION_INTERVAL_MS);
   await Promise.all(scheduler.pump());
   assert.deepEqual(keys, ['ai', 'web']);
   const status = scheduler.status().sources[0];
   assert.equal(status.keyCount, 2);
-  assert.equal(status.expectedCycleMs, TARGET_CYCLE_MS);
+  assert.equal(status.expectedCycleMs, 2 * MAX_COLLECTION_INTERVAL_MS);
   const pending = scheduler.request('queries');
   await settle();
   assert.equal(keys.length, 2, 'A manual refresh preserves the provider minimum spacing');
@@ -63,6 +63,57 @@ test('empty successful inventories remain healthy and refresh on cadence', async
   const status = scheduler.status().sources[0];
   assert.equal(calls, 8); assert.equal(status.failures, 0); assert.equal(status.lastError, null);
   assert.equal(status.overdue, false);
+});
+
+test('small source inventories keep pulling within twenty seconds instead of waiting for the coverage target', async () => {
+  for (const keyCount of [1, 2, 11, 15, 200]) {
+    const { scheduler, advance } = fixture();
+    const calls = [];
+    scheduler.register({ id: 'inventory', keys: Array.from({ length: keyCount }, (_, i) => String(i)),
+      collect: async key => { calls.push(key); return {}; } });
+    const expectedInterval = Math.min(MAX_COLLECTION_INTERVAL_MS, TARGET_CYCLE_MS / keyCount);
+    assert.equal(scheduler.status().sources[0].intervalMs, expectedInterval);
+    await Promise.all(scheduler.pump());
+    advance(expectedInterval - 1);
+    assert.equal(scheduler.pump().length, 0);
+    advance(1);
+    await Promise.all(scheduler.pump());
+    assert.deepEqual(calls, ['0', keyCount > 1 ? '1' : '0']);
+  }
+});
+
+test('configured policy spacing can intentionally exceed the normal twenty-second schedule', async () => {
+  const { scheduler, advance } = fixture();
+  let calls = 0;
+  scheduler.register({ id: 'restricted', keys: ['inventory'],
+    collectionState: () => ({ allowed: true, minSpacingMs: 60000 }),
+    collect: async () => { calls++; return {}; } });
+  await Promise.all(scheduler.pump());
+  advance(MAX_COLLECTION_INTERVAL_MS);
+  assert.equal(scheduler.pump().length, 0);
+  assert.equal(scheduler.status().sources[0].intervalMs, 60000);
+  advance(40000);
+  await Promise.all(scheduler.pump());
+  assert.equal(calls, 2);
+});
+
+test('missing setup remains degraded without attempts and resumes when credentials are configured', async () => {
+  const { scheduler, advance } = fixture();
+  let configured = false, calls = 0;
+  scheduler.register({ id: 'needs_setup', keys: ['inventory'], enabled: () => configured,
+    collectionState: () => ({ allowed: configured, reason: configured ? null : 'setup_required', minSpacingMs: 20000 }),
+    collect: async () => { calls++; return {}; } });
+  advance(TARGET_CYCLE_MS);
+  assert.equal(scheduler.pump().length, 0);
+  assert.equal((await scheduler.request('needs_setup')).reason, 'setup_required');
+  assert.deepEqual(scheduler.nudge(['needs_setup']), []);
+  assert.equal(scheduler.status().sources[0].pauseReason, 'setup_required');
+  assert.equal(scheduler.status().sources[0].lastAttemptAt, null);
+  configured = true;
+  await Promise.all(scheduler.pump());
+  advance(MAX_COLLECTION_INTERVAL_MS);
+  await Promise.all(scheduler.pump());
+  assert.equal(calls, 2);
 });
 
 test('Retry-After, quota resets and repeated errors are not bypassed by manual refresh', async () => {

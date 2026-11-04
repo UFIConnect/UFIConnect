@@ -171,7 +171,7 @@ test('blocked and stale policy prevent provider access; manual retries obey scre
   assert.equal(app.getSourceCollectionScheduler().status().sources[0].failures, 0);
 });
 
-test('all four research sources have real catalog entries, collectors, and conservative pull settings', async t => {
+test('all four research sources have real catalog entries, collectors, and 20-second pull settings', async t => {
   const { app } = await fixture(t);
   app.refreshControl.mode = 'critical';
   app.startContinuousWorkers();
@@ -183,7 +183,7 @@ test('all four research sources have real catalog entries, collectors, and conse
     assert.equal(typeof app.SOURCE_FETCHERS[source], 'function');
     const collector = state.sources.find(candidate => candidate.id === source);
     assert.ok(collector, `${source} has a registered collector`);
-    assert.equal(collector.minSpacingMs, source === 'openalex' ? 300000 : 60000);
+    assert.equal(collector.minSpacingMs, 20000);
   }
   assert.equal(state.active, 0);
 });
