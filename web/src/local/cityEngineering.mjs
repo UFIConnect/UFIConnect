@@ -57,7 +57,7 @@ export function nearestCityArterial(point) {
 }
 // Tangential expressway departures curve into gaps between districts. Elevation
 // changes along distance with zero grade at either end, avoiding abrupt crests.
-export const CITY_AIRPORT = { id: 'airport', label: 'Airport', to: '/?feed=countries', focus: [-94, 92], camera: [20, 35, 44], entrance: [-85, 80], junction: cityRoadPoint('arterial', cityRoadPosition('arterial', -98)), angle: cityRoadPosition('arterial', -98) };
+export const CITY_AIRPORT = { id: 'airport', label: 'Airport', to: '/?feed=countries', focus: [-94, 92], camera: [20, 35, 44], entrance: [-85, 80], junction: cityRoadPoint('arterial', cityRoadPosition('arterial', -96)), angle: cityRoadPosition('arterial', -96) };
 export const CITY_SHOPPING = { id: 'shopping', label: 'Shopping center', to: '/?feed=ufi&channel=shop', focus: [104, 99], camera: [22, 29, -40], entrance: [124, 93], junction: cityRoadPoint('arterial', cityRoadPosition('arterial', 132)), angle: cityRoadPosition('arterial', 132) };
 for (const landmark of [CITY_AIRPORT, CITY_SHOPPING]) {
   const [x, z] = landmark.junction, [endX, endZ] = landmark.entrance;
