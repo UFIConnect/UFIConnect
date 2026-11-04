@@ -2,6 +2,19 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { createAppHarness } = require('./test-support/app-harness');
 
+test('a completed setup check leaves the manual queue without claiming successful refresh throughput', async () => {
+  const app = await createAppHarness({ env: { SERVICE_ROLE: 'pipeline' } });
+  try {
+    app.SOURCE_FETCHERS.setup_fixture = async () => ({ skipped: 'setup_required', deferred: false });
+    app.sourceRefreshQueue.pendingIds.add('setup_fixture');
+    app.sourceRefreshQueue.batchTotal = 1;
+    await app.drainSourceRefreshQueue();
+    assert.equal(app.sourceRefreshQueue.pendingIds.size, 0);
+    assert.equal(app.sourceRefreshQueue.batchDone, 1);
+    assert.equal(app.sourceRefreshQueue.recentCompletions.length, 0);
+  } finally { await app.close(); }
+});
+
 test('critical pressure retains and deduplicates requested sources without inflating completion', async () => {
   const app = await createAppHarness({ env: { SERVICE_ROLE: 'pipeline' } });
   try {

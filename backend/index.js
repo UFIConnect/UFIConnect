@@ -6862,9 +6862,6 @@ const FEED_TOPICS = [
 const sourcePullGate = createSourcePullGate({ collectionState: sourceCollectionState });
 function sourceCollectionState(value) {
   const id = canonicalFeedSourceId(value) || value;
-  const readiness = require('./office-agent-activation').officeSourceReadiness(id, process.env);
-  if (!readiness.configured) return { allowed: false, reason: readiness.reason, retryAt: null,
-    remaining: 0, minSpacingMs: sourcePullLimit(id, feedAudit.policy().sourcePullLimits).minSpacingMs };
   const state = feedAudit.collectionState(id);
   if (!state.allowed) return state;
   const buffered = equalizerBuffer.get(id)?.length || 0;
@@ -6893,17 +6890,20 @@ function sourceProviderCooldown(id) {
   return 0;
 }
 
+function sourceCollectionEnabled(id) {
+  return id !== 'linkedin' && isSourceDisplayAllowed(id, { env: process.env });
+}
+
 function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper, options = {}) {
   const cfg = SOURCE_CONFIG[agentId] || {};
   const keys = options.keys || (cfg.inventory ? [''] : FEED_TOPICS.map(keyMapper).filter(key => key != null));
   const scheduler = getSourceCollectionScheduler();
   const health = { consecutiveErrors: 0, totalErrors: 0, fetchCount: 0,
     lastSuccess: null, paused: false, pauseUntil: 0,
-    skippedForStability: 0, skippedForInactivity: 0, lastAttempt: null, lastError: null };
+    skippedForStability: 0, skippedForInactivity: 0, lastAttempt: null, lastError: null,
+    setupCheckCount: 0, lastSetupCheck: null };
   workerHealth.set(agentId, health);
-  const ready = () => agentId !== 'linkedin'
-    && isSourceDisplayAllowed(agentId, { env: process.env })
-    && require('./office-agent-activation').officeSourceReady(agentId, process.env);
+  const ready = () => sourceCollectionEnabled(agentId);
   scheduler.register({ id: agentId, keys, enabled: ready,
     minSpacingMs: options.minSpacingMs || cfg.minSpacingMs || 1000,
     targetIntervalMs: sourcePullLimit(agentId).minSpacingMs,
@@ -6911,6 +6911,15 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper, options = {}
     providerUntil: () => sourceProviderCooldown(agentId),
     collectionState: () => sourceCollectionState(agentId),
     collect: async key => {
+      // Missing setup no longer disables the scheduler or manual refreshes.
+      // Check it at the normal source cadence without inventing successful
+      // pulls or sending requests with missing provider credentials.
+      if (!require('./office-agent-activation').officeSourceReady(agentId, process.env)) {
+        health.setupCheckCount++;
+        health.lastSetupCheck = Date.now();
+        updateAgentStatus(agentId);
+        return { skipped: 'setup_required' };
+      }
       health.lastAttempt = Date.now();
       health.fetchCount++;
       // The job is due for fresh provider data. All triggers share this lock;
@@ -12612,6 +12621,13 @@ async function transferWorker(slot, stats, priorityOrder) {
           sourceRefreshQueue.currentIds[slot] = null;
           break;
         }
+        if (result?.skipped) {
+          sourceRefreshQueue.currentIds[slot] = null;
+          sourceRefreshQueue.batchDone += 1;
+          // The requested check finished, but no provider refresh completed.
+          // Do not inflate successful transfer/refresh throughput.
+          continue;
+        }
         stats.processed++;
       } catch (err) {
         const h = workerHealth.get(id);
@@ -13100,8 +13116,8 @@ async function runFeedOptimizer() {
 
     statsBySource.push({ id, postCount, isPaused, isDegraded });
 
-    // Existing provider cooldowns and absent app credentials are not faults
-    // that a generic recovery sweep can repair by immediately retrying.
+    // Setup is already checked on the regular schedule. A recovery sweep
+    // cannot repair missing credentials or shorten provider cooldowns.
     if (!require('./office-agent-activation').officeSourceReady(id, process.env)
       || (health.paused && health.pauseUntil > now)) continue;
 
@@ -25281,7 +25297,8 @@ function getSourceRateMetadata(source, context = sourceRateContext()) {
   // individual query keys from the protected scheduler diagnostics.
   const summary = collection && Object.fromEntries(['enabled', 'inFlight', 'overdue', 'pauseReason', 'collectionReason',
     'retryAt', 'collectionRetryAt', 'backoffUntil', 'intervalMs', 'minSpacingMs', 'expectedCycleMs', 'keyCount',
-    'coverageLimited', 'cycleOverdue', 'lastAttemptAt', 'lastSuccessAt', 'lastDurationMs', 'nextAt']
+    'coverageLimited', 'cycleOverdue', 'lastAttemptAt', 'lastSuccessAt', 'lastDurationMs', 'nextAt',
+    'skippedRuns', 'lastSkippedAt', 'lastSkipReason']
     .map(key => [key, collection[key]]));
   return { workerId, ...metadata, ...setup, cadence: metadata.pullLimitLabel,
     collection: summary && { ...summary, configured: setup.configured, setupRequired: setup.setupRequired } };
@@ -27241,15 +27258,15 @@ function officeControlCatalog() {
     ));
     const renderConfigured = missingRenderServices.length === 0;
     const deployConfigured = !renderServices.length || githubConfigured || renderConfigured;
-    const sourceConfigured = !control.id.startsWith('source.refresh.') || require('./office-agent-activation').officeSourceReady(control.sourceId, process.env);
+    const sourceEnabled = !control.id.startsWith('source.refresh.') || sourceCollectionEnabled(control.sourceId);
     const automationConfigured = control.id !== 'automation.enable' || Boolean(process.env.AUTOFIX_GITHUB_TOKEN && process.env.OPENAI_API_KEY);
-    const available = (!needsGithub || githubConfigured) && deployConfigured && sourceConfigured && automationConfigured;
+    const available = (!needsGithub || githubConfigured) && deployConfigured && sourceEnabled && automationConfigured;
     return {
       ...control,
       available,
       unavailableReason: needsGithub && !githubConfigured
         ? 'Set OFFICE_GITHUB_TOKEN in Render with repository Contents and Actions write access.'
-        : !sourceConfigured ? 'This public source needs its provider credentials. Open Office Setup.'
+        : !sourceEnabled ? 'Public collection is disabled for this source by its visibility or member-only policy.'
         : !automationConfigured ? 'Automatic fixes need a dedicated repository token and an AI provider key. Open Office Setup.'
         : !deployConfigured
           ? `Set OFFICE_GITHUB_TOKEN or deployment configuration for ${missingRenderServices.join(', ')}.`
@@ -27386,7 +27403,7 @@ async function executeOfficeControl(control, body, { expectedSha } = {}) {
         steps: control.id === 'feed.audit-protect' ? ['Enabled anti flooding', 'Reviewed feed safety', 'Expired delivery snapshots'] : ['Reviewed feed safety'] };
     }
     case 'agents.activate-configured': {
-      const { officeSourceReady, planOfficeActivation, activateOfficeAgents } = require('./office-agent-activation');
+      const { planOfficeActivation, activateOfficeAgents } = require('./office-agent-activation');
       const agents = Object.fromEntries(Object.entries(AGENT_DEFS).map(([id, def]) => {
         const observation = getOfficeAgentObservation(id);
         return [id, { ...def, executionRole: observation.executionRole, observation,
@@ -27394,7 +27411,7 @@ async function executeOfficeControl(control, body, { expectedSha } = {}) {
       }));
       const sourceIds = Object.keys(SOURCE_FETCHERS);
       const plan = planOfficeActivation({ role: SERVICE_ROLE, agents, sourceIds,
-        critical: isStabilityCritical(), sourceReady: id => officeSourceReady(id, process.env) });
+        critical: isStabilityCritical(), sourceEnabled: sourceCollectionEnabled });
       return activateOfficeAgents({ role: SERVICE_ROLE, plan,
         checks: { security: runSecurityScan, perf: runPerfCheck, community: runCommunityCheck, seo: runSeoCheck,
           opps: runOppsCheck, data: runDataCheck, analytics_verification: runAnalyticsVerificationCheck,

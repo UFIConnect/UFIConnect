@@ -97,6 +97,27 @@ test('configured policy spacing can intentionally exceed the normal twenty-secon
   assert.equal(calls, 2);
 });
 
+test('setup checks retain cadence without false successful coverage and recover on the next normal slot', async () => {
+  const { scheduler, advance } = fixture();
+  let configured = false, checks = 0, pulls = 0;
+  scheduler.register({ id: 'setup', keys: ['first', 'second'], minSpacingMs: 20000, targetIntervalMs: 20000,
+    collect: async () => { checks++; if (!configured) return { skipped: 'setup_required' }; pulls++; return { posts: 1 }; } });
+  await Promise.all(scheduler.pump());
+  advance(19999); assert.equal(scheduler.pump().length, 0);
+  advance(1); await Promise.all(scheduler.pump());
+  assert.equal(checks, 2); assert.equal(pulls, 0);
+  let source = scheduler.status().sources[0];
+  assert.equal(source.enabled, true); assert.equal(source.pauseReason, null);
+  assert.equal(source.skippedRuns, 2); assert.equal(source.lastSkipReason, 'setup_required');
+  assert.equal(source.lastSuccessAt, null); assert.equal(source.totalRuns, 0);
+  assert.equal(source.completedKeys, 0); assert.equal(source.attemptedKeys, 0);
+  configured = true; advance(20000); await Promise.all(scheduler.pump());
+  source = scheduler.status().sources[0];
+  assert.equal(pulls, 1); assert.equal(source.totalRuns, 1);
+  assert.equal(source.skippedRuns, 2); assert.equal(source.lastSkipReason, null);
+  assert.equal(source.completedKeys, 1); assert.equal(source.attemptedKeys, 1);
+});
+
 test('photo pull slots are scheduled independently of inventory size without concurrent same-source work', async () => {
   const { DEFAULT_SOURCE_PULL_LIMITS, sourcePullLimit } = require('./source-pull-limits');
   for (const [id, budget] of Object.entries(DEFAULT_SOURCE_PULL_LIMITS)) {

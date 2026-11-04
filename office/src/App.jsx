@@ -591,7 +591,7 @@ function AgentsView({ agents, triggerAgent, triggering }) {
               </p>
               {ag.health?.setupRequired && (
                 <p style={{ fontSize: 12, color: '#fbbf24', lineHeight: 1.5, margin: '0 0 14px' }}>
-                  Setup required. Add the missing provider settings in Office Setup to enable pulls.
+                  Provider settings are missing. Scheduled checks continue for enabled sources; authenticated pulls need credentials.
                 </p>
               )}
               {ag.health && (
@@ -1080,7 +1080,7 @@ function SourcesView({ status, triggerAgent, triggering }) {
 
                 {w.setupRequired && (
                   <div style={{ fontSize: 11, color: '#fbbf24', lineHeight: 1.5 }}>
-                    Setup required. Add the missing provider settings in Office Setup to enable pulls.
+                    Provider settings are missing. Scheduled checks continue for enabled sources; authenticated pulls need credentials.
                   </div>
                 )}
 

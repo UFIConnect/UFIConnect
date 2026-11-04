@@ -34,9 +34,12 @@ Sites absent from the photo use comparable source groups:
 These are scheduled capacities, not guarantees of network traffic or new posts.
 Timer resolution, the global concurrency cap, caching, provider quotas,
 Retry-After, quality cooldowns, intake backpressure and stricter saved settings
-can slow collection. Sources missing required collector credentials remain
-degraded (`setup_required`) and make no pulls. Existing member-only visibility
-rules still apply. Feed equalizer weights remain independent of these budgets.
+can slow collection. Missing credentials do not disable eligible collectors or
+their manual refresh controls. These collectors check setup on the same schedule
+and remain degraded until provider access is configured. A setup check is recorded
+as skipped, never as a successful pull; no request is sent with missing credentials.
+Existing member-only visibility rules still apply. Feed equalizer weights remain
+independent of these budgets.
 
 Saved-policy version 3 upgrades only exact version-2 defaults. Startup does not
 rewrite existing settings during a rolling deployment. After both API and

@@ -47,7 +47,7 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
       lastCycleFinishedAt: null, lastCycleDurationMs: null, lastDurationMs: null,
       lastAttemptCycleFinishedAt: null, lastAttemptCycleDurationMs: null,
       lastAttemptCycleSuccessfulKeys: 0, lastAttemptCycleFailedKeys: 0,
-      totalRuns: 0, waiters: [] };
+      totalRuns: 0, skippedRuns: 0, lastSkippedAt: null, lastSkipReason: null, waiters: [] };
     sources.set(id, source);
     return source;
   }
@@ -116,7 +116,15 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
         outcome = result;
         return;
       }
+      if (result?.skipped) {
+        source.skippedRuns++;
+        source.lastSkippedAt = now();
+        source.lastSkipReason = String(result.skipped).slice(0, 80);
+        outcome = { ...result, deferred: false };
+        return;
+      }
       source.lastSuccessAt = now();
+      source.lastSkipReason = null;
       source.lastError = null;
       source.failures = 0;
       source.backoffUntil = 0;
@@ -151,7 +159,7 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
       outcome = { deferred: true, error: source.lastError,
         retryAt: source.keyFailures.get(String(key))?.retryAt || source.backoffUntil };
     }).finally(() => {
-      if (!outcome?.deferred || outcome?.error) source.attemptedKeys.add(String(key));
+      if (!outcome?.skipped && (!outcome?.deferred || outcome?.error)) source.attemptedKeys.add(String(key));
       if (source.attemptedKeys.size === source.keys.length) {
         source.lastAttemptCycleFinishedAt = now();
         source.lastAttemptCycleDurationMs = now() - source.cycleStartedAt;
@@ -258,6 +266,7 @@ function createSourceCollectionScheduler({ concurrency = 4, now = Date.now, sche
         inFlight: Boolean(source.inFlight), inFlightMs: source.inFlight ? sampledAt - source.lastAttemptAt : 0,
         nextAt: Math.max(source.nextAt, spacingDueAt(source, state), waitUntil, availableKey(source, sampledAt) ? 0 : nextKeyRetryAt(source)), backoffUntil: backoffUntil || null,
         lastError: source.lastError, failures: source.failures, totalRuns: source.totalRuns,
+        skippedRuns: source.skippedRuns, lastSkippedAt: source.lastSkippedAt, lastSkipReason: source.lastSkipReason,
         lastCycleFinishedAt: source.lastCycleFinishedAt, lastCycleDurationMs: source.lastCycleDurationMs,
         lastAttemptCycleFinishedAt: source.lastAttemptCycleFinishedAt, lastAttemptCycleDurationMs: source.lastAttemptCycleDurationMs,
         lastAttemptCycleSuccessfulKeys: source.lastAttemptCycleSuccessfulKeys, lastAttemptCycleFailedKeys: source.lastAttemptCycleFailedKeys,

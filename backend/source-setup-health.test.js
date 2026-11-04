@@ -30,7 +30,14 @@ test('source observation sanitization keeps setup evidence without arbitrary str
 });
 
 async function fixture(t, env = {}) {
-  const app = await createAppHarness({ env: { OFFICE_TOKEN: 'source-setup-test', SERVICE_ROLE: 'pipeline', ...env } });
+  const schedulerModule = require('./source-collection-scheduler');
+  const app = await createAppHarness({ env: { OFFICE_TOKEN: 'source-setup-test', SERVICE_ROLE: 'pipeline', ...env },
+    modules: { './source-collection-scheduler': { ...schedulerModule,
+      createSourceCollectionScheduler: options => schedulerModule.createSourceCollectionScheduler({ ...options,
+        schedule: () => ({ unref() {} }), cancel() {},
+      }),
+    } },
+  });
   t.after(() => app.close());
   app.refreshControl.mode = 'critical';
   app.startContinuousWorkers();
@@ -38,7 +45,7 @@ async function fixture(t, env = {}) {
   return app;
 }
 
-test('missing provider setup is degraded across Office views and never launches pulls', async t => {
+test('missing setup stays degraded without disabling eligible schedules or bypassing runtime protection', async t => {
   const app = await fixture(t);
   const agents = (await app.request('/office/agents', { headers })).data.agents;
   const sources = (await app.request('/office/sources', { headers })).data.sources;
@@ -60,14 +67,45 @@ test('missing provider setup is degraded across Office views and never launches 
     assert.equal(row.setupRequired, true, id);
     assert.equal(row.fetchCount, 0, id);
     assert.equal(row.totalErrors, 0, 'Missing setup is not a fabricated provider error');
-    assert.equal(registered.find(source => source.id === id).enabled, false, id);
+    assert.equal(registered.find(source => source.id === id).enabled, id !== 'linkedin', id);
     const request = await scheduler.request(id);
     assert.equal(request.deferred, true, id);
-    assert.equal(request.reason, 'setup_required', id);
-    assert.equal(app.sourceCollectionState(id).reason, 'setup_required', id);
+    assert.equal(request.reason, id === 'linkedin' ? 'disabled' : 'protected', id);
+    assert.equal(app.sourceCollectionState(id).allowed, true, id);
   }
   assert.equal(scheduler.status().active, 0);
   assert.ok(overview.degraded >= Object.keys(SOURCE_KEYS).length);
+});
+
+test('unconfigured sources run setup checks without provider calls, false successes or unavailable refresh controls', async t => {
+  for (const id of Object.keys(SOURCE_KEYS).filter(id => id !== 'linkedin')) await t.test(id, async t => {
+    const app = await createAppHarness({ connected: true, env: { OFFICE_TOKEN: 'source-setup-test', SERVICE_ROLE: 'pipeline' } });
+    t.after(() => app.close());
+    app.makeTopicCycler(id, '', '', () => assert.fail('Missing credentials cannot reach the provider'), key => key, { keys: ['fixture'] });
+    const response = await app.request('/office/controls', { headers });
+    assert.equal(response.status, 200);
+    const controls = response.data.controls;
+    assert.equal(controls.find(control => control.id === 'source.refresh.' + id).available, true, id);
+    const scheduler = app.getSourceCollectionScheduler();
+    const result = await scheduler.request(id);
+    assert.equal(result.skipped, 'setup_required', id);
+    assert.equal(result.deferred, false, id);
+    const state = scheduler.status().sources.find(source => source.id === id);
+    assert.equal(state.enabled, true, id);
+    assert.equal(state.skippedRuns, 1, id);
+    assert.equal(state.totalRuns, 0, id);
+    assert.equal(state.lastSuccessAt, null, id);
+    assert.equal(state.failures, 0, id);
+    assert.equal(state.pauseReason, null, id);
+    assert.equal(state.completedKeys, 0, id);
+    assert.equal(state.attemptedKeys, 0, id);
+    const row = (await app.request('/office/status', { headers })).data.sources.workers.find(row => row.id === id);
+    assert.equal(row.fetchCount, 0, id);
+    assert.equal(row.lastSuccess, null, id);
+    assert.equal(row.totalErrors, 0, id);
+    assert.equal(row.status, 'degraded', id);
+    assert.equal(controls.find(control => control.id === 'source.refresh.linkedin').available, false);
+  });
 });
 
 test('configured collectors retain intentional policy disables separately from missing setup', async t => {

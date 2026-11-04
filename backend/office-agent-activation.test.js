@@ -4,22 +4,23 @@ const assert = require('node:assert/strict');
 const { officeSourceReady, planOfficeActivation, activateOfficeAgents } = require('./office-agent-activation');
 const { createAppHarness } = require('./test-support/app-harness');
 const headers = { 'x-office-token': 'activation-test' };
-test('activation respects credentials, service ownership, cooldowns and explicit automation setup', () => {
+test('activation permits missing-credential checks while respecting ownership, visibility and cooldowns', () => {
   assert.equal(officeSourceReady('reddit', {}), false);
   assert.equal(officeSourceReady('reddit', { REDDIT_CLIENT_ID: 'fixture', REDDIT_CLIENT_SECRET: 'fixture' }), true);
   assert.equal(officeSourceReady('twitter', { TWITTER_CLIENT_ID: 'fixture', TWITTER_CLIENT_SECRET: 'fixture' }), false);
   assert.equal(officeSourceReady('usajobs', { USAJOBS_API_KEY: 'fixture', USAJOBS_EMAIL: 'fixture' }), false);
   assert.equal(officeSourceReady('usajobs', { USAJOBS_API_KEY: 'fixture', USAJOBS_USER_AGENT: 'fixture' }), true);
   const agents = { reddit: { executionRole: 'pipeline', health: { paused: true, pauseUntil: 200 } },
-    twitch: { executionRole: 'pipeline' }, hn: { executionRole: 'pipeline' },
+    twitch: { executionRole: 'pipeline' }, linkedin: { executionRole: 'pipeline' }, hn: { executionRole: 'pipeline' },
     devto: { executionRole: 'pipeline', health: { status: 'healthy', lastSuccess: 90 } },
     community: { executionRole: 'both', health: { status: 'unknown' } },
     security: { executionRole: 'both', health: { status: 'healthy' } },
     ai: { executionRole: 'api' }, autofix: { executionRole: 'both' }, instagram: { executionRole: 'on-demand' } };
-  const options = { agents, sourceIds: ['reddit', 'twitch', 'hn', 'devto'], now: 100, sourceReady: id => id !== 'twitch' };
+  const options = { agents, sourceIds: ['reddit', 'twitch', 'hn', 'devto', 'linkedin'], now: 100, sourceEnabled: id => id !== 'linkedin' };
   const pipeline = Object.fromEntries(planOfficeActivation({ ...options, role: 'pipeline' }).map(item => [item.id, item]));
   assert.equal(pipeline.reddit.status, 'skipped'); assert.match(pipeline.reddit.reason, /cooldown/);
-  assert.equal(pipeline.twitch.status, 'skipped'); assert.match(pipeline.twitch.reason, /credentials/);
+  assert.equal(pipeline.twitch.status, 'queue');
+  assert.equal(pipeline.linkedin.status, 'skipped'); assert.match(pipeline.linkedin.reason, /member-only/);
   assert.equal(pipeline.hn.status, 'queue'); assert.equal(pipeline.community.status, 'check');
   assert.equal(pipeline.devto.status, 'checked'); assert.match(pipeline.devto.reason, /no extra refresh/);
   assert.equal(pipeline.security.status, 'checked'); assert.equal(pipeline.autofix.status, 'skipped');

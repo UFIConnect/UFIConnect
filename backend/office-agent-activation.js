@@ -14,7 +14,7 @@ function officeSourceReady(id, env = {}) {
 
 // Use the registered worker and control inventory; activation never creates
 // provider accounts, purchases credits, or enables unattended code changes.
-function planOfficeActivation({ role, agents = {}, sourceIds = [], sourceReady = () => true, now = Date.now(), critical = false }) {
+function planOfficeActivation({ role, agents = {}, sourceIds = [], sourceEnabled = () => true, now = Date.now(), critical = false }) {
   const sources = new Set(sourceIds);
   return Object.entries(agents).map(([id, agent]) => {
     const label = agent.name || id;
@@ -23,7 +23,7 @@ function planOfficeActivation({ role, agents = {}, sourceIds = [], sourceReady =
     const item = { id, label };
     if (sources.has(id)) {
       if (role !== 'pipeline') return { ...item, status: 'skipped', reason: 'Source work belongs to Pipeline.' };
-      if (!sourceReady(id)) return { ...item, status: 'skipped', reason: 'Provider credentials or approval are required. Open Setup.' };
+      if (!sourceEnabled(id)) return { ...item, status: 'skipped', reason: 'Public collection is disabled by source visibility or member-only policy.' };
       if (critical) return { ...item, status: 'skipped', reason: 'Runtime protection is waiting for memory pressure to fall.' };
       if (agent.health?.paused && agent.health.pauseUntil > now) return { ...item, status: 'skipped', reason: 'Provider cooldown is active; recovery resumes when it expires.' };
       if (['healthy', 'running'].includes(status) && agent.health?.lastSuccess) return { ...item, status: 'checked', reason: 'The configured source worker is already running; no extra refresh was started.' };
