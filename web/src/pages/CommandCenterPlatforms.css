@@ -3,3 +3,13 @@
 .cc-draft-platform-control select { flex: 1; width: 100%; min-width: 0; }
 .command-center-pricing:has(> :only-child) { grid-template-columns: minmax(0, 1fr); max-width: 320px; }
 .command-center-price strong { overflow-wrap: anywhere; }
+
+.crosspost-destination { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.crosspost-destination-button.btn { background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 8px; min-height: 42px; padding: 10px 14px; justify-content: center; text-decoration: none; font-weight: 600; white-space: normal; overflow-wrap: anywhere; }
+.crosspost-destination-button.btn[aria-pressed="true"] { background: var(--primary); color: #fff; border-color: var(--primary); }
+.crosspost-destination-button.btn:hover:not(:disabled) { border-color: var(--primary); }
+.crosspost-destination-button.btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.crosspost-destination-button.btn:disabled { opacity: .55; cursor: not-allowed; }
+.crosspost-destination-note { color: var(--muted); font-size: .75rem; line-height: 1.5; }
+.crosspost-destination-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.business-career-list .crosspost-destination-button { flex: 1; }

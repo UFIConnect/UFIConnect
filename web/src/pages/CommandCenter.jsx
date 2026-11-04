@@ -27,7 +27,7 @@ import useTabMetrics from '../analytics/useTabMetrics';
 import { safePostLink } from '../../../backend/post-links.mjs';
 
 import VideoDurationControl, { VIDEO_DURATION_LIMIT } from '../components/VideoDurationControl';
-import { accountSections, selectedAccountSections } from '../components/sourceDirectory';
+import { accountSections, selectedAccountSections, ACCOUNT_SITE_URLS } from '../components/sourceDirectory';
 import { AccountCategoryNavigation } from '../components/DirectoryControls';
 import { DISCOVERY_CATEGORIES, discoveryPostContext } from '../components/discoveryCategories';
 import '../components/DiscoveryCategoryBar.css';
@@ -1403,7 +1403,7 @@ export function CrossPostSection({ initialCategory } = {}) {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [mediaError, setMediaError] = useState('');
   const [syncing, setSyncing] = useState(false);
-  const [destinationCategory, setDestinationCategory] = useState(initialCategory || (profile?.plan === 'business' ? 'career' : 'social'));
+  const [destinationCategory, setDestinationCategory] = useState(initialCategory || (profile?.plan === 'business' ? 'career' : 'all'));
   useTabMetrics('crosspost_category', destinationCategory);
   const [checkingConnections, setCheckingConnections] = useState(false);
   const catalogRequest = useRef(0);
@@ -1432,7 +1432,13 @@ export function CrossPostSection({ initialCategory } = {}) {
     if (controller.signal.aborted || requestId !== catalogRequest.current) return;
     if (socialResult.status === 'fulfilled') {
       setConnected(socialResult.value.data.connected || {});
-      setPlatforms(withCareerAccountFallback(socialResult.value.data.platforms || {}, profile?.plan === 'business'));
+      setPlatforms(withCareerAccountFallback({
+        ...Object.fromEntries(Object.entries(ACCOUNT_SITE_URLS).map(([key, siteUrl]) => [key, {
+          name: SOURCE_META[key]?.label || key, siteUrl, connectionMode: 'external',
+          configured: false, crossPost: { supported: false },
+        }])),
+        ...socialResult.value.data.platforms,
+      }, profile?.plan === 'business'));
     } else {
       setConnected({});
       setPlatforms({});
@@ -1615,8 +1621,8 @@ export function CrossPostSection({ initialCategory } = {}) {
     ...group,
     items: group.items.sort(([left], [right]) => Number(shownPlatforms.has(right)) - Number(shownPlatforms.has(left))),
   }));
-  const activeDestinationCategory = destinationGroups.some(group => group.id === destinationCategory) ? destinationCategory : destinationGroups[0]?.id || '';
-  const visibleDestinationGroups = destinationGroups.filter(group => group.id === activeDestinationCategory);
+  const activeDestinationCategory = destinationCategory === 'all' ? 'all' : destinationGroups.some(group => group.id === destinationCategory) ? destinationCategory : destinationGroups[0]?.id || '';
+  const visibleDestinationGroups = destinationGroups.filter(group => activeDestinationCategory === 'all' || group.id === activeDestinationCategory);
   const connectionPath = (platform) => platform === 'mastodon' || platform === 'bluesky'
     ? `/connected-accounts?connect=${platform}&returnTo=command-center`
     : '/command-center?tab=accounts';
@@ -1631,9 +1637,9 @@ export function CrossPostSection({ initialCategory } = {}) {
     return (
       <button
         type="button" onClick={() => toggle(p)} disabled={posting || checkingConnections || !crossPostReady(p, platforms, connected, profile?.plan, media)} aria-pressed={active}
-        className="btn btn-sm"
+        className="btn btn-sm crosspost-destination-button"
         title={needsPhoto ? 'Add a photo to publish to this account.' : incompatibleVideo ? 'This account does not support this video attachment.' : capability.note}
-        style={{ background: active ? 'var(--primary)' : 'var(--bg-secondary)', color: active ? '#fff' : 'var(--text)', border: 'none', opacity: needsPhoto ? .55 : 1 }}
+        
       >
         <SourceMark source={p} label={meta.icon} active={active} /> {meta.label}{deliveryHint}
       </button>
@@ -1645,31 +1651,30 @@ export function CrossPostSection({ initialCategory } = {}) {
     const capability = platform?.crossPost;
     const available = sourceAuthorizationState(platform, { isConnected: !!connected[p] }).ready;
     const reconnect = connected[p] && (platform?.reconnectRequired || capability?.reconnectRequired);
-    const external = platform?.connectionMode === 'external';
-    const status = external ? 'Website only · Connection locked' : !available ? 'Coming soon' : reconnect ? 'Reconnect required' : connected[p] ? 'Connected' : 'Not connected';
-    const detail = external ? platform.note : !available ? platform?.note || 'Account connection setup is pending.'
-      : reconnect ? capability?.reconnectMessage || platform?.reconnectMessage || 'Reconnect to restore publishing permission.'
-      : !capability?.supported ? capability?.note || 'This connection does not provide a publishing route.'
-      : platform.locked ? 'Membership required.'
-      : profile?.plan !== 'pro' ? 'Publishing to connected accounts requires Pro.'
-      : capability?.note;
+    const direct = capability?.supported && platform?.connectionMode !== 'external';
+    const siteUrl = ACCOUNT_SITE_URLS[p];
     return (
-      <div key={p} aria-label={`${meta.label} destination`} style={{ display: 'flex', flexDirection: 'column', gap: 8, border: '1px solid var(--border)', borderRadius: 8, padding: 10, minWidth: 0 }}>
-        <strong style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '.8rem' }}><SourceMark source={p} label={meta.icon} /> {meta.label}</strong>
-        <span style={{ fontSize: '.73rem', color: 'var(--muted)' }}>{status}{available && !capability?.supported ? ' · Publishing unavailable' : ''}</span>
-        {detail && <p style={{ fontSize: '.73rem', color: 'var(--muted)', lineHeight: 1.5, margin: 0, overflowWrap: 'anywhere' }}>{detail}</p>}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 'auto' }}>
-          {external && <AccountConnectionAction platformKey={p} platform={platform} compact />}
-          {external && platform.category !== 'publication' && <button type="button" className="btn btn-ghost btn-sm" disabled={!content.trim()} onClick={async () => {
-            try { await navigator.clipboard.writeText(content.trim()); showToast('Draft copied. Review and publish it on the source website.', 'success'); }
-            catch { showToast('Select and copy the draft text, then open the source website.', 'error'); }
+      <div key={p} aria-label={meta.label + ' destination'} className="crosspost-destination">
+        {direct ? platformTargetButton(p) : siteUrl ? (
+          <a className="btn btn-sm crosspost-destination-button" href={siteUrl} target="_blank" rel="noopener noreferrer"
+            aria-label={'Open ' + meta.label + ' website'}>
+            <SourceMark source={p} label={meta.icon} /> {meta.label}
+          </a>
+        ) : <button type="button" className="btn btn-sm crosspost-destination-button" disabled><SourceMark source={p} /> {meta.label}</button>}
+        <span className="crosspost-destination-note">{direct
+          ? reconnect ? 'Reconnect to publish' : connected[p] ? 'Connected account publishing' : 'Connect your account to publish'
+          : p === 'youtube' ? 'Copy your draft, then upload or create your post on YouTube.'
+          : platform?.category === 'career' ? 'Copy your draft and complete the career site’s posting form.'
+          : 'Website handoff: use the source’s available publishing or submission tools.'}</span>
+        <div className="crosspost-destination-actions">
+          {!direct && siteUrl && <button type="button" className="btn btn-sm crosspost-destination-button" disabled={posting || !content.trim()} onClick={async () => {
+            try { await navigator.clipboard.writeText(content.trim()); showToast('Draft copied. Open the source website to finish. This does not confirm publication.', 'success'); }
+            catch { showToast('Clipboard unavailable. Download the text or copy it from the editor.', 'error'); }
           }}>Copy draft</button>}
-          {available && !external && capability?.supported && connected[p] && !reconnect && platformTargetButton(p)}
-          {available && !external && <Link to={connectionPath(p)} className="btn btn-ghost btn-sm account-icon-action" style={{ textDecoration: 'none' }}
-            aria-label={reconnect ? `Reconnect ${meta.label}` : connected[p] ? `Manage ${meta.label}` : `Connect ${meta.label}`}
-            title={reconnect ? `Reconnect ${meta.label}` : connected[p] ? `Manage ${meta.label}` : `Connect ${meta.label}`}>
-            <AccountActionIcon platform={p} />
+          {direct && available && <Link to={connectionPath(p)} className="btn btn-sm crosspost-destination-button">
+            {reconnect ? 'Reconnect' : connected[p] ? 'Manage account' : 'Connect account'}
           </Link>}
+          {direct && !available && <AccountConnectionAction platformKey={p} platform={platform} compact />}
         </div>
       </div>
     );
@@ -1681,7 +1686,7 @@ export function CrossPostSection({ initialCategory } = {}) {
       <div className="card">
         <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>{profile?.plan === 'business' ? 'Prepare a hiring update' : categoryLabel ? `Post to ${categoryLabel}` : 'Post to multiple platforms'}</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0 }}>
-          {profile?.plan === 'business' ? 'Write your role description, copy the draft, and open a career site to review and publish it with its employer tools. Website sign-in does not enable automatic posting.' : 'Send one post through the official publishing route for each selected account. TikTok uses its inbox handoff, then this history confirms when it is complete.'}
+          {profile?.plan === 'business' ? 'Write your role description, copy the draft, and open a career site to review and publish it with its employer tools. Website sign-in does not enable automatic posting.' : 'Publish to supported connected accounts, or copy your draft and open YouTube, a career site, or another source to finish there. Website visits and copied drafts are not confirmed publications.'}
         </p>
         {categoryLabel && <div className="discovery-post-context" aria-label={`${categoryLabel} posting destinations`}>
           <strong>Sites in your {categoryLabel.toLowerCase()} feed</strong>
@@ -1709,6 +1714,7 @@ export function CrossPostSection({ initialCategory } = {}) {
             <label style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, fontSize: '.75rem', minWidth: 0 }}>
               Category
               <select className="form-select" aria-label="Publishing category" value={activeDestinationCategory} onChange={event => setDestinationCategory(event.target.value)} style={{ width: 'auto', maxWidth: '100%' }}>
+                <option value="all">All sources & career sites</option>
                 {destinationGroups.map(group => <option key={group.id} value={group.id}>{group.label}</option>)}
               </select>
             </label>
@@ -1718,7 +1724,7 @@ export function CrossPostSection({ initialCategory } = {}) {
               <h4 id={`crosspost-category-${group.id}`} style={{ margin: '0 0 8px', fontSize: '.78rem', color: 'var(--muted)' }}>{group.label}</h4>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 8 }}>
                 {group.items.map(([platform]) => platform === 'uficonnect'
-                  ? <button key={platform} type="button" className="btn btn-sm" disabled={posting} aria-pressed={selected.has(platform)} onClick={() => toggle(platform)} style={{ background: selected.has(platform) ? 'var(--primary)' : 'var(--card)', color: selected.has(platform) ? '#fff' : 'var(--text)' }}><SourceMark source={platform} active={selected.has(platform)} /> UFIConnect</button>
+                  ? <button key={platform} type="button" className="btn btn-sm crosspost-destination-button" disabled={posting} aria-pressed={selected.has(platform)} onClick={() => toggle(platform)}><SourceMark source={platform} active={selected.has(platform)} /> UFIConnect</button>
                   : publishingDestination(platform))}
               </div>
             </section>)}

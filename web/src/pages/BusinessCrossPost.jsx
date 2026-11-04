@@ -5,7 +5,7 @@ import { Copy, Send, Save, ArrowRight } from 'lucide-react';
 import Layout from '../components/Layout';
 import BusinessAccessNotice from '../components/BusinessAccessNotice';
 import { isBusinessAccount } from '../businessAccount.mjs';
-import ExternalAccountLogin from '../components/ExternalAccountLogin';
+import './CommandCenterPlatforms.css';
 import BrandIcon from '../components/BrandIcon';
 import { WritingArea, PhotoAttachment, PostPreview, downloadPostText } from '../components/PublishingComposer';
 import { privateSessionStorage } from '../auth/session';
@@ -146,7 +146,7 @@ function BusinessCrossPostContent({ profile }) {
     </div>
     <section className="business-post-panel business-career-handoff"><h2>Career site handoff</h2><p className="business-post-muted">Copy your post, sign in on the destination and complete its job posting form. These sites do not confirm publication or report engagement to UFIConnect.</p>
       <label className="business-post-field">Find a career site<input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Indeed, Glassdoor, USAJobs…" /></label>
-      <div className="business-career-list">{careers.map(([key, entry]) => <div key={key}><SourceIcon source={key} size={24} /><strong>{entry.name}</strong><ExternalAccountLogin platform={key} compact /></div>)}</div>
+      <div className="business-career-list">{careers.map(([key, entry]) => <div key={key}><a className="btn btn-sm crosspost-destination-button" href={entry.siteUrl} target="_blank" rel="noopener noreferrer" aria-label={"Open " + entry.name + " website"}><SourceIcon source={key} size={22} />{entry.name}</a><button type="button" className="btn btn-sm crosspost-destination-button" disabled={pending || !content.trim()} onClick={copy}>Copy draft</button></div>)}</div>
       {!careers.length && <p>No career sites match your search.</p>}
     </section>
   </Layout>;
