@@ -97,6 +97,7 @@ const call=page=>page.locator('.office-ai-sensors').getByRole('region',{name:'Pi
 const dock=page=>page.getByRole('dialog',{name:'Pip',exact:true});
 const taskPosts=requests=>requests.filter(x=>x.method==='POST'&&x.path==='/office/ai/tasks');
 const fitsViewport=locator=>locator.evaluate(element=>{const box=element.getBoundingClientRect();return box.width>0&&box.height>0&&box.x>=0&&box.y>=0&&box.right<=innerWidth+1&&box.bottom<=innerHeight+1;});
+const isCornerDock=locator=>locator.evaluate(element=>{const box=element.getBoundingClientRect();return element.closest('.pip-dock-floating')&&box.width<=401&&innerWidth-box.right>=0&&innerWidth-box.right<=24&&innerHeight-box.bottom>=70&&innerHeight-box.bottom<=100;});
 async function activateCamera(page){
  await call(page).getByRole('button',{name:'Turn camera off',exact:true}).waitFor();
  await page.waitForFunction(()=>{const video=document.querySelector('video[aria-label="Live camera preview"]');return video?.videoWidth>0&&video.readyState>=2;});
@@ -123,6 +124,11 @@ try{
   check(await dock(page).isVisible(),'Silent greeting leaves Pip available in its dock');
   check((await page.locator('.pip-dock-welcome').innerText()).includes('need anything'),'Consumed welcome remains visible in the dock');
   check(new URL(page.url()).hash==='#agents','Silent greeting does not navigate away from the Office page');
+  await page.getByRole('button',{name:'Minimize Pip',exact:true}).click();
+  await page.getByRole('navigation',{name:'Office sections',exact:true}).getByRole('button',{name:'Pip',exact:true}).click();
+  check(await dock(page).isVisible()&&await isCornerDock(dock(page)),'Sidebar Pip opens the bottom-right mini window');
+  check(new URL(page.url()).hash==='#agents'&&await page.getByRole('heading',{name:'Agent Control',exact:true}).isVisible(),'Sidebar Pip preserves the selected Office page and hash');
+  check(await page.evaluate(()=>window.syntheticSensors.active===null&&window.syntheticSensors.streams.every(item=>item.stream.getTracks().every(track=>track.readyState==='ended'))),'Sidebar Pip does not reactivate voice or camera');
   await page.getByLabel('Message Pip',{exact:true}).fill('Keep this unsent Office question.');
   await page.getByRole('button',{name:'Open Pip workspace',exact:true}).click();
   check(new URL(page.url()).hash==='#office-ai','Explicit workspace control opens the full Pip workspace');
@@ -133,6 +139,17 @@ try{
   check(await page.getByLabel('Message Pip',{exact:true}).inputValue()==='Keep this unsent Office question.','Returning from the full workspace preserves the draft');
   check(taskPosts(requests).length===0,'Welcome and workspace navigation never start tasks');
   check(errors.length===0,'Actual App login has no browser errors');report.scenarios.push('real-login-preserved-page-and-silent-welcome');await context.close();
+ }
+ {
+  const {page,context,requests,errors}=await setup(1280,{app:true,hash:'office-ai'});
+  check(await dock(page).isVisible()&&await isCornerDock(dock(page)),'A bookmarked Pip URL opens the bottom-right popup');
+  check(await page.getByRole('heading',{name:'Command Center',exact:true}).isVisible(),'A bookmarked Pip URL keeps Overview underneath the popup');
+  check(await page.locator('.office-ai').getAttribute('data-compact')==='true','A bookmarked Pip URL keeps the compact conversation');
+  await page.getByRole('button',{name:'Open Pip workspace',exact:true}).click();
+  check(await page.getByRole('region',{name:'Pip workspace',exact:true}).isVisible()&&await page.locator('.office-ai').getAttribute('data-compact')==='false','Only explicit expansion opens the full Pip workspace from a bookmarked popup');
+  check(taskPosts(requests).length===0,'Opening a bookmarked Pip popup and expanding never starts a task');
+  check(errors.length===0,'Bookmarked Pip entry has no browser errors');
+  report.scenarios.push('real-bookmarked-pip-opens-corner-popup');await context.close();
  }
  for(const width of [1280,390,320]){
   const {page,context,requests,errors}=await setup(width,{height:width===320?568:1000});

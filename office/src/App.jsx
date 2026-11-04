@@ -2816,9 +2816,9 @@ export default function App() {
   const officeViews = ['overview', 'office-ai', 'city', 'local-web', 'setup', 'controls', 'sources', 'pipeline', 'post-pipeline', 'feed-audit', 'topic-transfer', 'users', 'topics', 'agents', 'feed', 'analytics', 'reports', 'deploy', 'autofix', 'versions'];
   const [view, setView] = useState(() => {
     const requested = typeof window !== 'undefined' ? window.location.hash.slice(1) : '';
-    return officeViews.includes(requested) ? requested : 'overview';
+    return officeViews.includes(requested) && requested !== 'office-ai' ? requested : 'overview';
   });
-  const [pipOpen, setPipOpen] = useState(false), [pipActivity, setPipActivity] = useState('idle');
+  const [pipOpen, setPipOpen] = useState(() => typeof window !== 'undefined' && window.location.hash === '#office-ai'), [pipActivity, setPipActivity] = useState('idle');
   const openPip = useCallback(() => setPipOpen(true), []);
   useEffect(() => {
     const reset = () => { setPipOpen(false); setPipActivity('idle'); };
@@ -2854,8 +2854,9 @@ export default function App() {
   });
   const polls = useRef({ api: false, pipeline: false, agents: false });
   const observedAgents = useRef({ api: {}, pipeline: {} });
-  const navigateOffice = useCallback(id => {
+  const navigateOffice = useCallback((id, options = {}) => {
     if (!officeViews.includes(id)) return;
+    if (id === 'office-ai' && options.expandPip !== true) { setPipOpen(true); return; }
     if (!window.dispatchEvent(new Event('office-before-navigate', { cancelable: true }))) return;
     setView(id);
     window.history.replaceState(null, '', `#${id}`);
@@ -3280,7 +3281,7 @@ export default function App() {
           {view === 'controls' && <Controls apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} onNavigate={navigateOffice} />}
           <PipDock open={pipOpen || view === 'office-ai'} workspace={view === 'office-ai'} activity={pipActivity} welcomeBriefing={welcomeBriefing}
             onOpenChange={open => { setPipOpen(open); if (!open && view === 'office-ai') navigateOffice('overview'); }}
-            onOpenWorkspace={() => { setPipOpen(true); navigateOffice('office-ai'); }}>
+            onOpenWorkspace={() => { setPipOpen(true); navigateOffice('office-ai', { expandPip: true }); }}>
             <OfficeAI apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} onNavigate={navigateOffice}
               compact={view !== 'office-ai'} active={pipOpen || view === 'office-ai'} onActivityChange={setPipActivity}
               welcomeBriefing={pipOpen || view === 'office-ai' ? welcomeBriefing : null} onWelcomeConsumed={consumeWelcome} />
