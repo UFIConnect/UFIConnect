@@ -17,6 +17,13 @@ const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const CONTROL_ID = /^[a-z][a-z0-9.-]{1,100}$/;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_TOOLS = 50;
+const TONE_STYLES = Object.freeze({
+  friendly: 'Use a friendly tone: warm, clear, and encouraging, without excessive praise or familiarity.',
+  calm: 'Use a calm tone: gentle, steady, and easy to follow. Explain serious information clearly without minimizing it.',
+  playful: 'Use a playful tone: light, curious, and occasionally whimsical. Keep technical work precise and avoid jokes in serious or sensitive situations.',
+  professional: 'Use a professional tone: direct, precise, composed, and respectful. Prefer useful detail over casual banter.',
+});
+const toneInstructions = tone => `${TONE_STYLES[Object.hasOwn(TONE_STYLES, tone) ? tone : 'friendly']} Tone affects presentation only; preserve accuracy, uncertainty, task permissions, and required confirmations.`;
 const OFFICE_AI_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS office_ai_tools (
     id UUID PRIMARY KEY, name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 80),
@@ -66,7 +73,7 @@ function configuration(env) {
 }
 
 function validateChat(body) {
-  if (!isObject(body) || !onlyKeys(body, ['message', 'mode', 'memory', 'history', 'research', 'perspective', 'toolIds', 'sourceIds', 'attachments'])) throw failure(400, 'Send a message and supported conversation options.');
+  if (!isObject(body) || !onlyKeys(body, ['message', 'mode', 'tone', 'memory', 'history', 'research', 'perspective', 'toolIds', 'sourceIds', 'attachments'])) throw failure(400, 'Send a message and supported conversation options.');
   if (Buffer.byteLength(JSON.stringify(body)) > (body.attachments?.length ? MAX_MEDIA_BODY_BYTES : MAX_BODY_BYTES)) throw failure(413, 'This conversation is too large. Send a shorter message or start a new chat.');
   if (typeof body.message !== 'string' || !body.message.trim() || body.message.length > 12000) throw failure(400, 'Enter a message of up to 12,000 characters.');
   const attachments = validateAttachments(body.attachments);
@@ -78,12 +85,13 @@ function validateChat(body) {
   if (body.memory !== undefined && typeof body.memory !== 'boolean') throw failure(400, 'Memory must be enabled or disabled.');
   if (body.mode !== undefined && !['chat', 'task', 'office'].includes(body.mode)) throw failure(400, 'Choose conversation, task, or Office controls mode.');
   if (body.perspective !== undefined && !['balanced', 'concise', 'deep'].includes(body.perspective)) throw failure(400, 'Choose a supported answer style.');
+  if (body.tone !== undefined && (typeof body.tone !== 'string' || !Object.hasOwn(TONE_STYLES, body.tone))) throw failure(400, 'Choose Friendly, Calm, Playful, or Professional.');
   const toolIds = body.toolIds ?? [];
   if (!Array.isArray(toolIds) || toolIds.length > 8 || toolIds.some(id => typeof id !== 'string' || !UUID.test(id)) || new Set(toolIds).size !== toolIds.length) throw failure(400, 'Choose up to eight saved tools.');
   const sourceIds = body.sourceIds ?? [];
   if (!Array.isArray(sourceIds) || sourceIds.length > SOURCE_IDS.length || sourceIds.some(id => !SOURCE_IDS.includes(id))
     || new Set(sourceIds).size !== sourceIds.length) throw failure(400, 'Choose supported connected sources once each.');
-  return { message: body.message.trim(), mode: body.mode || 'chat', memory: body.memory !== false, history, research: body.research !== false, perspective: body.perspective || 'balanced', toolIds, sourceIds, attachments };
+  return { message: body.message.trim(), mode: body.mode || 'chat', tone: body.tone || 'friendly', memory: body.memory !== false, history, research: body.research !== false, perspective: body.perspective || 'balanced', toolIds, sourceIds, attachments };
 }
 
 function canonicalControls(input) {
@@ -199,7 +207,7 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
     model: config.missing.includes('OFFICE_AI_MODEL') ? DEFAULT_MODEL : config.model,
     visionModel: config.missing.includes('OFFICE_AI_VISION_MODEL') ? DEFAULT_MODEL : config.visionModel,
     gateway: config.missing.includes('OFFICE_AI_GATEWAY') ? 'default' : config.gateway,
-    researchAvailable: config.configured, missing: config.missing, toolsAvailable: connected(),
+    researchAvailable: config.configured, missing: config.missing, toolsAvailable: connected(), tonesAvailable: true,
     reasoning: { enabled: config.configured && thinkingModel(config.model), mode: thinkingModel(config.model) ? 'thinking' : 'provider-default', maxOutputTokens: MAX_OUTPUT_TOKENS },
     researchNote: 'Live research requires AI Gateway search permissions and credits. Availability is checked on each request.',
     });
@@ -351,6 +359,7 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
         `The current UTC time is ${stamp()}. Answer general questions as well as Office operations.`,
         'For substantial topics cover the relevant factual, practical, competing, technical, economic, and risk perspectives. Explain uncertainty and strongest counterarguments proportionally to the evidence; do not manufacture false balance or promise exhaustive coverage.',
         `Answer style: ${input.perspective}. Concise means a brief direct answer; deep means a structured exploration; balanced means enough detail to compare relevant views.`,
+        toneInstructions(input.tone),
         'Use the supplied live source material to ground current claims. Web results are search snippets and announcement feeds provide publisher excerpts, not fully inspected pages. Cite their numeric source IDs and be candid about coverage and dates. Do not invent citations, source URLs, capabilities, benchmarks, release dates or search results.',
         'When the request needs current facts and research is disabled, empty, or unavailable, say current information was not verified. Do not add current-facts disclaimers to greetings, creative writing, calculations or other timeless requests. Never imply the model is continuously updated.',
         'When research status is official-updates, only dated official provider announcement feeds were retrieved. Broader web search is unavailable. State that limitation, cite publication dates, treat performance and product claims as first-party claims, and never imply independent verification, comprehensive coverage, or that announcements answer unrelated current questions.',
@@ -466,4 +475,4 @@ function createOfficeAIModel({ env = process.env, fetcher = globalThis.fetch } =
   };
 }
 
-module.exports = { createOfficeAI, createOfficeAIModel, OFFICE_AI_SCHEMA, DEFAULT_MODEL, validateChat, safeSources, validateTool };
+module.exports = { createOfficeAI, createOfficeAIModel, OFFICE_AI_SCHEMA, DEFAULT_MODEL, validateChat, safeSources, validateTool, TONE_STYLES, toneInstructions };

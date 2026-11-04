@@ -1,18 +1,19 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { Bot, Camera, CameraOff, Mic, Paperclip, PhoneOff, Square, Volume2 } from 'lucide-react';
+import { Camera, CameraOff, Mic, Paperclip, PhoneOff, Square, Volume2 } from 'lucide-react';
+import PipCharacter from './PipCharacter';
 import { createOfficeVoice } from './office-voice.mjs';
 import { ATTACHMENT_ACCEPT } from './office-attachments.mjs';
 
 const PHASE_LABELS = { idle: 'Voice off', starting: 'Starting microphone…', listening: 'Listening', speaking: 'Pip is speaking', working: 'Working on your request…' };
 
-const OfficeAISensors = forwardRef(function OfficeAISensors({ active = true, disabled = false, busy = false, onVoiceMessage, onFiles, welcomeBriefing, onWelcomeConsumed = () => {}, onActivate = () => {} }, ref) {
+const OfficeAISensors = forwardRef(function OfficeAISensors({ active = true, disabled = false, busy = false, compact = false, tone = 'friendly', onActivityChange = () => {}, onVoiceMessage, onFiles, welcomeBriefing, onWelcomeConsumed = () => {}, onActivate = () => {} }, ref) {
   const [voiceState, setVoiceState] = useState({ phase: 'idle', text: '' }), [error, setError] = useState('');
   const [camera, setCamera] = useState(false), [cameraBusy, setCameraBusy] = useState(false);
   const [callOpen, setCallOpen] = useState(false);
   const call = useRef(null), callStarted = useRef(false);
   const cameraFacing = useRef('user');
   const voice = useRef(null), stream = useRef(null), video = useRef(null), input = useRef(null), cameraSequence = useRef(0), mounted = useRef(false);
-  const callbacks = useRef({ onVoiceMessage, onFiles, onWelcomeConsumed, onActivate }); callbacks.current = { onVoiceMessage, onFiles, onWelcomeConsumed, onActivate };
+  const callbacks = useRef({ onVoiceMessage, onFiles, onWelcomeConsumed, onActivate, onActivityChange, tone }); callbacks.current = { onVoiceMessage, onFiles, onWelcomeConsumed, onActivate, onActivityChange, tone };
   const welcome = useRef(null), seenWelcome = useRef(null);
 
   function stopCamera() {
@@ -36,7 +37,7 @@ const OfficeAISensors = forwardRef(function OfficeAISensors({ active = true, dis
   useImperativeHandle(ref, () => ({ snapshot, stop: () => { voice.current?.stop(); stopCamera(); }, get voiceActive() { return !!voice.current?.active; } }));
   useEffect(() => {
     mounted.current = true;
-    voice.current = createOfficeVoice({ onState: value => { if (mounted.current) { setVoiceState(value); if (value.phase === 'idle' && callStarted.current) { callStarted.current = false; setCallOpen(false); stopCamera(); } } }, onError: value => { if (mounted.current) { setError(value); if (value) setCallOpen(true); } },
+    voice.current = createOfficeVoice({ getTone: () => callbacks.current.tone, onState: value => { if (mounted.current) { setVoiceState(value); callbacks.current.onActivityChange(value); if (value.phase === 'idle' && callStarted.current) { callStarted.current = false; setCallOpen(false); stopCamera(); } } }, onError: value => { if (mounted.current) { setError(value); if (value) setCallOpen(true); } },
       onTranscript: async text => callbacks.current.onVoiceMessage(text, snapshot()) });
     const reset = () => { voice.current?.stop(); stopCamera(); setCallOpen(false); welcome.current = null; setError(''); };
     const visibility = () => { if (document.hidden) { voice.current?.stop(); stopCamera(); setCallOpen(false); } };
@@ -50,17 +51,18 @@ const OfficeAISensors = forwardRef(function OfficeAISensors({ active = true, dis
     const previous = document.activeElement;
     call.current?.querySelector('button')?.focus();
     const keys = event => {
-      if (event.key === 'Escape') { event.preventDefault(); endCall(); }
-      if (event.key === 'Tab') {
+      if (event.key === 'Escape') { event.preventDefault(); if (compact) event.stopPropagation(); endCall(); }
+      if (event.key === 'Tab' && !compact) {
         const buttons = [...(call.current?.querySelectorAll('button:not(:disabled)') || [])];
         if (!buttons.length) return;
         if (event.shiftKey && document.activeElement === buttons[0]) { event.preventDefault(); buttons.at(-1).focus(); }
         else if (!event.shiftKey && document.activeElement === buttons.at(-1)) { event.preventDefault(); buttons[0].focus(); }
       }
     };
-    document.addEventListener('keydown', keys);
-    return () => { document.removeEventListener('keydown', keys); previous?.focus?.(); };
-  }, [callOpen]);
+    const keyTarget = compact ? call.current : document;
+    keyTarget?.addEventListener('keydown', keys);
+    return () => { keyTarget?.removeEventListener('keydown', keys); previous?.focus?.(); };
+  }, [callOpen, compact]);
   useEffect(() => {
     if (!welcomeBriefing?.id || typeof welcomeBriefing.text !== 'string' || seenWelcome.current === welcomeBriefing.id || disabled || busy) return;
     seenWelcome.current = welcomeBriefing.id; welcome.current = welcomeBriefing.text;
@@ -100,9 +102,9 @@ const OfficeAISensors = forwardRef(function OfficeAISensors({ active = true, dis
     <div className="office-ai-sensor-status" role="status" aria-live="polite"><span data-active={voiceState.phase !== 'idle'}>{voiceState.phase === 'speaking' ? <Volume2 size={14} /> : <Mic size={14} />}{PHASE_LABELS[voiceState.phase]}{voiceState.phase === 'listening' && voiceState.initial ? ' · waiting up to 5 seconds for your reply' : ''}</span><span data-active={camera}><Camera size={14} />{camera ? 'Camera on · a frame is shared with each message' : 'Camera off'}</span></div>
     {voiceState.text && <p className="office-ai-live-transcript">{voiceState.text}</p>}
     <div className="office-ai-call-backdrop" hidden={!callOpen}>
-      <section ref={call} className="office-ai-call" role="dialog" aria-modal="true" aria-labelledby="office-ai-call-title" aria-describedby="office-ai-call-state" data-phase={voiceState.phase}>
+      <section ref={call} className="office-ai-call" role={compact ? 'region' : 'dialog'} aria-modal={compact ? undefined : true} aria-labelledby="office-ai-call-title" aria-describedby="office-ai-call-state" data-phase={voiceState.phase}>
         <header><span>UFICONNECT OFFICE</span><button type="button" onClick={endCall} aria-label="Close voice and camera call"><PhoneOff size={18} /></button></header>
-        <div className="office-ai-call-stage"><div className="office-ai-call-avatar"><Bot size={66} strokeWidth={1.4} /></div><h2 id="office-ai-call-title">Pip</h2><p id="office-ai-call-state" role="status">{PHASE_LABELS[voiceState.phase]}{voiceState.phase === 'listening' && voiceState.initial ? ' · 5 seconds to respond' : ''}</p><div className="office-ai-call-wave" aria-hidden="true">{Array.from({length:9}, (_, index) => <i key={index} style={{animationDelay:`${index * .1}s`}} />)}</div><p className="office-ai-call-hint">{voiceState.phase === 'working' ? 'Your request is running in Work. Keep this call open to hear the result.' : 'Show me what you mean, then tell me what you need.'}</p></div>
+        <div className="office-ai-call-stage"><div className="office-ai-call-avatar"><PipCharacter size={110} state={voiceState.phase === 'working' ? 'thinking' : voiceState.phase === 'starting' ? 'listening' : voiceState.phase} decorative /></div><h2 id="office-ai-call-title">Pip</h2><p id="office-ai-call-state" role="status">{PHASE_LABELS[voiceState.phase]}{voiceState.phase === 'listening' && voiceState.initial ? ' · 5 seconds to respond' : ''}</p><div className="office-ai-call-wave" aria-hidden="true">{Array.from({length:9}, (_, index) => <i key={index} style={{animationDelay:`${index * .1}s`}} />)}</div><p className="office-ai-call-hint">{voiceState.phase === 'working' ? 'Your request is running in Work. Keep this call open to hear the result.' : 'Show me what you mean, then tell me what you need.'}</p></div>
         <div className="office-ai-self-preview"><video ref={video} autoPlay muted playsInline aria-label="Live camera preview" hidden={!camera} />{!camera && <div><CameraOff size={25} /><span>{cameraBusy ? 'Connecting camera…' : 'Camera off'}</span></div>}<span>You{camera ? ' · camera on' : ''}</span></div>
         {voiceState.text && <p className="office-ai-call-transcript">{voiceState.text}</p>}
         {error && <p className="office-ai-error" role="alert">{error}</p>}

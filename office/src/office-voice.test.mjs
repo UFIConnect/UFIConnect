@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createOfficeVoice } from './office-voice.mjs';
 
-function fixture() {
+function fixture(options = {}) {
   let time = 0, sequence = 0;
   const timers = new Map(), listeners = [], spoken = [], states = [], errors = [], received = [];
   const environment = {
@@ -13,7 +13,7 @@ function fixture() {
     SpeechSynthesisUtterance: class { constructor(text) { this.text = text; } },
     speechSynthesis: { cancel() {}, speak(value) { spoken.push(value); } },
   };
-  const voice = createOfficeVoice({ environment, onState: state => states.push(state), onError: error => errors.push(error), onTranscript: async text => { received.push(text); return 'Completed your request.'; } });
+  const voice = createOfficeVoice({ environment, onState: state => states.push(state), onError: error => errors.push(error), onTranscript: async text => { received.push(text); return 'Completed your request.'; }, ...options });
   function advance(ms) {
     const until = time + ms;
     while (true) { const next = [...timers].filter(([,value]) => value.at <= until).sort((a,b) => a[1].at - b[1].at)[0]; if (!next) break; time = next[1].at; timers.delete(next[0]); next[1].fn(); }
@@ -60,4 +60,19 @@ test('stop cancels stale speech callbacks and spoken stop never starts work', as
   const f = fixture(); f.voice.start('Welcome'); const utterance = f.spoken[0]; f.voice.stop(); utterance.onend(); assert.equal(f.listeners.length, 0);
   f.voice.start(); const listener = f.listeners[0]; listener.onstart(); listener.onresult({ results: [{ isFinal:true, 0:{ transcript:'Stop listening' } }] }); await listener.onend();
   assert.equal(f.voice.active, false); assert.equal(f.received.length, 0);
+});
+
+test('voice applies the current tone only when speaking and tone changes never start audio or recognition', () => {
+  let tone = 'calm';
+  const f = fixture({ getTone: () => tone });
+  assert.equal(f.spoken.length, 0); assert.equal(f.listeners.length, 0);
+  f.voice.start('A clear and steady update.');
+  assert.equal(f.spoken[0].rate, .9); assert.equal(f.spoken[0].pitch, .96);
+  f.voice.stop(); tone = 'playful';
+  assert.equal(f.spoken.length, 1); assert.equal(f.listeners.length, 0);
+  f.voice.start('A light and curious update.');
+  assert.equal(f.spoken[1].rate, 1.04); assert.equal(f.spoken[1].pitch, 1.16);
+  f.voice.stop(); tone = 'invalid'; f.voice.start('A friendly update.');
+  assert.equal(f.spoken[2].rate, 1); assert.equal(f.spoken[2].pitch, 1.08);
+  f.voice.stop(); assert.equal(f.timers.size, 0);
 });

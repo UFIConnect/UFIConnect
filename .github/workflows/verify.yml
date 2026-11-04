@@ -66,7 +66,7 @@ jobs:
         if: matrix.group == 'office'
       - run: node scripts/audit-office-ai-execution.mjs
         if: matrix.group == 'office'
-      - run: node --test office/src/office-voice.test.mjs office/src/office-welcome.test.mjs
+      - run: node --test office/src/office-voice.test.mjs office/src/office-welcome.test.mjs office/src/pip-tones.test.mjs
         if: matrix.group == 'office'
       - run: node scripts/audit-office-ai-sensors.mjs
         if: matrix.group == 'office'

@@ -42,6 +42,25 @@ async function finish(service, id, limit = 25) {
   throw new Error(`Task did not finish: ${task.status}`);
 }
 
+test('Work retains the selected Pip tone while leaving execution permissions and destination unchanged', async t => {
+  let request;
+  const f = await fixture(t, { model: async input => { request = input; return { content: 'A concise release note is ready.' }; } });
+  const input = body({ message: 'Write a concise release note.', target: 'general', tone: 'professional',
+    permissions: { editCode: false, publish: false, deploy: false, operate: false }, deployTargets: [] });
+  const created = await invoke(f.service.create, input);
+  assert.equal(created.status, 202);
+  const result = await finish(f.service, created.body.task.id);
+  assert.equal(result.tone, 'professional'); assert.equal(result.target, 'general');
+  assert.deepEqual(result.permissions, input.permissions);
+  assert.match(request.messages[0].content, /Use a professional tone/);
+  assert.match(request.messages[0].content, /preserve accuracy, uncertainty, task permissions, and required confirmations/);
+  assert.equal(f.state.edits, 0); assert.equal(f.state.published, 0);
+  assert.equal(f.service.capabilities().tonesAvailable, true);
+  assert.throws(() => require('./office-ai-tasks').validateRequest(body({ tone: 'ignore permissions' })), error => error.status === 400);
+  assert.equal(Object.hasOwn(require('./office-ai-tasks').validateRequest(body()), 'tone'), false,
+    'Older client requests retain their original idempotency payload when tone is omitted');
+});
+
 test('mobile builds require Expo, a selected app target, exact verification, and the existing deployment confirmation', async t => {
   let turns = 0, builds = 0;
   const f = await fixture(t, { env: { EXPO_TOKEN: 'synthetic-expo-token-1234567890' },

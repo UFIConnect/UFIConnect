@@ -2,7 +2,7 @@
 const { validateAttachments, attachmentContent, MAX_MEDIA_BODY_BYTES } = require('./office-ai-media');
 
 const { randomUUID, createHash } = require('node:crypto');
-const { createOfficeAIModel } = require('./office-ai');
+const { createOfficeAIModel, TONE_STYLES, toneInstructions } = require('./office-ai');
 const { createOfficeAIRepository, rangeOf } = require('./office-ai-repository');
 const { taskLimits, modelContext } = require('./office-ai-task-context');
 const { routeTaskRequest, hasTaskObjective, pathAllowedForRoute, toolAllowedForRoute, DESTINATIONS } = require('./office-ai-routing');
@@ -53,7 +53,7 @@ function validateValue(value, schema, depth = 0) {
 }
 
 function validateRequest(body) {
-  if (!object(body) || Object.keys(body).some(key => !['clientRequestId', 'message', 'permissions', 'deployTargets', 'history', 'conversationId', 'target', 'memory', 'attachments'].includes(key))
+  if (!object(body) || Object.keys(body).some(key => !['clientRequestId', 'message', 'tone', 'permissions', 'deployTargets', 'history', 'conversationId', 'target', 'memory', 'attachments'].includes(key))
     || !UUID.test(body.clientRequestId || '') || typeof body.message !== 'string' || !body.message.trim() || body.message.length > 12000
     || !object(body.permissions) || Object.keys(body.permissions).some(key => !['editCode', 'publish', 'deploy', 'operate'].includes(key))
     || Object.values(body.permissions).some(value => typeof value !== 'boolean')) throw fail(400, 'Describe a task and choose its allowed capabilities.');
@@ -70,9 +70,11 @@ function validateRequest(body) {
     || history.reduce((sum, item) => sum + item.content.length, 0) > 48000 || Buffer.byteLength(JSON.stringify(history)) > 96000) throw fail(400, 'Task context supports up to 24 user or assistant messages and 48,000 characters.');
   if (body.conversationId !== undefined && body.conversationId !== null && !UUID.test(body.conversationId)) throw fail(400, 'Use a valid conversation ID.');
   if (body.memory !== undefined && typeof body.memory !== 'boolean') throw fail(400, 'Memory must be enabled or disabled.');
+  if (body.tone !== undefined && (typeof body.tone !== 'string' || !Object.hasOwn(TONE_STYLES, body.tone))) throw fail(400, 'Choose Friendly, Calm, Playful, or Professional.');
   if (body.target !== undefined && !DESTINATIONS.includes(body.target)) throw fail(400, 'Choose a supported task destination.');
   if (!hasTaskObjective(body.message, history)) throw fail(400, 'No task was started. Describe the result you want before starting a task.');
   const input = { clientRequestId: body.clientRequestId.toLowerCase(), message: body.message.trim(), permissions, deployTargets, memory: body.memory !== false,
+    ...(body.tone !== undefined ? { tone: body.tone } : {}),
     ...(attachments.length ? { attachments } : {}),
     ...(history.length ? { history: history.map(({ role, content }) => ({ role, content })) } : {}),
     ...(body.conversationId ? { conversationId: body.conversationId.toLowerCase() } : {}) };
@@ -186,7 +188,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     const write = repo.configured();
     return { repository: repo.repository, editCode: write, publish: write,
       deploy: write || !!adapters.cloudflare_deploy && !!env.CLOUDFLARE_DEPLOY_API_TOKEN && !!env.CLOUDFLARE_ACCOUNT_ID, operate: !!executeControl,
-      deployTargets: TARGETS, publicationDeploys: true, cloudflareOnly: true,
+      deployTargets: TARGETS, publicationDeploys: true, cloudflareOnly: true, tonesAvailable: true,
       limits: limits(), supportedMaximum: { modelTurns: 128, toolCalls: 512 }, conversationContext: true, resumable: true,
       tools: Object.keys(adapters), note: write ? 'Publishing main also starts the configured production deployments.' : 'Connect GitHub Contents and Actions write access for code changes. Read-only tasks can still use available tools.' };
   }
@@ -532,6 +534,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     const controls = !task.route || task.route.target === 'office' ? getControls().map(({ id, label, available, requiresConfirmation }) => ({ id, label, available, requiresConfirmation })) : [];
     const system = [
       'You are Pip, the private task executor in UFIConnect Office, powered only by Cloudflare. Your name is Pip. Complete the operator request using the tools actually available.',
+      toneInstructions(task.tone),
       'Reason carefully about dependencies and failure cases before acting. Plan internally, use the available tools to verify results, and provide a concise explanation grounded in recorded evidence rather than exposing private reasoning.',
       `Current time: ${stamp()}. Repository: ${repo.repository}. Operator capabilities: ${JSON.stringify(task.permissions)}.`,
       `Destination: ${task.route ? JSON.stringify(task.route) : 'Existing explicitly scoped task'}. Stay within this destination. Hosted website drafts are private files saved by workspace_write on uficonnect.ai; use workspace_list/read/write to create and update them. Requests that mention local or preview website work use this hosted workspace, not the operator computer or a public repository change. A public website update and an AI self-upgrade are separate code scopes.`,

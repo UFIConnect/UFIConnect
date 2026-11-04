@@ -16,10 +16,21 @@ export async function fulfillOfficeWelcomeRead(route, endpoint, headers = {}) {
 }
 
 export async function returnFromOfficeWelcome(page, navigationLabel, beforeReturn = () => {}) {
-  await page.locator('.office-ai-header h1').waitFor();
-  assert.equal(new URL(page.url()).hash, '#office-ai', 'Successful login opens the Office welcome before operational inspection');
-  const call = page.locator('.office-ai-call[role="dialog"]');
+  const popup = page.locator('.pip-dock-floating .pip-dock-panel');
+  await popup.waitFor();
+  assert.notEqual(new URL(page.url()).hash, '#office-ai', 'Login keeps the requested Office page while Pip welcomes in the corner');
+  assert.equal(await popup.getAttribute('aria-modal'), 'false', 'Pip leaves the Office page available');
+  const call = page.locator('.office-ai-call');
   if (await call.isVisible()) await call.getByRole('button', { name: 'Continue with text', exact: true }).click();
+  // Explicitly enter the workspace so returning below exercises a fresh mount
+  // of each operational page, including its existing service-read assertions.
+  await page.getByRole('button', { name: 'Open Pip workspace', exact: true }).click();
+  await page.locator('.office-ai-header h1').waitFor();
+  await page.waitForFunction(() => {
+    const refresh = document.querySelector('button[aria-label="Refresh Pip connection"]');
+    return refresh && !refresh.disabled;
+  });
+  await page.waitForLoadState('networkidle');
   beforeReturn();
   const navigation = page.getByRole('navigation', { name: 'Office sections', exact: true });
   const destination = navigation.getByRole('button', { name: navigationLabel, exact: true });
@@ -28,4 +39,5 @@ export async function returnFromOfficeWelcome(page, navigationLabel, beforeRetur
     if (await more.getAttribute('aria-expanded') === 'false') await more.click();
   }
   await destination.click();
+  await page.locator('.pip-dock-floating .pip-dock-panel').getByRole('button', { name: 'Minimize Pip', exact: true }).click();
 }

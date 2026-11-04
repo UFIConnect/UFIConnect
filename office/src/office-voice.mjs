@@ -1,6 +1,8 @@
+import { getPipTone } from './pip-tones.mjs';
+
 // Browser speech recognition owns microphone permission and releases it on abort.
 // Recognition is paused while the assistant speaks, preventing feedback loops.
-export function createOfficeVoice({ environment = globalThis, onState = () => {}, onError = () => {}, onTranscript }) {
+export function createOfficeVoice({ environment = globalThis, onState = () => {}, onError = () => {}, onTranscript, tone = 'friendly', getTone }) {
   const Recognition = environment.SpeechRecognition || environment.webkitSpeechRecognition;
   const synthesis = environment.speechSynthesis;
   let active = false, conversation = false, recognition = null, timer = null, restartTimer = null, sequence = 0, initialDeadline = null;
@@ -82,6 +84,8 @@ export function createOfficeVoice({ environment = globalThis, onState = () => {}
       if (index >= chunks.length) return listen(current);
       const utterance = new environment.SpeechSynthesisUtterance(chunks[index++]);
       utterance.lang = environment.navigator?.language || 'en-US';
+      const profile = getPipTone(getTone ? getTone() : tone).speech;
+      utterance.rate = profile.rate; utterance.pitch = profile.pitch;
       utterance.onstart = () => { if (!active || current !== sequence) return; environment.clearTimeout(timer); onState({ phase: 'speaking', text: '' }); };
       utterance.onend = next;
       utterance.onerror = event => { if (active && current === sequence && event.error !== 'canceled' && event.error !== 'interrupted') fail('Your browser could not play the spoken update. Press Start voice to continue.'); };

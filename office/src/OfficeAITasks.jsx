@@ -6,7 +6,7 @@ import { officeAIRequest, officeAIError, taskDate, taskState } from './office-ai
 
 const FINISHED = new Set(['succeeded', 'failed', 'cancelled']);
 
-export default function OfficeAITasks({ apiBase, request, onOpenTerminal, initialDestination = 'auto' }) {
+export default function OfficeAITasks({ apiBase, request, onOpenTerminal, initialDestination = 'auto', tone = 'friendly' }) {
   const upgrade = initialDestination === 'self-update';
   const [tasks, setTasks] = useState([]), [task, setTask] = useState(null), [capabilities, setCapabilities] = useState(null);
   const [destination, setDestination] = useState(initialDestination), [remember, setRemember] = useState(true);
@@ -54,7 +54,7 @@ export default function OfficeAITasks({ apiBase, request, onOpenTerminal, initia
   }
   function submit(event) {
     event.preventDefault();
-    const body = { message: draft.trim(), target: destination, memory: remember, permissions, deployTargets: targets }, signature = JSON.stringify(body);
+    const body = { message: draft.trim(), target: destination, memory: remember, ...(capabilities?.tonesAvailable === true ? { tone } : {}), permissions, deployTargets: targets }, signature = JSON.stringify(body);
     if (!body.message) return;
     if (!submission.current || submission.current.signature !== signature) submission.current = { signature, clientRequestId: crypto.randomUUID() };
     mutate('', { ...body, clientRequestId: submission.current.clientRequestId });

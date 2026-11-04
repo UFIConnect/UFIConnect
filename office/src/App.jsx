@@ -10,6 +10,7 @@ import AnalyticsDashboard from './AnalyticsDashboard';
 import OfficeUsers from './OfficeUsers';
 import RecoveryOverview from './RecoveryOverview';
 import OfficeAI from './OfficeAI';
+import PipDock from './PipDock';
 import useOfficeWelcome from './useOfficeWelcome';
 import { mergeObservedAgents, observeAgentPayload } from './office-telemetry.mjs';
 import { createOfficeClient, createOfficeEventSource, createTrustedOfficeFetch, connectOfficeStreams, mergeOfficeLog } from './office-runtime.mjs';
@@ -2815,8 +2816,15 @@ export default function App() {
   const officeViews = ['overview', 'office-ai', 'city', 'local-web', 'setup', 'controls', 'sources', 'pipeline', 'post-pipeline', 'feed-audit', 'topic-transfer', 'users', 'topics', 'agents', 'feed', 'analytics', 'reports', 'deploy', 'autofix', 'versions'];
   const [view, setView] = useState(() => {
     const requested = typeof window !== 'undefined' ? window.location.hash.slice(1) : '';
-    return officeViews.includes(requested) ? requested : /^(?:www\.)?uficonnect\.ai$/i.test(window.location.hostname) ? 'office-ai' : 'overview';
+    return officeViews.includes(requested) ? requested : 'overview';
   });
+  const [pipOpen, setPipOpen] = useState(false), [pipActivity, setPipActivity] = useState('idle');
+  const openPip = useCallback(() => setPipOpen(true), []);
+  useEffect(() => {
+    const reset = () => { setPipOpen(false); setPipActivity('idle'); };
+    window.addEventListener('office-token-changed', reset);
+    return () => window.removeEventListener('office-token-changed', reset);
+  }, []);
   const [moreToolsOpen, setMoreToolsOpen] = useState(() => !PRIMARY_OFFICE_VIEWS.has(view));
   useEffect(() => {
     if (!PRIMARY_OFFICE_VIEWS.has(view)) setMoreToolsOpen(true);
@@ -2853,7 +2861,7 @@ export default function App() {
     window.history.replaceState(null, '', `#${id}`);
   }, []);
   const [welcomeBriefing, consumeWelcome] = useOfficeWelcome({ request: officeFetch, apiBase: API,
-    pipelineBase: PIPELINE_API, getToken: officeClient.getToken, onOpen: navigateOffice });
+    pipelineBase: PIPELINE_API, getToken: officeClient.getToken, onOpen: openPip });
 
   const fetchStatus = useCallback(async () => {
     if (polls.current.api) return;
@@ -3270,7 +3278,13 @@ export default function App() {
           {view === 'local-web' && <LocalWeb apiBase={API} request={officeFetch} onNavigate={navigateOffice} />}
           {view === 'overview' && <OverviewView status={status} pipelineStatus={pipelineStatus} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'controls' && <Controls apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} onNavigate={navigateOffice} />}
-          {view === 'office-ai' && <OfficeAI apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} onNavigate={navigateOffice} welcomeBriefing={welcomeBriefing} onWelcomeConsumed={consumeWelcome} />}
+          <PipDock open={pipOpen || view === 'office-ai'} workspace={view === 'office-ai'} activity={pipActivity} welcomeBriefing={welcomeBriefing}
+            onOpenChange={open => { setPipOpen(open); if (!open && view === 'office-ai') navigateOffice('overview'); }}
+            onOpenWorkspace={() => { setPipOpen(true); navigateOffice('office-ai'); }}>
+            <OfficeAI apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} onNavigate={navigateOffice}
+              compact={view !== 'office-ai'} active={pipOpen || view === 'office-ai'} onActivityChange={setPipActivity}
+              welcomeBriefing={pipOpen || view === 'office-ai' ? welcomeBriefing : null} onWelcomeConsumed={consumeWelcome} />
+          </PipDock>
           {/* Source health (workerHealth/agentSourceCache) only has real
               data on the pipeline role now — see pipelineStatus above. */}
           {view === 'sources'  && <SourcesView status={pipelineStatus} triggerAgent={triggerAgent} triggering={triggering} />}

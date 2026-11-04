@@ -67,7 +67,7 @@ try {
   await page.getByLabel('Access token',{exact:true}).fill(TOKEN);
   await page.getByRole('button',{name:'Unlock Office',exact:true}).click();
   // Finish the original auth-challenge retries before measuring a fresh mount.
-  await page.locator('.office-ai-header h1').waitFor();
+  await page.locator('.pip-dock-floating .pip-dock-panel').waitFor();
   await page.waitForFunction(()=>{const refresh=document.querySelector('button[aria-label="Refresh Pip connection"]');return refresh&&!refresh.disabled;});
   await page.waitForLoadState('networkidle');
   await returnFromOfficeWelcome(page,'Setup',()=>{calls=0;completedSetupReads.length=0;});

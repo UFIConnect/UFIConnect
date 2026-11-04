@@ -1,0 +1,21 @@
+.pip-character{display:block;flex:none;overflow:visible;isolation:isolate}
+.pip-character-float{animation:pip-character-bob 4.5s ease-in-out infinite;transform-origin:60px 65px}
+.pip-character-shadow{animation:pip-character-shadow 4.5s ease-in-out infinite;transform-origin:60px 108px}
+.pip-character-eyes{transform-box:fill-box;transform-origin:center;animation:pip-character-blink 6.8s linear infinite}
+.pip-character-arm-right{transform-box:view-box;transform-origin:91px 74px;animation:pip-character-wave 8s ease-in-out infinite}
+.pip-character-talk,.pip-character-thoughts{opacity:0}
+.pip-character-sparkle{opacity:.65;animation:pip-character-glimmer 4s ease-in-out infinite}
+.pip-character[data-state=speaking] .pip-character-smile{opacity:0}
+.pip-character[data-state=speaking] .pip-character-talk{opacity:1;animation:pip-character-talk .52s ease-in-out infinite;transform-box:fill-box;transform-origin:center}
+.pip-character[data-state=listening] .pip-character-antenna{animation:pip-character-listen 1.8s ease-in-out infinite;transform-origin:60px 24px}
+.pip-character[data-state=thinking] .pip-character-thoughts{opacity:1;animation:pip-character-glimmer 1.6s ease-in-out infinite}
+.pip-character[data-state=happy] .pip-character-arm-right{animation:pip-character-happy-wave 1.5s ease-in-out infinite}
+@keyframes pip-character-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+@keyframes pip-character-shadow{0%,100%{transform:scaleX(1);opacity:.18}50%{transform:scaleX(.88);opacity:.12}}
+@keyframes pip-character-blink{0%,43%,46%,100%{transform:scaleY(1)}44%,45%{transform:scaleY(.12)}}
+@keyframes pip-character-wave{0%,9%,25%,100%{transform:rotate(0)}13%,21%{transform:rotate(13deg)}17%{transform:rotate(-6deg)}}
+@keyframes pip-character-happy-wave{0%,100%{transform:rotate(-3deg)}50%{transform:rotate(15deg)}}
+@keyframes pip-character-talk{0%,100%{transform:scaleY(.65)}50%{transform:scaleY(1.15)}}
+@keyframes pip-character-listen{0%,100%{transform:rotate(-3deg)}50%{transform:rotate(3deg)}}
+@keyframes pip-character-glimmer{0%,100%{opacity:.4}50%{opacity:.95}}
+@media(prefers-reduced-motion:reduce){.pip-character,.pip-character *{animation:none!important;transition:none!important}}
