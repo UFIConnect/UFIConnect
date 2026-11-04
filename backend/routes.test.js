@@ -1,6 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createAppHarness, member } = require('./test-support/app-harness');
+const { PGlite } = require('@electric-sql/pglite');
+const { SCHEMA: DEVICE_SCHEMA } = require('./suspicious-devices');
 
 test('member and group routes enforce their actual HTTP contracts', async t => {
   const app = await createAppHarness();
@@ -196,10 +198,15 @@ test('Auth0 cannot claim an existing email or create a volatile account during a
 
 test('a failed member preference write rolls back without changing another account', async t => {
   const id = 'a0000000-0000-4000-8000-000000000088';
-  const app = await createAppHarness({ connected: true, query(sql) {
+  const pg = new PGlite(); t.after(() => pg.close());
+  await pg.exec('CREATE TABLE users(id UUID PRIMARY KEY)');
+  await pg.query('INSERT INTO users(id) VALUES($1)', [id]);
+  for (const sql of DEVICE_SCHEMA) await pg.exec(sql);
+  const app = await createAppHarness({ connected: true, query(sql, params) {
     if (sql.startsWith('UPDATE users')) throw new Error('Simulated storage failure');
     if (sql.startsWith('SELECT * FROM users WHERE id')) return { rows: [{ id, name: 'Test Member', email: 'member@example.invalid', role: 'Designer', interests: ['Design Systems'], goals: ['networking'], experience: 'mid' }] };
     if (sql.startsWith('SELECT id FROM auth_sessions')) return { rows: [{ id: 'active-session' }] };
+    if (/office_security_device|pg_advisory_xact_lock/.test(sql) || /^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)) return pg.query(sql, params);
     return { rows: [] };
   } });
   t.after(() => app.close());

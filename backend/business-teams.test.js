@@ -5,6 +5,7 @@ const { before, after, beforeEach, test } = require('node:test');
 const { PGlite } = require('@electric-sql/pglite');
 const { BUSINESS_TEAM_SCHEMA, createBusinessTeams } = require('./business-teams');
 const { createAppHarness, member } = require('./test-support/app-harness');
+const { SCHEMA: DEVICE_SCHEMA } = require('./suspicious-devices');
 
 const OWNER = 'a0000000-0000-4000-8000-000000000001';
 const ALICE = 'a0000000-0000-4000-8000-000000000002';
@@ -17,6 +18,7 @@ before(async () => {
     organization TEXT, plan TEXT NOT NULL DEFAULT 'free', business_seats INTEGER NOT NULL DEFAULT 0,
     billing_closed BOOLEAN NOT NULL DEFAULT false)`);
   for (const sql of BUSINESS_TEAM_SCHEMA) await pg.exec(sql);
+  for (const sql of DEVICE_SCHEMA) await pg.exec(sql);
 });
 after(async () => { await pg.close(); });
 beforeEach(async () => {

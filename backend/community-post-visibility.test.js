@@ -5,6 +5,7 @@ require('./generated-media');
 const {PGlite}=require('@electric-sql/pglite');
 const {createAppHarness,member}=require('./test-support/app-harness');
 const {REPORT_SCHEMA}=require('./content-reports');
+const {SCHEMA:DEVICE_SCHEMA}=require('./suspicious-devices');
 const {REPORT_TARGET_TEST_SCHEMA,REPORT_BASE_TEST_SCHEMA}=require('./test-support/report-db');
 const VIEWER='b0000000-0000-4000-8000-000000000001';
 const AUTHOR='b0000000-0000-4000-8000-000000000002';
@@ -12,7 +13,7 @@ const post=(id,groupId,createdAt)=>({id,groupId,authorId:AUTHOR,source:'uficonne
 test('post lists keep private and missing groups out of stranger profiles and paginate visible rows',async t=>{
   const pg=new PGlite();t.after(()=>pg.close());
   await pg.exec(REPORT_BASE_TEST_SCHEMA+REPORT_TARGET_TEST_SCHEMA+`ALTER TABLE users ADD COLUMN joined_groups TEXT[] DEFAULT '{}'; CREATE TABLE community_groups(id TEXT PRIMARY KEY,is_private BOOLEAN DEFAULT false,created_by TEXT);`);
-  for(const sql of REPORT_SCHEMA)await pg.exec(sql);
+  for(const sql of [...REPORT_SCHEMA,...DEVICE_SCHEMA])await pg.exec(sql);
   await pg.query("INSERT INTO users(id,name,email) VALUES($1,'Viewer','viewer@example.invalid'),($2,'Author','author@example.invalid')",[VIEWER,AUTHOR]);
   await pg.query("INSERT INTO community_groups(id,is_private,created_by) VALUES('ufi-general',false,NULL),('public-community',false,$1),('private-community',true,$1)",[AUTHOR]);
   const items=[post('private-newest','private-community','2026-10-07T10:00:00Z'),post('orphan-next','deleted-group','2026-10-07T09:00:00Z'),post('public-next','public-community','2026-10-07T08:00:00Z'),post('general-last','ufi-general','2026-10-07T07:00:00Z')];
@@ -60,7 +61,7 @@ test('offline post lists apply the same private group visibility rule to memory'
 test('native publishing persists to UFI and group feeds across API workers without relying on the composer cache',async t=>{
   const pg=new PGlite();t.after(()=>pg.close());
   await pg.exec(REPORT_BASE_TEST_SCHEMA+REPORT_TARGET_TEST_SCHEMA+`ALTER TABLE users ADD COLUMN joined_groups TEXT[] DEFAULT '{}'; CREATE TABLE community_groups(id TEXT PRIMARY KEY,is_private BOOLEAN DEFAULT false,created_by TEXT);`);
-  for(const sql of REPORT_SCHEMA)await pg.exec(sql);
+  for(const sql of [...REPORT_SCHEMA,...DEVICE_SCHEMA])await pg.exec(sql);
   await pg.query("INSERT INTO users(id,name,email,joined_groups) VALUES($1,'Synthetic author','author@example.invalid',ARRAY['public-community'])",[AUTHOR]);
   await pg.query("INSERT INTO community_groups(id,is_private,created_by) VALUES('ufi-general',false,NULL),('public-community',false,$1)",[AUTHOR]);
   const worker=async()=>{

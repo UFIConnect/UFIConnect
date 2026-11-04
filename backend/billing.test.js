@@ -3,6 +3,7 @@ const { before, after, beforeEach, test } = require('node:test');
 const { PGlite } = require('@electric-sql/pglite');
 const { BILLING_SCHEMA, createBilling, quantityOneAmount, validRecurringPrice } = require('./billing');
 const { createAppHarness, member } = require('./test-support/app-harness');
+const { SCHEMA: DEVICE_SCHEMA } = require('./suspicious-devices');
 
 const A = 'a0000000-0000-4000-8000-000000000001';
 const B = 'b0000000-0000-4000-8000-000000000002';
@@ -14,6 +15,7 @@ before(async () => {
     stripe_subscription_id TEXT, resume_builder_addon BOOLEAN DEFAULT false,
     resume_builder_subscription_id TEXT)`);
   for (const statement of BILLING_SCHEMA) await pg.exec(statement);
+  for (const statement of DEVICE_SCHEMA) await pg.exec(statement);
 });
 after(async () => { await pg.close(); });
 beforeEach(async () => {

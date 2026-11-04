@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const { PGlite } = require('@electric-sql/pglite');
 const { createAppHarness, member } = require('./test-support/app-harness');
 const { hydratePostLikes } = require('./post-likes');
+const { SCHEMA: DEVICE_SCHEMA } = require('./suspicious-devices');
 const vault = require('./token-vault').createTokenVault({ OAUTH_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString('base64') });
 
 const A = 'a0000000-0000-4000-8000-000000000001';
@@ -15,6 +16,7 @@ async function fixture(t) {
     CREATE TABLE external_post_likes(post_id TEXT NOT NULL,user_id TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),PRIMARY KEY(post_id,user_id));
     CREATE TABLE restaurant_post_likes(LIKE external_post_likes INCLUDING ALL);
     CREATE TABLE community_posts(id TEXT PRIMARY KEY,group_id TEXT,content TEXT,source TEXT,likes TEXT[] DEFAULT '{}')`);
+  for (const sql of DEVICE_SCHEMA) await pg.exec(sql);
   await pg.query("INSERT INTO users(id,name,email) VALUES($1,'Alice','alice@example.invalid'),($2,'Bob','bob@example.invalid')", [A, B]);
   const feedRow = { id: POST, source: 'reddit', title: 'A post in the feed', content: 'A useful discussion of software.',
     source_url: 'https://www.reddit.com/r/test/comments/abc/a_post/', topic: 'Technology', likes_count: 40,
@@ -25,7 +27,7 @@ async function fixture(t) {
       if (sql.startsWith('SELECT id FROM auth_sessions')) return { rows: [{ id: params[0] }] };
       if (sql.includes('FROM feed_posts_cache WHERE id')) return { rows: params[0] === POST ? [feedRow] : [] };
       if (failWrite && /^(INSERT INTO (external|restaurant)_post_likes|UPDATE community_posts)/.test(sql)) throw new Error('Simulated write failure');
-      if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql) || /external_post_likes|restaurant_post_likes|community_posts|FROM users WHERE id/.test(sql)) return pg.query(sql, params);
+      if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql) || /external_post_likes|restaurant_post_likes|community_posts|FROM users WHERE id|office_security_device|pg_advisory_xact_lock/.test(sql)) return pg.query(sql, params);
       return { rows: [], rowCount: 0 };
     } });
     t.after(() => app.close());

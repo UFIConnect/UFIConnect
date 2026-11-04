@@ -2,6 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
+const { PGlite } = require('@electric-sql/pglite');
 const { createOfficeWebDraft, generateDraft, applyEdits } = require('./office-web-draft');
 const { createAppHarness } = require('./test-support/app-harness');
 const sha = 'a'.repeat(40), source = '<h1>Welcome to UFIConnect</h1>', change = { summary: 'Improve public homepage heading', edits: [{ find: source, replace: '<h1>Your connected feed</h1>' }] };
@@ -48,9 +49,9 @@ test('cancelled requests stop generation without producing a change', async () =
 });
 test('authenticated real web draft route checks paths and revisions before generation and never commits', async t => {
   const fake = provider(); let file = { sha, content: source }, loads = 0;
-  // The Office connection middleware reads an empty synthetic settings store
-  // before invoking the draft handler; provider traffic stays mocked below.
-  const app = await createAppHarness({ connected: true, env: { OFFICE_TOKEN: 'web-draft-test', OPENAI_API_KEY: 'fixture-only' }, modules: {
+  // Office connections use real fixture storage; provider traffic stays mocked.
+  const pg = new PGlite(); t.after(() => pg.close());
+  const app = await createAppHarness({ connected: true, query: (sql, params) => pg.query(sql, params), env: { OFFICE_TOKEN: 'web-draft-test', OPENAI_API_KEY: 'fixture-only' }, modules: {
     './office-web-draft': { createOfficeWebDraft: options => createOfficeWebDraft({ ...options, request: fake.request, getFile: async () => { loads++; return file; } }) },
   } }); t.after(() => app.close());
   const headers = { 'x-office-token': 'web-draft-test' }, body = { message: 'Improve heading', filePath: 'web/index.html', expectedSha: sha };

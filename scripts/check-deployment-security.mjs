@@ -46,7 +46,7 @@ for (const file of ['.github/workflows/deploy-pages.yml']) {
   }
 }
 const renderDeployment = load('.github/workflows/deploy-render.yml');
-assert.deepEqual(renderDeployment.on.push.branches, ['main'], 'Render deploys main independently of CI');
+assert.deepEqual(renderDeployment.on.push.branches, ['main'], 'Main publication queues the verified Render release');
 assert.equal(renderDeployment.on.workflow_run, undefined, 'CI completion must not trigger duplicate Render builds');
 assert.equal(renderDeployment.concurrency?.['cancel-in-progress'], false, 'Serialize production deployments');
 assert.deepEqual(renderDeployment.on.workflow_dispatch.inputs.target.options, [
@@ -59,7 +59,12 @@ const renderCommands = renderJob.steps.map(step => step.run || '').join('\n');
 for (const required of ['/git/ref/heads/main', 'latest_sha', 'DEPLOY_SHA', 'ref=${DEPLOY_SHA}']) {
   assert.ok(renderCommands.includes(required), `Render deployment must pin current main: ${required}`);
 }
-assert.ok(!renderCommands.includes('actions/workflows/verify.yml/runs'), 'Render must not wait for full CI');
+const renderGate = renderJob.steps.findIndex(step => step.run?.includes('actions/workflows/verify.yml/runs'));
+const renderWrite = renderJob.steps.findIndex(step => step.run?.includes('curl ') && step.run.includes('ref=${DEPLOY_SHA}'));
+assert.ok(renderGate >= 0 && renderGate < renderWrite, 'Render must verify the exact commit before any deployment hook');
+for (const required of ['head_sha == $sha', 'conclusion == "success"', 'EXPECTED_SHA', 'Nothing was deployed.']) {
+  assert.ok(renderCommands.includes(required), `Render must reject unverified or superseded releases: ${required}`);
+}
 const verification = load('.github/workflows/verify.yml');
 assert.ok(verification.jobs.native, 'Native verification must continue alongside the web checks');
 const nativeSteps = verification.jobs.native.steps.map(step => step.run || '').join('\n');

@@ -7,6 +7,7 @@ const { BUSINESS_TEAM_SCHEMA } = require('./business-teams');
 const { BILLING_SCHEMA } = require('./billing');
 const { OFFICE_MEMBERS_SCHEMA } = require('./office-members');
 const { createAppHarness } = require('./test-support/app-harness');
+const { SCHEMA: DEVICE_SCHEMA } = require('./suspicious-devices');
 const signup = { name: 'Recruiting member', email: 'recruiter@example.invalid', password: 'Cobalt-rain-sky7',
   accountType: 'business', organization: 'Sample recruiting', businessIndustryId: 'technology' };
 
@@ -67,7 +68,7 @@ async function fixture(t) {
     auth_version INTEGER NOT NULL DEFAULT 0,onboarding_complete BOOLEAN NOT NULL DEFAULT false,profile_hidden BOOLEAN NOT NULL DEFAULT false,
     role_settings JSONB NOT NULL DEFAULT '{}');
     CREATE TABLE auth_sessions(id UUID PRIMARY KEY,user_id UUID REFERENCES users(id),expires_at TIMESTAMPTZ);`);
-  for (const sql of [...OFFICE_MEMBERS_SCHEMA, ...BUSINESS_TEAM_SCHEMA]) await pg.exec(sql);
+  for (const sql of [...OFFICE_MEMBERS_SCHEMA, ...BUSINESS_TEAM_SCHEMA, ...DEVICE_SCHEMA]) await pg.exec(sql);
   const app = await createAppHarness({ connected: true, query(sql, params) {
     if (sql.includes('site_activity_heartbeat')) return { rows: [], rowCount: 0 };
     return pg.query(sql, params.map(value => Object.prototype.toString.call(value) === '[object Date]' ? value.toISOString() : value));

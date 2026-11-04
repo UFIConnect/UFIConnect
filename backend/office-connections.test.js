@@ -251,6 +251,60 @@ test('Cloudflare relay verification rejects foreign hosts, credentials and non-r
   assert.equal(fake.calls[0].url, 'https://office.owner.workers.dev/health');
 });
 
+test('deployment-only Cloudflare save preserves the server AI relay without copying its secret into storage', async t => {
+  const db = await database(t), account = 'edc675f01dd686d29d7a2e447bc04a8b', deploymentToken = 'workers-deployment-scoped-credential-123456';
+  const env = { ...environment(), CLOUDFLARE_ACCOUNT_ID: account, CLOUDFLARE_API_TOKEN: '' }, original = { ...env }, calls = [];
+  const fetcher = async (url, options) => {
+    calls.push({ url: String(url), options });
+    if (String(url).endsWith('/health')) return json({ configured: true });
+    assert.ok(String(url).endsWith('/settings'));
+    return json({ success: true, result: { bindings: [] } });
+  };
+  const service = createOfficeConnections({ db, env, fetcher });
+  const result = await invoke(service.save, { provider: 'cloudflare', body: { deploymentToken, accountId: account } });
+  assert.equal(result.status, 200); assert.equal(result.data.aiVerified, true); assert.equal(result.data.deploymentVerified, true);
+  assert.equal(result.data.connection.mode, 'worker-binding'); assert.equal(result.data.connection.deploymentConfigured, true);
+  assert.equal(service.env.OFFICE_AI_RELAY_SECRET, original.OFFICE_AI_RELAY_SECRET); assert.equal(service.env.CLOUDFLARE_DEPLOY_API_TOKEN, deploymentToken);
+  assert.deepEqual(env, original); assert.ok(!JSON.stringify(result.data).includes(deploymentToken));
+  const row = (await db.query("SELECT * FROM office_provider_connections WHERE provider='cloudflare'")).rows[0];
+  const saved = JSON.parse(createTokenVault(env).open(row.encrypted_config, 'office:provider:cloudflare'));
+  assert.equal(saved.CLOUDFLARE_DEPLOY_API_TOKEN, deploymentToken); assert.equal(saved.OFFICE_AI_RELAY_SECRET, undefined); assert.equal(saved.CLOUDFLARE_API_TOKEN, undefined);
+  assert.ok(calls.every(call => call.options.method === 'GET')); assert.equal(calls.length, 3);
+  assert.equal(calls[0].options.headers.Authorization, `Bearer ${original.OFFICE_AI_RELAY_SECRET}`);
+  assert.ok(calls.slice(1).every(call => call.options.headers.Authorization === `Bearer ${deploymentToken}`));
+  const restarted = createOfficeConnections({ db, env: original, fetcher }); await restarted.refresh();
+  assert.equal(restarted.env.OFFICE_AI_RELAY_SECRET, original.OFFICE_AI_RELAY_SECRET); assert.equal(restarted.env.CLOUDFLARE_DEPLOY_API_TOKEN, deploymentToken);
+  const listed = await invoke(restarted.list); assert.equal(listed.data.connections.find(item => item.id === 'cloudflare').deploymentConfigured, true);
+});
+
+test('Cloudflare deployment-only updates preserve an existing encrypted AI token and disconnect disables both', async t => {
+  const db = await database(t), account = 'edc675f01dd686d29d7a2e447bc04a8b', deploymentToken = 'workers-deployment-scoped-credential-123456';
+  const env = { ...environment(), CLOUDFLARE_ACCOUNT_ID: account };
+  const fetcher = async url => String(url).endsWith('/settings') ? json({ success: true, result: { bindings: [] } }) : json({ success: true, result: [] });
+  const service = createOfficeConnections({ db, env, fetcher });
+  assert.equal((await invoke(service.save, { provider: 'cloudflare', body: { token: TOKEN, accountId: account, gateway: 'saved-gateway' } })).status, 200);
+  assert.equal((await invoke(service.save, { provider: 'cloudflare', body: { deploymentToken, accountId: account } })).status, 200);
+  assert.equal(service.env.CLOUDFLARE_API_TOKEN, TOKEN); assert.equal(service.env.OFFICE_AI_GATEWAY, 'saved-gateway');
+  const row = (await db.query("SELECT * FROM office_provider_connections WHERE provider='cloudflare'")).rows[0];
+  const saved = JSON.parse(createTokenVault(env).open(row.encrypted_config, 'office:provider:cloudflare'));
+  assert.equal(saved.CLOUDFLARE_API_TOKEN, TOKEN); assert.equal(saved.CLOUDFLARE_DEPLOY_API_TOKEN, deploymentToken);
+  assert.equal((await invoke(service.disconnect, { provider: 'cloudflare', body: { confirmed: true } })).status, 200);
+  const restarted = createOfficeConnections({ db, env: { ...env, CLOUDFLARE_DEPLOY_API_TOKEN: 'server-deployment-token-123456' }, fetcher });
+  await restarted.refresh(); assert.equal(restarted.env.CLOUDFLARE_DEPLOY_API_TOKEN, ''); assert.equal(restarted.env.CLOUDFLARE_API_TOKEN, ''); assert.equal(restarted.env.OFFICE_AI_RELAY_SECRET, '');
+  assert.equal((await invoke(restarted.save, { provider: 'cloudflare', body: { deploymentToken, accountId: account } })).status, 400);
+});
+
+test('Cloudflare deployment account mismatch and failed Worker verification cannot change credentials', async t => {
+  const db = await database(t), account = 'edc675f01dd686d29d7a2e447bc04a8b', deploymentToken = 'workers-deployment-scoped-credential-123456';
+  const env = { ...environment(), CLOUDFLARE_ACCOUNT_ID: account, CLOUDFLARE_API_TOKEN: '' }; let calls = 0;
+  const service = createOfficeConnections({ db, env, fetcher: async url => { calls++; return String(url).endsWith('/health') ? json({ configured: true }) : json({ error: deploymentToken }, 403); } });
+  assert.equal((await invoke(service.save, { provider: 'cloudflare', body: { deploymentToken, accountId: 'b'.repeat(32) } })).status, 400); assert.equal(calls, 0);
+  const result = await invoke(service.save, { provider: 'cloudflare', body: { deploymentToken, accountId: account } });
+  assert.equal(result.status, 422); assert.ok(!JSON.stringify(result.data).includes(deploymentToken));
+  assert.equal(service.env.CLOUDFLARE_DEPLOY_API_TOKEN, undefined); assert.equal(service.env.OFFICE_AI_RELAY_SECRET, env.OFFICE_AI_RELAY_SECRET);
+  assert.equal((await db.query('SELECT * FROM office_provider_connections')).rows.length, 0);
+});
+
 test('real Office AI and connection routes require authorization before database or provider access', async t => {
   const app = await createAppHarness({ env: { OFFICE_TOKEN: 'office-connections-test' } });
   t.after(() => app.close());

@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const proxyaddr = require('proxy-addr');
 const { createAppHarness, member } = require('./test-support/app-harness');
 const { paginateEqualizedPool } = require('./feed-pagination');
+const { SCHEMA: DEVICE_SCHEMA } = require('./suspicious-devices');
 
 const edgeHeaders = country => ({ 'x-forwarded-for': '203.0.113.45, 173.245.48.20', 'cf-ipcountry': country });
 function locationRequest(mode = 'feed', headers = {}, query = {}) {
@@ -106,6 +107,7 @@ test('real Postgres JSONB update preserves a concurrent change to another destin
   await pg.exec(`CREATE TABLE users (id UUID PRIMARY KEY, name TEXT, email TEXT, phone TEXT,
     title TEXT, bio TEXT, skills TEXT[], organization TEXT, links JSONB, role_settings JSONB,
     profile_hidden BOOLEAN, avatar_url TEXT, cover_url TEXT, auth_version INTEGER DEFAULT 0, auth_provider TEXT DEFAULT 'local')`);
+  for (const sql of DEVICE_SCHEMA) await pg.exec(sql);
   await pg.query('INSERT INTO users(id,name,email,role_settings) VALUES($1,$2,$3,$4)', [id, 'Database member', 'database@example.invalid', JSON.stringify({
     feedLanguages: ['en'], feedLocations: { countries: { country: 'JP', city: 'Tokyo' }, restaurants: { country: 'US', city: 'San Diego' } },
   })]);
@@ -123,7 +125,7 @@ test('real Postgres JSONB update preserves a concurrent change to another destin
       assert.deepEqual(JSON.parse(params[6]), { feedLocations: { bars: { country: 'CA', city: 'Vancouver' } } }, 'only submitted scopes belong in the SQL patch');
       return pg.query(sql, params);
     }
-    if (sql.startsWith('SELECT * FROM users WHERE id') || /^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)) return pg.query(sql, params);
+    if (sql.startsWith('SELECT * FROM users WHERE id') || /office_security_device|pg_advisory_xact_lock/.test(sql) || /^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)) return pg.query(sql, params);
     return { rows: [], rowCount: 0 };
   } });
   app.seedUser(member(id));

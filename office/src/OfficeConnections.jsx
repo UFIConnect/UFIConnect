@@ -3,17 +3,17 @@ import { CheckCircle2, ExternalLink, GitBranch, Cloud, Server, RefreshCw } from 
 import './OfficeConnections.css';
 
 const PROVIDERS = [
-  { id: 'github', name: 'GitHub', Icon: GitBranch, description: 'Review and publish web, app, and Office code changes through the existing code controls.',
+  { id: 'github', name: 'GitHub', Icon: GitBranch, description: 'Read and edit repository files, run checks and terminal commands, and publish requested code changes.',
     url: 'https://github.com/settings/personal-access-tokens/new', label: 'Create a GitHub token',
     help: 'Choose the UFIConnect repository and grant Contents and Actions write access. Repository access is verified before saving; each operation checks its required permissions.' },
   { id: 'render', name: 'Render', Icon: Server, description: 'Deploy the API, pipeline, website, and Office through the deployment controls.',
     url: 'https://dashboard.render.com/u/settings#api-keys', label: 'Open Render API keys',
     help: 'Use a Render API key and the service IDs for this Office. A service ID begins with srv-.' },
-  { id: 'cloudflare', name: 'Cloudflare', Icon: Cloud, description: 'Power conversations and current web research with your Cloudflare AI account.',
+  { id: 'cloudflare', name: 'Cloudflare', Icon: Cloud, description: 'Power conversations, web research, and requested Workers deployments through your Cloudflare account.',
     url: 'https://dash.cloudflare.com/profile/api-tokens', label: 'Create a Cloudflare token',
-    help: 'For a direct connection, grant Workers AI Read and AI Gateway Read for your account. Research needs search credits or a provider key in AI Gateway. An existing Worker binding can also power chat.' },
+    help: 'For a direct AI connection, grant Workers AI Read and AI Gateway Read for your account. Broad research needs Cloudflare search credits. An existing Worker binding can also power chat. Use a separate Workers Scripts Write token to enable deployment.' },
 ];
-const blank = () => ({ token: '', accountId: '', model: '@cf/google/gemma-4-26b-a4b-it', gateway: 'default', serviceIds: { api: '', pipeline: '', web: '', office: '' } });
+const blank = () => ({ token: '', deploymentToken: '', accountId: '', model: '@cf/google/gemma-4-26b-a4b-it', gateway: 'default', serviceIds: { api: '', pipeline: '', web: '', office: '' } });
 async function read(response) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw Error(response.status === 401 ? 'Reconnect to Office to manage connections.' :
@@ -72,8 +72,8 @@ export default function OfficeConnections({ apiBase, request, onConnected, onNav
   }
   function save(event) {
     event.preventDefault();
-    const body = { token: form.token.trim() };
-    if (editing === 'cloudflare') Object.assign(body, { accountId: form.accountId.trim(), model: form.model.trim(), gateway: form.gateway.trim() });
+    const body = form.token.trim() ? { token: form.token.trim() } : {};
+    if (editing === 'cloudflare') Object.assign(body, { accountId: form.accountId.trim(), model: form.model.trim(), gateway: form.gateway.trim(), ...(form.deploymentToken.trim() ? { deploymentToken: form.deploymentToken.trim() } : {}) });
     if (editing === 'render') body.serviceIds = Object.fromEntries(Object.entries(form.serviceIds).map(([role, value]) => [role, value.trim()]));
     operation(editing, 'save', body);
   }
@@ -89,6 +89,7 @@ export default function OfficeConnections({ apiBase, request, onConnected, onNav
         <p>{provider.description}</p>
         {item?.repository && <p className="oc-context">{item.repository}</p>}
         {item?.mode === 'worker-binding' && <p className="oc-context">Connected through a protected Cloudflare Worker</p>}
+        {provider.id === 'cloudflare' && item?.configured && <p className="oc-context">Workers deployment access: {item.deploymentConfigured ? 'configured' : 'not connected'}</p>}
         {item?.verifiedAt && <p className="oc-context">Last verified {new Date(item.verifiedAt).toLocaleString()}</p>}
         <div className="oc-actions">
           <button type="button" disabled={Boolean(busy) || loading} onClick={() => edit(provider.id)}>{item?.configured ? 'Update connection' : 'Connect'} {provider.name}</button>
@@ -98,18 +99,21 @@ export default function OfficeConnections({ apiBase, request, onConnected, onNav
         {disconnecting === provider.id && <div className="oc-confirm"><p>Disconnect {provider.name} from Office? This also disables the inherited server connection for Office.</p><button disabled={Boolean(busy)} onClick={() => operation(provider.id, 'disconnect', { confirmed: true })}>Confirm disconnect</button> <button disabled={Boolean(busy)} onClick={() => setDisconnecting('')}>Cancel</button></div>}
         {editing === provider.id && <form onSubmit={save} className="oc-form">
           <p>{provider.help}</p><a href={provider.url} target="_blank" rel="noopener noreferrer">{provider.label} <ExternalLink size={13} /></a>
-          <label>{provider.name} {provider.id === 'render' ? 'API key' : 'API token'}<input type="password" autoComplete="off" spellCheck="false" required minLength={20} maxLength={4096} value={form.token} disabled={Boolean(busy)} onChange={event => setForm(value => ({ ...value, token: event.target.value }))} /></label>
+          <label>{provider.name} {provider.id === 'render' ? 'API key' : 'API token'}<input type="password" autoComplete="off" spellCheck="false" required={provider.id !== 'cloudflare' || !item?.configured} minLength={20} maxLength={4096} value={form.token} disabled={Boolean(busy)} onChange={event => setForm(value => ({ ...value, token: event.target.value }))} /></label>
           {provider.id === 'cloudflare' && <>
+            {item?.configured && <p>Leave the AI token empty to keep the current AI connection.</p>}
+            <label>Workers deployment token<input type="password" autoComplete="off" spellCheck="false" minLength={20} maxLength={4096} value={form.deploymentToken} disabled={Boolean(busy)} onChange={event => setForm(value => ({ ...value, deploymentToken: event.target.value }))} /></label>
+            <p>Optional. Grant Workers Scripts Write for this connected account. This credential is used only for approved deployment operations.</p>
             <label>Cloudflare account ID<input required pattern="[a-fA-F0-9]{32}" value={form.accountId} disabled={Boolean(busy)} onChange={event => setForm(value => ({ ...value, accountId: event.target.value }))} /></label>
             <label>AI model<input required maxLength={150} value={form.model} disabled={Boolean(busy)} onChange={event => setForm(value => ({ ...value, model: event.target.value }))} /></label>
             <label>AI Gateway<input required maxLength={64} value={form.gateway} disabled={Boolean(busy)} onChange={event => setForm(value => ({ ...value, gateway: event.target.value }))} /></label>
           </>}
           {provider.id === 'render' && Object.entries(form.serviceIds).map(([role, value]) => <label key={role}>{role === 'api' ? 'API' : role[0].toUpperCase() + role.slice(1)} service ID<input value={value} placeholder="srv-…" disabled={Boolean(busy)} onChange={event => setForm(state => ({ ...state, serviceIds: { ...state.serviceIds, [role]: event.target.value } }))} /></label>)}
-          <div className="oc-actions"><button disabled={Boolean(busy)}>{busy === `${provider.id}:save` ? 'Verifying and saving…' : 'Verify and save'}</button><button type="button" disabled={Boolean(busy)} onClick={() => { setEditing(''); setForm(blank()); }}>Cancel</button></div>
+          <div className="oc-actions"><button disabled={Boolean(busy) || (!form.token.trim() && !form.deploymentToken.trim())}>{busy === `${provider.id}:save` ? 'Verifying and saving…' : 'Verify and save'}</button><button type="button" disabled={Boolean(busy)} onClick={() => { setEditing(''); setForm(blank()); }}>Cancel</button></div>
         </form>}
       </article>;
     })}</div>
-    <p className="oc-footer">Use Office commands to review code edits and deployments. Cloudflare connects AI and research; infrastructure changes remain in the Cloudflare dashboard.</p>
+    <p className="oc-footer">Run coding and deployment tasks in Office AI, or use the existing Office commands. Cloudflare supplies AI and web research; GitHub and Render provide repository, check, and deployment actions.</p>
     <div className="oc-actions"><button type="button" onClick={() => onNavigate?.('controls')}>Open code and deployment controls</button><a href="https://dash.cloudflare.com/" target="_blank" rel="noopener noreferrer">Cloudflare dashboard <ExternalLink size={13} /></a></div>
   </section>;
 }

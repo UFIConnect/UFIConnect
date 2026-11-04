@@ -39,6 +39,8 @@ try {
     let connections = ['github', 'render', 'cloudflare'].map(id => ({ id, configured: false }));
     let stallConnectionRead = false, stalledConnectionRoute = null, statusReadDelayMs = 0, connectionReadDelayMs = 0;
     let holdChat = false, releaseChat = null, heldChatReady = null, failChatNetwork = false;
+    const conversations = new Map();
+    let saveFailure = false, saveConflict = false, abortCreateOnce = false, markdownReply = false, task = null, terminal = null, terminalOutput = '', taskCreateFailure = false;
     page.on('pageerror', error => errors.push(error.message));
     await context.route('**/*', async route => {
       const req = route.request(), url = new URL(req.url());
@@ -48,6 +50,39 @@ try {
       check(req.headers()['x-office-token'] === 'synthetic-office-ai-token' && !url.href.includes('synthetic-office-ai-token'), 'Office credentials stay in authenticated headers');
       const body = req.postData() ? req.postDataJSON() : null;
       requests.push({ method: req.method(), path: url.pathname, body });
+      if (url.pathname === '/office/ai/conversations') {
+        if (req.method() === 'GET') return route.fulfill({ headers, json: { conversations: [...conversations.values()].map(({ messages, ...item }) => item), storage: 'encrypted-database' } });
+        if (saveFailure) return route.fulfill({ status: 503, headers, json: { error: 'Conversation database temporarily unavailable.' } });
+        if (!conversations.has(body.clientRequestId)) conversations.set(body.clientRequestId, { id: body.clientRequestId, title: body.title, messages: body.messages, version: 1, updatedAt: new Date().toISOString() });
+        if (abortCreateOnce) { abortCreateOnce = false; return route.abort('connectionfailed'); }
+        return route.fulfill({ headers, json: { conversation: conversations.get(body.clientRequestId) } });
+      }
+      if (url.pathname.startsWith('/office/ai/conversations/')) {
+        const id = url.pathname.split('/').at(-1), conversation = conversations.get(id);
+        if (req.method() === 'GET') return route.fulfill({ headers, json: { conversation } });
+        if (saveFailure) return route.fulfill({ status: 503, headers, json: { error: 'Conversation database temporarily unavailable.' } });
+        if (saveConflict || body.expectedVersion !== conversation?.version) return route.fulfill({ status: 409, headers, json: { error: 'Conversation version conflict.' } });
+        if (req.method() === 'DELETE') { check(body.confirmed === true, 'Deleting a saved chat carries the explicit confirmation'); conversations.delete(id); return route.fulfill({ headers, json: { deleted: true } }); }
+        const updated = { ...conversation, ...body, version: conversation.version + 1, updatedAt: new Date().toISOString() }; conversations.set(id, updated);
+        return route.fulfill({ headers, json: { conversation: updated } });
+      }
+      if (url.pathname === '/office/ai/tasks') {
+        if (req.method() === 'GET') return route.fulfill({ headers, json: { tasks: task ? [task] : [], capabilities: { repository: 'fixture/office', editCode: true, publish: true, deploy: true, operate: true, deployTargets: [{ id: 'office', label: 'Office website' }] } } });
+        if (!task || task.clientRequestId !== body.clientRequestId) task = { ...body, id: 'task-fixture', status: 'working', createdAt: new Date().toISOString(), events: [{ id: 'step-read', label: 'Read repository files', status: 'succeeded', detail: 'Read the requested UI source.', at: new Date().toISOString() }], changedFiles: [{ path: 'office/src/Example.jsx', diff: '- old title\n+ requested title', status: 'modified' }], commit: { sha: 'a'.repeat(40), ref: 'office-ai/check-fixture', refType: 'tag', published: false, url: 'https://github.com/fixture/office/commit/' + 'a'.repeat(40) }, checks: [{ name: 'Verify', status: 'queued', sha: 'a'.repeat(40), url: 'https://github.com/fixture/office/actions/runs/123' }], deployments: [] };
+        if (taskCreateFailure) return route.abort('connectionfailed');
+        return route.fulfill({ status: 202, headers, json: { task } });
+      }
+      if (url.pathname.startsWith('/office/ai/tasks/')) {
+        if (url.pathname.endsWith('/cancel')) task = { ...task, status: 'cancel_requested' };
+        if (url.pathname.endsWith('/confirm')) { check(body.confirmationId === task.confirmation.id && body.confirmed, 'Task confirms the current specific action'); task = { ...task, status: 'working', confirmation: null }; }
+        return route.fulfill({ headers, json: { task } });
+      }
+      if (url.pathname === '/office/ai/terminal') {
+        if (req.method() === 'GET') return route.fulfill({ headers, json: { capabilities: { available: true, configured: true, repository: 'fixture/office' }, sessions: terminal ? [terminal] : [] } });
+        terminal = { ...body, id: 'terminal-fixture', status: 'queued', ref: body.ref, commitSha: 'b'.repeat(40), createdAt: new Date().toISOString(), runUrl: 'https://github.com/fixture/office/actions/runs/456', exitCode: null };
+        return route.fulfill({ status: 202, headers, json: { session: terminal } });
+      }
+      if (url.pathname.startsWith('/office/ai/terminal/')) { if (url.pathname.endsWith('/cancel')) terminal = { ...terminal, cancellationRequested: true }; return route.fulfill({ headers, json: { session: terminal, output: terminalOutput, outputTruncated: false } }); }
       if (url.pathname === '/office/ai') {
         if (statusReadDelayMs) await new Promise(resolve => setTimeout(resolve, statusReadDelayMs));
         return route.fulfill({ headers, json: { provider: 'Cloudflare', configured, model: '@cf/test/model', gateway: 'default', researchAvailable: true, missing: configured ? [] : ['CLOUDFLARE_API_TOKEN'] } });
@@ -61,7 +96,7 @@ try {
       if (connectionMatch) {
         const id = connectionMatch[1];
         if (req.method() === 'DELETE') connections = connections.map(item => item.id === id ? { id, configured: false } : item);
-        else connections = connections.map(item => item.id === id ? { id, configured: true, verifiedAt: '2026-11-03T18:00:00Z', ...(id === 'github' ? { repository: 'fixture/office' } : {}), ...(id === 'render' ? { serviceIds: body.serviceIds || item.serviceIds } : {}), ...(id === 'cloudflare' ? { accountId: body.accountId || item.accountId, model: body.model || item.model, gateway: body.gateway || item.gateway } : {}) } : item);
+        else connections = connections.map(item => item.id === id ? { id, configured: true, verifiedAt: '2026-11-03T18:00:00Z', ...(id === 'github' ? { repository: 'fixture/office' } : {}), ...(id === 'render' ? { serviceIds: body.serviceIds || item.serviceIds } : {}), ...(id === 'cloudflare' ? { accountId: body.accountId || item.accountId, model: body.model || item.model, gateway: body.gateway || item.gateway, deploymentConfigured: !!body.deploymentToken || !!item.deploymentConfigured } : {}) } : item);
         return route.fulfill({ headers, json: { detail: req.method() === 'DELETE' ? 'Connection disabled.' : connectionMatch[2] ? 'Connection verified.' : 'Connection verified and saved.' } });
       }
       if (url.pathname === '/office/controls') return route.fulfill({ headers, json: { controls: [command], history: [] } });
@@ -75,7 +110,7 @@ try {
         if (failChatNetwork) return route.abort('connectionfailed');
         if (slowChat) await new Promise(resolve => setTimeout(resolve, 1500));
         if (failChat) return route.fulfill({ status: 503, headers, json: { error: 'Cloudflare could not complete the request. Please retry.' } });
-        const fulfillReply = () => route.fulfill({ headers, json: { reply: 'A grounded answer with alternatives and limitations.', provider: 'Cloudflare', model: '@cf/test/model', generatedAt: '2026-11-03T18:00:00Z', research: { status: researchStatus, checkedAt: '2026-11-03T18:00:00Z' },
+        const fulfillReply = () => route.fulfill({ headers, json: { reply: markdownReply ? '## Example\n**A safe code example**\n```js\nconsole.log("hello");\n```\n[Unsafe link](javascript:alert(1))\n<img src=x onerror=alert(1)>' : 'A grounded answer with alternatives and limitations.', provider: 'Cloudflare', model: '@cf/test/model', generatedAt: '2026-11-03T18:00:00Z', research: { status: researchStatus, checkedAt: '2026-11-03T18:00:00Z' },
           sources: researchStatus === 'official-updates' ? [{ title: 'Official model announcement', url: 'https://blog.google/technology/ai/fixture-announcement/', publisher: 'Google AI', publishedAt: '2026-11-02T12:00:00Z' }] : researchStatus === 'verified' ? [{ title: 'Official update', url: 'https://developers.cloudflare.com/changelog/', description: 'A current release.' }, { title: 'Unsafe script', url: 'javascript:alert(1)' }, { title: 'Credential URL', url: 'https://secret:password@example.org/' }] : [], actions: [command], toolsUsed: body.toolIds } });
         if (holdChat) { releaseChat = fulfillReply; heldChatReady?.(); return; }
         return fulfillReply();
@@ -92,6 +127,14 @@ try {
     check(firstChat.body.research && firstChat.body.perspective === 'balanced', 'New conversations use live research and balanced perspectives');
     check(await page.getByRole('link', { name: 'Official update' }).count() === 1, 'Retrieved source is a usable citation');
     check(await page.getByRole('link', { name: /Unsafe script|Credential URL/ }).count() === 0, 'Unsafe source schemes and credentials never become links');
+    await page.getByText('Conversation saved in Office', { exact: true }).waitFor();
+    const initialConversation = requests.find(row => row.path === '/office/ai/conversations' && row.method === 'POST').body.clientRequestId;
+    check(conversations.get(initialConversation).messages.length === 2, 'User and assistant messages are automatically persisted with versioned writes');
+    await page.reload();
+    await page.getByText('Cloudflare configured', { exact: true }).waitFor();
+    await page.locator('.office-ai-saved-chats li>button').first().click();
+    await page.getByText('A grounded answer with alternatives and limitations.', { exact: true }).waitFor();
+    check(await page.locator('.office-ai-message').count() === 2, 'Saved conversation can be reopened after a browser reload');
     await page.getByRole('button', { name: 'Run security check Review in Office commands' }).click();
     await page.getByRole('textbox', { name: 'Search controls' }).waitFor();
     check(await page.getByRole('textbox', { name: 'Search controls' }).inputValue() === command.id, 'Suggested command opens the canonical control filter');
@@ -158,6 +201,16 @@ try {
       await card.getByRole('button', { name: 'Verify connection', exact: true }).click();
       await page.getByRole('status').filter({ hasText: 'Connection verified.' }).waitFor();
       check(requests.some(row => row.path === `/office/connections/${id}/verify` && !row.body.token), 'Stored connection can be verified without returning its credential');
+      if (id === 'cloudflare') {
+        await card.getByRole('button', { name: 'Update connection Cloudflare', exact: true }).click();
+        await page.getByLabel('Workers deployment token', { exact: true }).fill('synthetic-cloudflare-private-deployment-token');
+        check(await page.getByLabel('Workers deployment token', { exact: true }).getAttribute('type') === 'password', 'Workers deployment credential is masked separately');
+        await card.getByRole('button', { name: 'Verify and save', exact: true }).click();
+        await page.getByText('Workers deployment access: configured', { exact: true }).waitFor();
+        const deploymentSave = requests.findLast(row => row.path === '/office/connections/cloudflare' && row.method === 'POST');
+        check(deploymentSave.body.deploymentToken === 'synthetic-cloudflare-private-deployment-token' && !Object.hasOwn(deploymentSave.body, 'token'), 'Deployment-only connection update preserves the existing AI credential');
+        check(await page.locator('input[type=password]').count() === 0, 'Saving deployment access clears both credential inputs');
+      }
       await card.getByRole('button', { name: 'Disconnect', exact: true }).click();
       check(!requests.some(row => row.path === `/office/connections/${id}` && row.method === 'DELETE'), 'Disconnect waits for explicit confirmation');
       await card.getByRole('button', { name: 'Confirm disconnect', exact: true }).click();
@@ -171,7 +224,122 @@ try {
     await page.getByLabel('Message Office AI').fill('Explain my connections.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await page.getByRole('button', { name: 'Send', exact: true }).waitFor();
-    check(!requests.filter(row => row.path === '/office/ai/chat').some(row => JSON.stringify(row.body).includes('private-connection-token')), 'Saved and unsaved provider credentials never enter chatbot payloads');
+    check(!requests.filter(row => row.path === '/office/ai/chat').some(row => /private-(?:connection|deployment)-token/.test(JSON.stringify(row.body))), 'Saved and unsaved provider credentials never enter chatbot payloads');
+    await page.getByText('Conversation saved in Office', { exact: true }).waitFor();
+    if (width === 1280) {
+      const attachment = page.getByLabel('Attach text file', { exact: true });
+      await page.getByLabel('Message Office AI').fill('Review this fixture.');
+      await attachment.setInputFiles({ name: 'too-large.txt', mimeType: 'text/plain', buffer: Buffer.from('x'.repeat(13000)) });
+      await page.getByRole('alert').filter({ hasText: 'exceed 12,000 characters' }).waitFor();
+      check(await page.getByLabel('Message Office AI').inputValue() === 'Review this fixture.', 'An oversized text attachment is rejected without truncating or replacing the draft');
+      await attachment.setInputFiles({ name: 'example.json', mimeType: 'application/json', buffer: Buffer.from('{"example":true}') });
+      await page.waitForFunction(() => document.querySelector('#office-ai-prompt').value.includes('Attached file: example.json'));
+      saveFailure = true; markdownReply = true;
+      await page.getByRole('button', { name: 'Send', exact: true }).click();
+      await page.getByRole('button', { name: 'Copy code', exact: true }).waitFor();
+      await page.getByRole('alert').filter({ hasText: 'Conversation database temporarily unavailable.' }).waitFor();
+      check(await page.getByText('Conversation changes are not saved.', { exact: true }).isVisible(), 'Failed database writes are visibly unsaved while retaining the conversation');
+      check(await page.locator('.office-ai-code pre').innerText() === 'console.log("hello");', 'Fenced code renders as readable, copyable text');
+      check(await page.locator('.office-ai-markdown img, .office-ai-markdown script').count() === 0 && await page.locator('.office-ai-markdown a[href^="javascript:"]').count() === 0, 'Model Markdown cannot execute HTML or unsafe links');
+      const attachedRequest = requests.filter(row => row.path === '/office/ai/chat').at(-1);
+      check(attachedRequest.body.message.includes('{"example":true}') && attachedRequest.body.message.length <= 12000, 'Text attachment contents use the bounded chat payload');
+      saveFailure = false;
+      await page.getByRole('button', { name: 'Retry saving conversation', exact: true }).click();
+      await page.getByText('Conversation saved in Office', { exact: true }).waitFor();
+      const savedVersion = conversations.get(initialConversation).version;
+      check(conversations.get(initialConversation).messages.at(-2).content.includes('example.json'), 'Retry persists the same conversation and its attached text');
+      saveConflict = true; markdownReply = false;
+      await page.getByLabel('Message Office AI').fill('Keep this conflicting local message until I choose to reload.');
+      await page.getByRole('button', { name: 'Send', exact: true }).click();
+      await page.getByRole('button', { name: 'Reload saved conversation', exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Send', exact: true }).waitFor();
+      check(conversations.get(initialConversation).version === savedVersion, 'A version conflict never overwrites the saved conversation');
+      check(await page.locator('.office-ai-message-user', { hasText: 'Keep this conflicting local message' }).isVisible(), 'A save conflict preserves unsaved local messages for review');
+      saveConflict = false; page.once('dialog', dialog => dialog.accept());
+      await page.getByRole('button', { name: 'Reload saved conversation', exact: true }).click();
+      await page.getByRole('button', { name: 'Copy code', exact: true }).waitFor();
+      check(await page.locator('.office-ai-message-user', { hasText: 'Keep this conflicting local message' }).count() === 0, 'Explicit reload resolves the conflict using the saved version');
+    }
+    await page.getByRole('button', { name: 'Run a task', exact: true }).click();
+    await page.getByLabel('Task request', { exact: true }).fill('Update the example title, check it, publish, and deploy Office.');
+    check(!await page.getByLabel('Run Office commands', { exact: true }).isChecked(), 'Operational Office commands require their own task scope');
+    await page.getByLabel('Run Office commands', { exact: true }).check();
+    await page.getByLabel('Office website', { exact: true }).check();
+    check(await page.getByText('Publishing to main can trigger automatic deployment.', { exact: false }).isVisible(), 'Task scope discloses the repository automatic deployment behavior');
+    taskCreateFailure = true;
+    await page.getByRole('button', { name: 'Run task', exact: true }).click();
+    await page.getByRole('alert').filter({ hasText: 'The connection ended.' }).waitFor();
+    taskCreateFailure = false;
+    await page.getByRole('button', { name: 'Run task', exact: true }).click();
+    await page.getByText('Candidate commit; not published', { exact: false }).waitFor();
+    const creates = requests.filter(row => row.path === '/office/ai/tasks' && row.method === 'POST');
+    check(creates.at(-1).body.clientRequestId === creates.at(-2).body.clientRequestId, 'Retry after an ambiguous task creation reuses its idempotency key');
+    check(creates.at(-1).body.permissions.publish && creates.at(-1).body.permissions.deploy && creates.at(-1).body.permissions.operate && creates.at(-1).body.deployTargets[0] === 'office', 'Task submission carries explicit requested action scope and deployment target');
+    check(await page.getByText('Candidate commit; not published', { exact: false }).isVisible() && await page.getByText('queued', { exact: true }).isVisible(), 'Queued checks and candidate commits are not represented as verified or published');
+    await page.getByText('office/src/Example.jsx', { exact: true }).click();
+    check(await page.getByText('- old title\n+ requested title', { exact: true }).isVisible(), 'Task file diffs are inspectable');
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `Task results fit ${width}px without horizontal page overflow`);
+    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    await page.getByRole('button', { name: 'Run a task', exact: true }).click();
+    await page.getByText('Candidate commit; not published', { exact: false }).waitFor();
+    check(await page.getByRole('heading', { name: 'Update the example title, check it, publish, and deploy Office.', exact: true }).isVisible(), 'Server-backed task is recovered after navigating away and back');
+    task = { ...task, status: 'needs_confirmation', confirmation: { id: 'uncertain-action', label: 'Check an unconfirmed external operation', detail: 'Inspect the provider receipt before retrying.', uncertain: true } };
+    await page.getByRole('button', { name: 'Refresh tasks', exact: true }).click();
+    await page.getByText('This interrupted action cannot be replayed from a confirmation button.', { exact: false }).waitFor();
+    check(await page.getByRole('button', { name: 'Confirm this action', exact: true }).count() === 0, 'An uncertain external write cannot be blindly replayed through confirmation');
+    task = { ...task, status: 'needs_confirmation', confirmation: { id: 'confirm-specific', label: 'Confirm destructive fixture action', detail: 'This fixture action removes a test resource.' } };
+    await page.getByRole('button', { name: 'Refresh tasks', exact: true }).click();
+    await page.getByRole('button', { name: 'Confirm this action', exact: true }).click();
+    await page.getByRole('button', { name: 'Confirm this action', exact: true }).waitFor({ state: 'hidden' });
+    await page.getByRole('button', { name: 'Stop task', exact: true }).click();
+    await page.getByRole('button', { name: 'Cancellation requested', exact: true }).waitFor();
+    check(task.status === 'cancel_requested' && await page.getByRole('button', { name: 'Cancellation requested', exact: true }).isDisabled(), 'Stopping a task shows a request, without claiming completed work was undone');
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await page.getByLabel('Terminal command', { exact: true }).fill('printf "terminal fixture"');
+    await page.getByRole('button', { name: 'Run command', exact: true }).click();
+    await page.getByRole('link', { name: 'Open GitHub Actions run', exact: true }).waitFor();
+    check(await page.getByRole('button', { name: 'Run command', exact: true }).isDisabled(), 'Only one isolated terminal session can run at a time');
+    terminal = { ...terminal, status: 'completed', conclusion: 'failure', exitCode: 7 }; terminalOutput = 'fixture output\ncommand failed with exit 7';
+    await page.getByRole('button', { name: 'Refresh terminal', exact: true }).click();
+    await page.getByText('completed · failure · exit 7', { exact: true }).waitFor();
+    check((await page.getByLabel('Command output', { exact: true }).innerText()).includes('fixture output'), 'Terminal displays actual fetched output and exit status');
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `Terminal fits ${width}px without horizontal page overflow`);
+    await page.screenshot({ path: path.join(output, `office-ai-terminal-${width}.png`), fullPage: true });
+    terminal = { ...terminal, status: 'running', conclusion: null, exitCode: null };
+    await page.getByRole('button', { name: 'Refresh terminal', exact: true }).click();
+    await page.getByRole('button', { name: 'Stop command', exact: true }).click();
+    await page.getByRole('button', { name: 'Cancellation requested', exact: true }).waitFor();
+    check(terminal.status === 'running' && terminal.cancellationRequested, 'Terminal cancellation retains the actual running status until GitHub confirms completion');
+    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    await page.getByText('Conversation saved in Office', { exact: true }).waitFor();
+    await page.getByRole('button', { name: /^Delete conversation / }).first().click();
+    check(conversations.has(initialConversation), 'Saved conversation deletion waits for confirmation');
+    await page.getByRole('button', { name: 'Delete saved chat', exact: true }).click();
+    await page.getByRole('heading', { name: 'What are we working on?', exact: true }).waitFor();
+    check(!conversations.has(initialConversation), 'Confirmed delete removes the saved conversation and clears the current transcript');
+    if (width === 1280) {
+      abortCreateOnce = true; holdChat = true;
+      const chatPending = new Promise(resolve => { heldChatReady = resolve; });
+      await page.getByLabel('Message Office AI').fill('Save both messages even when the first database response is lost.');
+      await page.getByRole('button', { name: 'Send', exact: true }).click();
+      await chatPending;
+      await page.getByRole('alert').filter({ hasText: 'The connection ended.' }).waitFor();
+      await releaseChat(); holdChat = false;
+      await page.getByText('A grounded answer with alternatives and limitations.', { exact: true }).waitFor();
+      await page.getByText('Conversation saved in Office', { exact: true }).waitFor();
+      const recoveredCreate = requests.findLast(row => row.path === '/office/ai/conversations' && row.method === 'POST');
+      check(conversations.get(recoveredCreate.body.clientRequestId).messages.length === 2, 'An idempotent create receipt with an older snapshot is updated before the assistant reply is reported saved');
+      check(conversations.size === 1, 'Recovering an ambiguous conversation create never makes duplicate chats');
+      await page.getByRole('button', { name: 'New chat', exact: true }).click();
+    }
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await page.getByLabel('Terminal command', { exact: true }).fill('Unsubmitted terminal draft to clear on auth change');
+    await page.evaluate(() => window.dispatchEvent(new Event('office-token-changed')));
+    await page.getByRole('heading', { name: 'What are we working on?', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await page.getByRole('button', { name: 'Cancellation requested', exact: true }).waitFor();
+    check(await page.getByLabel('Terminal command', { exact: true }).inputValue() === '', 'Auth changes clear terminal drafts while recovering authorized server receipts');
+    check(await page.getByRole('button', { name: 'Cancellation requested', exact: true }).isDisabled(), 'Recovered terminal receipt preserves its cancellation request');
     await page.getByRole('button', { name: 'Connections', exact: true }).click();
     await page.getByRole('button', { name: 'Connect GitHub', exact: true }).click();
     check(await page.getByLabel('GitHub API token', { exact: true }).inputValue() === '', 'Unsaved credential is cleared when Connections remounts');

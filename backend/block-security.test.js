@@ -3,6 +3,7 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const {PGlite}=require('@electric-sql/pglite');
 const {createAppHarness,member}=require('./test-support/app-harness');
+const {SCHEMA:DEVICE_SCHEMA}=require('./suspicious-devices');
 const A='11111111-1111-4111-8111-111111111111',B='22222222-2222-4222-8222-222222222222';
 
 test('failed block and unblock transactions preserve durable policy and retries cannot report a memory-only success',async t=>{
@@ -11,6 +12,7 @@ test('failed block and unblock transactions preserve durable policy and retries 
   CREATE TABLE blocks(id TEXT PRIMARY KEY,blocker_id TEXT,blocked_id TEXT,UNIQUE(blocker_id,blocked_id));
   CREATE TABLE follows(follower_id TEXT,following_id TEXT);
   CREATE TABLE connections(from_id TEXT,to_id TEXT,status TEXT);`);
+ for(const sql of DEVICE_SCHEMA)await pg.exec(sql);
  await pg.query("INSERT INTO users(id,name,email) VALUES($1,'Alice','alice@example.invalid'),($2,'Bob','bob@example.invalid')",[A,B]);
  await pg.query('INSERT INTO follows VALUES($1,$2)',[A,B]);
  await pg.query("INSERT INTO connections VALUES($1,$2,'accepted')",[A,B]);

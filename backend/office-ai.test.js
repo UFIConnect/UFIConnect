@@ -33,6 +33,30 @@ async function invoke(handler, body = {}, extras = {}) {
 }
 const configured = options => createOfficeAI({ env: { ...settings }, now, ...options });
 
+test('supplied public URLs use retrieved page text and citations without claiming a broad search', async () => {
+  const provider = fakeProvider(); let reads = 0;
+  const webReader = { urls: () => ['https://example.com/source'], read: async () => {
+    reads++; return { title: 'Primary document', url: 'https://example.com/source', content: 'Verified public page excerpt.', description: 'Document excerpt', checkedAt: now(), truncated: false };
+  } };
+  const service = configured({ fetcher: provider.fetcher, webReader });
+  const result = await invoke(service.chat, { message: 'Explain https://example.com/source', research: true });
+  assert.equal(result.status, 200); assert.equal(result.body.research.status, 'pages'); assert.equal(reads, 1);
+  assert.equal(provider.calls.length, 1); assert.equal(result.body.sources[0].url, 'https://example.com/source');
+  assert.match(provider.calls[0].body.messages[1].content, /Verified public page excerpt/);
+  assert.match(provider.calls[0].body.messages[0].content, /untrusted data/);
+  await invoke(service.chat, { message: 'Explain https://example.com/source', research: false });
+  assert.equal(reads, 1, 'Disabled research never reads a supplied URL');
+});
+
+test('unreadable supplied pages remain explicitly unavailable and task search reports unavailable search honestly', async () => {
+  const provider = fakeProvider({ failSearch: true });
+  const service = configured({ fetcher: provider.fetcher, webReader: { urls: () => ['https://example.com/private'], read: async () => { throw Error('blocked'); } } });
+  const result = await invoke(service.chat, { message: 'Read this page', research: true });
+  assert.equal(result.body.research.status, 'unavailable'); assert.equal(result.body.research.failedPages, 1); assert.deepEqual(result.body.sources, []);
+  const search = await service.search('current restaurant hours');
+  assert.equal(search.status, 'unavailable'); assert.deepEqual(search.sources, []); assert.match(search.note, /credits/);
+});
+
 function mockDeadlineClock(t) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   // AbortSignal.timeout uses native timers outside Node's mocked clock.

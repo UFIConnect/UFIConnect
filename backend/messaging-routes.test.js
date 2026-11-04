@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
 const { PGlite } = require('@electric-sql/pglite');
 const { createMessageMedia, MESSAGE_MEDIA_SCHEMA } = require('./messaging-security');
+const { SCHEMA: DEVICE_SCHEMA } = require('./suspicious-devices');
 const { createAppHarness, member } = require('./test-support/app-harness');
 
 const A = '11111111-1111-4111-8111-111111111111';
@@ -20,6 +21,7 @@ async function fixture(t, extra = {}) {
     CREATE TABLE connections(from_id TEXT,to_id TEXT,status TEXT);
     CREATE TABLE follows(follower_id TEXT,following_id TEXT)`);
   for (const sql of MESSAGE_MEDIA_SCHEMA) await pg.exec(sql);
+  for (const sql of DEVICE_SCHEMA) await pg.exec(sql);
   await pg.query("INSERT INTO users(id,name,email) VALUES($1,'Alice','alice@example.invalid'),($2,'Bob','bob@example.invalid'),($3,'Carol','carol@example.invalid')", [A,B,C]);
   const app = await createAppHarness({ env, connected: true, query: async (sql, params) => {
     if (sql.startsWith('SELECT id FROM auth_sessions')) return { rows: [{ id: params[0] }] };
@@ -97,7 +99,9 @@ test('message permissions changed during screening are checked again before comm
     const screeningContinue = new Promise(resolve => { release = resolve; });
     app.setContentScreening(async () => { entered(); await screeningContinue; return { allowed: true, content: 'Delayed message' }; });
     const pending = app.request(`/messages/${B}`, { userId: A, method: 'POST', body: { content: 'Delayed message' } });
-    await screeningStarted;
+    await Promise.race([screeningStarted, pending.then(response => {
+      throw new Error(`Request completed before the expected screening pause: HTTP ${response.status}`);
+    })]);
     if (change === 'block') await pg.query('INSERT INTO blocks VALUES($1,$2)', [B,A]);
     if (change === 'private') await pg.query('UPDATE users SET profile_hidden=true WHERE id=$1', [B]);
     if (change === 'connections') await pg.query('UPDATE users SET role_settings=$2 WHERE id=$1', [B, { privacy_messagePermission: 'connections' }]);

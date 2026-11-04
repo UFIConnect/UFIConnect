@@ -10,6 +10,11 @@ on:
       - .github/workflows/deploy-render.yml
   workflow_dispatch:
     inputs:
+      expected_sha:
+        description: Exact verified commit requested by Office (optional for manual dispatch)
+        required: false
+        default: ''
+        type: string
       target:
         description: Render destination to deploy from current main
         required: true
@@ -25,6 +30,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: deploy-render-main
@@ -34,10 +40,12 @@ jobs:
   deploy-render:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 50
     environment: main - uficonnect-pipeline-708r
     env:
       DEPLOY_SHA: ${{ github.sha }}
       DEPLOY_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.target || 'all' }}
+      EXPECTED_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_sha || '' }}
       RENDER_HOOK_API: ${{ secrets.RENDER_HOOK_API }}
       RENDER_HOOK_WEB: ${{ secrets.RENDER_HOOK_WEB }}
       RENDER_HOOK_OFFICE: ${{ secrets.RENDER_HOOK_OFFICE }}
@@ -47,11 +55,43 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [[ -n "$EXPECTED_SHA" && "$EXPECTED_SHA" != "$DEPLOY_SHA" ]]; then
+            echo "::error::Main changed after the requested commit was verified. Nothing was deployed."
+            exit 1
+          fi
           latest_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
           if [[ "$latest_sha" != "$DEPLOY_SHA" ]]; then
             echo "::error::The requested commit is not the current main commit. Deploy the latest main commit instead."
             exit 1
           fi
+
+      - name: Require successful verification of this exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in $(seq 1 160); do
+            latest_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+            if [[ "$latest_sha" != "$DEPLOY_SHA" ]]; then
+              echo "::error::Main changed while verification was pending. Nothing was deployed."
+              exit 1
+            fi
+            gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/verify.yml/runs?head_sha=${DEPLOY_SHA}&per_page=30" > "$RUNNER_TEMP/office-verify-runs.json"
+            state="$(jq -r --arg sha "$DEPLOY_SHA" '
+              [.workflow_runs[] | select(.head_sha == $sha and (.event == "push" or .event == "workflow_dispatch") and ((.path | split("@")[0]) == ".github/workflows/verify.yml"))] |
+              if any(.[]; .status == "completed" and .conclusion == "success") then "passed"
+              elif length > 0 and all(.[]; .status == "completed") then "failed"
+              else "pending" end' "$RUNNER_TEMP/office-verify-runs.json")"
+            if [[ "$state" == passed ]]; then
+              exit 0
+            fi
+            if [[ "$state" == failed ]]; then
+              echo "::error::Verification did not pass for this exact commit. Nothing was deployed."
+              exit 1
+            fi
+            sleep 15
+          done
+          echo "::error::Verification did not finish within the deployment wait limit. Nothing was deployed."
+          exit 1
 
       - name: Select and require release destinations
         run: |

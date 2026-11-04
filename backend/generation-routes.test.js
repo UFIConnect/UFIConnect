@@ -6,6 +6,7 @@ const { PGlite } = require('@electric-sql/pglite');
 const { createAppHarness, member } = require('./test-support/app-harness');
 const { HISTORY_SCHEMA } = require('./generated-content');
 const { createGenerationUsage, schemaStatements } = require('./generation-usage');
+const { SCHEMA: DEVICE_SCHEMA } = require('./suspicious-devices');
 
 const A = 'a0000000-0000-4000-8000-000000000001';
 const B = 'b0000000-0000-4000-8000-000000000002';
@@ -16,6 +17,7 @@ before(async () => {
   await pg.exec('CREATE TABLE users(id UUID PRIMARY KEY)');
   for (const statement of schemaStatements) await pg.exec(statement);
   await pg.exec(HISTORY_SCHEMA);
+  for (const statement of DEVICE_SCHEMA) await pg.exec(statement);
 });
 after(async () => { await pg.close(); });
 beforeEach(async () => {
@@ -44,7 +46,7 @@ async function setup(t, { env = {}, narrated } = {}) {
       if (state.failQuota && /generation_usage/.test(sql)) throw new Error('database secret');
       if (state.failComplete && /^UPDATE generation_usage_reservations SET state='completed'/.test(sql)) throw new Error('database secret');
       if (state.failHistoryInsert && /^INSERT INTO generated_content/.test(sql)) throw new Error('database secret');
-      if (/generation_usage|generated_content/.test(sql)) return pg.query(sql, params);
+      if (/generation_usage|generated_content|office_security_device|pg_advisory_xact_lock/.test(sql) || /^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)) return pg.query(sql, params);
       return { rows: [], rowCount: 0 };
     },
     modules: {
