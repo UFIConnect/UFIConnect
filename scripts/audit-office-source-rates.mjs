@@ -38,6 +38,11 @@ try {
     await page.goto(server.resolvedUrls.local[0]+'#agents',{waitUntil:'domcontentloaded'});
     await page.getByLabel('Access token',{exact:true}).fill('audit-only');
     await page.getByRole('button',{name:'Unlock Office',exact:true}).click();
+    // A successful sign-in opens the observed login briefing before navigation.
+    await page.getByRole('heading',{name:'Office AI',exact:true}).waitFor();
+    const navigation=page.getByRole('navigation',{name:'Office sections',exact:true});
+    if(await navigation.getByRole('button',{name:'More tools'}).getAttribute('aria-expanded')==='false') await navigation.getByRole('button',{name:'More tools'}).click();
+    await navigation.getByRole('button',{name:'Agents',exact:true}).click();
     await page.getByRole('heading',{name:'Agent Control',exact:true}).waitFor();
     await page.getByText(`${workers.at(-1).id} Agent`,{exact:true}).waitFor();
     for (const worker of workers) {
