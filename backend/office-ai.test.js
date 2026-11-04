@@ -33,6 +33,54 @@ async function invoke(handler, body = {}, extras = {}) {
 }
 const configured = options => createOfficeAI({ env: { ...settings }, now, ...options });
 
+test('general conversations never load Office observations or offer unrequested provider commands', async () => {
+  const fake = fakeProvider({ completion: { content: 'Here is a poem about a garden.', tool_calls: [{ type: 'function', function: {
+    name: 'propose_office_command', arguments: JSON.stringify({ id: control.id }) } }] } });
+  const service = configured({ fetcher: fake.fetcher, getControls: () => { throw Error('Catalog must stay separate'); },
+    getSnapshot: () => { throw Error('Observations must stay separate'); } });
+  const response = await invoke(service.chat, { message: 'Write a poem about a garden.', research: false });
+  assert.equal(response.status, 200); assert.equal(response.body.mode, 'chat'); assert.deepEqual(response.body.actions, []);
+  const request = fake.calls[0].body;
+  assert.equal(request.tools, undefined);
+  const context = JSON.parse(request.messages[1].content.split('\n').slice(1).join('\n'));
+  assert.equal(context.commands, undefined); assert.equal(context.observations, undefined);
+});
+
+test('greetings and idle-only follow-ups do not require AI, source, or Office capabilities', async () => {
+  let calls = 0;
+  const service = createOfficeAI({ env: {}, fetcher: async () => { calls++; throw Error('No research'); },
+    getControls: () => { throw Error('No controls'); } });
+  for (const message of ['Hi', 'thanks', 'start task', 'do anything', 'yes']) {
+    const response = await invoke(service.chat, { mode: 'task', message, sourceIds: ['slack'],
+      history: [{ role: 'user', content: 'Hello' }, { role: 'assistant', content: 'What would you like?' }] });
+    assert.equal(response.status, 200); assert.equal(response.body.task.status, 'needs-input');
+    assert.deepEqual(response.body.sources, []);
+  }
+  assert.equal(calls, 0);
+});
+
+test('dated memory grounds answers with references, records actual discussion and can be disabled', async () => {
+  const fake = fakeProvider(), writes = [], searches = [];
+  const entry = { id: 'memory-1', kind: 'execution', title: 'Earlier public update', status: 'succeeded', referenceId: 'run-123',
+    createdAt: '2026-11-02T10:00:00Z', content: 'The public heading was changed after checks passed.' };
+  const memory = { search: async query => { searches.push(query); return { entries: [entry] }; },
+    record: async item => { writes.push(item); } };
+  const service = configured({ fetcher: fake.fetcher, memory });
+  const response = await invoke(service.chat, { message: 'What did we change earlier?', research: false });
+  assert.equal(response.status, 200); assert.equal(response.body.memory.status, 'retrieved');
+  assert.equal(response.body.memory.entries[0].referenceId, 'run-123');
+  assert.match(JSON.stringify(fake.calls[0].body), /memory-1/);
+  assert.match(JSON.stringify(fake.calls[0].body), /2026-11-02/);
+  assert.deepEqual(writes.map(item => item.role), ['user', 'assistant']);
+  assert.equal(writes[1].content, response.body.reply);
+  const disabled = await invoke(service.chat, { message: 'Explain a garden.', research: false, memory: false });
+  assert.equal(disabled.body.memory.status, 'disabled'); assert.equal(searches.length, 1); assert.equal(writes.length, 2);
+  const unavailable = configured({ fetcher: fake.fetcher, memory: { search: async () => { throw Error('DB offline'); }, record: async () => { throw Error('DB offline'); } } });
+  const answer = await invoke(unavailable.chat, { message: 'Explain a garden.', research: false });
+  assert.equal(answer.status, 200); assert.equal(answer.body.memory.status, 'unavailable');
+  assert.match(answer.body.memory.note, /could not be saved/);
+});
+
 test('supplied public URLs use retrieved page text and citations without claiming a broad search', async () => {
   const provider = fakeProvider(); let reads = 0;
   const webReader = { urls: () => ['https://example.com/source'], read: async () => {
@@ -139,7 +187,7 @@ test('status reports missing configuration without exposing secrets; mutable set
   let response = await invoke(service.status);
   assert.equal(response.body.configured, false);
   assert.deepEqual(response.body.missing, ['CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN']);
-  assert.equal((await invoke(service.chat, { message: 'Hello' })).status, 503);
+  assert.equal((await invoke(service.chat, { message: 'Explain a compiler' })).status, 503);
   Object.assign(env, settings);
   response = await invoke(service.status);
   assert.equal(response.body.configured, true);
@@ -228,7 +276,7 @@ test('model proposals resolve against current canonical controls and cannot alte
     call('propose_office_command', { id: 'deploy.web' }),
   ] } });
   const controls = [control, { ...control, id: 'deploy.web', available: false }];
-  const response = await invoke(configured({ fetcher: fake.fetcher, getControls: () => controls }).chat, { message: 'Deploy Office', research: false });
+  const response = await invoke(configured({ fetcher: fake.fetcher, getControls: () => controls }).chat, { message: 'Deploy Office', mode: 'office', research: false });
   assert.equal(response.status, 200);
   assert.equal(response.body.actions.length, 1);
   assert.equal(response.body.actions[0].id, control.id);
@@ -245,7 +293,7 @@ test('a command disabled during inference is not proposed', async () => {
     return json({ choices: [{ message: { content: 'Please check command availability.', tool_calls: [{ type: 'function', function: {
       name: 'propose_office_command', arguments: JSON.stringify({ id: control.id }) } }] } }] });
   } });
-  const response = await invoke(service.chat, { message: 'Deploy Office', research: false });
+  const response = await invoke(service.chat, { message: 'Deploy Office', mode: 'office', research: false });
   assert.equal(response.status, 200);
   assert.deepEqual(response.body.actions, []);
 });
@@ -256,12 +304,12 @@ test('Cloudflare failures and oversized responses produce safe bounded errors, a
     : mode === 'large' ? json({ output: 'x'.repeat(1024 * 1024) }) : json({ choices: [{ message: { content: 'Recovered.' } }] }) });
   for (const kind of ['error', 'large', 'error']) {
     mode = kind;
-    const response = await invoke(service.chat, { message: 'Hello', research: false });
+    const response = await invoke(service.chat, { message: 'Explain a compiler', research: false });
     assert.equal(response.status, 502);
     assert.ok(!JSON.stringify(response.body).includes(settings.CLOUDFLARE_API_TOKEN));
   }
   mode = 'ok';
-  assert.equal((await invoke(service.chat, { message: 'Hello', research: false })).status, 200);
+  assert.equal((await invoke(service.chat, { message: 'Explain a compiler', research: false })).status, 200);
 });
 
 test('concurrency and per-minute request budgets reject extra AI spend', async () => {
@@ -335,7 +383,7 @@ test('saved prompt and command tools persist across service instances and remain
   const second = configured({ db, getControls: () => [control], fetcher: fake.fetcher });
   const list = await invoke(second.listTools);
   assert.equal(list.body.tools.length, 2);
-  const response = await invoke(second.chat, { message: 'Compare deployment options', research: false, toolIds: [saved.body.tool.id, command.body.tool.id] });
+  const response = await invoke(second.chat, { message: 'Compare deployment options', mode: 'office', research: false, toolIds: [saved.body.tool.id, command.body.tool.id] });
   assert.equal(response.status, 200);
   assert.equal(response.body.toolsUsed.length, 2);
   assert.deepEqual(response.body.actions, []);
@@ -346,7 +394,7 @@ test('saved prompt and command tools persist across service instances and remain
   const removal = await invoke(second.deleteTool, {}, { params: { id: saved.body.tool.id } });
   assert.equal(removal.status, 200);
   assert.equal((await invoke(first.listTools)).body.tools.length, 1);
-  assert.equal((await invoke(second.chat, { message: 'Hello', research: false, toolIds: [saved.body.tool.id] })).status, 400);
+  assert.equal((await invoke(second.chat, { message: 'Explain a compiler', research: false, toolIds: [saved.body.tool.id] })).status, 400);
   assert.equal((await invoke(second.saveTool, { id: saved.body.tool.id, name: 'Gone', kind: 'prompt', instructions: 'No recreation.' })).status, 404);
 });
 

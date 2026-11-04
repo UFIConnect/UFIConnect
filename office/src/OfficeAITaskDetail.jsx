@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowUpRight, RefreshCw, Square } from 'lucide-react';
 import OfficeAIContent, { safeOfficeLink } from './OfficeAIContent';
+import OfficeAIArtifacts from './OfficeAIArtifacts';
 import { officeAIRequest, officeAIError, taskDate, taskState } from './office-ai-client';
 
 export const FINISHED_TASKS = new Set(['succeeded','failed','cancelled']);
@@ -28,11 +29,15 @@ export default function OfficeAITaskDetail({ task, busy, observedAt, mutate, api
   return <div className="office-ai-task-detail" aria-label="Task execution" aria-live="polite">
     <div className="office-ai-task-heading"><div><h3>{task.message || 'Office task'}</h3><span className="office-ai-run-state" data-state={task.status}>{taskState(task.status)}</span></div>{active && <button type="button" disabled={busy || task.status === 'cancel_requested'} onClick={() => mutate(`/${encodeURIComponent(task.id)}/cancel`, {})}><Square size={14} />{task.status === 'cancel_requested' ? 'Cancellation requested' : 'Stop task'}</button>}</div>
     <p className="office-ai-form-note">Last checked {taskDate(observedAt)}. Stopping cannot undo completed commits or deployments.</p>
+    {task.route && <p className="office-ai-form-note">Destination: <strong>{task.route.target}</strong>. {task.route.reason}</p>}
+    {task.memoryState?.status === 'unavailable' && <p className="office-ai-research-note">Memory is unavailable for this task. Its execution receipts remain below.</p>}
+    {!!task.memoryState?.entries?.length && <details className="office-ai-sources"><summary>Memories used for this task</summary><ol>{task.memoryState.entries.map(entry => <li key={entry.id}><strong>{entry.title || 'Office memory'}</strong><small>{taskDate(entry.createdAt)} · {entry.kind} · {entry.status || 'recorded'}</small><small>Original record: {entry.referenceId || entry.id}</small></li>)}</ol></details>}
     {task.progress && <p className="office-ai-form-note">Model turns: {task.progress.modelTurns ?? 0}{task.limits?.modelTurns ? ` / ${task.limits.modelTurns}` : ''} · Tool calls: {task.progress.toolCalls ?? 0}{task.limits?.toolCalls ? ` / ${task.limits.toolCalls}` : ''}{task.progress.resumes ? ` · Continued ${task.progress.resumes} times` : ''}</p>}
     {task.confirmation && task.status === 'needs_confirmation' && <div className="office-ai-confirmation"><strong>{task.confirmation.label}</strong><p>{task.confirmation.detail}</p>{task.confirmation.uncertain ? <p>Review the recorded provider result before starting another task. This interrupted action cannot be replayed from a confirmation button.</p> : <button type="button" disabled={busy} onClick={() => mutate(`/${encodeURIComponent(task.id)}/confirm`, { confirmationId: task.confirmation.id, confirmed: true })}>Confirm this action</button>}</div>}
     {task.status === 'needs_continuation' && <div className="office-ai-confirmation"><strong>Ready to continue</strong><p>{task.continuation?.message || 'This task reached its current work limit. Continue from the saved checkpoint with the same permissions.'}</p><button type="button" disabled={busy || !task.resumable || !task.continuation?.id} onClick={() => mutate(`/${encodeURIComponent(task.id)}/resume`,{ confirmed: true, continuationId: task.continuation.id })}>Continue task</button></div>}
     {task.error && <p className="office-ai-error" role="alert">{officeAIError({ message: task.error })}</p>}
     {task.summary && <OfficeAIContent text={task.summary} />}
+    {!!task.artifacts?.length && <OfficeAIArtifacts key={task.id} task={task} apiBase={apiBase} request={request} />}
     <ol className="office-ai-task-events" aria-label="Task steps">{(task.events || []).map((event,index) => <li key={event.id || index} data-state={event.status}><div><strong>{event.label || event.kind}</strong><span>{taskState(event.status)}</span></div>{event.detail && <p>{event.detail}</p>}<small>{taskDate(event.at)}</small>{event.url && <ReceiptLink url={event.url}>Open result</ReceiptLink>}</li>)}</ol>
     {!!task.terminals?.length && <section className="office-ai-task-results"><h3>Terminal results</h3>{task.terminals.map(terminal => <TerminalReceipt key={terminal.id} terminal={terminal} apiBase={apiBase} request={request} onOpenTerminal={onOpenTerminal} />)}</section>}
     {!!task.changedFiles?.length && <section className="office-ai-task-results"><h3>Changed files</h3>{task.changedFiles.map(file => <details key={file.path}><summary><code>{file.path}</code> <span>{file.status}</span></summary><pre>{file.diff || (file.before !== undefined && file.after !== undefined ? `Before\n${file.before}\n\nAfter\n${file.after}` : 'No diff was supplied for this file.')}</pre></details>)}</section>}

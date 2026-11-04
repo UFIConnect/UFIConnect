@@ -122,13 +122,16 @@ try {
     });
     await page.goto(server.resolvedUrls.local[0] + 'office-ai-audit');
     await page.getByText('Cloudflare configured', { exact: true }).waitFor();
-    check(await page.getByRole('button', { name: 'Work', exact: true }).getAttribute('aria-pressed') === 'true', 'Work is the default conversation mode');
-    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    check(await page.getByRole('button', { name: 'Conversation', exact: true }).getAttribute('aria-pressed') === 'true', 'Conversation is the default without automatic work');
+    check(!requests.some(row => row.method === 'POST'), 'Opening the app never starts a task or mutation');
+    await page.getByRole('button', { name: 'Conversation', exact: true }).click();
     await page.getByRole('button', { name: 'Catch up on AI' }).click();
     check((await page.getByLabel('Message Office AI').inputValue()).includes('latest important AI updates'), 'Latest AI starter asks for current evidence');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await page.getByText('A grounded answer with alternatives and limitations.', { exact: true }).waitFor();
     const firstChat = requests.find(row => row.path.endsWith('/chat'));
+    check(firstChat.body.mode === 'chat' && firstChat.body.memory === true, 'Conversation explicitly answers with relevant memory enabled');
+    check(!requests.some(row => row.path === '/office/ai/tasks' && row.method === 'POST'), 'An ordinary question never creates an autonomous task');
     check(firstChat.body.research && firstChat.body.perspective === 'balanced', 'New conversations use live research and balanced perspectives');
     check(!firstChat.body.sourceIds?.length, 'Workspace retrieval is opt-in for each reply');
     check(await page.getByRole('link', { name: 'Official update' }).count() === 1, 'Retrieved source is a usable citation');
@@ -141,11 +144,9 @@ try {
     await page.locator('.office-ai-saved-chats li>button').first().click();
     await page.getByText('A grounded answer with alternatives and limitations.', { exact: true }).waitFor();
     check(await page.locator('.office-ai-message').count() === 2, 'Saved conversation can be reopened after a browser reload');
-    await page.getByRole('button', { name: 'Run security check Review in Office commands' }).click();
-    await page.getByRole('textbox', { name: 'Search controls' }).waitFor();
-    check(await page.getByRole('textbox', { name: 'Search controls' }).inputValue() === command.id, 'Suggested command opens the canonical control filter');
-    check(!requests.some(row => row.path.endsWith('/execute')), 'Reading a model command proposal never executes an Office command');
-    await page.getByRole('button', { name: 'Back to control map', exact: true }).click();
+    check(await page.getByRole('button', { name: /Run security check Review/ }).count() === 0, 'Conversation suppresses unsolicited provider command proposals');
+    await page.getByRole('button', { name: 'Office controls', exact: true }).click();
+    check(!requests.some(row => row.path.endsWith('/execute')), 'Control navigation never starts an operation');
     await page.getByRole('heading', { name: 'Control map', exact: true }).waitFor();
     check(await page.locator('.ocm-command').count() === commands.length, 'Every registered Office command has a map destination');
     check(await page.locator('.ocm-group-node').count() === new Set(commands.map(item => item.category)).size, 'Every command category has a functional group');
@@ -185,7 +186,7 @@ try {
     check(requests.some(row => row.path === '/office/ai/tools' && row.body?.kind === 'prompt'), 'Adding a prompt tool persists through the Office API');
     await page.getByRole('button', { name: 'Use in chat', exact: true }).click();
     await page.getByRole('button', { name: 'Conversation', exact: true }).click();
-    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    await page.getByRole('button', { name: 'Conversation', exact: true }).click();
     researchStatus = 'unavailable';
     await page.getByLabel('Message Office AI').fill('Review my idea.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -219,7 +220,7 @@ try {
     await page.getByRole('heading', { name: 'Build your personal toolkit', exact: true }).waitFor();
     check(requests.some(row => row.method === 'DELETE'), 'Removing a tool updates persistent storage');
     await page.getByRole('button', { name: 'Conversation', exact: true }).click();
-    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    await page.getByRole('button', { name: 'Conversation', exact: true }).click();
     check(await page.locator('.office-ai-selected').count() === 0, 'Deleted tool cannot remain selected for later chats');
     await page.screenshot({ path: path.join(output, `office-ai-${width}.png`), fullPage: true });
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `Office AI fits ${width}px without horizontal page overflow`);
@@ -250,7 +251,7 @@ try {
       check(requests.some(row => row.path === `/office/connections/${id}/verify` && !row.body.token), 'Stored connection can be verified without returning its credential');
       if (['notion', 'slack', 'linear'].includes(id)) {
         await page.getByRole('button', { name: 'Conversation', exact: true }).click();
-        await page.getByRole('button', { name: 'Ask', exact: true }).click();
+        await page.getByRole('button', { name: 'Conversation', exact: true }).click();
         const source = page.getByRole('checkbox', { name: `${name} Connected · include in reply`, exact: true });
         await source.check();
         await page.getByLabel('Message Office AI').fill(`Find context in ${name}`);
@@ -279,7 +280,7 @@ try {
       check(requests.some(row => row.path === `/office/connections/${id}` && row.method === 'DELETE' && row.body.confirmed === true), 'Disconnect uses the confirmed authenticated endpoint');
       if (['notion', 'slack', 'linear'].includes(id)) {
         await page.getByRole('button', { name: 'Conversation', exact: true }).click();
-        await page.getByRole('button', { name: 'Ask', exact: true }).click();
+        await page.getByRole('button', { name: 'Conversation', exact: true }).click();
         const source = page.getByRole('checkbox', { name: `${name} Connect to use in replies`, exact: true });
         await source.waitFor();
         check(await source.isDisabled() && !(await source.isChecked()), 'Disconnect removes the source from the next reply');
@@ -289,7 +290,7 @@ try {
     await page.getByRole('button', { name: 'Connect GitHub', exact: true }).click();
     await page.getByLabel('GitHub API token', { exact: true }).fill('synthetic-unsaved-private-connection-token');
     await page.getByRole('button', { name: 'Conversation', exact: true }).click();
-    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    await page.getByRole('button', { name: 'Conversation', exact: true }).click();
     check(await page.locator('input[type=password]').count() === 0, 'Leaving connections unmounts sensitive inputs');
     await page.getByLabel('Message Office AI').fill('Explain my connections.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -332,25 +333,28 @@ try {
       check(await page.locator('.office-ai-message-user', { hasText: 'Keep this conflicting local message' }).count() === 0, 'Explicit reload resolves the conflict using the saved version');
     }
     await page.getByRole('button', { name: 'Tasks', exact: true }).click();
-    await page.getByLabel('Task request', { exact: true }).fill('Update the example title, check it, publish, and deploy Office.');
+    check(await page.getByRole('button', { name: 'Start task', exact: true }).isDisabled(), 'Empty task instructions cannot start work');
+    await page.getByLabel('Request destination', { exact: true }).selectOption('self-update');
+    await page.getByLabel('Task instructions', { exact: true }).fill('Update the example title, check it, publish, and deploy Office.');
     check(await page.getByLabel('Run Office commands', { exact: true }).isChecked(), 'Operational Office commands are included in the visible default task scope');
     await page.getByLabel('Run Office commands', { exact: true }).check();
     await page.getByLabel('Office website', { exact: true }).check();
     check(await page.getByText('Publishing can trigger deployment.', { exact: false }).isVisible(), 'Task scope discloses the repository automatic deployment behavior');
     taskCreateFailure = true;
-    await page.getByRole('button', { name: 'Run task', exact: true }).click();
+    await page.getByRole('button', { name: 'Start task', exact: true }).click();
     await page.getByRole('alert').filter({ hasText: 'The connection ended.' }).waitFor();
     taskCreateFailure = false;
-    await page.getByRole('button', { name: 'Run task', exact: true }).click();
+    await page.getByRole('button', { name: 'Start task', exact: true }).click();
     await page.getByText('Candidate commit; not published', { exact: false }).waitFor();
     const creates = requests.filter(row => row.path === '/office/ai/tasks' && row.method === 'POST');
     check(creates.at(-1).body.clientRequestId === creates.at(-2).body.clientRequestId, 'Retry after an ambiguous task creation reuses its idempotency key');
     check(creates.at(-1).body.permissions.publish && creates.at(-1).body.permissions.deploy && creates.at(-1).body.permissions.operate && creates.at(-1).body.deployTargets[0] === 'office', 'Task submission carries explicit requested action scope and deployment target');
+    check(creates.at(-1).body.target === 'self-update' && creates.at(-1).body.memory === true, 'Task submission carries a distinct destination and memory preference');
     check(await page.getByText('Candidate commit; not published', { exact: false }).isVisible() && await page.getByText('queued', { exact: true }).isVisible(), 'Queued checks and candidate commits are not represented as verified or published');
     await page.getByText('office/src/Example.jsx', { exact: true }).click();
     check(await page.getByText('- old title\n+ requested title', { exact: true }).isVisible(), 'Task file diffs are inspectable');
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `Task results fit ${width}px without horizontal page overflow`);
-    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    await page.getByRole('button', { name: 'Conversation', exact: true }).click();
     await page.getByRole('button', { name: 'Tasks', exact: true }).click();
     await page.getByText('Candidate commit; not published', { exact: false }).waitFor();
     check(await page.getByRole('heading', { name: 'Update the example title, check it, publish, and deploy Office.', exact: true }).isVisible(), 'Server-backed task is recovered after navigating away and back');
@@ -381,7 +385,7 @@ try {
     await page.getByRole('button', { name: 'Stop command', exact: true }).click();
     await page.getByRole('button', { name: 'Cancellation requested', exact: true }).waitFor();
     check(terminal.status === 'running' && terminal.cancellationRequested, 'Terminal cancellation retains the actual running status until GitHub confirms completion');
-    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    await page.getByRole('button', { name: 'Conversation', exact: true }).click();
     await page.getByText('Conversation saved in Office', { exact: true }).waitFor();
     await page.getByRole('button', { name: /^Delete conversation / }).first().click();
     check(conversations.has(initialConversation), 'Saved conversation deletion waits for confirmation');
@@ -421,6 +425,7 @@ try {
     // sensitive form itself to leave the DOM after React processes the event.
     await page.locator('input[type=password]').waitFor({ state: 'hidden' });
     check(await page.locator('input[type=password]').count() === 0, 'Auth changes clear provider credential forms');
+    await page.getByRole('button', { name: 'Connections', exact: true }).click();
     if (width === 1280) {
       const connectionsView = page.getByRole('region', { name: 'Provider connections', exact: true });
       // Auth reset reloads the parent AI status as well as this panel. Settle
@@ -446,7 +451,7 @@ try {
     }
     statusReadDelayMs = 0; connectionReadDelayMs = 0;
     await page.getByRole('button', { name: 'Conversation', exact: true }).click();
-    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    await page.getByRole('button', { name: 'Conversation', exact: true }).click();
     await page.getByRole('heading', { name: 'What are we working on?', exact: true }).waitFor();
     check(await page.getByLabel('Message Office AI').inputValue() === '', 'Auth change clears private conversation and draft');
     if (width === 1280) {

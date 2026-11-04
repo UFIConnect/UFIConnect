@@ -3,6 +3,7 @@ import { officeAIRequest, officeAIError } from './office-ai-client';
 
 const WORKSPACE_PROVIDERS = new Set(['notion', 'slack', 'linear']);
 const SOURCE_STATUSES = new Set(['retrieved', 'empty', 'unavailable', 'not-connected']);
+const MEMORY_UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const savedText = (value, limit) => typeof value === 'string' ? value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '').slice(0, limit) : '';
 const savedDate = value => Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
 function savedSources(input) {
@@ -28,9 +29,25 @@ function savedSourceResults(input) {
       checkedAt: savedDate(source.checkedAt), note: savedText(source.note, 600) }];
   });
 }
+function savedMemory(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined;
+  const seen = new Set();
+  return { status: ['retrieved', 'empty', 'unavailable', 'disabled'].includes(input.status) ? input.status : 'unavailable',
+    entries: (Array.isArray(input.entries) ? input.entries : []).slice(0, 8).flatMap(entry => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry) || !MEMORY_UUID.test(entry.id || '')
+        || seen.has(entry.id.toLowerCase()) || !['conversation', 'execution', 'note'].includes(entry.kind)) return [];
+      seen.add(entry.id.toLowerCase());
+      return [{ id: entry.id.toLowerCase(), title: savedText(entry.title, 240), kind: entry.kind,
+        status: typeof entry.status === 'string' && /^[a-z][a-z0-9_-]{0,47}$/.test(entry.status) ? entry.status : '',
+        referenceId: typeof entry.referenceId === 'string' && /^[a-zA-Z0-9:._/-]{0,128}$/.test(entry.referenceId) ? entry.referenceId : '',
+        createdAt: savedDate(entry.createdAt) }];
+    }) };
+}
 function storedMessages(messages) {
-  return messages.map(({ role, content, sources, connectedSources, research, actions, model, generatedAt, taskId }) => ({ role, content: content.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, ''),
-    ...(role === 'assistant' ? { sources: savedSources(sources), connectedSources: savedSourceResults(connectedSources), research, actions, model, generatedAt, ...(taskId ? { taskId } : {}) } : {}) }));
+  return messages.map(({ role, content, sources, connectedSources, research, actions, model, generatedAt, taskId, memory, truncated }) => ({ role, content: content.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, ''),
+    ...(role === 'assistant' ? { sources: savedSources(sources), connectedSources: savedSourceResults(connectedSources), research, actions, model, generatedAt,
+      ...(taskId ? { taskId } : {}), ...(savedMemory(memory) ? { memory: savedMemory(memory) } : {}),
+      ...(typeof truncated === 'boolean' ? { truncated } : {}) } : {}) }));
 }
 
 export default function useOfficeAIConversations({ apiBase, request, messages, setMessages, beforeLoad }) {
@@ -65,10 +82,13 @@ export default function useOfficeAIConversations({ apiBase, request, messages, s
         const sameTask = sameText && received.every((item, index) => item.taskId === snapshot[index].taskId);
         const sameSourceMetadata = sameText && received.every((item, index) => JSON.stringify(item.sources) === JSON.stringify(snapshot[index].sources)
           && JSON.stringify(item.connectedSources) === JSON.stringify(snapshot[index].connectedSources));
-        const sameContent = sameTask && sameSourceMetadata;
+        const sameReplyMetadata = sameText && received.every((item, index) => JSON.stringify(item.memory) === JSON.stringify(snapshot[index].memory)
+          && item.truncated === snapshot[index].truncated);
+        const sameContent = sameTask && sameSourceMetadata && sameReplyMetadata;
         current.current = conversation; saved.current = sameContent ? signature : JSON.stringify(received); setCurrentId(conversation.id); setSavedAt(conversation.updatedAt || new Date().toISOString()); remember(conversation);
         if (sameText && !sameTask) throw Error('The service did not retain the task link. Your task remains here. Refresh after the service update and retry saving.');
         if (sameTask && !sameSourceMetadata) throw Error('The service did not retain the source references. Your answer remains here. Refresh after the service update and retry saving.');
+        if (sameTask && sameSourceMetadata && !sameReplyMetadata) throw Error('The service did not retain the memory references or completion status. Your answer remains here. Refresh after the service update and retry saving.');
       }
     } catch (cause) {
       if (mounted.current && generation === epoch.current) { conflict.current = cause.status === 409 && !!current.current; setError(conflict.current ? 'This conversation changed elsewhere. Your current messages remain here. Reload the saved conversation to resolve the conflict.' : officeAIError(cause)); }

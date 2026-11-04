@@ -1,5 +1,7 @@
 # Office AI
 
+Conversation is the default. Tasks, Upgrade AI, Office controls, Memory, Activity, and Terminal have separate tabs. Generated files and drafts are saved in encrypted memory on uficonnect.ai. See [memory, hosted drafts, and upgrades](OFFICE-AI-MEMORY.md) for the current routing, storage, learned knowledge, and monitoring behavior.
+
 Open `https://uficonnect.ai` or `https://office.uficonnect.org/#office-ai`. Both use the existing Office access token and provide Cloudflare conversations, saved history, public web reading, coding tasks, an isolated terminal, reusable tools, provider connections, and the Office control catalog. This is a private Office application; internet access does not enable public visitors or public administration.
 
 ## Conversation and research
@@ -24,7 +26,7 @@ There are at most 200 active saved chats, 200 messages per chat, and 300 KB of m
 
 My tools saves reusable prompt instructions and named shortcuts to existing Office commands in PostgreSQL. Tools persist across deployments. Up to 50 tools can be saved and eight selected per message. External URLs, executable scripts, and arbitrary model-supplied endpoints are not accepted as tools.
 
-In Ask mode, the model can propose a command ID and open its existing command workflow. In Run a task mode, the operator selects separate permissions for editing code, publishing, deploying, and running Office commands. The task submission authorizes that scope. Canonical command validation, availability, service routing, and audit history still apply, and commands with an existing confirmation requirement pause for confirmation of the exact pending action.
+Conversation excludes Office command tools and ignores unsolicited command proposals. Tasks and Upgrade AI use the selected editing, publication, deployment, and operation permissions, narrowed by the request's destination. Canonical command validation, availability, service routing, and audit history still apply, and commands with an existing confirmation requirement pause for confirmation of the exact pending action.
 
 ## Coding tasks and terminal
 
@@ -81,7 +83,7 @@ Cloudflare's current [AI REST API](https://developers.cloudflare.com/ai-gateway/
 
 ## First conversation
 
-1. Open Office AI in Ask mode, enter a question, and select Send.
+1. Open Office AI in Conversation, enter a question, and select Send.
 2. Wait for the reply and the Saved indicator before leaving the page.
 3. Reload Office, then select the conversation in saved history to continue.
 

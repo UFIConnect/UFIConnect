@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { PGlite } = require('@electric-sql/pglite');
 const { createOfficeConversations, messagesValue } = require('./office-ai-conversations');
+const { createOfficeAIMemory } = require('./office-ai-memory');
 const env = { NODE_ENV: 'test', OAUTH_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64') };
 const messages = [{ role: 'user', content: 'Private planning question', id: 'user-1' }, { role: 'assistant', content: 'Private planning answer', id: 'assistant-1',
   model: '@cf/test/model', research: { status: 'pages', checkedAt: '2026-11-04T00:00:00Z' }, sources: [{ title: 'Source', url: 'https://example.com/article' }] }];
@@ -114,4 +115,69 @@ test('database failure or wrong encryption key never reports a successful save o
   const wrongKey = createOfficeConversations({ db: f.db, env: { ...env, OAUTH_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 8).toString('base64') } });
   const read = await call(wrongKey.detail, undefined, id);
   assert.equal(read.code, 503); assert.doesNotMatch(JSON.stringify(read.body), /Private planning/);
+});
+
+test('saved conversation hooks index new messages idempotently and preserve committed saves during a memory outage', async t => {
+  const f = await fixture(t), id = randomUUID(), memory = createOfficeAIMemory({ db: f.db, env });
+  const api = createOfficeConversations({ db: f.db, env, memory });
+  const created = await call(api.create, { clientRequestId: id, messages });
+  assert.equal(created.code, 201); assert.equal(created.body.memory.indexed, 2);
+  assert.equal((await memory.search('planning')).entries.length, 2);
+  await call(api.create, { clientRequestId: id, messages });
+  assert.equal((await memory.list()).entries.length, 2);
+  const updated = await call(api.update, { expectedVersion: 1, messages: [...messages, { role: 'user', content: 'Additional discussion about memory.' }] }, id);
+  assert.equal(updated.code, 200); assert.equal(updated.body.memory.indexed, 1);
+  assert.equal((await memory.list()).entries.length, 3);
+  await memory.clear({ confirmed: true });
+  await call(api.update, { expectedVersion: 2, messages: [...messages, { role: 'user', content: 'Additional discussion about memory.' }, { role: 'assistant', content: 'A new answer after clearing memory.' }] }, id);
+  assert.equal((await memory.list()).entries.length, 1);
+  const unavailable = createOfficeConversations({ db: f.db, env, memory: { record: async () => { throw new Error('private internal error'); } } });
+  const saved = await call(unavailable.create, { clientRequestId: randomUUID(), messages });
+  assert.equal(saved.code, 201); assert.equal(saved.body.memory.available, false);
+  assert.equal(saved.body.conversation.messages[0].content, messages[0].content);
+  assert.ok(!JSON.stringify(saved.body).includes('private internal error'));
+  const deleted = await call(api.remove, { expectedVersion: 3, confirmed: true }, id);
+  assert.equal(deleted.body.memory.forgotten, true);
+  assert.equal((await memory.list()).entries.length, 0);
+});
+
+test('legacy saved history imports in bounded pages and cannot resurrect explicitly forgotten memories', async t => {
+  const f = await fixture(t), memory = createOfficeAIMemory({ db: f.db, env });
+  const ids = [randomUUID(), randomUUID()];
+  for (const id of ids) await call(f.api.create, { clientRequestId: id, messages });
+  const first = await memory.importSavedConversations({ limit: 1 });
+  assert.equal(first.conversations, 1); assert.equal(first.imported, 2); assert.equal(typeof first.nextCursor, 'string');
+  const second = await memory.importSavedConversations({ limit: 1, before: first.nextCursor });
+  assert.equal(second.conversations, 1); assert.equal(second.imported, 2); assert.equal(second.nextCursor, null);
+  assert.equal((await memory.list()).entries.length, 4);
+  assert.ok((await memory.list()).entries.every(item => item.metadata.savedAt && item.metadata.originallyCreatedAt));
+  await memory.clear({ confirmed: true });
+  const replay = await memory.importSavedConversations();
+  assert.equal(replay.skipped, 4); assert.equal(replay.imported, 0);
+  assert.equal((await memory.list()).entries.length, 0);
+  await assert.rejects(memory.importSavedConversations({ limit: 21 }), error => error.status === 400);
+  await assert.rejects(memory.importSavedConversations({ before: 'invalid-cursor' }), error => error.status === 400);
+});
+
+test('saved replies retain bounded memory trace references and truncation across recreation without recalled contents', async t => {
+  const f = await fixture(t), id = randomUUID(), reference = randomUUID();
+  const input = [{ role: 'user', content: 'Continue the earlier release discussion.' }, { role: 'assistant', content: 'The earlier decision is recorded here.', truncated: true,
+    memory: { status: 'retrieved', saved: true, note: 'PRIVATE NOTE', encrypted_payload: 'PRIVATE ENCRYPTED PAYLOAD', entries: [
+      { id: reference, title: 'Earlier release plan', kind: 'conversation', status: 'answered', referenceId: `chat:${id}:0`, createdAt: '2026-11-04T19:00:00Z',
+        content: 'PRIVATE RECALLED CONVERSATION', metadata: { token: 'PRIVATE PROVIDER TOKEN' }, encrypted_payload: 'PRIVATE ENCRYPTED ENTRY' },
+      { id: reference, title: 'Duplicate ignored', kind: 'conversation' }, { id: 'invalid', title: 'Invalid ignored', kind: 'note' },
+    ] } }];
+  assert.equal((await call(f.api.create, { clientRequestId: id, messages: input })).code, 201);
+  const restarted = createOfficeConversations({ db: f.db, env });
+  const reply = (await call(restarted.detail, undefined, id)).body.conversation.messages[1];
+  assert.equal(reply.truncated, true);
+  assert.equal(reply.memory.status, 'retrieved'); assert.equal(reply.memory.entries.length, 1);
+  assert.equal(reply.memory.entries[0].id, reference); assert.equal(reply.memory.entries[0].referenceId, `chat:${id}:0`);
+  assert.equal(reply.memory.entries[0].createdAt, '2026-11-04T19:00:00.000Z');
+  assert.deepEqual(Object.keys(reply.memory).sort(), ['entries', 'status']);
+  assert.deepEqual(Object.keys(reply.memory.entries[0]).sort(), ['createdAt', 'id', 'kind', 'referenceId', 'status', 'title']);
+  assert.ok(!JSON.stringify(reply).includes('PRIVATE'));
+  const malformed = messagesValue([{ role: 'assistant', content: 'Answer', truncated: 'yes', memory: { status: 'invalid', entries: Array.from({ length: 20 }, () => ({ id: randomUUID(), kind: 'note', title: 'x'.repeat(300), status: 'x'.repeat(60), referenceId: '../ invalid', createdAt: 'invalid' })) } }])[0];
+  assert.equal(malformed.truncated, undefined); assert.equal(malformed.memory.status, 'unavailable'); assert.equal(malformed.memory.entries.length, 8);
+  assert.ok(malformed.memory.entries.every(entry => entry.title.length === 240 && entry.status === '' && entry.referenceId === '' && entry.createdAt === null));
 });
