@@ -120,6 +120,7 @@ async function createAppHarness({ env = {}, connected = false, query, withClient
       setTokenExchange(handler) { postForm = handler; },
       setPostJSONWithMeta(handler) { postJSONWithMeta = handler; },
       setAIText(handler) { callOpenAIText = handler; },
+      seedJobCatalog(jobs) { liveJobCatalogCache = { jobs, expiresAt: Date.now() + 60000, sourceLimit: LIVE_JOB_SOURCE_LIMIT, pending: null }; },
       setAIImage(handler) { callOpenAIImage = handler; },
       setConfiguredVideoGenerator(handler) { callConfiguredVideoGenerator = handler; },
       setAIVideoCreate(handler) { createOpenAIVideoJob = handler; },
