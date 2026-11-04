@@ -100,7 +100,16 @@
 .map-drive-signal i { width: 9px; height: 9px; border-radius: 50%; background: #d64b47; }
 .map-drive-signal[data-signal="yellow"] i { background: #bb8513; }
 .map-drive-signal[data-signal="green"] i { background: #218452; }
+.map-drive-steering { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; flex: 1 1 100%; min-width: 0; border-radius: 8px; }
+.map-drive-steering:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; }
+.map-drive-steering-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.map-drive-steering button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: var(--card); font: inherit; font-size: .8rem; cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none; }
+.map-drive-steering button span { font-size: 1.1rem; }
+.map-drive-steering button[aria-pressed="true"] { border-color: var(--primary); background: var(--primary-light); }
+.map-drive-steering button:disabled { cursor: default; opacity: .5; }
+.map-drive-steering small { flex: 1 1 220px; color: var(--muted); font-size: .72rem; line-height: 1.5; }
 @media (max-width: 768px) { .map-drive-controls { padding-inline: 12px; } .map-drive-status { flex-basis: 100%; } }
+@media (max-width: 480px) { .map-drive-steering-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; } }
 .map-explorer-layout.map-explorer-layout--full { grid-template-columns: minmax(0, 1fr); }
 #map-desktop-settings { position: sticky; top: 90px; min-width: 0; }
 .map-city-title { padding-block: 16px; }

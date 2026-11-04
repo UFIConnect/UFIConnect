@@ -102,9 +102,17 @@ export function trafficTurnSpeed(path, travelled, cruise = 5.5) {
   return clamp(cruise / (1 + severity * 1.7), Math.min(cruise, 1.7), cruise);
 }
 
+export function trafficVehiclePoint(vehicle) {
+  const sample = trafficPoint(vehicle.path, vehicle.distance);
+  const offset = Number(vehicle.lateralOffset) || 0;
+  sample.position[0] -= sample.heading[2] * offset;
+  sample.position[2] += sample.heading[0] * offset;
+  return sample;
+}
+
 export function trafficSnapshot(vehicle) {
   return { id: vehicle.id, priority: vehicle.priority || 0, speed: vehicle.speed || 0,
-    ...trafficPoint(vehicle.path, vehicle.distance), active: vehicle.active !== false };
+    ...trafficVehiclePoint(vehicle), active: vehicle.active !== false };
 }
 
 function crossingAhead(ego, other) {
@@ -129,7 +137,7 @@ export function advanceTrafficVehicle(vehicle, { delta, time = 0, others = [], p
     return { ...vehicle, speed: 0, status: 'paused',
       signal: approached ? trafficLightPhase(approached.signal, time, approached.approach) : null, gap: null };
   }
-  const dt = clamp(Number(delta) || 0, 0, .05), cruise = vehicle.cruise || 5.5, brake = 5.5;
+  const dt = clamp(Number(delta) || 0, 0, .05), cruise = Math.max(0, vehicle.cruise ?? 5.5), brake = 5.5;
   const ego = trafficSnapshot(vehicle), remaining = vehicle.path.length - vehicle.distance;
   let target = trafficTurnSpeed(vehicle.path, vehicle.distance, cruise), obstruction = Infinity;
   let status = target < cruise - .3 ? 'turning' : 'driving', signal = null, gap = null;

@@ -50,7 +50,7 @@ try {
       const controls = document.querySelector('.map-drive-controls');
       const selector = controls?.querySelector('select');
       const destination = selector?.selectedOptions[0]?.textContent;
-      const expected = { 'red-light': 'Waiting at traffic light', traffic: 'Following traffic', turning: 'Slowing for turn', paused: 'Drive paused' }[data?.driveStatus]
+      const expected = { 'red-light': 'Waiting at traffic light', traffic: 'Following traffic', turning: 'Slowing for turn', braking: 'Braking', paused: 'Drive paused', accident: 'Accident reported · Continuing in 4 seconds' }[data?.driveStatus]
         || (data?.driveStatus === 'arrived' ? 'Arrived at ' : 'Driving to ') + destination;
       const signal = data?.driveStatus !== 'arrived' && ['red', 'yellow', 'green'].includes(data?.driveSignal) ? data.driveSignal : null;
       return controls?.querySelector('[role="status"]')?.textContent === expected
@@ -105,6 +105,65 @@ try {
       await waitForMatchingHud();
       assert.match(await drive.locator('.map-drive-status small').innerText(), /Traffic simulation/,
         'Decorative traffic is described as a simulation');
+
+      const steering = drive.getByRole('group', { name: 'Steering controls', exact: true });
+      const left = steering.getByRole('button', { name: 'Steer left', exact: true });
+      const right = steering.getByRole('button', { name: 'Steer right', exact: true });
+      const accelerator = steering.getByRole('button', { name: 'Accelerate', exact: true });
+      const brake = steering.getByRole('button', { name: 'Brake', exact: true });
+      const touch = width < 600 ? await context.newCDPSession(page) : null;
+      async function hold(button, check, { cancel = false } = {}) {
+        await button.scrollIntoViewIfNeeded();
+        const bounds = await button.boundingBox();
+        const point = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+        if (touch) await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+        else { await page.mouse.move(point.x, point.y); await page.mouse.down(); }
+        try { await check(); }
+        finally {
+          if (touch) await touch.send('Input.dispatchTouchEvent', { type: cancel ? 'touchCancel' : 'touchEnd', touchPoints: [] });
+          else await page.mouse.up();
+        }
+        assert.equal(await button.getAttribute('aria-pressed'), 'false', 'Releasing or cancelling a held control clears its input');
+      }
+      await hold(left, async () => {
+        await page.waitForFunction(() => Number(document.querySelector('.map-city-scene canvas')?.dataset.driveLateralOffset) < -.25);
+        assert.equal(await left.getAttribute('aria-pressed'), 'true');
+      }, { cancel: width < 600 });
+      await hold(right, async () => {
+        await page.waitForFunction(() => Number(document.querySelector('.map-city-scene canvas')?.dataset.driveLateralOffset) > .25);
+        assert.equal(await right.getAttribute('aria-pressed'), 'true');
+      });
+      await hold(accelerator, async () => {
+        assert.equal(await accelerator.getAttribute('aria-pressed'), 'true');
+        await page.waitForFunction(() => Number(document.querySelector('.map-city-scene canvas')?.dataset.driveSpeed) > .5);
+      });
+      await hold(brake, async () => {
+        assert.equal(await brake.getAttribute('aria-pressed'), 'true');
+        await page.waitForFunction(() => Number(document.querySelector('.map-city-scene canvas')?.dataset.driveSpeed) === 0);
+        const stopped = await snapshot();
+        await page.waitForTimeout(150);
+        assert.equal((await snapshot()).driveProgress, stopped.driveProgress, 'Holding the brake stops forward progress');
+      });
+      if (!touch) {
+        await steering.focus();
+        await page.keyboard.down('a');
+        assert.equal(await left.getAttribute('aria-pressed'), 'true', 'WASD steers while the driving controls have focus');
+        await destination.focus();
+        assert.equal(await left.getAttribute('aria-pressed'), 'false', 'Moving focus to the destination clears held steering');
+        await page.keyboard.up('a');
+        await steering.focus();
+        await page.keyboard.down('ArrowUp');
+        assert.equal(await accelerator.getAttribute('aria-pressed'), 'true', 'Arrow keys control acceleration');
+        await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+        assert.equal(await accelerator.getAttribute('aria-pressed'), 'false', 'Losing window focus clears held acceleration');
+        await page.keyboard.up('ArrowUp');
+      }
+      await accelerator.focus();
+      await accelerator.dispatchEvent('click', { detail: 0 });
+      assert.equal(await accelerator.getAttribute('aria-pressed'), 'true', 'Assistive activation supplies a driving input');
+      await page.waitForFunction(() => document.querySelector('[data-drive-action="throttle"]')?.getAttribute('aria-pressed') === 'false', null, { timeout: 1500 });
+      assert.equal(await accelerator.isEnabled(), true, 'Assistive input releases automatically without pausing the drive');
+      await scene.scrollIntoViewIfNeeded();
       await page.evaluate(() => {
         window.__cityAuditHiddenDescriptor = Object.getOwnPropertyDescriptor(document, 'hidden');
         Object.defineProperty(document, 'hidden', { configurable: true, value: true });
@@ -150,6 +209,20 @@ try {
         assert.equal(await destination.inputValue(), id, 'Changing destination updates the active route');
         await waitForMatchingHud();
         assert.equal(await drive.getByRole('button', { name: 'Resume drive', exact: true }).count(), 0, 'New routes clear the prior pause state');
+        if (id === 'shopping') {
+          await drive.getByRole('button', { name: 'Pause drive', exact: true }).click();
+          await page.waitForFunction(() => document.querySelector('.map-city-scene canvas')?.dataset.driveStatus === 'paused');
+        }
+        await drive.getByRole('button', { name: 'Skip drive', exact: true }).click();
+        await page.waitForFunction(() => document.querySelector('.map-city-scene canvas')?.dataset.driveStatus === 'arrived');
+        const arrival = await snapshot();
+        assert.equal(Number(arrival.driveProgress), 1, 'Skip completes the selected route, including while paused');
+        assert.equal(Number(arrival.driveSpeed), 0);
+        assert.equal(Number(arrival.driveLateralOffset), 0, 'Arrival parks the vehicle on its destination route');
+        assert.equal(await drive.getByRole('button', { name: 'Skip drive', exact: true }).isDisabled(), true);
+        assert.equal(await left.isDisabled(), true, 'Arrival disables steering');
+        await drive.getByRole('link', { name: id === 'airport' ? 'Open Travel' : 'Open Shop', exact: true }).waitFor();
+        await waitForMatchingHud();
       }
       await page.getByRole('button', { name: 'Exit drive mode', exact: true }).click();
       await drive.waitFor({ state: 'hidden' });
@@ -163,7 +236,7 @@ try {
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Driving controls fit desktop and mobile');
       assert.deepEqual(forbiddenWrites, []);
       assert.deepEqual(errors, []);
-      console.log(`PASS city driving ${width}px: bounded decorative residents, lights at night, reduced motion, real drive/pause/resume/reroute and controls`);
+      console.log(`PASS city driving ${width}px: traffic, reduced motion, steering, accelerate/brake, released inputs, pause/resume/reroute, and skip arrival`);
     } catch (error) {
       console.error('City diagnostics:', await snapshot().catch(() => null));
       await page.screenshot({ path: path.join(output, `failure-${width}.png`), fullPage: true }).catch(() => {});

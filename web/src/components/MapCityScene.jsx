@@ -12,11 +12,12 @@ import { CITY_NATURE } from '../local/cityNature';
 import { CITY_DOWNTOWN } from '../local/cityDowntown';
 import { CITY_SITES, CITY_DISTRICT_SCALE, CITY_ARCHITECTURE, CITY_RAMPS, CITY_TOP_EXITS, CITY_SIDE_EXITS, CITY_LOCAL_LINKS, CITY_END_ROADS, CITY_END_JUNCTIONS, CITY_HIGHWAY_LINKS, CITY_HIGHWAY_KINDS, CITY_AIRPORT, CITY_SHOPPING, CITY_LANDMARKS, CITY_HIGHWAY_PIERS, CITY_GROUND_ROADS, cityCollectorPoints, citySegmentDistance, cityHighwayJourney, cityRoadPoint, cityRoadPoints, cityRoadPosition, cityDriveOrigin, cityDriveWaypoints, cityRampWidths, cityTrafficSignals } from '../local/cityEngineering.mjs';
 import { createTrafficPath, createDriveTrafficPath, continueTrafficPath, trafficPoint, trafficPathSignals, trafficLightPhase, trafficSnapshot, advanceTrafficVehicle, cityResidentCount } from '../local/cityTraffic.mjs';
+import { advanceDrivenVehicle, drivenVehiclePoint } from '../local/cityDriving.mjs';
 
 // Decorative city simulation. It never represents measured traffic or member activity.
-export default function MapCityScene({ homes, cities, overview, viewMode = 'plan', timeOfDay = 'day', altitude = 100, focusLandmark = '', motion, quality = 'auto', theme, title, cityId, selected, onSelect, onCitySelect, onCivicSelect, resetKey, onFallback, driving = false, drivePaused = false, driveDestination = '', onDriveArrival, onDriveStatus }) {
+export default function MapCityScene({ homes, cities, overview, viewMode = 'plan', timeOfDay = 'day', altitude = 100, focusLandmark = '', motion, quality = 'auto', theme, title, cityId, selected, onSelect, onCitySelect, onCivicSelect, resetKey, onFallback, driving = false, drivePaused = false, driveDestination = '', driveInput = {}, driveSkipRequest = 0, onDriveArrival, onDriveStatus }) {
   const host = useRef(null), current = useRef(null), wake = useRef(null), renderBudget = useRef({ lightweight: false, illustrated: false });
-  current.current = { motion, altitude, onSelect, onCitySelect, onCivicSelect, onFallback, driving, drivePaused, driveDestination, onDriveArrival, onDriveStatus };
+  current.current = { motion, altitude, onSelect, onCitySelect, onCivicSelect, onFallback, driving, drivePaused, driveDestination, driveInput, driveSkipRequest, onDriveArrival, onDriveStatus };
   const shape = JSON.stringify(overview ? cities.map(city => [city.id, city.label, city.sources]) : homes);
   useEffect(() => {
     const element = host.current;
@@ -36,7 +37,8 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
     renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.shadowMap.autoUpdate = false;
     renderer.shadowMap.needsUpdate = true;
-    renderer.domElement.setAttribute('aria-label', overview ? 'All 16 nature cities connected to UFI downtown. Drag to explore or select a city or building.' : title + '. Select a source house for topics.');
+    const mapLabel = overview ? 'All 16 nature cities connected to UFI downtown. Drag to explore or select a city or building.' : title + '. Select a source house for topics.';
+    renderer.domElement.setAttribute('aria-label', mapLabel);
     renderer.domElement.dataset.timeOfDay = timeOfDay;
     element.appendChild(renderer.domElement);
     const scene = new THREE.Scene();
@@ -1040,16 +1042,20 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
     }
     let drivePath = null, driveProgress = 0, lastDriveDestination = '', originSite = null, orbitCamera = null, arrivalSent = false, labelsHidden = false;
     const arterialSurvey = cityRoadPoints('arterial').map(([x, , z]) => [x, z]);
-    let lastDriveReport = -Infinity, lastReportedStatus = '', lastReportedSignal = null;
+    let lastDriveReport = -Infinity, lastReportedStatus = '', lastReportedSignal = null, lastReportedAccidents = 0;
+    let lastDriveSkipRequest = current.current.driveSkipRequest;
     function reportDrive(vehicle) {
       const status = vehicle.status || 'driving', signal = vehicle.signal || null;
       renderer.domElement.dataset.driveSpeed = vehicle.speed.toFixed(2);
       renderer.domElement.dataset.driveStatus = status;
       renderer.domElement.dataset.driveSignal = signal || '';
       renderer.domElement.dataset.driveGap = vehicle.gap == null ? '' : vehicle.gap.toFixed(2);
-      if (trafficTime - lastDriveReport >= .25 || status !== lastReportedStatus || signal !== lastReportedSignal) {
-        current.current.onDriveStatus?.({ status, speed: vehicle.speed, signal, gap: vehicle.gap ?? null, residents: residentPopulation });
-        lastDriveReport = trafficTime; lastReportedStatus = status; lastReportedSignal = signal;
+      renderer.domElement.dataset.driveLateralOffset = (vehicle.lateralOffset || 0).toFixed(3);
+      renderer.domElement.dataset.driveAccidentCount = String(vehicle.accidentCount || 0);
+      if (trafficTime - lastDriveReport >= .25 || status !== lastReportedStatus || signal !== lastReportedSignal || vehicle.accidentCount !== lastReportedAccidents) {
+        current.current.onDriveStatus?.({ status, speed: vehicle.speed, signal, gap: vehicle.gap ?? null, residents: residentPopulation,
+          accidentCount: vehicle.accidentCount || 0, accidentOtherId: vehicle.accidentOtherId || null });
+        lastDriveReport = trafficTime; lastReportedStatus = status; lastReportedSignal = signal; lastReportedAccidents = vehicle.accidentCount;
       }
     }
     function makeDriveVehicle(path, origin = null) {
@@ -1108,15 +1114,20 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
         sprite.visible = !collision; if (!collision) occupied.push(bounds);
       }
     }
-    function updateDrive(delta) {
+    function updateDrive(delta, now) {
       if (!driveCar) return;
       const state = current.current;
-      if (state.driving !== labelsHidden) { labels.forEach(label => { label.visible = !state.driving; }); labelsHidden = state.driving; }
+      if (state.driving !== labelsHidden) {
+        labels.forEach(label => { label.visible = !state.driving; }); labelsHidden = state.driving;
+        renderer.domElement.setAttribute('aria-label', state.driving ? 'Driving through simulated city traffic.' : mapLabel);
+      }
       if (!state.driving) {
         driveCar.position.y = -1000;
         if (orbitCamera) { camera.position.copy(orbitCamera.position); controls.target.copy(orbitCamera.target); orbitCamera = null; }
         controls.enabled = true; lastDriveDestination = ''; drivePath = null; driveVehicle = null; originSite = null;
+        lastDriveSkipRequest = state.driveSkipRequest;
         renderer.domElement.dataset.driveSpeed = '0.00'; renderer.domElement.dataset.driveStatus = 'idle';
+        renderer.domElement.dataset.driveLateralOffset = '0.000'; renderer.domElement.dataset.driveAccidentCount = '0';
         renderer.domElement.dataset.driveSignal = ''; renderer.domElement.dataset.driveGap = ''; return;
       }
       if (!orbitCamera) orbitCamera = { position: camera.position.clone(), target: controls.target.clone() };
@@ -1125,22 +1136,25 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
         const destination = CITY_LANDMARKS.find(item => item.id === state.driveDestination) || CITY_SITES.find(item => item.id === state.driveDestination); if (!destination) return;
         let routeOrigin = null;
         if (drivePath && driveVehicle) {
-          routeOrigin = trafficPoint(driveVehicle.path, driveVehicle.distance);
+          routeOrigin = drivenVehiclePoint(driveVehicle);
           const point = routeOrigin.position;
           if (driveProgress < 1) originSite = cityDriveOrigin([point[0], point[2]]);
         }
         drivePath = driveCurve(cityDriveWaypoints(originSite, destination));
-        driveVehicle = makeDriveVehicle(drivePath, routeOrigin);
+        driveVehicle = { ...makeDriveVehicle(drivePath, routeOrigin), accidentCount: driveVehicle?.accidentCount || 0 };
         driveProgress = 0; arrivalSent = false; lastDriveDestination = state.driveDestination; originSite = destination;
       }
       if (!drivePath) return;
-      driveVehicle = advanceTrafficVehicle(driveVehicle, { delta, time: trafficTime,
+      const skip = state.driveSkipRequest !== lastDriveSkipRequest;
+      lastDriveSkipRequest = state.driveSkipRequest;
+      driveVehicle = advanceDrivenVehicle(driveVehicle, { delta, time: trafficTime, now, input: state.driveInput, skip,
         others: trafficVehicles.map(trafficSnapshot), paused: state.drivePaused && driveProgress < 1 });
       driveProgress = driveVehicle.distance / driveVehicle.path.length;
-      const sample = trafficPoint(driveVehicle.path, driveVehicle.distance), point = new THREE.Vector3(...sample.position), tangent = new THREE.Vector3(...sample.heading);
+      const sample = drivenVehiclePoint(driveVehicle), point = new THREE.Vector3(...sample.position), tangent = new THREE.Vector3(...sample.heading);
       driveCar.position.copy(point); driveCar.rotation.y = Math.atan2(tangent.x, tangent.z);
       const chase = point.clone().addScaledVector(tangent, -5.5); chase.y += 3.2;
-      if (driveProgress === 0) camera.position.copy(chase); else camera.position.lerp(chase, 1 - Math.exp(-delta * 5));
+      if (driveProgress === 0 || skip) camera.position.copy(chase);
+      else if (driveVehicle.status !== 'accident') camera.position.lerp(chase, 1 - Math.exp(-delta * 5));
       const look = point.clone().addScaledVector(tangent, 4); look.y += 1;
       camera.lookAt(look);
       renderer.domElement.dataset.driveProgress = String(driveProgress);
@@ -1302,20 +1316,22 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       frameId = 0;
       if (disposed || !inView || document.hidden) { last = 0; return; }
       const scenePlaying = current.current.motion !== 'paused';
-      const playing = scenePlaying || (current.current.driving && !current.current.drivePaused);
+      const reportingAccident = current.current.driving && driveVehicle?.status === 'accident';
+      const accidentPaused = reportingAccident && now / 1000 < driveVehicle.accidentUntil;
+      const playing = scenePlaying || (current.current.driving && !current.current.drivePaused) || reportingAccident;
       if (playing && now - lastPaint < (current.current.motion === 'calm' ? 32 : 15)) { requestFrame(); return; }
       lastPaint = now;
       const elapsed = last ? now - last : 0;
       const delta = Math.min(elapsed / 1000, .05); last = now;
       const renderStarted = performance.now();
-      if (scenePlaying) {
+      if (scenePlaying && !accidentPaused) {
         time += delta * (current.current.motion === 'calm' ? .4 : 1);
         animations.forEach(animate => animate(time));
       }
       // Explicit driving keeps signals and road traffic alive when reduced
       // motion has paused decorative pedestrians, birds and clouds.
-      updateTraffic(delta * (!current.current.driving && current.current.motion === 'calm' ? .4 : 1), playing);
-      updateDrive(delta);
+      updateTraffic(delta * (!current.current.driving && current.current.motion === 'calm' ? .4 : 1), playing && !accidentPaused);
+      updateDrive(delta, now / 1000);
       if (scenePlaying || current.current.driving || driveCar) {
         // Compute an animated vehicle or person hierarchy once, not once per part.
         movingRoots.forEach(item => item.updateMatrixWorld(true));
@@ -1378,11 +1394,13 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
     controls.addEventListener('change', requestFrame); wake.current = () => { last = 0; requestFrame(); };
     const ray = new THREE.Raycaster(); let start = null;
     const down = event => {
+      if (current.current.driving) { element.focus({ preventScroll: true }); return; }
       if (start || !event.isPrimary || event.button !== 0) { start = null; return; }
       start = { x: event.clientX, y: event.clientY, pointerId: event.pointerId };
     };
     const up = event => {
       const origin = start; start = null;
+      if (current.current.driving) return;
       if (!origin || origin.pointerId !== event.pointerId || !event.isPrimary || event.button !== 0 || Math.hypot(event.clientX - origin.x, event.clientY - origin.y) > 6) return;
       const rect = renderer.domElement.getBoundingClientRect();
       ray.setFromCamera(new THREE.Vector2((event.clientX - rect.left) / rect.width * 2 - 1, -(event.clientY - rect.top) / rect.height * 2 + 1), camera);
@@ -1419,6 +1437,7 @@ export default function MapCityScene({ homes, cities, overview, viewMode = 'plan
       renderer.dispose(); renderer.domElement.remove();
     };
   }, [shape, overview, viewMode, timeOfDay, focusLandmark, theme, title, cityId, selected, resetKey, quality]);
-  useEffect(() => { wake.current?.(); }, [motion, altitude, driving, drivePaused, driveDestination]);
-  return <div ref={host} className={'map-city-scene' + (overview ? ' map-city-scene--all' : '')} />;
+  useEffect(() => { wake.current?.(); }, [motion, altitude, driving, drivePaused, driveDestination, driveInput, driveSkipRequest]);
+  return <div ref={host} className={'map-city-scene' + (overview ? ' map-city-scene--all' : '')}
+    tabIndex={driving ? 0 : undefined} aria-label={driving ? 'Driving view. Use arrow keys or W A S D to steer, accelerate and brake.' : undefined} />;
 }
