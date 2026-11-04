@@ -40,8 +40,9 @@ async function executionFixture(t, extra = {}) {
       response.emit('end');
     }); return req;
   };
-  const app = await createAppHarness({ connected: true, env: { OFFICE_TOKEN: token, OFFICE_GITHUB_TOKEN: 'synthetic-github-write-token', ...extra },
+  const app = await createAppHarness({ connected: true, env: { OFFICE_TOKEN: token, OFFICE_GITHUB_TOKEN: 'synthetic-github-write-token', EXPO_TOKEN: 'synthetic-expo-token-for-tests', ...extra },
     modules: {
+      './office-expo': { createOfficeExpo: () => ({ build: async checkedSha => { requests.push({ hostname: 'api.expo.dev', body: { gitRef: checkedSha } }); return { provider: 'expo', sha: checkedSha, status: 'queued' }; } }) },
       https: { ...require('node:https'), request, get: request },
       './office-ai-repository': { createOfficeAIRepository: () => ({ verifiedHead: async () => ({ sha }) }) },
       './office-ai-tasks': { createOfficeAITasks: options => {
@@ -71,7 +72,7 @@ test('task deployment refuses a moved verified head and pins workflow dispatch t
   assert.equal(f.requests[0].body.inputs.expected_sha, f.sha); assert.equal(f.requests[0].body.ref, 'main');
   assert.equal(result.results[0].result.status, 'queued'); assert.equal(result.results[0].result.sha, f.sha);
   await f.execute('deploy.mobile', { confirmed: true }, { expectedSha: f.sha });
-  assert.equal(f.requests[1].body.inputs.expected_sha, f.sha);
+  assert.equal(f.requests[1].hostname, 'api.expo.dev'); assert.equal(f.requests[1].body.gitRef, f.sha);
 });
 test('direct Render deployment pins the verified commit instead of following a moving main branch', async t => {
   const f = await executionFixture(t, { OFFICE_GITHUB_TOKEN: '', AUTOFIX_GITHUB_TOKEN: '', RENDER_API_KEY: 'synthetic-render-api-key', RENDER_SERVICE_OFFICE_ID: 'srv-synthetic-office' });

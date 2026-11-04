@@ -1,0 +1,39 @@
+name: Office app builds
+
+defaults:
+  tools:
+    node: '24.21.0'
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: office-app-builds
+  cancel_in_progress: false
+
+jobs:
+  verify:
+    name: Verify mobile security and configuration
+    steps:
+      - uses: eas/checkout
+      - uses: eas/install_node_modules
+      - name: Check app security
+        run: npm run test:security
+      - name: Check dependency advisories
+        run: npm run audit:security
+      - name: Check Expo configuration
+        run: npm run doctor
+  build_ios:
+    name: Build iOS update
+    needs: [verify]
+    type: build
+    params:
+      platform: ios
+      profile: production
+  build_android:
+    name: Build Android update
+    needs: [verify]
+    type: build
+    params:
+      platform: android
+      profile: production

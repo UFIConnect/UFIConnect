@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { BookOpen, CheckCircle2, ExternalLink, GitBranch, Cloud, Layers, Link2, MessageSquare, Search, Server, RefreshCw } from 'lucide-react';
+import { BookOpen, CheckCircle2, ExternalLink, GitBranch, Cloud, Layers, Link2, MessageSquare, Search, Server, Smartphone, RefreshCw } from 'lucide-react';
 import './OfficeConnections.css';
 
 const PROVIDERS = [
@@ -21,6 +21,10 @@ const PROVIDERS = [
   { id: 'render', name: 'Render', Icon: Server, category: 'services', color: '#a7e4d1', credential: 'API key', tags: ['Deployments', 'Office commands'], description: 'Deploy the API, pipeline, website, and Office through the deployment controls.',
     url: 'https://dashboard.render.com/u/settings#api-keys', label: 'Open Render API keys',
     help: 'Use a Render API key and the service IDs for this Office. A service ID begins with srv-.' },
+  { id: 'expo', name: 'Expo', Icon: Smartphone, category: 'services', color: '#a9c7ff', credential: 'access token', tags: ['iOS', 'Android', 'App updates'],
+    description: 'Update mobile app code in Work and build iOS and Android releases through your connected Expo project.',
+    url: 'https://expo.dev/accounts/uficonnect/settings/access-tokens', label: 'Manage Expo access tokens',
+    help: 'Use an Expo access token limited to the uficonnect account with Developer access. Office verifies @uficonnect/ufic before saving. In Expo, link UFIConnect/UFIConnect with the app directory mobile. Builds use verified code; app store submission is separate.' },
   { id: 'cloudflare', name: 'Cloudflare', Icon: Cloud, category: 'services', color: '#f6bc80', tags: ['AI', 'Web research', 'Workers'], description: 'Power conversations, web research, and requested Workers deployments through your Cloudflare account.',
     url: 'https://dash.cloudflare.com/profile/api-tokens', label: 'Create a Cloudflare token',
     help: 'For a direct AI connection, grant Workers AI Read and AI Gateway Read for your account. Broad research needs Cloudflare search credits. An existing Worker binding can also power chat. Use a separate Workers Scripts Write token to enable deployment.' },
@@ -111,6 +115,7 @@ export default function OfficeConnections({ apiBase, request, onConnected, onNav
         <p>{provider.description}</p>
         {unavailable && <p className="oc-context">{error ? 'Refresh connections to check availability.' : 'Update the Office service to use this connection.'}</p>}
         {item?.repository && <p className="oc-context">{item.repository}</p>}
+        {provider.id === 'expo' && <p className="oc-context">@uficonnect/ufic · iOS and Android. Use Mobile apps in Tasks to edit and build updates.</p>}
         {item?.mode === 'worker-binding' && <p className="oc-context">Connected through a protected Cloudflare Worker</p>}
         {provider.id === 'cloudflare' && item?.configured && <p className="oc-context">Workers deployment access: {item.deploymentConfigured ? 'configured' : 'not connected'}</p>}
         {item?.verifiedAt && <p className="oc-context">Last verified {new Date(item.verifiedAt).toLocaleString()}</p>}
@@ -118,6 +123,7 @@ export default function OfficeConnections({ apiBase, request, onConnected, onNav
           <button type="button" className="oc-connect" disabled={Boolean(busy) || loading || unavailable} onClick={() => edit(provider.id)}>{item?.configured ? 'Update connection' : 'Connect'} {provider.name}</button>
           {item?.configured && <button type="button" disabled={Boolean(busy)} onClick={() => operation(provider.id, 'verify')}><CheckCircle2 size={14} />{busy === `${provider.id}:verify` ? 'Verifying…' : 'Verify connection'}</button>}
           {item?.configured && <button type="button" disabled={Boolean(busy)} onClick={() => { setDisconnecting(provider.id); setEditing(''); setForm(blank()); }}>Disconnect</button>}
+          {provider.id === 'expo' && item?.configured && <><button type="button" disabled={Boolean(busy)} onClick={() => onNavigate?.('controls')}>Open app build controls</button><a href={item.projectUrl} target="_blank" rel="noopener noreferrer">Open Expo project <ExternalLink size={13} /></a></>}
         </div>
         {disconnecting === provider.id && <div className="oc-confirm"><p>Disconnect {provider.name} from Office? This also disables the inherited server connection for Office.</p><button disabled={Boolean(busy)} onClick={() => operation(provider.id, 'disconnect', { confirmed: true })}>Confirm disconnect</button> <button disabled={Boolean(busy)} onClick={() => setDisconnecting('')}>Cancel</button></div>}
         {editing === provider.id && <form onSubmit={save} className="oc-form">
@@ -137,7 +143,7 @@ export default function OfficeConnections({ apiBase, request, onConnected, onNav
       </article>;
     })}</div>
     {!visibleProviders.length && <div className="oc-empty" role="status"><Search size={24} /><h3>No connections found</h3><p>Try a provider name or browse all connections.</p><button type="button" onClick={() => { setQuery(''); setCategory('all'); }}>Show all connections</button></div>}
-    <p className="oc-footer">Select Notion, Slack, and Linear in Ask mode for read-only context. Run coding and deployment tasks in Work mode, or use Office commands. Cloudflare supplies AI and web research; GitHub and Render provide repository, check, and deployment actions.</p>
+    <p className="oc-footer">Select Notion, Slack, and Linear in Ask mode for read-only context. Run coding and deployment tasks in Work mode, or use Office commands. Cloudflare supplies AI and web research; GitHub and Render provide repository, check, and deployment actions. Expo builds mobile app updates.</p>
     <div className="oc-actions"><button type="button" onClick={() => onNavigate?.('controls')}>Open code and deployment controls</button><a href="https://dash.cloudflare.com/" target="_blank" rel="noopener noreferrer">Cloudflare dashboard <ExternalLink size={13} /></a></div>
   </section>;
 }

@@ -42,6 +42,32 @@ async function finish(service, id, limit = 25) {
   throw new Error(`Task did not finish: ${task.status}`);
 }
 
+test('mobile builds require Expo, a selected app target, exact verification, and the existing deployment confirmation', async t => {
+  let turns = 0, builds = 0;
+  const f = await fixture(t, { env: { EXPO_TOKEN: 'synthetic-expo-token-1234567890' },
+    getControls: () => [{ id: 'deploy.mobile', available: true }],
+    executeControl: async (id, input, { expectedSha }) => {
+      builds++; assert.equal(id, 'deploy.mobile'); assert.equal(expectedSha, BASE); assert.equal(input.confirmed, true);
+      return { results: [{ ok: true, result: { provider: 'expo', status: 'queued', sha: BASE,
+        runId: '10000000-0000-4000-8000-000000000001', url: 'https://expo.dev/accounts/uficonnect/projects/ufic/workflows/10000000-0000-4000-8000-000000000001' } }] };
+    },
+    model: async ({ tools }) => {
+      assert.equal(tools.some(tool => tool.function.name === 'mobile_build'), true);
+      assert.equal(tools.some(tool => tool.function.name === 'office_command'), false);
+      return ++turns === 1 ? call('mobile_build', {}) : { content: 'Expo queued the app builds.' };
+    } });
+  f.repo.verifiedHead = async () => ({ sha: BASE });
+  const created = await invoke(f.service.create, body({ target: 'mobile-app', message: 'Build the mobile app.',
+    permissions: { deploy: true }, deployTargets: ['mobile'] }));
+  assert.equal(created.status, 202);
+  let task = await finish(f.service, created.body.task.id);
+  assert.equal(task.status, 'needs_confirmation'); assert.equal(builds, 0);
+  assert.equal((await invoke(f.service.confirm, { confirmationId: task.confirmation.id, confirmed: true }, task.id)).status, 200);
+  task = await finish(f.service, task.id);
+  assert.equal(task.status, 'succeeded'); assert.equal(builds, 1);
+  assert.equal(task.deployments[0].service, 'mobile'); assert.equal(task.deployments[0].status, 'queued');
+});
+
 test('idle requests never create work and preview asks use the hosted draft destination', async t => {
   let turns = 0;
   const { service, pg } = await fixture(t, { model: async () => { turns++; return { content: 'Must not run' }; } });

@@ -39,7 +39,7 @@ try {
     const context = await browser.newContext({ viewport: { width, height: 1000 } }), page = await context.newPage();
     const requests = [], errors = [];
     let tools = [], failChat = false, slowChat = false, configured = true, researchStatus = 'verified';
-    let connections = ['github', 'render', 'cloudflare', 'notion', 'slack', 'linear'].map(id => ({ id, configured: false, chatSource: ['notion', 'slack', 'linear'].includes(id) }));
+    let connections = ['github', 'render', 'cloudflare', 'expo', 'notion', 'slack', 'linear'].map(id => ({ id, configured: false, chatSource: ['notion', 'slack', 'linear'].includes(id), ...(id === 'expo' ? { projectUrl: 'https://expo.dev/accounts/uficonnect/projects/ufic' } : {}) }));
     let stallConnectionRead = false, stalledConnectionRoute = null, statusReadDelayMs = 0, connectionReadDelayMs = 0;
     let holdChat = false, releaseChat = null, heldChatReady = null, failChatNetwork = false;
     const conversations = new Map();
@@ -95,7 +95,7 @@ try {
         if (connectionReadDelayMs) await new Promise(resolve => setTimeout(resolve, connectionReadDelayMs));
         return route.fulfill({ headers, json: { connections } });
       }
-      const connectionMatch = url.pathname.match(/^\/office\/connections\/(github|render|cloudflare|notion|slack|linear)(\/verify)?$/);
+      const connectionMatch = url.pathname.match(/^\/office\/connections\/(github|render|cloudflare|expo|notion|slack|linear)(\/verify)?$/);
       if (connectionMatch) {
         const id = connectionMatch[1];
         if (req.method() === 'DELETE') connections = connections.map(item => item.id === id ? { ...item, configured: false } : item);
@@ -233,10 +233,10 @@ try {
     await page.getByRole('button', { name: 'All connections', exact: true }).click();
     await page.screenshot({ path: path.join(output, `office-connections-${width}.png`), fullPage: true });
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `Connections fit ${width}px without page overflow`);
-    for (const [id, name] of [['github', 'GitHub'], ['render', 'Render'], ['cloudflare', 'Cloudflare'], ['notion', 'Notion'], ['slack', 'Slack'], ['linear', 'Linear']]) {
+    for (const [id, name] of [['github', 'GitHub'], ['render', 'Render'], ['cloudflare', 'Cloudflare'], ['expo', 'Expo'], ['notion', 'Notion'], ['slack', 'Slack'], ['linear', 'Linear']]) {
       const card = page.locator('.oc-card').filter({ has: page.getByRole('heading', { name, exact: true }) });
       await card.getByRole('button', { name: `Connect ${name}`, exact: true }).click();
-      const credentialLabel = name + ({ render: ' API key', notion: ' internal connection token', slack: ' user OAuth token', linear: ' personal API key' }[id] || ' API token');
+      const credentialLabel = name + ({ render: ' API key', expo: ' access token', notion: ' internal connection token', slack: ' user OAuth token', linear: ' personal API key' }[id] || ' API token');
       await page.getByLabel(credentialLabel, { exact: true }).fill(`synthetic-${id}-private-connection-token`);
       check(await page.getByLabel(credentialLabel, { exact: true }).getAttribute('type') === 'password', 'Connection credential input is masked');
       if (id === 'render') await page.getByLabel('API service ID', { exact: true }).fill('srv-fixture-api');

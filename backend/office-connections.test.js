@@ -41,6 +41,24 @@ async function database(t) {
 }
 const memoryDb = () => ({ isConnected: () => true, query: async () => ({ rows: [], rowCount: 0 }) });
 
+test('Expo migrates existing connections and encrypts, verifies, persists, and independently disconnects its token', async t => {
+  const db = await database(t), env = { ...environment(), EXPO_TOKEN: 'baseline-expo-token-1234567890' };
+  const fetcher = async () => json({ data: { app: { byId: { id: '230828f2-53a3-4f87-a262-f2946e821eeb', fullName: '@uficonnect/ufic',
+    githubRepository: { githubRepositoryIdentifier: 1249535414 }, githubRepositorySettings: { baseDirectory: '/mobile' } } } } });
+  const service = createOfficeConnections({ db, env, fetcher });
+  const saved = await invoke(service.save, { provider: 'expo', body: { token: TOKEN } });
+  assert.equal(saved.status, 200); assert.equal(saved.data.buildConfigured, true);
+  assert.equal(saved.data.connection.configured, true); assert.ok(!JSON.stringify(saved.data).includes(TOKEN));
+  const row = (await db.query("SELECT encrypted_config FROM office_provider_connections WHERE provider='expo'")).rows[0];
+  assert.match(row.encrypted_config, /^enc:v1:/); assert.ok(!row.encrypted_config.includes(TOKEN));
+  const restarted = createOfficeConnections({ db, env, fetcher }); await restarted.refresh();
+  assert.equal(restarted.env.EXPO_TOKEN, TOKEN);
+  assert.equal((await invoke(restarted.disconnect, { provider: 'expo', body: { confirmed: true } })).status, 200);
+  const disconnected = createOfficeConnections({ db, env, fetcher }); await disconnected.refresh();
+  assert.equal(disconnected.env.EXPO_TOKEN, ''); assert.equal(env.EXPO_TOKEN, 'baseline-expo-token-1234567890');
+  assert.equal(disconnected.env.OFFICE_GITHUB_TOKEN, env.OFFICE_GITHUB_TOKEN);
+});
+
 test('saved providers are encrypted, persist across instances, and affect only the isolated Office environment', async t => {
   const db = await database(t), env = environment(), original = { ...env }, fake = provider();
   const service = createOfficeConnections({ db, env, fetcher: fake.fetcher, now: () => instant });

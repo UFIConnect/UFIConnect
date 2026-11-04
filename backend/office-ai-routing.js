@@ -2,9 +2,9 @@
 
 // Destinations describe where an operator wants work to happen. They never
 // grant capabilities: the task's explicitly selected permissions still apply.
-const DESTINATIONS = Object.freeze(['auto', 'general', 'office', 'hosted-web', 'local-web', 'public-web', 'self-update']);
+const DESTINATIONS = Object.freeze(['auto', 'general', 'office', 'hosted-web', 'local-web', 'public-web', 'mobile-app', 'self-update']);
 const labels = { general: 'General request', office: 'Office operations', 'hosted-web': 'Hosted website draft',
-  'public-web': 'Public website', 'self-update': 'UFIConnect AI upgrade' };
+  'public-web': 'Public website', 'mobile-app': 'Mobile apps', 'self-update': 'UFIConnect AI upgrade' };
 const fail = (status, message) => Object.assign(new Error(message), { status, publicMessage: message });
 const normalized = value => String(value || '').toLowerCase().replace(/[\u2018\u2019]/g, "'").replace(/\s+/g, ' ').trim();
 const idle = /^(?:hi|hello|hey|hi there|hello there|good morning|good afternoon|good evening|thanks|thank you|ok|okay|yes|no|go|start|run|help|help me|do something|do anything|anything|start (?:a |the )?task|run (?:a |the )?task|cancel|stop|never mind|nevermind|no task|do nothing|what can you do|what do you do|how can you help(?: me)?|what are your capabilities)[.!?]*$/;
@@ -30,11 +30,13 @@ function classifyDestination(message, requested = 'auto') {
   const publicText = value.replace(/\b(?:do not|don't|never|without|not)\s+(?:publish|deploy|release|public|live|production)(?:\s+\w+){0,3}/g, '');
   const publicWeb = /\b(?:public|live|production) (?:web(?:site)?|site|page|home ?page)\b|\b(?:publish|deploy|release)\b[\s\S]{0,80}\b(?:web(?:site)?|site|home ?page)\b/.test(publicText);
   const office = /\b(?:office (?:controls?|operations?|agents?)|feed|pipeline|source workers?|service health|security check|agent status)\b/.test(value);
+  const mobile = /\b(?:mobile apps?|ios apps?|android apps?|iphone apps?|ipad apps?|expo apps?)\b/.test(value)
+    || /\b(?:build|update|fix|deploy|release|publish)\b[\s\S]{0,60}\b(?:the |our |uficonnect )apps?\b/.test(value);
   if (hosted && requested !== 'auto' && requested !== 'hosted-web' && requested !== 'general')
     throw fail(409, 'This request names a private website draft. Choose Hosted website draft so it cannot publish to production.');
   if (requested !== 'auto') return { target: requested, label: labels[requested], source: 'selected',
     reason: 'The operator selected this destination.', hosted: requested === 'hosted-web' };
-  const target = hosted ? 'hosted-web' : self ? 'self-update' : publicWeb ? 'public-web' : office ? 'office' : 'general';
+  const target = hosted ? 'hosted-web' : self ? 'self-update' : publicWeb ? 'public-web' : mobile ? 'mobile-app' : office ? 'office' : 'general';
   return { target, label: labels[target], source: 'request', hosted: target === 'hosted-web',
     reason: target === 'general' ? 'No external destination was specified. General work stays separate from publishing.'
       : `The current request explicitly refers to ${labels[target].toLowerCase()}.` };
@@ -54,6 +56,8 @@ function routeTaskRequest(input) {
     permissions.editCode = false; permissions.publish = false;
   } else if (route.target === 'public-web') {
     permissions.operate = false; deployTargets = deployTargets.filter(target => target === 'web');
+  } else if (route.target === 'mobile-app') {
+    permissions.operate = false; deployTargets = deployTargets.filter(target => target === 'mobile');
   } else if (route.target === 'self-update') {
     permissions.operate = false;
     deployTargets = deployTargets.filter(target => ['api', 'pipeline', 'office', 'cloudflare-ai', 'cloudflare-site'].includes(target));
@@ -70,6 +74,7 @@ function pathAllowedForRoute(route, filePath) {
   if (typeof filePath !== 'string' || filePath.includes('..') || filePath.includes('\\')) return false;
   if (route.target === 'hosted-web' || route.target === 'office') return false;
   if (route.target === 'public-web') return /^web\//.test(filePath);
+  if (route.target === 'mobile-app') return /^mobile\//.test(filePath);
   if (route.target === 'self-update') return /^office\/|^backend\/(?:office-ai[^/]*|office-connections[^/]*|index\.js)$|^infra\/office-ai[^/]*\/|^scripts\/(?:audit-office-ai|office-command-city)[^/]*$|^docs\/OFFICE-AI\.md$/.test(filePath);
   return true;
 }

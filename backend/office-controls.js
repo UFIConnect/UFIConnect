@@ -423,7 +423,7 @@ const BASE_OFFICE_CONTROLS = Object.freeze([
     category: 'Deployments',
     label: service === 'mobile' ? 'Build mobile app' : `Deploy ${service === 'web' ? 'public web' : service}`,
     description: service === 'mobile'
-      ? 'Start the production Expo EAS workflow for both iOS and Android from the main branch.'
+      ? 'Build iOS and Android app updates with the connected Expo account from the verified main commit. App store submission is separate.'
       : `Deploy the verified current main commit to the ${service} service through GitHub Actions.`,
     target: 'api',
     impact: 'critical',

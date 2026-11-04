@@ -10,8 +10,18 @@ test('destinations distinguish Office, hosted drafts, public web and AI upgrades
     ['Fix the localhost preview.', 'hosted-web'], ['Create a hosted website draft.', 'hosted-web'], ['Update the public website button.', 'public-web'],
     ['Deploy the website after its checks pass.', 'public-web'], ['Upgrade yourself with better memory.', 'self-update'],
     ['Improve uficonnect.ai capabilities.', 'self-update'], ['Write a poem about stars.', 'general'],
+    ['Update the mobile app sign-in screen.', 'mobile-app'], ['Build the app.', 'mobile-app'],
     ['Update the heading.', 'general'], ['Do not publish the website; explain the code.', 'general'],
   ]) assert.equal(classifyDestination(message).target, expected, message);
+});
+
+test('mobile app tasks limit writes and deployments to the app without granting permissions', () => {
+  const task = routeTaskRequest({ message: 'Update the iOS app', permissions: all, deployTargets: ['mobile', 'api', 'web'] });
+  assert.deepEqual(task.deployTargets, ['mobile']); assert.equal(task.permissions.operate, false);
+  assert.equal(pathAllowedForRoute(task.route, 'mobile/App.ios.js'), true);
+  assert.equal(pathAllowedForRoute(task.route, 'backend/index.js'), false);
+  assert.equal(pathAllowedForRoute(task.route, 'web/src/App.jsx'), false);
+  assert.equal(routeTaskRequest({ message: 'Fix the app', permissions: {} }).permissions.publish, false);
 });
 
 test('hosted website drafts never inherit production or repository execution from broad permissions', () => {

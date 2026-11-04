@@ -61,6 +61,7 @@ const { createOfficeAIRepository } = require('./office-ai-repository');
 const { createOfficeTerminal } = require('./office-ai-terminal');
 const { createOfficeCloudflareDeploy } = require('./office-ai-cloudflare');
 const { createOfficeConnections } = require('./office-connections');
+const { createOfficeExpo } = require('./office-expo');
 const { buildOfficeSetup } = require('./office-setup');
 const { createManagedRecovery } = require('./managed-recovery');
 const { withActiveMembers } = require('./member-write');
@@ -143,6 +144,7 @@ dotenv.config();
 const tokenVault = createTokenVault(process.env);
 const officeConnections = createOfficeConnections({ db, env: process.env });
 const officeProviderEnv = officeConnections.env;
+const officeExpo = createOfficeExpo({ env: officeProviderEnv });
 const snapMedia = createSnapMedia({ env: process.env });
 const messageMedia = createMessageMedia({ env: process.env });
 const snaps = createSnaps({ db, getUser, screenMemberContent,
@@ -27314,12 +27316,14 @@ function officeControlCatalog() {
     const deployConfigured = !renderServices.length || githubConfigured || renderConfigured;
     const sourceEnabled = !control.id.startsWith('source.refresh.') || sourceCollectionEnabled(control.sourceId);
     const automationConfigured = control.id !== 'automation.enable' || Boolean(process.env.AUTOFIX_GITHUB_TOKEN && process.env.OPENAI_API_KEY);
-    const available = (!needsGithub || githubConfigured) && deployConfigured && sourceEnabled && automationConfigured;
+    const expoConfigured = control.id !== 'deploy.mobile' || Boolean(officeProviderEnv.EXPO_TOKEN);
+    const available = (!needsGithub || githubConfigured) && deployConfigured && sourceEnabled && automationConfigured && expoConfigured;
     return {
       ...control,
       available,
       unavailableReason: needsGithub && !githubConfigured
         ? 'Set OFFICE_GITHUB_TOKEN in Render with repository Contents and Actions write access.'
+        : !expoConfigured ? 'Connect Expo in Office Connections to build iOS and Android app updates.'
         : !sourceEnabled ? 'Public collection is disabled for this source by its visibility or member-only policy.'
         : !automationConfigured ? 'Automatic fixes need a dedicated repository token and an AI provider key. Open Office Setup.'
         : !deployConfigured
@@ -27401,19 +27405,8 @@ async function executeFrontendControl(control, body) {
 }
 
 async function executeMobileBuild(expectedSha) {
-  const token = officeGithubToken();
-  if (!token) throw new Error('OFFICE_GITHUB_TOKEN is not configured.');
   const sha = await validatedOfficeDeploySha(expectedSha);
-  const result = await githubApiRequest(
-    `/repos/${AUTOFIX_GITHUB_OWNER}/${AUTOFIX_GITHUB_REPO}/actions/workflows/mobile-release.yml/dispatches`,
-    'POST',
-    { ref: 'main', inputs: { platform: 'all', profile: 'production', expected_sha: sha } },
-    token,
-  );
-  if (result.statusCode !== 204 && result.statusCode !== 200) {
-    throw new Error(`Mobile build dispatch failed: HTTP ${result.statusCode}`);
-  }
-  return { workflow: 'mobile-release.yml', ref: 'main', sha, status: 'queued', platform: 'all', profile: 'production' };
+  return officeExpo.build(sha);
 }
 
 async function executeOfficeControl(control, body, { expectedSha } = {}) {
