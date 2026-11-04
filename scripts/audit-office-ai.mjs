@@ -118,7 +118,7 @@ try {
         if (holdChat) { releaseChat = fulfillReply; heldChatReady?.(); return; }
         return fulfillReply();
       }
-      throw Error('Unexpected Office AI fixture route ' + url.pathname);
+      throw Error('Unexpected Pip fixture route ' + url.pathname);
     });
     await page.goto(server.resolvedUrls.local[0] + 'office-ai-audit');
     await page.getByText('Cloudflare configured', { exact: true }).waitFor();
@@ -126,7 +126,7 @@ try {
     check(!requests.some(row => row.method === 'POST'), 'Opening the app never starts a task or mutation');
     await page.getByRole('button', { name: 'Conversation', exact: true }).click();
     await page.getByRole('button', { name: 'Catch up on AI' }).click();
-    check((await page.getByLabel('Message Office AI').inputValue()).includes('latest important AI updates'), 'Latest AI starter asks for current evidence');
+    check((await page.getByLabel('Message Pip').inputValue()).includes('latest important AI updates'), 'Latest AI starter asks for current evidence');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await page.getByText('A grounded answer with alternatives and limitations.', { exact: true }).waitFor();
     const firstChat = requests.find(row => row.path.endsWith('/chat'));
@@ -188,26 +188,26 @@ try {
     await page.getByRole('button', { name: 'Conversation', exact: true }).click();
     await page.getByRole('button', { name: 'Conversation', exact: true }).click();
     researchStatus = 'unavailable';
-    await page.getByLabel('Message Office AI').fill('Review my idea.');
+    await page.getByLabel('Message Pip').fill('Review my idea.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await page.getByText('Current information could not be verified for this reply.', { exact: false }).waitFor();
     const chats = requests.filter(row => row.path.endsWith('/chat'));
     check(chats.at(-1).body.toolIds[0] === tools[0].id && chats.at(-1).body.history.length === 2, 'Follow-up includes only selected saved tools and recent conversation');
     failChat = true;
-    await page.getByLabel('Message Office AI').fill('Keep this failed draft');
+    await page.getByLabel('Message Pip').fill('Keep this failed draft');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await page.getByRole('alert').filter({ hasText: 'Cloudflare could not complete' }).waitFor();
-    check(await page.getByLabel('Message Office AI').inputValue() === 'Keep this failed draft', 'Failed requests preserve the draft for retry');
+    check(await page.getByLabel('Message Pip').inputValue() === 'Keep this failed draft', 'Failed requests preserve the draft for retry');
     check(await page.locator('.office-ai-message-user', { hasText: 'Keep this failed draft' }).count() === 0, 'Failed request is not duplicated in conversation history');
     failChat = false; slowChat = true;
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await page.waitForTimeout(1700);
-    check(await page.getByLabel('Message Office AI').inputValue() === 'Keep this failed draft', `Stopping restores the submitted draft; actual: ${await page.getByLabel('Message Office AI').inputValue()}`);
+    check(await page.getByLabel('Message Pip').inputValue() === 'Keep this failed draft', `Stopping restores the submitted draft; actual: ${await page.getByLabel('Message Pip').inputValue()}`);
     check(await page.locator('.office-ai-message-assistant').count() === 2, 'Stopped provider response does not appear later');
     slowChat = false;
     researchStatus = 'official-updates';
-    await page.getByLabel('Message Office AI').fill('What are the latest official AI announcements?');
+    await page.getByLabel('Message Pip').fill('What are the latest official AI announcements?');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     const officialAnswer = page.locator('.office-ai-message-assistant').last();
     await officialAnswer.getByText('Official AI announcements retrieved', { exact: true }).waitFor();
@@ -223,7 +223,7 @@ try {
     await page.getByRole('button', { name: 'Conversation', exact: true }).click();
     check(await page.locator('.office-ai-selected').count() === 0, 'Deleted tool cannot remain selected for later chats');
     await page.screenshot({ path: path.join(output, `office-ai-${width}.png`), fullPage: true });
-    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `Office AI fits ${width}px without horizontal page overflow`);
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `Pip fits ${width}px without horizontal page overflow`);
     await page.getByRole('button', { name: 'Connections', exact: true }).click();
     await page.getByRole('button', { name: 'Knowledge sources', exact: true }).click();
     check(await page.locator('.oc-card').count() === 3, 'Knowledge source category lists all new providers');
@@ -254,7 +254,7 @@ try {
         await page.getByRole('button', { name: 'Conversation', exact: true }).click();
         const source = page.getByRole('checkbox', { name: `${name} Connected · include in reply`, exact: true });
         await source.check();
-        await page.getByLabel('Message Office AI').fill(`Find context in ${name}`);
+        await page.getByLabel('Message Pip').fill(`Find context in ${name}`);
         const sourceSaved = page.waitForResponse(response => response.url().includes('/office/ai/conversations/') && response.request().method() === 'PATCH' && response.status() === 200 && response.request().postDataJSON()?.messages?.at(-1)?.connectedSources?.some(item => item.id === id));
         await page.getByRole('button', { name: 'Send', exact: true }).click();
         await page.locator('.office-ai-source-results').last().getByText(`${name} · Sources retrieved (1)`, { exact: true }).waitFor();
@@ -292,20 +292,20 @@ try {
     await page.getByRole('button', { name: 'Conversation', exact: true }).click();
     await page.getByRole('button', { name: 'Conversation', exact: true }).click();
     check(await page.locator('input[type=password]').count() === 0, 'Leaving connections unmounts sensitive inputs');
-    await page.getByLabel('Message Office AI').fill('Explain my connections.');
+    await page.getByLabel('Message Pip').fill('Explain my connections.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await page.getByRole('button', { name: 'Send', exact: true }).waitFor();
     check(!requests.filter(row => row.path === '/office/ai/chat').some(row => /private-(?:connection|deployment)-token/.test(JSON.stringify(row.body))), 'Saved and unsaved provider credentials never enter chatbot payloads');
     await page.getByText('Conversation saved in Office', { exact: true }).waitFor();
     if (width === 1280) {
       const attachment = page.getByLabel('Attach file or photo', { exact: true });
-      await page.getByLabel('Message Office AI').fill('Review this fixture.');
+      await page.getByLabel('Message Pip').fill('Review this fixture.');
       await attachment.setInputFiles({ name: 'too-large.txt', mimeType: 'text/plain', buffer: Buffer.from('x'.repeat(102401)) });
       await page.getByRole('alert').filter({ hasText: '100 KB or smaller' }).waitFor();
-      check(await page.getByLabel('Message Office AI').inputValue() === 'Review this fixture.', 'An oversized text attachment is rejected without truncating or replacing the draft');
+      check(await page.getByLabel('Message Pip').inputValue() === 'Review this fixture.', 'An oversized text attachment is rejected without truncating or replacing the draft');
       await attachment.setInputFiles({ name: 'example.json', mimeType: 'application/json', buffer: Buffer.from('{"example":true}') });
       await page.getByRole('list', { name: 'Files for your next message' }).getByText('example.json', { exact: true }).waitFor();
-      check(await page.getByLabel('Message Office AI').inputValue() === 'Review this fixture.', 'Attachments preserve the typed draft');
+      check(await page.getByLabel('Message Pip').inputValue() === 'Review this fixture.', 'Attachments preserve the typed draft');
       saveFailure = true; markdownReply = true;
       await page.getByRole('button', { name: 'Send', exact: true }).click();
       await page.getByRole('button', { name: 'Copy code', exact: true }).waitFor();
@@ -321,7 +321,7 @@ try {
       const savedVersion = conversations.get(initialConversation).version;
       check(conversations.get(initialConversation).messages.at(-2).content.includes('example.json'), 'Retry persists the same conversation and its attachment filename');
       saveConflict = true; markdownReply = false;
-      await page.getByLabel('Message Office AI').fill('Keep this conflicting local message until I choose to reload.');
+      await page.getByLabel('Message Pip').fill('Keep this conflicting local message until I choose to reload.');
       await page.getByRole('button', { name: 'Send', exact: true }).click();
       await page.getByRole('button', { name: 'Reload saved conversation', exact: true }).waitFor();
       await page.getByRole('button', { name: 'Send', exact: true }).waitFor();
@@ -397,7 +397,7 @@ try {
     if (width === 1280) {
       abortCreateOnce = true; holdChat = true;
       const chatPending = new Promise(resolve => { heldChatReady = resolve; });
-      await page.getByLabel('Message Office AI').fill('Save both messages even when the first database response is lost.');
+      await page.getByLabel('Message Pip').fill('Save both messages even when the first database response is lost.');
       await page.getByRole('button', { name: 'Send', exact: true }).click();
       await chatPending;
       await page.getByRole('alert').filter({ hasText: 'The connection ended.' }).waitFor();
@@ -455,11 +455,11 @@ try {
     await page.getByRole('button', { name: 'Conversation', exact: true }).click();
     await page.getByRole('button', { name: 'Conversation', exact: true }).click();
     await page.getByRole('heading', { name: 'What are we working on?', exact: true }).waitFor();
-    check(await page.getByLabel('Message Office AI').inputValue() === '', 'Auth change clears private conversation and draft');
+    check(await page.getByLabel('Message Pip').inputValue() === '', 'Auth change clears private conversation and draft');
     if (width === 1280) {
       holdChat = true;
       let pendingChat = new Promise(resolve => { heldChatReady = resolve; });
-      await page.getByLabel('Message Office AI').fill('Wait for a slower research response.');
+      await page.getByLabel('Message Pip').fill('Wait for a slower research response.');
       await page.getByRole('button', { name: 'Send', exact: true }).click();
       await pendingChat;
       await page.clock.fastForward(70000);
@@ -469,31 +469,31 @@ try {
       check(await page.locator('.office-ai-message-assistant').count() === 1, 'A response after 70 seconds still reaches the conversation');
 
       pendingChat = new Promise(resolve => { heldChatReady = resolve; });
-      await page.getByLabel('Message Office AI').fill('Preserve this stalled research draft.');
+      await page.getByLabel('Message Pip').fill('Preserve this stalled research draft.');
       await page.getByRole('button', { name: 'Send', exact: true }).click();
       await pendingChat;
       await page.clock.fastForward(220001);
       await page.getByRole('alert').filter({ hasText: 'The response timed out. Your message is ready to retry.' }).waitFor();
-      check(await page.getByLabel('Message Office AI').inputValue() === 'Preserve this stalled research draft.', 'The bounded 220-second deadline restores the pending draft');
+      check(await page.getByLabel('Message Pip').inputValue() === 'Preserve this stalled research draft.', 'The bounded 220-second deadline restores the pending draft');
       check(await page.locator('.office-ai-message-user', { hasText: 'Preserve this stalled research draft.' }).count() === 0, 'Timed-out requests do not pollute the follow-up history');
       await releaseChat().catch(() => {}); holdChat = false;
       check(await page.locator('.office-ai-message-assistant').count() === 1, 'A late timed-out response cannot enter the conversation');
 
       failChatNetwork = true;
       await page.getByRole('button', { name: 'Send', exact: true }).click();
-      await page.getByRole('alert').filter({ hasText: 'The connection ended before Office AI could respond. Your message is ready to retry.' }).waitFor();
-      check(await page.getByLabel('Message Office AI').inputValue() === 'Preserve this stalled research draft.', 'A failed network response has a clear retry message and preserves the draft');
+      await page.getByRole('alert').filter({ hasText: 'The connection ended before Pip could respond. Your message is ready to retry.' }).waitFor();
+      check(await page.getByLabel('Message Pip').inputValue() === 'Preserve this stalled research draft.', 'A failed network response has a clear retry message and preserves the draft');
       failChatNetwork = false;
     }
     configured = false;
-    await page.getByRole('button', { name: 'Refresh AI connection', exact: true }).click();
+    await page.getByRole('button', { name: 'Refresh Pip connection', exact: true }).click();
     await page.getByText('Connect your Cloudflare AI account', { exact: true }).waitFor();
-    await page.getByLabel('Message Office AI').fill('Should not send before connection');
+    await page.getByLabel('Message Pip').fill('Should not send before connection');
     check(await page.getByRole('button', { name: 'Send', exact: true }).isDisabled(), 'Unconfigured Cloudflare never produces a pretend AI reply');
     check(errors.length === 0, `No browser exceptions at ${width}px: ${errors.join('; ')}`);
     await context.close();
   }
-  console.log(`Office AI browser audit passed: ${checks} checks across desktop and mobile.`);
+  console.log(`Pip browser audit passed: ${checks} checks across desktop and mobile.`);
 } finally {
   await browser?.close(); await server.close(); await fs.unlink(fixturePath).catch(() => {});
 }

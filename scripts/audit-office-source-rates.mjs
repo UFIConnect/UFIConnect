@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { createServer } from '../office/node_modules/vite/dist/node/index.js';
 import sourcePullLimits from '../backend/source-pull-limits.js';
+import { fulfillOfficeWelcomeRead, returnFromOfficeWelcome } from './office-welcome-audit.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const server = await createServer({root:path.join(root,'office'),configFile:path.join(root,'office/vite.config.js'),envDir:false,
@@ -30,6 +31,8 @@ try {
       const url=new URL(route.request().url()), role=url.pathname.startsWith('/pipeline')?'pipeline':'api';
       const endpoint=url.pathname.replace(/^\/pipeline/,'');
       if (route.request().headers()['x-office-token'] !== 'audit-only') return route.fulfill({status:401,json:{message:'Unauthorized'}});
+      if(await fulfillOfficeWelcomeRead(route,endpoint)) return;
+      if(endpoint==='/office/controls') return route.fulfill({json:{controls:[],history:[]}});
       if(endpoint==='/office/status') return route.fulfill({json:{server:{serviceRole:role,uptime:120,db:'connected'},sources:{total:workers.length,healthy:workers.length,workers}}});
       if(endpoint==='/office/agents') return route.fulfill({json:{agents:role==='pipeline'?Object.fromEntries(workers.map(worker=>[worker.id,worker])):{}}});
       if(endpoint.endsWith('/stream')) return route.fulfill({contentType:'text/event-stream',body:'data: {"backlog":[]}\n\n'});
@@ -38,11 +41,7 @@ try {
     await page.goto(server.resolvedUrls.local[0]+'#agents',{waitUntil:'domcontentloaded'});
     await page.getByLabel('Access token',{exact:true}).fill('audit-only');
     await page.getByRole('button',{name:'Unlock Office',exact:true}).click();
-    // A successful sign-in opens the observed login briefing before navigation.
-    await page.getByRole('heading',{name:'Office AI',exact:true}).waitFor();
-    const navigation=page.getByRole('navigation',{name:'Office sections',exact:true});
-    if(await navigation.getByRole('button',{name:'More tools'}).getAttribute('aria-expanded')==='false') await navigation.getByRole('button',{name:'More tools'}).click();
-    await navigation.getByRole('button',{name:'Agents',exact:true}).click();
+    await returnFromOfficeWelcome(page,'Agents');
     await page.getByRole('heading',{name:'Agent Control',exact:true}).waitFor();
     await page.getByText(`${workers.at(-1).id} Agent`,{exact:true}).waitFor();
     for (const worker of workers) {

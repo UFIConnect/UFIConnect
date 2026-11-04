@@ -1,4 +1,4 @@
-# Office AI memory, hosted drafts, and upgrades
+# Pip memory, hosted drafts, and upgrades
 
 Conversation answers general questions without creating background tasks or receiving Office command tools. Tasks, Upgrade AI, Office controls, Memory, Activity, and Terminal have separate tabs. Greetings and missing objectives stay idle. Navigation does not submit work. Task and upgrade drafts stay separate from conversation and from each other.
 
@@ -26,7 +26,7 @@ Every new task classifies the current request or uses the selected destination, 
 | Hosted web | Save files and website drafts privately in memory. No production repository edits, terminal jobs, publication, deployment, or Office operations. |
 | Office | Run canonical Office operations with their existing validation and confirmation rules. |
 | Public web | Limit source edits to the website and follow the checked publication workflow. |
-| Self update | Limit edits to Office AI, its interface, and related infrastructure. |
+| Self update | Limit edits to Pip, its interface, and related infrastructure. |
 
 Legacy local-web wording maps to the hosted draft destination. Generated work is stored on uficonnect.ai rather than the user's computer.
 
@@ -44,4 +44,4 @@ A novel pattern can be legitimate. Monitoring covers recorded Office activity an
 
 ## Validation
 
-Run the Office AI, task, routing, memory, conversation, workspace, activity, connection, and source backend tests. Run both Office AI browser audits and build Office. The regression checks include idle requests, destination boundaries, memory deletion and encryption, saved trace metadata, revision conflicts, hosted downloads and previews, upgrade separation, unusual patterns, retries, and authentication.
+Run the Pip, task, routing, memory, conversation, workspace, activity, connection, and source backend tests. Run both Pip browser audits and build Office. The regression checks include idle requests, destination boundaries, memory deletion and encryption, saved trace metadata, revision conflicts, hosted downloads and previews, upgrade separation, unusual patterns, retries, and authentication.

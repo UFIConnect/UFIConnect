@@ -4,6 +4,7 @@ import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { createServer } from '../office/node_modules/vite/dist/node/index.js';
+import { fulfillOfficeWelcomeRead, returnFromOfficeWelcome } from './office-welcome-audit.mjs';
 import catalog from '../shared/analytics-categories.json' with { type: 'json' };
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const screenshots = path.join(root, '.cache', 'office-analytics-tabs-20261028');
@@ -47,6 +48,7 @@ function geographyReport(params, empty = false) {
     firstRecordedDay: source.geography.firstRecordedDay, cityHeadersEnabled: true };
 }
 const server = await createServer({ root: path.join(root, 'office'), configFile: path.join(root, 'office/vite.config.js'), envDir: false,
+  cacheDir: path.join(root, '.cache/vite-office-analytics'),
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify(API), 'import.meta.env.VITE_PIPELINE_API_URL': JSON.stringify(API) },
   server: { host: '127.0.0.1', port: 5273, strictPort: false } });
 let browser;
@@ -61,6 +63,7 @@ try {
       const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'x-office-token,content-type', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS' };
       if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
       if (req.headers()['x-office-token'] !== TOKEN) return route.fulfill({ status: 401, headers, json: { error: 'Unauthorized' } });
+      if(await fulfillOfficeWelcomeRead(route,url.pathname,headers)) return;
       if (url.pathname === '/office/analytics/pageviews') {
         assert.equal(req.headers()['x-office-token'], TOKEN);
         if (mode === 'hold') { held = route; return; }
@@ -86,6 +89,7 @@ try {
     await page.goto(`${server.resolvedUrls.local[0]}#analytics`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.getByLabel('Access token', { exact: true }).fill(TOKEN);
     await page.getByRole('button', { name: 'Unlock Office', exact: true }).click();
+    await returnFromOfficeWelcome(page,'Analytics');
     const dashboard = page.locator('.office-analytics');
     const tabs = dashboard.getByRole('tablist', { name: 'Analytics sections', exact: true });
     const selectTab = async name => {
@@ -200,6 +204,8 @@ try {
     for (let i = 0; i < 100 && (!held || !heldGeography); i++) await page.waitForTimeout(10);
     assert.ok(held); assert.ok(heldGeography);
     mode = 'empty'; await page.evaluate(() => window.dispatchEvent(new Event('office-token-changed')));
+    await returnFromOfficeWelcome(page,'Analytics');
+    await selectTab('Geography');
     await dashboard.getByRole('button', { name: 'Refresh analytics', exact: true }).waitFor();
     await held.fulfill({ json: report(), headers: { 'Access-Control-Allow-Origin': '*' } }).catch(() => {});
     await heldGeography.fulfill({ json: geographyReport(new URL(heldGeography.request().url()).searchParams), headers: { 'Access-Control-Allow-Origin': '*' } }).catch(() => {});

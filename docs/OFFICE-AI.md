@@ -1,4 +1,4 @@
-# Office AI
+# Pip
 
 Conversation is the default. Tasks, Upgrade AI, Office controls, Memory, Activity, and Terminal have separate tabs. Generated files and drafts are saved in encrypted memory on uficonnect.ai. See [memory, hosted drafts, and upgrades](OFFICE-AI-MEMORY.md) for the current routing, storage, learned knowledge, and monitoring behavior.
 
@@ -6,9 +6,9 @@ Open `https://uficonnect.ai` or `https://office.uficonnect.org/#office-ai`. Both
 
 ## Voice, camera, and attachments
 
-After unlocking Office, a call popup reads current service observations and the latest Work task state, then asks whether you need anything. It listens for five seconds after the microphone starts. Silence closes the call and releases the camera. A spoken response starts a Work request with the selected task permissions and keeps the voice conversation open. Use End call to stop the microphone, camera, and speech. Leaving Office AI or hiding the tab also stops the sensors. Browser permission prompts and audio playback restrictions can require pressing Start call first.
+After unlocking Office, a call popup reads current service observations and the latest Work task state, then asks whether you need anything. It listens for five seconds after the microphone starts. Silence closes the call and releases the camera. A spoken response starts a Work request with the selected task permissions and keeps the voice conversation open. Use End call to stop the microphone, camera, and speech. Leaving Pip or hiding the tab also stops the sensors. Browser permission prompts and audio playback restrictions can require pressing Start call first.
 
-The call shows your live camera preview and an animated Office AI avatar. Camera context is a snapshot captured when you speak or send a message; it is not continuous video analysis. Attach photo or file accepts images, text files, and PDFs within the limits shown in the composer. Camera snapshots and attachments go to the authenticated Office AI backend and configured Cloudflare model as context. Unsupported formats and extraction failures are reported. Work keeps the existing task execution permissions, approval steps, and result receipts.
+The call shows your live camera preview and an animated Pip avatar. Camera context is a snapshot captured when you speak or send a message; it is not continuous video analysis. Attach photo or file accepts images, text files, and PDFs within the limits shown in the composer. Camera snapshots and attachments go to the authenticated Pip backend and configured Cloudflare model as context. Unsupported formats and extraction failures are reported. Work keeps the existing task execution permissions, approval steps, and result receipts.
 
 ## Conversation and research
 
@@ -50,7 +50,7 @@ Office commands opens a connected control map. Controls are grouped by purpose, 
 
 ## Connections
 
-Office AI → Connections supports Notion, Slack, Linear, GitHub, Render, and Cloudflare, with provider search and knowledge/service filters. It reuses configured server credentials or allows the operator to enter replacements in password fields. Verification checks provider access before saving; it does not infer GitHub write permissions from repository metadata. Actual operations still enforce provider permissions.
+Pip → Connections supports Notion, Slack, Linear, GitHub, Render, and Cloudflare, with provider search and knowledge/service filters. It reuses configured server credentials or allows the operator to enter replacements in password fields. Verification checks provider access before saving; it does not infer GitHub write permissions from repository metadata. Actual operations still enforce provider permissions.
 
 In Conversation → Ask, explicitly select connected knowledge sources under **Sources for this reply**. Selected sources are searched even when public web research is off. Queries go to their providers, and retrieved excerpts go to Cloudflare with the message. Replies show provider-specific retrieval status and source links; failed or empty lookups are reported. Excerpts are bounded and do not represent a complete workspace search.
 
@@ -83,14 +83,14 @@ All `/office/ai` and `/office/connections` endpoints require the existing `x-off
 
 ## Validation
 
-Run `node --test scripts/office-command-city.test.mjs`, the backend Office AI, connected-source, conversation, and connection tests, the Worker tests, and `node scripts/audit-office-ai.mjs`; then build Office. The browser audit covers desktop/mobile layouts, research sources, tools, command handoff, connections, request failure/cancellation, and access changes. The release should be assembled from the current production source plus this feature's reviewed changes so unrelated local work is excluded.
+Run `node --test scripts/office-command-city.test.mjs`, the backend Pip, connected-source, conversation, and connection tests, the Worker tests, and `node scripts/audit-office-ai.mjs`; then build Office. The browser audit covers desktop/mobile layouts, research sources, tools, command handoff, connections, request failure/cancellation, and access changes. The release should be assembled from the current production source plus this feature's reviewed changes so unrelated local work is excluded.
 
 Cloudflare's current [AI REST API](https://developers.cloudflare.com/ai-gateway/usage/rest-api/), [Web Search API](https://developers.cloudflare.com/web-search/how-to-use/), [GitHub repository API](https://docs.github.com/en/rest/repos/repos), and [Render authentication](https://api-docs.render.com/reference/authentication) document the provider contracts used here.
 
 ## First conversation
 
-1. Open Office AI in Conversation, enter a question, and select Send.
+1. Open Pip in Conversation, enter a question, and select Send.
 2. Wait for the reply and the Saved indicator before leaving the page.
 3. Reload Office, then select the conversation in saved history to continue.
 
-Enter provider credentials only in Office AI Connections. Never paste credentials into a message, attachment, or terminal command.
+Enter provider credentials only in Pip Connections. Never paste credentials into a message, attachment, or terminal command.

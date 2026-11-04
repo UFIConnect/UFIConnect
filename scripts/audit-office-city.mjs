@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { createServer } from '../office/node_modules/vite/dist/node/index.js';
+import { fulfillOfficeWelcomeRead, returnFromOfficeWelcome } from './office-welcome-audit.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const API = 'https://api.city.invalid';
@@ -59,6 +60,7 @@ function installFixture(context) {
     state.requests.push({role,path:url.pathname,method:request.method(),headers:request.headers()});
     check(!request.headers().cookie,'Office requests omit browser cookies');
     if (request.headers()['x-office-token']!==TOKEN) return route.fulfill({status:401,headers,json:{error:'Unauthorized'}});
+    if(await fulfillOfficeWelcomeRead(route,url.pathname,headers)) return;
     if (url.pathname==='/office/status') {
       if (state.holdStatus) {state.heldStatus.push(()=>route.fulfill({headers,json:status(role,state.missing)}).catch(()=>{}));return;}
       if ((role==='api'&&state.apiFailure)||(role==='pipeline'&&state.pipelineFailure)) return route.fulfill({status:503,headers,json:{error:'Synthetic service unavailable'}});
@@ -111,8 +113,7 @@ async function auditWidth(browser, width) {
     await page.goto(server.resolvedUrls.local[0]+'#city',{waitUntil:'domcontentloaded'});
     await page.getByLabel('Access token',{exact:true}).fill(TOKEN);
     await page.getByRole('button',{name:'Unlock Office',exact:true}).click();
-    await page.getByRole('heading',{name:'Office AI',exact:true}).waitFor();
-    await page.getByRole('navigation',{name:'Office sections',exact:true}).getByRole('button',{name:'Live City',exact:true}).click();
+    await returnFromOfficeWelcome(page,'Live City');
     const city=page.getByTestId('live-city');
     await city.waitFor();
     await page.getByRole('button',{name:'Street map',exact:true}).click();
@@ -328,8 +329,7 @@ try {
     await page.goto(server.resolvedUrls.local[0]+'#city',{waitUntil:'domcontentloaded'});
     await page.getByLabel('Access token',{exact:true}).fill(TOKEN);
     await page.getByRole('button',{name:'Unlock Office',exact:true}).click();
-    await page.getByRole('heading',{name:'Office AI',exact:true}).waitFor();
-    await page.getByRole('navigation',{name:'Office sections',exact:true}).getByRole('button',{name:'Live City',exact:true}).click();
+    await returnFromOfficeWelcome(page,'Live City');
     const scene=page.locator('.lc-3d-scene canvas[data-rendered="true"]');
     await scene.waitFor();
     if (forceSoftwareGpu) {

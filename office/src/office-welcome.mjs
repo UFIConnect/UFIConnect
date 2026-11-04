@@ -3,7 +3,7 @@ const STATES = { queued: 'queued', planning: 'planning', working: 'working', suc
 
 // Announce measured fields only; exclude raw logs, instructions and errors.
 export function officeWelcome({ services = [], tasks = null, checkedAt = new Date().toISOString() } = {}) {
-  const parts = ['Welcome back. Here are the latest Office updates.'];
+  const parts = ['Welcome back. I am Pip. Here are the latest Office updates.'];
   let observed = false;
   for (const { role, data } of services) {
     const label = role === 'pipeline' ? 'Pipeline' : 'API';

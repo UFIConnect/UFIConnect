@@ -8,6 +8,7 @@ test('login announcement reports observations and latest Work state', () => {
     { role: 'pipeline', data: { server: { serviceRole: 'pipeline', db: 'fallback' }, sources: { degraded: 3, paused: 2 } } },
   ], tasks: [{ status: 'completed', updatedAt: '2026-11-03T10:00:00Z' }, { status: 'needs_confirmation', updatedAt: '2026-11-04T10:00:00Z', message: 'secret material never spoken' }] });
   assert.equal(value.observed, true);
+  assert.ok(value.text.startsWith('Welcome back. I am Pip.'));
   assert.match(value.text, /1,234 posts/);
   assert.match(value.text, /3 sources are degraded and 2 are paused/);
   assert.match(value.text, /Pipeline database connection is not confirmed/);

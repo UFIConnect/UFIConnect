@@ -4,9 +4,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { createServer } from '../office/node_modules/vite/dist/node/index.js';
+import { fulfillOfficeWelcomeRead, returnFromOfficeWelcome } from './office-welcome-audit.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const server = await createServer({ root: path.join(root, 'office'), configFile: path.join(root, 'office/vite.config.js'), envDir: false,
+  cacheDir: path.join(root, '.cache/vite-office-pipeline'),
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify(''), 'import.meta.env.VITE_PIPELINE_API_URL': JSON.stringify('') },
   server: { host: '127.0.0.1', port: 5213, strictPort: false },
 });
@@ -30,6 +32,7 @@ try {
       if (route.request().headers()['x-office-token'] !== 'audit-only') {
         return route.fulfill({ status: 401, json: { error: 'Unauthorized' } });
       }
+      if(await fulfillOfficeWelcomeRead(route,url.pathname)) return;
       if (url.pathname.endsWith('/post-pipeline/detail')) {
         if (failDetail) return route.fulfill({ status: 503, json: { error: 'History temporarily unavailable' } });
         const post = posts.find(row => row.id === url.searchParams.get('id'));
@@ -80,6 +83,7 @@ try {
     await page.getByRole('button', { name: 'Unlock Office', exact: true }).click();
     assert.equal(await page.locator('#office-access-token').inputValue(), '', 'Submission clears the entered credential');
     assert.equal(await page.evaluate(() => localStorage.getItem('ufi_office_token')), null);
+    await returnFromOfficeWelcome(page,'Post Pipeline');
     await page.getByRole('button', { name: posts[0].title, exact: true }).waitFor();
     await page.getByLabel('Auto-refresh').uncheck();
     assert.equal(await page.locator('.pp-list tbody tr').count(), 40);

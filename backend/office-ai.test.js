@@ -151,7 +151,7 @@ test('thinking inference aborts at 180 seconds with a safe error and releases co
     t.mock.timers.tick(1);
     const result = await pending;
     assert.equal(result.status, 504);
-    assert.equal(result.body.error, 'Office AI timed out. Please try again.');
+    assert.equal(result.body.error, 'Pip timed out. Please try again.');
     assert.equal(signal.aborted, true);
   }
 });

@@ -518,7 +518,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     if (progress(task).modelTurns >= limits().modelTurns) return pause('model-turns', `This run reached its ${limits().modelTurns}-turn limit. Staged work and receipts are saved; continue this checkpoint to proceed.`);
     const controls = !task.route || task.route.target === 'office' ? getControls().map(({ id, label, available, requiresConfirmation }) => ({ id, label, available, requiresConfirmation })) : [];
     const system = [
-      'You are the private UFIConnect Office AI task executor, powered only by Cloudflare. Complete the operator request using the tools actually available.',
+      'You are Pip, the private task executor in UFIConnect Office, powered only by Cloudflare. Your name is Pip. Complete the operator request using the tools actually available.',
       'Reason carefully about dependencies and failure cases before acting. Plan internally, use the available tools to verify results, and provide a concise explanation grounded in recorded evidence rather than exposing private reasoning.',
       `Current time: ${stamp()}. Repository: ${repo.repository}. Operator capabilities: ${JSON.stringify(task.permissions)}.`,
       `Destination: ${task.route ? JSON.stringify(task.route) : 'Existing explicitly scoped task'}. Stay within this destination. Hosted website drafts are private files saved by workspace_write on uficonnect.ai; use workspace_list/read/write to create and update them. Requests that mention local or preview website work use this hosted workspace, not the operator computer or a public repository change. A public website update and an AI self-upgrade are separate code scopes.`,

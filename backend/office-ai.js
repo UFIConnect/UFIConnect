@@ -203,7 +203,7 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
     reasoning: { enabled: config.configured && thinkingModel(config.model), mode: thinkingModel(config.model) ? 'thinking' : 'provider-default', maxOutputTokens: MAX_OUTPUT_TOKENS },
     researchNote: 'Live research requires AI Gateway search permissions and credits. Availability is checked on each request.',
     });
-  }, 'Office AI status is temporarily unavailable.');
+  }, 'Pip status is temporarily unavailable.');
 
   const listTools = wrap(async (_req, res) => res.json({ tools: await readTools(), persistence: 'database' }), 'Saved tools are temporarily unavailable.');
   const saveTool = wrap(async (req, res) => {
@@ -275,9 +275,9 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
     }
     const config = configuration(env);
     if (input.attachments.some(item => item.type.startsWith('image/'))) config.model = config.visionModel;
-    if (!config.configured) throw failure(503, 'Office AI is not connected to Cloudflare yet. Configure its account, API token, model and gateway on the API service.');
+    if (!config.configured) throw failure(503, 'Pip is not connected to Cloudflare yet. Configure its account, API token, model and gateway on the API service.');
     if (now() - windowStarted >= 60000) { windowStarted = now(); requests = 0; }
-    if (inFlight >= 2 || requests >= 20) throw failure(429, 'Office AI is busy. Wait a moment before sending another message.');
+    if (inFlight >= 2 || requests >= 20) throw failure(429, 'Pip is busy. Wait a moment before sending another message.');
     requests++; inFlight++;
     const controller = new AbortController();
     const abort = () => { if (!res.writableEnded) controller.abort(); };
@@ -312,7 +312,7 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
       if (pageUrls.length) {
         research.checkedAt = stamp();
         const pages = await Promise.allSettled(pageUrls.map(url => webReader.read(url, { signal: controller.signal })));
-        if (controller.signal.aborted) throw failure(504, 'Office AI timed out. Please try again.');
+        if (controller.signal.aborted) throw failure(504, 'Pip timed out. Please try again.');
         sources.push(...pages.filter(page => page.status === 'fulfilled').map(page => page.value));
         research.status = sources.length ? 'pages' : 'unavailable';
         research.note = sources.length ? 'Public text from the supplied URLs was retrieved. JavaScript, sign-in pages and access restrictions are not bypassed.' : 'The supplied public pages could not be read. They may require sign-in, JavaScript, or a supported public text URL.';
@@ -327,13 +327,13 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
           research.status = sources.length ? 'verified' : 'empty';
           if (sources.length) research.note = 'Web search results were retrieved; linked pages were not independently inspected in full.';
         } catch {
-          if (controller.signal.aborted) throw failure(504, 'Office AI timed out. Please try again.');
+          if (controller.signal.aborted) throw failure(504, 'Pip timed out. Please try again.');
           research.status = 'unavailable';
           research.note = 'Live sources could not be retrieved. Check Cloudflare search permissions and AI Gateway credits; this answer cannot verify current updates.';
         }
         if (research.status === 'unavailable' && env.OFFICE_AI_OFFICIAL_UPDATES_ENABLED !== 'false' && isAIUpdateQuestion(input.message)) {
           const updates = await officialUpdates();
-          if (controller.signal.aborted) throw failure(504, 'Office AI timed out. Please try again.');
+          if (controller.signal.aborted) throw failure(504, 'Pip timed out. Please try again.');
           if (updates.sources.length) {
             sources.push(...updates.sources);
             Object.assign(research, { status: 'official-updates', checkedAt: updates.checkedAt,
@@ -343,11 +343,11 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
       }
       if (input.sourceIds.length) {
         const workspace = await workspaceRequest;
-        if (controller.signal.aborted) throw failure(504, 'Office AI timed out. Please try again.');
+        if (controller.signal.aborted) throw failure(504, 'Pip timed out. Please try again.');
         sources.push(...workspace.sources); connectedSources = workspace.statuses;
       }
       const system = [
-        'You are UFIConnect AI, a general-purpose assistant powered by Cloudflare. Help with any topic your available capabilities support: writing, code, explanations, calculations, planning, research, and open-ended ideas. Produce the requested deliverable directly; make reasonable assumptions and ask only for essential missing information.',
+        'You are Pip, the UFIConnect general-purpose assistant powered by Cloudflare. Your name is Pip. Help with any topic your available capabilities support: writing, code, explanations, calculations, planning, research, and open-ended ideas. Produce the requested deliverable directly; make reasonable assumptions and ask only for essential missing information.',
         `The current UTC time is ${stamp()}. Answer general questions as well as Office operations.`,
         'For substantial topics cover the relevant factual, practical, competing, technical, economic, and risk perspectives. Explain uncertainty and strongest counterarguments proportionally to the evidence; do not manufacture false balance or promise exhaustive coverage.',
         `Answer style: ${input.perspective}. Concise means a brief direct answer; deep means a structured exploration; balanced means enough detail to compare relevant views.`,
@@ -406,12 +406,12 @@ function createOfficeAI({ env = process.env, fetcher = globalThis.fetch, getCont
         toolsUsed: savedTools.map(({ id, name, kind }) => ({ id, name, kind })),
       });
     } catch (error) {
-      if (controller.signal.aborted || error.name === 'TimeoutError' || error.name === 'AbortError') throw failure(504, 'Office AI timed out. Please try again.');
+      if (controller.signal.aborted || error.name === 'TimeoutError' || error.name === 'AbortError') throw failure(504, 'Pip timed out. Please try again.');
       throw error;
     } finally {
       clearTimeout(deadline); res.removeListener?.('close', abort); inFlight--;
     }
-  }, 'Office AI could not respond. Please retry or check the Cloudflare connection.');
+  }, 'Pip could not respond. Please retry or check the Cloudflare connection.');
   async function search(query, { signal } = {}) {
     if (typeof query !== 'string' || !query.trim() || query.length > 1024) throw failure(400, 'Search queries need 1 to 1,024 characters.');
     const config = configuration(env);

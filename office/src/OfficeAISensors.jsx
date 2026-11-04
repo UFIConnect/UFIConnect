@@ -3,7 +3,7 @@ import { Bot, Camera, CameraOff, Mic, Paperclip, PhoneOff, Square, Volume2 } fro
 import { createOfficeVoice } from './office-voice.mjs';
 import { ATTACHMENT_ACCEPT } from './office-attachments.mjs';
 
-const PHASE_LABELS = { idle: 'Voice off', starting: 'Starting microphone…', listening: 'Listening', speaking: 'Office AI is speaking', working: 'Working on your request…' };
+const PHASE_LABELS = { idle: 'Voice off', starting: 'Starting microphone…', listening: 'Listening', speaking: 'Pip is speaking', working: 'Working on your request…' };
 
 const OfficeAISensors = forwardRef(function OfficeAISensors({ active = true, disabled = false, busy = false, onVoiceMessage, onFiles, welcomeBriefing, onWelcomeConsumed = () => {}, onActivate = () => {} }, ref) {
   const [voiceState, setVoiceState] = useState({ phase: 'idle', text: '' }), [error, setError] = useState('');
@@ -102,7 +102,7 @@ const OfficeAISensors = forwardRef(function OfficeAISensors({ active = true, dis
     <div className="office-ai-call-backdrop" hidden={!callOpen}>
       <section ref={call} className="office-ai-call" role="dialog" aria-modal="true" aria-labelledby="office-ai-call-title" aria-describedby="office-ai-call-state" data-phase={voiceState.phase}>
         <header><span>UFICONNECT OFFICE</span><button type="button" onClick={endCall} aria-label="Close voice and camera call"><PhoneOff size={18} /></button></header>
-        <div className="office-ai-call-stage"><div className="office-ai-call-avatar"><Bot size={66} strokeWidth={1.4} /></div><h2 id="office-ai-call-title">Office AI</h2><p id="office-ai-call-state" role="status">{PHASE_LABELS[voiceState.phase]}{voiceState.phase === 'listening' && voiceState.initial ? ' · 5 seconds to respond' : ''}</p><div className="office-ai-call-wave" aria-hidden="true">{Array.from({length:9}, (_, index) => <i key={index} style={{animationDelay:`${index * .1}s`}} />)}</div><p className="office-ai-call-hint">{voiceState.phase === 'working' ? 'Your request is running in Work. Keep this call open to hear the result.' : 'Show me what you mean, then tell me what you need.'}</p></div>
+        <div className="office-ai-call-stage"><div className="office-ai-call-avatar"><Bot size={66} strokeWidth={1.4} /></div><h2 id="office-ai-call-title">Pip</h2><p id="office-ai-call-state" role="status">{PHASE_LABELS[voiceState.phase]}{voiceState.phase === 'listening' && voiceState.initial ? ' · 5 seconds to respond' : ''}</p><div className="office-ai-call-wave" aria-hidden="true">{Array.from({length:9}, (_, index) => <i key={index} style={{animationDelay:`${index * .1}s`}} />)}</div><p className="office-ai-call-hint">{voiceState.phase === 'working' ? 'Your request is running in Work. Keep this call open to hear the result.' : 'Show me what you mean, then tell me what you need.'}</p></div>
         <div className="office-ai-self-preview"><video ref={video} autoPlay muted playsInline aria-label="Live camera preview" hidden={!camera} />{!camera && <div><CameraOff size={25} /><span>{cameraBusy ? 'Connecting camera…' : 'Camera off'}</span></div>}<span>You{camera ? ' · camera on' : ''}</span></div>
         {voiceState.text && <p className="office-ai-call-transcript">{voiceState.text}</p>}
         {error && <p className="office-ai-error" role="alert">{error}</p>}

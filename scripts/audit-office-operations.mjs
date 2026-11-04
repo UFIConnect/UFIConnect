@@ -5,9 +5,10 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { createServer } from '../office/node_modules/vite/dist/node/index.js';
 import sourcePullLimits from '../backend/source-pull-limits.js';
+import { fulfillOfficeWelcomeRead, returnFromOfficeWelcome } from './office-welcome-audit.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const server = await createServer({root:path.join(root,'office'),configFile:path.join(root,'office/vite.config.js'),envDir:false,define:{'import.meta.env.VITE_API_URL':JSON.stringify(''),'import.meta.env.VITE_PIPELINE_API_URL':JSON.stringify('/pipeline')},server:{host:'127.0.0.1',port:5223,strictPort:false}});
+const server = await createServer({root:path.join(root,'office'),configFile:path.join(root,'office/vite.config.js'),envDir:false,cacheDir:path.join(root,'.cache/vite-office-operations'),define:{'import.meta.env.VITE_API_URL':JSON.stringify(''),'import.meta.env.VITE_PIPELINE_API_URL':JSON.stringify('/pipeline')},server:{host:'127.0.0.1',port:5223,strictPort:false}});
 const now = new Date().toISOString(), userId = 'a0000000-0000-4000-8000-000000000001', deviceId = 'd0000000-0000-4000-8000-000000000001';
 const user = {id:userId,name:'Review Member',email:'review@example.com',onboarded:true,createdAt:now};
 const item = {id:'review-item',postId:'post-spam',title:'Spam review example',content:'Retained text for inspection',source:'news',sourceUrl:'javascript:alert(1)',status:'rejected',reason:'link_spam',explanation:'Too many external links.',at:now};
@@ -25,6 +26,7 @@ try {
       const req = route.request(), url = new URL(req.url()), endpoint = url.pathname.replace(/^\/pipeline/,'');
       assert.equal(url.searchParams.has('token'),false);
       if(req.headers()['x-office-token'] !== 'audit-only') return route.fulfill({status:401,json:{message:'Unauthorized'}});
+      if(await fulfillOfficeWelcomeRead(route,endpoint)) return;
       if(req.method() === 'POST') writes.push({path:url.pathname,body:req.postDataJSON()});
       if(endpoint === '/office/security/devices') return route.fulfill({json:{threshold:5,blockOn:6,scope:'Registered device identity.',devices:[{id:deviceId,strikes:6,blockedAt:now,createdAt:now,accounts:1,events:[{reason:'link_spam',activity:'/groups/test/posts',occurred_at:now}]}]}});
       if(endpoint.endsWith('/unblock')) return route.fulfill({json:{ok:true,message:'Device unblocked and strike count reset.'}});
@@ -45,6 +47,7 @@ try {
     });
     await page.goto(server.resolvedUrls.local[0]+'#controls',{waitUntil:'domcontentloaded'});
     await page.getByLabel('Access token',{exact:true}).fill('audit-only'); await page.getByRole('button',{name:'Unlock Office',exact:true}).click();
+    await returnFromOfficeWelcome(page,'Controls');
     await page.getByRole('button',{name:'Configure',exact:true}).click();
     await page.getByRole('heading',{name:'Anti flooding',exact:true}).waitFor();
     assert.equal(writes.length,0,'Configure opens the settings form without an empty execution');
@@ -57,7 +60,7 @@ try {
     await page.getByText('Command results: feed.flood-configure',{exact:false}).waitFor();
     const floodWrites = writes.filter(row => row.path.endsWith('/feed.flood-configure/execute'));
     assert.equal(floodWrites.length,1,'Settings are submitted only when saved');
-    assert.deepEqual(floodWrites[0].body.settings.sourcePullLimits,{...policy.sourcePullLimits,medium:{windowSeconds:90,maxPulls:7}},'Edited pull limits retain all other sources');
+    assert.deepEqual(floodWrites[0].body.settings.sourcePullLimits,{...policy.sourcePullLimits,medium:{windowSeconds:policy.sourcePullLimits.medium.windowSeconds,maxPulls:7}},'Edited pull limits retain all other sources and the current window');
     assert.equal(floodWrites[0].body.settings.maxPerSourcePerMinute,policy.maxPerSourcePerMinute,'Existing post limits are retained');
     await pullTable.getByRole('spinbutton',{name:'Medium maximum pulls',exact:true}).waitFor();
     assert.equal(await pullTable.getByRole('spinbutton',{name:'Medium maximum pulls',exact:true}).inputValue(),'7','Saved settings are read back');

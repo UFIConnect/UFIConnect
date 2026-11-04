@@ -92,7 +92,7 @@ async function setup(width,options={}){
 const listening=page=>page.waitForFunction(()=>Boolean(window.syntheticSensors.active?.running));
 const idle=page=>page.waitForFunction(()=>!window.syntheticSensors.active?.running);
 async function activateCamera(page){
- await page.getByRole('dialog',{name:'Office AI',exact:true}).getByRole('button',{name:'Turn camera off',exact:true}).waitFor();
+ await page.getByRole('dialog',{name:'Pip',exact:true}).getByRole('button',{name:'Turn camera off',exact:true}).waitFor();
  await page.waitForFunction(()=>{const video=document.querySelector('video[aria-label="Live camera preview"]');return video?.videoWidth>0&&video.readyState>=2;});
 }
 
@@ -108,7 +108,7 @@ try{
   check(!requests.some(x=>x.method==='POST'&&x.path==='/office/ai/tasks'),'Five seconds of login silence does not create a task');
   check(await page.evaluate(()=>window.syntheticSensors.active===null),'Silent greeting closes microphone');
   check(await page.evaluate(()=>window.syntheticSensors.trackStops>0),'Silent greeting releases camera tracks');
-  check(await page.getByRole('dialog',{name:'Office AI',exact:true}).count()===0,'Silent greeting closes video call popup');
+  check(await page.getByRole('dialog',{name:'Pip',exact:true}).count()===0,'Silent greeting closes video call popup');
   check(errors.length===0,'Actual App login has no browser errors');report.scenarios.push('real-login-briefing-and-silence');await context.close();
  }
  for(const width of [1280,390,320]){
@@ -118,8 +118,8 @@ try{
   await input.setInputFiles([{name:'office-notes.txt',mimeType:'text/plain',buffer:Buffer.from('Synthetic Office context: check this item.')},{name:'office-photo.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')}]);
   await page.getByLabel('Files for your next message',{exact:true}).waitFor();
   await page.getByRole('button',{name:'Start voice',exact:true}).click();await listening(page);await activateCamera(page);
-  check(await page.getByRole('dialog',{name:'Office AI',exact:true}).isVisible(),'Voice opens a video call popup');
-  check(await page.getByRole('dialog',{name:'Office AI',exact:true}).evaluate(dialog=>{const box=dialog.getBoundingClientRect();return box.x>=0&&box.y>=0&&box.right<=innerWidth+1&&box.bottom<=innerHeight+1;}),'Call popup fits the visible viewport');
+  check(await page.getByRole('dialog',{name:'Pip',exact:true}).isVisible(),'Voice opens a video call popup');
+  check(await page.getByRole('dialog',{name:'Pip',exact:true}).evaluate(dialog=>{const box=dialog.getBoundingClientRect();return box.x>=0&&box.y>=0&&box.right<=innerWidth+1&&box.bottom<=innerHeight+1;}),'Call popup fits the visible viewport');
   await page.screenshot({path:path.join(root,`.cache/audit-ui/office-ai-call-${width}.png`)});
   await page.evaluate(()=>window.emitSyntheticSpeech('Check the Office item I am showing you and explain what to do.'));
   await page.waitForFunction(()=>window.syntheticSensors.spoken.some(text=>text.includes('checked the synthetic')));await listening(page);
@@ -135,7 +135,7 @@ try{
   await page.evaluate(()=>window.emitSyntheticSpeech('stop listening'));await page.getByRole('button',{name:'Start voice',exact:true}).waitFor();
   check(requests.filter(x=>x.method==='POST'&&x.path==='/office/ai/tasks').length===2,'Spoken stop ends voice without creating a task');
   check(await page.evaluate(()=>window.syntheticSensors.trackStops>0),'Ending the call releases its camera stream');
-  check(await page.getByRole('dialog',{name:'Office AI',exact:true}).count()===0,'Spoken stop closes the call popup');
+  check(await page.getByRole('dialog',{name:'Pip',exact:true}).count()===0,'Spoken stop closes the call popup');
   check(!(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+2)),'Sensor controls fit viewport '+width);
   check(errors.length===0,'No sensor browser errors at '+width);report.widths.push(width);await context.close();
  }
@@ -143,7 +143,7 @@ try{
   const {page,context,requests}=await setup(390);
   await page.evaluate(()=>{window.syntheticSensors.denyMic=true;});await page.getByRole('button',{name:'Start voice',exact:true}).click();
   await page.getByRole('alert').filter({hasText:'Microphone access was denied'}).first().waitFor();check(!requests.some(x=>x.method==='POST'&&x.path==='/office/ai/tasks'),'Denied microphone cannot execute a request');
-  if(await page.getByRole('dialog',{name:'Office AI',exact:true}).isVisible())await page.getByRole('dialog',{name:'Office AI',exact:true}).getByRole('button',{name:'End call',exact:true}).click();
+  if(await page.getByRole('dialog',{name:'Pip',exact:true}).isVisible())await page.getByRole('dialog',{name:'Pip',exact:true}).getByRole('button',{name:'End call',exact:true}).click();
   await page.evaluate(()=>{window.syntheticSensors.denyCamera=true;});await page.getByRole('button',{name:'Share camera',exact:true}).click();
   await page.getByRole('alert').filter({hasText:'Camera access was denied'}).first().waitFor();check(await page.getByRole('button',{name:'Share camera',exact:true}).isVisible(),'Denied camera remains visibly off');report.scenarios.push('denied-microphone-and-camera');await context.close();
  }

@@ -3048,7 +3048,7 @@ export default function App() {
 
   const nav = [
     { id: 'overview', label: 'Overview' },
-    { id: 'office-ai', label: 'Office AI' },
+    { id: 'office-ai', label: 'Pip' },
     { id: 'city', label: 'Live City' },
     { id: 'local-web', label: 'Local web' },
     { id: 'setup', label: 'Setup' },

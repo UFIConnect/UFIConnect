@@ -5,11 +5,13 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { chromium } from 'playwright';
 import { createServer } from '../office/node_modules/vite/dist/node/index.js';
+import { fulfillOfficeWelcomeRead, returnFromOfficeWelcome } from './office-welcome-audit.mjs';
 const require=createRequire(import.meta.url);
 const {buildOfficeSetup}=require('../backend/office-setup.js');
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const API='https://setup-api.invalid',PIPELINE='https://setup-pipeline.invalid',TOKEN='synthetic-setup-token';
 const server=await createServer({root:path.join(root,'office'),configFile:path.join(root,'office/vite.config.js'),envDir:false,
+ cacheDir:path.join(root,'.cache/vite-office-setup'),
  define:{'import.meta.env.VITE_API_URL':JSON.stringify(API),'import.meta.env.VITE_PIPELINE_API_URL':JSON.stringify(PIPELINE)},
  server:{host:'127.0.0.1',port:5235,strictPort:false}});
 let browser;
@@ -27,6 +29,9 @@ try {
    const headers={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'x-office-token,content-type','Access-Control-Allow-Methods':'GET,POST,OPTIONS'};
    if(req.method()==='OPTIONS')return route.fulfill({status:204,headers});
    if(req.headers()['x-office-token']!==TOKEN)return route.fulfill({status:401,headers,json:{error:'Unauthorized'}});
+   if(await fulfillOfficeWelcomeRead(route,url.pathname,headers)) return;
+   if(!activationTest&&!deployTest&&url.pathname==='/office/controls')return route.fulfill({headers,json:{controls:[],history:[]}});
+   if(!activationTest&&!deployTest&&url.pathname==='/office/status')return route.fulfill({headers,json:{server:{serviceRole:url.origin===API?'api':'pipeline',db:'connected'}}});
    if(deployTest){
     if(url.pathname==='/office/deploy/api')return route.fulfill({headers,json:{ok:false,msg:'Deployment configuration is missing.'}});
     if(url.pathname.endsWith('/stream'))return route.fulfill({headers,contentType:'text/event-stream',body:'data: {"backlog":[]}\n\n'});
@@ -57,6 +62,7 @@ try {
   await page.goto(`${server.resolvedUrls.local[0]}#setup`);
   await page.getByLabel('Access token',{exact:true}).fill(TOKEN);
   await page.getByRole('button',{name:'Unlock Office',exact:true}).click();
+  await returnFromOfficeWelcome(page,'Setup',()=>{calls=0;});
   await page.getByRole('button',{name:'Refresh setup',exact:true}).waitFor();
   assert.equal(calls,2);
   assert.ok(await page.locator('[data-setup-id]').count()>15);
@@ -108,7 +114,7 @@ try {
   const nav=page.getByRole('navigation',{name:'Office sections'});
   await nav.getByRole('button',{name:'Overview',exact:true}).click();
   assert.equal(await nav.getByRole('button').count(),7,'Six primary destinations and More tools keep navigation compact');
-  assert.equal(await nav.getByRole('button',{name:'Office AI',exact:true}).count(),1,'Office AI remains a primary destination');
+  assert.equal(await nav.getByRole('button',{name:'Pip',exact:true}).count(),1,'Pip remains a primary destination');
   const moreTools=nav.getByRole('button',{name:'More tools',exact:true});
   if(width<=760){
    const bounds=await moreTools.boundingBox();
