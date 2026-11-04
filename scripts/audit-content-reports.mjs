@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 import { chromium } from 'playwright';
 import { createServer } from '../web/node_modules/vite/dist/node/index.js';
 import { installAuditMember, auditNavigate } from './audit-session.mjs';
+import { returnFromOfficeWelcome } from './office-welcome-audit.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
@@ -99,6 +100,7 @@ try {
     await page.goto(office + '#reports');
     await page.getByLabel('Access token', { exact: true }).fill(token);
     await page.getByRole('button', { name: 'Unlock Office', exact: true }).click();
+    await returnFromOfficeWelcome(page, 'Reports');
     await page.getByRole('button', { name: /Copyright \/ intellectual property/ }).click();
     await page.getByRole('article', { name: 'Selected report' }).getByText('A private review detail. <img src=x onerror=alert(1)>', { exact: true }).waitFor();
     await page.getByLabel('Review note', { exact: true }).fill('Checked original source. Formal notice requested; no removal decision made.');

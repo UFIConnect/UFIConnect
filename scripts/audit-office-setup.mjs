@@ -22,6 +22,11 @@ try {
  for(const width of [1440,768,390,320]){
   const page=await browser.newPage({viewport:{width,height:900}});
   let mismatch=false,calls=0,deployTest=false,activationTest=false,activationMode='success';
+  const completedSetupReads=[];
+  page.on('requestfinished',request=>{
+   const url=new URL(request.url());
+   if([API,PIPELINE].includes(url.origin)&&url.pathname==='/office/setup'&&request.headers()['x-office-token']===TOKEN){calls++;completedSetupReads.push(url.origin===API?'api':'pipeline');}
+  });
   const activationWrites=[];
   await page.route('**/*',async route=>{
    const req=route.request(),url=new URL(req.url());
@@ -55,7 +60,6 @@ try {
     return route.fulfill({headers,json:{server:{serviceRole:role},serviceRole:role,agents:{}}});
    }
    assert.equal(url.pathname,'/office/setup','Setup does not start unrelated telemetry polling');
-   calls++;
    const role=url.origin===API?'api':mismatch?'api':'pipeline';
    return route.fulfill({headers,json:buildOfficeSetup({role,database:true,env:{OPENAI_API_KEY:'synthetic-secret'}})});
   });
@@ -66,9 +70,10 @@ try {
   await page.locator('.office-ai-header h1').waitFor();
   await page.waitForFunction(()=>{const refresh=document.querySelector('button[aria-label="Refresh Pip connection"]');return refresh&&!refresh.disabled;});
   await page.waitForLoadState('networkidle');
-  await returnFromOfficeWelcome(page,'Setup',()=>{calls=0;});
+  await returnFromOfficeWelcome(page,'Setup',()=>{calls=0;completedSetupReads.length=0;});
   await page.getByRole('button',{name:'Refresh setup',exact:true}).waitFor();
   assert.equal(calls,2);
+  assert.deepEqual(completedSetupReads.sort(),['api','pipeline'],'The fresh Setup view completes one read from each service; cancelled StrictMode attempts do not count');
   assert.ok(await page.locator('[data-setup-id]').count()>15);
   assert.ok(!(await page.locator('main').innerText()).includes('synthetic-secret'));
   await page.getByRole('button',{name:'Needs attention',exact:true}).click();
