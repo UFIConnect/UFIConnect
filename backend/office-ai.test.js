@@ -101,6 +101,33 @@ test('dated memory grounds answers with references, records actual discussion an
   assert.match(answer.body.memory.note, /could not be saved/);
 });
 
+test('recalled critical activity notes remain historical evidence in the actual model context', async () => {
+  const fake = fakeProvider();
+  const stale = { id: 'old-activity-note', kind: 'note', mode: 'activity', title: 'Earlier destination observation', status: 'critical',
+    referenceId: 'anomaly:old-execution:destination-mismatch', createdAt: '2026-11-02T10:01:00Z', content: 'A destination mismatch was recorded earlier.',
+    metadata: { detector: 'office-recorded-activity-v1', state: 'active', rule: 'destination-mismatch', observedAt: '2026-11-02T10:00:00Z',
+      evidence: { referenceId: 'task:original-execution' } } };
+  const legacy = { ...stale, id: 'legacy-activity-note', mode: 'chat', referenceId: 'anomaly:legacy-execution:new-failure-class', metadata: {} };
+  const execution = { id: 'ordinary-receipt', kind: 'execution', mode: 'public-web', title: 'Deployment result', status: 'succeeded',
+    referenceId: 'run:confirmed-deployment', createdAt: '2026-11-02T11:00:00Z', content: 'The deployment completed.' };
+  const memory = { search: async () => ({ entries: [stale, legacy, execution] }), record: async () => {} };
+  const response = await invoke(configured({ fetcher: fake.fetcher, memory }).chat, { message: 'Review the earlier recorded alerts.', research: false });
+  assert.equal(response.status, 200); assert.equal(fake.calls.length, 1);
+  const messages = fake.calls[0].body.messages;
+  const context = JSON.parse(messages[1].content.slice(messages[1].content.indexOf('\n') + 1));
+  assert.deepEqual(context.memories[0].activityObservation, { classification: 'historical-unverified', observedAt: '2026-11-02T10:00:00.000Z',
+    rule: 'destination-mismatch', executionReferenceId: 'task:original-execution' });
+  assert.equal(context.memories[0].mode, 'activity'); assert.equal(context.memories[0].status, 'critical');
+  assert.equal(context.memories[0].referenceId, stale.referenceId); assert.equal(context.memories[0].createdAt, stale.createdAt);
+  assert.equal(context.memories[1].mode, 'chat'); assert.equal(context.memories[1].activityObservation.classification, 'historical-unverified');
+  assert.equal(context.memories[1].activityObservation.observedAt, '2026-11-02T10:01:00.000Z');
+  assert.equal(context.memories[2].activityObservation, undefined);
+  assert.deepEqual(context.memories[2], execution, 'Ordinary confirmed execution recall retains its meaning and evidence');
+  assert.equal(response.body.memory.entries[0].activityObservation.classification, 'historical-unverified');
+  assert.match(messages[0].content, /Never present recalled activity notes as current alerts or as current storage or stability health/);
+  assert.match(messages[0].content, /current status was not verified/);
+});
+
 test('supplied public URLs use retrieved page text and citations without claiming a broad search', async () => {
   const provider = fakeProvider(); let reads = 0;
   const webReader = { urls: () => ['https://example.com/source'], read: async () => {
