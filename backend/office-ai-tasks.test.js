@@ -255,6 +255,25 @@ test('Work retains the selected Pip tone while leaving execution permissions and
     'Older client requests retain their original idempotency payload when tone is omitted');
 });
 
+test('Work creative freedom survives persistence without broadening execution scope', async t => {
+  let request;
+  const f = await fixture(t, { model: async input => { request = input; return { content: 'An original story is ready.' }; } });
+  const input = body({ message: 'Write a story with original characters.', target: 'general', creativity: 'creative',
+    permissions: { editCode: false, publish: false, deploy: false, operate: false }, deployTargets: [] });
+  const created = await invoke(f.service.create, input);
+  assert.equal(created.status, 202);
+  const result = await finish(f.service, created.body.task.id);
+  assert.equal(result.creativity, 'creative');
+  assert.deepEqual(result.permissions, input.permissions);
+  assert.match(request.messages[0].content, /Creative freedom: creative/);
+  assert.match(request.messages[0].content, /never authorizes invented factual claims/);
+  assert.equal(f.state.edits, 0); assert.equal(f.state.published, 0);
+  for (const creativity of ['constructor', '__proto__', {}, null]) {
+    assert.throws(() => require('./office-ai-tasks').validateRequest(body({ creativity })), error => error.status === 400);
+  }
+  assert.equal(Object.hasOwn(require('./office-ai-tasks').validateRequest(body()), 'creativity'), false);
+});
+
 test('mobile builds require Expo, a selected app target, exact verification, and the existing deployment confirmation', async t => {
   let turns = 0, builds = 0;
   const f = await fixture(t, { env: { EXPO_TOKEN: 'synthetic-expo-token-1234567890' },
