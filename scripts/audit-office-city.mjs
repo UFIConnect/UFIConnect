@@ -44,7 +44,7 @@ function status(role, missing = false) {
     refreshQueue:{running:true,pending:5,currentIds:['reddit'],batchTotal:3,batchDone:1,lastStarted:now},
     staging:{pendingCount:37,inFlight:true,lastRun:now,lastCount:17,totalTransferred:1234,lastError:null},
     topicFilterAgent:{status:'healthy',lastRun:now,totalRuns:20,lastInput:17,lastOutput:12},
-    dbSize:{mb:120,limitMb:5120,status:'ok',usedPct:2},
+    dbSize:{mb:120,limitMb:10240,status:'ok',usedPct:1.2},
   };
 }
 

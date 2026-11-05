@@ -17725,12 +17725,12 @@ const ARCHIVE_RETURNING_COLUMNS = ARCHIVE_COLUMNS.split(', ').map((column) => `f
 // backstopped by any check of the database's actual size (see
 // checkDatabaseSize/DB_SIZE_*_MB below, which didn't exist until now
 // either). 2M archived rows at a realistic ~1-2KB/row (title+content+URLs+
-// index overhead) is itself multiple GB — on a 4GB-plan database that's
+// index overhead) is itself multiple GB — even with 10 GB of primary storage,
 // large enough on its own to plausibly explain silent INSERT failures
 // elsewhere (see recordFeedWriteOutcome) if disk filled up. 500,000 is
 // still a large safety net (2x the live cache's own MAX_CACHED_DB_POSTS)
 // while leaving real headroom; raise it back via the env var if the DB
-// plan is upgraded, ideally alongside actually watching dbSizeState.
+// storage is expanded, ideally alongside actually watching dbSizeState.
 const MAX_ARCHIVE_POSTS = envNumber('MAX_ARCHIVE_POSTS', 500000, 100000, 20000000);
 const FEED_COUNT_CAP_INTERVAL_MS = envNumber('FEED_COUNT_CAP_INTERVAL_MS', 5 * 60 * 1000, 60 * 1000, 60 * 60 * 1000);
 const FEED_AGE_CAP_INTERVAL_MS = envNumber('FEED_AGE_CAP_INTERVAL_MS', 15 * 60 * 1000, 5 * 60 * 1000, 6 * 60 * 60 * 1000);
@@ -18707,19 +18707,19 @@ function runSourceDeletionReconciliation({ reason = 'scheduled', force = false }
 // disk usage — every existing cap (MAX_CACHED_DB_POSTS, MAX_ARCHIVE_POSTS)
 // is row-count-based, which only bounds size if the assumed per-row cost
 // stays right; it never once asked Postgres how big it actually is or
-// reacted if that grew close to the real provisioned limit (the render.yaml
-// database plan is basic-4gb — see its own comment on `plan:` for why that
-// number is real and Blueprint-sync-sensitive, not a placeholder). This runs
+// reacted if that grew close to the real provisioned limit (10 GB of primary
+// storage, configured separately from compute via render.yaml diskSizeGB).
+// This runs
 // on both roles (cheap read-only query, no reason to gate by SERVICE_ROLE)
 // and reacts locally: 'warn' just logs once per transition; 'critical'
 // forces an immediate, harder-than-normal trim pass (bypassing the usual
 // 10-minute throttle — waiting up to 10 minutes to start freeing space once
 // actually critical isn't acceptable) rather than waiting for the next
 // scheduled maintenance window.
-const DB_SIZE_WARN_MB     = envNumber('DB_SIZE_WARN_MB', 3200, 100, 1000000);
-const DB_SIZE_CRITICAL_MB = envNumber('DB_SIZE_CRITICAL_MB', 3700, DB_SIZE_WARN_MB, 1000000);
-const DB_SIZE_LIMIT_MB    = envNumber('DB_SIZE_LIMIT_MB', 4096, DB_SIZE_CRITICAL_MB, 1000000);
-const DB_RENDER_PLAN      = process.env.RENDER_DB_PLAN || 'basic-4gb';
+const DB_SIZE_WARN_MB     = envNumber('DB_SIZE_WARN_MB', 8192, 100, 1000000);
+const DB_SIZE_CRITICAL_MB = envNumber('DB_SIZE_CRITICAL_MB', 9216, DB_SIZE_WARN_MB, 1000000);
+const DB_SIZE_LIMIT_MB    = envNumber('DB_SIZE_LIMIT_MB', 10240, DB_SIZE_CRITICAL_MB, 1000000);
+const DB_RENDER_PLAN      = process.env.RENDER_DB_PLAN || 'disk-10gb';
 const DB_SIZE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const dbSizeState = { mb: null, usedPct: null, status: 'unknown', lastCheckedAt: null, lastError: null };
 async function checkDatabaseSize() {

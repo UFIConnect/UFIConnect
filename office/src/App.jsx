@@ -2154,7 +2154,7 @@ function TransferDetailCard({ q, workers = [], dbSize, cacheFreshness = {} }) {
         <DetailStat label="sources / last hr" value={(q?.processedLastHour ?? 0).toLocaleString()} color="#4ade80" />
         <DetailStat label="posts in DB" value={q?.dbPostCount != null ? q.dbPostCount.toLocaleString() : '—'} />
         <DetailStat
-          label={dbSize?.mb != null ? `${dbSize.mb.toLocaleString()}/${(dbSize.limitMb || 4096).toLocaleString()}MB` : 'API storage'}
+          label={dbSize?.mb != null ? `${dbSize.mb.toLocaleString()}/${(dbSize.limitMb || 10240).toLocaleString()}MB` : 'API storage'}
           value={dbSize?.usedPct != null ? `${dbSize.usedPct}%` : '—'}
           color={storageColor(dbSize)}
         />

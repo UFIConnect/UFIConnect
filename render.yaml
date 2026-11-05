@@ -2,9 +2,9 @@ databases:
   - name: uficonnect-db
     databaseName: uficonnect
     user: ufi_admin
-    # 5 GB database storage. Render's database plan is compute; storage is
+    # 10 GB primary database storage. Render's database plan is compute; storage is
     # tracked separately as diskSizeGB.
-    diskSizeGB: 5
+    diskSizeGB: 10
 
 # Deploy hooks are invoked only by the verified-commit workflow. Using a hook's
 # ref parameter disables Render auto-deploys, so keep this ownership explicit.
@@ -55,9 +55,13 @@ services:
       - key: RSS_CRITICAL_MB
         value: '360'
       - key: DB_SIZE_LIMIT_MB
-        value: '5120'
+        value: '10240'
+      - key: DB_SIZE_WARN_MB
+        value: '8192'
+      - key: DB_SIZE_CRITICAL_MB
+        value: '9216'
       - key: RENDER_DB_PLAN
-        value: disk-5gb
+        value: disk-10gb
       - key: FEED_COUNT_CAP_INTERVAL_MS
         value: '300000'
       - key: FEED_UNSEEN_CAP_INTERVAL_MS
@@ -433,9 +437,13 @@ services:
       - key: SOURCE_COLLECTION_CONCURRENCY
         value: '4'
       - key: DB_SIZE_LIMIT_MB
-        value: '5120'
+        value: '10240'
+      - key: DB_SIZE_WARN_MB
+        value: '8192'
+      - key: DB_SIZE_CRITICAL_MB
+        value: '9216'
       - key: RENDER_DB_PLAN
-        value: disk-5gb
+        value: disk-10gb
       - key: FEED_COUNT_CAP_INTERVAL_MS
         value: '300000'
       - key: FEED_UNSEEN_CAP_INTERVAL_MS
