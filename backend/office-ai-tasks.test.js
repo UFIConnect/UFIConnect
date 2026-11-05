@@ -43,6 +43,35 @@ async function finish(service, id, limit = 25) {
   throw new Error(`Task did not finish: ${task.status}`);
 }
 
+test('long task instructions are stored and reach the model intact without granting capabilities', async t => {
+  const message = `Write a release note using this background. ${'Background detail. '.repeat(1400)}End of instructions.`;
+  assert.ok(message.length > 24000);
+  let request;
+  const f = await fixture(t, { model: async input => { request = input; return { content: 'The release note is ready.' }; } });
+  const history = [{ role: 'user', content: `Earlier requirements. ${'Context. '.repeat(3000)}End of earlier requirements.` }];
+  assert.ok(history[0].content.length > 24000);
+  const input = body({ message, history, target: 'general', memory: false,
+    permissions: { editCode: false, publish: false, deploy: false, operate: false }, deployTargets: [] });
+  const created = await invoke(f.service.create, input);
+  assert.equal(created.status, 202);
+  const stored = (await f.pg.query('SELECT data FROM office_ai_tasks WHERE id=$1', [created.body.task.id])).rows[0].data;
+  assert.equal(stored.message, message);
+  const result = await finish(f.service, created.body.task.id);
+  assert.equal(result.status, 'succeeded');
+  assert.ok(request.messages.some(item => item.role === 'user' && item.content === message));
+  assert.ok(request.messages.some(item => typeof item.content === 'string' && item.content.includes(JSON.stringify(history))));
+  assert.deepEqual(result.permissions, input.permissions);
+  assert.equal(f.state.edits, 0); assert.equal(f.state.published, 0);
+});
+
+test('removing the task prompt cap retains malformed input and total request capacity checks', () => {
+  const { validateRequest } = require('./office-ai-tasks');
+  for (const message of ['', '   ', 12001]) assert.throws(() => validateRequest(body({ message })), { status: 400 });
+  assert.throws(() => validateRequest(body({ message: 'x'.repeat(3 * 1024 * 1024) })), { status: 413 });
+  assert.throws(() => validateRequest(body({ history: [{ role: 'user', content: 'x'.repeat(48001) }] })), { status: 400 });
+  assert.throws(() => validateRequest(body({ history: [{ role: 'user', content: '\u6f22'.repeat(32000) }] })), { status: 400 });
+});
+
 test('one malformed tool response is regenerated within the model budget without replaying earlier work', async t => {
   const malformed = call('repo_edit', {}); malformed.tool_calls[0].function.arguments = '{invalid-provider-arguments';
   const responses = [call('repo_read', { path: 'backend/office-ai-example.js' }), malformed,

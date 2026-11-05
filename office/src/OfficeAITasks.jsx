@@ -5,13 +5,10 @@ import OfficeAIContent, { safeOfficeLink } from './OfficeAIContent';
 import OfficeAITaskScope, { DEFAULT_TASK_PERMISSIONS } from './OfficeAITaskScope';
 import { officeAIRequest, officeAIError, taskDate, taskState } from './office-ai-client';
 import { isAgentQuestion } from './office-ai-intent.mjs';
+import { officeAIHistory } from './office-ai-history.mjs';
 
 const FINISHED = new Set(['succeeded', 'failed', 'cancelled']);
-const context = messages => {
-  const history = messages.filter(item => item.content).slice(-12).map(({ role, content }) => ({ role, content: content.slice(0, 12000) }));
-  while (history.reduce((sum, item) => sum + item.content.length, 0) > 32000) history.shift();
-  return history;
-};
+const context = officeAIHistory;
 
 export default function OfficeAITasks({ apiBase, request, onOpenTerminal, initialDestination = 'auto', tone = 'friendly' }) {
   const upgrade = initialDestination === 'self-update', agentName = upgrade ? 'Upgrade Pip agent' : 'Task agent';
@@ -108,7 +105,7 @@ export default function OfficeAITasks({ apiBase, request, onOpenTerminal, initia
       <form className="office-ai-composer" onSubmit={submit}>
         {error && <p className="office-ai-error" role="alert">{error}</p>}
         <div className="office-ai-modes" role="group" aria-label={`${agentName} mode`}>{[['ask', 'Ask'], ['work', 'Work']].map(([value, label]) => <button type="button" key={value} aria-pressed={mode === value} disabled={busy} onClick={() => setMode(value)}>{label}</button>)}</div>
-        <label className="office-ai-sr-only" htmlFor={`office-ai-agent-${initialDestination}`}>{upgrade ? 'Upgrade instructions' : 'Task instructions'}</label><textarea ref={composer} id={`office-ai-agent-${initialDestination}`} rows={3} maxLength={12000} required value={draft} disabled={busy} onChange={event => setDraft(event.target.value)} placeholder={upgrade ? 'Ask about Pip or describe an improvement…' : 'Ask a question or tell your agent what to do…'} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.currentTarget.form.requestSubmit(); } }} />
+        <label className="office-ai-sr-only" htmlFor={`office-ai-agent-${initialDestination}`}>{upgrade ? 'Upgrade instructions' : 'Task instructions'}</label><textarea ref={composer} id={`office-ai-agent-${initialDestination}`} rows={3} required value={draft} disabled={busy} onChange={event => setDraft(event.target.value)} placeholder={upgrade ? 'Ask about Pip or describe an improvement…' : 'Ask a question or tell your agent what to do…'} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.currentTarget.form.requestSubmit(); } }} />
         <div className="office-ai-composer-footer"><span>{asking ? 'Reply only' : working ? 'Your run is still active. You can ask about it.' : 'Work with allowed actions'} · Ctrl / ⌘ + Enter</span><button type="submit" className="office-ai-primary" disabled={busy || !draft.trim() || (!asking && (!capabilities || working))}><Send size={14} />{busy ? 'Sending…' : 'Send'}</button></div>
       </form>
     </div><aside className="office-ai-context">

@@ -34,8 +34,9 @@ function messagesValue(input) {
   if (!Array.isArray(input) || input.length > 200 || Buffer.byteLength(JSON.stringify(input)) > 300000) throw problem(413, 'A saved chat supports up to 200 messages and 300 KB. Start a new conversation.');
   return input.map((message, index) => {
     if (!object(message) || !['user', 'assistant'].includes(message.role) || typeof message.content !== 'string'
-      || !message.content.trim() || message.content.length > 24000) throw problem(400, 'Saved messages need a user or assistant role and up to 24,000 characters of text.');
-    const item = { id: text(message.id, 100) || `message-${index}`, role: message.role, content: text(message.content, 24000) };
+      || !message.content.trim() || message.role === 'assistant' && message.content.length > 24000) throw problem(400, 'Saved messages need a user or assistant role and nonempty text. Assistant replies support up to 24,000 characters.');
+    const item = { id: text(message.id, 100) || `message-${index}`, role: message.role,
+      content: text(message.content, message.role === 'user' ? message.content.length : 24000) };
     if (message.role === 'user') return item;
     if (typeof message.taskId === 'string' && UUID.test(message.taskId)) item.taskId = message.taskId.toLowerCase();
     if (date(message.generatedAt)) item.generatedAt = date(message.generatedAt);

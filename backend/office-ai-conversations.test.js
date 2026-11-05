@@ -38,6 +38,25 @@ test('an ambiguous create retry returns the original chat without overwriting it
   assert.equal(repeated.body.conversation.version, 1); assert.equal(repeated.body.conversation.messages[0].content, messages[0].content);
   assert.equal((await f.pg.query('SELECT COUNT(*)::integer AS count FROM office_ai_conversations')).rows[0].count, 1);
 });
+test('long user prompts save, update and reload intact without a per-message character cap', async t => {
+  const f = await fixture(t), id = randomUUID();
+  const content = `Beginning of private prompt\n${'Detailed requirements. '.repeat(1500)}\nEnd of private prompt`;
+  assert.ok(content.length > 24000);
+  const input = [{ role: 'user', content, id: 'long-user-message' }, messages[1]];
+  const created = await call(f.api.create, { clientRequestId: id, messages: input });
+  assert.equal(created.code, 201);
+  assert.equal(created.body.conversation.messages[0].content, content);
+  const updatedContent = `${content}\nAdditional requirement.`;
+  const updated = await call(f.api.update, { expectedVersion: 1, messages: [{ ...input[0], content: updatedContent }, input[1]] }, id);
+  assert.equal(updated.code, 200);
+  const restarted = createOfficeConversations({ db: f.db, env });
+  const loaded = await call(restarted.detail, undefined, id);
+  assert.equal(loaded.code, 200);
+  assert.equal(loaded.body.conversation.messages[0].content, updatedContent);
+  const stored = (await f.pg.query('SELECT encrypted_messages FROM office_ai_conversations WHERE id=$1', [id])).rows[0];
+  assert.ok(!stored.encrypted_messages.includes('Beginning of private prompt'));
+});
+
 test('versioned updates retain unsupplied messages and reject a stale writer', async t => {
   const f = await fixture(t), id = randomUUID();
   await call(f.api.create, { clientRequestId: id, messages });
@@ -63,7 +82,8 @@ test('confirmed versioned deletion erases encrypted content and prevents a late 
 test('message validation bounds storage and drops unsupported metadata and unsafe source links', () => {
   assert.throws(() => messagesValue([{ role: 'system', content: 'new instruction' }]), { status: 400 });
   assert.throws(() => messagesValue(Array.from({ length: 201 }, () => messages[0])), { status: 413 });
-  assert.throws(() => messagesValue([{ role: 'user', content: 'x'.repeat(24001) }]), { status: 400 });
+  assert.throws(() => messagesValue([{ role: 'user', content: 'x'.repeat(300000) }]), { status: 413 });
+  assert.throws(() => messagesValue([{ role: 'assistant', content: 'x'.repeat(24001) }]), { status: 400 });
   const saved = messagesValue([{ ...messages[1], token: 'do not persist', sources: [{ url: 'javascript:alert(1)' }, { url: 'https://secret@example.com/' }] }]);
   assert.equal(saved[0].token, undefined); assert.deepEqual(saved[0].sources, []);
 });

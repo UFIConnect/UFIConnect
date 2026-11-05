@@ -99,11 +99,11 @@ function configuration(env) {
 function validateChat(body) {
   if (!isObject(body) || !onlyKeys(body, ['message', 'mode', 'tone', 'voice', 'officeContext', 'memory', 'history', 'research', 'perspective', 'toolIds', 'sourceIds', 'attachments'])) throw failure(400, 'Send a message and supported conversation options.');
   if (Buffer.byteLength(JSON.stringify(body)) > (body.attachments?.length ? MAX_MEDIA_BODY_BYTES : MAX_BODY_BYTES)) throw failure(413, 'This conversation is too large. Send a shorter message or start a new chat.');
-  if (typeof body.message !== 'string' || !body.message.trim() || body.message.length > 12000) throw failure(400, 'Enter a message of up to 12,000 characters.');
+  if (typeof body.message !== 'string' || !body.message.trim()) throw failure(400, 'Enter a message.');
   const attachments = validateAttachments(body.attachments);
   const history = body.history ?? [];
   if (!Array.isArray(history) || history.length > 12 || history.some(item => !isObject(item) || !onlyKeys(item, ['role', 'content'])
-    || !['user', 'assistant'].includes(item.role) || typeof item.content !== 'string' || !item.content.trim() || item.content.length > 12000)
+    || !['user', 'assistant'].includes(item.role) || typeof item.content !== 'string' || !item.content.trim())
     || history.reduce((sum, item) => sum + item.content.length, 0) > 32000) throw failure(400, 'History must contain up to 12 messages and 32,000 characters.');
   if (body.research !== undefined && typeof body.research !== 'boolean') throw failure(400, 'Research must be enabled or disabled.');
   if (body.memory !== undefined && typeof body.memory !== 'boolean') throw failure(400, 'Memory must be enabled or disabled.');

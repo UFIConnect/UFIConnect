@@ -88,6 +88,7 @@ try {
   report.checks.push('Conversation is the default; greetings and ordinary replies never create a task');
   await page.getByRole('button',{name:'Tasks',exact:true}).click();
   const taskPrompt=page.getByRole('textbox',{name:/^Task instructions/}),startTask=page.getByRole('button',{name:'Send',exact:true});
+  assert.equal(await taskPrompt.getAttribute('maxlength'),null);
   assert.equal(await startTask.isDisabled(),true);assert.equal(taskCreates,0);
   await taskPrompt.fill('Hi!');await startTask.click();
   await page.getByRole('log',{name:'Task agent conversation',exact:true}).getByText('This is an answer without starting a task.',{exact:true}).waitFor();assert.equal(taskCreates,0);
@@ -97,14 +98,16 @@ try {
   report.checks.push('Task agent answers greetings and Ask messages without creating a run');
   await page.getByRole('combobox',{name:/^Request destination/}).selectOption('office');
   assert.equal(await page.getByRole('checkbox',{name:'Run Office commands',exact:true}).isChecked(),true);
-  await taskPrompt.fill('Run the requested checks and show their results.');
+  const longTask=`Run the requested checks and show their results. ${'Check context. '.repeat(1000)}End of full instructions.`;
+  await taskPrompt.fill(longTask);
   await page.getByRole('button',{name:'Office controls',exact:true}).click();
   assert.equal(taskCreates,0);
   await page.getByRole('button',{name:'Tasks',exact:true}).click();
-  assert.equal(await taskPrompt.inputValue(),'Run the requested checks and show their results.');
+  assert.equal(await taskPrompt.inputValue(),longTask);
   await startTask.click();
   await page.getByRole('button',{name:'Confirm this action',exact:true}).waitFor();
   const first=[...tasks.values()][0];assert.equal(taskCreates,1);assert.equal(first.request.permissions.operate,true);assert.equal(first.request.target,'office');assert.equal(first.request.memory,true);assert.deepEqual(first.request.history,[]);
+  assert.equal(first.request.message,longTask);report.checks.push('Tasks accept and send complete instructions longer than 12,000 characters');
   report.checks.push('Tasks require an explicit outcome and Start task; control navigation preserves the draft without executing it');
   await page.getByRole('button',{name:'Confirm this action',exact:true}).click();await page.getByRole('button',{name:'Continue task',exact:true}).waitFor();
   assert.match(await page.getByLabel('Task execution',{exact:true}).innerText(),/Model turns: 128 \/ 128/);
@@ -118,6 +121,7 @@ try {
   report.checks.push('Reloading Tasks reopens durable work and receipts without replaying execution');
   await page.getByRole('button',{name:'Upgrade Pip',exact:true}).click();
   const upgradePrompt=page.getByRole('textbox',{name:'Upgrade instructions',exact:true}),startUpgrade=page.getByRole('button',{name:'Send',exact:true});
+  assert.equal(await upgradePrompt.getAttribute('maxlength'),null);
   assert.equal(await startUpgrade.isDisabled(),true);assert.equal(taskCreates,1);
   await upgradePrompt.fill('What can you improve?');await startUpgrade.click();
   await page.getByRole('log',{name:'Upgrade Pip agent conversation',exact:true}).getByText('This is an answer without starting a task.',{exact:true}).waitFor();assert.equal(taskCreates,1);

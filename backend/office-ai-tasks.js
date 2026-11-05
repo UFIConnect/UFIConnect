@@ -65,7 +65,7 @@ function validateValue(value, schema, depth = 0) {
 
 function validateRequest(body) {
   if (!object(body) || Object.keys(body).some(key => !['clientRequestId', 'message', 'tone', 'permissions', 'deployTargets', 'history', 'conversationId', 'target', 'memory', 'attachments'].includes(key))
-    || !UUID.test(body.clientRequestId || '') || typeof body.message !== 'string' || !body.message.trim() || body.message.length > 12000
+    || !UUID.test(body.clientRequestId || '') || typeof body.message !== 'string' || !body.message.trim()
     || !object(body.permissions) || Object.keys(body.permissions).some(key => !['editCode', 'publish', 'deploy', 'operate'].includes(key))
     || Object.values(body.permissions).some(value => typeof value !== 'boolean')) throw fail(400, 'Describe a task and choose its allowed capabilities.');
   if (Buffer.byteLength(JSON.stringify(body)) > MAX_MEDIA_BODY_BYTES) throw fail(413, 'This request is too large. Attach smaller files or photos.');
@@ -77,7 +77,7 @@ function validateRequest(body) {
   const history = body.history ?? [];
   if (!Array.isArray(history) || history.length > 24 || history.some(item => !object(item)
     || Object.keys(item).some(key => !['role', 'content'].includes(key)) || !['user', 'assistant'].includes(item.role)
-    || typeof item.content !== 'string' || !item.content.trim() || item.content.length > 24000)
+    || typeof item.content !== 'string' || !item.content.trim())
     || history.reduce((sum, item) => sum + item.content.length, 0) > 48000 || Buffer.byteLength(JSON.stringify(history)) > 96000) throw fail(400, 'Task context supports up to 24 user or assistant messages and 48,000 characters.');
   if (body.conversationId !== undefined && body.conversationId !== null && !UUID.test(body.conversationId)) throw fail(400, 'Use a valid conversation ID.');
   if (body.memory !== undefined && typeof body.memory !== 'boolean') throw fail(400, 'Memory must be enabled or disabled.');

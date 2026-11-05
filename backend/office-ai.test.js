@@ -315,11 +315,41 @@ test('chat validates unsupported fields, roles, history, tools and byte capacity
     { message: 'hello', history: [{ role: 'assistant', content: 'ok', tool_calls: [] }] },
     { message: 'hello', history: Array.from({ length: 13 }, () => ({ role: 'user', content: 'a' })) },
     { message: 'hello', toolIds: ['https://attacker.invalid'] },
-    { message: 'x'.repeat(12001) },
+    { message: '' },
+    { message: '   ' },
+    { message: 12001 },
+    { message: 'hello', history: [{ role: 'user', content: 'x'.repeat(16000) }, { role: 'assistant', content: 'y'.repeat(16001) }] },
   ];
   for (const body of bad) assert.equal((await invoke(service.chat, body)).status, 400);
   assert.equal((await invoke(service.chat, { message: '🙂'.repeat(20000) })).status, 413);
   assert.equal(fake.calls.length, 0);
+});
+
+test('conversation and task prompts over 12,000 characters reach the provider intact', async () => {
+  const message = `Beginning of request\n${'long prompt content '.repeat(1000)}\nEnd of request`;
+  assert.ok(message.length > 12000);
+  for (const mode of ['chat', 'task']) {
+    const fake = fakeProvider();
+    const service = configured({ fetcher: fake.fetcher });
+    const response = await invoke(service.chat, { mode, message, research: false, memory: false });
+    assert.equal(response.status, 200);
+    assert.equal(fake.calls.length, 1);
+    assert.deepEqual(fake.calls[0].body.messages.at(-1), { role: 'user', content: message });
+  }
+});
+
+test('history messages over 12,000 characters retain their full content within the aggregate budget', async () => {
+  const fake = fakeProvider();
+  const service = configured({ fetcher: fake.fetcher });
+  const history = [{ role: 'user', content: 'u'.repeat(16000) }, { role: 'assistant', content: 'a'.repeat(16000) }];
+  const response = await invoke(service.chat, { message: 'Continue from the previous answer', history, research: false, memory: false });
+  assert.equal(response.status, 200);
+  assert.deepEqual(fake.calls[0].body.messages.slice(-3, -1), history);
+  history[1].content += 'a';
+  const rejected = await invoke(service.chat, { message: 'Continue', history, research: false });
+  assert.equal(rejected.status, 400);
+  assert.match(rejected.body.error, /32,000 characters/);
+  assert.equal(fake.calls.length, 1);
 });
 
 test('live search uses Cloudflare server credentials and grounds current claims with sanitized references', async () => {

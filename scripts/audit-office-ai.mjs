@@ -127,9 +127,15 @@ try {
     await page.getByRole('button', { name: 'Conversation', exact: true }).click();
     await page.getByRole('button', { name: 'Catch up on AI' }).click();
     check((await page.getByLabel('Message Pip').inputValue()).includes('latest important AI updates'), 'Latest AI starter asks for current evidence');
+    const longMessage = `Explain this context. ${'Additional context. '.repeat(800)}End of full message.`;
+    check(await page.getByLabel('Message Pip').getAttribute('maxlength') === null, 'Conversation composer has no character cap');
+    await page.getByLabel('Message Pip').fill(longMessage);
+    check(await page.getByLabel('Message Pip').inputValue() === longMessage, 'Conversation accepts drafts longer than 12,000 characters');
+    check(!(await page.locator('.office-ai-composer-footer').innerText()).includes('/ 12,000'), 'Composer does not advertise the removed limit');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await page.getByText('A grounded answer with alternatives and limitations.', { exact: true }).waitFor();
     const firstChat = requests.find(row => row.path.endsWith('/chat'));
+    check(firstChat.body.message === longMessage, 'Conversation sends the complete long message');
     check(firstChat.body.mode === 'chat' && firstChat.body.memory === true, 'Conversation explicitly answers with relevant memory enabled');
     check(!requests.some(row => row.path === '/office/ai/tasks' && row.method === 'POST'), 'An ordinary question never creates an autonomous task');
     check(firstChat.body.research && firstChat.body.perspective === 'balanced', 'New conversations use live research and balanced perspectives');
@@ -139,11 +145,13 @@ try {
     await page.getByText('Conversation saved in Office', { exact: true }).waitFor();
     const initialConversation = requests.find(row => row.path === '/office/ai/conversations' && row.method === 'POST').body.clientRequestId;
     check(conversations.get(initialConversation).messages.length === 2, 'User and assistant messages are automatically persisted with versioned writes');
+    check(conversations.get(initialConversation).messages[0].content === longMessage, 'Long user messages are saved intact');
     await page.reload();await page.getByRole('button',{name:'Settings & history',exact:true}).click();
     await page.getByText('Cloudflare configured', { exact: true }).waitFor();
     await page.locator('.office-ai-saved-chats li>button').first().click();
     await page.getByText('A grounded answer with alternatives and limitations.', { exact: true }).waitFor();
     check(await page.locator('.office-ai-message').count() === 2, 'Saved conversation can be reopened after a browser reload');
+    check(await page.locator('.office-ai-message-user').innerText().then(value => value.includes(longMessage)), 'The complete long message survives a reload');
     check(await page.getByRole('button', { name: /Run security check Review/ }).count() === 0, 'Conversation suppresses unsolicited provider command proposals');
     await page.getByRole('button', { name: 'Office controls', exact: true }).click();
     check(!requests.some(row => row.path.endsWith('/execute')), 'Control navigation never starts an operation');
@@ -193,6 +201,7 @@ try {
     await page.getByText('Current information could not be verified for this reply.', { exact: false }).waitFor();
     const chats = requests.filter(row => row.path.endsWith('/chat'));
     check(chats.at(-1).body.toolIds[0] === tools[0].id && chats.at(-1).body.history.length === 2, 'Follow-up includes only selected saved tools and recent conversation');
+    check(chats.at(-1).body.history[0].content === longMessage, 'Follow-up context retains messages longer than 12,000 characters intact when they fit the history budget');
     failChat = true;
     await page.getByLabel('Message Pip').fill('Keep this failed draft');
     await page.getByRole('button', { name: 'Send', exact: true }).click();

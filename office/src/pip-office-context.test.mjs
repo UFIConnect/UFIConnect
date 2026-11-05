@@ -12,7 +12,7 @@ test('following records only bounded navigation and clears its trail when disabl
   assert.deepEqual(visitOfficeSection(recent, 'sources', false, allowed), []);
 });
 
-test('task context uses canonical section descriptions and never exceeds the message limit', () => {
+test('task context uses canonical section descriptions for short and long requests', () => {
   const sections = [{ id: 'sources', label: 'Live Sources', description: 'Source health and collection rates' }];
   assert.equal(officeTaskContext('Help', null, sections), 'Help');
   assert.equal(officeTaskContext('Help', { section: 'unknown' }, sections), 'Help');
@@ -20,5 +20,8 @@ test('task context uses canonical section descriptions and never exceeds the mes
   assert.match(message, /Live Sources.*Source health/);
   assert.match(message, /does not authorize actions/);
   assert.doesNotMatch(message, /injected text/);
-  assert.equal(officeTaskContext('a'.repeat(12000), { section: 'sources' }, sections).length, 12000);
+  const longRequest = 'a'.repeat(16000);
+  const withContext = officeTaskContext(longRequest, { section: 'sources' }, sections);
+  assert.ok(withContext.startsWith(longRequest));
+  assert.match(withContext, /Live Sources.*Source health/);
 });
