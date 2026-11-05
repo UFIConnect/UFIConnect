@@ -13,7 +13,10 @@ export function collectionSourceRows(data) {
     const previous = rows.get(id) || {};
     rows.set(id, { ...previous, ...row, id, workerId: row.workerId || previous.workerId || row.id });
   }
-  return [...rows.values()];
+  return [...rows.values()].map(row => ({ ...row,
+    inventoryStatus: data?.status === 'unavailable' ? 'unavailable'
+      : data?.status === 'stale' ? 'stale' : row.inventoryStatus,
+  }));
 }
 
 export function collectionDuration(milliseconds) {
@@ -51,6 +54,10 @@ export function collectionStatus(row) {
   if (state?.inFlight) return { label: 'Collecting', tone: 'active' };
   if (state?.overdue) return { label: 'Collection overdue', tone: 'waiting' };
   if (state?.enabled === true) return { label: 'Scheduled', tone: 'available' };
+  if (row?.inventoryStatus === 'unavailable' || !Number.isFinite(row?.postCount)) {
+    return { label: 'Post count unavailable', tone: 'muted' };
+  }
+  if (row?.inventoryStatus === 'stale') return { label: 'Last checked count', tone: 'waiting' };
   return Number(row?.postCount) > 0
     ? { label: 'Posts available', tone: 'available' }
     : { label: 'No posts yet', tone: 'muted' };

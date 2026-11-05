@@ -106,6 +106,8 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
   let serviceTotal = 0;
   let pending = new Map();
   let flushing = null;
+  let reportRevision = 0, reportCache = null;
+  const reportCacheMs = 15_000;
   const maximumPendingKeys = 1000;
   const collector = { accepted: 0, invalid: 0, rateLimited: 0, storageUnavailable: 0, writeFailures: 0, dropped: 0 };
   let lastPersistedAt = null;
@@ -150,6 +152,7 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
               SET event_count = LEAST(9007199254740991, analytics_daily_counts.event_count + EXCLUDED.event_count)`,
             [JSON.stringify([...batch.values()])]);
             lastPersistedAt = new Date(now()).toISOString();
+            reportRevision++; reportCache = null;
           } catch {
             collector.writeFailures++;
             lastFailureAt = new Date(now()).toISOString();
@@ -251,6 +254,9 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
       const today = new Date(timestamp).toISOString().slice(0, 10);
       const dayAt = offset => new Date(timestamp - offset * 86400_000).toISOString().slice(0, 10);
       const from = today >= ANALYTICS_HISTORY_START ? ANALYTICS_HISTORY_START : dayAt(29);
+      if (reportCache && reportCache.day === today && reportCache.revision === reportRevision
+        && timestamp - reportCache.at < reportCacheMs) return reportCache.value;
+      const revision = reportRevision;
       const { rows: [snapshot] } = await db.query(ANALYTICS_VERIFICATION_QUERY,
         [from, today, JSON.stringify(Object.values(CATEGORY_CATALOG))]);
       if (!snapshot || !Array.isArray(snapshot.rows) || !snapshot.expected) throw new Error('Metrics snapshot unavailable.');
@@ -258,18 +264,22 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
       const emptyCounts = () => ({ today: 0, last7: 0, last30: 0 });
       const dayCount = Math.round((Date.parse(today) - Date.parse(from)) / 86400_000) + 1;
       const days = Array.from({ length: dayCount }, (_, index) => new Date(Date.parse(from) + index * 86400_000).toISOString().slice(0, 10));
-      const dayIndexes = new Map(days.map((day, index) => [day, index]));
       const daily = new Map(days.map(day => [day, { day, views: 0, errors: 0, web: 0, mobile: 0 }]));
       const categories = new Map(Object.values(CATEGORY_CATALOG).map(page => [page.category,
         { ...page, ...emptyCounts(), errors: emptyCounts(), firstRecordedDay: null, lastRecordedDay: null,
-          daily: days.map(day => ({ day, views: 0, errors: 0 })) }]));
+          daily: [] }]));
+      // A retained day with no bucket has zero recorded events. Allocate only
+      // populated category/day buckets; the public full shape is expanded below.
+      const categoryDays = new Map();
       const errorCodes = new Map(CLIENT_ERROR_CODES.map(code => [code, { code, count: 0, ...emptyCounts() }]));
       const result = { available: true, mode: 'aggregate', window: 'utc-calendar-days', retentionDays: dayCount,
         range: { from, to: today }, generatedAt: new Date(timestamp).toISOString(),
         history: { requestedFrom: ANALYTICS_HISTORY_START, firstRecordedDay: null, lastRecordedDay: null,
           source: 'anonymous-daily-counts', sources: [], restoredViews: 0,
+          recordedViews: 0, pageScreenViews: 0, tabOpens: 0,
           missingHistory: 'Only retained events can be reported; unrecorded or previously expired events are unavailable.' },
         definition: 'A view is a page or screen navigation or a tab selection. Repeat views count; these totals do not measure unique people.',
+        uniqueVisitors: { available: false, reason: 'Anonymous open counts do not identify or deduplicate people.' },
         today: 0, last7: 0, last30: 0, topPaths: [], daily: [], categories: [],
         platforms: { web: emptyCounts(), mobile: emptyCounts() },
         viewTypes: { page: emptyCounts(), screen: emptyCounts(), tab: emptyCounts() },
@@ -285,7 +295,12 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
         const category = categories.get(row.category);
         const count = Number(row.event_count);
         if (!category || !daily.has(row.day) || !Number.isSafeInteger(count) || count <= 0) continue;
-        const categoryDay = category.daily[dayIndexes.get(row.day)];
+        const dayKey = JSON.stringify([row.category, row.day]);
+        let categoryDay = categoryDays.get(dayKey);
+        if (!categoryDay) {
+          categoryDay = { day: row.day, views: 0, errors: 0 };
+          categoryDays.set(dayKey, categoryDay); category.daily.push(categoryDay);
+        }
         if (row.kind === 'page_view' && row.code === '') {
           increment(result, row.day, count);
           increment(category, row.day, count);
@@ -294,6 +309,9 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
           daily.get(row.day).views = cappedAdd(daily.get(row.day).views, count);
           daily.get(row.day)[category.platform] = cappedAdd(daily.get(row.day)[category.platform], count);
           categoryDay.views = cappedAdd(categoryDay.views, count);
+          result.history.recordedViews = cappedAdd(result.history.recordedViews, count);
+          const historyField = category.viewType === 'tab' ? 'tabOpens' : 'pageScreenViews';
+          result.history[historyField] = cappedAdd(result.history[historyField], count);
         } else if (row.kind === 'client_error' && codeSet.has(row.code)) {
           result.performance.details.push({ day: row.day, category: row.category, code: row.code, count });
           increment(result.performance, row.day, count);
@@ -324,17 +342,34 @@ function createAggregateAnalytics({ db, now = Date.now, onPageview = () => {}, s
       result.performance.byCode = [...errorCodes.values()];
       result.performance.byCategory = result.categories.filter(row => row.errors.last30)
         .map(row => ({ category: row.category, label: row.label, platform: row.platform, ...row.errors }));
-      return { report: result, expected: snapshot.expected };
+      const value = { report: result, expected: snapshot.expected };
+      if (revision === reportRevision) reportCache = { day: today, revision, at: timestamp, value };
+      return value;
   }
   const verification = createAnalyticsVerification({ readReport, now, schedule, enabled: verificationEnabled });
-  async function report(_req, res) {
-    res.set('Cache-Control', 'no-store');
+  async function report(req, res) {
+    res.set('Cache-Control', 'private, no-store');
+    const detail = req.query?.detail || 'full';
+    if (!['full', 'compact', 'summary'].includes(detail)) return res.status(400).json({ available: false, error: 'Choose a valid analytics detail level.' });
     const unavailable = () => ({ available: false, mode: 'aggregate', error: 'Metrics storage unavailable.',
       storage: storageSnapshot(), excludedCategories: EXCLUDED_CATEGORIES, service: serviceSnapshot(), verification: verification.snapshot() });
-    if (!db.isConnected()) { verification.unavailable(); return res.json(unavailable()); }
+    if (!db.isConnected()) { verification.unavailable(); return res.status(503).json(unavailable()); }
     try {
       if (!await flush()) { verification.unavailable(); return res.status(503).json(unavailable()); }
-      return res.json(await verification.read());
+      const canonical = await verification.read();
+      const result = { ...canonical, detail, categoryDailyEncoding: detail === 'full' ? 'dense' : detail === 'compact' ? 'sparse' : 'omitted',
+        storage: storageSnapshot(), service: serviceSnapshot(),
+        snapshot: { checkedAt: canonical.generatedAt, maximumAgeMs: reportCacheMs } };
+      if (detail === 'full') result.categories = canonical.categories.map(category => {
+        const populated = new Map(category.daily.map(day => [day.day, day]));
+        return { ...category, daily: canonical.daily.map(({ day }) => populated.get(day) || { day, views: 0, errors: 0 }) };
+      });
+      if (detail === 'summary') {
+        delete result.categories;
+        const { details, byCategory, ...performance } = canonical.performance;
+        result.performance = performance;
+      }
+      return res.json(result);
     } catch { return res.status(503).json(unavailable()); }
   }
   return { pageview: handler('page_view'), performance: handler('client_error'), serviceMiddleware, report, flush, verification,

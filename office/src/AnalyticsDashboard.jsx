@@ -1,6 +1,7 @@
-import { useMemo, useRef, useState } from 'react';
+import { cloneElement, useMemo, useRef, useState } from 'react';
 import { count, filterAnalytics, filterDiagnostics, reportDays } from './analytics-model.mjs';
 import AnalyticsGeography from './AnalyticsGeography.jsx';
+import TrafficAnalytics from './TrafficAnalytics.jsx';
 import useAnalyticsReport from './useAnalyticsReport.js';
 import './AnalyticsDashboard.css';
 
@@ -8,7 +9,7 @@ const number = value => new Intl.NumberFormat(undefined, { maximumFractionDigits
 const errorNames = { script_error: 'Script errors', unhandled_rejection: 'Unhandled promises', render_error: 'Rendering errors', request_failed: 'Failed requests' };
 const types = { page: 'Page', screen: 'App screen', tab: 'Tab' };
 
-const analyticsTabs = [['overview', 'Overview'], ['pages', 'Pages & tabs'], ['geography', 'Geography'], ['diagnostics', 'Diagnostics'], ['users', 'Users']];
+const analyticsTabs = [['overview', 'Overview'], ['pages', 'Pages & tabs'], ['geography', 'Geography'], ['diagnostics', 'Diagnostics'], ['traffic', 'Traffic history'], ['users', 'Users']];
 
 function AnalyticsPanel({ name, activeTab, children }) {
   return <div className="office-analytics-panel" role="tabpanel" id={`office-analytics-panel-${name}`} aria-labelledby={`office-analytics-tab-${name}`} hidden={activeTab !== name} tabIndex={0}>{children}</div>;
@@ -17,7 +18,7 @@ function AnalyticsPanel({ name, activeTab, children }) {
 function DailyTrend({ daily }) {
   const peak = Math.max(1, ...daily.map(row => row.views + row.tabs));
   return <section className="office-analytics-card" aria-labelledby="analytics-daily-heading">
-    <div className="office-analytics-section-heading"><div><h2 id="analytics-daily-heading">Daily activity</h2><p>UTC calendar days. Page and app-screen views are separate from tab opens.</p></div><span>Peak: {number(peak === 1 && !daily.some(row => row.views || row.tabs) ? 0 : peak)}</span></div>
+    <div className="office-analytics-section-heading"><div><h2 id="analytics-daily-heading">Daily activity</h2><p>UTC calendar days. Page and app-screen views are separate from tab opens.</p></div><span>Peak: {daily.some(row => row.available) ? number(peak === 1 && !daily.some(row => row.views || row.tabs) ? 0 : peak) : 'Unavailable'}</span></div>
     <div className="office-analytics-legend"><span><i />Pages and screens</span><span><i className="tabs" />Tabs</span></div>
     <div className="office-analytics-chart" role="img" aria-label={`Daily activity for ${daily.length} days. Exact counts are in the daily data table.`}>
       {daily.map(row => <div key={row.day} className={`office-analytics-bar${row.available ? '' : ' unavailable'}`} title={row.available ? `${row.day}: ${number(row.views)} page/screen views, ${number(row.tabs)} tab opens, ${number(row.errors)} diagnostics` : `${row.day}: Historical analytics unavailable`}>
@@ -38,10 +39,12 @@ export default function AnalyticsDashboard({ apiBase, request, usersPanel }) {
   const [platform, setPlatform] = useState('all'), [category, setCategory] = useState('all'), [viewType, setViewType] = useState('all');
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState('overview');
+  const [visitedTabs, setVisitedTabs] = useState({ overview: true });
   const tabButtons = useRef({}), tabsAnchor = useRef(null);
   const tabs = usersPanel ? analyticsTabs : analyticsTabs.filter(([name]) => name !== 'users');
   function selectTab(name) {
     setActiveTab(name);
+    setVisitedTabs(previous => previous[name] ? previous : { ...previous, [name]: true });
     if (window.matchMedia('(min-width: 761px)').matches && tabsAnchor.current?.getBoundingClientRect().top < 0) tabsAnchor.current.scrollIntoView({ block: 'start' });
     tabButtons.current[name]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
@@ -91,7 +94,7 @@ export default function AnalyticsDashboard({ apiBase, request, usersPanel }) {
     {error && <div className="office-analytics-error" role="alert"><p>{error}{report ? ' The last successful report remains below.' : ''}</p><button type="button" onClick={refresh} disabled={busy}>Retry analytics</button></div>}
     {busy && <p role="status">Loading analytics…</p>}
     {report && <>
-      <div className="office-analytics-filters" hidden={activeTab === 'users'}>
+      <div className="office-analytics-filters" hidden={activeTab === 'users' || activeTab === 'traffic'}>
         <label>Period<select aria-label="Period" value={preset} onChange={event => { if (event.target.value === 'custom') { setCustomStart(start); setCustomEnd(end); } setPreset(event.target.value); }}><option value="history">Since May 2026</option><option value="1">Today</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="custom">Custom dates</option></select></label>
         <label>From (UTC)<input type="date" min={days[0]} max={end || days.at(-1)} value={start} onChange={event => customDate('start', event.target.value)} /></label>
         <label>To (UTC)<input type="date" min={start || days[0]} max={days.at(-1)} value={end} onChange={event => customDate('end', event.target.value)} /></label>
@@ -99,23 +102,23 @@ export default function AnalyticsDashboard({ apiBase, request, usersPanel }) {
         <label>View type<select aria-label="View type" value={viewType} onChange={event => { setViewType(event.target.value); setCategory('all'); }}><option value="all">All types</option><option value="page">Website pages</option><option value="screen">App screens</option><option value="tab">Internal tabs</option></select></label>
         <label>Category<select aria-label="Category" value={category} onChange={event => setCategory(event.target.value)}><option value="all">All categories</option>{options.map(row => <option key={row.category} value={row.category}>{row.label}</option>)}</select></label>
       </div>
-      {invalidDates ? <p role="alert" className="office-analytics-error" hidden={activeTab === 'users'}>Choose dates between {days[0]} and {days.at(-1)}, with the start before the end.</p> : <>
-        <dl className="office-analytics-metrics" hidden={activeTab === 'users'}>{[['Page / screen views', filtered.views], ['Tab opens', filtered.tabs], ['Optional diagnostics', filtered.errors], ['Categories with activity', filtered.activeCategories]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{number(value)}</dd></div>)}</dl>
-        <p className="office-analytics-meta" hidden={activeTab === 'users'}>Page and screen views count navigation. Tab opens are counted separately. Database summary rows group many opens by date and category.</p>
-        {report.history && <p className="office-analytics-meta" hidden={activeTab === 'users'}>{report.history.firstRecordedDay ? `Available analytics begins ${report.history.firstRecordedDay}. Earlier dates are unavailable and shaded in the chart. ` : 'Historical analytics is unavailable until an event is recorded. '}{count(report.history.restoredViews) > 0 ? `${number(report.history.restoredViews)} earlier page views were recovered. ` : ''}Selected totals include retained events only.</p>}
+      {invalidDates ? <p role="alert" className="office-analytics-error" hidden={activeTab === 'users' || activeTab === 'traffic'}>Choose dates between {days[0]} and {days.at(-1)}, with the start before the end.</p> : <>
+        <dl className="office-analytics-metrics" hidden={activeTab === 'users' || activeTab === 'traffic'}>{[['Page / screen views', filtered.views], ['Tab opens', filtered.tabs], ['Optional diagnostics', filtered.errors], ['Categories with activity', filtered.activeCategories]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{filtered.availableDays ? number(value) : 'Unavailable'}</dd></div>)}</dl>
+        <p className="office-analytics-meta" hidden={activeTab === 'users' || activeTab === 'traffic'}>Page and screen views count navigation. Tab opens are counted separately. Database summary rows group many opens by date and category.</p>
+        {report.history && <p className="office-analytics-meta" hidden={activeTab === 'users' || activeTab === 'traffic'}>{report.history.firstRecordedDay ? `Available analytics begins ${report.history.firstRecordedDay}. Earlier dates are unavailable and shaded in the chart. ` : 'Historical analytics is unavailable until an event is recorded. '}{count(report.history.restoredViews) > 0 ? `${number(report.history.restoredViews)} earlier page views were recovered. ` : ''}Selected totals include retained events only.</p>}
         <AnalyticsPanel name="overview" activeTab={activeTab}>
         <DailyTrend daily={filtered.daily} />
         <section className="office-analytics-card"><h2>Coverage and privacy</h2><p>Fixed category names and approximate network country and city are counted without IP addresses, device coordinates or visitor identifiers. Page addresses, search text, account identifiers, message content and form values are excluded. Private Vault, device-authentication and VPN screens do not send page counts or diagnostics.</p><p>May onward is available for date selection. {report.history?.firstRecordedDay ? `Retained activity starts on ${report.history.firstRecordedDay}. ` : 'No retained activity has been recorded. '}{count(report.history?.restoredViews) > 0 ? `${number(report.history.restoredViews)} historical page views were recovered from earlier records. ` : ''}Earlier dates are unavailable. Later dates with no retained events show zero recorded activity; previously expired or unrecorded events cannot be reconstructed.</p><p className="office-analytics-meta">Counts can be lower when requests are blocked, offline or rate limited. New categories and geographic counts have no historical backfill.</p></section>
         </AnalyticsPanel>
         <AnalyticsPanel name="geography" activeTab={activeTab}>
-        <AnalyticsGeography apiBase={apiBase} request={request} filters={{ platform, category, viewType, start, end }} refreshRevision={revision} />
+        {visitedTabs.geography && <AnalyticsGeography apiBase={apiBase} request={request} active={activeTab === 'geography'} filters={{ platform, category, viewType, start, end }} refreshRevision={revision} />}
         </AnalyticsPanel>
         <AnalyticsPanel name="pages" activeTab={activeTab}>
         <section className="office-analytics-card" aria-labelledby="analytics-category-heading">
           <div className="office-analytics-section-heading"><div><h2 id="analytics-category-heading">Every page, screen and tab</h2><p>Zero means no recorded activity in the selected period. Tab tracking starts with this release.</p></div><label>Find a category<input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search categories" /></label></div>
           <p className="office-analytics-meta">{rows.length} categories shown · {start} through {end}</p>
           <div className="office-analytics-table-wrap" tabIndex={0} role="region" aria-label="Category activity table"><table><thead><tr><th scope="col">Category</th><th scope="col">Platform / type</th><th scope="col">Selected period</th><th scope="col">Today</th><th scope="col">7 days</th><th scope="col">30 days</th><th scope="col">Diagnostics</th></tr></thead>
-            <tbody>{rows.map(row => <tr key={row.category}><th scope="row"><span>{row.label}</span><small>{row.group}</small></th><td>{row.platform === 'mobile' ? 'Mobile' : 'Web'} · {types[row.viewType] || row.viewType}</td><td>{number(row.selectedViews)}</td><td>{number(row.today)}</td><td>{number(row.last7)}</td><td>{number(row.last30)}</td><td>{number(row.selectedErrors)}</td></tr>)}</tbody></table></div>
+            <tbody>{rows.map(row => <tr key={row.category}><th scope="row"><span>{row.label}</span><small>{row.group}</small></th><td>{row.platform === 'mobile' ? 'Mobile' : 'Web'} · {types[row.viewType] || row.viewType}</td><td>{filtered.availableDays ? number(row.selectedViews) : 'Unavailable'}</td><td>{number(row.today)}</td><td>{number(row.last7)}</td><td>{number(row.last30)}</td><td>{filtered.availableDays ? number(row.selectedErrors) : 'Unavailable'}</td></tr>)}</tbody></table></div>
           {!rows.length && <p>No categories match these filters.</p>}
         </section>
         </AnalyticsPanel>
@@ -140,6 +143,7 @@ export default function AnalyticsDashboard({ apiBase, request, usersPanel }) {
       </dl></section>}
       </AnalyticsPanel>
     </>}
-    {usersPanel && <AnalyticsPanel name="users" activeTab={activeTab}>{usersPanel}</AnalyticsPanel>}
+    <AnalyticsPanel name="traffic" activeTab={activeTab}>{visitedTabs.traffic && <TrafficAnalytics apiBase={apiBase} request={request} active={activeTab === 'traffic'} />}</AnalyticsPanel>
+    {usersPanel && <AnalyticsPanel name="users" activeTab={activeTab}>{visitedTabs.users && cloneElement(usersPanel, { active: activeTab === 'users' })}</AnalyticsPanel>}
   </section>;
 }

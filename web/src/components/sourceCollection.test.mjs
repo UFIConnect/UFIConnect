@@ -39,3 +39,13 @@ test('observed pauses and provider backoff take precedence over cached posts', (
   assert.equal(collectionStatus({ collection: { enabled: true, inFlight: true } }).label, 'Collecting');
   assert.equal(collectionStatus({ collection: { enabled: true, overdue: true } }).label, 'Collection overdue');
 });
+
+test('unknown and stale inventory never becomes a reported empty source', () => {
+  assert.equal(collectionStatus({}).label, 'Post count unavailable');
+  const unavailable = collectionSourceRows({ status: 'unavailable', sourceCatalog: [{ id: 'devto' }], sources: [] });
+  assert.equal(collectionStatus(unavailable[0]).label, 'Post count unavailable');
+  const stale = collectionSourceRows({ status: 'stale', sources: [{ id: 'devto', postCount: 900 }] });
+  assert.equal(stale[0].postCount, 900);
+  assert.equal(collectionStatus(stale[0]).label, 'Last checked count');
+  assert.equal(collectionStatus({ postCount: 0 }).label, 'No posts yet');
+});

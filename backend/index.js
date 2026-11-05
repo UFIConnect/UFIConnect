@@ -19,6 +19,8 @@ const bcrypt = require('bcryptjs');
 const { SESSION_TTL_SECONDS, resolveJwtSecret, passwordPolicyError, signSecurityToken, verifySecurityToken, publicRoleSettings } = require('./auth-security');
 const { createTokenVault, migrateSocialCredentials } = require('./token-vault');
 const { isSourceDisplayAllowed } = require('./source-policy');
+const { createFeedSourceInventory } = require('./feed-source-inventory');
+const { createTrafficAnalytics, TRAFFIC_ANALYTICS_SCHEMA } = require('./traffic-analytics');
 const { REPORT_SCHEMA, COPYRIGHT_REPORT_BRIDGE_SCHEMA, registerContentReportRoutes, reportSuppressionPredicate, createReportVisibilityFilter } = require('./content-reports');
 const { nativeGroupVisibilityPredicate, createNativePostVisibilityFilter } = require('./community-post-visibility');
 const { createNativeGroupCountHydrator } = require('./group-membership-counts');
@@ -151,6 +153,7 @@ dotenv.config();
 const tokenVault = createTokenVault(process.env);
 const officeConnections = createOfficeConnections({ db, env: process.env });
 const officeProviderEnv = officeConnections.env;
+const trafficAnalytics = createTrafficAnalytics({ db, env: officeProviderEnv, refreshConnections: () => officeConnections.refresh() });
 const officeExpo = createOfficeExpo({ env: officeProviderEnv });
 const snapMedia = createSnapMedia({ env: process.env });
 const messageMedia = createMessageMedia({ env: process.env });
@@ -12513,6 +12516,7 @@ function getRecentTransferCount() {
 // refreshes on the same cadence as AUTO_TRANSFER_INTERVAL_MS instead (see
 // its own setInterval) and /office/status just reads the cached value.
 let dbFeedPostCount = null;
+const feedSourceInventory = createFeedSourceInventory(db, { now: () => Date.now() });
 const feedStorageFreshnessState = {
   cache: {
     count: null,
@@ -12531,27 +12535,10 @@ const feedStorageFreshnessState = {
   },
 };
 async function refreshDbFeedPostCount() {
-  if (!db.isConnected()) return;
-  try {
-    const { rows } = await db.query(
-      `SELECT COUNT(*)::int AS n,
-              MAX(fetched_at) AS newest_fetched_at,
-              MAX(post_created_at) AS newest_post_created_at
-       FROM feed_posts_cache`,
-      []
-    );
-    dbFeedPostCount = rows[0]?.n ?? dbFeedPostCount;
-    feedStorageFreshnessState.cache = {
-      count: dbFeedPostCount,
-      newestFetchedAt: rows[0]?.newest_fetched_at || null,
-      newestPostCreatedAt: rows[0]?.newest_post_created_at || null,
-      lastCheckedAt: new Date().toISOString(),
-      lastError: null,
-    };
-  } catch (e) {
-    feedStorageFreshnessState.cache.lastError = e.message;
-    console.warn('[refreshDbFeedPostCount] query failed:', e.message);
-  }
+  const inventory = await feedSourceInventory.refresh();
+  dbFeedPostCount = inventory.count;
+  feedStorageFreshnessState.cache = inventory;
+  return inventory;
 }
 // Every caller of this (runSortDistribCheck, runFeedOptimizer,
 // runWebStorageSubAgent, POST /feed/refresh, POST /office/agents/:id/trigger,
@@ -17451,6 +17438,7 @@ async function migrateDB() {
     await db.query(`CREATE INDEX IF NOT EXISTS wor_created_idx ON website_optimization_runs(created_at DESC)`);
 
     await db.query(ANALYTICS_SCHEMA);
+    await db.query(TRAFFIC_ANALYTICS_SCHEMA);
     for (const statement of ANALYTICS_MIGRATIONS) await db.query(statement);
     for (const statement of OFFICE_MEMBERS_SCHEMA) await db.query(statement);
     for (const statement of OFFICE_USER_USAGE_SCHEMA) await db.query(statement);
@@ -20096,6 +20084,7 @@ registerContentReportRoutes(app, { db, authenticate, requireOfficeToken, notifyC
 
 app.get('/office/analytics/pageviews', requireOfficeToken, aggregateAnalytics.report);
 app.get('/office/analytics/geography', requireOfficeToken, aggregateAnalytics.geography);
+app.get('/office/analytics/traffic', requireOfficeToken, trafficAnalytics.report);
 
 // Real per-topic volume, straight from the DB rather than the capped
 // 300-post in-memory global cache (feed_posts_cache holds far more, and is
@@ -24311,40 +24300,73 @@ app.post('/negative-signal', (_req, res) => res.status(204).end());
 
 // --- Feed source stats (posts per source in DB) -------------------------------
 app.get('/feed/stats', authenticate, async (req, res) => {
-  try {
-    const stats = {};
-    if (db.isConnected()) {
-      const { rows } = await db.query(
-        `SELECT source, COUNT(*) as count FROM feed_posts_cache
-         WHERE id NOT LIKE '%\\_fallback' ESCAPE '\\'
-           AND id NOT LIKE '%\\_social' ESCAPE '\\'
-           AND id NOT LIKE 'social\\_%' ESCAPE '\\'
-           AND id !~* '^indeed_j[0-9]+$'
-           AND id !~* '^govt_g[0-9]+$'
-         GROUP BY source ORDER BY count DESC`
-      );
-      rows.forEach(r => { stats[r.source] = parseInt(r.count, 10); });
-    }
-    res.json({
-      stats,
-      total: Object.values(stats).reduce((a, b) => a + b, 0),
-      cachedInMemory: realFeedPosts(globalFeedCache.posts).length,
-      refreshedAt: globalFeedCache.refreshedAt ? new Date(globalFeedCache.refreshedAt).toISOString() : null,
-    });
-  } catch (e) {
-    res.json({ stats: {}, total: 0, cachedInMemory: realFeedPosts(globalFeedCache.posts).length });
-  }
+  const inventory = await refreshDbFeedPostCount();
+  const stats = Object.fromEntries(Object.entries(inventory.bySource)
+    .filter(([, source]) => source.feedCount > 0).map(([id, source]) => [id, source.feedCount]));
+  res.set('Cache-Control', 'private, no-store').status(inventory.count === null ? 503 : 200).json({
+    stats,
+    total: inventory.count === null ? null : Object.values(stats).reduce((a, b) => a + b, 0),
+    cachedInMemory: realFeedPosts(globalFeedCache.posts).length,
+    refreshedAt: inventory.newestFetchedAt,
+    status: inventory.status,
+    countBasis: 'stored',
+    checkedAt: inventory.lastCheckedAt,
+    lastError: inventory.lastError,
+  });
 });
 
 // --- Feed sources explorer - all live sources with sample posts ---------------
-app.get('/feed/sources', authenticate, (req, res) => {
-  const sampleSize = Math.min(10, Math.max(1, parseInt(req.query.sample || '5', 10)));
+app.get('/feed/sources', authenticate, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  const sampleSize = Math.min(10, Math.max(1, parseInt(req.query.sample || '5', 10) || 5));
   const rateContext = sourceRateContext();
   const sourceCatalog = AGGREGATE_FEED_SOURCES.map(id => {
     const workerId = feedWorkerKey(id), meta = AGENT_DEFS[workerId] || {};
     return { id, name: meta.name || id, emoji: officeBadgeCode(workerId, meta.emoji), color: meta.color || '#6366F1',
       description: meta.description || null, ...getSourceRateMetadata(id, rateContext) };
   });
+
+  if (!IS_PIPELINE_ROLE) {
+    const inventory = await refreshDbFeedPostCount();
+    if (inventory.count === null) return res.status(503).json({
+      sources: [], sourceCatalog, configuredSourceCount: sourceCatalog.length,
+      totalSources: null, totalPosts: null, globalCacheCount: globalFeedCache.posts.length,
+      cachedInMemory: globalFeedCache.posts.length, refreshedAt: null,
+      status: 'unavailable', countBasis: 'stored', checkedAt: null, lastError: inventory.lastError,
+    });
+    const storedSources = Object.entries(inventory.bySource).filter(([, data]) => data.feedCount > 0);
+    // Fetch at most ten indexed rows per source once per minute, independent
+    // of visitor count and retained history. Screen samples before display.
+    const sampled = await feedSourceInventory.samples(storedSources.map(([id]) => id));
+    const samplesBySource = new Map();
+    for (const post of realFeedPosts(sampled.rows.map(dbRowToFeedPost))) {
+      const id = canonicalFeedSourceId(post.source);
+      if (!samplesBySource.has(id)) samplesBySource.set(id, []);
+      samplesBySource.get(id).push(post);
+    }
+    const sources = storedSources.map(([id, data]) => {
+      const workerId = feedWorkerKey(id), meta = AGENT_DEFS[workerId] || {};
+      return {
+        id, name: meta.name || id, emoji: officeBadgeCode(id, meta.emoji), color: meta.color || '#6366F1',
+        description: meta.description || null, ...getSourceRateMetadata(id, rateContext),
+        postCount: data.feedCount, totalSeen: data.feedCount, lastFetch: data.newestFetchedAt,
+        samplePosts: (samplesBySource.get(id) || []).slice(0, sampleSize).map(post => ({
+          id: post.id, title: post.title || null, content: (post.content || '').slice(0, 200),
+          sourceUrl: post.sourceUrl || null, likesCount: post.likesCount || 0,
+          commentsCount: post.commentsCount || 0, createdAt: post.createdAt,
+          author: post.author?.name || post.author || null,
+        })),
+      };
+    }).sort((a, b) => b.postCount - a.postCount || a.id.localeCompare(b.id));
+    return res.json({
+      sources, sourceCatalog, configuredSourceCount: sourceCatalog.length, totalSources: sources.length,
+      totalPosts: sources.reduce((sum, source) => sum + source.postCount, 0),
+      totalStoredPosts: inventory.count, globalCacheCount: globalFeedCache.posts.length,
+      cachedInMemory: globalFeedCache.posts.length, refreshedAt: inventory.newestFetchedAt,
+      status: inventory.status, countBasis: 'stored', checkedAt: inventory.lastCheckedAt,
+      lastError: inventory.lastError, samplesStatus: sampled.status,
+    });
+  }
 
   // Build a map: sourceId ? { posts[], lastFetch, totalSeen }
   const sourceMap = {};
@@ -24404,6 +24426,9 @@ app.get('/feed/sources', authenticate, (req, res) => {
     totalSources: sources.length,
     totalPosts: sources.reduce((n, s) => n + s.postCount, 0),
     globalCacheCount: realFeedPosts(globalFeedCache.posts).length,
+    cachedInMemory: realFeedPosts(globalFeedCache.posts).length,
+    countBasis: 'memory',
+    status: 'ready',
     refreshedAt: globalFeedCache.refreshedAt ? new Date(globalFeedCache.refreshedAt).toISOString() : null,
   });
 });
@@ -26025,6 +26050,8 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
   // rescanned the entire cache once for every source plus several more times
   // for summary cards, which made Office itself a source of pipeline load.
   const statusGlobalPosts = globalFeedCache.posts || [];
+  const storedInventory = feedSourceInventory.snapshot();
+  const statusPostCount = IS_PIPELINE_ROLE ? statusGlobalPosts.length : storedInventory.count;
   const statusGlobalBySource = new Map();
   const statusSourceCounts = {};
   const statusTopicCounts = {};
@@ -26048,7 +26075,8 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
     const cache = agentSourceCache.get(workerId);
     const cachedPosts = cache?.posts || [];
     const globalPostCount = statusGlobalBySource.get(id) || 0;
-    const liveCount = cache?.totalSeen ?? (cachedPosts.length || globalPostCount);
+    const liveCount = IS_PIPELINE_ROLE ? cache?.totalSeen ?? (cachedPosts.length || globalPostCount)
+      : storedInventory.count === null ? null : storedInventory.bySource[id]?.feedCount || 0;
     const collection = collectionById.get(workerId);
     const status = !IS_PIPELINE_ROLE ? 'unavailable'
       : !require('./office-agent-activation').officeSourceReady(workerId, process.env) ? 'degraded'
@@ -26133,18 +26161,23 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       port:        PORT,
     },
     feed: {
-      postCount:   statusGlobalPosts.length,
-      refreshedAt: globalFeedCache.refreshedAt || null,
+      postCount:   statusPostCount,
+      cachedInMemory: statusGlobalPosts.length,
+      countBasis: IS_PIPELINE_ROLE ? 'memory' : 'stored',
+      status: IS_PIPELINE_ROLE ? 'ready' : storedInventory.status,
+      checkedAt: IS_PIPELINE_ROLE ? null : storedInventory.lastCheckedAt,
+      lastError: IS_PIPELINE_ROLE ? null : storedInventory.lastError,
+      refreshedAt: IS_PIPELINE_ROLE ? globalFeedCache.refreshedAt || null : storedInventory.newestFetchedAt,
       sseClients:  sseClients.size,
       seenIds:     seenPostIds.size,
-      // Actual source breakdown of the shared global cache, independent of
-      // any per-request cap — the feed response itself is separately capped
-      // per source (=18%, =10% in balanced mode, see SRC_CAP in
-      // handleFeedRequest) so no single platform can flood a page even if
-      // its backing pool here is disproportionately large.
+      // API reports persisted inventory; pipeline reports its collector
+      // working set. The explicit basis keeps an empty API process cache
+      // from masquerading as an empty durable feed.
       composition: (() => {
-        return Object.entries(statusSourceCounts)
-          .map(([source, count]) => ({ source, count, pct: statusGlobalPosts.length ? Math.round((count / statusGlobalPosts.length) * 1000) / 10 : 0 }))
+        const counts = IS_PIPELINE_ROLE ? statusSourceCounts
+          : Object.fromEntries(Object.entries(storedInventory.bySource).map(([id, data]) => [id, data.count]));
+        return Object.entries(counts)
+          .map(([source, count]) => ({ source, count, pct: statusPostCount ? Math.round((count / statusPostCount) * 1000) / 10 : 0 }))
           .sort((a, b) => b.count - a.count);
       })(),
     },
@@ -26200,6 +26233,8 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       // their own they read as the pipeline "resetting to zero" constantly.
       processedLastHour: getRecentTransferCount(),
       dbPostCount: dbFeedPostCount,
+      dbPostCountStatus: storedInventory.status,
+      dbPostCountCheckedAt: storedInventory.lastCheckedAt,
       dbNewestFetchedAt: feedStorageFreshnessState.cache.newestFetchedAt,
       dbNewestPostCreatedAt: feedStorageFreshnessState.cache.newestPostCreatedAt,
     },
@@ -26249,7 +26284,7 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       },
     },
     feedStorage: {
-      cache: feedStorageFreshnessState.cache,
+      cache: storedInventory,
       staging: feedStorageFreshnessState.staging,
       retention: feedRetentionState,
       cacheMaintenance: cacheMaintenanceState,

@@ -34,7 +34,8 @@ export function filterAnalytics(report, { platform = 'all', category = 'all', vi
   });
   rows.sort((a, b) => b.selectedViews - a.selectedViews || String(a.label).localeCompare(String(b.label)));
   const days = [...daily.values()];
-  return { rows, daily: days, views: days.reduce((total, row) => total + row.views, 0), tabs: days.reduce((total, row) => total + row.tabs, 0),
+  return { rows, daily: days, availableDays: days.filter(row => row.available).length, unavailableDays: days.filter(row => !row.available).length,
+    views: days.reduce((total, row) => total + row.views, 0), tabs: days.reduce((total, row) => total + row.tabs, 0),
     errors: days.reduce((total, row) => total + row.errors, 0), activeCategories: rows.filter(row => row.selectedViews > 0).length };
 }
 

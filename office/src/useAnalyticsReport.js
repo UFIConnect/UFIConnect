@@ -22,7 +22,7 @@ export default function useAnalyticsReport({ apiBase, request }) {
       let timeout;
       try {
         const load = async () => {
-          const response = await request(`${apiBase}/office/analytics/pageviews`, { signal: controller.signal, cache: 'no-store' });
+          const response = await request(`${apiBase}/office/analytics/pageviews?detail=compact`, { signal: controller.signal, cache: 'no-store' });
           if (response.status === 401 || response.status === 403) {
             if (current(sequence)) { setReport(null); setUpdatedAt(null); }
             throw new Error('Office access is required. Update your Office access and retry.');

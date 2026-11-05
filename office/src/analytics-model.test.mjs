@@ -47,6 +47,8 @@ test('dates before the earliest retained event are unavailable rather than zero 
   assert.deepEqual(result.daily[0], { day:'2026-05-01',available:false,views:null,tabs:null,errors:null });
   assert.deepEqual(result.daily.find(row => row.day === '2026-08-11'), { day:'2026-08-11',available:true,views:0,tabs:0,errors:0 });
   assert.equal(result.views,14);
+  const may = filterAnalytics(history, { start: '2026-05-01', end: '2026-05-31' });
+  assert.equal(may.availableDays, 0); assert.equal(may.unavailableDays, 31);
 });
 
 const diagnosticReport = { ...report, performance: { details: [

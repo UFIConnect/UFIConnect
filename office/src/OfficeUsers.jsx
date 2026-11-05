@@ -21,7 +21,7 @@ function SelectionCheckbox({ checked, partial = false, ...props }) {
   return <input {...props} ref={input} type="checkbox" checked={checked} />;
 }
 
-export default function OfficeUsers({ apiBase, request }) {
+export default function OfficeUsers({ apiBase, request, active = true }) {
   const [usageUser, setUsageUser] = useState(null);
   const [data, setData] = useState(null), [error, setError] = useState(''), [busy, setBusy] = useState(true);
   const [query, setQuery] = useState(initialAccount), [search, setSearch] = useState(initialAccount), [state, setState] = useState('all'), [page, setPage] = useState(1), [revision, setRevision] = useState(0);
@@ -45,6 +45,7 @@ export default function OfficeUsers({ apiBase, request }) {
     return () => { generation.current++; emailGeneration.current++; selectionGeneration.current++; window.removeEventListener('office-token-changed', change); };
   }, [refresh]);
   useEffect(() => {
+    if (!active) return;
     const controller = new AbortController(), current = ++generation.current;
     setBusy(true); setError(''); setData(null);
     const params = new URLSearchParams({ page: String(page), q: search, state, days });
@@ -55,8 +56,12 @@ export default function OfficeUsers({ apiBase, request }) {
     }).catch(error => { if (generation.current === current && error.name !== 'AbortError') setError(error.message); })
       .finally(() => { if (generation.current === current) setBusy(false); });
     return () => controller.abort();
-  }, [apiBase, request, page, search, state, days, revision]);
-  useEffect(() => { const timer = window.setInterval(refresh, 30000); return () => window.clearInterval(timer); }, [refresh]);
+  }, [apiBase, request, page, search, state, days, revision, active]);
+  useEffect(() => {
+    if (!active) return;
+    const timer = window.setInterval(() => { if (document.visibilityState !== 'hidden') refresh(); }, 30000);
+    return () => window.clearInterval(timer);
+  }, [refresh, active]);
   useEffect(() => { selectionGeneration.current++; setSelected({}); setSelectionSummary(null); setBulkPreview(null); setSelectionBusy(false); setSelectionError(''); }, [search, state, days]);
   function toggleSelection(users, checked) {
     setSelected(previous => { const next = { ...previous }; for (const user of users) { if (checked) next[user.id] = { id: user.id, name: user.name, email: user.email }; else delete next[user.id]; } return next; });

@@ -130,6 +130,7 @@ async function createAppHarness({ env = {}, connected = false, query, withClient
       setBlueskyAuthServerResolver(handler) { resolveBlueskyAuthServer = handler; },
       getVideoCapableSources, videoReadAdmission,
       sourceRefreshQueue, refreshControl, SOURCE_FETCHERS, enqueueSourceRefresh, drainSourceRefreshQueue,
+      feedSourceInventory, refreshDbFeedPostCount,
       makeTopicCycler, FEED_TOPICS, startContinuousWorkers, startJobBoardSweeps, getSourceCollectionScheduler,
       feedAudit, equalizerBuffer, runEqualizerDrain, buildEqualizerDrainPlan, agentSourceCache,
       sourceCollectionState, fetchAllTopicPosts,
