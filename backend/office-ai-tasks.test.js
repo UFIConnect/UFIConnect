@@ -5,6 +5,7 @@ const { randomUUID } = require('node:crypto');
 const { PGlite } = require('@electric-sql/pglite');
 const { createOfficeAITasks } = require('./office-ai-tasks');
 const { createOfficeAIModel } = require('./office-ai');
+const { RECOVERY_ATTEMPTS } = require('./office-ai-recovery');
 const BASE = 'a'.repeat(40), CANDIDATE = 'c'.repeat(40);
 const body = (overrides = {}) => ({ clientRequestId: randomUUID(), target: overrides.permissions?.operate ? 'office' : 'self-update', message: 'Improve the example and validate it.', permissions: { editCode: true, publish: true, deploy: true }, deployTargets: ['api'], ...overrides });
 const call = (name, args) => ({ content: null, tool_calls: [{ id: randomUUID(), type: 'function', function: { name, arguments: JSON.stringify(args) } }] });
@@ -94,20 +95,21 @@ test('one malformed tool response is regenerated within the model budget without
   assert.equal(done.events.filter(event => event.kind === 'model-response').length, 1);
 });
 
-test('a second malformed model response pauses the existing checkpoint without an unbounded retry', async t => {
+test('malformed model responses allow ten recoveries and then retain the existing checkpoint', async t => {
   const malformed = call('repo_edit', {}); malformed.tool_calls[0].function.arguments = '{';
   const nonObject = call('repo_edit', {}); nonObject.tool_calls[0].function.arguments = '[]';
-  const responses = [call('repo_read', { path: 'backend/office-ai-example.js' }), malformed, nonObject];
+  const responses = [call('repo_read', { path: 'backend/office-ai-example.js' }),
+    ...Array.from({ length: RECOVERY_ATTEMPTS + 1 }, (_, index) => index % 2 ? nonObject : malformed)];
   let turns = 0;
   const f = await fixture(t, { model: async () => { turns++; return responses.shift() || { content: 'Should not be called again.' }; } });
   const created = await invoke(f.service.create, body()); const done = await finish(f.service, created.body.task.id);
   assert.equal(done.status, 'needs_continuation'); assert.equal(done.continuation.reason, 'model-response');
-  assert.equal(done.progress.modelTurns, 3); assert.equal(done.progress.toolCalls, 1);
+  assert.equal(done.progress.modelTurns, RECOVERY_ATTEMPTS + 2); assert.equal(done.progress.toolCalls, 1);
   assert.equal(f.state.edits, 0); assert.equal(f.state.candidates, 0); assert.equal(f.state.published, 0);
   const stored = (await f.db.query('SELECT data FROM office_ai_tasks WHERE id=$1', [done.id])).rows[0].data;
   assert.equal(stored.internal.baseSha, BASE); assert.equal(stored.internal.pendingCalls.length, 0);
   assert.ok(stored.internal.messages.some(message => message.role === 'tool'));
-  assert.equal(await f.service.runOne(done.id), false); assert.equal(turns, 3);
+  assert.equal(await f.service.runOne(done.id), false); assert.equal(turns, RECOVERY_ATTEMPTS + 2);
 });
 
 test('a malformed sibling rejects the whole response before an otherwise valid edit can execute', async t => {
@@ -133,6 +135,43 @@ test('malformed-response repair cannot exceed the existing model-turn budget', a
   const created = await invoke(f.service.create, body()); const done = await finish(f.service, created.body.task.id);
   assert.equal(done.status, 'needs_continuation'); assert.equal(done.continuation.reason, 'model-turns');
   assert.equal(done.progress.modelTurns, 1); assert.equal(turns, 1); assert.equal(done.progress.toolCalls, 0);
+});
+
+test('valid model turns reset the consecutive malformed-response allowance', async t => {
+  const malformed = call('repo_read', {}); malformed.tool_calls[0].function.arguments = '{';
+  const responses = [...Array(RECOVERY_ATTEMPTS).fill(malformed), call('repo_list', {}),
+    ...Array(RECOVERY_ATTEMPTS).fill(malformed), { content: 'The requested repository read finished.' }];
+  let turns = 0, reads = 0;
+  const f = await fixture(t, { model: async () => { turns++; return responses.shift(); } });
+  f.repo.listFiles = async () => { reads++; return { files: [] }; };
+  const created = await invoke(f.service.create, body({ target: 'general', permissions: {}, deployTargets: [] }));
+  const done = await finish(f.service, created.body.task.id, 60);
+  assert.equal(done.status, 'succeeded'); assert.equal(reads, 1);
+  assert.equal(turns, 2 * RECOVERY_ATTEMPTS + 2);
+  assert.equal(done.progress.resumes, 0);
+});
+
+test('successful tool calls reset consecutive argument and logical correction failures', async t => {
+  for (const invalid of [true, false]) await t.test(invalid ? 'invalid arguments' : 'logical failure', async t => {
+    const rejected = () => call('code_execute', invalid ? { wrong: true } : { code: 'bad' });
+    const accepted = () => call('code_execute', { code: 'good' });
+    const responses = [...Array.from({ length: RECOVERY_ATTEMPTS }, rejected), accepted(),
+      ...Array.from({ length: RECOVERY_ATTEMPTS }, rejected), accepted(), { content: 'Both corrected steps completed.' }];
+    let executions = 0, successes = 0;
+    const f = await fixture(t, { model: async () => responses.shift(), adapters: {
+      code_execute: { permission: 'read', parameters: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'], additionalProperties: false },
+        execute: async ({ code }) => {
+          executions++;
+          if (code === 'bad') throw Object.assign(Error('Correct the syntax.'), { status: 422 });
+          successes++; return { result: 323 };
+        } },
+    } });
+    const created = await invoke(f.service.create, body({ target: 'general', permissions: {}, deployTargets: [] }));
+    const done = await finish(f.service, created.body.task.id, 100);
+    assert.equal(done.status, 'succeeded'); assert.equal(successes, 2);
+    assert.equal(executions, invalid ? 2 : 2 * RECOVERY_ATTEMPTS + 2);
+    assert.equal(done.progress.resumes, 0);
+  });
 });
 
 test('task list projects private context in the database before transfer while preserving public progress and continuation', async t => {
@@ -571,12 +610,86 @@ test('failed verification prevents publication and an edit-only task retains its
   const { service, state } = await fixture(t); state.conclusion = 'failure';
   const created = await invoke(service.create, body());
   const failed = await finish(service, created.body.task.id);
-  assert.equal(failed.status, 'failed'); assert.equal(state.published, 0);
-  assert.match(failed.error, /Nothing was published/);
+  assert.equal(failed.status, 'needs_continuation'); assert.equal(state.published, 0);
+  assert.equal(failed.continuation.reason, 'verification-recovery'); assert.match(failed.continuation.message, /nothing was published/);
   const other = await fixture(t);
   const editOnly = await invoke(other.service.create, body({ permissions: { editCode: true, publish: false, deploy: false } }));
   const result = await finish(other.service, editOnly.body.task.id);
   assert.equal(result.status, 'succeeded'); assert.equal(other.state.published, 0); assert.equal(result.commit.published, false);
+});
+
+test('failed CI is corrected in the same task with a new candidate and exact successful checks', async t => {
+  const next = 'd'.repeat(40), checked = [], published = [];
+  const responses = [call('repo_read', { path: 'backend/office-ai-example.js' }),
+    call('repo_edit', { path: 'backend/office-ai-example.js', edits: [{ find: '=1', replace: '=2' }] }),
+    call('repo_commit', { message: 'Prepare initial candidate' }),
+    call('repo_read', { path: 'backend/office-ai-example.js' }),
+    call('repo_edit', { path: 'backend/office-ai-example.js', edits: [{ find: '=2', replace: '=3' }] }),
+    { content: 'The CI correction is staged.' }, { content: 'The corrected change passed checks and was published.' }];
+  let turns = 0, diagnostics = 0;
+  const f = await fixture(t, { model: async ({ messages }) => {
+    if (++turns === 4) {
+      assert.ok(messages.some(message => message.content?.includes('backend regression tests')));
+      assert.ok(messages.some(message => message.content?.includes('Do not rerun the unchanged failed source')));
+    }
+    return responses.shift();
+  } });
+  f.repo.edit = async (_args, staged) => {
+    f.state.edits++;
+    return { path: 'backend/office-ai-example.js', originalSha: BASE, sha: staged ? next : CANDIDATE,
+      before: 'const value=1;', content: staged ? 'const value=3;' : 'const value=2;' };
+  };
+  f.repo.candidate = async ({ files }) => {
+    f.state.candidates++;
+    return { sha: files[0].content.includes('=3') ? next : CANDIDATE, baseSha: BASE, published: false };
+  };
+  f.repo.checks = async (candidate, { dispatch }) => {
+    checked.push({ sha: candidate.sha, dispatch });
+    return [{ id: candidate.sha === next ? 2 : 1, name: 'Verify', status: 'completed', conclusion: candidate.sha === next ? 'success' : 'failure', sha: candidate.sha }];
+  };
+  f.repo.verificationFailure = async candidate => {
+    diagnostics++; assert.equal(candidate.sha, CANDIDATE);
+    return { sha: candidate.sha, runId: 1, failedJobs: [{ name: 'Backend', steps: [{ name: 'backend regression tests', conclusion: 'failure' }] }] };
+  };
+  f.repo.publish = async candidate => { published.push(candidate.sha); return { ...candidate, published: true }; };
+  const created = await invoke(f.service.create, body()); const done = await finish(f.service, created.body.task.id, 40);
+  assert.equal(done.status, 'succeeded'); assert.equal(done.progress.resumes, 0);
+  assert.deepEqual(checked, [{ sha: CANDIDATE, dispatch: true }, { sha: next, dispatch: true }]);
+  assert.deepEqual(published, [next]); assert.equal(diagnostics, 1); assert.equal(f.state.edits, 2);
+  assert.equal(done.candidateHistory[0].sha, CANDIDATE);
+  assert.equal(done.verificationHistory[0].checks[0].conclusion, 'failure');
+  assert.equal(done.checks[0].sha, next); assert.equal(done.checks[0].conclusion, 'success');
+});
+
+test('verification recovery stays finite across different failed source revisions', async t => {
+  let turns = 0, revisions = 0, checks = 0;
+  const f = await fixture(t, { model: async () => ++turns % 2
+    ? call('repo_edit', { path: 'backend/office-ai-example.js', edits: [{ find: 'value', replace: 'correctedValue' }] })
+    : call('repo_commit', { message: 'Correct candidate verification' }) });
+  f.repo.edit = async () => ({ path: 'backend/office-ai-example.js', originalSha: BASE,
+    sha: String(++revisions).padStart(40, '0'), before: 'const value=1;', content: `const value=${revisions + 1};` });
+  f.repo.candidate = async ({ files }) => ({ sha: files[0].sha, baseSha: BASE, published: false });
+  f.repo.checks = async candidate => { checks++; return [{ id: checks, status: 'completed', conclusion: 'failure', sha: candidate.sha }]; };
+  const created = await invoke(f.service.create, body()); const done = await finish(f.service, created.body.task.id, 100);
+  assert.equal(done.status, 'needs_continuation'); assert.equal(done.continuation.reason, 'verification-recovery');
+  assert.equal(checks, RECOVERY_ATTEMPTS + 1); assert.equal(revisions, RECOVERY_ATTEMPTS + 1);
+  assert.equal(done.verificationHistory.length, RECOVERY_ATTEMPTS); assert.equal(f.state.published, 0);
+  assert.equal(await f.service.runOne(done.id), false);
+});
+
+test('unchanged failed candidates and stale successful checks cannot be published', async t => {
+  for (const stale of [false, true]) await t.test(stale ? 'stale successful check' : 'unchanged failed source', async t => {
+    let turns = 0, checks = 0;
+    const f = await fixture(t, { model: async () => {
+      turns++;
+      return turns === 1 ? call('repo_edit', { path: 'backend/office-ai-example.js', edits: [{ find: '=1', replace: '=2' }] })
+        : call('repo_commit', { message: 'Try the candidate' });
+    } });
+    f.repo.checks = async () => { checks++; return [{ id: 1, status: 'completed', conclusion: stale ? 'success' : 'failure', sha: stale ? BASE : CANDIDATE }]; };
+    const created = await invoke(f.service.create, body()); const done = await finish(f.service, created.body.task.id, 60);
+    assert.equal(done.status, 'needs_continuation'); assert.equal(f.state.published, 0);
+    assert.equal(f.state.candidates, 1); assert.equal(checks, 1);
+  });
 });
 
 test('selected full access runs authorized Office commands without repeated confirmations', async t => {
@@ -648,14 +761,14 @@ test('full access edits across project paths while failed exact-candidate verifi
   const responses = paths.flatMap(path => [call('repo_read', { path }), call('repo_edit', { path, edits: [{ find: '=1', replace: '=2' }] })]);
   responses.push(call('repo_commit', { message: 'Update requested project components' }), { content: 'Ready.' });
   const edited = [];
-  const f = await fixture(t, { model: async () => responses.shift() });
+  const f = await fixture(t, { model: async () => responses.shift() || { content: 'Ready.' } });
   f.repo.edit = async args => { edited.push(args.path); return { path: args.path, originalSha: BASE, sha: CANDIDATE, before: 'const value=1;', content: 'const value=2;' }; };
   f.state.conclusion = 'failure';
   const created = await invoke(f.service.create, body({ target: 'full-access', message: 'Update the feed, public website and mobile app.',
     permissions: { editCode: true, publish: true, deploy: true, operate: true }, deployTargets: ['api', 'web', 'mobile'] }));
-  const done = await finish(f.service, created.body.task.id);
-  assert.deepEqual(edited, paths); assert.equal(done.status, 'failed'); assert.equal(f.state.candidates, 1);
-  assert.equal(f.state.published, 0); assert.equal(done.commit.published, false); assert.match(done.error, /Nothing was published/);
+  const done = await finish(f.service, created.body.task.id, 50);
+  assert.deepEqual(edited, paths); assert.equal(done.status, 'needs_continuation'); assert.equal(f.state.candidates, 1);
+  assert.equal(f.state.published, 0); assert.equal(done.commit.published, false); assert.match(done.continuation.message, /nothing was published/);
 });
 
 test('full access still stops unconfirmed external outcomes and refuses replay', async t => {
@@ -858,13 +971,13 @@ test('Work receives real uploaded content, exposes metadata only, and clears upl
 });
 
 
-test('model failures recover twice and persistent failures pause without losing the task',async t=>{
- let attempts=0;const f=await fixture(t,{model:async()=>{if(++attempts<=2)throw Object.assign(Error('temporarily unavailable'),{status:502});return{content:'Verified answer.'};}});const created=await invoke(f.service.create,body({target:'general',permissions:{editCode:false,publish:false,deploy:false,operate:false},deployTargets:[]}));const done=await finish(f.service,created.body.task.id);assert.equal(attempts,3);assert.equal(done.status,'succeeded');assert.equal(done.recovery.totalAttempts,2);
- let failures=0;const g=await fixture(t,{model:async()=>{failures++;throw Object.assign(Error('still unavailable'),{status:502});}});const pending=await invoke(g.service.create,body());const paused=await finish(g.service,pending.body.task.id);assert.equal(failures,3);assert.equal(paused.status,'needs_continuation');assert.equal(paused.continuation.reason,'recovery-limit');
+test('model failures succeed on the tenth recovery and then stop at the finite limit',async t=>{
+ let attempts=0;const f=await fixture(t,{model:async()=>{if(++attempts<=RECOVERY_ATTEMPTS)throw Object.assign(Error('temporarily unavailable'),{status:502});return{content:'Verified answer.'};}});const created=await invoke(f.service.create,body({target:'general',permissions:{editCode:false,publish:false,deploy:false,operate:false},deployTargets:[]}));const done=await finish(f.service,created.body.task.id);assert.equal(attempts,RECOVERY_ATTEMPTS+1);assert.equal(done.status,'succeeded');assert.equal(done.recovery.totalAttempts,RECOVERY_ATTEMPTS);
+ let failures=0;const g=await fixture(t,{model:async()=>{failures++;throw Object.assign(Error('still unavailable'),{status:502});}});const pending=await invoke(g.service.create,body());const paused=await finish(g.service,pending.body.task.id);assert.equal(failures,RECOVERY_ATTEMPTS+1);assert.equal(paused.status,'needs_continuation');assert.equal(paused.continuation.reason,'recovery-limit');
 });
-test('safe tools retry exactly twice with the same invocation; exhaustion pauses before redispatch',async t=>{
- let attempts=0,turn=0;const ids=[];const f=await fixture(t,{model:async()=>++turn===1?call('code_execute',{code:'return 323;'}):{content:'323'},adapters:{code_execute:{permission:'read',retrySafe:true,parameters:{type:'object',properties:{code:{type:'string'}},required:['code'],additionalProperties:false},execute:async(_args,context)=>{attempts++;ids.push(context.invocationId);if(attempts<3)throw Object.assign(Error('busy'),{status:429});return{result:323};}}}});const created=await invoke(f.service.create,body({target:'general',permissions:{editCode:false,publish:false,deploy:false,operate:false},deployTargets:[]}));const done=await finish(f.service,created.body.task.id);assert.equal(done.status,'succeeded');assert.equal(attempts,3);assert.equal(new Set(ids).size,1);assert.equal(done.recovery.totalAttempts,2);assert.equal(done.review.checks.every(check=>check.passed),true);
- let rejected=0;const g=await fixture(t,{model:async()=>call('web_read',{url:'https://example.test'}),adapters:{web_read:{permission:'read',retrySafe:true,parameters:{type:'object',properties:{url:{type:'string'}},required:['url'],additionalProperties:false},execute:async()=>{rejected++;throw Object.assign(Error('unavailable'),{status:502});}}}});const second=await invoke(g.service.create,body());const paused=await finish(g.service,second.body.task.id);assert.equal(rejected,3);assert.equal(paused.continuation.reason,'recovery-limit');
+test('safe tools retry ten times with the same invocation; exhaustion pauses before redispatch',async t=>{
+ let attempts=0,turn=0;const ids=[];const f=await fixture(t,{model:async()=>++turn===1?call('code_execute',{code:'return 323;'}):{content:'323'},adapters:{code_execute:{permission:'read',retrySafe:true,parameters:{type:'object',properties:{code:{type:'string'}},required:['code'],additionalProperties:false},execute:async(_args,context)=>{attempts++;ids.push(context.invocationId);if(attempts<=RECOVERY_ATTEMPTS)throw Object.assign(Error('busy'),{status:429});return{result:323};}}}});const created=await invoke(f.service.create,body({target:'general',permissions:{editCode:false,publish:false,deploy:false,operate:false},deployTargets:[]}));const done=await finish(f.service,created.body.task.id);assert.equal(done.status,'succeeded');assert.equal(attempts,RECOVERY_ATTEMPTS+1);assert.equal(new Set(ids).size,1);assert.equal(done.recovery.totalAttempts,RECOVERY_ATTEMPTS);assert.equal(done.review.checks.every(check=>check.passed),true);
+ let rejected=0;const g=await fixture(t,{model:async()=>call('web_read',{url:'https://example.test'}),adapters:{web_read:{permission:'read',retrySafe:true,parameters:{type:'object',properties:{url:{type:'string'}},required:['url'],additionalProperties:false},execute:async()=>{rejected++;throw Object.assign(Error('unavailable'),{status:502});}}}});const second=await invoke(g.service.create,body());const paused=await finish(g.service,second.body.task.id);assert.equal(rejected,RECOVERY_ATTEMPTS+1);assert.equal(paused.continuation.reason,'recovery-limit');
 });
 test('plans remain progress metadata and paused encrypted drafts restore with a current continuation lease',async t=>{
  let turn=0;const f=await fixture(t,{checkpoints:true,model:async()=>[call('plan_update',{steps:[{id:'inspect',title:'Inspect the current file',status:'in_progress'},{id:'change',title:'Change and verify',status:'pending'}]}),call('repo_read',{path:'backend/office-ai-example.js'}),call('repo_edit',{path:'backend/office-ai-example.js',edits:[{find:'=1',replace:'=2'}]})][turn++]||{content:'Review the prepared draft.'}});
@@ -874,15 +987,15 @@ test('plans remain progress metadata and paused encrypted drafts restore with a 
  const stale={...res,statusCode:200};await f.service.restoreCheckpoint({params:{id:task.id,checkpointId},body:{confirmed:true,continuationId:stored.continuation.id}},stale);assert.equal(stale.statusCode,409);
 });
 
-test('three unchanged logical failures or invalid tool requests pause instead of looping',async t=>{
- for(const invalid of [false,true]){let attempts=0;const f=await fixture(t,{model:async()=>call('code_execute',invalid?{wrong:true}:{code:'bad code'}),adapters:{code_execute:{permission:'read',retrySafe:true,parameters:{type:'object',properties:{code:{type:'string'}},required:['code'],additionalProperties:false},execute:async()=>{attempts++;throw Object.assign(Error('syntax error'),{status:422,publicMessage:'Fix the syntax before trying again.'});}}}});const created=await invoke(f.service.create,body());const paused=await finish(f.service,created.body.task.id);assert.equal(paused.continuation.reason,'recovery-limit');assert.equal(attempts,invalid?0:3);if(!invalid)assert.equal(paused.recovery.currentAttempt,2);assert.equal(f.state.published,0);}
+test('logical failures and invalid tool requests stop after ten correction attempts',async t=>{
+ for(const invalid of [false,true]){let attempts=0;const f=await fixture(t,{model:async()=>call('code_execute',invalid?{wrong:true}:{code:'bad code'}),adapters:{code_execute:{permission:'read',retrySafe:true,parameters:{type:'object',properties:{code:{type:'string'}},required:['code'],additionalProperties:false},execute:async()=>{attempts++;throw Object.assign(Error('syntax error'),{status:422,publicMessage:'Fix the syntax before trying again.'});}}}});const created=await invoke(f.service.create,body());const paused=await finish(f.service,created.body.task.id);assert.equal(paused.continuation.reason,'recovery-limit');assert.equal(attempts,invalid?0:RECOVERY_ATTEMPTS+1);if(!invalid)assert.equal(paused.recovery.currentAttempt,RECOVERY_ATTEMPTS);assert.equal(f.state.published,0);}
 });
 
-test('empty model responses recover twice and never become a successful empty result',async t=>{
- for(const persistent of [false,true]){let attempts=0;const f=await fixture(t,{model:async()=>++attempts<=2||persistent?{content:null}:{content:'The verified result is 323.'}});const created=await invoke(f.service.create,body({target:'general',memory:false,permissions:{editCode:false,publish:false,deploy:false,operate:false},deployTargets:[]}));const task=await finish(f.service,created.body.task.id);assert.equal(attempts,3);assert.equal(task.recovery.totalAttempts,2);assert.equal(task.status,persistent?'needs_continuation':'succeeded');if(persistent)assert.equal(task.continuation.reason,'recovery-limit');else assert.match(task.summary,/323/);}
+test('empty model responses recover ten times and never become a successful empty result',async t=>{
+ for(const persistent of [false,true]){let attempts=0;const f=await fixture(t,{model:async()=>++attempts<=RECOVERY_ATTEMPTS||persistent?{content:null}:{content:'The verified result is 323.'}});const created=await invoke(f.service.create,body({target:'general',memory:false,permissions:{editCode:false,publish:false,deploy:false,operate:false},deployTargets:[]}));const task=await finish(f.service,created.body.task.id);assert.equal(attempts,RECOVERY_ATTEMPTS+1);assert.equal(task.recovery.totalAttempts,RECOVERY_ATTEMPTS);assert.equal(task.status,persistent?'needs_continuation':'succeeded');if(persistent)assert.equal(task.continuation.reason,'recovery-limit');else assert.match(task.summary,/323/);}
 });
-test('an unfinished plan gets two completion reviews and pauses instead of reporting success',async t=>{
- let turn=0;const f=await fixture(t,{model:async()=>++turn===1?call('plan_update',{steps:[{id:'verify',title:'Execute and verify the calculation',status:'in_progress'}]}):{content:'Everything is done.'}});const created=await invoke(f.service.create,body({target:'general',permissions:{editCode:false,publish:false,deploy:false,operate:false},deployTargets:[]}));const task=await finish(f.service,created.body.task.id);assert.equal(task.status,'needs_continuation');assert.equal(task.continuation.reason,'completion-review');assert.equal(task.recovery.totalAttempts,2);assert.equal(task.review.checks.find(check=>check.label==='Work plan completed').passed,false);assert.equal(turn,4);
+test('an unfinished plan gets ten completion reviews and pauses instead of reporting success',async t=>{
+ let turn=0;const f=await fixture(t,{model:async()=>++turn===1?call('plan_update',{steps:[{id:'verify',title:'Execute and verify the calculation',status:'in_progress'}]}):{content:'Everything is done.'}});const created=await invoke(f.service.create,body({target:'general',permissions:{editCode:false,publish:false,deploy:false,operate:false},deployTargets:[]}));const task=await finish(f.service,created.body.task.id);assert.equal(task.status,'needs_continuation');assert.equal(task.continuation.reason,'completion-review');assert.equal(task.recovery.totalAttempts,RECOVERY_ATTEMPTS);assert.equal(task.review.checks.find(check=>check.label==='Work plan completed').passed,false);assert.equal(turn,RECOVERY_ATTEMPTS+2);
 });
 test('completion review can finish the remaining tools and plan without losing recorded results',async t=>{
  const steps=status=>[{id:'calculate',title:'Calculate and verify',status}];let turn=0,executions=0;const f=await fixture(t,{model:async()=>[call('plan_update',{steps:steps('in_progress')}),{content:'I have finished.'},call('code_execute',{code:'return 323;'}),call('plan_update',{steps:steps('completed')}),{content:'The executed result is 323.'}][turn++],adapters:{code_execute:{permission:'read',retrySafe:true,parameters:{type:'object',properties:{code:{type:'string'}},required:['code'],additionalProperties:false},execute:async()=>{executions++;return{result:323};}}}});const created=await invoke(f.service.create,body({target:'general',permissions:{editCode:false,publish:false,deploy:false,operate:false},deployTargets:[]}));const task=await finish(f.service,created.body.task.id);assert.equal(task.status,'succeeded');assert.equal(executions,1);assert.equal(task.recovery.totalAttempts,1);assert.equal(task.review.checks.every(check=>check.passed),true);assert.match(task.summary,/323/);

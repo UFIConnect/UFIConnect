@@ -262,6 +262,23 @@ try {
   const readTask=[...tasks.values()].at(-1);assert.equal(readTask.request.target,'full-access');readTask.status='succeeded';readTask.summary='The requested file was read using repository tools.';
   await page.getByText(readTask.summary,{exact:true}).first().waitFor();
   report.checks.push('Concrete repository read requests use Full access tools; how-to questions remain conversational');
+  const beforeNatural = { tasks: taskCreates, chats: chatCalls };
+  for (const message of [
+    "make sure theres 10 recovery attemps, tasks aren't running properly or they're taking too long to execute",
+    'Can you help me fix tasks that need multiple attempts to finish a job?',
+    'I want you to increase recovery attempts to 10.',
+  ]) {
+    await prompt.fill(message); await page.getByRole('button',{name:'Send',exact:true}).click();
+    await page.getByRole('heading',{name:message,exact:true}).waitFor();
+    const task = [...tasks.values()].at(-1);
+    assert.equal(task.request.message,message); assert.equal(task.request.target,'full-access');
+    assert.equal(task.request.permissions.publish,true); assert.equal(task.request.permissions.deploy,true);
+    assert.equal(await page.getByRole('button',{name:'Confirm this action',exact:true}).count(),0);
+    task.status='succeeded'; task.summary=`Confirmed natural request ${taskCreates}: the requested work is complete.`;
+    await page.getByText(task.summary,{exact:true}).first().waitFor();
+  }
+  assert.equal(taskCreates,beforeNatural.tasks+3); assert.equal(chatCalls,beforeNatural.chats);
+  report.checks.push('Natural requests and slow-task reports execute directly with the selected permissions and finish in the same conversation');
   assert.deepEqual(report.errors,[]);
 } catch(error) {report.failure=error.message;if(page){report.failurePage=await page.locator('body').innerText().catch(()=>null);await page.screenshot({path:path.join(directory,'execution-failure.png'),fullPage:true}).catch(()=>{});}throw error;}
 finally {await browser?.close();await server?.close();await fs.writeFile(path.join(directory,'conversation-execution-smoke.json'),JSON.stringify(report,null,2));}
