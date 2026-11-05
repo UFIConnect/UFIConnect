@@ -32,6 +32,14 @@ const { BASE_OFFICE_CONTROLS } = createRequire(import.meta.url)('../backend/offi
 const commands = [command, ...BASE_OFFICE_CONTROLS.filter(item => item.id !== command.id)];
 let checks = 0, browser;
 const check = (condition, message) => { assert.ok(condition, message); checks++; };
+async function openSection(page, label) {
+  if (label === 'Chat') return page.getByRole('navigation', { name: 'Pip main navigation', exact: true }).getByRole('button', { name: 'Chat', exact: true }).click();
+  const more = page.getByRole('navigation', { name: 'Pip main navigation', exact: true }).getByRole('button', { name: 'More', exact: true });
+  if (await more.getAttribute('aria-expanded') !== 'true') await more.click();
+  await page.getByRole('navigation', { name: 'More Pip tools', exact: true }).getByRole('button', { name: label === 'My tools' ? /^My tools(?:\s*\d+)?$/ : label, exact: true }).click();
+}
+const openSettings = page => openSection(page, 'Settings & history');
+
 try {
   await server.listen();
   browser = await chromium.launch({ headless: true });
@@ -120,11 +128,11 @@ try {
       }
       throw Error('Unexpected Pip fixture route ' + url.pathname);
     });
-    await page.goto(server.resolvedUrls.local[0] + 'office-ai-audit');await page.getByRole('button',{name:'Settings & history',exact:true}).click();
+    await page.goto(server.resolvedUrls.local[0] + 'office-ai-audit');
     await page.getByText('Cloudflare configured', { exact: true }).waitFor();
-    check(await page.getByRole('button', { name: 'Conversation', exact: true }).getAttribute('aria-pressed') === 'true', 'Conversation is the default without automatic work');
+    check(await page.getByRole('button', { name: 'Chat', exact: true }).getAttribute('aria-pressed') === 'true', 'Conversation is the default without automatic work');
     check(!requests.some(row => row.method === 'POST'), 'Opening the app never starts a task or mutation');
-    await page.getByRole('button', { name: 'Conversation', exact: true }).click();
+    await openSection(page, 'Chat');
     await page.getByRole('button', { name: 'Catch up on AI' }).click();
     check((await page.getByLabel('Message Pip').inputValue()).includes('latest important AI updates'), 'Latest AI starter asks for current evidence');
     const longMessage = `Explain this context. ${'Additional context. '.repeat(800)}End of full message.`;
@@ -146,14 +154,15 @@ try {
     const initialConversation = requests.find(row => row.path === '/office/ai/conversations' && row.method === 'POST').body.clientRequestId;
     check(conversations.get(initialConversation).messages.length === 2, 'User and assistant messages are automatically persisted with versioned writes');
     check(conversations.get(initialConversation).messages[0].content === longMessage, 'Long user messages are saved intact');
-    await page.reload();await page.getByRole('button',{name:'Settings & history',exact:true}).click();
+    await page.reload();await openSettings(page);
     await page.getByText('Cloudflare configured', { exact: true }).waitFor();
     await page.locator('.office-ai-saved-chats li>button').first().click();
+    await openSection(page, 'Chat');
     await page.getByText('A grounded answer with alternatives and limitations.', { exact: true }).waitFor();
     check(await page.locator('.office-ai-message').count() === 2, 'Saved conversation can be reopened after a browser reload');
     check(await page.locator('.office-ai-message-user').innerText().then(value => value.includes(longMessage)), 'The complete long message survives a reload');
     check(await page.getByRole('button', { name: /Run security check Review/ }).count() === 0, 'Conversation suppresses unsolicited provider command proposals');
-    await page.getByRole('button', { name: 'Office controls', exact: true }).click();
+    await openSection(page, 'Office controls');
     check(!requests.some(row => row.path.endsWith('/execute')), 'Control navigation never starts an operation');
     await page.getByRole('heading', { name: 'Control map', exact: true }).waitFor();
     check(await page.locator('.ocm-command').count() === commands.length, 'Every registered Office command has a map destination');
@@ -185,7 +194,7 @@ try {
     await page.getByRole('button', { name: 'Map', exact: true }).click();
     check(await page.locator('.office-command-map').evaluate(element => element.getAnimations({ subtree: true }).every(animation => animation.playState !== 'running')), 'System reduced-motion preference leaves no running map animation');
     await page.emulateMedia({ reducedMotion: 'no-preference' });
-    await page.getByRole('button', { name: 'My tools', exact: true }).click();
+    await openSection(page, 'My tools');
     await page.getByLabel('Tool name', { exact: true }).fill('Review an idea');
     await page.getByLabel('Description', { exact: true }).fill('Compare benefits, risks, and alternatives.');
     await page.getByLabel('Instructions', { exact: true }).fill('Consider user value, costs, privacy, and implementation risks.');
@@ -193,8 +202,7 @@ try {
     await page.getByRole('heading', { name: 'Review an idea', exact: true }).waitFor();
     check(requests.some(row => row.path === '/office/ai/tools' && row.body?.kind === 'prompt'), 'Adding a prompt tool persists through the Office API');
     await page.getByRole('button', { name: 'Use in chat', exact: true }).click();
-    await page.getByRole('button', { name: 'Conversation', exact: true }).click();
-    await page.getByRole('button', { name: 'Conversation', exact: true }).click();
+    await openSection(page, 'Chat');
     researchStatus = 'unavailable';
     await page.getByLabel('Message Pip').fill('Review my idea.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -224,16 +232,15 @@ try {
     check(await officialAnswer.getByRole('link', { name: 'Official model announcement', exact: true }).count() === 1, 'Official announcement fallback retains its source link');
     check(await officialAnswer.getByText('Google AI', { exact: false }).count() === 1 && await officialAnswer.locator('time[datetime="2026-11-02T12:00:00Z"]').count() === 1, 'Official source publisher and publication timestamp are visible');
     check(await officialAnswer.getByText('Web sources retrieved', { exact: true }).count() === 0 && await officialAnswer.getByText('Verified', { exact: false }).count() === 0, 'Official feed fallback is not presented as verified general web research');
-    await page.getByRole('button', { name: /My tools/ }).click();
+    await openSection(page, 'My tools');
     await page.getByRole('button', { name: 'Remove tool Review an idea', exact: true }).click();
     await page.getByRole('heading', { name: 'Build your personal toolkit', exact: true }).waitFor();
     check(requests.some(row => row.method === 'DELETE'), 'Removing a tool updates persistent storage');
-    await page.getByRole('button', { name: 'Conversation', exact: true }).click();
-    await page.getByRole('button', { name: 'Conversation', exact: true }).click();
+    await openSection(page, 'Chat');
     check(await page.locator('.office-ai-selected').count() === 0, 'Deleted tool cannot remain selected for later chats');
     await page.screenshot({ path: path.join(output, `office-ai-${width}.png`), fullPage: true });
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `Pip fits ${width}px without horizontal page overflow`);
-    await page.getByRole('button', { name: 'Connections', exact: true }).click();
+    await openSection(page, 'Connections');
     await page.getByRole('button', { name: 'Knowledge sources', exact: true }).click();
     check(await page.locator('.oc-card').count() === 3, 'Knowledge source category lists all new providers');
     await page.getByRole('searchbox', { name: 'Search connections', exact: true }).fill('slack');
@@ -259,10 +266,11 @@ try {
       await page.getByRole('status').filter({ hasText: 'Connection verified.' }).waitFor();
       check(requests.some(row => row.path === `/office/connections/${id}/verify` && !row.body.token), 'Stored connection can be verified without returning its credential');
       if (['notion', 'slack', 'linear'].includes(id)) {
-        await page.getByRole('button', { name: 'Conversation', exact: true }).click();
-        await page.getByRole('button', { name: 'Conversation', exact: true }).click();
+        await openSection(page, 'Chat');
+        await openSettings(page);
         const source = page.getByRole('checkbox', { name: `${name} Connected · include in reply`, exact: true });
         await source.check();
+        await openSection(page, 'Chat');
         await page.getByLabel('Message Pip').fill(`Find context in ${name}`);
         const sourceSaved = page.waitForResponse(response => response.url().includes('/office/ai/conversations/') && response.request().method() === 'PATCH' && response.status() === 200 && response.request().postDataJSON()?.messages?.at(-1)?.connectedSources?.some(item => item.id === id));
         await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -270,7 +278,7 @@ try {
         await sourceSaved;
         check(conversations.get(initialConversation).messages.at(-1).connectedSources[0].id === id, 'Saved history retains connected source results');
         check(JSON.stringify(requests.filter(row => row.path.endsWith('/chat')).at(-1).body.sourceIds) === JSON.stringify([id]), 'Only the selected workspace source is sent to chat');
-        await page.getByRole('button', { name: 'Connections', exact: true }).click();
+        await openSection(page, 'Connections');
       }
       if (id === 'cloudflare') {
         await card.getByRole('button', { name: 'Update connection Cloudflare', exact: true }).click();
@@ -288,18 +296,17 @@ try {
       await card.getByRole('button', { name: `Connect ${name}`, exact: true }).waitFor();
       check(requests.some(row => row.path === `/office/connections/${id}` && row.method === 'DELETE' && row.body.confirmed === true), 'Disconnect uses the confirmed authenticated endpoint');
       if (['notion', 'slack', 'linear'].includes(id)) {
-        await page.getByRole('button', { name: 'Conversation', exact: true }).click();
-        await page.getByRole('button', { name: 'Conversation', exact: true }).click();
+        await openSection(page, 'Chat');
+        await openSettings(page);
         const source = page.getByRole('checkbox', { name: `${name} Connect to use in replies`, exact: true });
         await source.waitFor();
         check(await source.isDisabled() && !(await source.isChecked()), 'Disconnect removes the source from the next reply');
-        await page.getByRole('button', { name: 'Connections', exact: true }).click();
+        await openSection(page, 'Connections');
       }
     }
     await page.getByRole('button', { name: 'Connect GitHub', exact: true }).click();
     await page.getByLabel('GitHub API token', { exact: true }).fill('synthetic-unsaved-private-connection-token');
-    await page.getByRole('button', { name: 'Conversation', exact: true }).click();
-    await page.getByRole('button', { name: 'Conversation', exact: true }).click();
+    await openSection(page, 'Chat');
     check(await page.locator('input[type=password]').count() === 0, 'Leaving connections unmounts sensitive inputs');
     await page.getByLabel('Message Pip').fill('Explain my connections.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -307,7 +314,7 @@ try {
     check(!requests.filter(row => row.path === '/office/ai/chat').some(row => /private-(?:connection|deployment)-token/.test(JSON.stringify(row.body))), 'Saved and unsaved provider credentials never enter chatbot payloads');
     await page.getByText('Conversation saved in Office', { exact: true }).waitFor();
     if (width === 1280) {
-      const attachment = page.getByLabel('Attach file or photo', { exact: true });
+      const attachment = page.locator('input[type=file][aria-label="Attach file or photo"]');
       await page.getByLabel('Message Pip').fill('Review this fixture.');
       await attachment.setInputFiles({ name: 'too-large.txt', mimeType: 'text/plain', buffer: Buffer.from('x'.repeat(102401)) });
       await page.getByRole('alert').filter({ hasText: '100 KB or smaller' }).waitFor();
@@ -342,7 +349,7 @@ try {
       await page.getByRole('button', { name: 'Copy code', exact: true }).waitFor();
       check(await page.locator('.office-ai-message-user', { hasText: 'Keep this conflicting local message' }).count() === 0, 'Explicit reload resolves the conflict using the saved version');
     }
-    await page.getByRole('button', { name: 'Tasks', exact: true }).click();
+    await openSection(page, 'Tasks');
     check(await page.getByRole('button', { name: 'Send', exact: true }).isDisabled(), 'Empty task instructions cannot start work');
     await page.getByRole('button', { name: 'Work settings', exact: true }).click();
     await page.getByLabel('Request destination', { exact: true }).selectOption('self-update');
@@ -366,8 +373,8 @@ try {
     await page.getByText('office/src/Example.jsx', { exact: true }).click();
     check(await page.getByText('- old title\n+ requested title', { exact: true }).isVisible(), 'Task file diffs are inspectable');
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `Task results fit ${width}px without horizontal page overflow`);
-    await page.getByRole('button', { name: 'Conversation', exact: true }).click();
-    await page.getByRole('button', { name: 'Tasks', exact: true }).click();
+    await openSection(page, 'Chat');
+    await openSection(page, 'Tasks');
     await page.getByText('Candidate commit; not published', { exact: false }).waitFor();
     check(await page.getByRole('heading', { name: 'Update the example title, check it, publish, and deploy Office.', exact: true }).isVisible(), 'Server-backed task is recovered after navigating away and back');
     await page.getByRole('button', { name: 'Recent tasks', exact: true }).click();
@@ -382,7 +389,7 @@ try {
     await page.getByRole('button', { name: 'Stop task', exact: true }).click();
     await page.getByRole('button', { name: 'Cancellation requested', exact: true }).waitFor();
     check(task.status === 'cancel_requested' && await page.getByRole('button', { name: 'Cancellation requested', exact: true }).isDisabled(), 'Stopping a task shows a request, without claiming completed work was undone');
-    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await openSection(page, 'Terminal');
     await page.getByLabel('Terminal command', { exact: true }).fill('printf "terminal fixture"');
     await page.getByRole('button', { name: 'Run command', exact: true }).click();
     await page.getByRole('link', { name: 'Open GitHub Actions run', exact: true }).waitFor();
@@ -398,12 +405,14 @@ try {
     await page.getByRole('button', { name: 'Stop command', exact: true }).click();
     await page.getByRole('button', { name: 'Cancellation requested', exact: true }).waitFor();
     check(terminal.status === 'running' && terminal.cancellationRequested, 'Terminal cancellation retains the actual running status until GitHub confirms completion');
-    await page.getByRole('button', { name: 'Conversation', exact: true }).click();
+    await openSection(page, 'Chat');
     await page.getByText('Conversation saved in Office', { exact: true }).waitFor();
+    await openSettings(page);
     await page.getByRole('button', { name: /^Delete conversation / }).first().click();
     check(conversations.has(initialConversation), 'Saved conversation deletion waits for confirmation');
     await page.getByRole('button', { name: 'Delete saved chat', exact: true }).click();
-    await page.getByRole('heading', { name: 'What would you like to fix?', exact: true }).waitFor();
+    await openSection(page, 'Chat');
+    await page.getByRole('heading', { name: 'How can I help?', exact: true }).waitFor();
     check(!conversations.has(initialConversation), 'Confirmed delete removes the saved conversation and clears the current transcript');
     if (width === 1280) {
       abortCreateOnce = true; holdChat = true;
@@ -420,15 +429,15 @@ try {
       check(conversations.size === 1, 'Recovering an ambiguous conversation create never makes duplicate chats');
       await page.getByRole('button', { name: 'New chat', exact: true }).click();
     }
-    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await openSection(page, 'Terminal');
     await page.getByLabel('Terminal command', { exact: true }).fill('Unsubmitted terminal draft to clear on auth change');
     await page.evaluate(() => window.dispatchEvent(new Event('office-token-changed')));
-    await page.getByRole('heading', { name: 'What would you like to fix?', exact: true }).waitFor();
-    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await page.getByRole('heading', { name: 'How can I help?', exact: true }).waitFor();
+    await openSection(page, 'Terminal');
     await page.getByRole('button', { name: 'Cancellation requested', exact: true }).waitFor();
     check(await page.getByLabel('Terminal command', { exact: true }).inputValue() === '', 'Auth changes clear terminal drafts while recovering authorized server receipts');
     check(await page.getByRole('button', { name: 'Cancellation requested', exact: true }).isDisabled(), 'Recovered terminal receipt preserves its cancellation request');
-    await page.getByRole('button', { name: 'Connections', exact: true }).click();
+    await openSection(page, 'Connections');
     await page.getByRole('button', { name: 'Connect GitHub', exact: true }).click();
     check(await page.getByLabel('GitHub API token', { exact: true }).inputValue() === '', 'Unsaved credential is cleared when Connections remounts');
     await page.getByLabel('GitHub API token', { exact: true }).fill('synthetic-auth-reset-private-connection-token');
@@ -438,7 +447,7 @@ try {
     // sensitive form itself to leave the DOM after React processes the event.
     await page.locator('input[type=password]').waitFor({ state: 'hidden' });
     check(await page.locator('input[type=password]').count() === 0, 'Auth changes clear provider credential forms');
-    await page.getByRole('button', { name: 'Connections', exact: true }).click();
+    await openSection(page, 'Connections');
     if (width === 1280) {
       const connectionsView = page.getByRole('region', { name: 'Provider connections', exact: true });
       // Auth reset reloads the parent AI status as well as this panel. Settle
@@ -463,9 +472,8 @@ try {
       check(await connectionsView.getByRole('alert').count() === 0, 'Retry recovers the connection view after a timeout');
     }
     statusReadDelayMs = 0; connectionReadDelayMs = 0;
-    await page.getByRole('button', { name: 'Conversation', exact: true }).click();
-    await page.getByRole('button', { name: 'Conversation', exact: true }).click();
-    await page.getByRole('heading', { name: 'What would you like to fix?', exact: true }).waitFor();
+    await openSection(page, 'Chat');
+    await page.getByRole('heading', { name: 'How can I help?', exact: true }).waitFor();
     check(await page.getByLabel('Message Pip').inputValue() === '', 'Auth change clears private conversation and draft');
     if (width === 1280) {
       holdChat = true;

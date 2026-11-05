@@ -33,7 +33,7 @@ export async function returnFromOfficeWelcome(page, navigationLabel, beforeRetur
   // Explicitly enter the workspace so returning below exercises a fresh mount
   // of each operational page, including its existing service-read assertions.
   await page.getByRole('button', { name: 'Open Pip workspace', exact: true }).click();
-  await page.locator('.office-ai-header h1').waitFor();
+  await page.locator('.pip-dock-workspace .pip-dock-header h2').waitFor();
   await page.waitForFunction(() => {
     const refresh = document.querySelector('button[aria-label="Refresh Pip connection"]');
     return refresh && !refresh.disabled;

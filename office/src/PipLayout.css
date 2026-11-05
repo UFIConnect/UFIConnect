@@ -1,0 +1,77 @@
+/* Keep Pip's main actions visible without horizontal navigation. */
+.office-ai-primary-nav {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px;
+  margin: 0 0 16px; padding: 8px 0; border-bottom: 1px solid var(--ai-line);
+}
+.office-ai .office-ai-primary-nav button {
+  min-width: 0; min-height: 44px; padding: 10px 8px; border-color: transparent;
+  border-radius: 10px; background: transparent; color: var(--ai-muted); font-size: 13px;
+}
+.office-ai .office-ai-primary-nav button[aria-pressed=true],
+.office-ai .office-ai-primary-nav button[aria-expanded=true] { background: #a99ac41c; color: #f1eaff; }
+.office-ai .office-ai-tabs {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px;
+  overflow: visible; padding: 8px; margin: 0 14px 16px; border-color: var(--ai-line); background: var(--ai-panel);
+}
+.office-ai .office-ai-tabs button {
+  min-width: 0; min-height: 44px; padding: 10px; justify-content: flex-start;
+  white-space: normal; text-align: left; font-size: 12px;
+}
+.office-ai .office-ai-workspace { display: block; max-width: 920px; margin: 0 auto; }
+.office-ai .office-ai-context, .pip-dock .office-ai .office-ai-context { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; padding: 0 16px 20px; }
+.office-ai .office-ai-settings-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.office-ai .office-ai-settings-heading h2 { font-size: 17px; }
+.office-ai .office-ai-settings-heading button { min-height: 44px; background: transparent; font-size: 12px; }
+.office-ai .office-ai-context-card { min-width: 0; }
+.office-ai .office-ai-context-card:nth-child(n) { grid-column: auto; }
+.office-ai .office-ai-creativity-control { margin: 16px 0 0; padding: 0; border: 0; }
+.office-ai .office-ai-tone-control { display: grid; gap: 8px; font-size: 13px; }
+.office-ai .office-ai-tone-control small { color: var(--ai-muted); font-size: 12px; }
+.office-ai .office-ai-tone-control select { width: 100%; min-height: 44px; }
+.office-ai .office-ai-privacy { margin: 0; padding: 0 18px 16px; font-size: 11px; }
+.office-ai .office-ai-privacy summary { min-height: 44px; padding: 12px 0; cursor: pointer; color: var(--ai-muted); }
+.office-ai .office-ai-privacy p { font-size: 12px; line-height: 1.7; padding: 0 0 8px; }
+.pip-dock .office-ai > .office-ai-header { display: none; }
+.pip-dock .office-ai { --ai-panel: #211d2d; --ai-line: #3e384e; --ai-muted: #b9b2c9; font-size: 14px; }
+.pip-dock .office-ai-primary-nav { position: sticky; top: 0; z-index: 3; margin: 0 12px 8px; background: #1b1826; }
+.pip-dock .office-ai .office-ai-chat { border: 0; border-radius: 0; background: transparent; }
+.pip-dock .office-ai .office-ai-transcript,
+.pip-dock .office-ai .office-ai-transcript:has(.office-ai-welcome) {
+  height: auto; max-height: none; min-height: 0; overflow: visible; padding: 20px 18px; scrollbar-gutter: auto;
+}
+.pip-dock .office-ai .office-ai-welcome { padding: 12px 0 8px; align-items: flex-start; text-align: left; }
+.pip-dock .office-ai .office-ai-welcome h2 { font-size: 23px; }
+.pip-dock .office-ai .office-ai-welcome > p { font-size: 14px; line-height: 1.65; margin: 10px 0 12px; }
+.pip-dock .office-ai .office-ai-welcome-icon, .pip-dock .office-ai .office-ai-starters { display: none; }
+.pip-dock .office-ai .office-ai-chat-bar { padding: 0 18px; border: 0; min-height: 44px; }
+.pip-dock .office-ai .office-ai-chat-bar > span { font-size: 11px; color: var(--ai-muted); }
+.pip-dock .office-ai .office-ai-chat-bar button { min-height: 44px; font-size: 12px; }
+.pip-dock .office-ai .office-ai-save-state { display: none; }
+.pip-dock .office-ai .office-ai-composer { margin: 0 16px; padding: 0; border-radius: 14px; box-shadow: none; background: #211d2d; }
+.pip-dock .office-ai .office-ai-composer textarea { min-height: 100px; padding: 14px; border: 0; background: transparent; font-size: 16px; }
+.pip-dock .office-ai .office-ai-composer-footer { margin: 0; padding: 0 10px 10px 14px; }
+.pip-dock .office-ai .office-ai-composer-footer > span { font-size: 10px; color: var(--ai-muted); }
+.pip-dock .office-ai .office-ai-composer-footer button { min-height: 44px; font-size: 13px; }
+.pip-dock .office-ai .office-ai-message { padding: 0 0 20px; margin-bottom: 20px; }
+.pip-dock .office-ai .office-ai-answer { font-size: 14px; line-height: 1.75; }
+.pip-dock .office-ai .office-ai-sensors { margin: 12px 16px 0; padding: 12px 0; }
+.pip-dock .office-ai .office-ai-sensor-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.pip-dock .office-ai .office-ai-sensor-controls button { min-height: 44px; padding: 9px 6px; font-size: 12px; gap: 6px; background: transparent; border: 0; }
+.pip-dock .office-ai .office-ai-sensor-status { display: none; }
+.pip-dock .office-ai .office-ai-sensors > .pip-follow-toggle,
+.pip-dock .office-ai .office-ai-sensors > .pip-context-hint { display: none; }
+.pip-dock .office-ai .office-ai-voice-scope { margin: 0 18px; font-size: 12px; }
+.pip-dock .office-ai .office-ai-voice-scope summary { min-height: 44px; padding: 12px 0; cursor: pointer; }
+.pip-dock .office-ai .office-ai-privacy { padding: 0 18px 14px; }
+.office-ai[data-call-only=true] > .office-ai-primary-nav,
+.office-ai:has(.office-ai-call-backdrop:not([hidden])) > .office-ai-primary-nav,
+.office-ai:has(.office-ai-call-backdrop:not([hidden])) > .office-ai-tabs { display: none; }
+@media (min-width: 800px) {
+  .pip-dock-workspace .office-ai .office-ai-context { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pip-dock-workspace .office-ai .office-ai-settings-heading { grid-column: 1 / -1; }
+}
+@media (max-width: 600px) {
+  .office-ai .office-ai-context { padding: 0 14px 16px; }
+  .office-ai .office-ai-tabs button { font-size: 12px; }
+  .office-ai .office-ai-tabs button:first-child { grid-column: 1 / -1; }
+}
