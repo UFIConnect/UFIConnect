@@ -11,6 +11,59 @@ function response() {
     json(value) { this.body = value; return this; }, end() { return this; } };
 }
 
+test('compact and summary projections retain verified historical totals without a category by day zero matrix', async t => {
+  const pg = new PGlite(); t.after(() => pg.close()); await pg.exec(analytics.ANALYTICS_SCHEMA);
+  await pg.exec(`INSERT INTO analytics_daily_counts VALUES
+    ('2026-10-08','home','page_view','',21000),
+    ('2026-10-08','command_center_media','page_view','',4000),
+    ('2026-10-08','home','client_error','render_error',3);
+    INSERT INTO analytics_history_daily_counts(source,day,category,event_count)
+    VALUES ('legacy_page_views_backup','2026-05-03','home',9000);`);
+  const metrics = analytics.createAggregateAnalytics({ db: { isConnected: () => true, query: (...args) => pg.query(...args) },
+    now: () => Date.parse('2026-10-08T12:00:00Z'), schedule() {} });
+  const full = response(), compact = response(), summary = response();
+  await metrics.report({}, full); await metrics.report({ query: { detail: 'compact' } }, compact);
+  await metrics.report({ query: { detail: 'summary' } }, summary);
+  for (const result of [full.body, compact.body, summary.body]) {
+    assert.equal(result.today, 25000); assert.equal(result.history.recordedViews, 34000);
+    assert.equal(result.history.pageScreenViews, 30000); assert.equal(result.history.tabOpens, 4000);
+    assert.equal(result.uniqueVisitors.available, false);
+    assert.equal(result.verification.status, 'verified');
+    assert.deepEqual(result.daily, full.body.daily);
+    assert.equal(result.snapshot.maximumAgeMs, 15000);
+  }
+  assert.equal(full.body.categories.find(row => row.category === 'home').daily.length, 161);
+  for (const row of compact.body.categories) assert.deepEqual(row.daily,
+    full.body.categories.find(other => other.category === row.category).daily.filter(day => day.views || day.errors));
+  assert.equal(compact.body.categories.find(row => row.category === 'maps').daily.length, 0);
+  assert.equal(Object.hasOwn(summary.body, 'categories'), false);
+  assert.equal(Object.hasOwn(summary.body.performance, 'details'), false);
+  assert.ok(JSON.stringify(compact.body).length < JSON.stringify(full.body).length / 5);
+  assert.ok(JSON.stringify(summary.body).length < JSON.stringify(compact.body).length / 3);
+  const invalid = response(); await metrics.report({ query: { detail: ['compact', 'full'] } }, invalid);
+  assert.equal(invalid.statusCode, 400);
+});
+
+test('report snapshots share concurrent reads, expire, invalidate after durable writes and never mask a failed refresh as zero', async t => {
+  const pg = new PGlite(); t.after(() => pg.close()); await pg.exec(analytics.ANALYTICS_SCHEMA);
+  let clock = Date.parse('2026-10-08T23:59:50Z'), reads = 0, fail = false;
+  const metrics = analytics.createAggregateAnalytics({ db: { isConnected: () => true, async query(sql, params) {
+    if (sql === analytics.ANALYTICS_VERIFICATION_QUERY) { reads++; if (fail) throw new Error('private error'); }
+    return pg.query(sql, params);
+  } }, now: () => clock, schedule() {} });
+  const read = async () => { const res = response(); await metrics.report({ query: { detail: 'compact' } }, res); return res; };
+  await Promise.all([read(), read(), read()]); assert.equal(reads, 1);
+  await read(); assert.equal(reads, 1);
+  assert.equal((await metrics.pageview({ body: { category: 'home' } }, response())).statusCode, 204);
+  assert.equal((await read()).body.today, 1); assert.equal(reads, 2);
+  clock += 11000; // UTC midnight expires the old date range even before its TTL.
+  const tomorrow = await read(); assert.equal(tomorrow.body.range.to, '2026-10-09');
+  assert.equal(tomorrow.body.today, 0); assert.equal(tomorrow.body.history.recordedViews, 1); assert.equal(reads, 3);
+  clock += 16000; fail = true;
+  const failed = await read(); assert.equal(failed.statusCode, 503); assert.equal(failed.body.available, false);
+  assert.equal(Object.hasOwn(failed.body, 'today'), false); assert.doesNotMatch(JSON.stringify(failed.body), /private error/);
+});
+
 test('browser and backend catalogs match and list every fixed tab with no private pages', () => {
   const shared = require('../shared/analytics-categories.cjs');
   assert.deepEqual(shared.PAGE_CATEGORIES, analytics.CATEGORY_CATALOG);

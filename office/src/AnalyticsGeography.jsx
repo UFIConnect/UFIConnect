@@ -4,12 +4,13 @@ import { count } from './analytics-model.mjs';
 const number = value => new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(count(value));
 const share = (value, total) => total ? `${(value / total * 100).toFixed(1)}%` : '0.0%';
 
-export default function AnalyticsGeography({ apiBase, request, filters, refreshRevision }) {
+export default function AnalyticsGeography({ apiBase, request, filters, refreshRevision, active = true }) {
   const [search, setSearch] = useState(''), [page, setPage] = useState(1);
   const [geography, setGeography] = useState(null), [busy, setBusy] = useState(true), [error, setError] = useState('');
   const [retry, setRetry] = useState(0), generation = useRef(0);
   const { platform, category, viewType, start, end } = filters;
   useEffect(() => {
+    if (!active) return;
     const controller = new AbortController(), current = ++generation.current;
     setGeography(null); setError(''); setBusy(true);
     const invalidate = () => { generation.current++; controller.abort(); setGeography(null); setError(''); setBusy(true); };
@@ -27,7 +28,7 @@ export default function AnalyticsGeography({ apiBase, request, filters, refreshR
       .catch(error => { if (generation.current === current && !controller.signal.aborted) setError(error.message || 'Geographic counts could not be loaded.'); })
       .finally(() => { if (generation.current === current && !controller.signal.aborted) setBusy(false); });
     return () => { controller.abort(); window.removeEventListener('office-token-changed', invalidate); };
-  }, [apiBase, request, platform, category, viewType, start, end, refreshRevision, retry]);
+  }, [apiBase, request, platform, category, viewType, start, end, refreshRevision, retry, active]);
   const cityRows = (geography?.cities || []).filter(row => `${row.city} ${row.region} ${row.countryName}`.toLowerCase().includes(search.trim().toLowerCase()));
   const pages = Math.max(1, Math.ceil(cityRows.length / 20)), currentPage = Math.min(page, pages);
   const shown = cityRows.slice((currentPage - 1) * 20, currentPage * 20);

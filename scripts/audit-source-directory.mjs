@@ -61,6 +61,7 @@ try {
     await page.route('**/api/office/feed?*', route => route.fulfill({ json: { posts: [], hasMore: false, nativeUficonnectIncluded: true } }));
     await page.route('**/api/social/platforms', route => route.fulfill({ json: { platforms, connected: { reddit: true } } }));
     await page.route('**/api/feed/sources?*', route => route.fulfill({ json: {
+      status: 'ready', totalPosts: 3,
       sources: [{ id: 'reddit', postCount: 3, lastFetch: new Date().toISOString(), samplePosts: [] },
         { id: 'audit-source', postCount: 0, samplePosts: [] }],
     } }));
@@ -156,6 +157,7 @@ try {
     await auditNavigate(page, server.resolvedUrls.local[0] + 'sources');
     await page.getByRole('heading', { name: 'Feed Sources', exact: true }).waitFor();
     await page.getByRole('switch').first().waitFor();
+    await page.getByText('1 sources with available posts · 3 stored posts', { exact: true }).waitFor();
     assert.equal(await page.getByPlaceholder(/Search sources/).count(), 0, 'Full Feed Sources page has no search bar');
     assert.equal(await page.getByRole('search', { name: 'Search UFIconnect', exact: true })
       .getByRole('searchbox', { name: 'Search UFIconnect', exact: true }).count(), 1, 'Global header search remains available');
@@ -193,6 +195,22 @@ try {
     await assertEnabledFirst(page);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
     await page.screenshot({ path: path.join(root, `.cache/audit-ui/sources-page-${width}.png`) });
+    if (width === 390) {
+      await page.route('**/api/feed/sources?*', route => route.fulfill({ status: 503, json: {
+        status: 'unavailable', totalPosts: null, sources: [], error: 'Post counts temporarily unavailable',
+      } }));
+      await auditReload(page);
+      await page.getByText('Post counts temporarily unavailable', { exact: true }).last().waitFor();
+      assert.equal(await page.getByText('0 sources with available posts', { exact: true }).count(), 0,
+        'Unavailable counts must not become a zero source summary');
+      await page.route('**/api/feed/sources?*', route => route.fulfill({ json: {
+        status: 'stale', totalPosts: 8000, sources: [{ id: 'reddit', postCount: 8000, samplePosts: [] }],
+      } }));
+      await auditReload(page);
+      await page.getByText('1 sources with available posts · 8,000 stored posts', { exact: true }).waitFor();
+      await page.getByText('Showing the last checked counts. Refresh to try again.', { exact: true }).waitFor();
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
+    }
     await auditNavigate(page, server.resolvedUrls.local[0] + 'connected-accounts');
     assert.equal(await page.getByRole('combobox', { name: 'Filter accounts' }).count(), 0);
     assert.equal(await page.getByRole('searchbox', { name: 'Search accounts', exact: true }).count(), 0);

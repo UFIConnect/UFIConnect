@@ -124,7 +124,7 @@ function relativeTime(iso) {
 
 function SourceRow({ sourceId, health, enabled, onToggle, expanded, onExpand, saving }) {
   const meta = SOURCE_META[sourceId] || { label: health?.name || sourceId, icon: 'SRC', color: '#6366F1', desc: health?.description || '' };
-  const { postCount = 0, samplePosts = [] } = health || {};
+  const { postCount, samplePosts = [] } = health || {};
 
   return (
     <div style={{
@@ -161,12 +161,12 @@ function SourceRow({ sourceId, health, enabled, onToggle, expanded, onExpand, sa
 
         {/* Post count + expand + toggle */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-          {postCount > 0 && (
+          {Number.isFinite(postCount) && (
             <span style={{
               fontSize: '.68rem', color: 'var(--muted)', fontWeight: 600,
               background: 'var(--bg-secondary)', borderRadius: 6, padding: '2px 7px',
             }}>
-              {postCount} posts
+              {postCount.toLocaleString()} posts
             </span>
           )}
           {samplePosts.length > 0 && (
@@ -237,7 +237,11 @@ export default function Sources() {
     if (!opts.silent) setLoading(true);
     return client.get('/feed/sources?sample=3')
       .then(r => { setData(r.data); setError(null); })
-      .catch(e => setError(e?.response?.data?.error || e.message || 'Failed to load'))
+      .catch(e => {
+        setError(e?.response?.data?.error || e.message || 'Failed to load');
+        setData(previous => previous && previous.status !== 'unavailable' && Array.isArray(previous.sources)
+          ? { ...previous, status: 'stale' } : e?.response?.data || previous || null);
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -308,6 +312,7 @@ export default function Sources() {
     { id: 'other', label: 'Other', items: allSourceIds.filter(id => !categorised.has(id)) },
   ], disabled);
   const availableCount = sourceRows.filter(source => source.postCount > 0).length;
+  const countsAvailable = data && data.status !== 'unavailable' && Array.isArray(data.sources);
   const hiddenCount = allSourceIds.filter(id => disabled.has(id)).length;
 
   return (
@@ -355,8 +360,10 @@ export default function Sources() {
                 {enabledCount} of {allSourceIds.length} sources selected
               </div>
               <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>
-                {availableCount} sources with available posts
+                {countsAvailable ? `${availableCount.toLocaleString()} sources with available posts` : 'Post counts temporarily unavailable'}
+                {countsAvailable && Number.isFinite(data.totalPosts) && ` · ${data.totalPosts.toLocaleString()} stored posts`}
               </div>
+              {countsAvailable && data.status === 'stale' && <div role="status" style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>Showing the last checked counts. Refresh to try again.</div>}
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               {hiddenCount > 0 && (

@@ -463,7 +463,7 @@ function OverviewView({ status, pipelineStatus, log, agents, triggerAgent, trigg
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 28 }}>
         <StatCard icon="UP" label="Uptime"        value={s ? fmtUptime(s.uptime) : '—'}           sub={s?.env}                                                     color="#60a5fa" />
-        <StatCard icon="FP" label="Feed Posts"    value={f?.postCount?.toLocaleString() ?? '—'}    sub={f?.refreshedAt ? `refreshed ${fmtAgo(f.refreshedAt)}` : null} color="#4ade80" />
+        <StatCard icon="FP" label="Feed Posts"    value={f?.postCount?.toLocaleString() ?? '—'}    sub={f?.countBasis === 'stored' ? `${f.status === 'stale' ? 'stored snapshot · ' : 'stored posts · '}${f.checkedAt ? `checked ${fmtAgo(f.checkedAt)}` : 'awaiting check'}` : f?.refreshedAt ? `refreshed ${fmtAgo(f.refreshedAt)}` : null} color="#4ade80" />
         <StatCard icon="AG" label="Agents"        value={a?.active ?? '—'}                         sub={`${a?.logSize || 0} log entries`}                            color="#fbbf24" />
         <StatCard icon="DB" label="Primary database" value={s?.db === 'connected' ? 'Live' : s?.db === 'fallback' ? 'Memory' : '—'} sub={s?.dbReadFailoverActive ? 'read failover active' : s?.db} color={s?.db === 'connected' ? '#4ade80' : '#f97316'} />
         <StatCard icon="SSE" label="SSE Clients"  value={f?.sseClients ?? '—'}                     sub="feed subscribers"                                            color="#a78bfa" />
@@ -1488,7 +1488,7 @@ function PipelineView({ status, pipelineStatus, compact = false }) {
   const [pageviews, setPageviews] = useState(null);
   useEffect(() => {
     let cancelled = false;
-    officeFetch(`${API}/office/analytics/pageviews`).then(r => r.json())
+    officeFetch(`${API}/office/analytics/pageviews?detail=summary`).then(r => r.json())
       .then(j => { if (!cancelled) setPageviews(j); }).catch(() => {});
     return () => { cancelled = true; };
   }, []);
@@ -1781,9 +1781,9 @@ function PipelineView({ status, pipelineStatus, compact = false }) {
             <div style={{ fontSize: 22, fontWeight: 800, color: '#e2e8f0', lineHeight: 1 }}>
               {pageviews?.available === false ? '—' : (pageviews?.today ?? '—')}
             </div>
-            <div style={{ fontSize: 11, color: '#64748b', marginBottom: 2 }}>views · last 24h</div>
+            <div style={{ fontSize: 11, color: '#64748b', marginBottom: 2 }}>opens today · UTC</div>
             <div style={{ fontSize: 10.5, color: '#475569', marginBottom: 8 }}>
-              {pageviews?.available === false ? '—' : `${pageviews?.todayVisitors ?? '—'} unique IPs`}
+              Repeat opens count separately
             </div>
             <a href="https://uficonnect.org" target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#4ade80' }}>
               uficonnect.org ↗

@@ -58,31 +58,43 @@ try {
     const page = await browser.newPage({ viewport: { width, height: 900 } }); page.setDefaultTimeout(15000);
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     let mode = 'normal', held = null, heldGeography = null;
+    const reads = { geography: 0, users: 0, traffic: 0 };
     await page.route(`${API}/**`, async route => {
       const req = route.request(), url = new URL(req.url());
       const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'x-office-token,content-type', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS' };
       if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
       if (req.headers()['x-office-token'] !== TOKEN) return route.fulfill({ status: 401, headers, json: { error: 'Unauthorized' } });
       if(await fulfillOfficeWelcomeRead(route,url.pathname,headers)) return;
+      if (url.pathname === '/office/analytics/traffic') {
+        reads.traffic++;
+        return route.fulfill({ headers, json: { available: true, status: 'ready', range: { from: '2026-05-01', to: '2026-10-08' },
+          coverage: { firstRecordedDay: '2026-05-25' }, checkedAt: '2026-10-08T12:00:00Z', totals: { requests: 90000, pageViews: 35000 },
+          daily: [{ day: '2026-05-25', requests: 50000, pageViews: 20000, uniqueIPs: 12000 }, { day: '2026-10-08', requests: 40000, pageViews: 15000, uniqueIPs: 11000 }],
+          monthly: [{ month: '2026-05', recordedDays: 1, requests: 50000, pageViews: 20000 }, { month: '2026-10', recordedDays: 1, requests: 40000, pageViews: 15000 }] } });
+      }
       if (url.pathname === '/office/analytics/pageviews') {
         assert.equal(req.headers()['x-office-token'], TOKEN);
         if (mode === 'hold') { held = route; return; }
         if (mode === 'error') return route.fulfill({ status: 503, headers, json: { error: 'Synthetic storage outage' } });
         if (mode === 'unauthorized') return route.fulfill({ status: 401, headers, json: { error: 'Unauthorized' } });
-        return route.fulfill({ headers, json: report(mode === 'empty') });
+        assert.equal(url.searchParams.get('detail'), 'compact');
+        const compact = report(mode === 'empty');
+        compact.categories = compact.categories.map(category => ({ ...category, daily: category.daily.filter(day => day.views || day.errors) }));
+        return route.fulfill({ headers, json: compact });
       }
       if (url.pathname === '/office/analytics/geography') {
+        reads.geography++;
         if (mode === 'hold') { heldGeography = route; return; }
         if (mode === 'error') return route.fulfill({ status: 503, headers, json: { error: 'Synthetic geography outage' } });
         return route.fulfill({ headers, json: geographyReport(url.searchParams, mode === 'empty') });
       }
-      if (url.pathname === '/office/users') return route.fulfill({ headers, json: { available: true,
+      if (url.pathname === '/office/users') { reads.users++; return route.fulfill({ headers, json: { available: true,
         recent: [{ id:'00000000-0000-4000-8000-000000000001',name:'Recovered May member',email:'member@example.invalid',registeredDay:'2026-05-31',createdAt:'2026-10-08T00:00:00Z',onboarded:false }],
         total:1,onboarded:0,incomplete:1,today:1,last7:1,last30:1,sinceMay:1,incompleteSinceMay:1,knownRegistrationsSinceMay:15,recoveredRegistrations:14,
         registrationHistory: { from:'2026-05-01',to:'2026-10-08',earlierRegistrationDates:1,daily:[
           { day:'2026-05-31',currentRegistrations:1,recoveredRegistrations:0,registrations:1 },
           { day:'2026-08-12',currentRegistrations:0,recoveredRegistrations:14,registrations:14 },
-        ] }, pagination: { total:1,pages:1,page:1 },signupRequests: { available:true,since:'2026-09-17',outcomes:[] },email: { available:true } } });
+        ] }, pagination: { total:1,pages:1,page:1 },signupRequests: { available:true,since:'2026-09-17',outcomes:[] },email: { available:true } } }); }
       if (url.pathname.endsWith('/stream')) return route.fulfill({ headers, contentType: 'text/event-stream', body: 'data: {"backlog":[]}\n\n' });
       return route.fulfill({ headers, json: { ok: true, server: {}, agents: {}, users: [], records: [], cache: {} } });
     });
@@ -99,7 +111,8 @@ try {
     };
     await dashboard.getByRole('heading', { name: 'Daily activity', exact: true }).waitFor();
     await page.screenshot({ path: path.join(screenshots, `overview-${width}.png`), fullPage: true });
-    assert.equal(await tabs.getByRole('tab').count(), 5);
+    assert.equal(await tabs.getByRole('tab').count(), 6);
+    assert.deepEqual(reads, { geography: 0, users: 0, traffic: 0 }, 'Hidden analytics panels do not fetch data on initial overview');
     assert.equal(await tabs.getByRole('tab', { name: 'Overview', exact: true }).getAttribute('aria-selected'), 'true');
     assert.equal(await tabs.locator('[tabindex="0"]').count(), 1);
     await tabs.getByRole('tab', { name: 'Overview', exact: true }).focus();
@@ -144,6 +157,11 @@ try {
     assert.equal(await dashboard.getByLabel('Find a city', { exact: true }).inputValue(), 'oregon', 'City search survives tab changes');
     await dashboard.getByLabel('Find a city', { exact: true }).fill('');
     await selectTab('Overview');
+    const hiddenGeographyReads = reads.geography, hiddenUserReads = reads.users;
+    await dashboard.getByRole('button', { name: 'Refresh analytics', exact: true }).click();
+    await dashboard.getByRole('button', { name: 'Refresh analytics', exact: true }).waitFor();
+    assert.equal(reads.geography, hiddenGeographyReads, 'A hidden geography panel does not refetch during analytics refresh');
+    assert.equal(reads.users, hiddenUserReads, 'Hidden account records do not refetch during analytics refresh');
     assert.equal(await dashboard.getByLabel('Period', { exact:true }).inputValue(),'history');
     assert.equal(await dashboard.getByLabel('From (UTC)', { exact:true }).inputValue(),'2026-05-01');
     assert.equal(await dashboard.locator('.office-analytics-bar.unavailable').count(),102);
@@ -153,6 +171,24 @@ try {
     assert.ok((await dailyTable.locator('tbody tr').first().innerText()).includes('Unavailable'));
     assert.ok((await dailyTable.locator('tbody tr').filter({ has: page.getByText('2026-08-11', { exact:true }) }).innerText()).includes('7'));
     await dashboard.getByText('View daily data', { exact:true }).click();
+    assert.equal(reads.traffic, 0, 'Provider traffic is fetched only when opened');
+    await selectTab('Traffic history');
+    const traffic = dashboard.getByRole('tabpanel');
+    await traffic.getByRole('region', { name: 'Monthly traffic table', exact: true }).waitFor();
+    assert.ok(reads.traffic >= 1 && reads.traffic <= 2, 'Development StrictMode can abort and restart the first panel read');
+    const visibleTrafficReads = reads.traffic;
+    assert.equal(await dashboard.getByLabel('Platform', { exact: true }).isVisible(), false, 'First-party filters do not imply that they filter provider traffic');
+    assert.equal(await traffic.getByRole('region', { name: 'Monthly traffic table', exact: true }).locator('tbody tr').count(), 2);
+    assert.equal(await traffic.locator('.office-analytics-metrics > div').filter({ has: page.getByText('Unique people', { exact: true }) }).locator('dd').innerText(), 'Unavailable');
+    await traffic.getByLabel('Traffic month', { exact: true }).selectOption('2026-05');
+    assert.equal(await traffic.getByRole('region', { name: 'Daily traffic table', exact: true }).locator('tbody tr').count(), 1);
+    await selectTab('Overview');
+    await dashboard.getByRole('button', { name: 'Refresh analytics', exact: true }).click();
+    await dashboard.getByRole('button', { name: 'Refresh analytics', exact: true }).waitFor();
+    assert.equal(reads.traffic, visibleTrafficReads, 'Hidden provider traffic does not refetch with first-party analytics');
+    await selectTab('Traffic history');
+    assert.equal(await traffic.getByLabel('Traffic month', { exact: true }).inputValue(), '2026-05', 'Provider filters survive tab changes');
+    await selectTab('Overview');
     const accounts = dashboard.getByRole('region', { name:'Registered accounts',exact:true });
     await selectTab('Users');
     await accounts.getByText('Recovered May member', { exact:true }).waitFor();
@@ -209,8 +245,8 @@ try {
     await dashboard.getByRole('button', { name: 'Refresh analytics', exact: true }).waitFor();
     await held.fulfill({ json: report(), headers: { 'Access-Control-Allow-Origin': '*' } }).catch(() => {});
     await heldGeography.fulfill({ json: geographyReport(new URL(heldGeography.request().url()).searchParams), headers: { 'Access-Control-Allow-Origin': '*' } }).catch(() => {});
-    assert.equal(await metric('Page / screen views').innerText(), '0', 'Old credential request cannot restore stale data');
-    assert.equal(await metric('Tab opens').innerText(), '0');
+    assert.equal(await metric('Page / screen views').innerText(), 'Unavailable', 'Old credential request cannot restore stale data or fill unrecorded history with zero');
+    assert.equal(await metric('Tab opens').innerText(), 'Unavailable');
     assert.equal(await countryTable.locator('tfoot td').first().innerText(), '0');
     mode = 'unauthorized'; await dashboard.getByRole('button', { name: 'Refresh analytics', exact: true }).click();
     await page.getByLabel('Access token', { exact: true }).waitFor();
