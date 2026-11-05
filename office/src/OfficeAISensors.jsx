@@ -3,12 +3,14 @@ import { Camera, CameraOff, Mic, Paperclip, PhoneOff, Square, Volume2 } from 'lu
 import PipCharacter from './PipCharacter';
 import { createOfficeVoice } from './office-voice.mjs';
 import { ATTACHMENT_ACCEPT } from './office-attachments.mjs';
+import { shouldMirrorCameraPreview } from '../../shared/cameraPreview.mjs';
 
 const PHASE_LABELS = { idle: 'Voice off', starting: 'Starting microphone…', listening: 'Listening', speaking: 'Pip is speaking', working: 'Working on your request…' };
 
 const OfficeAISensors = forwardRef(function OfficeAISensors({ active = true, disabled = false, busy = false, compact = false, tone = 'friendly', onActivityChange = () => {}, onVoiceMessage, onFiles, welcomeBriefing, onWelcomeConsumed = () => {}, onActivate = () => {} }, ref) {
   const [voiceState, setVoiceState] = useState({ phase: 'idle', text: '' }), [error, setError] = useState('');
   const [camera, setCamera] = useState(false), [cameraBusy, setCameraBusy] = useState(false);
+  const [cameraMirrored, setCameraMirrored] = useState(false);
   const [callOpen, setCallOpen] = useState(false);
   const call = useRef(null), callStarted = useRef(false);
   const cameraFacing = useRef('user');
@@ -20,7 +22,7 @@ const OfficeAISensors = forwardRef(function OfficeAISensors({ active = true, dis
     cameraSequence.current++;
     stream.current?.getTracks().forEach(track => track.stop()); stream.current = null;
     if (video.current) video.current.srcObject = null;
-    if (mounted.current) { setCamera(false); setCameraBusy(false); }
+    if (mounted.current) { setCamera(false); setCameraBusy(false); setCameraMirrored(false); }
   }
   function snapshot() {
     const preview = video.current;
@@ -77,7 +79,7 @@ const OfficeAISensors = forwardRef(function OfficeAISensors({ active = true, dis
       if (!navigator.mediaDevices?.getUserMedia) throw Error('Camera sharing needs a secure browser with camera support.');
       const media = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: cameraFacing.current }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
       if (!mounted.current || current !== cameraSequence.current) { media.getTracks().forEach(track => track.stop()); return; }
-      stream.current = media; setCamera(true); setCameraBusy(false); setCallOpen(true);
+      stream.current = media; setCameraMirrored(shouldMirrorCameraPreview(media)); setCamera(true); setCameraBusy(false); setCallOpen(true);
       media.getVideoTracks().forEach(track => { track.onended = stopCamera; });
     } catch (cause) {
       if (mounted.current && current === cameraSequence.current) { stopCamera(); setError(cause.name === 'NotAllowedError' ? 'Camera access was denied. Allow camera access in your browser, then try again.' : cause.name === 'NotFoundError' ? 'No camera is available. Attach a photo instead.' : cause.message || 'The camera could not start.'); }
@@ -105,7 +107,7 @@ const OfficeAISensors = forwardRef(function OfficeAISensors({ active = true, dis
       <section ref={call} className="office-ai-call" role={compact ? 'region' : 'dialog'} aria-modal={compact ? undefined : true} aria-labelledby="office-ai-call-title" aria-describedby="office-ai-call-state" data-phase={voiceState.phase}>
         <header><span>UFICONNECT OFFICE</span><button type="button" onClick={endCall} aria-label="Close voice and camera call"><PhoneOff size={18} /></button></header>
         <div className="office-ai-call-stage"><div className="office-ai-call-avatar"><PipCharacter size={110} state={voiceState.phase === 'working' ? 'thinking' : voiceState.phase === 'starting' ? 'listening' : voiceState.phase} decorative /></div><h2 id="office-ai-call-title">Pip</h2><p id="office-ai-call-state" role="status">{PHASE_LABELS[voiceState.phase]}{voiceState.phase === 'listening' && voiceState.initial ? ' · 5 seconds to respond' : ''}</p><div className="office-ai-call-wave" aria-hidden="true">{Array.from({length:9}, (_, index) => <i key={index} style={{animationDelay:`${index * .1}s`}} />)}</div><p className="office-ai-call-hint">{voiceState.phase === 'working' ? 'Your request is running in Work. Keep this call open to hear the result.' : 'Show me what you mean, then tell me what you need.'}</p></div>
-        <div className="office-ai-self-preview"><video ref={video} autoPlay muted playsInline aria-label="Live camera preview" hidden={!camera} />{!camera && <div><CameraOff size={25} /><span>{cameraBusy ? 'Connecting camera…' : 'Camera off'}</span></div>}<span>You{camera ? ' · camera on' : ''}</span></div>
+        <div className="office-ai-self-preview"><video ref={video} autoPlay muted playsInline aria-label="Live camera preview" style={{ transform: cameraMirrored ? 'scaleX(-1)' : undefined }} hidden={!camera} />{!camera && <div><CameraOff size={25} /><span>{cameraBusy ? 'Connecting camera…' : 'Camera off'}</span></div>}<span>You{camera ? ' · camera on' : ''}</span></div>
         {voiceState.text && <p className="office-ai-call-transcript">{voiceState.text}</p>}
         {error && <p className="office-ai-error" role="alert">{error}</p>}
         <div className="office-ai-call-controls"><button type="button" onClick={voiceState.phase === 'idle' ? startVoice : muteVoice} aria-pressed={voiceState.phase !== 'idle'}><Mic size={19} />{voiceState.phase === 'idle' ? 'Unmute microphone' : 'Mute microphone'}</button><button type="button" onClick={toggleCamera} aria-pressed={camera}>{camera ? <Camera size={19} /> : <CameraOff size={19} />}{camera ? 'Turn camera off' : 'Turn camera on'}</button><button type="button" disabled={cameraBusy} onClick={switchCamera}><Camera size={19} />Switch camera</button><button type="button" className="office-ai-end-call" onClick={endCall}><PhoneOff size={19} />End call</button></div>

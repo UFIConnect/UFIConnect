@@ -48,7 +48,8 @@ const SnapComposer = forwardRef(function SnapComposer({ profile, onClose, onPubl
     if (returning && dialog.current?.open) dialog.current.querySelector('header button')?.focus({ preventScroll: true });
   }, [camera.active]);
   const mirrorSupported = camera.mode === 'photo' || typeof window !== 'undefined' && typeof window.HTMLCanvasElement?.prototype.captureStream === 'function';
-  const mirror = mirrorSupported && (mirrorOverride ?? camera.facing === 'user');
+  const previewMirrored = mirrorOverride ?? camera.mirrored;
+  const mirror = mirrorSupported && previewMirrored;
   useLockBodyScroll();
   useImperativeHandle(ref, () => ({ openCamera }));
   useEffect(() => {
@@ -130,7 +131,7 @@ const SnapComposer = forwardRef(function SnapComposer({ profile, onClose, onPubl
       </div>
       <div className="snap-capture-stage">
       <div className="snap-composer-media">
-        {camera.active ? <video ref={camera.videoRef} className="snap-camera-preview" autoPlay muted playsInline aria-label="Live camera preview" style={{ ...snapFilterStyle(filter), transform: mirror ? 'scaleX(-1)' : undefined, objectFit: fillCamera ? 'cover' : 'contain' }} />
+        {camera.active ? <video ref={camera.videoRef} className="snap-camera-preview" autoPlay muted playsInline aria-label="Live camera preview" style={{ ...snapFilterStyle(filter), transform: previewMirrored ? 'scaleX(-1)' : undefined, objectFit: fillCamera ? 'cover' : 'contain' }} />
           : preview ? preview.type === 'video' ? <video src={preview.url} controls playsInline preload="metadata" style={snapFilterStyle(filter)} />
           : <img src={preview.url} alt="Your snap preview" style={snapFilterStyle(filter)} />
           : <div className="snap-composer-placeholder"><Camera size={36} /><strong>Share a moment</strong><span>Take a photo, record a video, or choose from your gallery.</span></div>}

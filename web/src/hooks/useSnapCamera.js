@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { SNAP_MAX_VIDEO_BYTES, SNAP_MAX_VIDEO_SECONDS } from '../components/snapRanking.mjs';
 import { MEDIA_PERMISSION_CHANGED, readMediaPermissions, requestMediaPermission } from '../utils/mediaPermissions.mjs';
+import { shouldMirrorCameraPreview } from '../../../shared/cameraPreview.mjs';
 
 // Browser capture only. The native host uses its system camera file inputs.
 export function useSnapCamera(onCapture, onError, accountId) {
@@ -11,6 +12,7 @@ export function useSnapCamera(onCapture, onError, accountId) {
   const callbacks = useRef({ onCapture, onError });
   callbacks.current = { onCapture, onError };
   const [active, setActive] = useState(false), [ready, setReady] = useState(false);
+  const [mirrored, setMirrored] = useState(false);
   const [mode, setMode] = useState('photo'), [recording, setRecording] = useState(false), [seconds, setSeconds] = useState(0);
   const [facing, setFacing] = useState('environment'), [paused, setPaused] = useState(false), [muted, setMuted] = useState(false);
 
@@ -39,7 +41,7 @@ export function useSnapCamera(onCapture, onError, accountId) {
     stream.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     elapsed.current = null;
-    if (mounted.current) { setActive(false); setReady(false); setRecording(false); setPaused(false); setMuted(false); setSeconds(0); }
+    if (mounted.current) { setActive(false); setReady(false); setMirrored(false); setRecording(false); setPaused(false); setMuted(false); setSeconds(0); }
   }
   async function open(nextMode = 'photo', facingMode = 'environment') {
     stop();
@@ -60,6 +62,7 @@ export function useSnapCamera(onCapture, onError, accountId) {
       if (!mounted.current || request.current !== id) { nextStream.getTracks().forEach(track => track.stop()); return; }
       pending.current = false;
       stream.current = nextStream;
+      setMirrored(shouldMirrorCameraPreview(nextStream));
       setFacing(nextStream.getVideoTracks()[0]?.getSettings?.().facingMode || facingMode);
       nextStream.getTracks().forEach(track => track.addEventListener('ended', () => {
         if (!mounted.current || request.current !== id) return;
@@ -172,5 +175,5 @@ export function useSnapCamera(onCapture, onError, accountId) {
     window.addEventListener('storage', changed);
     return () => { mounted.current = false; stop(); document.removeEventListener('visibilitychange', pause); window.removeEventListener(MEDIA_PERMISSION_CHANGED, changed); window.removeEventListener('storage', changed); };
   }, [accountId]);
-  return { videoRef, active, ready, mode, facing, recording, paused, muted, seconds, open, stop, photo, record, stopRecording, pauseRecording, toggleMicrophone };
+  return { videoRef, active, ready, mirrored, mode, facing, recording, paused, muted, seconds, open, stop, photo, record, stopRecording, pauseRecording, toggleMicrophone };
 }
