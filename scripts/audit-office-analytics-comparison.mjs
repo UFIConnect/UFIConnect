@@ -15,7 +15,7 @@ const comparison = { available: true, generatedAt: '2026-06-02T12:00:00Z', range
   firstParty: { status: 'ready', firstRecordedDay: '2026-05-31', scope: 'Anonymous recorded opens.' },
   registrations: { status: 'ready', firstRecordedDay: '2026-06-01', scope: 'Current and recovered registrations.' },
 }, daily: [
-  { day: '2026-05-30', edgeRequests: 1000, htmlPageViews: 500, webPageOpens: null, mobileScreenOpens: null, tabOpens: null, diagnostics: null, registrations: null },
+  { day: '2026-05-30', edgeRequests: 3639224, htmlPageViews: 998748, webPageOpens: null, mobileScreenOpens: null, tabOpens: null, diagnostics: null, registrations: null },
   { day: '2026-05-31', edgeRequests: 100, htmlPageViews: 50, webPageOpens: 10, mobileScreenOpens: 3, tabOpens: 2, diagnostics: 0, registrations: null },
   { day: '2026-06-01', edgeRequests: 300, htmlPageViews: 120, webPageOpens: 0, mobileScreenOpens: 0, tabOpens: 0, diagnostics: 2, registrations: 1 },
 ] };
@@ -40,19 +40,57 @@ try {
   await server.listen(); browser = await chromium.launch(process.platform === 'win32' ? { channel: 'msedge' } : {});
   for (const width of [1440, 768, 390, 320]) {
     const page = await browser.newPage({ viewport: { width, height: 1000 } }); page.setDefaultTimeout(15000);
-    const errors = [], reads = { comparison: 0, requests: 0, pageviews: 0 }; let mode = 'normal';
+    const errors = [], reads = { comparison: 0, requests: 0, pageviews: 0 }; let mode = 'normal', overviewMode = 'normal';
     page.on('pageerror', error => errors.push(error.name));
     await page.route(`${API}/**`, route => {
       const endpoint = new URL(route.request().url()).pathname, headers = { 'Access-Control-Allow-Origin': '*' };
       if (endpoint.endsWith('/comparison')) { reads.comparison++; return route.fulfill({ headers, status: mode === 'error' ? 503 : mode === 'unauthorized' ? 401 : 200, json: mode === 'error' ? { error: 'Comparison fixture unavailable' } : comparison }); }
       if (endpoint.endsWith('/requests')) { reads.requests++; return route.fulfill({ headers, json: requests }); }
-      if (endpoint.endsWith('/pageviews')) { reads.pageviews++; return route.fulfill({ headers, json: firstParty }); }
+      if (endpoint.endsWith('/overview')) {
+        reads.pageviews++; return route.fulfill({ headers, json: { available: true, mode: 'overview', range: firstParty.range,
+          activity: overviewMode === 'activity-failure' ? { available: false, error: 'Tracked activity fixture unavailable.' } : firstParty,
+          traffic: overviewMode === 'traffic-failure' ? { available: false, error: 'Traffic fixture unavailable.' } : { available: true, status: overviewMode === 'stale' ? 'stale' : 'cached',
+            generatedAt: '2026-06-02T12:00:00Z', coverage: { firstRecordedDay: '2026-05-30' },
+            daily: comparison.daily.map(row => ({ day: row.day, pageViews: row.htmlPageViews, requests: row.edgeRequests })) } } });
+      }
       return route.fulfill({ headers, json: { available: true, daily: [], monthly: [], totals: {}, coverage: {}, countries: [], cities: [] } });
     });
     await page.goto(`${server.resolvedUrls.local[0]}__analytics-comparison-audit`, { waitUntil: 'domcontentloaded' });
     const dashboard = page.locator('.office-analytics'), tabs = dashboard.getByRole('tablist');
     await dashboard.getByRole('heading', { name: 'Daily activity', exact: true }).waitFor();
     assert.equal(await tabs.getByRole('tab').count(), 8); assert.equal(reads.comparison, 0); assert.equal(reads.requests, 0);
+    const overviewMetric = label => dashboard.locator('#office-analytics-panel-overview .office-analytics-metrics > div').filter({ has: page.getByText(label, { exact: true }) }).locator('dd');
+    assert.equal(await overviewMetric('HTML page views').innerText(), '998,918');
+    assert.equal(await overviewMetric('Edge requests').innerText(), '3,639,624');
+    assert.equal(await overviewMetric('Tracked website opens').innerText(), '1');
+    assert.equal(await overviewMetric('Tracked app screens').innerText(), 'Unavailable');
+    assert.equal(await dashboard.getByLabel('Platform', { exact: true }).isVisible(), false);
+    const overviewReads = reads.pageviews;
+    await dashboard.getByLabel('From (UTC)', { exact: true }).fill('2026-05-30');
+    await dashboard.getByLabel('To (UTC)', { exact: true }).fill('2026-05-30');
+    assert.equal(await overviewMetric('HTML page views').innerText(), '998,748');
+    assert.equal(await overviewMetric('Tracked website opens').innerText(), 'Unavailable');
+    await dashboard.getByLabel('Period', { exact: true }).selectOption('1');
+    assert.equal(await overviewMetric('HTML page views').innerText(), 'Unavailable');
+    assert.equal(await overviewMetric('Tracked website opens').innerText(), '0');
+    await dashboard.getByLabel('Period', { exact: true }).selectOption('history');
+    await dashboard.getByLabel('Daily trend', { exact: true }).selectOption('webOpens');
+    assert.equal(reads.pageviews, overviewReads, 'The main traffic date filters and source trend use one shared snapshot');
+    await dashboard.getByLabel('Daily trend', { exact: true }).selectOption('htmlViews');
+    await page.screenshot({ path: path.join(output, `unified-overview-${width}.png`), fullPage: true });
+    overviewMode = 'activity-failure'; await dashboard.getByRole('button', { name: 'Refresh analytics', exact: true }).click();
+    await dashboard.getByText('Tracked activity fixture unavailable.', { exact: true }).waitFor();
+    assert.equal(await overviewMetric('HTML page views').innerText(), '998,918');
+    assert.equal(await overviewMetric('Tracked website opens').innerText(), 'Unavailable');
+    overviewMode = 'traffic-failure'; await dashboard.getByRole('button', { name: 'Refresh analytics', exact: true }).click();
+    await dashboard.getByText('Traffic fixture unavailable.', { exact: false }).waitFor();
+    assert.equal(await overviewMetric('HTML page views').innerText(), 'Unavailable');
+    assert.equal(await overviewMetric('Tracked website opens').innerText(), '1');
+    overviewMode = 'stale'; await dashboard.getByRole('button', { name: 'Refresh analytics', exact: true }).click();
+    await dashboard.getByText('Provider traffic needs a fresh check', { exact: true }).waitFor();
+    assert.equal(await overviewMetric('HTML page views').innerText(), '998,918');
+    overviewMode = 'normal'; await dashboard.getByRole('button', { name: 'Refresh analytics', exact: true }).click();
+    await dashboard.getByText('Analytics sources loaded', { exact: true }).waitFor();
     await tabs.getByRole('tab', { name: 'Compare', exact: true }).click();
     const panel = dashboard.getByRole('tabpanel'), table = panel.getByRole('region', { name: 'Traffic and activity comparison table', exact: true });
     await table.waitFor();
@@ -66,7 +104,7 @@ try {
     await panel.getByLabel('Comparison to (UTC)', { exact: true }).fill('2026-05-30');
     assert.equal(await metric('Edge requests').innerText(), 'Unavailable');
     await panel.getByRole('checkbox').uncheck();
-    assert.equal(await metric('Edge requests').innerText(), '1,000'); assert.equal(await metric('Website page opens').innerText(), 'Unavailable\n0 of 1 days recorded');
+    assert.equal(await metric('Edge requests').innerText(), '3,639,224'); assert.equal(await metric('Website page opens').innerText(), 'Unavailable\n0 of 1 days recorded');
     await panel.getByRole('button', { name: 'All retained dates', exact: true }).click();
     await panel.getByRole('checkbox').check(); await panel.getByLabel('Compare by', { exact: true }).selectOption('day');
     assert.equal(await table.locator('tbody tr').count(), 2);

@@ -344,7 +344,7 @@ test('aggregate batching retries safely, bounds counts, and preserves May onward
   await assert.rejects(pg.query("INSERT INTO analytics_daily_counts VALUES (CURRENT_DATE,'private-id','page_view','',1)"));
 });
 
-test('service metrics contain bounded status/duration categories and ignore metrics, health and VPN traffic', () => {
+test('service metrics contain bounded status/duration categories and ignore metrics, health and VPN traffic', async () => {
   let clock = 0;
   const metrics = analytics.createAggregateAnalytics({ db: { isConnected: () => false }, now: () => clock, schedule() {} });
   for (const path of ['/analytics/pageview', '/analytics/performance', '/office/analytics/pageviews', '/health', '/readyz', '/vpn', '/vpn/config', '/vpn/devices', '/vpn/devices/private-device-id', '/vpn/gateways/private-gateway/desired']) {
@@ -353,7 +353,7 @@ test('service metrics contain bounded status/duration categories and ignore metr
   }
   const res = new EventEmitter(); res.statusCode = 500;
   metrics.serviceMiddleware({ path: '/messages/private' }, res, () => {}); clock = 999999; res.emit('finish');
-  const result = response(); metrics.report({}, result);
+  const result = response(); await metrics.report({}, result);
   assert.equal(result.body.service.total, 1);
   assert.deepEqual(result.body.service.responses, [{ statusClass: '5xx', durationBucket: 'over_10s', count: 1 }]);
   assert.doesNotMatch(JSON.stringify(result.body), /messages|private/);

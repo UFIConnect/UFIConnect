@@ -61,3 +61,19 @@ test('request service and date filtering uses durable daily rows and keeps unobs
   assert.equal(selectRequestDays(requests, { end: '2026-06-01' }).totals.requests, 10);
   assert.equal(selectRequestDays(requests, { end: '2026-05-31' }).totals.requests, null);
 });
+
+test('recovered request totals retain unknown timings and do not absorb overlapping provider totals', () => {
+  const requests = { daily: [
+    { day: '2026-10-22', requests: 100, errors: 2, clientErrors: 4, slowRequests: null, aborted: null },
+    { day: '2026-11-05', requests: 10, errors: 0, clientErrors: 1, slowRequests: 1, aborted: 0 },
+  ], providerHistory: { daily: [{ day: '2026-10-22', requests: 120, errors: 3, clientErrors: 5 }] } };
+  const historic = selectRequestDays(requests, { end: '2026-10-22' });
+  assert.equal(historic.totals.requests, 100);
+  assert.equal(historic.totals.slowRequests, null);
+  assert.equal(historic.totals.aborted, null);
+  const combined = selectRequestDays(requests);
+  assert.equal(combined.totals.requests, 110);
+  assert.equal(combined.totals.slowRequests, 1);
+  assert.deepEqual(combined.totals.coverage.slowRequests, { observedDays: 1, missingDays: 1 });
+  assert.equal(selectRequestDays(requests.providerHistory).totals.requests, 120);
+});

@@ -3,6 +3,22 @@
 Office Analytics includes Traffic history, Compare, API requests, page/tab
 activity, geography, diagnostics and member registrations.
 
+## Overview
+
+`GET /office/analytics/overview` returns two independent Office-authenticated
+snapshots: `activity` contains the compact, verified app report and `traffic`
+contains retained Cloudflare history. Both share a UTC selection range. Source
+snapshots keep their own freshness, verification and availability; either can
+remain useful when the other is unavailable. Concurrent overview reads share
+work without adding another cache that could hide acknowledged app events.
+
+Overview leads with historical HTML views and edge requests. Tracked website
+opens, app screens, tabs and diagnostics remain separate. The date filter and
+trend selector use the same loaded snapshots. App categories, platforms and
+cities describe tracked navigation; unclassified provider traffic is not
+assigned to those dimensions. The original compact pageviews API remains
+available for existing clients.
+
 ## Compare
 
 `GET /office/analytics/comparison` is Office authenticated. It combines compact
@@ -30,12 +46,30 @@ writes. A bounded buffer flushes every 30 seconds; process-instance checkpoints
 and aggregate increments commit atomically so retrying an uncertain database
 acknowledgement cannot duplicate counts.
 
-Collection begins with this release. Historical requests cannot be reconstructed
-from app opens or Cloudflare totals. Unflushed requests may be lost on a process
-restart; pending, dropped, persistence and coverage states remain explicit.
-Latency measures server time until headers, not download time or a percentile.
-Bodies, raw URLs, query strings, IP addresses and account identifiers are not
-retained. Private Vault, VPN and authorization callback families are excluded.
+Live collection begins November 5, 2026 UTC. Earlier retained public HTTP logs
+can be recovered as anonymous daily family/status counts. Recovery ends before
+that UTC day so imports cannot overlap live collection. Retention boundaries,
+retrieved windows and partial days are reported by service. Missing historical
+header latency and early-disconnect outcomes stay null. Full-response timing
+from another provider is not substituted for time to headers.
+
+`providerHistory` separately exposes retained Render public HTTP totals by day,
+service and status. It includes all routes observed at Render ingress and
+excludes private-network service calls. These observations overlap classified
+logs and are never added to them or to Cloudflare traffic. Provider daily
+bucket timestamps identify the end of their preceding UTC day; recovery aligns
+them to that day before import.
+
+Imports accept only validated anonymous snapshots. Each source/service import
+uses a transaction and lock, replaces its exact snapshot, preserves previously
+retained coverage, and can be repeated without adding a second copy. No raw
+request paths, query strings, IP addresses or account identifiers are retained.
+Classified logs and live counters exclude private Vault, VPN and authorization
+callback families; platform totals retain their separate network scope.
+
+Unflushed live requests may be lost on a process restart; pending, dropped,
+persistence and coverage states remain explicit. Latency measures server time
+until headers, not download time or a percentile.
 
 Office separates selected-date daily totals from clearly labeled all-retained
 family/status/latency breakdowns. These metrics describe incoming requests;

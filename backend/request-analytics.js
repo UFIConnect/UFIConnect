@@ -1,6 +1,7 @@
 'use strict';
 const { randomUUID } = require('node:crypto');
 const { performance } = require('node:perf_hooks');
+const { readRequestHistoryReport } = require('./request-history-report');
 const START = '2026-05-01', DAY = 86400000;
 const FAMILIES = ['health','analytics','office','feed','auth','profile','community','messaging','connections','careers','billing','travel','media','other'];
 const STATUSES = ['1xx','2xx','3xx','4xx','5xx','aborted'];
@@ -65,29 +66,6 @@ function endpointFamily(path) {
   return 'other';
 }
 const bucket = ms => ms < 100 ? LATENCIES[0] : ms < 500 ? LATENCIES[1] : ms < 2000 ? LATENCIES[2] : ms < 10000 ? LATENCIES[3] : LATENCIES[4];
-const SUMMARIES=`COALESCE(SUM(request_count),0)::bigint AS requests,
-  COALESCE(SUM(request_count) FILTER(WHERE status_class='5xx'),0)::bigint AS errors,
-  COALESCE(SUM(request_count) FILTER(WHERE status_class='4xx'),0)::bigint AS "clientErrors",
-  COALESCE(SUM(request_count) FILTER(WHERE latency_bucket IN ('2_10s','over_10s')),0)::bigint AS "slowRequests",
-  COALESCE(SUM(request_count) FILTER(WHERE status_class='aborted'),0)::bigint AS aborted,
-  COALESCE(SUM(duration_ms),0)::bigint AS "durationMs"`;
-const grouped=(columns,group,order)=>`COALESCE((SELECT jsonb_agg(to_jsonb(summary) ORDER BY ${order}) FROM
-  (SELECT ${columns},${SUMMARIES} FROM matching GROUP BY ${group}) summary),'[]'::jsonb)`;
-const REPORT_SQL=`WITH matching AS MATERIALIZED (
-  SELECT * FROM request_analytics_daily_counts WHERE day >= $1::date AND day <= $2::date
-) SELECT (SELECT to_jsonb(summary) FROM (SELECT ${SUMMARIES} FROM matching) summary) AS totals,
-  ${grouped('day::text AS day','day','day')} AS daily,
-  ${grouped('day::text AS day,role','day,role','day,role')} AS daily_roles,
-  ${grouped('role','role','role')} AS by_role,
-  ${grouped('family','family','family')} AS by_family,
-  COALESCE((SELECT jsonb_agg(to_jsonb(summary) ORDER BY "statusClass") FROM
-    (SELECT status_class AS "statusClass",SUM(request_count)::bigint AS requests FROM matching GROUP BY status_class) summary),'[]'::jsonb) AS by_status,
-  COALESCE((SELECT jsonb_agg(to_jsonb(summary) ORDER BY "latencyBucket") FROM
-    (SELECT latency_bucket AS "latencyBucket",SUM(request_count)::bigint AS requests FROM matching GROUP BY latency_bucket) summary),'[]'::jsonb) AS by_latency`;
-function numericRow(row,identity=[]){
-  const result={};for(const[key,value]of Object.entries(row)){if(identity.includes(key))result[key]=value;
-    else{const count=Number(value);if(!Number.isSafeInteger(count)||count<0)throw Error('Invalid aggregate count');result[key]=count;}}return result;
-}
 function createRequestAnalytics({ db, role = 'api', now = Date.now, monotonic = () => performance.now(), schedule = setInterval,
   maxPendingKeys = 4096, maxPendingEvents = 1000000 } = {}) {
   if (!['api','pipeline'].includes(role)) throw Error('Invalid telemetry role');
@@ -140,18 +118,11 @@ function createRequestAnalytics({ db, role = 'api', now = Date.now, monotonic = 
     if(reportPending?.key===key)return reportPending.promise;
     const operation={key,revision};
     operation.promise=(async()=>{
-      const {rows:[snapshot]}=await db.query(REPORT_SQL,[from,to]);
-      const totals=numericRow(snapshot.totals),daily=snapshot.daily.map(row=>numericRow(row,['day']));
-      const observedDays=new Set(daily.map(row=>row.day));
-      const missingDays=[];for(let day=Date.parse(from);day<=Date.parse(to);day+=DAY){const value=new Date(day).toISOString().slice(0,10);if(!observedDays.has(value))missingDays.push(value);}
+      const snapshot=await readRequestHistoryReport(db,{from,to,today:new Date(now()).toISOString().slice(0,10)});
       const result={available:true,source:'durable-incoming-http',range:{from,to,timezone:'UTC'},generatedAt:new Date(now()).toISOString(),
-        totals,daily,dailyByRole:snapshot.daily_roles.map(row=>numericRow(row,['day','role'])),byRole:snapshot.by_role.map(row=>numericRow(row,['role'])),
-        byFamily:snapshot.by_family.map(row=>numericRow(row,['family'])),byStatus:snapshot.by_status.map(row=>numericRow(row,['statusClass'])),
-        byLatency:snapshot.by_latency.map(row=>numericRow(row,['latencyBucket'])),
-        coverage:{firstRecordedDay:daily[0]?.day||null,lastRecordedDay:daily.at(-1)?.day||null,observedDays:daily.length,missingDays,
-          note:'Collection begins with this release. Absent days are unobserved, not historical zero requests. The first and current collection days may be partial.'},
-        definition:'One incoming request is counted when response headers are sent, or as aborted if disconnected first. API and pipeline requests include bots, probes and Office polling, not unique people.',
-        measurement:'Server time to response headers; excludes client transit and response streaming. Latency buckets are not exact percentiles.',
+        ...snapshot,
+        definition:'Classified HTTP responses from live instrumentation and retained public request logs. Private endpoint families are excluded. Requests include automated traffic and Office polling, not unique people.',
+        measurement:'Live server time to response headers excludes client transit and streaming. Provider full-response timing is not mixed into header latency; historical latency and abort outcomes remain unknown.',
         exclusions:['Vault requests','VPN requests','OAuth callbacks','Device authorization'],bytes:{available:false,reason:'Bodies and raw headers are not inspected or retained.'}};
       if(reportPending===operation&&operation.revision===revision)cache={key,value:result,at:now()};return result;
     })(); reportPending=operation;

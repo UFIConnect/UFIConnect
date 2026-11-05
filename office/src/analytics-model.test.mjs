@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { filterAnalytics, filterDiagnostics, reportDays } from './analytics-model.mjs';
+import { filterAnalytics, filterDiagnostics, reportDays, normalizeAnalyticsOverview, filterAnalyticsOverview } from './analytics-model.mjs';
 const report = {
   daily: [{ day: '2026-10-07' }, { day: '2026-10-08' }],
   categories: [
@@ -62,4 +62,56 @@ test('diagnostic breakdowns respect the same date, platform, category and view f
   assert.equal(filterDiagnostics(diagnosticReport, { category: 'app_feed' })[0].count, 2);
   assert.equal(filterDiagnostics(diagnosticReport, { start: '2026-10-09' }).length, 0);
   assert.equal(filterDiagnostics(report), null);
+});
+
+const overview = { available: true, mode: 'overview', range: { from: '2026-05-01', to: '2026-10-08' }, generatedAt: '2026-10-08T12:00:00Z',
+  activity: { ...report, available: true, mode: 'aggregate', range: { from: '2026-05-01', to: '2026-10-08' }, history: { firstRecordedDay: '2026-10-07' }, verification: { status: 'verified' } },
+  traffic: { available: true, status: 'cached', coverage: { firstRecordedDay: '2026-05-25' }, daily: [
+    { day: '2026-05-25', pageViews: 20000, requests: 50000 }, { day: '2026-05-26', pageViews: 0, requests: 0 },
+    { day: '2026-10-08', pageViews: 15000, requests: 40000 },
+  ] } };
+
+test('unified overview applies the same UTC range to traffic and tracked metrics without summing distinct sources', () => {
+  const normalized = normalizeAnalyticsOverview(overview), all = filterAnalyticsOverview(normalized);
+  assert.equal(all.metrics.htmlViews.total, 35000); assert.equal(all.metrics.edgeRequests.total, 90000);
+  assert.equal(all.metrics.webOpens.total, 10); assert.equal(all.metrics.screenOpens.total, 4); assert.equal(all.metrics.tabs.total, 3);
+  assert.equal(all.metrics.htmlViews.observedDays, 3); assert.equal(all.selectedDays, 161);
+  const may = filterAnalyticsOverview(normalized, { start: '2026-05-01', end: '2026-05-31' });
+  assert.equal(may.metrics.htmlViews.total, 20000); assert.equal(may.metrics.webOpens.total, null);
+  const today = filterAnalyticsOverview(normalized, { start: '2026-10-08', end: '2026-10-08' });
+  assert.equal(today.metrics.htmlViews.total, 15000); assert.equal(today.metrics.webOpens.total, 2);
+  assert.equal(today.metrics.screenOpens.total, 4); assert.equal(today.metrics.tabs.total, 3);
+});
+
+test('missing traffic dates stay unknown while an explicitly recorded zero stays zero', () => {
+  const normalized = normalizeAnalyticsOverview(overview);
+  const zero = filterAnalyticsOverview(normalized, { start: '2026-05-26', end: '2026-05-26' });
+  assert.equal(zero.metrics.htmlViews.total, 0); assert.equal(zero.metrics.htmlViews.observedDays, 1);
+  const absent = filterAnalyticsOverview(normalized, { start: '2026-05-27', end: '2026-05-27' });
+  assert.equal(absent.metrics.htmlViews.total, null); assert.equal(absent.metrics.htmlViews.observedDays, 0);
+  assert.equal(absent.daily[0].htmlViews, null);
+});
+
+test('traffic-only partial success has no invented activity counts or database verification', () => {
+  const normalized = normalizeAnalyticsOverview({ ...overview, activity: { available: false, error: 'Activity unavailable.' } });
+  assert.equal(normalized.activityAvailable, false); assert.equal(normalized.verification, undefined);
+  const totals = filterAnalyticsOverview(normalized).metrics;
+  assert.equal(totals.htmlViews.total, 35000);
+  for (const key of ['webOpens', 'screenOpens', 'tabs', 'diagnostics']) assert.equal(totals[key].total, null);
+});
+
+test('activity-only partial success preserves tracked counts and never substitutes them for provider traffic', () => {
+  const normalized = normalizeAnalyticsOverview({ ...overview, traffic: { available: false, error: 'Traffic unavailable.' } });
+  const totals = filterAnalyticsOverview(normalized).metrics;
+  assert.equal(totals.htmlViews.total, null); assert.equal(totals.edgeRequests.total, null); assert.equal(totals.webOpens.total, 10);
+  assert.equal(normalized.verification.status, 'verified');
+  assert.throws(() => normalizeAnalyticsOverview({ ...overview, activity: { available: false }, traffic: { available: false } }));
+});
+
+test('a never-recorded mobile metric stays unavailable and category totals receive none of the traffic history', () => {
+  const activity = { ...overview.activity, categories: overview.activity.categories.filter(row => row.viewType !== 'screen') };
+  const normalized = normalizeAnalyticsOverview({ ...overview, activity });
+  assert.equal(filterAnalyticsOverview(normalized).metrics.screenOpens.total, null);
+  assert.equal(filterAnalytics(normalized, { category: 'home' }).views, 10);
+  assert.equal(filterAnalytics(normalized, { start: '2026-05-01', end: '2026-05-31' }).views, 0);
 });
