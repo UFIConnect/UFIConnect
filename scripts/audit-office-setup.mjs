@@ -132,7 +132,7 @@ try {
   await page.getByRole('alert').filter({hasText:'Deployment configuration is missing.'}).waitFor();
   const nav=page.getByRole('navigation',{name:'Office sections'});
   await nav.getByRole('button',{name:'Overview',exact:true}).click();
-  assert.equal(await nav.getByRole('button').count(),9,'Eight primary destinations and More tools keep navigation compact');
+  assert.equal(await nav.getByRole('button').count(),10,'Nine primary destinations and More tools keep navigation compact');
   assert.equal(await nav.locator('.office-nav-primary button[data-office-view="office-ai"]').count(),1,'The assistant remains a primary destination');
   const moreTools=nav.getByRole('button',{name:'More tools',exact:true});
   if(width<=760){
@@ -145,7 +145,7 @@ try {
   }
   await moreTools.click();
   assert.equal(await moreTools.getAttribute('aria-expanded'),'true');
-  assert.equal(await nav.getByRole('button').count(),21,'Twenty Office destinations and More tools remain available');
+  assert.equal(await nav.getByRole('button').count(),22,'Twenty-one Office destinations and More tools remain available');
   assert.equal(await nav.getByRole('button',{name:'Reports',exact:true}).count(),1,'Reports remains accessible from More tools');
   await nav.getByRole('button',{name:'Agents',exact:true}).click();
   await page.getByRole('heading',{name:'Agent Control',exact:true}).waitFor();
