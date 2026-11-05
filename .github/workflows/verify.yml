@@ -7,8 +7,26 @@ on:
       - main
 permissions:
   contents: read
+  actions: read
 jobs:
+  release_evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      reuse: ${{ steps.evidence.outputs.reuse }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - id: evidence
+        name: Check existing exact-source verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/verify-release-reuse.mjs
   verify_checks:
+    needs: release_evidence
+    if: needs.release_evidence.outputs.reuse != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     strategy:
@@ -35,6 +53,8 @@ jobs:
       - run: npm ci --prefix web --no-audit --no-fund
       - run: npm ci --prefix office --no-audit --no-fund
       - run: node scripts/check-js.cjs
+        if: matrix.group == 'core'
+      - run: node --test scripts/verify-release-reuse.test.mjs
         if: matrix.group == 'core'
       - run: node --test web/src/utils/feedSourceRoute.test.mjs
         if: matrix.group == 'core'
@@ -65,8 +85,11 @@ jobs:
       - run: npm audit --prefix office --audit-level=high
         if: matrix.group == 'core'
       - run: npm run build --prefix web
+        if: matrix.group != 'backend'
       - run: npm run build --prefix office
+        if: matrix.group != 'backend'
       - run: npx playwright install --with-deps chromium
+        if: matrix.group != 'backend'
       - run: node --test infra/office-ai-worker/index.test.mjs infra/office-ai-site/index.test.mjs
         if: matrix.group == 'office'
       - run: node --test scripts/office-command-city.test.mjs
@@ -207,12 +230,27 @@ jobs:
           include-hidden-files: true
   verify:
     runs-on: ubuntu-latest
-    needs: verify_checks
+    needs: [release_evidence, verify_checks, native]
     if: ${{ always() }}
     steps:
       - name: Require every verification group to pass
-        run: test "${{ needs.verify_checks.result }}" = "success"
+        env:
+          EVIDENCE_RESULT: ${{ needs.release_evidence.result }}
+          REUSE: ${{ needs.release_evidence.outputs.reuse }}
+          CHECKS_RESULT: ${{ needs.verify_checks.result }}
+          NATIVE_RESULT: ${{ needs.native.result }}
+        run: |
+          test "$EVIDENCE_RESULT" = "success"
+          if [[ "$REUSE" == "true" ]]; then
+            test "$CHECKS_RESULT" = "skipped"
+            test "$NATIVE_RESULT" = "skipped"
+          else
+            test "$CHECKS_RESULT" = "success"
+            test "$NATIVE_RESULT" = "success"
+          fi
   native:
+    needs: release_evidence
+    if: needs.release_evidence.outputs.reuse != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
