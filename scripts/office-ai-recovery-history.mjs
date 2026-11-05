@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-export async function captureRecoveryHistory(env, outputDirectory) {
+export async function captureRecoveryHistory(env, outputDirectory, { fetcher = fetch, signal } = {}) {
   const repository =
     (env.AUTOFIX_GITHUB_OWNER || 'UFIConnect') + '/' + (env.AUTOFIX_GITHUB_REPO || 'UFIConnect');
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw Error('Invalid repository identity');
@@ -17,27 +17,41 @@ export async function captureRecoveryHistory(env, outputDirectory) {
   if (Object.values(roles).some((id) => !/^srv-[a-z0-9]+$/.test(id || '')))
     throw Error('Configure all four Render service identifiers.');
   async function read(origin, route, key) {
-    const response = await fetch(origin + route, {
+    const response = await fetcher(origin + route, {
       method: 'GET',
       redirect: 'error',
       headers: { Accept: 'application/json', ...(key ? { Authorization: 'Bearer ' + key } : {}) },
-      signal: AbortSignal.timeout(30000),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000),
     });
     if (!response.ok) throw Error('Recovery evidence read failed HTTP' + response.status);
     return response.json();
   }
   const render = (route) => read('https://api.render.com/v1', route, env.RENDER_API_KEY),
     github = (route) => read('https://api.github.com/repos/' + repository, route, token);
+  async function deploymentHistory(id) {
+    const deploys = [], seen = new Set();
+    let cursor;
+    for (;;) {
+      signal?.throwIfAborted();
+      const page = await render('/services/' + id + '/deploys?limit=100' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : ''));
+      if (!Array.isArray(page)) throw Error('Invalid deployment history response');
+      deploys.push(...page.map((item) => item.deploy || item));
+      if (page.length < 100) return { deploys, complete: true };
+      const next = page.at(-1)?.cursor;
+      if (typeof next !== 'string' || !next) return { deploys, complete: false };
+      if (seen.has(next)) throw Error('Deployment history returned a repeated pagination cursor');
+      seen.add(next); cursor = next;
+    }
+  }
   const services = await Promise.all(
-    Object.entries(roles).map(async ([role, id]) => ({
-      role,
-      id,
-      deploys: (await render('/services/' + id + '/deploys?limit=100'))
-        .map((x) => x.deploy || x)
+    Object.entries(roles).map(async ([role, id]) => {
+      const history = await deploymentHistory(id);
+      return { role, id, historyComplete: history.complete,
+      deploys: history.deploys
         .filter(
           (d) => ['live', 'deactivated'].includes(d.status) && /^[a-f0-9]{40}$/.test(d.commit?.id || ''),
         ),
-    })),
+    };}),
   );
   const candidates = [...new Set(services[0].deploys.map((d) => d.commit.id))]
     .filter((sha) => services.every((s) => s.deploys.some((d) => d.commit.id === sha)))
@@ -89,10 +103,9 @@ export async function captureRecoveryHistory(env, outputDirectory) {
       rebuildDeployBody: { commitId: sha, clearCache: 'do_not_clear' },
       productionRestoreAttempted: false,
     });
-    if (points.length === 10) break;
   }
-  if (points.length !== 10)
-    throw Error('Only ' + points.length + ' complete verified historical recovery points were found');
+  if (!points.length)
+    throw Error('No complete verified historical recovery points were found');
   const manifest = {
     version: 1,
     createdAt: new Date().toISOString(),
@@ -100,6 +113,8 @@ export async function captureRecoveryHistory(env, outputDirectory) {
       'Exact immutable source and successful verification/deployment receipts across API,pipeline,Office,web. Rebuild recovery, not proof of retained fast-rollback artifacts or database restoration.',
     points,
     examined,
+    retentionCapacity: 'unlimited',
+    deploymentHistoryCoverage: services.map((service) => ({role:service.role,returnedDeployments:service.deploys.length,providerPaginationComplete:service.historyComplete})),
     providerArtifactRetentionVerified: false,
     liveRollbackExecuted: false,
   };

@@ -73,13 +73,19 @@ function createOfficeAIRepository({ env = process.env, fetcher = globalThis.fetc
     return value;
   }
   async function concurrent(items, worker) {
-    const results = [];
-    for (let start = 0; start < items.length; start += 4) {
-      const batch = await Promise.allSettled(items.slice(start, start + 4).map(worker));
-      const failed = batch.find(item => item.status === 'rejected');
-      if (failed) throw failed.reason;
-      results.push(...batch.map(item => item.value));
+    const results = new Array(items.length), errors = [];
+    let cursor = 0;
+    // Keep each free lane busy instead of waiting for the slowest request in
+    // a four-item batch. Preserve source order and settle every started call.
+    async function lane() {
+      while (!errors.length && cursor < items.length) {
+        const index = cursor++;
+        try { results[index] = await worker(items[index]); }
+        catch (error) { errors.push({ index, error }); }
+      }
     }
+    await Promise.all(Array.from({ length: Math.min(4, items.length) }, lane));
+    if (errors.length) throw errors.sort((a, b) => a.index - b.index)[0].error;
     return results;
   }
   const redact = value => {
@@ -163,7 +169,10 @@ function createOfficeAIRepository({ env = process.env, fetcher = globalThis.fetc
       sourceCache(signal);
       if (credential !== token()) throw fail(409, 'The repository connection changed. Retry this read with the current connection.');
       if (redact(content) !== content || credentialMaterial(content)) throw fail(400, 'This repository file contains credential material and cannot enter task context.');
-      if (credential === token() && bytes.length <= 256 * 1024) {
+      // Large entrypoints need several bounded section reads before an edit.
+      // Retain them within the same total cache budget rather than fetching
+      // their complete immutable blob again for every section or edit.
+      if (credential === token() && bytes.length <= 4 * 1024 * 1024) {
         if (blobs.has(entry.sha)) { blobBytes -= blobs.get(entry.sha).bytes; blobs.delete(entry.sha); }
         while (blobs.size >= 24 || blobBytes + bytes.length > 4 * 1024 * 1024) {
           const first = blobs.keys().next().value; blobBytes -= blobs.get(first).bytes; blobs.delete(first);

@@ -2,14 +2,29 @@
 const { validateAttachments, attachmentContent, MAX_MEDIA_BODY_BYTES } = require('./office-ai-media');
 
 const { randomUUID, createHash } = require('node:crypto');
-const { createTaskRecovery, RECOVERY_ATTEMPTS, ROLLBACK_COPIES } = require('./office-ai-recovery');
+const { createTaskRecovery, RECOVERY_ATTEMPTS, ROLLBACK_COPIES, recoveryLimitReached } = require('./office-ai-recovery');
 const { createOfficeAIModel, TONE_STYLES, toneInstructions, CREATIVE_STYLES, creativityInstructions } = require('./office-ai');
 const { createOfficeAIRepository, rangeOf } = require('./office-ai-repository');
 const { taskLimits, modelContext, ONE_ASK_INSTRUCTIONS } = require('./office-ai-task-context');
 const { routeTaskRequest, hasTaskObjective, pathAllowedForRoute, toolAllowedForRoute, DESTINATIONS } = require('./office-ai-routing');
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const SHA = /^[a-f0-9]{40}$/;
-const ACTIVE = ['planning', 'working', 'waiting_checks', 'cancel_requested'];
+const ACTIVE = ['planning', 'working', 'waiting_checks', 'recovery_requested', 'cancel_requested'];
+const LOCKED_STATES = ['planning', 'working', 'waiting_checks', 'recovery_requested', 'needs_confirmation', 'needs_continuation', 'cancel_requested'];
+const STEP_TIMEOUT_MS = 4 * 60000;
+const changesProject = task => task.permissions?.editCode || task.permissions?.operate || task.permissions?.deploy;
+const remainingRecovery = used => RECOVERY_ATTEMPTS === 'unlimited' ? 'unlimited' : Math.max(0, RECOVERY_ATTEMPTS + 1 - used);
+function requiresActionReceipt(message) {
+  const text = String(message || '').trim().replace(/[\u2018\u2019]/g, "'")
+    .replace(/^please[\s,]+/i, '').replace(/^(?:can|could|would|will) you(?: please)?\s+/i, '')
+    .replace(/^(?:help me(?: to)?|i (?:want|need)(?: you)? to|i(?:'d| would) like(?: you)? to)\s+/i, '').replace(/^please\s+/i, '');
+  const subject = text.split(/:\s/)[0];
+  if (/\b(?:sentence|paragraph|grammar|wording|tone|equation)\b/i.test(subject)
+    && !/\b(?:files?|repository|codebase|website|homepage|web ?page)\b|(?:[a-z0-9_.-]+\/)+[a-z0-9_.-]+|\.[cm]?[jt]sx?\b/i.test(subject)) return false;
+  const externalTarget = /\b(?:uficonnect(?:\.(?:ai|org))?|pip|workspace|repository|codebase|source code|files?|folders?|directories|website|homepage|web ?page|component|endpoint|api|backend|frontend|workers?|pipeline|memory|tools?|apps?|task runner|jobs?|recovery|permissions?|approvals?|timeouts?|limits?|settings?|configuration|services?|sources?|agents?|controls?)\b|\b(?:[a-z0-9_.-]+\/)+[a-z0-9_.-]+\b|\b[a-z0-9_-]+\.(?:[cm]?[jt]sx?|jsonc?|ya?ml|md|css|html?|sql|toml)\b/i.test(text);
+  return externalTarget && (/^(?:manage|adjust|configure|maintain|resolve|refactor|organize|customize|fix|repair|debug|edit|update|upgrade|implement|enable|disable|activate|deactivate|optimize|sync|transfer|drain|restart|connect|disconnect|clear|delete|restore|deploy|publish|release)\b/i.test(text)
+    || /^(?:make|do|apply) (?:the |some )?(?:edits|fixes|changes)\b/i.test(text));
+}
 const TERMINAL = ['succeeded', 'failed', 'cancelled'];
 const TARGETS = ['api', 'pipeline', 'web', 'office', 'mobile', 'cloudflare-ai', 'cloudflare-site'];
 const MAX_FINAL_ANSWER_CHARS = 18000, MAX_OUTPUT_DRAFT_CHARS = 64000;
@@ -109,6 +124,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
   const complete = model || createOfficeAIModel({ env, fetcher });
   let schemaReady, timer, stopped = false, ticking = false;
   const running = new Map();
+  const leaseDeadlines = new Map();
   const scheduled = new Map();
   const concurrency = () => /^\d+$/.test(String(env.OFFICE_AI_TASK_CONCURRENCY))
     ? Math.max(1, Math.min(3, Number(env.OFFICE_AI_TASK_CONCURRENCY))) : 2;
@@ -192,7 +208,9 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
   }
   const view = task => {
     const { internal, history, ...publicTask } = task;
-    return { ...publicTask, limits: limits(), progress: progress(task), resumable: task.status === 'needs_continuation' && !!task.continuation?.id };
+    return { ...publicTask, limits: limits(), progress: progress(task), resumable: task.status === 'needs_continuation' && !!task.continuation?.id,
+      recoveryAvailable: ['planning', 'working', 'waiting_checks', 'recovery_requested', 'needs_continuation'].includes(task.status),
+      executionLock: { protected: true, scope: 'project edits', held: !!changesProject(task) && LOCKED_STATES.includes(task.status) } };
   };
   async function load(id) {
     if (!UUID.test(id || '')) throw fail(404, 'Task not found.');
@@ -211,16 +229,19 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     }
     if (Buffer.byteLength(JSON.stringify(task)) > 12 * 1024 * 1024) throw fail(413, 'This task exceeds saved context capacity.');
     const { rows } = await db.query(`UPDATE office_ai_tasks SET
-      data=CASE WHEN status='cancel_requested' AND $3<>'cancelled' THEN jsonb_set($2::jsonb,'{status}','"cancelled"'::jsonb) ELSE $2::jsonb END,
-      status=CASE WHEN status='cancel_requested' THEN 'cancelled' ELSE $3 END,updated_at=$4,next_run_at=$5,
-      lease_id=NULL,lease_until=NULL WHERE id=$1 AND lease_id=$6 RETURNING id`,
+      data=CASE WHEN status='cancel_requested' AND $3<>'cancelled' THEN jsonb_set($2::jsonb,'{status}','"cancelled"'::jsonb)
+        WHEN status='recovery_requested' AND $3 NOT IN ('succeeded','failed','cancelled','needs_confirmation')
+          THEN jsonb_set(jsonb_set($2::jsonb,'{status}','"recovery_requested"'::jsonb),'{recoveryRequest}',COALESCE(data->'recoveryRequest','null'::jsonb)) ELSE $2::jsonb END,
+      status=CASE WHEN status='cancel_requested' THEN 'cancelled'
+        WHEN status='recovery_requested' AND $3 NOT IN ('succeeded','failed','cancelled','needs_confirmation') THEN 'recovery_requested' ELSE $3 END,updated_at=$4,next_run_at=$5,
+      lease_id=NULL,lease_until=NULL WHERE id=$1 AND lease_id=$6 AND lease_until>$4 RETURNING id`,
     [task.id, JSON.stringify(task), task.status, task.updatedAt, new Date(now() + delay).toISOString(), lease]);
     return rows.length > 0;
   }
   async function checkpoint(task, lease) {
     const { rows } = await db.query(`UPDATE office_ai_tasks SET data=$2::jsonb,status=$3,updated_at=$4,
-      lease_until=$5 WHERE id=$1 AND lease_id=$6 AND status<>'cancel_requested' RETURNING id`,
-    [task.id, JSON.stringify(task), task.status, stamp(), new Date(now() + 120000).toISOString(), lease]);
+      lease_until=$5 WHERE id=$1 AND lease_id=$6 AND lease_until>$4 AND status NOT IN ('cancel_requested','recovery_requested') RETURNING id`,
+    [task.id, JSON.stringify(task), task.status, stamp(), new Date(Math.min(now() + 120000, leaseDeadlines.get(lease) ?? Infinity)).toISOString(), lease]);
     if (!rows.length) throw fail(409, 'This task is now owned by another worker.');
   }
   function capabilities() {
@@ -230,7 +251,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       deployTargets: TARGETS, publicationDeploys: true, deploymentApprovalRequired: true, cloudflareOnly: true, tonesAvailable: true, creativeFreedomAvailable: true,
       recoveryAttempts: RECOVERY_ATTEMPTS, rollbackCopies: ROLLBACK_COPIES, checkpointsAvailable: recovery.configured(), planning: true,
       limits: limits(), supportedMaximum: { modelTurns: 128, toolCalls: 512 }, conversationContext: true, resumable: true,
-      automaticContinuation: true, concurrency: concurrency(),
+      automaticContinuation: true, concurrency: concurrency(), taskRecoveryAvailable: true, executionLockAvailable: true,
       fullAccess: true, destinations: DESTINATIONS, defaultDestination: 'full-access',
       tools: Object.keys(adapters), note: write ? 'Publishing main also starts the configured production deployments.' : 'Connect GitHub Contents and Actions write access for code changes. Read-only tasks can still use available tools.' };
   }
@@ -288,7 +309,12 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
           if (duplicate.rows[0].request_hash !== hash) throw fail(409, 'This request ID already belongs to a different task.');
           await client.query('COMMIT'); return { rows: [{ data: duplicate.rows[0].data }] };
         }
-        const counts = await client.query(`SELECT count(*) FILTER (WHERE status IN ('planning','working','waiting_checks','needs_confirmation','needs_continuation','cancel_requested'))::int AS active,
+        if (changesProject(input)) {
+          const locked = await client.query(`SELECT id FROM office_ai_tasks WHERE status=ANY($1::text[])
+            AND (data#>>'{permissions,editCode}'='true' OR data#>>'{permissions,operate}'='true' OR data#>>'{permissions,deploy}'='true') LIMIT 1`, [LOCKED_STATES]);
+          if (locked.rows.length) throw fail(409, `Task ${locked.rows[0].id} holds the project edit lock. Finish, stop, or recover that task before starting competing changes.`);
+        }
+        const counts = await client.query(`SELECT count(*) FILTER (WHERE status IN ('planning','working','waiting_checks','recovery_requested','needs_confirmation','needs_continuation','cancel_requested'))::int AS active,
           count(*) FILTER (WHERE created_at>NOW()-INTERVAL '1 hour')::int AS recent FROM office_ai_tasks`);
         if (Number(counts.rows[0]?.active) >= 5 || Number(counts.rows[0]?.recent) >= 20) throw fail(429, 'Task capacity is busy. Finish existing tasks or try again later.');
         const inserted = await client.query(`INSERT INTO office_ai_tasks(id,client_request_id,request_hash,status,data,created_at,updated_at)
@@ -307,6 +333,24 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     return res.status(202).json({ task: view(result.rows[0].data) });
   });
   const detail = handle(async (req, res) => res.json({ task: view(await load(req.params.id)) }));
+  const recover = handle(async (req, res) => {
+    if (!object(req.body) || req.body.confirmed !== true || Object.keys(req.body).some(key => key !== 'confirmed'))
+      throw fail(400, 'Confirm recovery of this task without changing its permissions.');
+    const task = await load(req.params.id);
+    if (TERMINAL.includes(task.status) || task.status === 'cancel_requested') throw fail(409, 'This task is stopped. Review its saved results before starting new work.');
+    if (task.status === 'needs_confirmation' || task.confirmation) throw fail(409, 'Review the pending confirmation or uncertain operation before recovering this task.');
+    // Request cooperative interruption without revoking a live worker lease.
+    // The worker persists any returned receipts before yielding. An expired
+    // lease can be claimed normally; started external calls retain nonreplay.
+    const changed = await db.query(`UPDATE office_ai_tasks SET status='recovery_requested',
+      data=jsonb_set(jsonb_set(data,'{status}','"recovery_requested"'::jsonb),'{recoveryRequest}',$2::jsonb),
+      next_run_at=$3,updated_at=$3 WHERE id=$1 AND status=ANY($4::text[])
+      AND (data->'confirmation' IS NULL OR data->'confirmation'='null'::jsonb) RETURNING id`,
+    [task.id, JSON.stringify({ id: randomUUID(), requestedAt: stamp() }), stamp(), ['planning', 'working', 'waiting_checks', 'recovery_requested', 'needs_continuation']]);
+    if (!changed.rows.length) throw fail(409, 'The task changed. Refresh its current state before recovery.');
+    running.get(task.id)?.abort(); wake();
+    return res.status(202).json({ task: view(await load(task.id)) });
+  });
   const resume = handle(async (req, res) => {
     if (!object(req.body) || Object.keys(req.body).some(key => !['confirmed', 'continuationId'].includes(key))
       || req.body.confirmed !== true || !UUID.test(req.body.continuationId || '')) throw fail(400, 'Confirm this exact task checkpoint to continue.');
@@ -364,7 +408,11 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     wake();
     return res.json({ task: view(await load(task.id)) });
   });
-  const checkpoints = handle(async (req, res) => { const task = await load(req.params.id); return res.json({ checkpoints: await recovery.history(task.id), copies: ROLLBACK_COPIES }); });
+  const checkpoints = handle(async (req, res) => {
+    const task = await load(req.params.id);
+    const page = await recovery.historyPage(task.id, { ...(req.query?.before !== undefined ? { before: req.query.before } : {}), ...(req.query?.limit !== undefined ? { limit: Number(req.query.limit) } : {}) });
+    return res.json({ ...page, copies: ROLLBACK_COPIES });
+  });
   const checkpointDetail = handle(async (req, res) => { const task = await load(req.params.id); return res.json({ checkpoint: await recovery.snapshot(task, req.params.checkpointId) }); });
   const restoreCheckpoint = handle(async (req, res) => {
     if (!object(req.body) || Object.keys(req.body).some(key => !['confirmed','continuationId'].includes(key)) || req.body.confirmed !== true || !UUID.test(req.body.continuationId || '')) throw fail(400, 'Confirm this exact draft checkpoint restore.');
@@ -491,7 +539,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
           // A verified private candidate remains immutable. Further successful
           // edits create a separate candidate; never overwrite its tag or reuse
           // its checks for the newly changed source.
-          task.candidateHistory = [...(task.candidateHistory || []), task.commit].slice(-10);
+          task.candidateHistory = [...(task.candidateHistory || []), task.commit];
           task.commit = null; task.checks = []; task.internal.checkDispatchAt = null;
           task.internal.codeFinished = false; task.internal.candidateId = randomUUID();
           event(task, 'commit', 'superseded', 'Preparing another private candidate', 'The earlier immutable candidate is retained in candidate history. Changed source requires new verification.');
@@ -562,6 +610,23 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     return result;
   }
   async function step(task, lease, signal) {
+    if (task.status === 'recovery_requested') {
+      task.status = task.commit && !task.checks?.some(check => check.sha === task.commit.sha && check.conclusion === 'success') ? 'waiting_checks' : 'working';
+      task.internal.budgetStartTurns = task.internal.turns; task.internal.budgetStartCalls = task.internal.calls;
+      task.internal.budgetStartedAt = stamp(); task.internal.modelResponseRepairs = 0; task.internal.outputCompletionRepairs = 0;
+      task.internal.resumes = (task.internal.resumes || 0) + 1;
+      if (task.internal.waitingTerminal) { task.internal.waitingTerminal.pollStartedAt = stamp(); task.internal.waitingTerminal.readFailures = 0; }
+      task.continuation = null; task.error = null; task.lastRecoveryAt = stamp(); task.recoveryRequest = null;
+      event(task, 'recovery', 'queued', 'Recovering saved task', 'Saved files, original permissions, completed receipts and started-operation markers were retained.');
+      // Recovery first saves its state before another model or external call.
+      // This update is the cooperative handoff itself, so it may transition
+      // the recovery_requested row while retaining its exact live lease.
+      const handedOff = await db.query(`UPDATE office_ai_tasks SET data=$2::jsonb,status=$3,updated_at=$4
+        WHERE id=$1 AND lease_id=$5 AND lease_until>$4 AND status='recovery_requested' RETURNING id`,
+      [task.id, JSON.stringify(task), task.status, stamp(), lease]);
+      if (!handedOff.rows.length) throw fail(409, 'Recovery ownership changed. Refresh the task.');
+      return 0;
+    }
     if (signal.aborted && stopped) throw fail(503, 'The worker stopped; task progress was retained.');
     if (task.status === 'cancel_requested' || signal.aborted) {
       task.status = 'cancelled'; task.summary = 'Task stopped. Completed commits, commands and remote jobs remain recorded below.';
@@ -575,7 +640,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     // Recovery/confirmation pauses deliberately never pass through this path.
     const continueBudget = (reason, message) => {
       const used = task.internal.automaticContinuations || 0;
-      if (used >= limits().automaticContinuations) return pause(reason, message);
+      if (recoveryLimitReached(used, limits().automaticContinuations)) return pause(reason, message);
       task.internal.automaticContinuations = used + 1;
       task.internal.budgetStartTurns = task.internal.turns;
       task.internal.budgetStartCalls = task.internal.calls;
@@ -642,7 +707,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     }
     if (task.status === 'waiting_checks') {
       const dispatch = !task.internal.checkDispatchAt;
-      if (dispatch) { task.internal.checkDispatchAt = stamp(); await checkpoint(task, lease); }
+      if (dispatch) { task.internal.checkDispatchAt = stamp(); await checkpoint(task, lease); signal.throwIfAborted(); }
       try { task.checks = await timed(task, 'verification', () => repo.checks(task.commit, { dispatch, signal })); if (task.checks.length) recovery.clear(task, 'phase:checks'); }
       catch (error) {
         if (dispatch && !signal.aborted) {
@@ -661,11 +726,11 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
         if (!['failure', 'timed_out'].includes(conclusion))
           return pause('verification', 'Candidate verification did not complete successfully. The exact candidate and check receipts are saved for review; nothing was published.');
         const failed = task.internal.failedVerificationShas ||= [];
-        if (failed.includes(task.commit.sha) || failed.length >= RECOVERY_ATTEMPTS)
+        if (failed.includes(task.commit.sha) || recoveryLimitReached(failed.length))
           return pause('verification-recovery', `${RECOVERY_ATTEMPTS} automatic verification repairs are exhausted or this exact candidate already failed. Source and failed check receipts are retained; nothing was published.`);
         failed.push(task.commit.sha);
         task.internal.verificationRepair = { sha: task.commit.sha, checks: task.checks.map(({ id, name, status, conclusion, sha, url }) => ({ id, name, status, conclusion, sha, url })) };
-        task.verificationHistory = [...(task.verificationHistory || []), { ...task.internal.verificationRepair, at: stamp() }].slice(-RECOVERY_ATTEMPTS);
+        task.verificationHistory = [...(task.verificationHistory || []), { ...task.internal.verificationRepair, at: stamp() }];
         let details = null;
         if (typeof repo.verificationFailure === 'function') {
           try { details = await repo.verificationFailure(task.commit, { signal }); }
@@ -691,13 +756,15 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
         if (!deploymentApproved(task, spec)) return requestDeploymentApproval(task, spec, 'Approve deployment',
           'The candidate passed its exact source checks. Review its changes and approve publishing this commit to main, which starts production deployment.');
         await timed(task, 'connection', refreshConnections);
+        signal.throwIfAborted(); await checkpoint(task, lease); signal.throwIfAborted();
         try { task.commit = await timed(task, 'publication', () => repo.publish(task.commit, signal)); }
         catch (error) {
-          if (error.code !== 'MAIN_MOVED' || typeof repo.rebase !== 'function' || (task.internal.publicationRebases || 0) >= RECOVERY_ATTEMPTS) throw error;
+          if (error.code !== 'MAIN_MOVED' || typeof repo.rebase !== 'function' || recoveryLimitReached(task.internal.publicationRebases || 0)) throw error;
           const previous = task.commit;
+          signal.throwIfAborted(); await checkpoint(task, lease); signal.throwIfAborted();
           const rebased = await repo.rebase(previous, task.internal.files, signal);
           task.internal.publicationRebases = (task.internal.publicationRebases || 0) + 1;
-          if (rebased.sha !== previous.sha) task.candidateHistory = [...(task.candidateHistory || []), previous].slice(-10);
+          if (rebased.sha !== previous.sha) task.candidateHistory = [...(task.candidateHistory || []), previous];
           task.commit = rebased;
           task.internal.deploymentApproval = null; task.internal.pendingDeployment = null; task.confirmation = null;
           if (!rebased.published) {
@@ -745,8 +812,8 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
         task.internal.logicFailures ||= {};
         const key = 'invalid:' + call.name, failures = task.internal.logicFailures[key] = (task.internal.logicFailures[key] || 0) + 1;
         event(task, call.name, 'failed', 'Tool request rejected', 'The requested tool or arguments are outside this task’s capabilities.');
-        addToolResult(task, call, { error: 'The requested tool or arguments are outside this task’s capabilities.', correctionsRemaining: Math.max(0, RECOVERY_ATTEMPTS + 1 - failures) });
-        if (failures > RECOVERY_ATTEMPTS) return pause('recovery-limit', `${RECOVERY_ATTEMPTS} attempts to correct an invalid tool request were exhausted. Review the saved task before continuing.`);
+        addToolResult(task, call, { error: 'The requested tool or arguments are outside this task’s capabilities.', correctionsRemaining: remainingRecovery(failures) });
+        if (recoveryLimitReached(failures - 1)) return pause('recovery-limit', `${RECOVERY_ATTEMPTS} attempts to correct an invalid tool request were exhausted. Review the saved task before continuing.`);
         return 0;
       }
       const control = call.name === 'office_command' ? getControls().find(item => item.id === call.args.id) : null;
@@ -783,9 +850,21 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
           'The deployment source is verified. Review this exact commit and the listed destinations before deployment starts.');
       }
       if (call.name === 'repo_edit') await recovery.capture(task, `Before editing ${call.args.path}`);
-      call.started = true; await checkpoint(task, lease);
+      const previouslyStarted = call.started;
+      call.started = true;
+      try { await checkpoint(task, lease); signal.throwIfAborted(); }
+      catch (error) {
+        // No invocation began. Do not turn a cooperative recovery that
+        // interrupted preparation into an uncertain external operation.
+        call.started = previouslyStarted;
+        throw error;
+      }
       try {
         const result = await timed(task, 'tool', () => execute(task, call, signal));
+        if (!['plan_update', 'memory_search', 'memory_remember'].includes(call.name)) {
+          task.internal.executionEvidence ||= {};
+          task.internal.executionEvidence[call.name] = { at: stamp(), invocationId: call.invocationId };
+        }
         if (call.name === 'repo_edit') await recovery.capture(task, `Draft after editing ${call.args.path}`);
         const receipt = receipts(task, call, result);
         if (task.internal.logicFailures) {
@@ -829,7 +908,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
         task.internal.logicFailures ||= {};
         const failureKey = call.name + ':' + (call.args.path || call.args.id || '');
         const failures = task.internal.logicFailures[failureKey] = (task.internal.logicFailures[failureKey] || 0) + 1;
-        if (failures <= RECOVERY_ATTEMPTS) {
+        if (!recoveryLimitReached(failures - 1)) {
           task.recovery = { limit: RECOVERY_ATTEMPTS, currentAttempt: failures, totalAttempts: (task.recovery?.totalAttempts || 0) + 1, step: call.name + ' correction', at: stamp() };
           event(task, 'recovery', 'correcting', 'Correcting the approach', 'Correction ' + failures + ' of ' + RECOVERY_ATTEMPTS + '; inspect the cause and change the failing step.');
         }
@@ -838,10 +917,10 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
         await remember(task, `${call.name}: ${publicError(error)}`, { status: 'failed', referenceId: `${call.invocationId}:failed`,
           metadata: { tool: call.name, ...(typeof call.args.path === 'string' ? { path: call.args.path } : {}),
             ...(call.name === 'office_command' ? { controlId: call.args.id } : {}) } });
-        addToolResult(task, call, { error: publicError(error), recovery: { correctionsRemaining: Math.max(0, RECOVERY_ATTEMPTS + 1 - failures), instruction: call.name === 'repo_edit'
+        addToolResult(task, call, { error: publicError(error), recovery: { correctionsRemaining: remainingRecovery(failures), instruction: call.name === 'repo_edit'
           ? 'For an existing file, omit content and use edits:[{find,replace}] copied from repo_read. Re-read when a find does not match exactly one section. content is only for a new file. Do not repeat the unchanged failing call.'
           : 'Diagnose the error, inspect the relevant data or source, and correct the approach. Do not repeat an unchanged failing call.' } });
-        if (failures > RECOVERY_ATTEMPTS) return pause('recovery-limit', `${RECOVERY_ATTEMPTS} automatic correction attempts were exhausted. The draft and up to ${ROLLBACK_COPIES} rollback checkpoints are retained; review them before continuing.`);
+        if (recoveryLimitReached(failures - 1)) return pause('recovery-limit', `${RECOVERY_ATTEMPTS} automatic correction attempts were exhausted. The draft and up to ${ROLLBACK_COPIES} rollback checkpoints are retained; review them before continuing.`);
       }
       task.confirmation = null; task.internal.confirmationApproved = null;
       if (isDeployment) { task.internal.deploymentApproval = null; task.internal.pendingDeployment = null; }
@@ -898,7 +977,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       if (publicAnswer) task.internal.messages.push({ role: 'assistant', content: task.internal.outputDraft.content });
       task.internal.messages.push({ role: 'user', content: `SERVER REVIEW: The previous response is incomplete (${outputReason}). None of its tool calls executed. Finish the original deliverable automatically; do not repeat earlier successful external operations. Use complete saved files or clearly labeled sections through workspace_write when available, preserving every requested requirement, then return a complete concise result within ${MAX_FINAL_ANSWER_CHARS} characters with actual artifact receipts. A shorter summary alone does not replace requested content. If it fits inline, return the complete revised answer rather than only its missing tail. ${task.internal.outputDraft.omittedCharacters ? 'The oversized draft exceeded the saved preview allowance; do not assume its omitted text was saved.' : 'The public draft is retained as context, not a completed result.'}` });
       event(task, 'output', 'incomplete', 'Completing interrupted output', 'The response did not finish. Earlier work and receipts are retained; no tools from the incomplete response executed.');
-      if (attempts >= RECOVERY_ATTEMPTS) {
+      if (recoveryLimitReached(attempts)) {
         task.summary = 'The final response is still incomplete after bounded automatic completion attempts. The public draft and earlier work are retained in this checkpoint; no complete result is claimed.';
         return pause('incomplete-output', `${RECOVERY_ATTEMPTS} automatic output-completion attempts were exhausted. Review the saved draft and receipts before continuing; the original capabilities and deployment approval rules still apply.`);
       }
@@ -923,7 +1002,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       // Do not persist malformed provider text or guess repairs to executable arguments.
       task.internal.modelResponseCorrection = true;
       event(task, 'model-response', 'warning', 'Invalid tool response rejected', 'No tools from this response were executed. The saved task checkpoint and earlier receipts are unchanged.');
-      if ((task.internal.modelResponseRepairs || 0) >= RECOVERY_ATTEMPTS)
+      if (recoveryLimitReached(task.internal.modelResponseRepairs || 0))
         return pause('model-response', `The model returned invalid tool requests after ${RECOVERY_ATTEMPTS} automatic recovery attempts. Earlier receipts and staged work are saved for review.`);
       task.internal.modelResponseRepairs = (task.internal.modelResponseRepairs || 0) + 1;
       return 1000;
@@ -938,6 +1017,23 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
         throw fail(502, 'Cloudflare returned an empty task response. Completed results are retained.');
       }
       recovery.clear(task, 'phase:model');
+      if (requiresActionReceipt(task.message)) {
+        const evidence = task.internal.executionEvidence || {};
+        const sourceChange = /\b(?:edit|adjust|fix|repair|refactor|customize|change|update|implement)\b[\s\S]{0,160}(?:\b(?:source code|codebase|repository|code|files?|website|homepage|component)\b|\b(?:[a-z0-9_.-]+\/)+[a-z0-9_.-]+\b|\.[cm]?[jt]sx?\b)/i.test(task.message);
+        const changedSource = task.changedFiles?.length || task.artifacts?.length;
+        const completedTerminal = task.terminals?.some(terminal => terminal.status === 'completed' && terminal.exitCode === 0);
+        const performed = sourceChange ? changedSource : changedSource || task.commit || completedTerminal
+          || Object.keys(evidence).some(name => ['office_command', 'function_run', 'cloudflare_deploy', 'mobile_build'].includes(name));
+        const inspected = Object.keys(evidence).length > 0 || task.events.some(item => item.status === 'succeeded' && /^(?:repo_|workspace_|web_|research)/.test(item.kind));
+        const unnecessary = inspected && /\b(?:no (?:changes?|edits?|fixes?) (?:were |are )?(?:needed|necessary|required)|already (?:correct|configured|up.to.date|working))\b/i.test(task.internal.answer);
+        if (!performed && !unnecessary) {
+          const delay = recovery.retry(task, 'action-review', 'Requested action verification');
+          task.internal.messages.push({ role: 'assistant', content: task.internal.answer }, { role: 'user', content: 'SERVER REVIEW: The operator requested an actual change, but no matching action receipt exists. Inspect the relevant files or service, perform the authorized edits or fixes, and verify the result. An offer, promise, or plan is not completion. If inspection proves no change is needed, explain that finding with the actual inspection evidence. If a required connection or essential detail is missing, state the concrete blocker and leave the task unfinished.' });
+          task.summary = 'Checking the requested action against actual tool receipts.';
+          event(task, 'recovery', 'reviewing', 'Requested action still needs execution', task.summary);
+          return delay ?? pause('action-review', 'No action result was confirmed. The original request and saved work are retained.');
+        }
+      }
       if (task.internal.verificationRepair && task.commit) {
         const failedSha = task.internal.verificationRepair.sha;
         const delay = recovery.retry(task, 'verification-review:' + failedSha, 'Verification correction review');
@@ -950,7 +1046,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       if (Object.keys(task.internal.editFailures || {}).length) {
         task.summary = `Requested edits have not been saved: ${Object.entries(task.internal.editFailures).map(([path, message]) => `${path}: ${message}`).join('; ')}`;
         const corrections = task.internal.editCompletionCorrections || 0;
-        if (!task.commit?.published && corrections < RECOVERY_ATTEMPTS) {
+        if (!task.commit?.published && !recoveryLimitReached(corrections)) {
           task.internal.editCompletionCorrections = corrections + 1;
           task.internal.messages.push({ role: 'user', content: 'SERVER REVIEW: An attempted edit is still unresolved: ' + JSON.stringify(task.internal.editFailures)
             + '. Read the current staged source and correct the failed edit using repo_edit. An unpublished immutable candidate can be edited into a NEW candidate which must pass new checks. Do not ask the operator to continue or claim the failed edit was saved.' });
@@ -1011,21 +1107,31 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     if (stopped) return false;
     const lease = randomUUID(), controller = new AbortController();
     const claimed = await db.query(`UPDATE office_ai_tasks SET lease_id=$2,lease_until=$3 WHERE id=$1
-      AND status IN ('planning','working','waiting_checks','cancel_requested') AND (lease_until IS NULL OR lease_until<$4) RETURNING data,next_run_at`,
+      AND status IN ('planning','working','waiting_checks','recovery_requested','cancel_requested') AND (lease_until IS NULL OR lease_until<$4) RETURNING data,next_run_at`,
     [id, lease, new Date(now() + 120000).toISOString(), stamp()]);
     if (!claimed.rows.length) return false;
+    const stepExpiresAt = now() + STEP_TIMEOUT_MS;
+    leaseDeadlines.set(lease, stepExpiresAt);
     const task = claimed.rows[0].data, previousStatus = task.status; running.set(id, controller);
     const queuedAt = Date.parse(claimed.rows[0].next_run_at);
     if (Number.isFinite(queuedAt)) timing(task, 'queue', Math.min(now(), queuedAt));
     if (stopped) controller.abort();
     let renewing = false, leaseLost = false;
+    const watchdog = setTimeout(() => {
+      leaseLost = true; controller.abort(); clearInterval(heartbeat);
+      // A noncooperative call must not renew a lease or occupy a scheduler
+      // slot forever. Its persisted started marker prevents blind replay.
+      scheduled.delete(id); wake();
+    }, STEP_TIMEOUT_MS);
+    watchdog.unref?.();
     const heartbeat = setInterval(async () => {
       if (renewing) return;
       renewing = true;
       try {
-        const current = await db.query('UPDATE office_ai_tasks SET lease_until=$3 WHERE id=$1 AND lease_id=$2 RETURNING status', [id, lease, new Date(now() + 120000).toISOString()]);
+        if (leaseLost) return;
+        const current = await db.query('UPDATE office_ai_tasks SET lease_until=$3 WHERE id=$1 AND lease_id=$2 RETURNING status', [id, lease, new Date(Math.min(now() + 120000, stepExpiresAt)).toISOString()]);
         if (!current.rows.length) { leaseLost = true; controller.abort(); }
-        else if (current.rows[0].status === 'cancel_requested') controller.abort();
+        else if (['cancel_requested', 'recovery_requested'].includes(current.rows[0].status)) controller.abort();
       } catch { leaseLost = true; controller.abort(); }
       finally { renewing = false; }
     }, 2000);
@@ -1033,11 +1139,15 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
     let delay = 0;
     try {
       await timed(task, 'connection', refreshConnections);
+      controller.signal.throwIfAborted();
       delay = await step(task, lease, controller.signal);
     } catch (error) {
       const latest = await load(id).catch(() => null);
       if (latest?.status === 'cancel_requested') {
         task.status = 'cancelled'; task.summary = 'Task stopped. Previously completed external operations remain recorded.';
+      } else if (latest?.status === 'recovery_requested') {
+        task.status = 'recovery_requested'; task.recoveryRequest = latest.recoveryRequest;
+        task.error = null; task.summary = 'Recovery requested. Saved work and operation receipts are retained.';
       } else if (stopped || leaseLost) task.status = previousStatus;
       else if ((error.status === 429 || error.status >= 500) && !task.internal.pendingCalls?.length && !error.outcomeUnknown && !error.noModelFallback) {
         const phase = task.internal.waitingDeployment ? 'deployment' : task.status === 'waiting_checks' ? 'checks' : 'model';
@@ -1052,14 +1162,19 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       } else { task.status = 'failed'; task.error = publicError(error); event(task, 'task', 'failed', 'Task stopped with an error', task.error); }
     } finally {
       clearInterval(heartbeat);
-      running.delete(id);
+      if (running.get(id) === controller) running.delete(id);
+      try {
       const latest = await load(id).catch(() => null);
       if (latest?.status === 'cancel_requested') { task.status = 'cancelled'; task.summary = 'Task stopped. Completed external operations remain recorded.'; }
+      else if (latest?.status === 'recovery_requested' && !TERMINAL.includes(task.status) && task.status !== 'needs_confirmation' && task.status !== 'recovery_requested') {
+        task.status = 'recovery_requested'; task.recoveryRequest = latest.recoveryRequest;
+      }
       if (['failed', 'cancelled', 'needs_confirmation', 'needs_continuation'].includes(task.status)) await remember(task,
         task.error || task.confirmation?.detail || task.continuation?.message || task.summary || `Task status: ${task.status}`,
         { status: task.status, referenceId: task.confirmation?.id || task.continuation?.id || task.id,
           metadata: { commit: task.commit ? { sha: task.commit.sha, published: !!task.commit.published } : null } });
       await save(task, lease, delay);
+      } finally { clearTimeout(watchdog); leaseDeadlines.delete(lease); }
     }
     return true;
   }
@@ -1070,12 +1185,12 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
       const available = concurrency() - scheduled.size;
       if (available <= 0) return;
       await storage();
-      const { rows } = await db.query(`SELECT id FROM office_ai_tasks WHERE status IN ('planning','working','waiting_checks','cancel_requested')
+      const { rows } = await db.query(`SELECT id FROM office_ai_tasks WHERE status IN ('planning','working','waiting_checks','recovery_requested','cancel_requested')
         AND next_run_at<=$1 AND (lease_until IS NULL OR lease_until<$1) AND NOT (id=ANY($2::uuid[]))
         ORDER BY next_run_at,created_at LIMIT $3`, [stamp(), [...scheduled.keys()], available]);
       for (const row of rows) {
         const execution = runOne(row.id).catch(() => { /* Keep the stored lease for recovery if persistence failed. */ })
-          .finally(() => { scheduled.delete(row.id); wake(); });
+          .finally(() => { if (scheduled.get(row.id) === execution) scheduled.delete(row.id); wake(); });
         scheduled.set(row.id, execution);
       }
     } catch { /* Authenticated status endpoints report database availability. */ }
@@ -1086,7 +1201,7 @@ function createOfficeAITasks({ db, env = process.env, fetcher = globalThis.fetch
   function wake() { if (timer && !stopped) queueMicrotask(() => { void tick(); }); }
   function start() { if (timer) return; stopped = false; timer = setInterval(() => { void tick(); }, 1000); timer.unref?.(); void tick(); }
   function stop() { stopped = true; clearInterval(timer); timer = null; for (const controller of running.values()) controller.abort(); }
-  return { list, create, detail, cancel, confirm, resume, checkpoints, checkpointDetail, restoreCheckpoint, start, stop, runOne, capabilities };
+  return { list, create, detail, cancel, confirm, resume, recover, checkpoints, checkpointDetail, restoreCheckpoint, start, stop, runOne, capabilities };
 }
 
 module.exports = { createOfficeAITasks, TASK_SCHEMA, validateRequest, validateValue };

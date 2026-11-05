@@ -49,11 +49,11 @@ function terminalFixture(read) {
 }
 
 test('effective execution limits default to supported maxima and environment values cannot exceed them', () => {
-  assert.deepEqual(taskLimits({}), { modelTurns: 128, toolCalls: 512, lifetimeMinutes: 90, automaticContinuations: 10 });
+  assert.deepEqual(taskLimits({}), { modelTurns: 128, toolCalls: 512, lifetimeMinutes: 90, automaticContinuations: 'unlimited' });
   assert.equal(taskLimits({ OFFICE_AI_MAX_MODEL_TURNS: '9999', OFFICE_AI_MAX_TOOL_CALLS: '9999' }).modelTurns, 128);
   assert.equal(taskLimits({ OFFICE_AI_MAX_MODEL_TURNS: '8', OFFICE_AI_MAX_TOOL_CALLS: '30' }).toolCalls, 30);
   assert.equal(taskLimits({ OFFICE_AI_MAX_MODEL_TURNS: 'unlimited' }).modelTurns, 128);
-  assert.equal(taskLimits({ OFFICE_AI_AUTOMATIC_CONTINUATIONS: '9999' }).automaticContinuations, 10);
+  assert.equal(taskLimits({ OFFICE_AI_AUTOMATIC_CONTINUATIONS: '9999' }).automaticContinuations, 'unlimited');
   assert.equal(taskLimits({ OFFICE_AI_AUTOMATIC_CONTINUATIONS: '0' }).automaticContinuations, 0);
 });
 
@@ -127,7 +127,7 @@ test('temporary terminal receipt failures retry only the same read and then reco
   });
 });
 
-test('persistent terminal read failures preserve staged work and resume the same session without redispatch', async t => {
+test('terminal reads recover after more than ten failures without discarding staged work or redispatching', async t => {
   let clock = Date.now(), turns = 0, available = false;
   const terminal = terminalFixture(async (_attempt, id) => {
     if (!available) throw Object.assign(new Error('Temporary receipt failure'), { status: 502, publicMessage: 'GitHub receipt is unavailable.' });
@@ -136,21 +136,17 @@ test('persistent terminal read failures preserve staged work and resume the same
   const f = await fixture(t, { adapters: terminal.adapters, now: () => clock,
     model: async () => ++turns === 1 ? calls('repo_edit', 'terminal_run') : { content: 'Complete.' } });
   const task = (await invoke(f.service.create, input({ permissions: { editCode: true } }))).body.task;
-  const paused = await untilStopped(f.service, task.id);
-  assert.equal(paused.status, 'needs_continuation'); assert.equal(paused.continuation.reason, 'terminal-status');
-  assert.equal(terminal.state.reads, RECOVERY_ATTEMPTS + 1); assert.equal(terminal.state.dispatches, 1); assert.equal(turns, 1);
+  for(let step=0;step<100&&terminal.state.reads<25;step++)await f.service.runOne(task.id);
+  assert.equal(terminal.state.reads,25); assert.equal(terminal.state.dispatches, 1); assert.equal(turns, 1);
   const saved = await f.raw(task.id), startedAt = saved.internal.waitingTerminal.startedAt;
+  assert.equal(saved.status,'working');assert.equal(saved.recovery.limit,'unlimited');assert.equal(saved.internal.waitingTerminal.readFailures,25);
   assert.equal(saved.internal.files[0].content, 'const value=2;'); assert.equal(saved.internal.waitingTerminal.id, terminal.state.id);
-  assert.equal(await f.service.runOne(task.id), false);
-  clock += 13 * 60000; available = true;
-  const resumed = await invoke(f.service.resume, { confirmed: true, continuationId: paused.continuation.id }, task.id);
-  assert.equal(resumed.code, 200);
+  available = true;
+  await f.service.runOne(task.id);
   const checkpoint = await f.raw(task.id);
-  assert.equal(checkpoint.internal.waitingTerminal.startedAt, startedAt);
-  assert.equal(checkpoint.internal.waitingTerminal.pollStartedAt, new Date(clock).toISOString());
-  assert.equal(checkpoint.internal.waitingTerminal.readFailures, 0);
+  assert.equal(checkpoint.internal.waitingTerminal,null);assert.ok(startedAt);
   const finished = await untilStopped(f.service, task.id);
-  assert.equal(finished.status, 'succeeded'); assert.equal(terminal.state.dispatches, 1); assert.equal(terminal.state.reads, RECOVERY_ATTEMPTS + 2);
+  assert.equal(finished.status, 'succeeded'); assert.equal(terminal.state.dispatches, 1); assert.equal(terminal.state.reads,26);assert.equal(finished.progress.resumes,0);
   assert.equal(f.state.edits, 1); assert.equal(f.state.commits, 1); assert.equal(finished.terminals[0].exitCode, 0);
 });
 
@@ -172,23 +168,24 @@ test('terminal polling timeout saves staged work and resume renews only the read
   assert.equal(terminal.state.dispatches, 1); assert.equal(terminal.state.reads, 2);
 });
 
-test('terminal receipt reads recover ten times and confirmed progress resets their allowance', async t => {
+test('terminal receipt reads continue across repeated failure streaks longer than ten attempts', async t => {
   let turns = 0;
+  const failures=25;
   const terminal = terminalFixture(async (attempt, id) => {
-    if (attempt !== RECOVERY_ATTEMPTS + 1 && attempt !== 2 * RECOVERY_ATTEMPTS + 2)
+    if (attempt !== failures + 1 && attempt !== 2 * failures + 2)
       throw Object.assign(Error('Temporary receipt failure'), { status: 502 });
-    return { session: { id, status: attempt === RECOVERY_ATTEMPTS + 1 ? 'running' : 'completed', exitCode: attempt === RECOVERY_ATTEMPTS + 1 ? null : 0 } };
+    return { session: { id, status: attempt === failures + 1 ? 'running' : 'completed', exitCode: attempt === failures + 1 ? null : 0 } };
   });
   const f = await fixture(t, { adapters: terminal.adapters, model: async () => ++turns === 1 ? calls('terminal_run') : { content: 'Verified completion.' } });
   const created = (await invoke(f.service.create, input({ permissions: { editCode: true } }))).body.task;
   const finished = await untilStopped(f.service, created.id);
-  assert.equal(finished.status, 'succeeded'); assert.equal(finished.recovery.totalAttempts, 2 * RECOVERY_ATTEMPTS);
-  assert.equal(terminal.state.reads, 2 * RECOVERY_ATTEMPTS + 2); assert.equal(terminal.state.dispatches, 1);
+  assert.equal(finished.status, 'succeeded'); assert.equal(finished.recovery.totalAttempts, 2 * failures);assert.equal(finished.recovery.currentAttempt,failures);
+  assert.equal(terminal.state.reads, 2 * failures + 2); assert.equal(terminal.state.dispatches, 1);
   assert.equal(finished.progress.resumes, 0); assert.equal(turns, 2);
 });
 
-test('terminal polling windows continue automatically and stop after the finite allowance without redispatch', async t => {
-  for (const complete of [true, false]) await t.test(complete ? 'completion' : 'exhaustion', async t => {
+test('terminal polling windows continue beyond ten while completion and cancellation preserve the same session', async t => {
+  for (const complete of [true, false]) await t.test(complete ? 'completion' : 'cancellation', async t => {
     let clock = Date.now(), turns = 0, completed = false;
     const terminal = terminalFixture(async (_attempt, id) => ({ session: { id, status: completed ? 'completed' : 'running', exitCode: completed ? 0 : null } }));
     const f = await fixture(t, { adapters: terminal.adapters, now: () => clock,
@@ -196,7 +193,7 @@ test('terminal polling windows continue automatically and stop after the finite 
     const created = (await invoke(f.service.create, input({ permissions: { editCode: true } }))).body.task;
     await f.service.runOne(created.id); await f.service.runOne(created.id);
     const original = await f.raw(created.id), startedAt = original.internal.waitingTerminal.startedAt;
-    const windows = complete ? 1 : taskLimits({}).automaticContinuations;
+    const windows = 25;
     for (let window = 1; window <= windows; window++) {
       clock += 13 * 60000;
       await f.service.runOne(created.id);
@@ -213,25 +210,40 @@ test('terminal polling windows continue automatically and stop after the finite 
       assert.equal(finished.status, 'succeeded'); assert.equal(finished.progress.resumes, 0);
       assert.equal(terminal.state.dispatches, 1); assert.equal(terminal.state.reads, 1);
     } else {
-      clock += 13 * 60000; await f.service.runOne(created.id);
-      const paused = (await invoke(f.service.detail, {}, created.id)).body.task;
-      assert.equal(paused.status, 'needs_continuation'); assert.equal(paused.continuation.reason, 'terminal-wait');
+      assert.equal((await invoke(f.service.cancel,{},created.id)).code,200);
+      const cancelled=await untilStopped(f.service,created.id);
+      assert.equal(cancelled.status,'cancelled');assert.equal(cancelled.progress.automaticContinuations,windows);
+      assert.equal(cancelled.terminals[0].id,terminal.state.id);assert.equal(cancelled.terminals[0].status,'queued');
       assert.equal(terminal.state.dispatches, 1); assert.equal(await f.service.runOne(created.id), false);
     }
   });
 });
 
-test('a mismatched terminal session cannot supply a completion receipt or replace the pending ID', async t => {
+test('mismatched terminal sessions cannot supply receipts during unlimited retries and remain cancellable', async t => {
   let turns = 0;
   const other = randomUUID(), terminal = terminalFixture(async () => ({ session: { id: other, status: 'completed', exitCode: 0 }, output: 'Unrelated output.' }));
   const f = await fixture(t, { adapters: terminal.adapters, model: async () => ++turns === 1 ? calls('terminal_run') : { content: 'Must not be reached.' } });
   const task = (await invoke(f.service.create, input({ permissions: { editCode: true } }))).body.task;
-  const paused = await untilStopped(f.service, task.id);
-  assert.equal(paused.continuation.reason, 'terminal-status'); assert.equal(turns, 1); assert.equal(terminal.state.dispatches, 1);
-  assert.equal(paused.terminals[0].id, terminal.state.id); assert.equal(paused.terminals[0].status, 'queued');
+  for(let step=0;step<100&&terminal.state.reads<25;step++)await f.service.runOne(task.id);
+  const pending=(await invoke(f.service.detail,{},task.id)).body.task;
+  assert.equal(pending.status,'working');assert.equal(terminal.state.reads,25); assert.equal(turns, 1); assert.equal(terminal.state.dispatches, 1);
+  assert.equal(pending.terminals[0].id, terminal.state.id); assert.equal(pending.terminals[0].status, 'queued');
   const saved = await f.raw(task.id);
   assert.equal(saved.internal.waitingTerminal.id, terminal.state.id);
   assert.ok(!saved.internal.messages.some(message => message.content?.includes('Unrelated output.')));
+  await invoke(f.service.cancel,{},task.id);
+  assert.equal((await untilStopped(f.service,task.id)).status,'cancelled');
+  assert.equal(terminal.state.dispatches,1);assert.equal(terminal.state.reads,25);
+});
+
+test('more than ten model budget rollovers finish automatically with original permissions and exact call counts',async t=>{
+  let turns=0;
+  const f=await fixture(t,{env:{OFFICE_AI_MAX_MODEL_TURNS:'1'},model:async()=>++turns<=25?calls('repo_list'):{content:'All requested repository reads are verified.'}});
+  const created=(await invoke(f.service.create,input())).body.task;
+  const finished=await untilStopped(f.service,created.id,160);
+  assert.equal(finished.status,'succeeded');assert.ok(finished.progress.automaticContinuations>=25);
+  assert.equal(finished.progress.resumes,0);assert.equal(finished.progress.totalToolCalls,25);assert.equal(f.state.reads,25);assert.equal(turns,26);
+  assert.deepEqual(finished.permissions,created.permissions);assert.equal(finished.limits.automaticContinuations,RECOVERY_ATTEMPTS);
 });
 
 test('context compaction bounds schema-inclusive bytes and preserves complete tool groups and executable staged work', () => {

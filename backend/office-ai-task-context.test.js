@@ -2,10 +2,19 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { modelContext, MAX_CONTEXT_BYTES } = require('./office-ai-task-context');
+const { modelContext, MAX_CONTEXT_BYTES, taskLimits } = require('./office-ai-task-context');
 
 const sha = 'a'.repeat(40);
 const artifact = index => ({ path: `reports/result-${index}.md`, revision: index.toString(16).padStart(64, '0'), memoryId: `memory-${index}`, version: 1, bytes: 240 });
+test('automatic continuation has no ten-window cap while individual windows remain bounded',()=>{
+  for(const value of [undefined,'10','9999','unlimited','invalid']){
+    const limits=taskLimits({OFFICE_AI_AUTOMATIC_CONTINUATIONS:value});
+    assert.equal(limits.automaticContinuations,'unlimited');
+    assert.equal(limits.modelTurns,128);assert.equal(limits.toolCalls,512);assert.equal(limits.lifetimeMinutes,90);
+    assert.equal(JSON.parse(JSON.stringify(limits)).automaticContinuations,'unlimited');
+  }
+  assert.equal(taskLimits({OFFICE_AI_AUTOMATIC_CONTINUATIONS:'0'}).automaticContinuations,0);
+});
 function checkpoint(task, redact) {
   const messages = modelContext(task, 'Task instructions', [], redact);
   const receipt = messages.find(message => message.content?.startsWith('RECORDED TASK CHECKPOINT'));

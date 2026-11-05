@@ -310,12 +310,12 @@ test('a completely unhealthy pool gets only one bounded thirty-second probe per 
   assert.equal(budgets[1], 30000);
 });
 
-test('status distinguishes ten recovery attempts from eleven total inference attempts', async () => {
+test('status distinguishes unlimited durable recovery from eleven attempts in one provider request', async () => {
   const { createOfficeAI } = require('./office-ai');
   const status = { set() {}, json(value) { this.body = value; return this; } };
   await createOfficeAI({ env: settings }).status({}, status);
   assert.equal(status.body.recoveryModels.maximum, 10);
-  assert.equal(status.body.recoveryModels.recoveryAttempts, 10);
+  assert.equal(status.body.recoveryModels.recoveryAttempts, 'unlimited');
   assert.equal(status.body.recoveryModels.attemptsPerStep, 11);
 });
 
