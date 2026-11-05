@@ -21,6 +21,8 @@ const { createTokenVault, migrateSocialCredentials } = require('./token-vault');
 const { isSourceDisplayAllowed } = require('./source-policy');
 const { createFeedSourceInventory } = require('./feed-source-inventory');
 const { createTrafficAnalytics, TRAFFIC_ANALYTICS_SCHEMA } = require('./traffic-analytics');
+const { createRequestAnalytics, REQUEST_ANALYTICS_SCHEMA } = require('./request-analytics');
+const { createAnalyticsComparison } = require('./analytics-comparison');
 const { REPORT_SCHEMA, COPYRIGHT_REPORT_BRIDGE_SCHEMA, registerContentReportRoutes, reportSuppressionPredicate, createReportVisibilityFilter } = require('./content-reports');
 const { nativeGroupVisibilityPredicate, createNativePostVisibilityFilter } = require('./community-post-visibility');
 const { createNativeGroupCountHydrator } = require('./group-membership-counts');
@@ -231,6 +233,9 @@ const responseTiming = createResponseTiming({ targetMs: envNumber('API_RESPONSE_
 app.use(responseTiming.middleware);
 const aggregateAnalytics = createAggregateAnalytics({ db, schedule: setInterval, verificationEnabled: !IS_PIPELINE_ROLE, rollingEnabled: !IS_PIPELINE_ROLE,
   onPageview: () => recordRealUserActivity(null, 'pageview') });
+const requestAnalytics = createRequestAnalytics({ db, role: SERVICE_ROLE, schedule: setInterval });
+const analyticsComparison = createAnalyticsComparison({ db, trafficAnalytics, aggregateAnalytics });
+app.use(requestAnalytics.middleware);
 app.use(aggregateAnalytics.serviceMiddleware);
 // Trust only an explicitly configured proxy range/hop count. Untrusted clients
 // must not choose their own rate-limit identity through forwarding headers.
@@ -417,7 +422,7 @@ app.get('/analytics-bridge.html', createAnalyticsBridgeHandler());
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
   : process.env.NODE_ENV !== 'production';
-app.use(cors({ origin: allowedOrigins, credentials: true, exposedHeaders: ['Server-Timing'] }));
+app.use(cors({ origin: allowedOrigins, credentials: true, maxAge: 600, exposedHeaders: ['Server-Timing'] }));
 // Metrics are parsed before general authentication and never receive user IDs.
 const analyticsRouter = express.Router();
 analyticsRouter.use(rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: true, legacyHeaders: false,
@@ -17440,6 +17445,7 @@ async function migrateDB() {
 
     await db.query(ANALYTICS_SCHEMA);
     await db.query(TRAFFIC_ANALYTICS_SCHEMA);
+    await db.query(REQUEST_ANALYTICS_SCHEMA);
     for (const statement of ANALYTICS_MIGRATIONS) await db.query(statement);
     for (const statement of OFFICE_MEMBERS_SCHEMA) await db.query(statement);
     for (const statement of OFFICE_USER_USAGE_SCHEMA) await db.query(statement);
@@ -20085,6 +20091,8 @@ registerContentReportRoutes(app, { db, authenticate, requireOfficeToken, notifyC
 
 app.get('/office/analytics/pageviews', requireOfficeToken, aggregateAnalytics.report);
 app.get('/office/analytics/geography', requireOfficeToken, aggregateAnalytics.geography);
+app.get('/office/analytics/requests', requireOfficeToken, requestAnalytics.report);
+app.get('/office/analytics/comparison', requireOfficeToken, analyticsComparison.report);
 app.get('/office/analytics/traffic', requireOfficeToken, trafficAnalytics.report);
 
 // Real per-topic volume, straight from the DB rather than the capped

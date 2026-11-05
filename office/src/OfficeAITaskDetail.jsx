@@ -3,6 +3,7 @@ import { ArrowUpRight, Download, RefreshCw, RotateCcw, Square } from 'lucide-rea
 import OfficeAIContent, { safeOfficeLink } from './OfficeAIContent';
 import OfficeAIArtifacts from './OfficeAIArtifacts';
 import { officeAIRequest, officeAIError, taskDate, taskState } from './office-ai-client';
+import { createVisibleOfficePoller } from './office-polling.mjs';
 
 export const FINISHED_TASKS = new Set(['succeeded','failed','cancelled']);
 function ReceiptLink({ url, children }) { const href = safeOfficeLink(url); return href ? <a href={href} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">{children}<ArrowUpRight size={13} /></a> : <span>{children}</span>; }
@@ -77,21 +78,21 @@ export function OfficeAITaskRun({ taskId, apiBase, request, onUpdate, onOpenTerm
   const controllers = useRef(new Set()), epoch = useRef(0), mutating = useRef(false), update = useRef(onUpdate);
   update.current = onUpdate;
   useEffect(() => {
-    let stopped = false, timer;
+    let stopped = false;
     const current = ++epoch.current, valid = () => !stopped && epoch.current === current;
-    async function refresh() {
+    async function refresh({ signal }) {
       let finished = false;
       try {
-        const data = await officeAIRequest(request,`${apiBase}/office/ai/tasks/${encodeURIComponent(taskId)}`,{},controllers.current);
-        if(!valid()) return;
+        const data = await officeAIRequest(request,`${apiBase}/office/ai/tasks/${encodeURIComponent(taskId)}`,{signal},controllers.current);
+        if(!valid() || signal.aborted) return;
         if(!data.task || data.task.id !== taskId) throw Error('The task receipt could not be verified.');
         setTask(data.task); setObservedAt(new Date().toISOString()); setError(''); update.current?.(data.task);
         finished = FINISHED_TASKS.has(data.task.status);
-      } catch(cause) { if(valid()) setError(officeAIError(cause)); }
-      finally { if(valid() && !finished) timer = setTimeout(refresh,3000); }
+      } catch(cause) { if(valid() && !signal.aborted) setError(officeAIError(cause)); }
+      finally { if(valid() && finished) poller.stop(); }
     }
-    refresh();
-    return () => { stopped = true; epoch.current++; clearTimeout(timer); controllers.current.forEach(controller => controller.abort()); };
+    const poller = createVisibleOfficePoller({ task: refresh, intervalMs: 3000 });
+    return () => { stopped = true; epoch.current++; poller.stop(); controllers.current.forEach(controller => controller.abort()); };
   },[taskId,apiBase,request,revision]);
   async function mutate(suffix,body) {
     if(mutating.current) return;

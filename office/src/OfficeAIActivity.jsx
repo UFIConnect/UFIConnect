@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { RefreshCw, ShieldAlert } from 'lucide-react';
+import { createVisibleOfficePoller } from './office-polling.mjs';
 
 const dateLabel = value => Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString() : '';
 const listStyle = { gridAutoFlow: 'row', gridTemplateColumns: 'minmax(0, 1fr)' };
@@ -30,25 +31,27 @@ export default function OfficeAIActivity({ apiBase, request }) {
   const [report, setReport] = useState(null), [error, setError] = useState(''), [busy, setBusy] = useState(false), [revision, setRevision] = useState(0);
   const generation = useRef(0);
   useEffect(() => {
-    let active = true, pending, timer;
+    let active = true, pending;
     const current = ++generation.current;
     const valid = () => active && current === generation.current;
-    async function check() {
+    async function check({ signal }) {
       const controller = new AbortController(); pending = controller; setBusy(true);
+      const abort = () => controller.abort();
+      if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
       const deadline = setTimeout(() => controller.abort(), 25000);
       try {
         const response = await request(`${apiBase}/office/ai/activity`, { signal: controller.signal });
         const data = await response.json().catch(() => ({}));
         if (!response.ok || data.status === 'unavailable') throw Error(typeof data.error === 'string' ? data.error : 'Activity monitoring is unavailable. Refresh to retry.');
-        if (valid()) { setReport(data); setError(''); }
+        if (valid() && !signal.aborted) { setReport(data); setError(''); }
       } catch (cause) {
-        if (valid()) { setReport(null); setError(cause.name === 'AbortError' ? 'The activity check timed out. Refresh to retry.' : cause.message); }
-      } finally { clearTimeout(deadline); if (valid()) { setBusy(false); timer = setTimeout(check, 60000); } }
+        if (valid() && !signal.aborted) { setReport(null); setError(cause.name === 'AbortError' ? 'The activity check timed out. Refresh to retry.' : cause.message); }
+      } finally { clearTimeout(deadline); signal.removeEventListener('abort', abort); if (valid()) setBusy(false); }
     }
-    check();
+    const poller = createVisibleOfficePoller({ task: check, intervalMs: 60000 });
     const reset = () => { generation.current++; pending?.abort(); setReport(null); setError(''); setRevision(value => value + 1); };
     window.addEventListener('office-token-changed', reset);
-    return () => { active = false; generation.current++; clearTimeout(timer); pending?.abort(); window.removeEventListener('office-token-changed', reset); };
+    return () => { active = false; generation.current++; poller.stop(); pending?.abort(); window.removeEventListener('office-token-changed', reset); };
   }, [apiBase, request, revision]);
   const findings = Array.isArray(report?.findings) ? report.findings : [];
   const alerts = findings.filter(finding => finding.severity !== 'info');
