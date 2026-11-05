@@ -12,9 +12,9 @@ const report={checks:[],errors:[],requests:[]},tasks=new Map(),byRequest=new Map
 const memoryId=randomUUID();let memoryEntries=[{id:memoryId,title:'Recorded release decision',kind:'execution',mode:'task',status:'succeeded',referenceId:'recorded-task-receipt',content:'The hosted website draft stayed in memory; publication had its own recorded request.',createdAt:new Date().toISOString()}];
 const terminalId=randomUUID(),confirmationId=randomUUID(),continuationId=randomUUID();
 const artifactMemoryId=randomUUID(),artifactContent='<!doctype html><html><body><h1>Hosted verification draft</h1><script>document.body.dataset.ready="yes";try{parent.document.body.dataset.previewEscaped="yes"}catch{document.body.dataset.isolated="yes"}</script></body></html>';
-const capabilities={repository:'fixture/office',editCode:true,publish:true,deploy:true,operate:true,deployTargets:['api','office'],limits:{modelTurns:128,toolCalls:512,lifetimeMinutes:90}};
+const capabilities={repository:'fixture/office',deploymentApprovalRequired:true,editCode:true,publish:true,deploy:true,operate:true,deployTargets:['api','office'],limits:{modelTurns:128,toolCalls:512,lifetimeMinutes:90}};
 const time=()=>new Date().toISOString();
-let taskCreates=0,chatCalls=0,loseNextReceipt=false,server,browser,page;
+let taskCreates=0,chatCalls=0,deploymentApprovals=0,loseNextReceipt=false,server,browser,page;
 const harness=`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;padding:16px;background:#080e18}</style></head><body><div id="root"></div><script type="module">import React from 'react';import {createRoot} from 'react-dom/client';import OfficeAI from '/src/OfficeAI.jsx';createRoot(document.getElementById('root')).render(React.createElement(OfficeAI,{apiBase:'/mock',request:fetch}));</script></body></html>`;
 async function section(label) {
   const primary=page.getByRole('navigation',{name:'Pip main navigation',exact:true});
@@ -53,7 +53,13 @@ async function mock(route) {
   if(taskMatch) {
     const task=tasks.get(taskMatch[1]);if(!task)return reply({error:'Task missing'},404);
     if(taskMatch[2]==='confirm') {
-      assert.deepEqual(body,{confirmationId,confirmed:true});task.status='needs_continuation';task.confirmation=null;task.continuation={id:continuationId,reason:'model-turns',message:'The task reached its model-turn limit. Continue from this checkpoint.'};task.resumable=true;task.progress={modelTurns:128,toolCalls:512,resumes:0};
+      if(task.confirmation?.kind==='deployment') {
+        assert.deepEqual(body,{confirmationId:task.confirmation.id,confirmed:true});
+        assert.equal(task.confirmation.sha,task.commit.sha);deploymentApprovals++;
+        task.status='working';task.confirmation=null;task.summary='Deployment approval recorded. Waiting for the deployment receipt.';
+      } else {
+        assert.deepEqual(body,{confirmationId,confirmed:true});task.status='needs_continuation';task.confirmation=null;task.continuation={id:continuationId,reason:'model-turns',message:'The task reached its model-turn limit. Continue from this checkpoint.'};task.resumable=true;task.progress={modelTurns:128,toolCalls:512,resumes:0};
+      }
     }
     if(taskMatch[2]==='resume') {
       assert.deepEqual(body,{confirmed:true,continuationId});task.status='succeeded';task.summary='Checks passed and the requested work is complete.';task.resumable=false;task.progress={modelTurns:1,toolCalls:1,resumes:1};task.terminals=[{id:terminalId,status:'completed',exitCode:0,url:'https://example.test/run/1'}];task.checks=[{name:'Tests',status:'completed',conclusion:'success',url:'https://example.test/check/1'}];
@@ -91,6 +97,8 @@ try {
   await section('Settings & history');
   await page.getByText('Thinking enabled',{exact:true}).waitFor();await section('Chat');
   assert.equal(await primary.getByRole('button',{name:'Chat',exact:true}).getAttribute('aria-pressed'),'true');
+  assert.equal(await page.getByRole('heading',{name:'Ask once. Review before it goes live.',exact:true}).isVisible(),true);
+  assert.equal(await page.getByText('Work and checks happen automatically. You approve before publishing or deployment.',{exact:true}).isVisible(),true);
   assert.equal(await page.getByRole('button',{name:'Work',exact:true}).count(),0);
   assert.equal(taskCreates,0);
   const prompt=page.getByLabel('Message Pip',{exact:true});
@@ -226,8 +234,35 @@ try {
   const typed=[...tasks.values()].at(-1); assert.equal(typed.request.target,'full-access');
   assert.equal(typed.request.permissions.publish,true); assert.equal(typed.request.permissions.deploy,true);
   assert.ok(typed.request.deployTargets.includes('web')); assert.ok(typed.request.history.some(item=>item.content.includes('How does deploying')));
+  typed.status='needs_confirmation';typed.summary='The button is fixed and its checks passed. Review the prepared deployment.';
+  typed.commit={sha:'a'.repeat(40),published:false,url:'https://example.test/commit'};
+  typed.changedFiles=[{path:'web/src/button.jsx',status:'modified',diff:'- Broken button\n+ Working button'}];
+  typed.checks=[{id:'deployment-check',name:'Website checks',status:'completed',conclusion:'success',sha:typed.commit.sha,url:'https://example.test/check/website'}];
+  typed.confirmation={id:randomUUID(),kind:'deployment',label:'Approve deployment',detail:'Checks passed for the prepared website change.',action:{name:'repo_publish'},sha:typed.commit.sha,targets:['web','office'],checks:typed.checks};
+  const review=page.getByRole('region',{name:'Review deployment',exact:true});
+  await review.waitFor();
+  assert.equal(deploymentApprovals,0,'Natural requests never approve their own deployment');
+  assert.equal(typed.commit.published,false);assert.equal(typed.deployments,undefined);
+  assert.match(await review.innerText(),/Website, Office/);
+  assert.equal(await review.getByText(typed.commit.sha,{exact:true}).count(),1);
+  assert.equal(await review.getByRole('link',{name:'Website checks',exact:true}).isVisible(),true);
+  assert.match(await review.innerText(),/Approval publishes this checked version to the repository and starts production deployment/);
+  assert.equal(await review.getByRole('button',{name:'Confirm this action',exact:true}).count(),0);
+  await page.getByRole('button',{name:'Review deployment',exact:true}).click();
+  assert.equal(await review.getByRole('button',{name:'Approve deployment',exact:true}).evaluate(button=>document.activeElement===button),true,'Review shortcut focuses the actual deployment approval');
+  assert.equal(await review.getByRole('button',{name:'Approve deployment',exact:true}).evaluate(button=>{const bounds=button.getBoundingClientRect(),log=button.closest('[role="log"]').getBoundingClientRect();return bounds.top>=log.top&&bounds.bottom<=log.bottom;}),true,'Mobile review shortcut reveals the approval inside the transcript');
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
+  await page.screenshot({path:path.join(directory,'deployment-review-mobile.png'),fullPage:true});
+  await page.setViewportSize({width:1440,height:1000});
+  await page.getByRole('button',{name:'Review deployment',exact:true}).click();
+  assert.equal(await review.getByRole('button',{name:'Approve deployment',exact:true}).evaluate(button=>{const bounds=button.getBoundingClientRect(),log=button.closest('[role="log"]').getBoundingClientRect();return document.activeElement===button&&bounds.top>=log.top&&bounds.bottom<=log.bottom;}),true,'Desktop review shortcut reveals and focuses the approval');
+  await page.screenshot({path:path.join(directory,'deployment-review-desktop.png'),fullPage:true});
+  await review.getByRole('button',{name:'Approve deployment',exact:true}).click();
+  await page.getByText('Deployment approval recorded. Waiting for the deployment receipt.',{exact:true}).first().waitFor();
+  assert.equal(deploymentApprovals,1);assert.equal(typed.commit.published,false);
+  assert.equal(await page.getByRole('heading',{name:'Deployments',exact:true}).count(),0,'Approval does not claim a deployment is already live');
   typed.status='succeeded'; typed.summary='The button is fixed. Checks passed and deployment is confirmed live.';
-  typed.commit={sha:'a'.repeat(40),published:true,url:'https://example.test/commit'};
+  typed.commit.published=true;
   typed.deployments=[{service:'web',status:'live',sha:typed.commit.sha,url:'https://example.test/deploy'}];
   await page.getByText(typed.summary,{exact:true}).first().waitFor();
   await page.getByRole('heading',{name:'Deployments',exact:true}).waitFor();
@@ -237,7 +272,7 @@ try {
   await page.screenshot({path:path.join(directory,'simple-chat-desktop.png'),fullPage:true});
   report.checks.push('Main chat automatically executes typed fix requests, preserves context, and shows the final commit and deployment in the same conversation');
   report.checks.push('Settings stay collapsed without hiding capabilities; Enter sends and Shift+Enter adds a line without executing a task');
-  await page.getByText('Task settings · Full access',{exact:true}).click();
+  await page.getByText('Task settings · Review before deployment',{exact:true}).click();
   const scope=page.locator('.office-ai-voice-scope');
   await scope.getByRole('checkbox',{name:'Edit code',exact:true}).uncheck();
   await scope.getByRole('checkbox',{name:'Run Office commands',exact:true}).uncheck();
@@ -250,7 +285,7 @@ try {
   assert.equal(await page.getByRole('button',{name:'Confirm this action',exact:true}).count(),0);
   restricted.status='succeeded';restricted.summary='The selected task permissions were preserved.';
   await page.getByText(restricted.summary,{exact:true}).first().waitFor();
-  await scope.getByRole('checkbox',{name:'Publish changes',exact:true}).check();
+  await scope.getByRole('checkbox',{name:'Publish after approval',exact:true}).check();
   await scope.getByRole('checkbox',{name:'Run Office commands',exact:true}).check();
   await scope.getByRole('checkbox',{name:'Office',exact:true}).check();
   report.checks.push('Operational enable requests start Full access tasks without a frontend confirmation; unchecked actions and targets remain excluded');
@@ -289,6 +324,56 @@ try {
   }
   assert.equal(taskCreates,beforeNatural.tasks+3); assert.equal(chatCalls,beforeNatural.chats);
   report.checks.push('Natural requests and slow-task reports execute directly with the selected permissions and finish in the same conversation');
+  await prompt.fill('Fix the website footer and prepare it for review.');await prompt.press('Enter');
+  await page.getByRole('heading',{name:'Fix the website footer and prepare it for review.',exact:true}).waitFor();
+  const unpublished=[...tasks.values()].at(-1);
+  unpublished.status='needs_confirmation';unpublished.commit={sha:'b'.repeat(40),published:false};
+  unpublished.confirmation={id:randomUUID(),kind:'deployment',label:'Approve deployment',detail:'Footer fix prepared.',action:{name:'repo_publish'},sha:'unverified',targets:['web']};
+  await review.waitFor();assert.equal(await review.getByRole('button',{name:'Approve deployment',exact:true}).isDisabled(),true);
+  assert.equal(deploymentApprovals,1,'An unverified version cannot be approved from the interface');
+  unpublished.confirmation.sha=unpublished.commit.sha;
+  await review.getByRole('button',{name:'Approve deployment',exact:true}).waitFor();
+  await page.waitForFunction(()=>[...document.querySelectorAll('section[aria-label="Review deployment"] code')].some(element=>element.textContent==='b'.repeat(40)));
+  await review.getByRole('button',{name:'Keep unpublished and stop',exact:true}).click();
+  await page.getByText('Stopped this synthetic task.',{exact:true}).first().waitFor();
+  assert.equal(unpublished.commit.published,false);assert.equal(unpublished.status,'cancelled');assert.equal(deploymentApprovals,1);
+  report.checks.push('Deployment review shows exact version, targets, and check receipts on desktop and mobile; approval precedes live receipts, missing source disables approval, and cancellation keeps the candidate unpublished');
+  delete capabilities.deploymentApprovalRequired;
+  await page.getByRole('button',{name:'Refresh Pip connection',exact:true}).click();
+  await page.locator('.office-ai-approval-note').filter({hasText:'Preparation mode: the server is updating.'}).waitFor();
+  assert.equal(await scope.getByRole('checkbox',{name:'Publish after approval',exact:true}).isChecked(),false);
+  assert.equal(await scope.getByRole('checkbox',{name:'Publish after approval',exact:true}).isDisabled(),true);
+  assert.equal(await scope.getByRole('checkbox',{name:'Run Office commands',exact:true}).isDisabled(),true);
+  loseNextReceipt=true;
+  const beforeLegacy=taskCreates;
+  await prompt.fill('Fix the website footer, publish it, and deploy it after review.');await prompt.press('Enter');
+  await page.getByRole('alert').filter({hasText:'The connection ended before the task receipt arrived.'}).waitFor();
+  const legacyChat=[...tasks.values()].at(-1);
+  assert.deepEqual(legacyChat.request.permissions,{editCode:true,publish:false,deploy:false,operate:false});assert.deepEqual(legacyChat.request.deployTargets,[]);
+  capabilities.deploymentApprovalRequired=true;
+  await page.getByRole('button',{name:'Check server update',exact:true}).click();
+  await page.locator('.office-ai-approval-note').filter({hasText:'Preparation mode:'}).waitFor({state:'hidden'});
+  await prompt.press('Enter');
+  await page.getByRole('heading',{name:'Fix the website footer, publish it, and deploy it after review.',exact:true}).waitFor();
+  assert.equal(taskCreates,beforeLegacy+1,'Upgrading the backend during a lost receipt must recover the same task');
+  assert.deepEqual(legacyChat.request.permissions,{editCode:true,publish:false,deploy:false,operate:false},'A receipt retry cannot widen its original preparation-only authorization');
+  legacyChat.status='succeeded';legacyChat.summary='The requested change is prepared without publication.';
+  await page.getByText(legacyChat.summary,{exact:true}).first().waitFor();
+  delete capabilities.deploymentApprovalRequired;
+  await section('Tasks');await page.getByRole('button',{name:'New agent chat',exact:true}).click();
+  await page.getByRole('button',{name:'Recent tasks',exact:true}).click();await page.getByRole('button',{name:'Refresh tasks',exact:true}).click();
+  await page.getByRole('region',{name:'Coding tasks',exact:true}).getByText('Preparation mode: the server is updating.',{exact:false}).first().waitFor();
+  await taskPrompt.fill('Prepare a safe website update while deployment approval is unavailable.');await startTask.click();
+  await page.getByRole('heading',{name:'Prepare a safe website update while deployment approval is unavailable.',exact:true}).waitFor();
+  const legacyTask=[...tasks.values()].at(-1);
+  assert.deepEqual(legacyTask.request.permissions,{editCode:true,publish:false,deploy:false,operate:false});assert.deepEqual(legacyTask.request.deployTargets,[]);
+  legacyTask.status='succeeded';legacyTask.summary='The task workspace preserved preparation-only authorization.';
+  capabilities.deploymentApprovalRequired=true;
+  await section('Chat');await page.getByRole('button',{name:'Refresh Pip connection',exact:true}).click();
+  await page.locator('.office-ai-approval-note').filter({hasText:'Preparation mode:'}).waitFor({state:'hidden'});
+  assert.equal(await scope.getByRole('checkbox',{name:'Publish after approval',exact:true}).isChecked(),true);
+  assert.equal(await scope.getByRole('checkbox',{name:'Run Office commands',exact:true}).isChecked(),true);
+  report.checks.push('Missing server approval support limits both main chat and Tasks to code preparation, masks publication/deployment/Office-command permissions and targets, disables unsafe checkboxes, and restores user preferences after upgrade');
   assert.deepEqual(report.errors,[]);
 } catch(error) {report.failure=error.message;if(page){report.failurePage=await page.locator('body').innerText().catch(()=>null);await page.screenshot({path:path.join(directory,'execution-failure.png'),fullPage:true}).catch(()=>{});}throw error;}
 finally {await browser?.close();await server?.close();await fs.writeFile(path.join(directory,'conversation-execution-smoke.json'),JSON.stringify(report,null,2));}

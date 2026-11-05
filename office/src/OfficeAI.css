@@ -102,6 +102,25 @@
 .office-ai-chat-bar button { min-height:38px; flex-shrink:0; padding:8px 11px; font-size:12px; }
 .office-ai-transcript { height:clamp(280px,calc(100dvh - 700px),530px); min-height:280px; padding:20px 24px; scrollbar-gutter:stable; }
 .office-ai-welcome { padding:8px 0; }
+.office-ai-approval-note { display:flex; flex-wrap:wrap; align-items:flex-start; gap:7px; margin:10px 18px; color:var(--ai-muted); font-size:11px; line-height:1.6; }
+.office-ai-approval-note>span { flex:1; min-width:0; }
+.office-ai-approval-note>button { min-height:44px; margin-left:21px; }
+.office-ai-approval-note svg { flex-shrink:0; margin-top:2px; color:#9edbc2; }
+.office-ai-deployment-review { border-color:#587b70; background:#162a27; }
+.office-ai-deployment-facts { display:grid; gap:12px; margin:14px 0; font-size:12px; }
+.office-ai-deployment-facts div { min-width:0; }
+.office-ai-deployment-facts dt { color:var(--ai-muted); font-size:11px; margin-bottom:4px; }
+.office-ai-deployment-facts dd { margin:0; overflow-wrap:anywhere; line-height:1.6; }
+.office-ai-deployment-facts code { font-size:11px; }
+.office-ai-approval-checks { list-style:none; padding:0; margin:12px 0; display:grid; gap:8px; font-size:12px; }
+.office-ai-approval-checks li { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px 14px; }
+.office-ai-approval-checks a { display:inline-flex; align-items:center; gap:4px; }
+.office-ai-approval-checks li>span { color:var(--ai-muted); }
+.office-ai-approval-actions { display:flex; flex-wrap:wrap; gap:9px; }
+.office-ai-approval-actions button { min-height:44px; }
+.office-ai-active-task-note { padding:10px 12px; border-bottom:1px solid var(--ai-line); }
+.office-ai-active-task-note .office-ai-form-note { margin:0; }
+.office-ai-active-task-note>button { margin-top:8px; min-height:44px; }
 .office-ai-welcome>p { margin:8px 0 18px; line-height:1.7; }
 .office-ai-starters { padding:2px 2px 8px; }
 .office-ai-starters button { justify-content:space-between; min-height:104px; padding:14px; border-color:#304867; border-radius:10px; }

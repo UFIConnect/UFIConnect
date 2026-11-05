@@ -25,7 +25,7 @@ const active = {
   changedFiles: [{ path: 'web/src/components/NavigationWithAVeryLongUnbrokenFileNameForResponsiveOverflowChecks.jsx', status: 'modified', diff: '+ const responsiveNavigation = true;' }],
 };
 const previous = { id: 'responsive-previous', status: 'succeeded', message: 'Previous completed website layout task', summary: 'Completed website navigation review.', createdAt: now(), events: [] };
-const capabilities = { editCode: true, publish: true, deploy: true, operate: true, deployTargets: ['api', 'office'], limits: active.limits };
+const capabilities = { deploymentApprovalRequired: true, editCode: true, publish: true, deploy: true, operate: true, deployTargets: ['api', 'office'], limits: active.limits };
 const harness = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;padding:16px;background:#1c1a2a;color:#e8eef8;font-family:Arial,sans-serif}#root{max-width:1500px;margin:auto}@media(max-width:600px){body{padding:10px}}</style></head><body><div id="root"></div><script type="module">import React from 'react';import {createRoot} from 'react-dom/client';import '/src/OfficeAI.css';import OfficeAITasks from '/src/OfficeAITasks.jsx';createRoot(document.getElementById('root')).render(React.createElement('main',{className:'office-ai','data-settings-open':'false'},React.createElement(OfficeAITasks,{apiBase:'/mock',request:fetch})));</script></body></html>`;
 async function mock(route) {
   const req = route.request(), pathname = new URL(req.url()).pathname.replace('/mock', ''), method = req.method();

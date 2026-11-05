@@ -1,6 +1,6 @@
 // The main conversation and voice share the same action boundary.
 const ACTION = /^(?:fix|repair|debug|edit|update|upgrade|improve|build|run|deploy|publish|release|check|audit|refresh|investigate|implement|test|enable|disable|activate|deactivate|optimize|sync|transfer|drain|execute|pause|resume|restart|connect|disconnect|clear|delete|restore|create|make|write|change|remove|add|save|set|increase|reduce|finish|complete)\b/i;
-const ACTION_OBJECT = /\b(?:website|site|page|file|code|button|component|endpoint|api|worker|pipeline|memory|tool|app|tasks?|jobs?|recovery|attempts?|retr(?:y|ies)|permissions?|approvals?|timeouts?|limits?|settings?|services?|sources?|agents?|controls?)\b/i;
+const ACTION_OBJECT = /\b(?:uficonnect(?:\.(?:ai|org))?|pip|assistant|website|site|page|file|code|button|component|endpoint|api|worker|pipeline|memory|tool|app|tasks?|jobs?|recovery|attempts?|retr(?:y|ies)|permissions?|approvals?|timeouts?|limits?|settings?|services?|sources?|agents?|controls?)\b/i;
 
 function requestText(message) {
   return String(message || '').trim().replace(/[\u2018\u2019]/g, "'")
@@ -60,8 +60,15 @@ export function isExecutionRequest(message) {
 
 export function needsToolSupport(message, files = []) {
   const text = String(message || '').trim();
+  if (noAction(text)) return false;
   if (/^(?:hi|hello|hey|thanks|thank you|what can you do)[.!?]*$/i.test(text)) return false;
   if (files.some(file => /\.(?:csv|tsv)$/i.test(file.name || '') || file.type === 'text/csv')) return true;
+  const instruction = requestText(text);
+  // Longer deliverables need durable work, artifact receipts and automatic
+  // continuation just as code does. A question about making one stays a chat.
+  if (/^research\s+\S/i.test(instruction)) return true;
+  if (/^(?:write|draft|prepare|create|make|build|produce|deliver)\s+\S/i.test(instruction)
+    && /\b(?:reports?|briefings?|business plans?|proposals?|presentations?|slide decks?|spreadsheets?|workbooks?|documents?|research papers?|white papers?|launch plans?|marketing plans?|project plans?|courses?|curricul(?:um|a)|websites?|dashboards?)\b/i.test(instruction)) return true;
   return /\b(?:calculate|compute|solve|median|correlation|compound interest|standard deviation)\b/i.test(text)
     || /\d\s*[-+*/%^]\s*\d/.test(text)
     || /\b(?:analy[sz]e|explore)\b[\s\S]{0,100}\b(?:data|csv|json|table|spreadsheet|statistics)\b/i.test(text)

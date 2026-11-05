@@ -80,7 +80,7 @@ try {
       }
       if (url.pathname === '/office/ai') return route.fulfill({ headers, json: { provider: 'Cloudflare', configured: true, model: '@cf/test/model', researchAvailable: true, tonesAvailable: true } });
       if (url.pathname === '/office/ai/chat') return route.fulfill({ headers, json: { reply: 'An imaginative answer with stated assumptions.', generatedAt: new Date().toISOString(), research: { status: 'off' }, sources: [] } });
-      if (url.pathname === '/office/ai/tasks') return route.fulfill({ headers, json: { tasks: [], capabilities: { editCode: true, publish: true, deploy: true, operate: true, tonesAvailable: true, deployTargets: [] } } });
+      if (url.pathname === '/office/ai/tasks') return route.fulfill({ headers, json: { tasks: [], capabilities: { deploymentApprovalRequired: true, editCode: true, publish: true, deploy: true, operate: true, tonesAvailable: true, deployTargets: [] } } });
       if (url.pathname === '/office/ai/conversations') return route.fulfill({ headers, json: req.method() === 'GET' ? { conversations: [], storage: 'encrypted-database' } : { conversation: { ...body, id: body.clientRequestId, version: 1, updatedAt: new Date().toISOString() } } });
       if (url.pathname.startsWith('/office/ai/conversations/')) return route.fulfill({ headers, json: { conversation: { ...body, id: url.pathname.split('/').at(-1), version: (body?.expectedVersion || 1) + 1, updatedAt: new Date().toISOString() } } });
       if (url.pathname === '/office/ai/tools') return route.fulfill({ headers, json: { tools: [] } });

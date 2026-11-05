@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isAgentQuestion, isExecutionRequest } from './office-ai-intent.mjs';
+import { isAgentQuestion, isExecutionRequest, needsToolSupport } from './office-ai-intent.mjs';
 
 test('questions and idle messages in agents do not become execution requests', () => {
   for (const text of ['Hi!', 'Hello there', 'Hi Pip', 'Good morning', 'What can you do?', 'Start task', 'Do the task', 'Do nothing', 'How do upgrades work?', 'Can you explain the failure?', 'Explain why this code fails.', 'Should I deploy this?']) assert.equal(isAgentQuestion(text), true, text);
@@ -42,6 +42,8 @@ test('natural requests start work without requiring a command-shaped message', (
     'Can you finish the website update?',
     'Help me complete the current task.',
     'I want you to finish the job.',
+    'Make uficonnect.ai better and easier to use.',
+    'Make Pip extremely capable and ask before deploying.',
   ]) {
     assert.equal(isAgentQuestion(text), false, text);
     assert.equal(isExecutionRequest(text), true, text);
@@ -74,4 +76,32 @@ test('natural request wording keeps questions, negation, and quoted instructions
     'Explain how to complete the job.',
     '“Complete the job.”',
   ]) assert.equal(isExecutionRequest(text), false, text);
+});
+
+test('research and substantial deliverables run with durable tools from a single request', () => {
+  for (const text of [
+    'Research the latest important AI updates and cite your sources.',
+    'Can you prepare a report comparing these suppliers?',
+    'Write a complete business plan for my bakery.',
+    'Please draft a proposal with a budget and delivery schedule.',
+    'I want you to create a spreadsheet for the launch budget.',
+    'Make a presentation covering our product strategy.',
+    'Build a dashboard showing these sales figures.',
+  ]) assert.equal(needsToolSupport(text), true, text);
+});
+
+test('deliverable questions, simple prose and untrusted instructions stay conversational', () => {
+  for (const text of [
+    'How do I write a business plan?',
+    'What makes a good research report?',
+    'Can you explain how to prepare a proposal?',
+    'Write a birthday greeting.',
+    'I want to write a poem.',
+    'Research',
+    'Do not research these suppliers.',
+    'Please do not create a spreadsheet.',
+    '> Prepare a report and calculate the budget.',
+    '"Research these sources and calculate the results."',
+  ]) assert.equal(needsToolSupport(text), false, text);
+  assert.equal(needsToolSupport('Analyze the attached results.', [{ name: 'sales.csv' }]), true);
 });

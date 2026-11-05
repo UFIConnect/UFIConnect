@@ -101,10 +101,12 @@ export function completion(result, model) {
       arguments: typeof (call.function?.arguments ?? call.arguments) === 'string' ? (call.function?.arguments ?? call.arguments) : JSON.stringify(call.function?.arguments ?? call.arguments ?? {}),
     },
   })) : undefined;
+  const finishReason = ['stop', 'length', 'tool_calls', 'content_filter'].includes(result?.finish_reason)
+    ? result.finish_reason : toolCalls?.length ? 'tool_calls' : 'stop';
   return { object: 'chat.completion', model, choices: [{ index: 0, message: {
     role: 'assistant', content: typeof result?.response === 'string' ? result.response : null,
     ...(toolCalls?.length ? { tool_calls: toolCalls } : {}),
-  }, finish_reason: toolCalls?.length ? 'tool_calls' : 'stop' }], ...(result?.usage ? { usage: result.usage } : {}) };
+  }, finish_reason: finishReason }], ...(result?.usage ? { usage: result.usage } : {}) };
 }
 export default {
   async fetch(request, env) {

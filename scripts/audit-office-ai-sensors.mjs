@@ -87,7 +87,7 @@ async function setup(width,options={}){
   if(url.pathname==='/office/controls')return reply({controls:[],history:[]});
   if(url.pathname==='/office/ai/tools')return reply({tools:[]});
   if(url.pathname==='/office/ai/tasks'){
-   if(req.method()==='GET')return reply({tasks:[...tasks.values()],capabilities:{repository:'synthetic/office',tonesAvailable:true,editCode:true,publish:true,deploy:true,operate:true,deployTargets:[{id:'office',label:'Office'}]}});
+   if(req.method()==='GET')return reply({tasks:[...tasks.values()],capabilities:{repository:'synthetic/office',...(options.legacyTasks?{}:{deploymentApprovalRequired:true}),tonesAvailable:true,editCode:true,publish:true,deploy:true,operate:true,deployTargets:[{id:'office',label:'Office'}]}});
    const task={...body,id:'sensor-task-'+(tasks.size+1),status:'succeeded',summary:'I checked the synthetic Office request and attached context successfully.',createdAt:new Date().toISOString(),events:[],changedFiles:[],checks:[],deployments:[]};tasks.set(task.id,task);return reply({task},202);
   }
   if(url.pathname.startsWith('/office/ai/tasks/'))return reply({task:tasks.get(url.pathname.split('/').at(-1))});
@@ -152,6 +152,23 @@ async function checkCallReleased(page,message){
 try{
  await server.listen();browser=await chromium.launch({headless:true});
  if(!process.argv.includes('--dedicated-only')){
+ {
+  const options={legacyTasks:true}, {page,context,requests,errors}=await setup(390,options);
+  await page.locator('.office-ai-approval-note').filter({hasText:'Preparation mode: the server is updating.'}).waitFor();
+  await page.getByRole('button',{name:'Start voice',exact:true}).click();await listening(page);
+  await page.evaluate(()=>window.emitSyntheticSpeech('Deploy Office and run its maintenance commands.'));
+  await page.waitForFunction(()=>window.syntheticSensors.spoken.length>=1);await listening(page);
+  const request=taskPosts(requests)[0];
+  check(JSON.stringify(request?.body.permissions)===JSON.stringify({editCode:true,publish:false,deploy:false,operate:false}),'A voice request to an older backend cannot authorize publication, deployment, or Office commands');
+  check(JSON.stringify(request.body.deployTargets)==='[]','A voice request to an older backend sends no deployment targets');
+  await call(page).getByRole('button',{name:'End call',exact:true}).click();
+  options.legacyTasks=false;await page.getByRole('button',{name:'Check server update',exact:true}).click();
+  await page.locator('.office-ai-approval-note').filter({hasText:'Preparation mode:'}).waitFor({state:'hidden'});
+  await page.getByText('Task settings · Review before deployment',{exact:true}).click();
+  check(await page.getByRole('checkbox',{name:'Publish after approval',exact:true}).isChecked(),'Voice capability masking retains the publication preference after the backend upgrade');
+  check(await page.getByRole('checkbox',{name:'Run Office commands',exact:true}).isChecked(),'Voice capability masking retains the Office-command preference after the backend upgrade');
+  check(errors.length===0,'Mixed-version voice fallback has no browser errors');report.scenarios.push('legacy-backend-voice-preparation-only');await context.close();
+ }
  // Exercise the real authentication dialog, App hook, and welcome prop together.
  {
   const {page,context,requests,errors}=await setup(1280,{app:true,hash:'agents'});
