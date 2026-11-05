@@ -22,7 +22,7 @@ export default function useOfficeWelcome({ request, apiBase, pipelineBase, getTo
       const targets = [['api', apiBase], ...(pipelineBase !== apiBase ? [['pipeline', pipelineBase]] : [])];
       try {
         const results = await Promise.allSettled([
-          ...targets.map(([, base]) => read(`${base}/office/status`)), read(`${apiBase}/office/ai/tasks`),
+          ...targets.map(([, base]) => read(`${base}/office/status`)), read(`${apiBase}/office/ai/tasks?summary=1`),
         ]);
         if (signal.aborted || sequence.current !== current) return;
         const summary = officeWelcome({

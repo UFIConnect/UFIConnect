@@ -155,7 +155,7 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
       request(`${apiBase}/office/controls`, { signal: controller.signal }).then(payload).then(data => {
         if (valid()) setControls(Array.isArray(data.controls) ? data.controls : []);
       }).catch(cause => { if (valid()) { setControls([]); setControlsError(cause.name === 'AbortError' ? 'Command list check timed out. Retry to load commands.' : cause.message); } }),
-      request(`${apiBase}/office/ai/tasks`, { signal: controller.signal }).then(payload).then(data => {
+      request(`${apiBase}/office/ai/tasks?summary=1`, { signal: controller.signal }).then(payload).then(data => {
         if (valid()) { setTaskCapabilities(data.capabilities || {}); setExecutionError(''); }
       }).catch(cause => { if (valid()) { setTaskCapabilities(null); setExecutionError(cause.name === 'AbortError' ? 'Task connection check timed out. Refresh the AI connection.' : cause.message); } }),
       request(`${apiBase}/office/connections`, { signal: controller.signal }).then(payload).then(data => {

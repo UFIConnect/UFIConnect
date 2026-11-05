@@ -6,6 +6,7 @@ const SHA = /^[a-f0-9]{40}$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const fail = (status, message) => Object.assign(new Error(message), { status, publicMessage: message });
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
+const VERIFICATION_PATHS = new Set(['.github/workflows/verify.yml', 'scripts/verify-release-reuse.mjs', 'scripts/verify-release-reuse.test.mjs']);
 const blobSha = content => createHash('sha1').update(`blob ${Buffer.byteLength(content)}\0`).update(content).digest('hex');
 const credentialMaterial = content => /-----BEGIN\s+(?:[A-Z ]*PRIVATE KEY)|\b(?:gh[pousr]_[A-Za-z0-9]{25,}|github_pat_[A-Za-z0-9_]{30,}|sk-[A-Za-z0-9_-]{25,}|AKIA[A-Z0-9]{16})/.test(content);
 
@@ -15,7 +16,8 @@ function repositoryPath(value) {
   if (/(?:^|\/)(?:\.git|\.cache|node_modules|dist|build|coverage|credentials?(?:\.[^/]*)?|secrets?(?:\.[^/]*)?|\.env(?:\..*)?|[^/]+\.(?:pem|key|p12|pfx|sqlite|db))$/i.test(value)
     || /(?:^|\/)(?:\.git|\.cache|node_modules|dist|build|coverage|credentials?|secrets?)\//i.test(value)) return null;
   if (!/^(?:(?:backend|web|office|mobile|infra|scripts|docs|tests)\/|\.github\/workflows\/|(?:README\.md|package(?:-lock)?\.json|render\.yaml|\.nvmrc|\.gitignore)$)/.test(value)) return null;
-  return /\.(?:[cm]?js|jsx|ts|tsx|json|jsonc|css|html|md|txt|ya?ml|svg|xml|webmanifest|sh|ps1)$/.test(value) || /^(?:\.nvmrc|\.gitignore)$/.test(value) ? value : null;
+  return /\.(?:[cm]?js|jsx|ts|tsx|json|jsonc|css|html|md|txt|ya?ml|svg|xml|webmanifest|sh|ps1)$/.test(value)
+    || /^(?:\.nvmrc|\.gitignore|(?:office|web)\/public\/_headers)$/.test(value) ? value : null;
 }
 
 function rangeOf(file, startLine = 1, endLine = startLine + 119) {
@@ -191,6 +193,7 @@ function createOfficeAIRepository({ env = process.env, fetcher = globalThis.fetc
     return { hits, truncated: hits.length >= 40 };
   }
   async function edit({ ref, ...input }, staged, signal) {
+    if (VERIFICATION_PATHS.has(input.path)) throw fail(400, 'A task cannot change the verification workflow or decision helpers used to approve its own publication.');
     const previous = staged || await file(ref, input.path, signal);
     const next = applyRepositoryEdit(previous, input);
     if (redact(next.content) !== next.content) throw fail(400, 'Configured credentials cannot be committed.');
@@ -201,7 +204,7 @@ function createOfficeAIRepository({ env = process.env, fetcher = globalThis.fetc
     if (!Number.isFinite(Date.parse(createdAt))) throw fail(400, 'A candidate needs a valid saved creation time.');
     requireSha(baseSha);
     const entries = await tree(baseSha, signal);
-    if (files.some(item => item.path === '.github/workflows/verify.yml')) throw fail(400, 'A task cannot change the verification workflow used to approve its own publication.');
+    if (files.some(item => VERIFICATION_PATHS.has(item.path))) throw fail(400, 'A task cannot change the verification workflow or decision helpers used to approve its own publication.');
     if (new Set(files.map(item => item.path)).size !== files.length) throw fail(400, 'Each candidate path must occur only once.');
     for (const item of files) {
       const original = entries.find(entry => entry.path === item.path);
