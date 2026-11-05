@@ -1,6 +1,6 @@
 'use strict';
 
-const MAX_MODEL_TURNS = 128, MAX_TOOL_CALLS = 512, MAX_AUTOMATIC_CONTINUATIONS = 10;
+const MAX_MODEL_TURNS = 128, MAX_TOOL_CALLS = 512;
 // Text and schemas keep their own budget; uploaded image bytes have a separate
 // bounded allowance and remain in the original user turn during compaction.
 const MAX_CONTEXT_BYTES = 400000, MAX_MESSAGES = 80;
@@ -56,8 +56,10 @@ function taskLimits(env = {}) {
     ? Math.max(1, Math.min(maximum, Number(value))) : maximum;
   return { modelTurns: bounded(env.OFFICE_AI_MAX_MODEL_TURNS, MAX_MODEL_TURNS),
     toolCalls: bounded(env.OFFICE_AI_MAX_TOOL_CALLS, MAX_TOOL_CALLS), lifetimeMinutes: 90,
-    automaticContinuations: /^\d+$/.test(String(env.OFFICE_AI_AUTOMATIC_CONTINUATIONS))
-      ? Math.min(MAX_AUTOMATIC_CONTINUATIONS, Number(env.OFFICE_AI_AUTOMATIC_CONTINUATIONS)) : MAX_AUTOMATIC_CONTINUATIONS };
+    // A bounded execution window protects each individual request. Completed
+    // windows can renew indefinitely without discarding state or receipts.
+    // Keep the explicit operator setting for manual checkpoints compatible.
+    automaticContinuations: String(env.OFFICE_AI_AUTOMATIC_CONTINUATIONS) === '0' ? 0 : 'unlimited' };
 }
 
 function completeGroups(messages) {

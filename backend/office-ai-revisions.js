@@ -2,7 +2,8 @@
 const {randomUUID,createHash}=require('node:crypto');
 const {createTokenVault}=require('./token-vault');
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
-const DRAFT_ROLLBACK_COPIES=10;
+const DRAFT_ROLLBACK_COPIES='unlimited';
+const HISTORY_PAGE_SIZE=100;
 const RECEIPT_COLUMNS='id,collection,record_key,sequence,revision,summary,metadata,created_at';
 const problem=(status,message)=>Object.assign(new Error(message),{status,publicMessage:message});
 const SCHEMA=`CREATE TABLE IF NOT EXISTS office_ai_revisions (
@@ -21,7 +22,19 @@ function createOfficeAIRevisions({db,env=process.env}={}){
     if(!ready)ready=(async()=>{for(const statement of SCHEMA.split(';').filter(value=>value.trim()))await db.query(statement);})().catch(error=>{ready=null;throw error;});await ready;
   }
   function identity(collection,key){if(!['function','task-draft'].includes(collection)||!UUID.test(key||''))throw problem(400,'Use a valid function or task identifier.');}
-  async function history(collection,key){identity(collection,key);await storage();return(await db.query(`SELECT ${RECEIPT_COLUMNS} FROM office_ai_revisions WHERE collection=$1 AND record_key=$2 ORDER BY sequence DESC LIMIT $3`,[collection,key,collection==='task-draft'?DRAFT_ROLLBACK_COPIES+1:3])).rows.map(receipt);}
+  async function historyPage(collection,key,{before,limit=HISTORY_PAGE_SIZE}={}){
+    identity(collection,key);
+    if(!Number.isInteger(limit)||limit<1||limit>HISTORY_PAGE_SIZE)throw problem(400,'Choose a rollback history page size from 1 to 100.');
+    // Sequence cursors stay decimal strings, including beyond the JavaScript
+    // safe integer range. Keyset pagination never skips retained checkpoints.
+    if(before!==undefined&&(typeof before!=='string'||!/^\d{1,19}$/.test(before)||BigInt(before)<1n||BigInt(before)>9223372036854775807n))throw problem(400,'Use the rollback cursor returned by the previous page.');
+    await storage();
+    const result=await db.query(`SELECT ${RECEIPT_COLUMNS} FROM office_ai_revisions WHERE collection=$1 AND record_key=$2${before!==undefined?' AND sequence<$4::bigint':''} ORDER BY sequence DESC LIMIT $3`,[collection,key,limit+1,...(before!==undefined?[before]:[])]);
+    const rows=result.rows.slice(0,limit),hasMore=result.rows.length>limit;
+    const count=await db.query('SELECT count(*)::text AS count FROM office_ai_revisions WHERE collection=$1 AND record_key=$2',[collection,key]);
+    return{checkpoints:rows.map(receipt),nextBefore:hasMore?String(rows.at(-1).sequence):null,hasMore,total:Number(count.rows[0].count),retention:DRAFT_ROLLBACK_COPIES};
+  }
+  async function history(collection,key,options){return(await historyPage(collection,key,options)).checkpoints;}
   async function list(collection){if(collection!=='function')throw problem(400,'Only the function library supports listing.');await storage();return(await db.query(`SELECT DISTINCT ON(record_key) ${RECEIPT_COLUMNS} FROM office_ai_revisions WHERE collection=$1 ORDER BY record_key,sequence DESC LIMIT 51`,[collection])).rows.map(receipt);}
   async function read(collection,key,id){
     identity(collection,key);if(id!==undefined&&!UUID.test(id))throw problem(400,'Use a valid checkpoint identifier.');await storage();
@@ -32,8 +45,11 @@ function createOfficeAIRevisions({db,env=process.env}={}){
     catch{throw problem(503,'This encrypted rollback checkpoint could not be verified.');}
     return{...receipt(row),value};
   }
-  async function write(collection,key,value,{expectedRevision,append=false,keep=3,summary='',metadata={}}={}){
-    identity(collection,key);if(![2,3,...(collection==='task-draft'?[DRAFT_ROLLBACK_COPIES+1]:[])].includes(keep))throw problem(400,'Drafts support a current checkpoint with ten backups; functions retain two previous versions.');
+  async function write(collection,key,value,{expectedRevision,append=false,keep='unlimited',summary='',metadata={}}={}){
+    identity(collection,key);
+    // Accept historical callers' finite keep argument without pruning their
+    // old data. Retention is unlimited for drafts and function rollbacks.
+    if(keep!=='unlimited'&&(!Number.isSafeInteger(keep)||keep<1))throw problem(400,'Use unlimited rollback retention.');
     const encoded=JSON.stringify(value);if(typeof encoded!=='string'||Buffer.byteLength(encoded)>4*1024*1024)throw problem(413,'The rollback checkpoint exceeds its four-megabyte capacity.');
     await storage();const revision=createHash('sha256').update(encoded).digest('hex');
     return db.withClient(async client=>{
@@ -48,7 +64,6 @@ function createOfficeAIRevisions({db,env=process.env}={}){
         if(collection==='function'&&!latest){const count=(await client.query('SELECT count(DISTINCT record_key)::integer AS count FROM office_ai_revisions WHERE collection=$1',[collection])).rows[0].count;if(count>=50)throw problem(409,'The library supports up to 50 reusable functions.');}
         const id=randomUUID(),sealed=createTokenVault(env).seal(encoded,`office:revision:${collection}:${key}:${id}`);
         const row=(await client.query(`INSERT INTO office_ai_revisions(id,collection,record_key,revision,summary,metadata,encrypted_payload) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7) RETURNING ${RECEIPT_COLUMNS}`,[id,collection,key,revision,String(summary).slice(0,240),JSON.stringify(metadata),sealed])).rows[0];
-        await client.query('DELETE FROM office_ai_revisions WHERE collection=$1 AND record_key=$2 AND id NOT IN(SELECT id FROM office_ai_revisions WHERE collection=$1 AND record_key=$2 ORDER BY sequence DESC LIMIT $3)',[collection,key,keep]);
         await client.query('COMMIT');return receipt(row);
       }catch(error){await client.query('ROLLBACK');throw error;}
     });
@@ -63,6 +78,6 @@ function createOfficeAIRevisions({db,env=process.env}={}){
       await client.query("DELETE FROM office_ai_revisions WHERE collection='function' AND record_key=$1",[key]);await client.query('COMMIT');return{deleted:true};
     }catch(error){await client.query('ROLLBACK');throw error;}});
   }
-  return{configured,list,history,read,write,restore,remove};
+  return{configured,list,history,historyPage,read,write,restore,remove};
 }
 module.exports={createOfficeAIRevisions,SCHEMA,DRAFT_ROLLBACK_COPIES};

@@ -474,3 +474,8 @@
     max-height: none;
   }
 }
+.office-ai-execution-lock { display: flex; align-items: flex-start; gap: 7px; font-size: 12px; line-height: 1.6; color: var(--ai-muted, #b9b2c9); }
+.office-ai-execution-lock svg { flex-shrink: 0; margin-top: 3px; }
+.office-ai-task-recover { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 14px; margin: 12px 0; padding: 12px; border: 1px solid var(--ai-line, #3e384e); border-radius: 10px; }
+.office-ai-task-recover p { flex: 1 1 180px; margin: 0; font-size: 12px; line-height: 1.6; }
+.office-ai-task-recover button { flex: 0 0 auto; min-height: 44px; }

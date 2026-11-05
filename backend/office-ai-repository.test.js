@@ -233,7 +233,7 @@ test('a connection change during a source fetch cannot return or retain its old 
   assert.equal(original.state.calls.filter(call => call.path.startsWith('/git/blobs/')).length, 2);
 });
 
-test('bad blob integrity never poisons a later source read and large files do not enter the small source cache', async () => {
+test('bad blob integrity never poisons a later source read and larger verified files reuse the bounded source cache', async () => {
   const original = provider(); let corrupt = true;
   const repo = createOfficeAIRepository({ env: {}, fetcher: async (url, options) => {
     if (url.includes('/git/blobs/') && corrupt) { corrupt = false; return json({ encoding: 'base64', content: Buffer.from('wrong content').toString('base64') }); }
@@ -243,7 +243,37 @@ test('bad blob integrity never poisons a later source read and large files do no
   assert.equal((await repo.readFile({ ref: BASE, path: 'backend/example.js' })).content, original.state.content);
   const large = provider('a'.repeat(100) + '\n' + 'line\n'.repeat(54000));
   for (let i = 0; i < 2; i++) await large.repo.readFile({ ref: BASE, path: 'backend/example.js', startLine: 1, endLine: 1 });
-  assert.equal(large.state.calls.filter(call => call.path.startsWith('/git/blobs/')).length, 2);
+  assert.equal(large.state.calls.filter(call => call.path.startsWith('/git/blobs/')).length, 1);
+});
+
+test('section reads and exact edits of a large entrypoint share one verified blob request', async () => {
+  const content = 'const timeout = 30;\n' + '// source detail\n'.repeat(115000);
+  assert.ok(Buffer.byteLength(content) > 1800000);
+  const { repo, state } = provider(content);
+  const first = await repo.readFile({ ref: BASE, path: 'backend/example.js', startLine: 1, endLine: 1 });
+  const later = await repo.readFile({ ref: BASE, path: first.path, startLine: 10000, endLine: 10003 });
+  assert.equal(later.sha, first.sha); assert.equal(later.content, Array(4).fill('// source detail').join('\n'));
+  const edited = await repo.edit({ ref: BASE, path: first.path, expectedSha: first.sha, edits: [{ find: 'const timeout = 30;', replace: 'const timeout = 90;' }] });
+  assert.equal(edited.originalSha, first.sha); assert.equal(edited.sha, blobSha(content.replace('const timeout = 30;', 'const timeout = 90;')));
+  await assert.rejects(repo.edit({ ref: BASE, path: first.path, expectedSha: 'f'.repeat(40), edits: [{ find: 'const timeout = 30;', replace: 'const timeout = 90;' }] }), /revision/);
+  assert.equal(state.calls.filter(call => call.path.startsWith('/git/trees/')).length, 1);
+  assert.equal(state.calls.filter(call => call.path.startsWith('/git/blobs/')).length, 1, 'Two section reads and an exact edit avoid two complete source downloads');
+});
+
+test('caching larger verified entrypoints does not grow the four-MiB total cache budget', async () => {
+  const source = Array.from({ length: 3 }, (_, i) => ({ path: `backend/large-${i}.js`, content: `const index = ${i};\n` + '// source detail\n'.repeat(99000) }));
+  const calls = [];
+  const repo = createOfficeAIRepository({ env: {}, fetcher: async url => {
+    const pathname = new URL(url).pathname; calls.push(pathname);
+    if (pathname.includes('/git/trees/')) return json({ tree: source.map(item => ({ path: item.path, sha: blobSha(item.content), mode: '100644', type: 'blob', size: Buffer.byteLength(item.content) })) });
+    const item = source.find(item => pathname.endsWith(blobSha(item.content)));
+    assert.ok(item); return json({ encoding: 'base64', content: Buffer.from(item.content).toString('base64') });
+  } });
+  const read = index => repo.readFile({ ref: BASE, path: source[index].path, startLine: 1, endLine: 1 });
+  await read(0); await read(1); await read(0);
+  assert.equal(calls.filter(path=>path.includes('/git/blobs/')).length, 2, 'Two entrypoints fit and the first remains cached');
+  await read(2); await read(1);
+  assert.equal(calls.filter(path=>path.includes('/git/blobs/')).length, 4, 'A third large entrypoint evicts the least recently used source within the same total budget');
 });
 
 test('candidate source validation finishes before any blob upload', async () => {
@@ -278,6 +308,56 @@ test('multi-file search and candidate upload overlap independent blobs with a fo
   const files = source.map(item => ({ ...item, originalSha: blobSha(item.content), content: item.content + '// updated\n', sha: blobSha(item.content + '// updated\n') }));
   await repo.candidate({ taskId: TASK, baseSha: BASE, files, message: 'Update all eight source files', createdAt: '2026-11-04' });
   assert.ok(maxReads > 1 && maxReads <= 4); assert.ok(maxWrites > 1 && maxWrites <= 4);
+});
+
+test('search and candidate upload start later source files while an earlier request is still pending', async t => {
+  for (const operation of ['search', 'candidate']) await t.test(operation, async () => {
+    const original = provider(), source = Array.from({ length: 8 }, (_, i) => ({ path: `backend/lane-${i}.js`, content: `const answer = ${i};\n` }));
+    let releaseFirst, startedFifth, active = 0, peak = 0, dispatched = 0;
+    const stalled = new Promise(resolve => { releaseFirst = resolve; }), fifth = new Promise(resolve => { startedFifth = resolve; });
+    const repo = createOfficeAIRepository({ env: { OFFICE_GITHUB_TOKEN: 'private-github-token' }, fetcher: async (url, options) => {
+      const pathname = new URL(url).pathname.replace('/repos/UFIConnect/UFIConnect', '');
+      if (pathname.startsWith('/git/trees/')) return json({ tree: source.map(item => ({ path: item.path, sha: blobSha(item.content), mode: '100644', type: 'blob', size: Buffer.byteLength(item.content) })) });
+      if (operation==='search' && pathname.startsWith('/git/blobs/') || operation==='candidate' && pathname==='/git/blobs') {
+        const index=operation==='search' ? source.findIndex(item=>pathname.endsWith(blobSha(item.content))) : source.findIndex(item=>JSON.parse(options.body).content.startsWith(item.content));
+        assert.ok(index>=0); active++; peak=Math.max(peak,active); dispatched++;
+        if(index===4)startedFifth();
+        if(index===0)await stalled;
+        active--;
+        if(operation==='search')return json({ encoding:'base64',content:Buffer.from(source[index].content).toString('base64') });
+      }
+      return original.fetcher(url,options);
+    } });
+    const pending=operation==='search'
+      ?repo.search({ref:BASE,paths:source.map(item=>item.path),query:'answer'})
+      :repo.candidate({taskId:TASK,baseSha:BASE,files:source.map(item=>({...item,originalSha:blobSha(item.content),content:item.content+'// adjusted\n',sha:blobSha(item.content+'// adjusted\n')})),message:'Adjust all eight source files',createdAt:'2026-11-04'});
+    let deadline;
+    try {
+      await Promise.race([fifth,new Promise((_resolve,reject)=>{deadline=setTimeout(()=>reject(Error('Free request lanes waited for the stalled first source')),1000);})]);
+      assert.ok(dispatched>=5); assert.ok(active>=1); assert.ok(peak<=4);
+    } finally {clearTimeout(deadline);releaseFirst();}
+    const result=await pending;
+    if(operation==='search')assert.deepEqual(result.hits.map(item=>item.path),source.map(item=>item.path));
+    else assert.equal(result.published,false);
+    assert.equal(dispatched,8);
+  });
+});
+
+test('a failed parallel source read stops additional dispatch and settles already started requests', async () => {
+  const source = Array.from({ length: 8 }, (_, i) => ({ path: `backend/failure-${i}.js`, content: `const answer = ${i};\n` }));
+  let dispatches=0, active=0, releaseOthers;
+  const waiting=new Promise(resolve=>{releaseOthers=resolve;});
+  const repo=createOfficeAIRepository({env:{},fetcher:async url=>{
+    const pathname=new URL(url).pathname;
+    if(pathname.includes('/git/trees/'))return json({tree:source.map(item=>({path:item.path,sha:blobSha(item.content),mode:'100644',type:'blob',size:Buffer.byteLength(item.content)}))});
+    dispatches++;active++;
+    if(pathname.endsWith(blobSha(source[0].content))){active--;releaseOthers();return json({error:'Read unavailable'},502);}
+    await waiting;active--;
+    const item=source.find(item=>pathname.endsWith(blobSha(item.content)));return json({encoding:'base64',content:Buffer.from(item.content).toString('base64')});
+  }});
+  await assert.rejects(repo.search({ref:BASE,paths:source.map(item=>item.path),query:'answer'}),/could not complete/);
+  assert.equal(active,0,'All requests already started are settled before reporting failure');
+  assert.ok(dispatches<=4,'No later batch starts after the initial read failure');
 });
 
 function rebaseProvider({ conflict = false, alreadyPublished = false } = {}) {

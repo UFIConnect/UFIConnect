@@ -197,11 +197,6 @@ export async function captureOfficeSnapshot(env) {
       .filter((name) => /^office-[0-9TZ-]+-[a-f0-9]{8}\.ufirec$/.test(name))
       .sort()
       .reverse();
-    for (const name of candidates.slice(10)) {
-      const target = path.resolve(privateDir, name);
-      if (path.dirname(target) !== privateDir) throw Error('Unsafe retention target');
-      await fs.unlink(target);
-    }
     return {
       filename,
       createdAt: value.createdAt,
@@ -210,8 +205,8 @@ export async function captureOfficeSnapshot(env) {
       captureMs: Math.round(performance.now() - start),
       tables: tables.length,
       sqlBytes: Buffer.byteLength(sql),
-      retentionCapacity: 10,
-      actualRetainedSnapshots: Math.min(candidates.length, 10),
+      retentionCapacity: 'unlimited',
+      actualRetainedSnapshots: candidates.length,
     };
   } finally {
     await client.query('ROLLBACK').catch(() => {});

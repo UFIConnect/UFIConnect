@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowUpRight, Download, RefreshCw, RotateCcw, Square } from 'lucide-react';
+import { ArrowUpRight, Download, LockKeyhole, RefreshCw, RotateCcw, Square } from 'lucide-react';
 import OfficeAIContent, { safeOfficeLink } from './OfficeAIContent';
 import OfficeAIArtifacts from './OfficeAIArtifacts';
 import { TASK_TARGET_LABELS } from './OfficeAITaskScope';
@@ -47,8 +47,22 @@ function TerminalReceipt({ terminal, apiBase, request, onOpenTerminal }) {
 
 function DraftCheckpoints({task,busy,mutate,apiBase,request}) {
   const [selected,setSelected]=useState(null),[error,setError]=useState(''),[loading,setLoading]=useState(false);
+  const [history,setHistory]=useState(task.backups || []),[nextBefore,setNextBefore]=useState(null),[hasMore,setHasMore]=useState(false),[total,setTotal]=useState(null),[retention,setRetention]=useState(null),[loaded,setLoaded]=useState(false);
   const controllers=useRef(new Set());
   useEffect(()=>()=>{controllers.current.forEach(controller=>controller.abort());},[task.id]);
+  async function loadHistory(older=false) {
+    if (loading) return;
+    setLoading(true); setError('');
+    try {
+      const params=new URLSearchParams({limit:'50'});
+      if (older && nextBefore) params.set('before',nextBefore);
+      const data=await officeAIRequest(request,`${apiBase}/office/ai/tasks/${encodeURIComponent(task.id)}/checkpoints?${params}`,{},controllers.current);
+      if (!Array.isArray(data.checkpoints)) throw Error('Checkpoint history could not be read. Retry loading the saved drafts.');
+      setHistory(previous=>older ? [...previous,...data.checkpoints.filter(item=>!previous.some(saved=>saved.id===item.id))] : data.checkpoints);
+      setNextBefore(typeof data.nextBefore==='string'?data.nextBefore:null); setHasMore(data.hasMore===true && typeof data.nextBefore==='string');
+      setTotal(Number.isInteger(data.total)?data.total:null); setRetention(data.retention); setLoaded(true);
+    } catch(cause) { setError(officeAIError(cause)); } finally { setLoading(false); }
+  }
   async function download(checkpoint) {
     setLoading(true);setError('');
     try {
@@ -57,7 +71,7 @@ function DraftCheckpoints({task,busy,mutate,apiBase,request}) {
       const link=document.createElement('a');link.href=url;link.download=`pip-draft-${checkpoint.id}.json`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
     } catch(cause) {setError(officeAIError(cause));} finally {setLoading(false);}
   }
-  return <details className="office-ai-checkpoints"><summary>Draft rollback checkpoints ({Math.max(0,task.backups.length-1)} / 10 earlier versions)</summary><p className="office-ai-form-note">The saved draft and ten earlier versions are encrypted in Office. Restore a paused draft before publication; completed commits and deployments retain their receipts.</p>{task.backups.map((checkpoint,index)=><div className="office-ai-receipt" key={checkpoint.id}><span>{index===0?'Latest saved draft':`Rollback version ${index}`} · {checkpoint.summary}</span><small>{taskDate(checkpoint.createdAt)}</small><button type="button" disabled={loading} onClick={()=>download(checkpoint)}><Download size={13}/>Download draft</button>{index>0&&task.status==='needs_continuation'&&!task.commit&&<button type="button" disabled={busy} onClick={()=>setSelected(checkpoint)}><RotateCcw size={13}/>Restore draft</button>}</div>)}{selected&&<div className="office-ai-confirmation"><strong>Restore {selected.summary}?</strong><p>This replaces the staged files and keeps the task paused for review.</p><button type="button" disabled={busy} onClick={()=>{mutate(`/${task.id}/checkpoints/${selected.id}/restore`,{confirmed:true,continuationId:task.continuation.id});setSelected(null);}}>Confirm restore draft</button><button type="button" disabled={busy} onClick={()=>setSelected(null)}>Keep current draft</button></div>}{error&&<p role="alert" className="office-ai-error">{error}</p>}</details>;
+  return <details className="office-ai-checkpoints" onToggle={event=>{if(event.currentTarget.open&&!loaded)loadHistory();}}><summary>Draft rollback checkpoints</summary><p className="office-ai-form-note">{total!==null?`${total} saved checkpoints. `:''}Saved drafts are encrypted in Office{retention==='unlimited'?', with no fixed retention count':''}. Restore a paused draft before publication; completed commits and deployments retain their receipts.</p>{history.map((checkpoint,index)=><div className="office-ai-receipt" key={checkpoint.id}><span>{index===0?'Latest saved draft':`Rollback version ${index}`} · {checkpoint.summary}</span><small>{taskDate(checkpoint.createdAt)}</small><button type="button" disabled={loading} onClick={()=>download(checkpoint)}><Download size={13}/>Download draft</button>{index>0&&task.status==='needs_continuation'&&!task.commit&&<button type="button" disabled={busy} onClick={()=>setSelected(checkpoint)}><RotateCcw size={13}/>Restore draft</button>}</div>)}{hasMore&&<button type="button" disabled={loading} onClick={()=>loadHistory(true)}>{loading?'Loading checkpoints…':'Load older checkpoints'}</button>}{loading&&<p role="status">Loading saved checkpoints…</p>}{selected&&<div className="office-ai-confirmation"><strong>Restore {selected.summary}?</strong><p>This replaces the staged files and keeps the task paused for review.</p><button type="button" disabled={busy} onClick={()=>{mutate(`/${task.id}/checkpoints/${selected.id}/restore`,{confirmed:true,continuationId:task.continuation.id});setSelected(null);}}>Confirm restore draft</button><button type="button" disabled={busy} onClick={()=>setSelected(null)}>Keep current draft</button></div>}{error&&<p role="alert" className="office-ai-error">{error}<button type="button" disabled={loading} onClick={()=>loadHistory()}>Reload checkpoint history</button></p>}</details>;
 }
 
 export default function OfficeAITaskDetail({ task, busy, observedAt, mutate, apiBase, request, onOpenTerminal }) {
@@ -68,12 +82,14 @@ export default function OfficeAITaskDetail({ task, busy, observedAt, mutate, api
   return <div className="office-ai-task-detail" aria-label="Task execution" aria-live="polite">
     <div className="office-ai-task-heading"><div><h3>{task.message || 'Office task'}</h3><span className="office-ai-run-state" data-state={task.status}>{taskState(task.status)}</span></div>{active && <button type="button" disabled={busy || task.status === 'cancel_requested'} onClick={() => mutate(`/${encodeURIComponent(task.id)}/cancel`, {})}><Square size={14} />{task.status === 'cancel_requested' ? 'Cancellation requested' : 'Stop task'}</button>}</div>
     <p className="office-ai-form-note" role="status">{task.status === 'needs_confirmation' && task.confirmation?.kind === 'deployment' ? 'Work is prepared. Deployment is waiting for your approval.' : active ? task.summary || latestStep?.label || 'Working on your request…' : task.status === 'succeeded' ? (live.length ? `Completed · ${live.length} deployments confirmed live` : 'Completed · results and receipts below') : task.error || 'Review the recorded result below.'}</p>
+    {task.executionLock?.protected && <p className="office-ai-execution-lock"><LockKeyhole size={14}/>{task.executionLock.held ? 'Project edits are locked to this task while it works.' : 'Project edits wait for the active task’s lock before continuing.'}</p>}
+    {active && task.recoveryAvailable && <div className="office-ai-task-recover"><p>Stuck? Recover from the saved checkpoint with the same permissions and completed receipts.</p><button type="button" disabled={busy || task.status==='recovery_requested'} onClick={()=>mutate(`/${encodeURIComponent(task.id)}/recover`,{confirmed:true})}><RotateCcw size={14}/>{task.status==='recovery_requested'?'Recovery requested':'Recover task'}</button></div>}
     <details className="office-ai-work-receipts office-ai-task-metadata"><summary>Task details</summary>
     <p className="office-ai-form-note">Last checked {taskDate(observedAt)}. Stopping cannot undo completed commits or deployments.</p>
     {task.route && <p className="office-ai-form-note">Destination: <strong>{task.route.target}</strong>. {task.route.reason}</p>}
     {task.memoryState?.status === 'unavailable' && <p className="office-ai-research-note">Memory is unavailable for this task. Its execution receipts remain below.</p>}
     {!!task.memoryState?.entries?.length && <details className="office-ai-sources"><summary>Memories used for this task</summary><ol>{task.memoryState.entries.map(entry => <li key={entry.id}><strong>{entry.title || 'Office memory'}</strong><small>{taskDate(entry.createdAt)} · {entry.kind} · {entry.status || 'recorded'}</small><small>Original record: {entry.referenceId || entry.id}</small></li>)}</ol></details>}
-    {task.progress && <p className="office-ai-form-note">Model turns: {task.progress.modelTurns ?? 0}{task.limits?.modelTurns ? ` / ${task.limits.modelTurns}` : ''} · Tool calls: {task.progress.toolCalls ?? 0}{task.limits?.toolCalls ? ` / ${task.limits.toolCalls}` : ''}{task.progress.automaticContinuations ? ` · Continued automatically ${task.progress.automaticContinuations} / ${task.limits?.automaticContinuations ?? 10} times` : ''}{task.progress.resumes ? ` · Continued manually ${task.progress.resumes} times` : ''}</p>}
+    {task.progress && <p className="office-ai-form-note">Model turns: {task.progress.modelTurns ?? 0}{task.limits?.modelTurns ? ` / ${task.limits.modelTurns}` : ''} · Tool calls: {task.progress.toolCalls ?? 0}{task.limits?.toolCalls ? ` / ${task.limits.toolCalls}` : ''}{task.progress.automaticContinuations ? ` · Continued automatically ${task.progress.automaticContinuations}${task.limits?.automaticContinuations === 'unlimited' ? ' times · no fixed attempt limit' : `${Number.isInteger(task.limits?.automaticContinuations)?` / ${task.limits.automaticContinuations}`:''} times`}` : ''}{task.progress.resumes ? ` · Continued manually ${task.progress.resumes} times` : ''}</p>}
     {['model','tool','verification','deployment'].some(phase => task.performance?.phases?.[phase]?.count > 0) && <p className="office-ai-form-note">Time spent: {[
       ['model', 'AI response'], ['tool', 'tools'], ['verification', 'verification checks'], ['deployment', 'deployment checks'],
     ].filter(([phase]) => task.performance.phases[phase]?.count > 0).map(([phase,label]) => `${label} ${(task.performance.phases[phase].totalMs / 1000).toFixed(1)}s`).join(' · ')}. Times show active work; waiting between checks is separate.</p>}
@@ -82,7 +98,7 @@ export default function OfficeAITaskDetail({ task, busy, observedAt, mutate, api
     {task.status === 'needs_continuation' && <div className="office-ai-confirmation"><strong>Ready to continue</strong><p>{task.continuation?.message || 'This task reached its current work limit. Continue from the saved checkpoint with the same permissions.'}</p><button type="button" disabled={busy || !task.resumable || !task.continuation?.id} onClick={() => mutate(`/${encodeURIComponent(task.id)}/resume`,{ confirmed: true, continuationId: task.continuation.id })}>Continue task</button></div>}
     {task.error && <p className="office-ai-error" role="alert">{officeAIError({ message: task.error })}</p>}
     {!!task.plan?.steps?.length && <ol className="office-ai-plan" aria-label="Work plan">{task.plan.steps.map(step=><li key={step.id} data-state={step.status}><span>{step.status==='completed'?'✓':step.status==='in_progress'?'→':'○'}</span>{step.title}<small>{taskState(step.status)}</small></li>)}</ol>}
-    {task.recovery && <p className="office-ai-form-note" role="status">Recovery attempt {task.recovery.currentAttempt} / {task.recovery.limit ?? 2} · {task.recovery.step}</p>}
+    {task.recovery && <p className="office-ai-form-note" role="status">Recovery attempt {task.recovery.currentAttempt}{task.recovery.limit==='unlimited'?' · no fixed attempt limit':Number.isInteger(task.recovery.limit)?` / ${task.recovery.limit}`:''} · {task.recovery.step}</p>}
     {!!task.backups?.length && <DraftCheckpoints key={task.id} task={task} busy={busy} mutate={mutate} apiBase={apiBase} request={request}/>}
     {task.review && <details className="office-ai-work-receipts"><summary>Result verification</summary><ul>{task.review.checks.map(check=><li key={check.label}>{check.passed?'✓':'Review needed'} · {check.label}</li>)}</ul><p className="office-ai-form-note">{task.review.confirmedSteps} confirmed steps. A work plan alone does not verify completion.</p></details>}
     {task.summary && <OfficeAIContent text={task.summary} />}

@@ -26814,7 +26814,7 @@ const functionRoute = operation => async (req, res) => {
 };
 app.get('/office/ai/functions', requireOfficeToken, requireOfficeAIRuntime, functionRoute(() => officeFunctions.list()));
 app.post('/office/ai/functions', requireOfficeToken, requireOfficeAIRuntime, functionRoute(req => officeFunctions.save(req.body)));
-app.get('/office/ai/functions/:id', requireOfficeToken, requireOfficeAIRuntime, functionRoute(async req => ({ function: await officeFunctions.read({ id: req.params.id }), versions: await officeFunctions.history(req.params.id) })));
+app.get('/office/ai/functions/:id', requireOfficeToken, requireOfficeAIRuntime, functionRoute(async req => ({ function: await officeFunctions.read({ id: req.params.id }), ...await officeFunctions.historyPage(req.params.id, { ...(req.query.before !== undefined ? { before: req.query.before } : {}), ...(req.query.limit !== undefined ? { limit: Number(req.query.limit) } : {}) }) })));
 app.post('/office/ai/functions/:id/run', requireOfficeToken, requireOfficeAIRuntime, functionRoute(req => {
   if (!req.body || Object.keys(req.body).some(key => key !== 'input')) throw Object.assign(Error('Provide function input as JSON.'), { status: 400, publicMessage: 'Provide function input as JSON.' });
   return officeFunctions.run({ id: req.params.id, input: req.body.input ?? {} });
@@ -26858,6 +26858,7 @@ app.post('/office/ai/tasks/:id/checkpoints/:checkpointId/restore', requireOffice
 app.post('/office/ai/tasks/:id/cancel', requireOfficeToken, requireOfficeAIRuntime, officeTasks.cancel);
 app.post('/office/ai/tasks/:id/confirm', requireOfficeToken, requireOfficeAIRuntime, officeTasks.confirm);
 app.post('/office/ai/tasks/:id/resume', requireOfficeToken, requireOfficeAIRuntime, officeTasks.resume);
+app.post('/office/ai/tasks/:id/recover', requireOfficeToken, requireOfficeAIRuntime, officeTasks.recover);
 app.get('/office/ai/terminal', requireOfficeToken, requireOfficeAIRuntime, officeTerminal.list);
 app.post('/office/ai/terminal', requireOfficeToken, requireOfficeAIRuntime, officeTerminal.create);
 app.get('/office/ai/terminal/:id', requireOfficeToken, requireOfficeAIRuntime, officeTerminal.status);

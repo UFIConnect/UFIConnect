@@ -1,26 +1,64 @@
 import { createOfficeRequestCoordinator } from './office-requests.mjs';
 
-export function createOfficeClient({ storage, fetcher, prompt, onTokenChange = () => {}, pageUrl, serviceBases }) {
+export function createOfficeClient({ storage, lockStorage, fetcher, prompt, onTokenChange = () => {}, pageUrl, serviceBases }) {
   const key = 'ufi_office_token';
   // Discard legacy persistent credentials; never recover them into a session.
   try { storage?.removeItem(key); } catch { /* Storage can be unavailable. */ }
   const prompted = new Set();
-  let memoryToken = '', pendingAuth = null, authScope = 0;
+  const lockKey = 'ufi_office_locked';
+  let locked = false;
+  try { locked = lockStorage?.getItem(lockKey) === '1'; } catch { /* Storage can be unavailable. */ }
+  let memoryToken = '', pendingAuth = null, pendingUnlock = null, authScope = 0;
   const getToken = () => memoryToken;
+  const isLocked = () => locked;
+  const lockedResponse = () => new Response('{"error":"Assistant access is locked. Unlock Office to continue."}', { status: 423, headers: { 'Content-Type': 'application/json' } });
   const reads = createOfficeRequestCoordinator({ fetcher, getScope: () => authScope, pageUrl, serviceBases });
+  function lock() {
+    locked = true; memoryToken = ''; authScope++;
+    pendingAuth = null; pendingUnlock = null; prompted.clear(); reads.clear({ auth: true });
+    try { lockStorage?.setItem(lockKey, '1'); } catch { /* The in-memory lock still applies. */ }
+    onTokenChange();
+  }
+  async function unlock() {
+    if (!locked) return Boolean(memoryToken);
+    if (pendingUnlock) return pendingUnlock;
+    const scope = authScope;
+    const attempt = Promise.resolve().then(() => prompt('Office access token')).then(async value => {
+      const entered = typeof value === 'string' ? value.trim() : '';
+      if (!entered || scope !== authScope) return false;
+      const base = serviceBases?.[0]?.url || '';
+      const response = await reads.request(`${base.replace(/\/$/, '')}/office/status`, { method: 'GET', cache: 'reload', credentials: 'omit', redirect: 'error', headers: { 'x-office-token': entered } });
+      if (scope !== authScope) return false;
+      if (response.status < 200 || response.status >= 300) throw new Error('Office could not verify that access token. The assistant remains locked.');
+      const result = await response.json().catch(() => null);
+      if (scope !== authScope) return false;
+      if (!result?.server || typeof result.server !== 'object' || Array.isArray(result.server)) throw new Error('Office could not verify access. The assistant remains locked.');
+      memoryToken = entered; locked = false; authScope++; reads.clear({ auth: true }); prompted.clear();
+      try { lockStorage?.removeItem(lockKey); } catch { /* The verified in-memory session is usable. */ }
+      onTokenChange();
+      return true;
+    }).finally(() => { if (pendingUnlock === attempt) pendingUnlock = null; });
+    pendingUnlock = attempt;
+    return attempt;
+  }
   async function authorize(token) {
+    if (locked) return '';
     if (!pendingAuth) {
       if (prompted.has(token)) return '';
       prompted.add(token);
-      pendingAuth = Promise.resolve().then(() => prompt('Office access token')).then(value => {
+      const scope = authScope;
+      const attempt = Promise.resolve().then(() => prompt('Office access token')).then(value => {
         const entered = value?.trim();
+        if (locked || scope !== authScope) return '';
         if (entered) { memoryToken = entered; authScope++; reads.clear({ auth: true }); prompted.clear(); onTokenChange(); }
         return entered;
-      }).finally(() => { pendingAuth = null; });
+      }).finally(() => { if (pendingAuth === attempt) pendingAuth = null; });
+      pendingAuth = attempt;
     }
     return pendingAuth;
   }
   async function request(url, options = {}) {
+    if (locked) return lockedResponse();
     if (typeof url !== 'string' && !(url instanceof URL)) throw new TypeError('Office requests require a URL string or URL object.');
     const write = !['GET', 'HEAD'].includes(String(options.method || 'GET').toUpperCase());
     let token = getToken();
@@ -28,6 +66,7 @@ export function createOfficeClient({ storage, fetcher, prompt, onTokenChange = (
     // replayed automatically after a 401, timeout or connection failure.
     if (write && !token) {
       token = await authorize(token);
+      if (locked) return lockedResponse();
       if (!token) return new Response('{"error":"Office access is required."}', { status: 401, headers: { 'Content-Type': 'application/json' } });
     }
     const send = value => {
@@ -47,6 +86,7 @@ export function createOfficeClient({ storage, fetcher, prompt, onTokenChange = (
   request.subscribeDiagnostics = reads.subscribeDiagnostics;
   request.invalidateReads = () => reads.clear();
   const transportRequest = (url, options = {}) => {
+    if (locked) return Promise.resolve(lockedResponse());
     if (String(options.method || 'GET').toUpperCase() !== 'GET' || options.body != null) {
       return Promise.reject(new TypeError('Office stream transport accepts GET requests without a body.'));
     }
@@ -57,7 +97,8 @@ export function createOfficeClient({ storage, fetcher, prompt, onTokenChange = (
     else headers.delete('x-office-token');
     return reads.request(url, { ...options, method: 'GET', credentials: 'omit', redirect: 'error', headers: Object.fromEntries(headers) });
   };
-  return { request, getToken, transportRequest,
+  request.lock = lock; request.unlock = unlock; request.isLocked = isLocked;
+  return { request, getToken, transportRequest, lock, unlock, isLocked,
     getDiagnostics: reads.getDiagnostics, subscribeDiagnostics: reads.subscribeDiagnostics };
 }
 

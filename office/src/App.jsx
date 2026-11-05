@@ -59,6 +59,7 @@ const officeClient = createOfficeClient({
     try { localStorage.removeItem(key); } catch { /* Storage can be disabled. */ }
     try { sessionStorage.removeItem(key); } catch { /* Storage can be disabled. */ }
   } },
+  lockStorage: { getItem: key => sessionStorage.getItem(key), setItem: (key, value) => sessionStorage.setItem(key, value), removeItem: key => sessionStorage.removeItem(key) },
   fetcher: trustedOfficeFetch, prompt: requestOfficeAccess,
   onTokenChange: () => window.dispatchEvent(new Event('office-token-changed')),
 });
@@ -2824,6 +2825,19 @@ function TopicsView() {
 // ─── App (root) ───────────────────────────────────────────────────────────────
 
 export default function App() {
+  const [officeLocked, setOfficeLocked] = useState(officeClient.isLocked), [unlocking, setUnlocking] = useState(false), [unlockError, setUnlockError] = useState('');
+  useEffect(() => {
+    const changed = () => { setOfficeLocked(officeClient.isLocked()); setUnlockError(''); };
+    window.addEventListener('office-token-changed', changed);
+    return () => window.removeEventListener('office-token-changed', changed);
+  }, []);
+  async function unlockOffice() {
+    if (unlocking) return;
+    setUnlocking(true); setUnlockError('');
+    try { await officeClient.unlock(); }
+    catch { setUnlockError('Office could not verify access. The assistant remains locked. Try unlocking again.'); }
+    finally { setUnlocking(false); }
+  }
   const dedicatedAI = /^(?:www\.)?uficonnect\.ai$/i.test(window.location.hostname);
   const officeViews = OFFICE_SECTIONS.map(section => section.id);
   const [view, setView] = useState(() => {
@@ -2856,7 +2870,7 @@ export default function App() {
     return () => navigation.current.dispose();
   }, [openPip]);
   const pageVisible = useOfficePageVisible();
-  const pollingPlan = useMemo(() => officePollingPlan(view, pageVisible), [view, pageVisible]);
+  const pollingPlan = useMemo(() => officePollingPlan(view, pageVisible && !officeLocked), [view, pageVisible, officeLocked]);
   const needsOfficeTelemetry = pollingPlan.tasks.length > 0;
   const [authRevision, setAuthRevision] = useState(0);
   const [status, setStatus] = useState(null);
@@ -3081,6 +3095,7 @@ export default function App() {
   const apiDbFailover = !!status?.server?.dbReadFailoverActive;
   const pipelineDbFailover = !!pipelineStatus?.server?.dbReadFailoverActive;
   const isMobile = useMediaQuery('(max-width: 760px)');
+  if (officeLocked) return <main className="office-locked-screen"><section aria-labelledby="office-locked-title"><h1 id="office-locked-title">Pip is locked</h1><p>Unlock with your Office access token to view conversations and manage your workspace.</p><p>Saved tasks keep their progress and receipts while this tab is locked.</p>{unlockError && <p role="alert">{unlockError}</p>}<button type="button" onClick={unlockOffice} disabled={unlocking}>{unlocking ? 'Verifying access…' : 'Unlock Office'}</button></section></main>;
   const shellStyle = {
     display: 'flex',
     flexDirection: 'column',
@@ -3261,7 +3276,7 @@ export default function App() {
           <PipDock open={pipOpen || view === 'office-ai'} workspace={view === 'office-ai'} callOnly={pipCallOnly} activity={pipActivity} status={pipFollowing ? `With you in ${OFFICE_SECTIONS.find(section => section.id === view)?.label || 'Office'}` : undefined} welcomeBriefing={welcomeBriefing}
             onOpenChange={open => { if (open) openPip(); else { setPipOpen(false); setPipCallOnly(false); if (view === 'office-ai') navigateOffice('overview'); } }}
             onOpenWorkspace={() => { setPipOpen(true); navigateOffice('office-ai', { expandPip: true }); }}>
-            {pipInitialized && <OfficeAI apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} onNavigate={navigateOffice}
+            {pipInitialized && <OfficeAI apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} onNavigate={navigateOffice} onLock={officeClient.lock}
               compact={view !== 'office-ai'} callOnly={pipCallOnly} active={pipFollowing || pipOpen || view === 'office-ai'} onActivityChange={setPipActivity}
               following={pipFollowing} onFollowingChange={setPipFollowing} officeSection={OFFICE_SECTIONS.find(section => section.id === view)} officeContext={pipFollowing ? { section: view, recentSections: pipRecentSections } : null}
               onCallOpenChange={open => { if (!open && pipCallOnly) { setPipOpen(false); setPipCallOnly(false); if (view === 'office-ai') navigateOffice('overview'); } }} onContinueWithText={openPip}

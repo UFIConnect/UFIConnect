@@ -11,6 +11,7 @@ test('conversations, tasks, terminal and capability routes remain private to Off
     ['PATCH', '/office/ai/conversations/10000000-0000-4000-8000-000000000001'],
     ['DELETE', '/office/ai/conversations/10000000-0000-4000-8000-000000000001'],
     ['GET', '/office/ai/tasks'], ['POST', '/office/ai/tasks'], ['POST', '/office/ai/tasks/10000000-0000-4000-8000-000000000001/confirm'],
+    ['POST', '/office/ai/tasks/10000000-0000-4000-8000-000000000001/recover'],
     ['GET', '/office/ai/terminal'], ['POST', '/office/ai/terminal'], ['POST', '/office/ai/terminal/10000000-0000-4000-8000-000000000001/cancel'],
     ['GET', '/office/ai/capabilities'],
     ['GET', '/office/ai/functions'], ['POST', '/office/ai/functions'],
@@ -58,7 +59,7 @@ async function executionFixture(t, extra = {}) {
       './office-ai-tasks': { createOfficeAITasks: options => {
         execute = options.executeControl;
         const handler = (_req, res) => res.json({});
-        return { list: handler, create: handler, detail: handler, cancel: handler, confirm: handler, resume: handler, checkpoints: handler, checkpointDetail: handler, restoreCheckpoint: handler, start() {}, stop() {}, capabilities: () => ({}) };
+        return { list: handler, create: handler, detail: handler, cancel: handler, confirm: handler, resume: handler, recover: handler, checkpoints: handler, checkpointDetail: handler, restoreCheckpoint: handler, start() {}, stop() {}, capabilities: () => ({}) };
       } },
     },
   }); t.after(() => app.close());

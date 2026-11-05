@@ -1,7 +1,11 @@
 'use strict';
 const {randomUUID,createHash}=require('node:crypto');
 const {DRAFT_ROLLBACK_COPIES}=require('./office-ai-revisions');
-const RECOVERY_ATTEMPTS=10, ROLLBACK_COPIES=DRAFT_ROLLBACK_COPIES;
+const RECOVERY_ATTEMPTS='unlimited', ROLLBACK_COPIES=DRAFT_ROLLBACK_COPIES;
+// A single provider request still has a shared timeout and bounded fallback
+// fan-out. Durable recovery can schedule another request after its backoff.
+const MODEL_ATTEMPTS_PER_REQUEST=11;
+const recoveryLimitReached=(used,limit=RECOVERY_ATTEMPTS)=>Number.isSafeInteger(limit)&&limit>=0&&used>=limit;
 function createTaskRecovery({revisions,now=Date.now}={}){
   const configured=()=>!!revisions?.configured?.();
   async function capture(task,summary){
@@ -10,7 +14,7 @@ function createTaskRecovery({revisions,now=Date.now}={}){
     // A task has one leased executor. Its last persisted checkpoint receipt is
     // enough to avoid a second transaction for an identical before-edit draft.
     if(task.backups?.[0]?.revision===createHash('sha256').update(JSON.stringify(snapshot)).digest('hex'))return;
-    const saved=await revisions.write('task-draft',task.id,snapshot,{append:true,keep:ROLLBACK_COPIES+1,summary,
+    const saved=await revisions.write('task-draft',task.id,snapshot,{append:true,keep:ROLLBACK_COPIES,summary,
       metadata:{fileCount:snapshot.files.length,baseSha:snapshot.baseSha}});
     // The write receipt already identifies the latest snapshot. Avoid reading
     // history again when a before-edit capture repeats the last saved draft.
@@ -19,7 +23,6 @@ function createTaskRecovery({revisions,now=Date.now}={}){
   function retry(task,key,label){
     task.internal.recoveryCounts||={};
     const used=task.internal.recoveryCounts[key]||0;
-    if(used>=RECOVERY_ATTEMPTS)return null;
     task.internal.recoveryCounts[key]=used+1;
     task.recovery={limit:RECOVERY_ATTEMPTS,currentAttempt:used+1,totalAttempts:(task.recovery?.totalAttempts||0)+1,step:label,at:new Date(now()).toISOString()};
     return Math.min(5000,(used+1)*1000);
@@ -48,6 +51,7 @@ function createTaskRecovery({revisions,now=Date.now}={}){
     task.continuation={id:randomUUID(),reason:'rollback',message:'The saved draft checkpoint is restored. Continue to review it and finish the original request.'};
     return task;
   }
-  return{configured,capture,retry,clear,review,snapshot,restore,history:id=>revisions.history('task-draft',id)};
+  return{configured,capture,retry,clear,review,snapshot,restore,history:(id,options)=>revisions.history('task-draft',id,options),
+    historyPage:(id,options)=>revisions.historyPage('task-draft',id,options)};
 }
-module.exports={createTaskRecovery,RECOVERY_ATTEMPTS,ROLLBACK_COPIES};
+module.exports={createTaskRecovery,RECOVERY_ATTEMPTS,ROLLBACK_COPIES,MODEL_ATTEMPTS_PER_REQUEST,recoveryLimitReached};

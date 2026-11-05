@@ -11,16 +11,16 @@ const {createResearchTool}=require('./office-ai-research');
 async function store(t){const pg=new PGlite();await pg.waitReady;t.after(()=>pg.close());const query=(sql,args)=>/pg_advisory_xact_lock/.test(sql)?Promise.resolve({rows:[]}):pg.query(sql,args);const db={query,isConnected:()=>true,withClient:fn=>fn({query})};const env={OAUTH_TOKEN_ENCRYPTION_KEY:Buffer.alloc(32,7).toString('base64')};return{pg,db,env,revisions:createOfficeAIRevisions({db,env})};}
 const definition=(n=1)=>({name:'Multiply',description:'Multiply a number',code:`return input.value*${n};`,parameters:{type:'object',properties:{value:{type:'number'}},required:['value'],additionalProperties:false}});
 
-test('encrypted function versions keep two prior copies, reject stale updates, and restore verified content',async t=>{
+test('encrypted function versions retain all prior copies, reject stale updates, and restore verified content',async t=>{
  const f=await store(t),id=randomUUID(),runtime={configured:()=>true,execute:async({code,input})=>({result:{code,input},logs:[]}),tool:{}};
  const library=createOfficeAIFunctions({...f,runtime});let saved=await library.save({...definition(),id});
  assert.equal(saved.id,id);assert.notEqual(saved.versionId,id);
  for(let n=2;n<=4;n++)saved=await library.save({...definition(n),id,expectedRevision:saved.revision});
- const history=await library.history(id);assert.equal(history.length,3);assert.equal((await library.read({id})).value.code,'return input.value*4;');
+ const history=await library.history(id);assert.equal(history.length,4);assert.equal((await library.read({id})).value.code,'return input.value*4;');
  const raw=(await f.pg.query('SELECT encrypted_payload FROM office_ai_revisions')).rows;assert.ok(raw.every(row=>!row.encrypted_payload.includes('input.value')));
  await assert.rejects(library.save({...definition(5),id,expectedRevision:'a'.repeat(64)}),error=>error.status===409);
  await library.restore(id,history[2].id,saved.revision);assert.equal((await library.read({id})).value.code,'return input.value*2;');
- assert.equal((await library.history(id)).length,3);assert.equal((await library.list()).functions[0].id,id);
+ assert.equal((await library.history(id)).length,5);assert.equal((await library.list()).functions[0].id,id);
  assert.deepEqual((await library.run({id,input:{value:4}})).result.input,{value:4});
  await assert.rejects(library.run({id,input:{value:'4'}}),error=>error.status===400);
  const latest=await library.read({id});await library.remove(id,latest.revision);await assert.rejects(library.read({id}),error=>error.status===404);
@@ -33,19 +33,19 @@ test('function save replay uses a stable invocation ID, validates schema, and re
  await f.pg.query('UPDATE office_ai_revisions SET revision=$1 WHERE id=$2',['a'.repeat(64),first.versionId]);
  await assert.rejects(library.read({id:first.id}),error=>error.status===503);
 });
-test('draft recovery retains ten encrypted rollback versions, prunes older content, and preserves external receipts',async t=>{
+test('draft recovery retains every encrypted rollback version and preserves external receipts',async t=>{
  const f=await store(t),recovery=createTaskRecovery(f),id=randomUUID();const task={id,status:'needs_continuation',message:'Fix this',permissions:{editCode:true},events:[],terminals:[{id:'confirmed-receipt'}],internal:{baseSha:'a'.repeat(40),files:[],messages:[],readRevisions:{},pendingCalls:[]},changedFiles:[]};
  let evicted;
  for(let n=0;n<13;n++){task.internal.files=[{path:'backend/office-ai-example.js',content:'saved draft '+n}];await recovery.capture(task,'Draft '+n);if(n===0)evicted=task.backups[0].id;}
- assert.equal(ROLLBACK_COPIES,10);assert.equal(task.backups.length,11);assert.equal(task.backups[0].summary,'Draft 12');
+ assert.equal(ROLLBACK_COPIES,'unlimited');assert.equal(task.backups.length,13);assert.equal(task.backups[0].summary,'Draft 12');
  const older=await recovery.snapshot(task,task.backups[10].id);assert.equal(older.value.files[0].content,'saved draft 2');
- const raw=(await f.pg.query('SELECT encrypted_payload FROM office_ai_revisions WHERE record_key=$1',[id])).rows;assert.equal(raw.length,11);assert.ok(raw.every(row=>!row.encrypted_payload.includes('saved draft')));
- await assert.rejects(recovery.snapshot(task,evicted),error=>error.status===404);
- const latestId=task.backups[0].id;await recovery.capture(task,'Repeated before-edit snapshot');assert.equal(task.backups[0].id,latestId);assert.equal((await recovery.history(id)).length,11);
+ const raw=(await f.pg.query('SELECT encrypted_payload FROM office_ai_revisions WHERE record_key=$1',[id])).rows;assert.equal(raw.length,13);assert.ok(raw.every(row=>!row.encrypted_payload.includes('saved draft')));
+ assert.equal((await recovery.snapshot(task,evicted)).value.files[0].content,'saved draft 0');
+ const latestId=task.backups[0].id;await recovery.capture(task,'Repeated before-edit snapshot');assert.equal(task.backups[0].id,latestId);assert.equal((await recovery.history(id)).length,13);
  recovery.restore(task,older);assert.equal(task.internal.files[0].content,'saved draft 2');assert.equal(task.terminals[0].id,'confirmed-receipt');assert.equal(task.permissions.editCode,true);assert.equal(task.continuation.reason,'rollback');
  const restoredContext=require('./office-ai-task-context').modelContext(task,'Restore the draft safely.',[]);assert.ok(restoredContext.some(message=>typeof message.content==='string'&&message.content.includes('confirmed-receipt')),'Restored model context retains the independent completed-action ledger');
- for(let attempt=1;attempt<=10;attempt++)assert.equal(recovery.retry(task,'step','code'),Math.min(5000,attempt*1000));
- assert.equal(recovery.retry(task,'step','code'),null);assert.equal(task.recovery.limit,10);assert.equal(task.recovery.currentAttempt,10);
+ for(let attempt=1;attempt<=25;attempt++)assert.equal(recovery.retry(task,'step','code'),Math.min(5000,attempt*1000));
+ assert.equal(recovery.retry(task,'step','code'),5000);assert.equal(task.recovery.limit,'unlimited');assert.equal(task.recovery.currentAttempt,26);
  task.commit={sha:'b'.repeat(40),published:true};assert.throws(()=>recovery.restore(task,older),error=>error.status===409);
  task.commit=null;task.internal.pendingCalls=[{started:true}];assert.throws(()=>recovery.restore(task,older),error=>error.status===409);
  task.internal.pendingCalls=[];task.internal.waitingTerminal={id:'running'};assert.throws(()=>recovery.restore(task,older),error=>error.status===409);
@@ -60,6 +60,28 @@ test('unchanged draft checkpoints skip duplicate database writes and history rea
  const recovery=createTaskRecovery({revisions:{configured:()=>true,write:async(_collection,_id,value)=>{writes++;saved.revision=createHash('sha256').update(JSON.stringify(value)).digest('hex');return saved;},history:async()=>{reads++;return[{...saved}];}}});
  const task={id,internal:{baseSha:'a'.repeat(40),files:[]}};await recovery.capture(task,'Original');await recovery.capture(task,'Before edit');assert.equal(reads,1);assert.equal(writes,1);assert.deepEqual(task.backups,[saved]);
  task.internal.files=[{path:'backend/office-ai-example.js',content:'Changed'}];await recovery.capture(task,'After edit');assert.equal(reads,2);assert.equal(writes,2);
+});
+
+test('rollback history pages through more than one hundred retained versions without omissions or payload disclosure',async t=>{
+ const f=await store(t),id=randomUUID();let first;
+ for(let n=0;n<127;n++){
+  const saved=await f.revisions.write('task-draft',id,{number:n,files:[{content:'private draft '+n}]},{append:true,keep:11,summary:'Draft '+n});
+  first||=saved;
+ }
+ const unrelated=await f.revisions.write('task-draft',randomUUID(),{number:999},{append:true,summary:'Other task'});
+ const recovery=createTaskRecovery(f),newest=await recovery.historyPage(id,{limit:50});
+ assert.equal(newest.total,127);assert.equal(newest.retention,'unlimited');assert.equal(newest.checkpoints.length,50);assert.equal(newest.hasMore,true);
+ assert.ok(newest.checkpoints.every(record=>!('value' in record)&&!('encrypted_payload' in record)&&record.id!==unrelated.id));
+ // A new head inserted between requests must not shift older pages.
+ await f.revisions.write('task-draft',id,{number:127},{append:true,summary:'New head'});
+ const middle=await recovery.historyPage(id,{limit:50,before:newest.nextBefore});
+ const oldest=await recovery.historyPage(id,{limit:50,before:middle.nextBefore});
+ const all=[...newest.checkpoints,...middle.checkpoints,...oldest.checkpoints];
+ assert.equal(new Set(all.map(record=>record.id)).size,127);assert.equal(all.length,127);
+ assert.equal(oldest.checkpoints.at(-1).id,first.id);assert.equal(oldest.hasMore,false);assert.equal(oldest.nextBefore,null);
+ assert.equal((await recovery.snapshot({id},first.id)).value.number,0,'The oldest checkpoint remains restorable beyond the former retention cap');
+ for(const options of [{limit:0},{limit:101},{before:'0'},{before:'-1'},{before:'1 OR 1=1'},{before:'9223372036854775808'}])await assert.rejects(recovery.historyPage(id,options),error=>error.status===400);
+ assert.equal((await recovery.historyPage(id)).total,128);
 });
 test('trusted data helper computes CSV and JSON statistics from actual rows',async()=>{
  // Only our static authored helper is evaluated here. Model-supplied code is never evaluated on the host.

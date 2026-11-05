@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { ArrowLeft, ArrowUpRight, Bot, Brain, Check, ChevronDown, ChevronRight, Clapperboard, ClipboardList, Code2, Globe2, Link2, List, Map as MapIcon, MessageSquare, Plus, RefreshCw, Send, SlidersHorizontal, Square, Trash2, Wrench } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Bot, Brain, Check, ChevronDown, ChevronRight, Clapperboard, ClipboardList, Code2, Globe2, Link2, List, LockKeyhole, Map as MapIcon, MessageSquare, Plus, RefreshCw, Send, SlidersHorizontal, Square, Trash2, Wrench } from 'lucide-react';
 import Controls from './Controls';
 import OfficeConnections from './OfficeConnections';
 import OfficeCommandMap from './OfficeCommandMap';
@@ -99,7 +99,7 @@ function Answer({ message, onCommand, apiBase, request, onTaskUpdate, onOpenTerm
   </article>;
 }
 
-export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fetch, onNavigate = () => {}, welcomeBriefing, onWelcomeConsumed, compact = false, callOnly = false, active = true, onActivityChange, onCallOpenChange, onContinueWithText, following = false, onFollowingChange = () => {}, officeSection, officeContext }) {
+export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fetch, onNavigate = () => {}, onLock = request.lock, welcomeBriefing, onWelcomeConsumed, compact = false, callOnly = false, active = true, onActivityChange, onCallOpenChange, onContinueWithText, following = false, onFollowingChange = () => {}, officeSection, officeContext }) {
   const [tone, setTone] = useState(() => loadPipTone()), [sensorState, setSensorState] = useState({ phase: 'idle' });
   const sensorPhase = sensorState.phase;
   const pipState = busyState();
@@ -403,10 +403,11 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
   return <section className="office-ai" data-compact={compact} data-call-only={callOnly} data-settings-open={settingsOpen} aria-labelledby="office-ai-title">
     {callOnly && (loading || conversations.loading) && <p role="status">Starting call…</p>}
     <header className="office-ai-header"><div className="office-ai-identity"><div className="office-ai-mark"><PipCharacter state={busy ? 'thinking' : pipState} speech={sensorState} tone={tone} size={50} decorative /></div><div><p className="office-ai-eyebrow">UFICONNECT · OFFICIAL OFFICE ASSISTANT</p><h1 id="office-ai-title">Pip</h1><p>One request. Finished work. Your approval before deployment.</p></div></div><div className="office-ai-connection"><span data-ready={!!connection?.configured}>{loading ? 'Checking connection…' : connection?.configured ? 'Cloudflare configured' : 'Connection needs attention'}</span><button type="button" onClick={() => setRevision(value => value + 1)} disabled={loading || toolBusy} aria-label="Refresh Pip connection"><RefreshCw size={15} /></button></div></header>
-    <nav className="office-ai-primary-nav" aria-label="Pip main navigation">
+    <nav className="office-ai-primary-nav" data-lock-available={typeof onLock === 'function'} aria-label="Pip main navigation">
       <button type="button" aria-pressed={tab === 'conversation' && !settingsOpen} onClick={() => { setTab('conversation'); setSettingsOpen(false); setMoreOpen(false); }}><MessageSquare size={17} />Chat</button>
       <button type="button" aria-pressed={tab === 'studio'} onClick={() => openStudio()}><Clapperboard size={17} />Studio</button>
       <button ref={moreButton} type="button" aria-expanded={moreOpen} aria-controls={moreId} onClick={() => setMoreOpen(value => !value)} onKeyDown={event => { if (event.key === 'ArrowDown') { event.preventDefault(); setMoreOpen(true); } }}><SlidersHorizontal size={17} />More<ChevronDown size={14} /></button>
+      {typeof onLock === 'function' && <button type="button" aria-label="Lock assistant" onClick={() => { stop(); sensors.current?.stop(); onLock(); }}><LockKeyhole size={17} />Lock</button>}
     </nav>
     <nav ref={tabsRef} id={moreId} hidden={!moreOpen} className="office-ai-tabs" aria-label="More Pip tools" onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); setMoreOpen(false); moreButton.current?.focus(); } }}>
       <button type="button" aria-pressed={settingsOpen} onClick={() => { setTab('conversation'); setSettingsOpen(true); setMoreOpen(false); }}><SlidersHorizontal size={16} />Settings & history</button>
@@ -425,7 +426,7 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
           <div className="office-ai-save-state" role="status">{conversations.saving ? 'Saving conversation…' : conversations.error ? 'Conversation changes are not saved.' : conversations.savedAt ? 'Conversation saved in Office' : 'Chats save automatically in Office.'}</div>
           {conversations.error && <div className="office-ai-save-error"><p className="office-ai-error" role="alert">{conversations.error}</p>{conversations.conflict && conversations.currentId ? <button type="button" onClick={() => { if (window.confirm('Replace your current messages with the version saved in Office?')) conversations.open(conversations.currentId); }}>Reload saved conversation</button> : <button type="button" onClick={() => { conversations.refresh(); conversations.retry(); }}>Retry saving conversation</button>}</div>}
           <div className="office-ai-transcript" ref={transcript} role="log" aria-label="Pip conversation" aria-live="polite" aria-relevant="additions text">
-            {!messages.length && <div className="office-ai-welcome"><div className="office-ai-welcome-icon"><Bot size={29} /></div><h2>Ask once. Review before it goes live.</h2><p>Describe the result you want. Pip researches, uses your connected tools, makes changes, and runs checks as needed. It keeps working and asks when it needs an essential detail or your deployment approval.</p><div className="office-ai-starters">{STARTERS.map(item => <button key={item.title} type="button" disabled={busy} onClick={() => starter(item)}><strong>{item.title}<ArrowUpRight size={15} /></strong><span>{item.detail}</span></button>)}</div></div>}
+            {!messages.length && <div className="office-ai-welcome"><div className="office-ai-welcome-icon"><Bot size={29} /></div><h2>Ask once. Review before it goes live.</h2><p>Describe the result you want. Pip can manage your workspace, adjust settings, edit files, build features, apply fixes, and check the results using your connected tools. It keeps working and asks when it needs an essential detail or your deployment approval.</p><div className="office-ai-starters">{STARTERS.map(item => <button key={item.title} type="button" disabled={busy} onClick={() => starter(item)}><strong>{item.title}<ArrowUpRight size={15} /></strong><span>{item.detail}</span></button>)}</div></div>}
             {messages.map(message => <Answer key={message.id} message={message} onCommand={chooseCommand} apiBase={apiBase} request={request} onTaskUpdate={updateTask} onOpenTerminal={openTerminal} />)}
             {busy && <p className="office-ai-thinking" role="status"><span />{pending.current?.kind === 'work' ? 'Starting your task…' : research ? 'Researching sources and preparing your answer…' : 'Preparing your answer…'}</p>}
           </div>

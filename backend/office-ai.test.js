@@ -253,6 +253,7 @@ test('full-context inference may finish after 30 seconds while preserving deep a
     });
   } });
   const pending = invoke(service.chat, { message: 'Compare all relevant perspectives', research: false, perspective: 'deep' });
+  await new Promise(setImmediate);
   t.mock.timers.tick(30000);
   assert.equal(signal.aborted, false);
   t.mock.timers.tick(35000);
@@ -271,6 +272,7 @@ test('thinking inference aborts at 180 seconds with a safe error and releases co
   } });
   for (let attempt = 0; attempt < 3; attempt++) {
     const pending = invoke(service.chat, { message: 'A request that stalls', research: false });
+    await new Promise(setImmediate);
     t.mock.timers.tick(179999);
     assert.equal(signal.aborted, false);
     t.mock.timers.tick(1);
