@@ -68,7 +68,7 @@ try {
       const endpoint = url.pathname.slice(4);
       const body = route.request().method() === 'POST' ? route.request().postDataJSON() : {};
       if (/events|stream/.test(endpoint)) return route.abort();
-      if (endpoint === '/social/interaction-capabilities') return route.fulfill({ json: { sources: Object.fromEntries(['youtube', 'bluesky'].map(source => [source, { connected: true, like: true, comment: true, label: source === 'youtube' ? 'YouTube' : 'Bluesky', maxLength: 1000 }])) } });
+      if (endpoint === '/social/interaction-capabilities') return route.fulfill({ json: { sources: Object.fromEntries(['youtube', 'bluesky', 'reddit'].map(source => [source, { connected: true, like: true, comment: true, label: source === 'youtube' ? 'YouTube' : source === 'bluesky' ? 'Bluesky' : 'Reddit', maxLength: 1000 }])) } });
       if (endpoint === '/social/post-engagement') {
         engagementReads++; const indexed = liked && engagementReads >= 3;
         return route.fulfill({ json: { sourceLikedByMe: indexed, sourceLikesCount: indexed ? 8 : 7, commentsCount: Number(sourceReply) } });
@@ -128,6 +128,9 @@ try {
     await video.getByRole('button', { name: /^Comments/ }).first().click();
     const sheet = page.getByRole('dialog', { name: /Comments/ });
     await readable(sheet.getByText('Readable video comment', { exact: true }), 'Video sheet comment');
+    await sheet.getByRole('textbox').fill('Readable video reply draft');
+    await readable(sheet.getByRole('textbox'), 'Video reply input');
+    await readable(sheet.getByRole('button', { name: 'Comment on Reddit' }), 'Video reply submit button');
     assert.deepEqual(errors, []);
     await page.screenshot({ path: path.join(output, `${theme}-${width}.png`), fullPage: false });
     console.log(`PASS ${theme}/${width}: readable comments, drafts, errors and toast; indexed Bluesky likes/replies; one header fullscreen control`);
