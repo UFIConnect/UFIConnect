@@ -153,7 +153,7 @@ try{
   check(!await dock(page).isVisible()&&!await page.getByLabel('Message Pip',{exact:true}).isVisible(),'Silent greeting closes without opening the chatbot');
   await checkCallReleased(page,'Silent greeting releases all microphone and camera resources');
   check(new URL(page.url()).hash==='#agents','Silent greeting does not navigate away from the Office page');
-  await page.getByRole('navigation',{name:'Office sections',exact:true}).getByRole('button',{name:'Office AI',exact:true}).click();
+  await page.getByRole('navigation',{name:'Office sections',exact:true}).locator('button[data-office-view="office-ai"]').click();
   check(await dock(page).isVisible()&&await isCornerDock(dock(page)),'Sidebar Pip opens the bottom-right mini window');
   check(new URL(page.url()).hash==='#agents'&&await page.getByRole('heading',{name:'Agent Control',exact:true}).isVisible(),'Sidebar Pip preserves the selected Office page and hash');
   check(await page.evaluate(()=>window.syntheticSensors.active===null&&window.syntheticSensors.streams.every(item=>item.stream.getTracks().every(track=>track.readyState==='ended'))),'Sidebar Pip does not reactivate voice or camera');
@@ -241,7 +241,7 @@ try{
   check(local.saves.length===1&&local.saves[0].content.includes('Saved through the synthetic'),'Local files remain editable and save through the mocked local editor without Office access');
   check(local.requests.every(entry=>entry.token===undefined),'Local editor requests never include an Office access token');
   check(!await page.getByLabel('Access token',{exact:true}).isVisible()&&!requests.some(entry=>entry.path.startsWith('/office/ai')),'Local editing and saving do not initialize Pip or request Office sign-in');
-  await page.getByRole('navigation',{name:'Office sections',exact:true}).getByRole('button',{name:'Office AI',exact:true}).click();
+  await page.getByRole('navigation',{name:'Office sections',exact:true}).locator('button[data-office-view="office-ai"]').click();
   await page.getByLabel('Access token',{exact:true}).waitFor();
   check(await page.getByLabel('Access token',{exact:true}).isVisible(),'Explicitly opening Pip requests Office access');
   await page.getByLabel('Access token',{exact:true}).fill('synthetic-office-sensors-token');
@@ -251,7 +251,7 @@ try{
   await call(page).getByRole('button',{name:'End call',exact:true}).click();
   await loginDock(page).waitFor({state:'hidden'});
   check(!await dock(page).isVisible(),'Ending the local editor login call leaves the chatbot closed');
-  await page.getByRole('navigation',{name:'Office sections',exact:true}).getByRole('button',{name:'Office AI',exact:true}).click();
+  await page.getByRole('navigation',{name:'Office sections',exact:true}).locator('button[data-office-view="office-ai"]').click();
   await dock(page).waitFor();
   check(await isCornerDock(dock(page))&&new URL(page.url()).hash==='#local-web','Explicit Pip entry after the call opens the corner chatbot while preserving the local editor page');
   check(requests.some(entry=>entry.path==='/office/ai'),'OfficeAI connects after explicit Pip entry and authentication');

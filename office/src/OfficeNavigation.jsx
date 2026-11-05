@@ -3,7 +3,7 @@ import './office-navigation.css';
 
 export const OFFICE_SECTIONS = [
   { id: 'overview', label: 'Overview', primary: true, group: 'Office', description: 'Platform health and recent activity' },
-  { id: 'office-ai', label: 'Pip', primary: true, group: 'Office', description: 'Office AI assistant, connections, memory and commands' },
+  { id: 'office-ai', label: 'Office AI', primary: true, group: 'Office', description: 'Office AI assistant, connections, memory and commands' },
   { id: 'city', label: 'Live City', primary: true, group: 'Office', description: 'Explore services and agents on the map' },
   { id: 'local-web', label: 'Local web', primary: true, group: 'Office', description: 'Preview and edit the front website' },
   { id: 'sources', label: 'Live Sources', primary: true, group: 'Content flow', description: 'Integrated source health and collection rates' },

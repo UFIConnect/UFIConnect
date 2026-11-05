@@ -123,7 +123,7 @@ try {
   const nav=page.getByRole('navigation',{name:'Office sections'});
   await nav.getByRole('button',{name:'Overview',exact:true}).click();
   assert.equal(await nav.getByRole('button').count(),9,'Eight primary destinations and More tools keep navigation compact');
-  assert.equal(await nav.getByRole('button',{name:'Pip',exact:true}).count(),1,'Pip remains a primary destination');
+  assert.equal(await nav.locator('.office-nav-primary button[data-office-view="office-ai"]').count(),1,'The assistant remains a primary destination');
   const moreTools=nav.getByRole('button',{name:'More tools',exact:true});
   if(width<=760){
    const bounds=await moreTools.boundingBox();
