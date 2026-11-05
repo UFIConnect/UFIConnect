@@ -66,6 +66,7 @@ import { SavePostButton } from '../components/SaveButtons';
 import { CommentIcon, OpenOnSource, PostHeader, PostOptionsMenu, SharePostButton, feedAccountKey } from '../components/PostCardChrome';
 import PostLikes from '../components/PostLikes';
 import { normalizeFeedLocation, savedFeedLocation, regionalFeedLocation, feedLocationKey } from '../utils/feedLocation.mjs';
+import { feedRouteSources } from '../utils/feedSourceRoute.mjs';
 
 const COMMAND_CENTER_PRO_TIER = TIERS.find((tier) => tier.tier === 'pro');
 const HOME_VIEW_MODES = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants', 'bars']);
@@ -2051,7 +2052,9 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const _saved = routeRequestsAllHome ? null : loadFeedState(profile?.id);
   const routeInitialMode = routeRequestedFeed === 'local' ? 'countries' : routeRequestedFeed;
   const initialViewMode = forcedMode || (HOME_VIEW_MODES.has(routeInitialMode) ? routeInitialMode : _saved?.viewMode || 'feed');
-  const _cache = !forcedMode && initialViewMode === 'feed' ? readFeedCache(profile?.id, profile?.roleSettings) : null;
+  const routeSources = feedRouteSources(routeLocation.search, initialViewMode);
+  const initialTabs = routeSources || (initialViewMode === 'countries' ? [] : _saved?.activeTabs || []);
+  const _cache = !forcedMode && !routeSources && initialViewMode === 'feed' ? readFeedCache(profile?.id, profile?.roleSettings) : null;
   const [posts,         setPosts]        = useState(_cache?.posts || []);
   const [travelLiveFeeds, setTravelLiveFeeds] = useState([]);
   const [travelStatus, setTravelStatus] = useState(null);
@@ -2083,10 +2086,10 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const initialFilters = ['feed', 'following'].includes(initialViewMode)
     ? {
         ...DEFAULT_FILTERS,
-        topics: Array.isArray(_saved?.filters?.topics) ? _saved.filters.topics : [],
+        topics: !routeSources && Array.isArray(_saved?.filters?.topics) ? _saved.filters.topics : [],
       }
     : { ...DEFAULT_FILTERS, ...(initialViewMode === 'countries' && _saved?.viewMode !== 'countries' ? {} : _saved?.filters || {}), ...(initialViewMode === 'countries' ? { sources: [] } : {}), sort: 'newest' };
-  const [search,        setSearch]       = useState(initialViewMode === 'countries' ? '' : _saved?.search || '');
+  const [search,        setSearch]       = useState(routeSources || initialViewMode === 'countries' ? '' : _saved?.search || '');
   const [filterOpen,    setFilterOpen]   = useState(false);
   const [topicFilterOpen, setTopicFilterOpen] = useState(false);
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
@@ -2102,7 +2105,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const [mediaLightboxPostId, setMediaLightboxPostId] = useState(null);
   const [guideDestination, setGuideDestination] = useState(null);
   const [filters, setFilters] = useState(initialFilters);
-  const [activeTabs,    setActiveTabs]    = useState(initialViewMode === 'countries' ? [] : _saved?.activeTabs || []); // [] = All
+  const [activeTabs,    setActiveTabs]    = useState(initialTabs); // [] = All
   const [viewMode,      setViewMode]      = useState(initialViewMode);
   useTabMetrics('home', viewMode);
   useSelectedTabMetrics(viewMode === 'following' ? 'following_source' : 'home_source', activeTabs, ['feed', 'following'].includes(viewMode));
@@ -2140,11 +2143,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   // all start their own fetch. A ref updates immediately, in the same tick.
   const loadingMoreRef = useRef(false);
   const paginationRequestIdRef = useRef(0);
-  const activeTabsRef = useRef(_saved?.activeTabs || []);
+  const activeTabsRef = useRef(initialTabs);
   const filtersRef    = useRef(initialFilters);
   const viewModeRef   = useRef(initialViewMode);
   const locationFiltersRef = useRef(savedFeedLocation(profile?.roleSettings, initialViewMode));
-  const searchRef     = useRef(_saved?.search || '');
+  const searchRef     = useRef(routeSources ? '' : _saved?.search || '');
   const postsRef      = useRef([]);
   const engagementLedgerRef = useRef(createEngagementLedger());
   const loadStateRef  = useRef({ loading: false, refreshing: false, loadingMore: false });
@@ -2154,6 +2157,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const feedRequestIdRef = useRef(0);
   const feedContextRef = useRef(`${profile?.id}:${initialViewMode}:${initialViewMode === 'groups' && publicGroupsFeed}:${feedLocationKey(profile?.roleSettings, initialViewMode)}`);
   const allHomeRouteKeyRef = useRef(routeRequestsAllHome ? routeLocation.key : null);
+  const sourceRouteKeyRef = useRef(routeSources ? `${initialViewMode}:${routeSources.join(',')}` : null);
   const liveRefreshTimeoutRef = useRef(null);
   const sourcePreferenceKeyRef = useRef(disabledSourceKey);
   // Sent as ?seed= on every feed request — the backend folds it into this
@@ -2460,12 +2464,14 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     setLocationContext(null);
     const saved = loadFeedState(profile.id);
     const nextMode = forcedMode || (HOME_VIEW_MODES.has(routeInitialMode) ? routeInitialMode : saved?.viewMode || 'feed');
-    const savedTopics = Array.isArray(saved?.filters?.topics) ? saved.filters.topics : [];
+    const nextRouteSources = feedRouteSources(routeLocation.search, nextMode);
+    const savedTopics = !nextRouteSources && Array.isArray(saved?.filters?.topics) ? saved.filters.topics : [];
     const nextFilters = ['feed', 'following'].includes(nextMode)
       ? { ...DEFAULT_FILTERS, topics: savedTopics }
       : { ...DEFAULT_FILTERS, ...(nextMode === 'countries' && saved?.viewMode !== 'countries' ? {} : saved?.filters || {}), ...(nextMode === 'countries' ? { sources: [] } : {}), sort: 'newest' };
-    const nextTabs = nextMode === 'countries' ? [] : saved?.activeTabs || [];
-    const nextSearch = nextMode === 'countries' ? '' : saved?.search || '';
+    const nextTabs = nextRouteSources || (nextMode === 'countries' ? [] : saved?.activeTabs || []);
+    const nextSearch = nextRouteSources || nextMode === 'countries' ? '' : saved?.search || '';
+    sourceRouteKeyRef.current = nextRouteSources ? `${nextMode}:${nextRouteSources.join(',')}` : null;
     const nextLocation = savedFeedLocation(profile.roleSettings, nextMode);
     filtersRef.current = nextFilters;
     activeTabsRef.current = nextTabs;
@@ -2506,20 +2512,20 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   // there's one clear path responsible for going back to the server for
   // fresh, freshly-sorted data instead of several buttons each doing their
   // own version of it.
-  const switchViewMode = useCallback((mode, { resetHome = false } = {}) => {
+  const switchViewMode = useCallback((mode, { resetHome = false, sources = null } = {}) => {
     const requestedMode = mode === 'local' ? 'countries' : mode;
     const nextMode = HOME_VIEW_MODES.has(requestedMode) ? requestedMode : 'feed';
     const usesSources = ['feed', 'following'].includes(nextMode);
     const allowedSourceIds = nextMode === 'following' ? FOLLOWING_FEED_SOURCE_IDS : HOME_FEED_SOURCE_IDS;
-    const nextTabs = resetHome || !usesSources
+    const nextTabs = sources ? normalizeSourceSelection(sources, allowedSourceIds) : resetHome || !usesSources
       ? []
       : normalizeSourceSelection(activeTabsRef.current, allowedSourceIds);
-    const currentTopics = Array.isArray(filtersRef.current.topics) ? filtersRef.current.topics : [];
+    const currentTopics = !sources && Array.isArray(filtersRef.current.topics) ? filtersRef.current.topics : [];
     const nextFilters = usesSources
       ? { ...DEFAULT_FILTERS, topics: currentTopics }
       : nextMode === 'countries' && viewModeRef.current !== 'countries' ? { ...DEFAULT_FILTERS }
       : { ...filtersRef.current, sources: [] };
-    const clearSearch = resetHome || (nextMode === 'countries' && viewModeRef.current !== 'countries');
+    const clearSearch = resetHome || sources || (nextMode === 'countries' && viewModeRef.current !== 'countries');
     const nextSearch = clearSearch ? '' : searchRef.current;
     viewModeRef.current = nextMode;
     activeTabsRef.current = nextTabs;
@@ -2598,6 +2604,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     const requestedParam = params.get('feed');
     const requested = requestedParam === 'local' ? 'countries' : requestedParam;
     const requestsAllHome = requested === 'feed' && params.get('all') === '1';
+    const sourceMode = HOME_VIEW_MODES.has(requested) ? requested : viewModeRef.current;
+    const requestedSources = feedRouteSources(params, sourceMode);
+    const sourceRouteKey = requestedSources ? `${sourceMode}:${requestedSources.join(',')}` : null;
+    const sourceRouteChanged = sourceRouteKeyRef.current !== sourceRouteKey;
+    sourceRouteKeyRef.current = sourceRouteKey;
     if (requestsAllHome) {
       if (allHomeRouteKeyRef.current === routeLocation.key) return;
       allHomeRouteKeyRef.current = routeLocation.key;
@@ -2605,6 +2616,10 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       return;
     }
     allHomeRouteKeyRef.current = null;
+    if (requestedSources && sourceRouteChanged) {
+      switchViewMode(sourceMode, { sources: requestedSources });
+      return;
+    }
     if (!HOME_VIEW_MODES.has(requested) || requested === viewModeRef.current) return;
     switchViewMode(requested);
   }, [forcedMode, routeLocation.key, routeLocation.search, switchViewMode]);
@@ -2954,7 +2969,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   // Only Home owns this cache. Group scopes must start with their own response.
   useEffect(() => {
     if (!profile?.id) return;
-    const c = !forcedMode && viewModeRef.current === 'feed' ? readFeedCache(profile.id, profileRef.current?.roleSettings) : null;
+    const c = !forcedMode && viewModeRef.current === 'feed' && !feedRouteSources(routeLocation.search, 'feed')
+      ? readFeedCache(profile.id, profileRef.current?.roleSettings) : null;
     postsRef.current = c?.posts || [];
     knownIds.current = new Set(postsRef.current.map(post => post.id).filter(Boolean));
     remoteCursorRef.current = null;

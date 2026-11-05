@@ -10,6 +10,9 @@ import AnalyticsDashboard from './AnalyticsDashboard';
 import OfficeUsers from './OfficeUsers';
 import RecoveryOverview from './RecoveryOverview';
 import OfficeAI from './OfficeAI';
+import OfficeNavigation, { OFFICE_SECTIONS } from './OfficeNavigation';
+import OfficeViewBoundary from './OfficeViewBoundary';
+import { createOfficeNavigator } from './office-navigation.mjs';
 import PipDock from './PipDock';
 import useOfficeWelcome from './useOfficeWelcome';
 import { mergeObservedAgents, observeAgentPayload } from './office-telemetry.mjs';
@@ -38,7 +41,6 @@ const STAGING_BACKLOG_WARN = 20000;
 // other version's code out.
 const LOCAL_OFFICE = import.meta.env.MODE !== 'production';
 const LiveCity = LOCAL_OFFICE ? lazy(() => import('./LiveCity')) : lazy(() => import('./legacy-city/LiveCity'));
-const PRIMARY_OFFICE_VIEWS = new Set(['overview', 'office-ai', 'city', 'controls', 'setup', 'deploy']);
 
 // ─── office auth ────────────────────────────────────────────────────────────
 // Office requires a configured server token and a matching x-office-token
@@ -2814,7 +2816,7 @@ function TopicsView() {
 
 export default function App() {
   const dedicatedAI = /^(?:www\.)?uficonnect\.ai$/i.test(window.location.hostname);
-  const officeViews = ['overview', 'office-ai', 'city', 'local-web', 'setup', 'controls', 'sources', 'pipeline', 'post-pipeline', 'feed-audit', 'topic-transfer', 'users', 'topics', 'agents', 'feed', 'analytics', 'reports', 'deploy', 'autofix', 'versions'];
+  const officeViews = OFFICE_SECTIONS.map(section => section.id);
   const [view, setView] = useState(() => {
     const requested = typeof window !== 'undefined' ? window.location.hash.slice(1) : '';
     return officeViews.includes(requested) && requested !== 'office-ai' ? requested : 'overview';
@@ -2827,10 +2829,18 @@ export default function App() {
     window.addEventListener('office-token-changed', reset);
     return () => window.removeEventListener('office-token-changed', reset);
   }, []);
-  const [moreToolsOpen, setMoreToolsOpen] = useState(() => !PRIMARY_OFFICE_VIEWS.has(view));
+  const navigation = useRef(null);
   useEffect(() => {
-    if (!PRIMARY_OFFICE_VIEWS.has(view)) setMoreToolsOpen(true);
-  }, [view]);
+    navigation.current = createOfficeNavigator({ target: window, sections: OFFICE_SECTIONS, fallback: 'overview',
+      initialView: view, onChange: setView,
+      canLeave: () => window.dispatchEvent(new Event('office-before-navigate', { cancelable: true })),
+      resolveView: (id, entry, currentView) => {
+        if (id === 'office-ai' && entry?.view !== 'office-ai') { openPip(); return currentView; }
+        return id;
+      },
+    });
+    return () => navigation.current.dispose();
+  }, [openPip]);
   const needsOfficeTelemetry = !['office-ai', 'local-web', 'setup', 'reports'].includes(view);
   const [status, setStatus] = useState(null);
   // Source-fetcher health (workerHealth/agentSourceCache) only ever has real
@@ -2857,11 +2867,9 @@ export default function App() {
   const polls = useRef({ api: false, pipeline: false, agents: false });
   const observedAgents = useRef({ api: {}, pipeline: {} });
   const navigateOffice = useCallback((id, options = {}) => {
-    if (!officeViews.includes(id)) return;
-    if (id === 'office-ai' && options.expandPip !== true) { openPip(); return; }
-    if (!window.dispatchEvent(new Event('office-before-navigate', { cancelable: true }))) return;
-    setView(id);
-    window.history.replaceState(null, '', `#${id}`);
+    if (!officeViews.includes(id)) return false;
+    if (id === 'office-ai' && options.expandPip !== true) { openPip(); return true; }
+    return navigation.current?.navigate(id) ?? false;
   }, [openPip]);
   const [welcomeBriefing, consumeWelcome] = useOfficeWelcome({ request: officeFetch, apiBase: API,
     pipelineBase: PIPELINE_API, getToken: officeClient.getToken, onOpen: openPip });
@@ -3057,34 +3065,13 @@ export default function App() {
     setTimeout(() => setDeploying(prev => ({ ...prev, [service]: false })), 5000);
   };
 
-  const nav = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'office-ai', label: 'Pip' },
-    { id: 'city', label: 'Live City' },
-    { id: 'local-web', label: 'Local web' },
-    { id: 'setup', label: 'Setup' },
-    { id: 'controls', label: 'Controls' },
-    { id: 'sources',  label: 'Live Sources' },
-    { id: 'pipeline', label: 'Pipeline' },
-    { id: 'post-pipeline', label: 'Post Pipeline' },
-    { id: 'feed-audit', label: 'Feed Audit' },
-    { id: 'topic-transfer', label: 'Topic Transfer' },
-    { id: 'topics',   label: 'Topics' },
-    { id: 'agents',   label: 'Agents' },
-    { id: 'feed',     label: 'Feed Manager' },
-    { id: 'analytics',label: 'Analytics' },
-    { id: 'users', label: 'Users' },
-    { id: 'reports', label: 'Reports' },
-    { id: 'deploy',   label: 'Deploy Center' },
-    { id: 'autofix',  label: 'Autofix' },
-    { id: 'versions', label: 'Versions' },
-  ];
   const apiDbFailover = !!status?.server?.dbReadFailoverActive;
   const pipelineDbFailover = !!pipelineStatus?.server?.dbReadFailoverActive;
   const isMobile = useMediaQuery('(max-width: 760px)');
   const shellStyle = {
     display: 'flex',
-    flexDirection: isMobile ? 'column' : 'row',
+    flexDirection: 'column',
+    minWidth: 0,
     minHeight: '100vh',
     background: '#080810',
     color: '#e2e8f0',
@@ -3092,11 +3079,11 @@ export default function App() {
   };
   const aiHome = dedicatedAI && view === 'office-ai';
   const asideStyle = {
-    width: isMobile ? '100%' : 224,
+    width: '100%',
+    minWidth: 0,
     flexShrink: 0,
     background: '#08080f',
-    borderRight: isMobile ? 'none' : '1px solid rgba(255,255,255,.06)',
-    borderBottom: isMobile ? '1px solid rgba(255,255,255,.08)' : 'none',
+    borderBottom: '1px solid rgba(255,255,255,.08)',
     display: aiHome ? 'none' : 'flex',
     flexDirection: 'column',
     // Local web scrolls the header away so phone editing keeps the whole screen.
@@ -3104,27 +3091,19 @@ export default function App() {
     top: 0,
     zIndex: 20,
   };
-  const navStyle = {
-    flex: isMobile ? '0 0 auto' : 1,
-    display: isMobile ? 'grid' : 'block',
-    gridTemplateColumns: isMobile ? 'minmax(0, 1fr) auto' : undefined,
-    padding: isMobile ? '0 14px 12px' : 0,
-    scrollbarWidth: 'thin',
-  };
   const statusRowsStyle = {
-    display: isMobile ? 'grid' : 'flex',
-    gridTemplateColumns: isMobile ? 'repeat(auto-fit, minmax(142px, 1fr))' : undefined,
-    flexDirection: isMobile ? undefined : 'column',
-    gap: isMobile ? 6 : 4,
-    marginBottom: 8,
+    display: 'flex',
+    flexWrap: 'nowrap',
+    gap: 16,
+    minWidth: 0,
+    overflowX: 'auto',
   };
   const mainStyle = {
     flex: 1,
     minWidth: 0,
     padding: aiHome ? (isMobile ? '18px 12px' : '28px 40px') : isMobile ? '20px 14px calc(104px + env(safe-area-inset-bottom))' : '36px 40px calc(112px + env(safe-area-inset-bottom))',
     scrollPaddingBottom: 'calc(104px + env(safe-area-inset-bottom))',
-    overflowY: 'auto',
-    maxHeight: isMobile ? 'none' : '100vh',
+    overflowY: 'visible',
   };
 
   return (
@@ -3140,20 +3119,11 @@ export default function App() {
         @keyframes glowPulse { 0%,100% { transform: scale(1); filter: brightness(1); } 50% { transform: scale(1.06); filter: brightness(1.3); } }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         a { text-decoration: none; }
-        .office-nav-section { display: contents; }
-        .office-nav-primary, .office-nav-more { display: flex; flex-direction: column; }
-        .office-nav-toggle { width: 100%; padding: 12px 20px; border: 0; background: transparent; color: #94a3b8; text-align: left; cursor: pointer; font: inherit; font-size: 12px; }
-        .office-nav-more { border-top: 1px solid rgba(255,255,255,.06); }
-        .office-nav-more[hidden] { display: none; }
         .office-overview-detail { margin: 12px 0; border: 1px solid rgba(255,255,255,.08); border-radius: 12px; padding: 0 16px; }
         .office-overview-detail > summary { padding: 16px 0; color: #cbd5e1; font-size: 13px; font-weight: 600; cursor: pointer; }
         .office-overview-detail > summary span { margin-left: 10px; color: #64748b; font-size: 11px; font-weight: 400; }
         .office-overview-detail[open] { padding-bottom: 16px; }
         @media (max-width: 760px) {
-          .office-nav-primary { grid-column: 1; grid-row: 1; min-width: 0; flex-direction: row; gap: 6px; overflow-x: auto; scrollbar-width: thin; }
-          .office-nav-toggle { grid-column: 2; grid-row: 1; align-self: start; min-height: 44px; width: auto; margin-left: 8px; padding: 10px 12px; border: 1px solid #334155; border-radius: 8px; background: #142238; color: #dbeafe; font-weight: 600; white-space: nowrap; }
-          .office-nav-toggle[aria-expanded="true"] { background: #1d4ed8; border-color: #60a5fa; color: white; }
-          .office-nav-more { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; gap: 4px; max-height: 30vh; overflow-y: auto; margin-top: 10px; padding-top: 8px; }
         }
       `}</style>
 
@@ -3169,43 +3139,9 @@ export default function App() {
             </div>
           </div>
 
-          <nav style={navStyle} aria-label="Office sections">
-          {['primary', 'more'].map(section => <div key={section} className="office-nav-section">
-          {section === 'more' && <button className="office-nav-toggle" aria-expanded={moreToolsOpen} aria-controls="office-more-tools" onClick={() => setMoreToolsOpen(open => !open)}>
-            More tools <span aria-hidden="true">{moreToolsOpen ? '▴' : '▾'}</span>
-          </button>}
-          <div className={`office-nav-${section}`} id={section === 'more' ? 'office-more-tools' : undefined} hidden={section === 'more' && !moreToolsOpen}>
-          {nav.filter(({ id }) => PRIMARY_OFFICE_VIEWS.has(id) === (section === 'primary')).map(({ id, label }) => {
-              const active = view === id;
-              return (
-                <button
-                  key={id}
-                  aria-current={active ? 'page' : undefined}
-                  onClick={() => navigateOffice(id)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 8, width: isMobile ? 'auto' : '100%',
-                    flex: isMobile ? '0 0 auto' : undefined,
-                    padding: isMobile ? '9px 11px' : '11px 20px',
-                    border: 'none', cursor: 'pointer', textAlign: 'left',
-                    borderRadius: isMobile ? 8 : 0,
-                    fontSize: 13, fontWeight: active ? 700 : 400,
-                    background: active ? 'rgba(59,130,246,.1)' : 'transparent',
-                    color: active ? '#60a5fa' : '#64748b',
-                    borderRight: isMobile ? 'none' : `2px solid ${active ? '#3b82f6' : 'transparent'}`,
-                    borderBottom: isMobile ? `2px solid ${active ? '#3b82f6' : 'transparent'}` : 'none',
-                    transition: 'color .15s, background .15s',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-          </div>)}
-          </nav>
+          <OfficeNavigation view={view} onNavigate={navigateOffice} />
 
-          <div style={{ padding: isMobile ? '10px 14px 12px' : '16px 20px', borderTop: '1px solid rgba(255,255,255,.05)' }}>
+          <div className="office-shell-status" style={{ padding: isMobile ? '10px 14px 12px' : '10px 28px 12px', borderTop: '1px solid rgba(255,255,255,.05)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
               {needsOfficeTelemetry && <Dot ok={connected} pulse={connected} />}
               <span style={{ fontSize: 11, color: '#475569' }}>
@@ -3273,6 +3209,7 @@ export default function App() {
         <main style={mainStyle} className={aiHome ? 'office-ai-home' : undefined}>
           {aiHome && <a className="office-ai-dashboard-link" href="#overview" onClick={event => { event.preventDefault(); navigateOffice('overview'); }}>Office dashboard</a>}
           {actionError && <div role="alert" style={{ color: '#fca5a5', paddingBottom: 16 }}>{actionError}</div>}
+          <OfficeViewBoundary key={view}>
           {view === 'city' && <Suspense fallback={<p style={{ color: '#64748b' }}>Opening Live City…</p>}><LiveCity status={status} pipelineStatus={pipelineStatus} agents={agents} log={log}
             telemetry={{ ...telemetry, streamConnected: connected }} officeFetch={officeFetch}
             apiBase={API} pipelineBase={PIPELINE_API} onNavigate={navigateOffice} onActivate={activateConfiguredAgents}
@@ -3284,13 +3221,7 @@ export default function App() {
           {view === 'local-web' && <LocalWeb apiBase={API} request={officeFetch} onNavigate={navigateOffice} />}
           {view === 'overview' && <OverviewView status={status} pipelineStatus={pipelineStatus} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'controls' && <Controls apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} onNavigate={navigateOffice} />}
-          <PipDock open={pipOpen || view === 'office-ai'} workspace={view === 'office-ai'} activity={pipActivity} welcomeBriefing={welcomeBriefing}
-            onOpenChange={open => { if (open) setPipInitialized(true); setPipOpen(open); if (!open && view === 'office-ai') navigateOffice('overview'); }}
-            onOpenWorkspace={() => { setPipOpen(true); navigateOffice('office-ai', { expandPip: true }); }}>
-            {pipInitialized && <OfficeAI apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} onNavigate={navigateOffice}
-              compact={view !== 'office-ai'} active={pipOpen || view === 'office-ai'} onActivityChange={setPipActivity}
-              welcomeBriefing={pipOpen || view === 'office-ai' ? welcomeBriefing : null} onWelcomeConsumed={consumeWelcome} />}
-          </PipDock>
+
           {/* Source health (workerHealth/agentSourceCache) only has real
               data on the pipeline role now — see pipelineStatus above. */}
           {view === 'sources'  && <SourcesView status={pipelineStatus} triggerAgent={triggerAgent} triggering={triggering} />}
@@ -3313,6 +3244,14 @@ export default function App() {
           {view === 'deploy'   && <DeployView triggerDeploy={triggerDeploy} deploying={deploying} log={log} />}
           {view === 'autofix'  && <AutofixView />}
           {view === 'versions' && <VersionsView versions={versions} status={status} pipelineStatus={pipelineStatus} />}
+          </OfficeViewBoundary>
+          <PipDock open={pipOpen || view === 'office-ai'} workspace={view === 'office-ai'} activity={pipActivity} welcomeBriefing={welcomeBriefing}
+            onOpenChange={open => { if (open) setPipInitialized(true); setPipOpen(open); if (!open && view === 'office-ai') navigateOffice('overview'); }}
+            onOpenWorkspace={() => { setPipOpen(true); navigateOffice('office-ai', { expandPip: true }); }}>
+            {pipInitialized && <OfficeAI apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} onNavigate={navigateOffice}
+              compact={view !== 'office-ai'} active={pipOpen || view === 'office-ai'} onActivityChange={setPipActivity}
+              welcomeBriefing={pipOpen || view === 'office-ai' ? welcomeBriefing : null} onWelcomeConsumed={consumeWelcome} />}
+          </PipDock>
         </main>
       </div>
     </>

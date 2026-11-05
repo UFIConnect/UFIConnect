@@ -29,6 +29,8 @@ jobs:
       - run: npm ci --prefix office
       - run: node scripts/check-js.cjs
         if: matrix.group == 'core'
+      - run: node --test web/src/utils/feedSourceRoute.test.mjs
+        if: matrix.group == 'core'
       - run: npm test --prefix backend
         if: matrix.group == 'core'
       - run: node --test scripts/office-security.test.mjs scripts/web-security.test.mjs scripts/office-city.test.mjs scripts/office-recovery.test.mjs
@@ -75,6 +77,10 @@ jobs:
       - run: node --test office/src/source-rate-display.test.mjs web/src/components/sourceCollection.test.mjs
         if: matrix.group == 'office'
       - run: node scripts/audit-office-source-rates.mjs
+        if: matrix.group == 'office'
+      - run: node scripts/audit-office-navigation.mjs
+        if: matrix.group == 'office'
+      - run: node web/tests/source-navigation.browser.mjs
         if: matrix.group == 'office'
       - run: node web/tests/source-collection.browser.mjs
         if: matrix.group == 'office'
