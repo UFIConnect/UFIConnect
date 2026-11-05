@@ -4,7 +4,7 @@ const REFRESH_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 25_000;
 export const ANALYTICS_STALE_MS = 90_000;
 
-export default function useAnalyticsReport({ apiBase, request }) {
+export default function useAnalyticsReport({ apiBase, request, active: enabled = true }) {
   const [report, setReport] = useState(null), [busy, setBusy] = useState(true), [error, setError] = useState('');
   const [updatedAt, setUpdatedAt] = useState(null), [revision, setRevision] = useState(0), [checkedNow, setCheckedNow] = useState(Date.now);
   const refreshRef = useRef(() => {});
@@ -14,15 +14,15 @@ export default function useAnalyticsReport({ apiBase, request }) {
     let disposed = false, generation = 0, active = null;
     const timeouts = new Set();
     const current = sequence => !disposed && generation === sequence;
-    async function read() {
-      if (disposed || active) return;
+    async function read(force = false) {
+      if (disposed || active || !enabled || document.visibilityState === 'hidden') return;
       const controller = new AbortController(), sequence = ++generation;
       active = controller;
       setBusy(true); setCheckedNow(Date.now()); setRevision(value => value + 1);
       let timeout;
       try {
         const load = async () => {
-          const response = await request(`${apiBase}/office/analytics/pageviews?detail=compact`, { signal: controller.signal, cache: 'no-store' });
+          const response = await request(`${apiBase}/office/analytics/pageviews?detail=compact`, { signal: controller.signal, ...(force ? { cache: 'reload' } : {}) });
           if (response.status === 401 || response.status === 403) {
             if (current(sequence)) { setReport(null); setUpdatedAt(null); }
             throw new Error('Office access is required. Update your Office access and retry.');
@@ -47,13 +47,17 @@ export default function useAnalyticsReport({ apiBase, request }) {
         if (current(sequence)) { active = null; setBusy(false); setCheckedNow(Date.now()); }
       }
     }
-    const refreshVisible = () => { setCheckedNow(Date.now()); if (document.visibilityState !== 'hidden') read(); };
+    const refreshVisible = () => {
+      setCheckedNow(Date.now());
+      if (document.visibilityState === 'hidden') { generation++; active?.abort(); active = null; setBusy(false); }
+      else read();
+    };
     const invalidate = () => {
       generation++; active?.abort(); active = null;
       setReport(null); setUpdatedAt(null); setError(''); setBusy(true); setRevision(value => value + 1);
-      read();
+      read(true);
     };
-    refreshRef.current = read;
+    refreshRef.current = () => read(true);
     window.addEventListener('office-token-changed', invalidate);
     window.addEventListener('focus', refreshVisible);
     window.addEventListener('online', refreshVisible);
@@ -69,8 +73,8 @@ export default function useAnalyticsReport({ apiBase, request }) {
       window.removeEventListener('online', refreshVisible);
       document.removeEventListener('visibilitychange', refreshVisible);
     };
-  }, [apiBase, request]);
+  }, [apiBase, request, enabled]);
 
-  return { report, busy, error, updatedAt, revision, refresh,
+  return { report, busy: enabled && busy, error, updatedAt, revision, refresh,
     stale: Boolean(updatedAt && checkedNow - updatedAt.getTime() >= ANALYTICS_STALE_MS) };
 }

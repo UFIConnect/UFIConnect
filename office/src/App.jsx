@@ -20,6 +20,8 @@ import { mergeObservedAgents, observeAgentPayload } from './office-telemetry.mjs
 import { createOfficeClient, createOfficeEventSource, createTrustedOfficeFetch, connectOfficeStreams, mergeOfficeLog } from './office-runtime.mjs';
 import { requestOfficeAccess } from './OfficeAccessDialog';
 import { sourceRateSummary } from './source-rate-display.mjs';
+import { createVisibleOfficePoller, officePollingPlan } from './office-polling.mjs';
+import { useOfficePageVisible } from './useOfficePolling';
 import './office-shell.css';
 
 const API = import.meta.env.VITE_API_URL || '';
@@ -50,6 +52,8 @@ const LiveCity = LOCAL_OFFICE ? lazy(() => import('./LiveCity')) : lazy(() => im
 const trustedOfficeFetch = createTrustedOfficeFetch({ baseUrls: [API, PIPELINE_API], pageUrl: window.location.href,
   development: import.meta.env.DEV, fetcher: (...args) => fetch(...args) });
 const officeClient = createOfficeClient({
+  pageUrl: window.location.href,
+  serviceBases: [{ service: 'api', url: API }, ...(PIPELINE_API !== API ? [{ service: 'pipeline', url: PIPELINE_API }] : [])],
   storage: { removeItem: key => {
     try { localStorage.removeItem(key); } catch { /* Storage can be disabled. */ }
     try { sessionStorage.removeItem(key); } catch { /* Storage can be disabled. */ }
@@ -58,7 +62,7 @@ const officeClient = createOfficeClient({
   onTokenChange: () => window.dispatchEvent(new Event('office-token-changed')),
 });
 const officeFetch = officeClient.request;
-const OfficeEventSource = createOfficeEventSource({ fetcher: trustedOfficeFetch, getToken: officeClient.getToken });
+const OfficeEventSource = createOfficeEventSource({ fetcher: officeClient.transportRequest, getToken: officeClient.getToken });
 function officeStreamUrl(path, base = API) {
   return `${base}${path}`;
 }
@@ -749,17 +753,17 @@ function AutofixView() {
   const [toggling, setToggling] = useState(false);
   const [expanded, setExpanded] = useState(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async ({ signal } = {}) => {
     try {
-      const r = await officeFetch(`${API}/office/autofix/attempts`);
-      setData(await r.json());
+      const r = await officeFetch(`${API}/office/autofix/attempts`, { signal });
+      const data = await r.json();
+      if (!signal?.aborted) setData(data);
     } catch {}
   }, []);
 
   useEffect(() => {
-    load();
-    const id = setInterval(load, 15000);
-    return () => clearInterval(id);
+    const poller = createVisibleOfficePoller({ task: load, intervalMs: 15000 });
+    return () => poller.stop();
   }, [load]);
 
   const toggle = async () => {
@@ -2658,9 +2662,9 @@ function TopicsView() {
   const [refreshing, setRefreshing] = useState(false);
   const [lastLoaded, setLastLoaded] = useState(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = false) => {
     try {
-      const r = await officeFetch(`${API}/office/topics`);
+      const r = await officeFetch(`${API}/office/topics`, force ? { cache: 'reload' } : {});
       const j = await r.json();
       setData(j);
       setLastLoaded(Date.now());
@@ -2676,7 +2680,7 @@ function TopicsView() {
     // it obvious new counts actually came in, which is the whole point of
     // this button existing.
     setGrown(false);
-    await load();
+    await load(true);
     setRefreshing(false);
   };
 
@@ -2850,7 +2854,10 @@ export default function App() {
     });
     return () => navigation.current.dispose();
   }, [openPip]);
-  const needsOfficeTelemetry = !['office-ai', 'local-web', 'setup', 'reports'].includes(view);
+  const pageVisible = useOfficePageVisible();
+  const pollingPlan = useMemo(() => officePollingPlan(view, pageVisible), [view, pageVisible]);
+  const needsOfficeTelemetry = pollingPlan.tasks.length > 0;
+  const [authRevision, setAuthRevision] = useState(0);
   const [status, setStatus] = useState(null);
   // Source-fetcher health (workerHealth/agentSourceCache) only ever has real
   // data on the pipeline role now — SourcesView/PipelineView read this
@@ -2873,8 +2880,16 @@ export default function App() {
     pipeline: { updatedAt: null, loading: true, error: '' },
     agents: { updatedAt: null, error: '', byService: {} },
   });
-  const polls = useRef({ api: false, pipeline: false, agents: false });
   const observedAgents = useRef({ api: {}, pipeline: {} });
+  useEffect(() => {
+    const reset = () => {
+      setStatus(null); setPipelineStatus(null); setAgents({}); setLog([]); setVersions(null);
+      observedAgents.current = { api: {}, pipeline: {} };
+      setAuthRevision(value => value + 1);
+    };
+    window.addEventListener('office-token-changed', reset);
+    return () => window.removeEventListener('office-token-changed', reset);
+  }, []);
   const navigateOffice = useCallback((id, options = {}) => {
     if (!officeViews.includes(id)) return false;
     if (id === 'office-ai' && options.expandPip !== true) { openPip(); return true; }
@@ -2883,39 +2898,34 @@ export default function App() {
   const [welcomeBriefing, consumeWelcome] = useOfficeWelcome({ request: officeFetch, apiBase: API,
     pipelineBase: PIPELINE_API, getToken: officeClient.getToken, onOpen: openWelcomeCall });
 
-  const fetchStatus = useCallback(async () => {
-    if (polls.current.api) return;
-    polls.current.api = true;
+  const fetchStatus = useCallback(async ({ signal, force = false } = {}) => {
     setTelemetry(prev => ({ ...prev, api: { ...prev.api, loading: true } }));
     try {
-      const r = await officeFetch(`${API}/office/status`);
+      const r = await officeFetch(`${API}/office/status`, { signal, ...(force ? { cache: 'reload' } : {}) });
       if (!r.ok) throw new Error('Status unavailable');
       const data = await r.json();
+      if (signal?.aborted) return;
       if (!data?.server || typeof data.server !== 'object' || Array.isArray(data.server)) throw new Error('Status unavailable');
       setStatus(data);
       setTelemetry(prev => ({ ...prev, api: { updatedAt: Date.now(), loading: false,
         error: data.server.serviceRole === 'pipeline' ? 'The API address returned pipeline process telemetry' : '',
       } }));
     } catch {
+      if (signal?.aborted) return;
       setStatus(null);
       setTelemetry(prev => ({ ...prev, api: { ...prev.api, loading: false, error: 'API telemetry unavailable' } }));
-    } finally { polls.current.api = false; }
+    }
   }, []);
 
-  // Always a real fetch, even when PIPELINE_API === API (the fallback case,
-  // e.g. before uficonnect-pipeline is configured) — hitting the same URL
-  // twice on that fallback path is a trivial extra request, and avoids
-  // needing to read `status` from inside this closure (a stale-closure risk
-  // otherwise, since this callback is deliberately deps-stable for its own
-  // setInterval below).
-  const fetchPipelineStatus = useCallback(async () => {
-    if (polls.current.pipeline) return;
-    polls.current.pipeline = true;
+  // The shared request coordinator joins identical API/pipeline fallback
+  // reads while preserving independent role diagnostics and response bodies.
+  const fetchPipelineStatus = useCallback(async ({ signal, force = false } = {}) => {
     setTelemetry(prev => ({ ...prev, pipeline: { ...prev.pipeline, loading: true } }));
     try {
-      const r = await officeFetch(`${PIPELINE_API}/office/status`);
+      const r = await officeFetch(`${PIPELINE_API}/office/status`, { signal, ...(force ? { cache: 'reload' } : {}) });
       if (!r.ok) throw new Error('Status unavailable');
       const data = await r.json();
+      if (signal?.aborted) return;
       if (!data?.server || typeof data.server !== 'object' || Array.isArray(data.server)) throw new Error('Status unavailable');
       setPipelineStatus(data);
       setTelemetry(prev => ({ ...prev, pipeline: { updatedAt: Date.now(), loading: false,
@@ -2924,54 +2934,47 @@ export default function App() {
           : '',
       } }));
     } catch {
+      if (signal?.aborted) return;
       setPipelineStatus(null);
       setTelemetry(prev => ({ ...prev, pipeline: { ...prev.pipeline, loading: false, error: 'Pipeline telemetry unavailable' } }));
-    } finally { polls.current.pipeline = false; }
+    }
   }, []);
 
-  const fetchAgents = useCallback(async () => {
-    if (polls.current.agents) return;
-    polls.current.agents = true;
-    try {
+  const fetchAgents = useCallback(async ({ signal, force = false } = {}) => {
       const targets = PIPELINE_API === API ? [['api', API]] : [['api', API], ['pipeline', PIPELINE_API]];
       await Promise.allSettled(targets.map(async ([role, base]) => {
         try {
-          const response = await officeFetch(`${base}/office/agents`);
+          const response = await officeFetch(`${base}/office/agents`, { signal, ...(force ? { cache: 'reload' } : {}) });
           if (!response.ok) throw new Error('Agent telemetry unavailable');
           const data = await response.json();
+          if (signal?.aborted) return;
           const updatedAt = Date.now();
           observedAgents.current[role] = observeAgentPayload(data, role, updatedAt);
           setTelemetry(prev => ({ ...prev, agents: { ...prev.agents,
             updatedAt, byService: { ...prev.agents.byService, [role]: { updatedAt, error: '' } },
           } }));
         } catch {
+          if (signal?.aborted) return;
           setTelemetry(prev => ({ ...prev, agents: { ...prev.agents,
             byService: { ...prev.agents.byService, [role]: { ...prev.agents.byService[role], error: 'Agent telemetry unavailable' } },
           } }));
         }
       }));
-      setAgents(mergeObservedAgents(observedAgents.current.api, observedAgents.current.pipeline));
-    } finally { polls.current.agents = false; }
+      if (!signal?.aborted) setAgents(mergeObservedAgents(observedAgents.current.api, observedAgents.current.pipeline));
   }, []);
 
-  const fetchVersions = useCallback(async () => {
+  const fetchVersions = useCallback(async ({ signal, force = false } = {}) => {
     try {
-      const r = await officeFetch(`${API}/office/versions`);
-      if (r.ok) setVersions(await r.json());
+      const r = await officeFetch(`${API}/office/versions`, { signal, ...(force ? { cache: 'reload' } : {}) });
+      if (r.ok) { const data = await r.json(); if (!signal?.aborted) setVersions(data); }
     } catch {}
   }, []);
 
   useEffect(() => {
-    if (!needsOfficeTelemetry) return undefined;
-    fetchStatus();
-    fetchPipelineStatus();
-    fetchAgents();
-    fetchVersions();
-    const t1 = setInterval(fetchStatus,  8000);
-    const t2 = setInterval(fetchPipelineStatus, 8000);
-    const t3 = setInterval(fetchAgents, 15000);
-    return () => { clearInterval(t1); clearInterval(t2); clearInterval(t3); };
-  }, [fetchStatus, fetchPipelineStatus, fetchAgents, fetchVersions, needsOfficeTelemetry]);
+    const tasks = { api: fetchStatus, pipeline: fetchPipelineStatus, agents: fetchAgents, versions: fetchVersions };
+    const pollers = pollingPlan.tasks.map(({ id, intervalMs }) => createVisibleOfficePoller({ task: tasks[id], intervalMs }));
+    return () => pollers.forEach(poller => poller.stop());
+  }, [fetchStatus, fetchPipelineStatus, fetchAgents, fetchVersions, pollingPlan, authRevision]);
 
   // SSE: real-time agent activity pushed from backend. Connects to both
   // services when PIPELINE_API is actually configured as a distinct URL —
@@ -2982,7 +2985,7 @@ export default function App() {
   // OverviewView's activity feed and Agents view show one unified picture
   // instead of a dashboard split in two.
   useEffect(() => {
-    if (!needsOfficeTelemetry) return undefined;
+    if (!pollingPlan.stream) return undefined;
     return connectOfficeStreams({
       bases: [...new Set([API, PIPELINE_API])],
       urlFor: base => officeStreamUrl('/office/agents/stream', base),
@@ -3010,7 +3013,7 @@ export default function App() {
         if (changed) setAgents(mergeObservedAgents(observedAgents.current.api, observedAgents.current.pipeline));
       },
     });
-  }, [needsOfficeTelemetry]);
+  }, [pollingPlan.stream]);
 
   const activateConfiguredAgents = async () => {
     if (activationPending.current) return;
@@ -3021,7 +3024,7 @@ export default function App() {
       const targets = [['api', API], ...(PIPELINE_API !== API ? [['pipeline', PIPELINE_API]] : [])];
       for (const [role, base] of targets) {
         try {
-          const catalogResponse = await officeFetch(`${base}/office/controls`);
+          const catalogResponse = await officeFetch(`${base}/office/controls`, { cache: 'reload' });
           if (!catalogResponse.ok) throw Error('Office controls are unavailable.');
           const catalog = await catalogResponse.json();
           const control = catalog.controls?.find(item => item.id === 'agents.activate-configured');
@@ -3040,7 +3043,7 @@ export default function App() {
       }
       setActivationResult({ services, completedAt: new Date().toISOString() });
       if (services.some(service => service.failed > 0)) setActivationError('Some agents need attention. Review the results and Setup.');
-      await Promise.allSettled([fetchStatus(), fetchPipelineStatus(), fetchAgents()]);
+      await Promise.allSettled([fetchStatus({ force: true }), fetchPipelineStatus({ force: true }), fetchAgents({ force: true })]);
     } finally { activationPending.current = false; setActivating(false); }
   };
 
@@ -3152,7 +3155,7 @@ export default function App() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
               {needsOfficeTelemetry && <Dot ok={connected} pulse={connected} />}
               <span style={{ fontSize: 11, color: '#94a3b8' }}>
-                {!needsOfficeTelemetry ? 'Telemetry paused for this view' : connected ? 'Live stream active' : 'Reconnecting...'}
+                {!needsOfficeTelemetry ? 'Live telemetry is available in Overview' : !pollingPlan.stream ? 'Service status active' : connected ? 'Live stream active' : 'Reconnecting...'}
               </span>
             </div>
             {/* Both services' own health, always visible regardless of which
@@ -3216,7 +3219,8 @@ export default function App() {
         <main style={mainStyle} className={`office-main${aiHome ? ' office-ai-home' : ''}`} data-office-section={view}>
           {aiHome && <a className="office-ai-dashboard-link" href="#overview" onClick={event => { event.preventDefault(); navigateOffice('overview'); }}>Office dashboard</a>}
           {actionError && <div role="alert" style={{ color: '#fca5a5', paddingBottom: 16 }}>{actionError}</div>}
-          <OfficeViewBoundary key={view}>
+          {/* Local drafts and the pending public-source review survive the Office sign-in prompt. */}
+          <OfficeViewBoundary key={view === 'local-web' ? view : `${view}:${authRevision}`}>
           {view === 'city' && <Suspense fallback={<p style={{ color: '#64748b' }}>Opening Live City…</p>}><LiveCity status={status} pipelineStatus={pipelineStatus} agents={agents} log={log}
             telemetry={{ ...telemetry, streamConnected: connected }} officeFetch={officeFetch}
             apiBase={API} pipelineBase={PIPELINE_API} onNavigate={navigateOffice} onActivate={activateConfiguredAgents}

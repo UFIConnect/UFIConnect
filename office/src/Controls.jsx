@@ -164,10 +164,10 @@ export default function Controls({ apiBase = '', pipelineBase = '', request = fe
     return () => media.removeEventListener?.('change', update);
   }, []);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (force = false) => {
     setStatus('Refreshing controls');
     try {
-      const payload = await responsePayload(await request(`${apiBase}/office/controls`));
+      const payload = await responsePayload(await request(`${apiBase}/office/controls`, force ? { cache: 'reload' } : {}));
       setControls(Array.isArray(payload.controls) ? payload.controls : []);
       setHistory(Array.isArray(payload.history) ? payload.history : []);
       setStatus(`${payload.controls?.length || 0} controls ready`);
@@ -310,11 +310,11 @@ export default function Controls({ apiBase = '', pipelineBase = '', request = fe
           : `${control.label} completed.`,
         result,
       });
-      await refresh();
+      await refresh(true);
       return results[0] || null;
     } catch (runError) {
       setNotice({ tone: 'error', text: `${control.label} failed: ${runError.message}` });
-      await refresh();
+      await refresh(true);
       return null;
     } finally {
       setRunningId('');
@@ -422,7 +422,7 @@ export default function Controls({ apiBase = '', pipelineBase = '', request = fe
             Run public feed, source, health, frontend, and deployment actions from one place.
           </p>
         </div>
-        <ActionButton tone="neutral" onClick={refresh}>Refresh controls</ActionButton>
+        <ActionButton tone="neutral" onClick={() => refresh(true)}>Refresh controls</ActionButton>
       </div>
 
       <div className="controls-summary" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(155px, 1fr))', gap: 10, marginBottom: 18 }}>

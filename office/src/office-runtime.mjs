@@ -1,30 +1,64 @@
-export function createOfficeClient({ storage, fetcher, prompt, onTokenChange }) {
+import { createOfficeRequestCoordinator } from './office-requests.mjs';
+
+export function createOfficeClient({ storage, fetcher, prompt, onTokenChange = () => {}, pageUrl, serviceBases }) {
   const key = 'ufi_office_token';
   // Discard legacy persistent credentials; never recover them into a session.
   try { storage?.removeItem(key); } catch { /* Storage can be unavailable. */ }
   const prompted = new Set();
-  let memoryToken = '', pendingAuth = null;
+  let memoryToken = '', pendingAuth = null, authScope = 0;
   const getToken = () => memoryToken;
-  async function request(url, options = {}) {
-    const send = token => fetcher(url, { ...options, credentials: 'omit', cache: 'no-store', redirect: 'error', signal: options.signal || AbortSignal.timeout(20000), headers: { ...options.headers, ...(token ? { 'x-office-token': token } : {}) } });
-    const token = getToken();
-    const response = await send(token);
-    if (response.status !== 401) return response;
-    const updated = getToken();
-    if (updated !== token) return send(updated);
+  const reads = createOfficeRequestCoordinator({ fetcher, getScope: () => authScope, pageUrl, serviceBases });
+  async function authorize(token) {
     if (!pendingAuth) {
-      if (prompted.has(token)) return response;
+      if (prompted.has(token)) return '';
       prompted.add(token);
       pendingAuth = Promise.resolve().then(() => prompt('Office access token')).then(value => {
         const entered = value?.trim();
-        if (entered) { memoryToken = entered; prompted.clear(); onTokenChange(); }
+        if (entered) { memoryToken = entered; authScope++; reads.clear({ auth: true }); prompted.clear(); onTokenChange(); }
         return entered;
       }).finally(() => { pendingAuth = null; });
     }
-    const entered = await pendingAuth;
-    return entered ? send(entered) : response;
+    return pendingAuth;
   }
-  return { request, getToken };
+  async function request(url, options = {}) {
+    if (typeof url !== 'string' && !(url instanceof URL)) throw new TypeError('Office requests require a URL string or URL object.');
+    const write = !['GET', 'HEAD'].includes(String(options.method || 'GET').toUpperCase());
+    let token = getToken();
+    // Establish access before sending a write. An unconfirmed write is never
+    // replayed automatically after a 401, timeout or connection failure.
+    if (write && !token) {
+      token = await authorize(token);
+      if (!token) return new Response('{"error":"Office access is required."}', { status: 401, headers: { 'Content-Type': 'application/json' } });
+    }
+    const send = value => {
+      const headers = new Headers(options.headers);
+      if (value) headers.set('x-office-token', value);
+      else headers.delete('x-office-token');
+      return reads.request(url, { ...options, credentials: 'omit', redirect: 'error', headers: Object.fromEntries(headers) });
+    };
+    const response = await send(token);
+    if (response.status !== 401) return response;
+    const updated = getToken();
+    if (updated !== token) return write ? response : send(updated);
+    const entered = await authorize(token);
+    return !write && entered ? send(entered) : response;
+  }
+  request.getDiagnostics = reads.getDiagnostics;
+  request.subscribeDiagnostics = reads.subscribeDiagnostics;
+  request.invalidateReads = () => reads.clear();
+  const transportRequest = (url, options = {}) => {
+    if (String(options.method || 'GET').toUpperCase() !== 'GET' || options.body != null) {
+      return Promise.reject(new TypeError('Office stream transport accepts GET requests without a body.'));
+    }
+    const headers = new Headers(options.headers);
+    headers.set('Accept', 'text/event-stream');
+    const token = getToken();
+    if (token) headers.set('x-office-token', token);
+    else headers.delete('x-office-token');
+    return reads.request(url, { ...options, method: 'GET', credentials: 'omit', redirect: 'error', headers: Object.fromEntries(headers) });
+  };
+  return { request, getToken, transportRequest,
+    getDiagnostics: reads.getDiagnostics, subscribeDiagnostics: reads.subscribeDiagnostics };
 }
 
 export function createTrustedOfficeFetch({ baseUrls, pageUrl, development = false, fetcher }) {

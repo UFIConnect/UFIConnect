@@ -1,38 +1,18 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
+import useOfficeAnalyticsSnapshot from './useOfficeAnalyticsSnapshot.js';
 
 const number = value => Number.isFinite(value) ? new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value) : 'Unavailable';
+const valid = data => Array.isArray(data.daily) && Array.isArray(data.monthly);
 
-export default function TrafficAnalytics({ apiBase, request, active = true }) {
-  const [report, setReport] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const [revision, setRevision] = useState(0), [month, setMonth] = useState('all');
-  const generation = useRef(0);
-  useEffect(() => {
-    const invalidate = () => { generation.current++; setReport(null); setError(''); setRevision(value => value + 1); };
-    window.addEventListener('office-token-changed', invalidate);
-    return () => window.removeEventListener('office-token-changed', invalidate);
-  }, []);
-  useEffect(() => {
-    if (!active) return;
-    const controller = new AbortController(), current = ++generation.current;
-    setBusy(true); setError('');
-    request(`${apiBase}/office/analytics/traffic`, { signal: controller.signal, cache: 'no-store' })
-      .then(async response => {
-        const data = await response.json();
-        if (response.status === 401 || response.status === 403) throw new Error('Office access is required to load traffic history.');
-        if (!response.ok || data.available !== true || !Array.isArray(data.daily) || !Array.isArray(data.monthly)) {
-          throw new Error(data.error || 'Traffic history is unavailable. Check the Cloudflare connection and retry.');
-        }
-        if (generation.current === current && !controller.signal.aborted) setReport(data);
-      })
-      .catch(failure => { if (generation.current === current && !controller.signal.aborted) setError(failure.message || 'Traffic history could not be loaded.'); })
-      .finally(() => { if (generation.current === current && !controller.signal.aborted) setBusy(false); });
-    return () => controller.abort();
-  }, [active, apiBase, request, revision]);
+export default function TrafficAnalytics({ apiBase, request, active = true, onCompare }) {
+  const { report, busy, error, refresh } = useOfficeAnalyticsSnapshot({ apiBase, request, active, valid, endpoint: '/office/analytics/traffic' });
+  const [month, setMonth] = useState('all');
   const daily = (report?.daily || []).filter(row => month === 'all' || row.day.startsWith(month)).slice().reverse();
   return <section aria-labelledby="traffic-history-heading">
     <div className="office-analytics-section-heading"><div><h2 id="traffic-history-heading">Traffic since launch</h2><p>Cloudflare traffic for uficonnect.org and its proxied subdomains. UTC calendar days.</p></div>
-      <button type="button" disabled={busy} onClick={() => setRevision(value => value + 1)}>{busy ? 'Refreshing traffic…' : 'Refresh traffic history'}</button></div>
+      <button type="button" disabled={busy} onClick={refresh}>{busy ? 'Refreshing traffic…' : 'Refresh traffic history'}</button></div>
     <p className="office-analytics-meta">Edge requests include automated traffic. HTML page views and daily unique IPs describe network traffic; they do not identify unique people. These totals are separate from app opens and Google Analytics.</p>
+    {onCompare && <button type="button" onClick={onCompare}>Compare traffic with app analytics</button>}
     {busy && !report && <p role="status">Loading traffic history…</p>}
     {error && <div role="alert" className="office-analytics-error">{error}</div>}
     {report && <>

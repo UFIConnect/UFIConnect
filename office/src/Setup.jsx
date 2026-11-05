@@ -41,6 +41,7 @@ export default function Setup({ apiBase, pipelineBase, request, onNavigate, onAc
   const [filter, setFilter] = useState('all');
   const [localActivationError, setLocalActivationError] = useState('');
   const mounted = useRef(true);
+  const activationPending = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
     let active = true;
@@ -48,7 +49,7 @@ export default function Setup({ apiBase, pipelineBase, request, onNavigate, onAc
     setBusy(true);
     Promise.all([['api', apiBase], ['pipeline', pipelineBase]].map(async ([role, base]) => {
       try {
-        const response = await request(`${base}/office/setup`, { signal:controller.signal });
+        const response = await request(`${base}/office/setup`, { signal:controller.signal, ...(revision > 0 ? { cache:'reload' } : {}) });
         if (!response.ok) throw new Error(`Setup check failed (${response.status}). Check Office access and service readiness.`);
         const data = await response.json();
         if (data.role !== role || !Array.isArray(data.items)) throw new Error(`Expected ${role} setup information. Check the service address and SERVICE_ROLE.`);
@@ -60,11 +61,12 @@ export default function Setup({ apiBase, pipelineBase, request, onNavigate, onAc
   const items = reports.flatMap(report => (report.items || []).map(item => ({...item,role:report.role})));
   const needsAttention = items.filter(item => ['missing','degraded'].includes(item.status));
   async function connectConfigured() {
-    if (!onActivate || busy || activating) return;
+    if (activationPending.current || !onActivate || busy || activating) return;
+    activationPending.current = true;
     setLocalActivationError('');
     try { await onActivate(); }
     catch { if (mounted.current) setLocalActivationError('Configured agents could not be activated. Refresh setup and retry.'); }
-    finally { if (mounted.current) setRevision(value => value + 1); }
+    finally { activationPending.current = false; if (mounted.current) setRevision(value => value + 1); }
   }
   const visible = items.filter(item => filter === 'all' || (filter === 'attention' ? ['missing','degraded'].includes(item.status) : item.role === filter))
     .sort((a,b) => priority[a.status] - priority[b.status] || a.label.localeCompare(b.label));

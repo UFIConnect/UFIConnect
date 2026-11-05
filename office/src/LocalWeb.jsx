@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { lineChanges } from './line-changes.mjs';
+import { createVisibleOfficePoller } from './office-polling.mjs';
 import './local-web.css';
 
 const LOCAL_CONSOLE = 'http://127.0.0.1:4174/#local-web';
@@ -227,10 +228,13 @@ function LocalEditor({ apiBase, request }) {
 
   useEffect(() => {
     if (github.state !== 'updating') return undefined;
-    const timer = setInterval(() => {
-      fetch('/__local-web/github', { cache: 'no-store' }).then(payloadOf).then(setGithub).catch(() => {});
-    }, 2000);
-    return () => clearInterval(timer);
+    const poller = createVisibleOfficePoller({ intervalMs: 2000, task: async ({ signal }) => {
+      try {
+        const data = await payloadOf(await fetch('/__local-web/github', { cache: 'no-store', signal }));
+        if (!signal.aborted) setGithub(data);
+      } catch { /* The next visible status check can retry. */ }
+    } });
+    return () => poller.stop();
   }, [github.state]);
   const getLatestFromGithub = async () => {
     setPreviewSource('github');

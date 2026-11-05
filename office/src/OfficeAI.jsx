@@ -152,7 +152,7 @@ export default function OfficeAI({ apiBase = '', pipelineBase = '', request = fe
         const list = data.tools.filter(tool => typeof tool?.id === 'string' && typeof tool.name === 'string' && ['prompt', 'office-command'].includes(tool.kind));
         if (valid()) { setTools(list); setSelectedTools(previous => previous.filter(id => list.some(tool => tool.id === id))); }
       }).catch(cause => { if (valid()) { setTools([]); setSelectedTools([]); setToolsError(cause.name === 'AbortError' ? 'Tool library check timed out. Retry to load saved tools.' : cause.message); } }),
-      request(`${apiBase}/office/controls`, { signal: controller.signal }).then(payload).then(data => {
+      request(`${apiBase}/office/controls`, { signal: controller.signal, ...(revision > 0 ? { cache: 'reload' } : {}) }).then(payload).then(data => {
         if (valid()) setControls(Array.isArray(data.controls) ? data.controls : []);
       }).catch(cause => { if (valid()) { setControls([]); setControlsError(cause.name === 'AbortError' ? 'Command list check timed out. Retry to load commands.' : cause.message); } }),
       request(`${apiBase}/office/ai/tasks?summary=1`, { signal: controller.signal }).then(payload).then(data => {

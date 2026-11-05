@@ -2,6 +2,8 @@ import { cloneElement, useMemo, useRef, useState } from 'react';
 import { count, filterAnalytics, filterDiagnostics, reportDays } from './analytics-model.mjs';
 import AnalyticsGeography from './AnalyticsGeography.jsx';
 import TrafficAnalytics from './TrafficAnalytics.jsx';
+import AnalyticsComparison from './AnalyticsComparison.jsx';
+import RequestsAnalytics from './RequestsAnalytics.jsx';
 import useAnalyticsReport from './useAnalyticsReport.js';
 import './AnalyticsDashboard.css';
 
@@ -9,7 +11,7 @@ const number = value => new Intl.NumberFormat(undefined, { maximumFractionDigits
 const errorNames = { script_error: 'Script errors', unhandled_rejection: 'Unhandled promises', render_error: 'Rendering errors', request_failed: 'Failed requests' };
 const types = { page: 'Page', screen: 'App screen', tab: 'Tab' };
 
-const analyticsTabs = [['overview', 'Overview'], ['pages', 'Pages & tabs'], ['geography', 'Geography'], ['diagnostics', 'Diagnostics'], ['traffic', 'Traffic history'], ['users', 'Users']];
+const analyticsTabs = [['overview', 'Overview'], ['pages', 'Pages & tabs'], ['geography', 'Geography'], ['diagnostics', 'Diagnostics'], ['traffic', 'Traffic history'], ['comparison', 'Compare'], ['requests', 'API requests'], ['users', 'Users']];
 
 function AnalyticsPanel({ name, activeTab, children }) {
   return <div className="office-analytics-panel" role="tabpanel" id={`office-analytics-panel-${name}`} aria-labelledby={`office-analytics-tab-${name}`} hidden={activeTab !== name} tabIndex={0}>{children}</div>;
@@ -34,11 +36,12 @@ function DailyTrend({ daily }) {
 }
 
 export default function AnalyticsDashboard({ apiBase, request, usersPanel }) {
-  const { report, busy, error, updatedAt, revision, refresh, stale } = useAnalyticsReport({ apiBase, request });
+  const [activeTab, setActiveTab] = useState('overview');
+  const independentTab = ['traffic', 'comparison', 'requests', 'users'].includes(activeTab);
+  const { report, busy, error, updatedAt, revision, refresh, stale } = useAnalyticsReport({ apiBase, request, active: !independentTab });
   const [preset, setPreset] = useState('history'), [customStart, setCustomStart] = useState(''), [customEnd, setCustomEnd] = useState('');
   const [platform, setPlatform] = useState('all'), [category, setCategory] = useState('all'), [viewType, setViewType] = useState('all');
   const [search, setSearch] = useState('');
-  const [activeTab, setActiveTab] = useState('overview');
   const [visitedTabs, setVisitedTabs] = useState({ overview: true });
   const tabButtons = useRef({}), tabsAnchor = useRef(null);
   const tabs = usersPanel ? analyticsTabs : analyticsTabs.filter(([name]) => name !== 'users');
@@ -79,8 +82,8 @@ export default function AnalyticsDashboard({ apiBase, request, usersPanel }) {
             : verification?.status === 'pending' ? 'Database verification pending' : 'Counts loaded; database verification unavailable';
 
   return <section className="office-analytics">
-    <header className="office-analytics-header"><div><h1>Analytics</h1><p>Anonymous counts for website pages, app screens and internal tabs. Counts represent opens, not unique people.</p></div><button type="button" onClick={refresh} disabled={busy}>{busy ? 'Refreshing…' : 'Refresh analytics'}</button></header>
-    <section className={`office-analytics-freshness${freshnessWarning ? ' warning' : ''}`} aria-label="Analytics freshness">
+    <header className="office-analytics-header"><div><h1>Analytics</h1><p>Recorded traffic, app activity, registrations and server requests. Each source reports its own coverage.</p></div><button hidden={independentTab} type="button" onClick={refresh} disabled={busy}>{busy ? 'Refreshing…' : 'Refresh analytics'}</button></header>
+    <section hidden={independentTab} className={`office-analytics-freshness${freshnessWarning ? ' warning' : ''}`} aria-label="Analytics freshness">
       <strong role="status" aria-live="polite">{freshnessLabel}</strong>
       <p>{updatedAt ? <>Last successful read <time dateTime={updatedAt.toISOString()}>{updatedAt.toLocaleString()}</time>. </> : 'Waiting for the first successful read. '}Checks for updated counts every 30 seconds while this page is visible, and when you return or reconnect.</p>
       {verification && <p>{verification.checkedAt ? <>Database check <time dateTime={verification.checkedAt}>{new Date(verification.checkedAt).toLocaleString()}</time>. </> : 'Database check has not completed. '}{verification.status === 'verified' ? 'Displayed totals match the stored records.' : verification.status === 'mismatch' ? 'The stored records and reported totals differ. Review the count check before using these totals.' : verification.error || 'A successful database count check is still needed.'}{verification.lastVerifiedAt && verification.status !== 'verified' ? ` Last verified ${new Date(verification.lastVerifiedAt).toLocaleString()}.` : ''}</p>}
@@ -91,10 +94,10 @@ export default function AnalyticsDashboard({ apiBase, request, usersPanel }) {
     <div className="office-analytics-tabs" role="tablist" aria-label="Analytics sections">
       {tabs.map(([name, label], index) => <button key={name} ref={element => { tabButtons.current[name] = element; }} type="button" role="tab" id={`office-analytics-tab-${name}`} aria-controls={`office-analytics-panel-${name}`} aria-selected={activeTab === name} tabIndex={activeTab === name ? 0 : -1} onClick={() => selectTab(name)} onKeyDown={event => navigateTabs(event, index)}>{label}</button>)}
     </div>
-    {error && <div className="office-analytics-error" role="alert"><p>{error}{report ? ' The last successful report remains below.' : ''}</p><button type="button" onClick={refresh} disabled={busy}>Retry analytics</button></div>}
-    {busy && <p role="status">Loading analytics…</p>}
+    {error && !independentTab && <div className="office-analytics-error" role="alert"><p>{error}{report ? ' The last successful report remains below.' : ''}</p><button type="button" onClick={refresh} disabled={busy}>Retry analytics</button></div>}
+    {busy && !independentTab && <p role="status">Loading analytics…</p>}
     {report && <>
-      <div className="office-analytics-filters" hidden={activeTab === 'users' || activeTab === 'traffic'}>
+      <div className="office-analytics-filters" hidden={independentTab}>
         <label>Period<select aria-label="Period" value={preset} onChange={event => { if (event.target.value === 'custom') { setCustomStart(start); setCustomEnd(end); } setPreset(event.target.value); }}><option value="history">Since May 2026</option><option value="1">Today</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="custom">Custom dates</option></select></label>
         <label>From (UTC)<input type="date" min={days[0]} max={end || days.at(-1)} value={start} onChange={event => customDate('start', event.target.value)} /></label>
         <label>To (UTC)<input type="date" min={start || days[0]} max={days.at(-1)} value={end} onChange={event => customDate('end', event.target.value)} /></label>
@@ -102,10 +105,10 @@ export default function AnalyticsDashboard({ apiBase, request, usersPanel }) {
         <label>View type<select aria-label="View type" value={viewType} onChange={event => { setViewType(event.target.value); setCategory('all'); }}><option value="all">All types</option><option value="page">Website pages</option><option value="screen">App screens</option><option value="tab">Internal tabs</option></select></label>
         <label>Category<select aria-label="Category" value={category} onChange={event => setCategory(event.target.value)}><option value="all">All categories</option>{options.map(row => <option key={row.category} value={row.category}>{row.label}</option>)}</select></label>
       </div>
-      {invalidDates ? <p role="alert" className="office-analytics-error" hidden={activeTab === 'users' || activeTab === 'traffic'}>Choose dates between {days[0]} and {days.at(-1)}, with the start before the end.</p> : <>
-        <dl className="office-analytics-metrics" hidden={activeTab === 'users' || activeTab === 'traffic'}>{[['Page / screen views', filtered.views], ['Tab opens', filtered.tabs], ['Optional diagnostics', filtered.errors], ['Categories with activity', filtered.activeCategories]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{filtered.availableDays ? number(value) : 'Unavailable'}</dd></div>)}</dl>
-        <p className="office-analytics-meta" hidden={activeTab === 'users' || activeTab === 'traffic'}>Page and screen views count navigation. Tab opens are counted separately. Database summary rows group many opens by date and category.</p>
-        {report.history && <p className="office-analytics-meta" hidden={activeTab === 'users' || activeTab === 'traffic'}>{report.history.firstRecordedDay ? `Available analytics begins ${report.history.firstRecordedDay}. Earlier dates are unavailable and shaded in the chart. ` : 'Historical analytics is unavailable until an event is recorded. '}{count(report.history.restoredViews) > 0 ? `${number(report.history.restoredViews)} earlier page views were recovered. ` : ''}Selected totals include retained events only.</p>}
+      {invalidDates ? <p role="alert" className="office-analytics-error" hidden={independentTab}>Choose dates between {days[0]} and {days.at(-1)}, with the start before the end.</p> : <>
+        <dl className="office-analytics-metrics" hidden={independentTab}>{[['Page / screen views', filtered.views], ['Tab opens', filtered.tabs], ['Optional diagnostics', filtered.errors], ['Categories with activity', filtered.activeCategories]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{filtered.availableDays ? number(value) : 'Unavailable'}</dd></div>)}</dl>
+        <p className="office-analytics-meta" hidden={independentTab}>Page and screen views count navigation. Tab opens are counted separately. Database summary rows group many opens by date and category.</p>
+        {report.history && <p className="office-analytics-meta" hidden={independentTab}>{report.history.firstRecordedDay ? `Available analytics begins ${report.history.firstRecordedDay}. Earlier dates are unavailable and shaded in the chart. ` : 'Historical analytics is unavailable until an event is recorded. '}{count(report.history.restoredViews) > 0 ? `${number(report.history.restoredViews)} earlier page views were recovered. ` : ''}Selected totals include retained events only.</p>}
         <AnalyticsPanel name="overview" activeTab={activeTab}>
         <DailyTrend daily={filtered.daily} />
         <section className="office-analytics-card"><h2>Coverage and privacy</h2><p>Fixed category names and approximate network country and city are counted without IP addresses, device coordinates or visitor identifiers. Page addresses, search text, account identifiers, message content and form values are excluded. Private Vault, device-authentication and VPN screens do not send page counts or diagnostics.</p><p>May onward is available for date selection. {report.history?.firstRecordedDay ? `Retained activity starts on ${report.history.firstRecordedDay}. ` : 'No retained activity has been recorded. '}{count(report.history?.restoredViews) > 0 ? `${number(report.history.restoredViews)} historical page views were recovered from earlier records. ` : ''}Earlier dates are unavailable. Later dates with no retained events show zero recorded activity; previously expired or unrecorded events cannot be reconstructed.</p><p className="office-analytics-meta">Counts can be lower when requests are blocked, offline or rate limited. New categories and geographic counts have no historical backfill.</p></section>
@@ -130,6 +133,7 @@ export default function AnalyticsDashboard({ apiBase, request, usersPanel }) {
             {diagnostics.map(row => <tr key={`${row.day}:${row.category}:${row.code}`}><th scope="row">{row.day}</th><td>{row.label}</td><td>{errorNames[row.code] || row.code}</td><td>{number(row.count)}</td></tr>)}
           </tbody></table></div> : <p>No diagnostics were recorded for this selection.</p>}
         </section>}
+      <button type="button" onClick={() => selectTab('requests')}>View durable API request history</button>
       <div className="office-analytics-two-columns">
         <section className="office-analytics-card"><h2>Optional diagnostic types</h2><p>All platforms, last 30 days. Diagnostic collection depends on each user's preference.</p><dl className="office-analytics-facts">{Object.entries(errorNames).map(([code, label]) => <div key={code}><dt>{label}</dt><dd>{number(report.performance?.byCode?.find(row => row.code === code)?.last30)}</dd></div>)}</dl></section>
         <section className="office-analytics-card"><h2>API responses</h2><p>Current API process only, since {service?.since ? new Date(service.since).toLocaleString() : 'startup'}. These request totals are separate from visits.</p><dl className="office-analytics-facts">{['2xx', '3xx', '4xx', '5xx'].map(code => <div key={code}><dt>{code} responses</dt><dd>{number(responses[code])}</dd></div>)}</dl><p className="office-analytics-meta">Total requests: {number(service?.total)}</p></section>
@@ -143,7 +147,9 @@ export default function AnalyticsDashboard({ apiBase, request, usersPanel }) {
       </dl></section>}
       </AnalyticsPanel>
     </>}
-    <AnalyticsPanel name="traffic" activeTab={activeTab}>{visitedTabs.traffic && <TrafficAnalytics apiBase={apiBase} request={request} active={activeTab === 'traffic'} />}</AnalyticsPanel>
+    <AnalyticsPanel name="traffic" activeTab={activeTab}>{visitedTabs.traffic && <TrafficAnalytics apiBase={apiBase} request={request} active={activeTab === 'traffic'} onCompare={() => selectTab('comparison')} />}</AnalyticsPanel>
+    <AnalyticsPanel name="comparison" activeTab={activeTab}>{visitedTabs.comparison && <AnalyticsComparison apiBase={apiBase} request={request} active={activeTab === 'comparison'} />}</AnalyticsPanel>
+    <AnalyticsPanel name="requests" activeTab={activeTab}>{visitedTabs.requests && <RequestsAnalytics apiBase={apiBase} request={request} active={activeTab === 'requests'} />}</AnalyticsPanel>
     {usersPanel && <AnalyticsPanel name="users" activeTab={activeTab}>{visitedTabs.users && cloneElement(usersPanel, { active: activeTab === 'users' })}</AnalyticsPanel>}
   </section>;
 }
