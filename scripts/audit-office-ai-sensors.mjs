@@ -59,7 +59,6 @@ async function setup(width,options={}){
  });
  await context.route('**/*',async route=>{
   const req=route.request(),url=new URL(req.url());
-  if(options.dedicated && url.origin==='https://uficonnect.ai'){const pathname=url.pathname==='/'?'office-sensors-audit?app=1':url.pathname.slice(1)+url.search;return route.fulfill({response:await context.request.get(server.resolvedUrls.local[0]+pathname)});}
   if(url.origin==='http://127.0.0.1:4173')return route.fulfill({contentType:'text/html',body:'<h1>Synthetic local website preview</h1>'});
   if(url.pathname.startsWith('/__local-web/')){
    local.requests.push({path:url.pathname,token:req.headers()['x-office-token']});
@@ -71,6 +70,7 @@ async function setup(width,options={}){
    }
    return route.fulfill({json:{state:'unavailable'}});
   }
+  if(options.dedicated && url.origin==='https://uficonnect.ai'){const pathname=url.pathname==='/'?'office-sensors-audit?app=1':url.pathname.slice(1)+url.search;return route.fulfill({response:await context.request.get(server.resolvedUrls.local[0]+pathname)});}
   if(![API,PIPELINE].includes(url.origin))return route.continue();
   const headers={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'x-office-token,content-type','Access-Control-Allow-Methods':'GET,POST,PATCH,DELETE,OPTIONS'};
   const reply=(json,status=200)=>route.fulfill({headers,json,status});
@@ -99,7 +99,7 @@ async function setup(width,options={}){
   if(url.pathname==='/office/ai/chat')return reply({reply:'Synthetic Ask reply.',research:{status:'off'},generatedAt:new Date().toISOString()});
   return reply({});
  });
- await page.goto(options.dedicated?'https://uficonnect.ai/?app=1':server.resolvedUrls.local[0]+'office-sensors-audit'+(options.app?'?app=1#'+(options.hash||'agents'):options.welcome?'?welcome=1':''),{waitUntil:'networkidle'});
+ await page.goto(options.dedicated?'https://uficonnect.ai/?app=1'+(options.hash?'#'+options.hash:''):server.resolvedUrls.local[0]+'office-sensors-audit'+(options.app?'?app=1#'+(options.hash||'agents'):options.welcome?'?welcome=1':''),{waitUntil:'networkidle'});
  if(options.unauthenticated)return{page,context,requests,errors,tasks,local};
  if(options.app){try{await page.getByLabel('Access token',{exact:true}).fill('synthetic-office-sensors-token');await page.getByRole('button',{name:'Unlock Office',exact:true}).click();}catch(error){console.error(JSON.stringify({step:'synthetic-unlock',errors,requests:requests.map(({method,path})=>({method,path})),body:(await page.locator('body').innerText()).slice(0,1200)}));throw error;}}
  await page.locator('.office-ai').waitFor();
@@ -284,14 +284,37 @@ try{
  }
  {
   const {page,context,requests,errors}=await setup(1280,{app:true,dedicated:true});
-  await page.locator('.office-ai-home .office-ai[data-compact=false]').waitFor();
-  check(await page.getByRole('heading',{name:'What would you like to fix?',exact:true}).isVisible(),'The dedicated AI domain opens directly into the full conversation');
-  check(await page.getByRole('link',{name:'Office dashboard',exact:true}).isVisible(),'The dedicated chat retains a direct dashboard link');
-  check(await page.getByRole('button',{name:'Tasks',exact:true}).isVisible()===false,'Specialist workspaces are collapsed on the dedicated domain');
-  check(taskPosts(requests).length===0,'Opening the dedicated AI domain does not create work');
-  check(errors.length===0,'The dedicated chat and authentication have no browser errors');
+  await dock(page).waitFor();
+  check(await isCornerDock(dock(page))&&await fitsViewport(dock(page)),'The dedicated AI domain opens Pip in the bottom-right corner');
+  check(await page.getByRole('heading',{name:'Command Center',exact:true}).isVisible(),'The dedicated AI domain keeps Overview behind the popup');
+  check(await page.locator('.office-ai').getAttribute('data-compact')==='true','Dedicated homepage entry keeps the conversation compact');
+  check(await dock(page).getAttribute('aria-modal')==='false','The dedicated homepage popup leaves the Office page available');
+  if(await call(page).isVisible())await call(page).getByRole('button',{name:'End call',exact:true}).click();
+  await page.getByLabel('Message Pip',{exact:true}).fill('Keep this dedicated-domain draft.');
   await page.screenshot({path:path.join(root,'.cache/audit-ui/office-ai-home.png'),fullPage:true});
-  report.scenarios.push('dedicated-ai-domain-opens-full-chat');await context.close();
+  await page.getByRole('button',{name:'Open Pip workspace',exact:true}).click();
+  check(await page.locator('.office-ai-home .office-ai[data-compact=false]').isVisible(),'Only explicit expansion opens the dedicated full conversation');
+  check(await page.getByLabel('Message Pip',{exact:true}).inputValue()==='Keep this dedicated-domain draft.','Explicit expansion preserves the dedicated-domain draft');
+  check(await page.getByRole('link',{name:'Office dashboard',exact:true}).isVisible(),'The explicitly expanded dedicated workspace retains its dashboard link');
+  check(taskPosts(requests).length===0,'Opening the dedicated AI domain does not create work');
+  check(errors.length===0,'The dedicated popup and authentication have no browser errors');
+  report.scenarios.push('dedicated-ai-domain-opens-corner-until-explicit-expansion');await context.close();
+ }
+ {
+  const {page,context,requests,errors,local}=await setup(1280,{app:true,dedicated:true,hash:'local-web',unauthenticated:true});
+  await page.getByRole('heading',{name:'Local web',exact:true}).waitFor();
+  await page.getByLabel('Website file',{exact:true}).waitFor();
+  check(!await page.getByLabel('Access token',{exact:true}).isVisible(),'Dedicated-domain local editing needs no Office sign-in');
+  check(await page.locator('.office-ai').count()===0&&!requests.some(entry=>entry.path.startsWith('/office/ai')),'Dedicated-domain local editing keeps unused Pip unmounted without background AI requests');
+  check(!await dock(page).isVisible()&&new URL(page.url()).hash==='#local-web','An explicit dedicated-domain local editor URL stays on its selected page without opening Pip');
+  await page.getByLabel('Website file',{exact:true}).selectOption(local.path);
+  await page.getByLabel(local.path,{exact:true}).fill("export const label = 'Dedicated local work without authentication';\n");
+  await page.getByRole('button',{name:'Save locally',exact:true}).click();
+  await page.getByText('Saved locally',{exact:true}).first().waitFor();
+  check(local.saves.length===1&&local.requests.every(entry=>entry.token===undefined),'Dedicated-domain local files save through synthetic endpoints without Office credentials');
+  check(!await page.getByLabel('Access token',{exact:true}).isVisible()&&taskPosts(requests).length===0,'Dedicated-domain local edits never prompt for Office access or create tasks');
+  check(errors.length===0,'Dedicated-domain unauthenticated local editing has no browser errors');
+  report.scenarios.push('dedicated-ai-domain-local-editor-remains-anonymous');await context.close();
  }
  report.checks=checks;report.passed=true;await fs.mkdir(path.join(root,'.cache/audit-ui'),{recursive:true});await fs.writeFile(path.join(root,'.cache/audit-ui/office-ai-sensors.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));
 }catch(error){

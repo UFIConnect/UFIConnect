@@ -2817,9 +2817,9 @@ export default function App() {
   const officeViews = ['overview', 'office-ai', 'city', 'local-web', 'setup', 'controls', 'sources', 'pipeline', 'post-pipeline', 'feed-audit', 'topic-transfer', 'users', 'topics', 'agents', 'feed', 'analytics', 'reports', 'deploy', 'autofix', 'versions'];
   const [view, setView] = useState(() => {
     const requested = typeof window !== 'undefined' ? window.location.hash.slice(1) : '';
-    return officeViews.includes(requested) && requested !== 'office-ai' ? requested : dedicatedAI ? 'office-ai' : 'overview';
+    return officeViews.includes(requested) && requested !== 'office-ai' ? requested : 'overview';
   });
-  const [pipOpen, setPipOpen] = useState(() => typeof window !== 'undefined' && (dedicatedAI || window.location.hash === '#office-ai')), [pipActivity, setPipActivity] = useState('idle');
+  const [pipOpen, setPipOpen] = useState(() => typeof window !== 'undefined' && (window.location.hash === '#office-ai' || (dedicatedAI && !window.location.hash))), [pipActivity, setPipActivity] = useState('idle');
   const [pipInitialized, setPipInitialized] = useState(pipOpen);
   const openPip = useCallback(() => { setPipInitialized(true); setPipOpen(true); }, []);
   useEffect(() => {
